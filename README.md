@@ -25,3 +25,9 @@ This repo keeps optional zsh wrapper scripts and completion assets in-repo. See
 setup and wrapper installation:
 - Add `wrappers/` to your PATH (or symlink the wrappers into a bin directory).
 - Add `completions/zsh/` to your `fpath` and run `compinit`.
+
+## License
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
