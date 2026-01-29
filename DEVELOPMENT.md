@@ -28,6 +28,7 @@
 - All commands in **Formatting and linting** must pass.
 - `cargo test --workspace`
 - `zsh -f tests/zsh/completion.test.zsh`
+- Or run the single entrypoint: `./skills/tools/testing/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Shell completions (zsh)
 
