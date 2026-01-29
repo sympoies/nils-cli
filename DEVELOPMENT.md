@@ -26,17 +26,8 @@
 ### Required before committing
 
 - All commands in **Formatting and linting** must pass.
-- `cargo test -p nils-common`
-- `cargo test -p git-scope`
+- `cargo test --workspace`
 - `zsh -f tests/zsh/completion.test.zsh`
-
-### Targeted tests
-
-- `cargo test -p git-scope --test edge_cases`
-- `cargo test -p git-scope --test rendering`
-- `cargo test -p git-scope --test commit_mode`
-- `cargo test -p git-scope --test print_sources`
-- `cargo test -p git-scope --test tracked_prefix`
 
 ## Shell completions (zsh)
 
