@@ -1,0 +1,154 @@
+#compdef git-lock
+
+__git_lock_labels() {
+  emulate -L zsh -o extendedglob
+
+  local toplevel='' repo_id='' lock_dir='' file=''
+  lock_dir="$ZSH_CACHE_DIR/git-locks"
+
+  toplevel="$(command git rev-parse --show-toplevel 2>/dev/null)" || return 0
+  repo_id="${toplevel:t}"
+
+  [[ -d "$lock_dir" ]] || return 0
+
+  for file in "$lock_dir/${repo_id}-"*.lock(N); do
+    [[ -f "$file" ]] || continue
+    local label="${file:t}"
+    label="${label#${repo_id}-}"
+    label="${label%.lock}"
+    print -r -- "$label"
+  done
+
+  return 0
+}
+
+
+_git-lock() {
+  emulate -L zsh -o extendedglob
+
+  local context='' state='' state_descr=''
+  local -a line=()
+  typeset -A opt_args=()
+
+  local -i orig_current="$CURRENT"
+  local -a orig_words=("${words[@]}")
+
+  local cur="${orig_words[orig_current]-}"
+  cur="${cur%%[[:space:]]#}"
+
+  typeset -a subcmds=() opts=() labels=()
+  subcmds=(
+    'lock:Save commit hash to lock'
+    'unlock:Reset to a saved commit'
+    'list:Show all locks'
+    'copy:Duplicate a lock label'
+    'delete:Remove a lock'
+    'diff:Compare commits between two locks'
+    'tag:Create a git tag from a lock'
+    'help:Show usage'
+  )
+  opts=(
+    '-h:Show help'
+    '--help:Show help'
+  )
+
+  if (( orig_current == 2 )); then
+    if [[ "$cur" == -* ]]; then
+      _describe -t options 'option' opts && return 0
+      return 0
+    fi
+    _describe -t commands 'git-lock command' subcmds && return 0
+    _message 'command (lock|unlock|list|copy|delete|diff|tag)'
+    return 0
+  fi
+
+  local subcmd="${orig_words[2]-}"
+  subcmd="${subcmd%%[[:space:]]#}"
+
+  case "$subcmd" in
+    -h|--help|help)
+      return 0
+      ;;
+  esac
+
+  labels=(${(f)"$(__git_lock_labels)"})
+
+  case "$subcmd" in
+    unlock|delete)
+      if (( orig_current == 3 )); then
+        (( ${#labels[@]} > 0 )) && _values 'label' "${labels[@]}" && return 0
+        _message 'label'
+        return 0
+      fi
+      ;;
+    copy)
+      if (( orig_current == 3 )); then
+        (( ${#labels[@]} > 0 )) && _values 'source label' "${labels[@]}" && return 0
+        _message 'source label'
+        return 0
+      elif (( orig_current == 4 )); then
+        _message 'target label'
+        return 0
+      fi
+      ;;
+    diff)
+      if [[ "$cur" == -* ]]; then
+        typeset -a diff_opts=(
+          '--no-color:Disable ANSI colors'
+          '-h:Show diff help'
+          '--help:Show diff help'
+        )
+        _describe -t options 'option' diff_opts && return 0
+        return 0
+      fi
+
+      if (( orig_current == 3 || orig_current == 4 )); then
+        (( ${#labels[@]} > 0 )) && _values 'label' "${labels[@]}" && return 0
+        _message 'label'
+        return 0
+      fi
+      ;;
+    tag)
+      if [[ "${orig_words[orig_current-1]-}" == "-m" ]]; then
+        _message 'tag message'
+        return 0
+      fi
+
+      if [[ "$cur" == -* ]]; then
+        typeset -a tag_opts=(
+          '--push:Push the tag to origin'
+          '-m:Tag message'
+        )
+        _describe -t options 'option' tag_opts && return 0
+        return 0
+      fi
+
+      if (( orig_current == 3 )); then
+        (( ${#labels[@]} > 0 )) && _values 'git-lock label' "${labels[@]}" && return 0
+        _message 'git-lock label'
+        return 0
+      elif (( orig_current == 4 )); then
+        _message 'git tag name'
+        return 0
+      fi
+      ;;
+    lock)
+      if (( orig_current == 3 )); then
+        _message 'label (default: default)'
+        return 0
+      elif (( orig_current == 4 )); then
+        _message 'note (optional)'
+        return 0
+      elif (( orig_current == 5 )); then
+        _message 'commit (default: HEAD)'
+        return 0
+      fi
+      ;;
+    list)
+      _message 'no more arguments'
+      return 0
+      ;;
+  esac
+}
+
+compdef _git-lock git-lock

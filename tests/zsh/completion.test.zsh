@@ -6,6 +6,7 @@ SCRIPT_PATH="${0:A}"
 REPO_ROOT="${SCRIPT_PATH:h:h:h}"
 COMP_FILE="$REPO_ROOT/completions/zsh/_git-scope"
 COMP_SUMMARY_FILE="$REPO_ROOT/completions/zsh/_git-summary"
+COMP_LOCK_FILE="$REPO_ROOT/completions/zsh/_git-lock"
 
 if [[ ! -f "$COMP_FILE" ]]; then
   print -u2 -r -- "FAIL: missing completion file"
@@ -14,6 +15,11 @@ fi
 
 if [[ ! -f "$COMP_SUMMARY_FILE" ]]; then
   print -u2 -r -- "FAIL: missing git-summary completion file"
+  exit 1
+fi
+
+if [[ ! -f "$COMP_LOCK_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing git-lock completion file"
   exit 1
 fi
 
@@ -30,6 +36,11 @@ source "$COMP_SUMMARY_FILE" || {
   exit 1
 }
 
+source "$COMP_LOCK_FILE" || {
+  print -u2 -r -- "FAIL: failed to source git-lock completion file"
+  exit 1
+}
+
 if (( ! $+functions[_git-scope] )); then
   print -u2 -r -- "FAIL: _git-scope function not defined"
   exit 1
@@ -37,6 +48,11 @@ fi
 
 if (( ! $+functions[_git-summary] )); then
   print -u2 -r -- "FAIL: _git-summary function not defined"
+  exit 1
+fi
+
+if (( ! $+functions[_git-lock] )); then
+  print -u2 -r -- "FAIL: _git-lock function not defined"
   exit 1
 fi
 
@@ -57,6 +73,16 @@ grep -q "git-summary command" "$COMP_SUMMARY_FILE" || {
 
 grep -q "this-week" "$COMP_SUMMARY_FILE" || {
   print -u2 -r -- "FAIL: git-summary completion missing this-week"
+  exit 1
+}
+
+grep -q "lock:Save commit hash to lock" "$COMP_LOCK_FILE" || {
+  print -u2 -r -- "FAIL: git-lock completion missing lock command"
+  exit 1
+}
+
+grep -q "diff:Compare commits between two locks" "$COMP_LOCK_FILE" || {
+  print -u2 -r -- "FAIL: git-lock completion missing diff command"
   exit 1
 }
 

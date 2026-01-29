@@ -221,6 +221,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "git-lock"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "tempfile",
+]
+
+[[package]]
 name = "git-scope"
 version = "0.1.0"
 dependencies = [

@@ -7,6 +7,7 @@ Rust CLI workspace scaffold for building multiple independently packaged binarie
 - `crates/cli-template`: minimal binary crate for validating packaging
 - `crates/git-scope`: Rust port of the git-scope CLI
 - `crates/git-summary`: Rust port of the git-summary CLI
+- `crates/git-lock`: Rust port of the git-lock CLI
 
 ## Build and run
 - `cargo build`
@@ -14,9 +15,11 @@ Rust CLI workspace scaffold for building multiple independently packaged binarie
 - `cargo run -p cli-template -- --help`
 - `cargo run -p git-scope -- --help`
 - `cargo run -p git-summary -- --help`
+- `cargo run -p git-lock -- --help`
 - `cargo test -p nils-common`
 - `cargo test -p git-scope`
 - `cargo test -p git-summary`
+- `cargo test -p git-lock`
 
 ## git-scope
 - Example usage: `git-scope staged`, `git-scope all -p`, `git-scope commit HEAD -p`
@@ -24,6 +27,9 @@ Rust CLI workspace scaffold for building multiple independently packaged binarie
 
 ## git-summary
 - Example usage: `git-summary all`, `git-summary this-week`, `git-summary 2024-01-01 2024-12-31`
+
+## git-lock
+- Example usage: `git-lock lock wip "before refactor"`, `git-lock list`, `git-lock diff alpha beta`
 
 ## Adding a new CLI crate
 1. Create a new binary crate under `crates/`:
