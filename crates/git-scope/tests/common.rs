@@ -23,6 +23,9 @@ pub fn git(dir: &Path, args: &[&str]) -> String {
 pub fn init_repo() -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().expect("tempdir");
     git(dir.path(), &["init", "-q"]);
+    // Make the initial branch deterministic across environments (some git configs default to
+    // `master`, others to `main`).
+    git(dir.path(), &["checkout", "-q", "-B", "main"]);
     git(dir.path(), &["config", "user.email", "test@example.com"]);
     git(dir.path(), &["config", "user.name", "Test User"]);
     git(dir.path(), &["config", "commit.gpgsign", "false"]);
