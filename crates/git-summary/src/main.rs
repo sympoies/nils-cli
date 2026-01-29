@@ -122,17 +122,14 @@ fn print_help() {
     println!("Usage: git-summary <command> [args]");
     println!();
     println!("Commands:");
-    println!("  {:<16}  {}", "all", "Entire history");
-    println!("  {:<16}  {}", "today", "Today only");
-    println!("  {:<16}  {}", "yesterday", "Yesterday only");
-    println!("  {:<16}  {}", "this-month", "1st to today");
-    println!("  {:<16}  {}", "last-month", "1st to end of last month");
-    println!("  {:<16}  {}", "this-week", "This Mon–Sun");
-    println!("  {:<16}  {}", "last-week", "Last Mon–Sun");
-    println!(
-        "  {:<16}  {}",
-        "<from> <to>", "Custom date range (YYYY-MM-DD)"
-    );
+    println!("  {:<16}  Entire history", "all");
+    println!("  {:<16}  Today only", "today");
+    println!("  {:<16}  Yesterday only", "yesterday");
+    println!("  {:<16}  1st to today", "this-month");
+    println!("  {:<16}  1st to end of last month", "last-month");
+    println!("  {:<16}  This Mon–Sun", "this-week");
+    println!("  {:<16}  Last Mon–Sun", "last-week");
+    println!("  {:<16}  Custom date range (YYYY-MM-DD)", "<from> <to>");
     println!();
 }
 
