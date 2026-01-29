@@ -48,9 +48,7 @@ pub fn git_scope_bin() -> PathBuf {
 
 pub fn run_git_scope(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> String {
     let mut cmd = Command::new(git_scope_bin());
-    cmd.args(args)
-        .current_dir(dir)
-        .stdout(Stdio::piped());
+    cmd.args(args).current_dir(dir).stdout(Stdio::piped());
     for (k, v) in envs {
         cmd.env(k, v);
     }

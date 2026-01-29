@@ -84,12 +84,7 @@ pub fn collect_tracked(prefixes: &[String]) -> Result<Vec<String>> {
             let path = Path::new(&clean);
             if path.is_dir() {
                 let prefix_dir = format!("{}/", clean);
-                filtered.extend(
-                    files
-                        .iter()
-                        .filter(|f| f.starts_with(&prefix_dir))
-                        .cloned(),
-                );
+                filtered.extend(files.iter().filter(|f| f.starts_with(&prefix_dir)).cloned());
             } else if path.is_file() {
                 filtered.extend(files.iter().filter(|f| *f == &clean).cloned());
             } else {

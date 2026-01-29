@@ -4,7 +4,12 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::process::{Command, Stdio};
 
-pub fn render_commit(commit: &str, parent_selector: Option<&str>, no_color: bool, print: bool) -> Result<()> {
+pub fn render_commit(
+    commit: &str,
+    parent_selector: Option<&str>,
+    no_color: bool,
+    print: bool,
+) -> Result<()> {
     print_commit_metadata(commit, no_color)?;
     print_commit_message(commit)?;
 
@@ -60,7 +65,11 @@ fn print_commit_message(commit: &str) -> Result<()> {
     Ok(())
 }
 
-fn render_commit_files(commit: &str, parent_selector: Option<&str>, no_color: bool) -> Result<Vec<String>> {
+fn render_commit_files(
+    commit: &str,
+    parent_selector: Option<&str>,
+    no_color: bool,
+) -> Result<Vec<String>> {
     let parents = commit_parents(commit)?;
     let parent_count = parents.len();
     let is_merge = parent_count > 1;

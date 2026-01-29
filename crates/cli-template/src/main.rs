@@ -3,7 +3,11 @@ use tracing::info;
 use tracing_subscriber::{fmt, EnvFilter};
 
 #[derive(Parser)]
-#[command(name = "cli-template", version, about = "Template CLI for nils-cli workspace")]
+#[command(
+    name = "cli-template",
+    version,
+    about = "Template CLI for nils-cli workspace"
+)]
 struct Cli {
     /// Log level (e.g. trace, debug, info, warn, error)
     #[arg(long, default_value = "info")]
