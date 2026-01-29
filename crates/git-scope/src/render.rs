@@ -258,16 +258,14 @@ fn strip_ansi(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
     while let Some(ch) = chars.next() {
-        if ch == '\x1b' {
-            if matches!(chars.peek(), Some('[')) {
-                chars.next();
-                while let Some(c) = chars.next() {
-                    if c == 'm' {
-                        break;
-                    }
+        if ch == '\x1b' && matches!(chars.peek(), Some('[')) {
+            chars.next();
+            for c in chars.by_ref() {
+                if c == 'm' {
+                    break;
                 }
-                continue;
             }
+            continue;
         }
         out.push(ch);
     }

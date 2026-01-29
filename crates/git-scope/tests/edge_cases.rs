@@ -22,7 +22,7 @@ fn staged_binary_prints_placeholder() {
     let root = repo.path();
 
     let bytes = [0u8, 159u8, 146u8, 150u8];
-    fs::write(root.join("bin.dat"), &bytes).unwrap();
+    fs::write(root.join("bin.dat"), bytes).unwrap();
     common::git(root, &["add", "bin.dat"]);
 
     let output = common::run_git_scope(root, &["staged", "-p"], &[("NO_COLOR", "1")]);

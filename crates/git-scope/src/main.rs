@@ -81,32 +81,32 @@ fn print_help() {
     println!();
     println!("Commands:");
     println!(
-        "  {:<16}  {}",
-        "tracked", "Show files tracked by Git (prefix filter optional)"
+        "  {:<16}  Show files tracked by Git (prefix filter optional)",
+        "tracked"
     );
-    println!("  {:<16}  {}", "staged", "Show files staged for commit");
+    println!("  {:<16}  Show files staged for commit", "staged");
     println!(
-        "  {:<16}  {}",
-        "unstaged", "Show modified files not yet staged"
+        "  {:<16}  Show modified files not yet staged",
+        "unstaged"
     );
     println!(
-        "  {:<16}  {}",
-        "all", "Show all changes (staged and unstaged)"
+        "  {:<16}  Show all changes (staged and unstaged)",
+        "all"
     );
-    println!("  {:<16}  {}", "untracked", "Show untracked files");
+    println!("  {:<16}  Show untracked files", "untracked");
     println!(
-        "  {:<16}  {}",
-        "commit <id>", "Show commit details (use -p to print content)"
+        "  {:<16}  Show commit details (use -p to print content)",
+        "commit <id>"
     );
     println!();
     println!("Options:");
     println!(
-        "  {:<16}  {}",
-        "-p, --print", "Print file contents where applicable (e.g., commit)"
+        "  {:<16}  Print file contents where applicable (e.g., commit)",
+        "-p, --print"
     );
     println!(
-        "  {:<16}  {}",
-        "--no-color", "Disable ANSI colors (also via NO_COLOR)"
+        "  {:<16}  Disable ANSI colors (also via NO_COLOR)",
+        "--no-color"
     );
 }
 

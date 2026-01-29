@@ -54,7 +54,7 @@ pub fn print_file_content_index(path: &str) -> Result<()> {
 
     if git_has_object(&format!(":{path}"))? {
         let tmp = mktemp_path()?;
-        if !git_show_to_file(&format!(":{path}"), &tmp).is_ok() {
+        if git_show_to_file(&format!(":{path}"), &tmp).is_err() {
             let _ = fs::remove_file(&tmp);
             println!("❗ Failed to read file from index: {path}");
             return Ok(());

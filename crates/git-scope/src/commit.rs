@@ -277,10 +277,8 @@ fn is_rename_or_copy(kind: &str) -> bool {
 fn canonical_path(raw: &str) -> String {
     if raw.contains("=>") {
         if raw.contains('{') && raw.contains('}') {
-            let prefix = raw.split('{').next().unwrap_or("");
-            let after_open = raw.splitn(2, '{').nth(1).unwrap_or("");
-            let inside = after_open.split('}').next().unwrap_or("");
-            let suffix = after_open.splitn(2, '}').nth(1).unwrap_or("");
+            let (prefix, after_open) = raw.split_once('{').unwrap_or((raw, ""));
+            let (inside, suffix) = after_open.split_once('}').unwrap_or((after_open, ""));
 
             let mut new_part = inside.split("=>").last().unwrap_or(inside).trim();
             if new_part.starts_with(' ') {
