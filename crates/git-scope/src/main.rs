@@ -85,14 +85,8 @@ fn print_help() {
         "tracked"
     );
     println!("  {:<16}  Show files staged for commit", "staged");
-    println!(
-        "  {:<16}  Show modified files not yet staged",
-        "unstaged"
-    );
-    println!(
-        "  {:<16}  Show all changes (staged and unstaged)",
-        "all"
-    );
+    println!("  {:<16}  Show modified files not yet staged", "unstaged");
+    println!("  {:<16}  Show all changes (staged and unstaged)", "all");
     println!("  {:<16}  Show untracked files", "untracked");
     println!(
         "  {:<16}  Show commit details (use -p to print content)",
