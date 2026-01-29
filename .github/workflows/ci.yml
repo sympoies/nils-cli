@@ -36,6 +36,7 @@ jobs:
         run: |
           cargo test -p nils-common
           cargo test -p git-scope
+          cargo test -p git-summary
 
       - name: Tests (zsh)
         run: zsh -f tests/zsh/completion.test.zsh
