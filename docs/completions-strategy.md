@@ -10,6 +10,7 @@ Keep zsh completion and wrapper assets in this repo under `completions/zsh/` and
 
 ## Location
 - `completions/zsh/`: zsh completion files (generated or curated)
+  - `completions/zsh/_git-scope`: completion for `git-scope` (and alias `gs`)
 - `wrappers/`: wrapper scripts for invoking CLI binaries or enforcing env setup
 
 ## Integration Steps

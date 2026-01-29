@@ -5,12 +5,19 @@ Rust CLI workspace scaffold for building multiple independently packaged binarie
 ## Workspace layout
 - `crates/nils-common`: shared library crate for cross-CLI helpers
 - `crates/cli-template`: minimal binary crate for validating packaging
+- `crates/git-scope`: Rust port of the git-scope CLI
 
 ## Build and run
 - `cargo build`
 - `cargo build -p cli-template`
 - `cargo run -p cli-template -- --help`
+- `cargo run -p git-scope -- --help`
 - `cargo test -p nils-common`
+- `cargo test -p git-scope`
+
+## git-scope
+- Example usage: `git-scope staged`, `git-scope all -p`, `git-scope commit HEAD -p`
+- Wrapper aliases (optional): `gs` → `git-scope`, `gsc` → `git-scope commit`, `gst` → `git-scope tracked`
 
 ## Adding a new CLI crate
 1. Create a new binary crate under `crates/`:

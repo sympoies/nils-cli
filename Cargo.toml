@@ -2,6 +2,7 @@
 members = [
   "crates/nils-common",
   "crates/cli-template",
+  "crates/git-scope",
 ]
 resolver = "2"
 

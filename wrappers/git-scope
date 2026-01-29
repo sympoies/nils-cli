@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if command -v git-scope >/dev/null 2>&1; then
+  exec git-scope "$@"
+fi
+
+if command -v cargo >/dev/null 2>&1; then
+  exec cargo run -q -p git-scope -- "$@"
+fi
+
+echo "git-scope: binary not found (install via cargo install or build the workspace)" >&2
+exit 1
