@@ -17,11 +17,8 @@ if [[ ! -f "$COMP_SUMMARY_FILE" ]]; then
   exit 1
 fi
 
-autoload -U compinit
-compinit -D || {
-  print -u2 -r -- "FAIL: compinit failed"
-  exit 1
-}
+# Avoid compinit in CI (non-interactive shells); stub compdef so sourcing works.
+compdef() { :; }
 
 source "$COMP_FILE" || {
   print -u2 -r -- "FAIL: failed to source completion file"
