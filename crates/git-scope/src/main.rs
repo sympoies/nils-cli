@@ -8,7 +8,11 @@ mod print;
 mod render;
 
 #[derive(Parser)]
-#[command(name = "git-scope", disable_help_flag = true, disable_help_subcommand = true)]
+#[command(
+    name = "git-scope",
+    disable_help_flag = true,
+    disable_help_subcommand = true
+)]
 struct Cli {
     /// Disable ANSI colors (also via NO_COLOR)
     #[arg(long, global = true)]
@@ -76,16 +80,34 @@ fn print_help() {
     println!("Usage: git-scope <command> [args]");
     println!();
     println!("Commands:");
-    println!("  {:<16}  {}", "tracked", "Show files tracked by Git (prefix filter optional)");
+    println!(
+        "  {:<16}  {}",
+        "tracked", "Show files tracked by Git (prefix filter optional)"
+    );
     println!("  {:<16}  {}", "staged", "Show files staged for commit");
-    println!("  {:<16}  {}", "unstaged", "Show modified files not yet staged");
-    println!("  {:<16}  {}", "all", "Show all changes (staged and unstaged)");
+    println!(
+        "  {:<16}  {}",
+        "unstaged", "Show modified files not yet staged"
+    );
+    println!(
+        "  {:<16}  {}",
+        "all", "Show all changes (staged and unstaged)"
+    );
     println!("  {:<16}  {}", "untracked", "Show untracked files");
-    println!("  {:<16}  {}", "commit <id>", "Show commit details (use -p to print content)");
+    println!(
+        "  {:<16}  {}",
+        "commit <id>", "Show commit details (use -p to print content)"
+    );
     println!();
     println!("Options:");
-    println!("  {:<16}  {}", "-p, --print", "Print file contents where applicable (e.g., commit)");
-    println!("  {:<16}  {}", "--no-color", "Disable ANSI colors (also via NO_COLOR)");
+    println!(
+        "  {:<16}  {}",
+        "-p, --print", "Print file contents where applicable (e.g., commit)"
+    );
+    println!(
+        "  {:<16}  {}",
+        "--no-color", "Disable ANSI colors (also via NO_COLOR)"
+    );
 }
 
 fn main() {
@@ -125,12 +147,8 @@ fn run() -> Result<()> {
         }
         Command::All { print } => {
             let (combined, staged, unstaged) = git::collect_all()?;
-            let files = render::render_with_type(
-                &combined,
-                no_color,
-                render::PrintMode::Worktree,
-                false,
-            )?;
+            let files =
+                render::render_with_type(&combined, no_color, render::PrintMode::Worktree, false)?;
             if print {
                 render::print_all_files(&files, &staged, &unstaged)?;
             }

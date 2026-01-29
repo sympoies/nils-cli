@@ -52,7 +52,11 @@ pub fn render_with_type(
 
         let color = kind_color(&entry.kind, no_color);
         let reset = color_reset(no_color);
-        println!("  {color}➔ [{}] {display}{reset}", entry.kind, display = display_path);
+        println!(
+            "  {color}➔ [{}] {display}{reset}",
+            entry.kind,
+            display = display_path
+        );
     }
 
     render_tree(&files, no_color)?;
@@ -72,7 +76,11 @@ pub fn render_with_type(
     Ok(files)
 }
 
-pub fn print_all_files(files: &[String], staged_lines: &[String], unstaged_lines: &[String]) -> Result<()> {
+pub fn print_all_files(
+    files: &[String],
+    staged_lines: &[String],
+    unstaged_lines: &[String],
+) -> Result<()> {
     println!();
     println!("📦 Printing file contents:");
 

@@ -21,7 +21,10 @@ fn commit_merge_parent_selection() {
     common::git(root, &["add", "main.txt"]);
     common::git(root, &["commit", "-m", "main"]);
 
-    common::git(root, &["merge", "--no-ff", "feature", "-m", "merge feature"]);
+    common::git(
+        root,
+        &["merge", "--no-ff", "feature", "-m", "merge feature"],
+    );
     let merge_hash = common::git(root, &["rev-parse", "HEAD"]).trim().to_string();
 
     let output = common::run_git_scope(

@@ -37,10 +37,7 @@ pub fn git_scope_bin() -> PathBuf {
     }
 
     let exe = std::env::current_exe().expect("current exe");
-    let target_dir = exe
-        .parent()
-        .and_then(|p| p.parent())
-        .expect("target dir");
+    let target_dir = exe.parent().and_then(|p| p.parent()).expect("target dir");
     let bin = target_dir.join("git-scope");
     if bin.exists() {
         return bin;
@@ -51,7 +48,9 @@ pub fn git_scope_bin() -> PathBuf {
 
 pub fn run_git_scope(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> String {
     let mut cmd = Command::new(git_scope_bin());
-    cmd.args(args).current_dir(dir).stdout(Stdio::piped());
+    cmd.args(args)
+        .current_dir(dir)
+        .stdout(Stdio::piped());
     for (k, v) in envs {
         cmd.env(k, v);
     }

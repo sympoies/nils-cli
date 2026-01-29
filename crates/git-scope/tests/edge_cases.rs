@@ -61,11 +61,7 @@ fn rename_shows_arrow() {
 #[test]
 fn outside_repo_prints_warning() {
     let temp = tempfile::TempDir::new().unwrap();
-    let (code, output) = run_git_scope_allow_fail(
-        temp.path(),
-        &["staged"],
-        &[("NO_COLOR", "1")],
-    );
+    let (code, output) = run_git_scope_allow_fail(temp.path(), &["staged"], &[("NO_COLOR", "1")]);
     assert!(code != 0, "expected non-zero exit code");
     assert!(
         output.contains("Not a Git repository"),
@@ -79,7 +75,9 @@ fn run_git_scope_allow_fail(
     envs: &[(&str, &str)],
 ) -> (i32, String) {
     let mut cmd = std::process::Command::new(common::git_scope_bin());
-    cmd.args(args).current_dir(dir).stdout(std::process::Stdio::piped());
+    cmd.args(args)
+        .current_dir(dir)
+        .stdout(std::process::Stdio::piped());
     for (k, v) in envs {
         cmd.env(k, v);
     }
