@@ -2,8 +2,8 @@
 
 ## Overview
 `semantic-commit` is a small helper CLI that ports the Codex Zsh entrypoints:
-- `~/.codex/skills/tools/devex/semantic-commit/scripts/staged_context.sh`
-- `~/.codex/skills/tools/devex/semantic-commit/scripts/commit_with_message.sh`
+- `~/.codex/skills/semantic-commit/scripts/staged_context.sh`
+- `~/.codex/skills/semantic-commit/scripts/commit_with_message.sh`
 
 It provides a single binary with two subcommands: `staged-context` and `commit`.
 

@@ -2,8 +2,8 @@
 
 ## Overview
 This plan ports the existing Codex Zsh entrypoints under:
-- `~/.codex/skills/tools/devex/semantic-commit/scripts/staged_context.sh`
-- `~/.codex/skills/tools/devex/semantic-commit/scripts/commit_with_message.sh`
+- `~/.codex/skills/semantic-commit/scripts/staged_context.sh`
+- `~/.codex/skills/semantic-commit/scripts/commit_with_message.sh`
 
 into a single Rust binary crate inside this workspace, named `semantic-commit`.
 Behavioral parity (errors, warnings, exit codes, and validation rules) is the top priority.
@@ -35,8 +35,8 @@ Behavioral parity (errors, warnings, exit codes, and validation rules) is the to
 ### Task 1.1: Document current behavior and output contract
 - **Location**:
   - `docs/semantic-commit/spec.md`
-  - `~/.codex/skills/tools/devex/semantic-commit/scripts/staged_context.sh`
-  - `~/.codex/skills/tools/devex/semantic-commit/scripts/commit_with_message.sh`
+  - `~/.codex/skills/semantic-commit/scripts/staged_context.sh`
+  - `~/.codex/skills/semantic-commit/scripts/commit_with_message.sh`
 - **Description**: Capture CLI surface, preconditions, validation rules, error/warn text, and exit
   codes for both entrypoints.
 - **Dependencies**: none
