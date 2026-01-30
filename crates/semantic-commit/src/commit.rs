@@ -69,6 +69,10 @@ pub fn run(args: &[String]) -> i32 {
         }
     }
 
+    if let Err(code) = ensure_git_scope_available() {
+        return code;
+    }
+
     let message_contents = match (message, message_file) {
         (Some(text), None) => text,
         (None, Some(path)) => match std::fs::read_to_string(&path) {
@@ -145,6 +149,38 @@ pub fn run(args: &[String]) -> i32 {
     print_summary()
 }
 
+fn ensure_git_scope_available() -> Result<(), i32> {
+    let status = Command::new("git-scope")
+        .arg("help")
+        .env("GIT_PAGER", "cat")
+        .env("PAGER", "cat")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    match status {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => {
+            let rc = status.code().unwrap_or(1);
+            eprintln!("error: git-scope failed (exit code: {rc})");
+            Err(1)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("error: git-scope is required (ensure it is installed and on PATH)");
+            Err(1)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+            eprintln!("error: git-scope is required (ensure it is executable and on PATH)");
+            Err(1)
+        }
+        Err(err) => {
+            eprintln!("error: git-scope is required (failed to run git-scope: {err})");
+            Err(1)
+        }
+    }
+}
+
 fn print_summary() -> i32 {
     let status = Command::new("git-scope")
         .args(["commit", "HEAD", "--no-color"])
@@ -157,37 +193,21 @@ fn print_summary() -> i32 {
 
     match status {
         Ok(status) if status.success() => 0,
-        Ok(_) => {
-            eprintln!("warning: git-scope commit failed; falling back to git show --stat");
-            run_git_show_stat()
+        Ok(status) => {
+            let rc = status.code().unwrap_or(1);
+            eprintln!("error: git-scope commit failed (exit code: {rc})");
+            rc
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!("warning: git-scope not found; falling back to git show --stat");
-            let _ = run_git_show_stat();
-            0
+            eprintln!("error: git-scope is required (ensure it is installed and on PATH)");
+            1
         }
-        Err(_) => {
-            eprintln!("warning: git-scope commit failed; falling back to git show --stat");
-            run_git_show_stat()
+        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+            eprintln!("error: git-scope is required (ensure it is executable and on PATH)");
+            1
         }
-    }
-}
-
-fn run_git_show_stat() -> i32 {
-    let status = Command::new("git")
-        .args(["show", "--no-color", "--stat", "HEAD"])
-        .env("GIT_PAGER", "cat")
-        .env("PAGER", "cat")
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status();
-
-    match status {
-        Ok(status) if status.success() => 0,
-        Ok(status) => status.code().unwrap_or(1),
         Err(err) => {
-            eprintln!("{err:#}");
+            eprintln!("error: git-scope commit failed: {err}");
             1
         }
     }

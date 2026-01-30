@@ -126,7 +126,7 @@ fn commit_message_file_missing_errors() {
 }
 
 #[test]
-fn commit_success_stdin_falls_back_to_git_show() {
+fn commit_fails_when_git_scope_missing() {
     let repo = common::init_repo();
     stage_file(repo.path(), "a.txt", "hello\n");
 
@@ -141,12 +141,14 @@ fn commit_success_stdin_falls_back_to_git_show() {
         Some("feat(core): add thing\n\n- Add thing\n"),
     );
 
-    assert_eq!(output.status.code(), Some(0));
-    assert!(as_str(&output.stderr)
-        .contains("warning: git-scope not found; falling back to git show --stat"));
-    let stdout = as_str(&output.stdout);
-    assert!(stdout.contains("a.txt |"));
-    assert!(stdout.contains("file changed") || stdout.contains("files changed"));
+    assert_eq!(output.status.code(), Some(1));
+    assert!(as_str(&output.stderr).contains("error: git-scope is required"));
+
+    let head = common::git_output(repo.path(), &["rev-parse", "--verify", "HEAD"]);
+    assert!(
+        !head.status.success(),
+        "expected no commit to have been created"
+    );
 }
 
 #[test]
@@ -160,6 +162,9 @@ fn commit_success_uses_git_scope_when_available() {
         "git-scope",
         r#"#!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1-}" == "help" ]]; then
+  exit 0
+fi
 if [[ "${1-}" != "commit" || "${2-}" != "HEAD" || "${3-}" != "--no-color" ]]; then
   echo "unexpected args: $*" >&2
   exit 2
@@ -184,12 +189,12 @@ echo "GIT_SCOPE_OK"
 
     assert_eq!(output.status.code(), Some(0));
     assert!(as_str(&output.stdout).contains("GIT_SCOPE_OK"));
-    assert!(!as_str(&output.stderr).contains("warning: git-scope not found"));
+    assert!(!as_str(&output.stderr).contains("warning:"));
 }
 
 #[cfg(unix)]
 #[test]
-fn commit_falls_back_when_git_scope_is_not_executable() {
+fn commit_fails_when_git_scope_is_not_executable() {
     use std::os::unix::fs::PermissionsExt;
 
     let repo = common::init_repo();
@@ -216,8 +221,12 @@ fn commit_falls_back_when_git_scope_is_not_executable() {
         None,
     );
 
-    assert_eq!(output.status.code(), Some(0));
-    assert!(as_str(&output.stderr)
-        .contains("warning: git-scope commit failed; falling back to git show --stat"));
-    assert!(as_str(&output.stdout).contains("a.txt |"));
+    assert_eq!(output.status.code(), Some(1));
+    assert!(as_str(&output.stderr).contains("error: git-scope is required"));
+
+    let head = common::git_output(repo.path(), &["rev-parse", "--verify", "HEAD"]);
+    assert!(
+        !head.status.success(),
+        "expected no commit to have been created"
+    );
 }

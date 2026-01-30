@@ -83,18 +83,16 @@ Errors / guardrails:
 - Not in a git work tree: prints `error: must run inside a git work tree` to stderr, exits `1`.
 - No staged changes: prints `error: no staged changes (stage files with git add first)` to stderr,
   exits `2`.
+- Missing `git-scope` on `PATH`: prints `error: git-scope is required ...` to stderr, exits `1`
+  (and does not run `git commit`).
 - Git commit failures: prints `error: git commit failed (exit code: <rc>)` to stderr, exits `<rc>`.
 
 Success behavior (summary output):
 - Sets `GIT_PAGER=cat` and `PAGER=cat` for subprocess calls.
-- After a successful `git commit`, prints a commit summary:
-  - If `git-scope` is available on `PATH`:
-    - Runs: `git-scope commit HEAD --no-color`
-    - If it fails: prints `warning: git-scope commit failed; falling back to git show --stat` to
-      stderr, then runs `git show --no-color --stat HEAD`.
-  - If `git-scope` is missing:
-    - Prints `warning: git-scope not found; falling back to git show --stat` to stderr, then runs
-      `git show --no-color --stat HEAD`.
+- After a successful `git commit`, prints a commit summary by running:
+  - `git-scope commit HEAD --no-color`
+- If `git-scope commit` fails:
+  - Prints `error: git-scope commit failed (exit code: <rc>)` to stderr, exits `<rc>`.
 
 ## Exit codes
 - `0`: success.
@@ -105,4 +103,4 @@ Success behavior (summary output):
 ## Tool resolution
 - `semantic-commit` resolves external tools via `PATH`:
   - `git` is required.
-  - `git-scope` is optional (used for commit summary output when available).
+  - `git-scope` is required (used for commit summary output).

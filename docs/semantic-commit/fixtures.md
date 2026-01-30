@@ -42,21 +42,21 @@
 - Command: `semantic-commit staged-context`.
 - Expect: stderr contains `error: must run inside a git work tree` and exit `1`.
 
-## commit: stdin success (git-scope missing → git show fallback)
+## commit: fails when git-scope is missing
 - Setup: temp git repo with staged change; ensure `git-scope` is not on `PATH`.
 - Command: pipe a valid multi-line message into `semantic-commit commit`.
 - Expect:
-  - exit `0`.
-  - stderr contains `warning: git-scope not found; falling back to git show --stat`.
-  - stdout contains `git show --stat` output for `HEAD`.
+  - exit `1`.
+  - stderr contains `error: git-scope is required`.
+  - no commit is created.
 
-## commit: git-scope exec failure falls back
+## commit: fails when git-scope is not executable
 - Setup: temp git repo with staged change; put a non-executable `git-scope` on `PATH`.
 - Command: `semantic-commit commit --message "feat(core): add thing"`.
 - Expect:
-  - exit `0`.
-  - stderr contains `warning: git-scope commit failed; falling back to git show --stat`.
-  - stdout contains `git show --stat` output for `HEAD`.
+  - exit `1`.
+  - stderr contains `error: git-scope is required`.
+  - no commit is created.
 
 ## commit: no staged changes
 - Setup: temp git repo with clean index.
