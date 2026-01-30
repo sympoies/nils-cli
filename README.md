@@ -27,6 +27,14 @@ Rust CLI workspace scaffold for building multiple independently packaged binarie
 - `cargo test -p fzf-cli`
 - `cargo test -p semantic-commit`
 
+## Local install (release)
+- Build + install all workspace binaries into `~/.local/nils-cli/`:
+  - `./.codex/skills/nils-cli-install/scripts/nils-cli-install.sh`
+- Install only a specific binary:
+  - `./.codex/skills/nils-cli-install/scripts/nils-cli-install.sh --bin git-scope`
+- Add the install dir to `PATH` (example):
+  - `export PATH="$HOME/.local/nils-cli:$PATH"`
+
 ## git-scope
 - Example usage: `git-scope staged`, `git-scope all -p`, `git-scope commit HEAD -p`
 - Wrapper aliases (optional): `gs` → `git-scope`, `gsc` → `git-scope commit`, `gst` → `git-scope tracked`

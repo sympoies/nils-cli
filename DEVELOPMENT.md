@@ -15,6 +15,11 @@
 - Run CLI template: `cargo run -p cli-template -- --help`
 - Run git-scope: `cargo run -p git-scope -- --help`
 
+## Local install (release)
+
+- Build + install all workspace binaries into `~/.local/nils-cli/`:
+  - `./.codex/skills/nils-cli-install/scripts/nils-cli-install.sh`
+
 ## Formatting and linting
 
 - Format check: `cargo fmt --all -- --check`
@@ -28,7 +33,7 @@
 - All commands in **Formatting and linting** must pass.
 - `cargo test --workspace`
 - `zsh -f tests/zsh/completion.test.zsh`
-- Or run the single entrypoint: `./skills/tools/testing/nils-cli-checks/scripts/nils-cli-checks.sh`
+- Or run the single entrypoint: `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Shell completions (zsh)
 

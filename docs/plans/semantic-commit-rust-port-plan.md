@@ -169,7 +169,7 @@ Behavioral parity (errors, warnings, exit codes, and validation rules) is the to
 - **Acceptance criteria**:
   - All mandatory checks pass.
 - **Validation**:
-  - `./skills/tools/testing/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Testing Strategy
 - Use integration tests that create temporary git repositories and perform real staging/commits.
