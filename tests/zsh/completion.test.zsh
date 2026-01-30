@@ -7,6 +7,7 @@ REPO_ROOT="${SCRIPT_PATH:h:h:h}"
 COMP_FILE="$REPO_ROOT/completions/zsh/_git-scope"
 COMP_SUMMARY_FILE="$REPO_ROOT/completions/zsh/_git-summary"
 COMP_LOCK_FILE="$REPO_ROOT/completions/zsh/_git-lock"
+COMP_FZF_CLI_FILE="$REPO_ROOT/completions/zsh/_fzf-cli"
 
 if [[ ! -f "$COMP_FILE" ]]; then
   print -u2 -r -- "FAIL: missing completion file"
@@ -20,6 +21,11 @@ fi
 
 if [[ ! -f "$COMP_LOCK_FILE" ]]; then
   print -u2 -r -- "FAIL: missing git-lock completion file"
+  exit 1
+fi
+
+if [[ ! -f "$COMP_FZF_CLI_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing fzf-cli completion file"
   exit 1
 fi
 
@@ -41,6 +47,11 @@ source "$COMP_LOCK_FILE" || {
   exit 1
 }
 
+source "$COMP_FZF_CLI_FILE" || {
+  print -u2 -r -- "FAIL: failed to source fzf-cli completion file"
+  exit 1
+}
+
 if (( ! $+functions[_git-scope] )); then
   print -u2 -r -- "FAIL: _git-scope function not defined"
   exit 1
@@ -53,6 +64,11 @@ fi
 
 if (( ! $+functions[_git-lock] )); then
   print -u2 -r -- "FAIL: _git-lock function not defined"
+  exit 1
+fi
+
+if (( ! $+functions[_fzf-cli] )); then
+  print -u2 -r -- "FAIL: _fzf-cli function not defined"
   exit 1
 fi
 
@@ -83,6 +99,11 @@ grep -q "lock:Save commit hash to lock" "$COMP_LOCK_FILE" || {
 
 grep -q "diff:Compare commits between two locks" "$COMP_LOCK_FILE" || {
   print -u2 -r -- "FAIL: git-lock completion missing diff command"
+  exit 1
+}
+
+grep -q "file:Search and preview text files" "$COMP_FZF_CLI_FILE" || {
+  print -u2 -r -- "FAIL: fzf-cli completion missing file command"
   exit 1
 }
 

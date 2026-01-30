@@ -1,0 +1,76 @@
+#compdef fzf-cli
+
+_fzf-cli() {
+  emulate -L zsh -o extendedglob
+
+  local context='' state='' state_descr=''
+  local -a line=()
+  typeset -A opt_args=()
+
+  local -i orig_current="$CURRENT"
+  local -a orig_words=("${words[@]}")
+
+  local -a subcommands=()
+  subcommands=(
+    'file:Search and preview text files'
+    'directory:Search directories and cd into selection'
+    'git-status:Interactive git status viewer'
+    'git-commit:Browse commits and open changed files in editor'
+    'git-checkout:Pick and checkout a previous commit'
+    'git-branch:Browse and checkout branches interactively'
+    'git-tag:Browse and checkout tags interactively'
+    'process:Browse and kill running processes'
+    'port:Browse listening ports and owners'
+    'history:Search and execute command history'
+    'env:Browse environment variables'
+    'alias:Browse shell aliases'
+    'function:Browse defined shell functions'
+    'def:Browse all definitions (env, alias, functions)'
+    'help:Display help message for fzf-cli'
+  )
+
+  _arguments -C \
+    '1:command:->subcmds' \
+    '*::arg:->args'
+
+  case "${state-}" in
+    subcmds)
+      _describe -t commands 'fzf-cli command' subcommands && return 0
+      ;;
+    args)
+      local subcmd="${line[1]:-${orig_words[2]-}}"
+      subcmd="${subcmd%%[[:space:]]#}"
+
+      case "$subcmd" in
+        file|directory)
+          _arguments -C \
+            '--vi[Open files with vi]' \
+            '--vscode[Open files with VSCode]' \
+            '--[End of options]' \
+            '*:query:_message "query"' \
+            && return 0
+          ;;
+        git-commit)
+          _arguments -C \
+            '--snapshot[Open snapshot from selected commit by default]' \
+            '*:query:_message "query"' \
+            && return 0
+          ;;
+        process|port)
+          _arguments -C \
+            '(-k --kill)'{-k,--kill}'[Kill without interactive confirmation]' \
+            '(-9 --force)'{-9,--force}'[Force SIGKILL (-9)]' \
+            '*:query:_message "query"' \
+            && return 0
+          ;;
+        git-status|git-checkout|git-branch|git-tag|history|env|alias|function|def|help)
+          _message 'query (optional)'
+          return 0
+          ;;
+      esac
+      ;;
+  esac
+}
+
+compdef _fzf-cli fzf-cli
+
