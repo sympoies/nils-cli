@@ -8,6 +8,7 @@ COMP_FILE="$REPO_ROOT/completions/zsh/_git-scope"
 COMP_SUMMARY_FILE="$REPO_ROOT/completions/zsh/_git-summary"
 COMP_LOCK_FILE="$REPO_ROOT/completions/zsh/_git-lock"
 COMP_FZF_CLI_FILE="$REPO_ROOT/completions/zsh/_fzf-cli"
+COMP_SEMANTIC_COMMIT_FILE="$REPO_ROOT/completions/zsh/_semantic-commit"
 
 if [[ ! -f "$COMP_FILE" ]]; then
   print -u2 -r -- "FAIL: missing completion file"
@@ -26,6 +27,11 @@ fi
 
 if [[ ! -f "$COMP_FZF_CLI_FILE" ]]; then
   print -u2 -r -- "FAIL: missing fzf-cli completion file"
+  exit 1
+fi
+
+if [[ ! -f "$COMP_SEMANTIC_COMMIT_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing semantic-commit completion file"
   exit 1
 fi
 
@@ -52,6 +58,11 @@ source "$COMP_FZF_CLI_FILE" || {
   exit 1
 }
 
+source "$COMP_SEMANTIC_COMMIT_FILE" || {
+  print -u2 -r -- "FAIL: failed to source semantic-commit completion file"
+  exit 1
+}
+
 if (( ! $+functions[_git-scope] )); then
   print -u2 -r -- "FAIL: _git-scope function not defined"
   exit 1
@@ -69,6 +80,11 @@ fi
 
 if (( ! $+functions[_fzf-cli] )); then
   print -u2 -r -- "FAIL: _fzf-cli function not defined"
+  exit 1
+fi
+
+if (( ! $+functions[_semantic-commit] )); then
+  print -u2 -r -- "FAIL: _semantic-commit function not defined"
   exit 1
 fi
 
@@ -104,6 +120,16 @@ grep -q "diff:Compare commits between two locks" "$COMP_LOCK_FILE" || {
 
 grep -q "file:Search and preview text files" "$COMP_FZF_CLI_FILE" || {
   print -u2 -r -- "FAIL: fzf-cli completion missing file command"
+  exit 1
+}
+
+grep -q "staged-context:Print staged change context" "$COMP_SEMANTIC_COMMIT_FILE" || {
+  print -u2 -r -- "FAIL: semantic-commit completion missing staged-context command"
+  exit 1
+}
+
+grep -q "commit:Commit staged changes" "$COMP_SEMANTIC_COMMIT_FILE" || {
+  print -u2 -r -- "FAIL: semantic-commit completion missing commit command"
   exit 1
 }
 

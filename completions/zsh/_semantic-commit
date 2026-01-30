@@ -1,0 +1,59 @@
+#compdef semantic-commit
+
+_semantic-commit() {
+  emulate -L zsh -o extendedglob
+
+  local context='' state='' state_descr=''
+  local -a line=()
+  typeset -A opt_args=()
+
+  local -i orig_current="$CURRENT"
+  local -a orig_words=("${words[@]}")
+
+  local -a subcommands=()
+  subcommands=(
+    'staged-context:Print staged change context for commit message generation'
+    'commit:Commit staged changes with a prepared commit message'
+    'help:Display help message for semantic-commit'
+  )
+
+  _arguments -C \
+    '1:command:->subcmds' \
+    '*::arg:->args'
+
+  case "${state-}" in
+    subcmds)
+      _describe -t commands 'semantic-commit command' subcommands && return 0
+      ;;
+    args)
+      local subcmd="${line[1]:-${orig_words[2]-}}"
+      subcmd="${subcmd%%[[:space:]]#}"
+
+      case "$subcmd" in
+        staged-context)
+          _arguments -C \
+            '(-h --help)'{-h,--help}'[Show help message]' \
+            && return 0
+          _message 'no additional arguments'
+          return 0
+          ;;
+        commit)
+          _arguments -C \
+            '(-h --help)'{-h,--help}'[Show help message]' \
+            '--message=[Commit message text]:message:' \
+            '--message-file=[Path to commit message file]:file:_files' \
+            && return 0
+          _message 'commit message'
+          return 0
+          ;;
+        help)
+          _message 'no additional arguments'
+          return 0
+          ;;
+      esac
+      ;;
+  esac
+}
+
+compdef _semantic-commit semantic-commit
+

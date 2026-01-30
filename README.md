@@ -9,6 +9,7 @@ Rust CLI workspace scaffold for building multiple independently packaged binarie
 - `crates/git-summary`: Rust port of the git-summary CLI
 - `crates/git-lock`: Rust port of the git-lock CLI
 - `crates/fzf-cli`: Rust port of personal fzf helper CLI (from `fzf-tools.zsh`)
+- `crates/semantic-commit`: Rust port of Codex semantic commit entrypoints
 
 ## Build and run
 - `cargo build`
@@ -18,11 +19,13 @@ Rust CLI workspace scaffold for building multiple independently packaged binarie
 - `cargo run -p git-summary -- --help`
 - `cargo run -p git-lock -- --help`
 - `cargo run -p fzf-cli -- --help`
+- `cargo run -p semantic-commit -- --help`
 - `cargo test -p nils-common`
 - `cargo test -p git-scope`
 - `cargo test -p git-summary`
 - `cargo test -p git-lock`
 - `cargo test -p fzf-cli`
+- `cargo test -p semantic-commit`
 
 ## git-scope
 - Example usage: `git-scope staged`, `git-scope all -p`, `git-scope commit HEAD -p`
@@ -37,6 +40,12 @@ Rust CLI workspace scaffold for building multiple independently packaged binarie
 ## fzf-cli
 - Example usage: `fzf-cli file`, `fzf-cli directory`, `fzf-cli history`, `fzf-cli port`, `fzf-cli process`
 - Note: some subcommands print shell commands for `eval` (e.g. `fzf-cli directory` prints a `cd ...`), see `docs/fzf-cli/spec.md`.
+
+## semantic-commit
+- Example usage:
+  - `semantic-commit staged-context`
+  - `semantic-commit commit --message "chore: update thing"`
+  - `cat message.txt | semantic-commit commit`
 
 ## Adding a new CLI crate
 1. Create a new binary crate under `crates/`:
