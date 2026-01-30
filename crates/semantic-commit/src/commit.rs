@@ -69,10 +69,6 @@ pub fn run(args: &[String]) -> i32 {
         }
     }
 
-    if let Err(code) = ensure_git_scope_available() {
-        return code;
-    }
-
     let message_contents = match (message, message_file) {
         (Some(text), None) => text,
         (None, Some(path)) => match std::fs::read_to_string(&path) {
@@ -120,6 +116,10 @@ pub fn run(args: &[String]) -> i32 {
     }
 
     if let Err(code) = validate_commit_message(tmpfile.path()) {
+        return code;
+    }
+
+    if let Err(code) = ensure_git_scope_available() {
         return code;
     }
 
