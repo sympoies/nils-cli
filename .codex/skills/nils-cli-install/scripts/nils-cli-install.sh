@@ -21,6 +21,7 @@ Default binaries:
   - git-lock
   - git-scope
   - git-summary
+  - image-processing
   - semantic-commit
 
 Example:
@@ -74,7 +75,7 @@ elif [[ "$prefix" == "~/"* ]]; then
   prefix="$HOME/${prefix#~/}"
 fi
 
-default_bins=(cli-template fzf-cli git-lock git-scope git-summary semantic-commit)
+default_bins=(cli-template fzf-cli git-lock git-scope git-summary image-processing semantic-commit)
 if [[ ${#bins[@]} -eq 0 ]]; then
   bins=( "${default_bins[@]}" )
 fi
