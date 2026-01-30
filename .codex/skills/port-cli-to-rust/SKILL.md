@@ -33,11 +33,12 @@ Outputs:
 - Parity docs:
   - `docs/<cli>/spec.md`
   - `docs/<cli>/fixtures.md`
+  - The parity spec must include an explicit inventory of external dependencies (binaries + sourced scripts) and the chosen handling policy for each.
 - Comprehensive tests covering core flows + edge cases:
   - integration tests under `crates/<cli>/tests/` (use deterministic fixtures, PATH stubs, and temp git repos as needed)
   - zsh completion tests when applicable
 - Pre-delivery validation passes via:
-  - `./skills/tools/testing/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - If requested, a commit using the repo policy (`$semantic-commit` / `$semantic-commit-autostage`).
 
 Exit codes:
@@ -83,6 +84,14 @@ Failure modes:
   - each task has `Location`, `Description`, `Dependencies`, `Complexity`, `Acceptance criteria`, `Validation`
   - explicitly call out parallelizable tasks (docs/tests/scaffolding) vs tasks that must be sequential
   - include “Testing Strategy”, “Risks & gotchas”, and a plausible “Rollback plan”
+  - include an explicit “External dependencies” phase:
+    - inventory all external binaries invoked by the source script (and any sourced scripts it depends on)
+    - classify each dependency as one of:
+      - `Required (hard fail if missing)` (and specify the exact user-facing error/warning + exit code)
+      - `Optional (warn + fallback)` (and specify the warning text + fallback behavior)
+      - `Eliminate (rewrite in Rust)` (and specify parity impact + acceptance criteria)
+    - for each dependency decision, include matching deterministic tests (e.g. PATH-stubbing / missing-tool tests)
+    - ensure `docs/<cli>/spec.md` records the dependency inventory + missing-tool behavior contract (as the source of truth for tests)
 - Lint plan until it passes:
   - `$CODEX_HOME/skills/workflows/plan/plan-tooling/scripts/validate_plans.sh --file docs/plans/<cli>-rust-port-plan.md`
 - Run a subagent plan review (required by `$create-plan-rigorous`) and incorporate fixes.
@@ -123,7 +132,7 @@ Failure modes:
 7) Pre-delivery checks (must pass before committing)
 
 - Run:
-  - `./skills/tools/testing/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - If any check fails:
   - fix within scope, re-run, and only proceed once it exits `0`
   - if blocked, report the exact failing command + key error output + why it can’t be resolved
@@ -132,4 +141,3 @@ Failure modes:
 
 - Follow repo policy (do not run `git commit` directly):
   - use `$semantic-commit` (user staged) or `$semantic-commit-autostage` (Codex-owned change set)
-
