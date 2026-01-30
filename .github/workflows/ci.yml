@@ -37,6 +37,9 @@ jobs:
           cargo test -p nils-common
           cargo test -p git-scope
           cargo test -p git-summary
+          cargo test -p fzf-cli
+          cargo test -p semantic-commit
+          cargo test -p image-processing
 
       - name: Tests (zsh)
         run: zsh -f tests/zsh/completion.test.zsh
