@@ -1,4 +1,4 @@
-use crate::{codex, git};
+use crate::git;
 use std::fs::File;
 use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
 use std::path::Path;
@@ -146,30 +146,29 @@ pub fn run(args: &[String]) -> i32 {
 }
 
 fn print_summary() -> i32 {
-    let git_scope = codex::resolve_command("git-scope");
-    match git_scope {
-        None => {
+    let status = Command::new("git-scope")
+        .args(["commit", "HEAD", "--no-color"])
+        .env("GIT_PAGER", "cat")
+        .env("PAGER", "cat")
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status();
+
+    match status {
+        Ok(status) if status.success() => 0,
+        Ok(_) => {
+            eprintln!("warning: git-scope commit failed; falling back to git show --stat");
+            run_git_show_stat()
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             eprintln!("warning: git-scope not found; falling back to git show --stat");
             let _ = run_git_show_stat();
             0
         }
-        Some(tool) => {
-            let status = Command::new(tool)
-                .args(["commit", "HEAD", "--no-color"])
-                .env("GIT_PAGER", "cat")
-                .env("PAGER", "cat")
-                .stdin(Stdio::null())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .status();
-
-            match status {
-                Ok(status) if status.success() => 0,
-                _ => {
-                    eprintln!("warning: git-scope commit failed; falling back to git show --stat");
-                    run_git_show_stat()
-                }
-            }
+        Err(_) => {
+            eprintln!("warning: git-scope commit failed; falling back to git show --stat");
+            run_git_show_stat()
         }
     }
 }

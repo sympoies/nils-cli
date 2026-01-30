@@ -1,4 +1,3 @@
-mod codex;
 mod commit;
 mod git;
 mod staged_context;

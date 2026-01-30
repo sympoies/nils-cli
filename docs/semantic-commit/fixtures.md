@@ -1,11 +1,36 @@
 # semantic-commit fixtures
 
-## staged-context fallback (no git-commit-context-json)
+## staged-context prints bundle
 - Setup: temp git repo with at least one staged change.
 - Command: `semantic-commit staged-context`.
 - Expect:
-  - stderr contains `warning: printing fallback staged diff only`.
-  - stdout contains the staged patch (from `git diff --staged --no-color`).
+  - exit `0`.
+  - stderr is empty.
+  - stdout contains `===== commit-context.json =====` and `===== staged.patch =====`.
+  - stdout contains the staged patch (from `git diff --cached --no-color`).
+
+## staged-context: summary counts + flags
+- Setup: temp git repo with staged changes:
+  - root text file (e.g. `README.md`),
+  - lockfile (e.g. `package-lock.json`),
+  - subdir text file (e.g. `src/lib.rs`),
+  - binary file (e.g. `assets/logo.bin` with NUL bytes).
+- Command: `semantic-commit staged-context`.
+- Expect:
+  - commit-context.json summary:
+    - `fileCount=4`, `rootFileCount=2`, `lockfileCount=1`, `binaryFileCount=1`,
+      `topLevelDirCount=2`, `insertions=3`, `deletions=0`.
+  - statusCounts contains `{status:"A", count:4}`.
+  - topLevelDirs contains `{name:"assets", count:1}` and `{name:"src", count:1}`.
+  - file entry for `package-lock.json` has `lockfile=true`, `binary=false`.
+  - file entry for `assets/logo.bin` has `binary=true` and null insertions/deletions.
+
+## staged-context: rename captures oldPath
+- Setup: temp git repo; commit `old.txt`, rename to `new.txt`, stage rename.
+- Command: `semantic-commit staged-context`.
+- Expect:
+  - commit-context.json includes a file entry with `path="new.txt"`, `status="R"`,
+    and `oldPath="old.txt"`.
 
 ## staged-context: no staged changes
 - Setup: temp git repo with clean index.
@@ -18,11 +43,19 @@
 - Expect: stderr contains `error: must run inside a git work tree` and exit `1`.
 
 ## commit: stdin success (git-scope missing → git show fallback)
-- Setup: temp git repo with staged change; ensure no `git-scope` in Codex commands dir.
+- Setup: temp git repo with staged change; ensure `git-scope` is not on `PATH`.
 - Command: pipe a valid multi-line message into `semantic-commit commit`.
 - Expect:
   - exit `0`.
   - stderr contains `warning: git-scope not found; falling back to git show --stat`.
+  - stdout contains `git show --stat` output for `HEAD`.
+
+## commit: git-scope exec failure falls back
+- Setup: temp git repo with staged change; put a non-executable `git-scope` on `PATH`.
+- Command: `semantic-commit commit --message "feat(core): add thing"`.
+- Expect:
+  - exit `0`.
+  - stderr contains `warning: git-scope commit failed; falling back to git show --stat`.
   - stdout contains `git show --stat` output for `HEAD`.
 
 ## commit: no staged changes

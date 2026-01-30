@@ -23,9 +23,10 @@ Preconditions:
 - Must have staged changes (index is non-empty).
 
 Output:
-- Prefers running `git-commit-context-json --stdout --bundle` when available via Codex command
-  resolution (see “Command resolution”).
-- Falls back to printing the staged diff only: `git diff --staged --no-color`.
+- Prints a single bundle to stdout:
+  - `===== commit-context.json =====` then JSON (compact).
+  - blank line.
+  - `===== staged.patch =====` then the staged patch (from `git diff --cached --no-color`).
 
 Errors / guardrails:
 - Help: `semantic-commit staged-context --help` prints usage and exits `0`.
@@ -33,12 +34,6 @@ Errors / guardrails:
 - Not in a git work tree: prints `error: must run inside a git work tree` to stderr, exits `1`.
 - No staged changes: prints `error: no staged changes (stage files with git add first)` to stderr,
   exits `2`.
-
-Warnings / fallbacks:
-- If `git-commit-context-json` is missing: prints
-  `warning: printing fallback staged diff only` to stderr, then prints the staged diff to stdout.
-- If `git-commit-context-json` exists but fails: prints
-  `warning: git-commit-context-json failed; falling back` to stderr, then prints the staged diff.
 
 ### commit
 Usage: `semantic-commit commit [--message <text> | --message-file <path>]`
@@ -93,7 +88,7 @@ Errors / guardrails:
 Success behavior (summary output):
 - Sets `GIT_PAGER=cat` and `PAGER=cat` for subprocess calls.
 - After a successful `git commit`, prints a commit summary:
-  - If `git-scope` is available via Codex command resolution:
+  - If `git-scope` is available on `PATH`:
     - Runs: `git-scope commit HEAD --no-color`
     - If it fails: prints `warning: git-scope commit failed; falling back to git show --stat` to
       stderr, then runs `git show --no-color --stat HEAD`.
@@ -107,15 +102,7 @@ Success behavior (summary output):
 - `1`: invalid usage, validation failure, or not inside a git work tree.
 - Other non-zero: propagate `git commit` exit code.
 
-## Command resolution
-To preserve Codex behavior parity, optional helper commands are resolved only from the Codex commands
-directory (not the general `PATH`):
-
-- `CODEX_HOME`:
-  - If set, use it.
-  - If not set and the current executable lives at `<CODEX_HOME>/commands/<bin>`, infer `CODEX_HOME`
-    as the parent directory of `commands/`.
-- `commands_dir`:
-  - If `CODEX_COMMANDS_PATH` is set, use it.
-  - Else, use `<CODEX_HOME>/commands`.
-- A helper command is “available” only when `<commands_dir>/<name>` exists and is executable.
+## Tool resolution
+- `semantic-commit` resolves external tools via `PATH`:
+  - `git` is required.
+  - `git-scope` is optional (used for commit summary output when available).

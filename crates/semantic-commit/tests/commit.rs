@@ -1,5 +1,6 @@
 mod common;
 
+use std::fs;
 use std::path::Path;
 
 fn as_str(output: &[u8]) -> String {
@@ -133,7 +134,7 @@ fn commit_success_stdin_falls_back_to_git_show() {
         repo.path(),
         &["commit"],
         &[
-            ("CODEX_COMMANDS_PATH", "/nonexistent"),
+            ("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"),
             ("GIT_AUTHOR_DATE", "Thu, 01 Jan 1970 00:00:00 +0000"),
             ("GIT_COMMITTER_DATE", "Thu, 01 Jan 1970 00:00:00 +0000"),
         ],
@@ -153,10 +154,10 @@ fn commit_success_uses_git_scope_when_available() {
     let repo = common::init_repo();
     stage_file(repo.path(), "a.txt", "hello\n");
 
-    let codex_home = common::make_codex_home();
+    let tool_dir = tempfile::TempDir::new().expect("tempdir");
     common::write_executable(
-        codex_home.path(),
-        "commands/git-scope",
+        tool_dir.path(),
+        "git-scope",
         r#"#!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1-}" != "commit" || "${2-}" != "HEAD" || "${3-}" != "--no-color" ]]; then
@@ -167,20 +168,56 @@ echo "GIT_SCOPE_OK"
 "#,
     );
 
-    let commands_dir = codex_home.path().join("commands");
-    let commands_dir = commands_dir.to_str().unwrap();
+    let tool_dir = tool_dir.path().to_str().unwrap();
+    let path_env = format!("{tool_dir}:/usr/bin:/bin:/usr/sbin:/sbin");
+    let envs = vec![
+        ("PATH", path_env.as_str()),
+        ("GIT_AUTHOR_DATE", "Thu, 01 Jan 1970 00:00:00 +0000"),
+        ("GIT_COMMITTER_DATE", "Thu, 01 Jan 1970 00:00:00 +0000"),
+    ];
     let output = common::run_semantic_commit_output(
         repo.path(),
         &["commit", "--message", "feat(core): add thing"],
-        &[
-            ("CODEX_COMMANDS_PATH", commands_dir),
-            ("GIT_AUTHOR_DATE", "Thu, 01 Jan 1970 00:00:00 +0000"),
-            ("GIT_COMMITTER_DATE", "Thu, 01 Jan 1970 00:00:00 +0000"),
-        ],
+        &envs,
         None,
     );
 
     assert_eq!(output.status.code(), Some(0));
     assert!(as_str(&output.stdout).contains("GIT_SCOPE_OK"));
     assert!(!as_str(&output.stderr).contains("warning: git-scope not found"));
+}
+
+#[cfg(unix)]
+#[test]
+fn commit_falls_back_when_git_scope_is_not_executable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo = common::init_repo();
+    stage_file(repo.path(), "a.txt", "hello\n");
+
+    let tool_dir = tempfile::TempDir::new().expect("tempdir");
+    let tool_path = tool_dir.path().join("git-scope");
+    fs::write(&tool_path, "#!/usr/bin/env bash\nexit 0\n").expect("write git-scope");
+    let mut perms = fs::metadata(&tool_path).expect("metadata").permissions();
+    perms.set_mode(0o644);
+    fs::set_permissions(&tool_path, perms).expect("set permissions");
+
+    let tool_dir = tool_dir.path().to_str().unwrap();
+    let path_env = format!("{tool_dir}:/usr/bin:/bin:/usr/sbin:/sbin");
+    let envs = vec![
+        ("PATH", path_env.as_str()),
+        ("GIT_AUTHOR_DATE", "Thu, 01 Jan 1970 00:00:00 +0000"),
+        ("GIT_COMMITTER_DATE", "Thu, 01 Jan 1970 00:00:00 +0000"),
+    ];
+    let output = common::run_semantic_commit_output(
+        repo.path(),
+        &["commit", "--message", "feat(core): add thing"],
+        &envs,
+        None,
+    );
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(as_str(&output.stderr)
+        .contains("warning: git-scope commit failed; falling back to git show --stat"));
+    assert!(as_str(&output.stdout).contains("a.txt |"));
 }
