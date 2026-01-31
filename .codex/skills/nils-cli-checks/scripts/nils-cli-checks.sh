@@ -12,6 +12,11 @@ Runs the required pre-delivery checks from DEVELOPMENT.md:
   - cargo test --workspace
   - zsh -f tests/zsh/completion.test.zsh
 
+Environment:
+  NILS_CLI_TEST_RUNNER=nextest
+    Run `cargo nextest run --profile ci --workspace` and `cargo test --workspace --doc`
+    instead of `cargo test --workspace`.
+
 Exit codes:
   0  all checks passed
   1  a check failed
@@ -40,6 +45,22 @@ for cmd in git cargo zsh; do
   fi
 done
 
+test_runner="${NILS_CLI_TEST_RUNNER:-}"
+case "$test_runner" in
+  ""|cargo|cargo-test)
+    ;;
+  nextest)
+    if ! command -v cargo-nextest >/dev/null 2>&1; then
+      echo "error: NILS_CLI_TEST_RUNNER=nextest requires cargo-nextest on PATH" >&2
+      exit 2
+    fi
+    ;;
+  *)
+    echo "error: unsupported NILS_CLI_TEST_RUNNER value: $test_runner (expected 'cargo' or 'nextest')" >&2
+    exit 2
+    ;;
+esac
+
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 if [[ -z "$repo_root" || ! -d "$repo_root" ]]; then
   echo "error: must run inside a git work tree" >&2
@@ -62,7 +83,12 @@ run() {
 
 run cargo fmt --all -- --check
 run cargo clippy --all-targets --all-features -- -D warnings
-run cargo test --workspace
+if [[ "$test_runner" == "nextest" ]]; then
+  run cargo nextest run --profile ci --workspace
+  run cargo test --workspace --doc
+else
+  run cargo test --workspace
+fi
 run zsh -f tests/zsh/completion.test.zsh
 
 echo "ok: all nils-cli checks passed"

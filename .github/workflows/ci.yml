@@ -34,27 +34,17 @@ jobs:
         with:
           tool: cargo-nextest
 
-      - name: Rust fmt
-        run: cargo fmt --all -- --check
-
-      - name: Rust clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Rust tests (nextest)
-        run: cargo nextest run --profile ci --workspace
-
-      - name: Rust doctests
-        run: cargo test --workspace --doc
-
-      - name: Zsh completion tests
-        run: zsh -f tests/zsh/completion.test.zsh
+      - name: Nils CLI checks
+        env:
+          NILS_CLI_TEST_RUNNER: nextest
+        run: ./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh
 
       - name: Publish JUnit report
         if: always() && hashFiles('target/nextest/ci/junit.xml') != ''
         uses: mikepenz/action-junit-report@v6
         with:
           token: ${{ github.token }}
-          check_name: JUnit Test Report (nextest)
+          check_name: JUnit Test Report
           report_paths: target/nextest/ci/junit.xml
           detailed_summary: true
           group_suite: true

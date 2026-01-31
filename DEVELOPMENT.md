@@ -35,6 +35,12 @@
 - `zsh -f tests/zsh/completion.test.zsh`
 - Or run the single entrypoint: `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
+### CI-style test reporting (optional)
+
+- Install `cargo-nextest`: `cargo install cargo-nextest --locked`
+- Run CI-style tests + generate JUnit: `cargo nextest run --profile ci --workspace` (writes `target/nextest/ci/junit.xml`)
+- Note: nextest does not run doctests; run separately: `cargo test --workspace --doc`
+
 ## Shell completions (zsh)
 
 - Completion files:
