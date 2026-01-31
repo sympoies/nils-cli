@@ -5,27 +5,15 @@ Rust CLI workspace scaffold for building multiple independently packaged binarie
 ## Workspace layout
 - `crates/nils-common`: shared library crate for cross-CLI helpers
 - `crates/cli-template`: minimal binary crate for validating packaging
+- `crates/api-testing-core`: shared library crate for the API testing CLIs
+- `crates/api-rest`: Rust port of the REST testing CLI (`api-rest`)
+- `crates/api-gql`: Rust port of the GraphQL testing CLI (`api-gql`)
+- `crates/api-test`: Rust port of the API suite runner (`api-test`)
 - `crates/git-scope`: Rust port of the git-scope CLI
 - `crates/git-summary`: Rust port of the git-summary CLI
 - `crates/git-lock`: Rust port of the git-lock CLI
 - `crates/fzf-cli`: Rust port of personal fzf helper CLI (from `fzf-tools.zsh`)
 - `crates/semantic-commit`: Rust port of Codex semantic commit entrypoints
-
-## Build and run
-- `cargo build`
-- `cargo build -p cli-template`
-- `cargo run -p cli-template -- --help`
-- `cargo run -p git-scope -- --help`
-- `cargo run -p git-summary -- --help`
-- `cargo run -p git-lock -- --help`
-- `cargo run -p fzf-cli -- --help`
-- `cargo run -p semantic-commit -- --help`
-- `cargo test -p nils-common`
-- `cargo test -p git-scope`
-- `cargo test -p git-summary`
-- `cargo test -p git-lock`
-- `cargo test -p fzf-cli`
-- `cargo test -p semantic-commit`
 
 ## Local install (release)
 - Build + install all workspace binaries into `~/.local/nils-cli/`:
@@ -54,6 +42,27 @@ Rust CLI workspace scaffold for building multiple independently packaged binarie
   - `semantic-commit staged-context`
   - `semantic-commit commit --message "chore: update thing"`
   - `cat message.txt | semantic-commit commit`
+
+## API testing CLIs
+See `docs/api-testing/usage.md` for the recommended repo layout and end-to-end examples.
+
+### api-rest
+- Example usage:
+  - `api-rest call --env staging setup/rest/requests/health.request.json`
+  - `api-rest report --case health --request setup/rest/requests/health.request.json --run`
+  - `api-rest history`
+
+### api-gql
+- Example usage:
+  - `api-gql call --env staging setup/graphql/operations/health.graphql`
+  - `api-gql report --case health --op setup/graphql/operations/health.graphql --run`
+  - `api-gql schema --cat`
+
+### api-test
+- Example usage:
+  - `api-test run --suite smoke`
+  - `api-test run --suite smoke --out out/api-test-runner/results.json --junit out/junit.xml`
+  - `api-test summary --in out/api-test-runner/results.json --out out/summary.md`
 
 ## Adding a new CLI crate
 1. Create a new binary crate under `crates/`:
