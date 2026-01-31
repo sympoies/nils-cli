@@ -47,6 +47,29 @@ fn validate_default_discovers_tracked_docs_plans() {
     assert!(out.stderr.is_empty());
 }
 
+#[test]
+fn validate_repo_relative_file_works_from_nested_dir() {
+    let repo = init_repo();
+
+    let plan_path = repo.path().join("docs/plans/example-plan.md");
+    write_file(&plan_path, VALID_PLAN);
+
+    let nested = repo.path().join("nested/dir");
+    std::fs::create_dir_all(&nested).expect("create_dir_all");
+
+    let out = run_plan_tooling(
+        &nested,
+        &["validate", "--file", "docs/plans/example-plan.md"],
+    );
+    assert_eq!(
+        out.code, 0,
+        "stdout: {}\nstderr: {}",
+        out.stdout, out.stderr
+    );
+    assert!(out.stdout.is_empty());
+    assert!(out.stderr.is_empty());
+}
+
 const VALID_PLAN: &str = r#"# Plan: Example
 
 ## Sprint 1: First sprint
