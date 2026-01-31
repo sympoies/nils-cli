@@ -16,6 +16,9 @@ Options:
   -h, --help      Show help
 
 Default binaries:
+  - api-gql
+  - api-rest
+  - api-test
   - cli-template
   - fzf-cli
   - git-lock
@@ -75,7 +78,18 @@ elif [[ "$prefix" == "~/"* ]]; then
   prefix="$HOME/${prefix#~/}"
 fi
 
-default_bins=(cli-template fzf-cli git-lock git-scope git-summary image-processing semantic-commit)
+default_bins=(
+  api-gql
+  api-rest
+  api-test
+  cli-template
+  fzf-cli
+  git-lock
+  git-scope
+  git-summary
+  image-processing
+  semantic-commit
+)
 if [[ ${#bins[@]} -eq 0 ]]; then
   bins=( "${default_bins[@]}" )
 fi
