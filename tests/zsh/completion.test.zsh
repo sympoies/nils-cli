@@ -12,6 +12,7 @@ COMP_SEMANTIC_COMMIT_FILE="$REPO_ROOT/completions/zsh/_semantic-commit"
 COMP_API_REST_FILE="$REPO_ROOT/completions/zsh/_api-rest"
 COMP_API_GQL_FILE="$REPO_ROOT/completions/zsh/_api-gql"
 COMP_API_TEST_FILE="$REPO_ROOT/completions/zsh/_api-test"
+COMP_PLAN_TOOLING_FILE="$REPO_ROOT/completions/zsh/_plan-tooling"
 
 if [[ ! -f "$COMP_FILE" ]]; then
   print -u2 -r -- "FAIL: missing completion file"
@@ -50,6 +51,11 @@ fi
 
 if [[ ! -f "$COMP_API_TEST_FILE" ]]; then
   print -u2 -r -- "FAIL: missing api-test completion file"
+  exit 1
+fi
+
+if [[ ! -f "$COMP_PLAN_TOOLING_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing plan-tooling completion file"
   exit 1
 fi
 
@@ -96,6 +102,11 @@ source "$COMP_API_TEST_FILE" || {
   exit 1
 }
 
+source "$COMP_PLAN_TOOLING_FILE" || {
+  print -u2 -r -- "FAIL: failed to source plan-tooling completion file"
+  exit 1
+}
+
 if (( ! $+functions[_git-scope] )); then
   print -u2 -r -- "FAIL: _git-scope function not defined"
   exit 1
@@ -133,6 +144,11 @@ fi
 
 if (( ! $+functions[_api-test] )); then
   print -u2 -r -- "FAIL: _api-test function not defined"
+  exit 1
+fi
+
+if (( ! $+functions[_plan-tooling] )); then
+  print -u2 -r -- "FAIL: _plan-tooling function not defined"
   exit 1
 fi
 
@@ -193,6 +209,11 @@ grep -q "schema:Resolve a schema file path" "$COMP_API_GQL_FILE" || {
 
 grep -q "summary:Render a Markdown summary" "$COMP_API_TEST_FILE" || {
   print -u2 -r -- "FAIL: api-test completion missing summary command"
+  exit 1
+}
+
+grep -q "to-json:Parse a plan markdown file" "$COMP_PLAN_TOOLING_FILE" || {
+  print -u2 -r -- "FAIL: plan-tooling completion missing to-json command"
   exit 1
 }
 

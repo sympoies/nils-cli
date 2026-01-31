@@ -1,0 +1,90 @@
+#compdef plan-tooling
+
+_plan-tooling() {
+  emulate -L zsh -o extendedglob
+
+  local context='' state='' state_descr=''
+  local -a line=()
+  typeset -A opt_args=()
+
+  local -i orig_current="$CURRENT"
+  local -a orig_words=("${words[@]}")
+
+  local cur="${orig_words[orig_current]-}"
+  cur="${cur%%[[:space:]]#}"
+
+  typeset -a subcommands=()
+  subcommands=(
+    'to-json:Parse a plan markdown file into a stable JSON schema'
+    'validate:Lint plan markdown files'
+    'batches:Compute dependency layers (parallel batches) for a sprint'
+    'scaffold:Create a new plan from template'
+    'help:Show help'
+  )
+
+  if (( orig_current == 2 )); then
+    if [[ "$cur" == -* ]]; then
+      typeset -a opts=(
+        '-h:Show help'
+        '--help:Show help'
+      )
+      _describe -t options 'option' opts && return 0
+      return 0
+    fi
+
+    _describe -t commands 'plan-tooling command' subcommands && return 0
+    _message 'command (to-json|validate|batches|scaffold)'
+    return 0
+  fi
+
+  local subcmd="${orig_words[2]-}"
+  subcmd="${subcmd%%[[:space:]]#}"
+
+  case "$subcmd" in
+    -h|--help|help)
+      _message 'no additional arguments'
+      return 0
+      ;;
+  esac
+
+  case "$subcmd" in
+    to-json)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Show help]' \
+        '--file=[Plan file to parse (required)]:file:_files' \
+        '--sprint=[Only include a single sprint number]:sprint number:' \
+        '--pretty[Pretty-print JSON (indent=2)]' \
+        && return 0
+      ;;
+    validate)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Show help]' \
+        '--file=[Validate a specific plan file (repeatable)]:file:_files' \
+        && return 0
+      ;;
+    batches)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Show help]' \
+        '--file=[Plan file to parse (required)]:file:_files' \
+        '--sprint=[Sprint number to batch (required)]:sprint number:' \
+        '--format=[Output format]:format:(json text)' \
+        && return 0
+      ;;
+    scaffold)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Show help]' \
+        '--slug=[Base slug (kebab-case); writes to docs/plans/<slug>-plan.md]:slug:' \
+        '--file=[Explicit output path (must end with -plan.md)]:file:_files' \
+        '--title=[Replace the plan title line]:title:' \
+        '--force[Overwrite if the output file already exists]' \
+        && return 0
+      ;;
+    *)
+      _message 'unknown command'
+      return 0
+      ;;
+  esac
+}
+
+compdef _plan-tooling plan-tooling
+
