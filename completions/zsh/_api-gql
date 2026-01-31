@@ -1,0 +1,103 @@
+#compdef api-gql
+
+_api-gql() {
+  emulate -L zsh -o extendedglob
+
+  local context='' state='' state_descr=''
+  local -a line=()
+  typeset -A opt_args=()
+
+  local -i orig_current="$CURRENT"
+  local -a orig_words=("${words[@]}")
+
+  local cur="${orig_words[orig_current]-}"
+  cur="${cur%%[[:space:]]#}"
+
+  local -a subcommands=()
+  subcommands=(
+    'call:Execute an operation and print the response JSON to stdout (default)'
+    'history:Print the last (or last N) history entries'
+    'report:Generate a Markdown API test report'
+    'schema:Resolve a schema file path (or print schema contents)'
+    'help:Show help'
+  )
+
+  if (( orig_current == 2 )) && [[ "$cur" != -* ]]; then
+    _alternative \
+      'commands:api-gql command:_describe -t commands "api-gql command" subcommands' \
+      'files:operation file:_files' \
+      && return 0
+    return 0
+  fi
+
+  local subcmd="${orig_words[2]-}"
+  subcmd="${subcmd%%[[:space:]]#}"
+
+  case "$subcmd" in
+    call|history|report|schema|help) ;;
+    *) subcmd="call" ;;
+  esac
+
+  case "$subcmd" in
+    call)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Show help]' \
+        '(-V --version)'{-V,--version}'[Show version]' \
+        '(-e --env)'{-e,--env}'[Endpoint preset name]:env:' \
+        '(-u --url)'{-u,--url}'[Explicit GraphQL endpoint URL]:url:' \
+        '--jwt=[JWT profile name]:jwt:' \
+        '--config-dir=[GraphQL setup dir (discovery seed)]:dir:_files -/' \
+        '--list-envs[List available env presets and exit]' \
+        '--list-jwts[List available JWT profiles and exit]' \
+        '--no-history[Disable history writing]' \
+        '1::operation file:_files' \
+        '2::variables file:_files' \
+        && return 0
+      ;;
+    history)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Show help]' \
+        '--config-dir=[GraphQL setup dir (discovery seed)]:dir:_files -/' \
+        '--file=[Explicit history file path]:file:_files' \
+        '--last[Print the last entry (default)]' \
+        '--tail=[Print the last N entries]:n:' \
+        '--command-only[Omit metadata lines (starting with "#")]' \
+        && return 0
+      ;;
+    report)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Show help]' \
+        '--case=[Report case name]:case:' \
+        '--op=[Operation file path (*.graphql)]:operation file:_files' \
+        '--vars=[Variables JSON file path]:vars file:_files' \
+        '--out=[Output report path]:file:_files' \
+        '(-e --env)'{-e,--env}'[Endpoint preset name (passed through)]:env:' \
+        '(-u --url)'{-u,--url}'[Explicit GraphQL endpoint URL (passed through)]:url:' \
+        '--jwt=[JWT profile name (passed through)]:jwt:' \
+        '--run[Execute the operation and embed the response]' \
+        '--response=[Use an existing response file (or "-" for stdin)]:response file:_files' \
+        '--allow-empty[Allow generating a report with empty/no-data response]' \
+        '--no-redact[Do not redact secrets in variables/response JSON blocks]' \
+        '--no-command[Omit the command snippet section]' \
+        '--no-command-url[When using --url, omit the URL value in the command snippet]' \
+        '--project-root=[Override project root (default: git root or CWD)]:dir:_files -/' \
+        '--config-dir=[GraphQL setup dir (passed through)]:dir:_files -/' \
+        && return 0
+      ;;
+    schema)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Show help]' \
+        '--config-dir=[GraphQL setup dir (discovery seed)]:dir:_files -/' \
+        '--file=[Explicit schema file path (overrides env + schema.env)]:schema file:_files' \
+        '--cat[Print schema file contents]' \
+        && return 0
+      ;;
+    help)
+      _message 'no additional arguments'
+      return 0
+      ;;
+  esac
+}
+
+compdef _api-gql api-gql
+

@@ -37,7 +37,11 @@
 
 ## Shell completions (zsh)
 
-- Completion file: `completions/zsh/_git-scope`
+- Completion files:
+  - `completions/zsh/_git-scope`
+  - `completions/zsh/_api-rest`
+  - `completions/zsh/_api-gql`
+  - `completions/zsh/_api-test`
 - Wrapper scripts: `wrappers/gs`, `wrappers/gsc`, `wrappers/gst`, `wrappers/git-scope`
 - Setup:
   - Add `wrappers/` to `PATH`.

@@ -1,0 +1,73 @@
+#compdef api-test
+
+_api-test() {
+  emulate -L zsh -o extendedglob
+
+  local context='' state='' state_descr=''
+  local -a line=()
+  typeset -A opt_args=()
+
+  local -i orig_current="$CURRENT"
+  local -a orig_words=("${words[@]}")
+
+  local cur="${orig_words[orig_current]-}"
+  cur="${cur%%[[:space:]]#}"
+
+  local -a subcommands=()
+  subcommands=(
+    'run:Run a suite (default)'
+    'summary:Render a Markdown summary from results JSON'
+    'help:Show help'
+  )
+
+  if (( orig_current == 2 )) && [[ "$cur" != -* ]]; then
+    _describe -t commands 'api-test command' subcommands && return 0
+    return 0
+  fi
+
+  local subcmd="${orig_words[2]-}"
+  subcmd="${subcmd%%[[:space:]]#}"
+
+  case "$subcmd" in
+    run|summary|help) ;;
+    *) subcmd="run" ;;
+  esac
+
+  case "$subcmd" in
+    run)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Show help]' \
+        '(-V --version)'{-V,--version}'[Show version]' \
+        '--suite=[Suite name (tests/api/suites/<name>.suite.json)]:suite:' \
+        '--suite-file=[Explicit suite file path]:suite file:_files' \
+        '--out=[Write results JSON to a file]:file:_files' \
+        '--junit=[Write JUnit XML to a file]:file:_files' \
+        '--allow-writes[Allow write-capable cases (still requires allowWrite: true)]' \
+        '--tag=[Run only cases that include this tag (repeatable; AND semantics)]:tag:' \
+        '--only=[Run only listed case IDs (comma-separated)]:ids:' \
+        '--skip=[Skip listed case IDs (comma-separated)]:ids:' \
+        '--fail-fast[Stop after the first failed case]' \
+        '--continue[Continue after failures (default)]' \
+        && return 0
+      ;;
+    summary)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Show help]' \
+        '--in=[Input results JSON file path (default: stdin)]:file:_files' \
+        '--out=[Write Markdown summary to a file]:file:_files' \
+        '--slow=[Show slowest N executed cases]:n:' \
+        '--hide-skipped[Do not show skipped cases list]' \
+        '--max-failed=[Max failed cases to print]:n:' \
+        '--max-skipped=[Max skipped cases to print]:n:' \
+        '--no-github-summary[Do not write to $GITHUB_STEP_SUMMARY]' \
+        && return 0
+      ;;
+    help)
+      _message 'no additional arguments'
+      return 0
+      ;;
+  esac
+}
+
+compdef _api-test api-test
+

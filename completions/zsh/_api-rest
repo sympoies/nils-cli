@@ -1,0 +1,89 @@
+#compdef api-rest
+
+_api-rest() {
+  emulate -L zsh -o extendedglob
+
+  local context='' state='' state_descr=''
+  local -a line=()
+  typeset -A opt_args=()
+
+  local -i orig_current="$CURRENT"
+  local -a orig_words=("${words[@]}")
+
+  local cur="${orig_words[orig_current]-}"
+  cur="${cur%%[[:space:]]#}"
+
+  local -a subcommands=()
+  subcommands=(
+    'call:Execute a request file and print the response body to stdout (default)'
+    'history:Print the last (or last N) history entries'
+    'report:Generate a Markdown API test report'
+    'help:Show help'
+  )
+
+  if (( orig_current == 2 )) && [[ "$cur" != -* ]]; then
+    _alternative \
+      'commands:api-rest command:_describe -t commands "api-rest command" subcommands' \
+      'files:request file:_files' \
+      && return 0
+    return 0
+  fi
+
+  local subcmd="${orig_words[2]-}"
+  subcmd="${subcmd%%[[:space:]]#}"
+
+  case "$subcmd" in
+    call|history|report|help) ;;
+    *) subcmd="call" ;;
+  esac
+
+  case "$subcmd" in
+    call)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Show help]' \
+        '(-V --version)'{-V,--version}'[Show version]' \
+        '(-e --env)'{-e,--env}'[Endpoint preset name]:env:' \
+        '(-u --url)'{-u,--url}'[Explicit REST base URL]:url:' \
+        '--token=[Token profile name]:token:' \
+        '--config-dir=[REST setup dir (discovery seed)]:dir:_files -/' \
+        '--no-history[Disable history writing]' \
+        '1:request file:_files' \
+        && return 0
+      ;;
+    history)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Show help]' \
+        '--config-dir=[REST setup dir (discovery seed)]:dir:_files -/' \
+        '--file=[Explicit history file path]:file:_files' \
+        '--last[Print the last entry (default)]' \
+        '--tail=[Print the last N entries]:n:' \
+        '--command-only[Omit metadata lines (starting with "#")]' \
+        && return 0
+      ;;
+    report)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Show help]' \
+        '--case=[Report case name]:case:' \
+        '--request=[Request file path (*.request.json)]:request file:_files' \
+        '--out=[Output report path]:file:_files' \
+        '(-e --env)'{-e,--env}'[Endpoint preset name (passed through)]:env:' \
+        '(-u --url)'{-u,--url}'[Explicit REST base URL (passed through)]:url:' \
+        '--token=[Token profile name (passed through)]:token:' \
+        '--run[Execute the request and embed the response]' \
+        '--response=[Use an existing response file (or "-" for stdin)]:response file:_files' \
+        '--no-redact[Do not redact secrets in request/response JSON blocks]' \
+        '--no-command[Omit the command snippet section]' \
+        '--no-command-url[When using --url, omit the URL value in the command snippet]' \
+        '--project-root=[Override project root (default: git root or CWD)]:dir:_files -/' \
+        '--config-dir=[REST setup dir (passed through)]:dir:_files -/' \
+        && return 0
+      ;;
+    help)
+      _message 'no additional arguments'
+      return 0
+      ;;
+  esac
+}
+
+compdef _api-rest api-rest
+

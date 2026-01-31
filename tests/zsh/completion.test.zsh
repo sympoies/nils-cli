@@ -9,6 +9,9 @@ COMP_SUMMARY_FILE="$REPO_ROOT/completions/zsh/_git-summary"
 COMP_LOCK_FILE="$REPO_ROOT/completions/zsh/_git-lock"
 COMP_FZF_CLI_FILE="$REPO_ROOT/completions/zsh/_fzf-cli"
 COMP_SEMANTIC_COMMIT_FILE="$REPO_ROOT/completions/zsh/_semantic-commit"
+COMP_API_REST_FILE="$REPO_ROOT/completions/zsh/_api-rest"
+COMP_API_GQL_FILE="$REPO_ROOT/completions/zsh/_api-gql"
+COMP_API_TEST_FILE="$REPO_ROOT/completions/zsh/_api-test"
 
 if [[ ! -f "$COMP_FILE" ]]; then
   print -u2 -r -- "FAIL: missing completion file"
@@ -32,6 +35,21 @@ fi
 
 if [[ ! -f "$COMP_SEMANTIC_COMMIT_FILE" ]]; then
   print -u2 -r -- "FAIL: missing semantic-commit completion file"
+  exit 1
+fi
+
+if [[ ! -f "$COMP_API_REST_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing api-rest completion file"
+  exit 1
+fi
+
+if [[ ! -f "$COMP_API_GQL_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing api-gql completion file"
+  exit 1
+fi
+
+if [[ ! -f "$COMP_API_TEST_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing api-test completion file"
   exit 1
 fi
 
@@ -63,6 +81,21 @@ source "$COMP_SEMANTIC_COMMIT_FILE" || {
   exit 1
 }
 
+source "$COMP_API_REST_FILE" || {
+  print -u2 -r -- "FAIL: failed to source api-rest completion file"
+  exit 1
+}
+
+source "$COMP_API_GQL_FILE" || {
+  print -u2 -r -- "FAIL: failed to source api-gql completion file"
+  exit 1
+}
+
+source "$COMP_API_TEST_FILE" || {
+  print -u2 -r -- "FAIL: failed to source api-test completion file"
+  exit 1
+}
+
 if (( ! $+functions[_git-scope] )); then
   print -u2 -r -- "FAIL: _git-scope function not defined"
   exit 1
@@ -85,6 +118,21 @@ fi
 
 if (( ! $+functions[_semantic-commit] )); then
   print -u2 -r -- "FAIL: _semantic-commit function not defined"
+  exit 1
+fi
+
+if (( ! $+functions[_api-rest] )); then
+  print -u2 -r -- "FAIL: _api-rest function not defined"
+  exit 1
+fi
+
+if (( ! $+functions[_api-gql] )); then
+  print -u2 -r -- "FAIL: _api-gql function not defined"
+  exit 1
+fi
+
+if (( ! $+functions[_api-test] )); then
+  print -u2 -r -- "FAIL: _api-test function not defined"
   exit 1
 fi
 
@@ -130,6 +178,21 @@ grep -q "staged-context:Print staged change context" "$COMP_SEMANTIC_COMMIT_FILE
 
 grep -q "commit:Commit staged changes" "$COMP_SEMANTIC_COMMIT_FILE" || {
   print -u2 -r -- "FAIL: semantic-commit completion missing commit command"
+  exit 1
+}
+
+grep -q "call:Execute a request file" "$COMP_API_REST_FILE" || {
+  print -u2 -r -- "FAIL: api-rest completion missing call command"
+  exit 1
+}
+
+grep -q "schema:Resolve a schema file path" "$COMP_API_GQL_FILE" || {
+  print -u2 -r -- "FAIL: api-gql completion missing schema command"
+  exit 1
+}
+
+grep -q "summary:Render a Markdown summary" "$COMP_API_TEST_FILE" || {
+  print -u2 -r -- "FAIL: api-test completion missing summary command"
   exit 1
 }
 
