@@ -14,6 +14,7 @@ Rust CLI workspace scaffold for building multiple independently packaged binarie
 - `crates/git-lock`: Rust port of the git-lock CLI
 - `crates/fzf-cli`: Rust port of personal fzf helper CLI
 - `crates/semantic-commit`: Rust port of Codex semantic commit entrypoints
+- `crates/plan-tooling`: Plan Format v1 tooling CLI (to-json/validate/batches/scaffold)
 
 ## Local install (release)
 - Build + install all workspace binaries into `~/.local/nils-cli/`:
@@ -42,6 +43,13 @@ Rust CLI workspace scaffold for building multiple independently packaged binarie
   - `semantic-commit staged-context`
   - `semantic-commit commit --message "chore: update thing"`
   - `cat message.txt | semantic-commit commit`
+
+## plan-tooling
+- Example usage:
+  - `plan-tooling to-json --file docs/plans/plan-tooling-cli-consolidation-plan.md --pretty | jq .`
+  - `plan-tooling validate`
+  - `plan-tooling batches --file docs/plans/plan-tooling-cli-consolidation-plan.md --sprint 1 --format text`
+  - `plan-tooling scaffold --slug my-new-cli --title "My new CLI plan"`
 
 ## API testing CLIs
 See `docs/api-testing/usage.md` for the recommended repo layout and end-to-end examples.

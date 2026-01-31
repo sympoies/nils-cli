@@ -25,6 +25,7 @@ Default binaries:
   - git-scope
   - git-summary
   - image-processing
+  - plan-tooling
   - semantic-commit
 
 Example:
@@ -88,6 +89,7 @@ default_bins=(
   git-scope
   git-summary
   image-processing
+  plan-tooling
   semantic-commit
 )
 if [[ ${#bins[@]} -eq 0 ]]; then

@@ -24,6 +24,18 @@ Outputs:
 
 - Builds the workspace in release mode (unless `--skip-build`).
 - Installs selected binaries into the destination directory.
+  - Default binaries:
+    - `api-gql`
+    - `api-rest`
+    - `api-test`
+    - `cli-template`
+    - `fzf-cli`
+    - `git-lock`
+    - `git-scope`
+    - `git-summary`
+    - `image-processing`
+    - `plan-tooling`
+    - `semantic-commit`
 
 Exit codes:
 
