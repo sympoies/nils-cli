@@ -24,6 +24,21 @@ Rust CLI workspace scaffold for building multiple independently packaged binarie
 - Add the install dir to `PATH` (example):
   - `export PATH="$HOME/.local/nils-cli:$PATH"`
 
+## GitHub Releases (prebuilt binaries)
+
+This repo can publish prebuilt tarballs via GitHub Releases for both:
+- x86_64 (amd64)
+- aarch64 (arm64)
+
+To trigger a release build, push a tag like `v0.1.0`:
+- `git tag -a v0.1.0 -m "v0.1.0"`
+- `git push origin v0.1.0`
+
+Then download the matching `nils-cli-<tag>-<target>.tar.gz` asset, extract it, and add
+`<extract_dir>/bin` to your `PATH`.
+
+For zsh completions, add `<extract_dir>/completions/zsh` to your `fpath` and run `compinit`.
+
 ## git-scope
 - Example usage: `git-scope staged`, `git-scope all -p`, `git-scope commit HEAD -p`
 - Wrapper aliases (optional): `gs` → `git-scope`, `gsc` → `git-scope commit`, `gst` → `git-scope tracked`

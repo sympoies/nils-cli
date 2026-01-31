@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.runs_on }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs_on: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - runs_on: ubuntu-24.04-arm64
+            target: aarch64-unknown-linux-gnu
+          - runs_on: macos-13
+            target: x86_64-apple-darwin
+          - runs_on: macos-14
+            target: aarch64-apple-darwin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build (release)
+        run: cargo build --release --workspace --locked --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${GITHUB_REF_NAME}"
+          target="${{ matrix.target }}"
+
+          out_dir="dist/nils-cli-${tag}-${target}"
+          mkdir -p "${out_dir}/bin"
+
+          bins=(
+            api-gql
+            api-rest
+            api-test
+            cli-template
+            fzf-cli
+            git-lock
+            git-scope
+            git-summary
+            image-processing
+            plan-tooling
+            semantic-commit
+          )
+
+          for bin in "${bins[@]}"; do
+            src="target/${target}/release/${bin}"
+            if [[ ! -f "${src}" ]]; then
+              echo "error: missing binary: ${src}" >&2
+              exit 1
+            fi
+            install -m 0755 "${src}" "${out_dir}/bin/${bin}"
+          done
+
+          cp -R completions "${out_dir}/"
+          cp README.md LICENSE "${out_dir}/"
+
+          tarball="dist/nils-cli-${tag}-${target}.tar.gz"
+          tar -C dist -czf "${tarball}" "nils-cli-${tag}-${target}"
+
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${tarball}" > "${tarball}.sha256"
+          elif command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 "${tarball}" > "${tarball}.sha256"
+          else
+            echo "error: sha256sum/shasum not found" >&2
+            exit 1
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: nils-cli-${{ matrix.target }}
+          if-no-files-found: error
+          path: |
+            dist/nils-cli-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
+            dist/nils-cli-${{ github.ref_name }}-${{ matrix.target }}.tar.gz.sha256
+
+  release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v6
+        with:
+          path: dist
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: dist/**/*.tar.gz*
