@@ -26,20 +26,5 @@ jobs:
       - name: Install zsh
         run: sudo apt-get update && sudo apt-get install -y zsh
 
-      - name: Format check
-        run: cargo fmt --all -- --check
-
-      - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Tests (Rust)
-        run: |
-          cargo test -p nils-common
-          cargo test -p git-scope
-          cargo test -p git-summary
-          cargo test -p fzf-cli
-          cargo test -p semantic-commit
-          cargo test -p image-processing
-
-      - name: Tests (zsh)
-        run: zsh -f tests/zsh/completion.test.zsh
+      - name: nils-cli checks (fmt + clippy + tests)
+        run: ./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh
