@@ -1,0 +1,9 @@
+# Nextest configuration.
+#
+# JUnit report output is written to:
+#   target/nextest/<profile>/junit.xml
+# So with `--profile ci` this becomes:
+#   target/nextest/ci/junit.xml
+
+[profile.ci.junit]
+path = "junit.xml"
