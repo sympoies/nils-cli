@@ -185,7 +185,7 @@ Run only / skip case IDs:
 
 ```bash
 api-test run --suite smoke --only rest.health,graphql.health
-api-test run --suite smoke --skip rest.write_no_allow
+api-test run --suite smoke --skip graphql.health
 ```
 
 Write-capable cases:
@@ -193,6 +193,7 @@ Write-capable cases:
 - A write-capable case must set `allowWrite: true` in the suite file.
 - Writes are disabled by default (even with `allowWrite: true`).
 - Enable writes with `--allow-writes` (or `API_TEST_ALLOW_WRITES_ENABLED=true`).
+- Tip: keep “guardrail” negative cases (write-capable but `allowWrite: false`) in a separate suite (e.g. `guardrails.suite.json`) so your smoke suite report stays green.
 
 ```bash
 api-test run --suite smoke --allow-writes

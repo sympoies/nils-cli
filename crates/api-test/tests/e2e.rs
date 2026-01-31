@@ -43,17 +43,23 @@ struct CmdOutput {
 }
 
 fn run_api_test(cwd: &Path, args: &[&str]) -> CmdOutput {
-    let output = Command::new(api_test_bin())
-        .current_dir(cwd)
+    run_api_test_with_env(cwd, args, &[])
+}
+
+fn run_api_test_with_env(cwd: &Path, args: &[&str], env: &[(&str, &str)]) -> CmdOutput {
+    let mut cmd = Command::new(api_test_bin());
+    cmd.current_dir(cwd)
         .env_remove("ACCESS_TOKEN")
         .env_remove("SERVICE_TOKEN")
         .env_remove("REST_TOKEN_NAME")
         .env_remove("GQL_JWT_NAME")
         .args(args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("run api-test");
+        .stderr(Stdio::piped());
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let output = cmd.output().expect("run api-test");
 
     CmdOutput {
         code: output.status.code().unwrap_or(-1),
@@ -254,7 +260,7 @@ fn start_server() -> TestServer {
 }
 
 #[test]
-fn run_e2e_suite_writes_results_and_does_not_leak_secrets() {
+fn run_e2e_suite_smoke_passes_and_does_not_leak_secrets() {
     let tmp = TempDir::new().expect("tmp");
     let root = tmp.path();
     std::fs::create_dir_all(root.join(".git")).expect("mkdir .git");
@@ -290,7 +296,7 @@ fn run_e2e_suite_writes_results_and_does_not_leak_secrets() {
     );
 
     // Suite file
-    let suite_json = serde_json::json!({
+    let smoke_suite_json = serde_json::json!({
       "version": 1,
       "name": "smoke",
       "defaults": {
@@ -309,33 +315,31 @@ fn run_e2e_suite_writes_results_and_does_not_leak_secrets() {
           "loginRequest": "setup/rest/requests/login.request.json",
           "request": "setup/rest/requests/me.request.json",
           "tokenJq": ".accessToken"
-        },
-        { "id": "rest.write_no_allow", "type": "rest", "tags": ["write"], "allowWrite": false, "request": "setup/rest/requests/write.request.json" },
-        { "id": "rest.write_skip", "type": "rest", "tags": ["write"], "allowWrite": true, "request": "setup/rest/requests/write.request.json" },
-        { "id": "graphql.mutation_no_allow", "type": "graphql", "tags": ["write"], "allowWrite": false, "op": "setup/graphql/operations/mutation.graphql" }
+        }
       ]
     });
     write_str(
         &root.join("tests/api/suites/smoke.suite.json"),
-        &serde_json::to_string_pretty(&suite_json).expect("suite json"),
+        &serde_json::to_string_pretty(&smoke_suite_json).expect("suite json"),
     );
 
-    let out = run_api_test(
+    let out = run_api_test_with_env(
         root,
         &[
             "run",
             "--suite",
             "smoke",
             "--out",
-            "out/results.json",
+            "out/smoke/results.json",
             "--junit",
-            "out/junit.xml",
+            "out/smoke/junit.xml",
         ],
+        &[("API_TEST_OUTPUT_DIR", "out/api-test-runner-smoke")],
     );
 
     assert_eq!(
         out.code,
-        2,
+        0,
         "stdout={}\nstderr={}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
@@ -344,17 +348,22 @@ fn run_e2e_suite_writes_results_and_does_not_leak_secrets() {
     let stdout_text = String::from_utf8_lossy(&out.stdout).to_string();
     assert!(!stdout_text.contains(SECRET_TOKEN));
 
-    let results_file = root.join("out/results.json");
+    let results_file = root.join("out/smoke/results.json");
     assert!(results_file.is_file());
     let file_bytes = std::fs::read(&results_file).expect("read results");
     assert_eq!(file_bytes, out.stdout);
 
+    let junit_file = root.join("out/smoke/junit.xml");
+    assert!(junit_file.is_file());
+    let junit_text = std::fs::read_to_string(&junit_file).expect("read junit");
+    assert!(junit_text.contains("<testsuite"));
+
     let results_json: serde_json::Value =
         serde_json::from_slice(&out.stdout).expect("results json");
-    assert_eq!(results_json["summary"]["total"], 6);
+    assert_eq!(results_json["summary"]["total"], 3);
     assert_eq!(results_json["summary"]["passed"], 3);
-    assert_eq!(results_json["summary"]["failed"], 2);
-    assert_eq!(results_json["summary"]["skipped"], 1);
+    assert_eq!(results_json["summary"]["failed"], 0);
+    assert_eq!(results_json["summary"]["skipped"], 0);
 
     let output_dir_rel = results_json["outputDir"].as_str().unwrap_or("");
     assert!(!output_dir_rel.is_empty());
@@ -379,25 +388,20 @@ fn run_e2e_suite_writes_results_and_does_not_leak_secrets() {
         }
     }
 
-    let junit_file = root.join("out/junit.xml");
-    assert!(junit_file.is_file());
-    let junit_text = std::fs::read_to_string(&junit_file).expect("read junit");
-    assert!(junit_text.contains("<testsuite"));
-
     let out2 = run_api_test(
         root,
         &[
             "summary",
             "--in",
-            "out/results.json",
+            "out/smoke/results.json",
             "--out",
-            "out/summary.md",
+            "out/smoke/summary.md",
             "--slow",
             "5",
         ],
     );
     assert_eq!(out2.code, 0);
-    let summary_file = root.join("out/summary.md");
+    let summary_file = root.join("out/smoke/summary.md");
     assert!(summary_file.is_file());
     let summary_text = std::fs::read_to_string(&summary_file).expect("read summary");
     assert!(summary_text.contains("API test summary"));
@@ -405,4 +409,114 @@ fn run_e2e_suite_writes_results_and_does_not_leak_secrets() {
     // Sanity: rest-flow actually hit /me with Authorization.
     let reqs = server.requests.lock().expect("lock").clone();
     assert!(reqs.iter().any(|r| r.path == "/me"));
+}
+
+#[test]
+fn run_e2e_suite_guardrails_fails_with_expected_messages() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join(".git")).expect("mkdir .git");
+
+    let server = start_server();
+
+    // REST requests
+    write_str(
+        &root.join("setup/rest/requests/write.request.json"),
+        r#"{"method":"POST","path":"/write"}"#,
+    );
+
+    // GraphQL ops
+    write_str(
+        &root.join("setup/graphql/operations/mutation.graphql"),
+        "mutation M { write { ok } }\n",
+    );
+
+    let guardrails_suite_json = serde_json::json!({
+      "version": 1,
+      "name": "guardrails",
+      "defaults": {
+        "env": "staging",
+        "noHistory": true,
+        "rest": { "url": server.base_url },
+        "graphql": { "url": format!("{}/graphql", server.base_url) }
+      },
+      "cases": [
+        { "id": "rest.write_no_allow", "type": "rest", "tags": ["guardrails"], "allowWrite": false, "request": "setup/rest/requests/write.request.json" },
+        { "id": "rest.write_skip", "type": "rest", "tags": ["guardrails"], "allowWrite": true, "request": "setup/rest/requests/write.request.json" },
+        { "id": "graphql.mutation_no_allow", "type": "graphql", "tags": ["guardrails"], "allowWrite": false, "op": "setup/graphql/operations/mutation.graphql" }
+      ]
+    });
+    write_str(
+        &root.join("tests/api/suites/guardrails.suite.json"),
+        &serde_json::to_string_pretty(&guardrails_suite_json).expect("suite json"),
+    );
+
+    let out = run_api_test_with_env(
+        root,
+        &[
+            "run",
+            "--suite",
+            "guardrails",
+            "--out",
+            "out/guardrails/results.json",
+            "--junit",
+            "out/guardrails/junit.xml",
+        ],
+        &[("API_TEST_OUTPUT_DIR", "out/api-test-runner-guardrails")],
+    );
+
+    assert_eq!(
+        out.code,
+        2,
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let stdout_text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(!stdout_text.contains(SECRET_TOKEN));
+
+    let results_file = root.join("out/guardrails/results.json");
+    assert!(results_file.is_file());
+    let file_bytes = std::fs::read(&results_file).expect("read results");
+    assert_eq!(file_bytes, out.stdout);
+
+    let junit_file = root.join("out/guardrails/junit.xml");
+    assert!(junit_file.is_file());
+
+    let results_json: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("results json");
+    assert_eq!(results_json["summary"]["total"], 3);
+    assert_eq!(results_json["summary"]["passed"], 0);
+    assert_eq!(results_json["summary"]["failed"], 2);
+    assert_eq!(results_json["summary"]["skipped"], 1);
+
+    let cases = results_json["cases"].as_array().expect("cases array");
+    let mut by_id: std::collections::BTreeMap<String, serde_json::Value> =
+        std::collections::BTreeMap::new();
+    for c in cases {
+        if let Some(id) = c.get("id").and_then(|v| v.as_str()) {
+            by_id.insert(id.to_string(), c.clone());
+        }
+    }
+
+    assert_eq!(by_id["rest.write_no_allow"]["status"], "failed");
+    assert_eq!(
+        by_id["rest.write_no_allow"]["message"],
+        "write_capable_case_requires_allowWrite_true"
+    );
+
+    assert_eq!(by_id["graphql.mutation_no_allow"]["status"], "failed");
+    assert_eq!(
+        by_id["graphql.mutation_no_allow"]["message"],
+        "mutation_case_requires_allowWrite_true"
+    );
+
+    assert_eq!(by_id["rest.write_skip"]["status"], "skipped");
+    assert_eq!(by_id["rest.write_skip"]["message"], "write_cases_disabled");
+
+    let output_dir_rel = results_json["outputDir"].as_str().unwrap_or("");
+    assert!(!output_dir_rel.is_empty());
+    let output_dir_abs = root.join(output_dir_rel);
+    assert!(output_dir_abs.is_dir());
 }
