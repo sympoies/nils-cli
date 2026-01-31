@@ -45,6 +45,7 @@ fn help_includes_key_flags() {
     assert_eq!(out.code, 0);
     let text = format!("{}{}", out.stdout, out.stderr);
     assert!(text.contains("schema"));
+    assert!(text.contains("report-from-cmd"));
     assert!(text.contains("--config-dir"));
     assert!(text.contains("--list-envs"));
 }
@@ -53,4 +54,15 @@ fn help_includes_key_flags() {
 fn invalid_flag_exits_nonzero() {
     let out = run_api_gql(&["--definitely-not-a-flag"]);
     assert_ne!(out.code, 0);
+}
+
+#[test]
+fn report_from_cmd_dry_run_exits_zero_and_prints_report_command() {
+    let snippet = "api-gql call --env staging setup/graphql/operations/health.graphql";
+    let out = run_api_gql(&["report-from-cmd", "--dry-run", snippet]);
+    assert_eq!(out.code, 0);
+    assert!(out.stdout.contains("api-gql report"));
+    assert!(out.stdout.contains("--case"));
+    assert!(out.stdout.contains("health"));
+    assert!(out.stdout.contains("staging"));
 }

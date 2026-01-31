@@ -75,6 +75,30 @@ Write a Markdown report:
 api-rest report --case health --request setup/rest/requests/health.request.json --run
 ```
 
+Generate a report from a saved `call` snippet (e.g. from history):
+
+```bash
+api-rest history --command-only | api-rest report-from-cmd --stdin
+```
+
+Show the rewritten `report` command (no network):
+
+```bash
+api-rest report-from-cmd --dry-run "api-rest call --env staging setup/rest/requests/health.request.json"
+```
+
+Offline mode (use a saved response body):
+
+```bash
+api-rest report-from-cmd --response out/health.response.json "api-rest call --env staging setup/rest/requests/health.request.json"
+```
+
+If you use `--response -`, stdin is reserved for the response body (the snippet must be positional):
+
+```bash
+api-rest report-from-cmd --response - "api-rest call --env staging setup/rest/requests/health.request.json" < out/health.response.json
+```
+
 Show history (default: last entry):
 
 ```bash
@@ -105,6 +129,30 @@ Write a Markdown report:
 
 ```bash
 api-gql report --case health --op setup/graphql/operations/health.graphql --run
+```
+
+Generate a report from a saved `call` snippet (e.g. from history):
+
+```bash
+api-gql history --command-only | api-gql report-from-cmd --stdin
+```
+
+Show the rewritten `report` command (no network):
+
+```bash
+api-gql report-from-cmd --dry-run "api-gql call --env staging setup/graphql/operations/health.graphql"
+```
+
+Offline mode (use a saved response body):
+
+```bash
+api-gql report-from-cmd --response out/health.response.json "api-gql call --env staging setup/graphql/operations/health.graphql"
+```
+
+If you use `--response -`, stdin is reserved for the response body (the snippet must be positional):
+
+```bash
+api-gql report-from-cmd --response - "api-gql call --env staging setup/graphql/operations/health.graphql" < out/health.response.json
 ```
 
 Resolve and print the schema file:
@@ -169,4 +217,3 @@ Common `api-test` env vars:
 - `API_TEST_ALLOW_WRITES_ENABLED=true|false`: enable write-capable cases
 - `API_TEST_REST_URL`: override REST base URL for all REST/rest-flow cases
 - `API_TEST_GQL_URL`: override GraphQL endpoint URL for all GraphQL cases
-

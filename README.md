@@ -50,12 +50,14 @@ See `docs/api-testing/usage.md` for the recommended repo layout and end-to-end e
 - Example usage:
   - `api-rest call --env staging setup/rest/requests/health.request.json`
   - `api-rest report --case health --request setup/rest/requests/health.request.json --run`
+  - `api-rest history --command-only | api-rest report-from-cmd --stdin`
   - `api-rest history`
 
 ### api-gql
 - Example usage:
   - `api-gql call --env staging setup/graphql/operations/health.graphql`
   - `api-gql report --case health --op setup/graphql/operations/health.graphql --run`
+  - `api-gql history --command-only | api-gql report-from-cmd --stdin`
   - `api-gql schema --cat`
 
 ### api-test

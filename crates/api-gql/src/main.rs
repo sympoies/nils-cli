@@ -26,6 +26,8 @@ enum Command {
     History(HistoryArgs),
     /// Generate a Markdown API test report
     Report(ReportArgs),
+    /// Generate a report from a command snippet (arg or stdin)
+    ReportFromCmd(ReportFromCmdArgs),
     /// Resolve a schema file path (or print schema contents)
     Schema(SchemaArgs),
 }
@@ -164,6 +166,37 @@ struct ReportArgs {
 }
 
 #[derive(Args)]
+struct ReportFromCmdArgs {
+    /// Override report case name (default: derived from snippet)
+    #[arg(long = "case")]
+    case: Option<String>,
+
+    /// Output report path (default: <project_root>/docs/<stamp>-<case>-api-test-report.md)
+    #[arg(long = "out")]
+    out: Option<String>,
+
+    /// Use an existing response file (or "-" for stdin)
+    #[arg(long = "response")]
+    response: Option<String>,
+
+    /// Allow generating a report with an empty/no-data response
+    #[arg(long = "allow-empty", alias = "expect-empty")]
+    allow_empty: bool,
+
+    /// Print equivalent `api-gql report ...` command and exit 0 (no network)
+    #[arg(long = "dry-run")]
+    dry_run: bool,
+
+    /// Read the command snippet from stdin
+    #[arg(long = "stdin", conflicts_with = "snippet")]
+    stdin: bool,
+
+    /// Command snippet (e.g. from `api-gql history --command-only`)
+    #[arg(value_name = "snippet", required_unless_present = "stdin")]
+    snippet: Option<String>,
+}
+
+#[derive(Args)]
 struct SchemaArgs {
     /// GraphQL setup dir (same discovery semantics as call)
     #[arg(long = "config-dir")]
@@ -188,7 +221,10 @@ fn argv_with_default_command(raw_args: &[String]) -> Vec<String> {
     let is_root_help = first == "-h" || first == "--help";
     let is_root_version = first == "-V" || first == "--version";
 
-    let is_explicit_command = matches!(first, "call" | "history" | "report" | "schema");
+    let is_explicit_command = matches!(
+        first,
+        "call" | "history" | "report" | "report-from-cmd" | "schema"
+    );
     if !is_explicit_command && !is_root_help && !is_root_version {
         argv.push("call".to_string());
     }
@@ -204,6 +240,7 @@ fn print_root_help() {
     println!("  call     Execute an operation (and optional variables) and print response JSON (default)");
     println!("  history  Print the last (or last N) history entries");
     println!("  report   Generate a Markdown API test report");
+    println!("  report-from-cmd  Generate a report from a command snippet (arg or stdin)");
     println!("  schema   Resolve a schema file path (or print schema contents)");
     println!();
     println!("Common options (see subcommand help for full details):");
@@ -265,6 +302,9 @@ fn run() -> i32 {
             cmd_history(&args, &invocation_dir, &mut stdout, &mut stderr)
         }
         Some(Command::Report(args)) => cmd_report(&args, &invocation_dir, &mut stdout, &mut stderr),
+        Some(Command::ReportFromCmd(args)) => {
+            cmd_report_from_cmd(&args, &invocation_dir, &mut stdout, &mut stderr)
+        }
         Some(Command::Schema(args)) => cmd_schema(&args, &invocation_dir, &mut stdout, &mut stderr),
     }
 }
@@ -388,6 +428,59 @@ fn shell_quote(s: &str) -> String {
     }
     out.push('\'');
     out
+}
+
+fn build_api_gql_report_dry_run_command(args: &ReportArgs) -> String {
+    let mut cmd: Vec<String> = vec!["api-gql".to_string(), "report".to_string()];
+
+    cmd.push("--case".to_string());
+    cmd.push(shell_quote(&args.case));
+
+    cmd.push("--op".to_string());
+    cmd.push(shell_quote(&args.op));
+
+    if let Some(v) = args.vars.as_deref().and_then(trim_non_empty) {
+        cmd.push("--vars".to_string());
+        cmd.push(shell_quote(&v));
+    }
+
+    if let Some(out) = args.out.as_deref().and_then(trim_non_empty) {
+        cmd.push("--out".to_string());
+        cmd.push(shell_quote(&out));
+    }
+
+    if let Some(cd) = args.config_dir.as_deref().and_then(trim_non_empty) {
+        cmd.push("--config-dir".to_string());
+        cmd.push(shell_quote(&cd));
+    }
+
+    if let Some(env) = args.env.as_deref().and_then(trim_non_empty) {
+        cmd.push("--env".to_string());
+        cmd.push(shell_quote(&env));
+    }
+
+    if let Some(url) = args.url.as_deref().and_then(trim_non_empty) {
+        cmd.push("--url".to_string());
+        cmd.push(shell_quote(&url));
+    }
+
+    if let Some(jwt) = args.jwt.as_deref().and_then(trim_non_empty) {
+        cmd.push("--jwt".to_string());
+        cmd.push(shell_quote(&jwt));
+    }
+
+    if args.run {
+        cmd.push("--run".to_string());
+    } else if let Some(resp) = args.response.as_deref().and_then(trim_non_empty) {
+        cmd.push("--response".to_string());
+        cmd.push(shell_quote(&resp));
+    }
+
+    if args.allow_empty {
+        cmd.push("--allow-empty".to_string());
+    }
+
+    cmd.join(" ")
 }
 
 fn list_available_suffixes(file: &Path, prefix: &str) -> Vec<String> {
@@ -1343,6 +1436,96 @@ fn cmd_report(
 
     let _ = writeln!(stdout, "{}", out_path.display());
     0
+}
+
+fn cmd_report_from_cmd(
+    args: &ReportFromCmdArgs,
+    invocation_dir: &Path,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> i32 {
+    let response_is_stdin = matches!(args.response.as_deref(), Some(resp) if resp.trim() == "-");
+    if response_is_stdin && args.stdin {
+        let _ = writeln!(
+            stderr,
+            "error: --stdin cannot be used with --response - (stdin is reserved for response body)"
+        );
+        return 1;
+    }
+
+    let snippet = if args.stdin {
+        let mut buf = Vec::new();
+        if std::io::stdin().read_to_end(&mut buf).is_err() {
+            let _ = writeln!(stderr, "error: failed to read snippet from stdin");
+            return 1;
+        }
+        String::from_utf8_lossy(&buf).to_string()
+    } else {
+        args.snippet.clone().unwrap_or_default()
+    };
+
+    let parsed = match api_testing_core::cmd_snippet::parse_report_from_cmd_snippet(&snippet) {
+        Ok(v) => v,
+        Err(err) => {
+            let _ = writeln!(stderr, "error: {err}");
+            return 1;
+        }
+    };
+
+    let api_testing_core::cmd_snippet::ReportFromCmd::Graphql(parsed) = parsed else {
+        let _ = writeln!(
+            stderr,
+            "error: expected an api-gql/gql.sh snippet; got a non-GraphQL snippet"
+        );
+        return 1;
+    };
+
+    let api_testing_core::cmd_snippet::GraphqlReportFromCmd {
+        case: derived_case,
+        config_dir,
+        env,
+        url,
+        jwt,
+        op,
+        vars,
+    } = parsed;
+
+    let case = args
+        .case
+        .as_deref()
+        .and_then(trim_non_empty)
+        .unwrap_or(derived_case);
+
+    let report_args = ReportArgs {
+        case,
+        op,
+        vars,
+        out: args.out.clone(),
+        env,
+        url,
+        jwt,
+        run: args
+            .response
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .is_none(),
+        response: args.response.clone(),
+        allow_empty: args.allow_empty,
+        no_redact: false,
+        no_command: false,
+        no_command_url: false,
+        project_root: None,
+        config_dir,
+    };
+
+    if args.dry_run {
+        let cmd = build_api_gql_report_dry_run_command(&report_args);
+        let _ = writeln!(stdout, "{cmd}");
+        return 0;
+    }
+
+    cmd_report(&report_args, invocation_dir, stdout, stderr)
 }
 
 fn build_report_command_snippet(

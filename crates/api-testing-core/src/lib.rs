@@ -1,5 +1,6 @@
 //! Shared core primitives for the api-testing CLIs.
 
+pub mod cmd_snippet;
 pub mod config;
 pub mod env_file;
 pub mod graphql;

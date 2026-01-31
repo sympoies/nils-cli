@@ -26,6 +26,8 @@ enum Command {
     History(HistoryArgs),
     /// Generate a Markdown API test report
     Report(ReportArgs),
+    /// Generate a Markdown API test report from a saved `call` command snippet
+    ReportFromCmd(ReportFromCmdArgs),
 }
 
 #[derive(Args)]
@@ -141,6 +143,39 @@ struct ReportArgs {
     config_dir: Option<String>,
 }
 
+#[derive(Args)]
+struct ReportFromCmdArgs {
+    /// Report case name (default: derived from the snippet)
+    #[arg(long = "case")]
+    case: Option<String>,
+
+    /// Output report path (default: <project_root>/docs/<stamp>-<case>-api-test-report.md)
+    #[arg(long = "out")]
+    out: Option<String>,
+
+    /// Use an existing response file (or "-" for stdin)
+    ///
+    /// Note: when using "--response -", stdin is reserved for the response body; provide the snippet as a positional argument.
+    #[arg(long = "response")]
+    response: Option<String>,
+
+    /// Allow generating a report with an empty/no-data response (no-op for api-rest; kept for parity)
+    #[arg(long = "allow-empty", alias = "expect-empty")]
+    allow_empty: bool,
+
+    /// Print the equivalent `api-rest report ...` command and exit 0
+    #[arg(long = "dry-run")]
+    dry_run: bool,
+
+    /// Read the command snippet from stdin
+    #[arg(long = "stdin", conflicts_with = "snippet")]
+    stdin: bool,
+
+    /// Command snippet (e.g. from `api-rest history --command-only`)
+    #[arg(value_name = "snippet", required_unless_present = "stdin")]
+    snippet: Option<String>,
+}
+
 fn argv_with_default_command(raw_args: &[String]) -> Vec<String> {
     let mut argv = vec!["api-rest".to_string()];
     if raw_args.is_empty() {
@@ -151,7 +186,7 @@ fn argv_with_default_command(raw_args: &[String]) -> Vec<String> {
     let is_root_help = first == "-h" || first == "--help";
     let is_root_version = first == "-V" || first == "--version";
 
-    let is_explicit_command = matches!(first, "call" | "history" | "report");
+    let is_explicit_command = matches!(first, "call" | "history" | "report" | "report-from-cmd");
     if !is_explicit_command && !is_root_help && !is_root_version {
         argv.push("call".to_string());
     }
@@ -167,6 +202,7 @@ fn print_root_help() {
     println!("  call      Execute a request file and print the response body to stdout (default)");
     println!("  history   Print the last (or last N) history entries");
     println!("  report    Generate a Markdown API test report");
+    println!("  report-from-cmd  Generate a report from a saved `call` snippet");
     println!();
     println!("Common options (see subcommand help for full details):");
     println!("  --config-dir <dir>   Seed setup/rest discovery (call/history/report)");
@@ -176,6 +212,7 @@ fn print_root_help() {
     println!("  api-rest --help");
     println!("  api-rest call --help");
     println!("  api-rest report --help");
+    println!("  api-rest report-from-cmd --help");
 }
 
 fn main() {
@@ -231,6 +268,9 @@ fn run() -> i32 {
             cmd_history(&args, &invocation_dir, &mut stdout, &mut stderr)
         }
         Some(Command::Report(args)) => cmd_report(&args, &invocation_dir, &mut stdout, &mut stderr),
+        Some(Command::ReportFromCmd(args)) => {
+            cmd_report_from_cmd(&args, &invocation_dir, &mut stdout, &mut stderr)
+        }
     }
 }
 
@@ -1277,6 +1317,138 @@ fn cmd_report(
 
     let _ = writeln!(stdout, "{}", out_path.display());
     0
+}
+
+fn cmd_report_from_cmd(
+    args: &ReportFromCmdArgs,
+    invocation_dir: &Path,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> i32 {
+    let _ = args.allow_empty;
+
+    let response = args.response.as_deref().and_then(trim_non_empty);
+    let response_is_stdin = matches!(response.as_deref(), Some("-"));
+
+    if response_is_stdin && args.stdin {
+        let _ = writeln!(
+            stderr,
+            "error: When using --response -, stdin is reserved for the response body; provide the snippet as a positional argument."
+        );
+        return 1;
+    }
+
+    let snippet = if args.stdin {
+        let mut buf = Vec::new();
+        if std::io::stdin().read_to_end(&mut buf).is_err() {
+            let _ = writeln!(stderr, "error: failed to read command snippet from stdin");
+            return 1;
+        }
+        String::from_utf8_lossy(&buf).to_string()
+    } else {
+        args.snippet.clone().unwrap_or_default()
+    };
+
+    let parsed = match api_testing_core::cmd_snippet::parse_report_from_cmd_snippet(&snippet) {
+        Ok(v) => v,
+        Err(err) => {
+            let _ = writeln!(stderr, "error: {err}");
+            return 1;
+        }
+    };
+
+    let api_testing_core::cmd_snippet::ReportFromCmd::Rest(rest) = parsed else {
+        let _ = writeln!(
+            stderr,
+            "error: expected a REST call snippet (api-rest/rest.sh)"
+        );
+        return 1;
+    };
+
+    let api_testing_core::cmd_snippet::RestReportFromCmd {
+        case: derived_case,
+        config_dir,
+        env,
+        url,
+        token,
+        request,
+    } = rest;
+
+    let case_name = args
+        .case
+        .as_deref()
+        .and_then(trim_non_empty)
+        .unwrap_or_else(|| derived_case.clone());
+
+    let report_args = ReportArgs {
+        case: case_name,
+        request,
+        out: args.out.clone(),
+        env,
+        url,
+        token,
+        run: response.is_none(),
+        response,
+        no_redact: false,
+        no_command: false,
+        no_command_url: false,
+        project_root: None,
+        config_dir,
+    };
+
+    if args.dry_run {
+        let cmd = build_report_from_cmd_dry_run_command(&report_args);
+        let _ = writeln!(stdout, "{cmd}");
+        return 0;
+    }
+
+    cmd_report(&report_args, invocation_dir, stdout, stderr)
+}
+
+fn build_report_from_cmd_dry_run_command(args: &ReportArgs) -> String {
+    let mut cmd = String::from("api-rest report");
+
+    cmd.push_str(" --case ");
+    cmd.push_str(&shell_quote(&args.case));
+
+    cmd.push_str(" --request ");
+    cmd.push_str(&shell_quote(&args.request));
+
+    if let Some(out) = args.out.as_deref().and_then(trim_non_empty) {
+        cmd.push_str(" --out ");
+        cmd.push_str(&shell_quote(&out));
+    }
+
+    if let Some(cfg) = args.config_dir.as_deref().and_then(trim_non_empty) {
+        cmd.push_str(" --config-dir ");
+        cmd.push_str(&shell_quote(&cfg));
+    }
+
+    if let Some(url) = args.url.as_deref().and_then(trim_non_empty) {
+        cmd.push_str(" --url ");
+        cmd.push_str(&shell_quote(&url));
+    }
+    if let Some(env) = args.env.as_deref().and_then(trim_non_empty) {
+        if args.url.as_deref().and_then(trim_non_empty).is_none() {
+            cmd.push_str(" --env ");
+            cmd.push_str(&shell_quote(&env));
+        }
+    }
+    if let Some(token) = args.token.as_deref().and_then(trim_non_empty) {
+        cmd.push_str(" --token ");
+        cmd.push_str(&shell_quote(&token));
+    }
+
+    if args.run {
+        cmd.push_str(" --run");
+    } else if let Some(resp) = args.response.as_deref().and_then(trim_non_empty) {
+        cmd.push_str(" --response ");
+        cmd.push_str(&shell_quote(&resp));
+    } else {
+        cmd.push_str(" --run");
+    }
+
+    cmd
 }
 
 fn build_report_command_snippet(

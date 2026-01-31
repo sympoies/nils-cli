@@ -18,6 +18,7 @@ _api-gql() {
     'call:Execute an operation and print the response JSON to stdout (default)'
     'history:Print the last (or last N) history entries'
     'report:Generate a Markdown API test report'
+    'report-from-cmd:Generate a report from a command snippet (arg or stdin)'
     'schema:Resolve a schema file path (or print schema contents)'
     'help:Show help'
   )
@@ -34,7 +35,7 @@ _api-gql() {
   subcmd="${subcmd%%[[:space:]]#}"
 
   case "$subcmd" in
-    call|history|report|schema|help) ;;
+    call|history|report|report-from-cmd|schema|help) ;;
     *) subcmd="call" ;;
   esac
 
@@ -84,6 +85,18 @@ _api-gql() {
         '--config-dir=[GraphQL setup dir (passed through)]:dir:_files -/' \
         && return 0
       ;;
+    report-from-cmd)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Show help]' \
+        '--case=[Override report case name (default: derived from snippet)]:case:' \
+        '--out=[Output report path]:file:_files' \
+        '--response=[Use an existing response file (or "-" for stdin)]:response file:_files' \
+        '--allow-empty[Allow generating a report with empty/no-data response]' \
+        '--dry-run[Print equivalent `api-gql report ...` command and exit 0]' \
+        '--stdin[Read the command snippet from stdin]' \
+        '1::snippet:' \
+        && return 0
+      ;;
     schema)
       _arguments -C \
         '(-h --help)'{-h,--help}'[Show help]' \
@@ -100,4 +113,3 @@ _api-gql() {
 }
 
 compdef _api-gql api-gql
-

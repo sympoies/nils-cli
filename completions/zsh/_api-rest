@@ -18,6 +18,7 @@ _api-rest() {
     'call:Execute a request file and print the response body to stdout (default)'
     'history:Print the last (or last N) history entries'
     'report:Generate a Markdown API test report'
+    'report-from-cmd:Generate a report from a saved `call` snippet'
     'help:Show help'
   )
 
@@ -33,7 +34,7 @@ _api-rest() {
   subcmd="${subcmd%%[[:space:]]#}"
 
   case "$subcmd" in
-    call|history|report|help) ;;
+    call|history|report|report-from-cmd|help) ;;
     *) subcmd="call" ;;
   esac
 
@@ -78,6 +79,18 @@ _api-rest() {
         '--config-dir=[REST setup dir (passed through)]:dir:_files -/' \
         && return 0
       ;;
+    report-from-cmd)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Show help]' \
+        '--case=[Override report case name (default: derived from snippet)]:case:' \
+        '--out=[Output report path]:file:_files' \
+        '--response=[Use an existing response file (or "-" for stdin)]:response file:_files' \
+        '--allow-empty[Allow generating a report with empty/no-data response]' \
+        '--dry-run[Print equivalent `api-rest report ...` command and exit 0]' \
+        '--stdin[Read the command snippet from stdin]' \
+        '1::snippet:' \
+        && return 0
+      ;;
     help)
       _message 'no additional arguments'
       return 0
@@ -86,4 +99,3 @@ _api-rest() {
 }
 
 compdef _api-rest api-rest
-

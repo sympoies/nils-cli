@@ -10,6 +10,7 @@ members = [
   "crates/api-gql",
   "crates/api-test",
   "crates/semantic-commit",
+  "crates/plan-tooling",
 ]
 resolver = "2"
 
