@@ -42,7 +42,7 @@
   - `completions/zsh/_api-rest`
   - `completions/zsh/_api-gql`
   - `completions/zsh/_api-test`
-- Wrapper scripts: `wrappers/gs`, `wrappers/gsc`, `wrappers/gst`, `wrappers/git-scope`
+- Wrapper scripts: `wrappers/api-rest`, `wrappers/api-gql`, `wrappers/api-test`, `wrappers/gs`, `wrappers/gsc`, `wrappers/gst`, `wrappers/git-scope`
 - Setup:
   - Add `wrappers/` to `PATH`.
   - Add `completions/zsh/` to `fpath` and run `compinit`.
