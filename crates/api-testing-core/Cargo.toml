@@ -1,0 +1,19 @@
+[package]
+name = "api-testing-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+anyhow = { workspace = true }
+base64 = "0.22"
+jaq-core = "3.0.0-beta"
+jaq-json = { version = "2.0.0-beta", features = ["serde"] }
+jaq-std = "3.0.0-beta"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "multipart", "rustls-tls"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+time = { version = "0.3", features = ["formatting"] }
+
+[dev-dependencies]
+tempfile = "3"
