@@ -6,13 +6,13 @@ Rust CLI workspace scaffold for building multiple independently packaged binarie
 - `crates/nils-common`: shared library crate for cross-CLI helpers
 - `crates/cli-template`: minimal binary crate for validating packaging
 - `crates/api-testing-core`: shared library crate for the API testing CLIs
-- `crates/api-rest`: Rust port of the REST testing CLI (`api-rest`)
-- `crates/api-gql`: Rust port of the GraphQL testing CLI (`api-gql`)
-- `crates/api-test`: Rust port of the API suite runner (`api-test`)
+- `crates/api-rest`: Rust port of the REST testing CLI
+- `crates/api-gql`: Rust port of the GraphQL testing CLI
+- `crates/api-test`: Rust port of the API suite runner
 - `crates/git-scope`: Rust port of the git-scope CLI
 - `crates/git-summary`: Rust port of the git-summary CLI
 - `crates/git-lock`: Rust port of the git-lock CLI
-- `crates/fzf-cli`: Rust port of personal fzf helper CLI (from `fzf-tools.zsh`)
+- `crates/fzf-cli`: Rust port of personal fzf helper CLI
 - `crates/semantic-commit`: Rust port of Codex semantic commit entrypoints
 
 ## Local install (release)
