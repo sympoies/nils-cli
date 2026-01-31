@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod env_file;
+pub mod graphql;
 pub mod history;
 pub mod http;
 pub mod jq;
