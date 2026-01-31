@@ -101,6 +101,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "api-test"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "api-testing-core",
+ "clap",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "api-testing-core"
 version = "0.1.0"
 dependencies = [

@@ -11,6 +11,7 @@ pub mod markdown;
 pub mod redact;
 pub mod report;
 pub mod rest;
+pub mod suite;
 
 pub type Result<T> = std::result::Result<T, anyhow::Error>;
 

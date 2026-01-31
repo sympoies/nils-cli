@@ -8,6 +8,7 @@ members = [
   "crates/api-testing-core",
   "crates/api-rest",
   "crates/api-gql",
+  "crates/api-test",
   "crates/semantic-commit",
 ]
 resolver = "2"
