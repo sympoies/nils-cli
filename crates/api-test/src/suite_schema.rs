@@ -527,6 +527,7 @@ impl SuiteManifestV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn suite_schema_v1_accepts_minimal_valid_suite() {

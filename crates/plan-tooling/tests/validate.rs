@@ -2,6 +2,8 @@ mod common;
 
 use common::{git, init_repo, run_plan_tooling, write_file};
 
+use pretty_assertions::assert_eq;
+
 #[test]
 fn validate_ok_with_explicit_file() {
     let repo = init_repo();

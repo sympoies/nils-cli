@@ -812,6 +812,7 @@ pub fn run_case_cleanup(ctx: &mut CleanupContext<'_>) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     use tempfile::TempDir;
 

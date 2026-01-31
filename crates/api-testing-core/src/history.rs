@@ -141,6 +141,7 @@ pub fn read_records(history_file: &Path) -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     use tempfile::TempDir;
 

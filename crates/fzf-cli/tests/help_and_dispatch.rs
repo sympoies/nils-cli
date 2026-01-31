@@ -1,5 +1,7 @@
 mod common;
 
+use pretty_assertions::assert_eq;
+
 #[test]
 fn help_prints_usage_and_commands() {
     let temp = tempfile::TempDir::new().unwrap();

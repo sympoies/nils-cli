@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+use pretty_assertions::{assert_eq, assert_ne};
+
 struct CmdOutput {
     code: i32,
     stdout: String,

@@ -575,6 +575,7 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
+    use pretty_assertions::assert_eq;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 

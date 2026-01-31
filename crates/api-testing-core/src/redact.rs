@@ -52,6 +52,7 @@ pub fn redact_json(value: &mut serde_json::Value) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn redact_replaces_common_secret_fields_recursively() {

@@ -58,6 +58,7 @@ pub fn selection_skip_reason(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn suite_filter_tags_are_and_semantics() {

@@ -2,6 +2,8 @@ mod common;
 
 use common::{run_plan_tooling, write_file};
 
+use pretty_assertions::assert_eq;
+
 #[test]
 fn scaffold_slug_creates_plan_and_replaces_title() {
     let dir = tempfile::TempDir::new().expect("tempdir");

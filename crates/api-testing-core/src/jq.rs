@@ -120,6 +120,7 @@ pub fn query_raw(value: &serde_json::Value, expr: &str) -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn jq_basic_query_outputs_multiple_values() {

@@ -5,6 +5,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
+use pretty_assertions::assert_eq;
+
 fn as_str(output: &[u8]) -> String {
     String::from_utf8_lossy(output).to_string()
 }

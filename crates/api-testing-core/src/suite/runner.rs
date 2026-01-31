@@ -1225,6 +1225,7 @@ fn case_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn suite_runner_sanitize_id_matches_expected_replacements() {

@@ -46,6 +46,7 @@ pub fn code_block(lang: &str, body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn markdown_code_block_is_newline_stable() {

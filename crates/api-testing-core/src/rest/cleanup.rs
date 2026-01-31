@@ -66,6 +66,7 @@ pub fn execute_cleanup(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn rest_cleanup_renders_path_and_substitutes_vars() {

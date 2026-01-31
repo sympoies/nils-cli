@@ -219,6 +219,7 @@ pub fn resolve_gql_setup_dir_for_schema(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     use tempfile::TempDir;
 

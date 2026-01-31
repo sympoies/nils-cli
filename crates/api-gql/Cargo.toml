@@ -12,4 +12,5 @@ serde_json = { workspace = true }
 time = { version = "0.3", features = ["formatting", "local-offset"] }
 
 [dev-dependencies]
+pretty_assertions = { workspace = true }
 tempfile = "3"

@@ -2,6 +2,8 @@ mod common;
 
 use std::fs;
 
+use pretty_assertions::assert_eq;
+
 #[test]
 fn file_unknown_flag_exits_2() {
     let temp = tempfile::TempDir::new().unwrap();

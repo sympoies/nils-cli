@@ -2,6 +2,8 @@ mod common;
 
 use common::{run_plan_tooling, write_file};
 
+use pretty_assertions::assert_eq;
+
 #[test]
 fn to_json_pretty_parses_and_includes_start_lines() {
     let dir = tempfile::TempDir::new().expect("tempdir");

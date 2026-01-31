@@ -12,4 +12,5 @@ tempfile = "3"
 walkdir = "2"
 
 [dev-dependencies]
+pretty_assertions = { workspace = true }
 tempfile = "3"

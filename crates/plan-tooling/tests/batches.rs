@@ -2,6 +2,8 @@ mod common;
 
 use common::{run_plan_tooling, write_file};
 
+use pretty_assertions::assert_eq;
+
 #[test]
 fn batches_json_includes_layers_external_blockers_and_conflict_risk() {
     let dir = tempfile::TempDir::new().expect("tempdir");

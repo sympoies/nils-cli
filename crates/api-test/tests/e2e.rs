@@ -6,6 +6,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
 const SECRET_TOKEN: &str = "VERY_SECRET_TOKEN";

@@ -2,6 +2,8 @@ mod common;
 
 use std::fs;
 
+use pretty_assertions::assert_eq;
+
 #[test]
 fn missing_imagemagick_exits_1() {
     let dir = tempfile::TempDir::new().unwrap();

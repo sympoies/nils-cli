@@ -164,6 +164,7 @@ pub fn check_bearer_jwt(token: &str, label: &str, opts: JwtValidationOptions) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     fn b64url_json(value: &serde_json::Value) -> String {
         let bytes = serde_json::to_vec(value).expect("json");

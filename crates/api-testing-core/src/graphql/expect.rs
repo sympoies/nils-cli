@@ -72,6 +72,7 @@ pub fn evaluate_graphql_response_for_suite(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn graphql_expect_default_no_errors_and_has_data() {

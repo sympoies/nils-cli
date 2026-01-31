@@ -2,6 +2,8 @@ mod common;
 
 use std::fs;
 
+use pretty_assertions::assert_eq;
+
 #[test]
 fn info_json_emits_schema_and_writes_summary_json() {
     let dir = tempfile::TempDir::new().unwrap();

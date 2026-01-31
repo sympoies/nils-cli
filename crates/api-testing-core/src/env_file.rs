@@ -83,6 +83,7 @@ pub fn read_var_last_wins(key: &str, files: &[&Path]) -> Result<Option<String>> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     use tempfile::TempDir;
 

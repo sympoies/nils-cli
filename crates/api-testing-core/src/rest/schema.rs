@@ -436,6 +436,7 @@ pub fn parse_rest_request_json(raw: serde_json::Value) -> Result<RestRequest> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn rest_schema_parses_minimal_request() {
