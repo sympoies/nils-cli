@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/nils-common",
+  "crates/nils-term",
   "crates/nils-test-support",
   "crates/cli-template",
   "crates/codex-cli",
@@ -33,3 +34,4 @@ thiserror = "1"
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+indicatif = "0.17"

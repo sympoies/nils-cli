@@ -8,5 +8,6 @@ license = "MIT OR Apache-2.0"
 anyhow = { workspace = true }
 clap = { workspace = true }
 nils-common = { path = "../nils-common" }
+nils-term = { path = "../nils-term" }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

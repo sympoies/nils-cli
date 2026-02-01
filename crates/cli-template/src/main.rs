@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 use tracing::info;
 use tracing_subscriber::{fmt, EnvFilter};
 
@@ -24,6 +25,8 @@ enum Command {
         /// Name to greet (defaults to "world")
         name: Option<String>,
     },
+    /// Render a short progress demo (progress on stderr, stdout stays clean)
+    ProgressDemo,
 }
 
 fn init_tracing(level: &str) {
@@ -44,6 +47,23 @@ fn main() -> anyhow::Result<()> {
             let greeting = nils_common::greeting(&name);
             info!(%greeting, "generated greeting");
             println!("{greeting}");
+        }
+        Some(Command::ProgressDemo) => {
+            let progress = Progress::new(
+                10,
+                ProgressOptions::default()
+                    .with_prefix("demo ")
+                    .with_finish(ProgressFinish::Clear),
+            );
+
+            for i in 0..10_u64 {
+                progress.set_message(format!("step {} of 10", i + 1));
+                progress.inc(1);
+                std::thread::sleep(std::time::Duration::from_millis(30));
+            }
+
+            progress.finish_and_clear();
+            println!("done");
         }
         None => {
             info!("no subcommand selected");
