@@ -1362,6 +1362,7 @@ impl IfEmpty for String {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use tempfile::TempDir;
 
     #[test]
     fn compute_resize_box_scale_rules_and_minimums() {
@@ -1448,5 +1449,189 @@ mod tests {
         assert_eq!((tw, th), (160, 90));
         assert_eq!(fit, Some("cover".to_string()));
         assert!(uses_box);
+    }
+
+    #[test]
+    fn parse_aspect_and_size_validate_inputs() {
+        assert_eq!(parse_aspect("16:9").unwrap(), (16, 9));
+        assert_eq!(parse_aspect_opt(None).unwrap(), None);
+        assert_eq!(parse_aspect_opt(Some("4:3")).unwrap(), Some((4, 3)));
+
+        let err = parse_aspect("0:9").unwrap_err();
+        assert!(err.to_string().contains("W and H must be > 0"));
+        let err = parse_aspect("oops").unwrap_err();
+        assert!(err.to_string().contains("expected W:H"));
+
+        assert_eq!(parse_size("120x60").unwrap(), (120, 60));
+        let err = parse_size("0x1").unwrap_err();
+        assert!(err.to_string().contains("W and H must be > 0"));
+    }
+
+    #[test]
+    fn parse_geometry_accepts_offsets_and_validates() {
+        assert_eq!(parse_geometry("100x50+10+-5").unwrap(), (100, 50, 10, -5));
+        let err = parse_geometry("100x0+0+0").unwrap_err();
+        assert!(err.to_string().contains("W and H must be > 0"));
+    }
+
+    #[test]
+    fn extension_helpers_normalize_and_classify() {
+        assert_eq!(ext_normalize(Path::new("photo.JPEG")), "jpg");
+        assert_eq!(ext_normalize(Path::new("photo.PNG")), "png");
+        assert_eq!(ext_normalize(Path::new("photo")), "");
+        assert!(output_supports_alpha("png"));
+        assert!(output_supports_alpha("webp"));
+        assert!(!output_supports_alpha("jpg"));
+        assert!(is_non_alpha_format("jpg"));
+        assert!(!is_non_alpha_format("png"));
+        assert!(require_background("needs color")
+            .unwrap()
+            .contains("needs color"));
+    }
+
+    #[test]
+    fn validate_output_mode_enforces_constraints() {
+        let err =
+            validate_output_mode(Operation::Info, Some("out.png"), None, false, false).unwrap_err();
+        assert!(err.to_string().contains("info does not write outputs"));
+        assert!(
+            validate_output_mode(Operation::Info, None, None, false, false)
+                .unwrap()
+                .is_none()
+        );
+
+        let err = validate_output_mode(Operation::Convert, None, None, false, false).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("must specify exactly one output mode"));
+
+        let err = validate_output_mode(
+            Operation::Convert,
+            Some("out.png"),
+            Some("out"),
+            false,
+            false,
+        )
+        .unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("must specify exactly one output mode"));
+
+        let err = validate_output_mode(Operation::Convert, None, None, true, false).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("--in-place is destructive and requires --yes"));
+
+        let out = validate_output_mode(Operation::Convert, Some("out.png"), None, false, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(out.mode, "out");
+        assert!(out.out.as_ref().unwrap().ends_with("out.png"));
+
+        let out = validate_output_mode(Operation::Convert, None, Some("out"), false, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(out.mode, "out_dir");
+        assert!(out.out_dir.as_ref().unwrap().ends_with("out"));
+
+        let out = validate_output_mode(Operation::Convert, None, None, true, true)
+            .unwrap()
+            .unwrap();
+        assert_eq!(out.mode, "in_place");
+    }
+
+    #[test]
+    fn expand_inputs_resolves_files_dirs_and_globs() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("a.png"), "img").unwrap();
+        std::fs::write(root.join("b.jpg"), "img").unwrap();
+        let nested = root.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("c.png"), "img").unwrap();
+
+        let inputs = vec![root.to_string_lossy().to_string()];
+        let out = expand_inputs(&inputs, false, &["*.png".to_string()]).unwrap();
+        let mut names = out
+            .iter()
+            .filter_map(|p| p.file_name())
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(names, vec!["a.png"]);
+
+        let out = expand_inputs(&inputs, true, &["*.png".to_string()]).unwrap();
+        let mut names = out
+            .iter()
+            .filter_map(|p| p.file_name())
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(names, vec!["a.png", "c.png"]);
+
+        let out = expand_inputs(
+            &[root.join("a.png").to_string_lossy().to_string()],
+            false,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(out.len(), 1);
+
+        let err = expand_inputs(&[], false, &[]).unwrap_err();
+        assert!(err.to_string().contains("missing --in"));
+
+        let err = expand_inputs(
+            &[root.join("missing.png").to_string_lossy().to_string()],
+            false,
+            &[],
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("input not found"));
+
+        let err = expand_inputs(&inputs, false, &["*.gif".to_string()]).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("no input files resolved from --in/--glob"));
+    }
+
+    #[test]
+    fn build_magick_cmd_selects_backend_or_errors() {
+        let base = Toolchain {
+            magick: None,
+            convert: None,
+            identify: vec!["identify".to_string()],
+            cwebp: None,
+            dwebp: None,
+            cjpeg: None,
+            djpeg: None,
+        };
+
+        let toolchain = Toolchain {
+            magick: Some(vec!["magick".to_string()]),
+            ..base.clone()
+        };
+        let cmd = build_magick_cmd(&toolchain, Path::new("in.png")).unwrap();
+        assert_eq!(cmd[0], "magick");
+        assert!(cmd.iter().any(|c| c.ends_with("in.png")));
+
+        let toolchain = Toolchain {
+            magick: None,
+            convert: Some(vec!["convert".to_string()]),
+            ..base.clone()
+        };
+        let cmd = build_magick_cmd(&toolchain, Path::new("in.png")).unwrap();
+        assert_eq!(cmd[0], "convert");
+
+        let err = build_magick_cmd(&base, Path::new("in.png")).unwrap_err();
+        assert!(err.to_string().contains("no ImageMagick backend"));
+    }
+
+    #[test]
+    fn run_one_magick_is_noop_in_dry_run() {
+        let cmd = vec!["convert".to_string(), "in.png".to_string()];
+        let (rc, stdout, stderr) = run_one_magick(&cmd, true).unwrap();
+        assert_eq!(rc, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
     }
 }

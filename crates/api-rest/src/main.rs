@@ -1515,3 +1515,359 @@ fn report_date_now() -> Result<String> {
     let now = time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::now_utc());
     Ok(now.format(&format)?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use std::sync::Mutex;
+    use tempfile::TempDir;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvGuard {
+        key: &'static str,
+        original: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let original = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.original {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    fn write_file(path: &Path, contents: &str) {
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(path, contents).expect("write");
+    }
+
+    fn write_json(path: &Path, value: &serde_json::Value) {
+        write_file(path, &serde_json::to_string_pretty(value).unwrap());
+    }
+
+    #[test]
+    fn argv_with_default_command_inserts_call() {
+        let argv = argv_with_default_command(&[]);
+        assert_eq!(argv, vec!["api-rest".to_string()]);
+
+        let argv = argv_with_default_command(&["--help".to_string()]);
+        assert_eq!(argv, vec!["api-rest".to_string(), "--help".to_string()]);
+
+        let argv = argv_with_default_command(&["history".to_string()]);
+        assert_eq!(argv, vec!["api-rest".to_string(), "history".to_string()]);
+
+        let argv = argv_with_default_command(&["requests/health.request.json".to_string()]);
+        assert_eq!(
+            argv,
+            vec![
+                "api-rest".to_string(),
+                "call".to_string(),
+                "requests/health.request.json".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn bool_from_env_parses_and_warns() {
+        let mut stderr = Vec::new();
+        let got = bool_from_env(Some("true".to_string()), "REST_FOO", false, &mut stderr);
+        assert_eq!(got, true);
+
+        let mut stderr = Vec::new();
+        let got = bool_from_env(Some("nope".to_string()), "REST_FOO", true, &mut stderr);
+        assert_eq!(got, false);
+        let msg = String::from_utf8_lossy(&stderr);
+        assert!(msg.contains("REST_FOO must be true|false"));
+    }
+
+    #[test]
+    fn parse_u64_default_enforces_min() {
+        assert_eq!(parse_u64_default(Some("".to_string()), 10, 1), 10);
+        assert_eq!(parse_u64_default(Some("abc".to_string()), 10, 1), 10);
+        assert_eq!(parse_u64_default(Some("0".to_string()), 10, 1), 1);
+    }
+
+    #[test]
+    fn to_env_key_and_slugify_normalize() {
+        assert_eq!(to_env_key("prod-us"), "PROD_US");
+        assert_eq!(to_env_key("  foo@@bar  "), "FOO_BAR");
+        assert_eq!(slugify("Hello, world!"), "hello-world");
+        assert_eq!(slugify("  ___ "), "");
+    }
+
+    #[test]
+    fn maybe_relpath_and_shell_quote() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        assert_eq!(maybe_relpath(root, root), ".");
+
+        let child = root.join("a/b");
+        std::fs::create_dir_all(&child).unwrap();
+        assert_eq!(maybe_relpath(&child, root), "a/b");
+
+        assert_eq!(shell_quote(""), "''");
+        assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+    }
+
+    #[test]
+    fn list_available_suffixes_parses_and_sorts() {
+        let tmp = TempDir::new().unwrap();
+        let file = tmp.path().join("endpoints.env");
+        write_file(
+            &file,
+            "export REST_URL_PROD=http://prod\nREST_URL_DEV=http://dev\nREST_URL_=bad\nREST_URL_FOO-BAR=http://x\nREST_URL_TEST=http://t\nREST_URL_TEST=http://t2\n",
+        );
+
+        let suffixes = list_available_suffixes(&file, "REST_URL_");
+        assert_eq!(suffixes, vec!["dev", "prod", "test"]);
+    }
+
+    #[test]
+    fn resolve_endpoint_for_call_honors_url_and_env() {
+        let tmp = TempDir::new().unwrap();
+        let setup = tmp.path().join("setup/rest");
+        std::fs::create_dir_all(&setup).unwrap();
+        write_file(
+            &setup.join("endpoints.env"),
+            "REST_ENV_DEFAULT=prod\nREST_URL_PROD=http://prod\nREST_URL_STAGING=http://staging\n",
+        );
+
+        let args = CallArgs {
+            env: None,
+            url: Some("http://explicit".to_string()),
+            token: None,
+            config_dir: None,
+            no_history: false,
+            request: "requests/health.request.json".to_string(),
+        };
+        let sel = resolve_endpoint_for_call(&args, &setup).unwrap();
+        assert_eq!(sel.rest_url, "http://explicit");
+        assert_eq!(sel.endpoint_label_used, "url");
+
+        let args = CallArgs {
+            env: Some("staging".to_string()),
+            url: None,
+            token: None,
+            config_dir: None,
+            no_history: false,
+            request: "requests/health.request.json".to_string(),
+        };
+        let sel = resolve_endpoint_for_call(&args, &setup).unwrap();
+        assert_eq!(sel.rest_url, "http://staging");
+        assert_eq!(sel.endpoint_label_used, "env");
+
+        let args = CallArgs {
+            env: Some("https://example.test".to_string()),
+            url: None,
+            token: None,
+            config_dir: None,
+            no_history: false,
+            request: "requests/health.request.json".to_string(),
+        };
+        let sel = resolve_endpoint_for_call(&args, &setup).unwrap();
+        assert_eq!(sel.rest_url, "https://example.test");
+        assert_eq!(sel.endpoint_label_used, "url");
+    }
+
+    #[test]
+    fn resolve_endpoint_for_call_unknown_env_lists_available() {
+        let tmp = TempDir::new().unwrap();
+        let setup = tmp.path().join("setup/rest");
+        std::fs::create_dir_all(&setup).unwrap();
+        write_file(
+            &setup.join("endpoints.env"),
+            "REST_URL_PROD=http://prod\nREST_URL_DEV=http://dev\n",
+        );
+
+        let args = CallArgs {
+            env: Some("missing".to_string()),
+            url: None,
+            token: None,
+            config_dir: None,
+            no_history: false,
+            request: "requests/health.request.json".to_string(),
+        };
+
+        let err = resolve_endpoint_for_call(&args, &setup).unwrap_err();
+        assert!(err.to_string().contains("Unknown --env 'missing'"));
+        assert!(err.to_string().contains("prod"));
+    }
+
+    #[test]
+    fn resolve_auth_for_call_prefers_profile_then_env_fallback() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard::set("ACCESS_TOKEN", "env-token");
+
+        let tmp = TempDir::new().unwrap();
+        let setup = tmp.path().join("setup/rest");
+        std::fs::create_dir_all(&setup).unwrap();
+        write_file(&setup.join("tokens.env"), "REST_TOKEN_SVC=svc-token\n");
+
+        let args = CallArgs {
+            env: None,
+            url: None,
+            token: Some("svc".to_string()),
+            config_dir: None,
+            no_history: false,
+            request: "requests/health.request.json".to_string(),
+        };
+        let auth = resolve_auth_for_call(&args, &setup).unwrap();
+        assert_eq!(auth.bearer_token.as_deref(), Some("svc-token"));
+        assert!(matches!(
+            auth.auth_source_used,
+            AuthSourceUsed::TokenProfile
+        ));
+
+        let args = CallArgs {
+            env: None,
+            url: None,
+            token: None,
+            config_dir: None,
+            no_history: false,
+            request: "requests/health.request.json".to_string(),
+        };
+        let auth = resolve_auth_for_call(&args, &setup).unwrap();
+        assert_eq!(auth.bearer_token.as_deref(), Some("env-token"));
+        assert!(matches!(
+            auth.auth_source_used,
+            AuthSourceUsed::EnvFallback { .. }
+        ));
+    }
+
+    #[test]
+    fn build_report_commands_include_expected_flags() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let req = root.join("requests/health.request.json");
+        write_json(
+            &req,
+            &serde_json::json!({
+                "method": "GET",
+                "path": "/health",
+                "expect": { "status": 200 }
+            }),
+        );
+
+        let args = ReportArgs {
+            case: "Health".to_string(),
+            request: req.to_string_lossy().to_string(),
+            out: None,
+            env: Some("staging".to_string()),
+            url: None,
+            token: Some("svc".to_string()),
+            run: true,
+            response: None,
+            no_redact: false,
+            no_command: false,
+            no_command_url: false,
+            project_root: None,
+            config_dir: Some("setup/rest".to_string()),
+        };
+
+        let snippet = build_report_command_snippet(&args, root, true);
+        assert!(snippet.contains("--config-dir 'setup/rest'"));
+        assert!(snippet.contains("--env 'staging'"));
+        assert!(snippet.contains("--token 'svc'"));
+        assert!(snippet.contains("api-rest call"));
+
+        let cmd = build_report_from_cmd_dry_run_command(&args);
+        assert!(cmd.contains("--case 'Health'"));
+        assert!(cmd.contains("--request "));
+        assert!(cmd.contains(" --run"));
+    }
+
+    #[test]
+    fn cmd_history_command_only_and_empty_records() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("setup/rest")).unwrap();
+
+        let history_file = root.join("setup/rest/.rest_history");
+        write_file(
+            &history_file,
+            "# stamp exit=0 setup_dir=.\napi-rest call \\\n  --config-dir 'setup/rest' \\\n  requests/health.request.json \\\n| jq .\n\n",
+        );
+
+        let args = HistoryArgs {
+            config_dir: Some("setup/rest".to_string()),
+            file: None,
+            last: false,
+            tail: Some(1),
+            command_only: true,
+        };
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let code = cmd_history(&args, root, &mut stdout, &mut stderr);
+        assert_eq!(code, 0);
+        let out = String::from_utf8_lossy(&stdout);
+        assert!(out.contains("api-rest call"));
+
+        write_file(&history_file, "");
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let code = cmd_history(&args, root, &mut stdout, &mut stderr);
+        assert_eq!(code, 3);
+    }
+
+    #[test]
+    fn cmd_report_writes_report_from_response_file() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard::set("REST_REPORT_INCLUDE_COMMAND_ENABLED", "true");
+        let _guard_url = EnvGuard::set("REST_REPORT_COMMAND_LOG_URL_ENABLED", "false");
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let requests = root.join("requests");
+        std::fs::create_dir_all(&requests).unwrap();
+
+        let request_file = requests.join("health.request.json");
+        write_json(
+            &request_file,
+            &serde_json::json!({
+                "method": "GET",
+                "path": "/health",
+                "expect": { "status": 200 }
+            }),
+        );
+
+        let response_file = root.join("response.json");
+        write_file(&response_file, r#"{"ok":true}"#);
+
+        let out_path = root.join("report.md");
+        let args = ReportArgs {
+            case: "Health".to_string(),
+            request: request_file.to_string_lossy().to_string(),
+            out: Some(out_path.to_string_lossy().to_string()),
+            env: Some("staging".to_string()),
+            url: None,
+            token: None,
+            run: false,
+            response: Some(response_file.to_string_lossy().to_string()),
+            no_redact: true,
+            no_command: false,
+            no_command_url: true,
+            project_root: Some(root.to_string_lossy().to_string()),
+            config_dir: Some("setup/rest".to_string()),
+        };
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let code = cmd_report(&args, root, &mut stdout, &mut stderr);
+        assert_eq!(code, 0);
+        assert!(out_path.is_file());
+        let report = std::fs::read_to_string(&out_path).unwrap();
+        assert!(report.contains("Result: (response provided; request not executed)"));
+        assert!(report.contains("Endpoint: --env staging"));
+    }
+}

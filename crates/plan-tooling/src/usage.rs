@@ -61,3 +61,26 @@ fn print_help(stderr: bool) {
     let _ = writeln!(out, "  {:<10}  Create a new plan from template", "scaffold");
     let _ = writeln!(out, "  {:<10}  Display help message", "help");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dispatch_help_when_no_args() {
+        let code = dispatch(&["plan-tooling".to_string()]);
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn dispatch_help_flag_is_zero() {
+        let code = dispatch(&["plan-tooling".to_string(), "-h".to_string()]);
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn dispatch_unknown_command_exits_one() {
+        let code = dispatch(&["plan-tooling".to_string(), "nope".to_string()]);
+        assert_eq!(code, 1);
+    }
+}
