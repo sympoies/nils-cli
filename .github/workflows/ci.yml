@@ -63,7 +63,7 @@ jobs:
       contents: read
       pull-requests: write
     env:
-      COVERAGE_FAIL_UNDER_LINES: "0"
+      COVERAGE_FAIL_UNDER_LINES: "70"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -85,10 +85,6 @@ jobs:
 
       - name: Clear previous coverage outputs
         run: rm -rf target/coverage && mkdir -p target/coverage
-
-      - name: Set coverage threshold (main only)
-        if: github.event_name == 'push'
-        run: echo 'COVERAGE_FAIL_UNDER_LINES=55' >> "$GITHUB_ENV"
 
       - name: Generate LCOV report
         run: cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines "$COVERAGE_FAIL_UNDER_LINES"

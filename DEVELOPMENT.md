@@ -33,7 +33,10 @@
 - All commands in **Formatting and linting** must pass.
 - `cargo test --workspace`
 - `zsh -f tests/zsh/completion.test.zsh`
-- Or run the single entrypoint: `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- Coverage must be **>= 70.00%** total line coverage:
+  - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 70`
+  - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
+- Or run the single entrypoint for fmt/clippy/tests: `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh` (still run coverage commands above)
 
 ### CI-style test reporting (optional)
 
@@ -41,7 +44,9 @@
 - Run CI-style tests + generate JUnit: `cargo nextest run --profile ci --workspace` (writes `target/nextest/ci/junit.xml`)
 - Note: nextest does not run doctests; run separately: `cargo test --workspace --doc`
 
-## Coverage (optional)
+## Coverage
+
+- Policy: total line coverage must be **>= 70.00%** (enforced in CI).
 
 - Prereqs:
 
