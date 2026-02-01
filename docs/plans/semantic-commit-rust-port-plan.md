@@ -2,8 +2,8 @@
 
 ## Overview
 This plan ports the existing Codex Zsh entrypoints under:
-- `~/.codex/skills/semantic-commit/scripts/staged_context.sh`
-- `~/.codex/skills/semantic-commit/scripts/commit_with_message.sh`
+- `https://github.com/graysurf/codex-kit/blob/main/skills/tools/devex/semantic-commit/scripts/staged_context.sh`
+- `https://github.com/graysurf/codex-kit/blob/main/skills/tools/devex/semantic-commit/scripts/commit_with_message.sh`
 
 into a single Rust binary crate inside this workspace, named `semantic-commit`.
 Behavioral parity (errors, warnings, exit codes, and validation rules) is the top priority.
@@ -29,14 +29,14 @@ Behavioral parity (errors, warnings, exit codes, and validation rules) is the to
 ## Sprint 1: Parity spec + fixtures
 **Goal**: Make the current behavior explicit and define test fixtures.
 **Demo/Validation**:
-- `rg -n \"semantic-commit\" docs/semantic-commit/spec.md`
-- `rg -n \"^##\" docs/semantic-commit/fixtures.md`
+- `rg -n \"semantic-commit\" crates/semantic-commit/README.md`
+- `rg -n \"^##\" crates/semantic-commit/README.md`
 
 ### Task 1.1: Document current behavior and output contract
 - **Location**:
-  - `docs/semantic-commit/spec.md`
-  - `~/.codex/skills/semantic-commit/scripts/staged_context.sh`
-  - `~/.codex/skills/semantic-commit/scripts/commit_with_message.sh`
+  - `crates/semantic-commit/README.md`
+  - `https://github.com/graysurf/codex-kit/blob/main/skills/tools/devex/semantic-commit/scripts/staged_context.sh`
+  - `https://github.com/graysurf/codex-kit/blob/main/skills/tools/devex/semantic-commit/scripts/commit_with_message.sh`
 - **Description**: Capture CLI surface, preconditions, validation rules, error/warn text, and exit
   codes for both entrypoints.
 - **Dependencies**: none
@@ -45,12 +45,12 @@ Behavioral parity (errors, warnings, exit codes, and validation rules) is the to
   - Spec includes exact error/warn strings, exit codes, and validation rules.
   - Spec documents Codex command resolution rules.
 - **Validation**:
-  - `rg -n \"invalid header format\" docs/semantic-commit/spec.md`
-  - `rg -n \"CODEX_COMMANDS_PATH\" docs/semantic-commit/spec.md`
+  - `rg -n \"invalid header format\" crates/semantic-commit/README.md`
+  - `rg -n \"CODEX_COMMANDS_PATH\" crates/semantic-commit/README.md`
 
 ### Task 1.2: Define canonical fixture scenarios
 - **Location**:
-  - `docs/semantic-commit/fixtures.md`
+  - `crates/semantic-commit/README.md`
 - **Description**: Enumerate deterministic test scenarios for both subcommands (success, fallbacks,
   and edge-case failures).
 - **Dependencies**: Task 1.1
@@ -59,8 +59,8 @@ Behavioral parity (errors, warnings, exit codes, and validation rules) is the to
   - Fixtures cover staged-context fallback, outside-repo, no-staged, commit validation errors,
     and commit success output path.
 - **Validation**:
-  - `rg -n \"staged-context\" docs/semantic-commit/fixtures.md`
-  - `rg -n \"commit:\" docs/semantic-commit/fixtures.md`
+  - `rg -n \"staged-context\" crates/semantic-commit/README.md`
+  - `rg -n \"commit:\" crates/semantic-commit/README.md`
 
 ## Sprint 2: Crate scaffold + CLI surface
 **Goal**: Add the new crate and implement the CLI entrypoints with custom help/usage.
@@ -187,5 +187,5 @@ Behavioral parity (errors, warnings, exit codes, and validation rules) is the to
 
 ## Rollback plan
 - Remove the crate from `Cargo.toml` workspace members.
-- Delete `crates/semantic-commit/`, `docs/semantic-commit/`, `completions/zsh/_semantic-commit`, and
+- Delete `crates/semantic-commit/`, `completions/zsh/_semantic-commit`, and
   `wrappers/semantic-commit`, and revert `tests/zsh/completion.test.zsh` changes.

@@ -173,7 +173,7 @@ Compatibility with the legacy `api-report-from-cmd` shell script is best-effort;
 ### Task 3.2: Document `report-from-cmd` usage (README + usage guide)
 - **Location**:
   - `README.md`
-  - `docs/api-testing/usage.md`
+  - `crates/api-testing-core/README.md`
 - **Description**: Add a short section showing how to pipe a history snippet into `report-from-cmd`, how `--dry-run` works, and how to use `--response` for offline report generation.
 - **Dependencies**:
   - Task 2.1
@@ -183,7 +183,7 @@ Compatibility with the legacy `api-report-from-cmd` shell script is best-effort;
   - README includes at least one `api-gql report-from-cmd` and one `api-rest report-from-cmd` example.
   - Usage guide documents stdin behavior and the `--response -` stdin reservation rule.
 - **Validation**:
-  - `rg -n \"report-from-cmd\" README.md docs/api-testing/usage.md`
+  - `rg -n \"report-from-cmd\" README.md crates/api-testing-core/README.md`
 
 ### Task 3.3: Run mandatory checks (fmt, clippy, tests, zsh completion)
 - **Location**:

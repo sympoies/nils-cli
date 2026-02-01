@@ -1,14 +1,150 @@
+# codex-cli
+
+Rust port of the Zsh Codex helpers (`codex-tools`, `codex-use`, `codex-rate-limits`, `codex-starship`, etc.) for the `nils-cli` workspace.
+
+## Install
+
+- Build the workspace: `cargo build`
+- Run help: `cargo run -p codex-cli -- --help`
+
+For a local release install (all workspace binaries), follow `DEVELOPMENT.md`:
+
+- `./.codex/skills/nils-cli-install/scripts/nils-cli-install.sh`
+
+## Quickstart
+
+Agent commands are **dangerous-mode gated** (they call `codex exec --dangerously-bypass-approvals-and-sandbox`).
+
+```sh
+export CODEX_ALLOW_DANGEROUS_ENABLED=true
+codex-cli agent advice "How do I debug a flaky test?"
+```
+
+End-to-end flow (auth -> refresh -> rate-limits -> starship):
+
+```sh
+codex-cli auth use work
+codex-cli auth refresh
+codex-cli diag rate-limits --one-line
+export CODEX_STARSHIP_ENABLED=true
+codex-cli starship --refresh
+```
+
+## Command groups
+
+### `codex-cli agent`
+
+- `codex-cli agent prompt [PROMPT...]`
+- `codex-cli agent advice [QUESTION...]`
+- `codex-cli agent knowledge [CONCEPT...]`
+- `codex-cli agent commit [-p|--push] [-a|--auto-stage] [EXTRA_PROMPT...]`
+
+Notes:
+
+- Requires `CODEX_ALLOW_DANGEROUS_ENABLED=true`.
+- Requires the external `codex` CLI on `PATH` (the Rust wrapper shells out to `codex exec`).
+
+### `codex-cli auth`
+
+- `codex-cli auth use <profile|email>`
+- `codex-cli auth refresh [secret.json]`
+- `codex-cli auth auto-refresh`
+- `codex-cli auth current`
+- `codex-cli auth sync`
+
+### `codex-cli diag`
+
+- `codex-cli diag rate-limits [OPTIONS] [secret.json]`
+
+Useful flags:
+
+- `--one-line` (single-line output; also used by `--cached`)
+- `--all` (table for all secrets)
+- `--async` (concurrent all-secrets mode)
+- `--cached` (no network; implies `--one-line`)
+
+### `codex-cli config`
+
+Because a child process cannot mutate the parent shell environment, `config set` prints a shell snippet.
+
+- Show effective values:
+
+  ```sh
+  codex-cli config show
+  ```
+
+- Set a value in your current shell:
+
+  ```sh
+  eval "$(codex-cli config set model gpt-5.1-codex-mini)"
+  eval "$(codex-cli config set reasoning medium)"
+  eval "$(codex-cli config set dangerous true)"
+  ```
+
+### `codex-cli starship`
+
+- Enable:
+
+  ```sh
+  export CODEX_STARSHIP_ENABLED=true
+  ```
+
+- Use from Starship:
+
+  ```toml
+  [custom.codex]
+  command = "codex-cli starship"
+  when = "true"
+  ```
+
+## Zsh wrappers and migration
+
+The repo ships thin wrapper scripts under `wrappers/` to preserve legacy command names.
+
+### Wrapper mapping
+
+| Wrapper | Runs |
+|---|---|
+| `codex-use` | `codex-cli auth use` |
+| `codex-refresh-auth` | `codex-cli auth refresh` |
+| `codex-auto-refresh` | `codex-cli auth auto-refresh` |
+| `codex-rate-limits` | `codex-cli diag rate-limits` |
+| `codex-rate-limits-async` | `codex-cli diag rate-limits --async` |
+| `codex-starship` | `codex-cli starship` |
+| `cx` | `codex-cli` |
+| `cxgp` | `codex-cli agent prompt` |
+| `cxga` | `codex-cli agent advice` |
+| `cxgk` | `codex-cli agent knowledge` |
+| `cxgc` | `codex-cli agent commit` |
+| `cxau` | `codex-cli auth use` |
+| `cxar` | `codex-cli auth refresh` |
+| `cxaa` | `codex-cli auth auto-refresh` |
+| `cxac` | `codex-cli auth current` |
+| `cxas` | `codex-cli auth sync` |
+| `cxdr` | `codex-cli diag rate-limits` |
+| `cxcs` | `codex-cli config show` |
+| `cxct` | `codex-cli config set` |
+| `crl` | `codex-cli diag rate-limits` |
+| `crla` | `codex-cli diag rate-limits --async` |
+
+### Zsh completion
+
+- Completion file: `completions/zsh/_codex-cli`
+- Setup:
+  - Add `wrappers/` to `PATH`
+  - Add `completions/zsh/` to `fpath` and run `compinit`
+
 # codex-cli parity spec
 
 ## Scope and sources
 
 This spec documents the Rust `codex-cli` contract based on the current Zsh implementation in:
 
-- `~/.config/zsh/scripts/_features/codex/codex-tools.zsh`
-- `~/.config/zsh/scripts/_features/codex/codex-secret.zsh`
-- `~/.config/zsh/scripts/_features/codex/codex-auto-refresh.zsh`
-- `~/.config/zsh/scripts/_features/codex/codex-starship.zsh`
-- `~/.config/zsh/scripts/_features/codex/alias.zsh`
+- `https://github.com/graysurf/zsh-kit/blob/main/scripts/_features/codex/codex-tools.zsh`
+- `https://github.com/graysurf/zsh-kit/blob/main/scripts/_features/codex/codex-secret.zsh`
+- `https://github.com/graysurf/zsh-kit/blob/main/scripts/_features/codex/codex-auto-refresh.zsh`
+- `https://github.com/graysurf/zsh-kit/blob/main/scripts/_features/codex/codex-starship.zsh`
+- `https://github.com/graysurf/zsh-kit/blob/main/scripts/_features/codex/alias.zsh`
 
 Parity goal: match behavior, messages, exit codes, and side effects unless explicitly called out.
 
@@ -299,4 +435,185 @@ Behavior:
 - Output format:
   - Default: `<name> <window>:<pct>% W:<pct>% <weekly_reset_time>`
   - `--no-5h`: `<name> W:<pct>% <weekly_reset_time>`
+
+# codex-cli fixtures
+
+This document defines deterministic fixtures and edge-case coverage for codex-cli parity tests.
+
+## Fixture layout (proposed)
+
+```
+fixtures/codex-cli/
+  auth/
+    auth-active.json
+    auth-missing-refresh.json
+    auth-invalid-json.json
+  secrets/
+    alpha.json
+    beta.json
+    alpha-duplicate.json
+    gamma-missing-tokens.json
+  cache/
+    secrets/
+      auth.json.timestamp
+      alpha.json.timestamp
+    starship-rate-limits/
+      alpha.kv
+      beta.kv
+      auth_<hash>.kv
+  http/
+    oauth-token-200.json
+    oauth-token-401.json
+    wham-usage-200.json
+    wham-usage-401.json
+```
+
+## Auth/secrets JSON templates
+
+Base structure used by `auth-active.json` and secret files:
+
+```json
+{
+  "tokens": {
+    "access_token": "hdr.<payload>.sig",
+    "refresh_token": "refresh_token_value",
+    "id_token": "hdr.<payload>.sig",
+    "account_id": "acct_001"
+  },
+  "last_refresh": "2025-01-20T12:34:56Z"
+}
+```
+
+Deterministic JWT payloads (base64url; no padding):
+
+- `payload_alpha`:
+  - `eyJzdWIiOiJ1c2VyXzEyMyIsImVtYWlsIjoiYWxwaGFAZXhhbXBsZS5jb20iLCJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF91c2VyX2lkIjoidXNlcl8xMjMiLCJlbWFpbCI6ImFscGhhQGV4YW1wbGUuY29tIn19`
+- `payload_beta`:
+  - `eyJzdWIiOiJ1c2VyXzQ1NiIsImVtYWlsIjoiYmV0YUBleGFtcGxlLmNvbSIsImh0dHBzOi8vYXBpLm9wZW5haS5jb20vYXV0aCI6eyJjaGF0Z3B0X3VzZXJfaWQiOiJ1c2VyXzQ1NiIsImVtYWlsIjoiYmV0YUBleGFtcGxlLmNvbSJ9fQ`
+
+Example tokens (header can be any base64url string):
+
+- `hdr = eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0`
+- `access_token = hdr.<payload_alpha>.sig`
+- `id_token = hdr.<payload_alpha>.sig`
+
+Profiles:
+
+- `secrets/alpha.json`: payload_alpha, account_id `acct_001`.
+- `secrets/beta.json`: payload_beta, account_id `acct_002`.
+- `secrets/alpha-duplicate.json`: same payload/email as alpha to trigger ambiguity.
+- `auth/auth-active.json`: identical to `secrets/alpha.json` (exact hash match).
+- `auth/auth-missing-refresh.json`: no refresh_token (to trigger exit 2 in refresh).
+- `auth/auth-invalid-json.json`: invalid JSON (syntax error) for error paths.
+
+## Cache fixtures
+
+### Secrets timestamp cache
+
+- `cache/secrets/<filename>.timestamp` contains ISO8601 `last_refresh` (e.g. `2025-01-20T12:34:56Z`).
+
+### Starship cache KV
+
+KV format (one per line):
+
+```
+fetched_at=1700000000
+non_weekly_label=5h
+non_weekly_remaining=94
+non_weekly_reset_epoch=1700003600
+weekly_remaining=88
+weekly_reset_epoch=1700600000
+```
+
+Fixtures:
+
+- `cache/starship-rate-limits/alpha.kv` - valid cache for alpha.
+- `cache/starship-rate-limits/beta.kv` - valid cache for beta.
+- `cache/starship-rate-limits/auth_<hash>.kv` - valid cache for auth file hash key.
+- Invalid cache variants (missing weekly or non-weekly fields) to trigger errors.
+
+## HTTP stubs
+
+### OAuth token success (200)
+
+`http/oauth-token-200.json`:
+
+```json
+{
+  "access_token": "new_access",
+  "refresh_token": "new_refresh",
+  "id_token": "new_id",
+  "token_type": "Bearer",
+  "expires_in": 3600
+}
+```
+
+### OAuth token error (401)
+
+`http/oauth-token-401.json`:
+
+```json
+{
+  "error": "invalid_grant",
+  "error_description": "Refresh token expired"
+}
+```
+
+### wham/usage success (200)
+
+`http/wham-usage-200.json`:
+
+```json
+{
+  "rate_limit": {
+    "primary_window": {
+      "limit_window_seconds": 18000,
+      "used_percent": 12,
+      "reset_at": 1700003600
+    },
+    "secondary_window": {
+      "limit_window_seconds": 604800,
+      "used_percent": 25,
+      "reset_at": 1700600000
+    }
+  }
+}
+```
+
+### wham/usage unauthorized (401)
+
+`http/wham-usage-401.json`:
+
+```json
+{
+  "error": "Unauthorized"
+}
+```
+
+## Edge-case matrix
+
+| Scenario | Inputs | Expected behavior | Exit code |
+|---|---|---|---|
+| Missing `codex` binary | `agent prompt` with dangerous enabled | stderr `missing binary: codex` (if wrapper checks); no exec | 1 |
+| Missing `git` | `agent commit` | stderr `codex-commit-with-scope: missing binary: git` | 1 |
+| Not a git repo | `agent commit` | stderr `codex-commit-with-scope: not a git repository` | 1 |
+| No staged changes | `agent commit` (no auto-stage) | stderr `no staged changes` | 1 |
+| Invalid `auth use` arg | `auth use ../x` | stderr `invalid secret name` | 64 |
+| Ambiguous profile | `auth use alpha` with `alpha.json` and `alpha-duplicate.json` | stderr includes `identifier matches multiple secrets` + candidates | 2 |
+| Missing secret | `auth use missing` | stderr `secret not found` | 1 |
+| Missing refresh token | `auth refresh` on `auth-missing-refresh.json` | stderr `failed to read refresh token` | 2 |
+| Refresh 401 then success | `auth refresh` with first 401 then 200 | refresh+retry, success message, timestamps updated | 0 |
+| Refresh non-200 | `auth refresh` with 401/500 | stderr with error summary (if present) | 3 |
+| Rate limits 401 refresh retry | `diag rate-limits` | refresh tokens, retry once, success | 0 |
+| Rate limits 401 no-refresh | `diag rate-limits --no-refresh-auth` | no retry, stderr non-200 | 3 |
+| `--cached` without cache | `diag rate-limits --cached` | stderr `cache not found` | 1 |
+| `--cached` invalid cache | missing weekly/non-weekly data | stderr `invalid cache` | 1 |
+| `--json` + `--cached` | invalid combo | usage error | 64 |
+| `--all` + `--json` | invalid combo | usage error | 64 |
+| `--all` empty secret dir | no secrets | stderr `no secrets found` | 1 |
+| `--async` jobs invalid | `--jobs 0` or non-numeric | default to 5 | 0 |
+| Async debug | `--async --debug` | prints captured per-account stderr after table | 0 or 1 |
+| Starship stale output | cached but expired | prints cached output + `CODEX_STARSHIP_STALE_SUFFIX` | 0 |
+| Starship disabled | `CODEX_STARSHIP_ENABLED=false` | prints nothing | 0 |
+| `NO_COLOR` set | rate-limits table | no ANSI color output | 0 |
 

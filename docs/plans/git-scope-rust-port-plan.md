@@ -2,7 +2,7 @@
 
 ## Overview
 This plan ports the existing Zsh `git-scope` implementation into a Rust CLI crate inside this workspace,
-keeping behavioral and output parity with `~/.config/zsh/scripts/git/git-scope.zsh`. It also ports the
+keeping behavioral and output parity with `https://github.com/graysurf/zsh-kit/blob/main/scripts/git/git-scope.zsh`. It also ports the
 Zsh completion script and recreates/extends the existing Zsh tests in Rust or zsh-driven integration
 tests to ensure parity (including print modes, merge commit handling, and no-color behavior).
 The outcome is a `git-scope` binary with matching UX, a maintained completion file, and a repeatable
@@ -28,14 +28,14 @@ test suite that covers the original script end-to-end.
 ## Sprint 1: Baseline parity spec + fixture capture
 **Goal**: Make the existing behavior explicit and capture fixtures for parity.
 **Demo/Validation**:
-- Command(s): `rg -n "git-scope" ~/.config/zsh/scripts/git/git-scope.zsh`, `rg -n "git-scope" ~/.config/zsh/scripts/_completion/_git-scope`
+- Command(s): `rg -n "git-scope" crates/git-scope/README.md`, `rg -n "compdef" completions/zsh/_git-scope`
 - Verify: Spec doc includes subcommands, flags, output sections, and edge-case behavior.
 
 ### Task 1.1: Document current git-scope behavior and output contract
 - **Location**:
-  - `docs/git-scope/spec.md`
-  - `~/.config/zsh/scripts/git/git-scope.zsh`
-  - `~/.config/zsh/docs/cli/git-scope.md`
+  - `crates/git-scope/README.md`
+  - `https://github.com/graysurf/zsh-kit/blob/main/scripts/git/git-scope.zsh`
+  - `https://github.com/graysurf/zsh-kit/blob/main/docs/cli/git-scope.md`
 - **Description**: Read the current Zsh implementation and documentation to produce a concise spec
   covering subcommands, flags, output sections, color behavior, and tree/print fallbacks.
 - **Dependencies**:
@@ -46,13 +46,13 @@ test suite that covers the original script end-to-end.
   - Spec captures merge commit parent selection behavior and warning messages.
   - Spec documents tree rendering and binary file output placeholders.
 - **Validation**:
-  - `rg "^##" docs/git-scope/spec.md`
-  - `rg "--parent" docs/git-scope/spec.md`
-  - `rg "tree" docs/git-scope/spec.md`
+  - `rg "^##" crates/git-scope/README.md`
+  - `rg "--parent" crates/git-scope/README.md`
+  - `rg "tree" crates/git-scope/README.md`
 
 ### Task 1.2: Capture fixture scenarios for tests
 - **Location**:
-  - `docs/git-scope/fixtures.md`
+  - `crates/git-scope/README.md`
 - **Description**: Define canonical test scenarios (staged/unstaged/both, untracked, tracked prefix,
   commit diff, merge commit parent selection, binary file, tree missing) and expected output sections
   to guide test creation.
@@ -63,8 +63,8 @@ test suite that covers the original script end-to-end.
   - Fixture list covers all subcommands and print modes.
   - Each fixture describes setup steps and expected output markers.
 - **Validation**:
-  - `rg "^##" docs/git-scope/fixtures.md`
-  - `rg "commit" docs/git-scope/fixtures.md`
+  - `rg "^##" crates/git-scope/README.md`
+  - `rg "commit" crates/git-scope/README.md`
 
 ## Sprint 2: Rust crate scaffold + CLI surface
 **Goal**: Add a new `git-scope` crate and CLI interface matching the current script.
@@ -213,7 +213,7 @@ test suite that covers the original script end-to-end.
 ### Task 5.1: Port zsh completion script
 - **Location**:
   - `completions/zsh/_git-scope`
-- **Description**: Port `~/.config/zsh/scripts/_completion/_git-scope` into this repo, preserving
+- **Description**: Port `https://github.com/graysurf/zsh-kit/blob/main/scripts/_completion/_git-scope` into this repo, preserving
   subcommands, options, commit hash completion, and alias support for `gs`.
 - **Dependencies**:
   - Task 2.2
@@ -317,7 +317,6 @@ test suite that covers the original script end-to-end.
 ### Task 7.1: Add README usage and install notes
 - **Location**:
   - `README.md`
-  - `docs/completions-strategy.md`
 - **Description**: Document the new `git-scope` binary, wrapper scripts, and zsh completion setup
   in the repo docs.
 - **Dependencies**:
@@ -325,10 +324,10 @@ test suite that covers the original script end-to-end.
 - **Complexity**: 3
 - **Acceptance criteria**:
   - README includes `git-scope` usage and wrapper install notes.
-  - Completion doc references the `_git-scope` file.
+  - README references the `_git-scope` completion file.
 - **Validation**:
   - `rg "git-scope" README.md`
-  - `rg "_git-scope" docs/completions-strategy.md`
+  - `rg "_git-scope" README.md`
 
 ### Task 7.2: End-to-end validation
 - **Location**:
@@ -361,4 +360,5 @@ test suite that covers the original script end-to-end.
 
 ## Rollback plan
 - Remove `crates/git-scope`, wrapper scripts, and completion files.
-- Revert docs changes and keep existing Zsh script in `~/.config/zsh` as the active implementation.
+- Revert docs changes and keep the existing Zsh implementation as the active reference:
+  `https://github.com/graysurf/zsh-kit/blob/main/scripts/git/git-scope.zsh`.

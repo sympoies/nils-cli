@@ -26,12 +26,12 @@ The outcome is a cohesive set of CLIs with shared core libraries, comprehensive 
 ## Sprint 1: Parity specs, fixtures, and dependency decisions
 **Goal**: Make current behavior explicit and lock down a parity contract for each CLI (plus shared conventions).
 **Demo/Validation**:
-- Command(s): `rg -n "Usage:" /Users/terry/.config/codex-kit/skills/tools/testing -S`, `rg -n "Exit codes" -S /Users/terry/.config/codex-kit/skills/tools/testing`
+- Command(s): See https://github.com/graysurf/codex-kit/tree/main/skills/tools/testing
 - Verify: Specs capture flags, env vars, exit codes, history/report semantics, and degradation paths.
 
 ### Task 1.1: Write shared overview and CLI mapping
 - **Location**:
-  - `docs/api-testing/overview.md`
+  - `crates/api-testing-core/README.md`
 - **Description**: Document how the three binaries map to the existing scripts, the shared conventions (config discovery,
   path resolution rules, output rules, secret handling), and what is considered parity-critical vs best-effort.
 - **Dependencies**:
@@ -42,12 +42,12 @@ The outcome is a cohesive set of CLIs with shared core libraries, comprehensive 
   - Overview defines consistent terminology: setup dir, config dir, env preset, token profile, history, report.
   - Overview lists the canonical repo layouts supported by the suite runner (setup/ and tests/).
 - **Validation**:
-  - `rg -n "^# " docs/api-testing/overview.md`
-  - `rg -n "api-rest|api-gql|api-test" docs/api-testing/overview.md`
+  - `rg -n "^# " crates/api-testing-core/README.md`
+  - `rg -n "api-rest|api-gql|api-test" crates/api-testing-core/README.md`
 
 ### Task 1.2: Write api-rest parity spec
 - **Location**:
-  - `docs/api-rest/spec.md`
+  - `crates/api-rest/README.md`
 - **Description**: Specify `api-rest` CLI behavior based on `rest.sh` and its report/history scripts: arguments, env vars,
   request JSON schema, auth selection rules, JWT validation behavior, exit codes, and output conventions.
 - **Dependencies**:
@@ -59,13 +59,13 @@ The outcome is a cohesive set of CLIs with shared core libraries, comprehensive 
   - Spec includes history semantics and report semantics (including redaction defaults).
   - Spec includes an explicit external-dependency inventory for api-rest (and the chosen policy per dependency).
 - **Validation**:
-  - `rg -n "^# api-rest parity spec" docs/api-rest/spec.md`
-  - `rg -n "Request schema" docs/api-rest/spec.md`
-  - `rg -n "External dependencies" docs/api-rest/spec.md`
+  - `rg -n "^# api-rest parity spec" crates/api-rest/README.md`
+  - `rg -n "Request schema" crates/api-rest/README.md`
+  - `rg -n "External dependencies" crates/api-rest/README.md`
 
 ### Task 1.3: Write api-rest fixtures
 - **Location**:
-  - `docs/api-rest/fixtures.md`
+  - `crates/api-rest/README.md`
 - **Description**: Define deterministic fixture scenarios for `api-rest`, including successful calls, expect failures,
   multipart upload, cleanup templating, and history/report generation.
 - **Dependencies**:
@@ -76,12 +76,12 @@ The outcome is a cohesive set of CLIs with shared core libraries, comprehensive 
   - Fixtures include at least one multipart case and one cleanup case.
   - Fixtures include a history append/rotation case.
 - **Validation**:
-  - `rg -n "^# api-rest fixtures" docs/api-rest/fixtures.md`
-  - `rg -n "multipart|cleanup|history" docs/api-rest/fixtures.md`
+  - `rg -n "^# api-rest fixtures" crates/api-rest/README.md`
+  - `rg -n "multipart|cleanup|history" crates/api-rest/README.md`
 
 ### Task 1.4: Write api-gql parity spec
 - **Location**:
-  - `docs/api-gql/spec.md`
+  - `crates/api-gql/README.md`
 - **Description**: Specify `api-gql` CLI behavior based on `gql.sh` and its helper scripts: arguments, env vars,
   operation and variables handling, JWT selection and login fallback, list commands, schema resolution, and exit codes.
 - **Dependencies**:
@@ -93,13 +93,13 @@ The outcome is a cohesive set of CLIs with shared core libraries, comprehensive 
   - Spec captures mutation detection semantics and how it influences safety in the suite runner.
   - Spec includes an explicit external-dependency inventory for api-gql (and the chosen policy per dependency).
 - **Validation**:
-  - `rg -n "^# api-gql parity spec" docs/api-gql/spec.md`
-  - `rg -n "GQL_VARS_MIN_LIMIT|login|schema" docs/api-gql/spec.md`
-  - `rg -n "External dependencies" docs/api-gql/spec.md`
+  - `rg -n "^# api-gql parity spec" crates/api-gql/README.md`
+  - `rg -n "GQL_VARS_MIN_LIMIT|login|schema" crates/api-gql/README.md`
+  - `rg -n "External dependencies" crates/api-gql/README.md`
 
 ### Task 1.5: Write api-gql fixtures
 - **Location**:
-  - `docs/api-gql/fixtures.md`
+  - `crates/api-gql/README.md`
 - **Description**: Define deterministic fixture scenarios for `api-gql`, including query success, errors present,
   allow-empty report gating, mutation detection, schema resolution behavior, and history behavior.
 - **Dependencies**:
@@ -110,12 +110,12 @@ The outcome is a cohesive set of CLIs with shared core libraries, comprehensive 
   - Fixtures cover allow-empty report behavior and default non-empty requirements.
   - Fixtures cover list envs/jwts and schema resolution.
 - **Validation**:
-  - `rg -n "^# api-gql fixtures" docs/api-gql/fixtures.md`
-  - `rg -n "mutation|allow-empty|schema|history" docs/api-gql/fixtures.md`
+  - `rg -n "^# api-gql fixtures" crates/api-gql/README.md`
+  - `rg -n "mutation|allow-empty|schema|history" crates/api-gql/README.md`
 
 ### Task 1.6: Write api-test parity spec
 - **Location**:
-  - `docs/api-test/spec.md`
+  - `crates/api-test/README.md`
 - **Description**: Specify `api-test` suite-runner behavior based on `api-test.sh` and `api-test-summary.sh`: suite file
   resolution, manifest schema v1, filtering, allow-writes guardrails, per-case artifacts, results JSON schema,
   JUnit output, and exit codes.
@@ -131,13 +131,13 @@ The outcome is a cohesive set of CLIs with shared core libraries, comprehensive 
   - Spec defines results JSON shape and exit code mapping (all pass vs failures vs invalid input).
   - Spec includes an explicit external-dependency inventory for api-test (and the chosen policy per dependency).
 - **Validation**:
-  - `rg -n "^# api-test parity spec" docs/api-test/spec.md`
-  - `rg -n "Suite schema v1|results|JUnit|Exit codes" docs/api-test/spec.md`
-  - `rg -n "External dependencies" docs/api-test/spec.md`
+  - `rg -n "^# api-test parity spec" crates/api-test/README.md`
+  - `rg -n "Suite schema v1|results|JUnit|Exit codes" crates/api-test/README.md`
+  - `rg -n "External dependencies" crates/api-test/README.md`
 
 ### Task 1.7: Write api-test fixtures
 - **Location**:
-  - `docs/api-test/fixtures.md`
+  - `crates/api-test/README.md`
 - **Description**: Define deterministic suite-runner fixture scenarios: mixed REST + GraphQL suites, tagging filters,
   skip/only filters, allow-writes gating, rest-flow token extraction, auth JSON login caching, and cleanup steps.
 - **Dependencies**:
@@ -148,8 +148,8 @@ The outcome is a cohesive set of CLIs with shared core libraries, comprehensive 
   - Fixtures include at least one rest-flow case and one auth JSON driven suite.
   - Fixtures include at least one cleanup scenario for REST and for GraphQL.
 - **Validation**:
-  - `rg -n "^# api-test fixtures" docs/api-test/fixtures.md`
-  - `rg -n "rest-flow|auth|cleanup|tag|skip" docs/api-test/fixtures.md`
+  - `rg -n "^# api-test fixtures" crates/api-test/README.md`
+  - `rg -n "rest-flow|auth|cleanup|tag|skip" crates/api-test/README.md`
 
 ## Sprint 2: Workspace scaffold (crates + CLI surfaces + smoke tests)
 **Goal**: Create crates and CLI parsing surfaces for the three binaries plus a shared core crate.
@@ -668,7 +668,7 @@ The outcome is a cohesive set of CLIs with shared core libraries, comprehensive 
 
 ### Task 7.1: Add user-facing usage docs and migration notes
 - **Location**:
-  - `docs/api-testing/usage.md`
+  - `crates/api-testing-core/README.md`
 - **Description**: Document how to migrate from calling the legacy scripts to using the new binaries, including directory
   layout expectations, CI usage patterns, and how to keep report outputs consistent with existing contracts.
 - **Dependencies**:
@@ -680,8 +680,8 @@ The outcome is a cohesive set of CLIs with shared core libraries, comprehensive 
   - Docs include concrete command examples for REST, GraphQL, and suite runs.
   - Docs include guidance for report generation and summary usage.
 - **Validation**:
-  - `rg -n "^# " docs/api-testing/usage.md`
-  - `rg -n "api-rest|api-gql|api-test" docs/api-testing/usage.md`
+  - `rg -n "^# " crates/api-testing-core/README.md`
+  - `rg -n "api-rest|api-gql|api-test" crates/api-testing-core/README.md`
 
 ### Task 7.2: Run mandatory repo checks and fix in-scope failures
 - **Location**:

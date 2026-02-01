@@ -1,7 +1,7 @@
 # Plan: Rust fzf-cli parity (CLI + docs + tests)
 
 ## Overview
-This plan ports the existing Zsh `fzf-tools` implementation from `~/.config/zsh/scripts/fzf-tools.zsh`
+This plan ports the existing Zsh `fzf-tools` implementation from `https://github.com/graysurf/zsh-kit/blob/main/scripts/fzf-tools.zsh`
 into a Rust CLI crate inside this workspace, named `fzf-cli`. The goal is behavioral parity for the
 dispatcher commands (help text, guardrails, prompts, and exit codes) while keeping the same external
 tooling model (shell out to `fzf`, `git`, `ps`, `lsof`, etc.) and providing deterministic, CI-friendly
@@ -30,13 +30,13 @@ tests via stubbed PATH tools.
 ## Sprint 1: Parity spec + fixture capture
 **Goal**: Make current `fzf-tools` behavior explicit and define test fixtures for parity and edge cases.
 **Demo/Validation**:
-- Command(s): `rg -n "fzf-tools\\(" ~/.config/zsh/scripts/fzf-tools.zsh`
+- Command(s): `rg -n "^# fzf-cli parity spec" crates/fzf-cli/README.md`
 - Verify: spec and fixtures describe commands, flags, prompts, errors, and non-trivial edge cases.
 
 ### Task 1.1: Write fzf-cli parity spec
 - **Location**:
-  - `docs/fzf-cli/spec.md`
-- **Description**: Read `~/.config/zsh/scripts/fzf-tools.zsh` and document `fzf-cli` commands,
+  - `crates/fzf-cli/README.md`
+- **Description**: Read `https://github.com/graysurf/zsh-kit/blob/main/scripts/fzf-tools.zsh` and document `fzf-cli` commands,
   argument parsing, output/prompt strings, exit codes, and limitations where parent-shell mutation is
   not possible.
 - **Dependencies**:
@@ -48,11 +48,11 @@ tests via stubbed PATH tools.
   - Spec documents error messages and exit codes for unknown commands and invalid flags.
   - Spec documents how `directory` and `history` behave in Rust (and how to wrap for shell parity).
 - **Validation**:
-  - `rg -n "^# fzf-cli parity spec" docs/fzf-cli/spec.md`
+  - `rg -n "^# fzf-cli parity spec" crates/fzf-cli/README.md`
 
 ### Task 1.2: Define fzf-cli fixtures and edge-case matrix
 - **Location**:
-  - `docs/fzf-cli/fixtures.md`
+  - `crates/fzf-cli/README.md`
 - **Description**: Define canonical fixture scenarios and edge cases (missing tools, non-git repo,
   flag parse errors, empty selections, kill confirmations, snapshot extraction failures) with setup
   steps and expected output markers.
@@ -63,7 +63,7 @@ tests via stubbed PATH tools.
   - Fixtures cover every dispatcher command at least once.
   - Fixtures include explicit edge cases for parse errors and missing dependencies.
 - **Validation**:
-  - `rg -n "^# fzf-cli fixtures" docs/fzf-cli/fixtures.md`
+  - `rg -n "^# fzf-cli fixtures" crates/fzf-cli/README.md`
 
 ## Sprint 2: Rust crate scaffold + CLI surface
 **Goal**: Add the `fzf-cli` crate and implement help/dispatch behavior matching `fzf-tools`.
@@ -166,7 +166,7 @@ tests via stubbed PATH tools.
 - **Location**:
   - `crates/fzf-cli/src/directory.rs`
   - `crates/fzf-cli/src/main.rs`
-  - `docs/fzf-cli/spec.md`
+  - `crates/fzf-cli/README.md`
 - **Description**: Port the two-step `fzf-directory` picker. When the user chooses the cd action,
   print a shell command on stdout suitable for `eval` in the parent shell (documented in the spec).
 - **Dependencies**:
@@ -306,7 +306,7 @@ tests via stubbed PATH tools.
 - **Location**:
   - `crates/fzf-cli/src/git_commit.rs`
   - `crates/fzf-cli/src/main.rs`
-  - `docs/fzf-cli/spec.md`
+  - `crates/fzf-cli/README.md`
 - **Description**: Port `fzf-git-commit` including `--snapshot` behavior, file list rendering with
   per-file stats, and snapshot extraction to a temporary file with cleanup. Ensure editor behavior
   (`vi` vs `vscode`) matches the script as closely as possible and document deviations.
@@ -350,7 +350,7 @@ tests via stubbed PATH tools.
   - `crates/fzf-cli/src/defs/block_preview.rs`
   - `crates/fzf-cli/src/defs/commands.rs`
   - `crates/fzf-cli/src/main.rs`
-  - `docs/fzf-cli/spec.md`
+  - `crates/fzf-cli/README.md`
 - **Description**: Port `fzf_block_preview` behavior: require delimiter env vars, generate blocks,
   run `fzf` with a preview script, print the selected block, and copy it to the clipboard.
 - **Dependencies**:

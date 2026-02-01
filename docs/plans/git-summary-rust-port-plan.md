@@ -3,15 +3,15 @@
 ## Overview
 This plan ports the existing Zsh `git-summary` implementation into a Rust CLI crate inside this
 workspace, preserving output format, date-range behavior, and lockfile filtering from the current
-Zsh implementation. It also snapshots the source Zsh script and completion into the repo for
-repeatable parity reference, ports the zsh completion script, and adds a
+Zsh implementation. It also records upstream reference links for repeatable parity reference,
+ports the zsh completion script, and adds a
 Rust integration test suite (including edge cases) to ensure parity across presets and custom ranges.
 The outcome is a `git-summary` binary with matching UX, a maintained completion file, and
 repeatable tests that validate summary calculations and error handling.
 
 ## Scope
 - In scope: Rust `git-summary` CLI implementation, output parity with the Zsh script, preset date
-  range handling, lockfile filtering, zsh completion port, wrapper script, a source snapshot for
+  range handling, lockfile filtering, zsh completion port, wrapper script, upstream source references for
   parity reference, and a full test suite covering commands and edge cases.
 - Out of scope: New subcommands, alternative output formats, or changes to git-summary UX beyond
   parity with the current Zsh script.
@@ -21,37 +21,34 @@ repeatable tests that validate summary calculations and error handling.
 2. Output text, table widths, and emojis match the current script output.
 3. Date handling uses local timezone boundaries consistent with the script’s behavior.
 4. Zsh completion file will live at `completions/zsh/_git-summary`.
-5. Source snapshots for parity live under `docs/git-summary/source/`.
+5. Upstream Zsh references for parity live in `crates/git-summary/README.md`.
 6. Tests can create temporary git repos and execute the new binary with stable output checks.
 
 ## Sprint 1: Parity spec + fixtures
 **Goal**: Make current git-summary behavior explicit and capture fixtures for parity.
 **Demo/Validation**:
-- Command(s): `rg -n "git-summary" docs/git-summary/source/git-summary.zsh`, `rg -n "git-summary" docs/git-summary/source/_git-summary`
+- Command(s): `rg -n "git-summary" crates/git-summary/README.md`, `rg -n "compdef" completions/zsh/_git-summary`
 - Verify: Spec doc includes commands, help output, table format, and edge-case behavior.
 
-### Task 1.1: Snapshot source script + completion + docs into repo
+### Task 1.1: Capture upstream Zsh references into repo docs
 - **Location**:
-  - `docs/git-summary/source/git-summary.zsh`
-  - `docs/git-summary/source/_git-summary`
-  - `docs/git-summary/source/git-summary.md`
-- **Description**: Copy the current Zsh script, completion, and doc into repo-local snapshot files
-  to make parity references reproducible without external paths.
+  - `crates/git-summary/README.md`
+  - `https://github.com/graysurf/zsh-kit/blob/main/scripts/git/git-summary.zsh`
+  - `https://github.com/graysurf/zsh-kit/blob/main/scripts/_completion/_git-summary`
+  - `https://github.com/graysurf/zsh-kit/blob/main/docs/cli/git-summary.md`
+- **Description**: Record upstream script/completion/doc references as GitHub links so parity
+  sources are stable and not tied to a local filesystem snapshot.
 - **Dependencies**:
   - none
 - **Complexity**: 2
 - **Acceptance criteria**:
-  - Repo contains source snapshots for the script, completion, and doc.
+  - Repo docs include upstream links for the script, completion, and doc.
 - **Validation**:
-  - `rg "git-summary" docs/git-summary/source/git-summary.zsh`
-  - `rg "compdef" docs/git-summary/source/_git-summary`
+  - `rg "github.com/graysurf/zsh-kit" crates/git-summary/README.md`
 
 ### Task 1.2: Document current git-summary behavior and output contract
 - **Location**:
-  - `docs/git-summary/spec.md`
-  - `docs/git-summary/source/git-summary.zsh`
-  - `docs/git-summary/source/_git-summary`
-  - `docs/git-summary/source/git-summary.md`
+  - `crates/git-summary/README.md`
 - **Description**: Read the Zsh implementation and docs to produce a concise spec covering commands,
   help text, date validation, output columns, sorting, and lockfile filtering.
 - **Dependencies**:
@@ -62,12 +59,12 @@ repeatable tests that validate summary calculations and error handling.
   - Spec captures date validation errors and missing-arg behavior.
   - Spec documents table columns, widths, and lockfile filtering rules.
 - **Validation**:
-  - `rg "Commands" docs/git-summary/spec.md`
-  - `rg "lockfile" docs/git-summary/spec.md`
+  - `rg "Commands" crates/git-summary/README.md`
+  - `rg "lockfile" crates/git-summary/README.md`
 
 ### Task 1.3: Capture fixture scenarios for tests
 - **Location**:
-  - `docs/git-summary/fixtures.md`
+  - `crates/git-summary/README.md`
 - **Description**: Define canonical test scenarios (custom range, presets, lockfile filtering,
   invalid date inputs, outside repo) and expected output markers.
 - **Dependencies**:
@@ -77,8 +74,8 @@ repeatable tests that validate summary calculations and error handling.
   - Fixtures list covers presets + custom ranges and edge cases.
   - Each fixture includes setup steps and expected output markers.
 - **Validation**:
-  - `rg "##" docs/git-summary/fixtures.md`
-  - `rg "edge" docs/git-summary/fixtures.md`
+  - `rg "##" crates/git-summary/README.md`
+  - `rg "edge" crates/git-summary/README.md`
 
 ## Sprint 2: Rust crate scaffold + CLI surface
 **Goal**: Add a new `git-summary` crate and CLI interface matching the script.
@@ -210,7 +207,7 @@ repeatable tests that validate summary calculations and error handling.
 ### Task 5.1: Port zsh completion script
 - **Location**:
   - `completions/zsh/_git-summary`
-- **Description**: Port `~/.config/zsh/scripts/_completion/_git-summary` into this repo,
+- **Description**: Port `https://github.com/graysurf/zsh-kit/blob/main/scripts/_completion/_git-summary` into this repo,
   preserving subcommands and date hints.
 - **Dependencies**:
   - Task 2.2
@@ -294,17 +291,16 @@ repeatable tests that validate summary calculations and error handling.
 ### Task 7.1: Update README and completion docs
 - **Location**:
   - `README.md`
-  - `docs/completions-strategy.md`
 - **Description**: Document the new `git-summary` binary and its completion/wrapper assets.
 - **Dependencies**:
   - Task 5.2
 - **Complexity**: 3
 - **Acceptance criteria**:
   - README mentions `git-summary` usage.
-  - Completion doc includes `_git-summary`.
+  - README references `_git-summary`.
 - **Validation**:
   - `rg "git-summary" README.md`
-  - `rg "_git-summary" docs/completions-strategy.md`
+  - `rg "_git-summary" README.md`
 
 ### Task 7.2: End-to-end validation
 - **Location**:
@@ -341,4 +337,5 @@ repeatable tests that validate summary calculations and error handling.
 
 ## Rollback plan
 - Remove `crates/git-summary`, wrapper, and completion files.
-- Revert docs changes and keep the Zsh script in `~/.config/zsh` as the active implementation.
+- Revert docs changes and keep the existing Zsh implementation as the active reference:
+  `https://github.com/graysurf/zsh-kit/blob/main/scripts/git/git-summary.zsh`.

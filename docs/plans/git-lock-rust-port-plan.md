@@ -2,14 +2,14 @@
 
 ## Overview
 This plan ports the existing Zsh `git-lock` helper into a Rust CLI crate inside this workspace,
-matching behavior, output text, and prompts from `~/.config/zsh/scripts/git/git-lock.zsh`. It also
-snapshots the source script/docs for repeatable parity reference, ports the Zsh completion script,
+matching behavior, output text, and prompts from `https://github.com/graysurf/zsh-kit/blob/main/scripts/git/git-lock.zsh`. It also
+records upstream reference links for repeatable parity reference, ports the Zsh completion script,
 adds wrapper scripts, and delivers a comprehensive Rust integration test suite (including edge
 cases like missing labels, invalid commits, and confirmation prompts). The outcome is a `git-lock`
 binary with matching UX and a repeatable test suite that validates parity across commands.
 
 ## Scope
-- In scope: Rust `git-lock` CLI implementation, output parity with the Zsh script, source snapshot
+- In scope: Rust `git-lock` CLI implementation, output parity with the Zsh script, upstream source references
   for parity reference, zsh completion port, wrapper script, and a full test suite covering
   commands and edge cases.
 - Out of scope: New subcommands, alternative lock storage locations, or behavior changes beyond
@@ -25,32 +25,29 @@ binary with matching UX and a repeatable test suite that validates parity across
 ## Sprint 1: Parity spec + fixtures
 **Goal**: Make current git-lock behavior explicit and capture fixtures for parity.
 **Demo/Validation**:
-- Command(s): `rg -n "git-lock" docs/git-lock/source/git-lock.zsh`, `rg -n "git-lock" docs/git-lock/source/_git-lock`
+- Command(s): `rg -n "git-lock" crates/git-lock/README.md`, `rg -n "compdef" completions/zsh/_git-lock`
 - Verify: Spec doc includes commands, flags, file format, and edge-case behavior.
 **Parallelizable**: none.
 
-### Task 1.1: Snapshot source script + completion + docs into repo
+### Task 1.1: Capture upstream Zsh references into repo docs
 - **Location**:
-  - `docs/git-lock/source/git-lock.zsh`
-  - `docs/git-lock/source/_git-lock`
-  - `docs/git-lock/source/git-lock.md`
-- **Description**: Copy the current Zsh script, completion, and doc into repo-local snapshot files
-  to make parity references reproducible without external paths.
+  - `crates/git-lock/README.md`
+  - `https://github.com/graysurf/zsh-kit/blob/main/scripts/git/git-lock.zsh`
+  - `https://github.com/graysurf/zsh-kit/blob/main/scripts/_completion/_git-lock`
+  - `https://github.com/graysurf/zsh-kit/blob/main/docs/cli/git-lock.md`
+- **Description**: Record upstream script/completion/doc references as GitHub links so parity
+  sources are stable and not tied to a local filesystem snapshot.
 - **Dependencies**:
   - none
 - **Complexity**: 2
 - **Acceptance criteria**:
-  - Repo contains source snapshots for the script, completion, and doc.
+  - Repo docs include upstream links for the script, completion, and doc.
 - **Validation**:
-  - `rg "git-lock" docs/git-lock/source/git-lock.zsh`
-  - `rg "compdef" docs/git-lock/source/_git-lock`
+  - `rg "github.com/graysurf/zsh-kit" crates/git-lock/README.md`
 
 ### Task 1.2: Document current git-lock behavior and output contract
 - **Location**:
-  - `docs/git-lock/spec.md`
-  - `docs/git-lock/source/git-lock.zsh`
-  - `docs/git-lock/source/_git-lock`
-  - `docs/git-lock/source/git-lock.md`
+  - `crates/git-lock/README.md`
 - **Description**: Read the Zsh implementation and docs to produce a concise spec covering
   commands, flags, output sections, confirmation prompts, lock file format, and error handling.
 - **Dependencies**:
@@ -61,12 +58,12 @@ binary with matching UX and a repeatable test suite that validates parity across
   - Spec captures confirmation prompts and error messages.
   - Spec documents lock file format and latest marker behavior.
 - **Validation**:
-  - `rg "Commands" docs/git-lock/spec.md`
-  - `rg "latest" docs/git-lock/spec.md`
+  - `rg "Commands" crates/git-lock/README.md`
+  - `rg "latest" crates/git-lock/README.md`
 
 ### Task 1.3: Capture fixture scenarios for tests
 - **Location**:
-  - `docs/git-lock/fixtures.md`
+  - `crates/git-lock/README.md`
 - **Description**: Define canonical test scenarios (lock/unlock/list/copy/delete/diff/tag,
   missing labels, invalid commit, overwrite prompts, latest label resolution, and not-a-repo)
   with setup steps and expected output markers.
@@ -77,8 +74,8 @@ binary with matching UX and a repeatable test suite that validates parity across
   - Fixtures list covers all commands and edge cases.
   - Each fixture includes setup steps and expected output markers.
 - **Validation**:
-  - `rg "^##" docs/git-lock/fixtures.md`
-  - `rg "unlock" docs/git-lock/fixtures.md`
+  - `rg "^##" crates/git-lock/README.md`
+  - `rg "unlock" crates/git-lock/README.md`
 
 ## Sprint 2: Rust crate scaffold + CLI surface
 **Goal**: Add a new `git-lock` crate and CLI interface matching the script.
@@ -269,7 +266,7 @@ binary with matching UX and a repeatable test suite that validates parity across
 ### Task 6.1: Port zsh completion script
 - **Location**:
   - `completions/zsh/_git-lock`
-- **Description**: Port `~/.config/zsh/scripts/_completion/_git-lock` into this repo, preserving
+- **Description**: Port `https://github.com/graysurf/zsh-kit/blob/main/scripts/_completion/_git-lock` into this repo, preserving
   subcommands, options, and diff/tag completion behavior.
 - **Dependencies**:
   - Task 1.1
@@ -385,7 +382,6 @@ binary with matching UX and a repeatable test suite that validates parity across
 ### Task 7.7: Update README + completion strategy docs
 - **Location**:
   - `README.md`
-  - `docs/completions-strategy.md`
 - **Description**: Document the `git-lock` crate, usage examples, and completion file location.
 - **Dependencies**:
   - Task 6.2
@@ -393,10 +389,10 @@ binary with matching UX and a repeatable test suite that validates parity across
 - **Complexity**: 3
 - **Acceptance criteria**:
   - README lists `crates/git-lock` and example commands.
-  - Completions doc references `_git-lock`.
+  - README references `_git-lock`.
 - **Validation**:
   - `rg "git-lock" README.md`
-  - `rg "_git-lock" docs/completions-strategy.md`
+  - `rg "_git-lock" README.md`
 
 ### Task 7.8: End-to-end validation
 - **Location**:

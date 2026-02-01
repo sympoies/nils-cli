@@ -12,8 +12,8 @@ The Rust `image-processing` binary must be able to fully replace the current
 - external tool invocation and fallback behavior
 
 Source of truth (current behavior):
-- `~/.config/codex-kit/skills/tools/media/image-processing/scripts/image_processing.py`
-- `~/.config/codex-kit/skills/tools/media/image-processing/references/IMAGE_PROCESSING_GUIDE.md`
+- `https://github.com/graysurf/codex-kit/blob/main/skills/tools/media/image-processing/scripts/image_processing.py`
+- `https://github.com/graysurf/codex-kit/blob/main/skills/tools/media/image-processing/references/IMAGE_PROCESSING_GUIDE.md`
 
 ## Scope
 - In scope:
@@ -71,8 +71,7 @@ Optional (fallback behavior):
 
 ### Task 1.1: Write spec and fixtures
 - **Location**:
-  - `docs/image-processing/spec.md`
-  - `docs/image-processing/fixtures.md`
+  - `crates/image-processing/README.md`
 - **Description**: Document CLI surface area, error contracts, JSON schema, external dependencies,
   and deterministic fixtures to drive tests.
 - **Dependencies**: none
@@ -82,8 +81,8 @@ Optional (fallback behavior):
   - Spec documents external tool detection and optimize fallback behavior.
   - Fixtures list includes at least one scenario per subcommand and all output modes + edge cases.
 - **Validation**:
-  - `rg "^##" docs/image-processing/spec.md`
-  - `rg "schema_version" docs/image-processing/spec.md`
+  - `rg "^##" crates/image-processing/README.md`
+  - `rg "schema_version" crates/image-processing/README.md`
 
 ### Task 1.2: Create crate skeleton and wire workspace
 - **Location**:
@@ -179,4 +178,3 @@ Optional (fallback behavior):
   - Skill runs without requiring `python3`.
 - **Validation**:
   - `$CODEX_HOME/skills/tools/media/image-processing/scripts/image-processing.sh --help`
-

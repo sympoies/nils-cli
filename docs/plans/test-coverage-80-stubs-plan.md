@@ -324,17 +324,17 @@ This plan raises Rust workspace **total line coverage** from **75.01%** (13886/1
 - **Location**:
   - `scripts/ci/coverage-summary.sh`
   - `target/coverage/lcov.info` (generated)
-- **Description**: Run a fresh coverage pass (recommended after Sprint 2–3 tests land) and record the total line coverage. If coverage is below 80%, capture the gap (lines needed) and document the top 5 lowest-coverage files in `docs/notes/coverage-gap.md` to guide remediation before raising the CI gate.
+- **Description**: Run a fresh coverage pass (recommended after Sprint 2–3 tests land) and record the total line coverage. If coverage is below 80%, capture the gap (lines needed) and document the top 5 lowest-coverage files in `notes/coverage-gap.md` to guide remediation before raising the CI gate.
 - **Dependencies**:
   - none
 - **Complexity**: 4
 - **Acceptance criteria**:
   - Coverage summary is generated from a fresh run.
-  - If coverage < 80.00%, the gap and top 5 low-coverage files are recorded in `docs/notes/coverage-gap.md` and the gate-raising task is deferred.
+  - If coverage < 80.00%, the gap and top 5 low-coverage files are recorded in `notes/coverage-gap.md` and the gate-raising task is deferred.
 - **Validation**:
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info`
   - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
-  - If coverage < 80.00%: `test -s docs/notes/coverage-gap.md`
+  - If coverage < 80.00%: `test -s notes/coverage-gap.md`
 
 ### Task 4.1: Raise CI coverage threshold from 75% to 80%
 - **Location**:
@@ -370,13 +370,13 @@ This plan raises Rust workspace **total line coverage** from **75.01%** (13886/1
 
 ### Task 4.3: Close remaining coverage gap (conditional)
 - **Location**:
-  - `docs/notes/coverage-gap.md`
+  - `notes/coverage-gap.md`
   - `crates/api-testing-core/src/suite/runner.rs`
   - `crates/api-testing-core/src/suite/cleanup.rs`
   - `crates/api-testing-core/src/suite/auth.rs`
   - `crates/fzf-cli/src/git_commit.rs`
   - `crates/git-lock/src/copy.rs`
-- **Description**: If Task 4.0 reports coverage < 80%, add targeted, deterministic tests for the top offenders listed in `docs/notes/coverage-gap.md` using the existing fixture/stub toolkit. Prefer unit tests for pure logic and small integration tests for CLI pathways.
+- **Description**: If Task 4.0 reports coverage < 80%, add targeted, deterministic tests for the top offenders listed in `notes/coverage-gap.md` using the existing fixture/stub toolkit. Prefer unit tests for pure logic and small integration tests for CLI pathways.
 - **Dependencies**:
   - Task 4.0
 - **Complexity**: 8

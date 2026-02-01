@@ -54,10 +54,10 @@ For zsh completions, add `<extract_dir>/completions/zsh` to your `fpath` and run
 
 ## fzf-cli
 - Example usage: `fzf-cli file`, `fzf-cli directory`, `fzf-cli history`, `fzf-cli port`, `fzf-cli process`
-- Note: some subcommands print shell commands for `eval` (e.g. `fzf-cli directory` prints a `cd ...`), see `docs/fzf-cli/spec.md`.
+- Note: some subcommands print shell commands for `eval` (e.g. `fzf-cli directory` prints a `cd ...`), see `crates/fzf-cli/README.md`.
 
 ## codex-cli
-- Docs: `docs/codex-cli/README.md`
+- Docs: `crates/codex-cli/README.md`
 - Example usage: `codex-cli auth current`, `codex-cli diag rate-limits --one-line`
 
 ## semantic-commit
@@ -74,7 +74,7 @@ For zsh completions, add `<extract_dir>/completions/zsh` to your `fpath` and run
   - `plan-tooling scaffold --slug my-new-cli --title "My new CLI plan"`
 
 ## API testing CLIs
-See `docs/api-testing/usage.md` for the recommended repo layout and end-to-end examples.
+See `crates/api-testing-core/README.md` for the recommended repo layout and end-to-end examples.
 
 ### api-rest
 - Example usage:
@@ -104,11 +104,34 @@ See `docs/api-testing/usage.md` for the recommended repo layout and end-to-end e
 4. Build or run the new CLI with `cargo build -p <cli-name>` or `cargo run -p <cli-name> -- ...`.
 
 ## Zsh wrappers and completions
-This repo keeps optional zsh wrapper scripts and completion assets in-repo. See
-`docs/completions-strategy.md` for the layout and integration steps. For zsh completion
-setup and wrapper installation:
-- Add `wrappers/` to your PATH (or symlink the wrappers into a bin directory).
-- Add `completions/zsh/` to your `fpath` and run `compinit`.
+This repo keeps optional zsh wrapper scripts and completion assets in-repo.
+
+Decision:
+- Keep zsh completion and wrapper assets under `completions/zsh/` and `wrappers/`.
+
+Rationale:
+- Keeps shell UX assets versioned alongside the Rust CLIs they accompany.
+- Makes local setup reproducible without hopping between repos.
+- Enables future automation to generate and update completions in one place.
+
+Location:
+- `completions/zsh/`: zsh completion files (generated or curated)
+  - `completions/zsh/_api-rest`
+  - `completions/zsh/_api-gql`
+  - `completions/zsh/_api-test`
+  - `completions/zsh/_git-scope`
+  - `completions/zsh/_git-summary`
+  - `completions/zsh/_git-lock`
+  - `completions/zsh/_fzf-cli`
+  - `completions/zsh/_codex-cli`
+  - `completions/zsh/_semantic-commit`
+  - `completions/zsh/_plan-tooling`
+- `wrappers/`: wrapper scripts for invoking CLI binaries or enforcing env setup
+
+Integration steps:
+1. Add `wrappers/` to your PATH (or symlink wrapper scripts into a bin directory).
+2. Add `completions/zsh/` to your `fpath`, then run `compinit` in your shell init.
+3. Regenerate completions when CLIs change, and commit updates alongside code.
 
 ## License
 

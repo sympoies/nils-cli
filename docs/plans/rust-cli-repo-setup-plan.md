@@ -4,14 +4,14 @@
 This plan sets up a Rust development environment on macOS and scaffolds a Cargo workspace designed for multiple independently packaged CLI binaries. It also selects a baseline set of Rust crates for CLI development, references existing zsh CLI docs for conventions, and decides whether zle completion/wrapper assets live in this repo. It does not inventory or implement any specific CLI binaries from the existing zsh wrappers. The outcome is a ready-to-build repo plus a verified local toolchain and a documented completion strategy.
 
 ## Scope
-- In scope: Rust toolchain installation on macOS, baseline developer tooling (rustfmt/clippy), repo scaffolding for a multi-binary workspace, baseline crate selection for CLI development, referencing `~/.config/zsh/docs/cli` for naming/convention guidance, a decision on whether zle completion/wrapper assets live in this repo, and validation that the workspace builds.
+- In scope: Rust toolchain installation on macOS, baseline developer tooling (rustfmt/clippy), repo scaffolding for a multi-binary workspace, baseline crate selection for CLI development, referencing `https://github.com/graysurf/zsh-kit/tree/main/docs/cli` for naming/convention guidance, a decision on whether zle completion/wrapper assets live in this repo, and validation that the workspace builds.
 - Out of scope: Implementing any specific CLI functionality, porting zsh scripts, or enumerating which binaries to build.
 
 ## Assumptions (if any)
 1. The machine has internet access and permissions to install developer tools.
 2. The user prefers rustup-managed toolchains on macOS.
 3. The repo will be a Cargo workspace with one binary crate per CLI and an optional shared library crate.
-4. Existing zsh CLI docs at `~/.config/zsh/docs/cli` are available to reference for naming and UX conventions.
+4. Existing zsh CLI docs at `https://github.com/graysurf/zsh-kit/tree/main/docs/cli` are available to reference for naming and UX conventions.
 5. A clear decision will be made about whether zle completion/wrapper assets live in this repo.
 
 ## Sprint 1: Local Rust toolchain (macOS)
@@ -67,20 +67,16 @@ This plan sets up a Rust development environment on macOS and scaffolds a Cargo 
 
 ### Task 1.4: Review existing zsh CLI docs for conventions
 - **Location**:
-  - `docs/zsh-cli-reference.md`
-- **Description**: Review `~/.config/zsh/docs/cli` to capture naming conventions, common CLI patterns, and completion expectations that should influence the Rust repo scaffold.
+  - `https://github.com/graysurf/zsh-kit/tree/main/docs/cli`
+- **Description**: Review the upstream zsh-kit CLI docs to capture naming conventions, common CLI patterns, and completion expectations that should influence the Rust repo scaffold.
 - **Dependencies**:
   - none
 - **Complexity**: 3
 - **Acceptance criteria**:
-  - `docs/zsh-cli-reference.md` includes sections for Source, Conventions, and Completion Notes.
-  - The source section explicitly references `~/.config/zsh/docs/cli`.
+  - Notes reference the upstream `docs/cli` directory as the source of conventions.
   - Summary avoids enumerating specific binaries.
 - **Validation**:
-  - `rg "^## Source" docs/zsh-cli-reference.md`
-  - `rg "^## Conventions" docs/zsh-cli-reference.md`
-  - `rg "^## Completion Notes" docs/zsh-cli-reference.md`
-  - `rg "~/.config/zsh/docs/cli" docs/zsh-cli-reference.md`
+  - `rg "github.com/graysurf/zsh-kit/tree/main/docs/cli" docs/plans/rust-cli-repo-setup-plan.md`
 
 ## Sprint 2: Repo scaffold + baseline CLI crates
 **Goal**: Create a Cargo workspace that supports multiple independently packaged CLI binaries with shared dependencies.
@@ -165,27 +161,25 @@ This plan sets up a Rust development environment on macOS and scaffolds a Cargo 
 ### Task 2.6: Add in-repo zsh completion/wrapper layout
 - **Location**:
   - `README.md`
-  - `docs/completions-strategy.md`
-  - `completions/zsh/.gitkeep`
-  - `wrappers/.gitkeep`
+  - `completions/zsh/`
+  - `wrappers/`
 - **Description**: Decide whether zle completion and zsh wrapper assets should live in this repo. If yes, specify the directory layout (e.g. `completions/zsh/` and `wrappers/`). If no, document the external repo path and integration steps.
 - **Dependencies**:
   - Task 1.4
 - **Complexity**: 4
 - **Acceptance criteria**:
-  - `docs/completions-strategy.md` includes Decision, Rationale, Location, and Integration Steps sections.
-  - Decision explicitly states in-repo placement with `completions/zsh/` and `wrappers/`.
+  - README includes Decision, Rationale, Location, and Integration steps for completions/wrappers.
   - `completions/zsh/` and `wrappers/` directories exist.
   - `README.md` documents optional installation steps for zsh wrappers and completion.
 - **Validation**:
-  - `rg "^## Decision" docs/completions-strategy.md`
-  - `rg "^## Rationale" docs/completions-strategy.md`
-  - `rg "^## Location" docs/completions-strategy.md`
-  - `rg "^## Integration Steps" docs/completions-strategy.md`
-  - `rg "completions/zsh" docs/completions-strategy.md`
-  - `rg "wrappers/" docs/completions-strategy.md`
-  - `test -f completions/zsh/.gitkeep`
-  - `test -f wrappers/.gitkeep`
+  - `rg "^Decision:" README.md`
+  - `rg "^Rationale:" README.md`
+  - `rg "^Location:" README.md`
+  - `rg "^Integration steps:" README.md`
+  - `rg "completions/zsh" README.md`
+  - `rg "wrappers/" README.md`
+  - `test -d completions/zsh`
+  - `test -d wrappers`
   - `rg "zsh completion" README.md`
 
 ### Task 2.7: Validate workspace build and test workflow

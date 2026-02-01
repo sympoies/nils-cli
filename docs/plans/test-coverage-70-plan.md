@@ -280,7 +280,7 @@ This plan increases Rust workspace **total line coverage** from **56.89%** (9188
 - **Complexity**: 6
 - **Acceptance criteria**:
   - Tests cover both parsing success and “ignored line” cases.
-  - No tests depend on user machine’s real `~/.config/zsh` contents.
+  - No tests depend on the developer machine’s real Zsh config contents.
 - **Validation**:
   - `cargo test -p fzf-cli defs::index`
 

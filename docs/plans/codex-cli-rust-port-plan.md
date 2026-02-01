@@ -1,7 +1,7 @@
 # Plan: Rust codex-cli parity (CLI + docs + tests)
 
 ## Overview
-This plan ports the Zsh Codex feature set from `~/.config/zsh/scripts/_features/codex/` into a single Rust CLI crate in this workspace, named `codex-cli`. The goal is behavioral parity for the underlying features (auth/profile management, token refresh, rate-limit diagnostics, starship prompt output, and agent wrappers) while intentionally tightening the top-level interface: when no subcommand is provided, `codex-cli` prints help (no implicit “raw prompt mode” fallback). Zsh wrappers and completion will be provided for backwards-compatible entrypoints like `codex-use`, `codex-rate-limits`, and `cx*` aliases.
+This plan ports the Zsh Codex feature set from `https://github.com/graysurf/zsh-kit/tree/main/scripts/_features/codex` into a single Rust CLI crate in this workspace, named `codex-cli`. The goal is behavioral parity for the underlying features (auth/profile management, token refresh, rate-limit diagnostics, starship prompt output, and agent wrappers) while intentionally tightening the top-level interface: when no subcommand is provided, `codex-cli` prints help (no implicit “raw prompt mode” fallback). Zsh wrappers and completion will be provided for backwards-compatible entrypoints like `codex-use`, `codex-rate-limits`, and `cx*` aliases.
 
 ## Scope
 - In scope: A new `codex-cli` Rust binary implementing all existing feature behaviors: agent prompt wrappers, auth/profile management, rate-limits diagnostics (single/all/async/cached), starship prompt output, config show/set behavior, and compatibility wrappers + Zsh completion. Comprehensive tests (unit + integration + Zsh completion) anchored to docs fixtures. Delivery requirement: `codex-cli` crate line coverage **>= 80.00%** (measured by `cargo llvm-cov nextest --profile ci -p codex-cli --lcov --output-path target/coverage/codex-cli.lcov.info --fail-under-lines 80`).
@@ -37,13 +37,13 @@ Binary name: `codex-cli`
 ## Sprint 1: Inventory, parity spec, and fixtures
 **Goal**: Make the current Zsh behaviors explicit and create a fixtures/edge-case matrix that tests can anchor to.
 **Demo/Validation**:
-- Command(s): `rg -n \"codex-tools\\(\\)|codex-use\\(|codex-refresh-auth\\(|codex-rate-limits\\(|codex-starship\\(\" ~/.config/zsh/scripts/_features/codex/*.zsh`
-- Verify: `docs/codex-cli/spec.md` and `docs/codex-cli/fixtures.md` fully enumerate commands, flags, outputs, and edge cases.
+- Command(s): `rg -n \"^# codex-cli parity spec\" crates/codex-cli/README.md`, `rg -n \"^# codex-cli fixtures\" crates/codex-cli/README.md`
+- Verify: `crates/codex-cli/README.md` fully enumerates commands, flags, outputs, and edge cases.
 
 ### Task 1.1: Write codex-cli parity spec
 - **Location**:
-  - `docs/codex-cli/spec.md`
-- **Description**: Read `~/.config/zsh/scripts/_features/codex/` scripts and document the Rust `codex-cli` CLI contract: subcommands, flag parsing, help text, exit codes, output strings, env var behavior, cache/writeback semantics, and shell-integration limitations (notably `config set`).
+  - `crates/codex-cli/README.md`
+- **Description**: Read `https://github.com/graysurf/zsh-kit/tree/main/scripts/_features/codex` and document the Rust `codex-cli` CLI contract: subcommands, flag parsing, help text, exit codes, output strings, env var behavior, cache/writeback semantics, and shell-integration limitations (notably `config set`).
 - **Dependencies**:
   - none
 - **Complexity**: 6
@@ -53,11 +53,11 @@ Binary name: `codex-cli`
   - Spec documents on-disk side effects: which files are read/written, permissions, and cache paths.
   - Spec captures exit codes and stderr/stdout behavior for usage errors, missing files, and ambiguous secret selection.
 - **Validation**:
-  - `rg -n \"^# codex-cli parity spec\" docs/codex-cli/spec.md`
+  - `rg -n \"^# codex-cli parity spec\" crates/codex-cli/README.md`
 
 ### Task 1.2: Define codex-cli fixtures and edge-case matrix
 - **Location**:
-  - `docs/codex-cli/fixtures.md`
+  - `crates/codex-cli/README.md`
 - **Description**: Define deterministic fixture scenarios (auth.json, secrets/*.json, cache kv files, stub HTTP responses) and a full edge-case matrix covering: missing tools (`codex`, `git`), missing/invalid JSON, ambiguous profile resolution, 401 refresh-and-retry, `--cached` behavior, `--all` table rendering, `--async` concurrency, starship stale suffix, and `NO_COLOR` output.
 - **Dependencies**:
   - Task 1.1
@@ -67,7 +67,7 @@ Binary name: `codex-cli`
   - Fixtures include at least one scenario each for `--all`, `--async`, and `--cached` rate limit modes.
   - Fixtures include at least one scenario for starship cached output and starship refresh behavior.
 - **Validation**:
-  - `rg -n \"^# codex-cli fixtures\" docs/codex-cli/fixtures.md`
+  - `rg -n \"^# codex-cli fixtures\" crates/codex-cli/README.md`
 
 ## Sprint 2: Crate scaffold and CLI surface (dispatch + exit codes)
 **Goal**: Add a `codex-cli` crate with stable CLI parsing and parity for the dispatcher behaviors (help, legacy guidance, and exit codes).
@@ -390,7 +390,7 @@ Binary name: `codex-cli`
   - `wrappers/cxct`
   - `wrappers/crl`
   - `wrappers/crla`
-- **Description**: Add thin wrapper scripts that `exec` `codex-cli` with the correct subcommand mapping, preserving the alias behaviors in `~/.config/zsh/scripts/_features/codex/alias.zsh` while keeping a single underlying Rust binary.
+- **Description**: Add thin wrapper scripts that `exec` `codex-cli` with the correct subcommand mapping, preserving the alias behaviors in `https://github.com/graysurf/zsh-kit/blob/main/scripts/_features/codex/alias.zsh` while keeping a single underlying Rust binary.
 - **Dependencies**:
   - Task 6.3
   - Task 5.2
@@ -420,7 +420,7 @@ Binary name: `codex-cli`
 
 ### Task 7.3: Add codex-cli docs for installation and migration
 - **Location**:
-  - `docs/codex-cli/README.md`
+  - `crates/codex-cli/README.md`
 - **Description**: Document how to install and use the Rust `codex-cli` binary, how wrappers map from legacy Zsh commands, recommended Zsh/Starship integration, and how to apply `config set` output in a parent shell.
 - **Dependencies**:
   - Task 1.1
@@ -432,7 +432,7 @@ Binary name: `codex-cli`
   - Docs include the complete wrapper mapping table for `cx*` and `crl/crla`.
   - Docs call out limitations where parent-shell mutation is required and document the eval/export contract.
 - **Validation**:
-  - `rg -n \"^# codex-cli\" docs/codex-cli/README.md`
+  - `rg -n \"^# codex-cli\" crates/codex-cli/README.md`
 
 ### Task 7.4: Run required formatting, lint, and test gates
 - **Location**:

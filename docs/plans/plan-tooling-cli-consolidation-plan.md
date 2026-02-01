@@ -4,7 +4,7 @@
 
 Consolidate the current Plan Format v1 tooling scripts (`plan_to_json.sh`, `validate_plans.sh`, `plan_batches.sh`, `scaffold_plan.sh`) into a single CLI entrypoint with subcommands. Keep the plan markdown format and JSON schema stable, and preserve exit codes plus `error:`-style diagnostics so existing workflows keep working. Maintain the existing `.sh` entrypoints as thin wrappers for backwards compatibility while updating docs and skills to prefer the new CLI.
 
-Source scripts (current): `/Users/terry/.config/codex-kit/skills/workflows/plan/plan-tooling/scripts`.
+Source scripts (current): `https://github.com/graysurf/codex-kit/tree/main/skills/workflows/plan/plan-tooling/scripts`.
 
 ## Scope
 - In scope: A single CLI with subcommands for JSON export, linting, batch computation, and scaffolding; wrappers for existing entrypoints; docs + skill updates; tests that cover both the new CLI and wrapper parity.

@@ -18,7 +18,7 @@ This plan adds a new workspace crate, `nils-term`, that provides a small, RAII-f
     - `git-lock` (lock dir scanning + per-entry enrichment)
     - `plan-tooling` (interactive UX only; must not spam automation)
   - Out of scope:
-  - Exact behavioral parity with `/Users/terry/.config/zsh/scripts/progress-bar.zsh` (bar glyphs, update throttling rules, width heuristics, etc.).
+  - Exact behavioral parity with `https://github.com/graysurf/zsh-kit/blob/main/scripts/progress-bar.zsh` (bar glyphs, update throttling rules, width heuristics, etc.).
   - A crates.io release or cross-repo shared crate.
   - Multi-progress UIs, nested progress trees, or rich TUI components.
 
