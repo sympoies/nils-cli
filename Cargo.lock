@@ -409,6 +409,7 @@ name = "fzf-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "nils-test-support",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -737,6 +738,7 @@ dependencies = [
  "chrono",
  "clap",
  "globset",
+ "nils-test-support",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -971,6 +973,13 @@ name = "nils-common"
 version = "0.1.0"
 dependencies = [
  "pretty_assertions",
+]
+
+[[package]]
+name = "nils-test-support"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
 ]
 
 [[package]]

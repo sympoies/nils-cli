@@ -16,5 +16,6 @@ uuid = { version = "1", features = ["v4"] }
 walkdir = "2"
 
 [dev-dependencies]
+nils-test-support = { path = "../nils-test-support" }
 pretty_assertions = { workspace = true }
 tempfile = "3"

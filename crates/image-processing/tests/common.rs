@@ -1,8 +1,9 @@
 #![allow(dead_code)]
 
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+use nils_test_support::StubBinDir;
 
 pub struct CmdOutput {
     pub code: i32,
@@ -47,183 +48,38 @@ pub fn run_image_processing(dir: &Path, args: &[&str], envs: &[(&str, &str)]) ->
     }
 }
 
-pub fn make_stub_dir() -> tempfile::TempDir {
-    tempfile::TempDir::new().expect("tempdir")
+pub fn make_stub_dir() -> StubBinDir {
+    StubBinDir::new()
 }
 
-pub fn write_exe(dir: &Path, name: &str, content: &str) {
-    let path = dir.join(name);
-    fs::write(&path, content).expect("write stub");
-    let mut perms = fs::metadata(&path).expect("meta").permissions();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        perms.set_mode(0o755);
-    }
-    fs::set_permissions(&path, perms).expect("chmod stub");
+pub fn write_exe(dir: &Path, name: &str, content: impl AsRef<str>) {
+    nils_test_support::write_exe(dir, name, content.as_ref());
 }
 
-pub fn identify_stub_script() -> &'static str {
-    r#"#!/bin/bash
-set -euo pipefail
-
-path="${@: -1}"
-name="$(/usr/bin/basename "$path")"
-ext="${name##*.}"
-ext="$(/usr/bin/tr '[:upper:]' '[:lower:]' <<<"$ext")"
-
-fmt="PNG"
-if [[ "$ext" == "jpg" || "$ext" == "jpeg" ]]; then
-  fmt="JPEG"
-elif [[ "$ext" == "webp" ]]; then
-  fmt="WEBP"
-fi
-
-channels="rgb"
-if [[ "$name" == *alpha* ]]; then
-  channels="rgba"
-fi
-
-echo "${fmt}|100|50|${channels}|1"
-"#
+pub fn identify_stub_script() -> String {
+    nils_test_support::stubs::identify_stub_script()
 }
 
-pub fn convert_stub_script() -> &'static str {
-    r#"#!/bin/bash
-set -euo pipefail
-
-in="$1"
-out="${@: -1}"
-
-dir="$(/usr/bin/dirname "$out")"
-/bin/mkdir -p "$dir"
-/bin/cp "$in" "$out"
-"#
+pub fn convert_stub_script() -> String {
+    nils_test_support::stubs::convert_stub_script()
 }
 
-pub fn magick_stub_script() -> &'static str {
-    r#"#!/bin/bash
-set -euo pipefail
-
-if [[ "${1:-}" == "identify" ]]; then
-  shift
-  path="${@: -1}"
-  name="$(/usr/bin/basename "$path")"
-  ext="${name##*.}"
-  ext="$(/usr/bin/tr '[:upper:]' '[:lower:]' <<<"$ext")"
-
-  fmt="PNG"
-  if [[ "$ext" == "jpg" || "$ext" == "jpeg" ]]; then
-    fmt="JPEG"
-  elif [[ "$ext" == "webp" ]]; then
-    fmt="WEBP"
-  fi
-
-  channels="rgb"
-  if [[ "$name" == *alpha* ]]; then
-    channels="rgba"
-  fi
-
-  echo "${fmt}|100|50|${channels}|1"
-  exit 0
-fi
-
-in="$1"
-out="${@: -1}"
-dir="$(/usr/bin/dirname "$out")"
-/bin/mkdir -p "$dir"
-/bin/cp "$in" "$out"
-"#
+pub fn magick_stub_script() -> String {
+    nils_test_support::stubs::magick_stub_script()
 }
 
-pub fn dwebp_stub_script() -> &'static str {
-    r#"#!/bin/bash
-set -euo pipefail
-
-in="$1"
-out=""
-prev=""
-for a in "$@"; do
-  if [[ "$prev" == "-o" ]]; then
-    out="$a"
-    break
-  fi
-  prev="$a"
-done
-
-if [[ -z "$out" ]]; then
-  echo "dwebp: missing -o" >&2
-  exit 1
-fi
-
-dir="$(/usr/bin/dirname "$out")"
-/bin/mkdir -p "$dir"
-/bin/cp "$in" "$out"
-"#
+pub fn dwebp_stub_script() -> String {
+    nils_test_support::stubs::dwebp_stub_script()
 }
 
-pub fn cwebp_stub_script() -> &'static str {
-    r#"#!/bin/bash
-set -euo pipefail
-
-out=""
-src=""
-prev=""
-out_next=0
-for a in "$@"; do
-  if [[ "$out_next" == "1" ]]; then
-    out="$a"
-    src="$prev"
-    break
-  fi
-  if [[ "$a" == "-o" ]]; then
-    out_next=1
-  else
-    prev="$a"
-  fi
-done
-
-if [[ -z "$out" ]]; then
-  echo "cwebp: missing -o" >&2
-  exit 1
-fi
-
-dir="$(/usr/bin/dirname "$out")"
-/bin/mkdir -p "$dir"
-/bin/cp "$src" "$out"
-"#
+pub fn cwebp_stub_script() -> String {
+    nils_test_support::stubs::cwebp_stub_script()
 }
 
-pub fn djpeg_stub_script() -> &'static str {
-    r#"#!/bin/bash
-set -euo pipefail
-
-in="$1"
-/bin/cat "$in"
-"#
+pub fn djpeg_stub_script() -> String {
+    nils_test_support::stubs::djpeg_stub_script()
 }
 
-pub fn cjpeg_stub_script() -> &'static str {
-    r#"#!/bin/bash
-set -euo pipefail
-
-out=""
-prev=""
-for a in "$@"; do
-  if [[ "$prev" == "-outfile" ]]; then
-    out="$a"
-    break
-  fi
-  prev="$a"
-done
-
-if [[ -z "$out" ]]; then
-  echo "cjpeg: missing -outfile" >&2
-  exit 1
-fi
-
-dir="$(/usr/bin/dirname "$out")"
-/bin/mkdir -p "$dir"
-/bin/cat > "$out"
-"#
+pub fn cjpeg_stub_script() -> String {
+    nils_test_support::stubs::cjpeg_stub_script()
 }

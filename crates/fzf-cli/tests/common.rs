@@ -1,6 +1,9 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+#[allow(unused_imports)]
+pub use nils_test_support::write_exe;
+use nils_test_support::StubBinDir;
 
 #[allow(dead_code)]
 pub struct CmdOutput {
@@ -68,45 +71,11 @@ pub fn run_fzf_cli(
 }
 
 #[allow(dead_code)]
-pub fn make_stub_dir() -> tempfile::TempDir {
-    tempfile::TempDir::new().expect("tempdir")
-}
-
-#[allow(dead_code)]
-pub fn write_exe(dir: &Path, name: &str, content: &str) {
-    let path = dir.join(name);
-    fs::write(&path, content).expect("write stub");
-    let mut perms = fs::metadata(&path).expect("meta").permissions();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        perms.set_mode(0o755);
-    }
-    fs::set_permissions(&path, perms).expect("chmod stub");
+pub fn make_stub_dir() -> StubBinDir {
+    StubBinDir::new()
 }
 
 #[allow(dead_code)]
 pub fn fzf_stub_script() -> &'static str {
-    r#"#!/bin/bash
-set -euo pipefail
-
-dir="${FZF_STUB_OUT_DIR:?FZF_STUB_OUT_DIR is required}"
-counter="$dir/.counter"
-n=1
-if [[ -f "$counter" ]]; then
-  n=$(( $(/bin/cat "$counter") + 1 ))
-fi
-echo "$n" > "$counter"
-
-out="$dir/$n.out"
-code_file="$dir/$n.code"
-if [[ -f "$out" ]]; then
-  /bin/cat "$out"
-fi
-
-if [[ -f "$code_file" ]]; then
-  exit "$(/bin/cat "$code_file")"
-fi
-exit 0
-"#
+    nils_test_support::stubs::fzf_stub_script()
 }
