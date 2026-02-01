@@ -24,6 +24,25 @@ This plan adds a new workspace crate, `nils-term`, that provides a small, RAII-f
 - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - `cargo test -p nils-term --doc`
 
+## Adoption inventory (indicatif candidates in this workspace)
+- High ROI (multi-item workloads):
+  - `image-processing`:
+    - `crates/image-processing/src/processing.rs` (`process_items`): loops over planned inputs and runs external tools per file (good determinate progress bar: `N / total`, message can include input/output basename).
+    - `crates/image-processing/src/processing.rs` (`expand_inputs`): recursive directory scan can be slow on large trees (spinner while resolving inputs; optional).
+  - `api-test` / `api-testing-core`:
+    - `crates/api-testing-core/src/suite/runner.rs` (`run_suite`): runs suites case-by-case (`loaded.manifest.cases`), with optional fail-fast (good determinate bar per case; message can include case id + status).
+    - `crates/api-test/src/main.rs` prints results JSON to stdout, so stderr-based progress is safe and won’t corrupt machine-readable output.
+- Medium ROI (pre-computation before interactive UX):
+  - `fzf-cli`:
+    - `crates/fzf-cli/src/file.rs` (`list_files`) and `crates/fzf-cli/src/directory.rs` (`list_dirs`, `list_files_in_dir`) traverse via `WalkDir` + sort (spinner while indexing before launching `fzf`; ensure it finishes before entering `fzf`).
+    - `crates/fzf-cli/src/defs/index.rs` (`build_index`): scans/reads/parses many `.zsh` files to build an index (spinner or simple determinate if file count is known).
+- Low/conditional ROI (script-friendly CLIs):
+  - `plan-tooling`:
+    - `crates/plan-tooling/src/validate.rs` validates multiple `docs/plans/*-plan.md` files (progress would need to be opt-in to avoid noisy stderr in CI/automation).
+- Parity-sensitive (avoid unless explicitly opt-in):
+  - `git-scope`:
+    - Print modes (`-p`) can process/print many files, but `git-scope` prioritizes behavioral parity with the original script; adding progress output should be strictly opt-in (flag/env) to avoid changing expected UX.
+
 ## Sprint 1: Crate scaffold + API contract
 **Goal**: `nils-term` exists and exposes a small, stable public API that is easy to adopt across workspace binaries.
 **Demo/Validation**:
