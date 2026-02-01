@@ -29,6 +29,7 @@ Outputs:
     - `api-rest`
     - `api-test`
     - `cli-template`
+    - `codex-cli`
     - `fzf-cli`
     - `git-lock`
     - `git-scope`

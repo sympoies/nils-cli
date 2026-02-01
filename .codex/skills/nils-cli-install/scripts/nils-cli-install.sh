@@ -20,6 +20,7 @@ Default binaries:
   - api-rest
   - api-test
   - cli-template
+  - codex-cli
   - fzf-cli
   - git-lock
   - git-scope
@@ -84,6 +85,7 @@ default_bins=(
   api-rest
   api-test
   cli-template
+  codex-cli
   fzf-cli
   git-lock
   git-scope

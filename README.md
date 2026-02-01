@@ -15,6 +15,7 @@ Rust CLI workspace scaffold for building multiple independently packaged binarie
 - `crates/git-summary`: Rust port of the git-summary CLI
 - `crates/git-lock`: Rust port of the git-lock CLI
 - `crates/fzf-cli`: Rust port of personal fzf helper CLI
+- `crates/codex-cli`: Rust port of the Zsh Codex helper CLIs (codex-tools, codex-use, etc.)
 - `crates/semantic-commit`: Rust port of Codex semantic commit entrypoints
 - `crates/plan-tooling`: Plan Format v1 tooling CLI (to-json/validate/batches/scaffold)
 
@@ -54,6 +55,10 @@ For zsh completions, add `<extract_dir>/completions/zsh` to your `fpath` and run
 ## fzf-cli
 - Example usage: `fzf-cli file`, `fzf-cli directory`, `fzf-cli history`, `fzf-cli port`, `fzf-cli process`
 - Note: some subcommands print shell commands for `eval` (e.g. `fzf-cli directory` prints a `cd ...`), see `docs/fzf-cli/spec.md`.
+
+## codex-cli
+- Docs: `docs/codex-cli/README.md`
+- Example usage: `codex-cli auth current`, `codex-cli diag rate-limits --one-line`
 
 ## semantic-commit
 - Example usage:
