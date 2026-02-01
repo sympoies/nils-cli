@@ -26,8 +26,14 @@ fn rate_limits_render_parses_usage_and_formats_windows() {
     assert_eq!(weekly.non_weekly_label, "5h");
     assert_eq!(weekly.non_weekly_remaining, 94);
 
-    assert_eq!(render::format_window_seconds(604800).as_deref(), Some("Weekly"));
-    assert_eq!(render::format_window_seconds(1209600).as_deref(), Some("2w"));
+    assert_eq!(
+        render::format_window_seconds(604800).as_deref(),
+        Some("Weekly")
+    );
+    assert_eq!(
+        render::format_window_seconds(1209600).as_deref(),
+        Some("2w")
+    );
     assert_eq!(render::format_window_seconds(86400).as_deref(), Some("1d"));
     assert_eq!(render::format_window_seconds(3600).as_deref(), Some("1h"));
     assert_eq!(render::format_window_seconds(60).as_deref(), Some("1m"));
@@ -63,4 +69,3 @@ fn rate_limits_render_parse_usage_rejects_missing_fields() {
     let missing = json!({});
     assert!(render::parse_usage(&missing).is_none());
 }
-

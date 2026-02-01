@@ -12,7 +12,10 @@ fn write_target(dir: &tempfile::TempDir, contents: &str) -> std::path::PathBuf {
 #[test]
 fn rate_limits_client_read_tokens_supports_root_account_id() {
     let dir = tempfile::TempDir::new().expect("tempdir");
-    let target = write_target(&dir, r#"{"tokens":{"access_token":"tok"},"account_id":"acct"}"#);
+    let target = write_target(
+        &dir,
+        r#"{"tokens":{"access_token":"tok"},"account_id":"acct"}"#,
+    );
     let (token, account) = read_tokens(&target).expect("tokens");
     assert_eq!(token, "tok");
     assert_eq!(account.as_deref(), Some("acct"));
@@ -28,7 +31,10 @@ fn rate_limits_client_fetch_usage_errors_include_body_preview() {
     );
 
     let dir = tempfile::TempDir::new().expect("tempdir");
-    let target = write_target(&dir, r#"{"tokens":{"access_token":"tok","account_id":"acct"}}"#);
+    let target = write_target(
+        &dir,
+        r#"{"tokens":{"access_token":"tok","account_id":"acct"}}"#,
+    );
 
     let request = UsageRequest {
         target_file: target,
@@ -38,7 +44,10 @@ fn rate_limits_client_fetch_usage_errors_include_body_preview() {
         max_time_seconds: 3,
     };
 
-    let err = fetch_usage(&request).unwrap_err().to_string();
+    let err = match fetch_usage(&request) {
+        Ok(_) => panic!("expected fetch_usage to error"),
+        Err(err) => err.to_string(),
+    };
     assert!(err.contains("HTTP 500"));
     assert!(err.contains("body:"));
     assert!(err.contains("hello world"));
@@ -60,7 +69,10 @@ fn rate_limits_client_fetch_usage_errors_without_body_when_empty() {
         max_time_seconds: 3,
     };
 
-    let err = fetch_usage(&request).unwrap_err().to_string();
+    let err = match fetch_usage(&request) {
+        Ok(_) => panic!("expected fetch_usage to error"),
+        Err(err) => err.to_string(),
+    };
     assert!(err.contains("HTTP 500"));
     assert!(!err.contains("body:"));
 }
@@ -81,7 +93,10 @@ fn rate_limits_client_fetch_usage_invalid_json_is_error() {
         max_time_seconds: 3,
     };
 
-    let err = fetch_usage(&request).unwrap_err().to_string();
+    let err = match fetch_usage(&request) {
+        Ok(_) => panic!("expected fetch_usage to error"),
+        Err(err) => err.to_string(),
+    };
     assert!(err.contains("invalid JSON"));
 }
 
@@ -105,7 +120,10 @@ fn rate_limits_client_fetch_usage_refreshes_on_401_when_enabled() {
         max_time_seconds: 3,
     };
 
-    let err = fetch_usage(&request).unwrap_err().to_string();
+    let err = match fetch_usage(&request) {
+        Ok(_) => panic!("expected fetch_usage to error"),
+        Err(err) => err.to_string(),
+    };
     assert!(err.contains("HTTP 401"));
 
     let requests = server.take_requests();
@@ -117,4 +135,3 @@ fn rate_limits_client_fetch_usage_refreshes_on_401_when_enabled() {
         2
     );
 }
-

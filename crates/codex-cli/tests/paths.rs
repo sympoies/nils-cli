@@ -113,8 +113,11 @@ fn paths_resolve_secret_cache_dir_variants() {
     {
         let _override = EnvGuard::remove(&lock, "CODEX_SECRET_CACHE_DIR");
         let cache_root = dir.path().join("cache_root");
-        let _cache_root =
-            EnvGuard::set(&lock, "ZSH_CACHE_DIR", cache_root.to_str().expect("cache_root"));
+        let _cache_root = EnvGuard::set(
+            &lock,
+            "ZSH_CACHE_DIR",
+            cache_root.to_str().expect("cache_root"),
+        );
 
         assert_eq!(
             paths::resolve_secret_cache_dir().expect("secret cache dir"),
@@ -146,4 +149,3 @@ fn paths_resolve_auth_file_prefers_env() {
 
     assert_eq!(paths::resolve_auth_file().expect("auth file"), auth_file);
 }
-

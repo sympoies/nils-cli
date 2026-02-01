@@ -14,10 +14,7 @@ fn rate_limits_ansi_format_percent_cell_and_token() {
         ansi::format_percent_cell("5h:94%", 8, Some(false)),
         "  5h:94%"
     );
-    assert_eq!(
-        ansi::format_percent_cell("too_long", 3, Some(false)),
-        "too"
-    );
+    assert_eq!(ansi::format_percent_cell("too_long", 3, Some(false)), "too");
 
     assert_eq!(ansi::format_percent_cell("oops", 4, Some(true)), "oops");
 
@@ -30,4 +27,3 @@ fn rate_limits_ansi_format_percent_cell_and_token() {
 
     assert_eq!(ansi::format_percent_token("", Some(true)), "");
 }
-

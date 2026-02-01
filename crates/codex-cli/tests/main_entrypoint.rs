@@ -77,4 +77,3 @@ fn main_unknown_command_exits_64() {
     assert_exit(&output, 64);
     assert!(!stderr(&output).trim().is_empty());
 }
-

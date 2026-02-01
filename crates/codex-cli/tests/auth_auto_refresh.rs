@@ -102,7 +102,10 @@ fn auth_auto_refresh_unconfigured_exits_zero() {
     let output = run(
         &["auth", "auto-refresh"],
         &[],
-        &[("CODEX_AUTH_FILE", &auth_file), ("CODEX_SECRET_DIR", &secrets)],
+        &[
+            ("CODEX_AUTH_FILE", &auth_file),
+            ("CODEX_SECRET_DIR", &secrets),
+        ],
     );
 
     assert_exit(&output, 0);
@@ -173,11 +176,7 @@ fn auth_auto_refresh_normalizes_fractional_last_refresh() {
     fs::create_dir_all(&cache).expect("cache dir");
     fs::create_dir_all(&secrets).expect("secrets dir");
 
-    fs::write(
-        &auth_file,
-        r#"{"last_refresh":"2025-01-20T12:34:56.789Z"}"#,
-    )
-    .expect("write auth");
+    fs::write(&auth_file, r#"{"last_refresh":"2025-01-20T12:34:56.789Z"}"#).expect("write auth");
 
     let output = run(
         &["auth", "auto-refresh"],

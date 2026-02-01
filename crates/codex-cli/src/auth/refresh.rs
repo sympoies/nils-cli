@@ -247,6 +247,41 @@ fn is_auth_file(target: &Path) -> bool {
 mod tests {
     use super::*;
 
+    struct EnvVarGuard {
+        key: String,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self {
+                key: key.to_string(),
+                previous,
+            }
+        }
+
+        fn remove(key: &str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::remove_var(key);
+            Self {
+                key: key.to_string(),
+                previous,
+            }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.take() {
+                std::env::set_var(&self.key, previous);
+            } else {
+                std::env::remove_var(&self.key);
+            }
+        }
+    }
+
     #[test]
     fn auth_refresh_error_summary() {
         let body = r#"{"error":{"code":"invalid_grant","message":"Bad token"}}"#;
@@ -264,5 +299,94 @@ mod tests {
         assert_eq!(tokens.get("access_token").unwrap(), "new");
         assert_eq!(tokens.get("refresh_token").unwrap(), "r1");
         assert_eq!(merged.get("last_refresh").unwrap(), "2025-01-20T00:00:00Z");
+    }
+
+    #[test]
+    fn auth_refresh_resolve_target_defaults_when_no_args() {
+        let args: Vec<String> = Vec::new();
+        let target = resolve_target(&args).unwrap().expect("target");
+        assert!(!target.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn auth_refresh_resolve_target_rejects_invalid_secret_names() {
+        for secret in ["", "a/b", "a..b", "../x"] {
+            let args = vec![secret.to_string()];
+            let target = resolve_target(&args).unwrap();
+            assert!(target.is_none(), "expected None for secret={secret:?}");
+        }
+    }
+
+    #[test]
+    fn auth_refresh_resolve_target_joins_secret_name() {
+        let secret_name = "my-secret.json";
+        let args = vec![secret_name.to_string()];
+        let target = resolve_target(&args).unwrap().expect("target");
+        assert!(target.ends_with(secret_name));
+    }
+
+    #[test]
+    fn auth_refresh_refresh_token_from_json_prefers_nested() {
+        let value = serde_json::json!({
+            "refresh_token": "top",
+            "tokens": { "refresh_token": "nested" }
+        });
+        let token = refresh_token_from_json(&value).expect("token");
+        assert_eq!(token, "nested");
+    }
+
+    #[test]
+    fn auth_refresh_refresh_token_from_json_falls_back_to_top_level() {
+        let value = serde_json::json!({ "refresh_token": "top" });
+        let token = refresh_token_from_json(&value).expect("token");
+        assert_eq!(token, "top");
+    }
+
+    #[test]
+    fn auth_refresh_refresh_token_from_json_none_when_missing() {
+        let value = serde_json::json!({ "tokens": { "access_token": "a1" } });
+        assert!(refresh_token_from_json(&value).is_none());
+    }
+
+    #[test]
+    fn auth_refresh_env_timeout_uses_default_when_missing_or_invalid() {
+        let key = "CODEX_TEST_ENV_TIMEOUT_SECONDS_DEFAULT";
+        let _guard = EnvVarGuard::remove(key);
+        assert_eq!(env_timeout(key, 123), 123);
+
+        let _guard = EnvVarGuard::set(key, "not-a-number");
+        assert_eq!(env_timeout(key, 456), 456);
+
+        let _guard = EnvVarGuard::set(key, "-1");
+        assert_eq!(env_timeout(key, 789), 789);
+    }
+
+    #[test]
+    fn auth_refresh_env_timeout_parses_value() {
+        let key = "CODEX_TEST_ENV_TIMEOUT_SECONDS_PARSE";
+        let _guard = EnvVarGuard::set(key, "42");
+        assert_eq!(env_timeout(key, 1), 42);
+    }
+
+    #[test]
+    fn auth_refresh_file_name_returns_basename() {
+        let path = Path::new("my-auth.json");
+        assert_eq!(file_name(path), "my-auth.json");
+    }
+
+    #[test]
+    fn auth_refresh_file_name_defaults_when_missing() {
+        let path = Path::new("");
+        assert_eq!(file_name(path), "auth.json");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn auth_refresh_file_name_defaults_when_non_utf8() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let path = PathBuf::from(OsString::from_vec(vec![0xFF]));
+        assert_eq!(file_name(&path), "auth.json");
     }
 }
