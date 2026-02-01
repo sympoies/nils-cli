@@ -89,7 +89,12 @@ fn auth_use_email_resolution() {
 
     let auth_file = dir.path().join("auth.json");
     let secret_file = secrets.join("alpha.json");
-    let content = auth_json(PAYLOAD_ALPHA, "acct_001", "refresh_a", "2025-01-20T12:34:56Z");
+    let content = auth_json(
+        PAYLOAD_ALPHA,
+        "acct_001",
+        "refresh_a",
+        "2025-01-20T12:34:56Z",
+    );
     fs::write(&secret_file, &content).expect("write secret");
 
     let output = run(
@@ -109,7 +114,10 @@ fn auth_use_email_resolution() {
     assert_eq!(applied, content);
 
     let timestamp = cache.join("auth.json.timestamp");
-    assert_eq!(fs::read_to_string(&timestamp).unwrap(), "2025-01-20T12:34:56Z");
+    assert_eq!(
+        fs::read_to_string(&timestamp).unwrap(),
+        "2025-01-20T12:34:56Z"
+    );
 }
 
 #[test]
@@ -121,13 +129,21 @@ fn auth_use_ambiguous_email() {
     let auth_file = dir.path().join("auth.json");
     fs::write(&auth_file, "{}").expect("write auth");
 
-    let content = auth_json(PAYLOAD_ALPHA, "acct_001", "refresh_a", "2025-01-20T12:34:56Z");
+    let content = auth_json(
+        PAYLOAD_ALPHA,
+        "acct_001",
+        "refresh_a",
+        "2025-01-20T12:34:56Z",
+    );
     fs::write(secrets.join("alpha.json"), &content).expect("write secret");
     fs::write(secrets.join("alpha-duplicate.json"), &content).expect("write secret");
 
     let output = run(
         &["auth", "use", "alpha@example.com"],
-        &[("CODEX_AUTH_FILE", &auth_file), ("CODEX_SECRET_DIR", &secrets)],
+        &[
+            ("CODEX_AUTH_FILE", &auth_file),
+            ("CODEX_SECRET_DIR", &secrets),
+        ],
     );
 
     assert_exit(&output, 2);

@@ -294,8 +294,7 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
                             )
                             .and_then(|v| v.parse::<i64>().ok());
                         }
-                        if row.non_weekly_reset_epoch.is_none()
-                            || row.weekly_reset_epoch.is_none()
+                        if row.non_weekly_reset_epoch.is_none() || row.weekly_reset_epoch.is_none()
                         {
                             if let Ok(cache_entry) = cache::read_cache_entry(secret_file) {
                                 if row.non_weekly_reset_epoch.is_none() {
@@ -337,7 +336,7 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
     );
     println!("-----------------------------------------------------------------------");
 
-    rows.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
+    rows.sort_by_key(|row| row.sort_key());
 
     for row in rows {
         let display_non_weekly = if multiple_labels && !row.window_label.is_empty() {
@@ -374,7 +373,12 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
 
         println!(
             "{:<15}  {}  {:>7}  {}  {:>7}  {:<11}",
-            row.name, non_weekly_display, non_weekly_left, weekly_display, weekly_left, reset_display
+            row.name,
+            non_weekly_display,
+            non_weekly_left,
+            weekly_display,
+            weekly_left,
+            reset_display
         );
     }
 
@@ -475,7 +479,11 @@ fn async_fetch_one_line(
 
     let line = result.line.map(normalize_one_line);
     let err = errors.join("\n");
-    AsyncFetchResult { line, rc: result.rc, err }
+    AsyncFetchResult {
+        line,
+        rc: result.rc,
+        err,
+    }
 }
 
 fn fetch_one_line_network(target_file: &Path, no_refresh_auth: bool) -> AsyncFetchResult {
@@ -622,8 +630,8 @@ fn format_one_line_output(
     let prefix = cache::secret_name_for_target(target_file)
         .map(|name| format!("{name} "))
         .unwrap_or_default();
-    let weekly_reset_iso = render::format_epoch_local_datetime(weekly_reset_epoch)
-        .unwrap_or_else(|| "?".to_string());
+    let weekly_reset_iso =
+        render::format_epoch_local_datetime(weekly_reset_epoch).unwrap_or_else(|| "?".to_string());
 
     format!(
         "{}{}:{}% W:{}% {}",
@@ -632,7 +640,7 @@ fn format_one_line_output(
 }
 
 fn normalize_one_line(line: String) -> String {
-    line.replace('\n', " ").replace('\r', " ").replace('\t', " ")
+    line.replace(['\n', '\r', '\t'], " ")
 }
 
 fn sync_auth_silent() -> Result<(i32, Option<String>)> {
@@ -679,10 +687,7 @@ fn sync_auth_silent() -> Result<(i32, Option<String>)> {
                 let secret_hash = match crate::fs::sha256_file(&path) {
                     Ok(hash) => hash,
                     Err(_) => {
-                        return Ok((
-                            1,
-                            Some(format!("codex: failed to hash {}", path.display())),
-                        ))
+                        return Ok((1, Some(format!("codex: failed to hash {}", path.display()))))
                     }
                 };
                 if secret_hash == auth_hash {
@@ -754,16 +759,12 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
             .to_string();
 
         let mut row = Row::empty(secret_name.trim_end_matches(".json").to_string());
-        let output = match single_one_line(
-            &secret_file,
-            cached_mode,
-            args.no_refresh_auth,
-            debug_mode,
-        ) {
-            Ok(Some(line)) => line,
-            Ok(None) => String::new(),
-            Err(_) => String::new(),
-        };
+        let output =
+            match single_one_line(&secret_file, cached_mode, args.no_refresh_auth, debug_mode) {
+                Ok(Some(line)) => line,
+                Ok(None) => String::new(),
+                Err(_) => String::new(),
+            };
 
         if output.is_empty() {
             if !cached_mode {
@@ -808,7 +809,6 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
             }
             rows.push(row);
         }
-
     }
 
     let mut non_weekly_header = "Non-weekly".to_string();
@@ -827,7 +827,7 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
     );
     println!("-----------------------------------------------------------------------");
 
-    rows.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
+    rows.sort_by_key(|row| row.sort_key());
 
     for row in rows {
         let display_non_weekly = if multiple_labels && !row.window_label.is_empty() {
@@ -864,7 +864,12 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
 
         println!(
             "{:<15}  {}  {:>7}  {}  {:>7}  {:<11}",
-            row.name, non_weekly_display, non_weekly_left, weekly_display, weekly_left, reset_display
+            row.name,
+            non_weekly_display,
+            non_weekly_left,
+            weekly_display,
+            weekly_left,
+            reset_display
         );
     }
 
@@ -890,8 +895,9 @@ fn run_single_mode(
     if cached_mode {
         match cache::read_cache_entry(&target_file) {
             Ok(entry) => {
-                let weekly_reset_iso = render::format_epoch_local_datetime(entry.weekly_reset_epoch)
-                    .unwrap_or_else(|| "?".to_string());
+                let weekly_reset_iso =
+                    render::format_epoch_local_datetime(entry.weekly_reset_epoch)
+                        .unwrap_or_else(|| "?".to_string());
                 let prefix = cache::secret_name_for_target(&target_file)
                     .map(|name| format!("{name} "))
                     .unwrap_or_default();
@@ -930,7 +936,10 @@ fn run_single_mode(
         Err(err) => {
             let msg = err.to_string();
             if msg.contains("missing access_token") {
-                eprintln!("codex-rate-limits: missing access_token in {}", target_file.display());
+                eprintln!(
+                    "codex-rate-limits: missing access_token in {}",
+                    target_file.display()
+                );
                 return Ok(2);
             }
             eprintln!("{msg}");
@@ -988,7 +997,11 @@ fn run_single_mode(
 
         println!(
             "{}{}:{}% W:{}% {}",
-            prefix, weekly.non_weekly_label, weekly.non_weekly_remaining, weekly.weekly_remaining, weekly_reset_iso
+            prefix,
+            weekly.non_weekly_label,
+            weekly.non_weekly_remaining,
+            weekly.weekly_remaining,
+            weekly_reset_iso
         );
         return Ok(0);
     }
@@ -1027,8 +1040,9 @@ fn single_one_line(
     if cached_mode {
         return match cache::read_cache_entry(target_file) {
             Ok(entry) => {
-                let weekly_reset_iso = render::format_epoch_local_datetime(entry.weekly_reset_epoch)
-                    .unwrap_or_else(|| "?".to_string());
+                let weekly_reset_iso =
+                    render::format_epoch_local_datetime(entry.weekly_reset_epoch)
+                        .unwrap_or_else(|| "?".to_string());
                 let prefix = cache::secret_name_for_target(target_file)
                     .map(|name| format!("{name} "))
                     .unwrap_or_default();
@@ -1092,7 +1106,11 @@ fn single_one_line(
 
     Ok(Some(format!(
         "{}{}:{}% W:{}% {}",
-        prefix, weekly.non_weekly_label, weekly.non_weekly_remaining, weekly.weekly_remaining, weekly_reset_iso
+        prefix,
+        weekly.non_weekly_label,
+        weekly.non_weekly_remaining,
+        weekly.weekly_remaining,
+        weekly_reset_iso
     )))
 }
 
@@ -1176,9 +1194,16 @@ fn parse_one_line_output(line: &str) -> Option<ParsedOneLine> {
     let weekly_field = parts[parts.len() - 2];
     let reset_iso = parts[parts.len() - 1].to_string();
 
-    let window_label = window_field.split(':').next()?.trim_matches('"').to_string();
+    let window_label = window_field
+        .split(':')
+        .next()?
+        .trim_matches('"')
+        .to_string();
     let non_weekly_remaining = window_field.split(':').nth(1)?;
-    let non_weekly_remaining = non_weekly_remaining.trim_end_matches('%').parse::<i64>().ok()?;
+    let non_weekly_remaining = non_weekly_remaining
+        .trim_end_matches('%')
+        .parse::<i64>()
+        .ok()?;
 
     let weekly_remaining = weekly_field.trim_start_matches("W:").trim_end_matches('%');
     let weekly_remaining = weekly_remaining.parse::<i64>().ok()?;

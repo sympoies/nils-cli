@@ -42,7 +42,10 @@ pub fn format_percent_token(raw: &str, color_enabled: Option<bool>) -> String {
 
 fn extract_percent(raw: &str) -> Option<i32> {
     let mut part = raw.rsplit(':').next()?.to_string();
-    part = part.trim().trim_end_matches('%').replace(char::is_whitespace, "");
+    part = part
+        .trim()
+        .trim_end_matches('%')
+        .replace(char::is_whitespace, "");
     part.parse::<i32>().ok()
 }
 

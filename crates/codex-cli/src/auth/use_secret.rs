@@ -112,11 +112,13 @@ fn resolve_by_email(secret_dir: &Path, target: &str) -> ResolveResult {
     } else if matches.is_empty() {
         ResolveResult::NotFound
     } else {
-        ResolveResult::Ambiguous { candidates: matches }
+        ResolveResult::Ambiguous {
+            candidates: matches,
+        }
     }
 }
 
-fn secret_timestamp_path(target_file: &PathBuf) -> Result<PathBuf> {
+fn secret_timestamp_path(target_file: &Path) -> Result<PathBuf> {
     let cache_dir = paths::resolve_secret_cache_dir()
         .ok_or_else(|| anyhow::anyhow!("CODEX_SECRET_CACHE_DIR not resolved"))?;
     let name = target_file
@@ -126,7 +128,7 @@ fn secret_timestamp_path(target_file: &PathBuf) -> Result<PathBuf> {
     Ok(cache_dir.join(format!("{name}.timestamp")))
 }
 
-fn file_name(path: &PathBuf) -> String {
+fn file_name(path: &Path) -> String {
     path.file_name()
         .and_then(|name| name.to_str())
         .unwrap_or_default()

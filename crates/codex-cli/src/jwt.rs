@@ -43,5 +43,8 @@ fn nested_string(payload: &Value, parent: &str, key: &str) -> Option<String> {
 }
 
 fn top_level_string(payload: &Value, key: &str) -> Option<String> {
-    payload.get(key).and_then(|value| value.as_str()).map(strip_newlines)
+    payload
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(strip_newlines)
 }

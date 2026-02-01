@@ -38,7 +38,10 @@ pub fn parse_usage(json: &Value) -> Option<UsageData> {
 
 fn parse_window(value: &Value) -> Option<Window> {
     let limit_window_seconds = value.get("limit_window_seconds")?.as_i64()?;
-    let used_percent = value.get("used_percent").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let used_percent = value
+        .get("used_percent")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
     let reset_at = value.get("reset_at")?.as_i64()?;
     Some(Window {
         limit_window_seconds,
@@ -67,32 +70,29 @@ pub fn render_values(data: &UsageData) -> RenderValues {
 }
 
 pub fn weekly_values(values: &RenderValues) -> WeeklyValues {
-    let (weekly_remaining, weekly_reset_epoch, non_weekly_label, non_weekly_remaining, non_weekly_reset_epoch) =
-        if values.primary_label == "Weekly" {
-            (
-                values.primary_remaining,
-                values.primary_reset_epoch,
-                values.secondary_label.clone(),
-                values.secondary_remaining,
-                Some(values.secondary_reset_epoch),
-            )
-        } else if values.secondary_label == "Weekly" {
-            (
-                values.secondary_remaining,
-                values.secondary_reset_epoch,
-                values.primary_label.clone(),
-                values.primary_remaining,
-                Some(values.primary_reset_epoch),
-            )
-        } else {
-            (
-                values.secondary_remaining,
-                values.secondary_reset_epoch,
-                values.primary_label.clone(),
-                values.primary_remaining,
-                Some(values.primary_reset_epoch),
-            )
-        };
+    let (
+        weekly_remaining,
+        weekly_reset_epoch,
+        non_weekly_label,
+        non_weekly_remaining,
+        non_weekly_reset_epoch,
+    ) = if values.primary_label == "Weekly" {
+        (
+            values.primary_remaining,
+            values.primary_reset_epoch,
+            values.secondary_label.clone(),
+            values.secondary_remaining,
+            Some(values.secondary_reset_epoch),
+        )
+    } else {
+        (
+            values.secondary_remaining,
+            values.secondary_reset_epoch,
+            values.primary_label.clone(),
+            values.primary_remaining,
+            Some(values.primary_reset_epoch),
+        )
+    };
 
     WeeklyValues {
         weekly_remaining,

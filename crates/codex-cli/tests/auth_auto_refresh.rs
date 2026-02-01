@@ -68,8 +68,11 @@ fn auth_auto_refresh_backfills_timestamp() {
     fs::create_dir_all(&cache).expect("cache dir");
     fs::create_dir_all(&secrets).expect("secrets dir");
     let last_refresh = "2025-01-20T12:34:56Z";
-    fs::write(&auth_file, format!(r#"{{"last_refresh":"{}"}}"#, last_refresh))
-        .expect("write auth");
+    fs::write(
+        &auth_file,
+        format!(r#"{{"last_refresh":"{}"}}"#, last_refresh),
+    )
+    .expect("write auth");
 
     let output = run(
         &["auth", "auto-refresh"],

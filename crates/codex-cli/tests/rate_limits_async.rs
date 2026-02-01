@@ -48,11 +48,7 @@ fn rate_limits_async_json_conflict() {
 
 #[test]
 fn rate_limits_async_one_line_conflict() {
-    let output = run(
-        &["diag", "rate-limits", "--async", "--one-line"],
-        &[],
-        &[],
-    );
+    let output = run(&["diag", "rate-limits", "--async", "--one-line"], &[], &[]);
     assert_exit(&output, 64);
     assert!(stderr(&output).contains("--async does not support --one-line"));
 }

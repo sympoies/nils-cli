@@ -37,8 +37,7 @@ pub fn fetch_usage(request: &UsageRequest) -> Result<UsageResponse> {
             .chars()
             .take(200)
             .collect::<String>()
-            .replace('\n', " ")
-            .replace('\r', " ");
+            .replace(['\n', '\r'], " ");
         if preview.is_empty() {
             anyhow::bail!(
                 "codex-rate-limits: GET {} failed (HTTP {})",
@@ -54,8 +53,8 @@ pub fn fetch_usage(request: &UsageRequest) -> Result<UsageResponse> {
         );
     }
 
-    let json: Value = serde_json::from_str(&response.body)
-        .context("invalid JSON from usage endpoint")?;
+    let json: Value =
+        serde_json::from_str(&response.body).context("invalid JSON from usage endpoint")?;
 
     Ok(UsageResponse {
         body: response.body,
@@ -72,7 +71,11 @@ pub fn read_tokens(target_file: &Path) -> Result<(String, Option<String>)> {
     Ok((access_token, account_id))
 }
 
-fn send_request(request: &UsageRequest, access_token: &str, account_id: Option<&str>) -> Result<HttpResponse> {
+fn send_request(
+    request: &UsageRequest,
+    access_token: &str,
+    account_id: Option<&str>,
+) -> Result<HttpResponse> {
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(request.connect_timeout_seconds))
         .timeout(Duration::from_secs(request.max_time_seconds))

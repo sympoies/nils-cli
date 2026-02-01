@@ -45,15 +45,21 @@ pub fn write_atomic(path: &Path, contents: &[u8], mode: u32) -> Result<()> {
             .open(&tmp_path)
         {
             Ok(mut file) => {
-                file.write_all(contents)
-                    .with_context(|| format!("failed to write temp file: {}", tmp_path.display()))?;
+                file.write_all(contents).with_context(|| {
+                    format!("failed to write temp file: {}", tmp_path.display())
+                })?;
                 file.flush().ok();
 
                 set_permissions(&tmp_path, mode)?;
                 drop(file);
 
-                fs::rename(&tmp_path, path)
-                    .with_context(|| format!("failed to rename {} -> {}", tmp_path.display(), path.display()))?;
+                fs::rename(&tmp_path, path).with_context(|| {
+                    format!(
+                        "failed to rename {} -> {}",
+                        tmp_path.display(),
+                        path.display()
+                    )
+                })?;
                 set_permissions(path, mode)?;
                 return Ok(());
             }

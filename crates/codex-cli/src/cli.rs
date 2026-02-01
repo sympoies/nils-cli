@@ -144,10 +144,7 @@ pub enum ConfigCommand {
     /// Show current configuration
     Show,
     /// Set configuration value (current shell only)
-    Set {
-        key: String,
-        value: String,
-    },
+    Set { key: String, value: String },
 }
 
 #[derive(Args)]

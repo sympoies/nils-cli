@@ -187,7 +187,9 @@ fn cache_root() -> Option<PathBuf> {
 }
 
 fn secret_name_for_auth(auth_file: &Path, secret_dir: &Path) -> Option<String> {
-    let auth_key = auth::identity_key_from_auth_file(auth_file).ok().flatten()?;
+    let auth_key = auth::identity_key_from_auth_file(auth_file)
+        .ok()
+        .flatten()?;
     let entries = std::fs::read_dir(secret_dir).ok()?;
     for entry in entries.flatten() {
         let path = entry.path();

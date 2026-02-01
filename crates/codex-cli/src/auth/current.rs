@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::Path;
 
 use crate::auth;
 use crate::fs;
@@ -101,7 +101,7 @@ enum MatchMode {
     Identity,
 }
 
-fn file_name(path: &PathBuf) -> String {
+fn file_name(path: &Path) -> String {
     path.file_name()
         .and_then(|name| name.to_str())
         .unwrap_or_default()

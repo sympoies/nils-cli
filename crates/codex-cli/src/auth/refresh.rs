@@ -23,7 +23,10 @@ pub fn run(args: &[String]) -> Result<i32> {
     let value = match json::read_json(&target_file) {
         Ok(value) => value,
         Err(_) => {
-            eprintln!("codex-refresh: failed to read refresh token from {}", target_file.display());
+            eprintln!(
+                "codex-refresh: failed to read refresh token from {}",
+                target_file.display()
+            );
             return Ok(2);
         }
     };
@@ -32,7 +35,10 @@ pub fn run(args: &[String]) -> Result<i32> {
     let refresh_token = match refresh_token {
         Some(token) => token,
         None => {
-            eprintln!("codex-refresh: failed to read refresh token from {}", target_file.display());
+            eprintln!(
+                "codex-refresh: failed to read refresh token from {}",
+                target_file.display()
+            );
             return Ok(2);
         }
     };
@@ -128,11 +134,7 @@ pub fn run(args: &[String]) -> Result<i32> {
         }
     }
 
-    println!(
-        "codex: refreshed {} at {}",
-        target_file.display(),
-        now_iso
-    );
+    println!("codex: refreshed {} at {}", target_file.display(), now_iso);
     Ok(0)
 }
 
@@ -159,10 +161,7 @@ fn refresh_token_from_json(value: &Value) -> Option<String> {
 }
 
 fn merge_tokens(base: &Value, refresh: &Value, now_iso: &str) -> Result<Value> {
-    let mut root = base
-        .as_object()
-        .cloned()
-        .unwrap_or_else(Map::new);
+    let mut root = base.as_object().cloned().unwrap_or_else(Map::new);
     let mut tokens = root
         .get("tokens")
         .and_then(|value| value.as_object())
@@ -178,7 +177,10 @@ fn merge_tokens(base: &Value, refresh: &Value, now_iso: &str) -> Result<Value> {
     }
 
     root.insert("tokens".to_string(), Value::Object(tokens));
-    root.insert("last_refresh".to_string(), Value::String(now_iso.to_string()));
+    root.insert(
+        "last_refresh".to_string(),
+        Value::String(now_iso.to_string()),
+    );
     Ok(Value::Object(root))
 }
 
@@ -255,7 +257,8 @@ mod tests {
     #[test]
     fn auth_refresh_merge_tokens() {
         let base: Value = serde_json::from_str(r#"{"tokens":{"access_token":"old"}}"#).unwrap();
-        let refresh: Value = serde_json::from_str(r#"{"access_token":"new","refresh_token":"r1"}"#).unwrap();
+        let refresh: Value =
+            serde_json::from_str(r#"{"access_token":"new","refresh_token":"r1"}"#).unwrap();
         let merged = merge_tokens(&base, &refresh, "2025-01-20T00:00:00Z").unwrap();
         let tokens = merged.get("tokens").unwrap();
         assert_eq!(tokens.get("access_token").unwrap(), "new");

@@ -6,8 +6,8 @@ use std::path::Path;
 pub fn read_json(path: &Path) -> Result<Value> {
     let raw = fs::read_to_string(path)
         .with_context(|| format!("failed to read json: {}", path.display()))?;
-    let value: Value = serde_json::from_str(&raw)
-        .with_context(|| format!("invalid json: {}", path.display()))?;
+    let value: Value =
+        serde_json::from_str(&raw).with_context(|| format!("invalid json: {}", path.display()))?;
     Ok(value)
 }
 

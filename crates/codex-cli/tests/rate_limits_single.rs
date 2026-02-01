@@ -61,7 +61,10 @@ fn rate_limits_single_cached_missing_cache() {
 
     let output = run(
         &["diag", "rate-limits", "--cached"],
-        &[("CODEX_AUTH_FILE", &auth_file), ("CODEX_SECRET_CACHE_DIR", &cache_dir)],
+        &[
+            ("CODEX_AUTH_FILE", &auth_file),
+            ("CODEX_SECRET_CACHE_DIR", &cache_dir),
+        ],
         &[("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false")],
     );
     assert_exit(&output, 1);

@@ -11,7 +11,8 @@ pub fn run() -> Result<i32> {
         return Ok(0);
     }
 
-    let min_days_raw = std::env::var("CODEX_AUTO_REFRESH_MIN_DAYS").unwrap_or_else(|_| "5".to_string());
+    let min_days_raw =
+        std::env::var("CODEX_AUTO_REFRESH_MIN_DAYS").unwrap_or_else(|_| "5".to_string());
     let min_days = match min_days_raw.parse::<i64>() {
         Ok(value) => value,
         Err(_) => {
@@ -83,7 +84,10 @@ pub fn run() -> Result<i32> {
                 skipped += 1;
             }
             RefreshDecision::WarnFuture => {
-                eprintln!("codex-auto-refresh: warning: future timestamp for {}", target.display());
+                eprintln!(
+                    "codex-auto-refresh: warning: future timestamp for {}",
+                    target.display()
+                );
                 skipped += 1;
             }
         }
@@ -126,7 +130,12 @@ enum RefreshDecision {
     WarnFuture,
 }
 
-fn should_refresh(target: &Path, timestamp_path: &Path, now_epoch: i64, min_seconds: i64) -> RefreshDecision {
+fn should_refresh(
+    target: &Path,
+    timestamp_path: &Path,
+    now_epoch: i64,
+    min_seconds: i64,
+) -> RefreshDecision {
     if let Some(last_epoch) = last_refresh_epoch(target, timestamp_path) {
         let age = now_epoch - last_epoch;
         if age < 0 {
@@ -158,7 +167,11 @@ fn last_refresh_epoch(target: &Path, timestamp_path: &Path) -> Option<i64> {
 }
 
 fn normalize_iso(raw: &str) -> String {
-    let mut trimmed = raw.split(&['\n', '\r'][..]).next().unwrap_or("").to_string();
+    let mut trimmed = raw
+        .split(&['\n', '\r'][..])
+        .next()
+        .unwrap_or("")
+        .to_string();
     if let Some(dot) = trimmed.find('.') {
         if trimmed.ends_with('Z') {
             trimmed.truncate(dot);
@@ -169,7 +182,9 @@ fn normalize_iso(raw: &str) -> String {
 }
 
 fn iso_to_epoch(iso: &str) -> Option<i64> {
-    DateTime::parse_from_rfc3339(iso).ok().map(|dt| dt.timestamp())
+    DateTime::parse_from_rfc3339(iso)
+        .ok()
+        .map(|dt| dt.timestamp())
 }
 
 fn timestamp_path(target: &Path) -> Result<PathBuf> {

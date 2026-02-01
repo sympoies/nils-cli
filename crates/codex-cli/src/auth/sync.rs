@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::auth;
 use crate::fs;
@@ -71,7 +71,7 @@ pub fn run() -> Result<i32> {
     Ok(0)
 }
 
-fn secret_timestamp_path(target_file: &PathBuf) -> Result<PathBuf> {
+fn secret_timestamp_path(target_file: &Path) -> Result<PathBuf> {
     let cache_dir = paths::resolve_secret_cache_dir()
         .ok_or_else(|| anyhow::anyhow!("CODEX_SECRET_CACHE_DIR not resolved"))?;
     let name = target_file

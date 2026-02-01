@@ -1,8 +1,8 @@
-pub mod current;
 pub mod auto_refresh;
+pub mod current;
 pub mod refresh;
-pub mod use_secret;
 pub mod sync;
+pub mod use_secret;
 
 use anyhow::Result;
 use std::path::Path;
@@ -55,5 +55,6 @@ pub fn identity_key_from_auth_file(path: &Path) -> Result<Option<String>> {
 }
 
 fn token_from_auth_json(value: &serde_json::Value) -> Option<String> {
-    json::string_at(value, &["tokens", "id_token"]).or_else(|| json::string_at(value, &["tokens", "access_token"]))
+    json::string_at(value, &["tokens", "id_token"])
+        .or_else(|| json::string_at(value, &["tokens", "access_token"]))
 }
