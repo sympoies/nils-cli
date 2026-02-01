@@ -29,7 +29,6 @@ pub fn plan_tooling_bin() -> PathBuf {
 pub fn run_plan_tooling(dir: &Path, args: &[&str]) -> CmdOut {
     let mut cmd = Command::new(plan_tooling_bin());
     cmd.current_dir(dir)
-        .env("CODEX_HOME", dir)
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
