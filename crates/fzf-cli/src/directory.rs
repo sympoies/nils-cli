@@ -1,4 +1,5 @@
 use crate::{fzf, open, util};
+use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -125,6 +126,14 @@ pub fn run(args: &[String]) -> i32 {
 }
 
 fn list_dirs() -> Vec<String> {
+    let spinner = Progress::spinner(
+        ProgressOptions::default()
+            .with_prefix("index ")
+            .with_finish(ProgressFinish::Clear),
+    );
+    spinner.set_message("directories");
+    spinner.tick();
+
     let mut out: Vec<String> = Vec::new();
 
     let walker = WalkDir::new(".")
@@ -133,7 +142,13 @@ fn list_dirs() -> Vec<String> {
         .into_iter()
         .filter_entry(|e| e.file_name() != ".git");
 
+    let mut scanned: usize = 0;
     for entry in walker.flatten() {
+        scanned = scanned.saturating_add(1);
+        if scanned % 128 == 0 {
+            spinner.tick();
+        }
+
         if !entry.file_type().is_dir() {
             continue;
         }
@@ -153,10 +168,19 @@ fn list_dirs() -> Vec<String> {
     }
 
     out.sort();
+    spinner.finish_and_clear();
     out
 }
 
 fn list_files_in_dir(dir: &Path, max_depth: usize) -> Vec<String> {
+    let spinner = Progress::spinner(
+        ProgressOptions::default()
+            .with_prefix("index ")
+            .with_finish(ProgressFinish::Clear),
+    );
+    spinner.set_message("files");
+    spinner.tick();
+
     let mut out: Vec<String> = Vec::new();
     let walker = WalkDir::new(dir)
         .follow_links(true)
@@ -164,7 +188,13 @@ fn list_files_in_dir(dir: &Path, max_depth: usize) -> Vec<String> {
         .into_iter()
         .filter_entry(|e| e.file_name() != ".git");
 
+    let mut scanned: usize = 0;
     for entry in walker.flatten() {
+        scanned = scanned.saturating_add(1);
+        if scanned % 128 == 0 {
+            spinner.tick();
+        }
+
         if !entry.file_type().is_file() {
             continue;
         }
@@ -181,6 +211,7 @@ fn list_files_in_dir(dir: &Path, max_depth: usize) -> Vec<String> {
     }
 
     out.sort();
+    spinner.finish_and_clear();
     out
 }
 

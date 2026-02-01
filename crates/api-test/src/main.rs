@@ -10,6 +10,7 @@ use api_testing_core::suite::resolve::{
 use api_testing_core::suite::runner::{run_suite, SuiteRunOptions};
 use api_testing_core::suite::schema::load_and_validate_suite;
 use api_testing_core::suite::summary::{render_summary_from_json_str, SummaryOptions};
+use nils_term::progress::{Progress, ProgressOptions};
 
 #[derive(Parser)]
 #[command(
@@ -244,6 +245,11 @@ fn cmd_run(args: &RunArgs) -> i32 {
         }
     };
 
+    let progress = Progress::new(
+        loaded.manifest.cases.len() as u64,
+        ProgressOptions::default().with_prefix("api-test "),
+    );
+
     let out_dir_base_raw = std::env::var("API_TEST_OUTPUT_DIR")
         .ok()
         .unwrap_or_default();
@@ -288,6 +294,7 @@ fn cmd_run(args: &RunArgs) -> i32 {
         output_dir_base,
         env_rest_url,
         env_gql_url,
+        progress: Some(progress),
     };
 
     let run_output = match run_suite(&repo_root, loaded, opts) {

@@ -1,4 +1,5 @@
 use clap::{CommandFactory, Parser};
+use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 use std::process;
 
 mod cli;
@@ -135,10 +136,16 @@ fn run() -> i32 {
         run_dir = Some(p);
     }
 
+    let progress = Progress::new(
+        inputs.len() as u64,
+        ProgressOptions::default().with_finish(ProgressFinish::Leave),
+    );
+
     let summary = match processing::process_items(processing::ProcessArgs {
         toolchain: &toolchain,
         repo_root: &repo_root,
         run_dir: run_dir.as_deref(),
+        progress,
         subcommand: cli.subcommand,
         inputs: &inputs,
         output_mode: output_mode.as_ref(),

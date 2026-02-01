@@ -6,6 +6,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 anyhow = { workspace = true }
+nils-term = { path = "../nils-term" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tempfile = "3"

@@ -1,5 +1,6 @@
 use crate::util;
 use anyhow::Result;
+use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -28,11 +29,22 @@ pub struct DefIndex {
 }
 
 pub fn build_index() -> Result<DefIndex> {
+    let spinner = Progress::spinner(
+        ProgressOptions::default()
+            .with_prefix("index ")
+            .with_finish(ProgressFinish::Clear),
+    );
+    spinner.set_message("defs");
+    spinner.tick();
+
     let root = util::zsh_root()?;
-    let files = list_first_party_files(&root)?;
+    let files = list_first_party_files(&root, &spinner)?;
     let mut index = DefIndex::default();
 
-    for file in files {
+    for (i, file) in files.into_iter().enumerate() {
+        if i % 8 == 0 {
+            spinner.tick();
+        }
         let content = match fs::read(&file) {
             Ok(v) => String::from_utf8_lossy(&v).to_string(),
             Err(_) => continue,
@@ -43,10 +55,11 @@ pub fn build_index() -> Result<DefIndex> {
     index.aliases.sort_by(|a, b| a.name.cmp(&b.name));
     index.functions.sort_by(|a, b| a.name.cmp(&b.name));
 
+    spinner.finish_and_clear();
     Ok(index)
 }
 
-fn list_first_party_files(root: &Path) -> Result<Vec<PathBuf>> {
+fn list_first_party_files(root: &Path, spinner: &Progress) -> Result<Vec<PathBuf>> {
     let mut files: Vec<PathBuf> = Vec::new();
 
     let zshrc = root.join(".zshrc");
@@ -63,7 +76,12 @@ fn list_first_party_files(root: &Path) -> Result<Vec<PathBuf>> {
         if !d.is_dir() {
             continue;
         }
+        let mut scanned: usize = 0;
         for entry in WalkDir::new(&d).follow_links(true) {
+            scanned = scanned.saturating_add(1);
+            if scanned % 64 == 0 {
+                spinner.tick();
+            }
             let entry = match entry {
                 Ok(v) => v,
                 Err(_) => continue,
@@ -244,7 +262,10 @@ mod tests {
         write(&root.join("tools/c.zsh"), "foo() { echo ok }\n");
         write(&root.join("scripts/readme.txt"), "ignore\n");
 
-        let files = list_first_party_files(root).unwrap();
+        let spinner = Progress::spinner(
+            ProgressOptions::default().with_enabled(nils_term::progress::ProgressEnabled::Off),
+        );
+        let files = list_first_party_files(root, &spinner).unwrap();
         let names = files
             .iter()
             .map(|p| p.strip_prefix(root).unwrap().to_string_lossy().to_string())

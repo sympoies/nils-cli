@@ -109,6 +109,7 @@ dependencies = [
  "anyhow",
  "api-testing-core",
  "clap",
+ "nils-term",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -124,6 +125,7 @@ dependencies = [
  "jaq-core",
  "jaq-json",
  "jaq-std",
+ "nils-term",
  "nils-test-support",
  "pretty_assertions",
  "reqwest",
@@ -483,6 +485,7 @@ name = "fzf-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "nils-term",
  "nils-test-support",
  "pretty_assertions",
  "serde",
@@ -823,6 +826,7 @@ dependencies = [
  "chrono",
  "clap",
  "globset",
+ "nils-term",
  "nils-test-support",
  "pretty_assertions",
  "serde",

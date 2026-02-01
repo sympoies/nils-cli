@@ -6,6 +6,7 @@ use crate::model::{
 use crate::report::render_report_md;
 use crate::toolchain::{probe_image, Toolchain};
 use crate::util;
+use nils_term::progress::Progress;
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -171,6 +172,7 @@ pub struct ProcessArgs<'a> {
     pub toolchain: &'a Toolchain,
     pub repo_root: &'a Path,
     pub run_dir: Option<&'a Path>,
+    pub progress: Progress,
     pub subcommand: Operation,
     pub inputs: &'a [PathBuf],
     pub output_mode: Option<&'a OutputMode>,
@@ -206,6 +208,7 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
         toolchain,
         repo_root,
         run_dir,
+        progress,
         subcommand,
         inputs,
         output_mode,
@@ -391,6 +394,8 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
     }
 
     for (inp, out_abs) in planned {
+        progress.set_message(util::maybe_relpath(&inp, repo_root));
+
         let input_info = probe_image(toolchain, &inp);
         let input_alpha = input_info.alpha.unwrap_or(false);
 
@@ -981,6 +986,8 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
             warnings: item_warnings,
             error: item_error,
         });
+
+        progress.inc(1);
     }
 
     let mut report_path: Option<String> = None;
@@ -1029,6 +1036,8 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
         let json = serde_json::to_string_pretty(&summary)?;
         std::fs::write(&summary_file, json)?;
     }
+
+    progress.finish_with_message("done");
 
     Ok(summary)
 }

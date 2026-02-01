@@ -1,4 +1,5 @@
 use crate::{fzf, open, util};
+use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 use std::path::Path;
 use walkdir::WalkDir;
 
@@ -47,6 +48,14 @@ pub fn run(args: &[String]) -> i32 {
 }
 
 fn list_files(max_depth: usize) -> Vec<String> {
+    let spinner = Progress::spinner(
+        ProgressOptions::default()
+            .with_prefix("index ")
+            .with_finish(ProgressFinish::Clear),
+    );
+    spinner.set_message("files");
+    spinner.tick();
+
     let walker = WalkDir::new(".")
         .follow_links(true)
         .max_depth(max_depth.saturating_add(1))
@@ -54,7 +63,13 @@ fn list_files(max_depth: usize) -> Vec<String> {
         .filter_entry(|e| e.file_name() != ".git");
 
     let mut out = Vec::new();
+    let mut scanned: usize = 0;
     for entry in walker.flatten() {
+        scanned = scanned.saturating_add(1);
+        if scanned % 128 == 0 {
+            spinner.tick();
+        }
+
         if !entry.file_type().is_file() {
             continue;
         }
@@ -70,6 +85,7 @@ fn list_files(max_depth: usize) -> Vec<String> {
         out.push(display.to_string());
     }
     out.sort();
+    spinner.finish_and_clear();
     out
 }
 

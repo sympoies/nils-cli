@@ -79,6 +79,7 @@ fn suite_runner_loopback_runs_and_cleans_up() {
         output_dir_base: root.join("out-disabled"),
         env_rest_url: server.url(),
         env_gql_url: String::new(),
+        progress: None,
     };
 
     let run_disabled = run_suite(root, loaded.clone(), options).expect("run suite");
@@ -129,6 +130,7 @@ fn suite_runner_loopback_runs_and_cleans_up() {
         output_dir_base: root.join("out-enabled"),
         env_rest_url: server.url(),
         env_gql_url: String::new(),
+        progress: None,
     };
 
     let run_enabled = run_suite(root, loaded, options).expect("run suite writes enabled");

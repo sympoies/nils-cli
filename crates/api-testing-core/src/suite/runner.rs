@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::Context;
+use nils_term::progress::Progress;
 
 use crate::suite::auth::{AuthInit, SuiteAuthManager};
 use crate::suite::cleanup::{run_case_cleanup, CleanupContext};
@@ -227,6 +228,7 @@ pub struct SuiteRunOptions {
     pub output_dir_base: PathBuf,
     pub env_rest_url: String,
     pub env_gql_url: String,
+    pub progress: Option<Progress>,
 }
 
 #[derive(Debug, Clone)]
@@ -259,8 +261,50 @@ fn default_rest_flow_token_jq() -> String {
 pub fn run_suite(
     repo_root: &Path,
     loaded: LoadedSuite,
-    options: SuiteRunOptions,
+    mut options: SuiteRunOptions,
 ) -> Result<SuiteRunOutput> {
+    struct SuiteProgress {
+        progress: Option<Progress>,
+        touched: bool,
+    }
+
+    impl SuiteProgress {
+        fn new(progress: Option<Progress>) -> Self {
+            Self {
+                progress,
+                touched: false,
+            }
+        }
+
+        fn on_case_start(&mut self, position: u64, message: &str) {
+            let Some(progress) = self.progress.as_ref() else {
+                return;
+            };
+
+            self.touched = true;
+            progress.set_position(position);
+            progress.set_message(message);
+        }
+
+        fn finish(&mut self) {
+            if !self.touched {
+                return;
+            }
+
+            if let Some(progress) = self.progress.as_ref() {
+                progress.finish();
+            }
+        }
+    }
+
+    impl Drop for SuiteProgress {
+        fn drop(&mut self) {
+            self.finish();
+        }
+    }
+
+    let mut progress = SuiteProgress::new(options.progress.take());
+
     let run_id = time_run_id_now()?;
     let started_at = time_iso_now()?;
 
@@ -293,11 +337,16 @@ pub fn run_suite(
 
     let mut cases_out: Vec<SuiteCaseResult> = Vec::new();
 
+    let mut case_index: u64 = 0;
+
     for c in &loaded.manifest.cases {
         total += 1;
 
         let id = c.id.trim().to_string();
         let safe_id = sanitize_id(&id);
+
+        case_index = case_index.saturating_add(1);
+        progress.on_case_start(case_index, if id.is_empty() { &safe_id } else { &id });
 
         let tags = c.tags.clone();
         let ty = case_type_normalized(&c.case_type);
@@ -1226,12 +1275,14 @@ fn case_result(
 mod tests {
     use super::*;
     use crate::suite::schema::{SuiteCase, SuiteManifest};
+    use nils_term::progress::{ProgressDrawTarget, ProgressEnabled, ProgressOptions};
     use nils_test_support::fixtures::{GraphqlSetupFixture, RestSetupFixture};
     use pretty_assertions::assert_eq;
     use std::collections::HashSet;
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::sync::mpsc;
+    use std::sync::{Arc, Mutex};
     use std::thread;
     use std::time::Duration;
 
@@ -1335,6 +1386,40 @@ mod tests {
             shutdown: tx,
             join: Some(join),
         }
+    }
+
+    fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
+        String::from_utf8_lossy(&buffer.lock().expect("buffer lock")).to_string()
+    }
+
+    fn normalize_progress_output(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        let bytes = s.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'\r' {
+                i += 1;
+                continue;
+            }
+
+            if bytes[i] == 0x1b {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+                    i += 2;
+                    while i < bytes.len() {
+                        let b = bytes[i];
+                        i += 1;
+                        if b.is_ascii_alphabetic() {
+                            break;
+                        }
+                    }
+                    continue;
+                }
+            }
+
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+        out
     }
 
     #[test]
@@ -1521,6 +1606,7 @@ mod tests {
             output_dir_base: tmp.path().join("out"),
             env_rest_url: String::new(),
             env_gql_url: String::new(),
+            progress: None,
         };
 
         let out = run_suite(tmp.path(), loaded, options).unwrap();
@@ -1561,6 +1647,7 @@ mod tests {
             output_dir_base: tmp.path().join("out"),
             env_rest_url: String::new(),
             env_gql_url: String::new(),
+            progress: None,
         };
 
         let out = run_suite(tmp.path(), loaded, options).unwrap();
@@ -1612,6 +1699,7 @@ mod tests {
             output_dir_base: tmp.path().join("out"),
             env_rest_url: String::new(),
             env_gql_url: String::new(),
+            progress: None,
         };
 
         let out = run_suite(tmp.path(), loaded, options).unwrap();
@@ -1652,6 +1740,7 @@ mod tests {
             output_dir_base: tmp.path().join("out"),
             env_rest_url: String::new(),
             env_gql_url: String::new(),
+            progress: None,
         };
 
         let err = run_suite(tmp.path(), loaded, options).unwrap_err();
@@ -1703,11 +1792,111 @@ mod tests {
             output_dir_base: tmp.path().join("out"),
             env_rest_url: server.base_url.clone(),
             env_gql_url: String::new(),
+            progress: None,
         };
 
         let out = run_suite(tmp.path(), loaded, options).unwrap();
         let cmd = out.results.cases[0].command.as_deref().unwrap_or("");
         assert!(cmd.contains("--no-history"));
         assert!(cmd.contains("--url"));
+    }
+
+    #[test]
+    fn suite_runner_progress_disabled_is_noop() {
+        let tmp = TempDir::new().unwrap();
+        let suite_path = tmp.path().join("suite.json");
+        std::fs::write(&suite_path, br#"{"version":1,"cases":[]}"#).unwrap();
+
+        let mut case = base_case("case-1", "rest");
+        case.tags = vec!["smoke".to_string()];
+
+        let manifest = SuiteManifest {
+            version: 1,
+            name: String::new(),
+            defaults: SuiteDefaults::default(),
+            auth: None,
+            cases: vec![case],
+        };
+        let loaded = LoadedSuite {
+            suite_path: suite_path.clone(),
+            manifest,
+        };
+
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let progress = Progress::new(
+            1,
+            ProgressOptions::default()
+                .with_enabled(ProgressEnabled::Off)
+                .with_draw_target(ProgressDrawTarget::to_writer(buffer.clone()))
+                .with_width(Some(60)),
+        );
+
+        let options = SuiteRunOptions {
+            required_tags: vec!["fast".to_string()],
+            only_ids: HashSet::new(),
+            skip_ids: HashSet::new(),
+            allow_writes_flag: true,
+            fail_fast: false,
+            output_dir_base: tmp.path().join("out"),
+            env_rest_url: String::new(),
+            env_gql_url: String::new(),
+            progress: Some(progress),
+        };
+
+        let out = run_suite(tmp.path(), loaded, options).unwrap();
+        assert_eq!(out.results.summary.total, 1);
+        assert_eq!(out.results.summary.skipped, 1);
+        assert!(read_output(&buffer).is_empty());
+    }
+
+    #[test]
+    fn suite_runner_progress_updates_position_and_message() {
+        let tmp = TempDir::new().unwrap();
+        let suite_path = tmp.path().join("suite.json");
+        std::fs::write(&suite_path, br#"{"version":1,"cases":[]}"#).unwrap();
+
+        let mut case = base_case("case-1", "rest");
+        case.tags = vec!["smoke".to_string()];
+
+        let manifest = SuiteManifest {
+            version: 1,
+            name: String::new(),
+            defaults: SuiteDefaults::default(),
+            auth: None,
+            cases: vec![case],
+        };
+        let loaded = LoadedSuite {
+            suite_path: suite_path.clone(),
+            manifest,
+        };
+
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let progress = Progress::new(
+            1,
+            ProgressOptions::default()
+                .with_enabled(ProgressEnabled::Auto)
+                .with_draw_target(ProgressDrawTarget::to_writer(buffer.clone()))
+                .with_width(Some(60)),
+        );
+
+        let options = SuiteRunOptions {
+            required_tags: vec!["fast".to_string()],
+            only_ids: HashSet::new(),
+            skip_ids: HashSet::new(),
+            allow_writes_flag: true,
+            fail_fast: false,
+            output_dir_base: tmp.path().join("out"),
+            env_rest_url: String::new(),
+            env_gql_url: String::new(),
+            progress: Some(progress),
+        };
+
+        let out = run_suite(tmp.path(), loaded, options).unwrap();
+        assert_eq!(out.results.summary.total, 1);
+        assert_eq!(out.results.summary.skipped, 1);
+
+        let normalized = normalize_progress_output(&read_output(&buffer));
+        assert!(normalized.contains("1/1"), "output was: {normalized:?}");
+        assert!(normalized.contains("case-1"), "output was: {normalized:?}");
     }
 }
