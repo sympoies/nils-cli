@@ -113,8 +113,15 @@ fn handle_config(args: &cli::ConfigArgs) -> i32 {
     }
 }
 
-fn handle_starship(_args: &cli::StarshipArgs) -> i32 {
-    0
+fn handle_starship(args: &cli::StarshipArgs) -> i32 {
+    let options = codex_cli::starship::StarshipOptions {
+        no_5h: args.no_5h,
+        ttl: args.ttl.clone(),
+        time_format: args.time_format.clone(),
+        refresh: args.refresh,
+        is_enabled: args.is_enabled,
+    };
+    codex_cli::starship::run(&options)
 }
 
 fn print_subcommand_help(name: &str) -> i32 {

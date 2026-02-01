@@ -4,3 +4,4 @@ pub mod json;
 pub mod jwt;
 pub mod paths;
 pub mod rate_limits;
+pub mod starship;

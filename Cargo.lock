@@ -285,6 +285,7 @@ dependencies = [
  "base64",
  "chrono",
  "clap",
+ "nils-test-support",
  "reqwest",
  "serde_json",
  "sha2",

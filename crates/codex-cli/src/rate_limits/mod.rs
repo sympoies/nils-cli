@@ -1190,28 +1190,49 @@ fn parse_one_line_output(line: &str) -> Option<ParsedOneLine> {
         return None;
     }
 
-    let window_field = parts[parts.len() - 3];
-    let weekly_field = parts[parts.len() - 2];
-    let reset_iso = parts[parts.len() - 1].to_string();
+    fn parse_fields(
+        window_field: &str,
+        weekly_field: &str,
+        reset_iso: String,
+    ) -> Option<ParsedOneLine> {
+        let window_label = window_field
+            .split(':')
+            .next()?
+            .trim_matches('"')
+            .to_string();
+        let non_weekly_remaining = window_field.split(':').nth(1)?;
+        let non_weekly_remaining = non_weekly_remaining
+            .trim_end_matches('%')
+            .parse::<i64>()
+            .ok()?;
 
-    let window_label = window_field
-        .split(':')
-        .next()?
-        .trim_matches('"')
-        .to_string();
-    let non_weekly_remaining = window_field.split(':').nth(1)?;
-    let non_weekly_remaining = non_weekly_remaining
-        .trim_end_matches('%')
-        .parse::<i64>()
-        .ok()?;
+        let weekly_remaining = weekly_field.trim_start_matches("W:").trim_end_matches('%');
+        let weekly_remaining = weekly_remaining.parse::<i64>().ok()?;
 
-    let weekly_remaining = weekly_field.trim_start_matches("W:").trim_end_matches('%');
-    let weekly_remaining = weekly_remaining.parse::<i64>().ok()?;
+        Some(ParsedOneLine {
+            window_label,
+            non_weekly_remaining,
+            weekly_remaining,
+            weekly_reset_iso: reset_iso,
+        })
+    }
 
-    Some(ParsedOneLine {
-        window_label,
-        non_weekly_remaining,
-        weekly_remaining,
-        weekly_reset_iso: reset_iso,
-    })
+    let len = parts.len();
+    let window_field = parts[len - 3];
+    let weekly_field = parts[len - 2];
+    let reset_iso = parts[len - 1].to_string();
+
+    if let Some(parsed) = parse_fields(window_field, weekly_field, reset_iso) {
+        return Some(parsed);
+    }
+
+    if len < 4 {
+        return None;
+    }
+
+    parse_fields(
+        parts[len - 4],
+        parts[len - 3],
+        format!("{} {}", parts[len - 2], parts[len - 1]),
+    )
 }

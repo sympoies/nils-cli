@@ -91,3 +91,108 @@ fn auth_auto_refresh_backfills_timestamp() {
     let timestamp = cache.join("auth.json.timestamp");
     assert_eq!(fs::read_to_string(&timestamp).unwrap(), last_refresh);
 }
+
+#[test]
+fn auth_auto_refresh_unconfigured_exits_zero() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let auth_file = dir.path().join("missing_auth.json");
+    let secrets = dir.path().join("secrets");
+    fs::create_dir_all(&secrets).expect("secrets dir");
+
+    let output = run(
+        &["auth", "auto-refresh"],
+        &[],
+        &[("CODEX_AUTH_FILE", &auth_file), ("CODEX_SECRET_DIR", &secrets)],
+    );
+
+    assert_exit(&output, 0);
+    assert!(stdout(&output).trim().is_empty());
+}
+
+#[test]
+fn auth_auto_refresh_warns_on_future_timestamp_and_skips() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let auth_file = dir.path().join("auth.json");
+    let cache = dir.path().join("cache");
+    let secrets = dir.path().join("secrets");
+    fs::create_dir_all(&cache).expect("cache dir");
+    fs::create_dir_all(&secrets).expect("secrets dir");
+    fs::write(&auth_file, r#"{"last_refresh":"2025-01-20T12:34:56Z"}"#).expect("write auth");
+
+    let timestamp = cache.join("auth.json.timestamp");
+    fs::write(&timestamp, "2999-01-01T00:00:00Z").expect("write timestamp");
+
+    let output = run(
+        &["auth", "auto-refresh"],
+        &[("CODEX_AUTO_REFRESH_MIN_DAYS", "1")],
+        &[
+            ("CODEX_AUTH_FILE", &auth_file),
+            ("CODEX_SECRET_CACHE_DIR", &cache),
+            ("CODEX_SECRET_DIR", &secrets),
+        ],
+    );
+
+    assert_exit(&output, 0);
+    assert!(stderr(&output).contains("warning: future timestamp"));
+    assert!(stdout(&output).contains("skipped=1 failed=0"));
+}
+
+#[test]
+fn auth_auto_refresh_counts_non_file_secret_entry_as_failed() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let auth_file = dir.path().join("auth.json");
+    let cache = dir.path().join("cache");
+    let secrets = dir.path().join("secrets");
+    fs::create_dir_all(&cache).expect("cache dir");
+    fs::create_dir_all(&secrets).expect("secrets dir");
+    fs::write(&auth_file, r#"{"last_refresh":"2025-01-20T12:34:56Z"}"#).expect("write auth");
+
+    fs::create_dir_all(secrets.join("not_a_file.json")).expect("create not_a_file.json dir");
+
+    let output = run(
+        &["auth", "auto-refresh"],
+        &[("CODEX_AUTO_REFRESH_MIN_DAYS", "9999")],
+        &[
+            ("CODEX_AUTH_FILE", &auth_file),
+            ("CODEX_SECRET_CACHE_DIR", &cache),
+            ("CODEX_SECRET_DIR", &secrets),
+        ],
+    );
+
+    assert_exit(&output, 1);
+    assert!(stderr(&output).contains("missing file"));
+    assert!(stdout(&output).contains("failed=1"));
+}
+
+#[test]
+fn auth_auto_refresh_normalizes_fractional_last_refresh() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let auth_file = dir.path().join("auth.json");
+    let cache = dir.path().join("cache");
+    let secrets = dir.path().join("secrets");
+    fs::create_dir_all(&cache).expect("cache dir");
+    fs::create_dir_all(&secrets).expect("secrets dir");
+
+    fs::write(
+        &auth_file,
+        r#"{"last_refresh":"2025-01-20T12:34:56.789Z"}"#,
+    )
+    .expect("write auth");
+
+    let output = run(
+        &["auth", "auto-refresh"],
+        &[("CODEX_AUTO_REFRESH_MIN_DAYS", "9999")],
+        &[
+            ("CODEX_AUTH_FILE", &auth_file),
+            ("CODEX_SECRET_CACHE_DIR", &cache),
+            ("CODEX_SECRET_DIR", &secrets),
+        ],
+    );
+
+    assert_exit(&output, 0);
+    let timestamp = cache.join("auth.json.timestamp");
+    assert_eq!(
+        fs::read_to_string(&timestamp).expect("read timestamp"),
+        "2025-01-20T12:34:56Z"
+    );
+}

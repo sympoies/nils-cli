@@ -14,4 +14,5 @@ serde_json = { workspace = true }
 sha2 = "0.10"
 
 [dev-dependencies]
+nils-test-support = { path = "../nils-test-support" }
 tempfile = "3"
