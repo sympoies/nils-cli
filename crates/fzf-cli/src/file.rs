@@ -66,7 +66,7 @@ fn list_files(max_depth: usize) -> Vec<String> {
     let mut scanned: usize = 0;
     for entry in walker.flatten() {
         scanned = scanned.saturating_add(1);
-        if scanned % 128 == 0 {
+        if scanned.is_multiple_of(128) {
             spinner.tick();
         }
 

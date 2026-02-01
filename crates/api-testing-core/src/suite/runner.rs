@@ -1402,18 +1402,16 @@ mod tests {
                 continue;
             }
 
-            if bytes[i] == 0x1b {
-                if i + 1 < bytes.len() && bytes[i + 1] == b'[' {
-                    i += 2;
-                    while i < bytes.len() {
-                        let b = bytes[i];
-                        i += 1;
-                        if b.is_ascii_alphabetic() {
-                            break;
-                        }
+            if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+                i += 2;
+                while i < bytes.len() {
+                    let b = bytes[i];
+                    i += 1;
+                    if b.is_ascii_alphabetic() {
+                        break;
                     }
-                    continue;
                 }
+                continue;
             }
 
             out.push(bytes[i] as char);

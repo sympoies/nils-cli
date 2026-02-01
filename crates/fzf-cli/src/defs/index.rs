@@ -79,7 +79,7 @@ fn list_first_party_files(root: &Path, spinner: &Progress) -> Result<Vec<PathBuf
         let mut scanned: usize = 0;
         for entry in WalkDir::new(&d).follow_links(true) {
             scanned = scanned.saturating_add(1);
-            if scanned % 64 == 0 {
+            if scanned.is_multiple_of(64) {
                 spinner.tick();
             }
             let entry = match entry {
