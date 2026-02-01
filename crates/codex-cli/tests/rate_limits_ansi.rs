@@ -1,5 +1,6 @@
 use codex_cli::rate_limits::ansi;
 use nils_test_support::{EnvGuard, GlobalStateLock};
+use pretty_assertions::assert_eq;
 
 #[test]
 fn rate_limits_ansi_should_color_respects_no_color() {

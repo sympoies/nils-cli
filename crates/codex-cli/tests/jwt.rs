@@ -2,6 +2,7 @@ use std::fs;
 
 use codex_cli::auth;
 use codex_cli::jwt;
+use pretty_assertions::assert_eq;
 
 const HEADER: &str = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0";
 const PAYLOAD_ALPHA: &str = "eyJzdWIiOiJ1c2VyXzEyMyIsImVtYWlsIjoiYWxwaGFAZXhhbXBsZS5jb20iLCJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF91c2VyX2lkIjoidXNlcl8xMjMiLCJlbWFpbCI6ImFscGhhQGV4YW1wbGUuY29tIn19";

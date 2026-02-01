@@ -15,4 +15,5 @@ sha2 = "0.10"
 
 [dev-dependencies]
 nils-test-support = { path = "../nils-test-support" }
+pretty_assertions = { workspace = true }
 tempfile = "3"

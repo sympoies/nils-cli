@@ -291,6 +291,7 @@ dependencies = [
  "chrono",
  "clap",
  "nils-test-support",
+ "pretty_assertions",
  "reqwest",
  "serde_json",
  "sha2",

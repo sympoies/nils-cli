@@ -1,6 +1,7 @@
 use codex_cli::rate_limits::client::{fetch_usage, read_tokens, UsageRequest};
 use nils_test_support::http::{HttpResponse, LoopbackServer};
 use nils_test_support::{EnvGuard, GlobalStateLock};
+use pretty_assertions::assert_eq;
 use std::fs;
 
 fn write_target(dir: &tempfile::TempDir, contents: &str) -> std::path::PathBuf {

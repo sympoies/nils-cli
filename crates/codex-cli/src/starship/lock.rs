@@ -75,6 +75,7 @@ pub fn is_stale(dir: &Path, stale_seconds: u64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
     use std::io;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 

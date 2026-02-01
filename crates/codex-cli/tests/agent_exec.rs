@@ -1,5 +1,6 @@
 use codex_cli::agent::exec;
 use nils_test_support::{EnvGuard, GlobalStateLock};
+use pretty_assertions::assert_eq;
 
 #[test]
 fn exec_dangerous_missing_prompt_exits_1() {

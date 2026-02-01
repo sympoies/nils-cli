@@ -1,5 +1,6 @@
 use codex_cli::rate_limits::render;
 use nils_test_support::{EnvGuard, GlobalStateLock};
+use pretty_assertions::assert_eq;
 use serde_json::json;
 
 #[test]

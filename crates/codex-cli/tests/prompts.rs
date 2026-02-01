@@ -1,5 +1,6 @@
 use codex_cli::prompts::{self, PromptTemplateError};
 use nils_test_support::{EnvGuard, GlobalStateLock};
+use pretty_assertions::assert_eq;
 use std::fs;
 use std::path::Path;
 

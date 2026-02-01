@@ -1,4 +1,5 @@
 use nils_test_support::http::{HttpResponse, LoopbackServer};
+use pretty_assertions::assert_eq;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};

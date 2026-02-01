@@ -3,6 +3,7 @@ use codex_cli::agent;
 use std::io::{BufReader, Cursor};
 
 use nils_test_support::{prepend_path, EnvGuard, GlobalStateLock, StubBinDir};
+use pretty_assertions::assert_eq;
 
 fn write_codex_stub(stub: &StubBinDir) -> tempfile::NamedTempFile {
     let args_log = tempfile::NamedTempFile::new().expect("args log");

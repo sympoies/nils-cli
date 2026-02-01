@@ -1,5 +1,6 @@
 use codex_cli::paths;
 use nils_test_support::{EnvGuard, GlobalStateLock};
+use pretty_assertions::assert_eq;
 use std::fs;
 
 #[test]

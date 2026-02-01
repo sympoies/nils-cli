@@ -246,6 +246,7 @@ fn is_auth_file(target: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     struct EnvVarGuard {
         key: String,
