@@ -2,7 +2,7 @@ mod cli;
 
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
-use codex_cli::auth;
+use codex_cli::{agent, auth, config};
 
 fn main() {
     let exit_code = run();
@@ -57,7 +57,21 @@ fn run() -> i32 {
 
 fn handle_agent(args: &cli::AgentArgs) -> i32 {
     match &args.command {
-        Some(_cmd) => 0,
+        Some(cli::AgentCommand::Prompt { prompt }) => agent::prompt(prompt),
+        Some(cli::AgentCommand::Advice { question }) => agent::advice(question),
+        Some(cli::AgentCommand::Knowledge { concept }) => agent::knowledge(concept),
+        Some(cli::AgentCommand::Commit {
+            push,
+            auto_stage,
+            extra,
+        }) => {
+            let options = agent::commit::CommitOptions {
+                push: *push,
+                auto_stage: *auto_stage,
+                extra: extra.clone(),
+            };
+            agent::commit::run(&options).unwrap_or(1)
+        }
         None => print_subcommand_help("agent"),
     }
 }
@@ -108,7 +122,8 @@ fn handle_diag(args: &cli::DiagArgs) -> i32 {
 
 fn handle_config(args: &cli::ConfigArgs) -> i32 {
     match &args.command {
-        Some(_cmd) => 0,
+        Some(cli::ConfigCommand::Show) => config::show(),
+        Some(cli::ConfigCommand::Set { key, value }) => config::set(key, value),
         None => print_subcommand_help("config"),
     }
 }

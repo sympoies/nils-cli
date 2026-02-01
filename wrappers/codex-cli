@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+self_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+self_path="$self_dir/$(basename -- "${BASH_SOURCE[0]}")"
+
+installed="$(command -v codex-cli || true)"
+if [[ -n "${installed}" && "${installed}" != "${self_path}" ]]; then
+  exec "${installed}" "$@"
+fi
+
+if command -v cargo >/dev/null 2>&1; then
+  exec cargo run -q -p codex-cli -- "$@"
+fi
+
+echo "codex-cli: binary not found (install via cargo install or build the workspace)" >&2
+exit 1
+

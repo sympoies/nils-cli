@@ -63,9 +63,14 @@ fn main_agent_and_config_without_subcommand_print_help() {
 }
 
 #[test]
-fn main_agent_and_config_subcommands_exit_zero() {
-    let output = run(&["agent", "prompt", "hello"]);
-    assert_exit(&output, 0);
+fn main_agent_prompt_is_gated_and_config_show_exits_zero() {
+    let output = Command::new(codex_cli_bin())
+        .args(["agent", "prompt", "hello"])
+        .env("CODEX_ALLOW_DANGEROUS_ENABLED", "false")
+        .output()
+        .expect("run codex-cli");
+    assert_exit(&output, 1);
+    assert!(stderr(&output).contains("disabled (set CODEX_ALLOW_DANGEROUS_ENABLED=true)"));
 
     let output = run(&["config", "show"]);
     assert_exit(&output, 0);

@@ -1,0 +1,89 @@
+#compdef codex-cli cx \
+#  codex-use codex-refresh-auth codex-auto-refresh \
+#  codex-rate-limits codex-rate-limits-async codex-starship \
+#  cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxdr cxcs cxct \
+#  crl crla
+
+_codex-cli() {
+  emulate -L zsh -o extendedglob
+
+  local context='' state='' state_descr=''
+  local -a line=()
+  typeset -A opt_args=()
+
+  local -a subcommands=()
+  subcommands=(
+    'agent:Prompts and skill wrappers'
+    'auth:Auth and secrets'
+    'diag:Diagnostics'
+    'config:Configuration'
+    'starship:Starship integration'
+    'help:Display help message'
+  )
+
+  _arguments -C \
+    '1:command:->subcmds' \
+    '*::arg:->args'
+
+  case "${state-}" in
+    subcmds)
+      _describe -t commands 'codex-cli subcommand' subcommands && return 0
+      ;;
+    args)
+      local subcmd="${line[1]:-${words[2]-}}"
+      subcmd="${subcmd%%[[:space:]]#}"
+
+      case "$subcmd" in
+        diag)
+          local -a diag_cmds=()
+          diag_cmds=(
+            'rate-limits:Rate-limits diagnostics'
+          )
+
+          _arguments -C \
+            '1:diag command:->diag_subcmds' \
+            '*::arg:->diag_args'
+
+          case "${state-}" in
+            diag_subcmds)
+              _describe -t commands 'codex-cli diag' diag_cmds && return 0
+              ;;
+            diag_args)
+              local diag_subcmd="${line[1]:-${words[3]-}}"
+              diag_subcmd="${diag_subcmd%%[[:space:]]#}"
+
+              case "$diag_subcmd" in
+                rate-limits)
+                  _arguments -C \
+                    '(-c)'{-c}'[Clear starship cache before querying]' \
+                    '(-d --debug)'{-d,--debug}'[Debug output]' \
+                    '--cached[Cached mode (no network)]' \
+                    '--async[Concurrent all-secrets mode]' \
+                    '--all[Query all secrets under CODEX_SECRET_DIR]' \
+                    '--json[Output raw JSON]' \
+                    '--one-line[Output a one-line summary]' \
+                    '--no-refresh-auth[Disable refresh-on-401 behavior]' \
+                    '--jobs=[Max concurrent jobs (async mode)]' \
+                    '*:args:->nothing' \
+                    && return 0
+                  ;;
+              esac
+
+              return 0
+              ;;
+          esac
+
+          return 0
+          ;;
+      esac
+      ;;
+  esac
+}
+
+compdef _codex-cli \
+  codex-cli cx \
+  codex-use codex-refresh-auth codex-auto-refresh \
+  codex-rate-limits codex-rate-limits-async codex-starship \
+  cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxdr cxcs cxct \
+  crl crla
+

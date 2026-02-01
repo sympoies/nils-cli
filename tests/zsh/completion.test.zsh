@@ -13,6 +13,7 @@ COMP_API_REST_FILE="$REPO_ROOT/completions/zsh/_api-rest"
 COMP_API_GQL_FILE="$REPO_ROOT/completions/zsh/_api-gql"
 COMP_API_TEST_FILE="$REPO_ROOT/completions/zsh/_api-test"
 COMP_PLAN_TOOLING_FILE="$REPO_ROOT/completions/zsh/_plan-tooling"
+COMP_CODEX_CLI_FILE="$REPO_ROOT/completions/zsh/_codex-cli"
 
 if [[ ! -f "$COMP_FILE" ]]; then
   print -u2 -r -- "FAIL: missing completion file"
@@ -56,6 +57,11 @@ fi
 
 if [[ ! -f "$COMP_PLAN_TOOLING_FILE" ]]; then
   print -u2 -r -- "FAIL: missing plan-tooling completion file"
+  exit 1
+fi
+
+if [[ ! -f "$COMP_CODEX_CLI_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing codex-cli completion file"
   exit 1
 fi
 
@@ -107,6 +113,11 @@ source "$COMP_PLAN_TOOLING_FILE" || {
   exit 1
 }
 
+source "$COMP_CODEX_CLI_FILE" || {
+  print -u2 -r -- "FAIL: failed to source codex-cli completion file"
+  exit 1
+}
+
 if (( ! $+functions[_git-scope] )); then
   print -u2 -r -- "FAIL: _git-scope function not defined"
   exit 1
@@ -149,6 +160,11 @@ fi
 
 if (( ! $+functions[_plan-tooling] )); then
   print -u2 -r -- "FAIL: _plan-tooling function not defined"
+  exit 1
+fi
+
+if (( ! $+functions[_codex-cli] )); then
+  print -u2 -r -- "FAIL: _codex-cli function not defined"
   exit 1
 fi
 
@@ -214,6 +230,36 @@ grep -q "summary:Render a Markdown summary" "$COMP_API_TEST_FILE" || {
 
 grep -q "to-json:Parse a plan markdown file" "$COMP_PLAN_TOOLING_FILE" || {
   print -u2 -r -- "FAIL: plan-tooling completion missing to-json command"
+  exit 1
+}
+
+grep -q "agent:Prompts and skill wrappers" "$COMP_CODEX_CLI_FILE" || {
+  print -u2 -r -- "FAIL: codex-cli completion missing agent command"
+  exit 1
+}
+
+grep -q "auth:Auth and secrets" "$COMP_CODEX_CLI_FILE" || {
+  print -u2 -r -- "FAIL: codex-cli completion missing auth command"
+  exit 1
+}
+
+grep -q "diag:Diagnostics" "$COMP_CODEX_CLI_FILE" || {
+  print -u2 -r -- "FAIL: codex-cli completion missing diag command"
+  exit 1
+}
+
+grep -q -- "--all\\[" "$COMP_CODEX_CLI_FILE" || {
+  print -u2 -r -- "FAIL: codex-cli completion missing --all"
+  exit 1
+}
+
+grep -q -- "--async\\[" "$COMP_CODEX_CLI_FILE" || {
+  print -u2 -r -- "FAIL: codex-cli completion missing --async"
+  exit 1
+}
+
+grep -q -- "--cached\\[" "$COMP_CODEX_CLI_FILE" || {
+  print -u2 -r -- "FAIL: codex-cli completion missing --cached"
   exit 1
 }
 

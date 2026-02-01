@@ -1,7 +1,10 @@
+pub mod agent;
 pub mod auth;
+pub mod config;
 pub mod fs;
 pub mod json;
 pub mod jwt;
 pub mod paths;
+pub mod prompts;
 pub mod rate_limits;
 pub mod starship;
