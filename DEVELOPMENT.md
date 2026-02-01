@@ -28,6 +28,10 @@
 
 ## Testing
 
+### Test conventions
+
+- In Rust tests, prefer `pretty_assertions::{assert_eq, assert_ne}` (more readable diffs on failure).
+
 ### Required before committing
 
 - All commands in **Formatting and linting** must pass.
