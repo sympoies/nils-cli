@@ -150,47 +150,10 @@ fn pipe_to_command(cmd: &str, args: &[&str], text: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nils_test_support::{prepend_path, EnvGuard, GlobalStateLock, StubBinDir};
     use pretty_assertions::assert_eq;
     use std::fs;
-    use std::path::Path;
-    use std::sync::Mutex;
     use tempfile::TempDir;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    struct EnvGuard {
-        key: &'static str,
-        original: Option<String>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let original = std::env::var(key).ok();
-            std::env::set_var(key, value);
-            Self { key, original }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.original {
-                Some(value) => std::env::set_var(self.key, value),
-                None => std::env::remove_var(self.key),
-            }
-        }
-    }
-
-    fn write_exe(dir: &Path, name: &str, content: &str) {
-        let path = dir.join(name);
-        fs::write(&path, content).expect("write stub");
-        let mut perms = fs::metadata(&path).expect("meta").permissions();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o755);
-        }
-        fs::set_permissions(&path, perms).expect("chmod");
-    }
 
     fn fzf_stub_script() -> &'static str {
         r#"#!/bin/bash
@@ -219,9 +182,9 @@ exit 0
 
     #[test]
     fn run_requires_delimiters() {
-        let _lock = ENV_LOCK.lock().unwrap();
-        let _guard = EnvGuard::set("FZF_DEF_DELIM", "");
-        let _guard_end = EnvGuard::set("FZF_DEF_DELIM_END", "");
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::set(&lock, "FZF_DEF_DELIM", "");
+        let _guard_end = EnvGuard::set(&lock, "FZF_DEF_DELIM_END", "");
 
         let (code, out) = run(&[], "").expect("run");
         assert_eq!(code, 1);
@@ -230,19 +193,17 @@ exit 0
 
     #[test]
     fn run_renders_and_copies_selected_block() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let lock = GlobalStateLock::new();
         let temp = TempDir::new().unwrap();
-        let stub = temp.path().join("stub");
-        fs::create_dir_all(&stub).unwrap();
 
         let out_dir = temp.path().join("fzf-out");
         fs::create_dir_all(&out_dir).unwrap();
         fs::write(out_dir.join("1.out"), "Header A\n").unwrap();
 
         let clipboard = temp.path().join("clipboard.txt");
-        write_exe(&stub, "fzf", fzf_stub_script());
-        write_exe(
-            &stub,
+        let stub = StubBinDir::new();
+        stub.write_exe("fzf", fzf_stub_script());
+        stub.write_exe(
             "pbcopy",
             r#"#!/bin/bash
 set -euo pipefail
@@ -250,12 +211,13 @@ cat > "${PBCOPY_OUT:?}"
 "#,
         );
 
-        let path_s = format!("{}:{}", stub.display(), std::env::var("PATH").unwrap());
-        let _guard_path = EnvGuard::set("PATH", &path_s);
-        let _guard_out = EnvGuard::set("FZF_STUB_OUT_DIR", out_dir.to_string_lossy().as_ref());
-        let _guard_delim = EnvGuard::set("FZF_DEF_DELIM", "---");
-        let _guard_end = EnvGuard::set("FZF_DEF_DELIM_END", "+++");
-        let _guard_clip = EnvGuard::set("PBCOPY_OUT", clipboard.to_string_lossy().as_ref());
+        let _guard_path = prepend_path(&lock, stub.path());
+        let out_dir_s = out_dir.to_string_lossy().to_string();
+        let clipboard_s = clipboard.to_string_lossy().to_string();
+        let _guard_out = EnvGuard::set(&lock, "FZF_STUB_OUT_DIR", &out_dir_s);
+        let _guard_delim = EnvGuard::set(&lock, "FZF_DEF_DELIM", "---");
+        let _guard_end = EnvGuard::set(&lock, "FZF_DEF_DELIM_END", "+++");
+        let _guard_clip = EnvGuard::set(&lock, "PBCOPY_OUT", &clipboard_s);
 
         let blocks = vec![Block {
             header: "Header A".to_string(),
