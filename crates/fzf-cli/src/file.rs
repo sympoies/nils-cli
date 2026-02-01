@@ -72,3 +72,49 @@ fn list_files(max_depth: usize) -> Vec<String> {
     out.sort();
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+    use tempfile::TempDir;
+
+    static CWD_LOCK: Mutex<()> = Mutex::new(());
+
+    struct CwdGuard {
+        original: PathBuf,
+    }
+
+    impl CwdGuard {
+        fn new(original: PathBuf) -> Self {
+            Self { original }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.original);
+        }
+    }
+
+    #[test]
+    fn list_files_skips_git_and_sorts() {
+        let _lock = CWD_LOCK.lock().unwrap();
+        let dir = TempDir::new().unwrap();
+
+        std::fs::create_dir_all(dir.path().join(".git/objects")).unwrap();
+        std::fs::write(dir.path().join(".git/ignored.txt"), "x").unwrap();
+        std::fs::create_dir_all(dir.path().join("nested")).unwrap();
+        std::fs::write(dir.path().join("a.txt"), "x").unwrap();
+        std::fs::write(dir.path().join("b.txt"), "x").unwrap();
+        std::fs::write(dir.path().join("nested/c.txt"), "x").unwrap();
+
+        let original = std::env::current_dir().unwrap();
+        let _guard = CwdGuard::new(original);
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let files = list_files(5);
+        assert_eq!(files, vec!["a.txt", "b.txt", "nested/c.txt"]);
+    }
+}

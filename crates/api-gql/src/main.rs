@@ -1652,3 +1652,207 @@ fn cmd_schema(
         0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use tempfile::TempDir;
+
+    fn write_file(path: &Path, contents: &str) {
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(path, contents).expect("write");
+    }
+
+    #[test]
+    fn argv_with_default_command_inserts_call() {
+        let argv = argv_with_default_command(&[]);
+        assert_eq!(argv, vec!["api-gql".to_string()]);
+
+        let argv = argv_with_default_command(&["--help".to_string()]);
+        assert_eq!(argv, vec!["api-gql".to_string(), "--help".to_string()]);
+
+        let argv = argv_with_default_command(&["history".to_string()]);
+        assert_eq!(argv, vec!["api-gql".to_string(), "history".to_string()]);
+
+        let argv = argv_with_default_command(&["ops/health.graphql".to_string()]);
+        assert_eq!(
+            argv,
+            vec![
+                "api-gql".to_string(),
+                "call".to_string(),
+                "ops/health.graphql".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn bool_from_env_parses_and_warns() {
+        let mut stderr = Vec::new();
+        let got = bool_from_env(Some("true".to_string()), "GQL_FOO", false, &mut stderr);
+        assert_eq!(got, true);
+
+        let mut stderr = Vec::new();
+        let got = bool_from_env(Some("nope".to_string()), "GQL_FOO", true, &mut stderr);
+        assert_eq!(got, false);
+        let msg = String::from_utf8_lossy(&stderr);
+        assert!(msg.contains("GQL_FOO must be true|false"));
+    }
+
+    #[test]
+    fn parse_u64_default_enforces_min() {
+        assert_eq!(parse_u64_default(Some("".to_string()), 10, 1), 10);
+        assert_eq!(parse_u64_default(Some("abc".to_string()), 10, 1), 10);
+        assert_eq!(parse_u64_default(Some("0".to_string()), 10, 1), 1);
+    }
+
+    #[test]
+    fn to_env_key_and_slugify_normalize() {
+        assert_eq!(to_env_key("prod-us"), "PROD_US");
+        assert_eq!(to_env_key("  foo@@bar  "), "FOO_BAR");
+        assert_eq!(slugify("Hello, world!"), "hello-world");
+        assert_eq!(slugify("  ___ "), "");
+    }
+
+    #[test]
+    fn maybe_relpath_and_shell_quote() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        assert_eq!(maybe_relpath(root, root), ".");
+
+        let child = root.join("a/b");
+        std::fs::create_dir_all(&child).unwrap();
+        assert_eq!(maybe_relpath(&child, root), "a/b");
+
+        assert_eq!(shell_quote(""), "''");
+        assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+    }
+
+    #[test]
+    fn build_report_command_includes_expected_flags() {
+        let args = ReportArgs {
+            case: "Health".to_string(),
+            op: "ops/health.graphql".to_string(),
+            vars: Some("vars.json".to_string()),
+            out: Some("docs/report.md".to_string()),
+            env: Some("staging".to_string()),
+            url: None,
+            jwt: Some("svc".to_string()),
+            run: true,
+            response: None,
+            allow_empty: true,
+            no_redact: false,
+            no_command: false,
+            no_command_url: false,
+            project_root: None,
+            config_dir: Some("setup/graphql".to_string()),
+        };
+
+        let cmd = build_api_gql_report_dry_run_command(&args);
+        assert!(cmd.contains("--case 'Health'"));
+        assert!(cmd.contains("--op 'ops/health.graphql'"));
+        assert!(cmd.contains("--vars 'vars.json'"));
+        assert!(cmd.contains("--out 'docs/report.md'"));
+        assert!(cmd.contains("--config-dir 'setup/graphql'"));
+        assert!(cmd.contains("--env 'staging'"));
+        assert!(cmd.contains("--jwt 'svc'"));
+        assert!(cmd.contains("--run"));
+        assert!(cmd.contains("--allow-empty"));
+    }
+
+    #[test]
+    fn list_available_suffixes_parses_and_sorts() {
+        let tmp = TempDir::new().unwrap();
+        let file = tmp.path().join("endpoints.env");
+        write_file(
+            &file,
+            "export GQL_URL_PROD=http://prod\nGQL_URL_DEV=http://dev\nGQL_URL_=bad\nGQL_URL_FOO-BAR=http://x\nGQL_URL_TEST=http://t\nGQL_URL_TEST=http://t2\n",
+        );
+
+        let suffixes = list_available_suffixes(&file, "GQL_URL_");
+        assert_eq!(suffixes, vec!["dev", "prod", "test"]);
+    }
+
+    #[test]
+    fn resolve_endpoint_for_call_honors_url_and_env() {
+        let tmp = TempDir::new().unwrap();
+        let setup = tmp.path().join("setup/graphql");
+        std::fs::create_dir_all(&setup).unwrap();
+        write_file(
+            &setup.join("endpoints.env"),
+            "GQL_ENV_DEFAULT=prod\nGQL_URL_PROD=http://prod\nGQL_URL_STAGING=http://staging\n",
+        );
+
+        let args = CallArgs {
+            env: None,
+            url: Some("http://explicit".to_string()),
+            jwt: None,
+            config_dir: None,
+            list_envs: false,
+            list_jwts: false,
+            no_history: false,
+            operation: Some("ops/health.graphql".to_string()),
+            variables: None,
+        };
+        let sel = resolve_endpoint_for_call(&args, &setup).unwrap();
+        assert_eq!(sel.gql_url, "http://explicit");
+        assert_eq!(sel.endpoint_label_used, "url");
+
+        let args = CallArgs {
+            env: Some("staging".to_string()),
+            url: None,
+            jwt: None,
+            config_dir: None,
+            list_envs: false,
+            list_jwts: false,
+            no_history: false,
+            operation: Some("ops/health.graphql".to_string()),
+            variables: None,
+        };
+        let sel = resolve_endpoint_for_call(&args, &setup).unwrap();
+        assert_eq!(sel.gql_url, "http://staging");
+        assert_eq!(sel.endpoint_label_used, "env");
+
+        let args = CallArgs {
+            env: Some("https://example.test/graphql".to_string()),
+            url: None,
+            jwt: None,
+            config_dir: None,
+            list_envs: false,
+            list_jwts: false,
+            no_history: false,
+            operation: Some("ops/health.graphql".to_string()),
+            variables: None,
+        };
+        let sel = resolve_endpoint_for_call(&args, &setup).unwrap();
+        assert_eq!(sel.gql_url, "https://example.test/graphql");
+        assert_eq!(sel.endpoint_label_used, "url");
+    }
+
+    #[test]
+    fn resolve_endpoint_for_call_unknown_env_lists_available() {
+        let tmp = TempDir::new().unwrap();
+        let setup = tmp.path().join("setup/graphql");
+        std::fs::create_dir_all(&setup).unwrap();
+        write_file(
+            &setup.join("endpoints.env"),
+            "GQL_URL_PROD=http://prod\nGQL_URL_DEV=http://dev\n",
+        );
+
+        let args = CallArgs {
+            env: Some("missing".to_string()),
+            url: None,
+            jwt: None,
+            config_dir: None,
+            list_envs: false,
+            list_jwts: false,
+            no_history: false,
+            operation: Some("ops/health.graphql".to_string()),
+            variables: None,
+        };
+
+        let err = resolve_endpoint_for_call(&args, &setup).unwrap_err();
+        assert!(err.to_string().contains("Unknown --env 'missing'"));
+        assert!(err.to_string().contains("prod"));
+    }
+}

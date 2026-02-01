@@ -61,3 +61,26 @@ fn print_help(stderr: bool) {
     );
     let _ = writeln!(out, "  {:<16}  Display help message", "help");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dispatch_help_when_no_args() {
+        let code = dispatch(&["semantic-commit".to_string()]);
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn dispatch_help_flag_is_zero() {
+        let code = dispatch(&["semantic-commit".to_string(), "--help".to_string()]);
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn dispatch_unknown_command_exits_one() {
+        let code = dispatch(&["semantic-commit".to_string(), "nope".to_string()]);
+        assert_eq!(code, 1);
+    }
+}
