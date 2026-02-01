@@ -1,4 +1,5 @@
 use crate::git;
+use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 use std::fs::File;
 use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
 use std::path::Path;
@@ -102,26 +103,47 @@ pub fn run(args: &[String]) -> i32 {
         return 1;
     }
 
+    let progress = Progress::spinner(
+        ProgressOptions::default()
+            .with_prefix("semantic-commit ")
+            .with_finish(ProgressFinish::Clear),
+    );
+
+    progress.set_message("prepare message");
+    progress.tick();
+
     let tmpfile = match tempfile::NamedTempFile::new() {
         Ok(file) => file,
         Err(_) => {
+            progress.finish_and_clear();
             eprintln!("error: failed to create temp file for commit message");
             return 1;
         }
     };
 
     if let Err(err) = write_message_file(tmpfile.path(), &message_contents) {
+        progress.finish_and_clear();
         eprintln!("{err:#}");
         return 1;
     }
 
-    if let Err(code) = validate_commit_message(tmpfile.path()) {
+    progress.set_message("validate message");
+    progress.tick();
+    if let Err(code) = progress.suspend(|| validate_commit_message(tmpfile.path())) {
+        progress.finish_and_clear();
         return code;
     }
 
-    if let Err(code) = ensure_git_scope_available() {
+    progress.set_message("check git-scope");
+    progress.tick();
+    if let Err(code) = progress.suspend(ensure_git_scope_available) {
+        progress.finish_and_clear();
         return code;
     }
+
+    progress.set_message("git commit");
+    progress.tick();
+    progress.finish_and_clear();
 
     let status = Command::new("git")
         .args(["commit", "-F"])

@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 
 pub fn git(dir: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
@@ -50,8 +50,17 @@ pub fn git_scope_bin() -> PathBuf {
 }
 
 pub fn run_git_scope(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> String {
+    let output = run_git_scope_output(dir, args, envs);
+    String::from_utf8_lossy(&output.stdout).to_string()
+}
+
+pub fn run_git_scope_output(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> Output {
     let mut cmd = Command::new(git_scope_bin());
-    cmd.args(args).current_dir(dir).stdout(Stdio::piped());
+    cmd.args(args)
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     for (k, v) in envs {
         cmd.env(k, v);
     }
@@ -64,5 +73,5 @@ pub fn run_git_scope(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> String
             String::from_utf8_lossy(&output.stdout)
         );
     }
-    String::from_utf8_lossy(&output.stdout).to_string()
+    output
 }
