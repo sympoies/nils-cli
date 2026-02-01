@@ -55,7 +55,7 @@
 
   ```bash
   cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info
-  cargo llvm-cov nextest --profile ci --workspace --html --output-dir target/coverage/html
+  cargo llvm-cov report --html --output-dir target/coverage
   ```
 
 - Outputs:
