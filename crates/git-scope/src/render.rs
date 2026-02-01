@@ -1,5 +1,6 @@
 use crate::print::{print_file_content, print_file_content_index};
 use anyhow::Result;
+use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 use std::collections::BTreeSet;
 use std::process::Command;
 
@@ -21,6 +22,7 @@ pub fn render_with_type(
     no_color: bool,
     print_mode: PrintMode,
     print: bool,
+    progress_opt_in: bool,
 ) -> Result<Vec<String>> {
     if lines.is_empty() {
         println!("⚠️  No matching files");
@@ -64,12 +66,51 @@ pub fn render_with_type(
     if print {
         println!();
         println!("📦 Printing file contents:");
+
+        let progress = if progress_opt_in && !files.is_empty() {
+            Some(Progress::new(
+                files.len() as u64,
+                ProgressOptions::default()
+                    .with_prefix("git-scope ")
+                    .with_finish(ProgressFinish::Clear),
+            ))
+        } else {
+            None
+        };
+
         for file in &files {
-            match print_mode {
-                PrintMode::Index => print_file_content_index(file)?,
-                PrintMode::Worktree => print_file_content(file)?,
+            match (print_mode, &progress) {
+                (PrintMode::Index, Some(progress)) => {
+                    progress.set_message(file);
+                    progress.suspend(|| -> Result<()> {
+                        print_file_content_index(file)?;
+                        println!();
+                        Ok(())
+                    })?;
+                    progress.inc(1);
+                }
+                (PrintMode::Worktree, Some(progress)) => {
+                    progress.set_message(file);
+                    progress.suspend(|| -> Result<()> {
+                        print_file_content(file)?;
+                        println!();
+                        Ok(())
+                    })?;
+                    progress.inc(1);
+                }
+                (PrintMode::Index, None) => {
+                    print_file_content_index(file)?;
+                    println!();
+                }
+                (PrintMode::Worktree, None) => {
+                    print_file_content(file)?;
+                    println!();
+                }
             }
-            println!();
+        }
+
+        if let Some(progress) = progress {
+            progress.finish_and_clear();
         }
     }
 
@@ -80,6 +121,7 @@ pub fn print_all_files(
     files: &[String],
     staged_lines: &[String],
     unstaged_lines: &[String],
+    progress_opt_in: bool,
 ) -> Result<()> {
     println!();
     println!("📦 Printing file contents:");
@@ -87,25 +129,93 @@ pub fn print_all_files(
     let staged_paths = collect_paths(staged_lines);
     let unstaged_paths = collect_paths(unstaged_lines);
 
+    let total_ops = files
+        .iter()
+        .map(|file| {
+            let staged = staged_paths.contains(file) as u64;
+            let unstaged = unstaged_paths.contains(file) as u64;
+            let ops = staged + unstaged;
+            if ops == 0 {
+                1
+            } else {
+                ops
+            }
+        })
+        .sum::<u64>();
+
+    let progress = if progress_opt_in && total_ops > 0 {
+        Some(Progress::new(
+            total_ops,
+            ProgressOptions::default()
+                .with_prefix("git-scope ")
+                .with_finish(ProgressFinish::Clear),
+        ))
+    } else {
+        None
+    };
+
     for file in files {
         let mut printed = false;
 
         if staged_paths.contains(file) {
-            print_file_content_index(file)?;
+            match &progress {
+                Some(progress) => {
+                    progress.set_message(format!("{file} (index)"));
+                    progress.suspend(|| -> Result<()> {
+                        print_file_content_index(file)?;
+                        println!();
+                        Ok(())
+                    })?;
+                    progress.inc(1);
+                }
+                None => {
+                    print_file_content_index(file)?;
+                    println!();
+                }
+            }
             printed = true;
-            println!();
         }
 
         if unstaged_paths.contains(file) {
-            print_file_content(file)?;
+            match &progress {
+                Some(progress) => {
+                    progress.set_message(format!("{file} (working tree)"));
+                    progress.suspend(|| -> Result<()> {
+                        print_file_content(file)?;
+                        println!();
+                        Ok(())
+                    })?;
+                    progress.inc(1);
+                }
+                None => {
+                    print_file_content(file)?;
+                    println!();
+                }
+            }
             printed = true;
-            println!();
         }
 
         if !printed {
-            print_file_content(file)?;
-            println!();
+            match &progress {
+                Some(progress) => {
+                    progress.set_message(file.to_string());
+                    progress.suspend(|| -> Result<()> {
+                        print_file_content(file)?;
+                        println!();
+                        Ok(())
+                    })?;
+                    progress.inc(1);
+                }
+                None => {
+                    print_file_content(file)?;
+                    println!();
+                }
+            }
         }
+    }
+
+    if let Some(progress) = progress {
+        progress.finish_and_clear();
     }
 
     Ok(())

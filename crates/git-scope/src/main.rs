@@ -120,6 +120,7 @@ fn run() -> Result<()> {
     }
 
     let no_color = cli.no_color || std::env::var_os("NO_COLOR").is_some();
+    let progress_opt_in = git_scope_progress_opt_in();
 
     if cli.help {
         print_help();
@@ -129,34 +130,63 @@ fn run() -> Result<()> {
     match cli.command.unwrap_or(Command::Help) {
         Command::Tracked { print, prefixes } => {
             let lines = git::collect_tracked(&prefixes)?;
-            render::render_with_type(&lines, no_color, render::PrintMode::Worktree, print)?;
+            render::render_with_type(
+                &lines,
+                no_color,
+                render::PrintMode::Worktree,
+                print,
+                progress_opt_in,
+            )?;
         }
         Command::Staged { print } => {
             let lines = git::collect_staged()?;
-            render::render_with_type(&lines, no_color, render::PrintMode::Index, print)?;
+            render::render_with_type(
+                &lines,
+                no_color,
+                render::PrintMode::Index,
+                print,
+                progress_opt_in,
+            )?;
         }
         Command::Unstaged { print } => {
             let lines = git::collect_unstaged()?;
-            render::render_with_type(&lines, no_color, render::PrintMode::Worktree, print)?;
+            render::render_with_type(
+                &lines,
+                no_color,
+                render::PrintMode::Worktree,
+                print,
+                progress_opt_in,
+            )?;
         }
         Command::All { print } => {
             let (combined, staged, unstaged) = git::collect_all()?;
-            let files =
-                render::render_with_type(&combined, no_color, render::PrintMode::Worktree, false)?;
+            let files = render::render_with_type(
+                &combined,
+                no_color,
+                render::PrintMode::Worktree,
+                false,
+                progress_opt_in,
+            )?;
             if print {
-                render::print_all_files(&files, &staged, &unstaged)?;
+                render::print_all_files(&files, &staged, &unstaged, progress_opt_in)?;
             }
         }
         Command::Untracked { print } => {
             let lines = git::collect_untracked()?;
-            render::render_with_type(&lines, no_color, render::PrintMode::Worktree, print)?;
+            render::render_with_type(
+                &lines,
+                no_color,
+                render::PrintMode::Worktree,
+                print,
+                progress_opt_in,
+            )?;
         }
         Command::Commit {
             print,
             parent,
             commit,
         } => {
-            commit::render_commit(&commit, parent.as_deref(), no_color, print)
+            commit::render_commit(&commit, parent.as_deref(), no_color, print, progress_opt_in)
                 .with_context(|| format!("git-scope commit {commit}"))?;
         }
         Command::Help => {
@@ -165,4 +195,13 @@ fn run() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn git_scope_progress_opt_in() -> bool {
+    let Some(value) = std::env::var_os("GIT_SCOPE_PROGRESS") else {
+        return false;
+    };
+    let value = value.to_string_lossy();
+    let normalized = value.trim().to_ascii_lowercase();
+    matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
 }

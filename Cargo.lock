@@ -552,6 +552,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "nils-term",
  "tempfile",
 ]
 
@@ -1518,6 +1519,7 @@ name = "semantic-commit"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "nils-term",
  "pretty_assertions",
  "serde",
  "serde_json",

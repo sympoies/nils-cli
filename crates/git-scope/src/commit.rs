@@ -1,6 +1,7 @@
 use crate::print::print_file_content;
 use crate::render::{color_reset_for_commit, kind_color_for_commit, render_tree_for_commit};
 use anyhow::{Context, Result};
+use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 use std::collections::HashMap;
 use std::process::{Command, Stdio};
 
@@ -9,6 +10,7 @@ pub fn render_commit(
     parent_selector: Option<&str>,
     no_color: bool,
     print: bool,
+    progress_opt_in: bool,
 ) -> Result<()> {
     print_commit_metadata(commit, no_color)?;
     print_commit_message(commit)?;
@@ -18,9 +20,38 @@ pub fn render_commit(
     if print && !files.is_empty() {
         println!();
         println!("📦 Printing file contents:");
+
+        let progress = if progress_opt_in {
+            Some(Progress::new(
+                files.len() as u64,
+                ProgressOptions::default()
+                    .with_prefix("git-scope ")
+                    .with_finish(ProgressFinish::Clear),
+            ))
+        } else {
+            None
+        };
+
         for file in files {
-            print_file_content(&file)?;
-            println!();
+            match &progress {
+                Some(progress) => {
+                    progress.set_message(&file);
+                    progress.suspend(|| -> Result<()> {
+                        print_file_content(&file)?;
+                        println!();
+                        Ok(())
+                    })?;
+                    progress.inc(1);
+                }
+                None => {
+                    print_file_content(&file)?;
+                    println!();
+                }
+            }
+        }
+
+        if let Some(progress) = progress {
+            progress.finish_and_clear();
         }
     }
 
