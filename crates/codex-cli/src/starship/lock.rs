@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn is_stale_modified_returns_true_when_modified_fails() {
-        let err = io::Error::new(io::ErrorKind::Other, "boom");
+        let err = io::Error::other("boom");
         assert!(is_stale_modified(Err(err), 60, SystemTime::now()));
     }
 
