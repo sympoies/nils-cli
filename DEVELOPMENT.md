@@ -33,8 +33,8 @@
 - All commands in **Formatting and linting** must pass.
 - `cargo test --workspace`
 - `zsh -f tests/zsh/completion.test.zsh`
-- Coverage must be **>= 70.00%** total line coverage:
-  - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 70`
+- Coverage must be **>= 80.00%** total line coverage:
+  - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 80`
   - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
 - Or run the single entrypoint for fmt/clippy/tests: `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh` (still run coverage commands above)
 
@@ -46,7 +46,7 @@
 
 ## Coverage
 
-- Policy: total line coverage must be **>= 70.00%** (enforced in CI).
+- Policy: total line coverage must be **>= 80.00%** (enforced in CI).
 
 - Prereqs:
 

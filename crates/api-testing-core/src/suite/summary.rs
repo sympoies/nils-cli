@@ -396,4 +396,123 @@ mod tests {
         assert!(md.contains("### Totals"));
         assert!(md.contains("| total | passed | failed | skipped |"));
     }
+
+    #[test]
+    fn summary_renders_failed_skipped_and_slowest_with_limits() {
+        let results = SuiteRunResults {
+            version: 1,
+            suite: "smoke".to_string(),
+            suite_file: "tests/api/suites/smoke.suite.json".to_string(),
+            run_id: "run`id & <tag>".to_string(),
+            started_at: "2026-01-31T00:00:00Z".to_string(),
+            finished_at: "2026-01-31T00:00:05Z".to_string(),
+            output_dir: "out/api-test-runner/20260131-000000Z".to_string(),
+            summary: crate::suite::results::SuiteRunSummary {
+                total: 6,
+                passed: 1,
+                failed: 3,
+                skipped: 2,
+            },
+            cases: vec![
+                crate::suite::results::SuiteCaseResult {
+                    id: "fail.1".to_string(),
+                    case_type: "rest".to_string(),
+                    status: "failed".to_string(),
+                    duration_ms: 50,
+                    tags: vec![],
+                    command: None,
+                    message: Some("bad | pipe".to_string()),
+                    assertions: None,
+                    stdout_file: Some("out/stdout-1.txt".to_string()),
+                    stderr_file: Some("out/stderr-1.txt".to_string()),
+                },
+                crate::suite::results::SuiteCaseResult {
+                    id: "fail.2".to_string(),
+                    case_type: "graphql".to_string(),
+                    status: "failed".to_string(),
+                    duration_ms: 150,
+                    tags: vec![],
+                    command: None,
+                    message: Some("write_cases_disabled".to_string()),
+                    assertions: None,
+                    stdout_file: None,
+                    stderr_file: None,
+                },
+                crate::suite::results::SuiteCaseResult {
+                    id: "fail.3".to_string(),
+                    case_type: "rest".to_string(),
+                    status: "failed".to_string(),
+                    duration_ms: 20,
+                    tags: vec![],
+                    command: None,
+                    message: Some("skipped_by_id".to_string()),
+                    assertions: None,
+                    stdout_file: None,
+                    stderr_file: None,
+                },
+                crate::suite::results::SuiteCaseResult {
+                    id: "skip.1".to_string(),
+                    case_type: "rest".to_string(),
+                    status: "skipped".to_string(),
+                    duration_ms: 5,
+                    tags: vec![],
+                    command: None,
+                    message: Some("write_cases_disabled".to_string()),
+                    assertions: None,
+                    stdout_file: None,
+                    stderr_file: None,
+                },
+                crate::suite::results::SuiteCaseResult {
+                    id: "skip.2".to_string(),
+                    case_type: "graphql".to_string(),
+                    status: "skipped".to_string(),
+                    duration_ms: 7,
+                    tags: vec![],
+                    command: None,
+                    message: Some("not_selected".to_string()),
+                    assertions: None,
+                    stdout_file: None,
+                    stderr_file: None,
+                },
+                crate::suite::results::SuiteCaseResult {
+                    id: "pass.1".to_string(),
+                    case_type: "rest".to_string(),
+                    status: "passed".to_string(),
+                    duration_ms: 10,
+                    tags: vec![],
+                    command: None,
+                    message: None,
+                    assertions: None,
+                    stdout_file: None,
+                    stderr_file: None,
+                },
+            ],
+        };
+
+        let options = SummaryOptions {
+            max_failed: 1,
+            max_skipped: 1,
+            slow_n: 1,
+            ..SummaryOptions::default()
+        };
+
+        let md = render_summary_markdown(&results, &options);
+        assert!(md.contains("### Failed (3)"));
+        assert!(md.contains("…and 2 more failed cases"));
+        assert!(md.contains("### Skipped (2)"));
+        assert!(md.contains("…and 1 more skipped cases"));
+        assert!(md.contains("### Slowest (Top 1)"));
+        assert!(md.contains("<code>run`id &amp; &lt;tag&gt;</code>"));
+        assert!(md.contains("bad \\| pipe"));
+    }
+
+    #[test]
+    fn summary_render_handles_empty_and_invalid_json_input() {
+        let empty =
+            render_summary_from_json_str("", Some("missing.json"), &SummaryOptions::default());
+        assert!(empty.contains("results file not found or empty"));
+
+        let invalid = render_summary_from_json_str("{not-json", None, &SummaryOptions::default());
+        assert!(invalid.contains("invalid JSON from stdin"));
+    }
 }

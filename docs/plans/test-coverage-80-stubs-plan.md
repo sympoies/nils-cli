@@ -309,13 +309,32 @@ This plan raises Rust workspace **total line coverage** from **75.01%** (13886/1
   - `cargo test -p git-scope -p git-summary`
 
 ## Sprint 4: Raise the CI coverage gate to 80% and lock it in
-**Goal**: Enforce the new coverage baseline via CI while keeping the developer workflow clear and reproducible.
+**Goal**: Enforce the new coverage baseline via CI once a fresh coverage run confirms >= 80%, and keep the developer workflow clear and reproducible.
 **Demo/Validation**:
 - Command(s):
   - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info`
+  - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 80`
 - Verify:
-  - CI is green with the new gate.
+  - Coverage summary reports >= 80.00% before the gate is raised.
+  - CI is green with the new gate after the change is merged.
+
+### Task 4.0: Recompute workspace coverage and confirm gate readiness
+- **Location**:
+  - `scripts/ci/coverage-summary.sh`
+  - `target/coverage/lcov.info` (generated)
+- **Description**: Run a fresh coverage pass (recommended after Sprint 2–3 tests land) and record the total line coverage. If coverage is below 80%, capture the gap (lines needed) and document the top 5 lowest-coverage files in `docs/notes/coverage-gap.md` to guide remediation before raising the CI gate.
+- **Dependencies**:
+  - none
+- **Complexity**: 4
+- **Acceptance criteria**:
+  - Coverage summary is generated from a fresh run.
+  - If coverage < 80.00%, the gap and top 5 low-coverage files are recorded in `docs/notes/coverage-gap.md` and the gate-raising task is deferred.
+- **Validation**:
+  - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info`
+  - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
+  - If coverage < 80.00%: `test -s docs/notes/coverage-gap.md`
 
 ### Task 4.1: Raise CI coverage threshold from 75% to 80%
 - **Location**:
@@ -324,13 +343,10 @@ This plan raises Rust workspace **total line coverage** from **75.01%** (13886/1
   - `COVERAGE_FAIL_UNDER_LINES: "80"`
   - Keep this change last to avoid blocking intermediate PRs while test harness is still being built.
 - **Dependencies**:
-  - Task 2.4
-  - Task 3.1
-  - Task 3.2
-  - Task 3.3
-  - Task 3.4
+  - Task 4.0
 - **Complexity**: 3
 - **Acceptance criteria**:
+  - Coverage is >= 80.00% on the latest run prior to raising the gate.
   - CI coverage job passes with the new gate.
 - **Validation**:
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 80`
@@ -347,9 +363,30 @@ This plan raises Rust workspace **total line coverage** from **75.01%** (13886/1
   - Task 4.1
 - **Complexity**: 3
 - **Acceptance criteria**:
-  - Docs match CI behavior and are runnable verbatim.
+  - Docs match CI behavior and are runnable verbatim (80% minimum).
 - **Validation**:
   - `rg \"COVERAGE_FAIL_UNDER_LINES\" -n .github/workflows/ci.yml`
+  - `rg \"80.00%\" -n DEVELOPMENT.md`
+
+### Task 4.3: Close remaining coverage gap (conditional)
+- **Location**:
+  - `docs/notes/coverage-gap.md`
+  - `crates/api-testing-core/src/suite/runner.rs`
+  - `crates/api-testing-core/src/suite/cleanup.rs`
+  - `crates/api-testing-core/src/suite/auth.rs`
+  - `crates/fzf-cli/src/git_commit.rs`
+  - `crates/git-lock/src/copy.rs`
+- **Description**: If Task 4.0 reports coverage < 80%, add targeted, deterministic tests for the top offenders listed in `docs/notes/coverage-gap.md` using the existing fixture/stub toolkit. Prefer unit tests for pure logic and small integration tests for CLI pathways.
+- **Dependencies**:
+  - Task 4.0
+- **Complexity**: 8
+- **Acceptance criteria**:
+  - Coverage summary reaches >= 80.00% on a fresh run.
+  - Tests are hermetic (no external network; stubbed binaries only).
+- **Validation**:
+  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info`
+  - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
 
 ## Testing Strategy
 - Unit:
@@ -364,6 +401,8 @@ This plan raises Rust workspace **total line coverage** from **75.01%** (13886/1
 ## Risks & gotchas
 - Adding a new test-support crate increases the coverage denominator:
   - Mitigation: keep it small and ensure it is executed by many tests (or add direct unit tests in the crate).
+- Current `target/coverage/lcov.info` reports **75.01%** total line coverage:
+  - Mitigation: run Task 4.0 to confirm the true current coverage, then execute missing test tasks from Sprints 2–3 (or targeted hotspot tests) before raising the CI gate.
 - Flaky tests from ports/timeouts:
   - Mitigation: bind to `127.0.0.1:0`, avoid sleeps, and fully own server thread lifecycle.
 - Cross-platform executable bit issues:

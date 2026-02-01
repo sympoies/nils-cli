@@ -522,6 +522,279 @@ mod tests {
         path
     }
 
+    fn base_rest_case() -> serde_json::Value {
+        serde_json::json!({
+          "id": "rest.health",
+          "type": "rest",
+          "request": "setup/rest/requests/health.request.json"
+        })
+    }
+
+    fn validate_err(value: serde_json::Value) -> String {
+        let tmp = TempDir::new().unwrap();
+        let path = write_suite(&tmp, &value);
+        let err = load_and_validate_suite(&path).unwrap_err();
+        format!("{err:#}")
+    }
+
+    #[test]
+    fn suite_schema_rejects_unsupported_version() {
+        let err = validate_err(serde_json::json!({
+          "version": 2,
+          "cases": [base_rest_case()]
+        }));
+        assert!(err.contains("Unsupported suite version"));
+    }
+
+    #[test]
+    fn suite_schema_rejects_empty_auth_secret_env() {
+        let err = validate_err(serde_json::json!({
+          "version": 1,
+          "auth": { "secretEnv": "   " },
+          "cases": [base_rest_case()]
+        }));
+        assert!(err.contains("auth.secretEnv"));
+        assert!(err.contains("must not be empty"));
+    }
+
+    #[test]
+    fn suite_schema_rejects_invalid_auth_secret_env() {
+        let err = validate_err(serde_json::json!({
+          "version": 1,
+          "auth": { "secretEnv": "123" },
+          "cases": [base_rest_case()]
+        }));
+        assert!(err.contains("auth.secretEnv"));
+        assert!(err.contains("valid env var name"));
+    }
+
+    #[test]
+    fn suite_schema_requires_provider_when_both_auth_blocks_present() {
+        let err = validate_err(serde_json::json!({
+          "version": 1,
+          "auth": {
+            "rest": {
+              "loginRequestTemplate": "setup/rest/requests/login.request.json",
+              "credentialsJq": ".profiles[$profile]"
+            },
+            "graphql": {
+              "loginOp": "setup/graphql/operations/login.graphql",
+              "loginVarsTemplate": "setup/graphql/vars/login.json",
+              "credentialsJq": ".profiles[$profile]"
+            }
+          },
+          "cases": [base_rest_case()]
+        }));
+        assert!(err.contains("auth.provider"));
+        assert!(err.contains("both auth.rest and auth.graphql"));
+    }
+
+    #[test]
+    fn suite_schema_rejects_rest_auth_missing_login_request_template() {
+        let err = validate_err(serde_json::json!({
+          "version": 1,
+          "auth": {
+            "provider": "rest",
+            "rest": {
+              "loginRequestTemplate": " ",
+              "credentialsJq": ".profiles[$profile]"
+            }
+          },
+          "cases": [base_rest_case()]
+        }));
+        assert!(err.contains("auth.rest.loginRequestTemplate"));
+    }
+
+    #[test]
+    fn suite_schema_rejects_rest_auth_missing_credentials_jq() {
+        let err = validate_err(serde_json::json!({
+          "version": 1,
+          "auth": {
+            "provider": "rest",
+            "rest": {
+              "loginRequestTemplate": "setup/rest/requests/login.request.json",
+              "credentialsJq": " "
+            }
+          },
+          "cases": [base_rest_case()]
+        }));
+        assert!(err.contains("auth.rest.credentialsJq"));
+    }
+
+    #[test]
+    fn suite_schema_rejects_graphql_auth_missing_login_op() {
+        let err = validate_err(serde_json::json!({
+          "version": 1,
+          "auth": {
+            "provider": "graphql",
+            "graphql": {
+              "loginOp": " ",
+              "loginVarsTemplate": "setup/graphql/vars/login.json",
+              "credentialsJq": ".profiles[$profile]"
+            }
+          },
+          "cases": [base_rest_case()]
+        }));
+        assert!(err.contains("auth.graphql.loginOp"));
+    }
+
+    #[test]
+    fn suite_schema_rejects_graphql_auth_missing_login_vars_template() {
+        let err = validate_err(serde_json::json!({
+          "version": 1,
+          "auth": {
+            "provider": "graphql",
+            "graphql": {
+              "loginOp": "setup/graphql/operations/login.graphql",
+              "loginVarsTemplate": " ",
+              "credentialsJq": ".profiles[$profile]"
+            }
+          },
+          "cases": [base_rest_case()]
+        }));
+        assert!(err.contains("auth.graphql.loginVarsTemplate"));
+    }
+
+    #[test]
+    fn suite_schema_rejects_graphql_auth_missing_credentials_jq() {
+        let err = validate_err(serde_json::json!({
+          "version": 1,
+          "auth": {
+            "provider": "graphql",
+            "graphql": {
+              "loginOp": "setup/graphql/operations/login.graphql",
+              "loginVarsTemplate": "setup/graphql/vars/login.json",
+              "credentialsJq": " "
+            }
+          },
+          "cases": [base_rest_case()]
+        }));
+        assert!(err.contains("auth.graphql.credentialsJq"));
+    }
+
+    #[test]
+    fn suite_schema_rejects_unknown_auth_provider() {
+        let err = validate_err(serde_json::json!({
+          "version": 1,
+          "auth": { "provider": "soap" },
+          "cases": [base_rest_case()]
+        }));
+        assert!(err.contains("auth.provider"));
+        assert!(err.contains("rest, graphql"));
+    }
+
+    #[test]
+    fn suite_schema_rejects_empty_case_id() {
+        let err = validate_err(serde_json::json!({
+          "version": 1,
+          "cases": [
+            { "id": " ", "type": "rest", "request": "setup/rest/requests/health.request.json" }
+          ]
+        }));
+        assert!(err.contains("cases[0].id"));
+        assert!(err.contains("is required"));
+    }
+
+    #[test]
+    fn suite_schema_rejects_duplicate_case_ids() {
+        let err = validate_err(serde_json::json!({
+          "version": 1,
+          "cases": [
+            { "id": "dup", "type": "rest", "request": "setup/rest/requests/health.request.json" },
+            { "id": "dup", "type": "rest", "request": "setup/rest/requests/health.request.json" }
+          ]
+        }));
+        assert!(err.contains("cases[1].id"));
+        assert!(err.contains("must be unique"));
+    }
+
+    #[test]
+    fn suite_schema_rejects_empty_case_type() {
+        let err = validate_err(serde_json::json!({
+          "version": 1,
+          "cases": [
+            { "id": "x", "type": " ", "request": "setup/rest/requests/health.request.json" }
+          ]
+        }));
+        assert!(err.contains("cases[0].type"));
+        assert!(err.contains("is required"));
+    }
+
+    #[test]
+    fn suite_schema_rejects_rest_case_missing_request() {
+        let err = validate_err(serde_json::json!({
+          "version": 1,
+          "cases": [
+            { "id": "rest.missing", "type": "rest" }
+          ]
+        }));
+        assert!(err.contains("cases[0].request"));
+        assert!(err.contains("type=rest"));
+    }
+
+    #[test]
+    fn suite_schema_rejects_rest_flow_missing_login_request() {
+        let err = validate_err(serde_json::json!({
+          "version": 1,
+          "cases": [
+            { "id": "rest.flow", "type": "rest-flow", "request": "setup/rest/requests/health.request.json" }
+          ]
+        }));
+        assert!(err.contains("cases[0].loginRequest"));
+        assert!(err.contains("type=rest-flow"));
+    }
+
+    #[test]
+    fn suite_schema_rejects_rest_flow_missing_request() {
+        let err = validate_err(serde_json::json!({
+          "version": 1,
+          "cases": [
+            { "id": "rest.flow", "type": "rest-flow", "loginRequest": "setup/rest/requests/login.request.json" }
+          ]
+        }));
+        assert!(err.contains("cases[0].request"));
+        assert!(err.contains("type=rest-flow"));
+    }
+
+    #[test]
+    fn suite_schema_rejects_graphql_case_missing_op() {
+        let err = validate_err(serde_json::json!({
+          "version": 1,
+          "cases": [
+            { "id": "graphql.missing", "type": "graphql" }
+          ]
+        }));
+        assert!(err.contains("cases[0].op"));
+        assert!(err.contains("type=graphql"));
+    }
+
+    #[test]
+    fn suite_cleanup_steps_supports_single_and_many() {
+        let one = SuiteCleanup::One(Box::new(SuiteCleanupStep {
+            step_type: "rest".to_string(),
+            config_dir: String::new(),
+            url: String::new(),
+            env: String::new(),
+            no_history: None,
+            method: "DELETE".to_string(),
+            path_template: "/health".to_string(),
+            vars: None,
+            token: String::new(),
+            expect: None,
+            expect_status: None,
+            expect_jq: String::new(),
+            jwt: String::new(),
+            op: String::new(),
+            vars_jq: String::new(),
+            vars_template: String::new(),
+            allow_errors: false,
+        }));
+        let many = SuiteCleanup::Many(vec![one.steps()[0].clone()]);
+
+        assert_eq!(one.steps().len(), 1);
+        assert_eq!(many.steps().len(), 1);
+    }
+
     #[test]
     fn suite_schema_rejects_allow_errors_true_without_expect_jq() {
         let tmp = TempDir::new().unwrap();

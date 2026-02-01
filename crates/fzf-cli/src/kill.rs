@@ -97,3 +97,51 @@ fn run_kill(pids: &[String], force: bool) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nils_test_support::{prepend_path, GlobalStateLock, StubBinDir};
+
+    #[test]
+    fn parse_kill_flags_collects_flags_and_rest() {
+        let args = vec!["-k", "-9", "123", "456"]
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>();
+        let flags = parse_kill_flags(&args);
+        assert!(flags.kill_now);
+        assert!(flags.force_kill);
+        assert_eq!(flags.rest, vec!["123".to_string(), "456".to_string()]);
+    }
+
+    #[test]
+    fn kill_flow_no_pids_is_noop() {
+        let code = kill_flow(&[], true, false).unwrap();
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn kill_flow_kill_now_runs_stub_kill() {
+        let lock = GlobalStateLock::new();
+        let stub = StubBinDir::new();
+        stub.write_exe("kill", "#!/bin/bash\nexit 0\n");
+        let _path = prepend_path(&lock, stub.path());
+
+        let pids = vec!["123".to_string(), "456".to_string()];
+        assert_eq!(kill_flow(&pids, true, false).unwrap(), 0);
+        assert_eq!(kill_flow(&pids, true, true).unwrap(), 0);
+    }
+
+    #[test]
+    fn kill_flow_reports_kill_failure() {
+        let lock = GlobalStateLock::new();
+        let stub = StubBinDir::new();
+        stub.write_exe("kill", "#!/bin/bash\nexit 1\n");
+        let _path = prepend_path(&lock, stub.path());
+
+        let pids = vec!["123".to_string()];
+        let err = kill_flow(&pids, true, false).unwrap_err();
+        assert!(err.to_string().contains("kill failed"));
+    }
+}

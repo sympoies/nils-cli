@@ -529,29 +529,39 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
+    fn base_rest_case() -> serde_json::Value {
+        serde_json::json!({
+            "id": "rest.health",
+            "type": "rest",
+            "request": "setup/rest/requests/health.request.json"
+        })
+    }
+
+    fn suite_from(value: serde_json::Value) -> SuiteManifestV1 {
+        serde_json::from_value(value).unwrap()
+    }
+
     #[test]
     fn suite_schema_v1_accepts_minimal_valid_suite() {
-        let suite: SuiteManifestV1 = serde_json::from_value(serde_json::json!({
+        let suite: SuiteManifestV1 = suite_from(serde_json::json!({
             "version": 1,
             "name": "smoke",
             "cases": [
                 { "id": "rest.health", "type": "rest", "request": "setup/rest/requests/health.request.json" },
                 { "id": "graphql.health", "type": "graphql", "op": "setup/graphql/ops/health.graphql" }
             ]
-        }))
-        .unwrap();
+        }));
         suite.validate().unwrap();
     }
 
     #[test]
     fn suite_schema_v1_graphql_allow_errors_true_requires_expect_jq() {
-        let suite: SuiteManifestV1 = serde_json::from_value(serde_json::json!({
+        let suite: SuiteManifestV1 = suite_from(serde_json::json!({
             "version": 1,
             "cases": [
                 { "id": "graphql.bad", "type": "graphql", "op": "x.graphql", "allowErrors": true }
             ]
-        }))
-        .unwrap();
+        }));
         let err = suite.validate().unwrap_err();
         assert_eq!(
             err,
@@ -564,13 +574,12 @@ mod tests {
 
     #[test]
     fn suite_schema_v1_graphql_allow_errors_must_be_boolean() {
-        let suite: SuiteManifestV1 = serde_json::from_value(serde_json::json!({
+        let suite: SuiteManifestV1 = suite_from(serde_json::json!({
             "version": 1,
             "cases": [
                 { "id": "graphql.bad", "type": "graphql", "op": "x.graphql", "allowErrors": "maybe" }
             ]
-        }))
-        .unwrap();
+        }));
         let err = suite.validate().unwrap_err();
         assert_eq!(
             err,
@@ -583,13 +592,12 @@ mod tests {
 
     #[test]
     fn suite_schema_v1_unknown_case_type_includes_case_id() {
-        let suite: SuiteManifestV1 = serde_json::from_value(serde_json::json!({
+        let suite: SuiteManifestV1 = suite_from(serde_json::json!({
             "version": 1,
             "cases": [
                 { "id": "x", "type": "soap" }
             ]
-        }))
-        .unwrap();
+        }));
         let err = suite.validate().unwrap_err();
         assert!(err.to_string().contains("case 'x'"));
         assert!(err.to_string().contains("soap"));
@@ -597,13 +605,12 @@ mod tests {
 
     #[test]
     fn suite_schema_v1_rest_flow_requires_login_request_and_request() {
-        let suite: SuiteManifestV1 = serde_json::from_value(serde_json::json!({
+        let suite: SuiteManifestV1 = suite_from(serde_json::json!({
             "version": 1,
             "cases": [
                 { "id": "rest.flow", "type": "rest-flow", "request": "x.request.json" }
             ]
-        }))
-        .unwrap();
+        }));
         let err = suite.validate().unwrap_err();
         assert_eq!(
             err,
@@ -615,15 +622,355 @@ mod tests {
 
     #[test]
     fn suite_schema_v1_auth_secret_env_must_be_valid_env_var_name() {
-        let suite: SuiteManifestV1 = serde_json::from_value(serde_json::json!({
+        let suite: SuiteManifestV1 = suite_from(serde_json::json!({
             "version": 1,
             "auth": { "secretEnv": "123" },
             "cases": [
                 { "id": "rest.health", "type": "rest", "request": "x.request.json" }
             ]
-        }))
-        .unwrap();
+        }));
         let err = suite.validate().unwrap_err();
         assert!(err.to_string().contains(".auth.secretEnv"));
+    }
+
+    #[test]
+    fn raw_text_deserializes_primitives() {
+        let value: RawText = serde_json::from_value(serde_json::json!(123)).unwrap();
+        assert_eq!(value.0, "123");
+        let value: RawText = serde_json::from_value(serde_json::json!(true)).unwrap();
+        assert_eq!(value.0, "true");
+        let value: RawText = serde_json::from_value(serde_json::json!(null)).unwrap();
+        assert_eq!(value.0, "");
+    }
+
+    #[test]
+    fn parse_bool_raw_accepts_true_false_and_rejects_other() {
+        assert_eq!(parse_bool_raw(&RawText("true".to_string())), Some(true));
+        assert_eq!(parse_bool_raw(&RawText("false".to_string())), Some(false));
+        assert_eq!(parse_bool_raw(&RawText("nope".to_string())), None);
+    }
+
+    #[test]
+    fn auth_provider_effective_infers_rest_or_graphql() {
+        let auth = SuiteAuthV1 {
+            provider: None,
+            required: None,
+            secret_env: None,
+            rest: Some(SuiteAuthRestV1 {
+                login_request_template: None,
+                credentials_jq: None,
+                token_jq: None,
+                config_dir: None,
+                url: None,
+                env: None,
+            }),
+            graphql: None,
+        };
+        assert_eq!(
+            auth_provider_effective(&auth).unwrap(),
+            Some("rest".to_string())
+        );
+
+        let auth = SuiteAuthV1 {
+            provider: None,
+            required: None,
+            secret_env: None,
+            rest: None,
+            graphql: Some(SuiteAuthGraphqlV1 {
+                login_op: None,
+                login_vars_template: None,
+                credentials_jq: None,
+                token_jq: None,
+                config_dir: None,
+                url: None,
+                env: None,
+            }),
+        };
+        assert_eq!(
+            auth_provider_effective(&auth).unwrap(),
+            Some("graphql".to_string())
+        );
+    }
+
+    #[test]
+    fn auth_provider_effective_requires_provider_when_both_present() {
+        let auth = SuiteAuthV1 {
+            provider: None,
+            required: None,
+            secret_env: None,
+            rest: Some(SuiteAuthRestV1 {
+                login_request_template: None,
+                credentials_jq: None,
+                token_jq: None,
+                config_dir: None,
+                url: None,
+                env: None,
+            }),
+            graphql: Some(SuiteAuthGraphqlV1 {
+                login_op: None,
+                login_vars_template: None,
+                credentials_jq: None,
+                token_jq: None,
+                config_dir: None,
+                url: None,
+                env: None,
+            }),
+        };
+        let err = auth_provider_effective(&auth).unwrap_err();
+        assert_eq!(
+            err,
+            SuiteSchemaValidationError::InvalidSuiteAuthProviderRequiredWhenBothPresent
+        );
+    }
+
+    #[test]
+    fn suite_schema_rejects_auth_required_not_boolean() {
+        let suite = suite_from(serde_json::json!({
+            "version": 1,
+            "auth": { "required": "maybe" },
+            "cases": [base_rest_case()]
+        }));
+        let err = suite.validate().unwrap_err();
+        assert_eq!(
+            err,
+            SuiteSchemaValidationError::InvalidSuiteAuthRequiredNotBoolean
+        );
+    }
+
+    #[test]
+    fn suite_schema_rejects_empty_auth_secret_env() {
+        let suite = suite_from(serde_json::json!({
+            "version": 1,
+            "auth": { "secretEnv": "   " },
+            "cases": [base_rest_case()]
+        }));
+        let err = suite.validate().unwrap_err();
+        assert_eq!(
+            err,
+            SuiteSchemaValidationError::InvalidSuiteAuthSecretEnvEmpty
+        );
+    }
+
+    #[test]
+    fn suite_schema_rejects_auth_provider_when_unknown() {
+        let suite = suite_from(serde_json::json!({
+            "version": 1,
+            "auth": { "provider": "soap" },
+            "cases": [base_rest_case()]
+        }));
+        let err = suite.validate().unwrap_err();
+        assert_eq!(
+            err,
+            SuiteSchemaValidationError::InvalidSuiteAuthProviderValue {
+                value: "soap".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn suite_schema_rejects_rest_auth_missing_login_request_template() {
+        let suite = suite_from(serde_json::json!({
+            "version": 1,
+            "auth": {
+                "provider": "rest",
+                "rest": { "credentialsJq": ".profiles[$profile]" }
+            },
+            "cases": [base_rest_case()]
+        }));
+        let err = suite.validate().unwrap_err();
+        assert_eq!(
+            err,
+            SuiteSchemaValidationError::InvalidSuiteAuthRestMissingLoginRequestTemplate
+        );
+    }
+
+    #[test]
+    fn suite_schema_rejects_rest_auth_missing_credentials_jq() {
+        let suite = suite_from(serde_json::json!({
+            "version": 1,
+            "auth": {
+                "provider": "rest",
+                "rest": { "loginRequestTemplate": "setup/rest/requests/login.request.json" }
+            },
+            "cases": [base_rest_case()]
+        }));
+        let err = suite.validate().unwrap_err();
+        assert_eq!(
+            err,
+            SuiteSchemaValidationError::InvalidSuiteAuthRestMissingCredentialsJq
+        );
+    }
+
+    #[test]
+    fn suite_schema_rejects_graphql_auth_missing_login_op() {
+        let suite = suite_from(serde_json::json!({
+            "version": 1,
+            "auth": { "provider": "graphql", "graphql": {} },
+            "cases": [base_rest_case()]
+        }));
+        let err = suite.validate().unwrap_err();
+        assert_eq!(
+            err,
+            SuiteSchemaValidationError::InvalidSuiteAuthGraphqlMissingLoginOp
+        );
+    }
+
+    #[test]
+    fn suite_schema_rejects_graphql_auth_missing_login_vars_template() {
+        let suite = suite_from(serde_json::json!({
+            "version": 1,
+            "auth": {
+                "provider": "graphql",
+                "graphql": { "loginOp": "setup/graphql/operations/login.graphql" }
+            },
+            "cases": [base_rest_case()]
+        }));
+        let err = suite.validate().unwrap_err();
+        assert_eq!(
+            err,
+            SuiteSchemaValidationError::InvalidSuiteAuthGraphqlMissingLoginVarsTemplate
+        );
+    }
+
+    #[test]
+    fn suite_schema_rejects_graphql_auth_missing_credentials_jq() {
+        let suite = suite_from(serde_json::json!({
+            "version": 1,
+            "auth": {
+                "provider": "graphql",
+                "graphql": {
+                    "loginOp": "setup/graphql/operations/login.graphql",
+                    "loginVarsTemplate": "setup/graphql/vars/login.json"
+                }
+            },
+            "cases": [base_rest_case()]
+        }));
+        let err = suite.validate().unwrap_err();
+        assert_eq!(
+            err,
+            SuiteSchemaValidationError::InvalidSuiteAuthGraphqlMissingCredentialsJq
+        );
+    }
+
+    #[test]
+    fn suite_schema_rejects_case_missing_id_and_type() {
+        let suite = suite_from(serde_json::json!({
+            "version": 1,
+            "cases": [ { "type": "rest", "request": "x.request.json" } ]
+        }));
+        let err = suite.validate().unwrap_err();
+        assert_eq!(err, SuiteSchemaValidationError::CaseMissingId { index: 0 });
+    }
+
+    #[test]
+    fn suite_schema_rejects_case_missing_type() {
+        let suite = suite_from(serde_json::json!({
+            "version": 1,
+            "cases": [ { "id": "rest.bad", "request": "x.request.json" } ]
+        }));
+        let err = suite.validate().unwrap_err();
+        assert_eq!(
+            err,
+            SuiteSchemaValidationError::CaseMissingType {
+                id: "rest.bad".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn suite_schema_rejects_rest_case_missing_request() {
+        let suite = suite_from(serde_json::json!({
+            "version": 1,
+            "cases": [ { "id": "rest.missing", "type": "rest" } ]
+        }));
+        let err = suite.validate().unwrap_err();
+        assert_eq!(
+            err,
+            SuiteSchemaValidationError::RestCaseMissingRequest {
+                id: "rest.missing".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn suite_schema_rejects_rest_flow_missing_request() {
+        let suite = suite_from(serde_json::json!({
+            "version": 1,
+            "cases": [ { "id": "rest.flow", "type": "rest-flow", "loginRequest": "x.request.json" } ]
+        }));
+        let err = suite.validate().unwrap_err();
+        assert_eq!(
+            err,
+            SuiteSchemaValidationError::RestFlowCaseMissingRequest {
+                id: "rest.flow".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn suite_schema_rejects_graphql_case_missing_op() {
+        let suite = suite_from(serde_json::json!({
+            "version": 1,
+            "cases": [ { "id": "graphql.missing", "type": "graphql" } ]
+        }));
+        let err = suite.validate().unwrap_err();
+        assert_eq!(
+            err,
+            SuiteSchemaValidationError::GraphqlCaseMissingOp {
+                id: "graphql.missing".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn suite_schema_error_messages_cover_all_variants() {
+        let cases = vec![
+            SuiteSchemaValidationError::UnsupportedSuiteVersion { got: 2 },
+            SuiteSchemaValidationError::InvalidSuiteAuthSecretEnvEmpty,
+            SuiteSchemaValidationError::InvalidSuiteAuthSecretEnvNotEnvVarName {
+                value: "123".to_string(),
+            },
+            SuiteSchemaValidationError::InvalidSuiteAuthRequiredNotBoolean,
+            SuiteSchemaValidationError::InvalidSuiteAuthProviderRequiredWhenBothPresent,
+            SuiteSchemaValidationError::InvalidSuiteAuthProviderValue {
+                value: "soap".to_string(),
+            },
+            SuiteSchemaValidationError::InvalidSuiteAuthRestMissingLoginRequestTemplate,
+            SuiteSchemaValidationError::InvalidSuiteAuthRestMissingCredentialsJq,
+            SuiteSchemaValidationError::InvalidSuiteAuthGraphqlMissingLoginOp,
+            SuiteSchemaValidationError::InvalidSuiteAuthGraphqlMissingLoginVarsTemplate,
+            SuiteSchemaValidationError::InvalidSuiteAuthGraphqlMissingCredentialsJq,
+            SuiteSchemaValidationError::CaseMissingId { index: 0 },
+            SuiteSchemaValidationError::CaseMissingType {
+                id: "case".to_string(),
+            },
+            SuiteSchemaValidationError::RestCaseMissingRequest {
+                id: "rest".to_string(),
+            },
+            SuiteSchemaValidationError::RestFlowCaseMissingLoginRequest {
+                id: "flow".to_string(),
+            },
+            SuiteSchemaValidationError::RestFlowCaseMissingRequest {
+                id: "flow".to_string(),
+            },
+            SuiteSchemaValidationError::GraphqlCaseMissingOp {
+                id: "gql".to_string(),
+            },
+            SuiteSchemaValidationError::GraphqlCaseAllowErrorsInvalid {
+                id: "gql".to_string(),
+            },
+            SuiteSchemaValidationError::GraphqlCaseAllowErrorsTrueRequiresExpectJq {
+                id: "gql".to_string(),
+            },
+            SuiteSchemaValidationError::UnknownCaseType {
+                id: "case".to_string(),
+                case_type: "soap".to_string(),
+            },
+        ];
+
+        for err in cases {
+            let msg = err.to_string();
+            assert!(!msg.trim().is_empty());
+        }
     }
 }
