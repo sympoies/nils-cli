@@ -602,15 +602,16 @@ mod tests {
     #[test]
     fn tokenization_expands_env_vars_best_effort() {
         let _g = ENV_LOCK.lock().expect("lock");
-        let prev = std::env::var("CODEX_HOME").ok();
-        std::env::set_var("CODEX_HOME", "/tmp/codex-home");
+        let key = "NILS_TEST_HOME";
+        let prev = std::env::var(key).ok();
+        std::env::set_var(key, "/tmp/nils-test-home");
 
-        let s = "$CODEX_HOME/bin/api-gql call --env staging op.graphql";
+        let s = "$NILS_TEST_HOME/bin/api-gql call --env staging op.graphql";
         let tokens = tokenize_call_snippet(s).expect("tokens");
         assert_eq!(
             tokens,
             vec![
-                "/tmp/codex-home/bin/api-gql",
+                "/tmp/nils-test-home/bin/api-gql",
                 "call",
                 "--env",
                 "staging",
@@ -619,9 +620,9 @@ mod tests {
         );
 
         if let Some(v) = prev {
-            std::env::set_var("CODEX_HOME", v);
+            std::env::set_var(key, v);
         } else {
-            std::env::remove_var("CODEX_HOME");
+            std::env::remove_var(key);
         }
     }
 

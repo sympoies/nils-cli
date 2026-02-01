@@ -86,12 +86,6 @@ pub fn run_semantic_commit_output(
     child.wait_with_output().expect("wait semantic-commit")
 }
 
-pub fn make_codex_home() -> tempfile::TempDir {
-    let dir = tempfile::TempDir::new().expect("tempdir");
-    fs::create_dir_all(dir.path().join("commands")).expect("create commands dir");
-    dir
-}
-
 pub fn write_executable(dir: &Path, rel: &str, contents: &str) {
     let path = dir.join(rel);
     fs::write(&path, contents).expect("write executable");
