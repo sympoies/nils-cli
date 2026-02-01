@@ -21,6 +21,12 @@ impl GlobalStateLock {
     }
 }
 
+impl Default for GlobalStateLock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct EnvGuard {
     key: String,
     original: Option<String>,
@@ -100,6 +106,12 @@ impl StubBinDir {
 
     pub fn write_exe(&self, name: &str, content: &str) {
         write_exe(self.path(), name, content);
+    }
+}
+
+impl Default for StubBinDir {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

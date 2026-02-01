@@ -812,6 +812,7 @@ pub fn run_case_cleanup(ctx: &mut CleanupContext<'_>) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nils_test_support::fixtures::{GraphqlSetupFixture, RestSetupFixture, SuiteFixture};
     use pretty_assertions::assert_eq;
     use std::collections::BTreeMap;
 
@@ -948,12 +949,47 @@ mod tests {
     }
 
     #[test]
+    fn suite_cleanup_rest_url_selection_uses_rest_endpoints_env() {
+        let fixture = RestSetupFixture::new();
+        fixture.write_endpoints_env("REST_URL_STAGING=https://fromfile.example\n");
+        let defaults = SuiteDefaults::default();
+
+        let url = resolve_rest_base_url(&fixture.root, "setup/rest", "", "staging", &defaults, "")
+            .unwrap();
+
+        assert_eq!(url, "https://fromfile.example");
+    }
+
+    #[test]
+    fn suite_cleanup_graphql_url_selection_uses_graphql_endpoints_env() {
+        let fixture = GraphqlSetupFixture::new();
+        fixture.write_endpoints_env("GQL_URL_STAGING=https://fromfile.example/graphql\n");
+        let defaults = SuiteDefaults::default();
+
+        let url =
+            resolve_gql_url(&fixture.root, "setup/graphql", "", "staging", &defaults, "").unwrap();
+
+        assert_eq!(url, "https://fromfile.example/graphql");
+    }
+
+    #[test]
     fn suite_cleanup_template_replaces_vars() {
         let response = serde_json::json!({"data": {"id": "123"}});
         let mut vars = BTreeMap::new();
         vars.insert("id".to_string(), ".data.id".to_string());
         let out = render_template("/items/{{id}}", &response, &vars).unwrap();
         assert_eq!(out, "/items/123");
+    }
+
+    #[test]
+    fn suite_cleanup_template_missing_var_is_error() {
+        let response = serde_json::json!({"data": {"id": "123"}});
+        let mut vars = BTreeMap::new();
+        vars.insert("id".to_string(), ".data.missing".to_string());
+        let err = render_template("/items/{{id}}", &response, &vars).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("template var 'id' failed to resolve"));
     }
 
     #[test]
@@ -1263,6 +1299,224 @@ mod tests {
         assert!(!ok);
         let content = std::fs::read_to_string(&stderr_file).unwrap();
         assert!(content.contains("varsJq failed"));
+    }
+
+    #[test]
+    fn suite_cleanup_graphql_step_invalid_vars_template_vars_map_is_error() {
+        let fixture = GraphqlSetupFixture::new();
+        let run_dir = fixture.root.join("out");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let stderr_file = run_dir.join("case.stderr.log");
+        write_file(&stderr_file, b"").unwrap();
+
+        let op_path = fixture.root.join("ops/cleanup.graphql");
+        std::fs::create_dir_all(op_path.parent().unwrap()).unwrap();
+        std::fs::write(&op_path, "query Q { ok }\n").unwrap();
+
+        let template_path = fixture.root.join("templates/vars.json");
+        std::fs::create_dir_all(template_path.parent().unwrap()).unwrap();
+        std::fs::write(&template_path, r#"{"id":"{{id}}"}"#).unwrap();
+
+        let defaults = SuiteDefaults::default();
+        let mut ctx = CleanupContext {
+            repo_root: &fixture.root,
+            run_dir: &run_dir,
+            case_id: "c",
+            safe_id: "c",
+            main_response_file: None,
+            main_stderr_file: &stderr_file,
+            allow_writes_flag: true,
+            effective_env: "staging",
+            effective_no_history: true,
+            suite_defaults: &defaults,
+            env_rest_url: "",
+            env_gql_url: "",
+            rest_config_dir: "setup/rest",
+            rest_url: "",
+            rest_token: "",
+            gql_config_dir: "setup/graphql",
+            gql_url: "",
+            gql_jwt: "",
+            access_token_for_case: "",
+            auth_manager: None,
+            cleanup: None,
+        };
+
+        let response_json = serde_json::json!({"data": {"id": "123"}});
+        let step = SuiteCleanupStep {
+            step_type: "graphql".to_string(),
+            config_dir: String::new(),
+            url: "https://override.example/graphql".to_string(),
+            env: String::new(),
+            no_history: None,
+            method: String::new(),
+            path_template: String::new(),
+            vars: Some(serde_json::json!(["bad"])),
+            token: String::new(),
+            expect: None,
+            expect_status: None,
+            expect_jq: String::new(),
+            jwt: String::new(),
+            op: op_path
+                .strip_prefix(&fixture.root)
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+            vars_jq: String::new(),
+            vars_template: template_path
+                .strip_prefix(&fixture.root)
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+            allow_errors: false,
+        };
+
+        let err = graphql_cleanup_step(&mut ctx, &response_json, &step, 2).unwrap_err();
+        assert!(err.to_string().contains("cleanup.vars must be an object"));
+    }
+
+    #[test]
+    fn suite_cleanup_graphql_step_vars_template_render_failure_is_logged() {
+        let fixture = SuiteFixture::new();
+        let run_dir = fixture.root.join("out");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let stderr_file = run_dir.join("case.stderr.log");
+        write_file(&stderr_file, b"").unwrap();
+
+        let op_path = fixture.root.join("ops/cleanup.graphql");
+        std::fs::create_dir_all(op_path.parent().unwrap()).unwrap();
+        std::fs::write(&op_path, "query Q { ok }\n").unwrap();
+
+        let template_path = fixture.root.join("templates/vars.json");
+        std::fs::create_dir_all(template_path.parent().unwrap()).unwrap();
+        std::fs::write(&template_path, r#"{"id":"{{id}}"}"#).unwrap();
+
+        let defaults = SuiteDefaults::default();
+        let mut ctx = CleanupContext {
+            repo_root: &fixture.root,
+            run_dir: &run_dir,
+            case_id: "c",
+            safe_id: "c",
+            main_response_file: None,
+            main_stderr_file: &stderr_file,
+            allow_writes_flag: true,
+            effective_env: "staging",
+            effective_no_history: true,
+            suite_defaults: &defaults,
+            env_rest_url: "",
+            env_gql_url: "",
+            rest_config_dir: "setup/rest",
+            rest_url: "",
+            rest_token: "",
+            gql_config_dir: "setup/graphql",
+            gql_url: "",
+            gql_jwt: "",
+            access_token_for_case: "",
+            auth_manager: None,
+            cleanup: None,
+        };
+
+        let response_json = serde_json::json!({"data": {"other": "x"}});
+        let step = SuiteCleanupStep {
+            step_type: "graphql".to_string(),
+            config_dir: String::new(),
+            url: "https://override.example/graphql".to_string(),
+            env: String::new(),
+            no_history: None,
+            method: String::new(),
+            path_template: String::new(),
+            vars: Some(serde_json::json!({"id": ".data.id"})),
+            token: String::new(),
+            expect: None,
+            expect_status: None,
+            expect_jq: String::new(),
+            jwt: String::new(),
+            op: op_path
+                .strip_prefix(&fixture.root)
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+            vars_jq: String::new(),
+            vars_template: template_path
+                .strip_prefix(&fixture.root)
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+            allow_errors: false,
+        };
+
+        let ok = graphql_cleanup_step(&mut ctx, &response_json, &step, 3).unwrap();
+        assert!(!ok);
+        let content = std::fs::read_to_string(&stderr_file).unwrap();
+        assert!(content.contains("varsTemplate render failed"));
+    }
+
+    #[test]
+    fn suite_cleanup_graphql_step_allow_errors_requires_expect_jq() {
+        let fixture = GraphqlSetupFixture::new();
+        let run_dir = fixture.root.join("out");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let stderr_file = run_dir.join("case.stderr.log");
+        write_file(&stderr_file, b"").unwrap();
+
+        let op_path = fixture.root.join("ops/cleanup.graphql");
+        std::fs::create_dir_all(op_path.parent().unwrap()).unwrap();
+        std::fs::write(&op_path, "query Q { ok }\n").unwrap();
+
+        let defaults = SuiteDefaults::default();
+        let mut ctx = CleanupContext {
+            repo_root: &fixture.root,
+            run_dir: &run_dir,
+            case_id: "c",
+            safe_id: "c",
+            main_response_file: None,
+            main_stderr_file: &stderr_file,
+            allow_writes_flag: true,
+            effective_env: "staging",
+            effective_no_history: true,
+            suite_defaults: &defaults,
+            env_rest_url: "",
+            env_gql_url: "",
+            rest_config_dir: "setup/rest",
+            rest_url: "",
+            rest_token: "",
+            gql_config_dir: "setup/graphql",
+            gql_url: "",
+            gql_jwt: "",
+            access_token_for_case: "",
+            auth_manager: None,
+            cleanup: None,
+        };
+
+        let response_json = serde_json::json!({});
+        let step = SuiteCleanupStep {
+            step_type: "graphql".to_string(),
+            config_dir: String::new(),
+            url: "https://override.example/graphql".to_string(),
+            env: String::new(),
+            no_history: None,
+            method: String::new(),
+            path_template: String::new(),
+            vars: None,
+            token: String::new(),
+            expect: None,
+            expect_status: None,
+            expect_jq: String::new(),
+            jwt: String::new(),
+            op: op_path
+                .strip_prefix(&fixture.root)
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+            vars_jq: String::new(),
+            vars_template: String::new(),
+            allow_errors: true,
+        };
+
+        let ok = graphql_cleanup_step(&mut ctx, &response_json, &step, 4).unwrap();
+        assert!(!ok);
+        let content = std::fs::read_to_string(&stderr_file).unwrap();
+        assert!(content.contains("expect.jq missing"));
     }
 
     #[test]

@@ -41,6 +41,12 @@ impl RestSetupFixture {
     }
 }
 
+impl Default for RestSetupFixture {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct GraphqlSetupFixture {
     _temp: tempfile::TempDir,
     pub root: PathBuf,
@@ -89,6 +95,12 @@ impl GraphqlSetupFixture {
     /// Writes a schema file under setup/graphql (use with schema.env).
     pub fn write_schema_file(&self, name: &str, contents: &str) -> PathBuf {
         write_text(&self.setup_dir.join(name), contents)
+    }
+}
+
+impl Default for GraphqlSetupFixture {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -150,6 +162,12 @@ impl SuiteFixture {
 }}"#
         );
         write_text(&self.suite_path, &manifest)
+    }
+}
+
+impl Default for SuiteFixture {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

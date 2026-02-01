@@ -491,14 +491,11 @@ fn resolve_auth_gql_url(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
-
     use super::*;
 
+    use nils_test_support::{EnvGuard, GlobalStateLock};
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn suite_auth_credentials_jq_requires_exactly_one_object() {
@@ -635,10 +632,9 @@ mod tests {
 
     #[test]
     fn init_from_suite_missing_secret_env_required_false_disables_auth() {
-        let _g = ENV_LOCK.lock().expect("lock");
+        let lock = GlobalStateLock::new();
         let key = "NILS_TEST_AUTH_JSON_MISSING";
-        let prev = std::env::var(key).ok();
-        std::env::remove_var(key);
+        let _guard = EnvGuard::remove(&lock, key);
 
         let auth = SuiteAuth {
             provider: String::new(),
@@ -657,20 +653,35 @@ mod tests {
         assert!(msg.contains("auth disabled"));
         assert!(msg.contains(key));
         assert!(msg.contains("auth.required=false"));
+    }
 
-        if let Some(v) = prev {
-            std::env::set_var(key, v);
-        } else {
-            std::env::remove_var(key);
-        }
+    #[test]
+    fn init_from_suite_missing_secret_env_required_true_is_error() {
+        let lock = GlobalStateLock::new();
+        let key = "NILS_TEST_AUTH_JSON_REQUIRED";
+        let _guard = EnvGuard::remove(&lock, key);
+
+        let auth = SuiteAuth {
+            provider: "rest".to_string(),
+            required: true,
+            secret_env: key.to_string(),
+            rest: Some(auth_rest_stub()),
+            graphql: None,
+        };
+        let defaults = SuiteDefaults::default();
+
+        let err = SuiteAuthManager::init_from_suite(auth, &defaults)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Missing auth secret env var for suite auth"));
+        assert!(err.contains(key));
     }
 
     #[test]
     fn init_from_suite_invalid_json_is_error() {
-        let _g = ENV_LOCK.lock().expect("lock");
+        let lock = GlobalStateLock::new();
         let key = "NILS_TEST_AUTH_JSON_INVALID";
-        let prev = std::env::var(key).ok();
-        std::env::set_var(key, "{");
+        let _guard = EnvGuard::set(&lock, key, "{");
 
         let auth = SuiteAuth {
             provider: "rest".to_string(),
@@ -685,12 +696,6 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains(&format!("Invalid JSON in {key}")));
-
-        if let Some(v) = prev {
-            std::env::set_var(key, v);
-        } else {
-            std::env::remove_var(key);
-        }
     }
 
     fn stub_mgr(provider: AuthProvider, provider_label: &str) -> SuiteAuthManager {

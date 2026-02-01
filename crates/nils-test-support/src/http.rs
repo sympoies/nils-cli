@@ -119,6 +119,7 @@ fn handle_connection(
     routes: &Arc<Mutex<HashMap<RouteKey, HttpResponse>>>,
     requests: &Arc<Mutex<Vec<RecordedRequest>>>,
 ) -> io::Result<()> {
+    stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(1)))?;
     let mut buffer = Vec::new();
     let mut temp = [0u8; 8192];
@@ -137,7 +138,7 @@ fn handle_connection(
         }
     }
 
-    let (method, path, body) = parse_request(&mut buffer, stream)?;
+    let (method, path, body) = parse_request(&buffer, stream)?;
     requests
         .lock()
         .expect("requests lock")
@@ -163,10 +164,7 @@ fn handle_connection(
     Ok(())
 }
 
-fn parse_request(
-    buffer: &mut Vec<u8>,
-    stream: &mut TcpStream,
-) -> io::Result<(String, String, String)> {
+fn parse_request(buffer: &[u8], stream: &mut TcpStream) -> io::Result<(String, String, String)> {
     let mut headers_end = None;
     for i in 0..buffer.len().saturating_sub(3) {
         if &buffer[i..i + 4] == b"\r\n\r\n" {

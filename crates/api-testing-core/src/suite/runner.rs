@@ -1226,6 +1226,7 @@ fn case_result(
 mod tests {
     use super::*;
     use crate::suite::schema::{SuiteCase, SuiteManifest};
+    use nils_test_support::fixtures::{GraphqlSetupFixture, RestSetupFixture};
     use pretty_assertions::assert_eq;
     use std::collections::HashSet;
     use std::io::{Read, Write};
@@ -1341,6 +1342,156 @@ mod tests {
         assert_eq!(sanitize_id("rest.health"), "rest.health");
         assert_eq!(sanitize_id("a b c"), "a-b-c");
         assert_eq!(sanitize_id(""), "case");
+    }
+
+    #[test]
+    fn suite_runner_sanitize_id_handles_punctuation_and_unicode() {
+        assert_eq!(sanitize_id("foo,bar"), "foo-bar");
+        assert_eq!(sanitize_id("foo✅bar"), "foo-bar");
+        assert_eq!(sanitize_id("✅foo"), "foo");
+        assert_eq!(sanitize_id("foo!!!"), "foo");
+        assert_eq!(sanitize_id("!!!"), "case");
+    }
+
+    #[test]
+    fn suite_runner_masks_token_args_in_command_snippet() {
+        let args = vec![
+            "--token".to_string(),
+            "secret".to_string(),
+            "--jwt=jwt-value".to_string(),
+            "--other".to_string(),
+            "keep".to_string(),
+            "--token=inline".to_string(),
+            "--jwt".to_string(),
+            "another".to_string(),
+        ];
+
+        let masked = mask_args_for_command_snippet(&args);
+
+        assert_eq!(
+            masked,
+            "'--token' 'REDACTED' '--jwt=REDACTED' '--other' 'keep' '--token=REDACTED' '--jwt' 'REDACTED'"
+        );
+    }
+
+    #[test]
+    fn suite_runner_resolve_rest_base_url_precedence() {
+        let fixture = RestSetupFixture::new();
+        fixture.write_endpoints_env("REST_URL_STAGE=http://env-file\n");
+
+        let defaults = SuiteDefaults::default();
+        assert_eq!(
+            resolve_rest_base_url(&fixture.root, "setup/rest", "", "", &defaults, "").unwrap(),
+            "http://localhost:6700"
+        );
+        assert_eq!(
+            resolve_rest_base_url(&fixture.root, "setup/rest", "", "stage", &defaults, "").unwrap(),
+            "http://env-file"
+        );
+        assert_eq!(
+            resolve_rest_base_url(
+                &fixture.root,
+                "setup/rest",
+                "",
+                "stage",
+                &defaults,
+                "http://env-var"
+            )
+            .unwrap(),
+            "http://env-var"
+        );
+
+        let mut defaults_with_url = SuiteDefaults::default();
+        defaults_with_url.rest.url = "http://default".to_string();
+        assert_eq!(
+            resolve_rest_base_url(
+                &fixture.root,
+                "setup/rest",
+                "",
+                "stage",
+                &defaults_with_url,
+                "http://env-var"
+            )
+            .unwrap(),
+            "http://default"
+        );
+        assert_eq!(
+            resolve_rest_base_url(
+                &fixture.root,
+                "setup/rest",
+                "http://override",
+                "stage",
+                &defaults_with_url,
+                "http://env-var"
+            )
+            .unwrap(),
+            "http://override"
+        );
+    }
+
+    #[test]
+    fn suite_runner_resolve_gql_url_precedence() {
+        let fixture = GraphqlSetupFixture::new();
+        fixture.write_endpoints_env("GQL_URL_STAGE=http://env-file/graphql\n");
+
+        let defaults = SuiteDefaults::default();
+        assert_eq!(
+            resolve_gql_url(&fixture.root, "setup/graphql", "", "", &defaults, "").unwrap(),
+            "http://localhost:6700/graphql"
+        );
+        assert_eq!(
+            resolve_gql_url(&fixture.root, "setup/graphql", "", "stage", &defaults, "").unwrap(),
+            "http://env-file/graphql"
+        );
+        assert_eq!(
+            resolve_gql_url(
+                &fixture.root,
+                "setup/graphql",
+                "",
+                "stage",
+                &defaults,
+                "http://env-var/graphql"
+            )
+            .unwrap(),
+            "http://env-var/graphql"
+        );
+
+        let mut defaults_with_url = SuiteDefaults::default();
+        defaults_with_url.graphql.url = "http://default/graphql".to_string();
+        assert_eq!(
+            resolve_gql_url(
+                &fixture.root,
+                "setup/graphql",
+                "",
+                "stage",
+                &defaults_with_url,
+                "http://env-var/graphql"
+            )
+            .unwrap(),
+            "http://default/graphql"
+        );
+        assert_eq!(
+            resolve_gql_url(
+                &fixture.root,
+                "setup/graphql",
+                "http://override/graphql",
+                "stage",
+                &defaults_with_url,
+                "http://env-var/graphql"
+            )
+            .unwrap(),
+            "http://override/graphql"
+        );
+    }
+
+    #[test]
+    fn suite_runner_resolve_rest_token_profile_from_tokens_files() {
+        let fixture = RestSetupFixture::new();
+        fixture.write_tokens_env("REST_TOKEN_TEAM_ALPHA=base\n");
+        fixture.write_tokens_local_env("REST_TOKEN_TEAM_ALPHA=local\n");
+
+        let token = resolve_rest_token_profile(&fixture.setup_dir, "team alpha").unwrap();
+        assert_eq!(token, "local");
     }
 
     #[test]

@@ -124,6 +124,7 @@ dependencies = [
  "jaq-core",
  "jaq-json",
  "jaq-std",
+ "nils-test-support",
  "pretty_assertions",
  "reqwest",
  "serde",
@@ -451,6 +452,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "nils-test-support",
  "tempfile",
 ]
 
