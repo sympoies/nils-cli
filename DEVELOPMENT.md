@@ -41,6 +41,28 @@
 - Run CI-style tests + generate JUnit: `cargo nextest run --profile ci --workspace` (writes `target/nextest/ci/junit.xml`)
 - Note: nextest does not run doctests; run separately: `cargo test --workspace --doc`
 
+## Coverage (optional)
+
+- Prereqs:
+
+  ```bash
+  rustup component add llvm-tools-preview
+  cargo install cargo-llvm-cov --locked
+  cargo install cargo-nextest --locked
+  ```
+
+- Generate coverage artifacts (recommended; matches CI runner):
+
+  ```bash
+  cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info
+  cargo llvm-cov nextest --profile ci --workspace --html --output-dir target/coverage/html
+  ```
+
+- Outputs:
+  - `target/coverage/lcov.info`
+  - `target/coverage/html/index.html`
+- Note: doctests are **not included** in coverage initially; still run doctests for correctness: `cargo test --workspace --doc`
+
 ## Shell completions (zsh)
 
 - Completion files:

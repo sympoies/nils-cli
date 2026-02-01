@@ -1,5 +1,7 @@
 # nils-cli
 
+[![Coverage](https://raw.githubusercontent.com/graysurf/nils-cli/coverage-badge/badges/coverage.svg)](https://github.com/graysurf/nils-cli/actions/workflows/ci.yml)
+
 Rust CLI workspace scaffold for building multiple independently packaged binaries.
 
 ## Workspace layout
