@@ -5,6 +5,7 @@ use clap::error::ErrorKind;
 use clap::{Args, Parser, Subcommand};
 
 use api_testing_core::{config, env_file, history, jwt, Result};
+use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 
 #[derive(Parser)]
 #[command(
@@ -839,6 +840,14 @@ fn cmd_call_internal(
         }
     }
 
+    let spinner = Progress::spinner(
+        ProgressOptions::default()
+            .with_prefix("api-rest ")
+            .with_finish(ProgressFinish::Clear),
+    );
+    spinner.set_message("request");
+    spinner.tick();
+
     let executed = match api_testing_core::rest::runner::execute_rest_request(
         &request_file,
         &endpoint.rest_url,
@@ -846,6 +855,7 @@ fn cmd_call_internal(
     ) {
         Ok(v) => v,
         Err(err) => {
+            spinner.finish_and_clear();
             let _ = writeln!(stderr, "{err}");
             append_history_best_effort(&history_ctx, exit_code);
             return 1;
@@ -857,6 +867,7 @@ fn cmd_call_internal(
     if let Err(err) =
         api_testing_core::rest::expect::evaluate_main_response(&request_file.request, &executed)
     {
+        spinner.finish_and_clear();
         let _ = writeln!(stderr, "{err}");
         maybe_print_failure_body_to_stderr(&executed.response.body, 8192, stdout_is_tty, stderr);
         append_history_best_effort(&history_ctx, exit_code);
@@ -864,18 +875,22 @@ fn cmd_call_internal(
     }
 
     if let Some(cleanup) = &request_file.request.cleanup {
+        spinner.set_message("cleanup");
+        spinner.tick();
         if let Err(err) = api_testing_core::rest::cleanup::execute_cleanup(
             cleanup,
             &endpoint.rest_url,
             auth.bearer_token.as_deref(),
             &executed.response.body,
         ) {
+            spinner.finish_and_clear();
             let _ = writeln!(stderr, "{err}");
             append_history_best_effort(&history_ctx, exit_code);
             return 1;
         }
     }
 
+    spinner.finish_and_clear();
     exit_code = 0;
     append_history_best_effort(&history_ctx, exit_code);
 

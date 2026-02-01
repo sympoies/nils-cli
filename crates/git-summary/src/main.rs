@@ -1,7 +1,10 @@
 use anyhow::{Context, Result};
 use chrono::{Datelike, Duration, Local, NaiveDate};
 use std::env;
+use std::io::IsTerminal;
 use std::process::{Command, Stdio};
+
+use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 
 const SEPARATOR: &str =
     "----------------------------------------------------------------------------------------------------------------------------------------";
@@ -246,12 +249,33 @@ fn build_range_args(since: &str, until: &str) -> Vec<String> {
 
 fn render_summary(log_args: &[String]) -> Result<()> {
     let authors = collect_authors(log_args)?;
+    let progress = if !authors.is_empty() && std::io::stderr().is_terminal() {
+        Some(Progress::new(
+            authors.len() as u64,
+            ProgressOptions::default().with_finish(ProgressFinish::Clear),
+        ))
+    } else {
+        None
+    };
+
     let mut rows = Vec::new();
-    for author in authors {
-        rows.push(collect_author_row(&author, log_args)?);
+    for (idx, author) in authors.iter().enumerate() {
+        if let Some(p) = &progress {
+            p.set_message(author.to_string());
+        }
+
+        rows.push(collect_author_row(author, log_args)?);
+
+        if let Some(p) = &progress {
+            p.set_position((idx + 1) as u64);
+        }
     }
 
     rows.sort_by(|a, b| b.net.cmp(&a.net).then_with(|| a.line.cmp(&b.line)));
+
+    if let Some(p) = progress {
+        p.finish_and_clear();
+    }
 
     println!(
         "{:<25} {:<40} {:>8} {:>8} {:>8} {:>8} {:>12} {:>12}",

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use crate::fs as lock_fs;
 use crate::git;
+use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 
 pub fn run(_args: &[String]) -> Result<i32> {
     let repo_id = lock_fs::repo_id()?;
@@ -62,14 +63,14 @@ struct Entry {
 }
 
 fn collect_entries(repo_id: &str, lock_dir: &PathBuf) -> Result<Vec<Entry>> {
-    let mut entries = Vec::new();
     let prefix = format!("{repo_id}-");
 
     let dir_entries = match fs::read_dir(lock_dir) {
         Ok(value) => value,
-        Err(_) => return Ok(entries),
+        Err(_) => return Ok(Vec::new()),
     };
 
+    let mut candidates: Vec<(PathBuf, String)> = Vec::new();
     for entry in dir_entries {
         let entry = match entry {
             Ok(value) => value,
@@ -92,7 +93,28 @@ fn collect_entries(repo_id: &str, lock_dir: &PathBuf) -> Result<Vec<Entry>> {
             .trim_start_matches(&prefix)
             .to_string();
 
-        let lock = lock_fs::read_lock_file(&path)?;
+        candidates.push((path, label));
+    }
+
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let progress = Progress::new(
+        candidates.len() as u64,
+        ProgressOptions::default().with_finish(ProgressFinish::Clear),
+    );
+    progress.set_message("scanning");
+
+    let mut entries = Vec::new();
+    for (path, label) in candidates {
+        let lock = match lock_fs::read_lock_file(&path) {
+            Ok(v) => v,
+            Err(err) => {
+                progress.finish_and_clear();
+                return Err(err);
+            }
+        };
         let epoch = lock
             .timestamp
             .as_deref()
@@ -100,7 +122,9 @@ fn collect_entries(repo_id: &str, lock_dir: &PathBuf) -> Result<Vec<Entry>> {
             .unwrap_or(0);
 
         entries.push(Entry { epoch, label, lock });
+        progress.inc(1);
     }
 
+    progress.finish_and_clear();
     Ok(entries)
 }

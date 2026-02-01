@@ -3,6 +3,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
+
 use crate::parse::{parse_plan_with_display, Plan, Task};
 
 const USAGE: &str = r#"Usage:
@@ -78,15 +80,27 @@ pub fn run(args: &[String]) -> i32 {
         return 0;
     }
 
+    let progress = Progress::new(
+        discovered.len() as u64,
+        ProgressOptions::default().with_finish(ProgressFinish::Clear),
+    );
+
     let mut errors: Vec<String> = Vec::new();
-    for display_path in discovered {
+    for (idx, display_path) in discovered.into_iter().enumerate() {
+        progress.set_message(display_path.clone());
+
         let read_path = resolve_repo_relative(&repo_root, Path::new(&display_path));
         if !read_path.is_file() {
             errors.push(format!("{display_path}: file not found"));
+            progress.set_position((idx + 1) as u64);
             continue;
         }
         errors.extend(validate_plan(&display_path, &read_path));
+
+        progress.set_position((idx + 1) as u64);
     }
+
+    progress.finish_and_clear();
 
     if errors.is_empty() {
         return 0;

@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 anyhow = { workspace = true }
 api-testing-core = { path = "../api-testing-core" }
 clap = { workspace = true }
+nils-term = { path = "../nils-term" }
 serde_json = { workspace = true }
 time = { version = "0.3", features = ["formatting", "local-offset"] }
 

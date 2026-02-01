@@ -5,6 +5,7 @@ use clap::error::ErrorKind;
 use clap::{Args, Parser, Subcommand};
 
 use api_testing_core::{config, env_file, history, Result};
+use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 
 #[derive(Parser)]
 #[command(
@@ -850,6 +851,14 @@ fn cmd_call_internal(
         }
     };
 
+    let spinner = Progress::spinner(
+        ProgressOptions::default()
+            .with_prefix("api-gql ")
+            .with_finish(ProgressFinish::Clear),
+    );
+    spinner.set_message("request");
+    spinner.tick();
+
     let executed = match api_testing_core::graphql::runner::execute_graphql_request(
         &endpoint.gql_url,
         auth.bearer_token.as_deref(),
@@ -858,12 +867,14 @@ fn cmd_call_internal(
     ) {
         Ok(v) => v,
         Err(err) => {
+            spinner.finish_and_clear();
             let _ = writeln!(stderr, "{err}");
             append_history_best_effort(&history_ctx, exit_code);
             return 1;
         }
     };
 
+    spinner.finish_and_clear();
     let _ = stdout.write_all(&executed.response.body);
 
     exit_code = 0;
