@@ -268,8 +268,118 @@ mod tests {
 
     use tempfile::TempDir;
 
+    fn write(path: &Path, contents: &str) {
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(path, contents).expect("write");
+    }
+
+    #[test]
+    fn suite_find_repo_root_success_and_failure() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join("a/b/c")).unwrap();
+
+        let found = find_repo_root(&root.join("a/b/c")).unwrap();
+        assert_eq!(found, root);
+
+        let tmp2 = TempDir::new().unwrap();
+        let err = find_repo_root(tmp2.path()).unwrap_err();
+        assert!(format!("{err:#}").contains("Must run inside a git work tree"));
+    }
+
+    #[test]
+    fn suite_resolve_path_from_repo_root_handles_absolute_and_relative() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        assert_eq!(
+            resolve_path_from_repo_root(root, " setup/rest "),
+            root.join("setup/rest")
+        );
+        assert_eq!(
+            resolve_path_from_repo_root(root, "/abs/path"),
+            PathBuf::from("/abs/path")
+        );
+    }
+
+    #[test]
+    fn suite_resolve_rest_base_url_from_url_and_env_files() {
+        let tmp = TempDir::new().unwrap();
+        let setup_dir = tmp.path().join("setup/rest");
+
+        assert_eq!(
+            resolve_rest_base_url_for_env(&setup_dir, "https://example.test").unwrap(),
+            "https://example.test"
+        );
+
+        let err = resolve_rest_base_url_for_env(&setup_dir, "prod").unwrap_err();
+        assert!(format!("{err:#}").contains("endpoints.env not found"));
+        assert!(format!("{err:#}").contains("setup/rest"));
+
+        let endpoints_env = setup_dir.join("endpoints.env");
+        let endpoints_local = setup_dir.join("endpoints.local.env");
+        write(&endpoints_env, "REST_URL_PROD=http://base.test\n");
+        write(
+            &endpoints_local,
+            "REST_URL_PROD=http://local.test\nREST_URL_LOCAL=http://x\n",
+        );
+
+        assert_eq!(
+            resolve_rest_base_url_for_env(&setup_dir, "prod").unwrap(),
+            "http://local.test"
+        );
+
+        let err = resolve_rest_base_url_for_env(&setup_dir, "nope").unwrap_err();
+        assert!(format!("{err:#}").contains("Unknown env 'nope'"));
+        assert!(format!("{err:#}").contains("available: local prod"));
+    }
+
+    #[test]
+    fn suite_resolve_gql_url_from_url_and_env_files() {
+        let tmp = TempDir::new().unwrap();
+        let setup_dir = tmp.path().join("setup/graphql");
+
+        assert_eq!(
+            resolve_gql_url_for_env(&setup_dir, "http://example.test/graphql").unwrap(),
+            "http://example.test/graphql"
+        );
+
+        let err = resolve_gql_url_for_env(&setup_dir, "prod").unwrap_err();
+        assert!(format!("{err:#}").contains("endpoints.env not found"));
+        assert!(format!("{err:#}").contains("setup/graphql"));
+
+        let endpoints_env = setup_dir.join("endpoints.env");
+        let endpoints_local = setup_dir.join("endpoints.local.env");
+        write(&endpoints_env, "GQL_URL_PROD=http://base.test/graphql\n");
+        write(
+            &endpoints_local,
+            "GQL_URL_PROD=http://local.test/graphql\nGQL_URL_LOCAL=http://x\n",
+        );
+
+        assert_eq!(
+            resolve_gql_url_for_env(&setup_dir, "prod").unwrap(),
+            "http://local.test/graphql"
+        );
+
+        let err = resolve_gql_url_for_env(&setup_dir, "nope").unwrap_err();
+        assert!(format!("{err:#}").contains("Unknown env 'nope'"));
+        assert!(format!("{err:#}").contains("available: local prod"));
+    }
+
+    #[test]
+    fn suite_write_file_creates_parent_dirs() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("a/b/c.txt");
+        write_file(&path, b"hello").unwrap();
+        assert!(path.is_file());
+        assert_eq!(std::fs::read(&path).unwrap(), b"hello");
+    }
+
     #[test]
     fn suite_resolve_resolves_suite_name_under_tests_dir() {
+        std::env::remove_var("API_TEST_SUITES_DIR");
+
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         std::fs::create_dir_all(root.join(".git")).unwrap();
@@ -284,5 +394,56 @@ mod tests {
         assert!(sel
             .suite_path
             .ends_with("tests/api/suites/smoke.suite.json"));
+    }
+
+    #[test]
+    fn suite_resolve_resolves_suite_name_under_setup_dir() {
+        std::env::remove_var("API_TEST_SUITES_DIR");
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join("setup/api/suites")).unwrap();
+        std::fs::write(
+            root.join("setup/api/suites/smoke.suite.json"),
+            br#"{"version":1,"cases":[]}"#,
+        )
+        .unwrap();
+
+        let sel = resolve_suite_selection(root, Some("smoke"), None).unwrap();
+        assert!(sel
+            .suite_path
+            .ends_with("setup/api/suites/smoke.suite.json"));
+    }
+
+    #[test]
+    fn suite_resolve_rejects_invalid_suite_args() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let err = resolve_suite_selection(root, Some("a"), Some("b")).unwrap_err();
+        assert!(format!("{err:#}").contains("Use only one of --suite or --suite-file"));
+
+        let err = resolve_suite_selection(root, None, None).unwrap_err();
+        assert!(format!("{err:#}").contains("Missing suite (use --suite or --suite-file)"));
+    }
+
+    #[test]
+    fn suite_resolve_resolves_suite_file_relative_to_repo_root() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("setup/api/suites")).unwrap();
+        std::fs::write(
+            root.join("setup/api/suites/smoke.suite.json"),
+            br#"{"version":1,"cases":[]}"#,
+        )
+        .unwrap();
+
+        let sel =
+            resolve_suite_selection(root, None, Some("setup/api/suites/smoke.suite.json")).unwrap();
+        assert_eq!(sel.suite_key, "smoke.suite.json");
+        assert!(sel
+            .suite_path
+            .ends_with("setup/api/suites/smoke.suite.json"));
     }
 }

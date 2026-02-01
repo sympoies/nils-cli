@@ -65,3 +65,127 @@ pub fn resolve_schema_path(setup_dir: &Path, schema_file_arg: Option<&str>) -> R
 
     Ok(schema_path)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use tempfile::TempDir;
+
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn write_file(path: &Path, contents: &str) {
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(path, contents).expect("write");
+    }
+
+    #[test]
+    fn schema_file_arg_is_trimmed_and_resolved_under_setup() {
+        let tmp = TempDir::new().expect("tmp");
+        let setup_dir = std::fs::canonicalize(tmp.path()).expect("setup abs");
+
+        write_file(
+            &setup_dir.join("schemas/api.graphql"),
+            "schema { query: Query }\n",
+        );
+
+        let got = resolve_schema_path(&setup_dir, Some("  schemas/api.graphql  ")).expect("path");
+        let expected = std::fs::canonicalize(setup_dir.join("schemas/api.graphql")).expect("abs");
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn schema_file_env_var_is_used_when_no_arg() {
+        let _guard = env_lock().lock().expect("lock env");
+        let old = std::env::var("GQL_SCHEMA_FILE").ok();
+        std::env::set_var("GQL_SCHEMA_FILE", "  schema.gql  ");
+
+        let tmp = TempDir::new().expect("tmp");
+        let setup_dir = std::fs::canonicalize(tmp.path()).expect("setup abs");
+        write_file(&setup_dir.join("schema.gql"), "schema { query: Query }\n");
+
+        let got = resolve_schema_path(&setup_dir, None).expect("path");
+        let expected = std::fs::canonicalize(setup_dir.join("schema.gql")).expect("abs");
+        assert_eq!(got, expected);
+
+        match old {
+            Some(v) => std::env::set_var("GQL_SCHEMA_FILE", v),
+            None => std::env::remove_var("GQL_SCHEMA_FILE"),
+        }
+    }
+
+    #[test]
+    fn schema_file_schema_env_is_used_when_no_arg_or_env() {
+        let _guard = env_lock().lock().expect("lock env");
+        let old = std::env::var("GQL_SCHEMA_FILE").ok();
+        std::env::remove_var("GQL_SCHEMA_FILE");
+
+        let tmp = TempDir::new().expect("tmp");
+        let setup_dir = std::fs::canonicalize(tmp.path()).expect("setup abs");
+
+        write_file(
+            &setup_dir.join("schema.env"),
+            "export GQL_SCHEMA_FILE=schemas/schema.graphql\n",
+        );
+        write_file(
+            &setup_dir.join("schemas/schema.graphql"),
+            "schema { query: Query }\n",
+        );
+
+        let got = resolve_schema_path(&setup_dir, None).expect("path");
+        let expected =
+            std::fs::canonicalize(setup_dir.join("schemas/schema.graphql")).expect("abs");
+        assert_eq!(got, expected);
+
+        match old {
+            Some(v) => std::env::set_var("GQL_SCHEMA_FILE", v),
+            None => std::env::remove_var("GQL_SCHEMA_FILE"),
+        }
+    }
+
+    #[test]
+    fn schema_file_falls_back_to_candidate_filenames() {
+        let _guard = env_lock().lock().expect("lock env");
+        let old = std::env::var("GQL_SCHEMA_FILE").ok();
+        std::env::remove_var("GQL_SCHEMA_FILE");
+
+        let tmp = TempDir::new().expect("tmp");
+        let setup_dir = std::fs::canonicalize(tmp.path()).expect("setup abs");
+
+        write_file(&setup_dir.join("schema.gql"), "schema { query: Query }\n");
+
+        let got = resolve_schema_path(&setup_dir, None).expect("path");
+        let expected = std::fs::canonicalize(setup_dir.join("schema.gql")).expect("abs");
+        assert_eq!(got, expected);
+
+        match old {
+            Some(v) => std::env::set_var("GQL_SCHEMA_FILE", v),
+            None => std::env::remove_var("GQL_SCHEMA_FILE"),
+        }
+    }
+
+    #[test]
+    fn schema_file_errors_when_not_configured() {
+        let _guard = env_lock().lock().expect("lock env");
+        let old = std::env::var("GQL_SCHEMA_FILE").ok();
+        std::env::remove_var("GQL_SCHEMA_FILE");
+
+        let tmp = TempDir::new().expect("tmp");
+        let setup_dir = std::fs::canonicalize(tmp.path()).expect("setup abs");
+
+        let err = resolve_schema_path(&setup_dir, None).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("Schema file not configured. Set GQL_SCHEMA_FILE"));
+
+        match old {
+            Some(v) => std::env::set_var("GQL_SCHEMA_FILE", v),
+            None => std::env::remove_var("GQL_SCHEMA_FILE"),
+        }
+    }
+}

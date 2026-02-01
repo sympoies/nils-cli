@@ -50,3 +50,132 @@ fn write_cache(
     let _ = fs::write(ts_file, now.to_string());
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::defs::index::{AliasDef, DefIndex};
+    use pretty_assertions::assert_eq;
+    use std::sync::Mutex;
+    use tempfile::TempDir;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvGuard {
+        key: &'static str,
+        original: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let original = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.original {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    fn write(path: &std::path::Path, contents: &str) {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::write(path, contents).expect("write");
+    }
+
+    #[test]
+    fn cache_disabled_builds_index_from_zsh_root() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let temp = TempDir::new().unwrap();
+        let root = temp.path();
+        write(&root.join(".zshrc"), "alias ll='ls -la'\n");
+
+        let _guard = EnvGuard::set("ZDOTDIR", root.to_string_lossy().as_ref());
+        let _guard_cache = EnvGuard::set("FZF_DEF_DOC_CACHE_ENABLED", "0");
+
+        let index = load_or_build().expect("load");
+        assert!(index.aliases.iter().any(|a| a.name == "ll"));
+    }
+
+    #[test]
+    fn cache_enabled_uses_fresh_cache() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let temp = TempDir::new().unwrap();
+        let cache_dir = temp.path().join("cache");
+        std::fs::create_dir_all(&cache_dir).unwrap();
+
+        let now = util::now_epoch_seconds();
+        write(&cache_dir.join("fzf-def-doc.timestamp"), &now.to_string());
+        let cached = DefIndex {
+            aliases: vec![AliasDef {
+                name: "cached".to_string(),
+                value: "ls".to_string(),
+                doc: None,
+                source_file: "/tmp/.zshrc".to_string(),
+            }],
+            functions: Vec::new(),
+        };
+        write(
+            &cache_dir.join("fzf-def-doc.cache.json"),
+            &serde_json::to_string(&cached).unwrap(),
+        );
+
+        let _guard_cache = EnvGuard::set("FZF_DEF_DOC_CACHE_ENABLED", "1");
+        let _guard_ttl = EnvGuard::set("FZF_DEF_DOC_CACHE_EXPIRE_MINUTES", "10");
+        let _guard_cache_dir = EnvGuard::set("ZSH_CACHE_DIR", cache_dir.to_string_lossy().as_ref());
+        let _guard_zdot = EnvGuard::set("ZDOTDIR", temp.path().to_string_lossy().as_ref());
+
+        let index = load_or_build().expect("load");
+        assert_eq!(index.aliases.len(), 1);
+        assert_eq!(index.aliases[0].name, "cached");
+    }
+
+    #[test]
+    fn cache_stale_rebuilds_and_overwrites() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("zsh");
+        std::fs::create_dir_all(&root).unwrap();
+        write(&root.join(".zshrc"), "alias fresh='echo hi'\n");
+
+        let cache_dir = temp.path().join("cache");
+        std::fs::create_dir_all(&cache_dir).unwrap();
+        let now = util::now_epoch_seconds();
+        write(
+            &cache_dir.join("fzf-def-doc.timestamp"),
+            &(now - 3600).to_string(),
+        );
+        let stale = DefIndex {
+            aliases: vec![AliasDef {
+                name: "stale".to_string(),
+                value: "bad".to_string(),
+                doc: None,
+                source_file: "/tmp/.zshrc".to_string(),
+            }],
+            functions: Vec::new(),
+        };
+        write(
+            &cache_dir.join("fzf-def-doc.cache.json"),
+            &serde_json::to_string(&stale).unwrap(),
+        );
+
+        let _guard_cache = EnvGuard::set("FZF_DEF_DOC_CACHE_ENABLED", "1");
+        let _guard_ttl = EnvGuard::set("FZF_DEF_DOC_CACHE_EXPIRE_MINUTES", "0");
+        let _guard_cache_dir = EnvGuard::set("ZSH_CACHE_DIR", cache_dir.to_string_lossy().as_ref());
+        let _guard_zdot = EnvGuard::set("ZDOTDIR", root.to_string_lossy().as_ref());
+
+        let index = load_or_build().expect("load");
+        assert!(index.aliases.iter().any(|a| a.name == "fresh"));
+        assert!(!index.aliases.iter().any(|a| a.name == "stale"));
+
+        let updated = std::fs::read_to_string(cache_dir.join("fzf-def-doc.cache.json")).unwrap();
+        assert!(updated.contains("\"fresh\""));
+    }
+}

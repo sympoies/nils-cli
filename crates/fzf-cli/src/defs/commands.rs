@@ -186,3 +186,88 @@ fn docblock_with_separators(doc: &str) -> String {
     out.push_str(&format!("{prefix}# {dashes}\n"));
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    struct EnvGuard {
+        key: &'static str,
+        original: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let original = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.original {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    #[test]
+    fn docblock_with_separators_respects_indent_and_pad() {
+        let _guard = EnvGuard::set("FZF_DEF_DOC_SEPARATOR_PAD", "2");
+        let doc = "  # Alpha\n  # Beta";
+        let out = docblock_with_separators(doc);
+        let lines: Vec<&str> = out.lines().collect();
+
+        assert_eq!(
+            lines,
+            vec!["  # -------", "  # Alpha", "  # Beta", "  # -------"]
+        );
+    }
+
+    #[test]
+    fn docblock_with_separators_empty_returns_empty() {
+        let out = docblock_with_separators("");
+        assert_eq!(out, "");
+    }
+
+    #[test]
+    fn build_alias_body_includes_doc_value_and_footer() {
+        let _guard = EnvGuard::set("FZF_DEF_DOC_SEPARATOR_PAD", "2");
+        let def = AliasDef {
+            name: "ll".to_string(),
+            value: "ls -la".to_string(),
+            doc: Some("  # Alpha\n  # Beta".to_string()),
+            source_file: "/tmp/zshrc".to_string(),
+        };
+
+        let body = build_alias_body(&def);
+        let lines: Vec<&str> = body.lines().collect();
+
+        assert_eq!(lines[0], "  # -------");
+        assert_eq!(lines[3], "  # -------");
+        assert_eq!(lines[4], "");
+        assert_eq!(lines[5], "ls -la");
+        assert_eq!(lines[6], "(from /tmp/zshrc)");
+    }
+
+    #[test]
+    fn build_function_body_without_doc_renders_footer() {
+        let def = FunctionDef {
+            name: "hello".to_string(),
+            source: "hello() { echo hi }".to_string(),
+            doc: None,
+            source_file: "/tmp/functions.zsh".to_string(),
+        };
+
+        let body = build_function_body(&def);
+        let lines: Vec<&str> = body.lines().collect();
+
+        assert_eq!(
+            lines,
+            vec!["hello() { echo hi }", "(from /tmp/functions.zsh)"]
+        );
+    }
+}

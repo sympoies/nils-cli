@@ -177,3 +177,77 @@ fn open_vi(file: &Path) -> i32 {
         Err(_) => 127,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use std::sync::Mutex;
+    use tempfile::TempDir;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvGuard {
+        key: &'static str,
+        original: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let original = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.original {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_open_with_flags_respects_env_and_explicit_flags() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard::set("FZF_FILE_OPEN_WITH", "vscode");
+        let (open_with, rest) = parse_open_with_flags(&[String::from("file.txt")]).expect("parse");
+        assert_eq!(open_with, OpenWith::Vscode);
+        assert_eq!(rest, vec!["file.txt".to_string()]);
+
+        let (open_with, rest) = parse_open_with_flags(&[
+            String::from("--vi"),
+            String::from("--"),
+            String::from("a.txt"),
+        ])
+        .expect("parse");
+        assert_eq!(open_with, OpenWith::Vi);
+        assert_eq!(rest, vec!["a.txt".to_string()]);
+    }
+
+    #[test]
+    fn parse_open_with_flags_rejects_conflicts_and_unknowns() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let err =
+            parse_open_with_flags(&[String::from("--vi"), String::from("--vscode")]).unwrap_err();
+        assert_eq!(err, 2);
+
+        let err = parse_open_with_flags(&[String::from("--nope")]).unwrap_err();
+        assert_eq!(err, 2);
+    }
+
+    #[test]
+    fn find_git_root_upwards_discovers_repo() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        let nested = root.join("a/b/c");
+        std::fs::create_dir_all(&nested).unwrap();
+
+        let found = find_git_root_upwards(&nested, 5).expect("found");
+        assert_eq!(found, root);
+        assert_eq!(find_git_root_upwards(&nested, 1), None);
+    }
+}

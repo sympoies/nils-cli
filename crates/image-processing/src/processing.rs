@@ -1357,3 +1357,96 @@ impl IfEmpty for String {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn compute_resize_box_scale_rules_and_minimums() {
+        let err = compute_resize_box(100, 50, Some(1.0), Some(10), None, None, None).unwrap_err();
+        assert!(err.to_string().contains("--scale is mutually exclusive"));
+
+        let err = compute_resize_box(100, 50, Some(0.0), None, None, None, None).unwrap_err();
+        assert!(err.to_string().contains("--scale must be > 0"));
+
+        let (tw, th, fit, uses_box) =
+            compute_resize_box(100, 50, Some(0.0001), None, None, None, None).unwrap();
+        assert_eq!(tw, 1);
+        assert_eq!(th, 1);
+        assert_eq!(fit, None);
+        assert!(!uses_box);
+    }
+
+    #[test]
+    fn compute_resize_box_width_and_height_variants() {
+        let (tw, th, fit, uses_box) =
+            compute_resize_box(200, 100, None, Some(100), None, None, None).unwrap();
+        assert_eq!((tw, th), (100, 50));
+        assert_eq!(fit, None);
+        assert!(!uses_box);
+
+        let err =
+            compute_resize_box(200, 100, None, Some(100), None, None, Some("contain")).unwrap_err();
+        assert!(err.to_string().contains("--fit is only valid"));
+
+        let (tw, th, fit, uses_box) =
+            compute_resize_box(200, 100, None, None, Some(25), None, None).unwrap();
+        assert_eq!((tw, th), (50, 25));
+        assert_eq!(fit, None);
+        assert!(!uses_box);
+    }
+
+    #[test]
+    fn compute_resize_box_requires_fit_for_box_and_validates_fit_values() {
+        let err = compute_resize_box(200, 100, None, Some(100), Some(100), None, None).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("--fit contain|cover|stretch is required"));
+
+        let err = compute_resize_box(200, 100, None, Some(100), Some(100), None, Some("bad"))
+            .unwrap_err();
+        assert!(err.to_string().contains("--fit must be one of"));
+
+        let (tw, th, fit, uses_box) =
+            compute_resize_box(200, 100, None, Some(100), Some(100), None, Some("cover")).unwrap();
+        assert_eq!((tw, th), (100, 100));
+        assert_eq!(fit, Some("cover".to_string()));
+        assert!(uses_box);
+    }
+
+    #[test]
+    fn compute_resize_box_aspect_validates_and_derives_size() {
+        let err = compute_resize_box(200, 100, None, None, None, Some((16, 9)), None).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("must also specify --width or --height"));
+
+        let err = compute_resize_box(
+            200,
+            100,
+            None,
+            Some(100),
+            Some(100),
+            Some((16, 9)),
+            Some("contain"),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("must match --aspect"));
+
+        let (tw, th, fit, uses_box) = compute_resize_box(
+            200,
+            100,
+            None,
+            Some(160),
+            None,
+            Some((16, 9)),
+            Some("cover"),
+        )
+        .unwrap();
+        assert_eq!((tw, th), (160, 90));
+        assert_eq!(fit, Some("cover".to_string()));
+        assert!(uses_box);
+    }
+}

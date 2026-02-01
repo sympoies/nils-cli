@@ -54,3 +54,75 @@ pub fn render_report_md(
 
     format!("{}\n", lines.join("\n"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::ImageInfo;
+
+    #[test]
+    fn report_renders_commands_and_item_deltas() {
+        let input_info = ImageInfo {
+            size_bytes: Some(100),
+            ..Default::default()
+        };
+        let output_info = ImageInfo {
+            size_bytes: Some(80),
+            ..Default::default()
+        };
+
+        let items = vec![ItemResult {
+            input_path: "in.png".to_string(),
+            output_path: Some("out.png".to_string()),
+            status: "ok".to_string(),
+            input_info,
+            output_info: Some(output_info),
+            commands: Vec::new(),
+            warnings: Vec::new(),
+            error: None,
+        }];
+
+        let out = render_report_md(
+            "run123",
+            "resize",
+            &items,
+            &["magick in.png out.png".to_string()],
+            true,
+        );
+
+        assert!(out.contains("# Image Processing Report (run123)"));
+        assert!(out.contains("- Operation: `resize`"));
+        assert!(out.contains("- Dry run: `true`"));
+        assert!(out.contains("## Commands"));
+        assert!(out.contains("- `magick in.png out.png`"));
+        assert!(out.contains("`ok`: `in.png` -> `out.png`"));
+        assert!(out.contains("input_bytes: 100"));
+        assert!(out.contains("output_bytes: 80"));
+        assert!(out.contains("delta_bytes: -20"));
+    }
+
+    #[test]
+    fn report_renders_errors_and_none_output_paths() {
+        let input_info = ImageInfo {
+            size_bytes: Some(10),
+            ..Default::default()
+        };
+
+        let items = vec![ItemResult {
+            input_path: "a.jpg".to_string(),
+            output_path: None,
+            status: "error".to_string(),
+            input_info,
+            output_info: None,
+            commands: Vec::new(),
+            warnings: Vec::new(),
+            error: Some("boom".to_string()),
+        }];
+
+        let out = render_report_md("run456", "convert", &items, &[], false);
+
+        assert!(out.contains("- Dry run: `false`"));
+        assert!(out.contains("`error`: `a.jpg` -> `None`"));
+        assert!(out.contains("error: boom"));
+    }
+}

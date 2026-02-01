@@ -219,3 +219,76 @@ fn brace_delta(line: &str) -> i32 {
     }
     delta
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use tempfile::TempDir;
+
+    fn write(path: &Path, contents: &str) {
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(path, contents).expect("write");
+    }
+
+    #[test]
+    fn defs_index_lists_first_party_files_and_ignores_plugins() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write(&root.join(".zshrc"), "alias ll='ls'\n");
+        write(&root.join(".zprofile"), "export PATH=/bin\n");
+        write(&root.join("scripts/a.zsh"), "alias ga='git add'\n");
+        write(&root.join("scripts/plugins/skip.zsh"), "alias nope='no'\n");
+        write(&root.join("bootstrap/b.zsh"), "function f() { echo hi }\n");
+        write(&root.join("tools/c.zsh"), "foo() { echo ok }\n");
+        write(&root.join("scripts/readme.txt"), "ignore\n");
+
+        let files = list_first_party_files(root).unwrap();
+        let names = files
+            .iter()
+            .map(|p| p.strip_prefix(root).unwrap().to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        assert!(names.contains(&".zshrc".to_string()));
+        assert!(names.contains(&".zprofile".to_string()));
+        assert!(names.contains(&"scripts/a.zsh".to_string()));
+        assert!(names.contains(&"bootstrap/b.zsh".to_string()));
+        assert!(names.contains(&"tools/c.zsh".to_string()));
+        assert!(!names.contains(&"scripts/plugins/skip.zsh".to_string()));
+    }
+
+    #[test]
+    fn defs_index_parses_aliases_and_functions() {
+        let path = Path::new("/tmp/example.zsh");
+        let content = r#"
+# alias doc
+alias ll='ls -la'
+alias -g G="| grep"
+
+# function doc
+function hello() {
+  echo hi
+}
+
+world() {
+  echo there
+}
+"#;
+
+        let mut index = DefIndex::default();
+        index_file(path, content, &mut index).unwrap();
+
+        assert_eq!(index.aliases.len(), 2);
+        let alias_g = index.aliases.iter().find(|a| a.name == "G").unwrap();
+        assert_eq!(alias_g.value, "| grep");
+        let alias_ll = index.aliases.iter().find(|a| a.name == "ll").unwrap();
+        assert_eq!(alias_ll.value, "ls -la");
+
+        assert_eq!(index.functions.len(), 2);
+        let func_hello = index.functions.iter().find(|f| f.name == "hello").unwrap();
+        assert!(func_hello.source.contains("function hello"));
+        let func_world = index.functions.iter().find(|f| f.name == "world").unwrap();
+        assert!(func_world.source.contains("world()"));
+    }
+}

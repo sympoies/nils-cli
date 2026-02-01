@@ -74,3 +74,93 @@ pub fn render_rest_report_markdown(report: &RestReport) -> String {
 
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn rest_report_renders_markdown_with_optional_sections() {
+        let report = RestReport {
+            report_date: "2026-02-01".to_string(),
+            case_name: "Health".to_string(),
+            generated_at: "2026-02-01T00:00:00Z".to_string(),
+            endpoint_note: "Endpoint: http://localhost:8080/health".to_string(),
+            result_note: "Result: OK".to_string(),
+            command_snippet: Some("curl -sS http://localhost:8080/health".to_string()),
+            assertions: vec![RestReportAssertion {
+                label: "status".to_string(),
+                state: "pass".to_string(),
+            }],
+            request_json: r#"{"method":"GET","path":"/health"}"#.to_string(),
+            response_lang: "json".to_string(),
+            response_body: r#"{"ok":true}"#.to_string(),
+            stderr_note: Some("warning: retrying".to_string()),
+        };
+
+        let got = render_rest_report_markdown(&report);
+        let expected = concat!(
+            "# API Test Report (2026-02-01)\n",
+            "\n",
+            "## Test Case: Health\n",
+            "\n",
+            "## Command\n",
+            "\n",
+            "```bash\n",
+            "curl -sS http://localhost:8080/health\n",
+            "```\n",
+            "\n",
+            "Generated at: 2026-02-01T00:00:00Z\n",
+            "\n",
+            "Endpoint: http://localhost:8080/health\n",
+            "\n",
+            "Result: OK\n",
+            "\n",
+            "### Assertions\n",
+            "\n",
+            "- status (pass)\n",
+            "\n",
+            "### Request\n",
+            "\n",
+            "```json\n",
+            "{\"method\":\"GET\",\"path\":\"/health\"}\n",
+            "```\n",
+            "\n",
+            "### Response\n",
+            "\n",
+            "```json\n",
+            "{\"ok\":true}\n",
+            "```\n",
+            "\n",
+            "### stderr\n",
+            "\n",
+            "```text\n",
+            "warning: retrying\n",
+            "```\n"
+        );
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn rest_report_omits_command_assertions_and_empty_stderr() {
+        let report = RestReport {
+            report_date: "2026-02-01".to_string(),
+            case_name: "No-Options".to_string(),
+            generated_at: "2026-02-01T00:00:00Z".to_string(),
+            endpoint_note: "Endpoint: x".to_string(),
+            result_note: "Result: y".to_string(),
+            command_snippet: None,
+            assertions: vec![],
+            request_json: "{}".to_string(),
+            response_lang: "text".to_string(),
+            response_body: "ok".to_string(),
+            stderr_note: Some("".to_string()),
+        };
+
+        let got = render_rest_report_markdown(&report);
+        assert!(!got.contains("## Command\n"));
+        assert!(!got.contains("### Assertions\n"));
+        assert!(!got.contains("### stderr\n"));
+    }
+}

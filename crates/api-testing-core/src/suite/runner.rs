@@ -1225,12 +1225,338 @@ fn case_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::suite::schema::{SuiteCase, SuiteManifest};
     use pretty_assertions::assert_eq;
+    use std::collections::HashSet;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
+    use tempfile::TempDir;
+
+    fn base_case(id: &str, case_type: &str) -> SuiteCase {
+        SuiteCase {
+            id: id.to_string(),
+            case_type: case_type.to_string(),
+            tags: Vec::new(),
+            env: String::new(),
+            no_history: None,
+            allow_write: false,
+            config_dir: String::new(),
+            url: String::new(),
+            token: String::new(),
+            request: String::new(),
+            login_request: String::new(),
+            token_jq: String::new(),
+            jwt: String::new(),
+            op: String::new(),
+            vars: None,
+            allow_errors: false,
+            expect: None,
+            cleanup: None,
+        }
+    }
+
+    struct TestServer {
+        base_url: String,
+        shutdown: mpsc::Sender<()>,
+        join: Option<thread::JoinHandle<()>>,
+    }
+
+    impl Drop for TestServer {
+        fn drop(&mut self) {
+            let _ = self.shutdown.send(());
+            if let Some(j) = self.join.take() {
+                let _ = j.join();
+            }
+        }
+    }
+
+    fn read_until_headers_end(stream: &mut TcpStream) {
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+        let mut buf = Vec::new();
+        let mut tmp = [0u8; 2048];
+        loop {
+            match stream.read(&mut tmp) {
+                Ok(0) => break,
+                Ok(n) => {
+                    buf.extend_from_slice(&tmp[..n]);
+                    if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                        break;
+                    }
+                    if buf.len() > 64 * 1024 {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    }
+
+    fn write_json_response(stream: &mut TcpStream, body: &[u8]) {
+        let mut resp = Vec::new();
+        resp.extend_from_slice(b"HTTP/1.1 200 OK\r\n");
+        resp.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
+        resp.extend_from_slice(b"Content-Type: application/json\r\n");
+        resp.extend_from_slice(b"\r\n");
+        resp.extend_from_slice(body);
+        let _ = stream.write_all(&resp);
+        let _ = stream.flush();
+    }
+
+    fn start_server() -> TestServer {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let addr = listener.local_addr().expect("addr");
+        let base_url = format!("http://{addr}");
+
+        let (tx, rx) = mpsc::channel::<()>();
+        let join = thread::spawn(move || loop {
+            if rx.try_recv().is_ok() {
+                break;
+            }
+            match listener.accept() {
+                Ok((mut stream, _peer)) => {
+                    read_until_headers_end(&mut stream);
+                    write_json_response(&mut stream, br#"{"ok":true}"#);
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(_) => break,
+            }
+        });
+
+        TestServer {
+            base_url,
+            shutdown: tx,
+            join: Some(join),
+        }
+    }
 
     #[test]
     fn suite_runner_sanitize_id_matches_expected_replacements() {
         assert_eq!(sanitize_id("rest.health"), "rest.health");
         assert_eq!(sanitize_id("a b c"), "a-b-c");
         assert_eq!(sanitize_id(""), "case");
+    }
+
+    #[test]
+    fn suite_runner_empty_suite_has_zero_counts() {
+        let tmp = TempDir::new().unwrap();
+        let suite_path = tmp.path().join("suite.json");
+        std::fs::write(&suite_path, br#"{"version":1,"cases":[]}"#).unwrap();
+
+        let manifest = SuiteManifest {
+            version: 1,
+            name: String::new(),
+            defaults: SuiteDefaults::default(),
+            auth: None,
+            cases: Vec::new(),
+        };
+        let loaded = LoadedSuite {
+            suite_path: suite_path.clone(),
+            manifest,
+        };
+
+        let options = SuiteRunOptions {
+            required_tags: Vec::new(),
+            only_ids: HashSet::new(),
+            skip_ids: HashSet::new(),
+            allow_writes_flag: true,
+            fail_fast: false,
+            output_dir_base: tmp.path().join("out"),
+            env_rest_url: String::new(),
+            env_gql_url: String::new(),
+        };
+
+        let out = run_suite(tmp.path(), loaded, options).unwrap();
+        assert_eq!(out.results.summary.total, 0);
+        assert_eq!(out.results.summary.passed, 0);
+        assert_eq!(out.results.summary.failed, 0);
+        assert_eq!(out.results.summary.skipped, 0);
+        assert!(out.run_dir_abs.is_dir());
+    }
+
+    #[test]
+    fn suite_runner_skips_case_when_tag_mismatch() {
+        let tmp = TempDir::new().unwrap();
+        let suite_path = tmp.path().join("suite.json");
+        std::fs::write(&suite_path, br#"{"version":1,"cases":[]}"#).unwrap();
+
+        let mut case = base_case("case-1", "rest");
+        case.tags = vec!["smoke".to_string()];
+
+        let manifest = SuiteManifest {
+            version: 1,
+            name: String::new(),
+            defaults: SuiteDefaults::default(),
+            auth: None,
+            cases: vec![case],
+        };
+        let loaded = LoadedSuite {
+            suite_path: suite_path.clone(),
+            manifest,
+        };
+
+        let options = SuiteRunOptions {
+            required_tags: vec!["fast".to_string()],
+            only_ids: HashSet::new(),
+            skip_ids: HashSet::new(),
+            allow_writes_flag: true,
+            fail_fast: false,
+            output_dir_base: tmp.path().join("out"),
+            env_rest_url: String::new(),
+            env_gql_url: String::new(),
+        };
+
+        let out = run_suite(tmp.path(), loaded, options).unwrap();
+        assert_eq!(out.results.summary.total, 1);
+        assert_eq!(out.results.summary.skipped, 1);
+        assert_eq!(out.results.cases[0].status, "skipped");
+        assert_eq!(
+            out.results.cases[0].message.as_deref(),
+            Some("tag_mismatch")
+        );
+    }
+
+    #[test]
+    fn suite_runner_skips_write_case_when_writes_disabled() {
+        let tmp = TempDir::new().unwrap();
+        let suite_path = tmp.path().join("suite.json");
+        std::fs::write(&suite_path, br#"{"version":1,"cases":[]}"#).unwrap();
+
+        let request_path = tmp.path().join("requests/post.request.json");
+        std::fs::create_dir_all(request_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &request_path,
+            br#"{"method":"POST","path":"/do","expect":{"status":200}}"#,
+        )
+        .unwrap();
+
+        let mut case = base_case("write-case", "rest");
+        case.allow_write = true;
+        case.request = "requests/post.request.json".to_string();
+
+        let manifest = SuiteManifest {
+            version: 1,
+            name: String::new(),
+            defaults: SuiteDefaults::default(),
+            auth: None,
+            cases: vec![case],
+        };
+        let loaded = LoadedSuite {
+            suite_path: suite_path.clone(),
+            manifest,
+        };
+
+        let options = SuiteRunOptions {
+            required_tags: Vec::new(),
+            only_ids: HashSet::new(),
+            skip_ids: HashSet::new(),
+            allow_writes_flag: false,
+            fail_fast: false,
+            output_dir_base: tmp.path().join("out"),
+            env_rest_url: String::new(),
+            env_gql_url: String::new(),
+        };
+
+        let out = run_suite(tmp.path(), loaded, options).unwrap();
+        assert_eq!(out.results.summary.total, 1);
+        assert_eq!(out.results.summary.skipped, 1);
+        assert_eq!(out.results.cases[0].status, "skipped");
+        assert_eq!(
+            out.results.cases[0].message.as_deref(),
+            Some(MSG_WRITE_CASES_DISABLED)
+        );
+    }
+
+    #[test]
+    fn suite_runner_unknown_case_type_is_error() {
+        let tmp = TempDir::new().unwrap();
+        let suite_path = tmp.path().join("suite.json");
+        std::fs::write(&suite_path, br#"{"version":1,"cases":[]}"#).unwrap();
+
+        let case = base_case("case-1", "weird");
+        let manifest = SuiteManifest {
+            version: 1,
+            name: String::new(),
+            defaults: SuiteDefaults::default(),
+            auth: None,
+            cases: vec![case],
+        };
+        let loaded = LoadedSuite {
+            suite_path: suite_path.clone(),
+            manifest,
+        };
+
+        let options = SuiteRunOptions {
+            required_tags: Vec::new(),
+            only_ids: HashSet::new(),
+            skip_ids: HashSet::new(),
+            allow_writes_flag: true,
+            fail_fast: false,
+            output_dir_base: tmp.path().join("out"),
+            env_rest_url: String::new(),
+            env_gql_url: String::new(),
+        };
+
+        let err = run_suite(tmp.path(), loaded, options).unwrap_err();
+        assert!(format!("{err:#}").contains("Unknown case type 'weird'"));
+    }
+
+    #[test]
+    fn suite_runner_no_history_flag_in_command_snippet() {
+        let tmp = TempDir::new().unwrap();
+        let suite_path = tmp.path().join("suite.json");
+        std::fs::write(&suite_path, br#"{"version":1,"cases":[]}"#).unwrap();
+
+        let request_path = tmp.path().join("requests/health.request.json");
+        std::fs::create_dir_all(request_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &request_path,
+            br#"{"method":"GET","path":"/health","expect":{"status":200}}"#,
+        )
+        .unwrap();
+
+        let server = start_server();
+
+        let defaults = SuiteDefaults {
+            no_history: true,
+            ..Default::default()
+        };
+
+        let mut case = base_case("case-1", "rest");
+        case.request = "requests/health.request.json".to_string();
+
+        let manifest = SuiteManifest {
+            version: 1,
+            name: String::new(),
+            defaults,
+            auth: None,
+            cases: vec![case],
+        };
+        let loaded = LoadedSuite {
+            suite_path: suite_path.clone(),
+            manifest,
+        };
+
+        let options = SuiteRunOptions {
+            required_tags: Vec::new(),
+            only_ids: HashSet::new(),
+            skip_ids: HashSet::new(),
+            allow_writes_flag: true,
+            fail_fast: false,
+            output_dir_base: tmp.path().join("out"),
+            env_rest_url: server.base_url.clone(),
+            env_gql_url: String::new(),
+        };
+
+        let out = run_suite(tmp.path(), loaded, options).unwrap();
+        let cmd = out.results.cases[0].command.as_deref().unwrap_or("");
+        assert!(cmd.contains("--no-history"));
+        assert!(cmd.contains("--url"));
     }
 }
