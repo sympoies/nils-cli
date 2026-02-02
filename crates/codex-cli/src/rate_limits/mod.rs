@@ -775,8 +775,6 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
         None
     };
 
-    println!("\n🚦 Codex rate limits for all accounts\n");
-
     let mut rc = 0;
     let mut rows: Vec<Row> = Vec::new();
     let mut window_labels = std::collections::HashSet::new();
@@ -849,6 +847,8 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
     if let Some(progress) = progress {
         progress.finish_and_clear();
     }
+
+    println!("\n🚦 Codex rate limits for all accounts\n");
 
     let mut non_weekly_header = "Non-weekly".to_string();
     let multiple_labels = window_labels.len() != 1;
