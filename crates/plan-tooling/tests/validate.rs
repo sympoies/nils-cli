@@ -86,6 +86,17 @@ fn validate_repo_relative_file_works_from_nested_dir() {
     assert!(out.stderr.is_empty());
 }
 
+#[test]
+fn validate_missing_dependencies_is_error() {
+    let repo = init_repo();
+    write_file(&repo.path().join("missing-deps.md"), MISSING_DEPS_PLAN);
+
+    let out = run_plan_tooling(repo.path(), &["validate", "--file", "missing-deps.md"]);
+    assert_eq!(out.code, 1);
+    assert!(out.stdout.is_empty());
+    assert!(out.stderr.contains("missing Dependencies"));
+}
+
 const VALID_PLAN: &str = r#"# Plan: Example
 
 ## Sprint 1: First sprint
@@ -116,4 +127,19 @@ const INVALID_PLAN: &str = r#"# Plan: Bad
   - <TBD>
 - **Validation**:
   - TBD
+"#;
+
+const MISSING_DEPS_PLAN: &str = r#"# Plan: Missing deps
+
+## Sprint 1: First sprint
+
+### Task 1.1: Do thing
+- **Location**:
+  - `src/a.rs`
+- **Description**: Do A
+- **Dependencies**:
+- **Acceptance criteria**:
+  - A works
+- **Validation**:
+  - cargo test -p plan-tooling
 "#;

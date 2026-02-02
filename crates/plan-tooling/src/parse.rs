@@ -208,11 +208,13 @@ pub fn parse_plan_with_display(
             };
 
             let mut normalized: Vec<String> = Vec::new();
+            let mut saw_value = false;
             for d in deps {
                 let trimmed = d.trim();
                 if trimmed.is_empty() {
                     continue;
                 }
+                saw_value = true;
                 if trimmed.eq_ignore_ascii_case("none") {
                     continue;
                 }
@@ -223,7 +225,11 @@ pub fn parse_plan_with_display(
                     }
                 }
             }
-            task.dependencies = Some(normalized);
+            if !saw_value {
+                task.dependencies = None;
+            } else {
+                task.dependencies = Some(normalized);
+            }
         }
     }
 
