@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 
 pub fn print_file_content(path: &str) -> Result<()> {
@@ -121,17 +121,30 @@ fn git_show_to_file(spec: &str, dest: &str) -> Result<()> {
 }
 
 fn is_binary_file(path: &str) -> Result<bool> {
-    let output = Command::new("file")
-        .arg("--mime")
-        .arg(path)
-        .output()
-        .with_context(|| format!("file --mime {path}"))?;
-
-    if !output.status.success() {
-        return Ok(false);
+    match Command::new("file").arg("--mime").arg(path).output() {
+        Ok(output) => {
+            if output.status.success() {
+                let text = String::from_utf8_lossy(&output.stdout);
+                return Ok(text.contains("charset=binary"));
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return is_binary_file_fallback(path);
+        }
+        Err(err) => return Err(err).with_context(|| format!("file --mime {path}")),
     }
-    let text = String::from_utf8_lossy(&output.stdout);
-    Ok(text.contains("charset=binary"))
+
+    is_binary_file_fallback(path)
+}
+
+fn is_binary_file_fallback(path: &str) -> Result<bool> {
+    const CHUNK_SIZE: usize = 8192;
+    let mut file = fs::File::open(path).with_context(|| format!("open {path}"))?;
+    let mut buf = [0u8; CHUNK_SIZE];
+    let n = file
+        .read(&mut buf)
+        .with_context(|| format!("read {path}"))?;
+    Ok(buf[..n].contains(&0))
 }
 
 fn mktemp_path() -> Result<String> {
