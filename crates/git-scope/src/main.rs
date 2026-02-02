@@ -114,6 +114,12 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
 
+    let help_requested = cli.help || matches!(cli.command, Some(Command::Help));
+    if help_requested {
+        print_help();
+        return Ok(());
+    }
+
     if !git::is_git_repo() {
         println!("⚠️ Not a Git repository. Run this command inside a Git project.");
         process::exit(1);
@@ -121,11 +127,6 @@ fn run() -> Result<()> {
 
     let no_color = cli.no_color || std::env::var_os("NO_COLOR").is_some();
     let progress_opt_in = git_scope_progress_opt_in();
-
-    if cli.help {
-        print_help();
-        return Ok(());
-    }
 
     match cli.command.unwrap_or(Command::Help) {
         Command::Tracked { print, prefixes } => {
