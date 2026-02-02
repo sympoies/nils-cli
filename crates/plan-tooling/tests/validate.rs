@@ -3,6 +3,7 @@ mod common;
 use common::{git, init_repo, run_plan_tooling, write_file};
 
 use pretty_assertions::assert_eq;
+use tempfile::TempDir;
 
 #[test]
 fn validate_ok_with_explicit_file() {
@@ -10,6 +11,21 @@ fn validate_ok_with_explicit_file() {
     write_file(&repo.path().join("plan.md"), VALID_PLAN);
 
     let out = run_plan_tooling(repo.path(), &["validate", "--file", "plan.md"]);
+    assert_eq!(
+        out.code, 0,
+        "stdout: {}\nstderr: {}",
+        out.stdout, out.stderr
+    );
+    assert!(out.stdout.is_empty());
+    assert!(out.stderr.is_empty());
+}
+
+#[test]
+fn validate_explicit_file_without_git_repo() {
+    let dir = TempDir::new().expect("tempdir");
+    write_file(&dir.path().join("plan.md"), VALID_PLAN);
+
+    let out = run_plan_tooling(dir.path(), &["validate", "--file", "plan.md"]);
     assert_eq!(
         out.code, 0,
         "stdout: {}\nstderr: {}",
