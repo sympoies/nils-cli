@@ -67,7 +67,7 @@ pub fn run(args: &[String]) -> i32 {
         };
 
         let preview = format!(
-            r#"bash -c 'line="$1"; filepath=$(printf "%s\n" "$line" | sed -E "s/^\[[^]]+\] //; s/ *\[\+.*\]$//"); git diff --color=always {commit}^! -- "$filepath" | cat' -- {{}}"#,
+            r#"bash -c 'line="$1"; filepath=$(printf "%s\n" "$line" | sed -E "s/^\[[^]]+\] //; s/ *\[\+.*\]$//"); if command -v delta >/dev/null 2>&1; then git diff --color=always {commit}^! -- "$filepath" | delta --width=100 --line-numbers | awk "NR==1 && NF==0 {{next}} {{print}}"; else git diff --color=always {commit}^! -- "$filepath" | cat; fi' -- {{}}"#,
             commit = commit
         );
 
@@ -203,12 +203,31 @@ fn resolve_to_short_hash_or_query(input: &str) -> String {
     input.to_string()
 }
 
+fn commit_parents(commit: &str) -> Vec<String> {
+    let out = util::run_capture("git", &["rev-list", "--parents", "-n", "1", commit])
+        .unwrap_or_default();
+    let mut parts = out.split_whitespace();
+    let _ = parts.next();
+    parts.map(|s| s.to_string()).collect()
+}
+
 fn build_commit_file_list(commit: &str) -> anyhow::Result<(Vec<String>, Vec<String>)> {
-    let diff_out = util::run_capture(
-        "git",
-        &["diff-tree", "--no-commit-id", "--name-status", "-r", commit],
-    )?;
-    let numstat_out = util::run_capture("git", &["show", "--numstat", "--format=", commit])?;
+    let parents = commit_parents(commit);
+    let (diff_out, numstat_out) = if parents.len() > 1 {
+        let parent = parents.first().cloned().unwrap_or_default();
+        (
+            util::run_capture("git", &["diff", "--name-status", &parent, commit])?,
+            util::run_capture("git", &["diff", "--numstat", &parent, commit])?,
+        )
+    } else {
+        (
+            util::run_capture(
+                "git",
+                &["diff-tree", "--no-commit-id", "--name-status", "-r", commit],
+            )?,
+            util::run_capture("git", &["show", "--numstat", "--format=", commit])?,
+        )
+    };
     let numstat = parse_numstat(&numstat_out);
 
     let mut file_list: Vec<String> = Vec::new();
