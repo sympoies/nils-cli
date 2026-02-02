@@ -373,14 +373,26 @@ fn parse_numstat_totals(log: &str) -> (i64, i64) {
     let mut deleted = 0i64;
 
     for line in log.lines() {
-        if is_lockfile_line(line) {
+        let mut parts = line.splitn(3, '\t');
+        let added_part = match parts.next() {
+            Some(part) => part,
+            None => continue,
+        };
+        let deleted_part = match parts.next() {
+            Some(part) => part,
+            None => continue,
+        };
+        let path = match parts.next() {
+            Some(part) => part,
+            None => continue,
+        };
+
+        if is_lockfile_line(path) {
             continue;
         }
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() == 3 {
-            added += parts[0].parse::<i64>().unwrap_or(0);
-            deleted += parts[1].parse::<i64>().unwrap_or(0);
-        }
+
+        added += added_part.parse::<i64>().unwrap_or(0);
+        deleted += deleted_part.parse::<i64>().unwrap_or(0);
     }
 
     (added, deleted)
@@ -417,4 +429,30 @@ struct Row {
 
 fn format_date(date: NaiveDate) -> String {
     date.format("%Y-%m-%d").to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_numstat_totals;
+
+    #[test]
+    fn parse_numstat_totals_counts_paths_with_spaces() {
+        let log = "\
+2024-01-01
+1\t2\tpath/with space.txt
+3\t4\tpath/with space/another file.md
+";
+        let (added, deleted) = parse_numstat_totals(log);
+        assert_eq!((added, deleted), (4, 6));
+    }
+
+    #[test]
+    fn parse_numstat_totals_skips_lockfiles_with_spaces() {
+        let log = "\
+1\t1\tpath/with space/yarn.lock
+2\t3\tpath/with space/src/lib.rs
+";
+        let (added, deleted) = parse_numstat_totals(log);
+        assert_eq!((added, deleted), (2, 3));
+    }
 }
