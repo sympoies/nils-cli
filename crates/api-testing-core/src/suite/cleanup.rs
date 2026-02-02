@@ -171,11 +171,14 @@ fn resolve_rest_token_profile(setup_dir: &Path, profile: &str) -> Result<String>
 
     let key = profile.trim().to_ascii_uppercase();
     let mut env_key = String::new();
+    let mut prev_us = false;
     for c in key.chars() {
         if c.is_ascii_alphanumeric() {
             env_key.push(c);
-        } else if !env_key.ends_with('_') {
+            prev_us = false;
+        } else if !env_key.is_empty() && !prev_us {
             env_key.push('_');
+            prev_us = true;
         }
     }
     while env_key.ends_with('_') {
