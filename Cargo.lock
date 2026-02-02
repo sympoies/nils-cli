@@ -290,6 +290,7 @@ dependencies = [
  "base64",
  "chrono",
  "clap",
+ "nils-term",
  "nils-test-support",
  "pretty_assertions",
  "reqwest",

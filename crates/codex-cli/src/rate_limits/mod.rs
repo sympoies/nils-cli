@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use crate::auth;
 use crate::rate_limits::client::{fetch_usage, UsageRequest};
+use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 
 pub mod ansi;
 pub mod cache;
@@ -179,10 +180,21 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
 
     secret_files.sort();
 
+    let total = secret_files.len();
+    let progress = if total > 1 {
+        Some(Progress::new(
+            total as u64,
+            ProgressOptions::default()
+                .with_prefix("codex-rate-limits ")
+                .with_finish(ProgressFinish::Clear),
+        ))
+    } else {
+        None
+    };
+
     let (tx, rx) = mpsc::channel();
     let mut handles = Vec::new();
     let mut index = 0usize;
-    let total = secret_files.len();
     let worker_count = jobs.min(total);
 
     let spawn_worker = |path: PathBuf,
@@ -224,6 +236,10 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
             Ok(event) => event,
             Err(_) => break,
         };
+        if let Some(progress) = &progress {
+            progress.set_message(event.secret_name.clone());
+            progress.inc(1);
+        }
         events.insert(event.secret_name.clone(), event);
 
         if index < total {
@@ -236,6 +252,10 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
                 tx.clone(),
             ));
         }
+    }
+
+    if let Some(progress) = progress {
+        progress.finish_and_clear();
     }
 
     drop(tx);
@@ -745,6 +765,18 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
 
     secret_files.sort();
 
+    let total = secret_files.len();
+    let progress = if total > 1 {
+        Some(Progress::new(
+            total as u64,
+            ProgressOptions::default()
+                .with_prefix("codex-rate-limits ")
+                .with_finish(ProgressFinish::Clear),
+        ))
+    } else {
+        None
+    };
+
     println!("\n🚦 Codex rate limits for all accounts\n");
 
     let mut rc = 0;
@@ -757,6 +789,9 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
             .and_then(|name| name.to_str())
             .unwrap_or("")
             .to_string();
+        if let Some(progress) = &progress {
+            progress.set_message(secret_name.clone());
+        }
 
         let mut row = Row::empty(secret_name.trim_end_matches(".json").to_string());
         let output =
@@ -809,6 +844,14 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
             }
             rows.push(row);
         }
+
+        if let Some(progress) = &progress {
+            progress.inc(1);
+        }
+    }
+
+    if let Some(progress) = progress {
+        progress.finish_and_clear();
     }
 
     let mut non_weekly_header = "Non-weekly".to_string();
