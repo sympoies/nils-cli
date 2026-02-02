@@ -9,7 +9,8 @@ use crate::suite::filter::selection_skip_reason;
 use crate::suite::resolve::write_file;
 use crate::suite::results::{SuiteCaseResult, SuiteRunResults, SuiteRunSummary};
 use crate::suite::runtime::{
-    path_relative_to_repo_or_abs, resolve_rest_base_url, sanitize_id, time_iso_now, time_run_id_now,
+    path_relative_to_repo_or_abs, resolve_effective_env, resolve_effective_no_history,
+    resolve_rest_base_url, sanitize_id, time_iso_now, time_run_id_now,
 };
 use crate::suite::schema::LoadedSuite;
 use crate::Result;
@@ -138,14 +139,8 @@ pub fn run_suite(
         let tags = c.tags.clone();
         let ty = context::case_type_normalized(&c.case_type);
 
-        let effective_env = c.env.trim().to_string();
-        let effective_env = if effective_env.is_empty() {
-            defaults.env.trim().to_string()
-        } else {
-            effective_env
-        };
-
-        let effective_no_history = c.no_history.unwrap_or(defaults.no_history);
+        let effective_env = resolve_effective_env(&c.env, defaults);
+        let effective_no_history = resolve_effective_no_history(c.no_history, defaults);
 
         if let Some(reason) = selection_skip_reason(
             &id,

@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use crate::suite::auth::SuiteAuthManager;
 use crate::suite::resolve::{resolve_path_from_repo_root, write_file};
 use crate::suite::runtime::{
-    path_relative_to_repo_or_abs, resolve_rest_base_url, resolve_rest_token_profile,
+    path_relative_to_repo_or_abs, plan_case_output_paths, resolve_rest_base_url,
+    resolve_rest_token_profile,
 };
 use crate::suite::safety::{
     rest_method_is_write, writes_enabled, MSG_WRITE_CAPABLE_REQUIRES_ALLOW_WRITE_TRUE,
@@ -198,8 +199,9 @@ pub(super) fn run_rest_case(
     request_abs: &Path,
     request_file: &crate::rest::schema::RestRequestFile,
 ) -> Result<RestCaseRunOutput> {
-    let stdout_path = run_dir_abs.join(format!("{safe_id}.response.json"));
-    let stderr_path = run_dir_abs.join(format!("{safe_id}.stderr.log"));
+    let outputs = plan_case_output_paths(run_dir_abs, safe_id);
+    let stdout_path = outputs.stdout_path;
+    let stderr_path = outputs.stderr_path;
     write_file(&stdout_path, b"")?;
     write_file(&stderr_path, b"")?;
 

@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::suite::resolve::{
     resolve_gql_url_for_env, resolve_path_from_repo_root, resolve_rest_base_url_for_env,
@@ -118,24 +118,7 @@ pub(crate) fn resolve_rest_token_profile(setup_dir: &Path, profile: &str) -> Res
         Vec::new()
     };
 
-    let key = profile.trim().to_ascii_uppercase();
-    let mut env_key = String::new();
-    let mut prev_us = false;
-    for c in key.chars() {
-        if c.is_ascii_alphanumeric() {
-            env_key.push(c);
-            prev_us = false;
-        } else if !env_key.is_empty() && !prev_us {
-            env_key.push('_');
-            prev_us = true;
-        }
-    }
-    while env_key.ends_with('_') {
-        env_key.pop();
-    }
-
-    let var = format!("REST_TOKEN_{env_key}");
-    let found = crate::env_file::read_var_last_wins(&var, &files)?;
+    let found = crate::env_file::read_prefixed_var("REST_TOKEN_", profile, &files)?;
     found.ok_or_else(|| anyhow::anyhow!("Token profile '{profile}' is empty/missing."))
 }
 
@@ -157,4 +140,33 @@ pub(crate) fn resolve_graphql_bearer_token(
         stderr,
     )?;
     Ok(auth.bearer_token)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CaseOutputPaths {
+    pub stdout_path: PathBuf,
+    pub stderr_path: PathBuf,
+}
+
+pub(crate) fn plan_case_output_paths(run_dir_abs: &Path, safe_id: &str) -> CaseOutputPaths {
+    CaseOutputPaths {
+        stdout_path: run_dir_abs.join(format!("{safe_id}.response.json")),
+        stderr_path: run_dir_abs.join(format!("{safe_id}.stderr.log")),
+    }
+}
+
+pub(crate) fn resolve_effective_env(raw_env: &str, defaults: &SuiteDefaults) -> String {
+    let effective_env = raw_env.trim().to_string();
+    if effective_env.is_empty() {
+        defaults.env.trim().to_string()
+    } else {
+        effective_env
+    }
+}
+
+pub(crate) fn resolve_effective_no_history(
+    case_no_history: Option<bool>,
+    defaults: &SuiteDefaults,
+) -> bool {
+    case_no_history.unwrap_or(defaults.no_history)
 }

@@ -59,3 +59,41 @@ impl SuiteRunResults {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn suite_results_exit_code_reflects_failures() {
+        let ok = SuiteRunResults {
+            version: 1,
+            suite: "suite".to_string(),
+            suite_file: "suite.json".to_string(),
+            run_id: "run-1".to_string(),
+            started_at: "start".to_string(),
+            finished_at: "end".to_string(),
+            output_dir: "out".to_string(),
+            summary: SuiteRunSummary {
+                total: 1,
+                passed: 1,
+                failed: 0,
+                skipped: 0,
+            },
+            cases: Vec::new(),
+        };
+        assert_eq!(ok.exit_code(), 0);
+
+        let failed = SuiteRunResults {
+            summary: SuiteRunSummary {
+                total: 1,
+                passed: 0,
+                failed: 1,
+                skipped: 0,
+            },
+            ..ok
+        };
+        assert_eq!(failed.exit_code(), 2);
+    }
+}

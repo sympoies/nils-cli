@@ -4,7 +4,8 @@ use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
 use super::runtime::{
-    path_relative_to_repo_or_abs, resolve_gql_url, resolve_rest_base_url,
+    path_relative_to_repo_or_abs, plan_case_output_paths, resolve_effective_env,
+    resolve_effective_no_history, resolve_gql_url, resolve_rest_base_url,
     resolve_rest_token_profile, sanitize_id,
 };
 use crate::suite::schema::SuiteDefaults;
@@ -218,4 +219,35 @@ fn runtime_helpers_path_relative_to_repo_or_abs_strips_prefix_or_keeps_abs() {
         path_relative_to_repo_or_abs(repo_root, &outside),
         outside.to_string_lossy().to_string()
     );
+}
+
+#[test]
+fn runtime_helpers_resolve_effective_env_prefers_case_over_defaults() {
+    let defaults = SuiteDefaults {
+        env: "default".to_string(),
+        ..SuiteDefaults::default()
+    };
+
+    assert_eq!(resolve_effective_env("staging", &defaults), "staging");
+    assert_eq!(resolve_effective_env("   ", &defaults), "default");
+}
+
+#[test]
+fn runtime_helpers_resolve_effective_no_history_prefers_case_override() {
+    let defaults = SuiteDefaults {
+        no_history: false,
+        ..SuiteDefaults::default()
+    };
+
+    assert!(!resolve_effective_no_history(None, &defaults));
+    assert!(resolve_effective_no_history(Some(true), &defaults));
+}
+
+#[test]
+fn runtime_helpers_plan_case_output_paths_is_deterministic() {
+    let tmp = TempDir::new().expect("tmp");
+    let run_dir = tmp.path().join("out/20260202-000000Z");
+    let outputs = plan_case_output_paths(&run_dir, "case-1");
+    assert_eq!(outputs.stdout_path, run_dir.join("case-1.response.json"));
+    assert_eq!(outputs.stderr_path, run_dir.join("case-1.stderr.log"));
 }

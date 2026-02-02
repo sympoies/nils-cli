@@ -72,6 +72,31 @@ fn strip_inline_comment(value: &str) -> &str {
     value.trim_end()
 }
 
+pub fn normalize_env_key(raw: &str) -> String {
+    let raw = raw.trim().to_ascii_uppercase();
+    let mut out = String::new();
+    let mut prev_us = false;
+    for c in raw.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+            prev_us = false;
+        } else if !out.is_empty() && !prev_us {
+            out.push('_');
+            prev_us = true;
+        }
+    }
+    while out.ends_with('_') {
+        out.pop();
+    }
+    out
+}
+
+pub fn read_prefixed_var(prefix: &str, profile: &str, files: &[&Path]) -> Result<Option<String>> {
+    let env_key = normalize_env_key(profile);
+    let var = format!("{prefix}{env_key}");
+    read_var_last_wins(&var, files)
+}
+
 /// Read an env var from a list of `.env`-like files using the legacy "last assignment wins" semantics.
 ///
 /// Parity notes:
@@ -203,5 +228,12 @@ QUX=keep#hash
             read_var_last_wins("QUX", &[&f]).unwrap(),
             Some("keep#hash".to_string())
         );
+    }
+
+    #[test]
+    fn env_file_normalize_env_key_is_stable() {
+        assert_eq!(normalize_env_key("my-profile"), "MY_PROFILE");
+        assert_eq!(normalize_env_key("  team.alpha "), "TEAM_ALPHA");
+        assert_eq!(normalize_env_key("___bad__"), "BAD");
     }
 }

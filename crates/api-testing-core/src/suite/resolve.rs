@@ -4,28 +4,6 @@ use anyhow::Context;
 
 use crate::Result;
 
-fn to_env_key(s: &str) -> String {
-    let s = s.trim().to_ascii_uppercase();
-    let mut out = String::new();
-    let mut prev_us = false;
-    for c in s.chars() {
-        let ok = c.is_ascii_alphanumeric();
-        if ok {
-            out.push(c);
-            prev_us = false;
-            continue;
-        }
-        if !out.is_empty() && !prev_us {
-            out.push('_');
-            prev_us = true;
-        }
-    }
-    while out.ends_with('_') {
-        out.pop();
-    }
-    out
-}
-
 fn list_available_suffixes(file: &Path, prefix: &str) -> Vec<String> {
     if !file.is_file() {
         return Vec::new();
@@ -109,7 +87,7 @@ pub fn resolve_rest_base_url_for_env(setup_dir: &Path, env_value: &str) -> Resul
         anyhow::bail!("endpoints.env not found (expected under setup/rest/)");
     }
 
-    let env_key = to_env_key(env_value);
+    let env_key = crate::env_file::normalize_env_key(env_value);
     let key = format!("REST_URL_{env_key}");
     let found = crate::env_file::read_var_last_wins(&key, &endpoints_files)?;
     let Some(found) = found else {
@@ -147,7 +125,7 @@ pub fn resolve_gql_url_for_env(setup_dir: &Path, env_value: &str) -> Result<Stri
         anyhow::bail!("endpoints.env not found (expected under setup/graphql/)");
     }
 
-    let env_key = to_env_key(env_value);
+    let env_key = crate::env_file::normalize_env_key(env_value);
     let key = format!("GQL_URL_{env_key}");
     let found = crate::env_file::read_var_last_wins(&key, &endpoints_files)?;
     let Some(found) = found else {

@@ -21,6 +21,29 @@ impl Default for RotationPolicy {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct HistoryWriter {
+    history_file: PathBuf,
+    rotation: RotationPolicy,
+}
+
+impl HistoryWriter {
+    pub fn new(history_file: PathBuf, rotation: RotationPolicy) -> Self {
+        Self {
+            history_file,
+            rotation,
+        }
+    }
+
+    pub fn history_file(&self) -> &Path {
+        &self.history_file
+    }
+
+    pub fn append(&self, record: &str) -> Result<bool> {
+        append_record(&self.history_file, record, self.rotation)
+    }
+}
+
 fn lock_dir_for(history_file: &Path) -> PathBuf {
     let mut os: OsString = history_file.as_os_str().to_os_string();
     os.push(".lock");

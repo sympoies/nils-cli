@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use crate::suite::auth::SuiteAuthManager;
 use crate::suite::resolve::{resolve_path_from_repo_root, write_file};
 use crate::suite::runtime::{
-    path_relative_to_repo_or_abs, resolve_gql_url, resolve_graphql_bearer_token,
+    path_relative_to_repo_or_abs, plan_case_output_paths, resolve_gql_url,
+    resolve_graphql_bearer_token,
 };
 use crate::suite::safety::graphql_safety_decision;
 use crate::suite::schema::{SuiteCase, SuiteDefaults};
@@ -132,8 +133,9 @@ pub(super) fn run_graphql_case(
     allow_errors: bool,
     expect_jq_raw: &str,
 ) -> Result<GraphqlCaseRunOutput> {
-    let stdout_path = run_dir_abs.join(format!("{safe_id}.response.json"));
-    let stderr_path = run_dir_abs.join(format!("{safe_id}.stderr.log"));
+    let outputs = plan_case_output_paths(run_dir_abs, safe_id);
+    let stdout_path = outputs.stdout_path;
+    let stderr_path = outputs.stderr_path;
     write_file(&stdout_path, b"")?;
     write_file(&stderr_path, b"")?;
 

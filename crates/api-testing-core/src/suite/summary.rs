@@ -372,6 +372,76 @@ pub fn render_summary_from_json_str(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::suite::results::{SuiteCaseResult, SuiteRunResults, SuiteRunSummary};
+
+    fn base_results(summary: SuiteRunSummary, cases: Vec<SuiteCaseResult>) -> SuiteRunResults {
+        SuiteRunResults {
+            version: 1,
+            suite: "sample".to_string(),
+            suite_file: "tests/api/suites/sample.suite.json".to_string(),
+            run_id: "run-1".to_string(),
+            started_at: "2026-02-02T00:00:00Z".to_string(),
+            finished_at: "2026-02-02T00:00:10Z".to_string(),
+            output_dir: "out/api-test-runner/run-1".to_string(),
+            summary,
+            cases,
+        }
+    }
+
+    #[test]
+    fn render_summary_markdown_handles_successful_runs() {
+        let summary = SuiteRunSummary {
+            total: 1,
+            passed: 1,
+            failed: 0,
+            skipped: 0,
+        };
+        let cases = vec![SuiteCaseResult {
+            id: "rest.health".to_string(),
+            case_type: "rest".to_string(),
+            status: "passed".to_string(),
+            duration_ms: 12,
+            tags: Vec::new(),
+            command: None,
+            message: None,
+            assertions: None,
+            stdout_file: Some("out/run-1/rest.health.response.json".to_string()),
+            stderr_file: Some("out/run-1/rest.health.stderr.log".to_string()),
+        }];
+        let results = base_results(summary, cases);
+        let markdown = render_summary_markdown(&results, &SummaryOptions::default());
+
+        assert!(markdown.contains("## API test summary: sample"));
+        assert!(markdown.contains("### Failed (0)"));
+        assert!(markdown.contains("(none)"));
+    }
+
+    #[test]
+    fn render_summary_markdown_includes_failed_cases() {
+        let summary = SuiteRunSummary {
+            total: 1,
+            passed: 0,
+            failed: 1,
+            skipped: 0,
+        };
+        let cases = vec![SuiteCaseResult {
+            id: "gql.health".to_string(),
+            case_type: "graphql".to_string(),
+            status: "failed".to_string(),
+            duration_ms: 120,
+            tags: Vec::new(),
+            command: None,
+            message: Some("boom".to_string()),
+            assertions: None,
+            stdout_file: Some("out/run-1/gql.health.response.json".to_string()),
+            stderr_file: Some("out/run-1/gql.health.stderr.log".to_string()),
+        }];
+        let results = base_results(summary, cases);
+        let markdown = render_summary_markdown(&results, &SummaryOptions::default());
+
+        assert!(markdown.contains("### Failed (1)"));
+        assert!(markdown.contains("boom"));
+    }
 
     #[test]
     fn summary_renders_totals_table() {

@@ -4,6 +4,75 @@ use anyhow::Context;
 
 use crate::Result;
 
+const SETUP_DIR_ERROR: &str = "Failed to resolve setup dir (try --config-dir).";
+const INVOCATION_DIR_ERROR: &str = "Failed to resolve invocation dir for setup discovery";
+const SETUP_GRAPHQL_ERROR: &str = "failed to resolve setup/graphql";
+
+#[derive(Debug, Clone, Copy)]
+enum FallbackMode {
+    None,
+    Upwards(&'static str),
+    Direct(&'static str, &'static str),
+}
+
+#[derive(Debug)]
+struct SetupDiscovery<'a> {
+    cwd: &'a Path,
+    seed: PathBuf,
+    config_dir_explicit: bool,
+    files: &'static [&'static str],
+    seed_fallback: FallbackMode,
+    invocation_dir: Option<&'a Path>,
+    invocation_fallback: FallbackMode,
+}
+
+impl<'a> SetupDiscovery<'a> {
+    fn resolve(&self) -> Result<PathBuf> {
+        let seed_abs = abs_dir(self.cwd, &self.seed).context(SETUP_DIR_ERROR)?;
+
+        if let Some(dir) = find_upwards_for_files(&seed_abs, self.files) {
+            return Ok(dir);
+        }
+
+        if let FallbackMode::Upwards(subdir) = self.seed_fallback {
+            if let Some(found_setup) = find_upwards_for_setup_subdir(&seed_abs, subdir) {
+                return Ok(found_setup);
+            }
+        }
+
+        if self.config_dir_explicit {
+            return Ok(seed_abs);
+        }
+
+        match self.invocation_fallback {
+            FallbackMode::None => {}
+            FallbackMode::Upwards(subdir) => {
+                let invocation_dir = self
+                    .invocation_dir
+                    .expect("invocation_dir required for upwards fallback");
+                let invocation_abs =
+                    abs_dir(self.cwd, invocation_dir).context(INVOCATION_DIR_ERROR)?;
+                if let Some(found_setup) = find_upwards_for_setup_subdir(&invocation_abs, subdir) {
+                    return Ok(found_setup);
+                }
+            }
+            FallbackMode::Direct(subdir, ctx) => {
+                let invocation_dir = self
+                    .invocation_dir
+                    .expect("invocation_dir required for direct fallback");
+                let invocation_abs =
+                    abs_dir(self.cwd, invocation_dir).context(INVOCATION_DIR_ERROR)?;
+                let fallback = invocation_abs.join(subdir);
+                if fallback.is_dir() {
+                    return abs_dir(self.cwd, &fallback).context(ctx);
+                }
+            }
+        }
+
+        Ok(seed_abs)
+    }
+}
+
 fn abs_dir(base_dir: &Path, path: &Path) -> Result<PathBuf> {
     let joined = if path.is_absolute() {
         path.to_path_buf()
@@ -27,6 +96,15 @@ fn find_upwards_for_file(start_dir: &Path, filename: &str) -> Option<PathBuf> {
             _ => return None,
         }
     }
+}
+
+fn find_upwards_for_files(start_dir: &Path, filenames: &[&str]) -> Option<PathBuf> {
+    for filename in filenames {
+        if let Some(found) = find_upwards_for_file(start_dir, filename) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 fn find_upwards_for_setup_subdir(start_dir: &Path, rel_subdir: &str) -> Option<PathBuf> {
@@ -58,33 +136,21 @@ pub fn resolve_rest_setup_dir_for_call(
             .unwrap_or_else(|| PathBuf::from(".")),
     };
 
-    let seed_abs =
-        abs_dir(cwd, &seed).context("Failed to resolve setup dir (try --config-dir).")?;
-    let config_dir_explicit = config_dir.is_some();
-
-    let found = find_upwards_for_file(&seed_abs, "endpoints.env")
-        .or_else(|| find_upwards_for_file(&seed_abs, "tokens.env"))
-        .or_else(|| find_upwards_for_file(&seed_abs, "endpoints.local.env"))
-        .or_else(|| find_upwards_for_file(&seed_abs, "tokens.local.env"));
-    if let Some(dir) = found {
-        return Ok(dir);
+    SetupDiscovery {
+        cwd,
+        seed,
+        config_dir_explicit: config_dir.is_some(),
+        files: &[
+            "endpoints.env",
+            "tokens.env",
+            "endpoints.local.env",
+            "tokens.local.env",
+        ],
+        seed_fallback: FallbackMode::Upwards("setup/rest"),
+        invocation_dir: Some(invocation_dir),
+        invocation_fallback: FallbackMode::Upwards("setup/rest"),
     }
-
-    if let Some(found_setup) = find_upwards_for_setup_subdir(&seed_abs, "setup/rest") {
-        return Ok(found_setup);
-    }
-
-    if config_dir_explicit {
-        return Ok(seed_abs);
-    }
-
-    let invocation_abs = abs_dir(cwd, invocation_dir)
-        .context("Failed to resolve invocation dir for setup discovery")?;
-    if let Some(found_invocation) = find_upwards_for_setup_subdir(&invocation_abs, "setup/rest") {
-        return Ok(found_invocation);
-    }
-
-    Ok(seed_abs)
+    .resolve()
 }
 
 pub fn resolve_rest_setup_dir_for_history(
@@ -92,26 +158,22 @@ pub fn resolve_rest_setup_dir_for_history(
     config_dir: Option<&Path>,
 ) -> Result<PathBuf> {
     let seed = config_dir.unwrap_or_else(|| Path::new("."));
-    let seed_abs = abs_dir(cwd, seed).context("Failed to resolve setup dir (try --config-dir).")?;
-    let config_dir_explicit = config_dir.is_some();
 
-    let found = find_upwards_for_file(&seed_abs, ".rest_history")
-        .or_else(|| find_upwards_for_file(&seed_abs, "endpoints.env"))
-        .or_else(|| find_upwards_for_file(&seed_abs, "tokens.env"))
-        .or_else(|| find_upwards_for_file(&seed_abs, "tokens.local.env"));
-    if let Some(dir) = found {
-        return Ok(dir);
+    SetupDiscovery {
+        cwd,
+        seed: seed.to_path_buf(),
+        config_dir_explicit: config_dir.is_some(),
+        files: &[
+            ".rest_history",
+            "endpoints.env",
+            "tokens.env",
+            "tokens.local.env",
+        ],
+        seed_fallback: FallbackMode::Upwards("setup/rest"),
+        invocation_dir: None,
+        invocation_fallback: FallbackMode::None,
     }
-
-    if let Some(found_setup) = find_upwards_for_setup_subdir(&seed_abs, "setup/rest") {
-        return Ok(found_setup);
-    }
-
-    if config_dir_explicit {
-        return Ok(seed_abs);
-    }
-
-    Ok(seed_abs)
+    .resolve()
 }
 
 pub fn resolve_gql_setup_dir_for_call(
@@ -128,29 +190,16 @@ pub fn resolve_gql_setup_dir_for_call(
             .unwrap_or_else(|| PathBuf::from(".")),
     };
 
-    let seed_abs =
-        abs_dir(cwd, &seed).context("Failed to resolve setup dir (try --config-dir).")?;
-    let config_dir_explicit = config_dir.is_some();
-
-    let found = find_upwards_for_file(&seed_abs, "endpoints.env")
-        .or_else(|| find_upwards_for_file(&seed_abs, "jwts.env"))
-        .or_else(|| find_upwards_for_file(&seed_abs, "jwts.local.env"));
-    if let Some(dir) = found {
-        return Ok(dir);
+    SetupDiscovery {
+        cwd,
+        seed,
+        config_dir_explicit: config_dir.is_some(),
+        files: &["endpoints.env", "jwts.env", "jwts.local.env"],
+        seed_fallback: FallbackMode::None,
+        invocation_dir: Some(invocation_dir),
+        invocation_fallback: FallbackMode::Direct("setup/graphql", SETUP_GRAPHQL_ERROR),
     }
-
-    if config_dir_explicit {
-        return Ok(seed_abs);
-    }
-
-    let invocation_abs = abs_dir(cwd, invocation_dir)
-        .context("Failed to resolve invocation dir for setup discovery")?;
-    let fallback = invocation_abs.join("setup/graphql");
-    if fallback.is_dir() {
-        return abs_dir(cwd, &fallback).context("failed to resolve setup/graphql");
-    }
-
-    Ok(seed_abs)
+    .resolve()
 }
 
 pub fn resolve_gql_setup_dir_for_history(
@@ -159,29 +208,22 @@ pub fn resolve_gql_setup_dir_for_history(
     config_dir: Option<&Path>,
 ) -> Result<PathBuf> {
     let seed = config_dir.unwrap_or_else(|| Path::new("."));
-    let seed_abs = abs_dir(cwd, seed).context("Failed to resolve setup dir (try --config-dir).")?;
-    let config_dir_explicit = config_dir.is_some();
 
-    let found = find_upwards_for_file(&seed_abs, ".gql_history")
-        .or_else(|| find_upwards_for_file(&seed_abs, "endpoints.env"))
-        .or_else(|| find_upwards_for_file(&seed_abs, "jwts.env"))
-        .or_else(|| find_upwards_for_file(&seed_abs, "jwts.local.env"));
-    if let Some(dir) = found {
-        return Ok(dir);
+    SetupDiscovery {
+        cwd,
+        seed: seed.to_path_buf(),
+        config_dir_explicit: config_dir.is_some(),
+        files: &[
+            ".gql_history",
+            "endpoints.env",
+            "jwts.env",
+            "jwts.local.env",
+        ],
+        seed_fallback: FallbackMode::None,
+        invocation_dir: Some(invocation_dir),
+        invocation_fallback: FallbackMode::Direct("setup/graphql", SETUP_GRAPHQL_ERROR),
     }
-
-    if config_dir_explicit {
-        return Ok(seed_abs);
-    }
-
-    let invocation_abs = abs_dir(cwd, invocation_dir)
-        .context("Failed to resolve invocation dir for setup discovery")?;
-    let fallback = invocation_abs.join("setup/graphql");
-    if fallback.is_dir() {
-        return abs_dir(cwd, &fallback).context("failed to resolve setup/graphql");
-    }
-
-    Ok(seed_abs)
+    .resolve()
 }
 
 pub fn resolve_gql_setup_dir_for_schema(
@@ -190,30 +232,107 @@ pub fn resolve_gql_setup_dir_for_schema(
     config_dir: Option<&Path>,
 ) -> Result<PathBuf> {
     let seed = config_dir.unwrap_or_else(|| Path::new("."));
-    let seed_abs = abs_dir(cwd, seed).context("Failed to resolve setup dir (try --config-dir).")?;
-    let config_dir_explicit = config_dir.is_some();
 
-    let found = find_upwards_for_file(&seed_abs, "schema.env")
-        .or_else(|| find_upwards_for_file(&seed_abs, "schema.local.env"))
-        .or_else(|| find_upwards_for_file(&seed_abs, "endpoints.env"))
-        .or_else(|| find_upwards_for_file(&seed_abs, "jwts.env"))
-        .or_else(|| find_upwards_for_file(&seed_abs, "jwts.local.env"));
-    if let Some(dir) = found {
-        return Ok(dir);
+    SetupDiscovery {
+        cwd,
+        seed: seed.to_path_buf(),
+        config_dir_explicit: config_dir.is_some(),
+        files: &[
+            "schema.env",
+            "schema.local.env",
+            "endpoints.env",
+            "jwts.env",
+            "jwts.local.env",
+        ],
+        seed_fallback: FallbackMode::None,
+        invocation_dir: Some(invocation_dir),
+        invocation_fallback: FallbackMode::Direct("setup/graphql", SETUP_GRAPHQL_ERROR),
+    }
+    .resolve()
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedSetup {
+    pub setup_dir: PathBuf,
+    pub history_file: PathBuf,
+    pub endpoints_env: PathBuf,
+    pub endpoints_local_env: PathBuf,
+    pub tokens_env: Option<PathBuf>,
+    pub tokens_local_env: Option<PathBuf>,
+    pub jwts_env: Option<PathBuf>,
+    pub jwts_local_env: Option<PathBuf>,
+}
+
+impl ResolvedSetup {
+    pub fn rest(setup_dir: PathBuf, history_override: Option<&Path>) -> Self {
+        let history_file =
+            crate::history::resolve_history_file(&setup_dir, history_override, ".rest_history");
+        let endpoints_env = setup_dir.join("endpoints.env");
+        let endpoints_local_env = setup_dir.join("endpoints.local.env");
+        let tokens_env = setup_dir.join("tokens.env");
+        let tokens_local_env = setup_dir.join("tokens.local.env");
+        Self {
+            setup_dir,
+            history_file,
+            endpoints_env,
+            endpoints_local_env,
+            tokens_env: Some(tokens_env),
+            tokens_local_env: Some(tokens_local_env),
+            jwts_env: None,
+            jwts_local_env: None,
+        }
     }
 
-    if config_dir_explicit {
-        return Ok(seed_abs);
+    pub fn graphql(setup_dir: PathBuf, history_override: Option<&Path>) -> Self {
+        let history_file =
+            crate::history::resolve_history_file(&setup_dir, history_override, ".gql_history");
+        let endpoints_env = setup_dir.join("endpoints.env");
+        let endpoints_local_env = setup_dir.join("endpoints.local.env");
+        let jwts_env = setup_dir.join("jwts.env");
+        let jwts_local_env = setup_dir.join("jwts.local.env");
+        Self {
+            setup_dir,
+            history_file,
+            endpoints_env,
+            endpoints_local_env,
+            tokens_env: None,
+            tokens_local_env: None,
+            jwts_env: Some(jwts_env),
+            jwts_local_env: Some(jwts_local_env),
+        }
     }
 
-    let invocation_abs = abs_dir(cwd, invocation_dir)
-        .context("Failed to resolve invocation dir for setup discovery")?;
-    let fallback = invocation_abs.join("setup/graphql");
-    if fallback.is_dir() {
-        return abs_dir(cwd, &fallback).context("failed to resolve setup/graphql");
+    pub fn endpoints_files(&self) -> Vec<&Path> {
+        if self.endpoints_env.is_file() {
+            vec![&self.endpoints_env, &self.endpoints_local_env]
+        } else {
+            Vec::new()
+        }
     }
 
-    Ok(seed_abs)
+    pub fn tokens_files(&self) -> Vec<&Path> {
+        let Some(tokens_env) = self.tokens_env.as_ref() else {
+            return Vec::new();
+        };
+        let tokens_local = self.tokens_local_env.as_ref().expect("tokens_local_env");
+        if tokens_env.is_file() || tokens_local.is_file() {
+            vec![tokens_env, tokens_local]
+        } else {
+            Vec::new()
+        }
+    }
+
+    pub fn jwts_files(&self) -> Vec<&Path> {
+        let Some(jwts_env) = self.jwts_env.as_ref() else {
+            return Vec::new();
+        };
+        let jwts_local = self.jwts_local_env.as_ref().expect("jwts_local_env");
+        if jwts_env.is_file() || jwts_local.is_file() {
+            vec![jwts_env, jwts_local]
+        } else {
+            Vec::new()
+        }
+    }
 }
 
 #[cfg(test)]

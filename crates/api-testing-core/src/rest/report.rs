@@ -1,4 +1,4 @@
-use crate::markdown;
+use crate::report::{ReportBuilder, ReportHeader};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RestReportAssertion {
@@ -22,57 +22,40 @@ pub struct RestReport {
 }
 
 pub fn render_rest_report_markdown(report: &RestReport) -> String {
-    let mut out = String::new();
-
-    out.push_str(&markdown::heading(
-        1,
-        &format!("API Test Report ({})", report.report_date),
-    ));
-    out.push('\n');
-    out.push_str(&markdown::heading(
-        2,
-        &format!("Test Case: {}", report.case_name),
-    ));
-    out.push('\n');
-
-    if let Some(cmd) = &report.command_snippet {
-        out.push_str(&markdown::heading(2, "Command"));
-        out.push('\n');
-        out.push_str(&markdown::code_block("bash", cmd));
-        out.push('\n');
-    }
-
-    out.push_str(&format!("Generated at: {}\n\n", report.generated_at));
-    out.push_str(&format!("{}\n\n", report.endpoint_note));
-    out.push_str(&format!("{}\n\n", report.result_note));
+    let header = ReportHeader {
+        report_date: &report.report_date,
+        case_name: &report.case_name,
+        generated_at: &report.generated_at,
+        endpoint_note: &report.endpoint_note,
+        result_note: &report.result_note,
+        command_snippet: report.command_snippet.as_deref(),
+    };
+    let mut builder = ReportBuilder::new(header);
 
     if !report.assertions.is_empty() {
-        out.push_str("### Assertions\n\n");
+        builder.push_section_heading("Assertions");
         for a in &report.assertions {
-            out.push_str(&format!("- {} ({})\n", a.label, a.state));
+            builder.push_list_item(&format!("{} ({})", a.label, a.state));
         }
-        out.push('\n');
+        builder.push_blank_line();
     }
 
-    out.push_str("### Request\n\n");
-    out.push_str(&markdown::code_block("json", &report.request_json));
-    out.push('\n');
-
-    out.push_str("### Response\n\n");
-    out.push_str(&markdown::code_block(
+    builder.push_code_section("Request", "json", &report.request_json, None, true);
+    builder.push_code_section(
+        "Response",
         &report.response_lang,
         &report.response_body,
-    ));
-    out.push('\n');
+        None,
+        true,
+    );
 
     if let Some(stderr_note) = &report.stderr_note {
         if !stderr_note.is_empty() {
-            out.push_str("### stderr\n\n");
-            out.push_str(&markdown::code_block("text", stderr_note));
+            builder.push_code_section("stderr", "text", stderr_note, None, false);
         }
     }
 
-    out
+    builder.finish()
 }
 
 #[cfg(test)]

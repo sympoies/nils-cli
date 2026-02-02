@@ -350,28 +350,7 @@ fn parse_u64_default(raw: Option<String>, default: u64, min: u64) -> u64 {
 }
 
 fn to_env_key(s: &str) -> String {
-    let s = s.trim().to_ascii_uppercase();
-    let mut out = String::new();
-    let mut prev_us = false;
-    for c in s.chars() {
-        let ok = c.is_ascii_alphanumeric();
-        if ok {
-            out.push(c);
-            prev_us = false;
-            continue;
-        }
-
-        if !out.is_empty() && !prev_us {
-            out.push('_');
-            prev_us = true;
-        }
-    }
-
-    while out.ends_with('_') {
-        out.pop();
-    }
-
-    out
+    env_file::normalize_env_key(s)
 }
 
 fn slugify(s: &str) -> String {
@@ -568,14 +547,13 @@ struct EndpointSelection {
     endpoint_value_used: String,
 }
 
-fn resolve_endpoint_for_call(args: &CallArgs, setup_dir: &Path) -> Result<EndpointSelection> {
-    let endpoints_env = setup_dir.join("endpoints.env");
-    let endpoints_local = setup_dir.join("endpoints.local.env");
-    let endpoints_files: Vec<&Path> = if endpoints_env.is_file() {
-        vec![&endpoints_env, &endpoints_local]
-    } else {
-        Vec::new()
-    };
+fn resolve_endpoint_for_call(
+    args: &CallArgs,
+    setup: &api_testing_core::config::ResolvedSetup,
+) -> Result<EndpointSelection> {
+    let endpoints_env = &setup.endpoints_env;
+    let endpoints_local = &setup.endpoints_local_env;
+    let endpoints_files = setup.endpoints_files();
 
     let gql_env_default = if !endpoints_files.is_empty() {
         env_file::read_var_last_wins("GQL_ENV_DEFAULT", &endpoints_files)?
@@ -604,9 +582,9 @@ fn resolve_endpoint_for_call(args: &CallArgs, setup_dir: &Path) -> Result<Endpoi
             let key = format!("GQL_URL_{env_key}");
             let found = env_file::read_var_last_wins(&key, &endpoints_files)?;
             let Some(found) = found else {
-                let mut available = list_available_suffixes(&endpoints_env, "GQL_URL_");
+                let mut available = list_available_suffixes(endpoints_env, "GQL_URL_");
                 if endpoints_local.is_file() {
-                    available.extend(list_available_suffixes(&endpoints_local, "GQL_URL_"));
+                    available.extend(list_available_suffixes(endpoints_local, "GQL_URL_"));
                     available.sort();
                     available.dedup();
                 }
@@ -691,9 +669,18 @@ fn cmd_call_internal(
         }
     };
 
+    let history_file_override = std::env::var("GQL_HISTORY_FILE")
+        .ok()
+        .and_then(|s| trim_non_empty(&s))
+        .map(PathBuf::from);
+    let setup = api_testing_core::config::ResolvedSetup::graphql(
+        setup_dir.clone(),
+        history_file_override.as_deref(),
+    );
+
     if args.list_envs {
-        let endpoints_env = setup_dir.join("endpoints.env");
-        let endpoints_local = setup_dir.join("endpoints.local.env");
+        let endpoints_env = &setup.endpoints_env;
+        let endpoints_local = &setup.endpoints_local_env;
         if !endpoints_env.is_file() {
             let _ = writeln!(
                 stderr,
@@ -701,9 +688,9 @@ fn cmd_call_internal(
             );
             return 1;
         }
-        let mut out = list_available_suffixes(&endpoints_env, "GQL_URL_");
+        let mut out = list_available_suffixes(endpoints_env, "GQL_URL_");
         if endpoints_local.is_file() {
-            out.extend(list_available_suffixes(&endpoints_local, "GQL_URL_"));
+            out.extend(list_available_suffixes(endpoints_local, "GQL_URL_"));
             out.sort();
             out.dedup();
         }
@@ -714,8 +701,8 @@ fn cmd_call_internal(
     }
 
     if args.list_jwts {
-        let jwts_env = setup_dir.join("jwts.env");
-        let jwts_local = setup_dir.join("jwts.local.env");
+        let jwts_env = setup.jwts_env.as_ref().expect("jwts_env");
+        let jwts_local = setup.jwts_local_env.as_ref().expect("jwts_local_env");
         if !jwts_env.is_file() && !jwts_local.is_file() {
             let _ = writeln!(
                 stderr,
@@ -723,9 +710,9 @@ fn cmd_call_internal(
             );
             return 1;
         }
-        let mut out = list_available_suffixes(&jwts_env, "GQL_JWT_");
+        let mut out = list_available_suffixes(jwts_env, "GQL_JWT_");
         if jwts_local.is_file() {
-            out.extend(list_available_suffixes(&jwts_local, "GQL_JWT_"));
+            out.extend(list_available_suffixes(jwts_local, "GQL_JWT_"));
             out.sort();
             out.dedup();
         }
@@ -762,11 +749,6 @@ fn cmd_call_internal(
             stderr,
         );
 
-    let history_file_override = std::env::var("GQL_HISTORY_FILE")
-        .ok()
-        .and_then(|s| trim_non_empty(&s))
-        .map(PathBuf::from);
-
     let rotation = history::RotationPolicy {
         max_mb: parse_u64_default(std::env::var("GQL_HISTORY_MAX_MB").ok(), 10, 0),
         keep: parse_u64_default(std::env::var("GQL_HISTORY_ROTATE_COUNT").ok(), 5, 1)
@@ -781,11 +763,12 @@ fn cmd_call_internal(
         stderr,
     );
 
+    let history_writer = history::HistoryWriter::new(setup.history_file.clone(), rotation);
+
     let mut history_ctx = CallHistoryContext {
         enabled: history_enabled,
         setup_dir: setup_dir.clone(),
-        history_file_override,
-        rotation,
+        history_writer,
         invocation_dir: invocation_dir.to_path_buf(),
         op_arg: args.operation.clone().unwrap_or_default(),
         vars_arg: args.variables.clone(),
@@ -795,7 +778,7 @@ fn cmd_call_internal(
         auth_source_used: api_testing_core::graphql::auth::GraphqlAuthSourceUsed::None,
     };
 
-    let endpoint = match resolve_endpoint_for_call(args, &setup_dir) {
+    let endpoint = match resolve_endpoint_for_call(args, &setup) {
         Ok(v) => {
             history_ctx.endpoint_label_used = v.endpoint_label_used.clone();
             history_ctx.endpoint_value_used = v.endpoint_value_used.clone();
@@ -809,7 +792,7 @@ fn cmd_call_internal(
     };
 
     let auth = match api_testing_core::graphql::auth::resolve_bearer_token(
-        &setup_dir,
+        &setup.setup_dir,
         &endpoint.gql_url,
         Some(&op_path),
         args.jwt.as_deref(),
@@ -887,8 +870,7 @@ fn cmd_call_internal(
 struct CallHistoryContext {
     enabled: bool,
     setup_dir: PathBuf,
-    history_file_override: Option<PathBuf>,
-    rotation: history::RotationPolicy,
+    history_writer: history::HistoryWriter,
     invocation_dir: PathBuf,
     op_arg: String,
     vars_arg: Option<String>,
@@ -902,12 +884,7 @@ fn append_history_best_effort(ctx: &CallHistoryContext, exit_code: i32) {
     if !ctx.enabled {
         return;
     }
-
-    let history_file = history::resolve_history_file(
-        &ctx.setup_dir,
-        ctx.history_file_override.as_deref(),
-        ".gql_history",
-    );
+    let history_writer = &ctx.history_writer;
 
     let stamp = history_timestamp_now().unwrap_or_default();
     let setup_rel = maybe_relpath(&ctx.setup_dir, &ctx.invocation_dir);
@@ -987,7 +964,7 @@ fn append_history_best_effort(ctx: &CallHistoryContext, exit_code: i32) {
         record.push_str("| jq .\n\n");
     }
 
-    let _ = history::append_record(&history_file, &record, ctx.rotation);
+    let _ = history_writer.append(&record);
 }
 
 fn cmd_history(
@@ -1020,14 +997,15 @@ fn cmd_history(
             .and_then(|s| trim_non_empty(&s))
     });
     let file_override = file_override.as_deref().map(Path::new);
-    let history_file = history::resolve_history_file(&setup_dir, file_override, ".gql_history");
+    let setup = api_testing_core::config::ResolvedSetup::graphql(setup_dir, file_override);
+    let history_file = &setup.history_file;
 
     if !history_file.is_file() {
         let _ = writeln!(stderr, "History file not found: {}", history_file.display());
         return 1;
     }
 
-    let records = match history::read_records(&history_file) {
+    let records = match history::read_records(history_file) {
         Ok(v) => v,
         Err(err) => {
             let _ = writeln!(stderr, "{err}");
@@ -1787,12 +1765,13 @@ mod tests {
     #[test]
     fn resolve_endpoint_for_call_honors_url_and_env() {
         let tmp = TempDir::new().unwrap();
-        let setup = tmp.path().join("setup/graphql");
-        std::fs::create_dir_all(&setup).unwrap();
+        let setup_dir = tmp.path().join("setup/graphql");
+        std::fs::create_dir_all(&setup_dir).unwrap();
         write_file(
-            &setup.join("endpoints.env"),
+            &setup_dir.join("endpoints.env"),
             "GQL_ENV_DEFAULT=prod\nGQL_URL_PROD=http://prod\nGQL_URL_STAGING=http://staging\n",
         );
+        let setup = api_testing_core::config::ResolvedSetup::graphql(setup_dir, None);
 
         let args = CallArgs {
             env: None,
@@ -1843,12 +1822,13 @@ mod tests {
     #[test]
     fn resolve_endpoint_for_call_unknown_env_lists_available() {
         let tmp = TempDir::new().unwrap();
-        let setup = tmp.path().join("setup/graphql");
-        std::fs::create_dir_all(&setup).unwrap();
+        let setup_dir = tmp.path().join("setup/graphql");
+        std::fs::create_dir_all(&setup_dir).unwrap();
         write_file(
-            &setup.join("endpoints.env"),
+            &setup_dir.join("endpoints.env"),
             "GQL_URL_PROD=http://prod\nGQL_URL_DEV=http://dev\n",
         );
+        let setup = api_testing_core::config::ResolvedSetup::graphql(setup_dir, None);
 
         let args = CallArgs {
             env: Some("missing".to_string()),

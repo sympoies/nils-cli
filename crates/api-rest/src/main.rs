@@ -315,28 +315,7 @@ fn parse_u64_default(raw: Option<String>, default: u64, min: u64) -> u64 {
 }
 
 fn to_env_key(s: &str) -> String {
-    let s = s.trim().to_ascii_uppercase();
-    let mut out = String::new();
-    let mut prev_us = false;
-    for c in s.chars() {
-        let ok = c.is_ascii_alphanumeric();
-        if ok {
-            out.push(c);
-            prev_us = false;
-            continue;
-        }
-
-        if !out.is_empty() && !prev_us {
-            out.push('_');
-            prev_us = true;
-        }
-    }
-
-    while out.ends_with('_') {
-        out.pop();
-    }
-
-    out
+    env_file::normalize_env_key(s)
 }
 
 fn slugify(s: &str) -> String {
@@ -479,14 +458,13 @@ struct EndpointSelection {
     endpoint_value_used: String,
 }
 
-fn resolve_endpoint_for_call(args: &CallArgs, setup_dir: &Path) -> Result<EndpointSelection> {
-    let endpoints_env = setup_dir.join("endpoints.env");
-    let endpoints_local = setup_dir.join("endpoints.local.env");
-    let endpoints_files: Vec<&Path> = if endpoints_env.is_file() {
-        vec![&endpoints_env, &endpoints_local]
-    } else {
-        Vec::new()
-    };
+fn resolve_endpoint_for_call(
+    args: &CallArgs,
+    setup: &api_testing_core::config::ResolvedSetup,
+) -> Result<EndpointSelection> {
+    let endpoints_env = &setup.endpoints_env;
+    let endpoints_local = &setup.endpoints_local_env;
+    let endpoints_files = setup.endpoints_files();
 
     let rest_env_default = if !endpoints_files.is_empty() {
         env_file::read_var_last_wins("REST_ENV_DEFAULT", &endpoints_files)?
@@ -515,9 +493,9 @@ fn resolve_endpoint_for_call(args: &CallArgs, setup_dir: &Path) -> Result<Endpoi
             let key = format!("REST_URL_{env_key}");
             let found = env_file::read_var_last_wins(&key, &endpoints_files)?;
             let Some(found) = found else {
-                let mut available = list_available_suffixes(&endpoints_env, "REST_URL_");
+                let mut available = list_available_suffixes(endpoints_env, "REST_URL_");
                 if endpoints_local.is_file() {
-                    available.extend(list_available_suffixes(&endpoints_local, "REST_URL_"));
+                    available.extend(list_available_suffixes(endpoints_local, "REST_URL_"));
                     available.sort();
                     available.dedup();
                 }
@@ -578,14 +556,13 @@ struct AuthSelection {
     auth_source_used: AuthSourceUsed,
 }
 
-fn resolve_auth_for_call(args: &CallArgs, setup_dir: &Path) -> Result<AuthSelection> {
-    let tokens_env = setup_dir.join("tokens.env");
-    let tokens_local = setup_dir.join("tokens.local.env");
-    let tokens_files: Vec<&Path> = if tokens_env.is_file() || tokens_local.is_file() {
-        vec![&tokens_env, &tokens_local]
-    } else {
-        Vec::new()
-    };
+fn resolve_auth_for_call(
+    args: &CallArgs,
+    setup: &api_testing_core::config::ResolvedSetup,
+) -> Result<AuthSelection> {
+    let tokens_env = setup.tokens_env.as_ref().expect("tokens_env");
+    let tokens_local = setup.tokens_local_env.as_ref().expect("tokens_local_env");
+    let tokens_files = setup.tokens_files();
 
     let token_name_arg = args.token.as_deref().and_then(trim_non_empty);
     let token_name_env = std::env::var("REST_TOKEN_NAME")
@@ -610,9 +587,9 @@ fn resolve_auth_for_call(args: &CallArgs, setup_dir: &Path) -> Result<AuthSelect
         let token_var = format!("REST_TOKEN_{token_key}");
         let bearer_token = env_file::read_var_last_wins(&token_var, &tokens_files)?;
         let Some(bearer_token) = bearer_token else {
-            let mut available = list_available_suffixes(&tokens_env, "REST_TOKEN_");
+            let mut available = list_available_suffixes(tokens_env, "REST_TOKEN_");
             if tokens_local.is_file() {
-                available.extend(list_available_suffixes(&tokens_local, "REST_TOKEN_"));
+                available.extend(list_available_suffixes(tokens_local, "REST_TOKEN_"));
                 available.sort();
                 available.dedup();
             }
@@ -773,6 +750,11 @@ fn cmd_call_internal(
         .and_then(|s| trim_non_empty(&s))
         .map(PathBuf::from);
 
+    let setup = api_testing_core::config::ResolvedSetup::rest(
+        setup_dir.clone(),
+        history_file_override.as_deref(),
+    );
+
     let rotation = history::RotationPolicy {
         max_mb: parse_u64_default(std::env::var("REST_HISTORY_MAX_MB").ok(), 10, 0),
         keep: parse_u64_default(std::env::var("REST_HISTORY_ROTATE_COUNT").ok(), 5, 1)
@@ -787,11 +769,12 @@ fn cmd_call_internal(
         stderr,
     );
 
+    let history_writer = history::HistoryWriter::new(setup.history_file.clone(), rotation);
+
     let mut history_ctx = CallHistoryContext {
         enabled: history_enabled,
         setup_dir: setup_dir.clone(),
-        history_file_override,
-        rotation,
+        history_writer,
         invocation_dir: invocation_dir.to_path_buf(),
         request_arg: args.request.clone(),
         endpoint_label_used: String::new(),
@@ -801,7 +784,7 @@ fn cmd_call_internal(
         token_name_for_log: String::new(),
     };
 
-    let endpoint = match resolve_endpoint_for_call(args, &setup_dir) {
+    let endpoint = match resolve_endpoint_for_call(args, &setup) {
         Ok(v) => {
             history_ctx.endpoint_label_used = v.endpoint_label_used.clone();
             history_ctx.endpoint_value_used = v.endpoint_value_used.clone();
@@ -814,7 +797,7 @@ fn cmd_call_internal(
         }
     };
 
-    let auth = match resolve_auth_for_call(args, &setup_dir) {
+    let auth = match resolve_auth_for_call(args, &setup) {
         Ok(v) => {
             history_ctx.auth_source_used = v.auth_source_used.clone();
             history_ctx.token_name_for_log = v.token_name.clone();
@@ -901,8 +884,7 @@ fn cmd_call_internal(
 struct CallHistoryContext {
     enabled: bool,
     setup_dir: PathBuf,
-    history_file_override: Option<PathBuf>,
-    rotation: history::RotationPolicy,
+    history_writer: history::HistoryWriter,
     invocation_dir: PathBuf,
     request_arg: String,
     endpoint_label_used: String,
@@ -917,11 +899,7 @@ fn append_history_best_effort(ctx: &CallHistoryContext, exit_code: i32) {
         return;
     }
 
-    let history_file = history::resolve_history_file(
-        &ctx.setup_dir,
-        ctx.history_file_override.as_deref(),
-        ".rest_history",
-    );
+    let history_writer = &ctx.history_writer;
 
     let stamp = history_timestamp_now().unwrap_or_default();
     let setup_rel = maybe_relpath(&ctx.setup_dir, &ctx.invocation_dir);
@@ -989,7 +967,7 @@ fn append_history_best_effort(ctx: &CallHistoryContext, exit_code: i32) {
     record.push_str(&format!("  {} \\\n", shell_quote(&req_rel)));
     record.push_str("| jq .\n\n");
 
-    let _ = history::append_record(&history_file, &record, ctx.rotation);
+    let _ = history_writer.append(&record);
 }
 
 fn history_timestamp_now() -> Result<String> {
@@ -1026,14 +1004,15 @@ fn cmd_history(
             .and_then(|s| trim_non_empty(&s))
     });
     let file_override = file_override.as_deref().map(Path::new);
-    let history_file = history::resolve_history_file(&setup_dir, file_override, ".rest_history");
+    let setup = api_testing_core::config::ResolvedSetup::rest(setup_dir, file_override);
+    let history_file = &setup.history_file;
 
     if !history_file.is_file() {
         let _ = writeln!(stderr, "History file not found: {}", history_file.display());
         return 1;
     }
 
-    let records = match history::read_records(&history_file) {
+    let records = match history::read_records(history_file) {
         Ok(v) => v,
         Err(err) => {
             let _ = writeln!(stderr, "{err}");
@@ -1651,12 +1630,13 @@ mod tests {
     #[test]
     fn resolve_endpoint_for_call_honors_url_and_env() {
         let tmp = TempDir::new().unwrap();
-        let setup = tmp.path().join("setup/rest");
-        std::fs::create_dir_all(&setup).unwrap();
+        let setup_dir = tmp.path().join("setup/rest");
+        std::fs::create_dir_all(&setup_dir).unwrap();
         write_file(
-            &setup.join("endpoints.env"),
+            &setup_dir.join("endpoints.env"),
             "REST_ENV_DEFAULT=prod\nREST_URL_PROD=http://prod\nREST_URL_STAGING=http://staging\n",
         );
+        let setup = api_testing_core::config::ResolvedSetup::rest(setup_dir, None);
 
         let args = CallArgs {
             env: None,
@@ -1698,12 +1678,13 @@ mod tests {
     #[test]
     fn resolve_endpoint_for_call_unknown_env_lists_available() {
         let tmp = TempDir::new().unwrap();
-        let setup = tmp.path().join("setup/rest");
-        std::fs::create_dir_all(&setup).unwrap();
+        let setup_dir = tmp.path().join("setup/rest");
+        std::fs::create_dir_all(&setup_dir).unwrap();
         write_file(
-            &setup.join("endpoints.env"),
+            &setup_dir.join("endpoints.env"),
             "REST_URL_PROD=http://prod\nREST_URL_DEV=http://dev\n",
         );
+        let setup = api_testing_core::config::ResolvedSetup::rest(setup_dir, None);
 
         let args = CallArgs {
             env: Some("missing".to_string()),
@@ -1725,9 +1706,10 @@ mod tests {
         let _guard = EnvGuard::set("ACCESS_TOKEN", "env-token");
 
         let tmp = TempDir::new().unwrap();
-        let setup = tmp.path().join("setup/rest");
-        std::fs::create_dir_all(&setup).unwrap();
-        write_file(&setup.join("tokens.env"), "REST_TOKEN_SVC=svc-token\n");
+        let setup_dir = tmp.path().join("setup/rest");
+        std::fs::create_dir_all(&setup_dir).unwrap();
+        write_file(&setup_dir.join("tokens.env"), "REST_TOKEN_SVC=svc-token\n");
+        let setup = api_testing_core::config::ResolvedSetup::rest(setup_dir, None);
 
         let args = CallArgs {
             env: None,

@@ -22,31 +22,6 @@ fn trim_non_empty(s: &str) -> Option<String> {
     (!t.is_empty()).then(|| t.to_string())
 }
 
-fn to_env_key(s: &str) -> String {
-    let s = s.trim().to_ascii_uppercase();
-    let mut out = String::new();
-    let mut prev_us = false;
-    for c in s.chars() {
-        let ok = c.is_ascii_alphanumeric();
-        if ok {
-            out.push(c);
-            prev_us = false;
-            continue;
-        }
-
-        if !out.is_empty() && !prev_us {
-            out.push('_');
-            prev_us = true;
-        }
-    }
-
-    while out.ends_with('_') {
-        out.pop();
-    }
-
-    out
-}
-
 fn bool_from_env(
     raw: Option<String>,
     name: &str,
@@ -286,10 +261,8 @@ pub fn resolve_bearer_token(
             .unwrap_or_else(|| "default".to_string())
             .to_ascii_lowercase();
 
-        let jwt_key = to_env_key(&jwt_name);
-        let token_var = format!("GQL_JWT_{jwt_key}");
-        let token =
-            env_file::read_var_last_wins(&token_var, &jwts_files)?.and_then(|s| trim_non_empty(&s));
+        let token = env_file::read_prefixed_var("GQL_JWT_", &jwt_name, &jwts_files)?
+            .and_then(|s| trim_non_empty(&s));
 
         let token = if let Some(token) = token {
             token
@@ -366,6 +339,8 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
+    use nils_test_support::http::{HttpResponse, LoopbackServer};
+    use nils_test_support::{EnvGuard, GlobalStateLock};
     use tempfile::TempDir;
 
     fn write_file(path: &Path, contents: &str) {
@@ -402,5 +377,156 @@ query Login {
 
         let found = find_login_operation(&setup, "admin").expect("found");
         assert!(found.ends_with("login.admin.graphql"));
+    }
+
+    #[test]
+    fn graphql_auth_helper_parsers_cover_defaults() {
+        let mut warnings = Vec::new();
+        assert!(bool_from_env(
+            Some("true".into()),
+            "X",
+            false,
+            &mut warnings
+        ));
+        assert!(!bool_from_env(
+            Some("false".into()),
+            "X",
+            true,
+            &mut warnings
+        ));
+
+        let mut warnings = Vec::new();
+        assert!(!bool_from_env(
+            Some("nope".into()),
+            "X",
+            true,
+            &mut warnings
+        ));
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("X must be true|false"));
+
+        assert_eq!(parse_u64_default(Some("".into()), 5, 1), 5);
+        assert_eq!(parse_u64_default(Some("nope".into()), 5, 1), 5);
+        assert_eq!(parse_u64_default(Some("0".into()), 5, 1), 1);
+        assert_eq!(parse_u64_default(Some("10".into()), 5, 1), 10);
+    }
+
+    #[test]
+    fn graphql_auth_find_token_in_value_handles_nested_structures() {
+        let value = serde_json::json!({
+            "data": {
+                "login": {
+                    "token": "abc"
+                }
+            }
+        });
+        assert_eq!(find_token_in_value(&value), Some("abc".to_string()));
+
+        let array_value = serde_json::json!([{"accessToken": "def"}]);
+        assert_eq!(find_token_in_value(&array_value), Some("def".to_string()));
+
+        let blank = serde_json::json!("  ");
+        assert_eq!(find_token_in_value(&blank), None);
+    }
+
+    #[test]
+    fn graphql_auth_resolve_uses_access_token_env() {
+        let lock = GlobalStateLock::new();
+        let _access = EnvGuard::set(&lock, "ACCESS_TOKEN", "env-token");
+        let _jwt_enabled = EnvGuard::set(&lock, "GQL_JWT_VALIDATE_ENABLED", "false");
+        let _jwt_name = EnvGuard::remove(&lock, "GQL_JWT_NAME");
+
+        let tmp = TempDir::new().expect("tmp");
+        let mut stderr = Vec::new();
+        let out = resolve_bearer_token(
+            tmp.path(),
+            "http://localhost/graphql",
+            None,
+            None,
+            &mut stderr,
+        )
+        .expect("resolve");
+
+        assert_eq!(out.bearer_token.as_deref(), Some("env-token"));
+        assert_eq!(out.source, GraphqlAuthSourceUsed::EnvAccessToken);
+    }
+
+    #[test]
+    fn graphql_auth_resolve_prefers_profile_token_from_files() {
+        let lock = GlobalStateLock::new();
+        let _access = EnvGuard::remove(&lock, "ACCESS_TOKEN");
+        let _jwt_enabled = EnvGuard::set(&lock, "GQL_JWT_VALIDATE_ENABLED", "false");
+        let _jwt_name = EnvGuard::remove(&lock, "GQL_JWT_NAME");
+
+        let tmp = TempDir::new().expect("tmp");
+        write_file(
+            &tmp.path().join("jwts.env"),
+            "GQL_JWT_ADMIN=token-from-file\n",
+        );
+
+        let mut stderr = Vec::new();
+        let out = resolve_bearer_token(
+            tmp.path(),
+            "http://localhost/graphql",
+            None,
+            Some("admin"),
+            &mut stderr,
+        )
+        .expect("resolve");
+
+        assert_eq!(out.bearer_token.as_deref(), Some("token-from-file"));
+        assert_eq!(
+            out.source,
+            GraphqlAuthSourceUsed::JwtProfile {
+                name: "admin".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn graphql_auth_auto_login_fetches_token_and_vars() {
+        let lock = GlobalStateLock::new();
+        let _access = EnvGuard::remove(&lock, "ACCESS_TOKEN");
+        let _jwt_enabled = EnvGuard::set(&lock, "GQL_JWT_VALIDATE_ENABLED", "false");
+        let _jwt_name = EnvGuard::remove(&lock, "GQL_JWT_NAME");
+
+        let tmp = TempDir::new().expect("tmp");
+        let setup = tmp.path().join("setup/graphql");
+        std::fs::create_dir_all(&setup).expect("mkdir");
+        write_file(
+            &setup.join("login.admin.graphql"),
+            "query Login($user: String!) { login { accessToken } }",
+        );
+        write_file(
+            &setup.join("login.admin.variables.json"),
+            r#"{"user":"alice"}"#,
+        );
+
+        let server = LoopbackServer::new().expect("server");
+        server.add_route(
+            "POST",
+            "/graphql",
+            HttpResponse::new(200, r#"{"data":{"login":{"accessToken":"auto-token"}}}"#)
+                .with_header("Content-Type", "application/json"),
+        );
+
+        let endpoint = format!("{}/graphql", server.url());
+        let mut stderr = Vec::new();
+        let out = resolve_bearer_token(&setup, &endpoint, None, Some("admin"), &mut stderr)
+            .expect("resolve");
+
+        assert_eq!(out.bearer_token.as_deref(), Some("auto-token"));
+        assert_eq!(
+            out.source,
+            GraphqlAuthSourceUsed::JwtProfile {
+                name: "admin".to_string()
+            }
+        );
+
+        let requests = server.take_requests();
+        assert_eq!(requests.len(), 1);
+        let body = requests[0].body_text();
+        assert!(body.contains("\"variables\""));
+        assert!(body.contains("\"user\":\"alice\""));
     }
 }

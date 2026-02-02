@@ -1,251 +1,258 @@
-# Plan: api-testing-core suite refactor
+# Plan: API testing core refactor for maintainability + coverage
 
 ## Overview
-This plan refactors the `api-testing-core` crate with a focus on the `suite` runtime, especially `suite/runner` and `suite/cleanup`, to improve readability and maintainability. It centralizes duplicated helper logic, decomposes large modules into cohesive submodules, and adds characterization tests to preserve behavior. External behavior (CLI output, file layout, warnings, and JSON formats) remains unchanged. Work is staged to keep diffs reviewable and risk low.
+This plan refactors `crates/api-testing-core` to improve maintainability and raise test coverage while
+preserving the external behavior of `api-rest`, `api-gql`, and `api-test`. The approach is to lock
+current behavior with characterization tests, then restructure duplicated setup discovery, auth/token
+resolution, and report/history pipelines into shared, testable components. The refactor favors small,
+validated steps and keeps CLI-facing output stable.
 
 ## Scope
-- In scope: internal module reorganization, shared helper extraction, new unit/integration tests that lock current behavior, minor naming improvements for clarity.
-- Out of scope: new features, performance optimizations, CLI flag changes, or changing on-disk output formats.
+- In scope: `crates/api-testing-core` module refactors, new test fixtures and integration tests, and
+  small adapter changes in `api-rest`, `api-gql`, and `api-test` to match refactored core APIs.
+- Out of scope: New CLI flags, behavior changes, HTTP client swaps, or changes to legacy scripts.
 
 ## Assumptions (if any)
-1. Behavioral parity is required; existing tests are authoritative for expected outputs.
-2. Adding `#[cfg(test)]` unit tests inside crate modules is acceptable.
-3. Refactors will be delivered in small steps so regressions are easy to spot and revert.
+1. Output and exit-code parity for `api-rest`, `api-gql`, and `api-test` must remain unchanged.
+2. Tests can use `nils-test-support` helpers and loopback HTTP servers where needed.
+3. Internal API changes are allowed if dependent crates are updated in the same refactor.
 
-## Sprint 1: Shared helpers and characterization tests
-**Goal**: Remove duplicated helper logic between `runner` and `cleanup`, and lock key behaviors with tests.
+## Sprint 1: Characterization + test scaffolding
+**Goal**: Lock current behavior and build reusable fixtures to enable safe refactors.
 **Demo/Validation**:
 - Command(s): `cargo test -p api-testing-core`
-- Verify: tests pass and `suite_runner_loopback` still validates stdout/stderr content and command snippets.
+- Verify: New characterization tests pass and fail on intentional behavior changes.
+**Parallelizable**: After Task 1.1, Tasks 1.2 and 1.3 can run in parallel.
 
-### Task 1.1: Create shared suite runtime helpers
+### Task 1.1: Add fixture builders and test support helpers
 - **Location**:
-  - `crates/api-testing-core/src/suite/runtime.rs`
-  - `crates/api-testing-core/src/suite/mod.rs`
-- **Description**: Introduce a `suite::runtime` module and move shared helpers from `suite/runner.rs` and `suite/cleanup.rs` into it (URL resolution with defaults/env, token profile resolution, GraphQL bearer token resolution, time/ID/path helpers). Export them as `pub(crate)`.
+  - `crates/api-testing-core/tests/support/mod.rs`
+  - `crates/api-testing-core/tests/fixtures_smoke.rs`
+  - `crates/nils-test-support/src/http.rs`
+- **Description**: Create reusable helpers to build temp setup dirs (endpoints/tokens/jwts env files),
+  stub request/operation files, and spin up loopback HTTP servers. Add a small smoke test to ensure
+  the helpers assemble a minimal repo layout correctly.
 - **Dependencies**:
   - none
-- **Complexity**: 6
+- **Complexity**: 4
 - **Acceptance criteria**:
-  - `suite/runner.rs` and `suite/cleanup.rs` no longer define duplicate helpers.
-  - `suite::runtime` provides the shared API surface with clear, single-responsibility functions.
+  - A fixture helper can create a REST + GraphQL setup directory with endpoints and tokens.
+  - A smoke test verifies the fixture helper output structure.
 - **Validation**:
-  - `cargo test -p api-testing-core`
+  - `cargo test -p api-testing-core --test fixtures_smoke`
 
-### Task 1.2: Update runner/cleanup to use shared helpers
+### Task 1.2: Characterize setup discovery and config resolution
 - **Location**:
-  - `crates/api-testing-core/src/suite/runner.rs`
-  - `crates/api-testing-core/src/suite/cleanup.rs`
-- **Description**: Replace local helper calls with `suite::runtime` usage and remove redundant logic. Keep signatures and error messages identical.
+  - `crates/api-testing-core/src/config.rs`
+  - `crates/api-testing-core/tests/config_resolution.rs`
+- **Description**: Add tests that capture the exact discovery order for REST/GQL setup dirs,
+  including config-dir overrides, upward search rules, and invocation-dir fallbacks.
 - **Dependencies**:
   - Task 1.1
 - **Complexity**: 5
 - **Acceptance criteria**:
-  - No behavior changes in `run_suite` and `run_case_cleanup` outputs for existing tests.
-  - Error messages and logging remain byte-for-byte identical for common paths.
+  - Tests cover at least one REST and one GQL discovery path per rule branch.
+  - Each test asserts the resolved setup dir matches current behavior.
 - **Validation**:
-  - `cargo test -p api-testing-core`
+  - `cargo test -p api-testing-core --test config_resolution`
 
-### Task 1.3: Add in-module characterization tests for shared helpers
+### Task 1.3: Characterize report, history, and snippet formatting
 - **Location**:
-  - `crates/api-testing-core/src/suite/runtime.rs`
-  - `crates/api-testing-core/src/suite/runtime_tests.rs`
-- **Description**: Add `#[cfg(test)]` unit tests covering URL precedence (override vs defaults vs env), token profile resolution from `tokens.env`, and ID sanitization/path normalization. Use temp directories to write `tokens.env` so tests remain hermetic (no repo fixtures required). Prefix test names with `runtime_helpers_` for filtering.
+  - `crates/api-testing-core/src/report.rs`
+  - `crates/api-testing-core/src/markdown.rs`
+  - `crates/api-testing-core/src/redact.rs`
+  - `crates/api-testing-core/src/cmd_snippet.rs`
+  - `crates/api-testing-core/src/history.rs`
+  - `crates/api-testing-core/tests/report_history.rs`
+- **Description**: Add tests for report markdown structure, redaction rules, history record
+  formatting, and command snippet rendering. Focus on output invariants and edge cases like
+  redacting secrets and preserving line breaks.
 - **Dependencies**:
   - Task 1.1
-- **Complexity**: 4
+- **Complexity**: 6
 - **Acceptance criteria**:
-  - Tests cover at least one REST and one GraphQL URL resolution path.
-  - Tests verify token profile lookup and error path for missing profiles.
+  - Tests assert stable markdown headings and command snippet formatting.
+  - Tests cover history rotation and command-only extraction paths.
 - **Validation**:
-  - `cargo test -p api-testing-core --lib runtime_helpers_`
+  - `cargo test -p api-testing-core --test report_history`
 
-## Sprint 2: Runner decomposition
-**Goal**: Split `suite/runner.rs` into cohesive modules while keeping `run_suite` as the public entry point.
+## Sprint 2: Unify setup discovery + auth resolution
+**Goal**: Reduce duplicated discovery and token logic while keeping behavior identical.
 **Demo/Validation**:
-- Command(s): `cargo test -p api-testing-core`
-- Verify: `suite_runner_loopback` continues to pass unchanged.
+- Command(s): `cargo test -p api-testing-core --test config_resolution`
+- Verify: Updated code passes existing characterization tests without changes.
+**Parallelizable**: none.
 
-### Task 2.1: Create runner context + progress modules
+### Task 2.1: Extract shared setup discovery model
 - **Location**:
-  - `crates/api-testing-core/src/suite/runner/mod.rs`
-  - `crates/api-testing-core/src/suite/runner/context.rs`
-  - `crates/api-testing-core/src/suite/runner/progress.rs`
-- **Description**: Convert `suite/runner.rs` into a module directory. Move `SuiteRunOptions`, `SuiteRunOutput`, progress handling, and case metadata normalization into dedicated modules; keep `run_suite` in `runner/mod.rs`.
+  - `crates/api-testing-core/src/config.rs`
+  - `crates/api-rest/src/main.rs`
+  - `crates/api-gql/src/main.rs`
+  - `crates/api-test/src/main.rs`
+- **Description**: Introduce a `SetupDiscovery` model (for REST/GQL) that centralizes search rules
+  and fallback ordering. Replace the per-command functions with a shared resolver while preserving
+  exact error messages.
 - **Dependencies**:
   - Task 1.2
 - **Complexity**: 6
 - **Acceptance criteria**:
-  - Public API remains `api_testing_core::suite::runner::run_suite` and type names unchanged.
-  - File-level organization reduces `runner/mod.rs` to orchestration logic.
+  - REST and GQL discovery routes use the shared resolver.
+  - `config_resolution` tests pass unchanged.
 - **Validation**:
-  - `cargo test -p api-testing-core`
+  - `cargo test -p api-testing-core --test config_resolution`
 
-### Task 2.2: Extract REST case preparation + safety gating
+### Task 2.2: Centralize token/JWT profile resolution
 - **Location**:
-  - `crates/api-testing-core/src/suite/runner/rest.rs`
-  - `crates/api-testing-core/src/suite/runner/mod.rs`
-- **Description**: Move REST request loading, safety checks, and auth/token preparation into `runner/rest.rs`, returning a structured `RestCasePlan` (or equivalent) that `run_suite` can execute without changing outputs.
+  - `crates/api-testing-core/src/suite/runtime.rs`
+  - `crates/api-testing-core/src/graphql/auth.rs`
+  - `crates/api-testing-core/src/rest/runner.rs`
+  - `crates/api-testing-core/src/env_file.rs`
+- **Description**: Move token/JWT profile resolution into a shared helper (new module or extended
+  `env_file` API). Remove duplicated key normalization logic and ensure error messages match
+  current behavior.
 - **Dependencies**:
-  - Task 2.1
-- **Complexity**: 6
+  - Task 1.1
+- **Complexity**: 5
 - **Acceptance criteria**:
-  - REST request parsing and safety decisions live in `runner/rest.rs`.
-  - `run_suite` still produces identical stdout/stderr files for REST cases in `suite_runner_loopback`.
+  - REST token and GraphQL JWT lookups use the shared helper.
+  - Existing auth/error tests (and new ones from Sprint 1) pass unchanged.
 - **Validation**:
+  - `cargo test -p api-testing-core --test report_history`
   - `cargo test -p api-testing-core --test suite_runner_loopback`
 
-### Task 2.3: Extract REST execution + command snippet formatting
+### Task 2.3: Introduce a resolved-setup struct for core workflows
 - **Location**:
-  - `crates/api-testing-core/src/suite/runner/rest.rs`
-  - `crates/api-testing-core/src/suite/runner/mod.rs`
-- **Description**: Move REST request execution, response assertion handling, and command snippet formatting into `runner/rest.rs` so `run_suite` only orchestrates results.
+  - `crates/api-testing-core/src/config.rs`
+  - `crates/api-testing-core/src/history.rs`
+  - `crates/api-testing-core/src/report.rs`
+  - `crates/api-testing-core/src/rest/runner.rs`
+  - `crates/api-testing-core/src/graphql/runner.rs`
+- **Description**: Add a `ResolvedSetup` struct that carries setup dir, history file, and env file
+  paths. Update call sites to pass this struct instead of raw paths to reduce parameter sprawl.
 - **Dependencies**:
+  - Task 2.1
   - Task 2.2
 - **Complexity**: 6
 - **Acceptance criteria**:
-  - REST stdout/stderr contents and command snippets are byte-for-byte identical for existing tests.
-  - `run_suite` delegates REST execution to `runner/rest.rs`.
+  - Core entrypoints use `ResolvedSetup` and no longer duplicate path resolution.
+  - All Sprint 1 tests pass without expectation changes.
 - **Validation**:
-  - `cargo test -p api-testing-core --test suite_runner_loopback`
+  - `cargo test -p api-testing-core`
 
-### Task 2.4: Extract GraphQL case preparation + auth resolution
+## Sprint 3: Report + history pipeline refactor
+**Goal**: Consolidate report/history logic into testable, reusable pipelines.
+**Demo/Validation**:
+- Command(s): `cargo test -p api-testing-core --test report_history`
+- Verify: Output format tests remain stable after refactor.
+**Parallelizable**: After Task 2.3, Tasks 3.1 and 3.2 can run in parallel.
+
+### Task 3.1: Unify report rendering pipeline
 - **Location**:
-  - `crates/api-testing-core/src/suite/runner/graphql.rs`
-  - `crates/api-testing-core/src/suite/runner/mod.rs`
-- **Description**: Move operation loading and JWT resolution into `runner/graphql.rs`, returning a structured plan object that `run_suite` can execute without changing outputs.
+  - `crates/api-testing-core/src/report.rs`
+  - `crates/api-testing-core/src/rest/report.rs`
+  - `crates/api-testing-core/src/graphql/report.rs`
+  - `crates/api-testing-core/src/markdown.rs`
+  - `crates/api-testing-core/src/redact.rs`
+- **Description**: Create a shared report builder that assembles markdown sections, applies
+  redaction consistently, and renders command snippets. Update REST/GQL report modules to call the
+  shared pipeline and keep the same output ordering.
 - **Dependencies**:
   - Task 2.3
-- **Complexity**: 6
+- **Complexity**: 7
 - **Acceptance criteria**:
-  - GraphQL preparation logic lives in `runner/graphql.rs`.
-  - `run_suite` behavior remains unchanged for GraphQL cases.
+  - REST and GQL reports are rendered through a single shared pipeline.
+  - Report formatting tests match the pre-refactor outputs exactly.
 - **Validation**:
-  - `cargo test -p api-testing-core`
+  - `cargo test -p api-testing-core --test report_history`
 
-### Task 2.5: Extract GraphQL execution + command snippet formatting
+### Task 3.2: Extract a history writer with deterministic formatting
 - **Location**:
-  - `crates/api-testing-core/src/suite/runner/graphql.rs`
-  - `crates/api-testing-core/src/suite/runner/mod.rs`
-- **Description**: Move GraphQL execution, assertions, and command snippet formatting into `runner/graphql.rs` so `run_suite` only aggregates results and reporting.
+  - `crates/api-testing-core/src/history.rs`
+  - `crates/api-testing-core/src/rest/runner.rs`
+  - `crates/api-testing-core/src/graphql/runner.rs`
+- **Description**: Wrap history append + rotation logic in a small `HistoryWriter` struct with
+  explicit formatting helpers. Keep lock behavior and rotation policies identical.
 - **Dependencies**:
-  - Task 2.4
-- **Complexity**: 6
-- **Acceptance criteria**:
-  - GraphQL stdout/stderr files and command snippets are byte-for-byte identical for existing tests.
-  - Shared case result construction stays centralized and reused by REST/GraphQL.
-- **Validation**:
-  - `cargo test -p api-testing-core`
-
-### Task 2.6: Strengthen runner output assertions
-- **Location**:
-  - `crates/api-testing-core/tests/suite_runner_loopback.rs`
-- **Description**: Extend `suite_runner_loopback` assertions to explicitly validate command snippet text, stdout/stderr file contents, and output file paths so refactors cannot silently change outputs.
-- **Dependencies**:
-  - Task 2.5
-- **Complexity**: 4
-- **Acceptance criteria**:
-  - Tests assert command snippet formatting for at least one REST and one GraphQL case.
-  - Tests assert stdout/stderr content and file path shape for existing cases.
-- **Validation**:
-  - `cargo test -p api-testing-core --test suite_runner_loopback`
-
-## Sprint 3: Cleanup decomposition and consistency
-**Goal**: Make `suite/cleanup` maintainable by splitting REST/GraphQL cleanup flows and sharing template logic.
-**Demo/Validation**:
-- Command(s): `cargo test -p api-testing-core`
-- Verify: cleanup steps still run and log as before.
-
-### Task 3.1: Introduce cleanup module structure + shared template helpers
-- **Location**:
-  - `crates/api-testing-core/src/suite/cleanup/mod.rs`
-  - `crates/api-testing-core/src/suite/cleanup/context.rs`
-  - `crates/api-testing-core/src/suite/cleanup/template.rs`
-- **Description**: Replace `suite/cleanup.rs` with a module directory, move context + template rendering into dedicated files, and re-export a thin `run_case_cleanup` entry point.
-- **Dependencies**:
-  - Task 1.2
-- **Complexity**: 6
-- **Acceptance criteria**:
-  - `run_case_cleanup` compiles and delegates to the new module structure with no behavior change.
-  - Template rendering helpers live in `cleanup/template.rs`.
-- **Validation**:
-  - `cargo test -p api-testing-core`
-
-### Task 3.2: Move REST cleanup flow into submodule
-- **Location**:
-  - `crates/api-testing-core/src/suite/cleanup/mod.rs`
-  - `crates/api-testing-core/src/suite/cleanup/context.rs`
-  - `crates/api-testing-core/src/suite/cleanup/rest.rs`
-  - `crates/api-testing-core/src/suite/cleanup/template.rs`
-- **Description**: Move REST cleanup logic into `cleanup/rest.rs`, keeping logging and file outputs unchanged.
-- **Dependencies**:
-  - Task 3.1
-- **Complexity**: 6
-- **Acceptance criteria**:
-  - REST cleanup still emits the same stderr log lines and files as before.
-  - Template rendering and token resolution behavior remain unchanged.
-- **Validation**:
-  - `cargo test -p api-testing-core`
-
-### Task 3.3: Move GraphQL cleanup flow into submodule
-- **Location**:
-  - `crates/api-testing-core/src/suite/cleanup/mod.rs`
-  - `crates/api-testing-core/src/suite/cleanup/context.rs`
-  - `crates/api-testing-core/src/suite/cleanup/graphql.rs`
-  - `crates/api-testing-core/src/suite/cleanup/template.rs`
-- **Description**: Move GraphQL cleanup logic into `cleanup/graphql.rs`, preserving operation loading, JWT handling, and logging output.
-- **Dependencies**:
-  - Task 3.2
-- **Complexity**: 6
-- **Acceptance criteria**:
-  - GraphQL cleanup still emits identical stderr log lines and files as before.
-  - `run_case_cleanup` behavior remains unchanged.
-- **Validation**:
-  - `cargo test -p api-testing-core`
-
-### Task 3.4: Normalize cleanup error reporting
-- **Location**:
-  - `crates/api-testing-core/src/suite/cleanup/mod.rs`
-  - `crates/api-testing-core/src/suite/cleanup/context.rs`
-  - `crates/api-testing-core/src/suite/cleanup/rest.rs`
-  - `crates/api-testing-core/src/suite/cleanup/graphql.rs`
-  - `crates/api-testing-core/src/suite/cleanup/template.rs`
-- **Description**: Centralize cleanup logging helpers (append, formatting, error prefixes) so REST and GraphQL cleanup share the same reporting flow and remain consistent with prior output.
-- **Dependencies**:
-  - Task 3.3
+  - Task 2.3
 - **Complexity**: 5
 - **Acceptance criteria**:
-  - Error log lines match previous formatting for common failure cases.
-  - Cleanup failures still leave stderr artifacts in the same paths.
+  - History append output is unchanged for identical inputs.
+  - Rotation tests cover the new writer API.
 - **Validation**:
-  - `cargo test -p api-testing-core`
+  - `cargo test -p api-testing-core --test report_history`
 
-### Task 3.5: Extend cleanup coverage tests
+## Sprint 4: Suite runtime refactor + coverage gates
+**Goal**: Improve suite runtime maintainability and raise coverage for core workflows.
+**Demo/Validation**:
+- Command(s): `cargo test -p api-testing-core`, `cargo llvm-cov nextest --profile ci -p api-testing-core --lcov --output-path target/coverage/api-testing-core.lcov.info`
+- Verify: Coverage for `api-testing-core` is >= 80% and workspace gates still pass.
+**Parallelizable**: After Task 4.1, Task 4.2 can run in parallel with Task 3.2 if not already done.
+
+### Task 4.1: Split suite runtime planning from execution
+- **Location**:
+  - `crates/api-testing-core/src/suite/runtime.rs`
+  - `crates/api-testing-core/src/suite/resolve.rs`
+  - `crates/api-testing-core/src/suite/results.rs`
+  - `crates/api-testing-core/src/suite/summary.rs`
+- **Description**: Separate pure planning (path resolution, URL selection, token selection, output
+  path computation) from side-effectful execution. Add unit tests for planning functions and result
+  rendering.
+- **Dependencies**:
+  - Task 2.2
+  - Task 2.3
+- **Complexity**: 7
+- **Acceptance criteria**:
+  - Planning functions are pure and unit-tested with fixtures.
+  - Suite result rendering tests cover success and failure cases.
+- **Validation**:
+  - `cargo test -p api-testing-core --test suite_planning`
+
+### Task 4.2: Expand suite integration tests with loopback servers
 - **Location**:
   - `crates/api-testing-core/tests/suite_runner_loopback.rs`
   - `crates/api-testing-core/tests/suite_cleanup_graphql.rs`
-- **Description**: Extend existing loopback tests to assert cleanup side effects and add a dedicated GraphQL cleanup test that asserts stderr logging and cleanup request behavior. Add any required fixtures under test temp directories to keep tests hermetic.
+  - `crates/api-testing-core/tests/suite_rest_graphql_matrix.rs`
+- **Description**: Add integration tests that run REST and GraphQL cases through the suite runner,
+  asserting report output, redaction, and summary JSON. Use loopback servers to avoid external
+  dependencies.
 - **Dependencies**:
-  - Task 3.4
+  - Task 4.1
 - **Complexity**: 6
 - **Acceptance criteria**:
-  - Tests cover REST cleanup and GraphQL cleanup flows.
-  - Cleanup tests assert both success and failure logging paths.
+  - Integration tests cover REST-only, GQL-only, and mixed suites.
+  - Summary JSON includes expected status counts and durations.
 - **Validation**:
-  - `cargo test -p api-testing-core --test suite_runner_loopback --test suite_cleanup_graphql`
+  - `cargo test -p api-testing-core --test suite_rest_graphql_matrix`
+
+### Task 4.3: Coverage gate and workspace validation
+- **Location**:
+  - `DEVELOPMENT.md`
+  - `scripts/ci/coverage-summary.sh`
+- **Description**: Run the repo-required checks and capture coverage for the refactored crate.
+  Ensure `api-testing-core` coverage meets the 80% target and workspace gates still pass.
+- **Dependencies**:
+  - Task 3.1
+  - Task 3.2
+  - Task 4.2
+- **Complexity**: 4
+- **Acceptance criteria**:
+  - `api-testing-core` line coverage >= 80%.
+  - Workspace fmt/clippy/tests and zsh completion tests pass.
+- **Validation**:
+  - `cargo llvm-cov nextest --profile ci -p api-testing-core --lcov --output-path target/coverage/api-testing-core.lcov.info --fail-under-lines 80`
+  - `scripts/ci/coverage-summary.sh target/coverage/api-testing-core.lcov.info`
+  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Testing Strategy
-- Unit: `#[cfg(test)]` helper tests in `crates/api-testing-core/src/suite/runtime.rs` (or `runtime_tests.rs`).
-- Integration: extend `suite_runner_loopback` and add GraphQL cleanup loopback tests.
-- E2E/manual: mandatory full workspace run with `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh` before delivery.
+- Unit: Pure helpers (config discovery, env parsing, report markdown, suite planning) with fixture-based tests.
+- Integration: Loopback HTTP servers for REST/GQL suite runs, plus history/report generation checks.
+- E2E/manual: Validate `api-rest`, `api-gql`, and `api-test` commands against a sample repo layout.
 
 ## Risks & gotchas
-- Subtle output or error message changes during extraction could break CLI parity tests.
-- Refactors may introduce accidental path normalization changes (absolute vs repo-relative).
-- Splitting modules can create cyclic dependencies; keep data types in `context` modules to avoid that.
-- Converting files to module directories can cause re-export/API regressions; add compile checkpoints after each split.
+- Behavior drift in report formatting or discovery order; mitigate with characterization tests first.
+- Flaky tests due to time-dependent fields; mitigate with deterministic time injection or fixed clocks in tests.
+- Over-refactor of shared helpers could leak changes into CLI outputs; keep tests as the gate before merges.
 
 ## Rollback plan
-- Keep refactor work in small, reviewable commits per sprint; if regressions appear, revert the sprint commit(s) to restore the pre-refactor behavior.
-- Preserve old module boundaries in the first sprint so rollback is a clean file-level revert.
-- For module directory conversions, revert file-level splits first to restore old module paths and public re-exports.
+- Revert the refactor commits while retaining the new characterization tests to preserve behavior checks.
+- Restore previous module APIs if dependent crates regress, then re-apply refactor in smaller steps.
