@@ -10,13 +10,21 @@ or stub external commands.
 - Global guards
   - `GlobalStateLock`: serialize tests that mutate process-global state (env, cwd, PATH, etc.)
   - `EnvGuard`, `CwdGuard`: RAII guards for temporarily setting env vars / current directory
+- FS helpers
+  - `fs`: write text/bytes/json/executables while ensuring parent dirs exist
+- Command runners
+  - `cmd`: run binaries with captured output (`CmdOutput`) and flexible options (`CmdOptions`)
+- Workspace binaries
+  - `bin`: `resolve` finds `CARGO_BIN_EXE_*` or falls back to `target/<profile>/<name>`
+- Git helpers
+  - `git`: init temp repos (`InitRepoOptions`), run git commands, and commit files
 - Stubbing external tools
   - `StubBinDir`, `write_exe`, `prepend_path`: create a temp bin dir and put it at the front of `PATH`
-  - `stubs`: ready-made stub scripts for common external tools (e.g. `fzf`, `bat`, `tree`, `file`, ImageMagick)
+  - `stubs`: ready-made stub scripts for common external tools (e.g. `fzf`, `bat`, `tree`, `file`, ImageMagick/WebP/JPEG)
 - Fixtures
-  - `fixtures`: temp repo/layout fixtures for API testing CLIs (REST / GraphQL setup + suite manifests)
+  - `fixtures`: REST/GraphQL setup fixtures + suite manifest helpers
 - Loopback HTTP server
-  - `http`: a tiny in-process loopback server to record requests and return canned responses
+  - `http`: in-process loopback servers (`LoopbackServer`, `TestServer`) that record requests
 
 ## Example
 ```rust
@@ -28,4 +36,3 @@ let stub_dir = StubBinDir::new();
 let _path = prepend_path(&lock, stub_dir.path());
 let _env = EnvGuard::set(&lock, "EXAMPLE", "1");
 ```
-
