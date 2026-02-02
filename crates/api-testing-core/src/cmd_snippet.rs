@@ -191,7 +191,7 @@ fn parse_graphql_call_args(
         }
 
         if let Some(v) = flag_value_eq(arg, "--config-dir") {
-            config_dir = Some(v);
+            config_dir = Some(v?);
             i += 1;
             continue;
         }
@@ -202,7 +202,7 @@ fn parse_graphql_call_args(
         }
 
         if let Some(v) = flag_value_eq(arg, "--env") {
-            env = Some(v);
+            env = Some(v?);
             i += 1;
             continue;
         }
@@ -213,7 +213,7 @@ fn parse_graphql_call_args(
         }
 
         if let Some(v) = flag_value_eq(arg, "--url") {
-            url = Some(v);
+            url = Some(v?);
             i += 1;
             continue;
         }
@@ -224,7 +224,7 @@ fn parse_graphql_call_args(
         }
 
         if let Some(v) = flag_value_eq(arg, "--jwt") {
-            jwt = Some(v);
+            jwt = Some(v?);
             i += 1;
             continue;
         }
@@ -299,7 +299,7 @@ fn parse_rest_call_args(
         }
 
         if let Some(v) = flag_value_eq(arg, "--config-dir") {
-            config_dir = Some(v);
+            config_dir = Some(v?);
             i += 1;
             continue;
         }
@@ -310,7 +310,7 @@ fn parse_rest_call_args(
         }
 
         if let Some(v) = flag_value_eq(arg, "--env") {
-            env = Some(v);
+            env = Some(v?);
             i += 1;
             continue;
         }
@@ -321,7 +321,7 @@ fn parse_rest_call_args(
         }
 
         if let Some(v) = flag_value_eq(arg, "--url") {
-            url = Some(v);
+            url = Some(v?);
             i += 1;
             continue;
         }
@@ -332,7 +332,7 @@ fn parse_rest_call_args(
         }
 
         if let Some(v) = flag_value_eq(arg, "--token") {
-            token = Some(v);
+            token = Some(v?);
             i += 1;
             continue;
         }
@@ -495,8 +495,16 @@ fn expand_env_vars_best_effort(s: &str) -> String {
     out
 }
 
-fn flag_value_eq(arg: &str, flag: &str) -> Option<String> {
-    arg.strip_prefix(&format!("{flag}=")).map(|v| v.to_string())
+fn flag_value_eq(arg: &str, flag: &str) -> Option<Result<String, CmdSnippetError>> {
+    arg.strip_prefix(&format!("{flag}=")).map(|v| {
+        if v.is_empty() {
+            Err(CmdSnippetError::MissingFlagValue {
+                flag: flag.to_string(),
+            })
+        } else {
+            Ok(v.to_string())
+        }
+    })
 }
 
 fn take_value(args: &[String], idx: usize, flag: &str) -> Result<String, CmdSnippetError> {
@@ -659,6 +667,28 @@ mod tests {
         assert_eq!(report.case, "health (staging, jwt:service)");
     }
 
+    fn assert_missing_flag_value(snippet: &str, expected_flag: &str) {
+        let err = parse_call_snippet(snippet).expect_err("expected err");
+        match err {
+            CmdSnippetError::MissingFlagValue { flag } => assert_eq!(flag, expected_flag),
+            _ => panic!("expected missing flag value error"),
+        }
+    }
+
+    #[test]
+    fn graphql_empty_flag_values_are_errors() {
+        let cases = [
+            ("--env=", "--env"),
+            ("--url=", "--url"),
+            ("--jwt=", "--jwt"),
+            ("--config-dir=", "--config-dir"),
+        ];
+        for (flag, expected) in cases {
+            let s = format!("api-gql call {flag} setup/graphql/operations/health.graphql");
+            assert_missing_flag_value(&s, expected);
+        }
+    }
+
     #[test]
     fn rest_missing_request_is_error() {
         let s = "api-rest call --env staging";
@@ -674,5 +704,18 @@ mod tests {
             panic!("expected rest");
         };
         assert_eq!(report.case, "health (staging, token:service)");
+    }
+
+    #[test]
+    fn rest_empty_flag_values_are_errors() {
+        let cases = [
+            ("--env=", "--env"),
+            ("--url=", "--url"),
+            ("--token=", "--token"),
+        ];
+        for (flag, expected) in cases {
+            let s = format!("api-rest call {flag} setup/rest/requests/health.request.json");
+            assert_missing_flag_value(&s, expected);
+        }
     }
 }
