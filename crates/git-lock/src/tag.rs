@@ -1,9 +1,10 @@
 use anyhow::Result;
 use std::process::Command;
 
-use crate::fs as lock_fs;
 use crate::git;
+use crate::messages;
 use crate::prompt;
+use crate::store::LockStore;
 
 pub fn run(args: &[String]) -> Result<i32> {
     let mut do_push = false;
@@ -31,12 +32,12 @@ pub fn run(args: &[String]) -> Result<i32> {
     }
 
     if positional.len() != 2 {
-        println!("❗ Usage: git-lock tag <git-lock-label> <tag-name> [-m <tag-message>] [--push]");
+        println!("{}", messages::TAG_USAGE);
         return Ok(1);
     }
 
-    let repo_id = lock_fs::repo_id()?;
-    let label = match lock_fs::resolve_label(&repo_id, Some(positional[0].as_str()))? {
+    let store = LockStore::open()?;
+    let label = match store.resolve_label(Some(positional[0].as_str()))? {
         Some(label) => label,
         None => {
             println!("❌ git-lock label not provided or not found");
@@ -46,24 +47,24 @@ pub fn run(args: &[String]) -> Result<i32> {
 
     let tag_name = positional[1].trim();
     if tag_name.is_empty() {
-        println!("❗ Usage: git-lock tag <git-lock-label> <tag-name> [-m <tag-message>] [--push]");
+        println!("{}", messages::TAG_USAGE);
         return Ok(1);
     }
 
-    let lock_dir = lock_fs::lock_dir_path();
-    let lock_file = lock_dir.join(format!("{repo_id}-{label}.lock"));
+    let lock_dir = store.lock_dir();
+    let lock_file = store.lock_path(&label);
 
     if !lock_file.exists() {
         println!(
             "❌ git-lock [{label}] not found in [{}] for [{repo_id}]",
-            lock_dir.display()
+            lock_dir.display(),
+            repo_id = store.repo_id()
         );
         return Ok(1);
     }
 
-    let content = std::fs::read_to_string(&lock_file)?;
-    let line1 = content.lines().next().unwrap_or("");
-    let (hash, _) = lock_fs::parse_lock_line(line1);
+    let lock = store.read_lock_at_path(&lock_file)?;
+    let hash = lock.hash;
 
     let mut message = tag_msg.unwrap_or_default();
     if message.trim().is_empty() {

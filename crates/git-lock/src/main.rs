@@ -7,7 +7,10 @@ mod fs;
 mod git;
 mod list;
 mod lock;
+mod lock_view;
+mod messages;
 mod prompt;
+mod store;
 mod tag;
 mod unlock;
 
@@ -63,23 +66,23 @@ fn run() -> i32 {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() > 1 && is_help(&args[1]) {
-        print_help();
+        messages::print_help();
         return 0;
     }
 
     if !git::is_git_repo() {
-        println!("❗ Not a Git repository. Run this command inside a Git project.");
+        println!("{}", messages::NOT_GIT_REPO);
         return 1;
     }
 
     if args.len() <= 1 {
-        print_help();
+        messages::print_help();
         return 0;
     }
 
     if !is_known_command(&args[1]) {
-        println!("❗ Unknown command: '{}'", args[1]);
-        println!("Run 'git-lock help' for usage.");
+        println!("{}", messages::unknown_command(&args[1]));
+        println!("{}", messages::UNKNOWN_COMMAND_HINT);
         return 1;
     }
 
@@ -94,7 +97,7 @@ fn run() -> i32 {
         Command::Diff { args } => diff::run(&args),
         Command::Tag { args } => tag::run(&args),
         Command::Help => {
-            print_help();
+            messages::print_help();
             Ok(0)
         }
     };
@@ -119,25 +122,28 @@ fn is_known_command(arg: &str) -> bool {
     )
 }
 
-fn print_help() {
-    println!("Usage: git-lock <command> [args]");
-    println!();
-    println!("Commands:");
-    println!(
-        "  {:<16}  Save commit hash to lock",
-        "lock [label] [note] [commit]"
-    );
-    println!("  {:<16}  Reset to a saved commit", "unlock [label]");
-    println!("  {:<16}  Show all locks for repo", "list");
-    println!("  {:<16}  Duplicate a lock label", "copy <from> <to>");
-    println!("  {:<16}  Remove a lock", "delete [label]");
-    println!(
-        "  {:<16}  Compare commits between two locks",
-        "diff <l1> <l2> [--no-color]"
-    );
-    println!(
-        "  {:<16}  Create git tag from a lock",
-        "tag <label> <tag> [-m msg]"
-    );
-    println!();
+#[cfg(test)]
+mod tests {
+    use super::{is_help, is_known_command};
+
+    #[test]
+    fn is_help_matches_expected_flags() {
+        assert!(is_help("help"));
+        assert!(is_help("--help"));
+        assert!(is_help("-h"));
+        assert!(!is_help("lock"));
+    }
+
+    #[test]
+    fn is_known_command_accepts_known() {
+        assert!(is_known_command("lock"));
+        assert!(is_known_command("unlock"));
+        assert!(is_known_command("list"));
+        assert!(is_known_command("copy"));
+        assert!(is_known_command("delete"));
+        assert!(is_known_command("diff"));
+        assert!(is_known_command("tag"));
+        assert!(is_known_command("help"));
+        assert!(!is_known_command("nope"));
+    }
 }

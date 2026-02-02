@@ -1,9 +1,4 @@
-use anyhow::{Context, Result};
 use chrono::{Local, NaiveDateTime, TimeZone};
-use std::fs;
-use std::path::{Path, PathBuf};
-
-use crate::git;
 
 pub const TIMESTAMP_PREFIX: &str = "timestamp=";
 
@@ -14,72 +9,7 @@ pub struct LockFile {
     pub timestamp: Option<String>,
 }
 
-pub fn repo_id() -> Result<String> {
-    let toplevel = git::run_capture(&["rev-parse", "--show-toplevel"])?
-        .trim()
-        .to_string();
-    let path = Path::new(&toplevel);
-    let name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("")
-        .to_string();
-    Ok(name)
-}
-
-pub fn lock_dir_path() -> PathBuf {
-    let base = std::env::var("ZSH_CACHE_DIR").unwrap_or_default();
-    if base.is_empty() {
-        PathBuf::from("/git-locks")
-    } else {
-        PathBuf::from(base).join("git-locks")
-    }
-}
-
-pub fn ensure_lock_dir() -> Result<PathBuf> {
-    let dir = lock_dir_path();
-    fs::create_dir_all(&dir).with_context(|| format!("create lock dir {dir:?}"))?;
-    Ok(dir)
-}
-
-pub fn lock_file(repo_id: &str, label: &str) -> PathBuf {
-    lock_dir_path().join(format!("{repo_id}-{label}.lock"))
-}
-
-pub fn latest_file(repo_id: &str) -> PathBuf {
-    lock_dir_path().join(format!("{repo_id}-latest"))
-}
-
-pub fn read_latest_label(repo_id: &str) -> Result<Option<String>> {
-    let path = latest_file(repo_id);
-    if !path.exists() {
-        return Ok(None);
-    }
-    let label = fs::read_to_string(&path).unwrap_or_default();
-    let label = label.trim().to_string();
-    if label.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(label))
-}
-
-pub fn resolve_label(repo_id: &str, input: Option<&str>) -> Result<Option<String>> {
-    if let Some(label) = input.and_then(|value| {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    }) {
-        return Ok(Some(label));
-    }
-
-    read_latest_label(repo_id)
-}
-
-pub fn read_lock_file(path: &Path) -> Result<LockFile> {
-    let content = fs::read_to_string(path).with_context(|| format!("read {path:?}"))?;
+pub fn parse_lock_file(content: &str) -> LockFile {
     let mut lines = content.lines();
     let line1 = lines.next().unwrap_or("");
     let (hash, note) = parse_lock_line(line1);
@@ -95,11 +25,11 @@ pub fn read_lock_file(path: &Path) -> Result<LockFile> {
         }
     }
 
-    Ok(LockFile {
+    LockFile {
         hash,
         note,
         timestamp,
-    })
+    }
 }
 
 pub fn parse_lock_line(line: &str) -> (String, String) {
@@ -121,4 +51,51 @@ pub fn timestamp_epoch(timestamp: &str) -> i64 {
     }
 
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_lock_file, parse_lock_line, timestamp_epoch, TIMESTAMP_PREFIX};
+    use chrono::{Local, NaiveDateTime, TimeZone};
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn parse_lock_line_splits_hash_and_note() {
+        let (hash, note) = parse_lock_line("abc123 # before refactor");
+        assert_eq!(hash, "abc123");
+        assert_eq!(note, "before refactor");
+    }
+
+    #[test]
+    fn parse_lock_line_trims_whitespace() {
+        let (hash, note) = parse_lock_line("  abc123   #   note here   ");
+        assert_eq!(hash, "abc123");
+        assert_eq!(note, "note here");
+    }
+
+    #[test]
+    fn parse_lock_file_reads_timestamp_line() {
+        let content = format!("abc123 # note\n{TIMESTAMP_PREFIX}2020-01-01 00:00:00\n");
+        let lock = parse_lock_file(&content);
+        assert_eq!(lock.hash, "abc123");
+        assert_eq!(lock.note, "note");
+        assert_eq!(lock.timestamp, Some("2020-01-01 00:00:00".to_string()));
+    }
+
+    #[test]
+    fn timestamp_epoch_returns_zero_for_invalid() {
+        assert_eq!(timestamp_epoch(""), 0);
+        assert_eq!(timestamp_epoch("not-a-date"), 0);
+    }
+
+    #[test]
+    fn timestamp_epoch_parses_valid() {
+        let ts = "2020-01-02 03:04:05";
+        let parsed = NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S").expect("parse");
+        let expected = Local
+            .from_local_datetime(&parsed)
+            .single()
+            .expect("local time");
+        assert_eq!(timestamp_epoch(ts), expected.timestamp());
+    }
 }

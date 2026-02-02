@@ -35,6 +35,22 @@ fn copy_overwrite_prompt() {
 }
 
 #[test]
+fn copy_missing_source_label() {
+    let repo = init_repo();
+    let cache = cache_dir();
+    let repo_name = repo_id(repo.path());
+    let env = [("ZSH_CACHE_DIR", cache.path().to_str().unwrap())];
+
+    run_git_lock(repo.path(), &["lock", "a"], &env, None);
+
+    let output = run_git_lock_output(repo.path(), &["copy", "missing", "b"], &env, None);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.contains(&format!("Source git-lock [{repo_name}:missing] not found")));
+    assert!(!output.status.success());
+}
+
+#[test]
 fn delete_latest() {
     let repo = init_repo();
     let cache = cache_dir();

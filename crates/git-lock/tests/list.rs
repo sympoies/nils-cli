@@ -1,6 +1,6 @@
 mod common;
 
-use common::{init_repo, repo_id, run_git_lock};
+use common::{git, init_repo, repo_id, run_git_lock};
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -47,4 +47,58 @@ fn list_latest_sorted() {
     let idx_first = output.find("tag:     first").expect("first label");
     assert!(idx_second < idx_first);
     assert!(output.contains("second  ⭐ (latest)"));
+}
+
+#[test]
+fn list_no_lock_dir_prints_empty_message() {
+    let repo = init_repo();
+    let cache = cache_dir();
+    let repo_name = repo_id(repo.path());
+    let env = [("ZSH_CACHE_DIR", cache.path().to_str().unwrap())];
+
+    let output = run_git_lock(repo.path(), &["list"], &env, None);
+    assert!(output.contains(&format!("📬 No git-locks found for [{repo_name}]")));
+}
+
+#[test]
+fn list_empty_lock_dir_prints_empty_message() {
+    let repo = init_repo();
+    let cache = cache_dir();
+    let repo_name = repo_id(repo.path());
+    let env = [("ZSH_CACHE_DIR", cache.path().to_str().unwrap())];
+
+    let lock_dir = cache.path().join("git-locks");
+    fs::create_dir_all(&lock_dir).expect("create lock dir");
+
+    let output = run_git_lock(repo.path(), &["list"], &env, None);
+    assert!(output.contains(&format!("📬 No git-locks found for [{repo_name}]")));
+}
+
+#[test]
+fn list_handles_corrupted_lock_files() {
+    let repo = init_repo();
+    let cache = cache_dir();
+    let repo_name = repo_id(repo.path());
+    let env = [("ZSH_CACHE_DIR", cache.path().to_str().unwrap())];
+
+    let lock_dir = cache.path().join("git-locks");
+    fs::create_dir_all(&lock_dir).expect("create lock dir");
+
+    let hash = git(repo.path(), &["rev-parse", "HEAD"]).trim().to_string();
+
+    let broken_path = lock_dir.join(format!("{repo_name}-broken.lock"));
+    let broken_content = format!("  {hash}   #   spaced note   \ntimestamp=bad timestamp\n");
+    fs::write(&broken_path, broken_content).expect("write broken lock");
+
+    let empty_path = lock_dir.join(format!("{repo_name}-empty.lock"));
+    fs::write(&empty_path, " \n").expect("write empty lock");
+
+    let latest_path = lock_dir.join(format!("{repo_name}-latest"));
+    fs::write(&latest_path, "broken\n").expect("write latest");
+
+    let output = run_git_lock(repo.path(), &["list"], &env, None);
+    assert!(output.contains("tag:     broken"));
+    assert!(output.contains("tag:     empty"));
+    assert!(output.contains("📝 note:    spaced note"));
+    assert!(output.contains("📅 time:    bad timestamp"));
 }

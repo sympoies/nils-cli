@@ -1,6 +1,6 @@
 mod common;
 
-use common::{init_repo, repo_id, run_git_lock, run_git_lock_output};
+use common::{commit_file, init_repo, repo_id, run_git_lock, run_git_lock_output};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -60,4 +60,31 @@ fn unlock_cancel() {
     assert!(stdout.contains("Hard reset to [wip]?"));
     assert!(stdout.contains("🚫 Aborted"));
     assert!(!output.status.success());
+}
+
+#[test]
+fn unlock_confirms_and_resets() {
+    let repo = init_repo();
+    let cache = cache_dir();
+    let env = [("ZSH_CACHE_DIR", cache.path().to_str().unwrap())];
+
+    let base_hash = common::git(repo.path(), &["rev-parse", "HEAD"])
+        .trim()
+        .to_string();
+    commit_file(repo.path(), "change.txt", "second", "second");
+
+    run_git_lock(
+        repo.path(),
+        &["lock", "base", "note", &base_hash],
+        &env,
+        None,
+    );
+
+    let output = run_git_lock_output(repo.path(), &["unlock", "base"], &env, Some("y\n"));
+    assert!(output.status.success());
+
+    let head_after = common::git(repo.path(), &["rev-parse", "HEAD"])
+        .trim()
+        .to_string();
+    assert_eq!(head_after, base_hash);
 }

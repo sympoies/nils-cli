@@ -1,45 +1,45 @@
 use anyhow::Result;
-use std::fs;
 use std::path::PathBuf;
 
-use crate::fs as lock_fs;
-use crate::git;
+use crate::git::DefaultGitBackend;
+use crate::lock_view::LockDetails;
+use crate::store::LockStore;
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 
 pub fn run(_args: &[String]) -> Result<i32> {
-    let repo_id = lock_fs::repo_id()?;
-    let lock_dir = lock_fs::lock_dir_path();
+    let store = LockStore::open()?;
+    let lock_dir = store.lock_dir().to_path_buf();
 
     if !lock_dir.is_dir() {
-        println!("📬 No git-locks found for [{repo_id}]");
+        println!("📬 No git-locks found for [{}]", store.repo_id());
         return Ok(0);
     }
 
-    let latest = lock_fs::read_latest_label(&repo_id)?.unwrap_or_default();
+    let latest = store.read_latest_label()?.unwrap_or_default();
 
-    let mut entries = collect_entries(&repo_id, &lock_dir)?;
+    let git_backend = DefaultGitBackend;
+    let mut entries = collect_entries(&store, &lock_dir, &git_backend)?;
     if entries.is_empty() {
-        println!("📬 No git-locks found for [{repo_id}]");
+        println!("📬 No git-locks found for [{}]", store.repo_id());
         return Ok(0);
     }
 
     entries.sort_by(|a, b| b.epoch.cmp(&a.epoch));
 
-    println!("🔐 git-lock list for [{repo_id}]:");
+    println!("🔐 git-lock list for [{}]:", store.repo_id());
 
     for entry in entries {
         println!();
-        print!(" - 🏷️  tag:     {}", entry.label);
-        if entry.label == latest {
+        let label = entry.label.as_str();
+        print!(" - 🏷️  tag:     {label}");
+        if label == latest {
             print!("  ⭐ (latest)");
         }
         println!();
         println!("   🧬 commit:  {}", entry.lock.hash);
 
-        if let Some(subject) = git::log_subject(&entry.lock.hash)? {
-            if !subject.is_empty() {
-                println!("   📄 message: {subject}");
-            }
+        if let Some(subject) = entry.subject.as_deref() {
+            println!("   📄 message: {subject}");
         }
 
         if !entry.lock.note.is_empty() {
@@ -56,16 +56,14 @@ pub fn run(_args: &[String]) -> Result<i32> {
     Ok(0)
 }
 
-struct Entry {
-    epoch: i64,
-    label: String,
-    lock: lock_fs::LockFile,
-}
+fn collect_entries(
+    store: &LockStore,
+    lock_dir: &PathBuf,
+    git_backend: &DefaultGitBackend,
+) -> Result<Vec<LockDetails>> {
+    let prefix = format!("{}-", store.repo_id());
 
-fn collect_entries(repo_id: &str, lock_dir: &PathBuf) -> Result<Vec<Entry>> {
-    let prefix = format!("{repo_id}-");
-
-    let dir_entries = match fs::read_dir(lock_dir) {
+    let dir_entries = match std::fs::read_dir(lock_dir) {
         Ok(value) => value,
         Err(_) => return Ok(Vec::new()),
     };
@@ -108,20 +106,15 @@ fn collect_entries(repo_id: &str, lock_dir: &PathBuf) -> Result<Vec<Entry>> {
 
     let mut entries = Vec::new();
     for (path, label) in candidates {
-        let lock = match lock_fs::read_lock_file(&path) {
+        let details = match LockDetails::load_from_path(store, &label, &path, git_backend) {
             Ok(v) => v,
             Err(err) => {
                 progress.finish_and_clear();
                 return Err(err);
             }
         };
-        let epoch = lock
-            .timestamp
-            .as_deref()
-            .map(lock_fs::timestamp_epoch)
-            .unwrap_or(0);
 
-        entries.push(Entry { epoch, label, lock });
+        entries.push(details);
         progress.inc(1);
     }
 

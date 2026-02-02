@@ -1,21 +1,23 @@
 use anyhow::Result;
 use std::fs;
 
-use crate::fs as lock_fs;
-use crate::git;
+use crate::git::DefaultGitBackend;
+use crate::lock_view::LockDetails;
+use crate::messages;
 use crate::prompt;
+use crate::store::LockStore;
 
 pub fn run(args: &[String]) -> Result<i32> {
-    let repo_id = lock_fs::repo_id()?;
-    let lock_dir = lock_fs::lock_dir_path();
+    let store = LockStore::open()?;
+    let lock_dir = store.lock_dir().to_path_buf();
 
     if !lock_dir.is_dir() {
-        println!("❌ No git-locks found");
+        println!("{}", messages::NO_GIT_LOCKS_FOUND);
         return Ok(1);
     }
 
     let label_arg = args.first().map(String::as_str);
-    let label = match lock_fs::resolve_label(&repo_id, label_arg)? {
+    let label = match store.resolve_label(label_arg)? {
         Some(label) => label,
         None => {
             println!("❌ No label provided and no latest git-lock exists");
@@ -23,34 +25,28 @@ pub fn run(args: &[String]) -> Result<i32> {
         }
     };
 
-    let lock_file = lock_dir.join(format!("{repo_id}-{label}.lock"));
+    let lock_file = store.lock_path(&label);
     if !lock_file.exists() {
         println!("❌ git-lock [{label}] not found");
         return Ok(1);
     }
 
-    let content = fs::read_to_string(&lock_file)?;
-    let mut lines = content.lines();
-    let line1 = lines.next().unwrap_or("");
-    let (hash, note) = lock_fs::parse_lock_line(line1);
-    let timestamp = content
-        .lines()
-        .find_map(|line| line.strip_prefix(lock_fs::TIMESTAMP_PREFIX))
-        .map(|value| value.trim().to_string())
-        .unwrap_or_default();
-    let subject = git::log_subject(&hash)?.unwrap_or_default();
+    let git_backend = DefaultGitBackend;
+    let details = LockDetails::load_from_path(&store, &label, &lock_file, &git_backend)?;
 
     println!("🗑️  Candidate for deletion:");
     println!("   🏷️  tag:     {label}");
-    println!("   🧬 commit:  {hash}");
-    if !subject.is_empty() {
+    println!("   🧬 commit:  {}", details.lock.hash);
+    if let Some(subject) = details.subject.as_deref() {
         println!("   📄 message: {subject}");
     }
-    if !note.is_empty() {
-        println!("   📝 note:    {note}");
+    if !details.lock.note.is_empty() {
+        println!("   📝 note:    {}", details.lock.note);
     }
-    if !timestamp.is_empty() {
-        println!("   📅 time:    {timestamp}");
+    if let Some(timestamp) = details.lock.timestamp.as_deref() {
+        if !timestamp.is_empty() {
+            println!("   📅 time:    {timestamp}");
+        }
     }
     println!();
 
@@ -60,15 +56,10 @@ pub fn run(args: &[String]) -> Result<i32> {
     }
 
     fs::remove_file(&lock_file)?;
-    println!("🗑️  Deleted git-lock [{repo_id}:{label}]");
+    println!("🗑️  Deleted git-lock [{}:{label}]", store.repo_id());
 
-    let latest_file = lock_dir.join(format!("{repo_id}-latest"));
-    if latest_file.exists() {
-        let latest_label = fs::read_to_string(&latest_file).unwrap_or_default();
-        if latest_label.trim() == label {
-            fs::remove_file(&latest_file)?;
-            println!("🧼 Removed latest marker (was [{label}])");
-        }
+    if store.remove_latest_if_matches(&label)? {
+        println!("🧼 Removed latest marker (was [{label}])");
     }
 
     Ok(0)

@@ -1,7 +1,7 @@
 use anyhow::Result;
 
-use crate::fs;
 use crate::git;
+use crate::store::LockStore;
 
 pub fn run(args: &[String]) -> Result<i32> {
     let label = args.first().map(String::as_str).unwrap_or("");
@@ -10,10 +10,8 @@ pub fn run(args: &[String]) -> Result<i32> {
 
     let label = if label.is_empty() { "default" } else { label };
 
-    let repo_id = fs::repo_id()?;
-    fs::ensure_lock_dir()?;
-    let lock_file = fs::lock_file(&repo_id, label);
-    let latest_file = fs::latest_file(&repo_id);
+    let store = LockStore::open()?;
+    store.ensure_dir()?;
 
     let hash = match git::rev_parse(commit)? {
         Some(value) if !value.is_empty() => value,
@@ -25,11 +23,15 @@ pub fn run(args: &[String]) -> Result<i32> {
 
     let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-    let content = format!("{hash} # {note}\n{}{}\n", fs::TIMESTAMP_PREFIX, timestamp);
-    std::fs::write(&lock_file, content)?;
-    std::fs::write(&latest_file, format!("{label}\n"))?;
+    let content = format!(
+        "{hash} # {note}\n{}{}\n",
+        crate::fs::TIMESTAMP_PREFIX,
+        timestamp
+    );
+    store.write_lock_content(label, &content)?;
+    store.write_latest_label(label)?;
 
-    print!("🔐 [{repo_id}:{label}] Locked: {hash}");
+    print!("🔐 [{}:{label}] Locked: {hash}", store.repo_id());
     if !note.is_empty() {
         print!("  # {note}");
     }

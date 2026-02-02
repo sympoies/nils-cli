@@ -1,7 +1,8 @@
 use anyhow::Result;
 use std::process::Command;
 
-use crate::fs as lock_fs;
+use crate::messages;
+use crate::store::LockStore;
 
 pub fn run(args: &[String]) -> Result<i32> {
     let mut no_color = false;
@@ -13,7 +14,7 @@ pub fn run(args: &[String]) -> Result<i32> {
                 no_color = true;
             }
             "--help" | "-h" => {
-                println!("❗ Usage: git-lock diff <label1> <label2> [--no-color]");
+                println!("{}", messages::DIFF_USAGE);
                 return Ok(0);
             }
             _ => positional.push(arg.to_string()),
@@ -22,21 +23,21 @@ pub fn run(args: &[String]) -> Result<i32> {
 
     if positional.len() > 2 {
         println!("❗ Too many labels provided (expected 2)");
-        println!("❗ Usage: git-lock diff <label1> <label2> [--no-color]");
+        println!("{}", messages::DIFF_USAGE);
         return Ok(1);
     }
 
-    let repo_id = lock_fs::repo_id()?;
+    let store = LockStore::open()?;
 
-    let label1 = match lock_fs::resolve_label(&repo_id, positional.first().map(String::as_str))? {
+    let label1 = match store.resolve_label(positional.first().map(String::as_str))? {
         Some(label) => label,
         None => {
-            println!("❗ Usage: git-lock diff <label1> <label2> [--no-color]");
+            println!("{}", messages::DIFF_USAGE);
             return Ok(1);
         }
     };
 
-    let label2 = match lock_fs::resolve_label(&repo_id, positional.get(1).map(String::as_str))? {
+    let label2 = match store.resolve_label(positional.get(1).map(String::as_str))? {
         Some(label) => label,
         None => {
             println!("❗ Second label not provided or found");
@@ -44,25 +45,27 @@ pub fn run(args: &[String]) -> Result<i32> {
         }
     };
 
-    let lock_dir = lock_fs::lock_dir_path();
-    let file1 = lock_dir.join(format!("{repo_id}-{label1}.lock"));
-    let file2 = lock_dir.join(format!("{repo_id}-{label2}.lock"));
+    let file1 = store.lock_path(&label1);
+    let file2 = store.lock_path(&label2);
 
     if !file1.exists() {
-        println!("❌ git-lock [{label1}] not found for [{repo_id}]");
+        println!("❌ git-lock [{label1}] not found for [{}]", store.repo_id());
         return Ok(1);
     }
     if !file2.exists() {
-        println!("❌ git-lock [{label2}] not found for [{repo_id}]");
+        println!("❌ git-lock [{label2}] not found for [{}]", store.repo_id());
         return Ok(1);
     }
 
-    let line1 = std::fs::read_to_string(&file1)?;
-    let line2 = std::fs::read_to_string(&file2)?;
-    let hash1 = lock_fs::parse_lock_line(line1.lines().next().unwrap_or("")).0;
-    let hash2 = lock_fs::parse_lock_line(line2.lines().next().unwrap_or("")).0;
+    let lock1 = store.read_lock_at_path(&file1)?;
+    let lock2 = store.read_lock_at_path(&file2)?;
+    let hash1 = lock1.hash;
+    let hash2 = lock2.hash;
 
-    println!("🧮 Comparing commits: [{repo_id}:{label1}] → [{label2}]");
+    println!(
+        "🧮 Comparing commits: [{}:{label1}] → [{label2}]",
+        store.repo_id()
+    );
     println!("   🔖 {label1}: {hash1}");
     println!("   🔖 {label2}: {hash2}");
     println!();

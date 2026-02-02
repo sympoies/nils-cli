@@ -544,6 +544,7 @@ dependencies = [
  "clap",
  "nils-term",
  "nils-test-support",
+ "pretty_assertions",
  "tempfile",
 ]
 

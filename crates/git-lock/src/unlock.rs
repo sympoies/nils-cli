@@ -1,38 +1,47 @@
 use anyhow::Result;
 
-use crate::fs;
 use crate::git;
+use crate::git::DefaultGitBackend;
+use crate::lock_view::LockDetails;
 use crate::prompt;
+use crate::store::LockStore;
 
 pub fn run(args: &[String]) -> Result<i32> {
     let label_arg = args.first().map(String::as_str);
 
-    let repo_id = fs::repo_id()?;
-    fs::ensure_lock_dir()?;
+    let store = LockStore::open()?;
+    store.ensure_dir()?;
 
-    let label = match fs::resolve_label(&repo_id, label_arg)? {
+    let label = match store.resolve_label(label_arg)? {
         Some(label) => label,
         None => {
-            println!("❌ No recent git-lock found for {repo_id}");
+            println!("❌ No recent git-lock found for {}", store.repo_id());
             return Ok(1);
         }
     };
 
-    let lock_file = fs::lock_file(&repo_id, &label);
+    let lock_file = store.lock_path(&label);
     if !lock_file.exists() {
-        println!("❌ No git-lock named '{label}' found for {repo_id}");
+        println!(
+            "❌ No git-lock named '{label}' found for {}",
+            store.repo_id()
+        );
         return Ok(1);
     }
 
-    let lock = fs::read_lock_file(&lock_file)?;
-    let msg = git::log_subject(&lock.hash)?.unwrap_or_default();
+    let git_backend = DefaultGitBackend;
+    let details = LockDetails::load_from_path(&store, &label, &lock_file, &git_backend)?;
 
-    println!("🔐 Found [{repo_id}:{label}] → {}", lock.hash);
-    if !lock.note.is_empty() {
-        println!("    # {}", lock.note);
+    println!(
+        "🔐 Found [{}:{label}] → {}",
+        store.repo_id(),
+        details.lock.hash
+    );
+    if !details.lock.note.is_empty() {
+        println!("    # {}", details.lock.note);
     }
-    if !msg.is_empty() {
-        println!("    commit message: {msg}");
+    if let Some(subject) = details.subject.as_deref() {
+        println!("    commit message: {subject}");
     }
     println!();
 
@@ -41,12 +50,16 @@ pub fn run(args: &[String]) -> Result<i32> {
         return Ok(1);
     }
 
-    let status = git::run_status_inherit(&["reset", "--hard", &lock.hash])?;
+    let status = git::run_status_inherit(&["reset", "--hard", &details.lock.hash])?;
     if status != 0 {
         return Ok(status);
     }
 
-    println!("⏪ [{repo_id}:{label}] Reset to: {}", lock.hash);
+    println!(
+        "⏪ [{}:{label}] Reset to: {}",
+        store.repo_id(),
+        details.lock.hash
+    );
 
     Ok(0)
 }

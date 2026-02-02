@@ -1,6 +1,19 @@
 use anyhow::{Context, Result};
 use std::process::{Command, Stdio};
 
+pub trait GitBackend {
+    fn log_subject(&self, hash: &str) -> Result<Option<String>>;
+}
+
+#[derive(Debug, Default)]
+pub struct DefaultGitBackend;
+
+impl GitBackend for DefaultGitBackend {
+    fn log_subject(&self, hash: &str) -> Result<Option<String>> {
+        log_subject(hash)
+    }
+}
+
 pub fn is_git_repo() -> bool {
     Command::new("git")
         .args(["rev-parse", "--git-dir"])
