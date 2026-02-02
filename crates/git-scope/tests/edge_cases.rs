@@ -59,6 +59,24 @@ fn rename_shows_arrow() {
 }
 
 #[test]
+fn staged_deletion_is_listed() {
+    let repo = common::init_repo();
+    let root = repo.path();
+
+    fs::write(root.join("gone.txt"), "gone").unwrap();
+    common::git(root, &["add", "gone.txt"]);
+    common::git(root, &["commit", "-m", "add gone"]);
+
+    common::git(root, &["rm", "gone.txt"]);
+
+    let output = common::run_git_scope(root, &["staged"], &[("NO_COLOR", "1")]);
+    assert!(
+        output.contains("➔ [D] gone.txt"),
+        "staged deletion missing: {output}"
+    );
+}
+
+#[test]
 fn outside_repo_prints_warning() {
     let temp = tempfile::TempDir::new().unwrap();
     let (code, output) = run_git_scope_allow_fail(temp.path(), &["staged"], &[("NO_COLOR", "1")]);

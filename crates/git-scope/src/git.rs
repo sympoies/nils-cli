@@ -33,7 +33,7 @@ pub fn collect_staged() -> Result<Vec<String>> {
         "diff",
         "--cached",
         "--name-status",
-        "--diff-filter=ACMRTUXB",
+        "--diff-filter=ACMRTUXBD",
     ])?;
     Ok(lines(output))
 }
@@ -44,7 +44,7 @@ pub fn collect_unstaged() -> Result<Vec<String>> {
         "core.quotepath=false",
         "diff",
         "--name-status",
-        "--diff-filter=ACMRTUXB",
+        "--diff-filter=ACMRTUXBD",
     ])?;
     Ok(lines(output))
 }
