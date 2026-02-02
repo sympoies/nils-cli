@@ -157,7 +157,7 @@ fn filenames_with_spaces_are_counted() {
     let output = run_git_summary(root, &["2024-01-01", "2024-01-31"], &[]);
     let line = format!(
         "{:<25} {:<40} {:>8} {:>8} {:>8} {:>8} {:>12} {:>12}",
-        "Space", "space@example.com", 0, 0, 0, 1, "2024-01-12", "2024-01-12"
+        "Space", "space@example.com", 2, 0, 2, 1, "2024-01-12", "2024-01-12"
     );
     assert!(
         output.contains(&line),
