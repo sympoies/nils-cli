@@ -26,6 +26,10 @@ fn codex_cli_bin() -> PathBuf {
 fn run(args: &[&str], envs: &[(&str, &Path)], vars: &[(&str, &str)]) -> Output {
     let mut cmd = Command::new(codex_cli_bin());
     cmd.args(args);
+    // Stabilize output for tests regardless of user shell/starship environment.
+    cmd.env("NO_COLOR", "1");
+    cmd.env_remove("STARSHIP_SESSION_KEY");
+    cmd.env_remove("STARSHIP_SHELL");
     for (key, path) in envs {
         cmd.env(key, path);
     }
