@@ -1,6 +1,6 @@
 use crate::change::{canonical_path, parse_name_status_output};
 use crate::git_cmd::run_git;
-use crate::print::{emit_file, HeadFallback, PrintSource};
+use crate::print::emit_file_from_commit;
 use crate::progress::ProgressRunner;
 use crate::render::{color_reset_for_commit, kind_color_for_commit, render_tree_for_commit};
 use anyhow::Result;
@@ -26,7 +26,7 @@ pub fn render_commit(
 
         for file in files {
             progress.run(&file, || -> Result<()> {
-                emit_file(PrintSource::Worktree, &file, HeadFallback::FromHead)?;
+                emit_file_from_commit(commit, &file)?;
                 println!();
                 Ok(())
             })?;

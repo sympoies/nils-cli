@@ -47,6 +47,35 @@ pub fn emit_file(source: PrintSource, path: &str, fallback: HeadFallback) -> Res
     }
 }
 
+pub fn emit_file_from_commit(commit: &str, path: &str) -> Result<()> {
+    if path.is_empty() {
+        println!("❗ Missing file path");
+        return Ok(());
+    }
+
+    let tmp = mktemp_path()?;
+    if git_show_to_file(&format!("{commit}:{path}"), &tmp).is_err() {
+        let _ = fs::remove_file(&tmp);
+        println!("❗ File not found in commit {commit}: {path}");
+        return Ok(());
+    }
+
+    if is_binary_file(&tmp)? {
+        println!("📄 {path} (binary file in {commit})");
+        println!("🔹 [Binary file content omitted]");
+    } else {
+        println!("📄 {path} (from {commit})");
+        println!("```");
+        let content = fs::read(&tmp)?;
+        std::io::stdout().write_all(&content)?;
+        println!();
+        println!("```");
+    }
+
+    let _ = fs::remove_file(&tmp);
+    Ok(())
+}
+
 fn emit_from_worktree(path: &str) -> Result<()> {
     if is_binary_file(path)? {
         println!("📄 {path} (binary file in working tree)");
