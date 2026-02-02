@@ -208,8 +208,8 @@ fn resolve_to_short_hash_or_query(input: &str) -> String {
 }
 
 fn commit_parents(commit: &str) -> Vec<String> {
-    let out = util::run_capture("git", &["rev-list", "--parents", "-n", "1", commit])
-        .unwrap_or_default();
+    let out =
+        util::run_capture("git", &["rev-list", "--parents", "-n", "1", commit]).unwrap_or_default();
     let mut parts = out.split_whitespace();
     let _ = parts.next();
     parts.map(|s| s.to_string()).collect()
