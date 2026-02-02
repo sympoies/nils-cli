@@ -303,16 +303,14 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
                     } else {
                         let values = crate::json::read_json(secret_file).ok();
                         if let Some(values) = values {
-                            row.non_weekly_reset_epoch = crate::json::string_at(
+                            row.non_weekly_reset_epoch = crate::json::i64_at(
                                 &values,
                                 &["codex_rate_limits", "non_weekly_reset_at_epoch"],
-                            )
-                            .and_then(|v| v.parse::<i64>().ok());
-                            row.weekly_reset_epoch = crate::json::string_at(
+                            );
+                            row.weekly_reset_epoch = crate::json::i64_at(
                                 &values,
                                 &["codex_rate_limits", "weekly_reset_at_epoch"],
-                            )
-                            .and_then(|v| v.parse::<i64>().ok());
+                            );
                         }
                         if row.non_weekly_reset_epoch.is_none() || row.weekly_reset_epoch.is_none()
                         {
@@ -361,12 +359,12 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
     for row in rows {
         let display_non_weekly = if multiple_labels && !row.window_label.is_empty() {
             if row.non_weekly_remaining >= 0 {
-                format!("{}:{}", row.window_label, row.non_weekly_remaining)
+                format!("{}:{}%", row.window_label, row.non_weekly_remaining)
             } else {
                 "-".to_string()
             }
         } else if row.non_weekly_remaining >= 0 {
-            row.non_weekly_remaining.to_string()
+            format!("{}%", row.non_weekly_remaining)
         } else {
             "-".to_string()
         };
@@ -386,7 +384,7 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
 
         let non_weekly_display = ansi::format_percent_cell(&display_non_weekly, 8, None);
         let weekly_display = if row.weekly_remaining >= 0 {
-            ansi::format_percent_cell(&row.weekly_remaining.to_string(), 8, None)
+            ansi::format_percent_cell(&format!("{}%", row.weekly_remaining), 8, None)
         } else {
             ansi::format_percent_cell("-", 8, None)
         };
@@ -823,16 +821,14 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
             } else {
                 let values = crate::json::read_json(&secret_file).ok();
                 if let Some(values) = values {
-                    row.non_weekly_reset_epoch = crate::json::string_at(
+                    row.non_weekly_reset_epoch = crate::json::i64_at(
                         &values,
                         &["codex_rate_limits", "non_weekly_reset_at_epoch"],
-                    )
-                    .and_then(|v| v.parse::<i64>().ok());
-                    row.weekly_reset_epoch = crate::json::string_at(
+                    );
+                    row.weekly_reset_epoch = crate::json::i64_at(
                         &values,
                         &["codex_rate_limits", "weekly_reset_at_epoch"],
-                    )
-                    .and_then(|v| v.parse::<i64>().ok());
+                    );
                 }
             }
 
@@ -875,12 +871,12 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
     for row in rows {
         let display_non_weekly = if multiple_labels && !row.window_label.is_empty() {
             if row.non_weekly_remaining >= 0 {
-                format!("{}:{}", row.window_label, row.non_weekly_remaining)
+                format!("{}:{}%", row.window_label, row.non_weekly_remaining)
             } else {
                 "-".to_string()
             }
         } else if row.non_weekly_remaining >= 0 {
-            row.non_weekly_remaining.to_string()
+            format!("{}%", row.non_weekly_remaining)
         } else {
             "-".to_string()
         };
@@ -900,7 +896,7 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
 
         let non_weekly_display = ansi::format_percent_cell(&display_non_weekly, 8, None);
         let weekly_display = if row.weekly_remaining >= 0 {
-            ansi::format_percent_cell(&row.weekly_remaining.to_string(), 8, None)
+            ansi::format_percent_cell(&format!("{}%", row.weekly_remaining), 8, None)
         } else {
             ansi::format_percent_cell("-", 8, None)
         };

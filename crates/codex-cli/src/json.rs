@@ -19,6 +19,18 @@ pub fn string_at(value: &Value, path: &[&str]) -> Option<String> {
     cursor.as_str().map(strip_newlines)
 }
 
+pub fn i64_at(value: &Value, path: &[&str]) -> Option<i64> {
+    let mut cursor = value;
+    for key in path {
+        cursor = cursor.get(*key)?;
+    }
+    match cursor {
+        Value::Number(value) => value.as_i64(),
+        Value::String(value) => value.trim().parse::<i64>().ok(),
+        _ => None,
+    }
+}
+
 pub fn strip_newlines(raw: &str) -> String {
     raw.split(&['\n', '\r'][..])
         .next()
