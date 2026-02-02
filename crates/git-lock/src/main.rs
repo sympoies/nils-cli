@@ -60,13 +60,19 @@ fn main() {
 }
 
 fn run() -> i32 {
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.len() > 1 && is_help(&args[1]) {
+        print_help();
+        return 0;
+    }
+
     if !git::is_git_repo() {
         println!("❗ Not a Git repository. Run this command inside a Git project.");
         return 1;
     }
 
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() <= 1 || is_help(&args[1]) {
+    if args.len() <= 1 {
         print_help();
         return 0;
     }
