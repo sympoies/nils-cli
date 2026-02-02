@@ -90,6 +90,44 @@ fn missing_file_warning_is_stable() {
     );
 }
 
+#[test]
+fn missing_worktree_file_falls_back_to_head() {
+    let repo = common::init_repo();
+    let root = repo.path();
+
+    fs::write(root.join("worktree.txt"), "worktree").unwrap();
+    common::git(root, &["add", "worktree.txt"]);
+    common::git(root, &["commit", "-m", "add worktree"]);
+
+    fs::remove_file(root.join("worktree.txt")).unwrap();
+
+    let output = common::run_git_scope(root, &["unstaged", "-p"], &[("NO_COLOR", "1")]);
+
+    assert!(
+        output.contains("📄 worktree.txt (from HEAD)"),
+        "missing worktree fallback not found: {output}"
+    );
+}
+
+#[test]
+fn missing_index_file_falls_back_to_head() {
+    let repo = common::init_repo();
+    let root = repo.path();
+
+    fs::write(root.join("index.txt"), "index").unwrap();
+    common::git(root, &["add", "index.txt"]);
+    common::git(root, &["commit", "-m", "add index"]);
+
+    common::git(root, &["rm", "index.txt"]);
+
+    let output = common::run_git_scope(root, &["staged", "-p"], &[("NO_COLOR", "1")]);
+
+    assert!(
+        output.contains("📄 index.txt (deleted in index; from HEAD)"),
+        "missing index fallback not found: {output}"
+    );
+}
+
 fn which_cmd(cmd: &str) -> String {
     let output = std::process::Command::new("which")
         .arg(cmd)
