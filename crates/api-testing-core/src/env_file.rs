@@ -35,14 +35,41 @@ fn parse_assignment_line(line: &str) -> Option<(String, String)> {
         return None;
     }
 
-    let mut value = rhs.trim().to_string();
-    if let Some(stripped) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
-        value = stripped.to_string();
-    } else if let Some(stripped) = value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')) {
-        value = stripped.to_string();
-    }
+    let raw_value = rhs.trim();
+    let value = if let Some(stripped) = parse_quoted_value(raw_value) {
+        stripped
+    } else {
+        strip_inline_comment(raw_value).to_string()
+    };
 
     Some((key.to_string(), value))
+}
+
+fn parse_quoted_value(value: &str) -> Option<String> {
+    let mut chars = value.chars();
+    let quote = chars.next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+
+    let closing_index = value[1..].find(quote).map(|idx| idx + 1)?;
+    let remainder = value[closing_index + 1..].trim_start();
+    if !remainder.is_empty() && !remainder.starts_with('#') {
+        return None;
+    }
+
+    Some(value[1..closing_index].to_string())
+}
+
+fn strip_inline_comment(value: &str) -> &str {
+    let mut prev_was_space = false;
+    for (idx, ch) in value.char_indices() {
+        if ch == '#' && prev_was_space {
+            return value[..idx].trim_end();
+        }
+        prev_was_space = ch.is_whitespace();
+    }
+    value.trim_end()
 }
 
 /// Read an env var from a list of `.env`-like files using the legacy "last assignment wins" semantics.
@@ -144,5 +171,37 @@ NOPE=   plain
         write(&local, "A=\n");
 
         assert_eq!(read_var_last_wins("A", &[&base, &local]).unwrap(), None);
+    }
+
+    #[test]
+    fn env_file_inline_comments_only_strip_unquoted_values() {
+        let tmp = TempDir::new().expect("tmp");
+        let f = tmp.path().join("inline.env");
+        write(
+            &f,
+            r#"
+FOO=bar # comment
+BAR="baz # keep"
+BAZ='qux # keep'
+QUX=keep#hash
+"#,
+        );
+
+        assert_eq!(
+            read_var_last_wins("FOO", &[&f]).unwrap(),
+            Some("bar".to_string())
+        );
+        assert_eq!(
+            read_var_last_wins("BAR", &[&f]).unwrap(),
+            Some("baz # keep".to_string())
+        );
+        assert_eq!(
+            read_var_last_wins("BAZ", &[&f]).unwrap(),
+            Some("qux # keep".to_string())
+        );
+        assert_eq!(
+            read_var_last_wins("QUX", &[&f]).unwrap(),
+            Some("keep#hash".to_string())
+        );
     }
 }
