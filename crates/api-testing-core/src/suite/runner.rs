@@ -187,11 +187,14 @@ fn resolve_rest_token_profile(setup_dir: &Path, profile: &str) -> Result<String>
 
     let key = profile.trim().to_ascii_uppercase();
     let mut env_key = String::new();
+    let mut prev_us = false;
     for c in key.chars() {
         if c.is_ascii_alphanumeric() {
             env_key.push(c);
-        } else if !env_key.ends_with('_') {
+            prev_us = false;
+        } else if !env_key.is_empty() && !prev_us {
             env_key.push('_');
+            prev_us = true;
         }
     }
     while env_key.ends_with('_') {
@@ -1575,6 +1578,15 @@ mod tests {
 
         let token = resolve_rest_token_profile(&fixture.setup_dir, "team alpha").unwrap();
         assert_eq!(token, "local");
+    }
+
+    #[test]
+    fn suite_runner_token_profile_ignores_leading_separators() {
+        let fixture = RestSetupFixture::new();
+        fixture.write_tokens_env("REST_TOKEN_TEAM_ALPHA=base\n");
+
+        let token = resolve_rest_token_profile(&fixture.setup_dir, "-team alpha").unwrap();
+        assert_eq!(token, "base");
     }
 
     #[test]
