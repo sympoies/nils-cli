@@ -60,16 +60,6 @@ pub fn run(args: &[String]) -> i32 {
 
     let repo_root = crate::repo_root::detect();
 
-    if !has_git() {
-        eprintln!("validate_plans: error: git is required");
-        return 1;
-    }
-
-    if !is_git_worktree(&repo_root) {
-        eprintln!("validate_plans: error: must run inside a git work tree");
-        return 1;
-    }
-
     let discovered = if files.is_empty() {
         discover_default_plan_files(&repo_root)
     } else {
@@ -110,26 +100,6 @@ pub fn run(args: &[String]) -> i32 {
         eprintln!("error: {err}");
     }
     1
-}
-
-fn has_git() -> bool {
-    Command::new("git")
-        .arg("--version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok()
-}
-
-fn is_git_worktree(repo_root: &Path) -> bool {
-    Command::new("git")
-        .args(["rev-parse", "--is-inside-work-tree"])
-        .current_dir(repo_root)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
 }
 
 fn discover_default_plan_files(repo_root: &Path) -> Vec<String> {
