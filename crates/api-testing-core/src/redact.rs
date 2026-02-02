@@ -7,10 +7,13 @@ fn should_redact_key(key: &str) -> bool {
     matches!(
         k.as_str(),
         "accesstoken"
+            | "access_token"
             | "refreshtoken"
+            | "refresh_token"
             | "password"
             | "token"
             | "apikey"
+            | "api_key"
             | "authorization"
             | "cookie"
             | "set-cookie"
@@ -58,10 +61,13 @@ mod tests {
     fn redact_replaces_common_secret_fields_recursively() {
         let mut v = serde_json::json!({
             "accessToken": "a",
+            "access_token": "a2",
             "refreshToken": "b",
+            "refresh_token": "b2",
             "password": "c",
             "token": "d",
             "apiKey": "e",
+            "api_key": "e2",
             "authorization": "Bearer x",
             "cookie": "a=b",
             "set-cookie": "c=d",
@@ -78,10 +84,13 @@ mod tests {
         redact_json(&mut v).unwrap();
 
         assert_eq!(v["accessToken"], REDACTED);
+        assert_eq!(v["access_token"], REDACTED);
         assert_eq!(v["refreshToken"], REDACTED);
+        assert_eq!(v["refresh_token"], REDACTED);
         assert_eq!(v["password"], REDACTED);
         assert_eq!(v["token"], REDACTED);
         assert_eq!(v["apiKey"], REDACTED);
+        assert_eq!(v["api_key"], REDACTED);
         assert_eq!(v["authorization"], REDACTED);
         assert_eq!(v["cookie"], REDACTED);
         assert_eq!(v["set-cookie"], REDACTED);
