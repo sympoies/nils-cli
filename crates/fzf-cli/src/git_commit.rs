@@ -51,7 +51,7 @@ pub fn run(args: &[String]) -> i32 {
         let commit = pick.hash;
         selected_commit = commit.clone();
 
-        let (file_list, file_paths) = match build_commit_file_list(&commit) {
+        let (file_list, file_paths, diff_parent) = match build_commit_file_list(&commit) {
             Ok(v) => v,
             Err(err) => {
                 eprintln!("{err:#}");
@@ -66,9 +66,13 @@ pub fn run(args: &[String]) -> i32 {
             "enter: open all (worktree) | ctrl-o: open selected"
         };
 
+        let diff_cmd = match diff_parent.as_deref() {
+            Some(parent) => format!("git diff --color=always {parent} {commit} -- \"$filepath\""),
+            None => format!("git diff --color=always {commit}^! -- \"$filepath\""),
+        };
         let preview = format!(
-            r#"bash -c 'line="$1"; filepath=$(printf "%s\n" "$line" | sed -E "s/^\[[^]]+\] //; s/ *\[\+.*\]$//"); if command -v delta >/dev/null 2>&1; then git diff --color=always {commit}^! -- "$filepath" | delta --width=100 --line-numbers | awk "NR==1 && NF==0 {{next}} {{print}}"; else git diff --color=always {commit}^! -- "$filepath" | cat; fi' -- {{}}"#,
-            commit = commit
+            r#"bash -c 'line="$1"; filepath=$(printf "%s\n" "$line" | sed -E "s/^\[[^]]+\] //; s/ *\[\+.*\]$//"); if command -v delta >/dev/null 2>&1; then {diff_cmd} | delta --width=100 --line-numbers | awk "NR==1 && NF==0 {{next}} {{print}}"; else {diff_cmd} | cat; fi' -- {{}}"#,
+            diff_cmd = diff_cmd
         );
 
         let fzf_args: Vec<String> = vec![
@@ -211,13 +215,16 @@ fn commit_parents(commit: &str) -> Vec<String> {
     parts.map(|s| s.to_string()).collect()
 }
 
-fn build_commit_file_list(commit: &str) -> anyhow::Result<(Vec<String>, Vec<String>)> {
+fn build_commit_file_list(
+    commit: &str,
+) -> anyhow::Result<(Vec<String>, Vec<String>, Option<String>)> {
     let parents = commit_parents(commit);
-    let (diff_out, numstat_out) = if parents.len() > 1 {
+    let (diff_out, numstat_out, diff_parent) = if parents.len() > 1 {
         let parent = parents.first().cloned().unwrap_or_default();
         (
             util::run_capture("git", &["diff", "--name-status", &parent, commit])?,
             util::run_capture("git", &["diff", "--numstat", &parent, commit])?,
+            Some(parent),
         )
     } else {
         (
@@ -226,6 +233,7 @@ fn build_commit_file_list(commit: &str) -> anyhow::Result<(Vec<String>, Vec<Stri
                 &["diff-tree", "--no-commit-id", "--name-status", "-r", commit],
             )?,
             util::run_capture("git", &["show", "--numstat", "--format=", commit])?,
+            None,
         )
     };
     let numstat = parse_numstat(&numstat_out);
@@ -260,7 +268,7 @@ fn build_commit_file_list(commit: &str) -> anyhow::Result<(Vec<String>, Vec<Stri
         file_paths.push(filepath);
     }
 
-    Ok((file_list, file_paths))
+    Ok((file_list, file_paths, diff_parent))
 }
 
 fn parse_numstat(input: &str) -> HashMap<String, (i64, i64)> {
