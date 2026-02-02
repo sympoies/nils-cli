@@ -1,6 +1,8 @@
-use crate::print::{print_file_content, print_file_content_index};
+use crate::change::parse_name_status_lines;
+use crate::print::{emit_file, HeadFallback, PrintSource};
+use crate::progress::ProgressRunner;
+use crate::tree::{tree_support, TREE_MISSING_WARNING, TREE_UNSUPPORTED_WARNING};
 use anyhow::Result;
-use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 use std::collections::BTreeSet;
 use std::process::Command;
 
@@ -8,13 +10,6 @@ use std::process::Command;
 pub enum PrintMode {
     Worktree,
     Index,
-}
-
-#[derive(Debug, Clone)]
-struct ChangeLine {
-    kind: String,
-    src: String,
-    dest: Option<String>,
 }
 
 pub fn render_with_type(
@@ -34,21 +29,9 @@ pub fn render_with_type(
 
     let mut files: Vec<String> = Vec::new();
 
-    for entry in parse_lines(lines) {
-        let display_path = if is_rename_or_copy(&entry.kind) {
-            match entry.dest.as_ref() {
-                Some(dest) => format!("{} -> {}", entry.src, dest),
-                None => entry.src.clone(),
-            }
-        } else {
-            entry.src.clone()
-        };
-
-        let file_path = if is_rename_or_copy(&entry.kind) {
-            entry.dest.clone().unwrap_or_else(|| entry.src.clone())
-        } else {
-            entry.src.clone()
-        };
+    for entry in parse_name_status_lines(lines) {
+        let display_path = entry.display_path();
+        let file_path = entry.file_path();
 
         files.push(file_path);
 
@@ -67,51 +50,28 @@ pub fn render_with_type(
         println!();
         println!("📦 Printing file contents:");
 
-        let progress = if progress_opt_in && !files.is_empty() {
-            Some(Progress::new(
-                files.len() as u64,
-                ProgressOptions::default()
-                    .with_prefix("git-scope ")
-                    .with_finish(ProgressFinish::Clear),
-            ))
-        } else {
-            None
-        };
+        let progress = ProgressRunner::new(files.len() as u64, progress_opt_in);
 
         for file in &files {
-            match (print_mode, &progress) {
-                (PrintMode::Index, Some(progress)) => {
-                    progress.set_message(file);
-                    progress.suspend(|| -> Result<()> {
-                        print_file_content_index(file)?;
+            match print_mode {
+                PrintMode::Index => {
+                    progress.run(file, || -> Result<()> {
+                        emit_file(PrintSource::Index, file, HeadFallback::DeletedInIndex)?;
                         println!();
                         Ok(())
                     })?;
-                    progress.inc(1);
                 }
-                (PrintMode::Worktree, Some(progress)) => {
-                    progress.set_message(file);
-                    progress.suspend(|| -> Result<()> {
-                        print_file_content(file)?;
+                PrintMode::Worktree => {
+                    progress.run(file, || -> Result<()> {
+                        emit_file(PrintSource::Worktree, file, HeadFallback::FromHead)?;
                         println!();
                         Ok(())
                     })?;
-                    progress.inc(1);
-                }
-                (PrintMode::Index, None) => {
-                    print_file_content_index(file)?;
-                    println!();
-                }
-                (PrintMode::Worktree, None) => {
-                    print_file_content(file)?;
-                    println!();
                 }
             }
         }
 
-        if let Some(progress) = progress {
-            progress.finish_and_clear();
-        }
+        progress.finish();
     }
 
     Ok(files)
@@ -143,117 +103,48 @@ pub fn print_all_files(
         })
         .sum::<u64>();
 
-    let progress = if progress_opt_in && total_ops > 0 {
-        Some(Progress::new(
-            total_ops,
-            ProgressOptions::default()
-                .with_prefix("git-scope ")
-                .with_finish(ProgressFinish::Clear),
-        ))
-    } else {
-        None
-    };
+    let progress = ProgressRunner::new(total_ops, progress_opt_in);
 
     for file in files {
         let mut printed = false;
 
         if staged_paths.contains(file) {
-            match &progress {
-                Some(progress) => {
-                    progress.set_message(format!("{file} (index)"));
-                    progress.suspend(|| -> Result<()> {
-                        print_file_content_index(file)?;
-                        println!();
-                        Ok(())
-                    })?;
-                    progress.inc(1);
-                }
-                None => {
-                    print_file_content_index(file)?;
-                    println!();
-                }
-            }
+            progress.run(format!("{file} (index)"), || -> Result<()> {
+                emit_file(PrintSource::Index, file, HeadFallback::DeletedInIndex)?;
+                println!();
+                Ok(())
+            })?;
             printed = true;
         }
 
         if unstaged_paths.contains(file) {
-            match &progress {
-                Some(progress) => {
-                    progress.set_message(format!("{file} (working tree)"));
-                    progress.suspend(|| -> Result<()> {
-                        print_file_content(file)?;
-                        println!();
-                        Ok(())
-                    })?;
-                    progress.inc(1);
-                }
-                None => {
-                    print_file_content(file)?;
-                    println!();
-                }
-            }
+            progress.run(format!("{file} (working tree)"), || -> Result<()> {
+                emit_file(PrintSource::Worktree, file, HeadFallback::FromHead)?;
+                println!();
+                Ok(())
+            })?;
             printed = true;
         }
 
         if !printed {
-            match &progress {
-                Some(progress) => {
-                    progress.set_message(file.to_string());
-                    progress.suspend(|| -> Result<()> {
-                        print_file_content(file)?;
-                        println!();
-                        Ok(())
-                    })?;
-                    progress.inc(1);
-                }
-                None => {
-                    print_file_content(file)?;
-                    println!();
-                }
-            }
+            progress.run(file, || -> Result<()> {
+                emit_file(PrintSource::Worktree, file, HeadFallback::FromHead)?;
+                println!();
+                Ok(())
+            })?;
         }
     }
 
-    if let Some(progress) = progress {
-        progress.finish_and_clear();
-    }
+    progress.finish();
 
     Ok(())
 }
 
 fn collect_paths(lines: &[String]) -> BTreeSet<String> {
-    parse_lines(lines)
+    parse_name_status_lines(lines)
         .into_iter()
-        .map(|entry| {
-            if is_rename_or_copy(&entry.kind) {
-                entry.dest.unwrap_or(entry.src)
-            } else {
-                entry.src
-            }
-        })
+        .map(|entry| entry.file_path())
         .collect()
-}
-
-fn parse_lines(lines: &[String]) -> Vec<ChangeLine> {
-    let mut entries = Vec::new();
-    for line in lines {
-        let mut parts = line.split('\t');
-        let kind = match parts.next() {
-            Some(k) => k.to_string(),
-            None => continue,
-        };
-        let src = match parts.next() {
-            Some(s) => s.to_string(),
-            None => continue,
-        };
-        let dest = parts.next().map(|s| s.to_string());
-        entries.push(ChangeLine { kind, src, dest });
-    }
-    entries
-}
-
-fn is_rename_or_copy(kind: &str) -> bool {
-    kind.starts_with('R') || kind.starts_with('C')
 }
 
 fn kind_color(kind: &str, no_color: bool) -> &'static str {
@@ -287,22 +178,15 @@ fn render_tree(files: &[String], no_color: bool) -> Result<()> {
     println!();
     println!("📂 Directory tree:");
 
-    if Command::new("tree").arg("--version").output().is_err() {
-        println!("⚠️  tree is not installed. Install it to see the directory tree.");
-        return Ok(());
-    }
-
-    let support = Command::new("tree")
-        .arg("--fromfile")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-
-    if support.map(|s| !s.success()).unwrap_or(true) {
-        println!(
-            "⚠️  tree does not support --fromfile. Please upgrade tree to enable directory tree output."
-        );
+    let support = tree_support();
+    if !support.is_installed || !support.supports_fromfile {
+        if let Some(warning) = support.warning {
+            println!("{warning}");
+        } else if !support.is_installed {
+            println!("{TREE_MISSING_WARNING}");
+        } else {
+            println!("{TREE_UNSUPPORTED_WARNING}");
+        }
         return Ok(());
     }
 

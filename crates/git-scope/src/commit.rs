@@ -1,9 +1,10 @@
-use crate::print::print_file_content;
+use crate::change::{canonical_path, parse_name_status_output};
+use crate::git_cmd::run_git;
+use crate::print::{emit_file, HeadFallback, PrintSource};
+use crate::progress::ProgressRunner;
 use crate::render::{color_reset_for_commit, kind_color_for_commit, render_tree_for_commit};
-use anyhow::{Context, Result};
-use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
+use anyhow::Result;
 use std::collections::HashMap;
-use std::process::{Command, Stdio};
 
 pub fn render_commit(
     commit: &str,
@@ -21,38 +22,17 @@ pub fn render_commit(
         println!();
         println!("📦 Printing file contents:");
 
-        let progress = if progress_opt_in {
-            Some(Progress::new(
-                files.len() as u64,
-                ProgressOptions::default()
-                    .with_prefix("git-scope ")
-                    .with_finish(ProgressFinish::Clear),
-            ))
-        } else {
-            None
-        };
+        let progress = ProgressRunner::new(files.len() as u64, progress_opt_in);
 
         for file in files {
-            match &progress {
-                Some(progress) => {
-                    progress.set_message(&file);
-                    progress.suspend(|| -> Result<()> {
-                        print_file_content(&file)?;
-                        println!();
-                        Ok(())
-                    })?;
-                    progress.inc(1);
-                }
-                None => {
-                    print_file_content(&file)?;
-                    println!();
-                }
-            }
+            progress.run(&file, || -> Result<()> {
+                emit_file(PrintSource::Worktree, &file, HeadFallback::FromHead)?;
+                println!();
+                Ok(())
+            })?;
         }
 
-        if let Some(progress) = progress {
-            progress.finish_and_clear();
-        }
+        progress.finish();
     }
 
     Ok(())
@@ -140,22 +120,8 @@ fn render_commit_files(
             .trim()
             .to_string();
 
-        ns_lines = run_git(&[
-            "-c",
-            "core.quotepath=false",
-            "diff",
-            "--name-status",
-            selected_parent_hash,
-            commit,
-        ])?;
-        numstat_lines = run_git(&[
-            "-c",
-            "core.quotepath=false",
-            "diff",
-            "--numstat",
-            selected_parent_hash,
-            commit,
-        ])?;
+        ns_lines = run_git(&["diff", "--name-status", selected_parent_hash, commit])?;
+        numstat_lines = run_git(&["diff", "--numstat", selected_parent_hash, commit])?;
 
         if ns_lines.trim().is_empty() {
             println!("\n📄 Changed files:");
@@ -171,22 +137,8 @@ fn render_commit_files(
             return Ok(Vec::new());
         }
     } else {
-        ns_lines = run_git(&[
-            "-c",
-            "core.quotepath=false",
-            "show",
-            "--pretty=format:",
-            "--name-status",
-            commit,
-        ])?;
-        numstat_lines = run_git(&[
-            "-c",
-            "core.quotepath=false",
-            "show",
-            "--pretty=format:",
-            "--numstat",
-            commit,
-        ])?;
+        ns_lines = run_git(&["show", "--pretty=format:", "--name-status", commit])?;
+        numstat_lines = run_git(&["show", "--pretty=format:", "--numstat", commit])?;
 
         if ns_lines.trim().is_empty() || numstat_lines.trim().is_empty() {
             println!("\n📄 Changed files:");
@@ -238,32 +190,9 @@ fn render_commit_files(
     let mut total_del = 0i64;
     let reset = color_reset_for_commit(no_color);
 
-    for line in ns_lines.lines() {
-        let mut parts = line.split('\t');
-        let kind = match parts.next() {
-            Some(v) => v.to_string(),
-            None => continue,
-        };
-        let src = match parts.next() {
-            Some(v) => v.to_string(),
-            None => continue,
-        };
-        let dest = parts.next().map(|v| v.to_string());
-
-        let display_path = if is_rename_or_copy(&kind) {
-            match dest.as_ref() {
-                Some(d) => format!("{src} -> {d}"),
-                None => src.clone(),
-            }
-        } else {
-            src.clone()
-        };
-
-        let file_path = if is_rename_or_copy(&kind) {
-            dest.clone().unwrap_or_else(|| src.clone())
-        } else {
-            src.clone()
-        };
+    for entry in parse_name_status_output(&ns_lines) {
+        let display_path = entry.display_path();
+        let file_path = entry.file_path();
 
         files.push(file_path.clone());
 
@@ -279,10 +208,10 @@ fn render_commit_files(
             }
         }
 
-        let color = kind_color_for_commit(&kind, no_color);
+        let color = kind_color_for_commit(&entry.kind, no_color);
         println!(
             "  {color}➤ [{}] {display_path}  [+{add} / -{del}]{reset}",
-            kind
+            entry.kind
         );
     }
 
@@ -299,48 +228,4 @@ fn commit_parents(commit: &str) -> Result<Vec<String>> {
         .map(|v| v.to_string())
         .collect::<Vec<_>>();
     Ok(parents)
-}
-
-fn is_rename_or_copy(kind: &str) -> bool {
-    kind.starts_with('R') || kind.starts_with('C')
-}
-
-fn canonical_path(raw: &str) -> String {
-    if raw.contains("=>") {
-        if raw.contains('{') && raw.contains('}') {
-            let (prefix, after_open) = raw.split_once('{').unwrap_or((raw, ""));
-            let (inside, suffix) = after_open.split_once('}').unwrap_or((after_open, ""));
-
-            let mut new_part = inside.split("=>").last().unwrap_or(inside).trim();
-            if new_part.starts_with(' ') {
-                new_part = new_part.trim_start();
-            }
-
-            format!("{prefix}{new_part}{suffix}")
-        } else {
-            let mut new_part = raw.split("=>").last().unwrap_or(raw).trim();
-            if new_part.starts_with(' ') {
-                new_part = new_part.trim_start();
-            }
-            new_part.to_string()
-        }
-    } else {
-        raw.to_string()
-    }
-}
-
-fn run_git(args: &[&str]) -> Result<String> {
-    let output = Command::new("git")
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .with_context(|| format!("git {args:?}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git {args:?} failed: {stderr}");
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }

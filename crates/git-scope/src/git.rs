@@ -1,22 +1,8 @@
-use anyhow::{Context, Result};
+use crate::git_cmd::run_git;
+use anyhow::Result;
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::Command;
-
-fn run_git(args: &[&str]) -> Result<String> {
-    let output = Command::new("git")
-        .args(args)
-        .output()
-        .with_context(|| format!("failed to run git {args:?}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        anyhow::bail!("git {args:?} failed: {stderr}{stdout}");
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
-}
 
 pub fn is_git_repo() -> bool {
     Command::new("git")
@@ -28,8 +14,6 @@ pub fn is_git_repo() -> bool {
 
 pub fn collect_staged() -> Result<Vec<String>> {
     let output = run_git(&[
-        "-c",
-        "core.quotepath=false",
         "diff",
         "--cached",
         "--name-status",
@@ -39,13 +23,7 @@ pub fn collect_staged() -> Result<Vec<String>> {
 }
 
 pub fn collect_unstaged() -> Result<Vec<String>> {
-    let output = run_git(&[
-        "-c",
-        "core.quotepath=false",
-        "diff",
-        "--name-status",
-        "--diff-filter=ACMRTUXBD",
-    ])?;
+    let output = run_git(&["diff", "--name-status", "--diff-filter=ACMRTUXBD"])?;
     Ok(lines(output))
 }
 
@@ -64,7 +42,7 @@ pub fn collect_all() -> Result<(Vec<String>, Vec<String>, Vec<String>)> {
 }
 
 pub fn collect_tracked(prefixes: &[String]) -> Result<Vec<String>> {
-    let output = run_git(&["-c", "core.quotepath=false", "ls-files"])?;
+    let output = run_git(&["ls-files"])?;
     let files = lines(output);
 
     let mut filtered: Vec<String> = Vec::new();
@@ -106,13 +84,7 @@ pub fn collect_tracked(prefixes: &[String]) -> Result<Vec<String>> {
 }
 
 pub fn collect_untracked() -> Result<Vec<String>> {
-    let output = run_git(&[
-        "-c",
-        "core.quotepath=false",
-        "ls-files",
-        "--others",
-        "--exclude-standard",
-    ])?;
+    let output = run_git(&["ls-files", "--others", "--exclude-standard"])?;
 
     let lines = lines(output)
         .into_iter()

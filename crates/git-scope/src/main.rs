@@ -2,10 +2,14 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::process;
 
+mod change;
 mod commit;
 mod git;
+mod git_cmd;
 mod print;
+mod progress;
 mod render;
+mod tree;
 
 #[derive(Parser)]
 #[command(
