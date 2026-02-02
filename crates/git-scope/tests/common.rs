@@ -1,52 +1,17 @@
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::path::Path;
+use std::process::Output;
 
-pub fn git(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("git command failed to spawn");
-
-    if !output.status.success() {
-        panic!(
-            "git {:?} failed: {}{}",
-            args,
-            String::from_utf8_lossy(&output.stderr),
-            String::from_utf8_lossy(&output.stdout)
-        );
-    }
-
-    String::from_utf8_lossy(&output.stdout).to_string()
-}
+use nils_test_support::bin::resolve;
+use nils_test_support::cmd::{run_with, CmdOptions, CmdOutput};
+pub use nils_test_support::git::git;
+use nils_test_support::git::{init_repo_with, InitRepoOptions};
 
 pub fn init_repo() -> tempfile::TempDir {
-    let dir = tempfile::TempDir::new().expect("tempdir");
-    git(dir.path(), &["init", "-q"]);
-    // Make the initial branch deterministic across environments (some git configs default to
-    // `master`, others to `main`).
-    git(dir.path(), &["checkout", "-q", "-B", "main"]);
-    git(dir.path(), &["config", "user.email", "test@example.com"]);
-    git(dir.path(), &["config", "user.name", "Test User"]);
-    git(dir.path(), &["config", "commit.gpgsign", "false"]);
-    dir
+    init_repo_with(InitRepoOptions::new().with_branch("main"))
 }
 
-pub fn git_scope_bin() -> PathBuf {
-    if let Ok(bin) = std::env::var("CARGO_BIN_EXE_git-scope")
-        .or_else(|_| std::env::var("CARGO_BIN_EXE_git_scope"))
-    {
-        return PathBuf::from(bin);
-    }
-
-    let exe = std::env::current_exe().expect("current exe");
-    let target_dir = exe.parent().and_then(|p| p.parent()).expect("target dir");
-    let bin = target_dir.join("git-scope");
-    if bin.exists() {
-        return bin;
-    }
-
-    panic!("git-scope binary path: NotPresent");
+pub fn git_scope_bin() -> std::path::PathBuf {
+    resolve("git-scope")
 }
 
 pub fn run_git_scope(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> String {
@@ -55,23 +20,40 @@ pub fn run_git_scope(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> String
 }
 
 pub fn run_git_scope_output(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> Output {
-    let mut cmd = Command::new(git_scope_bin());
-    cmd.args(args)
-        .current_dir(dir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    for (k, v) in envs {
-        cmd.env(k, v);
+    let mut options = CmdOptions::new().with_cwd(dir);
+    for (key, value) in envs {
+        options = options.with_env(key, value);
     }
-    let output = cmd.output().expect("run git-scope");
-    if !output.status.success() {
+    let output = run_with(&git_scope_bin(), args, &options);
+    if output.code != 0 {
         panic!(
             "git-scope {:?} failed: {}{}",
             args,
-            String::from_utf8_lossy(&output.stderr),
-            String::from_utf8_lossy(&output.stdout)
+            output.stderr_text(),
+            output.stdout_text()
         );
     }
-    output
+    output_from_cmd(output)
+}
+
+fn output_from_cmd(output: CmdOutput) -> Output {
+    Output {
+        status: exit_status_from_code(output.code),
+        stdout: output.stdout,
+        stderr: output.stderr,
+    }
+}
+
+#[cfg(unix)]
+fn exit_status_from_code(code: i32) -> std::process::ExitStatus {
+    use std::os::unix::process::ExitStatusExt;
+    let raw = if code >= 0 { code << 8 } else { 1 << 8 };
+    std::process::ExitStatus::from_raw(raw)
+}
+
+#[cfg(windows)]
+fn exit_status_from_code(code: i32) -> std::process::ExitStatus {
+    use std::os::windows::process::ExitStatusExt;
+    let raw = if code >= 0 { code as u32 } else { 1 };
+    std::process::ExitStatus::from_raw(raw)
 }

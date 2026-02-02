@@ -1,45 +1,22 @@
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::net::TcpListener;
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc};
-use std::thread;
-use std::time::Duration;
+use std::sync::Arc;
 
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
-struct CmdOutput {
-    code: i32,
-    stdout: String,
-    stderr: String,
-}
+use nils_test_support::bin::resolve;
+use nils_test_support::cmd::{run_with, CmdOptions, CmdOutput};
+use nils_test_support::fs::{write_json, write_text};
+use nils_test_support::http::{HttpResponse, TestServer};
 
-fn api_rest_bin() -> PathBuf {
-    if let Ok(bin) =
-        std::env::var("CARGO_BIN_EXE_api-rest").or_else(|_| std::env::var("CARGO_BIN_EXE_api_rest"))
-    {
-        return PathBuf::from(bin);
-    }
-
-    let exe = std::env::current_exe().expect("current exe");
-    let target_dir = exe.parent().and_then(|p| p.parent()).expect("target dir");
-    let bin = target_dir.join("api-rest");
-    if bin.exists() {
-        return bin;
-    }
-
-    panic!("api-rest binary path: NotPresent");
+fn api_rest_bin() -> std::path::PathBuf {
+    resolve("api-rest")
 }
 
 fn run_api_rest(cwd: &Path, args: &[&str], envs: &[(&str, &str)]) -> CmdOutput {
-    let mut cmd = Command::new(api_rest_bin());
-    cmd.current_dir(cwd)
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
+    let mut options = CmdOptions::default().with_cwd(cwd);
     // Keep tests hermetic and deterministic: avoid inheriting user proxy or REST_* env vars.
     for key in [
         "REST_URL",
@@ -55,31 +32,16 @@ fn run_api_rest(cwd: &Path, args: &[&str], envs: &[(&str, &str)]) -> CmdOutput {
         "ALL_PROXY",
         "all_proxy",
     ] {
-        cmd.env_remove(key);
+        options = options.with_env_remove(key);
     }
-    cmd.env("NO_PROXY", "127.0.0.1,localhost");
-    cmd.env("no_proxy", "127.0.0.1,localhost");
+    options = options.with_env("NO_PROXY", "127.0.0.1,localhost");
+    options = options.with_env("no_proxy", "127.0.0.1,localhost");
 
     for (k, v) in envs {
-        cmd.env(k, v);
+        options = options.with_env(k, v);
     }
 
-    let output = cmd.output().expect("run api-rest");
-    CmdOutput {
-        code: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-    }
-}
-
-fn write_json(path: &Path, value: &serde_json::Value) {
-    std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
-    std::fs::write(path, serde_json::to_vec_pretty(value).expect("json")).expect("write json");
-}
-
-fn write_file(path: &Path, contents: &str) {
-    std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
-    std::fs::write(path, contents.as_bytes()).expect("write file");
+    run_with(&api_rest_bin(), args, &options)
 }
 
 fn write_health_request(root: &Path) {
@@ -94,89 +56,16 @@ fn write_health_request(root: &Path) {
     );
 }
 
-fn read_until_headers_end(stream: &mut TcpStream) {
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-    let mut buf = Vec::new();
-    let mut tmp = [0u8; 2048];
-    loop {
-        match stream.read(&mut tmp) {
-            Ok(0) => break,
-            Ok(n) => {
-                buf.extend_from_slice(&tmp[..n]);
-                if buf.windows(4).any(|w| w == b"\r\n\r\n") {
-                    break;
-                }
-                if buf.len() > 64 * 1024 {
-                    break;
-                }
-            }
-            Err(_) => break,
-        }
-    }
-}
-
-fn write_json_response(stream: &mut TcpStream, body: &[u8]) {
-    let mut resp = Vec::new();
-    resp.extend_from_slice(b"HTTP/1.1 200 OK\r\n");
-    resp.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
-    resp.extend_from_slice(b"Content-Type: application/json\r\n");
-    resp.extend_from_slice(b"\r\n");
-    resp.extend_from_slice(body);
-    let _ = stream.write_all(&resp);
-    let _ = stream.flush();
-}
-
-struct TestServer {
-    base_url: String,
-    hits: Arc<AtomicUsize>,
-    shutdown: mpsc::Sender<()>,
-    join: Option<thread::JoinHandle<()>>,
-}
-
-impl Drop for TestServer {
-    fn drop(&mut self) {
-        let _ = self.shutdown.send(());
-        if let Some(j) = self.join.take() {
-            let _ = j.join();
-        }
-    }
-}
-
-fn start_json_server(body: &'static [u8]) -> TestServer {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    listener.set_nonblocking(true).expect("nonblocking");
-    let addr = listener.local_addr().expect("addr");
-    let base_url = format!("http://{addr}");
-
+fn start_json_server(body: &'static [u8]) -> (TestServer, Arc<AtomicUsize>) {
     let hits = Arc::new(AtomicUsize::new(0));
-    let hits_for_thread = Arc::clone(&hits);
-    let (tx, rx) = mpsc::channel::<()>();
-    let body = body.to_vec();
-
-    let join = thread::spawn(move || loop {
-        if rx.try_recv().is_ok() {
-            break;
-        }
-
-        match listener.accept() {
-            Ok((mut stream, _peer)) => {
-                hits_for_thread.fetch_add(1, Ordering::SeqCst);
-                read_until_headers_end(&mut stream);
-                write_json_response(&mut stream, &body);
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                thread::sleep(Duration::from_millis(5));
-            }
-            Err(_) => break,
-        }
-    });
-
-    TestServer {
-        base_url,
-        hits,
-        shutdown: tx,
-        join: Some(join),
-    }
+    let hits_for_handler = Arc::clone(&hits);
+    let body = String::from_utf8_lossy(body).to_string();
+    let server = TestServer::new(move |_req| {
+        hits_for_handler.fetch_add(1, Ordering::SeqCst);
+        HttpResponse::new(200, body.clone()).with_header("Content-Type", "application/json")
+    })
+    .expect("start test server");
+    (server, hits)
 }
 
 #[test]
@@ -186,8 +75,8 @@ fn endpoint_precedence_url_wins_even_if_env_and_rest_url_set() {
     std::fs::create_dir_all(root.join("setup/rest")).expect("mkdir setup/rest");
     write_health_request(root);
 
-    let server_url = start_json_server(br#"{"server":"explicit-url"}"#);
-    let server_rest_url = start_json_server(br#"{"server":"rest-url"}"#);
+    let (server_url, server_url_hits) = start_json_server(br#"{"server":"explicit-url"}"#);
+    let (server_rest_url, server_rest_url_hits) = start_json_server(br#"{"server":"rest-url"}"#);
 
     let out = run_api_rest(
         root,
@@ -197,21 +86,21 @@ fn endpoint_precedence_url_wins_even_if_env_and_rest_url_set() {
             "setup/rest",
             "--no-history",
             "--url",
-            &server_url.base_url,
+            &server_url.url(),
             "--env",
             "staging",
             "requests/health.request.json",
         ],
-        &[("REST_URL", &server_rest_url.base_url)],
+        &[("REST_URL", &server_rest_url.url())],
     );
-    assert_eq!(out.code, 0, "stderr={}", out.stderr);
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
     assert!(
-        out.stdout.contains("\"explicit-url\""),
+        out.stdout_text().contains("\"explicit-url\""),
         "stdout={}",
-        out.stdout
+        out.stdout_text()
     );
-    assert_eq!(server_url.hits.load(Ordering::SeqCst), 1);
-    assert_eq!(server_rest_url.hits.load(Ordering::SeqCst), 0);
+    assert_eq!(server_url_hits.load(Ordering::SeqCst), 1);
+    assert_eq!(server_rest_url_hits.load(Ordering::SeqCst), 0);
 }
 
 #[test]
@@ -222,12 +111,12 @@ fn endpoint_precedence_env_wins_over_rest_url() {
     std::fs::create_dir_all(&setup_dir).expect("mkdir setup/rest");
     write_health_request(root);
 
-    let server_env = start_json_server(br#"{"server":"env"}"#);
-    let server_rest_url = start_json_server(br#"{"server":"rest-url"}"#);
+    let (server_env, server_env_hits) = start_json_server(br#"{"server":"env"}"#);
+    let (server_rest_url, server_rest_url_hits) = start_json_server(br#"{"server":"rest-url"}"#);
 
-    write_file(
+    write_text(
         &setup_dir.join("endpoints.env"),
-        &format!("REST_URL_STAGING={}\n", server_env.base_url),
+        &format!("REST_URL_STAGING={}\n", server_env.url()),
     );
 
     let out = run_api_rest(
@@ -241,12 +130,16 @@ fn endpoint_precedence_env_wins_over_rest_url() {
             "staging",
             "requests/health.request.json",
         ],
-        &[("REST_URL", &server_rest_url.base_url)],
+        &[("REST_URL", &server_rest_url.url())],
     );
-    assert_eq!(out.code, 0, "stderr={}", out.stderr);
-    assert!(out.stdout.contains("\"env\""), "stdout={}", out.stdout);
-    assert_eq!(server_env.hits.load(Ordering::SeqCst), 1);
-    assert_eq!(server_rest_url.hits.load(Ordering::SeqCst), 0);
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+    assert!(
+        out.stdout_text().contains("\"env\""),
+        "stdout={}",
+        out.stdout_text()
+    );
+    assert_eq!(server_env_hits.load(Ordering::SeqCst), 1);
+    assert_eq!(server_rest_url_hits.load(Ordering::SeqCst), 0);
 }
 
 #[test]
@@ -279,15 +172,15 @@ fn env_as_url_https_does_not_require_endpoints_env() {
     );
     assert_eq!(out.code, 1);
     assert!(
-        out.stderr
+        out.stderr_text()
             .contains("HTTP request failed: GET https://127.0.0.1"),
         "stderr={}",
-        out.stderr
+        out.stderr_text()
     );
     assert!(
-        !out.stderr.contains("endpoints.env not found"),
+        !out.stderr_text().contains("endpoints.env not found"),
         "stderr={}",
-        out.stderr
+        out.stderr_text()
     );
 }
 
@@ -299,14 +192,14 @@ fn endpoint_precedence_rest_url_wins_over_rest_env_default() {
     std::fs::create_dir_all(&setup_dir).expect("mkdir setup/rest");
     write_health_request(root);
 
-    let server_rest_url = start_json_server(br#"{"server":"rest-url"}"#);
-    let server_default = start_json_server(br#"{"server":"default-env"}"#);
+    let (server_rest_url, server_rest_url_hits) = start_json_server(br#"{"server":"rest-url"}"#);
+    let (server_default, server_default_hits) = start_json_server(br#"{"server":"default-env"}"#);
 
-    write_file(
+    write_text(
         &setup_dir.join("endpoints.env"),
         &format!(
             "REST_ENV_DEFAULT=staging\nREST_URL_STAGING={}\n",
-            server_default.base_url
+            server_default.url()
         ),
     );
 
@@ -319,12 +212,16 @@ fn endpoint_precedence_rest_url_wins_over_rest_env_default() {
             "--no-history",
             "requests/health.request.json",
         ],
-        &[("REST_URL", &server_rest_url.base_url)],
+        &[("REST_URL", &server_rest_url.url())],
     );
-    assert_eq!(out.code, 0, "stderr={}", out.stderr);
-    assert!(out.stdout.contains("\"rest-url\""), "stdout={}", out.stdout);
-    assert_eq!(server_rest_url.hits.load(Ordering::SeqCst), 1);
-    assert_eq!(server_default.hits.load(Ordering::SeqCst), 0);
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+    assert!(
+        out.stdout_text().contains("\"rest-url\""),
+        "stdout={}",
+        out.stdout_text()
+    );
+    assert_eq!(server_rest_url_hits.load(Ordering::SeqCst), 1);
+    assert_eq!(server_default_hits.load(Ordering::SeqCst), 0);
 }
 
 #[test]
@@ -335,12 +232,12 @@ fn rest_env_default_selects_endpoint_from_files() {
     std::fs::create_dir_all(&setup_dir).expect("mkdir setup/rest");
     write_health_request(root);
 
-    let server_default = start_json_server(br#"{"server":"default-env"}"#);
-    write_file(
+    let (server_default, server_default_hits) = start_json_server(br#"{"server":"default-env"}"#);
+    write_text(
         &setup_dir.join("endpoints.env"),
         &format!(
             "REST_ENV_DEFAULT=staging\nREST_URL_STAGING={}\n",
-            server_default.base_url
+            server_default.url()
         ),
     );
 
@@ -355,13 +252,13 @@ fn rest_env_default_selects_endpoint_from_files() {
         ],
         &[],
     );
-    assert_eq!(out.code, 0, "stderr={}", out.stderr);
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
     assert!(
-        out.stdout.contains("\"default-env\""),
+        out.stdout_text().contains("\"default-env\""),
         "stdout={}",
-        out.stdout
+        out.stdout_text()
     );
-    assert_eq!(server_default.hits.load(Ordering::SeqCst), 1);
+    assert_eq!(server_default_hits.load(Ordering::SeqCst), 1);
 }
 
 #[test]
@@ -386,10 +283,10 @@ fn missing_endpoints_env_errors_for_named_env() {
     );
     assert_eq!(out.code, 1);
     assert!(
-        out.stderr
+        out.stderr_text()
             .contains("endpoints.env not found (expected under setup/rest/)"),
         "stderr={}",
-        out.stderr
+        out.stderr_text()
     );
 }
 
@@ -401,11 +298,11 @@ fn unknown_env_lists_available_suffixes_including_local_env() {
     std::fs::create_dir_all(&setup_dir).expect("mkdir setup/rest");
     write_health_request(root);
 
-    write_file(
+    write_text(
         &setup_dir.join("endpoints.env"),
         "REST_URL_STAGING=http://example.invalid\n",
     );
-    write_file(
+    write_text(
         &setup_dir.join("endpoints.local.env"),
         "REST_URL_DEV=http://example.invalid\n",
     );
@@ -425,13 +322,13 @@ fn unknown_env_lists_available_suffixes_including_local_env() {
     );
     assert_eq!(out.code, 1);
     assert!(
-        out.stderr.contains("Unknown --env 'prod'"),
+        out.stderr_text().contains("Unknown --env 'prod'"),
         "stderr={}",
-        out.stderr
+        out.stderr_text()
     );
     assert!(
-        out.stderr.contains("available: dev staging"),
+        out.stderr_text().contains("available: dev staging"),
         "stderr={}",
-        out.stderr
+        out.stderr_text()
     );
 }

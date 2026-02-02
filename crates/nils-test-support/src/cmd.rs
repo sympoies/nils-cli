@@ -1,0 +1,164 @@
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+
+/// Output captured from a command invocation.
+#[derive(Debug)]
+pub struct CmdOutput {
+    pub code: i32,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+}
+
+impl CmdOutput {
+    pub fn success(&self) -> bool {
+        self.code == 0
+    }
+
+    pub fn stdout_text(&self) -> String {
+        String::from_utf8_lossy(&self.stdout).to_string()
+    }
+
+    pub fn stderr_text(&self) -> String {
+        String::from_utf8_lossy(&self.stderr).to_string()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CmdOptions {
+    pub cwd: Option<PathBuf>,
+    pub envs: Vec<(String, String)>,
+    pub env_remove: Vec<String>,
+    pub stdin: Option<Vec<u8>>,
+    pub stdin_null: bool,
+}
+
+impl Default for CmdOptions {
+    fn default() -> Self {
+        Self {
+            cwd: None,
+            envs: Vec::new(),
+            env_remove: Vec::new(),
+            stdin: None,
+            stdin_null: true,
+        }
+    }
+}
+
+impl CmdOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_cwd(mut self, dir: &Path) -> Self {
+        self.cwd = Some(dir.to_path_buf());
+        self
+    }
+
+    pub fn with_env(mut self, key: &str, value: &str) -> Self {
+        self.envs.push((key.to_string(), value.to_string()));
+        self
+    }
+
+    pub fn with_env_remove(mut self, key: &str) -> Self {
+        self.env_remove.push(key.to_string());
+        self
+    }
+
+    pub fn with_stdin_bytes(mut self, bytes: &[u8]) -> Self {
+        self.stdin = Some(bytes.to_vec());
+        self
+    }
+
+    pub fn with_stdin_str(mut self, input: &str) -> Self {
+        self.stdin = Some(input.as_bytes().to_vec());
+        self
+    }
+
+    pub fn inherit_stdin(mut self) -> Self {
+        self.stdin_null = false;
+        self
+    }
+}
+
+/// Run a binary with arguments, capturing `code`, `stdout`, and `stderr`.
+///
+/// - `envs` overrides or adds environment variables (existing vars are preserved).
+/// - `stdin` (when `Some`) is piped into the process before waiting for output.
+pub fn run(bin: &Path, args: &[&str], envs: &[(&str, &str)], stdin: Option<&[u8]>) -> CmdOutput {
+    let mut options = CmdOptions::default();
+    for (key, value) in envs {
+        options = options.with_env(key, value);
+    }
+    if let Some(input) = stdin {
+        options = options.with_stdin_bytes(input);
+    }
+    run_with(bin, args, &options)
+}
+
+/// Run a binary in a specific directory.
+pub fn run_in_dir(
+    dir: &Path,
+    bin: &Path,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    stdin: Option<&[u8]>,
+) -> CmdOutput {
+    let mut options = CmdOptions::default().with_cwd(dir);
+    for (key, value) in envs {
+        options = options.with_env(key, value);
+    }
+    if let Some(input) = stdin {
+        options = options.with_stdin_bytes(input);
+    }
+    run_with(bin, args, &options)
+}
+
+pub fn run_with(bin: &Path, args: &[&str], options: &CmdOptions) -> CmdOutput {
+    run_impl(bin, args, options, None)
+}
+
+pub fn run_in_dir_with(dir: &Path, bin: &Path, args: &[&str], options: &CmdOptions) -> CmdOutput {
+    run_impl(bin, args, options, Some(dir))
+}
+
+fn run_impl(bin: &Path, args: &[&str], options: &CmdOptions, dir: Option<&Path>) -> CmdOutput {
+    let mut cmd = Command::new(bin);
+    if let Some(dir) = dir {
+        cmd.current_dir(dir);
+    } else if let Some(cwd) = options.cwd.as_deref() {
+        cmd.current_dir(cwd);
+    }
+
+    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    for key in &options.env_remove {
+        cmd.env_remove(key);
+    }
+    for (key, value) in &options.envs {
+        cmd.env(key, value);
+    }
+
+    let output = match options.stdin.as_ref() {
+        Some(input) => {
+            cmd.stdin(Stdio::piped());
+            let mut child = cmd.spawn().expect("spawn command");
+            if let Some(mut writer) = child.stdin.take() {
+                writer.write_all(input).expect("write stdin");
+            }
+            child.wait_with_output().expect("wait command")
+        }
+        None => {
+            if options.stdin_null {
+                cmd.stdin(Stdio::null());
+            }
+            cmd.output().expect("run command")
+        }
+    };
+
+    CmdOutput {
+        code: output.status.code().unwrap_or(-1),
+        stdout: output.stdout,
+        stderr: output.stderr,
+    }
+}

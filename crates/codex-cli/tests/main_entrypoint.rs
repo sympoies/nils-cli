@@ -1,41 +1,27 @@
+use nils_test_support::bin;
+use nils_test_support::cmd::{self, CmdOptions, CmdOutput};
 use pretty_assertions::assert_eq;
 use std::path::PathBuf;
-use std::process::{Command, Output};
 
 fn codex_cli_bin() -> PathBuf {
-    if let Ok(bin) = std::env::var("CARGO_BIN_EXE_codex-cli")
-        .or_else(|_| std::env::var("CARGO_BIN_EXE_codex_cli"))
-    {
-        return PathBuf::from(bin);
-    }
-
-    let exe = std::env::current_exe().expect("current exe");
-    let target_dir = exe.parent().and_then(|p| p.parent()).expect("target dir");
-    let bin = target_dir.join("codex-cli");
-    if bin.exists() {
-        return bin;
-    }
-
-    panic!("codex-cli binary path: NotPresent");
+    bin::resolve("codex-cli")
 }
 
-fn run(args: &[&str]) -> Output {
-    Command::new(codex_cli_bin())
-        .args(args)
-        .output()
-        .expect("run codex-cli")
+fn run(args: &[&str]) -> CmdOutput {
+    let bin = codex_cli_bin();
+    cmd::run(&bin, args, &[], None)
 }
 
-fn stdout(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).to_string()
+fn stdout(output: &CmdOutput) -> String {
+    output.stdout_text()
 }
 
-fn stderr(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stderr).to_string()
+fn stderr(output: &CmdOutput) -> String {
+    output.stderr_text()
 }
 
-fn assert_exit(output: &Output, code: i32) {
-    assert_eq!(output.status.code(), Some(code));
+fn assert_exit(output: &CmdOutput, code: i32) {
+    assert_eq!(output.code, code);
 }
 
 #[test]
@@ -65,11 +51,9 @@ fn main_agent_and_config_without_subcommand_print_help() {
 
 #[test]
 fn main_agent_prompt_is_gated_and_config_show_exits_zero() {
-    let output = Command::new(codex_cli_bin())
-        .args(["agent", "prompt", "hello"])
-        .env("CODEX_ALLOW_DANGEROUS_ENABLED", "false")
-        .output()
-        .expect("run codex-cli");
+    let options = CmdOptions::default().with_env("CODEX_ALLOW_DANGEROUS_ENABLED", "false");
+    let bin = codex_cli_bin();
+    let output = cmd::run_with(&bin, &["agent", "prompt", "hello"], &options);
     assert_exit(&output, 1);
     assert!(stderr(&output).contains("disabled (set CODEX_ALLOW_DANGEROUS_ENABLED=true)"));
 

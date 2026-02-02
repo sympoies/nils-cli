@@ -84,6 +84,7 @@ dependencies = [
  "api-testing-core",
  "clap",
  "nils-term",
+ "nils-test-support",
  "pretty_assertions",
  "serde_json",
  "tempfile",
@@ -98,6 +99,7 @@ dependencies = [
  "api-testing-core",
  "clap",
  "nils-term",
+ "nils-test-support",
  "pretty_assertions",
  "serde_json",
  "tempfile",
@@ -112,6 +114,7 @@ dependencies = [
  "api-testing-core",
  "clap",
  "nils-term",
+ "nils-test-support",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -278,6 +281,8 @@ dependencies = [
  "clap",
  "nils-common",
  "nils-term",
+ "nils-test-support",
+ "pretty_assertions",
  "tracing",
  "tracing-subscriber",
 ]
@@ -555,6 +560,7 @@ dependencies = [
  "anyhow",
  "clap",
  "nils-term",
+ "nils-test-support",
  "tempfile",
 ]
 
@@ -565,6 +571,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "nils-term",
+ "nils-test-support",
  "tempfile",
 ]
 
@@ -1097,6 +1104,9 @@ dependencies = [
 name = "nils-test-support"
 version = "0.1.0"
 dependencies = [
+ "pretty_assertions",
+ "serde",
+ "serde_json",
  "tempfile",
 ]
 
@@ -1194,6 +1204,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "nils-term",
+ "nils-test-support",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -1522,6 +1533,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "nils-term",
+ "nils-test-support",
  "pretty_assertions",
  "serde",
  "serde_json",

@@ -3,7 +3,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
+pub mod bin;
+pub mod cmd;
 pub mod fixtures;
+pub mod fs;
+pub mod git;
 pub mod http;
 pub mod stubs;
 

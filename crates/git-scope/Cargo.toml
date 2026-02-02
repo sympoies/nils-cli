@@ -10,4 +10,5 @@ clap = { workspace = true }
 nils-term = { path = "../nils-term" }
 
 [dev-dependencies]
+nils-test-support = { path = "../nils-test-support" }
 tempfile = "3"

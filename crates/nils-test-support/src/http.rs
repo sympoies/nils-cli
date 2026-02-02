@@ -10,7 +10,22 @@ use std::time::Duration;
 pub struct RecordedRequest {
     pub method: String,
     pub path: String,
-    pub body: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+impl RecordedRequest {
+    pub fn body_text(&self) -> String {
+        String::from_utf8_lossy(&self.body).to_string()
+    }
+
+    pub fn header_value(&self, key: &str) -> Option<String> {
+        let key = key.to_ascii_lowercase();
+        self.headers
+            .iter()
+            .find(|(k, _)| k == &key)
+            .map(|(_, v)| v.clone())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -119,38 +134,15 @@ fn handle_connection(
     routes: &Arc<Mutex<HashMap<RouteKey, HttpResponse>>>,
     requests: &Arc<Mutex<Vec<RecordedRequest>>>,
 ) -> io::Result<()> {
-    stream.set_nonblocking(false)?;
-    stream.set_read_timeout(Some(Duration::from_secs(1)))?;
-    let mut buffer = Vec::new();
-    let mut temp = [0u8; 8192];
-
-    loop {
-        let n = stream.read(&mut temp)?;
-        if n == 0 {
-            break;
-        }
-        buffer.extend_from_slice(&temp[..n]);
-        if buffer.windows(4).any(|w| w == b"\r\n\r\n") {
-            break;
-        }
-        if buffer.len() > 1024 * 1024 {
-            break;
-        }
-    }
-
-    let (method, path, body) = parse_request(&buffer, stream)?;
+    let request = read_request(stream)?;
     requests
         .lock()
         .expect("requests lock")
-        .push(RecordedRequest {
-            method: method.clone(),
-            path: path.clone(),
-            body: body.clone(),
-        });
+        .push(request.clone());
 
     let route_key = RouteKey {
-        method: method.to_ascii_uppercase(),
-        path: path.clone(),
+        method: request.method.to_ascii_uppercase(),
+        path: request.path.clone(),
     };
 
     let response = routes
@@ -164,7 +156,64 @@ fn handle_connection(
     Ok(())
 }
 
-fn parse_request(buffer: &[u8], stream: &mut TcpStream) -> io::Result<(String, String, String)> {
+fn read_request(stream: &mut TcpStream) -> io::Result<RecordedRequest> {
+    stream.set_nonblocking(false)?;
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    let mut buffer = Vec::new();
+    let mut temp = [0u8; 8192];
+
+    loop {
+        let n = match stream.read(&mut temp) {
+            Ok(n) => n,
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => 0,
+            Err(err) if err.kind() == io::ErrorKind::TimedOut => 0,
+            Err(err) => return Err(err),
+        };
+        if n == 0 {
+            break;
+        }
+        buffer.extend_from_slice(&temp[..n]);
+        if buffer.windows(4).any(|w| w == b"\r\n\r\n") {
+            break;
+        }
+        if buffer.len() > 1024 * 1024 {
+            break;
+        }
+    }
+
+    let (method, path, headers, rest) = parse_headers_and_rest(&buffer);
+
+    if header_value(&headers, "expect")
+        .is_some_and(|v| v.to_ascii_lowercase().contains("100-continue"))
+    {
+        let _ = stream.write_all(b"HTTP/1.1 100 Continue\r\n\r\n");
+        let _ = stream.flush();
+    }
+
+    let body = if let Some(te) =
+        header_value(&headers, "transfer-encoding").map(|v| v.to_ascii_lowercase())
+    {
+        if te.contains("chunked") {
+            read_chunked_body(stream, rest)
+        } else {
+            Vec::new()
+        }
+    } else if let Some(cl) = header_value(&headers, "content-length") {
+        let len = cl.parse::<usize>().unwrap_or(0);
+        read_exact_bytes(stream, rest, len)
+    } else {
+        rest
+    };
+
+    Ok(RecordedRequest {
+        method,
+        path,
+        headers,
+        body,
+    })
+}
+
+fn parse_headers_and_rest(buffer: &[u8]) -> (String, String, Vec<(String, String)>, Vec<u8>) {
     let mut headers_end = None;
     for i in 0..buffer.len().saturating_sub(3) {
         if &buffer[i..i + 4] == b"\r\n\r\n" {
@@ -174,40 +223,179 @@ fn parse_request(buffer: &[u8], stream: &mut TcpStream) -> io::Result<(String, S
     }
 
     let header_end = headers_end.unwrap_or(buffer.len());
-    let headers_raw = String::from_utf8_lossy(&buffer[..header_end]).to_string();
-    let mut lines = headers_raw.lines();
+    let headers_raw = String::from_utf8_lossy(&buffer[..header_end]);
+    let mut lines = headers_raw.split("\r\n");
     let first = lines.next().unwrap_or("");
     let mut parts = first.split_whitespace();
     let method = parts.next().unwrap_or("GET").to_string();
-    let path = parts.next().unwrap_or("/").to_string();
+    let target = parts.next().unwrap_or("/");
+    let path = target.split('?').next().unwrap_or("/").to_string();
 
-    let mut content_length: usize = 0;
+    let mut headers = Vec::new();
     for line in lines {
-        let lower = line.to_ascii_lowercase();
-        if let Some(rest) = lower.strip_prefix("content-length:") {
-            content_length = rest.trim().parse::<usize>().unwrap_or(0);
+        if line.is_empty() {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once(':') {
+            let key = key.trim().to_ascii_lowercase();
+            let value = value.trim().to_string();
+            headers.push((key, value));
         }
     }
 
-    let mut body = Vec::new();
     let body_start = header_end.saturating_add(4);
-    if buffer.len() > body_start {
-        body.extend_from_slice(&buffer[body_start..]);
+    let rest = if buffer.len() > body_start {
+        buffer[body_start..].to_vec()
+    } else {
+        Vec::new()
+    };
+
+    (method, path, headers, rest)
+}
+
+fn header_value(headers: &[(String, String)], key: &str) -> Option<String> {
+    let key = key.to_ascii_lowercase();
+    headers
+        .iter()
+        .find(|(k, _)| k == &key)
+        .map(|(_, v)| v.clone())
+}
+
+fn read_exact_bytes(stream: &mut TcpStream, mut already: Vec<u8>, want: usize) -> Vec<u8> {
+    while already.len() < want {
+        let mut tmp = vec![0u8; (want - already.len()).min(8192)];
+        let n = stream.read(&mut tmp).unwrap_or_default();
+        if n == 0 {
+            break;
+        }
+        already.extend_from_slice(&tmp[..n]);
+    }
+    already.truncate(want);
+    already
+}
+
+fn take_line(buf: &mut Vec<u8>, stream: &mut TcpStream) -> Option<Vec<u8>> {
+    loop {
+        if let Some(pos) = buf.windows(2).position(|w| w == b"\r\n") {
+            let mut line = buf.drain(..pos).collect::<Vec<u8>>();
+            let _ = buf.drain(..2);
+            if line.ends_with(b"\r") {
+                line.pop();
+            }
+            return Some(line);
+        }
+
+        let mut tmp = [0u8; 4096];
+        let n = stream.read(&mut tmp).ok()?;
+        if n == 0 {
+            return None;
+        }
+        buf.extend_from_slice(&tmp[..n]);
+    }
+}
+
+fn read_chunked_body(stream: &mut TcpStream, mut buf: Vec<u8>) -> Vec<u8> {
+    let mut body = Vec::new();
+    while let Some(line) = take_line(&mut buf, stream) {
+        let line_str = String::from_utf8_lossy(&line);
+        let size_str = line_str.split(';').next().unwrap_or("").trim();
+        let Ok(size) = usize::from_str_radix(size_str, 16) else {
+            break;
+        };
+        if size == 0 {
+            while let Some(l) = take_line(&mut buf, stream) {
+                if l.is_empty() {
+                    break;
+                }
+            }
+            break;
+        }
+
+        while buf.len() < size + 2 {
+            let mut tmp = [0u8; 8192];
+            let n = stream.read(&mut tmp).unwrap_or_default();
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&tmp[..n]);
+        }
+
+        if buf.len() < size + 2 {
+            break;
+        }
+        body.extend_from_slice(&buf[..size]);
+        buf.drain(..size + 2);
+    }
+    body
+}
+
+pub struct TestServer {
+    addr: SocketAddr,
+    requests: Arc<Mutex<Vec<RecordedRequest>>>,
+    stop: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl TestServer {
+    pub fn new<F>(handler: F) -> io::Result<Self>
+    where
+        F: Fn(&RecordedRequest) -> HttpResponse + Send + Sync + 'static,
+    {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        listener.set_nonblocking(true)?;
+        let addr = listener.local_addr()?;
+
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let handler = Arc::new(handler);
+
+        let requests_t = Arc::clone(&requests);
+        let stop_t = Arc::clone(&stop);
+        let handler_t = Arc::clone(&handler);
+
+        let handle = thread::spawn(move || {
+            while !stop_t.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        if let Ok(request) = read_request(&mut stream) {
+                            let response = handler_t(&request);
+                            requests_t.lock().expect("requests lock").push(request);
+                            let _ = write_response(&mut stream, response);
+                        }
+                    }
+                    Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                        thread::yield_now();
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        Ok(Self {
+            addr,
+            requests,
+            stop,
+            handle: Some(handle),
+        })
     }
 
-    while body.len() < content_length {
-        let mut tmp = vec![0u8; content_length - body.len()];
-        match stream.read(&mut tmp) {
-            Ok(0) => break,
-            Ok(n) => body.extend_from_slice(&tmp[..n]),
-            Err(err) if err.kind() == io::ErrorKind::WouldBlock => break,
-            Err(err) if err.kind() == io::ErrorKind::TimedOut => break,
-            Err(err) => return Err(err),
+    pub fn url(&self) -> String {
+        format!("http://{}", self.addr)
+    }
+
+    pub fn take_requests(&self) -> Vec<RecordedRequest> {
+        let mut guard = self.requests.lock().expect("requests lock");
+        std::mem::take(&mut *guard)
+    }
+}
+
+impl Drop for TestServer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
         }
     }
-
-    let body_str = String::from_utf8_lossy(&body).to_string();
-    Ok((method, path, body_str))
 }
 
 fn write_response(stream: &mut TcpStream, response: HttpResponse) -> io::Result<()> {

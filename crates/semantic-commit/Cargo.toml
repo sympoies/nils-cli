@@ -13,4 +13,5 @@ time = { version = "0.3", features = ["formatting"] }
 nils-term = { path = "../nils-term" }
 
 [dev-dependencies]
+nils-test-support = { path = "../nils-test-support" }
 pretty_assertions = { workspace = true }

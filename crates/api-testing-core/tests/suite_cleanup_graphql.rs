@@ -102,7 +102,7 @@ fn suite_cleanup_graphql_success_sends_vars() {
         .iter()
         .find(|r| r.method == "POST" && r.path == "/graphql")
         .expect("graphql request");
-    let body: serde_json::Value = serde_json::from_str(&req.body).expect("json body");
+    let body: serde_json::Value = serde_json::from_str(&req.body_text()).expect("json body");
     assert!(body
         .get("query")
         .and_then(|v| v.as_str())

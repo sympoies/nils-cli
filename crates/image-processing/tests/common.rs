@@ -1,7 +1,8 @@
 #![allow(dead_code)]
 
+use nils_test_support::bin;
+use nils_test_support::cmd::{self, CmdOptions};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
 use nils_test_support::StubBinDir;
 
@@ -12,39 +13,20 @@ pub struct CmdOutput {
 }
 
 pub fn image_processing_bin() -> PathBuf {
-    if let Ok(bin) = std::env::var("CARGO_BIN_EXE_image-processing")
-        .or_else(|_| std::env::var("CARGO_BIN_EXE_image_processing"))
-    {
-        return PathBuf::from(bin);
-    }
-
-    let exe = std::env::current_exe().expect("current exe");
-    let target_dir = exe.parent().and_then(|p| p.parent()).expect("target dir");
-    let bin = target_dir.join("image-processing");
-    if bin.exists() {
-        return bin;
-    }
-
-    panic!("image-processing binary path: NotPresent");
+    bin::resolve("image-processing")
 }
 
 pub fn run_image_processing(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> CmdOutput {
-    let mut cmd = Command::new(image_processing_bin());
-    cmd.args(args)
-        .current_dir(dir)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .stdin(Stdio::null());
-
+    let mut options = CmdOptions::default().with_cwd(dir);
     for (k, v) in envs {
-        cmd.env(k, v);
+        options = options.with_env(k, v);
     }
-
-    let output = cmd.output().expect("run image-processing");
+    let bin = image_processing_bin();
+    let output = cmd::run_with(&bin, args, &options);
     CmdOutput {
-        code: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        code: output.code,
+        stdout: output.stdout_text(),
+        stderr: output.stderr_text(),
     }
 }
 

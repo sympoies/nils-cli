@@ -1,77 +1,48 @@
+use nils_test_support::bin;
+use nils_test_support::cmd::{self, CmdOptions, CmdOutput};
+use nils_test_support::fs as test_fs;
 use pretty_assertions::assert_eq;
 use std::fs;
 use std::path::PathBuf;
-use std::process::{Command, Output, Stdio};
 
 fn codex_cli_bin() -> PathBuf {
-    if let Ok(bin) = std::env::var("CARGO_BIN_EXE_codex-cli")
-        .or_else(|_| std::env::var("CARGO_BIN_EXE_codex_cli"))
-    {
-        return PathBuf::from(bin);
-    }
-
-    let exe = std::env::current_exe().expect("current exe");
-    let target_dir = exe.parent().and_then(|p| p.parent()).expect("target dir");
-    let bin = target_dir.join("codex-cli");
-    if bin.exists() {
-        return bin;
-    }
-
-    panic!("codex-cli binary path: NotPresent");
+    bin::resolve("codex-cli")
 }
 
-fn run(args: &[&str], vars: &[(&str, &str)]) -> Output {
-    let mut cmd = Command::new(codex_cli_bin());
-    cmd.args(args);
+fn run(args: &[&str], vars: &[(&str, &str)]) -> CmdOutput {
+    let mut options = CmdOptions::default();
     for (key, value) in vars {
-        cmd.env(key, value);
+        options = options.with_env(key, value);
     }
-    cmd.output().expect("run codex-cli")
+    let bin = codex_cli_bin();
+    cmd::run_with(&bin, args, &options)
 }
 
-fn run_with_stdin(args: &[&str], vars: &[(&str, &str)], stdin: &str) -> Output {
-    let mut cmd = Command::new(codex_cli_bin());
-    cmd.args(args);
+fn run_with_stdin(args: &[&str], vars: &[(&str, &str)], stdin: &str) -> CmdOutput {
+    let mut options = CmdOptions::default().with_stdin_str(stdin);
     for (key, value) in vars {
-        cmd.env(key, value);
+        options = options.with_env(key, value);
     }
-    cmd.stdin(Stdio::piped());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-    let mut child = cmd.spawn().expect("spawn codex-cli");
-    if let Some(mut handle) = child.stdin.take() {
-        use std::io::Write;
-        handle.write_all(stdin.as_bytes()).expect("write stdin");
-    }
-    child.wait_with_output().expect("wait")
+    let bin = codex_cli_bin();
+    cmd::run_with(&bin, args, &options)
 }
 
-fn stdout(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).to_string()
+fn stdout(output: &CmdOutput) -> String {
+    output.stdout_text()
 }
 
-fn stderr(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stderr).to_string()
+fn stderr(output: &CmdOutput) -> String {
+    output.stderr_text()
 }
 
-fn assert_exit(output: &Output, code: i32) {
+fn assert_exit(output: &CmdOutput, code: i32) {
     assert_eq!(
-        output.status.code(),
-        Some(code),
+        output.code,
+        code,
         "unexpected exit code.\nstdout:\n{}\nstderr:\n{}",
         stdout(output),
         stderr(output)
     );
-}
-
-fn make_exe(path: &std::path::Path) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(path).expect("meta").permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(path, perms).expect("chmod");
-    }
 }
 
 fn write_stub_codex(stub_dir: &std::path::Path, out_dir: &std::path::Path) {
@@ -89,8 +60,7 @@ done
 exit 0
 "#;
     let path = stub_dir.join("codex");
-    fs::write(&path, script).expect("write codex stub");
-    make_exe(&path);
+    test_fs::write_executable(&path, script);
 }
 
 #[test]
@@ -143,7 +113,7 @@ fn agent_knowledge_missing_template_prints_error_prefix() {
             ("ZDOTDIR", &zdotdir_str),
         ],
     );
-    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.code, 1);
     assert!(stderr(&output).contains("codex-tools: prompt template not found:"));
 }
 

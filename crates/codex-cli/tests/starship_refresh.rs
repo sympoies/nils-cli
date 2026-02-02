@@ -1,50 +1,39 @@
+use nils_test_support::bin;
+use nils_test_support::cmd::{self, CmdOptions, CmdOutput};
 use nils_test_support::http::{HttpResponse, LoopbackServer};
 use pretty_assertions::assert_eq;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn codex_cli_bin() -> PathBuf {
-    if let Ok(bin) = std::env::var("CARGO_BIN_EXE_codex-cli")
-        .or_else(|_| std::env::var("CARGO_BIN_EXE_codex_cli"))
-    {
-        return PathBuf::from(bin);
-    }
-
-    let exe = std::env::current_exe().expect("current exe");
-    let target_dir = exe.parent().and_then(|p| p.parent()).expect("target dir");
-    let bin = target_dir.join("codex-cli");
-    if bin.exists() {
-        return bin;
-    }
-
-    panic!("codex-cli binary path: NotPresent");
+    bin::resolve("codex-cli")
 }
 
-fn run(args: &[&str], envs: &[(&str, &Path)], vars: &[(&str, &str)]) -> Output {
-    let mut cmd = Command::new(codex_cli_bin());
-    cmd.args(args);
-    // Stabilize output for tests regardless of user shell/starship environment.
-    cmd.env("NO_COLOR", "1");
-    cmd.env_remove("STARSHIP_SESSION_KEY");
-    cmd.env_remove("STARSHIP_SHELL");
+fn run(args: &[&str], envs: &[(&str, &Path)], vars: &[(&str, &str)]) -> CmdOutput {
+    let mut options = CmdOptions::default()
+        // Stabilize output for tests regardless of user shell/starship environment.
+        .with_env("NO_COLOR", "1")
+        .with_env_remove("STARSHIP_SESSION_KEY")
+        .with_env_remove("STARSHIP_SHELL");
     for (key, path) in envs {
-        cmd.env(key, path);
+        let value = path.to_string_lossy();
+        options = options.with_env(key, value.as_ref());
     }
     for (key, value) in vars {
-        cmd.env(key, value);
+        options = options.with_env(key, value);
     }
-    cmd.output().expect("run codex-cli")
+    let bin = codex_cli_bin();
+    cmd::run_with(&bin, args, &options)
 }
 
-fn stdout(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).to_string()
+fn stdout(output: &CmdOutput) -> String {
+    output.stdout_text()
 }
 
-fn assert_exit(output: &Output, code: i32) {
-    assert_eq!(output.status.code(), Some(code));
+fn assert_exit(output: &CmdOutput, code: i32) {
+    assert_eq!(output.code, code);
 }
 
 fn now_epoch() -> i64 {

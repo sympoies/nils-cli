@@ -1,51 +1,31 @@
+use nils_test_support::bin;
+use nils_test_support::cmd::{self, CmdOptions, CmdOutput};
+use nils_test_support::fs as test_fs;
 use pretty_assertions::assert_eq;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::Command;
 
 fn codex_cli_bin() -> PathBuf {
-    if let Ok(bin) = std::env::var("CARGO_BIN_EXE_codex-cli")
-        .or_else(|_| std::env::var("CARGO_BIN_EXE_codex_cli"))
-    {
-        return PathBuf::from(bin);
-    }
-
-    let exe = std::env::current_exe().expect("current exe");
-    let target_dir = exe.parent().and_then(|p| p.parent()).expect("target dir");
-    let bin = target_dir.join("codex-cli");
-    if bin.exists() {
-        return bin;
-    }
-
-    panic!("codex-cli binary path: NotPresent");
+    bin::resolve("codex-cli")
 }
 
-fn stdout(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).to_string()
+fn stdout(output: &CmdOutput) -> String {
+    output.stdout_text()
 }
 
-fn stderr(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stderr).to_string()
+fn stderr(output: &CmdOutput) -> String {
+    output.stderr_text()
 }
 
-fn assert_exit(output: &Output, code: i32) {
+fn assert_exit(output: &CmdOutput, code: i32) {
     assert_eq!(
-        output.status.code(),
-        Some(code),
+        output.code,
+        code,
         "unexpected exit code.\nstdout:\n{}\nstderr:\n{}",
         stdout(output),
         stderr(output)
     );
-}
-
-fn make_exe(path: &Path) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(path).expect("meta").permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(path, perms).expect("chmod");
-    }
 }
 
 fn real_git_path() -> String {
@@ -68,8 +48,7 @@ exec "{git}" "$@"
 "#
     );
     let path = dir.join("git");
-    fs::write(&path, script).expect("write git stub");
-    make_exe(&path);
+    test_fs::write_executable(&path, &script);
 }
 
 fn write_stub_semantic_commit(dir: &Path) {
@@ -77,8 +56,7 @@ fn write_stub_semantic_commit(dir: &Path) {
 exit 0
 "#;
     let path = dir.join("semantic-commit");
-    fs::write(&path, script).expect("write semantic-commit stub");
-    make_exe(&path);
+    test_fs::write_executable(&path, script);
 }
 
 fn write_stub_codex(dir: &Path) {
@@ -92,8 +70,7 @@ for arg in "$@"; do
 done
 "#;
     let path = dir.join("codex");
-    fs::write(&path, script).expect("write codex stub");
-    make_exe(&path);
+    test_fs::write_executable(&path, script);
 }
 
 fn init_repo(dir: &Path) {
@@ -145,22 +122,13 @@ fn agent_commit_fallback_creates_commit() {
     fs::create_dir_all(&stub_dir).expect("stub dir");
     write_stub_git(&stub_dir);
 
-    let mut cmd = Command::new(codex_cli_bin());
-    cmd.current_dir(&repo);
-    cmd.args(["agent", "commit"]);
-    cmd.env("PATH", stub_dir.to_string_lossy().to_string());
-    cmd.stdin(Stdio::piped());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-
-    let mut child = cmd.spawn().expect("spawn codex-cli");
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        stdin
-            .write_all(b"\n\nmy subject\ny\n")
-            .expect("write stdin");
-    }
-    let output = child.wait_with_output().expect("wait");
+    let stub_path = stub_dir.to_string_lossy().to_string();
+    let options = CmdOptions::default()
+        .with_cwd(&repo)
+        .with_env("PATH", &stub_path)
+        .with_stdin_bytes(b"\n\nmy subject\ny\n");
+    let bin = codex_cli_bin();
+    let output = cmd::run_with(&bin, &["agent", "commit"], &options);
     assert_exit(&output, 0);
     assert!(stderr(&output).contains("fallback mode"));
 
@@ -203,25 +171,29 @@ fn agent_commit_semantic_mode_executes_codex_with_template_and_push_note() {
     let out_dir = dir.path().join("out");
     fs::create_dir_all(&out_dir).expect("out dir");
     let out_dir_str = out_dir.to_string_lossy().to_string();
-
-    let mut cmd = Command::new(codex_cli_bin());
-    cmd.current_dir(&repo);
-    cmd.args([
-        "agent",
-        "commit",
-        "--push",
-        "--auto-stage",
-        "extra",
-        "words",
-    ]);
-    cmd.env("PATH", stub_dir.to_string_lossy().to_string());
-    cmd.env("CODEX_ALLOW_DANGEROUS_ENABLED", "true");
-    cmd.env("CODEX_CLI_MODEL", "m-test");
-    cmd.env("CODEX_CLI_REASONING", "low");
-    cmd.env("ZDOTDIR", zdotdir.to_string_lossy().to_string());
-    cmd.env("CODEX_STUB_OUT_DIR", &out_dir_str);
-
-    let output = cmd.output().expect("run codex-cli");
+    let stub_path = stub_dir.to_string_lossy().to_string();
+    let zdotdir_str = zdotdir.to_string_lossy().to_string();
+    let options = CmdOptions::default()
+        .with_cwd(&repo)
+        .with_env("PATH", &stub_path)
+        .with_env("CODEX_ALLOW_DANGEROUS_ENABLED", "true")
+        .with_env("CODEX_CLI_MODEL", "m-test")
+        .with_env("CODEX_CLI_REASONING", "low")
+        .with_env("ZDOTDIR", &zdotdir_str)
+        .with_env("CODEX_STUB_OUT_DIR", &out_dir_str);
+    let bin = codex_cli_bin();
+    let output = cmd::run_with(
+        &bin,
+        &[
+            "agent",
+            "commit",
+            "--push",
+            "--auto-stage",
+            "extra",
+            "words",
+        ],
+        &options,
+    );
     assert_exit(&output, 0);
 
     let prompt = fs::read_to_string(out_dir.join("arg-9")).expect("prompt");

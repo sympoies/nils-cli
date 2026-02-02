@@ -1,37 +1,23 @@
+use nils_test_support::bin;
+use nils_test_support::cmd::{self, CmdOutput};
 use pretty_assertions::assert_eq;
 use std::path::PathBuf;
-use std::process::{Command, Output};
 
 fn codex_cli_bin() -> PathBuf {
-    if let Ok(bin) = std::env::var("CARGO_BIN_EXE_codex-cli")
-        .or_else(|_| std::env::var("CARGO_BIN_EXE_codex_cli"))
-    {
-        return PathBuf::from(bin);
-    }
-
-    let exe = std::env::current_exe().expect("current exe");
-    let target_dir = exe.parent().and_then(|p| p.parent()).expect("target dir");
-    let bin = target_dir.join("codex-cli");
-    if bin.exists() {
-        return bin;
-    }
-
-    panic!("codex-cli binary path: NotPresent");
+    bin::resolve("codex-cli")
 }
 
-fn run(args: &[&str]) -> Output {
-    Command::new(codex_cli_bin())
-        .args(args)
-        .output()
-        .expect("run codex-cli")
+fn run(args: &[&str]) -> CmdOutput {
+    let bin = codex_cli_bin();
+    cmd::run(&bin, args, &[], None)
 }
 
-fn stderr_string(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stderr).to_string()
+fn stderr_string(output: &CmdOutput) -> String {
+    output.stderr_text()
 }
 
-fn assert_exit_code(output: &Output, expected: i32) {
-    assert_eq!(output.status.code(), Some(expected));
+fn assert_exit_code(output: &CmdOutput, expected: i32) {
+    assert_eq!(output.code, expected);
 }
 
 #[test]

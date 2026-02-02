@@ -1,49 +1,34 @@
+use nils_test_support::bin;
+use nils_test_support::cmd::{self, CmdOutput};
 use std::path::PathBuf;
-use std::process::Command;
 
 fn cli_template_bin() -> PathBuf {
-    if let Ok(bin) = std::env::var("CARGO_BIN_EXE_cli-template")
-        .or_else(|_| std::env::var("CARGO_BIN_EXE_cli_template"))
-    {
-        return PathBuf::from(bin);
-    }
+    bin::resolve("cli-template")
+}
 
-    let exe = std::env::current_exe().expect("current exe");
-    let target_dir = exe.parent().and_then(|p| p.parent()).expect("target dir");
-    let bin = target_dir.join("cli-template");
-    if bin.exists() {
-        return bin;
-    }
-
-    panic!("cli-template binary path: NotPresent");
+fn run(args: &[&str]) -> CmdOutput {
+    let bin = cli_template_bin();
+    cmd::run(&bin, args, &[], None)
 }
 
 #[test]
 fn cli_template_runs_without_subcommand() {
-    let output = Command::new(cli_template_bin())
-        .output()
-        .expect("run cli-template");
-    assert_eq!(output.status.code().unwrap_or(-1), 0);
+    let output = run(&[]);
+    assert_eq!(output.code, 0);
 }
 
 #[test]
 fn cli_template_hello_defaults_to_world() {
-    let output = Command::new(cli_template_bin())
-        .args(["hello"])
-        .output()
-        .expect("run hello");
-    assert_eq!(output.status.code().unwrap_or(-1), 0);
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let output = run(&["hello"]);
+    assert_eq!(output.code, 0);
+    let stdout = output.stdout_text();
     assert!(stdout.contains("Hello, world!"), "stdout={stdout}");
 }
 
 #[test]
 fn cli_template_hello_accepts_name() {
-    let output = Command::new(cli_template_bin())
-        .args(["hello", "Nils"])
-        .output()
-        .expect("run hello");
-    assert_eq!(output.status.code().unwrap_or(-1), 0);
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let output = run(&["hello", "Nils"]);
+    assert_eq!(output.code, 0);
+    let stdout = output.stdout_text();
     assert!(stdout.contains("Hello, Nils!"), "stdout={stdout}");
 }

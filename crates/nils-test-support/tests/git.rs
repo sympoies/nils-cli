@@ -1,0 +1,61 @@
+use nils_test_support::git;
+use pretty_assertions::assert_eq;
+
+#[test]
+fn init_repo_with_default_branch_and_config() {
+    let repo = git::init_repo_with(git::InitRepoOptions::default());
+    let branch = git::git(repo.path(), &["symbolic-ref", "--short", "HEAD"]);
+    assert_eq!(branch.trim_end(), "main");
+
+    let email = git::git(repo.path(), &["config", "user.email"]);
+    assert_eq!(email.trim_end(), "test@example.com");
+}
+
+#[test]
+fn init_repo_with_initial_commit_creates_commit() {
+    let repo = git::init_repo_with(git::InitRepoOptions::new().with_initial_commit());
+    let head = git::git(repo.path(), &["rev-parse", "HEAD"]);
+    let head = head.trim();
+    assert_eq!(head.len(), 40);
+}
+
+#[test]
+fn commit_file_creates_commit_and_returns_hash() {
+    let repo = git::init_repo_with(git::InitRepoOptions::default());
+    let hash = git::commit_file(repo.path(), "hello.txt", "hello", "hello");
+    let head = git::git(repo.path(), &["rev-parse", "HEAD"]);
+    assert_eq!(hash, head.trim());
+}
+
+#[test]
+fn git_with_env_applies_env_vars() {
+    let repo = git::init_repo_with(git::InitRepoOptions::default());
+    let ident = git::git_with_env(
+        repo.path(),
+        &["var", "GIT_AUTHOR_IDENT"],
+        &[
+            ("GIT_AUTHOR_NAME", "Env Name"),
+            ("GIT_AUTHOR_EMAIL", "env@example.com"),
+        ],
+    );
+    assert!(ident.contains("Env Name"));
+    assert!(ident.contains("env@example.com"));
+}
+
+#[test]
+fn git_output_returns_status() {
+    let repo = git::init_repo_with(git::InitRepoOptions::default());
+    let output = git::git_output(repo.path(), &["status", "--porcelain"]);
+    assert_eq!(output.status.success(), true);
+}
+
+#[test]
+fn repo_id_matches_directory_name() {
+    let repo = git::init_repo_with(git::InitRepoOptions::default());
+    let expected = repo
+        .path()
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    assert_eq!(git::repo_id(repo.path()), expected.to_string());
+}

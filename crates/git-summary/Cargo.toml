@@ -10,4 +10,5 @@ chrono = { version = "0.4", features = ["clock"] }
 nils-term = { path = "../nils-term" }
 
 [dev-dependencies]
+nils-test-support = { path = "../nils-test-support" }
 tempfile = "3"

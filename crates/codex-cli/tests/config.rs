@@ -1,45 +1,33 @@
+use nils_test_support::bin;
+use nils_test_support::cmd::{self, CmdOptions, CmdOutput};
 use pretty_assertions::assert_eq;
 use std::path::PathBuf;
-use std::process::{Command, Output};
 
 fn codex_cli_bin() -> PathBuf {
-    if let Ok(bin) = std::env::var("CARGO_BIN_EXE_codex-cli")
-        .or_else(|_| std::env::var("CARGO_BIN_EXE_codex_cli"))
-    {
-        return PathBuf::from(bin);
-    }
-
-    let exe = std::env::current_exe().expect("current exe");
-    let target_dir = exe.parent().and_then(|p| p.parent()).expect("target dir");
-    let bin = target_dir.join("codex-cli");
-    if bin.exists() {
-        return bin;
-    }
-
-    panic!("codex-cli binary path: NotPresent");
+    bin::resolve("codex-cli")
 }
 
-fn run(args: &[&str], vars: &[(&str, &str)]) -> Output {
-    let mut cmd = Command::new(codex_cli_bin());
-    cmd.args(args);
+fn run(args: &[&str], vars: &[(&str, &str)]) -> CmdOutput {
+    let mut options = CmdOptions::default();
     for (key, value) in vars {
-        cmd.env(key, value);
+        options = options.with_env(key, value);
     }
-    cmd.output().expect("run codex-cli")
+    let bin = codex_cli_bin();
+    cmd::run_with(&bin, args, &options)
 }
 
-fn stdout(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).to_string()
+fn stdout(output: &CmdOutput) -> String {
+    output.stdout_text()
 }
 
-fn stderr(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stderr).to_string()
+fn stderr(output: &CmdOutput) -> String {
+    output.stderr_text()
 }
 
-fn assert_exit(output: &Output, code: i32) {
+fn assert_exit(output: &CmdOutput, code: i32) {
     assert_eq!(
-        output.status.code(),
-        Some(code),
+        output.code,
+        code,
         "unexpected exit code.\nstdout:\n{}\nstderr:\n{}",
         stdout(output),
         stderr(output)
@@ -75,18 +63,17 @@ fn config_show_prints_effective_values() {
 
 #[test]
 fn config_show_prints_blank_paths_when_unresolvable() {
-    let output = Command::new(codex_cli_bin())
-        .args(["config", "show"])
-        .env_remove("HOME")
-        .env_remove("ZDOTDIR")
-        .env_remove("ZSH_SCRIPT_DIR")
-        .env_remove("_ZSH_BOOTSTRAP_PRELOAD_PATH")
-        .env_remove("ZSH_CACHE_DIR")
-        .env_remove("CODEX_SECRET_DIR")
-        .env_remove("CODEX_AUTH_FILE")
-        .env_remove("CODEX_SECRET_CACHE_DIR")
-        .output()
-        .expect("run codex-cli");
+    let options = CmdOptions::default()
+        .with_env_remove("HOME")
+        .with_env_remove("ZDOTDIR")
+        .with_env_remove("ZSH_SCRIPT_DIR")
+        .with_env_remove("_ZSH_BOOTSTRAP_PRELOAD_PATH")
+        .with_env_remove("ZSH_CACHE_DIR")
+        .with_env_remove("CODEX_SECRET_DIR")
+        .with_env_remove("CODEX_AUTH_FILE")
+        .with_env_remove("CODEX_SECRET_CACHE_DIR");
+    let bin = codex_cli_bin();
+    let output = cmd::run_with(&bin, &["config", "show"], &options);
     assert_exit(&output, 0);
 
     let out = stdout(&output);
