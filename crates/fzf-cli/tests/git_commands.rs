@@ -160,14 +160,14 @@ case "$cmd" in
     fi
     ;;
   log)
-    if [[ "${1:-}" == "--no-decorate" ]]; then
-      echo "abc123 01-01 00:00 User subject"
-      exit 0
-    fi
-    if [[ "${1:-}" == "-1" ]]; then
-      echo "Initial commit"
-      exit 0
-    fi
+    for arg in "$@"; do
+      if [[ "$arg" == "-1" ]]; then
+        echo "Initial commit"
+        exit 0
+      fi
+    done
+    echo "abc123 01-01 00:00 User subject"
+    exit 0
     ;;
   checkout)
     count_file="${CHECKOUT_COUNT:?}"
@@ -289,10 +289,8 @@ case "$cmd" in
     fi
     ;;
   log)
-    if [[ "${1:-}" == "--no-decorate" ]]; then
-      echo "abcdef1 01-01 00:00 User subject"
-      exit 0
-    fi
+    echo "abcdef1 01-01 00:00 User subject"
+    exit 0
     ;;
   diff-tree)
     echo -e "M\tfile.txt"

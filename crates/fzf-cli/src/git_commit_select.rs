@@ -6,20 +6,21 @@ pub struct CommitPick {
     pub hash: String,
 }
 
-pub fn pick_commit(default_query: &str) -> Result<Option<CommitPick>> {
+pub fn pick_commit(default_query: &str, selected: Option<&str>) -> Result<Option<CommitPick>> {
     let log_out = util::run_capture(
         "git",
         &[
             "log",
+            "--color=always",
             "--no-decorate",
             "--date=format:%m-%d %H:%M",
-            "--pretty=format:%h %cd %an%d %s",
+            "--pretty=format:%C(bold #82aaff)%h%C(reset) %C(#ecc48d)%cd%C(reset) %C(#7fdbca)%an%C(reset)%C(auto)%d%C(reset) %C(#d6deeb)%s%C(reset)",
         ],
     )?;
 
     let preview = r#"git-scope commit {1} | sed "s/^📅.*/&\n/""#;
 
-    let args_vec: Vec<String> = vec![
+    let mut args_vec: Vec<String> = vec![
         "--ansi".to_string(),
         "--reverse".to_string(),
         "--prompt".to_string(),
@@ -29,9 +30,23 @@ pub fn pick_commit(default_query: &str) -> Result<Option<CommitPick>> {
         "--preview".to_string(),
         preview.to_string(),
         "--print-query".to_string(),
-        "--query".to_string(),
-        default_query.to_string(),
     ];
+
+    if let Some(selected) = selected.filter(|s| !s.is_empty()) {
+        let restore_bind = if default_query.is_empty() {
+            "focus:unbind(focus)+clear-query".to_string()
+        } else {
+            format!("focus:unbind(focus)+change-query[[{default_query}]]")
+        };
+        args_vec.push("--track".to_string());
+        args_vec.push("--bind".to_string());
+        args_vec.push(restore_bind);
+        args_vec.push("--query".to_string());
+        args_vec.push(selected.to_string());
+    } else {
+        args_vec.push("--query".to_string());
+        args_vec.push(default_query.to_string());
+    }
 
     let args_ref: Vec<&str> = args_vec.iter().map(|s| s.as_str()).collect();
     let (code, query, selected) = fzf::run_print_query(&format!("{log_out}\n"), &args_ref, &[])

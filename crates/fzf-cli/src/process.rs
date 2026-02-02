@@ -19,13 +19,36 @@ pub fn run(args: &[String]) -> i32 {
     let _ = lines.next();
     let input = lines.collect::<Vec<_>>().join("\n");
 
+    let preview = r#"printf "%s\n" {} | awk '{
+  uid  = $1;
+  pid  = $2;
+  ppid = $3;
+  cpu  = $4;
+  mem  = $5;
+  stat = $6;
+  start = sprintf("%s %s %s %s %s", $7, $8, $9, $10, $11);
+  time = $12;
+  cmd  = "";
+  for (i=13; i<=NF; i++) cmd = cmd $i " ";
+
+  printf "👤 UID\n%s\n\n", uid;
+  printf "🔢 PID\n%s\n\n", pid;
+  printf "👪 PPID\n%s\n\n", ppid;
+  printf "🔥 CPU%%\n%s\n\n", cpu;
+  printf "💾 MEM%%\n%s\n\n", mem;
+  printf "📊 STAT\n%s\n\n", stat;
+  printf "🕒 STARTED\n%s\n\n", start;
+  printf "⌚ TIME\n%s\n\n", time;
+  printf "💬 CMD\n%s\n", cmd;
+}'"#;
+
     let args_vec: Vec<String> = vec![
         "-m".to_string(),
         "--query".to_string(),
         query,
         "--preview-window=right:30%:wrap".to_string(),
         "--preview".to_string(),
-        "printf \"%s\\n\" {}".to_string(),
+        preview.to_string(),
     ];
     let args_ref: Vec<&str> = args_vec.iter().map(|s| s.as_str()).collect();
 

@@ -31,9 +31,15 @@ pub fn run(args: &[String]) -> i32 {
 
     let input = util::join_args(&query_parts);
     let mut commit_query = resolve_to_short_hash_or_query(&input);
+    let mut selected_commit = String::new();
 
     loop {
-        let pick = match git_commit_select::pick_commit(&commit_query) {
+        let selected_ref = if selected_commit.is_empty() {
+            None
+        } else {
+            Some(selected_commit.as_str())
+        };
+        let pick = match git_commit_select::pick_commit(&commit_query, selected_ref) {
             Ok(Some(p)) => p,
             Ok(None) => return 1,
             Err(err) => {
@@ -43,6 +49,7 @@ pub fn run(args: &[String]) -> i32 {
         };
         let commit_query_restore = pick.query;
         let commit = pick.hash;
+        selected_commit = commit.clone();
 
         let (file_list, file_paths) = match build_commit_file_list(&commit) {
             Ok(v) => v,
@@ -59,11 +66,10 @@ pub fn run(args: &[String]) -> i32 {
             "enter: open all (worktree) | ctrl-o: open selected"
         };
 
-        let preview = r#"bash -c "
-            filepath=\$(printf \"%s\\n\" {} | sed -E 's/^\\[[^]]+\\] //; s/ *\\[\\+.*\\]$//')
-            git diff --color=always '"#;
-
-        let preview = format!("{preview}{commit}^! -- \"$filepath\" | cat\"");
+        let preview = format!(
+            r#"bash -c 'line="$1"; filepath=$(printf "%s\n" "$line" | sed -E "s/^\[[^]]+\] //; s/ *\[\+.*\]$//"); git diff --color=always {commit}^! -- "$filepath" | cat' -- {{}}"#,
+            commit = commit
+        );
 
         let fzf_args: Vec<String> = vec![
             "--ansi".to_string(),
@@ -87,7 +93,8 @@ pub fn run(args: &[String]) -> i32 {
             }
         };
         if code != 0 {
-            return 1;
+            commit_query = commit_query_restore;
+            continue;
         }
 
         let mode_key = key.unwrap_or_default();

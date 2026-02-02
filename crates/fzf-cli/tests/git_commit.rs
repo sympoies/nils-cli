@@ -38,10 +38,8 @@ case "$cmd" in
     fi
     ;;
   log)
-    if [[ "${1:-}" == "--no-decorate" ]]; then
-      echo "abcdef1 01-01 00:00 User subject"
-      exit 0
-    fi
+    echo "abcdef1 01-01 00:00 User subject"
+    exit 0
     ;;
   diff-tree)
     echo -e "M\tmissing.txt"

@@ -16,6 +16,24 @@ pub fn run(args: &[String]) -> i32 {
         let _ = lines.next();
         let input = lines.collect::<Vec<_>>().join("\n");
 
+        let preview = r#"printf "%s\n" {} | awk '{
+  cmd = $1; pid = $2; user = $3;
+  proto = "?"; name = "";
+  for (i=1; i<=NF; i++) if ($i == "TCP" || $i == "UDP") { proto = $i; break }
+  for (i=NF; i>=1; i--) if (index($i, ":") > 0) { name = $i; break }
+
+  printf "🔭 PORT\n%s\n\n", name;
+  printf "🌐 PROTO\n%s\n\n", proto;
+  printf "📦 CMD\n%s\n\n", cmd;
+  printf "👤 USER\n%s\n\n", user;
+  printf "🔢 PID\n%s\n\n", pid;
+
+  if (pid ~ /^[0-9]+$/) {
+    printf "lsof -p %s\n\n", pid;
+    system("lsof -nP -p " pid " 2>/dev/null | sed 1d | head -n 80");
+  }
+}'"#;
+
         let args_vec: Vec<String> = vec![
             "-m".to_string(),
             "--prompt".to_string(),
@@ -24,7 +42,7 @@ pub fn run(args: &[String]) -> i32 {
             query,
             "--preview-window=right:50%:wrap".to_string(),
             "--preview".to_string(),
-            "printf \"%s\\n\" {}".to_string(),
+            preview.to_string(),
         ];
         let args_ref: Vec<&str> = args_vec.iter().map(|s| s.as_str()).collect();
 

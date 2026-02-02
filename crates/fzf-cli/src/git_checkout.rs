@@ -7,7 +7,7 @@ pub fn run(args: &[String]) -> i32 {
     }
 
     let query = util::join_args(args);
-    let pick = match git_commit_select::pick_commit(&query) {
+    let pick = match git_commit_select::pick_commit(&query, None) {
         Ok(Some(p)) => p,
         Ok(None) => return 1,
         Err(err) => {
