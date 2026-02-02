@@ -91,7 +91,7 @@ Output is emoji-heavy and colorized unless `--no-color` or `NO_COLOR` is set.
 ## commit with print
 - Setup: commit with text file in history.
 - Command: `git-scope commit HEAD -p`.
-- Expect: `📦 Printing file contents` and `📄 <file> (from HEAD)` or `(working tree)`.
+- Expect: `📦 Printing file contents` and `📄 <file> (from <commit-ish>)`.
 
 ## merge parent selection
 - Setup: create merge commit with two parents and divergent changes.

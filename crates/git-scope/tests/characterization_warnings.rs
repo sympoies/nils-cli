@@ -85,8 +85,8 @@ fn missing_file_warning_is_stable() {
     let output = common::run_git_scope(root, &["commit", &old_commit, "-p"], &[("NO_COLOR", "1")]);
 
     assert!(
-        output.contains("❗ File not found: vanish.txt"),
-        "missing file warning not found: {output}"
+        output.contains(&format!("📄 vanish.txt (from {old_commit})")),
+        "commit snapshot header missing: {output}"
     );
 }
 
