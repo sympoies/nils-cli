@@ -551,10 +551,22 @@ fn maybe_print_failure_body_to_stderr(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine;
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
     use crate::test_support::{write_file, EnvGuard, ENV_LOCK};
+
+    fn b64url_json(value: &serde_json::Value) -> String {
+        let bytes = serde_json::to_vec(value).expect("json");
+        URL_SAFE_NO_PAD.encode(bytes)
+    }
+
+    fn make_jwt(payload: serde_json::Value) -> String {
+        let header = serde_json::json!({"alg":"none","typ":"JWT"});
+        format!("{}.{}.sig", b64url_json(&header), b64url_json(&payload))
+    }
 
     #[test]
     fn resolve_endpoint_for_call_honors_url_and_env() {
@@ -669,5 +681,68 @@ mod tests {
             auth.auth_source_used,
             AuthSourceUsed::EnvFallback { .. }
         ));
+    }
+
+    #[test]
+    fn validate_bearer_token_warns_when_non_strict() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _enabled = EnvGuard::set("REST_JWT_VALIDATE_ENABLED", "true");
+        let _strict = EnvGuard::set("REST_JWT_VALIDATE_STRICT", "false");
+
+        let mut stderr = Vec::new();
+        let res = validate_bearer_token_if_jwt(
+            "not.a.jwt",
+            &AuthSourceUsed::None,
+            "default",
+            &mut stderr,
+        );
+        assert!(res.is_ok());
+        let msg = String::from_utf8_lossy(&stderr);
+        assert!(msg.contains("not a valid JWT"));
+    }
+
+    #[test]
+    fn validate_bearer_token_errors_when_strict_invalid() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _enabled = EnvGuard::set("REST_JWT_VALIDATE_ENABLED", "true");
+        let _strict = EnvGuard::set("REST_JWT_VALIDATE_STRICT", "true");
+
+        let mut stderr = Vec::new();
+        let err = validate_bearer_token_if_jwt(
+            "not.a.jwt",
+            &AuthSourceUsed::None,
+            "default",
+            &mut stderr,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("invalid JWT"));
+    }
+
+    #[test]
+    fn validate_bearer_token_errors_when_expired() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _enabled = EnvGuard::set("REST_JWT_VALIDATE_ENABLED", "true");
+        let _strict = EnvGuard::set("REST_JWT_VALIDATE_STRICT", "false");
+
+        let token = make_jwt(serde_json::json!({ "exp": 1 }));
+        let mut stderr = Vec::new();
+        let err =
+            validate_bearer_token_if_jwt(&token, &AuthSourceUsed::TokenProfile, "svc", &mut stderr)
+                .unwrap_err();
+        assert!(err.to_string().contains("JWT expired"));
+    }
+
+    #[test]
+    fn validate_bearer_token_errors_when_nbf_in_future() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _enabled = EnvGuard::set("REST_JWT_VALIDATE_ENABLED", "true");
+        let _strict = EnvGuard::set("REST_JWT_VALIDATE_STRICT", "false");
+
+        let token = make_jwt(serde_json::json!({ "nbf": 4_000_000_000i64 }));
+        let mut stderr = Vec::new();
+        let err =
+            validate_bearer_token_if_jwt(&token, &AuthSourceUsed::TokenProfile, "svc", &mut stderr)
+                .unwrap_err();
+        assert!(err.to_string().contains("JWT not yet valid"));
     }
 }

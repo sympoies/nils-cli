@@ -315,3 +315,10 @@ risk.
 - Sprint 3.3: Coverage + required checks
   - Coverage: **83.59% (1131/1353 lines hit)** vs baseline 76.92%.
   - Required checks: `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh` passed.
+- Follow-up: Deferred gaps closed
+  - JWT strict/expiry validations covered (unit tests in `crates/api-rest/src/commands/call.rs`).
+  - Schema/query/header/multipart edge cases covered (`crates/api-rest/tests/schema_edges.rs`).
+  - Setup-dir discovery covered (`crates/api-rest/tests/setup_resolution.rs`).
+  - Report jq assertions in `--response` mode covered (`crates/api-rest/tests/report.rs`).
+  - Coverage: **88.01% (1241/1410 lines hit)** after follow-up tests.
+  - Required checks re-run: `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`.

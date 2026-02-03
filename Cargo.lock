@@ -97,6 +97,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "api-testing-core",
+ "base64",
  "clap",
  "nils-term",
  "nils-test-support",

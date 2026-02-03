@@ -223,3 +223,88 @@ fn report_run_mode_writes_default_path_and_passes() {
     let report = std::fs::read_to_string(report_path).expect("read report");
     assert!(report.contains("Result: PASS"));
 }
+
+#[test]
+fn report_response_jq_assertion_passes() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("requests")).expect("mkdir requests");
+
+    write_json(
+        &root.join("requests/jq.request.json"),
+        &serde_json::json!({
+            "method": "GET",
+            "path": "/health",
+            "expect": { "status": 200, "jq": ".ok == true" }
+        }),
+    );
+
+    let response_file = root.join("response.json");
+    write_text(&response_file, r#"{"ok":true}"#);
+
+    let out_path = root.join("report.md");
+    let out = run_api_rest(
+        root,
+        &[
+            "report",
+            "--case",
+            "Health",
+            "--request",
+            "requests/jq.request.json",
+            "--response",
+            response_file.to_string_lossy().as_ref(),
+            "--out",
+            out_path.to_string_lossy().as_ref(),
+            "--url",
+            "http://example.test",
+        ],
+        &[],
+    );
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+
+    let report = std::fs::read_to_string(&out_path).expect("read report");
+    assert!(report.contains("expect.status: 200 (NOT_EVALUATED)"));
+    assert!(report.contains("expect.jq: .ok == true (PASS)"));
+}
+
+#[test]
+fn report_response_jq_assertion_fails() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("requests")).expect("mkdir requests");
+
+    write_json(
+        &root.join("requests/jq.request.json"),
+        &serde_json::json!({
+            "method": "GET",
+            "path": "/health",
+            "expect": { "status": 200, "jq": ".ok == true" }
+        }),
+    );
+
+    let response_file = root.join("response.json");
+    write_text(&response_file, r#"{"ok":false}"#);
+
+    let out_path = root.join("report.md");
+    let out = run_api_rest(
+        root,
+        &[
+            "report",
+            "--case",
+            "Health",
+            "--request",
+            "requests/jq.request.json",
+            "--response",
+            response_file.to_string_lossy().as_ref(),
+            "--out",
+            out_path.to_string_lossy().as_ref(),
+            "--url",
+            "http://example.test",
+        ],
+        &[],
+    );
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+
+    let report = std::fs::read_to_string(&out_path).expect("read report");
+    assert!(report.contains("expect.jq: .ok == true (FAIL)"));
+}
