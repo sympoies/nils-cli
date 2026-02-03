@@ -60,19 +60,16 @@ jobs:
           out_dir="dist/nils-cli-${tag}-${target}"
           mkdir -p "${out_dir}/bin"
 
-          bins=(
-            api-gql
-            api-rest
-            api-test
-            cli-template
-            fzf-cli
-            git-lock
-            git-scope
-            git-summary
-            image-processing
-            plan-tooling
-            semantic-commit
-          )
+          bins=()
+          while IFS= read -r bin; do
+            [[ -n "${bin}" ]] || continue
+            bins+=( "${bin}" )
+          done < <(python3 scripts/workspace-bins.py)
+
+          if [[ ${#bins[@]} -eq 0 ]]; then
+            echo "error: no workspace binaries found" >&2
+            exit 1
+          fi
 
           for bin in "${bins[@]}"; do
             src="target/${target}/release/${bin}"

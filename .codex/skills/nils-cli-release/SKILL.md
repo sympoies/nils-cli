@@ -31,6 +31,7 @@ Outputs:
 - Refreshes `Cargo.lock` via `cargo check` or the full checks script.
 - Creates a semantic commit for the version bump.
 - Creates an annotated tag `vX.Y.Z` and (unless `--skip-push`) pushes commit + tag to `origin`.
+- GitHub Release artifacts are built by `.github/workflows/release.yml` and include all workspace `bin` targets (auto-discovered via `scripts/workspace-bins.py`).
 
 Exit codes:
 

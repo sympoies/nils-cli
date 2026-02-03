@@ -102,6 +102,8 @@ See `crates/api-testing-core/README.md` for the recommended repo layout and end-
 2. Add the crate path to the workspace `members` list in `Cargo.toml`.
 3. Use shared dependencies via `workspace = true` in the new crate's `Cargo.toml`.
 4. Build or run the new CLI with `cargo build -p <cli-name>` or `cargo run -p <cli-name> -- ...`.
+5. Verify packaging picks it up (both local install + GitHub Releases use the same discovery):
+   - `python3 scripts/workspace-bins.py | rg "^<cli-name>$"`
 
 ## Zsh wrappers and completions
 This repo keeps optional zsh wrapper scripts and completion assets in-repo.

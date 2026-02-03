@@ -16,18 +16,8 @@ Options:
   -h, --help      Show help
 
 Default binaries:
-  - api-gql
-  - api-rest
-  - api-test
-  - cli-template
-  - codex-cli
-  - fzf-cli
-  - git-lock
-  - git-scope
-  - git-summary
-  - image-processing
-  - plan-tooling
-  - semantic-commit
+  - All workspace binaries (auto-discovered via scripts/workspace-bins.py)
+  - Use --bin NAME (repeatable) to install a subset
 
 Example:
   ./.codex/skills/nils-cli-install/scripts/nils-cli-install.sh
@@ -79,26 +69,7 @@ if [[ "$prefix" == "~" ]]; then
 elif [[ "$prefix" == "~/"* ]]; then
   prefix="$HOME/${prefix#~/}"
 fi
-
-default_bins=(
-  api-gql
-  api-rest
-  api-test
-  cli-template
-  codex-cli
-  fzf-cli
-  git-lock
-  git-scope
-  git-summary
-  image-processing
-  plan-tooling
-  semantic-commit
-)
-if [[ ${#bins[@]} -eq 0 ]]; then
-  bins=( "${default_bins[@]}" )
-fi
-
-for cmd in git cargo install; do
+for cmd in git cargo install python3; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "error: missing required tool on PATH: $cmd" >&2
     exit 2
@@ -112,6 +83,24 @@ if [[ -z "$repo_root" || ! -d "$repo_root" ]]; then
 fi
 
 cd "$repo_root"
+
+if [[ ${#bins[@]} -eq 0 ]]; then
+  bins_script="$repo_root/scripts/workspace-bins.py"
+  if [[ ! -f "$bins_script" ]]; then
+    echo "error: missing bins script: $bins_script" >&2
+    exit 2
+  fi
+
+  while IFS= read -r bin; do
+    [[ -n "$bin" ]] || continue
+    bins+=( "$bin" )
+  done < <(python3 "$bins_script")
+
+  if [[ ${#bins[@]} -eq 0 ]]; then
+    echo "error: no workspace binaries found" >&2
+    exit 2
+  fi
+fi
 
 run() {
   local -a cmd=( "$@" )
