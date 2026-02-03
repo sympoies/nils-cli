@@ -22,9 +22,15 @@ fn start_server() -> TestServer {
         |req: &RecordedRequest| match (req.method.as_str(), req.path.as_str()) {
             ("GET", "/cleanup/main") => HttpResponse::new(200, r#"{"key":"abc"}"#)
                 .with_header("Content-Type", "application/json"),
+            ("GET", "/cleanup/fail") => HttpResponse::new(200, r#"{"key":"bad"}"#)
+                .with_header("Content-Type", "application/json"),
             ("DELETE", "/files/images/abc") => HttpResponse::new(204, ""),
+            ("DELETE", "/files/images/bad") => HttpResponse::new(500, "cleanup failed"),
             ("GET", "/expect/status") => HttpResponse::new(500, r#"{"ok":false}"#)
                 .with_header("Content-Type", "application/json"),
+            ("GET", "/expect/text") => {
+                HttpResponse::new(500, "boom").with_header("Content-Type", "text/plain")
+            }
             ("GET", "/expect/jq") => HttpResponse::new(200, r#"{"ok":false}"#)
                 .with_header("Content-Type", "application/json"),
             ("POST", "/upload") => HttpResponse::new(200, r#"{"ok":true}"#)
@@ -205,4 +211,78 @@ fn call_multipart_upload_reads_file_relative_to_request_file() {
             .any(|w| w == b"hello-multipart"),
         "multipart body should include file content"
     );
+}
+
+#[test]
+fn call_expect_status_failure_non_json_prints_body_to_stderr() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("setup/rest")).expect("mkdir setup");
+    let server = start_server();
+
+    let request_file = root.join("requests/expect-text.request.json");
+    write_json(
+        &request_file,
+        &serde_json::json!({
+            "method": "GET",
+            "path": "/expect/text",
+            "expect": { "status": 200 }
+        }),
+    );
+
+    let out = run_api_rest(
+        root,
+        &[
+            "call",
+            "--config-dir",
+            "setup/rest",
+            "--url",
+            &server.url(),
+            "requests/expect-text.request.json",
+        ],
+    );
+    assert_eq!(out.code, 1);
+    let stderr = out.stderr_text();
+    assert!(stderr.contains("Expected HTTP status 200 but got 500."));
+    assert!(stderr.contains("Response body (non-JSON; first"));
+}
+
+#[test]
+fn call_cleanup_failure_exits_nonzero() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    let setup_dir = root.join("setup/rest");
+    std::fs::create_dir_all(&setup_dir).expect("mkdir setup");
+
+    let server = start_server();
+
+    let request_file = root.join("requests/cleanup-fail.request.json");
+    write_json(
+        &request_file,
+        &serde_json::json!({
+            "method": "GET",
+            "path": "/cleanup/fail",
+            "expect": { "status": 200 },
+            "cleanup": {
+                "method": "DELETE",
+                "pathTemplate": "/files/images/{{key}}",
+                "vars": { "key": ".key" },
+                "expectStatus": 204
+            }
+        }),
+    );
+
+    let out = run_api_rest(
+        root,
+        &[
+            "call",
+            "--config-dir",
+            "setup/rest",
+            "--url",
+            &server.url(),
+            "requests/cleanup-fail.request.json",
+        ],
+    );
+    assert_eq!(out.code, 1);
+    assert!(out.stderr_text().contains("cleanup failed: expected"));
 }
