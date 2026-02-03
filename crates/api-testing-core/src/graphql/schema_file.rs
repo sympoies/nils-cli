@@ -38,7 +38,7 @@ pub fn resolve_schema_path(setup_dir: &Path, schema_file_arg: Option<&str>) -> R
         .or_else(|| {
             let schema_local = setup_dir.join("schema.local.env");
             let schema_env = setup_dir.join("schema.env");
-            let files: Vec<&Path> = vec![&schema_local, &schema_env];
+            let files: Vec<&Path> = vec![&schema_env, &schema_local];
             env_file::read_var_last_wins("GQL_SCHEMA_FILE", &files)
                 .ok()
                 .flatten()

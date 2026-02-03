@@ -14,8 +14,38 @@ fn api_gql_bin() -> std::path::PathBuf {
     resolve("api-gql")
 }
 
+fn base_cmd_options(cwd: &Path) -> CmdOptions {
+    let mut options = CmdOptions::default().with_cwd(cwd);
+    for key in [
+        "ACCESS_TOKEN",
+        "GQL_ALLOW_EMPTY_ENABLED",
+        "GQL_ENV_DEFAULT",
+        "GQL_HISTORY_ENABLED",
+        "GQL_HISTORY_FILE",
+        "GQL_HISTORY_LOG_URL_ENABLED",
+        "GQL_JWT_NAME",
+        "GQL_JWT_VALIDATE_ENABLED",
+        "GQL_JWT_VALIDATE_LEEWAY_SECONDS",
+        "GQL_JWT_VALIDATE_STRICT",
+        "GQL_REPORT_COMMAND_LOG_URL_ENABLED",
+        "GQL_REPORT_DIR",
+        "GQL_REPORT_INCLUDE_COMMAND_ENABLED",
+        "GQL_SCHEMA_FILE",
+        "GQL_URL",
+        "GQL_VARS_MIN_LIMIT",
+    ] {
+        options = options.with_env_remove(key);
+    }
+    options
+}
+
 fn run_api_gql(cwd: &Path, args: &[&str]) -> CmdOutput {
-    let options = CmdOptions::default().with_cwd(cwd);
+    let options = base_cmd_options(cwd);
+    run_with(&api_gql_bin(), args, &options)
+}
+
+fn run_api_gql_with(cwd: &Path, args: &[&str], options: CmdOptions) -> CmdOutput {
+    let options = options.with_cwd(cwd);
     run_with(&api_gql_bin(), args, &options)
 }
 
@@ -237,4 +267,220 @@ fn report_allow_empty_writes_report() {
     assert!(Path::new(&report_path).is_file());
     let contents = std::fs::read_to_string(&report_path).expect("read report");
     assert!(contents.contains("# API Test Report"));
+}
+
+#[test]
+fn report_run_executes_and_writes_report() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+
+    let setup_dir = root.join("setup/graphql");
+    std::fs::create_dir_all(&setup_dir).expect("mkdir setup");
+
+    let server = start_server();
+    write_text(
+        &setup_dir.join("endpoints.env"),
+        &format!("GQL_URL_LOCAL={}/graphql\n", server.url()),
+    );
+
+    let op = root.join("q.graphql");
+    write_text(&op, "query Q { ok }\n");
+
+    let out = run_api_gql(
+        root,
+        &[
+            "report",
+            "--case",
+            "run",
+            "--op",
+            "q.graphql",
+            "--run",
+            "--env",
+            "local",
+            "--config-dir",
+            "setup/graphql",
+        ],
+    );
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+    let report_path = out.stdout_text().trim().to_string();
+    assert!(!report_path.is_empty());
+    let contents = std::fs::read_to_string(&report_path).expect("read report");
+    assert!(contents.contains("Result: PASS"));
+    assert!(contents.contains("\"ok\": true"));
+}
+
+#[test]
+fn report_response_stdin_writes_report() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+
+    let op = root.join("q.graphql");
+    write_text(&op, "query Q { ok }\n");
+
+    let response_body = r#"{"data":{"items":[{"id":1}]}}"#;
+    let out = run_api_gql_with(
+        root,
+        &[
+            "report",
+            "--case",
+            "stdin",
+            "--op",
+            "q.graphql",
+            "--response",
+            "-",
+        ],
+        base_cmd_options(root).with_stdin_str(response_body),
+    );
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+    let report_path = out.stdout_text().trim().to_string();
+    let contents = std::fs::read_to_string(&report_path).expect("read report");
+    assert!(contents.contains("\"id\": 1"));
+}
+
+#[test]
+fn report_rejects_non_json_response_without_allow_empty() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+
+    let op = root.join("q.graphql");
+    write_text(&op, "query Q { ok }\n");
+
+    let resp = root.join("resp.txt");
+    write_text(&resp, "not-json");
+
+    let out = run_api_gql(
+        root,
+        &[
+            "report",
+            "--case",
+            "bad-json",
+            "--op",
+            "q.graphql",
+            "--response",
+            "resp.txt",
+        ],
+    );
+    assert_eq!(out.code, 1);
+    assert!(out
+        .stderr_text()
+        .contains("Response is not JSON; refusing to write a no-data report."));
+}
+
+#[test]
+fn report_redaction_defaults_and_no_redact() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+
+    let op = root.join("q.graphql");
+    write_text(&op, "query Q { ok }\n");
+
+    let vars = root.join("vars.json");
+    write_text(&vars, r#"{"password":"vars-secret"}"#);
+
+    let resp = root.join("resp.json");
+    write_text(&resp, r#"{"data":{"token":"resp-secret","ok":true}}"#);
+
+    let out = run_api_gql(
+        root,
+        &[
+            "report",
+            "--case",
+            "redact",
+            "--op",
+            "q.graphql",
+            "--vars",
+            "vars.json",
+            "--response",
+            "resp.json",
+        ],
+    );
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+    let report_path = out.stdout_text().trim().to_string();
+    let contents = std::fs::read_to_string(&report_path).expect("read report");
+    assert!(contents.contains("<REDACTED>"));
+    assert!(!contents.contains("vars-secret"));
+    assert!(!contents.contains("resp-secret"));
+
+    let out = run_api_gql(
+        root,
+        &[
+            "report",
+            "--case",
+            "no-redact",
+            "--op",
+            "q.graphql",
+            "--vars",
+            "vars.json",
+            "--response",
+            "resp.json",
+            "--no-redact",
+        ],
+    );
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+    let report_path = out.stdout_text().trim().to_string();
+    let contents = std::fs::read_to_string(&report_path).expect("read report");
+    assert!(contents.contains("vars-secret"));
+    assert!(contents.contains("resp-secret"));
+}
+
+#[test]
+fn report_no_command_omits_command_section() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+
+    let op = root.join("q.graphql");
+    write_text(&op, "query Q { ok }\n");
+
+    let resp = root.join("resp.json");
+    write_text(&resp, r#"{"data":{"items":[{"id":1}]}}"#);
+
+    let out = run_api_gql(
+        root,
+        &[
+            "report",
+            "--case",
+            "no-command",
+            "--op",
+            "q.graphql",
+            "--response",
+            "resp.json",
+            "--no-command",
+        ],
+    );
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+    let report_path = out.stdout_text().trim().to_string();
+    let contents = std::fs::read_to_string(&report_path).expect("read report");
+    assert!(!contents.contains("## Command"));
+}
+
+#[test]
+fn report_no_command_url_omits_url_value() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+
+    let op = root.join("q.graphql");
+    write_text(&op, "query Q { ok }\n");
+
+    let resp = root.join("resp.json");
+    write_text(&resp, r#"{"data":{"items":[{"id":1}]}}"#);
+
+    let out = run_api_gql(
+        root,
+        &[
+            "report",
+            "--case",
+            "no-command-url",
+            "--op",
+            "q.graphql",
+            "--response",
+            "resp.json",
+            "--url",
+            "http://example.invalid/graphql",
+            "--no-command-url",
+        ],
+    );
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+    let report_path = out.stdout_text().trim().to_string();
+    let contents = std::fs::read_to_string(&report_path).expect("read report");
+    assert!(contents.contains("<omitted>"));
 }

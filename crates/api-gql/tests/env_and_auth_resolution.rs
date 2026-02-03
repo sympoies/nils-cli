@@ -81,6 +81,65 @@ GQL_URL_PROD=http://example.invalid/graphql
 }
 
 #[test]
+fn list_jwts_outputs_sorted_deduped_suffixes_and_skips_name() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    let setup_dir = root.join("setup/graphql");
+    std::fs::create_dir_all(&setup_dir).expect("mkdir setup");
+
+    write_text(
+        &setup_dir.join("jwts.env"),
+        r#"
+# comment
+GQL_JWT_ADMIN=token-a
+GQL_JWT_NAME=admin
+GQL_JWT_TEAM=token-team
+"#,
+    );
+    write_text(
+        &setup_dir.join("jwts.local.env"),
+        r#"
+GQL_JWT_ADMIN=token-local
+GQL_JWT_SERVICE=token-service
+"#,
+    );
+
+    let out = run_api_gql(
+        root,
+        &["call", "--config-dir", "setup/graphql", "--list-jwts"],
+        &[],
+    );
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+
+    let lines: Vec<String> = out
+        .stdout_text()
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .map(|l| l.to_string())
+        .collect();
+    assert_eq!(lines, vec!["admin", "service", "team"]);
+}
+
+#[test]
+fn list_jwts_errors_when_missing_jwts_files() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    let setup_dir = root.join("setup/graphql");
+    std::fs::create_dir_all(&setup_dir).expect("mkdir setup");
+
+    let out = run_api_gql(
+        root,
+        &["call", "--config-dir", "setup/graphql", "--list-jwts"],
+        &[],
+    );
+    assert_eq!(out.code, 1);
+    assert!(out
+        .stderr_text()
+        .contains("jwts(.local).env not found (expected under setup/graphql/)"));
+}
+
+#[test]
 fn env_endpoint_prefers_endpoints_local_over_endpoints_env() {
     let tmp = TempDir::new().expect("tmp");
     let root = tmp.path();
@@ -122,6 +181,76 @@ fn env_endpoint_prefers_endpoints_local_over_endpoints_env() {
 
     assert_eq!(server_a.take_requests().len(), 0);
     assert_eq!(server_b.take_requests().len(), 1);
+}
+
+#[test]
+fn gql_env_default_is_used_when_no_env_or_url_is_provided() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    let setup_dir = root.join("setup/graphql");
+    std::fs::create_dir_all(&setup_dir).expect("mkdir setup");
+
+    let server = start_server();
+    write_text(
+        &setup_dir.join("endpoints.env"),
+        &format!(
+            "GQL_ENV_DEFAULT=staging\nGQL_URL_STAGING={}/graphql\n",
+            server.url()
+        ),
+    );
+
+    write_text(&root.join("q.graphql"), "query Q { ok }\n");
+    let out = run_api_gql(
+        root,
+        &[
+            "call",
+            "--no-history",
+            "--config-dir",
+            "setup/graphql",
+            "q.graphql",
+        ],
+        &[],
+    );
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+
+    let reqs = server.take_requests();
+    assert_eq!(reqs.len(), 1);
+    assert_eq!(reqs[0].path, "/graphql");
+}
+
+#[test]
+fn gql_url_env_overrides_gql_env_default() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    let setup_dir = root.join("setup/graphql");
+    std::fs::create_dir_all(&setup_dir).expect("mkdir setup");
+
+    let server_default = start_server();
+    let server_env = start_server();
+    write_text(
+        &setup_dir.join("endpoints.env"),
+        &format!(
+            "GQL_ENV_DEFAULT=staging\nGQL_URL_STAGING={}/graphql\n",
+            server_default.url()
+        ),
+    );
+
+    write_text(&root.join("q.graphql"), "query Q { ok }\n");
+    let out = run_api_gql(
+        root,
+        &[
+            "call",
+            "--no-history",
+            "--config-dir",
+            "setup/graphql",
+            "q.graphql",
+        ],
+        &[("GQL_URL", &format!("{}/graphql", server_env.url()))],
+    );
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+
+    assert_eq!(server_default.take_requests().len(), 0);
+    assert_eq!(server_env.take_requests().len(), 1);
 }
 
 #[test]
@@ -296,5 +425,42 @@ GQL_JWT_FILE=file_token
     assert_eq!(
         reqs[0].header_value("authorization").as_deref(),
         Some("Bearer file_token")
+    );
+}
+
+#[test]
+fn access_token_is_used_when_no_jwt_profile_is_selected() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    let setup_dir = root.join("setup/graphql");
+    std::fs::create_dir_all(&setup_dir).expect("mkdir setup");
+
+    let server = start_server();
+    write_text(
+        &setup_dir.join("endpoints.env"),
+        &format!("GQL_URL_LOCAL={}/graphql\n", server.url()),
+    );
+
+    write_text(&root.join("q.graphql"), "query Q { ok }\n");
+    let out = run_api_gql(
+        root,
+        &[
+            "call",
+            "--no-history",
+            "--config-dir",
+            "setup/graphql",
+            "--env",
+            "local",
+            "q.graphql",
+        ],
+        &[("ACCESS_TOKEN", "access-token")],
+    );
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+
+    let reqs = server.take_requests();
+    assert_eq!(reqs.len(), 1);
+    assert_eq!(
+        reqs[0].header_value("authorization").as_deref(),
+        Some("Bearer access-token")
     );
 }

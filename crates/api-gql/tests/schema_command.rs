@@ -99,6 +99,42 @@ fn schema_errors_when_schema_env_points_to_missing_file() {
 }
 
 #[test]
+fn schema_local_env_overrides_schema_env() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    let setup_dir = root.join("setup/graphql");
+    std::fs::create_dir_all(&setup_dir).expect("mkdir setup");
+
+    write_text(
+        &setup_dir.join("schema.env"),
+        "GQL_SCHEMA_FILE=from-env.graphql\n",
+    );
+    write_text(
+        &setup_dir.join("schema.local.env"),
+        "GQL_SCHEMA_FILE=from-local.graphql\n",
+    );
+    write_text(
+        &setup_dir.join("from-env.graphql"),
+        "type Query { env: Boolean }\n",
+    );
+    write_text(
+        &setup_dir.join("from-local.graphql"),
+        "type Query { local: Boolean }\n",
+    );
+
+    let out = run_api_gql(root, &["schema", "--config-dir", "setup/graphql"], &[]);
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+    let printed_raw = out.stdout_text();
+    let printed = printed_raw.trim();
+    let p = PathBuf::from(printed);
+    assert!(
+        p.ends_with("from-local.graphql"),
+        "stdout={}",
+        out.stdout_text()
+    );
+}
+
+#[test]
 fn schema_file_flag_overrides_env_and_schema_env() {
     let tmp = TempDir::new().expect("tmp");
     let root = tmp.path();
