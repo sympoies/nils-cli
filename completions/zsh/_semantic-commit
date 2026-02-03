@@ -18,6 +18,7 @@ _semantic-commit() {
   )
 
   _arguments -C \
+    '(-h --help)'{-h,--help}'[Show help message]' \
     '1:command:->subcmds' \
     '*::arg:->args'
 
@@ -56,4 +57,3 @@ _semantic-commit() {
 }
 
 compdef _semantic-commit semantic-commit
-

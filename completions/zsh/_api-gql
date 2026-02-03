@@ -20,14 +20,22 @@ _api-gql() {
     'report:Generate a Markdown API test report'
     'report-from-cmd:Generate a report from a command snippet (arg or stdin)'
     'schema:Resolve a schema file path (or print schema contents)'
-    'help:Show help'
   )
 
-  if (( orig_current == 2 )) && [[ "$cur" != -* ]]; then
-    _alternative \
-      'commands:api-gql command:_describe -t commands "api-gql command" subcommands' \
-      'files:operation file:_files' \
-      && return 0
+  if (( orig_current == 2 )); then
+    if [[ "$cur" == -* ]]; then
+      local -a root_opts=(
+        '-h:Show help'
+        '--help:Show help'
+        '-V:Show version'
+        '--version:Show version'
+      )
+      _describe -t options 'option' root_opts && return 0
+      return 0
+    fi
+
+    _describe -t commands 'api-gql command' subcommands
+    _files
     return 0
   fi
 
@@ -35,15 +43,30 @@ _api-gql() {
   subcmd="${subcmd%%[[:space:]]#}"
 
   case "$subcmd" in
-    call|history|report|report-from-cmd|schema|help) ;;
+    call|history|report|report-from-cmd|schema) ;;
     *) subcmd="call" ;;
   esac
 
   case "$subcmd" in
     call)
+      if [[ "$cur" == -* ]]; then
+        local -a call_opts=(
+          '--env:Endpoint preset name'
+          '--url:Explicit GraphQL endpoint URL'
+          '--jwt:JWT profile name'
+          '--config-dir:GraphQL setup dir (discovery seed)'
+          '--list-envs:List available env presets and exit'
+          '--list-jwts:List available JWT profiles and exit'
+          '--no-history:Disable history writing'
+          '--help:Show help'
+          '-e:Endpoint preset name'
+          '-u:Explicit GraphQL endpoint URL'
+          '-h:Show help'
+        )
+        _describe -t options 'option' call_opts && return 0
+      fi
       _arguments -C \
         '(-h --help)'{-h,--help}'[Show help]' \
-        '(-V --version)'{-V,--version}'[Show version]' \
         '(-e --env)'{-e,--env}'[Endpoint preset name]:env:' \
         '(-u --url)'{-u,--url}'[Explicit GraphQL endpoint URL]:url:' \
         '--jwt=[JWT profile name]:jwt:' \
@@ -56,6 +79,18 @@ _api-gql() {
         && return 0
       ;;
     history)
+      if [[ "$cur" == -* ]]; then
+        local -a history_opts=(
+          '--config-dir:GraphQL setup dir (discovery seed)'
+          '--file:Explicit history file path'
+          '--last:Print the last entry (default)'
+          '--tail:Print the last N entries'
+          '--command-only:Omit metadata lines (starting with "#")'
+          '--help:Show help'
+          '-h:Show help'
+        )
+        _describe -t options 'option' history_opts && return 0
+      fi
       _arguments -C \
         '(-h --help)'{-h,--help}'[Show help]' \
         '--config-dir=[GraphQL setup dir (discovery seed)]:dir:_files -/' \
@@ -66,18 +101,48 @@ _api-gql() {
         && return 0
       ;;
     report)
+      if [[ "$cur" == -* ]]; then
+        local -a report_opts=(
+          '--case:Report case name'
+          '--op:Operation file path (*.graphql)'
+          '--operation:Operation file path (*.graphql)'
+          '--vars:Variables JSON file path'
+          '--variables:Variables JSON file path'
+          '--out:Output report path'
+          '--env:Endpoint preset name (passed through)'
+          '--url:Explicit GraphQL endpoint URL (passed through)'
+          '--jwt:JWT profile name (passed through)'
+          '--run:Execute the operation and embed the response'
+          '--response:Use an existing response file (or "-" for stdin)'
+          '--allow-empty:Allow generating a report with empty/no-data response'
+          '--expect-empty:Alias of --allow-empty'
+          '--no-redact:Do not redact secrets in variables/response JSON blocks'
+          '--no-command:Omit the command snippet section'
+          '--no-command-url:Omit URL value in command snippet'
+          '--project-root:Override project root (default: git root or CWD)'
+          '--config-dir:GraphQL setup dir (passed through)'
+          '--help:Show help'
+          '-e:Endpoint preset name'
+          '-u:Explicit GraphQL endpoint URL'
+          '-h:Show help'
+        )
+        _describe -t options 'option' report_opts && return 0
+      fi
       _arguments -C \
         '(-h --help)'{-h,--help}'[Show help]' \
         '--case=[Report case name]:case:' \
         '--op=[Operation file path (*.graphql)]:operation file:_files' \
+        '--operation=[Operation file path (*.graphql)]:operation file:_files' \
         '--vars=[Variables JSON file path]:vars file:_files' \
+        '--variables=[Variables JSON file path]:vars file:_files' \
         '--out=[Output report path]:file:_files' \
         '(-e --env)'{-e,--env}'[Endpoint preset name (passed through)]:env:' \
         '(-u --url)'{-u,--url}'[Explicit GraphQL endpoint URL (passed through)]:url:' \
         '--jwt=[JWT profile name (passed through)]:jwt:' \
         '--run[Execute the operation and embed the response]' \
         '--response=[Use an existing response file (or "-" for stdin)]:response file:_files' \
-        '--allow-empty[Allow generating a report with empty/no-data response]' \
+        '(--allow-empty --expect-empty)--allow-empty[Allow generating a report with empty/no-data response]' \
+        '(--allow-empty --expect-empty)--expect-empty[Alias of --allow-empty]' \
         '--no-redact[Do not redact secrets in variables/response JSON blocks]' \
         '--no-command[Omit the command snippet section]' \
         '--no-command-url[When using --url, omit the URL value in the command snippet]' \
@@ -86,28 +151,49 @@ _api-gql() {
         && return 0
       ;;
     report-from-cmd)
+      if [[ "$cur" == -* ]]; then
+        local -a report_cmd_opts=(
+          '--case:Override report case name (default: derived from snippet)'
+          '--out:Output report path'
+          '--response:Use an existing response file (or "-" for stdin)'
+          '--allow-empty:Allow generating a report with empty/no-data response'
+          '--expect-empty:Alias of --allow-empty'
+          '--dry-run:Print equivalent `api-gql report ...` command and exit 0'
+          '--stdin:Read the command snippet from stdin'
+          '--help:Show help'
+          '-h:Show help'
+        )
+        _describe -t options 'option' report_cmd_opts && return 0
+      fi
       _arguments -C \
         '(-h --help)'{-h,--help}'[Show help]' \
         '--case=[Override report case name (default: derived from snippet)]:case:' \
         '--out=[Output report path]:file:_files' \
         '--response=[Use an existing response file (or "-" for stdin)]:response file:_files' \
-        '--allow-empty[Allow generating a report with empty/no-data response]' \
+        '(--allow-empty --expect-empty)--allow-empty[Allow generating a report with empty/no-data response]' \
+        '(--allow-empty --expect-empty)--expect-empty[Alias of --allow-empty]' \
         '--dry-run[Print equivalent `api-gql report ...` command and exit 0]' \
         '--stdin[Read the command snippet from stdin]' \
         '1::snippet:' \
         && return 0
       ;;
     schema)
+      if [[ "$cur" == -* ]]; then
+        local -a schema_opts=(
+          '--config-dir:GraphQL setup dir (discovery seed)'
+          '--file:Explicit schema file path (overrides env + schema.env)'
+          '--cat:Print schema file contents'
+          '--help:Show help'
+          '-h:Show help'
+        )
+        _describe -t options 'option' schema_opts && return 0
+      fi
       _arguments -C \
         '(-h --help)'{-h,--help}'[Show help]' \
         '--config-dir=[GraphQL setup dir (discovery seed)]:dir:_files -/' \
         '--file=[Explicit schema file path (overrides env + schema.env)]:schema file:_files' \
         '--cat[Print schema file contents]' \
         && return 0
-      ;;
-    help)
-      _message 'no additional arguments'
-      return 0
       ;;
   esac
 }

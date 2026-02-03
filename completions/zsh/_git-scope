@@ -1,4 +1,4 @@
-#compdef git-scope gs
+#compdef git-scope gs gsc gst
 
 _git-scope() {
   emulate -L zsh -o extendedglob
@@ -9,6 +9,18 @@ _git-scope() {
 
   local -i orig_current="$CURRENT"
   local -a orig_words=("${words[@]}")
+
+  local invoked_as="${orig_words[1]-}"
+  local subcmd_override=''
+
+  case "$invoked_as" in
+    gsc)
+      subcmd_override='commit'
+      ;;
+    gst)
+      subcmd_override='tracked'
+      ;;
+  esac
 
   typeset -a subcommands=()
   subcommands=(
@@ -21,60 +33,76 @@ _git-scope() {
     'help:Display help message for git-scope'
   )
 
-  _arguments -C \
-    '--no-color[Disable ANSI colors (also via NO_COLOR)]' \
-    '1:command:->subcmds' \
-    '*::arg:->args'
+  local subcmd=''
 
-  case "${state-}" in
-    subcmds)
-      _describe -t commands 'git-scope subcommand' subcommands && return 0
-      ;;
-    args)
-      local subcmd="${line[1]:-${orig_words[2]-}}"
-      subcmd="${subcmd%%[[:space:]]#}"
+  if [[ -n "$subcmd_override" ]]; then
+    subcmd="$subcmd_override"
+  else
+    _arguments -C \
+      '(-h --help)'{-h,--help}'[Display help message for git-scope]' \
+      '--no-color[Disable ANSI colors (also via NO_COLOR)]' \
+      '1:command:->subcmds' \
+      '*::arg:->args'
 
-      case "$subcmd" in
-        commit)
-          _arguments -C \
-            '--no-color[Disable ANSI colors (also via NO_COLOR)]' \
-            '(-p --print)'{-p,--print}'[Print contents of each file in the commit (from HEAD or working tree)]' \
-            '--parent=[For merge commits: show diff against parent <n>]:parent index:' \
-            '-P+[For merge commits: show diff against parent <n>]:parent index:' \
-            '1:commit-ish:->commit_hashes'
+    case "${state-}" in
+      subcmds)
+        _describe -t commands 'git-scope subcommand' subcommands && return 0
+        ;;
+      args)
+        subcmd="${line[1]:-${orig_words[2]-}}"
+        subcmd="${subcmd%%[[:space:]]#}"
+        ;;
+    esac
+  fi
 
-          case "${state-}" in
-            commit_hashes)
-              local -a commit_hashes=()
+  case "$subcmd" in
+    commit)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Display help message for git-scope]' \
+        '--no-color[Disable ANSI colors (also via NO_COLOR)]' \
+        '(-p --print)'{-p,--print}'[Print contents of each file in the commit (from HEAD or working tree)]' \
+        '--parent=[For merge commits: show diff against parent <n>]:parent index:' \
+        '-P+[For merge commits: show diff against parent <n>]:parent index:' \
+        '1:commit-ish:->commit_hashes'
 
-              if command git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-                commit_hashes=(${(f)"$(command git log --pretty=format:'%h:%s' -n 20 2>/dev/null || true)"})
-              fi
+      case "${state-}" in
+        commit_hashes)
+          local -a commit_hashes=()
 
-              if (( ${#commit_hashes[@]} > 0 )); then
-                _describe -t commits 'commit hash' commit_hashes && return 0
-              fi
+          if command git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            commit_hashes=(${(f)"$(command git log --pretty=format:'%h:%s' -n 20 2>/dev/null || true)"})
+          fi
 
-              _message 'commit hash'
-              return 0
-              ;;
-          esac
+          if (( ${#commit_hashes[@]} > 0 )); then
+            _describe -t commits 'commit hash' commit_hashes && return 0
+          fi
 
-          return 0
-          ;;
-        tracked|staged|unstaged|all|untracked)
-          _arguments -C \
-            '--no-color[Disable ANSI colors (also via NO_COLOR)]' \
-            '(-p --print)'{-p,--print}'[Print the contents of each file]' \
-            '1:prefix:_files -/' \
-            '*:prefix:_files -/' \
-            && return 0
-          _message 'prefix'
+          _message 'commit hash'
           return 0
           ;;
       esac
+
+      return 0
+      ;;
+    tracked)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Display help message for git-scope]' \
+        '--no-color[Disable ANSI colors (also via NO_COLOR)]' \
+        '(-p --print)'{-p,--print}'[Print the contents of each file]' \
+        '*:prefix:_files -/' \
+        && return 0
+      _message 'prefix'
+      return 0
+      ;;
+    staged|unstaged|all|untracked)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Display help message for git-scope]' \
+        '--no-color[Disable ANSI colors (also via NO_COLOR)]' \
+        '(-p --print)'{-p,--print}'[Print the contents of each file]' \
+        && return 0
+      return 0
       ;;
   esac
 }
 
-compdef _git-scope git-scope gs
+compdef _git-scope git-scope gs gsc gst

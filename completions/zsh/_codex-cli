@@ -11,6 +11,67 @@ _codex-cli() {
   local -a line=()
   typeset -A opt_args=()
 
+  local -i orig_current="$CURRENT"
+  local -a orig_words=("${words[@]}")
+
+  local invoked_as="${orig_words[1]-}"
+  local subcmd_override=''
+  local subcmd2_override=''
+
+  case "$invoked_as" in
+    codex-use|cxau)
+      subcmd_override='auth'
+      subcmd2_override='use'
+      ;;
+    codex-refresh-auth|cxar)
+      subcmd_override='auth'
+      subcmd2_override='refresh'
+      ;;
+    codex-auto-refresh|cxaa)
+      subcmd_override='auth'
+      subcmd2_override='auto-refresh'
+      ;;
+    codex-rate-limits|codex-rate-limits-async|cxdr|crl|crla)
+      subcmd_override='diag'
+      subcmd2_override='rate-limits'
+      ;;
+    codex-starship)
+      subcmd_override='starship'
+      ;;
+    cxgp)
+      subcmd_override='agent'
+      subcmd2_override='prompt'
+      ;;
+    cxga)
+      subcmd_override='agent'
+      subcmd2_override='advice'
+      ;;
+    cxgk)
+      subcmd_override='agent'
+      subcmd2_override='knowledge'
+      ;;
+    cxgc)
+      subcmd_override='agent'
+      subcmd2_override='commit'
+      ;;
+    cxac)
+      subcmd_override='auth'
+      subcmd2_override='current'
+      ;;
+    cxas)
+      subcmd_override='auth'
+      subcmd2_override='sync'
+      ;;
+    cxcs)
+      subcmd_override='config'
+      subcmd2_override='show'
+      ;;
+    cxct)
+      subcmd_override='config'
+      subcmd2_override='set'
+      ;;
+  esac
+
   local -a subcommands=()
   subcommands=(
     'agent:Prompts and skill wrappers'
@@ -21,61 +82,303 @@ _codex-cli() {
     'help:Display help message'
   )
 
-  _arguments -C \
-    '1:command:->subcmds' \
-    '*::arg:->args'
+  local subcmd=''
+  local subcmd2=''
 
-  case "${state-}" in
-    subcmds)
-      _describe -t commands 'codex-cli subcommand' subcommands && return 0
-      ;;
-    args)
-      local subcmd="${line[1]:-${words[2]-}}"
-      subcmd="${subcmd%%[[:space:]]#}"
+  if [[ -n "$subcmd_override" ]]; then
+    subcmd="$subcmd_override"
+    subcmd2="$subcmd2_override"
+  else
+    _arguments -C \
+      '(-h --help)'{-h,--help}'[Show help]' \
+      '(-V --version)'{-V,--version}'[Show version]' \
+      '1:command:->subcmds' \
+      '*::arg:->args'
 
-      case "$subcmd" in
-        diag)
-          local -a diag_cmds=()
-          diag_cmds=(
-            'rate-limits:Rate-limits diagnostics'
-          )
+    case "${state-}" in
+      subcmds)
+        _describe -t commands 'codex-cli subcommand' subcommands && return 0
+        ;;
+      args)
+        subcmd="${line[1]:-${orig_words[2]-}}"
+        subcmd="${subcmd%%[[:space:]]#}"
+        ;;
+    esac
+  fi
 
+  case "$subcmd" in
+    agent)
+      local -a agent_cmds=()
+      agent_cmds=(
+        'prompt:Run a raw prompt'
+        'advice:Get actionable engineering advice'
+        'knowledge:Get an explanation for a concept'
+        'commit:Run the semantic-commit workflow'
+      )
+
+      if [[ -z "$subcmd2" ]]; then
+        _arguments -C \
+          '(-h --help)'{-h,--help}'[Show help]' \
+          '1:agent command:->agent_subcmds' \
+          '*::arg:->agent_args'
+
+        case "${state-}" in
+          agent_subcmds)
+            _describe -t commands 'codex-cli agent' agent_cmds && return 0
+            ;;
+          agent_args)
+            subcmd2="${line[1]:-${orig_words[3]-}}"
+            subcmd2="${subcmd2%%[[:space:]]#}"
+            ;;
+        esac
+      fi
+
+      case "$subcmd2" in
+        prompt)
           _arguments -C \
-            '1:diag command:->diag_subcmds' \
-            '*::arg:->diag_args'
-
-          case "${state-}" in
-            diag_subcmds)
-              _describe -t commands 'codex-cli diag' diag_cmds && return 0
-              ;;
-            diag_args)
-              local diag_subcmd="${line[1]:-${words[3]-}}"
-              diag_subcmd="${diag_subcmd%%[[:space:]]#}"
-
-              case "$diag_subcmd" in
-                rate-limits)
-                  _arguments -C \
-                    '(-c)'{-c}'[Clear starship cache before querying]' \
-                    '(-d --debug)'{-d,--debug}'[Debug output]' \
-                    '--cached[Cached mode (no network)]' \
-                    '--async[Concurrent all-secrets mode]' \
-                    '--all[Query all secrets under CODEX_SECRET_DIR]' \
-                    '--json[Output raw JSON]' \
-                    '--one-line[Output a one-line summary]' \
-                    '--no-refresh-auth[Disable refresh-on-401 behavior]' \
-                    '--jobs=[Max concurrent jobs (async mode)]' \
-                    '*:args:->nothing' \
-                    && return 0
-                  ;;
-              esac
-
-              return 0
-              ;;
-          esac
-
+            '(-h --help)'{-h,--help}'[Show help]' \
+            '*:prompt text:' \
+            && return 0
+          ;;
+        advice)
+          _arguments -C \
+            '(-h --help)'{-h,--help}'[Show help]' \
+            '*:question:' \
+            && return 0
+          ;;
+        knowledge)
+          _arguments -C \
+            '(-h --help)'{-h,--help}'[Show help]' \
+            '*:concept:' \
+            && return 0
+          ;;
+        commit)
+          _arguments -C \
+            '(-h --help)'{-h,--help}'[Show help]' \
+            '(-p --push)'{-p,--push}'[Push after committing]' \
+            '(-a --auto-stage)'{-a,--auto-stage}'[Autostage changes before committing]' \
+            '*:extra prompt:' \
+            && return 0
+          ;;
+        '')
+          _message 'agent command (prompt|advice|knowledge|commit)'
+          return 0
+          ;;
+        *)
+          _message 'unknown agent command'
           return 0
           ;;
       esac
+      ;;
+    auth)
+      local -a auth_cmds=()
+      auth_cmds=(
+        'use:Switch to a secret by name or email'
+        'refresh:Refresh OAuth tokens'
+        'auto-refresh:Refresh stale tokens across auth + secrets'
+        'current:Show which secret matches CODEX_AUTH_FILE'
+        'sync:Sync CODEX_AUTH_FILE back into matching secrets'
+      )
+
+      if [[ -z "$subcmd2" ]]; then
+        _arguments -C \
+          '(-h --help)'{-h,--help}'[Show help]' \
+          '1:auth command:->auth_subcmds' \
+          '*::arg:->auth_args'
+
+        case "${state-}" in
+          auth_subcmds)
+            _describe -t commands 'codex-cli auth' auth_cmds && return 0
+            ;;
+          auth_args)
+            subcmd2="${line[1]:-${orig_words[3]-}}"
+            subcmd2="${subcmd2%%[[:space:]]#}"
+            ;;
+        esac
+      fi
+
+      case "$subcmd2" in
+        use)
+          _arguments -C \
+            '(-h --help)'{-h,--help}'[Show help]' \
+            '1:profile or email:' \
+            && return 0
+          ;;
+        refresh)
+          _arguments -C \
+            '(-h --help)'{-h,--help}'[Show help]' \
+            '*:secret file:_files' \
+            && return 0
+          ;;
+        auto-refresh|current|sync)
+          _arguments -C \
+            '(-h --help)'{-h,--help}'[Show help]' \
+            && return 0
+          _message 'no additional arguments'
+          return 0
+          ;;
+        '')
+          _message 'auth command (use|refresh|auto-refresh|current|sync)'
+          return 0
+          ;;
+        *)
+          _message 'unknown auth command'
+          return 0
+          ;;
+      esac
+      ;;
+    diag)
+      local -a diag_cmds=()
+      diag_cmds=(
+        'rate-limits:Rate-limits diagnostics'
+      )
+
+      if [[ -z "$subcmd2" ]]; then
+        _arguments -C \
+          '(-h --help)'{-h,--help}'[Show help]' \
+          '1:diag command:->diag_subcmds' \
+          '*::arg:->diag_args'
+
+        case "${state-}" in
+          diag_subcmds)
+            _describe -t commands 'codex-cli diag' diag_cmds && return 0
+            ;;
+          diag_args)
+            subcmd2="${line[1]:-${orig_words[3]-}}"
+            subcmd2="${subcmd2%%[[:space:]]#}"
+            ;;
+        esac
+      fi
+
+      case "$subcmd2" in
+        rate-limits)
+          _arguments -C \
+            '(-h --help)'{-h,--help}'[Show help]' \
+            '(-c)-c[Clear starship cache before querying]' \
+            '(-d --debug)'{-d,--debug}'[Debug output]' \
+            '--cached[Cached mode (no network)]' \
+            '--async[Concurrent all-secrets mode]' \
+            '--all[Query all secrets under CODEX_SECRET_DIR]' \
+            '--json[Output raw JSON]' \
+            '--one-line[Output a one-line summary]' \
+            '--no-refresh-auth[Disable refresh-on-401 behavior]' \
+            '--jobs=[Max concurrent jobs (async mode)]:jobs:' \
+            '1::secret.json:' \
+            && return 0
+          ;;
+        '')
+          _message 'diag command (rate-limits)'
+          return 0
+          ;;
+        *)
+          _message 'unknown diag command'
+          return 0
+          ;;
+      esac
+      ;;
+    config)
+      local -a config_cmds=()
+      config_cmds=(
+        'show:Show current configuration'
+        'set:Set configuration value (current shell only)'
+      )
+
+      if [[ -z "$subcmd2" ]]; then
+        _arguments -C \
+          '(-h --help)'{-h,--help}'[Show help]' \
+          '1:config command:->config_subcmds' \
+          '*::arg:->config_args'
+
+        case "${state-}" in
+          config_subcmds)
+            _describe -t commands 'codex-cli config' config_cmds && return 0
+            ;;
+          config_args)
+            subcmd2="${line[1]:-${orig_words[3]-}}"
+            subcmd2="${subcmd2%%[[:space:]]#}"
+            ;;
+        esac
+      fi
+
+      case "$subcmd2" in
+        show)
+          _arguments -C \
+            '(-h --help)'{-h,--help}'[Show help]' \
+            && return 0
+          _message 'no additional arguments'
+          return 0
+          ;;
+        set)
+          local -a config_keys=()
+          config_keys=(
+            'model:Alias for CODEX_CLI_MODEL'
+            'reasoning:Alias for CODEX_CLI_REASONING'
+            'reason:Alias for CODEX_CLI_REASONING'
+            'dangerous:Alias for CODEX_ALLOW_DANGEROUS_ENABLED'
+            'allow-dangerous:Alias for CODEX_ALLOW_DANGEROUS_ENABLED'
+            'CODEX_CLI_MODEL:Model env var'
+            'CODEX_CLI_REASONING:Reasoning env var'
+            'CODEX_ALLOW_DANGEROUS_ENABLED:Dangerous-mode env var'
+          )
+
+          _arguments -C \
+            '(-h --help)'{-h,--help}'[Show help]' \
+            '1:key:->config_keys' \
+            '2:value:->config_values'
+
+          case "${state-}" in
+            config_keys)
+              _describe -t values 'config key' config_keys && return 0
+              ;;
+            config_values)
+              local key="${line[1]:-${orig_words[4]-}}"
+              if [[ -z "$key" ]]; then
+                key="${orig_words[2]-}"
+              fi
+              case "$key" in
+                dangerous|allow-dangerous|CODEX_ALLOW_DANGEROUS_ENABLED)
+                  _describe -t values 'value' \
+                    'true:Enable dangerous mode' \
+                    'false:Disable dangerous mode' \
+                    && return 0
+                  ;;
+              esac
+              _message 'value'
+              return 0
+              ;;
+          esac
+          ;;
+        '')
+          _message 'config command (show|set)'
+          return 0
+          ;;
+        *)
+          _message 'unknown config command'
+          return 0
+          ;;
+      esac
+      ;;
+    starship)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Show help]' \
+        '--no-5h[Hide the 5h window output]' \
+        '--ttl=[Cache TTL]:duration:' \
+        '--time-format=[Reset time format (UTC)]:strftime:' \
+        '--refresh[Force a blocking refresh]' \
+        '--is-enabled[Exit 0 if starship is enabled]' \
+        && return 0
+      ;;
+    help)
+      _message 'no additional arguments'
+      return 0
+      ;;
+    '')
+      _message 'command (agent|auth|diag|config|starship|help)'
+      return 0
+      ;;
+    *)
+      _message 'unknown command'
+      return 0
       ;;
   esac
 }
@@ -86,4 +389,3 @@ compdef _codex-cli \
   codex-rate-limits codex-rate-limits-async codex-starship \
   cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxdr cxcs cxct \
   crl crla
-

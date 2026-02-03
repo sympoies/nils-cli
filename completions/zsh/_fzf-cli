@@ -30,6 +30,7 @@ _fzf-cli() {
   )
 
   _arguments -C \
+    '(-h --help)'{-h,--help}'[Display help message for fzf-cli]' \
     '1:command:->subcmds' \
     '*::arg:->args'
 
@@ -44,8 +45,8 @@ _fzf-cli() {
       case "$subcmd" in
         file|directory)
           _arguments -C \
-            '--vi[Open files with vi]' \
-            '--vscode[Open files with VSCode]' \
+            '(--vi --vscode)--vi[Open files with vi]' \
+            '(--vscode --vi)--vscode[Open files with VSCode]' \
             '--[End of options]' \
             '*:query:_message "query"' \
             && return 0
@@ -73,4 +74,3 @@ _fzf-cli() {
 }
 
 compdef _fzf-cli fzf-cli
-

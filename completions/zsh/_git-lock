@@ -95,6 +95,7 @@ _git-lock() {
       if [[ "$cur" == -* ]]; then
         typeset -a diff_opts=(
           '--no-color:Disable ANSI colors'
+          'no-color:Disable ANSI colors'
           '-h:Show diff help'
           '--help:Show diff help'
         )
