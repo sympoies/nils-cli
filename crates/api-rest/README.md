@@ -2,10 +2,14 @@
 
 ## Overview
 `api-rest` is a REST API runner that executes a JSON-defined request file and prints the HTTP response body to stdout.
-It is a Rust port of the Codex Kit REST testing scripts:
+It is a Rust port of the Codex Kit REST testing scripts, plus a Rust-only `report-from-cmd` helper that turns saved
+`call` snippets into reports:
 - `rest-api-testing/scripts/rest.sh` (request runner; “call”)
 - `rest-api-testing/scripts/rest-history.sh` (history viewer)
 - `rest-api-testing/scripts/rest-report.sh` (Markdown report generator)
+
+Most behavior is implemented in shared core (`crates/api-testing-core`), but this README documents the current
+`api-rest` CLI surface and parity expectations.
 
 Parity-critical outcomes:
 - The CLI surface (flags, env vars, defaults, help intent).
@@ -14,6 +18,7 @@ Parity-critical outcomes:
 - Endpoint + auth selection rules (including token profile and `ACCESS_TOKEN` fallback).
 - JWT validation behavior (format + `exp`/`nbf` time checks).
 - History + report artifacts (file locations, record/report structure, redaction defaults).
+- `report-from-cmd` snippet parsing and case-name derivation.
 
 See also: `crates/api-testing-core/README.md`.
 
@@ -26,9 +31,10 @@ Commands (parity mapping):
 - `api-rest call` (default when no subcommand is given) → `rest.sh`
 - `api-rest history` → `rest-history.sh`
 - `api-rest report` → `rest-report.sh`
+- `api-rest report-from-cmd` → Rust-only helper (no legacy script)
 
 Help intent:
-- `api-rest --help` explains the three commands and how config discovery works (`--config-dir`).
+- `api-rest --help` explains the four commands and how config discovery works (`--config-dir`).
 - Each subcommand help lists relevant flags and environment variables (grouped by purpose).
 - Help text must clearly state that request files are JSON-only, and that `expect` turns the request into a CI/E2E contract.
 
@@ -83,6 +89,19 @@ Mutual exclusivity rules (parity):
 - `--run` and `--response` MUST NOT be used together (error).
 - At least one of `--run` or `--response` MUST be provided (error).
 
+#### `api-rest report-from-cmd`
+Usage:
+`api-rest report-from-cmd [--case <name>] [--out <path>] [--response <file|->] [--allow-empty] [--dry-run] [--stdin] <snippet>`
+
+Flags:
+- `--case <name>`: optional case name (default derived from the snippet).
+- `--out <path>`: output report path (default described in report semantics).
+- `--response <file|->`: embed an existing response (use `-` for stdin); when omitted, the request is executed.
+- `--allow-empty`, `--expect-empty`: no-op for `api-rest` (kept for parity with `api-gql`).
+- `--dry-run`: print the equivalent `api-rest report ...` command and exit `0`.
+- `--stdin`: read the command snippet from stdin (conflicts with positional snippet).
+- `-h, --help`: print help and exit `0`.
+
 ### Environment variables (by function)
 
 #### Endpoint selection
@@ -129,6 +148,8 @@ Boolean parsing parity:
   - If `false`, omits the command snippet section (equivalent to `--no-command`).
 - `REST_REPORT_COMMAND_LOG_URL_ENABLED=true|false` (default: `true`)
   - If `false`, omits the URL value in the command snippet when `--url` is used (equivalent to `--no-command-url`).
+
+Note: all report controls apply to `api-rest report-from-cmd` as well (it delegates to `api-rest report`).
 
 ## Setup/config discovery
 
@@ -264,7 +285,8 @@ Failure policy:
   - Non-strict mode prints a warning and proceeds (skipping further format validation).
 
 Legacy missing-runtime behavior (for parity awareness):
-- If the legacy script cannot run `python3`, it prints a warning and skips JWT validation entirely.
+- Legacy script: if `python3` is unavailable, it prints a warning and skips JWT validation.
+- Rust implementation: always validates JWTs (no external runtime dependency).
 
 ## Request schema (JSON)
 Request files are JSON-only and must parse as a JSON object.
@@ -425,6 +447,7 @@ Ported from `rest.sh`.
   - HTTP client errors
   - expectation failures (`expect.status`, `expect.jq`)
   - cleanup failures
+- Progress: when stderr is a TTY, `api-rest` emits a spinner for request/cleanup; it is suppressed for non-TTY stderr.
 
 ### Failure-body echo behavior (non-interactive)
 On failure, when stdout is *not* a TTY:
@@ -437,7 +460,7 @@ On failure, when stdout is *not* a TTY:
 Ported from `rest.sh` + `rest-history.sh`.
 
 ### When history is written
-- History is appended only for `api-rest call` (not for `history` or `report` commands).
+- History is appended only for `api-rest call` (not for `history`, `report`, or `report-from-cmd`).
 - History is enabled by default and may be disabled by:
   - `--no-history` (for that run), or
   - `REST_HISTORY_ENABLED=false`
@@ -482,10 +505,11 @@ Command snippet shape (parity intent):
 - Multi-line with `\` continuations.
 - Includes `--config-dir <setup_dir>` to pin configuration for replay.
 - Ends with `| jq .` for human-friendly JSON formatting (even if `api-rest` itself prints raw JSON).
+  - The `jq` suffix is a convenience; `api-rest` does not require `jq` to run.
 
 Note on Rust port output:
 - The legacy history snippet uses a `$CODEX_HOME/.../rest.sh` path when available.
-- The Rust port MAY emit an equivalent `api-rest` invocation instead, but must preserve the record structure and option semantics.
+- The Rust port emits an equivalent `api-rest call` invocation, preserving the record structure and option semantics.
 
 ### `api-rest history` output rules
 - Entries are parsed as blank-line-separated records.
@@ -518,6 +542,7 @@ Project root resolution:
   - stdout as the response body
   - stderr (if non-empty) into a `### stderr` section
 - Records `Result: PASS` when the call exit code is `0`, else `Result: FAIL (api-rest exit=<code>)`.
+- History is not written during report execution (equivalent to `--no-history`).
 
 `--response <file|->`:
 - Reads response bytes from the given file (or stdin).
@@ -572,6 +597,29 @@ When the request includes `expect`:
   - If the response is JSON and `expect.jq` is present, evaluate it and mark `PASS`/`FAIL`.
   - If the response is not JSON, `expect.jq` is `NOT_EVALUATED`.
 
+## Report-from-cmd semantics
+Rust-only helper that parses a saved `api-rest call` snippet (or legacy `rest.sh` snippet) and delegates to
+`api-rest report`.
+
+### Snippet parsing
+- Accepts `api-rest` or `rest.sh` basenames; an explicit `call` token is optional.
+- Rejects `history`/`report` subcommands and unknown flags.
+- Recognized flags (extracted): `--config-dir`, `--env`/`-e`, `--url`/`-u`, `--token`.
+- Ignored flags: `--no-history`.
+- Handles `\` line continuations and ignores everything after the first pipe (`|`), so history snippets ending in
+  `| jq .` are accepted.
+- Requires exactly one positional request path (extra args are errors).
+
+### Derived case name
+- `case = "<request-stem> (<env-or-url|implicit>[, token:<name>])"`.
+- `<request-stem>` strips `.request.json` when present; otherwise uses the file stem (fallback `"case"`).
+
+### Execution modes
+- Without `--response`: behaves like `api-rest report --run` using parsed endpoint/auth/config values.
+- With `--response <file|->`: behaves like `api-rest report --response ...`; no network call.
+- `--response -` reserves stdin for the response body; the snippet must be positional (cannot use `--stdin`).
+- `--dry-run` prints the equivalent `api-rest report ...` command and exits `0`.
+
 ## Exit codes
 
 ### `api-rest call`
@@ -587,7 +635,11 @@ When the request includes `expect`:
 
 ### `api-rest report`
 - `0`: report written and the output path printed (even if `--run` produced a failing request; the failure is recorded in the report).
-- `1`: invalid arguments, missing files, failure to write report, or JSON formatting failures (legacy requires `jq`).
+- `1`: invalid arguments, missing files, failure to write report, or JSON formatting failures.
+
+### `api-rest report-from-cmd`
+- `0`: report written and the output path printed, or `--dry-run` printed the equivalent report command.
+- `1`: invalid arguments, snippet parse failures, missing files, failure to write report, or JSON formatting failures.
 
 ## External dependencies (inventory + policy)
 
@@ -601,16 +653,19 @@ When the request includes `expect`:
 | `awk` | `rest-history.sh` | record parsing (`RS=`) | required |
 | coreutils (`date`, `mktemp`, `wc`, `mv`, `mkdir`, `head`, etc.) | all | plumbing | required |
 
-### Rust port policy (api-rest)
-Goal: eliminate runtime dependencies on external binaries for core behavior.
+### Rust implementation status (api-rest)
+The current Rust implementation (via `api-testing-core`) has no required runtime dependencies on external binaries for
+core behavior. History/report snippets still include `| jq .` as a convenience, but `jq` is not required to run
+`api-rest`.
 
-| Dependency | Policy | Rationale |
+| Dependency | Rust status | Notes |
 |---|---|---|
-| `curl` | eliminate | implement HTTP client in Rust for portability and consistent error handling |
-| `jq` | eliminate (default) | implement JSON formatting + jq-like evaluation (`expect.jq`, cleanup vars, redaction) in Rust |
-| `python3` | eliminate | implement JWT parsing/time checks and base64 decoding in Rust |
-| `git` | eliminate | detect repo root in Rust (or treat as best-effort “CWD” when not in a repo) |
-| shell utilities (`awk`, `date`, `mktemp`, etc.) | eliminate | implement history/report generation and file ops in Rust |
+| `curl` | not used | HTTP client implemented in Rust |
+| `jq` | not used (optional in snippets) | JSON formatting + jq-like evaluation (`expect.jq`, cleanup vars, redaction) in Rust |
+| `python3` | not used | JWT parsing/time checks and base64 decoding implemented in Rust |
+| `git` | not used | repo root detection in Rust (fallback to CWD) |
+| `awk` | not used | history parsing in Rust |
+| coreutils (`date`, `mktemp`, `wc`, `mv`, `mkdir`, `head`, etc.) | not used | history/report file ops implemented in Rust |
 
 If a compatibility fallback to any external tool is added later, it MUST:
 - be explicitly opt-in (flag/env),
@@ -739,3 +794,21 @@ These fixtures define deterministic scenarios for integration tests. Tests shoul
 - Command: run repeated calls.
 - Expect:
   - rotated files exist (for example `.rest_history.1`) and are bounded by `REST_HISTORY_ROTATE_COUNT`.
+
+## report-from-cmd: dry-run from history snippet
+- Setup:
+  - Use a history-style snippet (with `| jq .`).
+- Command:
+  - `api-rest report-from-cmd --dry-run "api-rest call --config-dir setup/rest --env staging --token service setup/rest/requests/health.request.json | jq ."`
+- Expect:
+  - exit `0`
+  - stdout starts with `api-rest report`
+  - derived `--case` includes the request stem + `(staging, token:service)`
+  - includes `--request`, `--config-dir`, `--env`, `--token`, and `--run`
+
+## report-from-cmd: stdin conflicts with response dash
+- Command:
+  - `api-rest report-from-cmd --response - --stdin --dry-run`
+- Expect:
+  - exit `1`
+  - stderr mentions stdin is reserved for the response body
