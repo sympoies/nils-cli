@@ -93,8 +93,8 @@ See `crates/api-testing-core/README.md` for the recommended repo layout and end-
 ### api-test
 - Example usage:
   - `api-test run --suite smoke`
-  - `api-test run --suite smoke --out out/api-test-runner/results.json --junit out/junit.xml`
-  - `api-test summary --in out/api-test-runner/results.json --out out/summary.md`
+  - `api-test run --suite smoke --out out/api-test-runner/results.json --junit out/api-test-runner/junit.xml`
+  - `api-test summary --in out/api-test-runner/results.json --out out/api-test-runner/summary.md`
 
 ## Adding a new CLI crate
 1. Create a new binary crate under `crates/`:
