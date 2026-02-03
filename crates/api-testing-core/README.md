@@ -1,17 +1,24 @@
 # API testing CLIs overview
 
 ## Overview
-This workspace ports the existing Bash-based API testing scripts into three Rust binaries: `api-rest`, `api-gql`, and `api-test`.
-The top priority is behavioral parity with the legacy scripts: flags, defaults, exit codes, and on-disk artifacts (history files, reports, results).
-These tools are designed to work with a conventional repository layout that keeps configuration under `setup/` and suite manifests under `tests/`.
+This workspace ships three Rust API testing CLIs (`api-rest`, `api-gql`, `api-test`) plus the shared library crate
+`api-testing-core`. Behavioral parity with the legacy scripts remains the top priority: flags, defaults, exit codes,
+and on-disk artifacts (history files, reports, results).
+
+Detailed parity specs live with each binary:
+- `crates/api-rest/README.md`
+- `crates/api-gql/README.md`
+- `crates/api-test/README.md`
+
+This README focuses on the shared repository layout, cross-CLI concepts, and the `api-testing-core` surface area.
 
 ## Binaries and legacy script mapping
 - `api-rest` (REST)
-  - `api-rest call` (or the default mode) : parity with `rest.sh`
+  - `api-rest call` (default) : parity with `rest.sh`
   - `api-rest history` : parity with `rest-history.sh`
   - `api-rest report` : parity with `rest-report.sh`
 - `api-gql` (GraphQL)
-  - `api-gql call` (or the default mode) : parity with `gql.sh`
+  - `api-gql call` (default) : parity with `gql.sh`
   - `api-gql history` : parity with `gql-history.sh`
   - `api-gql report` : parity with `gql-report.sh`
   - `api-gql schema` : parity with `gql-schema.sh`
@@ -20,45 +27,46 @@ These tools are designed to work with a conventional repository layout that keep
   - `api-test summary` : parity with `api-test-summary.sh`
 
 Notes:
-- `api-test` executes REST and GraphQL cases by invoking the Rust equivalents (`api-rest` and `api-gql`) rather than shelling out to the legacy scripts.
-- Where the legacy scripts embed their own paths (often under `$CODEX_HOME`) in history/report command snippets, the Rust ports may emit a stable Rust invocation instead (for example `api-rest ... | jq .`), while preserving option semantics.
+- `api-test` executes REST/GraphQL cases through shared core runners (no shelling out to scripts or the binaries).
+- `api-rest`/`api-gql` also provide `report-from-cmd` as a Rust-only convenience for replaying saved `call` snippets.
+
+## api-testing-core scope
+`api-testing-core` is a library crate used by all three CLIs. Key modules:
+- `config`: setup dir discovery for REST/GraphQL configs.
+- `env_file`: `.env` parsing + key normalization helpers.
+- `cli_*`: shared CLI helpers (endpoint resolution, history I/O, report args, CLI utilities).
+- `history`, `report`, `markdown`, `redact`, `cmd_snippet`: shared report/history rendering and snippet parsing.
+- `rest`: request schema, runner, expect/cleanup logic, report rendering.
+- `graphql`: schema/vars loading, auth/JWT resolution, runner, expect/allow-errors, report rendering, mutation detection.
+- `suite`: suite schema v1, path resolution, filters, safety gates, auth integration, runner, cleanup, results, summary, JUnit.
 
 ## Shared terminology
 - Setup dir
-  - A protocol-specific directory that contains configuration files (and, optionally, local-only overrides).
-  - Canonical locations:
-    - REST: `setup/rest`
-    - GraphQL: `setup/graphql`
+  - Protocol-specific config directory.
+  - Canonical locations: REST `setup/rest`, GraphQL `setup/graphql`.
 - Config dir
-  - A CLI argument (`--config-dir <dir>`) that selects or seeds discovery of the setup dir.
-  - The legacy scripts resolve the final setup dir by searching upward from a seed directory for known config files; if none are found, they fall back to conventional `setup/<tool>` locations.
+  - CLI arg `--config-dir <dir>` that seeds setup-dir discovery.
+  - Discovery searches upward for known config files; fallback uses the canonical `setup/<tool>` when applicable.
 - Env preset
-  - A short name passed via `--env <name>` that selects a base URL from `endpoints.env` (+ optional `.local` overrides).
-  - REST: looks up `REST_URL_<ENV_KEY>`; GraphQL: looks up `GQL_URL_<ENV_KEY>`.
-  - `<ENV_KEY>` is derived by uppercasing and replacing non-alphanumerics with underscores (for example `local-dev` → `LOCAL_DEV`).
-  - If the `--env` value looks like a URL (`http://...` or `https://...`), the legacy scripts treat it as an explicit URL (equivalent to `--url`).
-- Token profile
-  - A named bearer token selection used to populate `Authorization: Bearer ...`.
-  - REST: `--token <name>` / `REST_TOKEN_NAME` selects `REST_TOKEN_<NAME>` from `tokens.env` (+ optional `tokens.local.env`).
-    - If no token profile is selected, the legacy script falls back to `ACCESS_TOKEN` (or `SERVICE_TOKEN`).
-  - GraphQL: `--jwt <name>` / `GQL_JWT_NAME` selects `GQL_JWT_<NAME>` from `jwts.env` (+ optional `jwts.local.env`).
-    - If no JWT profile is selected, the legacy script falls back to `ACCESS_TOKEN`.
-    - If a JWT profile is selected but missing, the legacy script may auto-login by running `login.graphql` under the GraphQL setup dir to fetch a token.
+  - `--env <name>` selects a base URL from `endpoints.env` (+ optional `.local` overrides).
+  - REST: `REST_URL_<ENV_KEY>`; GraphQL: `GQL_URL_<ENV_KEY>`.
+  - If the value looks like `http(s)://...`, it is treated as a direct URL (like `--url`).
+- Token/JWT profile
+  - REST: `--token <name>` or `REST_TOKEN_NAME` selects `REST_TOKEN_<NAME>`.
+  - GraphQL: `--jwt <name>` or `GQL_JWT_NAME` selects `GQL_JWT_<NAME>`.
+  - REST fallback: `ACCESS_TOKEN`, then `SERVICE_TOKEN` if no profile is selected.
+  - GraphQL fallback: `ACCESS_TOKEN` if no profile is selected.
 - History
-  - An append-only log of past invocations stored under the setup dir:
-    - REST: `<setup_dir>/.rest_history`
-    - GraphQL: `<setup_dir>/.gql_history`
-  - A history entry is a blank-line-separated record containing a metadata header line plus a copy/paste-friendly command snippet.
-  - History is enabled by default, can be disabled, and supports rotation/size limits.
+  - REST: `<setup_dir>/.rest_history`, GraphQL: `<setup_dir>/.gql_history`.
+  - Enabled by default, can be disabled, and supports rotation/size limits.
 - Report
-  - A Markdown artifact (typically written under `<repo>/docs/`) that captures a single “case”:
-    - command snippet (optional)
-    - request/operation inputs
-    - response output (and optional assertions / stderr)
-  - Reports redact common secret fields by default and can be configured to omit or include sensitive details (for example URLs in the command snippet).
+  - Markdown artifact (usually under `<repo>/docs/`) capturing request/operation, response, and optional assertions.
+  - Redacts common secret fields by default, with opt-out flags for debugging.
+- Suite
+  - JSON manifest (`version: 1`) that drives `api-test run` and defines cases, defaults, auth, and cleanup.
 
 ## Canonical repo layouts
-The Rust CLIs aim to support the same “canonical” layouts the scripts assume, so that repositories can keep setup/config and suites in predictable places.
+The CLIs support the same layouts the legacy scripts assume.
 
 ### Layout A: App repo with `setup/` + `tests/` (recommended)
 ```text
@@ -83,239 +91,89 @@ The Rust CLIs aim to support the same “canonical” layouts the scripts assume
       suites/
         <name>.suite.json
   out/
-    api-test-runner/             # suite runner default output dir
+    api-test-runner/             # suite runner output base dir
 ```
 
-### Layout B: Suites under `setup/` (supported fallback)
-`api-test` (and the legacy `api-test.sh`) resolves `--suite <name>` to:
+### Layout B: Suites under `setup/` (fallback)
+`api-test` resolves `--suite <name>` to:
 - `<repo>/tests/api/suites/<name>.suite.json` (preferred)
 - `<repo>/setup/api/suites/<name>.suite.json` (fallback)
 
-## Parity-critical vs best-effort
-- Parity-critical
-  - Flags, environment variables, and defaults (including config discovery and preset resolution)
-  - Exit code semantics and error messaging intent (user-actionable guardrails)
-  - Artifact behavior: history append/rotation, report generation, suite results JSON (+ optional JUnit)
-  - Secret-handling defaults (redaction/masking behavior)
-- Best-effort
-  - Which HTTP client implementation is used internally (the scripts use `curl`/`xh`/`http`, while Rust uses its own HTTP stack)
-  - Performance and portability improvements that do not change user-visible behavior or artifacts
-# API testing CLIs usage
+### Layout C: Custom suites directory
+- `API_TEST_SUITES_DIR=<path>` overrides the suites directory for `--suite <name>`.
 
-This document shows how to use the Rust ports of the Codex Kit API testing scripts:
-`api-rest`, `api-gql`, and `api-test`.
+## Quickstart examples
 
-See also:
-- `crates/api-rest/README.md`
-- `crates/api-gql/README.md`
-- `crates/api-test/README.md`
-
-## Migration mapping (legacy → Rust)
-
-| Legacy script | Rust binary |
-| --- | --- |
-| `rest.sh` | `api-rest call` |
-| `rest-history.sh` | `api-rest history` |
-| `rest-report.sh` | `api-rest report` |
-| `gql.sh` | `api-gql call` |
-| `gql-history.sh` | `api-gql history` |
-| `gql-report.sh` | `api-gql report` |
-| `gql-schema.sh` | `api-gql schema` |
-| `api-test.sh` | `api-test run` |
-| `api-test-summary.sh` | `api-test summary` |
-
-## Recommended repo layout
-
-```text
-<repo>/
-  setup/
-    rest/
-      endpoints.env
-      endpoints.local.env   # optional (local override)
-      tokens.env
-      tokens.local.env      # optional (local tokens; do not commit)
-    graphql/
-      endpoints.env
-      endpoints.local.env   # optional (local override)
-      jwts.env
-      jwts.local.env        # optional (local jwts; do not commit)
-      operations/
-        login.graphql       # optional (for auto-login)
-      schema.graphql        # or: schema.gql / schema.graphqls / api.graphql / api.gql
-  tests/
-    api/
-      suites/
-        smoke.suite.json
-  out/
-    api-test-runner/
-```
-
-## `api-rest` examples
-
-Run a request (prints the HTTP response body JSON to stdout):
-
+### `api-rest`
+Run a request:
 ```bash
 api-rest call --env staging setup/rest/requests/health.request.json
 ```
 
-Override base URL directly:
-
-```bash
-api-rest call --url http://localhost:6700 setup/rest/requests/health.request.json
-```
-
-Use a token profile (selected from `setup/rest/tokens(.local).env`):
-
-```bash
-api-rest call --env staging --token service setup/rest/requests/me.request.json
-```
-
-Write a Markdown report:
-
+Write a report:
 ```bash
 api-rest report --case health --request setup/rest/requests/health.request.json --run
 ```
 
-Generate a report from a saved `call` snippet (e.g. from history):
-
+Generate a report from a saved snippet:
 ```bash
 api-rest history --command-only | api-rest report-from-cmd --stdin
 ```
 
-Show the rewritten `report` command (no network):
-
-```bash
-api-rest report-from-cmd --dry-run "api-rest call --env staging setup/rest/requests/health.request.json"
-```
-
-Offline mode (use a saved response body):
-
-```bash
-api-rest report-from-cmd --response out/health.response.json "api-rest call --env staging setup/rest/requests/health.request.json"
-```
-
-If you use `--response -`, stdin is reserved for the response body (the snippet must be positional):
-
-```bash
-api-rest report-from-cmd --response - "api-rest call --env staging setup/rest/requests/health.request.json" < out/health.response.json
-```
-
-Show history (default: last entry):
-
-```bash
-api-rest history
-```
-
-## `api-gql` examples
-
-Run an operation (prints the GraphQL response body JSON to stdout):
-
+### `api-gql`
+Run an operation:
 ```bash
 api-gql call --env staging setup/graphql/operations/health.graphql
 ```
 
-Run with variables:
-
-```bash
-api-gql call --env staging setup/graphql/operations/countries.graphql setup/graphql/operations/countries.variables.json
-```
-
-Use a JWT profile (selected from `setup/graphql/jwts(.local).env`):
-
-```bash
-api-gql call --env staging --jwt service setup/graphql/operations/me.graphql
-```
-
-Write a Markdown report:
-
+Write a report:
 ```bash
 api-gql report --case health --op setup/graphql/operations/health.graphql --run
 ```
 
-Generate a report from a saved `call` snippet (e.g. from history):
-
-```bash
-api-gql history --command-only | api-gql report-from-cmd --stdin
-```
-
-Show the rewritten `report` command (no network):
-
-```bash
-api-gql report-from-cmd --dry-run "api-gql call --env staging setup/graphql/operations/health.graphql"
-```
-
-Offline mode (use a saved response body):
-
-```bash
-api-gql report-from-cmd --response out/health.response.json "api-gql call --env staging setup/graphql/operations/health.graphql"
-```
-
-If you use `--response -`, stdin is reserved for the response body (the snippet must be positional):
-
-```bash
-api-gql report-from-cmd --response - "api-gql call --env staging setup/graphql/operations/health.graphql" < out/health.response.json
-```
-
-Resolve and print the schema file:
-
+Resolve and print schema:
 ```bash
 api-gql schema --cat
 ```
 
-## `api-test` examples
-
+### `api-test`
 Run a suite (always emits results JSON to stdout):
-
 ```bash
 api-test run --suite smoke
 ```
 
-Write results JSON and optional JUnit XML:
+Use an explicit suite file:
+```bash
+api-test run --suite-file tests/api/suites/smoke.suite.json
+```
 
+Write results JSON + JUnit:
 ```bash
 api-test run --suite smoke --out out/api-test-runner/results.json --junit out/api-test-runner/junit.xml
 ```
 
-Filter by tags (repeatable; AND semantics):
-
-```bash
-api-test run --suite smoke --tag smoke --tag graphql
-```
-
-Run only / skip case IDs:
-
-```bash
-api-test run --suite smoke --only rest.health,graphql.health
-api-test run --suite smoke --skip graphql.health
-```
-
-Write-capable cases:
-
-- A write-capable case must set `allowWrite: true` in the suite file.
-- Writes are disabled by default (even with `allowWrite: true`).
-- Enable writes with `--allow-writes` (or `API_TEST_ALLOW_WRITES_ENABLED=true`).
-- Tip: keep “guardrail” negative cases (write-capable but `allowWrite: false`) in a separate suite (e.g. `guardrails.suite.json`) so your smoke suite report stays green.
-
-```bash
-api-test run --suite smoke --allow-writes
-```
-
-Render a Markdown summary from results JSON:
-
+Render a Markdown summary:
 ```bash
 api-test summary --in out/api-test-runner/results.json --out out/api-test-runner/summary.md
 ```
 
-CI tip (GitHub Actions):
+## Suite runner behavior (high-level)
+- Results JSON is always emitted to stdout. `--out` writes an additional copy.
+- Output directory base defaults to `<repo>/out/api-test-runner` (override via `API_TEST_OUTPUT_DIR`).
+- Each run creates `<output_dir>/<run_id>/` where `run_id` is `YYYYMMDD-HHMMSSZ`.
+- Per-case artifacts include `<case>.response.json` and `<case>.stderr.log`, referenced in results JSON.
+- Exit code is `2` when any case fails; otherwise `0`.
+- Write safety is two-step:
+  - Case must set `allowWrite: true`.
+  - Writes must be enabled via `--allow-writes`, `API_TEST_ALLOW_WRITES_ENABLED=true`, or `env: local`.
+- Optional suite auth can derive tokens from secret JSON in `API_TEST_AUTH_JSON`.
+- Optional cleanup steps run after the main case; cleanup failures mark the case failed.
 
-- `api-test summary` appends to `$GITHUB_STEP_SUMMARY` by default when the env var is set.
-- Use `--no-github-summary` to disable that behavior.
-
-## Environment variables (suite runner)
-
-Common `api-test` env vars:
-
-- `API_TEST_OUTPUT_DIR`: base output directory (default: `<repo>/out/api-test-runner`)
-- `API_TEST_ALLOW_WRITES_ENABLED=true|false`: enable write-capable cases
-- `API_TEST_REST_URL`: override REST base URL for all REST/rest-flow cases
-- `API_TEST_GQL_URL`: override GraphQL endpoint URL for all GraphQL cases
+## Suite runner environment variables
+- `API_TEST_OUTPUT_DIR`: override the base output directory.
+- `API_TEST_SUITES_DIR`: override the suites directory used by `--suite`.
+- `API_TEST_ALLOW_WRITES_ENABLED`: enable write-capable cases.
+- `API_TEST_REST_URL`: override REST base URL for all REST/rest-flow cases.
+- `API_TEST_GQL_URL`: override GraphQL endpoint URL for all GraphQL cases.
+- `API_TEST_AUTH_JSON`: credentials JSON used by suite auth (default key name).
+- `GITHUB_STEP_SUMMARY`: when set, `api-test summary` appends Markdown output (disable via `--no-github-summary`).
