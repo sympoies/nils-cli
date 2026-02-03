@@ -48,20 +48,20 @@ _fzf-cli() {
             '(--vi --vscode)--vi[Open files with vi]' \
             '(--vscode --vi)--vscode[Open files with VSCode]' \
             '--[End of options]' \
-            '*:query:_message "query"' \
+            '*:query:_message -r "query"' \
             && return 0
           ;;
         git-commit)
           _arguments -C \
             '--snapshot[Open snapshot from selected commit by default]' \
-            '*:query:_message "query"' \
+            '*:query:_message -r "query"' \
             && return 0
           ;;
         process|port)
           _arguments -C \
             '(-k --kill)'{-k,--kill}'[Kill without interactive confirmation]' \
             '(-9 --force)'{-9,--force}'[Force SIGKILL (-9)]' \
-            '*:query:_message "query"' \
+            '*:query:_message -r "query"' \
             && return 0
           ;;
         git-status|git-checkout|git-branch|git-tag|history|env|alias|function|def|help)
