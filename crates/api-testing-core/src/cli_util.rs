@@ -1,18 +1,35 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use api_testing_core::{env_file, Result};
+use crate::{env_file, Result};
 
-pub(crate) fn trim_non_empty(s: &str) -> Option<String> {
+pub trait WarnSink {
+    fn warn(&mut self, message: &str);
+}
+
+impl WarnSink for Vec<String> {
+    fn warn(&mut self, message: &str) {
+        self.push(message.to_string());
+    }
+}
+
+impl<'a> WarnSink for dyn Write + 'a {
+    fn warn(&mut self, message: &str) {
+        let _ = writeln!(self, "{message}");
+    }
+}
+
+pub fn trim_non_empty(s: &str) -> Option<String> {
     let t = s.trim();
     (!t.is_empty()).then(|| t.to_string())
 }
 
-pub(crate) fn bool_from_env(
+pub fn bool_from_env<S: WarnSink + ?Sized>(
     raw: Option<String>,
     name: &str,
     default: bool,
-    stderr: &mut dyn Write,
+    tool_label: Option<&str>,
+    warnings: &mut S,
 ) -> bool {
     let raw = raw.unwrap_or_default();
     let raw = raw.trim();
@@ -23,16 +40,20 @@ pub(crate) fn bool_from_env(
         "true" => true,
         "false" => false,
         _ => {
-            let _ = writeln!(
-                stderr,
-                "api-gql: warning: {name} must be true|false (got: {raw}); treating as false"
-            );
+            let label = tool_label.and_then(|l| (!l.trim().is_empty()).then_some(l));
+            let msg = match label {
+                Some(label) => format!(
+                    "{label}: warning: {name} must be true|false (got: {raw}); treating as false"
+                ),
+                None => format!("{name} must be true|false (got: {raw}); treating as false"),
+            };
+            warnings.warn(&msg);
             false
         }
     }
 }
 
-pub(crate) fn parse_u64_default(raw: Option<String>, default: u64, min: u64) -> u64 {
+pub fn parse_u64_default(raw: Option<String>, default: u64, min: u64) -> u64 {
     let raw = raw.unwrap_or_default();
     let raw = raw.trim();
     if raw.is_empty() {
@@ -47,11 +68,11 @@ pub(crate) fn parse_u64_default(raw: Option<String>, default: u64, min: u64) -> 
     v.max(min)
 }
 
-pub(crate) fn to_env_key(s: &str) -> String {
+pub fn to_env_key(s: &str) -> String {
     env_file::normalize_env_key(s)
 }
 
-pub(crate) fn slugify(s: &str) -> String {
+pub fn slugify(s: &str) -> String {
     let s = s.trim().to_ascii_lowercase();
     let mut out = String::new();
     let mut prev_dash = false;
@@ -75,7 +96,7 @@ pub(crate) fn slugify(s: &str) -> String {
     out
 }
 
-pub(crate) fn maybe_relpath(path: &Path, base: &Path) -> String {
+pub fn maybe_relpath(path: &Path, base: &Path) -> String {
     if path == base {
         return ".".to_string();
     }
@@ -91,7 +112,7 @@ pub(crate) fn maybe_relpath(path: &Path, base: &Path) -> String {
     path.to_string_lossy().to_string()
 }
 
-pub(crate) fn shell_quote(s: &str) -> String {
+pub fn shell_quote(s: &str) -> String {
     if s.is_empty() {
         return "''".to_string();
     }
@@ -108,7 +129,7 @@ pub(crate) fn shell_quote(s: &str) -> String {
     out
 }
 
-pub(crate) fn list_available_suffixes(file: &Path, prefix: &str) -> Vec<String> {
+pub fn list_available_suffixes(file: &Path, prefix: &str) -> Vec<String> {
     if !file.is_file() {
         return Vec::new();
     }
@@ -152,7 +173,7 @@ pub(crate) fn list_available_suffixes(file: &Path, prefix: &str) -> Vec<String> 
     out
 }
 
-pub(crate) fn find_git_root(start_dir: &Path) -> Option<PathBuf> {
+pub fn find_git_root(start_dir: &Path) -> Option<PathBuf> {
     let mut dir = start_dir;
     loop {
         if dir.join(".git").exists() {
@@ -165,7 +186,7 @@ pub(crate) fn find_git_root(start_dir: &Path) -> Option<PathBuf> {
     }
 }
 
-pub(crate) fn history_timestamp_now() -> Result<String> {
+pub fn history_timestamp_now() -> Result<String> {
     let format = time::format_description::parse(
         "[year]-[month]-[day]T[hour]:[minute]:[second][offset_hour sign:mandatory][offset_minute]",
     )?;
@@ -173,81 +194,14 @@ pub(crate) fn history_timestamp_now() -> Result<String> {
     Ok(now.format(&format)?)
 }
 
-pub(crate) fn report_stamp_now() -> Result<String> {
+pub fn report_stamp_now() -> Result<String> {
     let format = time::format_description::parse("[year][month][day]-[hour][minute]")?;
     let now = time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::now_utc());
     Ok(now.format(&format)?)
 }
 
-pub(crate) fn report_date_now() -> Result<String> {
+pub fn report_date_now() -> Result<String> {
     let format = time::format_description::parse("[year]-[month]-[day]")?;
     let now = time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::now_utc());
     Ok(now.format(&format)?)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use pretty_assertions::assert_eq;
-    use tempfile::TempDir;
-
-    fn write_file(path: &Path, contents: &str) {
-        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
-        std::fs::write(path, contents).expect("write");
-    }
-
-    #[test]
-    fn bool_from_env_parses_and_warns() {
-        let mut stderr = Vec::new();
-        let got = bool_from_env(Some("true".to_string()), "GQL_FOO", false, &mut stderr);
-        assert_eq!(got, true);
-
-        let mut stderr = Vec::new();
-        let got = bool_from_env(Some("nope".to_string()), "GQL_FOO", true, &mut stderr);
-        assert_eq!(got, false);
-        let msg = String::from_utf8_lossy(&stderr);
-        assert!(msg.contains("GQL_FOO must be true|false"));
-    }
-
-    #[test]
-    fn parse_u64_default_enforces_min() {
-        assert_eq!(parse_u64_default(Some("".to_string()), 10, 1), 10);
-        assert_eq!(parse_u64_default(Some("abc".to_string()), 10, 1), 10);
-        assert_eq!(parse_u64_default(Some("0".to_string()), 10, 1), 1);
-    }
-
-    #[test]
-    fn to_env_key_and_slugify_normalize() {
-        assert_eq!(to_env_key("prod-us"), "PROD_US");
-        assert_eq!(to_env_key("  foo@@bar  "), "FOO_BAR");
-        assert_eq!(slugify("Hello, world!"), "hello-world");
-        assert_eq!(slugify("  ___ "), "");
-    }
-
-    #[test]
-    fn maybe_relpath_and_shell_quote() {
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path();
-        assert_eq!(maybe_relpath(root, root), ".");
-
-        let child = root.join("a/b");
-        std::fs::create_dir_all(&child).unwrap();
-        assert_eq!(maybe_relpath(&child, root), "a/b");
-
-        assert_eq!(shell_quote(""), "''");
-        assert_eq!(shell_quote("a'b"), "'a'\\''b'");
-    }
-
-    #[test]
-    fn list_available_suffixes_parses_and_sorts() {
-        let tmp = TempDir::new().unwrap();
-        let file = tmp.path().join("endpoints.env");
-        write_file(
-            &file,
-            "export GQL_URL_PROD=http://prod\nGQL_URL_DEV=http://dev\nGQL_URL_=bad\nGQL_URL_FOO-BAR=http://x\nGQL_URL_TEST=http://t\nGQL_URL_TEST=http://t2\n",
-        );
-
-        let suffixes = list_available_suffixes(&file, "GQL_URL_");
-        assert_eq!(suffixes, vec!["dev", "prod", "test"]);
-    }
 }

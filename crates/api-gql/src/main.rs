@@ -1,6 +1,5 @@
 mod cli;
 mod commands;
-mod util;
 
 use std::io::IsTerminal;
 use std::path::PathBuf;

@@ -1,5 +1,10 @@
 //! Shared core primitives for the api-testing CLIs.
 
+pub mod cli_endpoint;
+pub mod cli_history;
+pub mod cli_io;
+pub mod cli_report;
+pub mod cli_util;
 pub mod cmd_snippet;
 pub mod config;
 pub mod env_file;

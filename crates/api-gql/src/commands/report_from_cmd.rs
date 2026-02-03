@@ -1,8 +1,9 @@
 use std::io::{Read, Write};
 
+use api_testing_core::cli_util::{shell_quote, trim_non_empty};
+
 use crate::cli::{ReportArgs, ReportFromCmdArgs};
 use crate::commands::report::cmd_report;
-use crate::util::{shell_quote, trim_non_empty};
 
 pub(crate) fn cmd_report_from_cmd(
     args: &ReportFromCmdArgs,

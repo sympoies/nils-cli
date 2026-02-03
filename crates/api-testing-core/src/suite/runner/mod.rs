@@ -3,6 +3,7 @@ use std::time::Instant;
 
 use anyhow::Context;
 
+use crate::cli_util;
 use crate::suite::auth::{AuthInit, SuiteAuthManager};
 use crate::suite::cleanup::{run_case_cleanup, CleanupContext};
 use crate::suite::filter::selection_skip_reason;
@@ -21,22 +22,6 @@ mod progress;
 mod rest;
 
 pub use context::{SuiteRunOptions, SuiteRunOutput};
-
-fn shell_quote(s: &str) -> String {
-    if s.is_empty() {
-        return "''".to_string();
-    }
-    let mut out = String::from("'");
-    for ch in s.chars() {
-        if ch == '\'' {
-            out.push_str("'\\''");
-        } else {
-            out.push(ch);
-        }
-    }
-    out.push('\'');
-    out
-}
 
 fn mask_args_for_command_snippet(args: &[String]) -> String {
     if args.is_empty() {
@@ -66,24 +51,9 @@ fn mask_args_for_command_snippet(args: &[String]) -> String {
     }
 
     out.into_iter()
-        .map(|a| shell_quote(&a))
+        .map(|a| cli_util::shell_quote(&a))
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-fn parse_u64_default(raw: Option<String>, default: u64, min: u64) -> u64 {
-    let raw = raw.unwrap_or_default();
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return default;
-    }
-    if !raw.chars().all(|c| c.is_ascii_digit()) {
-        return default;
-    }
-    let Ok(v) = raw.parse::<u64>() else {
-        return default;
-    };
-    v.max(min)
 }
 
 pub fn run_suite(
@@ -342,12 +312,12 @@ pub fn run_suite(
 
                         let login_args_snip = mask_args_for_command_snippet(&login_args);
                         let main_args_snip = mask_args_for_command_snippet(&main_args);
-                        let token_expr_q = shell_quote(&token_jq);
+                        let token_expr_q = cli_util::shell_quote(&token_jq);
                         command_snippet = Some(format!(
                         "ACCESS_TOKEN=\"$(REST_TOKEN_NAME= ACCESS_TOKEN= {} {} | jq -r {token_expr_q})\" REST_TOKEN_NAME= {} {}",
-                        shell_quote("api-rest"),
+                        cli_util::shell_quote("api-rest"),
                         login_args_snip,
-                        shell_quote("api-rest"),
+                        cli_util::shell_quote("api-rest"),
                         main_args_snip
                     ));
 

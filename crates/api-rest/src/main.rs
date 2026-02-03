@@ -1,7 +1,5 @@
 mod cli;
 mod commands;
-mod util;
-
 #[cfg(test)]
 mod test_support;
 

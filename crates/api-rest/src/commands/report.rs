@@ -3,10 +3,9 @@ use std::path::{Path, PathBuf};
 
 use crate::cli::{CallArgs, ReportArgs, ReportFromCmdArgs};
 use crate::commands::call::cmd_call_internal;
-use crate::util::{
-    bool_from_env, find_git_root, history_timestamp_now, maybe_relpath, report_date_now,
-    report_stamp_now, shell_quote, slugify, trim_non_empty,
-};
+use api_testing_core::cli_io;
+use api_testing_core::cli_report::{self, ReportMetadata, ReportMetadataConfig};
+use api_testing_core::cli_util::{bool_from_env, maybe_relpath, shell_quote, trim_non_empty};
 
 pub(crate) fn cmd_report(
     args: &ReportArgs,
@@ -34,17 +33,25 @@ pub(crate) fn cmd_report(
         }
     };
 
-    let project_root = if let Some(p) = args.project_root.as_deref().and_then(trim_non_empty) {
-        PathBuf::from(p)
-    } else {
-        find_git_root(invocation_dir).unwrap_or_else(|| invocation_dir.to_path_buf())
-    };
+    let ReportMetadata {
+        project_root,
+        out_path,
+        report_date,
+        generated_at,
+    } = cli_report::build_report_metadata(ReportMetadataConfig {
+        case_name,
+        out_path: args.out.as_deref(),
+        project_root: args.project_root.as_deref(),
+        report_dir_env: "REST_REPORT_DIR",
+        invocation_dir,
+    });
 
     let include_command = !args.no_command
         && bool_from_env(
             std::env::var("REST_REPORT_INCLUDE_COMMAND_ENABLED").ok(),
             "REST_REPORT_INCLUDE_COMMAND_ENABLED",
             true,
+            Some("api-rest"),
             stderr,
         );
     let include_command_url = !args.no_command_url
@@ -52,59 +59,19 @@ pub(crate) fn cmd_report(
             std::env::var("REST_REPORT_COMMAND_LOG_URL_ENABLED").ok(),
             "REST_REPORT_COMMAND_LOG_URL_ENABLED",
             true,
+            Some("api-rest"),
             stderr,
         );
-
-    let out_path = match args.out.as_deref().and_then(trim_non_empty) {
-        Some(p) => PathBuf::from(p),
-        None => {
-            let stamp = report_stamp_now().unwrap_or_else(|_| "00000000-0000".to_string());
-            let case_slug = slugify(case_name);
-            let case_slug = if case_slug.is_empty() {
-                "case".to_string()
-            } else {
-                case_slug
-            };
-
-            let report_dir = std::env::var("REST_REPORT_DIR")
-                .ok()
-                .and_then(|s| trim_non_empty(&s));
-            let report_dir = match report_dir {
-                None => project_root.join("docs"),
-                Some(d) => {
-                    let p = PathBuf::from(d);
-                    if p.is_absolute() {
-                        p
-                    } else {
-                        project_root.join(p)
-                    }
-                }
-            };
-
-            report_dir.join(format!("{stamp}-{case_slug}-api-test-report.md"))
-        }
-    };
 
     if let Some(parent) = out_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
 
-    let report_date = report_date_now().unwrap_or_else(|_| "0000-00-00".to_string());
-    let generated_at = history_timestamp_now().unwrap_or_else(|_| "".to_string());
-
-    let endpoint_note = if args.url.as_deref().and_then(trim_non_empty).is_some() {
-        format!(
-            "Endpoint: --url {}",
-            args.url.as_deref().unwrap_or_default()
-        )
-    } else if args.env.as_deref().and_then(trim_non_empty).is_some() {
-        format!(
-            "Endpoint: --env {}",
-            args.env.as_deref().unwrap_or_default()
-        )
-    } else {
-        "Endpoint: (implicit; see REST_URL / REST_ENV_DEFAULT)".to_string()
-    };
+    let endpoint_note = cli_report::endpoint_note(
+        args.url.as_deref(),
+        args.env.as_deref(),
+        "Endpoint: (implicit; see REST_URL / REST_ENV_DEFAULT)",
+    );
 
     let mut stderr_note: Option<String> = None;
     let mut run_exit_code: i32 = 0;
@@ -137,29 +104,12 @@ pub(crate) fn cmd_report(
             let _ = writeln!(stderr, "error: Use either --run or --response.");
             return 1;
         };
-        if resp == "-" {
-            let mut buf = Vec::new();
-            if std::io::stdin().read_to_end(&mut buf).is_err() {
-                let _ = writeln!(stderr, "error: failed to read response from stdin");
+        let mut stdin = std::io::stdin();
+        match cli_io::read_response_bytes(&resp, &mut stdin) {
+            Ok(v) => v,
+            Err(err) => {
+                let _ = writeln!(stderr, "{err}");
                 return 1;
-            }
-            buf
-        } else {
-            let resp_path = PathBuf::from(resp);
-            if !resp_path.is_file() {
-                let _ = writeln!(stderr, "Response file not found: {}", resp_path.display());
-                return 1;
-            }
-            match std::fs::read(&resp_path) {
-                Ok(v) => v,
-                Err(_) => {
-                    let _ = writeln!(
-                        stderr,
-                        "error: failed to read response file: {}",
-                        resp_path.display()
-                    );
-                    return 1;
-                }
             }
         }
     };

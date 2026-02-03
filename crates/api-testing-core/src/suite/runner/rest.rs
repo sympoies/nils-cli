@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use crate::cli_util;
 use crate::suite::auth::SuiteAuthManager;
 use crate::suite::resolve::{resolve_path_from_repo_root, write_file};
 use crate::suite::runtime::{
@@ -12,11 +13,6 @@ use crate::suite::safety::{
 };
 use crate::suite::schema::{SuiteCase, SuiteDefaults};
 use crate::Result;
-
-fn trim_non_empty(s: &str) -> Option<String> {
-    let t = s.trim();
-    (!t.is_empty()).then(|| t.to_string())
-}
 
 pub(super) enum PrepareOutcome<T> {
     Ready(T),
@@ -72,11 +68,12 @@ pub(super) fn prepare_rest_case(
         anyhow::bail!("REST case '{id}' request not found: {request_rel}");
     }
 
-    let config_dir =
-        trim_non_empty(&case.config_dir).unwrap_or_else(|| defaults.rest.config_dir.clone());
-    let token = trim_non_empty(&case.token).unwrap_or_else(|| defaults.rest.token.clone());
+    let config_dir = cli_util::trim_non_empty(&case.config_dir)
+        .unwrap_or_else(|| defaults.rest.config_dir.clone());
+    let token =
+        cli_util::trim_non_empty(&case.token).unwrap_or_else(|| defaults.rest.token.clone());
 
-    let mut url = trim_non_empty(&case.url).unwrap_or_else(|| defaults.rest.url.clone());
+    let mut url = cli_util::trim_non_empty(&case.url).unwrap_or_else(|| defaults.rest.url.clone());
     if url.trim().is_empty() && !env_rest_url.trim().is_empty() {
         url = env_rest_url.to_string();
     }
@@ -144,15 +141,15 @@ pub(super) fn prepare_rest_flow_case(
         anyhow::bail!("rest-flow case '{id}' request not found: {request_rel}");
     }
 
-    let config_dir =
-        trim_non_empty(&case.config_dir).unwrap_or_else(|| defaults.rest.config_dir.clone());
-    let mut url = trim_non_empty(&case.url).unwrap_or_else(|| defaults.rest.url.clone());
+    let config_dir = cli_util::trim_non_empty(&case.config_dir)
+        .unwrap_or_else(|| defaults.rest.config_dir.clone());
+    let mut url = cli_util::trim_non_empty(&case.url).unwrap_or_else(|| defaults.rest.url.clone());
     if url.trim().is_empty() && !env_rest_url.trim().is_empty() {
         url = env_rest_url.to_string();
     }
 
-    let token_jq =
-        trim_non_empty(&case.token_jq).unwrap_or_else(super::context::default_rest_flow_token_jq);
+    let token_jq = cli_util::trim_non_empty(&case.token_jq)
+        .unwrap_or_else(super::context::default_rest_flow_token_jq);
 
     let login_request_file = crate::rest::schema::RestRequestFile::load(&login_abs)?;
     let main_request_file = crate::rest::schema::RestRequestFile::load(&request_abs)?;
@@ -300,9 +297,13 @@ pub(super) fn run_rest_case(
         ""
     };
     let snippet = if env_prefix.is_empty() {
-        format!("{} {}", super::shell_quote("api-rest"), args)
+        format!("{} {}", cli_util::shell_quote("api-rest"), args)
     } else {
-        format!("{env_prefix} {} {}", super::shell_quote("api-rest"), args)
+        format!(
+            "{env_prefix} {} {}",
+            cli_util::shell_quote("api-rest"),
+            args
+        )
     };
 
     Ok(RestCaseRunOutput {

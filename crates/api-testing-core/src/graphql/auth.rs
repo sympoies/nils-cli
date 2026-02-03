@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::{env_file, jwt, Result};
+use crate::{cli_util, env_file, jwt, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GraphqlAuthSourceUsed {
@@ -15,49 +15,6 @@ pub struct GraphqlAuthResolution {
     pub bearer_token: Option<String>,
     pub source: GraphqlAuthSourceUsed,
     pub warnings: Vec<String>,
-}
-
-fn trim_non_empty(s: &str) -> Option<String> {
-    let t = s.trim();
-    (!t.is_empty()).then(|| t.to_string())
-}
-
-fn bool_from_env(
-    raw: Option<String>,
-    name: &str,
-    default: bool,
-    warnings: &mut Vec<String>,
-) -> bool {
-    let raw = raw.unwrap_or_default();
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return default;
-    }
-    match raw.to_ascii_lowercase().as_str() {
-        "true" => true,
-        "false" => false,
-        _ => {
-            warnings.push(format!(
-                "{name} must be true|false (got: {raw}); treating as false"
-            ));
-            false
-        }
-    }
-}
-
-fn parse_u64_default(raw: Option<String>, default: u64, min: u64) -> u64 {
-    let raw = raw.unwrap_or_default();
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return default;
-    }
-    if !raw.chars().all(|c| c.is_ascii_digit()) {
-        return default;
-    }
-    let Ok(v) = raw.parse::<u64>() else {
-        return default;
-    };
-    v.max(min)
 }
 
 fn extract_login_root_field_name(operation_text: &str) -> Option<String> {
@@ -248,8 +205,8 @@ pub fn resolve_bearer_token(
     };
     let jwt_name_env = std::env::var("GQL_JWT_NAME")
         .ok()
-        .and_then(|s| trim_non_empty(&s));
-    let jwt_name_arg = jwt_name_arg.and_then(trim_non_empty);
+        .and_then(|s| cli_util::trim_non_empty(&s));
+    let jwt_name_arg = jwt_name_arg.and_then(cli_util::trim_non_empty);
 
     let jwt_profile_selected =
         jwt_name_arg.is_some() || jwt_name_env.is_some() || jwt_name_file.is_some();
@@ -262,7 +219,7 @@ pub fn resolve_bearer_token(
             .to_ascii_lowercase();
 
         let token = env_file::read_prefixed_var("GQL_JWT_", &jwt_name, &jwts_files)?
-            .and_then(|s| trim_non_empty(&s));
+            .and_then(|s| cli_util::trim_non_empty(&s));
 
         let token = if let Some(token) = token {
             token
@@ -280,7 +237,7 @@ pub fn resolve_bearer_token(
         )
     } else if let Some(t) = std::env::var("ACCESS_TOKEN")
         .ok()
-        .and_then(|s| trim_non_empty(&s))
+        .and_then(|s| cli_util::trim_non_empty(&s))
     {
         (Some(t), GraphqlAuthSourceUsed::EnvAccessToken)
     } else {
@@ -288,20 +245,25 @@ pub fn resolve_bearer_token(
     };
 
     if let Some(token) = bearer_token.as_deref() {
-        let enabled = bool_from_env(
+        let enabled = cli_util::bool_from_env(
             std::env::var("GQL_JWT_VALIDATE_ENABLED").ok(),
             "GQL_JWT_VALIDATE_ENABLED",
             true,
+            None,
             &mut warnings,
         );
-        let strict = bool_from_env(
+        let strict = cli_util::bool_from_env(
             std::env::var("GQL_JWT_VALIDATE_STRICT").ok(),
             "GQL_JWT_VALIDATE_STRICT",
             false,
+            None,
             &mut warnings,
         );
-        let leeway_seconds =
-            parse_u64_default(std::env::var("GQL_JWT_VALIDATE_LEEWAY_SECONDS").ok(), 0, 0);
+        let leeway_seconds = cli_util::parse_u64_default(
+            std::env::var("GQL_JWT_VALIDATE_LEEWAY_SECONDS").ok(),
+            0,
+            0,
+        );
 
         let label = match &source {
             GraphqlAuthSourceUsed::JwtProfile { name } => format!("jwt profile '{name}'"),
@@ -382,33 +344,36 @@ query Login {
     #[test]
     fn graphql_auth_helper_parsers_cover_defaults() {
         let mut warnings = Vec::new();
-        assert!(bool_from_env(
+        assert!(cli_util::bool_from_env(
             Some("true".into()),
             "X",
             false,
+            None,
             &mut warnings
         ));
-        assert!(!bool_from_env(
+        assert!(!cli_util::bool_from_env(
             Some("false".into()),
             "X",
             true,
+            None,
             &mut warnings
         ));
 
         let mut warnings = Vec::new();
-        assert!(!bool_from_env(
+        assert!(!cli_util::bool_from_env(
             Some("nope".into()),
             "X",
             true,
+            None,
             &mut warnings
         ));
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("X must be true|false"));
 
-        assert_eq!(parse_u64_default(Some("".into()), 5, 1), 5);
-        assert_eq!(parse_u64_default(Some("nope".into()), 5, 1), 5);
-        assert_eq!(parse_u64_default(Some("0".into()), 5, 1), 1);
-        assert_eq!(parse_u64_default(Some("10".into()), 5, 1), 10);
+        assert_eq!(cli_util::parse_u64_default(Some("".into()), 5, 1), 5);
+        assert_eq!(cli_util::parse_u64_default(Some("nope".into()), 5, 1), 5);
+        assert_eq!(cli_util::parse_u64_default(Some("0".into()), 5, 1), 1);
+        assert_eq!(cli_util::parse_u64_default(Some("10".into()), 5, 1), 10);
     }
 
     #[test]

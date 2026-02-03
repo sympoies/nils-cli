@@ -15,7 +15,7 @@ shell-words = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-time = { version = "0.3", features = ["formatting"] }
+time = { version = "0.3", features = ["formatting", "local-offset"] }
 nils-term = { path = "../nils-term" }
 
 [dev-dependencies]

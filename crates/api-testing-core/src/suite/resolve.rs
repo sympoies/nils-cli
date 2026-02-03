@@ -2,51 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 
-use crate::Result;
-
-fn list_available_suffixes(file: &Path, prefix: &str) -> Vec<String> {
-    if !file.is_file() {
-        return Vec::new();
-    }
-
-    let Ok(content) = std::fs::read_to_string(file) else {
-        return Vec::new();
-    };
-
-    let mut out: Vec<String> = Vec::new();
-    for raw_line in content.lines() {
-        let line = raw_line.trim_end_matches('\r');
-        let mut line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some(rest) = line.strip_prefix("export") {
-            if rest.starts_with(char::is_whitespace) {
-                line = rest.trim();
-            }
-        }
-
-        let Some((lhs, _rhs)) = line.split_once('=') else {
-            continue;
-        };
-        let key = lhs.trim();
-        let Some(suffix) = key.strip_prefix(prefix) else {
-            continue;
-        };
-        if suffix.is_empty()
-            || !suffix
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_')
-        {
-            continue;
-        }
-        out.push(suffix.to_ascii_lowercase());
-    }
-
-    out.sort();
-    out.dedup();
-    out
-}
+use crate::{cli_util, Result};
 
 pub fn find_repo_root(start_dir: &Path) -> Result<PathBuf> {
     let mut dir = start_dir;
@@ -91,9 +47,12 @@ pub fn resolve_rest_base_url_for_env(setup_dir: &Path, env_value: &str) -> Resul
     let key = format!("REST_URL_{env_key}");
     let found = crate::env_file::read_var_last_wins(&key, &endpoints_files)?;
     let Some(found) = found else {
-        let mut available = list_available_suffixes(&endpoints_env, "REST_URL_");
+        let mut available = cli_util::list_available_suffixes(&endpoints_env, "REST_URL_");
         if endpoints_local.is_file() {
-            available.extend(list_available_suffixes(&endpoints_local, "REST_URL_"));
+            available.extend(cli_util::list_available_suffixes(
+                &endpoints_local,
+                "REST_URL_",
+            ));
             available.sort();
             available.dedup();
         }
@@ -129,9 +88,12 @@ pub fn resolve_gql_url_for_env(setup_dir: &Path, env_value: &str) -> Result<Stri
     let key = format!("GQL_URL_{env_key}");
     let found = crate::env_file::read_var_last_wins(&key, &endpoints_files)?;
     let Some(found) = found else {
-        let mut available = list_available_suffixes(&endpoints_env, "GQL_URL_");
+        let mut available = cli_util::list_available_suffixes(&endpoints_env, "GQL_URL_");
         if endpoints_local.is_file() {
-            available.extend(list_available_suffixes(&endpoints_local, "GQL_URL_"));
+            available.extend(cli_util::list_available_suffixes(
+                &endpoints_local,
+                "GQL_URL_",
+            ));
             available.sort();
             available.dedup();
         }
@@ -152,11 +114,6 @@ pub struct SuiteSelection {
     pub suite_path: PathBuf,
 }
 
-fn trim_non_empty(s: &str) -> Option<String> {
-    let t = s.trim();
-    (!t.is_empty()).then(|| t.to_string())
-}
-
 fn normalize_suite_key(raw: &str) -> String {
     let key = raw.trim();
     let key = key.strip_suffix(".suite.json").unwrap_or(key);
@@ -172,8 +129,8 @@ pub fn resolve_suite_selection(
     if suite.is_some() && suite_file.is_some() {
         anyhow::bail!("Use only one of --suite or --suite-file");
     }
-    let suite = suite.and_then(trim_non_empty);
-    let suite_file = suite_file.and_then(trim_non_empty);
+    let suite = suite.and_then(cli_util::trim_non_empty);
+    let suite_file = suite_file.and_then(cli_util::trim_non_empty);
     if suite.is_none() && suite_file.is_none() {
         anyhow::bail!("Missing suite (use --suite or --suite-file)");
     }
@@ -202,7 +159,7 @@ pub fn resolve_suite_selection(
 
     let suites_dir_override = std::env::var("API_TEST_SUITES_DIR")
         .ok()
-        .and_then(|s| trim_non_empty(&s));
+        .and_then(|s| cli_util::trim_non_empty(&s));
 
     let candidate = if let Some(dir) = suites_dir_override {
         let abs = resolve_path_from_repo_root(repo_root, &dir);

@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use crate::cli_util;
 use crate::suite::auth::SuiteAuthManager;
 use crate::suite::resolve::{resolve_path_from_repo_root, write_file};
 use crate::suite::runtime::{
@@ -9,11 +10,6 @@ use crate::suite::runtime::{
 use crate::suite::safety::graphql_safety_decision;
 use crate::suite::schema::{SuiteCase, SuiteDefaults};
 use crate::Result;
-
-fn trim_non_empty(s: &str) -> Option<String> {
-    let t = s.trim();
-    (!t.is_empty()).then(|| t.to_string())
-}
 
 pub(super) enum PrepareOutcome<T> {
     Ready(T),
@@ -64,7 +60,7 @@ pub(super) fn prepare_graphql_case(
     let vars_abs = case
         .vars
         .as_deref()
-        .and_then(trim_non_empty)
+        .and_then(cli_util::trim_non_empty)
         .map(|p| resolve_path_from_repo_root(repo_root, &p));
     if let Some(vp) = vars_abs.as_deref() {
         if !vp.is_file() {
@@ -72,11 +68,12 @@ pub(super) fn prepare_graphql_case(
         }
     }
 
-    let config_dir =
-        trim_non_empty(&case.config_dir).unwrap_or_else(|| defaults.graphql.config_dir.clone());
-    let jwt = trim_non_empty(&case.jwt).unwrap_or_else(|| defaults.graphql.jwt.clone());
+    let config_dir = cli_util::trim_non_empty(&case.config_dir)
+        .unwrap_or_else(|| defaults.graphql.config_dir.clone());
+    let jwt = cli_util::trim_non_empty(&case.jwt).unwrap_or_else(|| defaults.graphql.jwt.clone());
 
-    let mut url = trim_non_empty(&case.url).unwrap_or_else(|| defaults.graphql.url.clone());
+    let mut url =
+        cli_util::trim_non_empty(&case.url).unwrap_or_else(|| defaults.graphql.url.clone());
     if url.trim().is_empty() && !env_gql_url.trim().is_empty() {
         url = env_gql_url.to_string();
     }
@@ -160,7 +157,8 @@ pub(super) fn run_graphql_case(
         }
     };
 
-    let vars_min_limit = super::parse_u64_default(std::env::var("GQL_VARS_MIN_LIMIT").ok(), 5, 0);
+    let vars_min_limit =
+        cli_util::parse_u64_default(std::env::var("GQL_VARS_MIN_LIMIT").ok(), 5, 0);
     let vars_json = match vars_abs {
         None => None,
         Some(path) => {
@@ -309,9 +307,9 @@ pub(super) fn run_graphql_case(
         ""
     };
     let snippet = if env_prefix.is_empty() {
-        format!("{} {}", super::shell_quote("api-gql"), args)
+        format!("{} {}", cli_util::shell_quote("api-gql"), args)
     } else {
-        format!("{env_prefix} {} {}", super::shell_quote("api-gql"), args)
+        format!("{env_prefix} {} {}", cli_util::shell_quote("api-gql"), args)
     };
 
     Ok(GraphqlCaseRunOutput {

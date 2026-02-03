@@ -1,10 +1,10 @@
 use std::io::Write;
 use std::path::PathBuf;
 
+use api_testing_core::cli_util::trim_non_empty;
 use api_testing_core::config;
 
 use crate::cli::SchemaArgs;
-use crate::util::trim_non_empty;
 
 pub(crate) fn cmd_schema(
     args: &SchemaArgs,

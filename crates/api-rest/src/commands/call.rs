@@ -1,13 +1,13 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use api_testing_core::{config, env_file, history, jwt, Result};
+use api_testing_core::{cli_endpoint, cli_util, config, env_file, history, jwt, Result};
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 
 use crate::cli::CallArgs;
-use crate::util::{
-    bool_from_env, history_timestamp_now, list_available_suffixes, maybe_relpath,
-    parse_u64_default, shell_quote, to_env_key, trim_non_empty,
+use api_testing_core::cli_util::{
+    history_timestamp_now, list_available_suffixes, maybe_relpath, parse_u64_default, shell_quote,
+    to_env_key, trim_non_empty,
 };
 
 #[derive(Debug, Clone)]
@@ -39,79 +39,23 @@ pub(crate) fn resolve_endpoint_for_call(
     let endpoints_local = &setup.endpoints_local_env;
     let endpoints_files = setup.endpoints_files();
 
-    let rest_env_default = if !endpoints_files.is_empty() {
-        env_file::read_var_last_wins("REST_ENV_DEFAULT", &endpoints_files)?
-    } else {
-        None
-    };
-
-    let env_name = args.env.as_deref().and_then(trim_non_empty);
-    let explicit_url = args.url.as_deref().and_then(trim_non_empty);
-
-    let (rest_url, endpoint_label_used, endpoint_value_used) = if let Some(url) = explicit_url {
-        (url.clone(), "url".to_string(), url)
-    } else if let Some(env_value) = env_name.as_deref() {
-        if env_value.starts_with("http://") || env_value.starts_with("https://") {
-            (
-                env_value.to_string(),
-                "url".to_string(),
-                env_value.to_string(),
-            )
-        } else {
-            if endpoints_files.is_empty() {
-                anyhow::bail!("endpoints.env not found (expected under setup/rest/)");
-            }
-
-            let env_key = to_env_key(env_value);
-            let key = format!("REST_URL_{env_key}");
-            let found = env_file::read_var_last_wins(&key, &endpoints_files)?;
-            let Some(found) = found else {
-                let mut available = list_available_suffixes(endpoints_env, "REST_URL_");
-                if endpoints_local.is_file() {
-                    available.extend(list_available_suffixes(endpoints_local, "REST_URL_"));
-                    available.sort();
-                    available.dedup();
-                }
-                let available = if available.is_empty() {
-                    "none".to_string()
-                } else {
-                    available.join(" ")
-                };
-                anyhow::bail!("Unknown --env '{env_value}' (available: {available})");
-            };
-
-            (found, "env".to_string(), env_value.to_string())
-        }
-    } else if let Some(v) = std::env::var("REST_URL")
-        .ok()
-        .and_then(|s| trim_non_empty(&s))
-    {
-        (v.clone(), "url".to_string(), v)
-    } else if let Some(default_env) = rest_env_default {
-        if endpoints_files.is_empty() {
-            anyhow::bail!(
-                "REST_ENV_DEFAULT is set but endpoints.env not found (expected under setup/rest/)"
-            );
-        }
-        let env_key = to_env_key(&default_env);
-        let key = format!("REST_URL_{env_key}");
-        let found = env_file::read_var_last_wins(&key, &endpoints_files)?;
-        let Some(found) = found else {
-            anyhow::bail!(
-                "REST_ENV_DEFAULT is '{}' but no matching REST_URL_* was found.",
-                default_env
-            );
-        };
-        (found, "env".to_string(), default_env)
-    } else {
-        let rest_url = "http://localhost:6700".to_string();
-        (rest_url.clone(), "url".to_string(), rest_url)
-    };
+    let selection = cli_endpoint::resolve_cli_endpoint(cli_endpoint::EndpointConfig {
+        explicit_url: args.url.as_deref(),
+        env_name: args.env.as_deref(),
+        endpoints_env,
+        endpoints_local,
+        endpoints_files: &endpoints_files,
+        url_env_var: "REST_URL",
+        env_default_var: "REST_ENV_DEFAULT",
+        url_prefix: "REST_URL_",
+        default_url: "http://localhost:6700",
+        setup_dir_label: "setup/rest/",
+    })?;
 
     Ok(EndpointSelection {
-        rest_url,
-        endpoint_label_used,
-        endpoint_value_used,
+        rest_url: selection.url,
+        endpoint_label_used: selection.endpoint_label_used,
+        endpoint_value_used: selection.endpoint_value_used,
     })
 }
 
@@ -207,16 +151,18 @@ pub(crate) fn validate_bearer_token_if_jwt(
     token_name: &str,
     stderr: &mut dyn Write,
 ) -> Result<()> {
-    let enabled = bool_from_env(
+    let enabled = cli_util::bool_from_env(
         std::env::var("REST_JWT_VALIDATE_ENABLED").ok(),
         "REST_JWT_VALIDATE_ENABLED",
         true,
+        Some("api-rest"),
         stderr,
     );
-    let strict = bool_from_env(
+    let strict = cli_util::bool_from_env(
         std::env::var("REST_JWT_VALIDATE_STRICT").ok(),
         "REST_JWT_VALIDATE_STRICT",
         false,
+        Some("api-rest"),
         stderr,
     );
     let leeway_seconds =
@@ -297,10 +243,11 @@ pub(crate) fn cmd_call_internal(
 
     let history_enabled = history_enabled_by_command
         && !args.no_history
-        && bool_from_env(
+        && cli_util::bool_from_env(
             std::env::var("REST_HISTORY_ENABLED").ok(),
             "REST_HISTORY_ENABLED",
             true,
+            Some("api-rest"),
             stderr,
         );
 
@@ -321,10 +268,11 @@ pub(crate) fn cmd_call_internal(
             .unwrap_or(u32::MAX),
     };
 
-    let log_url = bool_from_env(
+    let log_url = cli_util::bool_from_env(
         std::env::var("REST_HISTORY_LOG_URL_ENABLED").ok(),
         "REST_HISTORY_LOG_URL_ENABLED",
         true,
+        Some("api-rest"),
         stderr,
     );
 

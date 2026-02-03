@@ -10,7 +10,6 @@ api-testing-core = { path = "../api-testing-core" }
 clap = { workspace = true }
 nils-term = { path = "../nils-term" }
 serde_json = { workspace = true }
-time = { version = "0.3", features = ["formatting", "local-offset"] }
 
 [dev-dependencies]
 nils-test-support = { path = "../nils-test-support" }

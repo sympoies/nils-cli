@@ -3,6 +3,7 @@ use std::io::{Read, Write};
 use clap::error::ErrorKind;
 use clap::{Args, Parser, Subcommand};
 
+use api_testing_core::cli_util;
 use api_testing_core::suite::filter::parse_csv_list;
 use api_testing_core::suite::resolve::{
     find_repo_root, resolve_path_from_repo_root, resolve_suite_selection,
@@ -197,24 +198,6 @@ fn run() -> i32 {
     }
 }
 
-fn bool_from_env(raw: Option<String>, name: &str, default: bool) -> bool {
-    let raw = raw.unwrap_or_default();
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return default;
-    }
-    match raw.to_ascii_lowercase().as_str() {
-        "true" => true,
-        "false" => false,
-        _ => {
-            eprintln!(
-                "api-test: warning: {name} must be true|false (got: {raw}); treating as false"
-            );
-            false
-        }
-    }
-}
-
 fn cmd_run(args: &RunArgs) -> i32 {
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let repo_root = match find_repo_root(&cwd) {
@@ -260,10 +243,14 @@ fn cmd_run(args: &RunArgs) -> i32 {
         resolve_path_from_repo_root(&repo_root, out_dir_base)
     };
 
-    let allow_writes_env = bool_from_env(
+    let mut stderr = std::io::stderr().lock();
+    let stderr_writer: &mut dyn std::io::Write = &mut stderr;
+    let allow_writes_env = cli_util::bool_from_env(
         std::env::var("API_TEST_ALLOW_WRITES_ENABLED").ok(),
         "API_TEST_ALLOW_WRITES_ENABLED",
         false,
+        Some("api-test"),
+        stderr_writer,
     );
     let allow_writes_flag = args.allow_writes || allow_writes_env;
 

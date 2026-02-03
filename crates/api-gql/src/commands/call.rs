@@ -1,13 +1,13 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use api_testing_core::{config, env_file, history, Result};
+use api_testing_core::{cli_endpoint, config, history, Result};
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 
 use crate::cli::CallArgs;
-use crate::util::{
+use api_testing_core::cli_util::{
     bool_from_env, history_timestamp_now, list_available_suffixes, maybe_relpath,
-    parse_u64_default, shell_quote, to_env_key, trim_non_empty,
+    parse_u64_default, shell_quote, trim_non_empty,
 };
 
 #[derive(Debug, Clone)]
@@ -25,77 +25,23 @@ pub(crate) fn resolve_endpoint_for_call(
     let endpoints_local = &setup.endpoints_local_env;
     let endpoints_files = setup.endpoints_files();
 
-    let gql_env_default = if !endpoints_files.is_empty() {
-        env_file::read_var_last_wins("GQL_ENV_DEFAULT", &endpoints_files)?
-    } else {
-        None
-    };
-
-    let env_name = args.env.as_deref().and_then(trim_non_empty);
-    let explicit_url = args.url.as_deref().and_then(trim_non_empty);
-
-    let (gql_url, endpoint_label_used, endpoint_value_used) = if let Some(url) = explicit_url {
-        (url.clone(), "url".to_string(), url)
-    } else if let Some(env_value) = env_name.as_deref() {
-        if env_value.starts_with("http://") || env_value.starts_with("https://") {
-            (
-                env_value.to_string(),
-                "url".to_string(),
-                env_value.to_string(),
-            )
-        } else {
-            if endpoints_files.is_empty() {
-                anyhow::bail!("endpoints.env not found (expected under setup/graphql/)");
-            }
-
-            let env_key = to_env_key(env_value);
-            let key = format!("GQL_URL_{env_key}");
-            let found = env_file::read_var_last_wins(&key, &endpoints_files)?;
-            let Some(found) = found else {
-                let mut available = list_available_suffixes(endpoints_env, "GQL_URL_");
-                if endpoints_local.is_file() {
-                    available.extend(list_available_suffixes(endpoints_local, "GQL_URL_"));
-                    available.sort();
-                    available.dedup();
-                }
-                let available = if available.is_empty() {
-                    "none".to_string()
-                } else {
-                    available.join(" ")
-                };
-                anyhow::bail!("Unknown --env '{env_value}' (available: {available})");
-            };
-
-            (found, "env".to_string(), env_value.to_string())
-        }
-    } else if let Some(v) = std::env::var("GQL_URL")
-        .ok()
-        .and_then(|s| trim_non_empty(&s))
-    {
-        (v.clone(), "url".to_string(), v)
-    } else if let Some(default_env) = gql_env_default {
-        if endpoints_files.is_empty() {
-            anyhow::bail!("GQL_ENV_DEFAULT is set but endpoints.env not found (expected under setup/graphql/)");
-        }
-        let env_key = to_env_key(&default_env);
-        let key = format!("GQL_URL_{env_key}");
-        let found = env_file::read_var_last_wins(&key, &endpoints_files)?;
-        let Some(found) = found else {
-            anyhow::bail!(
-                "GQL_ENV_DEFAULT is '{}' but no matching GQL_URL_* was found.",
-                default_env
-            );
-        };
-        (found, "env".to_string(), default_env)
-    } else {
-        let gql_url = "http://localhost:6700/graphql".to_string();
-        (gql_url.clone(), "url".to_string(), gql_url)
-    };
+    let selection = cli_endpoint::resolve_cli_endpoint(cli_endpoint::EndpointConfig {
+        explicit_url: args.url.as_deref(),
+        env_name: args.env.as_deref(),
+        endpoints_env,
+        endpoints_local,
+        endpoints_files: &endpoints_files,
+        url_env_var: "GQL_URL",
+        env_default_var: "GQL_ENV_DEFAULT",
+        url_prefix: "GQL_URL_",
+        default_url: "http://localhost:6700/graphql",
+        setup_dir_label: "setup/graphql/",
+    })?;
 
     Ok(EndpointSelection {
-        gql_url,
-        endpoint_label_used,
-        endpoint_value_used,
+        gql_url: selection.url,
+        endpoint_label_used: selection.endpoint_label_used,
+        endpoint_value_used: selection.endpoint_value_used,
     })
 }
 
@@ -151,19 +97,18 @@ pub(crate) fn cmd_call_internal(
     if args.list_envs {
         let endpoints_env = &setup.endpoints_env;
         let endpoints_local = &setup.endpoints_local_env;
-        if !endpoints_env.is_file() {
-            let _ = writeln!(
-                stderr,
-                "endpoints.env not found (expected under setup/graphql/)"
-            );
-            return 1;
-        }
-        let mut out = list_available_suffixes(endpoints_env, "GQL_URL_");
-        if endpoints_local.is_file() {
-            out.extend(list_available_suffixes(endpoints_local, "GQL_URL_"));
-            out.sort();
-            out.dedup();
-        }
+        let out = match cli_endpoint::list_available_env_suffixes(
+            endpoints_env,
+            endpoints_local,
+            "GQL_URL_",
+            "endpoints.env not found (expected under setup/graphql/)",
+        ) {
+            Ok(v) => v,
+            Err(err) => {
+                let _ = writeln!(stderr, "{err}");
+                return 1;
+            }
+        };
         for v in out {
             let _ = writeln!(stdout, "{v}");
         }
@@ -216,6 +161,7 @@ pub(crate) fn cmd_call_internal(
             std::env::var("GQL_HISTORY_ENABLED").ok(),
             "GQL_HISTORY_ENABLED",
             true,
+            Some("api-gql"),
             stderr,
         );
 
@@ -230,6 +176,7 @@ pub(crate) fn cmd_call_internal(
         std::env::var("GQL_HISTORY_LOG_URL_ENABLED").ok(),
         "GQL_HISTORY_LOG_URL_ENABLED",
         true,
+        Some("api-gql"),
         stderr,
     );
 
