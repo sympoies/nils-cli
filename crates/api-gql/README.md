@@ -1,390 +1,616 @@
 # api-gql parity spec
 
 ## Overview
-`api-gql` is a GraphQL operation runner plus helper commands for history replay, Markdown report generation,
-and schema file resolution.
+`api-gql` is a GraphQL operation runner that executes a `.graphql` file (and optional variables) and prints the response
+body to stdout. It is a Rust port of the Codex Kit GraphQL scripts:
+- `graphql-api-testing/scripts/gql.sh` (call)
+- `graphql-api-testing/scripts/gql-history.sh` (history)
+- `graphql-api-testing/scripts/gql-report.sh` (report)
+- `graphql-api-testing/scripts/gql-schema.sh` (schema resolver)
 
-Source-of-truth behavior is defined by the legacy Codex Kit scripts and report contract:
-- `graphql-api-testing/scripts/gql.sh`
-- `graphql-api-testing/scripts/gql-history.sh`
-- `graphql-api-testing/scripts/gql-report.sh`
-- `graphql-api-testing/scripts/gql-schema.sh`
-- `graphql-api-testing/references/GRAPHQL_API_TEST_REPORT_CONTRACT.md`
+Parity-critical outcomes:
+- The CLI surface (flags, env vars, defaults, help intent).
+- Exit code contract.
+- Endpoint + auth selection rules (including auto-login fallback).
+- JWT validation behavior (format + `exp`/`nbf` time checks).
+- History + report artifacts (file locations, record/report structure, redaction defaults).
 
-Primary goals:
-- Behavioral parity for flags, environment variables, list modes, exit codes, and history/report semantics.
-- Deterministic, CI-friendly behavior (stable outputs; no secrets in logs by default).
+See also: `crates/api-testing-core/README.md`.
 
-## Entry point
+## CLI surface
+
+### Entry point and commands
 Command: `api-gql <command> [args]`
 
-Commands:
-- `api-gql call ...` (default)
-- `api-gql history ...`
-- `api-gql report ...`
-- `api-gql schema ...`
+Commands (parity mapping):
+- `api-gql call` (default when no subcommand is given) -> `gql.sh`
+- `api-gql history` -> `gql-history.sh`
+- `api-gql report` -> `gql-report.sh`
+- `api-gql report-from-cmd` -> helper: turn a command snippet into a report
+- `api-gql schema` -> `gql-schema.sh`
 
-## call
-Usage (parity intent):
+Help intent:
+- `api-gql --help` explains the commands and config discovery (`--config-dir`).
+- Each subcommand help lists relevant flags and environment variables.
+
+### Flags (by command)
+
+#### `api-gql call` (default)
+Parity intent usage:
 `api-gql call [--env <name> | --url <url>] [--jwt <name>] [--config-dir <dir>] [--list-envs] [--list-jwts] [--no-history] <operation.graphql> [variables.json]`
 
-### CLI surface
-Flags and options:
-- `-e, --env <name>`: endpoint preset name (resolved from config) OR a literal `http(s)://...` URL.
-- `-u, --url <url>`: explicit GraphQL endpoint URL.
-- `--jwt <name>`: JWT profile name (see “Auth selection + auto-login fallback”).
-- `--config-dir <dir>`: seed directory used for setup-dir discovery (see below).
-- `--list-envs`: list available endpoint preset names and exit `0`.
-- `--list-jwts`: list available JWT profile names and exit `0`.
-- `--no-history`: one-off disable of history writing for this invocation.
+Flags:
+- `-e, --env <name>`: select an endpoint preset or literal URL.
+- `-u, --url <url>`: explicit GraphQL endpoint URL (highest precedence).
+- `--jwt <name>`: JWT profile name (see Auth selection + auto-login).
+- `--config-dir <dir>`: seed setup-dir discovery (or pin it when no known files are present).
+- `--list-envs`: list available endpoint preset names (from `endpoints.env`) and exit `0`.
+- `--list-jwts`: list available JWT profile names (from `jwts(.local).env`) and exit `0`.
+- `--no-history`: disable writing to `.gql_history` for this run only.
 - `-h, --help`: print help and exit `0`.
 
-Environment variables (call runner):
-- `GQL_URL`: explicit GraphQL endpoint URL (overridden by `--env/--url`).
-- `ACCESS_TOKEN`: if set (and no JWT profile is selected), send `Authorization: Bearer <token>`.
-- `GQL_JWT_NAME`: default JWT profile name (same meaning as `--jwt`).
-- `GQL_JWT_VALIDATE_ENABLED` (default `true`): enable best-effort JWT format + `exp`/`nbf` checks when a token is present.
-- `GQL_JWT_VALIDATE_STRICT` (default `false`): fail hard on invalid/non-JWT token format instead of warning.
-- `GQL_JWT_VALIDATE_LEEWAY_SECONDS` (default `0`): clock-skew allowance for `exp`/`nbf`.
-- `GQL_VARS_MIN_LIMIT` (default `5`, `0` disables): bump numeric `limit` fields in variables JSON to at least this value.
-- `GQL_HISTORY_ENABLED` (default `true`): enable/disable history writing.
-- `GQL_HISTORY_FILE`: override history path (relative paths resolve under `<setup_dir>`).
-- `GQL_HISTORY_LOG_URL_ENABLED` (default `true`): when `false`, omit URL values from history entries.
-- `GQL_HISTORY_MAX_MB` (default `10`, `0` disables): rotate history when it reaches this size.
-- `GQL_HISTORY_ROTATE_COUNT` (default `5`): number of rotated history files to keep.
+List modes:
+- `--list-envs` prints lowercased, sorted, de-duplicated env names (from `GQL_URL_*` in endpoints files).
+- `--list-jwts` prints lowercased, sorted, de-duplicated JWT profile names (from `GQL_JWT_*`, excluding `GQL_JWT_NAME`).
+- `--list-jwts` errors if neither `jwts.env` nor `jwts.local.env` exists.
 
-Config files (setup dir):
-- `endpoints.env` (and optional `endpoints.local.env` override):
-  - `GQL_URL_<ENV>` variables define endpoint presets.
-  - `GQL_ENV_DEFAULT` defines the default preset name used when neither `--env` nor `GQL_URL` is provided.
-- `jwts.env` (and optional `jwts.local.env` override):
-  - `GQL_JWT_<NAME>` variables define JWT token values for named profiles.
-  - `GQL_JWT_NAME` can set the default profile name.
+#### `api-gql history`
+Parity intent usage:
+`api-gql history [--config-dir <dir>] [--file <path>] [--last | --tail <n>] [--command-only]`
 
-### Inputs
-- Operation file: required, must exist.
-- Variables file: optional.
-  - In the legacy scripts, invalid JSON may fail later (HTTP client parsing, min-limit bumping, or curl payload build).
-  - Parity intent for Rust: treat variables as JSON and fail early with a clear error if invalid.
+Flags:
+- `--config-dir <dir>`: seed setup-dir discovery for the history file.
+- `--file <path>`: explicit history file path (relative paths are resolved against the setup dir).
+- `--last`: print the last entry (default).
+- `--tail <n>`: print the last `n` entries.
+- `--command-only`: omit the metadata line (lines starting with `#`) from each entry.
+- `-h, --help`: print help and exit `0`.
+
+#### `api-gql report`
+Parity intent usage:
+`api-gql report --case <name> --op <operation.graphql> [--vars <variables.json>] [--run | --response <file|->] [options]`
+
+Core options:
+- `--case <name>`: required human label for the report.
+- `--op, --operation <file>`: required operation file path.
+- `--vars, --variables <file>`: optional variables JSON file path.
+- `--run`: execute the operation via `api-gql call` and embed the response.
+- `--response <file|->`: embed an existing response (use `-` for stdin).
+- `--out <path>`: output report path (default described below).
+- `--allow-empty` (alias `--expect-empty`): allow writing a report without data records.
+- `--no-redact`: disable secret redaction in variables/response JSON.
+- `--no-command`: omit the command snippet section.
+- `--no-command-url`: when `--url` is used, omit the URL value in the command snippet.
+- `--project-root <path>`: override the project root used for default output path + relative paths.
+- `--config-dir <dir>`: passed through to `api-gql call` (setup dir selection).
+
+Endpoint/auth pass-through options:
+- `-e, --env <name>`
+- `-u, --url <url>`
+- `--jwt <name>`
+
+Mutual exclusivity rules (parity):
+- `--run` and `--response` MUST NOT be used together (error).
+- At least one of `--run` or `--response` MUST be provided (error).
+
+#### `api-gql report-from-cmd`
+Usage:
+`api-gql report-from-cmd [--case <name>] [--out <path>] [--response <file|->] [--allow-empty] [--dry-run] [--stdin] <snippet>`
+
+Flags:
+- `--case <name>`: override the derived case name.
+- `--out <path>`: output report path.
+- `--response <file|->`: embed an existing response (use `-` for stdin).
+- `--allow-empty` (alias `--expect-empty`): allow writing a report without data records.
+- `--dry-run`: print the equivalent `api-gql report ...` command and exit `0`.
+- `--stdin`: read the snippet from stdin (cannot be used with `--response -`).
+
+#### `api-gql schema`
+Parity intent usage:
+`api-gql schema [--config-dir <dir>] [--file <path>] [--cat]`
+
+Flags:
+- `--config-dir <dir>`: seed setup-dir discovery (same semantics as `call`).
+- `--file <path>`: explicit schema file path (overrides env + schema.env).
+- `--cat`: print schema file contents (default is to print the resolved path).
+- `-h, --help`: print help and exit `0`.
+
+## Environment variables (by function)
 
 ### Endpoint selection
-Ported from `gql.sh`:
+- `GQL_URL=<url>`
+  - Used only when neither `--env` nor `--url` is provided.
+  - Overridden by `--env` / `--url`.
+- `GQL_ENV_DEFAULT` (file-based; see endpoints files)
+  - Read from `endpoints.env` / `endpoints.local.env` (not from the process environment).
 
-Resolution order:
-1. `--url <url>`
-2. `--env <name>`:
-   - if `<name>` looks like `http(s)://...`, treat it as a URL.
-   - otherwise resolve from `setup/graphql/endpoints.env` (+ `endpoints.local.env`) as `GQL_URL_<ENV>`.
-3. `GQL_URL=<url>` env var
-4. `GQL_ENV_DEFAULT` from endpoints env (resolved as `GQL_URL_<ENV>`)
-5. default: `http://localhost:6700/graphql`
-
-### List modes (`--list-envs`, `--list-jwts`)
-These are early-exit modes that do not require an operation file.
-
-- `--list-envs`:
-  - Requires `endpoints.env` to exist in the resolved setup dir.
-  - Prints one env name per line, derived from variables matching `GQL_URL_<SUFFIX>=...`.
-  - Output is lowercased and sorted unique.
-- `--list-jwts`:
-  - Requires at least one of `jwts.env` or `jwts.local.env` to exist in the resolved setup dir.
-  - Prints one JWT profile name per line, derived from variables matching `GQL_JWT_<SUFFIX>=...` (excluding `<SUFFIX>=NAME`).
-  - Output is lowercased and sorted unique.
-
-### Setup dir discovery
-Ported from `gql.sh`:
-- Seed directory:
-  - `--config-dir` if provided,
-  - otherwise the operation file directory,
-  - otherwise current working directory.
-- Search upward for `endpoints.env`, `jwts.env`, or `jwts.local.env`.
-- Fallback: if `setup/graphql` exists and no config files were found, treat it as the setup dir.
-
-### Auth selection + auto-login fallback
-Ported from `gql.sh`:
-
-JWT profile selection is true if any of these are set:
-- `--jwt <name>`
+### Auth selection
+- `ACCESS_TOKEN=<token>`
+  - Used only when no JWT profile is selected.
+  - When present, sends `Authorization: Bearer <token>`.
 - `GQL_JWT_NAME=<name>`
-- `GQL_JWT_NAME` in `setup/graphql/jwts.env` (+ local override)
+  - Selects a JWT profile name (equivalent to `--jwt <name>`).
+  - Presence of this variable counts as “JWT profile selected” (affects `ACCESS_TOKEN` fallback rules).
 
-When a JWT profile is selected:
-- token is read from `GQL_JWT_<NAME>` in `jwts.env` / `jwts.local.env`.
-- if selected but missing/empty, `gql.sh` attempts auto-login (best-effort, requires JSON tooling):
-  1. Find a login operation file in the first matching directory:
-     - `<setup_dir>/login.<profile>.graphql`, else `<setup_dir>/login.graphql`
-     - `<setup_dir>/operations/login.<profile>.graphql`, else `<setup_dir>/operations/login.graphql`
-     - `<setup_dir>/ops/login.<profile>.graphql`, else `<setup_dir>/ops/login.graphql`
-  2. Select an optional variables file (first match):
-     - `login.<profile>.variables.local.json`
-     - `login.<profile>.variables.json`
-     - `login.variables.local.json`
-     - `login.variables.json`
-  3. Execute the login operation against the resolved endpoint **without** any Authorization header.
-  4. Determine the login root field:
-     - Best-effort: first field name inside the first selection set `{ ... }` in the login operation text.
-  5. Extract a token from the login response JSON:
-     - If `.data[rootField]` is a non-empty string, that string is the token.
-     - Otherwise find the first non-empty string value of `.accessToken` or `.token` anywhere under `.data[rootField]`.
-  6. Guardrail: do not auto-login if the main operation file equals the login operation file (prevents recursion).
+### JWT validation controls
+These apply only when a bearer token is present:
+- `GQL_JWT_VALIDATE_ENABLED=true|false` (default: `true`)
+- `GQL_JWT_VALIDATE_STRICT=true|false` (default: `false`)
+- `GQL_JWT_VALIDATE_LEEWAY_SECONDS=<int>` (default: `0`, clamped to `>= 0`)
 
-When a JWT profile is NOT selected:
-- `ACCESS_TOKEN` is used as `Authorization: Bearer <token>` if set.
-
-JWT validation:
-- Enabled by default (`GQL_JWT_VALIDATE_ENABLED=true`).
-- Checks token shape and (best-effort) `exp`/`nbf` timestamps (no signature verification).
-- On invalid token format:
-  - strict mode (`GQL_JWT_VALIDATE_STRICT=true`) fails hard.
-  - non-strict mode warns and proceeds.
-- Legacy degradation: if `python3` is missing, the script warns and skips JWT validation entirely.
+Boolean parsing parity:
+- Values are trimmed and lowercased.
+- Only `true` and `false` are accepted.
+- Any other value prints a warning to stderr and is treated as `false`.
 
 ### Variables min-limit normalization
-Ported from `gql.sh`:
-- If `GQL_VARS_MIN_LIMIT` is set and > 0 (default: `5`), any numeric `limit` fields in the variables JSON are bumped
-  to at least that value (applies to nested objects, including pagination-style inputs).
-- Setting `GQL_VARS_MIN_LIMIT=0` disables the behavior.
-- Legacy degradation:
-  - If neither `jq` nor `python3` exists, the script silently skips the transformation (uses original variables file).
-  - If transformation tooling exists but parsing fails, the script fails the run.
+- `GQL_VARS_MIN_LIMIT=<int>` (default: `5`, `0` disables)
+  - Bumps numeric `limit` fields in variables JSON to at least this value.
 
-### Operation + variables request shape
-Parity intent mirrors the legacy scripts:
+### History controls (call)
+- `GQL_HISTORY_ENABLED=true|false` (default: `true`)
+- `GQL_HISTORY_FILE=<path>` (default: `<setup_dir>/.gql_history`; relative paths resolve under setup dir)
+- `GQL_HISTORY_LOG_URL_ENABLED=true|false` (default: `true`)
+- `GQL_HISTORY_MAX_MB=<int>` (default: `10`; `0` disables rotation; clamped to `>= 0`)
+- `GQL_HISTORY_ROTATE_COUNT=<int>` (default: `5`; clamped to `>= 1`)
+
+### Report controls
+- `GQL_REPORT_DIR=<path>`
+  - Default directory for generated reports when `--out` is not set.
+  - If relative, it is resolved against `<project_root>`.
+  - Default: `<project_root>/docs`.
+- `GQL_REPORT_INCLUDE_COMMAND_ENABLED=true|false` (default: `true`)
+  - If `false`, omits the command snippet section (equivalent to `--no-command`).
+- `GQL_REPORT_COMMAND_LOG_URL_ENABLED=true|false` (default: `true`)
+  - If `false`, omits the URL value in the command snippet when `--url` is used (equivalent to `--no-command-url`).
+- `GQL_ALLOW_EMPTY_ENABLED=true|false` (default: `false`)
+  - Allows report generation with empty/no-data responses (equivalent to `--allow-empty`).
+
+## Setup/config discovery
+
+### Setup dir definition
+The “setup dir” is the directory that contains GraphQL config files. Canonical location: `setup/graphql`.
+
+The setup dir influences:
+- Endpoint preset resolution (`endpoints.env` + `endpoints.local.env`)
+- JWT profile resolution (`jwts.env` + `jwts.local.env`)
+- History file location (`<setup_dir>/.gql_history`)
+- Schema resolution (`schema.env` / `schema.local.env`)
+
+### File parsing rules (endpoints/jwts env files)
+The legacy scripts parse `.env`-like files with these rules:
+- Blank lines and lines starting with `#` are ignored.
+- Lines may be `KEY=VALUE` or `export KEY=VALUE`.
+- Values may be wrapped in single or double quotes (quotes are stripped).
+- If a key is assigned multiple times, the last assignment wins.
+- Local override files are read after the base file, so the local value wins.
+
+Important parity quirks:
+- `endpoints.local.env` is only consulted when `endpoints.env` exists.
+  - A repo with only `endpoints.local.env` will not support `--env` selection.
+- `jwts.local.env` may exist without `jwts.env` and is still used.
+
+### Setup dir discovery: `api-gql call`
+Parity algorithm (ported from `gql.sh`):
+1. Seed directory:
+   - If `--config-dir` is set: seed = `--config-dir`.
+   - Else if an operation file is provided: seed = operation file directory.
+   - Else: seed = current directory.
+2. Search upward from the seed directory for the first matching file, in order:
+   - `endpoints.env`
+   - `jwts.env`
+   - `jwts.local.env`
+   If found: `setup_dir` is the directory containing that file.
+3. Else, if `--config-dir` was explicitly set: use the seed directory as `setup_dir`.
+4. Else, if `<invocation_dir>/setup/graphql` exists: use it.
+5. Else: use the seed directory.
+
+### Setup dir discovery: `api-gql history`
+Parity algorithm (ported from `gql-history.sh`):
+1. Seed directory:
+   - If `--config-dir` is set: seed = `--config-dir`.
+   - Else: seed = current directory.
+2. Search upward from the seed directory for the first matching file, in order:
+   - `.gql_history`
+   - `endpoints.env`
+   - `jwts.env`
+   - `jwts.local.env`
+   If found: `setup_dir` is the directory containing that file.
+3. Else, if `<invocation_dir>/setup/graphql` exists: use it.
+4. Else: use the seed directory.
+
+### Setup dir discovery: `api-gql schema`
+Parity algorithm (ported from `gql-schema.sh`):
+1. Seed directory:
+   - If `--config-dir` is set: seed = `--config-dir`.
+   - Else: seed = current directory.
+2. Search upward from the seed directory for the first matching file, in order:
+   - `schema.env`
+   - `schema.local.env`
+   - `endpoints.env`
+   - `jwts.env`
+   - `jwts.local.env`
+   If found: `setup_dir` is the directory containing that file.
+3. Else, if `<invocation_dir>/setup/graphql` exists: use it.
+4. Else: use the seed directory.
+
+## Endpoint selection rules
+Ported from `gql.sh`.
+
+Endpoint resolution order (highest precedence first):
+1. `--url <url>`
+2. `--env <name>`
+   - If `<name>` looks like a URL (`^https?://`), treat it as a URL (equivalent to `--url`).
+   - Otherwise, resolve from `endpoints.env` (+ optional `endpoints.local.env`) using:
+     - `<ENV_KEY> = uppercased(<name>) with non-alphanumerics replaced by '_'` (trim/collapse underscores)
+     - URL = `GQL_URL_<ENV_KEY>`
+3. `GQL_URL=<url>` environment variable
+4. `GQL_ENV_DEFAULT` (from endpoints files) resolved as `GQL_URL_<ENV_KEY>`
+5. Default: `http://localhost:6700/graphql`
+
+If `--env <name>` is used (and is not a URL) but `endpoints.env` cannot be found under the setup dir:
+- Fail with a clear error.
+
+If `--env <name>` is unknown:
+- Fail with a clear error listing available env presets discovered from `endpoints.env` (+ `endpoints.local.env` if present).
+
+## Auth selection + auto-login
+Ported from `gql.sh`.
+
+### JWT profile selection
+A “JWT profile is selected” if any of these sources provides a profile name:
+- CLI: `--jwt <name>`
+- Environment: `GQL_JWT_NAME=<name>`
+- JWT files: `GQL_JWT_NAME=<name>` in `jwts.env` or `jwts.local.env`
+
+Profile name normalization:
+- The selected name is trimmed and lowercased for display/logging.
+- When looking up the token variable, the name is converted to an env key (`<NAME_KEY>`) by uppercasing and converting
+  non-alphanumerics to `_`.
+  - Example: `local-dev` -> `LOCAL_DEV` -> lookup key `GQL_JWT_LOCAL_DEV`.
+
+### Token source resolution
+If a JWT profile is selected:
+- Read the bearer token from `jwts.env` / `jwts.local.env` using `GQL_JWT_<NAME_KEY>`.
+- If the selected token is empty or missing, attempt auto-login (see below).
+- If auto-login is not configured or fails, the call fails.
+
+If a JWT profile is NOT selected:
+- If `ACCESS_TOKEN` is set: use it as the bearer token.
+- Else: no `Authorization` header is sent.
+
+### Authorization header behavior
+When a bearer token is selected (from either source):
+- Send `Authorization: Bearer <token>`.
+
+### Auto-login fallback (when selected profile has no token)
+The Rust port implements best-effort auto-login parity with `gql.sh`:
+1. Find a login operation file (first match, lowercased profile name):
+   - `<setup_dir>/login.<profile>.graphql`, else `<setup_dir>/login.graphql`
+   - `<setup_dir>/operations/login.<profile>.graphql`, else `<setup_dir>/operations/login.graphql`
+   - `<setup_dir>/ops/login.<profile>.graphql`, else `<setup_dir>/ops/login.graphql`
+2. Select an optional variables file in the *same directory as the login op* (first match):
+   - `login.<profile>.variables.local.json`
+   - `login.<profile>.variables.json`
+   - `login.variables.local.json`
+   - `login.variables.json`
+3. Execute the login operation against the resolved endpoint **without** any Authorization header.
+4. Determine the login root field:
+   - Best-effort: first field name inside the first selection set `{ ... }` in the login operation text.
+5. Extract a token from the login response JSON:
+   - If `.data[rootField]` is a non-empty string, that string is the token.
+   - Otherwise find the first non-empty string value of `.accessToken` or `.token` anywhere under `.data[rootField]`.
+6. Guardrail: do not auto-login if the main operation file equals the login operation file (prevents recursion).
+
+## JWT validation behavior
+Ported from the legacy behavior, implemented in Rust.
+
+Scope:
+- Validates JWT shape and time-based claims only (no signature verification).
+- Validation runs only when a bearer token is present.
+- Validation is enabled by default and can be disabled with `GQL_JWT_VALIDATE_ENABLED=false`.
+
+Time checks:
+- `exp` (if present) must be parseable as a number. If `exp < now - leeway`, the token is treated as expired.
+- `nbf` (if present) must be parseable as a number. If `nbf > now + leeway`, the token is treated as not-yet-valid.
+- `GQL_JWT_VALIDATE_LEEWAY_SECONDS` is an integer number of seconds to allow for clock skew (default `0`).
+
+Format checks:
+- Token must be three dot-separated segments.
+- Header and payload must be base64url-decodable JSON.
+- Invalid formats are handled by the strictness policy below.
+
+Failure policy:
+- If the token is expired (`exp`) or not-yet-valid (`nbf`): always fail the request (exit non-zero).
+- If the token is not a valid JWT (wrong segment count / decode / JSON / invalid claim types):
+  - Strict mode (`GQL_JWT_VALIDATE_STRICT=true`) fails the request.
+  - Non-strict mode prints a warning and proceeds (skipping further format validation).
+
+## Variables min-limit normalization
+Ported from `gql.sh`.
+
+- If `GQL_VARS_MIN_LIMIT` is set and > 0 (default: `5`), any numeric `limit` fields in the variables JSON are bumped
+  to at least that value (applies to nested objects; key name is case-sensitive).
+- Setting `GQL_VARS_MIN_LIMIT=0` disables the behavior.
+- Variables must be valid JSON; invalid JSON fails the run with a clear error.
+
+## Operation execution & output semantics
+Ported from `gql.sh`.
+
+Request:
 - HTTP method: `POST`
-- Content-Type: `application/json`
-- Authorization:
-  - include `Authorization: Bearer <token>` only when a token is selected/present.
+- Headers:
+  - `Accept: application/json`
+  - `Content-Type: application/json`
+  - `Authorization: Bearer <token>` only when a token is selected
 - Body:
   - Always includes the GraphQL operation text as `query`.
   - Includes `variables` only when a variables file was supplied.
-  - Shape:
+  - Shapes:
     - with vars: `{"query":"...","variables":{...}}`
     - without vars: `{"query":"..."}`
 
-### Errors and `.errors` handling
-- Non-2xx HTTP responses are treated as failures.
-- GraphQL application errors under `.errors` are **not** automatically treated as failures by the legacy runner; callers
-  (including CI) are expected to assert on `.errors` explicitly (for example by piping to `jq -e`).
+Response handling:
+- Non-2xx HTTP responses are treated as failures (exit `1`).
+- GraphQL application errors under `.errors` do not affect the exit code.
 
-### Output contract
-- Stdout: response body only (typically JSON), with no additional decoration.
-- Stderr: errors and guardrail messages.
+Stdout/stderr contract:
+- Stdout: response body only (typically JSON), with no decoration.
+- Stderr: errors and warnings.
 
-### History behavior
-Ported from `gql.sh` + `gql-history.sh`:
-- Default history file: `<setup_dir>/.gql_history` (overridable via `GQL_HISTORY_FILE`).
-- Disable history: `--no-history` or `GQL_HISTORY_ENABLED=false`.
-- Rotation: when file exceeds `GQL_HISTORY_MAX_MB` (default 10; 0 disables), keep `GQL_HISTORY_ROTATE_COUNT` (default 5).
-- Command snippets must never include secret token values; JWT profile names may be logged.
-- `api-gql history` supports:
-  - `--last` (default), `--tail <n>`, and `--command-only` (omit metadata lines starting with `#`).
-- Legacy implementation details (parity-critical output shape, best-effort internals):
-  - History is appended on process exit (success or failure) and records the exit code.
-  - Entries are blank-line separated “paragraphs”:
-    - line 1: metadata beginning with `#`, including `exit=<code>` and setup dir (often relative to the invocation dir).
-    - subsequent lines: a copy/pasteable command snippet with line continuations and a trailing `| jq .`.
-  - URL logging can be suppressed with `GQL_HISTORY_LOG_URL_ENABLED=false`:
-    - metadata prints `url=<omitted>`.
-    - the snippet omits the `--url ...` flag entirely.
+## History semantics
+Ported from `gql.sh` + `gql-history.sh`.
 
-### Exit codes
-`api-gql call` (including list modes) uses these stable exit codes:
-- `0`: success (request executed successfully OR list mode printed output).
-- `1`: any error (invalid inputs/config, auth/login failure, JWT validation failure, network error, non-2xx HTTP status).
+### When history is written
+- History is appended only for `api-gql call` (not for `history` or `report`).
+- History is enabled by default and may be disabled by:
+  - `--no-history` (for that run), or
+  - `GQL_HISTORY_ENABLED=false`
+- History append happens on process exit (including failure exits) when enabled.
 
-## report
-Markdown report generator ported from `gql-report.sh`.
+### History file location
+Default: `<setup_dir>/.gql_history`
 
-Usage (parity intent):
-`api-gql report --case <name> --op <operation.graphql> [--vars <variables.json>] [--env <name> | --url <url>] [--jwt <name>] [--config-dir <dir>] [--run | --response <file|->] [--out <path>] [--allow-empty] [--no-redact] [--no-command] [--no-command-url] [--project-root <path>]`
+Overrides:
+- If `GQL_HISTORY_FILE` is set:
+  - absolute paths are used as-is
+  - relative paths are resolved against `<setup_dir>`
 
-### CLI surface
-Flags and options:
-- `--case <name>`: required case label (used in the report header + default filename slug).
-- `--op, --operation <operation.graphql>`: required operation file path.
-- `--vars, --variables <variables.json>`: optional variables JSON file path.
-- `--run`: execute the operation via the runner and embed the response.
-- `--response <file|->`: use a response from a file (or `-` for stdin) and embed it.
-- `--out <path>`: output report path (defaults described below).
-- `-e, --env <name>` / `-u, --url <url>` / `--jwt <name>` / `--config-dir <dir>`: passed through to the runner when `--run` is used.
-- `--allow-empty` (alias `--expect-empty`): allow writing a report with no response, or a response that contains no data.
-- `--no-redact` / `--redact`: control redaction (default: redact enabled).
-- `--no-command`: omit the command snippet section.
-- `--no-command-url`: when the snippet uses `--url`, omit the URL value (prints `<omitted>`).
-- `--project-root <path>`: override project root used for default output path + relative path rendering.
-- `-h, --help`: print help and exit `0`.
+### Locking and best-effort writes
+The history writer uses a lock directory (`<history_file>.lock`) to avoid concurrent writes.
+If the lock cannot be acquired, history is skipped silently (no error).
 
-Environment variables (report generator):
-- `GQL_REPORT_DIR`: default output directory when `--out` is not set.
-  - If relative, it is resolved against `<project root>`.
-  - Default: `<project root>/docs`.
-- `GQL_ALLOW_EMPTY_ENABLED` (default `false`): same as `--allow-empty`.
-- `GQL_VARS_MIN_LIMIT` (default `5`, `0` disables): same min-limit bumping semantics as the runner; report includes a note
-  when bumping occurs.
-- `GQL_REPORT_INCLUDE_COMMAND_ENABLED` (default `true`): if `false`, omit the command snippet (same as `--no-command`).
-- `GQL_REPORT_COMMAND_LOG_URL_ENABLED` (default `true`): if `false`, omit the URL value from the snippet
-  (same as `--no-command-url`).
+### Rotation
+If `GQL_HISTORY_MAX_MB > 0` and the history file size is `>= GQL_HISTORY_MAX_MB * 1024 * 1024`:
+- Rotate the file to `.1`, `.2`, ..., keeping `GQL_HISTORY_ROTATE_COUNT` files.
+- Rotation is best-effort; failures do not fail the request.
 
-### Output path defaults
-When `--out` is not set:
-- Determine `<project root>`:
-  - Prefer git root (`git rev-parse --show-toplevel`); if unavailable, fall back to the current working directory.
-  - (Or use `--project-root` when provided.)
-- Determine output directory: `GQL_REPORT_DIR` if set, otherwise `<project root>/docs`.
-- Output filename: `<YYYYMMDD-HHMM>-<slug(case)>-api-test-report.md`.
+### Record format
+Each entry is a blank-line-separated record:
+1. A metadata line starting with `#`.
+2. A copy/paste command snippet.
+3. A trailing blank line separating records.
 
-### Allow-empty gating (history/report semantics)
-This is the key guardrail from `GRAPHQL_API_TEST_REPORT_CONTRACT.md` and `gql-report.sh`.
+Metadata line shape (parity intent):
+`# <timestamp> exit=<code> setup_dir=<rel> [env=<name> | url=<url>|url=<omitted>] [jwt=<name> | token=ACCESS_TOKEN]`
 
+Details:
+- Timestamp format is `YYYY-MM-DDTHH:MM:SS%z` (for example `2026-01-31T12:34:56-0800`).
+- `setup_dir=<rel>` is rendered relative to the invocation directory when possible.
+- URL logging is controlled by `GQL_HISTORY_LOG_URL_ENABLED`:
+  - If `false` and the endpoint is URL-based, metadata uses `url=<omitted>` and the command snippet omits `--url`.
+- Tokens are never logged by value:
+  - JWT profile names may be logged (`jwt=<name>`).
+  - When `ACCESS_TOKEN` is used (and no JWT profile is selected), metadata uses `token=ACCESS_TOKEN`.
+
+Command snippet shape (parity intent):
+- Multi-line with `\` continuations.
+- Includes `--env`/`--url` and `--jwt` when applicable.
+- Ends with `| jq .` for human-friendly JSON formatting.
+
+Note on Rust port output:
+- The legacy history snippet uses a `$CODEX_HOME/.../gql.sh` path when available.
+- The Rust port emits an equivalent `api-gql` invocation instead, while preserving option semantics.
+
+### `api-gql history` output rules
+- Entries are parsed as blank-line-separated records.
+- `--last` prints the last record.
+- `--tail <n>` prints the last `n` records.
+- `--command-only` drops the metadata line if it begins with `#`.
+- Output includes a blank line after each printed record (including the last).
+
+## Report semantics
+Ported from `gql-report.sh` and aligned with `graphql-api-testing/references/GRAPHQL_API_TEST_REPORT_CONTRACT.md`.
+
+### Output path and printing behavior
+On success, the command prints the report path to stdout and exits `0`.
+
+Default output path when `--out` is not set:
+- `stamp = YYYYMMDD-HHMM` (local time)
+- `case_slug = lowercased(case) with non-alphanumerics replaced by '-'` (trim/collapse hyphens; fallback `"case"`)
+- `report_dir = GQL_REPORT_DIR` if set, else `<project_root>/docs`
+  - if `GQL_REPORT_DIR` is relative, it is resolved against `<project_root>`
+- `out = <report_dir>/<stamp>-<case_slug>-api-test-report.md`
+
+Project root resolution:
+- Default: the Git repo root (if available); otherwise the current directory.
+- Override with `--project-root`.
+
+### Response sourcing (`--run` vs `--response`)
+`--run`:
+- Executes `api-gql call` using the provided endpoint/auth/config options.
+- If the call fails, the report is not written and the command exits non-zero.
+- Records `Result: PASS` when the call exit code is `0`.
+
+`--response <file|->`:
+- Reads response bytes from the given file (or stdin).
+- Does not execute the request.
+- Records `Result: (response provided; request not executed)`.
+
+### Allow-empty gating (no-data guardrail)
 By default (no allow-empty):
-- Refuse to write a report unless a “real response” is provided:
-  - require `--run` OR `--response`.
-- Refuse to write a report if the response is not valid JSON.
-- Refuse to write a report if the response appears to contain “no data records”.
+- Refuses to write a report if the response is not valid JSON.
+- Refuses to write a report if the response appears to contain no data records.
 
-“No data records” is determined by a jq-based heuristic over `.data`:
+“No data records” is determined by a heuristic over `.data`:
 - Walk scalar values under `.data`.
-- Ignore common meta-only keys (case-insensitive): `__typename`, `pageInfo`, `totalCount`, `count`, `cursor`, `edges`,
-  `nodes`, `hasNextPage`, `hasPreviousPage`, `startCursor`, `endCursor`.
+- Ignore common meta-only keys (case-insensitive):
+  - `__typename`, `pageInfo`, `totalCount`, `count`, `cursor`, `edges`, `nodes`,
+    `hasNextPage`, `hasPreviousPage`, `startCursor`, `endCursor`.
 - If there are zero remaining scalar values, treat the response as empty/no-data.
 
 When allow-empty is enabled (`--allow-empty` or `GQL_ALLOW_EMPTY_ENABLED=true`), all of the above blocks are lifted.
 
+### Report Markdown structure
+The report is Markdown and includes (parity intent):
+- `# API Test Report (<YYYY-MM-DD>)`
+- `## Test Case: <case>`
+- Optional `## Command` section with a fenced `bash` block
+- `Generated at: <timestamp-with-timezone>`
+- Endpoint note:
+  - `Endpoint: --url <url>` OR `Endpoint: --env <name>` OR `Endpoint: (implicit; see GQL_URL / GQL_ENV_DEFAULT)`
+- Result note (`PASS` / provided)
+- `### GraphQL Operation` (fenced `graphql` block)
+- `### GraphQL Operation (Variables)` (fenced `json` block; `{}` when no vars file)
+- `### Response` (fenced `json` or `text` block)
+- Optional variables note when min-limit bumping occurs
+
 ### Redaction rules
-Default behavior is secret-safe:
-- When redact is enabled (default), redact:
-  - `.accessToken`, `.refreshToken`, `.password` (any nesting) in both variables and response.
-- Command snippets must never inline token values (only names like `--jwt <profile>` are allowed).
+Redaction is ON by default (for JSON formatting only).
+When enabled, any object field with these keys is replaced with `<REDACTED>` (deep traversal, case-insensitive):
+- `accessToken`, `access_token`
+- `refreshToken`, `refresh_token`
+- `password`
+- `token`
+- `apiKey`, `api_key`
+- `authorization`
+- `cookie`
+- `set-cookie`
 
-### Exit codes
-`api-gql report` uses these stable exit codes:
-- `0`: report written successfully; prints the report path to stdout.
-- `1`: any error (invalid inputs, jq/assertion failure, allow-empty guardrail refusal, runner failure when using `--run`).
+Notes:
+- Redaction applies only when the variables/response is parseable as JSON.
+- When the response is non-JSON text, it is included verbatim (no redaction).
 
-## schema
-Schema resolver ported from `gql-schema.sh`.
+### Command snippet inclusion and URL elision
+Command snippet inclusion:
+- Default: included.
+- Omitted when:
+  - `--no-command`, or
+  - `GQL_REPORT_INCLUDE_COMMAND_ENABLED=false`
 
-Usage (parity intent):
-`api-gql schema [--config-dir <dir>] [--file <path>] [--cat]`
+URL in command snippet (when `--url` is used):
+- Default: included.
+- When disabled (`--no-command-url` or `GQL_REPORT_COMMAND_LOG_URL_ENABLED=false`):
+  - the URL value is replaced with `<omitted>`.
 
-### CLI surface
-Flags and options:
-- `--config-dir <dir>`: setup dir discovery seed (same semantics as `call`).
-- `--file <path>`: explicit schema file path (overrides env + config).
-- `--cat`: print schema file contents instead of the resolved path.
-- `-h, --help`: print help and exit `0`.
+## Report-from-cmd semantics
+`api-gql report-from-cmd` turns a call snippet into a report command.
 
-Environment variables:
-- `GQL_SCHEMA_FILE`: overrides schema file path (relative paths resolve under `<setup_dir>`).
+Snippet parsing rules (best-effort parity with history snippets):
+- Accepts `api-gql ...` and legacy `gql.sh ...` call snippets.
+- Supports line continuations (`\` + newline) and truncates at the first pipe (`|`).
+- Expands `$VARS` and `${VARS}` best-effort for tokenization.
+- Ignores flags that do not affect report generation (`--no-history`, `--list-envs`, `--list-jwts`).
 
-Config files (recommended):
-- `schema.env`: committed; sets `GQL_SCHEMA_FILE`.
-- `schema.local.env`: local override; sets `GQL_SCHEMA_FILE`.
+Case name derivation:
+- Default case is derived from the operation filename stem plus metadata:
+  - `"<op-stem> (<env-or-url-or-implicit>, jwt:<name>)"` (JWT suffix only if provided).
+
+Execution modes:
+- If `--dry-run` is set, prints the equivalent `api-gql report ...` command and exits `0`.
+- Otherwise, delegates to `api-gql report` (using `--run` unless `--response` is provided).
+- `--stdin` reads the snippet from stdin; it cannot be used with `--response -`.
+
+## Schema semantics
+Ported from `gql-schema.sh`.
 
 Resolution order:
 1. `--file <path>` (explicit override)
-2. `GQL_SCHEMA_FILE` env var
+2. `GQL_SCHEMA_FILE` environment variable
 3. `GQL_SCHEMA_FILE` from `<setup_dir>/schema.local.env` then `<setup_dir>/schema.env`
 4. Fallback candidates under `<setup_dir>`:
    `schema.gql`, `schema.graphql`, `schema.graphqls`, `api.graphql`, `api.gql`
 
+Notes:
+- If a schema path is relative, it is resolved under `<setup_dir>`.
+- If no schema is configured or the file does not exist, the command fails.
+
 Output:
-- Default: print resolved schema file path.
+- Default: print the resolved schema file path.
 - With `--cat`: print schema file contents.
 
-### Exit codes
-`api-gql schema` uses these stable exit codes:
-- `0`: resolved successfully (path printed or file contents printed).
-- `1`: any error (setup dir cannot be resolved, schema not configured, schema file missing, invalid CLI args).
-
-## history
-History replay helper ported from `gql-history.sh`.
-
-Usage (parity intent):
-`api-gql history [--config-dir <dir>] [--file <path>] [--last | --tail <n>] [--command-only]`
-
-### CLI surface
-Flags and options:
-- `--config-dir <dir>`: setup dir discovery seed (default: current working directory).
-- `--file <path>`: explicit history file path (default: `<setup_dir>/.gql_history`).
-- `--last`: print the last entry (default).
-- `--tail <n>`: print the last N entries (blank-line separated).
-- `--command-only`: omit the metadata line (starting with `#`) from each entry.
-- `-h, --help`: print help and exit `0`.
-
-Environment variables:
-- `GQL_HISTORY_FILE`: override history file path (relative paths resolve under `<setup_dir>`).
-
-### Output contract
-- Output is one or more history “entries” separated by a blank line.
-- With `--command-only`, the first metadata line is omitted (when present).
-
-### Exit codes
-Parity intent mirrors the legacy script behavior:
-- `0`: success; printed one or more entries.
-- `1`: any error (invalid args, cannot resolve setup dir, file missing).
-- `3`: history file exists but contains zero entries (awk RS= behavior).
-
-## Mutation detection (write-capable classification)
+## Mutation detection (suite runner dependency)
 Suite runner safety relies on detecting `mutation` operation definitions.
-Parity intent mirrors the suite runner’s legacy implementation (`api-test.sh`) and is **best-effort**:
+Parity intent mirrors the legacy implementation and is best-effort:
 
 Detection algorithm:
 1. Read the operation file as text (UTF-8).
-2. Strip block comments: `/* ... */` (best-effort).
+2. Strip block comments (`/* ... */`) best-effort.
 3. Strip GraphQL string literals:
-   - triple-quoted strings `"""..."""` (best-effort),
-   - double-quoted strings `"..."` with escapes.
+   - triple-quoted strings `"""..."""`
+   - double-quoted strings `"..."` (with escapes)
 4. Strip line comments:
    - GraphQL `# ...`
-   - and also `// ...` (some tools allow it).
-5. Regex search (case-insensitive, multiline) for an operation definition line:
-   - `^\s*mutation\b(?=\s*(?:\(|@|\{|[_A-Za-z]))`
-   - The lookahead intentionally excludes schema shorthand like `mutation: Mutation` (because `:` does not match).
+   - `// ...` (some tools allow it).
+5. Scan lines for an operation definition beginning with `mutation`:
+   - `^\s*mutation\b` followed by `(`, `@`, `{`, `_`, or a letter.
+   - This intentionally excludes schema shorthand like `mutation: Mutation`.
 
 Semantics:
-- If the regex matches anywhere, the operation is classified as **write-capable**.
-- Write-capable classification is used by the suite runner guardrails:
-  - If a case is a mutation and `allowWrite` is not `true`, the case fails with a stable reason.
-  - If `allowWrite=true` but writes are not enabled for the run (and env is not `local`), the case is skipped.
-- `api-gql` itself does not block executing mutations; it is a low-level runner.
+- If the pattern matches anywhere, the operation is classified as **write-capable**.
+- This classification is used by the suite runner guardrails (not by `api-gql` itself).
+
+## Exit codes
+
+### `api-gql call`
+- `0`: request executed successfully.
+- `1`: invalid input/config, auth/login failure, JWT validation failure, network error, or non-2xx HTTP status.
+
+### `api-gql history`
+- `0`: printed at least one record successfully.
+- `1`: invalid arguments, setup/history discovery failure, or history file missing.
+- `3`: history file exists but contains zero records (parity with legacy awk-based implementation).
+
+### `api-gql report`
+- `0`: report written and the output path printed.
+- `1`: invalid arguments, missing files, refusal by allow-empty guardrails, runner failure when using `--run`,
+  or failure to write report.
+
+### `api-gql report-from-cmd`
+- `0`: dry-run output printed or report written successfully.
+- `1`: invalid snippet/flags, or underlying report failure.
+
+### `api-gql schema`
+- `0`: resolved successfully (path printed or file contents printed).
+- `1`: setup dir cannot be resolved, schema not configured, schema file missing, or invalid CLI args.
 
 ## External dependencies (inventory + policy)
-This section is an explicit inventory of the legacy external dependencies plus the chosen Rust-port policy.
 
-### Legacy scripts: external dependencies
-- HTTP client:
-  - required: one of `xh`, `http` (HTTPie), or `curl`
-  - `curl` path additionally requires `jq` to build the JSON payload
-- JSON tooling:
-  - `jq`:
-    - required by `gql-report.sh`
-    - required for auto-login token extraction in `gql.sh`
-    - used for variables min-limit bumping when present
-  - `python3`:
-    - optional: JWT validation in `gql.sh` (skipped when missing)
-    - optional: variables min-limit bumping fallback in `gql.sh` when `jq` is missing
-- Git (optional):
-  - `gql-report.sh` uses `git rev-parse --show-toplevel` to find `<project root>`, but falls back to `pwd` if git is missing.
-- Standard UNIX utilities (assumed available in the legacy environment):
-  - `awk` (login root-field extraction), `sed`, `tr`, `sort`, `wc`, `date`, `mktemp`, `mv`, `mkdir`, `cat`.
+### Legacy script inventory (observed)
+| Tool / runtime | Used by | Purpose | Legacy status |
+| --- | --- | --- | --- |
+| `curl` / `http` / `xh` | `gql.sh` | HTTP execution | required |
+| `jq` | `gql.sh`, `gql-report.sh` | JSON parsing + redaction + min-limit | required |
+| `python3` | `gql.sh` | JWT validation | optional |
+| `git` | `gql-report.sh` | detect project root | optional |
+| `awk` | `gql-history.sh` | record parsing (`RS=`) | required |
+| coreutils (`date`, `mktemp`, `wc`, `mv`, `mkdir`, `head`, etc.) | all | plumbing | required |
 
-### Rust port policy (api-gql binary)
-Goal: remove runtime reliance on external tools while preserving user-facing behavior.
+### Rust port policy (api-gql)
+Goal: eliminate runtime dependencies on external binaries for core behavior.
 
-- HTTP client (`xh/http/curl`): eliminate; implement HTTP requests directly in Rust.
-- JSON tooling (`jq`): eliminate by default; implement:
-  - request payload construction,
-  - variables min-limit bumping,
-  - report formatting + redaction,
-  - “meaningful data” allow-empty heuristic.
-  Optional compat policy: only shell out to `jq` if an explicit “compat mode” is enabled and documented.
-- `python3`: eliminate; implement JWT checks and mutation detection in Rust.
-- `git`: eliminate; implement “project root” resolution by searching upward for `.git/` (fallback to cwd).
-- Coreutils (`date/wc/mv/mkdir/mktemp/...`): eliminate; use Rust stdlib for filesystem and timestamps.
+| Dependency | Policy | Rationale |
+| --- | --- | --- |
+| `curl` / `http` / `xh` | eliminate | implement HTTP client in Rust for portability and consistent error handling |
+| `jq` | eliminate (default) | implement JSON parsing, redaction, and min-limit normalization in Rust |
+| `python3` | eliminate | implement JWT parsing/time checks in Rust |
+| `git` | eliminate | detect repo root in Rust (fallback to CWD) |
+| shell utilities (`awk`, `date`, `mktemp`, etc.) | eliminate | implement history/report generation and file ops in Rust |
 
-If any optional external tool invocation remains (compat mode), its behavior must be explicitly documented in `--help` and
-covered by deterministic tests.
+Note:
+- History/report command snippets still end with `| jq .` for human-friendly formatting, but `api-gql` does not
+  require `jq` at runtime.
+
 # api-gql fixtures
 
 These fixtures define deterministic scenarios for integration tests. Tests should use a local HTTP server and temporary
@@ -438,13 +664,21 @@ These fixtures define deterministic scenarios for integration tests. Tests shoul
 
 ## report: allow-empty gating
 - Setup:
-  - Generate a “draft” or empty response case.
+  - Generate a "draft" or empty response case.
 - Command(s):
-  - `api-gql report --case "Draft" --op op.graphql --out docs/draft.md` (no run/response)
-  - `api-gql report --case "Draft" --op op.graphql --out docs/draft.md --allow-empty`
+  - `api-gql report --case "Draft" --op op.graphql --response resp.json`
+  - `api-gql report --case "Draft" --op op.graphql --response resp.json --allow-empty`
 - Expect:
   - without `--allow-empty`: exit non-zero and no report is produced
   - with `--allow-empty`: report is produced
+
+## report: report-from-cmd dry run
+- Setup:
+  - A call snippet (from history or manual): `api-gql call --env local ops/health.graphql`.
+- Command: `api-gql report-from-cmd --dry-run "api-gql call --env local ops/health.graphql"`
+- Expect:
+  - exit `0`
+  - stdout contains `api-gql report --case` and references the operation
 
 ## list: env and JWT names
 - Setup:
