@@ -1,5 +1,6 @@
 use crate::confirm;
 use anyhow::{Context, Result};
+use std::ffi::OsString;
 use std::process::{Command, Stdio};
 
 pub struct KillFlags {
@@ -79,7 +80,10 @@ pub fn kill_flow(pids: &[String], kill_now: bool, force_kill: bool) -> Result<i3
 }
 
 fn run_kill(pids: &[String], force: bool) -> Result<()> {
-    let mut cmd = Command::new("kill");
+    let kill_cmd = std::env::var_os("NILS_TEST_KILL_BIN")
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| OsString::from("kill"));
+    let mut cmd = Command::new(kill_cmd);
     if force {
         cmd.arg("-9");
     }

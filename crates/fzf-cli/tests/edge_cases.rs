@@ -156,14 +156,17 @@ echo "$@" >> "${KILL_LOG:?}"
 
     let kill_log = dir.path().join("kill.log");
     fs::write(&kill_log, "").unwrap();
+    let kill_bin = stub.path().join("kill");
 
     let path_s = stub.path().to_string_lossy().to_string();
     let out_dir_s = out_dir.to_string_lossy().to_string();
     let kill_log_s = kill_log.to_string_lossy().to_string();
+    let kill_bin_s = kill_bin.to_string_lossy().to_string();
     let envs = [
         ("PATH", path_s.as_str()),
         ("FZF_STUB_OUT_DIR", out_dir_s.as_str()),
         ("KILL_LOG", kill_log_s.as_str()),
+        ("NILS_TEST_KILL_BIN", kill_bin_s.as_str()),
     ];
 
     let out = common::run_fzf_cli(dir.path(), &["process", "-k"], &envs, None);
@@ -205,14 +208,17 @@ echo "$@" >> "${KILL_LOG:?}"
 
     let kill_log = dir.path().join("kill.log");
     fs::write(&kill_log, "").unwrap();
+    let kill_bin = stub.path().join("kill");
 
     let path_s = stub.path().to_string_lossy().to_string();
     let out_dir_s = out_dir.to_string_lossy().to_string();
     let kill_log_s = kill_log.to_string_lossy().to_string();
+    let kill_bin_s = kill_bin.to_string_lossy().to_string();
     let envs = [
         ("PATH", path_s.as_str()),
         ("FZF_STUB_OUT_DIR", out_dir_s.as_str()),
         ("KILL_LOG", kill_log_s.as_str()),
+        ("NILS_TEST_KILL_BIN", kill_bin_s.as_str()),
     ];
 
     let out = common::run_fzf_cli(dir.path(), &["process"], &envs, Some("n\n"));
@@ -286,14 +292,17 @@ echo "$@" >> "${KILL_LOG:?}"
 
     let kill_log = dir.path().join("kill.log");
     fs::write(&kill_log, "").unwrap();
+    let kill_bin = stub.path().join("kill");
 
     let path_s = stub.path().to_string_lossy().to_string();
     let out_dir_s = out_dir.to_string_lossy().to_string();
     let kill_log_s = kill_log.to_string_lossy().to_string();
+    let kill_bin_s = kill_bin.to_string_lossy().to_string();
     let envs = [
         ("PATH", path_s.as_str()),
         ("FZF_STUB_OUT_DIR", out_dir_s.as_str()),
         ("KILL_LOG", kill_log_s.as_str()),
+        ("NILS_TEST_KILL_BIN", kill_bin_s.as_str()),
     ];
 
     let out = common::run_fzf_cli(dir.path(), &["port", "-k"], &envs, None);
