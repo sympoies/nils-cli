@@ -1,26 +1,25 @@
 # cli-template
 
 ## Overview
-`cli-template` is a minimal binary crate used as:
-- a sanity check for workspace packaging/build wiring, and
-- a reference implementation for new CLIs in this repo.
+cli-template is a minimal reference CLI for the nils-cli workspace. It demonstrates clap
+argument parsing, tracing-based logging, and optional progress output via nils-term.
 
-It demonstrates common patterns used across the workspace:
-- argument parsing with `clap`
-- logging via `tracing` / `tracing-subscriber`
-- clean stdout output + optional progress rendering on stderr via `nils-term`
+## Usage
+```text
+Usage:
+  cli-template [--log-level <level>] [command]
 
-## Commands
-- `cli-template hello [name]` : prints a greeting to stdout (defaults to `world`)
-- `cli-template progress-demo` : renders a short progress demo (progress on stderr, stdout stays clean)
+Commands:
+  hello [name]
+  progress-demo
 
-## Common flags
-- `--log-level <level>` : log level (e.g. `trace`, `debug`, `info`, `warn`, `error`)
-
-## Development
-Run locally from the workspace:
-```bash
-cargo run -p cli-template -- hello Nils
-cargo run -p cli-template -- progress-demo
+Help:
+  cli-template --help
 ```
 
+## Commands
+- `hello [name]`: Print a greeting (defaults to `world`).
+- `progress-demo`: Render a short progress demo (progress on stderr, stdout stays clean).
+
+## Flags
+- `--log-level <level>`: Log level (`trace|debug|info|warn|error`).

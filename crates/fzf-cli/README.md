@@ -1,212 +1,93 @@
-# fzf-cli parity spec
+# fzf-cli
 
 ## Overview
-`fzf-cli` is a Rust port of the Zsh `fzf-tools` dispatcher defined in `https://github.com/graysurf/zsh-kit/blob/main/scripts/fzf-tools.zsh`.
-It provides a single entry point with multiple interactive subcommands powered by `fzf`.
-Most subcommands shell out to external tools (`fzf`, `git`, `ps`, `lsof`, `netstat`, `kill`, editors)
-to preserve behavior and output parity with the Zsh implementation.
+fzf-cli is a Rust CLI that provides interactive pickers for files, Git metadata, processes, ports,
+and shell definitions, all powered by `fzf`.
 
-## Entry point
-- Command: `fzf-cli <command> [args]`
-- Help: `fzf-cli help`, `fzf-cli --help`, `fzf-cli -h`, or empty args.
+## Usage
+```text
+Usage:
+  fzf-cli <command> [args]
 
-## Commands (dispatcher)
-- `file` : search files and open selection in an editor
-- `directory` : two-step directory picker then file picker; supports an emit-cd flow
-- `git-status` : interactive `git status -s` viewer with diff preview
-- `git-commit` : browse commits and open changed files (worktree or snapshot)
-- `git-checkout` : pick a commit and checkout (with optional stash retry)
-- `git-branch` : browse and checkout branches
-- `git-tag` : browse and checkout tags
-- `process` : browse processes and optionally kill selected PIDs
-- `port` : browse listening ports (via `lsof`) and optionally kill owning PIDs
-- `history` : browse Zsh history and return the selected command
-- `env` : browse environment variables with preview (block mode)
-- `alias` : browse indexed alias definitions with preview (block mode)
-- `function` : browse indexed function definitions with preview (block mode)
-- `def` : browse env+alias+function in a single list (block mode)
+Commands:
+  file         Search and preview files
+  directory    Browse directories and pick files
+  git-status   Interactive git status viewer
+  git-commit   Browse commits and open changed files
+  git-checkout Pick and checkout a previous commit
+  git-branch   Browse and checkout branches
+  git-tag      Browse and checkout tags
+  process      Browse and kill running processes
+  port         Browse listening ports and owners
+  history      Search command history
+  env          Browse environment variables
+  alias        Browse shell aliases
+  function     Browse shell functions
+  def          Browse env, alias, and function definitions
+  help         Display help message
 
-## Help output and guardrails
-- Help output format matches the Zsh dispatcher (Usage, blank line, Commands list).
-- Unknown command prints:
-  - `❗ Unknown command: <cmd>`
-  - `Run 'fzf-cli help' for usage.`
-  and exits with code 1.
+Help:
+  fzf-cli help
+  fzf-cli --help
+```
 
-## Shared prompts (confirmation)
-`fzf-cli` uses the same confirmation rules as the script:
-- A confirmation prompt succeeds only when the user inputs `y` or `Y`.
-- Declining prints `🚫 Aborted.` and exits non-zero.
+## Commands
 
-## File opener behavior (file/directory/git-commit)
-### Open-with selection
-- Flags: `--vi` and `--vscode` (mutually exclusive).
-- Default opener comes from `FZF_FILE_OPEN_WITH` (`vi` default).
-- `--` ends option parsing; remaining args are treated as query tokens.
-- Unknown `--flag` errors:
-  - stderr: `❌ Unknown flag: --flag`
-  - exit code: 2
-- Mutual exclusion errors:
-  - stderr: `❌ Flags are mutually exclusive: --vi and --vscode`
-  - exit code: 2
-
-### VSCode open behavior
-- Uses `code --goto` when `--vscode` is selected.
-- For git-root workspaces, VSCode is launched with the workspace root and `--goto` path.
-- If VSCode open fails (including missing `code`), it prints:
-  - `❌ Failed to open in VSCode; falling back to vi`
-  and falls back to `vi`.
-
-## Shell interop limitations (directory/history)
-Some Zsh behaviors are not possible for a child process to apply to the parent shell session.
-`fzf-cli` provides an output contract to enable wrappers to preserve parity:
+### file
+- `file [--vi|--vscode] [-- <query...>]`: Search files with preview and open the selection.
 
 ### directory
-- The directory picker supports a “cd action” (triggered by the same key flow as the script).
-- When the user chooses the cd action, `fzf-cli directory` prints a `cd ...` shell command on stdout
-  and exits 0.
-- When the user chooses an open-file action, it opens the file and prints nothing.
+- `directory [--vi|--vscode] [-- <query...>]`: Pick a directory, then pick a file to open. Use
+  `ctrl-d` to emit `cd <path>` to stdout.
 
-Recommended wrapper:
-```zsh
-fzf-directory() { eval "$(fzf-cli directory -- "$@")"; }
-```
+### git-status
+- `git-status [query...]`: Interactive `git status -s` viewer with diff previews.
+
+### git-commit
+- `git-commit [--snapshot] [query...]`: Browse commits and open changed files. `--snapshot` opens
+  file snapshots from the selected commit by default.
+
+### git-checkout
+- `git-checkout [query...]`: Pick a commit and checkout (prompts before checkout).
+
+### git-branch
+- `git-branch [query...]`: Browse branches and checkout (prompts before checkout).
+
+### git-tag
+- `git-tag [query...]`: Browse tags and checkout (prompts before checkout).
+
+### process
+- `process [-k|--kill] [-9|--force] [query...]`: Browse processes and optionally kill selected PIDs.
+
+### port
+- `port [-k|--kill] [-9|--force] [query...]`: Browse listening ports and optionally kill owning PIDs.
 
 ### history
-- `fzf-cli history` prints the selected command on stdout (with the same icon-prefix stripping as the
-  script) and exits 0.
+- `history [query...]`: Browse shell history and print the selected command to stdout.
 
-Recommended wrapper:
-```zsh
-fzf-history() { eval "$(fzf-cli history -- "$@")"; }
-```
+### env
+- `env [query...]`: Browse environment variables.
 
-## process
-- Flags:
-  - `-k`, `--kill`: kill immediately with SIGTERM (no prompts)
-  - `-9`, `--force`: use SIGKILL (SIGKILL requires either `-k -9` or interactive confirmation)
-- Default flow (no `-k`): prompt `Kill PID(s): ...? [y/N] ` then prompt `Force SIGKILL (-9)? [y/N] `.
-- Kill messages:
-  - SIGTERM: `☠️  Killing PID(s) with SIGTERM: ...`
-  - SIGKILL: `☠️  Killing PID(s) with SIGKILL: ...`
+### alias
+- `alias [query...]`: Browse shell aliases.
 
-## port
-- Uses `lsof -nP -iTCP -sTCP:LISTEN` when `lsof` is available.
-- Without `lsof`, falls back to `netstat` in view-only mode (no kill dispatch).
+### function
+- `function [query...]`: Browse shell functions.
 
-## git-branch and git-tag
-- Outside a Git repository:
-  - stderr: `❌ Not inside a Git repository. Aborting.`
-  - exit code: 1
-- Prompts for confirmation before `git checkout`.
-- Branch checkout success: `✅ Checked out to <branch>`
-- Tag checkout success: `✅ Checked out to tag <tag> (commit <hash>)`
-- Tag resolution failure: `❌ Could not resolve tag '<tag>' to a commit hash.`
+### def
+- `def [query...]`: Browse env, alias, and function definitions.
 
-## git-checkout
-- Uses the commit picker and confirms before checkout:
-  - `🚚 Checkout to commit <hash>? [y/N] `
-- On checkout failure:
-  - prints `⚠️  Checkout to '<hash>' failed. Likely due to local changes.`
-  - prompts `📦 Stash your current changes and retry checkout? [y/N] `
-- On stash confirm:
-  - runs `git stash push -u -m "<stash_msg>"`
-  - prints `📦 Changes stashed: <stash_msg>`
+## Environment
+- `FZF_FILE_OPEN_WITH`: Default opener for `file`, `directory`, `git-commit` (`vi` or `vscode`).
+- `FZF_FILE_MAX_DEPTH`: Max directory depth for `file` and `directory` (default: `10`).
+- `FZF_PREVIEW_WINDOW`: Preview window layout for `directory` (default: `right:50%:wrap`).
+- `FZF_DEF_DELIM` and `FZF_DEF_DELIM_END`: Required delimiters for `env`, `alias`, `function`, `def`.
+- `FZF_DEF_DOC_CACHE_ENABLED`: Enable definition doc caching.
+- `FZF_DEF_DOC_CACHE_EXPIRE_MINUTES`: Cache TTL in minutes (default: `10`).
+- `FZF_DEF_DOC_SEPARATOR_PAD`: Padding lines between definition docs (default: `2`).
 
-## git-commit
-- Requires Git repository; otherwise prints the same abort message as git-branch.
-- Supports `--snapshot`:
-  - When enabled, the default open action opens a snapshot temp file extracted via `git show`.
-- Worktree file open behavior:
-  - When selected file exists: opens it.
-  - When missing: prints `❌ File no longer exists in working tree: <path>` then prompts
-    `🧾 Open snapshot from <commit> instead? [y/N] `
-- Snapshot extraction:
-  - Tries `git show <commit>:<path>`, then `git show <commit>^:<path>`
-  - Failure prints `❌ Failed to extract snapshot: <commit>:<path> (or <commit>^:<path>)`
-- When opening all files in VSCode:
-  - If `open-changed-files` exists, it is used; otherwise falls back to `code --new-window`.
-
-## env/alias/function/def (block preview mode)
-- Requires both env vars:
-  - `FZF_DEF_DELIM`
-  - `FZF_DEF_DELIM_END`
-- If either is missing:
-  - prints:
-    - `❌ Error: FZF_DEF_DELIM or FZF_DEF_DELIM_END is not set.`
-    - `💡 Please export FZF_DEF_DELIM and FZF_DEF_DELIM_END before running.`
-  - exits 1
-- After selection, prints the selected block and attempts to copy it to clipboard (best-effort).
-
-## Definition indexing and caching
-- First-party files scanned:
-  - `${ZDOTDIR:-$HOME/.config/zsh}/.zshrc`
-  - `${ZDOTDIR:-$HOME/.config/zsh}/.zprofile`
-  - zsh files under `${ZDOTDIR:-$HOME/.config/zsh}/{scripts,bootstrap,tools}`
-- Optional persistent doc cache:
-  - `FZF_DEF_DOC_CACHE_ENABLED=true` enables persistent cache.
-  - `FZF_DEF_DOC_CACHE_EXPIRE_MINUTES` controls TTL (default 10 minutes).
-
-# fzf-cli fixtures
-
-## help and unknown command
-- Command: `fzf-cli help`
-- Expect: prints Usage line and Commands list; exit 0.
-- Command: `fzf-cli nope`
-- Expect: prints `❗ Unknown command: nope` then `Run 'fzf-cli help' for usage.`; exit 1.
-
-## file open-with flags
-- Unknown flag:
-  - Command: `fzf-cli file --nope`
-  - Expect: stderr contains `❌ Unknown flag: --nope`; exit 2.
-- Mutual exclusion:
-  - Command: `fzf-cli file --vi --vscode`
-  - Expect: stderr contains `❌ Flags are mutually exclusive: --vi and --vscode`; exit 2.
-
-## directory cd emission contract
-- Setup: repo with directories and files.
-- Command: `fzf-cli directory`
-- Expect: when cd action is chosen, stdout prints `cd <dir>` for evaluation in the parent shell.
-
-## history parsing
-- Setup: temp HISTFILE with extended Zsh history lines `: <epoch>:<dur>;<cmd>`.
-- Expect: filters empty/punctuation-only commands and strips leading icon prefixes.
-
-## process kill flags
-- Setup: stub `ps` output and stub `kill` that records args.
-- Default:
-  - Command: `fzf-cli process`
-  - Expect: prompts for kill confirmation; declining prints `🚫 Aborted.` and exits non-zero.
-- Immediate:
-  - Command: `fzf-cli process -k`
-  - Expect: prints SIGTERM kill line and calls `kill` once per PID.
-- Immediate force:
-  - Command: `fzf-cli process -k -9`
-  - Expect: prints SIGKILL kill line and calls `kill -9`.
-
-## port lsof vs netstat fallback
-- With lsof:
-  - Setup: stub `lsof` with TCP LISTEN output including PIDs.
-  - Expect: selected PIDs are deduped and passed to kill flow.
-- Without lsof:
-  - Setup: remove `lsof` from PATH, stub `netstat` output.
-  - Expect: view-only selection does not attempt to kill processes.
-
-## git commands outside repo
-- Commands: `fzf-cli git-branch`, `fzf-cli git-tag`, `fzf-cli git-commit`
-- Expect: stderr contains `❌ Not inside a Git repository. Aborting.`; exit 1.
-
-## git-checkout stash retry
-- Setup: git repo with local changes that cause checkout to fail.
-- Command: `fzf-cli git-checkout`
-- Expect: on checkout failure, prompts for stash; confirming stashes and retries checkout.
-
-## git-commit snapshot extraction
-- Setup: repo with a commit containing a file that no longer exists in worktree.
-- Command: `fzf-cli git-commit --snapshot`
-- Expect: snapshot extraction to temp file succeeds and temp file is removed after editor exits.
-
-## def commands require delimiter env
-- Command: `fzf-cli env` (or `alias`/`function`/`def`) without `FZF_DEF_DELIM` and `FZF_DEF_DELIM_END`.
-- Expect: prints the two-line error/help text; exit 1.
-
+## Dependencies
+- `fzf` is required for all commands.
+- `git` is required for `git-*` commands.
+- `lsof` is optional for `port` (falls back to `netstat`).
+- `code` is required for `--vscode` (falls back to `vi`).
