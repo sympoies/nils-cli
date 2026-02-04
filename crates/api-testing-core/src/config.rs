@@ -303,7 +303,7 @@ impl ResolvedSetup {
     }
 
     pub fn endpoints_files(&self) -> Vec<&Path> {
-        if self.endpoints_env.is_file() {
+        if self.endpoints_env.is_file() || self.endpoints_local_env.is_file() {
             vec![&self.endpoints_env, &self.endpoints_local_env]
         } else {
             Vec::new()
@@ -395,6 +395,29 @@ mod tests {
         .expect("resolve");
 
         assert_eq!(setup_dir, cfg_root.join("custom/rest"));
+    }
+
+    #[test]
+    fn endpoints_files_includes_local_when_env_missing() {
+        let tmp = TempDir::new().expect("tmp");
+        let root = std::fs::canonicalize(tmp.path()).expect("root abs");
+        let setup = root.join("setup/rest");
+
+        write_file(
+            &setup.join("endpoints.local.env"),
+            "export REST_URL_LOCAL=http://localhost:1234\n",
+        );
+
+        let resolved = ResolvedSetup::rest(setup, None);
+        let files = resolved.endpoints_files();
+
+        assert_eq!(
+            files,
+            vec![
+                resolved.endpoints_env.as_path(),
+                resolved.endpoints_local_env.as_path()
+            ]
+        );
     }
 
     #[test]
