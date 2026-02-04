@@ -45,27 +45,27 @@ fi
 (( $+aliases[cxst] )) || alias cxst='codex-cli starship'
 
 # ---------------------------------------------------------------------------
-# fzf-cli (ff*)
+# fzf-cli (fx*)
 # ---------------------------------------------------------------------------
-(( $+aliases[ff] )) || alias ff='fzf-cli'
-(( $+aliases[fff] )) || alias fff='fzf-cli file'
+(( $+aliases[fx] )) || alias fx='fzf-cli'
+(( $+aliases[fxf] )) || alias fxf='fzf-cli file'
 
 # These use eval to preserve parent-shell effects:
-if (( ! $+functions[ffd] )); then
-  ffd() { eval "$(fzf-cli directory -- "$@")"; }
+if (( ! $+functions[fxd] )); then
+  fxd() { eval "$(fzf-cli directory -- "$@")"; }
 fi
-if (( ! $+functions[ffh] )); then
-  ffh() { eval "$(fzf-cli history -- "$@")"; }
+if (( ! $+functions[fxh] )); then
+  fxh() { eval "$(fzf-cli history -- "$@")"; }
 fi
 
-(( $+aliases[ffgs] )) || alias ffgs='fzf-cli git-status'
-(( $+aliases[ffgc] )) || alias ffgc='fzf-cli git-commit'
-(( $+aliases[ffgco] )) || alias ffgco='fzf-cli git-checkout'
-(( $+aliases[ffgb] )) || alias ffgb='fzf-cli git-branch'
-(( $+aliases[ffgt] )) || alias ffgt='fzf-cli git-tag'
-(( $+aliases[ffp] )) || alias ffp='fzf-cli process'
-(( $+aliases[ffpo] )) || alias ffpo='fzf-cli port'
-(( $+aliases[ffenv] )) || alias ffenv='fzf-cli env'
-(( $+aliases[ffal] )) || alias ffal='fzf-cli alias'
-(( $+aliases[fffn] )) || alias fffn='fzf-cli function'
-(( $+aliases[ffdef] )) || alias ffdef='fzf-cli def'
+(( $+aliases[fxgs] )) || alias fxgs='fzf-cli git-status'
+(( $+aliases[fxgc] )) || alias fxgc='fzf-cli git-commit'
+(( $+aliases[fxgco] )) || alias fxgco='fzf-cli git-checkout'
+(( $+aliases[fxgb] )) || alias fxgb='fzf-cli git-branch'
+(( $+aliases[fxgt] )) || alias fxgt='fzf-cli git-tag'
+(( $+aliases[fxp] )) || alias fxp='fzf-cli process'
+(( $+aliases[fxpo] )) || alias fxpo='fzf-cli port'
+(( $+aliases[fxenv] )) || alias fxenv='fzf-cli env'
+(( $+aliases[fxal] )) || alias fxal='fzf-cli alias'
+(( $+aliases[fxfn] )) || alias fxfn='fzf-cli function'
+(( $+aliases[fxdef] )) || alias fxdef='fzf-cli def'

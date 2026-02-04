@@ -1,4 +1,4 @@
-# nils-cli bash completion: fzf-cli (and ff* aliases)
+# nils-cli bash completion: fzf-cli (and fx* aliases)
 
 if [[ -z ${BASH_VERSION-} ]]; then
   return 0 2>/dev/null || exit 0
@@ -14,20 +14,20 @@ _nils_cli_fzf_cli_complete() {
 
   local subcmd_override=''
   case "$invoked_as" in
-    fff) subcmd_override='file' ;;
-    ffd) subcmd_override='directory' ;;
-    ffgs) subcmd_override='git-status' ;;
-    ffgc) subcmd_override='git-commit' ;;
-    ffgco) subcmd_override='git-checkout' ;;
-    ffgb) subcmd_override='git-branch' ;;
-    ffgt) subcmd_override='git-tag' ;;
-    ffp) subcmd_override='process' ;;
-    ffpo) subcmd_override='port' ;;
-    ffh) subcmd_override='history' ;;
-    ffenv) subcmd_override='env' ;;
-    ffal) subcmd_override='alias' ;;
-    fffn) subcmd_override='function' ;;
-    ffdef) subcmd_override='def' ;;
+    fxf) subcmd_override='file' ;;
+    fxd) subcmd_override='directory' ;;
+    fxgs) subcmd_override='git-status' ;;
+    fxgc) subcmd_override='git-commit' ;;
+    fxgco) subcmd_override='git-checkout' ;;
+    fxgb) subcmd_override='git-branch' ;;
+    fxgt) subcmd_override='git-tag' ;;
+    fxp) subcmd_override='process' ;;
+    fxpo) subcmd_override='port' ;;
+    fxh) subcmd_override='history' ;;
+    fxenv) subcmd_override='env' ;;
+    fxal) subcmd_override='alias' ;;
+    fxfn) subcmd_override='function' ;;
+    fxdef) subcmd_override='def' ;;
   esac
 
   if [[ -n "$subcmd_override" ]]; then
@@ -100,5 +100,4 @@ _nils_cli_fzf_cli_complete() {
   COMPREPLY=( $(compgen -W "${root_subcmds[*]}" -- "$cur") )
 }
 
-complete -F _nils_cli_fzf_cli_complete fzf-cli ff fff ffd ffgs ffgc ffgco ffgb ffgt ffp ffpo ffh ffenv ffal fffn ffdef
-
+complete -F _nils_cli_fzf_cli_complete fzf-cli fx fxf fxd fxgs fxgc fxgco fxgb fxgt fxp fxpo fxh fxenv fxal fxfn fxdef

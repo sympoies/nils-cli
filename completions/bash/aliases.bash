@@ -55,24 +55,23 @@ _nils_cli__has_alias cxgc || alias cxgc='codex-cli agent commit'
 _nils_cli__has_alias cxst || alias cxst='codex-cli starship'
 
 # ---------------------------------------------------------------------------
-# fzf-cli (ff*)
+# fzf-cli (fx*)
 # ---------------------------------------------------------------------------
-_nils_cli__has_alias ff || alias ff='fzf-cli'
-_nils_cli__has_alias fff || alias fff='fzf-cli file'
+_nils_cli__has_alias fx || alias fx='fzf-cli'
+_nils_cli__has_alias fxf || alias fxf='fzf-cli file'
 
 # These use eval to preserve parent-shell effects:
-_nils_cli__has_function ffd || ffd() { eval "$(fzf-cli directory -- "$@")"; }
-_nils_cli__has_function ffh || ffh() { eval "$(fzf-cli history -- "$@")"; }
+_nils_cli__has_function fxd || fxd() { eval "$(fzf-cli directory -- "$@")"; }
+_nils_cli__has_function fxh || fxh() { eval "$(fzf-cli history -- "$@")"; }
 
-_nils_cli__has_alias ffgs || alias ffgs='fzf-cli git-status'
-_nils_cli__has_alias ffgc || alias ffgc='fzf-cli git-commit'
-_nils_cli__has_alias ffgco || alias ffgco='fzf-cli git-checkout'
-_nils_cli__has_alias ffgb || alias ffgb='fzf-cli git-branch'
-_nils_cli__has_alias ffgt || alias ffgt='fzf-cli git-tag'
-_nils_cli__has_alias ffp || alias ffp='fzf-cli process'
-_nils_cli__has_alias ffpo || alias ffpo='fzf-cli port'
-_nils_cli__has_alias ffenv || alias ffenv='fzf-cli env'
-_nils_cli__has_alias ffal || alias ffal='fzf-cli alias'
-_nils_cli__has_alias fffn || alias fffn='fzf-cli function'
-_nils_cli__has_alias ffdef || alias ffdef='fzf-cli def'
-
+_nils_cli__has_alias fxgs || alias fxgs='fzf-cli git-status'
+_nils_cli__has_alias fxgc || alias fxgc='fzf-cli git-commit'
+_nils_cli__has_alias fxgco || alias fxgco='fzf-cli git-checkout'
+_nils_cli__has_alias fxgb || alias fxgb='fzf-cli git-branch'
+_nils_cli__has_alias fxgt || alias fxgt='fzf-cli git-tag'
+_nils_cli__has_alias fxp || alias fxp='fzf-cli process'
+_nils_cli__has_alias fxpo || alias fxpo='fzf-cli port'
+_nils_cli__has_alias fxenv || alias fxenv='fzf-cli env'
+_nils_cli__has_alias fxal || alias fxal='fzf-cli alias'
+_nils_cli__has_alias fxfn || alias fxfn='fzf-cli function'
+_nils_cli__has_alias fxdef || alias fxdef='fzf-cli def'

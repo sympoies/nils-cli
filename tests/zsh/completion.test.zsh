@@ -311,33 +311,33 @@ if (( ! $+aliases[cxdra] )); then
   exit 1
 fi
 
-if (( ! $+aliases[ff] )); then
-  print -u2 -r -- "FAIL: ff alias not defined"
+if (( ! $+aliases[fx] )); then
+  print -u2 -r -- "FAIL: fx alias not defined"
   exit 1
 fi
 
-if (( ! $+aliases[fff] )); then
-  print -u2 -r -- "FAIL: fff alias not defined"
+if (( ! $+aliases[fxf] )); then
+  print -u2 -r -- "FAIL: fxf alias not defined"
   exit 1
 fi
 
-if (( ! $+aliases[ffgs] )); then
-  print -u2 -r -- "FAIL: ffgs alias not defined"
+if (( ! $+aliases[fxgs] )); then
+  print -u2 -r -- "FAIL: fxgs alias not defined"
   exit 1
 fi
 
-if (( ! $+aliases[ffdef] )); then
-  print -u2 -r -- "FAIL: ffdef alias not defined"
+if (( ! $+aliases[fxdef] )); then
+  print -u2 -r -- "FAIL: fxdef alias not defined"
   exit 1
 fi
 
-if (( ! $+functions[ffd] )); then
-  print -u2 -r -- "FAIL: ffd function not defined"
+if (( ! $+functions[fxd] )); then
+  print -u2 -r -- "FAIL: fxd function not defined"
   exit 1
 fi
 
-if (( ! $+functions[ffh] )); then
-  print -u2 -r -- "FAIL: ffh function not defined"
+if (( ! $+functions[fxh] )); then
+  print -u2 -r -- "FAIL: fxh function not defined"
   exit 1
 fi
 
@@ -451,7 +451,7 @@ bash -c "set -euo pipefail; source \"$BASH_LOCK_FILE\"; complete -p git-lock | g
   exit 1
 }
 
-bash -c "set -euo pipefail; source \"$BASH_FZF_CLI_FILE\"; complete -p fzf-cli | grep -q _nils_cli_fzf_cli_complete; complete -p ff | grep -q _nils_cli_fzf_cli_complete" || {
+bash -c "set -euo pipefail; source \"$BASH_FZF_CLI_FILE\"; complete -p fzf-cli | grep -q _nils_cli_fzf_cli_complete; complete -p fx | grep -q _nils_cli_fzf_cli_complete" || {
   print -u2 -r -- "FAIL: failed to source bash fzf-cli completion file"
   exit 1
 }
@@ -486,7 +486,7 @@ bash -c "set -euo pipefail; source \"$BASH_CODEX_CLI_FILE\"; complete -p codex-c
   exit 1
 }
 
-bash -c "set -euo pipefail; source \"$BASH_ALIASES_FILE\"; alias gs >/dev/null; alias cx >/dev/null; alias ff >/dev/null; declare -F ffd >/dev/null; declare -F ffh >/dev/null" || {
+bash -c "set -euo pipefail; source \"$BASH_ALIASES_FILE\"; alias gs >/dev/null; alias cx >/dev/null; alias fx >/dev/null; declare -F fxd >/dev/null; declare -F fxh >/dev/null" || {
   print -u2 -r -- "FAIL: failed to source bash nils-cli aliases file"
   exit 1
 }
