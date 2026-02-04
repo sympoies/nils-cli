@@ -1,5 +1,10 @@
 #compdef fzf-cli
 
+__fzf_cli_query() {
+  emulate -L zsh -o extendedglob
+  builtin compadd -x 'query'
+}
+
 _fzf-cli() {
   emulate -L zsh -o extendedglob
 
@@ -39,33 +44,53 @@ _fzf-cli() {
       _describe -t commands 'fzf-cli command' subcommands && return 0
       ;;
     args)
+      local cur="${orig_words[orig_current]-}"
+      cur="${cur%%[[:space:]]#}"
+
       local subcmd="${line[1]:-${orig_words[2]-}}"
       subcmd="${subcmd%%[[:space:]]#}"
 
       case "$subcmd" in
         file|directory)
-          _arguments -C \
-            '(--vi --vscode)--vi[Open files with vi]' \
-            '(--vscode --vi)--vscode[Open files with VSCode]' \
-            '--[End of options]' \
-            '*:query:_message -r "query"' \
-            && return 0
+          if [[ "$cur" == -* ]]; then
+            local -a opts=(
+              '--vi:Open files with vi'
+              '--vscode:Open files with VSCode'
+              '--:End of options'
+            )
+            _describe -t options 'option' opts && return 0
+            return 0
+          fi
+          __fzf_cli_query
+          return 0
           ;;
         git-commit)
-          _arguments -C \
-            '--snapshot[Open snapshot from selected commit by default]' \
-            '*:query:_message -r "query"' \
-            && return 0
+          if [[ "$cur" == -* ]]; then
+            local -a opts=(
+              '--snapshot:Open snapshot from selected commit by default'
+            )
+            _describe -t options 'option' opts && return 0
+            return 0
+          fi
+          __fzf_cli_query
+          return 0
           ;;
         process|port)
-          _arguments -C \
-            '(-k --kill)'{-k,--kill}'[Kill without interactive confirmation]' \
-            '(-9 --force)'{-9,--force}'[Force SIGKILL (-9)]' \
-            '*:query:_message -r "query"' \
-            && return 0
+          if [[ "$cur" == -* ]]; then
+            local -a opts=(
+              '-k:Kill without interactive confirmation'
+              '--kill:Kill without interactive confirmation'
+              '-9:Force SIGKILL (-9)'
+              '--force:Force SIGKILL (-9)'
+            )
+            _describe -t options 'option' opts && return 0
+            return 0
+          fi
+          __fzf_cli_query
+          return 0
           ;;
         git-status|git-checkout|git-branch|git-tag|history|env|alias|function|def|help)
-          _message 'query (optional)'
+          builtin compadd -x 'query (optional)'
           return 0
           ;;
       esac
