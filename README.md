@@ -46,11 +46,11 @@ Then download the matching `nils-cli-<tag>-<target>.tar.gz` asset, extract it, a
 `<extract_dir>/bin` to your `PATH`.
 
 For zsh completions, add `<extract_dir>/completions/zsh` to your `fpath` and run `compinit`.
-Optional: source `<extract_dir>/completions/zsh/aliases.zsh` to enable `gs*`/`cx*`/`ff*` aliases.
+Optional: source `<extract_dir>/completions/zsh/aliases.zsh` to enable `gs*`/`cx*`/`fx*` aliases.
 
 For bash completions, copy `<extract_dir>/completions/bash/<command>` into your bash-completion directory
 (example: `~/.local/share/bash-completion/completions/`) or source it from your shell init.
-Optional: source `<extract_dir>/completions/bash/aliases.bash` to enable `gs*`/`cx*`/`ff*` aliases.
+Optional: source `<extract_dir>/completions/bash/aliases.bash` to enable `gs*`/`cx*`/`fx*` aliases.
 
 ## git-scope
 - Example usage: `git-scope staged`, `git-scope all -p`, `git-scope commit HEAD -p`
@@ -73,7 +73,7 @@ Optional: source `<extract_dir>/completions/bash/aliases.bash` to enable `gs*`/`
 ## fzf-cli
 - Example usage: `fzf-cli file`, `fzf-cli directory`, `fzf-cli history`, `fzf-cli port`, `fzf-cli process`
 - Note: some subcommands print shell commands for `eval` (e.g. `fzf-cli directory` prints a `cd ...`), see [crates/fzf-cli/README.md](crates/fzf-cli/README.md).
-- Optional aliases (opt-in): `ff*` (Zsh: [completions/zsh/aliases.zsh](completions/zsh/aliases.zsh), Bash: [completions/bash/aliases.bash](completions/bash/aliases.bash)); `ffd` and `ffh` are functions that `eval` the emitted command.
+- Optional aliases (opt-in): `fx*` (Zsh: [completions/zsh/aliases.zsh](completions/zsh/aliases.zsh), Bash: [completions/bash/aliases.bash](completions/bash/aliases.bash)); `fxd` and `fxh` are functions that `eval` the emitted command.
 
 ## codex-cli
 - Docs: [crates/codex-cli/README.md](crates/codex-cli/README.md)

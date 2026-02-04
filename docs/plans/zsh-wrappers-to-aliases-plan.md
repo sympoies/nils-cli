@@ -6,14 +6,14 @@ where required) so that, after `brew install`, users can enable short commands w
 line and still get completion via the existing `compdef` mappings in `completions/zsh/`.
 
 Initial scope: `git-scope` (`gs*` aliases for all subcommands), `codex-cli` (`cx*` only), and `fzf-cli`
-(`ff*` naming scheme).
+(`fx*` naming scheme).
 
 ## Scope
 - In scope:
   - Add a Zsh aliases snippet (opt-in via `source`) providing aliases for:
     - `git-scope` (`gs*` aliases for all subcommands)
     - `codex-cli` (`cx*` only; drop legacy `codex-*` and `crl/crla`)
-    - `fzf-cli` (`ff*` aliases, with function wrappers only where needed for parent-shell effects)
+    - `fzf-cli` (`fx*` aliases, with function wrappers only where needed for parent-shell effects)
   - Remove wrapper scripts that exist solely to provide these alias entrypoints.
   - Update Zsh completion registrations so alias names trigger the same completion as the underlying binary.
   - Update docs to describe the new setup for Homebrew and release tarball installs.
@@ -44,10 +44,10 @@ Initial scope: `git-scope` (`gs*` aliases for all subcommands), `codex-cli` (`cx
 - Do not support legacy long names (e.g. `codex-use`) or `crl/crla`; keep `cx*` only.
 
 ### fzf-cli
-- Use the `ff` prefix:
-  - `ff` maps to `fzf-cli`.
-  - `ff*` maps to a specific `fzf-cli <subcommand>` dispatcher command.
-  - Prefer readable abbreviations that avoid collisions (`ffdef`, `fffn`, `ffal`, etc.).
+- Use the `fx` prefix:
+  - `fx` maps to `fzf-cli`.
+  - `fx*` maps to a specific `fzf-cli <subcommand>` dispatcher command.
+  - Prefer readable abbreviations that avoid collisions (`fxdef`, `fxfn`, `fxal`, etc.).
 
 ## Alias inventory
 ### git-scope
@@ -78,21 +78,21 @@ Initial scope: `git-scope` (`gs*` aliases for all subcommands), `codex-cli` (`cx
 - `cxgc` → `codex-cli agent commit`
 
 ### fzf-cli
-- `ff` → `fzf-cli`
-- `fff` → `fzf-cli file`
-- `ffd` → `fzf-cli directory` (prefer a function wrapper to support `cd` via `eval`)
-- `ffgs` → `fzf-cli git-status`
-- `ffgc` → `fzf-cli git-commit`
-- `ffgco` → `fzf-cli git-checkout`
-- `ffgb` → `fzf-cli git-branch`
-- `ffgt` → `fzf-cli git-tag`
-- `ffp` → `fzf-cli process`
-- `ffpo` → `fzf-cli port`
-- `ffh` → `fzf-cli history` (prefer a function wrapper to support `eval`)
-- `ffenv` → `fzf-cli env`
-- `ffal` → `fzf-cli alias`
-- `fffn` → `fzf-cli function`
-- `ffdef` → `fzf-cli def`
+- `fx` → `fzf-cli`
+- `fxf` → `fzf-cli file`
+- `fxd` → `fzf-cli directory` (prefer a function wrapper to support `cd` via `eval`)
+- `fxgs` → `fzf-cli git-status`
+- `fxgc` → `fzf-cli git-commit`
+- `fxgco` → `fzf-cli git-checkout`
+- `fxgb` → `fzf-cli git-branch`
+- `fxgt` → `fzf-cli git-tag`
+- `fxp` → `fzf-cli process`
+- `fxpo` → `fzf-cli port`
+- `fxh` → `fzf-cli history` (prefer a function wrapper to support `eval`)
+- `fxenv` → `fzf-cli env`
+- `fxal` → `fzf-cli alias`
+- `fxfn` → `fzf-cli function`
+- `fxdef` → `fzf-cli def`
 
 ## Sprint 1: Add aliases + completion support
 **Goal**: Land an opt-in aliases file for the full inventory and ensure completion works for all alias names.
@@ -167,7 +167,7 @@ Initial scope: `git-scope` (`gs*` aliases for all subcommands), `codex-cli` (`cx
   - Sourcing the file in `zsh -f` does not error.
   - Aliases/functions are not redefined if the user already has them defined.
 - **Validation**:
-  - `zsh -f -c 'source completions/zsh/aliases.zsh && alias gs && alias cx && alias ff'`
+  - `zsh -f -c 'source completions/zsh/aliases.zsh && alias gs && alias cx && alias fx'`
 
 ### Task 1.3: Update `git-scope` completion registration for `gs*`
 - **Location**:
@@ -185,20 +185,20 @@ Initial scope: `git-scope` (`gs*` aliases for all subcommands), `codex-cli` (`cx
   - `rg -n \"#compdef git-scope\" completions/zsh/_git-scope`
   - `rg -n \"compdef _git-scope\" completions/zsh/_git-scope`
 
-### Task 1.4: Update `fzf-cli` completion registration for `ff*`
+### Task 1.4: Update `fzf-cli` completion registration for `fx*`
 - **Location**:
   - `completions/zsh/_fzf-cli`
-- **Description**: Register completion for `ff*` alias names by adding them to the `#compdef` header and
+- **Description**: Register completion for `fx*` alias names by adding them to the `#compdef` header and
   the explicit `compdef` call, so completion triggers for aliases without requiring
-  `setopt complete_aliases`. Add `invoked_as` override handling so `ff*` aliases that map to a fixed
-  dispatcher subcommand complete as if that subcommand were already selected (e.g., `fff` behaves like
+  `setopt complete_aliases`. Add `invoked_as` override handling so `fx*` aliases that map to a fixed
+  dispatcher subcommand complete as if that subcommand were already selected (e.g., `fxf` behaves like
   `fzf-cli file` completion).
 - **Dependencies**:
   - Task 1.2
 - **Complexity**: 2
 - **Acceptance criteria**:
-  - `completions/zsh/_fzf-cli` registers `compdef _fzf-cli` for every `ff*` name in the alias inventory.
-  - `invoked_as` overrides cover `ff*` aliases that map to a fixed dispatcher subcommand.
+  - `completions/zsh/_fzf-cli` registers `compdef _fzf-cli` for every `fx*` name in the alias inventory.
+  - `invoked_as` overrides cover `fx*` aliases that map to a fixed dispatcher subcommand.
 - **Validation**:
   - `rg -n \"#compdef fzf-cli\" completions/zsh/_fzf-cli`
   - `rg -n \"compdef _fzf-cli\" completions/zsh/_fzf-cli`
@@ -235,7 +235,7 @@ Initial scope: `git-scope` (`gs*` aliases for all subcommands), `codex-cli` (`cx
   - CI runs a Zsh test that sources the aliases snippet and asserts representative names exist:
     - `gs/gst/gss/gsu/gsa/gsun/gsc/gsh`
     - `cx/cxau/cxst/cxdr/cxdra`
-    - `ff/fff/ffgs/ffdef`
+    - `fx/fxf/fxgs/fxdef`
 - **Validation**:
   - `zsh -f tests/zsh/completion.test.zsh`
 
@@ -377,29 +377,29 @@ Initial scope: `git-scope` (`gs*` aliases for all subcommands), `codex-cli` (`cx
   - `cxau --help` behaves like `codex-cli auth use --help`.
   - `cxst --help` behaves like `codex-cli starship --help`.
   - `cxdra --help` behaves like `codex-cli diag rate-limits --help` (with `--async` implied by alias).
-  - `ff --help` behaves like `fzf-cli --help`.
-  - Tab completion works for representative codex aliases (`cx`, `cxau`, `cxst`) and fzf aliases (`ff`, `fff`, `ffgs`).
+  - `fx --help` behaves like `fzf-cli --help`.
+  - Tab completion works for representative codex aliases (`cx`, `cxau`, `cxst`) and fzf aliases (`fx`, `fxf`, `fxgs`).
 - **Validation**:
   - New zsh session:
     - Ensure `compinit` is enabled and `_git-scope` is installed.
     - `source \"$(brew --prefix nils-cli)/share/nils-cli/aliases.zsh\"`.
     - Type `gs ` then press Tab; repeat for `gss ` and `gsc `.
     - Type `cx ` then press Tab; repeat for `cxst ` and `cxdra `.
-    - Type `ff ` then press Tab; repeat for `fff ` and `ffgs `.
+    - Type `fx ` then press Tab; repeat for `fxf ` and `fxgs `.
 
 ## Testing Strategy
 - Unit: none (no Rust behavior changes).
 - Integration:
   - `zsh -f tests/zsh/completion.test.zsh` (and/or new alias-focused test) ensures Zsh assets are sourceable.
 - E2E/manual:
-  - In a clean Zsh session: source the aliases file, then verify completion works for `gs`, `cx`, and `ff`.
+  - In a clean Zsh session: source the aliases file, then verify completion works for `gs`, `cx`, and `fx`.
 
 ## Risks & gotchas
 - **Alias conflicts**: `gs` is a common alias name; the snippet should avoid overwriting existing aliases.
 - **Non-interactive shells**: aliases are not available unless sourced; wrapper removal may affect scripts.
 - **Completion ordering**: completion requires `compinit` and completion files in `completions/zsh/` installed/available.
 - **Homebrew caveats**: brew can install files but cannot auto-edit `~/.zshrc`; the formula must print instructions.
-- **Parent-shell effects**: `fzf-cli directory` and `fzf-cli history` require `eval` to fully match the original UX; prefer function wrappers for `ffd` and `ffh`.
+- **Parent-shell effects**: `fzf-cli directory` and `fzf-cli history` require `eval` to fully match the original UX; prefer function wrappers for `fxd` and `fxh`.
 
 ## Rollback plan
 - Reintroduce `wrappers/gs`, `wrappers/gsc`, `wrappers/gst` as scripts if alias-only proves too limiting.
