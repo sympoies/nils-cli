@@ -28,3 +28,20 @@ fn rate_limits_ansi_format_percent_cell_and_token() {
 
     assert_eq!(ansi::format_percent_token("", Some(true)), "");
 }
+
+#[test]
+fn rate_limits_ansi_format_name_cell() {
+    assert_eq!(
+        ansi::format_name_cell("work", 15, true, Some(false)),
+        "work           "
+    );
+    assert_eq!(
+        ansi::format_name_cell("work", 15, false, Some(true)),
+        "work           "
+    );
+
+    let rendered = ansi::format_name_cell("work", 15, true, Some(true));
+    assert!(rendered.starts_with("\x1b[38;2;199;146;234m"));
+    assert!(rendered.ends_with("\x1b[0m"));
+    assert!(rendered.contains("work"));
+}

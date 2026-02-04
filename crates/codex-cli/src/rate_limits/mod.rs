@@ -346,6 +346,8 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
         }
     }
 
+    let current_name = current_secret_basename(&secret_files);
+
     let now_epoch = Utc::now().timestamp();
 
     println!(
@@ -389,9 +391,12 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
             ansi::format_percent_cell("-", 8, None)
         };
 
+        let is_current = current_name.as_deref() == Some(row.name.as_str());
+        let name_display = ansi::format_name_cell(&row.name, 15, is_current, None);
+
         println!(
-            "{:<15}  {}  {:>7}  {}  {:>7}  {:<11}",
-            row.name,
+            "{}  {}  {:>7}  {}  {:>7}  {:<11}",
+            name_display,
             non_weekly_display,
             non_weekly_left,
             weekly_display,
@@ -763,6 +768,8 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
 
     secret_files.sort();
 
+    let current_name = current_secret_basename(&secret_files);
+
     let total = secret_files.len();
     let progress = if total > 1 {
         Some(Progress::new(
@@ -901,9 +908,12 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
             ansi::format_percent_cell("-", 8, None)
         };
 
+        let is_current = current_name.as_deref() == Some(row.name.as_str());
+        let name_display = ansi::format_name_cell(&row.name, 15, is_current, None);
+
         println!(
-            "{:<15}  {}  {:>7}  {}  {:>7}  {:<11}",
-            row.name,
+            "{}  {}  {:>7}  {}  {:>7}  {:<11}",
+            name_display,
             non_weekly_display,
             non_weekly_left,
             weekly_display,
@@ -913,6 +923,42 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
     }
 
     Ok(rc)
+}
+
+fn current_secret_basename(secret_files: &[PathBuf]) -> Option<String> {
+    let auth_file = crate::paths::resolve_auth_file()?;
+    if !auth_file.is_file() {
+        return None;
+    }
+
+    let auth_key = auth::identity_key_from_auth_file(&auth_file).ok().flatten();
+    let auth_hash = crate::fs::sha256_file(&auth_file).ok();
+
+    if let Some(auth_hash) = auth_hash.as_deref() {
+        for secret_file in secret_files {
+            if let Ok(secret_hash) = crate::fs::sha256_file(secret_file) {
+                if secret_hash == auth_hash {
+                    if let Some(name) = secret_file.file_name().and_then(|name| name.to_str()) {
+                        return Some(name.trim_end_matches(".json").to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(auth_key) = auth_key.as_deref() {
+        for secret_file in secret_files {
+            if let Ok(Some(candidate_key)) = auth::identity_key_from_auth_file(secret_file) {
+                if candidate_key == auth_key {
+                    if let Some(name) = secret_file.file_name().and_then(|name| name.to_str()) {
+                        return Some(name.trim_end_matches(".json").to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    None
 }
 
 fn run_single_mode(

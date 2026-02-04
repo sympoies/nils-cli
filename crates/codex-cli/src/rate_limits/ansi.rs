@@ -1,10 +1,28 @@
 use std::io::{self, IsTerminal};
 
+const CURRENT_PROFILE_FG: &str = "\x1b[38;2;199;146;234m";
+
 pub fn should_color() -> bool {
     if std::env::var_os("NO_COLOR").is_some() {
         return false;
     }
     io::stdout().is_terminal()
+}
+
+pub fn format_name_cell(
+    raw: &str,
+    width: usize,
+    is_current: bool,
+    color_enabled: Option<bool>,
+) -> String {
+    let padded = format!("{:<width$}", raw, width = width);
+
+    let enabled = color_enabled.unwrap_or_else(should_color);
+    if !enabled || !is_current {
+        return padded;
+    }
+
+    format!("{CURRENT_PROFILE_FG}{padded}{}", reset())
 }
 
 pub fn format_percent_cell(raw: &str, width: usize, color_enabled: Option<bool>) -> String {
