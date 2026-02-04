@@ -244,6 +244,103 @@ fn commit_context_fixture_f032_missing_file() {
 }
 
 #[test]
+fn commit_context_no_staged_changes() {
+    let repo = TempDir::new().expect("tempdir");
+    git_init_repo(repo.path());
+
+    fs::write(repo.path().join("hello.txt"), "base\n").expect("write hello");
+    git_commit_all(repo.path(), "init", "2000-01-01T00:00:00+0000");
+
+    let harness = GitCliHarness::new();
+    let output = run_with(
+        &harness.git_cli_bin(),
+        &["commit", "context"],
+        &harness.cmd_options(repo.path()),
+    );
+
+    assert_exit_code("F035", &output, 1);
+    let stderr = output.stderr_text();
+    assert_stderr_contains_all("F035", &stderr, &["⚠️  No staged changes to record"]);
+}
+
+#[test]
+fn commit_context_missing_include_value() {
+    let repo = TempDir::new().expect("tempdir");
+    git_init_repo(repo.path());
+
+    fs::write(repo.path().join("hello.txt"), "base\n").expect("write hello");
+    git_commit_all(repo.path(), "init", "2000-01-01T00:00:00+0000");
+
+    let harness = GitCliHarness::new();
+    let output = run_with(
+        &harness.git_cli_bin(),
+        &["commit", "context", "--include"],
+        &harness.cmd_options(repo.path()),
+    );
+
+    assert_exit_code("F036", &output, 2);
+    let stderr = output.stderr_text();
+    assert_stderr_contains_all("F036", &stderr, &["❌ Missing value for --include"]);
+}
+
+#[test]
+fn commit_context_help_output() {
+    let repo = TempDir::new().expect("tempdir");
+    git_init_repo(repo.path());
+
+    fs::write(repo.path().join("hello.txt"), "base\n").expect("write hello");
+    git_commit_all(repo.path(), "init", "2000-01-01T00:00:00+0000");
+
+    let harness = GitCliHarness::new();
+    let output = run_with(
+        &harness.git_cli_bin(),
+        &["commit", "context", "--help"],
+        &harness.cmd_options(repo.path()),
+    );
+
+    assert_exit_code("F037", &output, 0);
+    let stdout = output.stdout_text();
+    assert_stdout_contains_all(
+        "F037",
+        &stdout,
+        &[
+            "Usage: git-commit-context",
+            "--stdout",
+            "--both",
+            "--no-color",
+            "--include",
+        ],
+    );
+}
+
+#[test]
+fn commit_context_missing_git_scope() {
+    let repo = TempDir::new().expect("tempdir");
+    git_init_repo(repo.path());
+
+    fs::write(repo.path().join("hello.txt"), "base\n").expect("write hello");
+    git_commit_all(repo.path(), "init", "2000-01-01T00:00:00+0000");
+
+    fs::write(repo.path().join("hello.txt"), "base\nchange\n").expect("write hello");
+    git(repo.path(), &["add", "hello.txt"]);
+
+    let harness = GitCliHarness::new();
+    let options = harness
+        .cmd_options(repo.path())
+        .with_env("GIT_CLI_FIXTURE_GIT_SCOPE_MODE", "missing");
+
+    let output = run_with(&harness.git_cli_bin(), &["commit", "context"], &options);
+
+    assert_exit_code("F038", &output, 1);
+    let stderr = output.stderr_text();
+    assert_stderr_contains_all(
+        "F038",
+        &stderr,
+        &["❗ git-scope is required but was not found in PATH."],
+    );
+}
+
+#[test]
 fn commit_context_json_fixture_f033() {
     let root = TempDir::new().expect("tempdir");
     let repo_path = root.path().join("f033-commit-context-json");
@@ -312,6 +409,130 @@ fn commit_context_json_fixture_f033() {
     assert_eq!(manifest, format!("{json_body}\n"));
     assert_eq!(patch, patch_body);
     assert_eq!(generated_at, "2000-01-02T03:04:05Z");
+}
+
+#[test]
+fn commit_context_json_no_staged_changes() {
+    let repo = TempDir::new().expect("tempdir");
+    git_init_repo(repo.path());
+
+    fs::write(repo.path().join("hello.txt"), "base\n").expect("write hello");
+    git_commit_all(repo.path(), "init", "2000-01-01T00:00:00+0000");
+
+    let harness = GitCliHarness::new();
+    let output = run_with(
+        &harness.git_cli_bin(),
+        &["commit", "context-json"],
+        &harness.cmd_options(repo.path()),
+    );
+
+    assert_exit_code("F039", &output, 1);
+    let stderr = output.stderr_text();
+    assert_stderr_contains_all("F039", &stderr, &["⚠️  No staged changes to record"]);
+}
+
+#[test]
+fn commit_context_json_bad_out_dir() {
+    let repo = TempDir::new().expect("tempdir");
+    git_init_repo(repo.path());
+
+    fs::write(repo.path().join("hello.txt"), "base\n").expect("write hello");
+    git_commit_all(repo.path(), "init", "2000-01-01T00:00:00+0000");
+
+    fs::write(repo.path().join("hello.txt"), "base\nchange\n").expect("write hello");
+    git(repo.path(), &["add", "hello.txt"]);
+
+    let out_dir = repo.path().join("out-file");
+    fs::write(&out_dir, "not a dir\n").expect("write out dir file");
+
+    let harness = GitCliHarness::new();
+    let output = run_with(
+        &harness.git_cli_bin(),
+        &[
+            "commit",
+            "context-json",
+            "--out-dir",
+            out_dir.to_string_lossy().as_ref(),
+        ],
+        &harness.cmd_options(repo.path()),
+    );
+
+    assert_exit_code("F040", &output, 1);
+    let stderr = output.stderr_text();
+    assert_stderr_contains_all(
+        "F040",
+        &stderr,
+        &[&format!(
+            "❌ Failed to create output directory: {}",
+            out_dir.to_string_lossy()
+        )],
+    );
+}
+
+#[test]
+fn commit_context_json_stdout_non_bundle() {
+    let repo = TempDir::new().expect("tempdir");
+    git_init_repo(repo.path());
+
+    fs::write(repo.path().join("hello.txt"), "base\n").expect("write hello");
+    git_commit_all(repo.path(), "init", "2000-01-01T00:00:00+0000");
+
+    fs::write(repo.path().join("hello.txt"), "base\nchange\n").expect("write hello");
+    git(repo.path(), &["add", "hello.txt"]);
+
+    let out_dir = repo.path().join("out/commit-context");
+    let harness = GitCliHarness::new();
+    let output = run_with(
+        &harness.git_cli_bin(),
+        &[
+            "commit",
+            "context-json",
+            "--stdout",
+            "--out-dir",
+            out_dir.to_string_lossy().as_ref(),
+        ],
+        &harness.cmd_options(repo.path()),
+    );
+
+    assert_exit_code("F041", &output, 0);
+    let stdout = output.stdout_text();
+    assert!(!stdout.contains("===== commit-context.json ====="));
+    let parsed: Value = serde_json::from_str(stdout.trim()).expect("parse json stdout");
+    assert_eq!(
+        parsed.get("schemaVersion").and_then(|value| value.as_i64()),
+        Some(1)
+    );
+}
+
+#[test]
+fn commit_context_json_help_output() {
+    let repo = TempDir::new().expect("tempdir");
+    git_init_repo(repo.path());
+
+    fs::write(repo.path().join("hello.txt"), "base\n").expect("write hello");
+    git_commit_all(repo.path(), "init", "2000-01-01T00:00:00+0000");
+
+    let harness = GitCliHarness::new();
+    let output = run_with(
+        &harness.git_cli_bin(),
+        &["commit", "context-json", "--help"],
+        &harness.cmd_options(repo.path()),
+    );
+
+    assert_exit_code("F042", &output, 0);
+    let stdout = output.stdout_text();
+    assert_stdout_contains_all(
+        "F042",
+        &stdout,
+        &[
+            "Usage: git-commit-context-json",
+            "--stdout",
+            "--both",
+            "--pretty",
+            "--bundle",
+            "--out-dir",
+        ],
+    );
 }
 
 #[test]

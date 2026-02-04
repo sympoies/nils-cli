@@ -66,3 +66,71 @@ pub fn run_capture(cmd: &str, args: &[&str]) -> Result<String> {
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use tempfile::TempDir;
+
+    #[test]
+    fn find_in_path_with_explicit_missing_path_returns_none() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("missing");
+
+        let found = find_in_path(path.to_string_lossy().as_ref());
+
+        assert!(found.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn find_in_path_with_non_executable_file_returns_none() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("file");
+        File::create(&path).expect("create file");
+
+        let mut perms = fs::metadata(&path).expect("metadata").permissions();
+        perms.set_mode(0o644);
+        fs::set_permissions(&path, perms).expect("set permissions");
+
+        let found = find_in_path(path.to_string_lossy().as_ref());
+
+        assert!(found.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn find_in_path_with_executable_file_returns_path() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("exec");
+        File::create(&path).expect("create file");
+
+        let mut perms = fs::metadata(&path).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&path, perms).expect("set permissions");
+
+        let found = find_in_path(path.to_string_lossy().as_ref());
+
+        assert_eq!(found, Some(path));
+    }
+
+    #[test]
+    fn run_capture_reports_spawn_failure() {
+        let err = run_capture("definitely-not-a-command-xyz", &[]).expect_err("should fail");
+
+        assert!(err
+            .to_string()
+            .contains("spawn definitely-not-a-command-xyz"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_capture_reports_nonzero_exit() {
+        let err =
+            run_capture("sh", &["-c", "printf 'oops' 1>&2; exit 1"]).expect_err("should fail");
+
+        assert!(err.to_string().contains("failed:"));
+        assert!(err.to_string().contains("oops"));
+    }
+}

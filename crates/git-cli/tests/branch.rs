@@ -37,6 +37,56 @@ fn setup_repo_with_branches() -> tempfile::TempDir {
 }
 
 #[test]
+fn branch_cleanup_help() {
+    let harness = GitCliHarness::new();
+    let dir = tempfile::TempDir::new().expect("tempdir");
+
+    let output = harness.run(dir.path(), &["branch", "cleanup", "--help"]);
+
+    assert_eq!(output.code, 0);
+    assert!(output
+        .stdout_text()
+        .contains("Usage: git-delete-merged-branches [-b|--base <ref>] [-s|--squash]\n"));
+    assert_eq!(output.stderr_text(), "");
+}
+
+#[test]
+fn branch_cleanup_missing_base_arg() {
+    let harness = GitCliHarness::new();
+    let dir = init_repo();
+
+    let output = harness.run(dir.path(), &["branch", "cleanup", "--base"]);
+
+    assert_eq!(output.code, 2);
+    assert_eq!(output.stdout_text(), "");
+    assert_eq!(output.stderr_text(), "");
+}
+
+#[test]
+fn branch_cleanup_not_in_repo() {
+    let harness = GitCliHarness::new();
+    let dir = tempfile::TempDir::new().expect("tempdir");
+
+    let output = harness.run(dir.path(), &["branch", "cleanup"]);
+
+    assert_eq!(output.code, 1);
+    assert_eq!(output.stdout_text(), "");
+    assert_eq!(output.stderr_text(), "❌ Not in a git repository\n");
+}
+
+#[test]
+fn branch_cleanup_invalid_base_ref() {
+    let harness = GitCliHarness::new();
+    let dir = init_repo();
+
+    let output = harness.run(dir.path(), &["branch", "cleanup", "--base", "nope"]);
+
+    assert_eq!(output.code, 1);
+    assert_eq!(output.stdout_text(), "");
+    assert_eq!(output.stderr_text(), "❌ Invalid base ref: nope\n");
+}
+
+#[test]
 fn branch_cleanup_merged_lists_candidates_and_aborts() {
     let harness = GitCliHarness::new();
     let dir = setup_repo_with_branches();

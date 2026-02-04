@@ -77,6 +77,21 @@ fn group_usage_prints_help_for_group() {
 }
 
 #[test]
+fn group_help_token_prints_group_usage() {
+    let harness = GitCliHarness::new();
+    let dir = tempfile::TempDir::new().expect("tempdir");
+
+    let output = harness.run(dir.path(), &["ci", "--help"]);
+
+    assert_eq!(output.code, 0);
+    assert_eq!(output.stderr_text(), "");
+    assert_eq!(
+        output.stdout_text(),
+        "Usage: git-cli ci <command> [args]\n  pick\n"
+    );
+}
+
+#[test]
 fn unknown_command_prints_error_and_group_usage() {
     let harness = GitCliHarness::new();
     let dir = tempfile::TempDir::new().expect("tempdir");
@@ -89,6 +104,33 @@ fn unknown_command_prints_error_and_group_usage() {
         output.stdout_text(),
         "Usage: git-cli utils <command> [args]\n  zip | copy-staged | root | commit-hash\n"
     );
+}
+
+#[test]
+fn commit_unknown_command_prints_error_and_usage() {
+    let harness = GitCliHarness::new();
+    let dir = tempfile::TempDir::new().expect("tempdir");
+
+    let output = harness.run(dir.path(), &["commit", "nope"]);
+
+    assert_eq!(output.code, 2);
+    assert_eq!(output.stderr_text(), "Unknown commit command: nope\n");
+    assert_eq!(
+        output.stdout_text(),
+        "Usage: git-cli commit <command> [args]\n  context | context-json | to-stash\n"
+    );
+}
+
+#[test]
+fn unknown_group_help_prints_error_and_usage() {
+    let harness = GitCliHarness::new();
+    let dir = tempfile::TempDir::new().expect("tempdir");
+
+    let output = harness.run(dir.path(), &["nope", "help"]);
+
+    assert_eq!(output.code, 2);
+    assert_eq!(output.stderr_text(), "Unknown group: nope\n");
+    assert_eq!(output.stdout_text(), top_level_usage());
 }
 
 #[test]

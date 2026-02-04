@@ -41,6 +41,50 @@ fn ci_pick_usage_missing_args() {
 }
 
 #[test]
+fn ci_pick_help_shows_usage() {
+    let harness = GitCliHarness::new();
+    let dir = tempfile::TempDir::new().expect("tempdir");
+
+    let output = harness.run(dir.path(), &["ci", "pick", "--help"]);
+
+    assert_eq!(output.code, 0);
+    assert!(output
+        .stdout_text()
+        .contains("git-pick: create and push a CI branch"));
+    assert!(output
+        .stdout_text()
+        .contains("Usage:\n  git-pick <target> <commit-or-range> <name>\n"));
+    assert_eq!(output.stderr_text(), "");
+}
+
+#[test]
+fn ci_pick_usage_unknown_flag() {
+    let harness = GitCliHarness::new();
+    let dir = init_repo();
+
+    let output = harness.run(dir.path(), &["ci", "pick", "--bogus"]);
+
+    assert_eq!(output.code, 2);
+    assert_eq!(output.stdout_text(), "");
+    assert_eq!(
+        output.stderr_text(),
+        "❌ Usage: git-pick <target> <commit-or-range> <name>\n   Try: git-pick --help\n"
+    );
+}
+
+#[test]
+fn ci_pick_reports_not_in_repo() {
+    let harness = GitCliHarness::new();
+    let dir = tempfile::TempDir::new().expect("tempdir");
+
+    let output = harness.run(dir.path(), &["ci", "pick", "main", "HEAD", "test"]);
+
+    assert_eq!(output.code, 1);
+    assert_eq!(output.stdout_text(), "");
+    assert_eq!(output.stderr_text(), "❌ Not inside a Git repository.\n");
+}
+
+#[test]
 fn ci_pick_refuses_in_progress_op() {
     let harness = GitCliHarness::new();
     let dir = init_repo();
@@ -55,6 +99,98 @@ fn ci_pick_refuses_in_progress_op() {
     assert_eq!(
         output.stderr_text(),
         "❌ Refusing to run during an in-progress Git operation:\n   - cherry-pick in progress\n"
+    );
+}
+
+#[test]
+fn ci_pick_refuses_remote_target_with_mismatched_remote() {
+    let harness = GitCliHarness::new();
+    let dir = init_repo();
+    let origin = init_bare_remote();
+    let upstream = init_bare_remote();
+
+    add_remote(dir.path(), "origin", &origin);
+    add_remote(dir.path(), "upstream", &upstream);
+    push_main(dir.path(), "origin");
+
+    let output = harness.run(
+        dir.path(),
+        &[
+            "ci",
+            "pick",
+            "origin/main",
+            "HEAD",
+            "test",
+            "--remote",
+            "upstream",
+        ],
+    );
+
+    assert_eq!(output.code, 2);
+    assert_eq!(output.stdout_text(), "");
+    assert!(output.stderr_text().contains(
+        "❌ Target ref looks like 'origin/main' (remote 'origin') but --remote is 'upstream'."
+    ));
+}
+
+#[test]
+fn ci_pick_invalid_branch_name_errors() {
+    let harness = GitCliHarness::new();
+    let dir = init_repo();
+    let origin = init_bare_remote();
+
+    add_remote(dir.path(), "origin", &origin);
+    push_main(dir.path(), "origin");
+
+    let output = harness.run(dir.path(), &["ci", "pick", "main", "HEAD", "bad^name"]);
+
+    assert_eq!(output.code, 2);
+    assert_eq!(output.stdout_text(), "");
+    assert_eq!(
+        output.stderr_text(),
+        "❌ Invalid CI branch name: ci/main/bad^name\n"
+    );
+}
+
+#[test]
+fn ci_pick_rejects_invalid_ci_branch_name() {
+    let harness = GitCliHarness::new();
+    let dir = init_repo();
+    let remote = init_bare_remote();
+
+    add_remote(dir.path(), "origin", &remote);
+
+    let output = harness.run(
+        dir.path(),
+        &["ci", "pick", "main", "HEAD", "bad name", "--no-fetch"],
+    );
+
+    assert_eq!(output.code, 2);
+    assert_eq!(output.stdout_text(), "");
+    assert_eq!(
+        output.stderr_text(),
+        "❌ Invalid CI branch name: ci/main/bad name\n"
+    );
+}
+
+#[test]
+fn ci_pick_reports_invalid_base_ref() {
+    let harness = GitCliHarness::new();
+    let dir = init_repo();
+    let remote = init_bare_remote();
+
+    add_remote(dir.path(), "origin", &remote);
+
+    let output = harness.run(
+        dir.path(),
+        &["ci", "pick", "missing-branch", "HEAD", "test", "--no-fetch"],
+    );
+
+    assert_eq!(output.code, 1);
+    assert_eq!(output.stdout_text(), "");
+    assert_eq!(
+        output.stderr_text(),
+        "❌ Cannot resolve target ref: missing-branch\n"
     );
 }
 
