@@ -1,0 +1,104 @@
+# nils-cli bash completion: fzf-cli (and ff* aliases)
+
+if [[ -z ${BASH_VERSION-} ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+shopt -s progcomp 2>/dev/null || true
+
+_nils_cli_fzf_cli_complete() {
+  local invoked_as="${COMP_WORDS[0]}"
+  local -a words=("${COMP_WORDS[@]}")
+  local cword="$COMP_CWORD"
+  local cur="${COMP_WORDS[COMP_CWORD]}"
+
+  local subcmd_override=''
+  case "$invoked_as" in
+    fff) subcmd_override='file' ;;
+    ffd) subcmd_override='directory' ;;
+    ffgs) subcmd_override='git-status' ;;
+    ffgc) subcmd_override='git-commit' ;;
+    ffgco) subcmd_override='git-checkout' ;;
+    ffgb) subcmd_override='git-branch' ;;
+    ffgt) subcmd_override='git-tag' ;;
+    ffp) subcmd_override='process' ;;
+    ffpo) subcmd_override='port' ;;
+    ffh) subcmd_override='history' ;;
+    ffenv) subcmd_override='env' ;;
+    ffal) subcmd_override='alias' ;;
+    fffn) subcmd_override='function' ;;
+    ffdef) subcmd_override='def' ;;
+  esac
+
+  if [[ -n "$subcmd_override" ]]; then
+    words=( "fzf-cli" "$subcmd_override" "${words[@]:1}" )
+    cword=$((cword + 1))
+    cur="${words[cword]}"
+  else
+    words[0]="fzf-cli"
+  fi
+
+  local -a root_subcmds=(
+    file
+    directory
+    git-status
+    git-commit
+    git-checkout
+    git-branch
+    git-tag
+    process
+    port
+    history
+    env
+    alias
+    function
+    def
+    help
+  )
+
+  if (( cword == 1 )); then
+    if [[ "$cur" == -* ]]; then
+      COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
+      return 0
+    fi
+    COMPREPLY=( $(compgen -W "${root_subcmds[*]}" -- "$cur") )
+    return 0
+  fi
+
+  local subcmd="${words[1]-}"
+  case "$subcmd" in
+    file|directory)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "--vi --vscode --" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=()
+      return 0
+      ;;
+    git-commit)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "--snapshot" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=()
+      return 0
+      ;;
+    process|port)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-k --kill -9 --force" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=()
+      return 0
+      ;;
+    git-status|git-checkout|git-branch|git-tag|history|env|alias|function|def|help)
+      COMPREPLY=()
+      return 0
+      ;;
+  esac
+
+  COMPREPLY=( $(compgen -W "${root_subcmds[*]}" -- "$cur") )
+}
+
+complete -F _nils_cli_fzf_cli_complete fzf-cli ff fff ffd ffgs ffgc ffgco ffgb ffgt ffp ffpo ffh ffenv ffal fffn ffdef
+

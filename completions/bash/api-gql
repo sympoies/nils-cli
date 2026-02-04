@@ -1,0 +1,121 @@
+# nils-cli bash completion: api-gql
+
+if [[ -z ${BASH_VERSION-} ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+shopt -s progcomp 2>/dev/null || true
+
+_nils_cli_api_gql_complete() {
+  local -a words=("${COMP_WORDS[@]}")
+  local cword="$COMP_CWORD"
+  local cur="${COMP_WORDS[COMP_CWORD]}"
+  local prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+  local -a subcmds=(call history report report-from-cmd schema)
+  local -a root_opts=(-h --help -V --version)
+
+  if (( cword == 1 )); then
+    if [[ "$cur" == -* ]]; then
+      COMPREPLY=( $(compgen -W "${root_opts[*]}" -- "$cur") )
+      return 0
+    fi
+    local -a replies=()
+    replies+=( $(compgen -W "${subcmds[*]}" -- "$cur") )
+    replies+=( $(compgen -f -- "$cur") )
+    COMPREPLY=( "${replies[@]}" )
+    return 0
+  fi
+
+  local subcmd="${words[1]-}"
+  case "$subcmd" in
+    call|history|report|report-from-cmd|schema) ;;
+    *) subcmd="call" ;;
+  esac
+
+  case "$subcmd" in
+    call)
+      if [[ "$prev" == "--config-dir" ]]; then
+        COMPREPLY=( $(compgen -d -- "$cur") )
+        return 0
+      fi
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help -e --env -u --url --jwt --config-dir --list-envs --list-jwts --no-history" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=( $(compgen -f -- "$cur") )
+      return 0
+      ;;
+    history)
+      if [[ "$prev" == "--config-dir" ]]; then
+        COMPREPLY=( $(compgen -d -- "$cur") )
+        return 0
+      fi
+      if [[ "$prev" == "--file" ]]; then
+        COMPREPLY=( $(compgen -f -- "$cur") )
+        return 0
+      fi
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --config-dir --file --last --tail --command-only" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=()
+      return 0
+      ;;
+    report)
+      case "$prev" in
+        --op|--operation|--vars|--variables|--out|--response)
+          COMPREPLY=( $(compgen -f -- "$cur") )
+          return 0
+          ;;
+        --project-root|--config-dir)
+          COMPREPLY=( $(compgen -d -- "$cur") )
+          return 0
+          ;;
+      esac
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --case --op --operation --vars --variables --out -e --env -u --url --jwt --run --response --allow-empty --expect-empty --no-redact --no-command --no-command-url --project-root --config-dir" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=()
+      return 0
+      ;;
+    report-from-cmd)
+      case "$prev" in
+        --out|--response)
+          COMPREPLY=( $(compgen -f -- "$cur") )
+          return 0
+          ;;
+      esac
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --case --out --response --allow-empty --expect-empty --dry-run --stdin" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=()
+      return 0
+      ;;
+    schema)
+      case "$prev" in
+        --config-dir)
+          COMPREPLY=( $(compgen -d -- "$cur") )
+          return 0
+          ;;
+        --file)
+          COMPREPLY=( $(compgen -f -- "$cur") )
+          return 0
+          ;;
+      esac
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --config-dir --file --cat" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=()
+      return 0
+      ;;
+  esac
+
+  COMPREPLY=()
+}
+
+complete -F _nils_cli_api_gql_complete api-gql
+

@@ -1,0 +1,68 @@
+# nils-cli bash completion: api-test
+
+if [[ -z ${BASH_VERSION-} ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+shopt -s progcomp 2>/dev/null || true
+
+_nils_cli_api_test_complete() {
+  local -a words=("${COMP_WORDS[@]}")
+  local cword="$COMP_CWORD"
+  local cur="${COMP_WORDS[COMP_CWORD]}"
+  local prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+  local -a subcmds=(run summary)
+  local -a root_opts=(-h --help -V --version)
+
+  if (( cword == 1 )); then
+    if [[ "$cur" == -* ]]; then
+      COMPREPLY=( $(compgen -W "${root_opts[*]}" -- "$cur") )
+      return 0
+    fi
+    COMPREPLY=( $(compgen -W "${subcmds[*]}" -- "$cur") )
+    return 0
+  fi
+
+  local subcmd="${words[1]-}"
+  case "$subcmd" in
+    run|summary) ;;
+    *) subcmd="run" ;;
+  esac
+
+  case "$subcmd" in
+    run)
+      case "$prev" in
+        --suite-file|--out|--junit)
+          COMPREPLY=( $(compgen -f -- "$cur") )
+          return 0
+          ;;
+      esac
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --suite --suite-file --out --junit --allow-writes --tag --only --skip --fail-fast --continue" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=()
+      return 0
+      ;;
+    summary)
+      case "$prev" in
+        --in|--out)
+          COMPREPLY=( $(compgen -f -- "$cur") )
+          return 0
+          ;;
+      esac
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --in --out --slow --hide-skipped --max-failed --max-skipped --no-github-summary" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=()
+      return 0
+      ;;
+  esac
+
+  COMPREPLY=()
+}
+
+complete -F _nils_cli_api_test_complete api-test
+

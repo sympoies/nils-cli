@@ -1,0 +1,37 @@
+# nils-cli bash completion: git-summary
+
+if [[ -z ${BASH_VERSION-} ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+shopt -s progcomp 2>/dev/null || true
+
+_nils_cli_git_summary_complete() {
+  local cur="${COMP_WORDS[COMP_CWORD]}"
+
+  local -a subcmds=(
+    today
+    yesterday
+    this-month
+    last-month
+    this-week
+    last-week
+    all
+    help
+  )
+  local -a opts=(-h --help)
+
+  if (( COMP_CWORD == 1 )); then
+    if [[ "$cur" == -* ]]; then
+      COMPREPLY=( $(compgen -W "${opts[*]}" -- "$cur") )
+      return 0
+    fi
+    COMPREPLY=( $(compgen -W "${subcmds[*]}" -- "$cur") )
+    return 0
+  fi
+
+  COMPREPLY=()
+}
+
+complete -F _nils_cli_git_summary_complete git-summary
+

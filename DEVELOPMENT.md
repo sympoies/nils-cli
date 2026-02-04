@@ -72,7 +72,9 @@
   - `target/coverage/html/index.html`
 - Note: doctests are **not included** in coverage initially; still run doctests for correctness: `cargo test --workspace --doc`
 
-## Shell completions (zsh)
+## Shell completions
+
+### Zsh
 
 - Completion files:
   - `completions/zsh/_git-scope`
@@ -91,3 +93,22 @@
   - Add `wrappers/` to `PATH`.
   - Add `completions/zsh/` to `fpath` and run `compinit`.
   - Optional: `source completions/zsh/aliases.zsh`
+
+### Bash
+
+- Completion files:
+  - `completions/bash/git-scope`
+  - `completions/bash/git-summary`
+  - `completions/bash/git-lock`
+  - `completions/bash/fzf-cli`
+  - `completions/bash/codex-cli`
+  - `completions/bash/semantic-commit`
+  - `completions/bash/plan-tooling`
+  - `completions/bash/api-rest`
+  - `completions/bash/api-gql`
+  - `completions/bash/api-test`
+- Optional aliases (Bash): `completions/bash/aliases.bash`
+- Setup:
+  - Install `bash-completion` (recommended), then copy `completions/bash/<command>` into your completions directory (example: `~/.local/share/bash-completion/completions/`).
+  - Or: source the desired files from your `~/.bashrc`.
+  - Optional: `source completions/bash/aliases.bash`
