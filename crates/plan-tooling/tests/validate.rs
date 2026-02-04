@@ -128,7 +128,11 @@ fn validate_json_returns_errors_and_exit_one() {
         repo.path(),
         &["validate", "--file", "bad.md", "--format", "json"],
     );
-    assert_eq!(out.code, 1, "stdout: {}\nstderr: {}", out.stdout, out.stderr);
+    assert_eq!(
+        out.code, 1,
+        "stdout: {}\nstderr: {}",
+        out.stdout, out.stderr
+    );
     assert!(out.stderr.is_empty());
 
     let v: serde_json::Value = serde_json::from_str(&out.stdout).expect("json");
@@ -147,7 +151,11 @@ fn validate_json_no_files_emits_empty_payload() {
     let dir = TempDir::new().expect("tempdir");
 
     let out = run_plan_tooling(dir.path(), &["validate", "--format", "json"]);
-    assert_eq!(out.code, 0, "stdout: {}\nstderr: {}", out.stdout, out.stderr);
+    assert_eq!(
+        out.code, 0,
+        "stdout: {}\nstderr: {}",
+        out.stdout, out.stderr
+    );
     assert!(out.stderr.is_empty());
 
     let v: serde_json::Value = serde_json::from_str(&out.stdout).expect("json");
