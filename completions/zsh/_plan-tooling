@@ -60,6 +60,7 @@ _plan-tooling() {
       _arguments -C \
         '(-h --help)'{-h,--help}'[Show help]' \
         '--file=[Validate a specific plan file (repeatable)]:file:_files' \
+        '--format=[Output format]:format:(json text)' \
         && return 0
       ;;
     batches)
@@ -87,4 +88,3 @@ _plan-tooling() {
 }
 
 compdef _plan-tooling plan-tooling
-

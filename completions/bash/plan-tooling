@@ -47,8 +47,12 @@ _nils_cli_plan_tooling_complete() {
         COMPREPLY=( $(compgen -f -- "$cur") )
         return 0
       fi
+      if [[ "$prev" == "--format" ]]; then
+        COMPREPLY=( $(compgen -W "json text" -- "$cur") )
+        return 0
+      fi
       if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "-h --help --file" -- "$cur") )
+        COMPREPLY=( $(compgen -W "-h --help --file --format" -- "$cur") )
         return 0
       fi
       COMPREPLY=()
@@ -88,4 +92,3 @@ _nils_cli_plan_tooling_complete() {
 }
 
 complete -F _nils_cli_plan_tooling_complete plan-tooling
-
