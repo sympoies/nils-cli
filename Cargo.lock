@@ -584,6 +584,7 @@ dependencies = [
  "chrono",
  "nils-term",
  "nils-test-support",
+ "pretty_assertions",
  "tempfile",
 ]
 
