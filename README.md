@@ -5,6 +5,7 @@
 Rust CLI workspace scaffold for building multiple independently packaged binaries.
 
 ## Workspace layout
+
 Each crate is either a standalone CLI binary or a shared library used across the workspace.
 
 - [crates/nils-common](crates/nils-common): Shared cross-CLI utilities (small helpers that don’t belong to a specific binary).
@@ -25,7 +26,27 @@ Each crate is either a standalone CLI binary or a shared library used across the
 - [crates/plan-tooling](crates/plan-tooling): Plan Format v1 tooling CLI (to-json/validate/batches/scaffold).
 - [crates/image-processing](crates/image-processing): Batch image transformation CLI (resize/crop/optimize) with JSON/report outputs.
 
+## Shell wrappers and completions
+
+This repo keeps optional wrapper scripts and completion assets in-repo.
+
+Location:
+
+- [completions/zsh/](completions/zsh/): zsh completions (plus `aliases.zsh`)
+- [completions/bash/](completions/bash/): bash completions (plus `aliases.bash`)
+- [wrappers/](wrappers/): dev-only wrapper scripts
+
+Integration steps:
+
+1. Zsh: add [completions/zsh/](completions/zsh/) to your `fpath`, then run `compinit` in your shell init.
+2. Zsh (optional): `source completions/zsh/aliases.zsh` (see [completions/zsh/aliases.zsh](completions/zsh/aliases.zsh))
+3. Bash: copy `completions/bash/<command>` into your bash-completion directory, or source them from your shell init.
+4. Bash (optional): `source completions/bash/aliases.bash` (see [completions/bash/aliases.bash](completions/bash/aliases.bash))
+5. Dev-only: add [wrappers/](wrappers/) to your PATH (or symlink wrapper scripts into a bin directory).
+6. Regenerate completions when CLIs change, and commit updates alongside code.
+
 ## Local install (release)
+
 - Build + install all workspace binaries into `~/.local/nils-cli/`:
   - `./.codex/skills/nils-cli-install/scripts/nils-cli-install.sh`
 - Install only a specific binary:
@@ -36,10 +57,12 @@ Each crate is either a standalone CLI binary or a shared library used across the
 ## GitHub Releases (prebuilt binaries)
 
 This repo can publish prebuilt tarballs via GitHub Releases for both:
+
 - x86_64 (amd64)
 - aarch64 (arm64)
 
 To trigger a release build, push a tag like `v0.2.1`:
+
 - `git tag -a v0.2.1 -m "v0.2.1"`
 - `git push origin v0.2.1`
 
@@ -53,75 +76,8 @@ For bash completions, copy `<extract_dir>/completions/bash/<command>` into your 
 (example: `~/.local/share/bash-completion/completions/`) or source it from your shell init.
 Optional: source `<extract_dir>/completions/bash/aliases.bash` to enable `gs*`/`cx*`/`fx*` aliases.
 
-## git-scope
-- Example usage: `git-scope staged`, `git-scope all -p`, `git-scope commit HEAD -p`
-- Optional aliases (opt-in; Zsh: [completions/zsh/aliases.zsh](completions/zsh/aliases.zsh), Bash: [completions/bash/aliases.bash](completions/bash/aliases.bash)):
-  - `gs` → `git-scope`
-  - `gst` → `git-scope tracked`
-  - `gss` → `git-scope staged`
-  - `gsu` → `git-scope unstaged`
-  - `gsa` → `git-scope all`
-  - `gsun` → `git-scope untracked`
-  - `gsc` → `git-scope commit`
-  - `gsh` → `git-scope help`
-
-## git-cli
-- Example usage: `git-cli utils zip`, `git-cli reset hard 3`, `git-cli commit context`
-- Optional aliases (opt-in): `gx*` (Zsh: [completions/zsh/aliases.zsh](completions/zsh/aliases.zsh), Bash: [completions/bash/aliases.bash](completions/bash/aliases.bash)); `gxur` is a function that `eval`s the emitted command.
-
-## git-summary
-- Example usage: `git-summary all`, `git-summary this-week`, `git-summary 2024-01-01 2024-12-31`
-
-## git-lock
-- Example usage: `git-lock lock wip "before refactor"`, `git-lock list`, `git-lock diff alpha beta`
-
-## fzf-cli
-- Example usage: `fzf-cli file`, `fzf-cli directory`, `fzf-cli history`, `fzf-cli port`, `fzf-cli process`
-- Note: some subcommands print shell commands for `eval` (e.g. `fzf-cli directory` prints a `cd ...`), see [crates/fzf-cli/README.md](crates/fzf-cli/README.md).
-- Optional aliases (opt-in): `fx*` (Zsh: [completions/zsh/aliases.zsh](completions/zsh/aliases.zsh), Bash: [completions/bash/aliases.bash](completions/bash/aliases.bash)); `fxd` and `fxh` are functions that `eval` the emitted command.
-
-## codex-cli
-- Docs: [crates/codex-cli/README.md](crates/codex-cli/README.md)
-- Example usage: `codex-cli auth current`, `codex-cli diag rate-limits --one-line`
-- Optional aliases (opt-in): `cx*` (Zsh: [completions/zsh/aliases.zsh](completions/zsh/aliases.zsh), Bash: [completions/bash/aliases.bash](completions/bash/aliases.bash)).
-
-## semantic-commit
-- Example usage:
-  - `semantic-commit staged-context`
-  - `semantic-commit commit --message "chore: update thing"`
-  - `cat message.txt | semantic-commit commit`
-
-## plan-tooling
-- Example usage:
-  - `plan-tooling to-json --file docs/plans/plan-tooling-cli-consolidation-plan.md --pretty | jq .`
-  - `plan-tooling validate`
-  - `plan-tooling batches --file docs/plans/plan-tooling-cli-consolidation-plan.md --sprint 1 --format text`
-  - `plan-tooling scaffold --slug my-new-cli --title "My new CLI plan"`
-
-## API testing CLIs
-See [crates/api-testing-core/README.md](crates/api-testing-core/README.md) for the recommended repo layout and end-to-end examples.
-
-### api-rest
-- Example usage:
-  - `api-rest call --env staging setup/rest/requests/health.request.json`
-  - `api-rest report --case health --request setup/rest/requests/health.request.json --run`
-  - `api-rest history --command-only | api-rest report-from-cmd --stdin`
-  - `api-rest history`
-
-### api-gql
-- Example usage:
-  - `api-gql call --env staging setup/graphql/operations/health.graphql`
-  - `api-gql report --case health --op setup/graphql/operations/health.graphql --run`
-  - `api-gql history --command-only | api-gql report-from-cmd --stdin`
-  - `api-gql schema --cat`
-
-### api-test
-- Example usage:
-  - `api-test run --suite smoke`
-  - `api-test run --suite smoke --out out/api-test-runner/results.json --junit out/api-test-runner/junit.xml`
-  - `api-test summary --in out/api-test-runner/results.json --out out/api-test-runner/summary.md`
-
 ## Adding a new CLI crate
+
 1. Create a new binary crate under [crates/](crates/):
    - `cargo new crates/<cli-name> --bin`
 2. Add the crate path to the workspace `members` list in [Cargo.toml](Cargo.toml).
@@ -129,22 +85,6 @@ See [crates/api-testing-core/README.md](crates/api-testing-core/README.md) for t
 4. Build or run the new CLI with `cargo build -p <cli-name>` or `cargo run -p <cli-name> -- ...`.
 5. Verify packaging picks it up (both local install + GitHub Releases use the same discovery):
    - `python3 scripts/workspace-bins.py | rg "^<cli-name>$"` (see [scripts/workspace-bins.py](scripts/workspace-bins.py))
-
-## Shell wrappers and completions
-This repo keeps optional wrapper scripts and completion assets in-repo.
-
-Location:
-- [completions/zsh/](completions/zsh/): zsh completions (plus `aliases.zsh`)
-- [completions/bash/](completions/bash/): bash completions (plus `aliases.bash`)
-- [wrappers/](wrappers/): dev-only wrapper scripts
-
-Integration steps:
-1. Zsh: add [completions/zsh/](completions/zsh/) to your `fpath`, then run `compinit` in your shell init.
-2. Zsh (optional): `source completions/zsh/aliases.zsh` (see [completions/zsh/aliases.zsh](completions/zsh/aliases.zsh))
-3. Bash: copy `completions/bash/<command>` into your bash-completion directory, or source them from your shell init.
-4. Bash (optional): `source completions/bash/aliases.bash` (see [completions/bash/aliases.bash](completions/bash/aliases.bash))
-5. Dev-only: add [wrappers/](wrappers/) to your PATH (or symlink wrapper scripts into a bin directory).
-6. Regenerate completions when CLIs change, and commit updates alongside code.
 
 ## License
 
