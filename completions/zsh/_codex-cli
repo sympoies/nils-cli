@@ -1,8 +1,6 @@
 #compdef codex-cli cx \
-#  codex-use codex-refresh-auth codex-auto-refresh \
-#  codex-rate-limits codex-rate-limits-async codex-starship \
-#  cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxdr cxcs cxct \
-#  crl crla
+#  cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxst cxdr cxdra \
+#  cxcs cxct
 
 _codex-cli() {
   emulate -L zsh -o extendedglob
@@ -17,25 +15,31 @@ _codex-cli() {
   local invoked_as="${orig_words[1]-}"
   local subcmd_override=''
   local subcmd2_override=''
+  local implied_async=''
 
   case "$invoked_as" in
-    codex-use|cxau)
+    cxau)
       subcmd_override='auth'
       subcmd2_override='use'
       ;;
-    codex-refresh-auth|cxar)
+    cxar)
       subcmd_override='auth'
       subcmd2_override='refresh'
       ;;
-    codex-auto-refresh|cxaa)
+    cxaa)
       subcmd_override='auth'
       subcmd2_override='auto-refresh'
       ;;
-    codex-rate-limits|codex-rate-limits-async|cxdr|crl|crla)
+    cxdr)
       subcmd_override='diag'
       subcmd2_override='rate-limits'
       ;;
-    codex-starship)
+    cxdra)
+      subcmd_override='diag'
+      subcmd2_override='rate-limits'
+      implied_async='1'
+      ;;
+    cxst)
       subcmd_override='starship'
       ;;
     cxgp)
@@ -71,6 +75,17 @@ _codex-cli() {
       subcmd2_override='set'
       ;;
   esac
+
+  if [[ -n "$implied_async" && " ${words[*]-} " != *" --async "* ]]; then
+    local -a injected_words=()
+    injected_words=(
+      "${words[@]:0:$((CURRENT-1))}"
+      "--async"
+      "${words[@]:$((CURRENT-1))}"
+    )
+    words=("${injected_words[@]}")
+    (( CURRENT++ ))
+  fi
 
   local -a subcommands=()
   subcommands=(
@@ -385,7 +400,5 @@ _codex-cli() {
 
 compdef _codex-cli \
   codex-cli cx \
-  codex-use codex-refresh-auth codex-auto-refresh \
-  codex-rate-limits codex-rate-limits-async codex-starship \
-  cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxdr cxcs cxct \
-  crl crla
+  cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxst cxdr cxdra \
+  cxcs cxct

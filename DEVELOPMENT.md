@@ -76,11 +76,18 @@
 
 - Completion files:
   - `completions/zsh/_git-scope`
+  - `completions/zsh/_git-summary`
+  - `completions/zsh/_git-lock`
+  - `completions/zsh/_fzf-cli`
+  - `completions/zsh/_codex-cli`
+  - `completions/zsh/_semantic-commit`
   - `completions/zsh/_plan-tooling`
   - `completions/zsh/_api-rest`
   - `completions/zsh/_api-gql`
   - `completions/zsh/_api-test`
-- Wrapper scripts: `wrappers/plan-tooling`, `wrappers/api-rest`, `wrappers/api-gql`, `wrappers/api-test`, `wrappers/gs`, `wrappers/gsc`, `wrappers/gst`, `wrappers/git-scope`
+- Optional aliases (Zsh): `completions/zsh/aliases.zsh`
+- Wrapper scripts (dev-only): `wrappers/plan-tooling`, `wrappers/api-rest`, `wrappers/api-gql`, `wrappers/api-test`, `wrappers/git-scope`, `wrappers/codex-cli`, `wrappers/fzf-cli`
 - Setup:
   - Add `wrappers/` to `PATH`.
   - Add `completions/zsh/` to `fpath` and run `compinit`.
+  - Optional: `source completions/zsh/aliases.zsh`

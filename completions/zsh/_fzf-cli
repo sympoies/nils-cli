@@ -1,4 +1,4 @@
-#compdef fzf-cli
+#compdef fzf-cli ff fff ffd ffgs ffgc ffgco ffgb ffgt ffp ffpo ffh ffenv ffal fffn ffdef
 
 __fzf_cli_query() {
   emulate -L zsh -o extendedglob
@@ -14,6 +14,25 @@ _fzf-cli() {
 
   local -i orig_current="$CURRENT"
   local -a orig_words=("${words[@]}")
+  local invoked_as="${orig_words[1]-}"
+  local subcmd_override=''
+
+  case "$invoked_as" in
+    fff) subcmd_override='file' ;;
+    ffd) subcmd_override='directory' ;;
+    ffgs) subcmd_override='git-status' ;;
+    ffgc) subcmd_override='git-commit' ;;
+    ffgco) subcmd_override='git-checkout' ;;
+    ffgb) subcmd_override='git-branch' ;;
+    ffgt) subcmd_override='git-tag' ;;
+    ffp) subcmd_override='process' ;;
+    ffpo) subcmd_override='port' ;;
+    ffh) subcmd_override='history' ;;
+    ffenv) subcmd_override='env' ;;
+    ffal) subcmd_override='alias' ;;
+    fffn) subcmd_override='function' ;;
+    ffdef) subcmd_override='def' ;;
+  esac
 
   local -a subcommands=()
   subcommands=(
@@ -34,10 +53,16 @@ _fzf-cli() {
     'help:Display help message for fzf-cli'
   )
 
-  _arguments -C \
-    '(-h --help)'{-h,--help}'[Display help message for fzf-cli]' \
-    '1:command:->subcmds' \
-    '*::arg:->args'
+  if [[ -n "$subcmd_override" ]]; then
+    _arguments -C \
+      '(-h --help)'{-h,--help}'[Display help message for fzf-cli]' \
+      '*::arg:->args'
+  else
+    _arguments -C \
+      '(-h --help)'{-h,--help}'[Display help message for fzf-cli]' \
+      '1:command:->subcmds' \
+      '*::arg:->args'
+  fi
 
   case "${state-}" in
     subcmds)
@@ -47,8 +72,13 @@ _fzf-cli() {
       local cur="${orig_words[orig_current]-}"
       cur="${cur%%[[:space:]]#}"
 
-      local subcmd="${line[1]:-${orig_words[2]-}}"
-      subcmd="${subcmd%%[[:space:]]#}"
+      local subcmd=''
+      if [[ -n "$subcmd_override" ]]; then
+        subcmd="$subcmd_override"
+      else
+        subcmd="${line[1]:-${orig_words[2]-}}"
+        subcmd="${subcmd%%[[:space:]]#}"
+      fi
 
       case "$subcmd" in
         file|directory)
@@ -98,4 +128,4 @@ _fzf-cli() {
   esac
 }
 
-compdef _fzf-cli fzf-cli
+compdef _fzf-cli fzf-cli ff fff ffd ffgs ffgc ffgco ffgb ffgt ffp ffpo ffh ffenv ffal fffn ffdef

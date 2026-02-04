@@ -14,6 +14,7 @@ COMP_API_GQL_FILE="$REPO_ROOT/completions/zsh/_api-gql"
 COMP_API_TEST_FILE="$REPO_ROOT/completions/zsh/_api-test"
 COMP_PLAN_TOOLING_FILE="$REPO_ROOT/completions/zsh/_plan-tooling"
 COMP_CODEX_CLI_FILE="$REPO_ROOT/completions/zsh/_codex-cli"
+ALIASES_FILE="$REPO_ROOT/completions/zsh/aliases.zsh"
 
 if [[ ! -f "$COMP_FILE" ]]; then
   print -u2 -r -- "FAIL: missing completion file"
@@ -62,6 +63,11 @@ fi
 
 if [[ ! -f "$COMP_CODEX_CLI_FILE" ]]; then
   print -u2 -r -- "FAIL: missing codex-cli completion file"
+  exit 1
+fi
+
+if [[ ! -f "$ALIASES_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing nils-cli aliases file"
   exit 1
 fi
 
@@ -118,6 +124,11 @@ source "$COMP_CODEX_CLI_FILE" || {
   exit 1
 }
 
+source "$ALIASES_FILE" || {
+  print -u2 -r -- "FAIL: failed to source nils-cli aliases file"
+  exit 1
+}
+
 if (( ! $+functions[_git-scope] )); then
   print -u2 -r -- "FAIL: _git-scope function not defined"
   exit 1
@@ -165,6 +176,101 @@ fi
 
 if (( ! $+functions[_codex-cli] )); then
   print -u2 -r -- "FAIL: _codex-cli function not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[gs] )); then
+  print -u2 -r -- "FAIL: gs alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[gst] )); then
+  print -u2 -r -- "FAIL: gst alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[gss] )); then
+  print -u2 -r -- "FAIL: gss alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[gsu] )); then
+  print -u2 -r -- "FAIL: gsu alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[gsa] )); then
+  print -u2 -r -- "FAIL: gsa alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[gsun] )); then
+  print -u2 -r -- "FAIL: gsun alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[gsc] )); then
+  print -u2 -r -- "FAIL: gsc alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[gsh] )); then
+  print -u2 -r -- "FAIL: gsh alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[cx] )); then
+  print -u2 -r -- "FAIL: cx alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[cxau] )); then
+  print -u2 -r -- "FAIL: cxau alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[cxst] )); then
+  print -u2 -r -- "FAIL: cxst alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[cxdr] )); then
+  print -u2 -r -- "FAIL: cxdr alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[cxdra] )); then
+  print -u2 -r -- "FAIL: cxdra alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[ff] )); then
+  print -u2 -r -- "FAIL: ff alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[fff] )); then
+  print -u2 -r -- "FAIL: fff alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[ffgs] )); then
+  print -u2 -r -- "FAIL: ffgs alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[ffdef] )); then
+  print -u2 -r -- "FAIL: ffdef alias not defined"
+  exit 1
+fi
+
+if (( ! $+functions[ffd] )); then
+  print -u2 -r -- "FAIL: ffd function not defined"
+  exit 1
+fi
+
+if (( ! $+functions[ffh] )); then
+  print -u2 -r -- "FAIL: ffh function not defined"
   exit 1
 fi
 

@@ -41,10 +41,19 @@ Then download the matching `nils-cli-<tag>-<target>.tar.gz` asset, extract it, a
 `<extract_dir>/bin` to your `PATH`.
 
 For zsh completions, add `<extract_dir>/completions/zsh` to your `fpath` and run `compinit`.
+Optional: source `<extract_dir>/completions/zsh/aliases.zsh` to enable `gs*`/`cx*`/`ff*` aliases.
 
 ## git-scope
 - Example usage: `git-scope staged`, `git-scope all -p`, `git-scope commit HEAD -p`
-- Wrapper aliases (optional): `gs` → `git-scope`, `gsc` → `git-scope commit`, `gst` → `git-scope tracked`
+- Optional Zsh aliases (opt-in):
+  - `gs` → `git-scope`
+  - `gst` → `git-scope tracked`
+  - `gss` → `git-scope staged`
+  - `gsu` → `git-scope unstaged`
+  - `gsa` → `git-scope all`
+  - `gsun` → `git-scope untracked`
+  - `gsc` → `git-scope commit`
+  - `gsh` → `git-scope help`
 
 ## git-summary
 - Example usage: `git-summary all`, `git-summary this-week`, `git-summary 2024-01-01 2024-12-31`
@@ -55,10 +64,12 @@ For zsh completions, add `<extract_dir>/completions/zsh` to your `fpath` and run
 ## fzf-cli
 - Example usage: `fzf-cli file`, `fzf-cli directory`, `fzf-cli history`, `fzf-cli port`, `fzf-cli process`
 - Note: some subcommands print shell commands for `eval` (e.g. `fzf-cli directory` prints a `cd ...`), see `crates/fzf-cli/README.md`.
+- Optional Zsh aliases (opt-in): `ff*` (see `completions/zsh/aliases.zsh`); `ffd` and `ffh` are functions that `eval` the emitted command.
 
 ## codex-cli
 - Docs: `crates/codex-cli/README.md`
 - Example usage: `codex-cli auth current`, `codex-cli diag rate-limits --one-line`
+- Optional Zsh aliases (opt-in): `cx*` (see `completions/zsh/aliases.zsh`).
 
 ## semantic-commit
 - Example usage:
@@ -118,6 +129,7 @@ Rationale:
 
 Location:
 - `completions/zsh/`: zsh completion files (generated or curated)
+  - `completions/zsh/aliases.zsh`
   - `completions/zsh/_api-rest`
   - `completions/zsh/_api-gql`
   - `completions/zsh/_api-test`
@@ -131,9 +143,10 @@ Location:
 - `wrappers/`: wrapper scripts for invoking CLI binaries or enforcing env setup
 
 Integration steps:
-1. Add `wrappers/` to your PATH (or symlink wrapper scripts into a bin directory).
-2. Add `completions/zsh/` to your `fpath`, then run `compinit` in your shell init.
-3. Regenerate completions when CLIs change, and commit updates alongside code.
+1. Add `completions/zsh/` to your `fpath`, then run `compinit` in your shell init.
+2. Optional: `source completions/zsh/aliases.zsh`
+3. Dev-only: add `wrappers/` to your PATH (or symlink wrapper scripts into a bin directory).
+4. Regenerate completions when CLIs change, and commit updates alongside code.
 
 ## License
 

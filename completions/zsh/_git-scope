@@ -1,4 +1,4 @@
-#compdef git-scope gs gsc gst
+#compdef git-scope gs gst gss gsu gsa gsun gsc gsh
 
 _git-scope() {
   emulate -L zsh -o extendedglob
@@ -19,6 +19,21 @@ _git-scope() {
       ;;
     gst)
       subcmd_override='tracked'
+      ;;
+    gss)
+      subcmd_override='staged'
+      ;;
+    gsu)
+      subcmd_override='unstaged'
+      ;;
+    gsa)
+      subcmd_override='all'
+      ;;
+    gsun)
+      subcmd_override='untracked'
+      ;;
+    gsh)
+      subcmd_override='help'
       ;;
   esac
 
@@ -105,4 +120,4 @@ _git-scope() {
   esac
 }
 
-compdef _git-scope git-scope gs gsc gst
+compdef _git-scope git-scope gs gst gss gsu gsa gsun gsc gsh
