@@ -21,6 +21,41 @@ fi
 (( $+aliases[gsh] )) || alias gsh='git-scope help'
 
 # ---------------------------------------------------------------------------
+# git-cli (gx*)
+# ---------------------------------------------------------------------------
+(( $+aliases[gx] )) || alias gx='git-cli'
+(( $+aliases[gxh] )) || alias gxh='git-cli help'
+
+(( $+aliases[gxu] )) || alias gxu='git-cli utils'
+(( $+aliases[gxr] )) || alias gxr='git-cli reset'
+(( $+aliases[gxc] )) || alias gxc='git-cli commit'
+(( $+aliases[gxb] )) || alias gxb='git-cli branch'
+(( $+aliases[gxi] )) || alias gxi='git-cli ci'
+
+(( $+aliases[gxuz] )) || alias gxuz='git-cli utils zip'
+(( $+aliases[gxuc] )) || alias gxuc='git-cli utils copy-staged'
+if (( ! $+functions[gxur] )); then
+  gxur() { eval "$(git-cli utils root --shell)"; }
+fi
+(( $+aliases[gxuh] )) || alias gxuh='git-cli utils commit-hash'
+
+(( $+aliases[gxrs] )) || alias gxrs='git-cli reset soft'
+(( $+aliases[gxrm] )) || alias gxrm='git-cli reset mixed'
+(( $+aliases[gxrh] )) || alias gxrh='git-cli reset hard'
+(( $+aliases[gxru] )) || alias gxru='git-cli reset undo'
+(( $+aliases[gxrbh] )) || alias gxrbh='git-cli reset back-head'
+(( $+aliases[gxrbc] )) || alias gxrbc='git-cli reset back-checkout'
+(( $+aliases[gxrr] )) || alias gxrr='git-cli reset remote'
+
+(( $+aliases[gxcc] )) || alias gxcc='git-cli commit context'
+(( $+aliases[gxcj] )) || alias gxcj='git-cli commit context-json'
+(( $+aliases[gxcs] )) || alias gxcs='git-cli commit to-stash'
+
+(( $+aliases[gxbc] )) || alias gxbc='git-cli branch cleanup'
+
+(( $+aliases[gxip] )) || alias gxip='git-cli ci pick'
+
+# ---------------------------------------------------------------------------
 # codex-cli (cx*)
 # ---------------------------------------------------------------------------
 (( $+aliases[cx] )) || alias cx='codex-cli'

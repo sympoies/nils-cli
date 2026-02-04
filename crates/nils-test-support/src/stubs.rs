@@ -253,3 +253,40 @@ fi
 echo "text/plain"
 "#
 }
+
+fn clipboard_copy_stub_script(tool: &str) -> String {
+    let mut script = String::from("#!/bin/bash\nset -euo pipefail\n");
+    script.push_str(&log_prefix(tool));
+    script.push_str(
+        r#"
+if [[ ! -t 0 ]]; then
+  /bin/cat >/dev/null
+fi
+exit 0
+"#,
+    );
+    script
+}
+
+pub fn pbcopy_stub_script() -> String {
+    clipboard_copy_stub_script("pbcopy")
+}
+
+pub fn wl_copy_stub_script() -> String {
+    clipboard_copy_stub_script("wl-copy")
+}
+
+pub fn xclip_stub_script() -> String {
+    clipboard_copy_stub_script("xclip")
+}
+
+pub fn xsel_stub_script() -> String {
+    clipboard_copy_stub_script("xsel")
+}
+
+pub fn git_scope_stub_script() -> String {
+    let mut script = String::from("#!/bin/bash\nset -euo pipefail\n");
+    script.push_str(&log_prefix("git-scope"));
+    script.push_str("\nexit 0\n");
+    script
+}

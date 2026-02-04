@@ -50,6 +50,33 @@ impl CmdOptions {
         Self::default()
     }
 
+    pub fn with_env_remove_prefix(mut self, prefix: &str) -> Self {
+        for (key, _) in std::env::vars_os() {
+            let key = key.to_string_lossy();
+            if key.starts_with(prefix) {
+                self = self.with_env_remove(&key);
+            }
+        }
+        self
+    }
+
+    pub fn with_path_prepend(self, dir: &Path) -> Self {
+        let base = self
+            .envs
+            .iter()
+            .rev()
+            .find(|(key, _)| key == "PATH")
+            .map(|(_, value)| value.clone())
+            .or_else(|| std::env::var_os("PATH").map(|value| value.to_string_lossy().to_string()))
+            .unwrap_or_default();
+
+        let mut paths: Vec<PathBuf> = std::env::split_paths(std::ffi::OsStr::new(&base)).collect();
+        paths.insert(0, dir.to_path_buf());
+        let joined = std::env::join_paths(paths).expect("join paths");
+        let joined = joined.to_string_lossy().to_string();
+        self.with_env("PATH", &joined)
+    }
+
     pub fn with_cwd(mut self, dir: &Path) -> Self {
         self.cwd = Some(dir.to_path_buf());
         self

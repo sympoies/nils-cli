@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+args=("$@")
+if [[ ${#args[@]} -ge 2 && ${args[0]} == "--" && ${args[1]} == "help" ]]; then
+  args=("help" "${args[@]:2}")
+fi
+
+if command -v git-cli >/dev/null 2>&1; then
+  exec git-cli "${args[@]}"
+fi
+
+if command -v cargo >/dev/null 2>&1; then
+  exec cargo run -q -p git-cli -- "${args[@]}"
+fi
+
+echo "git-cli: binary not found (install via cargo install or build the workspace)" >&2
+exit 1

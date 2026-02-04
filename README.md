@@ -16,6 +16,7 @@ Each crate is either a standalone CLI binary or a shared library used across the
 - [crates/api-gql](crates/api-gql): GraphQL operation runner for `.graphql` files (variables, history, reports, schema).
 - [crates/api-test](crates/api-test): Suite runner that orchestrates REST/GraphQL cases and outputs JSON (and optional JUnit).
 - [crates/git-scope](crates/git-scope): Git change inspector (tracked/staged/unstaged/untracked/commit) with tree + optional file printing.
+- [crates/git-cli](crates/git-cli): Git tools dispatcher (utils/reset/commit/branch/ci).
 - [crates/git-summary](crates/git-summary): Per-author contribution summaries over a date range (adds/dels/net/commits).
 - [crates/git-lock](crates/git-lock): Label-based commit locks per repo (lock/list/diff/unlock/tag).
 - [crates/fzf-cli](crates/fzf-cli): Interactive `fzf` toolbox for files, Git, processes, ports, and shell history.
@@ -63,6 +64,10 @@ Optional: source `<extract_dir>/completions/bash/aliases.bash` to enable `gs*`/`
   - `gsun` → `git-scope untracked`
   - `gsc` → `git-scope commit`
   - `gsh` → `git-scope help`
+
+## git-cli
+- Example usage: `git-cli utils zip`, `git-cli reset hard 3`, `git-cli commit context`
+- Optional aliases (opt-in): `gx*` (Zsh: [completions/zsh/aliases.zsh](completions/zsh/aliases.zsh), Bash: [completions/bash/aliases.bash](completions/bash/aliases.bash)); `gxur` is a function that `eval`s the emitted command.
 
 ## git-summary
 - Example usage: `git-summary all`, `git-summary this-week`, `git-summary 2024-01-01 2024-12-31`
