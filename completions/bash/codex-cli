@@ -1,0 +1,232 @@
+# nils-cli bash completion: codex-cli (and cx* aliases)
+
+if [[ -z ${BASH_VERSION-} ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+shopt -s progcomp 2>/dev/null || true
+
+_nils_cli__has_word() {
+  local needle="$1"
+  shift
+  local w=''
+  for w in "$@"; do
+    [[ "$w" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+_nils_cli_codex_cli_complete() {
+  local invoked_as="${COMP_WORDS[0]}"
+  local -a words=("${COMP_WORDS[@]}")
+  local cword="$COMP_CWORD"
+  local cur="${COMP_WORDS[COMP_CWORD]}"
+  local prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+  local -a inject=()
+  local implied_async=''
+
+  case "$invoked_as" in
+    cxau) inject=(auth use) ;;
+    cxar) inject=(auth refresh) ;;
+    cxaa) inject=(auth auto-refresh) ;;
+    cxdr) inject=(diag rate-limits) ;;
+    cxdra) inject=(diag rate-limits); implied_async='1' ;;
+    cxst) inject=(starship) ;;
+    cxgp) inject=(agent prompt) ;;
+    cxga) inject=(agent advice) ;;
+    cxgk) inject=(agent knowledge) ;;
+    cxgc) inject=(agent commit) ;;
+    cxac) inject=(auth current) ;;
+    cxas) inject=(auth sync) ;;
+    cxcs) inject=(config show) ;;
+    cxct) inject=(config set) ;;
+  esac
+
+  if [[ -n "$implied_async" ]] && ! _nils_cli__has_word --async "${words[@]}"; then
+    inject+=(--async)
+  fi
+
+  if (( ${#inject[@]} > 0 )); then
+    words=( "codex-cli" "${inject[@]}" "${words[@]:1}" )
+    cword=$((cword + ${#inject[@]}))
+    cur="${words[cword]}"
+    prev="${words[cword-1]}"
+  else
+    words[0]="codex-cli"
+  fi
+
+  local -a root_cmds=(agent auth diag config starship help)
+  local -a root_opts=(-h --help -V --version)
+
+  if (( cword == 1 )); then
+    if [[ "$cur" == -* ]]; then
+      COMPREPLY=( $(compgen -W "${root_opts[*]}" -- "$cur") )
+      return 0
+    fi
+    COMPREPLY=( $(compgen -W "${root_cmds[*]}" -- "$cur") )
+    return 0
+  fi
+
+  local cmd="${words[1]-}"
+
+  case "$cmd" in
+    agent)
+      local -a agent_cmds=(prompt advice knowledge commit)
+      if (( cword == 2 )); then
+        if [[ "$cur" == -* ]]; then
+          COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
+          return 0
+        fi
+        COMPREPLY=( $(compgen -W "${agent_cmds[*]}" -- "$cur") )
+        return 0
+      fi
+      local agent_cmd="${words[2]-}"
+      case "$agent_cmd" in
+        commit)
+          if [[ "$cur" == -* ]]; then
+            COMPREPLY=( $(compgen -W "-h --help -p --push -a --auto-stage" -- "$cur") )
+            return 0
+          fi
+          COMPREPLY=()
+          return 0
+          ;;
+        prompt|advice|knowledge)
+          COMPREPLY=()
+          return 0
+          ;;
+      esac
+      ;;
+    auth)
+      local -a auth_cmds=(use refresh auto-refresh current sync)
+      if (( cword == 2 )); then
+        if [[ "$cur" == -* ]]; then
+          COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
+          return 0
+        fi
+        COMPREPLY=( $(compgen -W "${auth_cmds[*]}" -- "$cur") )
+        return 0
+      fi
+      local auth_cmd="${words[2]-}"
+      case "$auth_cmd" in
+        refresh)
+          if [[ "$cur" == -* ]]; then
+            COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
+            return 0
+          fi
+          COMPREPLY=( $(compgen -f -- "$cur") )
+          return 0
+          ;;
+        use)
+          if [[ "$cur" == -* ]]; then
+            COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
+            return 0
+          fi
+          COMPREPLY=()
+          return 0
+          ;;
+        auto-refresh|current|sync)
+          COMPREPLY=()
+          return 0
+          ;;
+      esac
+      ;;
+    diag)
+      local -a diag_cmds=(rate-limits)
+      if (( cword == 2 )); then
+        if [[ "$cur" == -* ]]; then
+          COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
+          return 0
+        fi
+        COMPREPLY=( $(compgen -W "${diag_cmds[*]}" -- "$cur") )
+        return 0
+      fi
+      local diag_cmd="${words[2]-}"
+      case "$diag_cmd" in
+        rate-limits)
+          if [[ "$prev" == "--jobs" ]]; then
+            COMPREPLY=()
+            return 0
+          fi
+          if [[ "$cur" == -* ]]; then
+            COMPREPLY=( $(compgen -W "-h --help -c -d --debug --cached --async --all --json --one-line --no-refresh-auth --jobs" -- "$cur") )
+            return 0
+          fi
+          COMPREPLY=( $(compgen -f -- "$cur") )
+          return 0
+          ;;
+      esac
+      ;;
+    config)
+      local -a config_cmds=(show set)
+      if (( cword == 2 )); then
+        if [[ "$cur" == -* ]]; then
+          COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
+          return 0
+        fi
+        COMPREPLY=( $(compgen -W "${config_cmds[*]}" -- "$cur") )
+        return 0
+      fi
+      local config_cmd="${words[2]-}"
+      case "$config_cmd" in
+        show)
+          COMPREPLY=()
+          return 0
+          ;;
+        set)
+          local -a config_keys=(
+            model
+            reasoning
+            reason
+            dangerous
+            allow-dangerous
+            CODEX_CLI_MODEL
+            CODEX_CLI_REASONING
+            CODEX_ALLOW_DANGEROUS_ENABLED
+          )
+          if (( cword == 3 )); then
+            COMPREPLY=( $(compgen -W "${config_keys[*]}" -- "$cur") )
+            return 0
+          fi
+          if (( cword == 4 )); then
+            local key="${words[3]-}"
+            case "$key" in
+              dangerous|allow-dangerous|CODEX_ALLOW_DANGEROUS_ENABLED)
+                COMPREPLY=( $(compgen -W "true false" -- "$cur") )
+                return 0
+                ;;
+            esac
+            COMPREPLY=()
+            return 0
+          fi
+          COMPREPLY=()
+          return 0
+          ;;
+      esac
+      ;;
+    starship)
+      if [[ "$prev" == "--ttl" || "$prev" == "--time-format" ]]; then
+        COMPREPLY=()
+        return 0
+      fi
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --no-5h --ttl --time-format --refresh --is-enabled" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=()
+      return 0
+      ;;
+    help)
+      COMPREPLY=()
+      return 0
+      ;;
+  esac
+
+  COMPREPLY=()
+}
+
+complete -F _nils_cli_codex_cli_complete \
+  codex-cli cx \
+  cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxst cxdr cxdra \
+  cxcs cxct
+

@@ -1,0 +1,107 @@
+# nils-cli bash completion: git-scope (and gs* aliases)
+#
+# Install (example):
+#   mkdir -p ~/.local/share/bash-completion/completions
+#   cp completions/bash/git-scope ~/.local/share/bash-completion/completions/git-scope
+# Or source directly from your shell init.
+
+if [[ -z ${BASH_VERSION-} ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+shopt -s progcomp 2>/dev/null || true
+
+_nils_cli_git_scope_complete() {
+  local invoked_as="${COMP_WORDS[0]}"
+  local -a words=("${COMP_WORDS[@]}")
+  local cword="$COMP_CWORD"
+  local cur="${COMP_WORDS[COMP_CWORD]}"
+  local prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+  local subcmd_override=''
+  case "$invoked_as" in
+    gsc) subcmd_override='commit' ;;
+    gst) subcmd_override='tracked' ;;
+    gss) subcmd_override='staged' ;;
+    gsu) subcmd_override='unstaged' ;;
+    gsa) subcmd_override='all' ;;
+    gsun) subcmd_override='untracked' ;;
+    gsh) subcmd_override='help' ;;
+  esac
+
+  if [[ -n "$subcmd_override" ]]; then
+    words=( "git-scope" "$subcmd_override" "${words[@]:1}" )
+    cword=$((cword + 1))
+    cur="${words[cword]}"
+    prev="${words[cword-1]}"
+  else
+    words[0]="git-scope"
+  fi
+
+  local -a root_subcmds=(
+    tracked
+    staged
+    unstaged
+    all
+    untracked
+    commit
+    help
+  )
+  local -a root_opts=(-h --help --no-color)
+
+  if (( cword == 1 )); then
+    if [[ "$cur" == -* ]]; then
+      COMPREPLY=( $(compgen -W "${root_opts[*]}" -- "$cur") )
+      return 0
+    fi
+    COMPREPLY=( $(compgen -W "${root_subcmds[*]}" -- "$cur") )
+    return 0
+  fi
+
+  local subcmd="${words[1]-}"
+
+  case "$subcmd" in
+    tracked)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --no-color -p --print" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=( $(compgen -f -- "$cur") )
+      return 0
+      ;;
+    staged|unstaged|all|untracked)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --no-color -p --print" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=()
+      return 0
+      ;;
+    commit)
+      if [[ "$prev" == "--parent" || "$prev" == "-P" ]]; then
+        COMPREPLY=( $(compgen -W "1 2" -- "$cur") )
+        return 0
+      fi
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --no-color -p --print --parent -P" -- "$cur") )
+        return 0
+      fi
+
+      local hashes=''
+      if command git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        hashes="$(command git log --pretty=format:%h -n 20 2>/dev/null || true)"
+      fi
+      COMPREPLY=( $(compgen -W "HEAD ${hashes}" -- "$cur") )
+      return 0
+      ;;
+    help)
+      COMPREPLY=()
+      return 0
+      ;;
+  esac
+
+  COMPREPLY=( $(compgen -W "${root_subcmds[*]}" -- "$cur") )
+}
+
+complete -F _nils_cli_git_scope_complete git-scope gs gst gss gsu gsa gsun gsc gsh
+

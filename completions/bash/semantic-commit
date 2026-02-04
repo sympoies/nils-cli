@@ -1,0 +1,51 @@
+# nils-cli bash completion: semantic-commit
+
+if [[ -z ${BASH_VERSION-} ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+shopt -s progcomp 2>/dev/null || true
+
+_nils_cli_semantic_commit_complete() {
+  local -a words=("${COMP_WORDS[@]}")
+  local cword="$COMP_CWORD"
+  local cur="${COMP_WORDS[COMP_CWORD]}"
+  local prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+  local -a root_subcmds=(staged-context commit help)
+  local -a root_opts=(-h --help)
+
+  if (( cword == 1 )); then
+    if [[ "$cur" == -* ]]; then
+      COMPREPLY=( $(compgen -W "${root_opts[*]}" -- "$cur") )
+      return 0
+    fi
+    COMPREPLY=( $(compgen -W "${root_subcmds[*]}" -- "$cur") )
+    return 0
+  fi
+
+  local subcmd="${words[1]-}"
+  case "$subcmd" in
+    staged-context|help)
+      COMPREPLY=()
+      return 0
+      ;;
+    commit)
+      if [[ "$prev" == "--message-file" ]]; then
+        COMPREPLY=( $(compgen -f -- "$cur") )
+        return 0
+      fi
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --message --message-file" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=()
+      return 0
+      ;;
+  esac
+
+  COMPREPLY=()
+}
+
+complete -F _nils_cli_semantic_commit_complete semantic-commit
+

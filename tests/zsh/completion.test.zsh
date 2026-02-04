@@ -16,6 +16,18 @@ COMP_PLAN_TOOLING_FILE="$REPO_ROOT/completions/zsh/_plan-tooling"
 COMP_CODEX_CLI_FILE="$REPO_ROOT/completions/zsh/_codex-cli"
 ALIASES_FILE="$REPO_ROOT/completions/zsh/aliases.zsh"
 
+BASH_GIT_SCOPE_FILE="$REPO_ROOT/completions/bash/git-scope"
+BASH_SUMMARY_FILE="$REPO_ROOT/completions/bash/git-summary"
+BASH_LOCK_FILE="$REPO_ROOT/completions/bash/git-lock"
+BASH_FZF_CLI_FILE="$REPO_ROOT/completions/bash/fzf-cli"
+BASH_SEMANTIC_COMMIT_FILE="$REPO_ROOT/completions/bash/semantic-commit"
+BASH_API_REST_FILE="$REPO_ROOT/completions/bash/api-rest"
+BASH_API_GQL_FILE="$REPO_ROOT/completions/bash/api-gql"
+BASH_API_TEST_FILE="$REPO_ROOT/completions/bash/api-test"
+BASH_PLAN_TOOLING_FILE="$REPO_ROOT/completions/bash/plan-tooling"
+BASH_CODEX_CLI_FILE="$REPO_ROOT/completions/bash/codex-cli"
+BASH_ALIASES_FILE="$REPO_ROOT/completions/bash/aliases.bash"
+
 if [[ ! -f "$COMP_FILE" ]]; then
   print -u2 -r -- "FAIL: missing completion file"
   exit 1
@@ -68,6 +80,61 @@ fi
 
 if [[ ! -f "$ALIASES_FILE" ]]; then
   print -u2 -r -- "FAIL: missing nils-cli aliases file"
+  exit 1
+fi
+
+if [[ ! -f "$BASH_GIT_SCOPE_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing bash git-scope completion file"
+  exit 1
+fi
+
+if [[ ! -f "$BASH_SUMMARY_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing bash git-summary completion file"
+  exit 1
+fi
+
+if [[ ! -f "$BASH_LOCK_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing bash git-lock completion file"
+  exit 1
+fi
+
+if [[ ! -f "$BASH_FZF_CLI_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing bash fzf-cli completion file"
+  exit 1
+fi
+
+if [[ ! -f "$BASH_SEMANTIC_COMMIT_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing bash semantic-commit completion file"
+  exit 1
+fi
+
+if [[ ! -f "$BASH_API_REST_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing bash api-rest completion file"
+  exit 1
+fi
+
+if [[ ! -f "$BASH_API_GQL_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing bash api-gql completion file"
+  exit 1
+fi
+
+if [[ ! -f "$BASH_API_TEST_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing bash api-test completion file"
+  exit 1
+fi
+
+if [[ ! -f "$BASH_PLAN_TOOLING_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing bash plan-tooling completion file"
+  exit 1
+fi
+
+if [[ ! -f "$BASH_CODEX_CLI_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing bash codex-cli completion file"
+  exit 1
+fi
+
+if [[ ! -f "$BASH_ALIASES_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing bash nils-cli aliases file"
   exit 1
 fi
 
@@ -366,6 +433,61 @@ grep -q -- "--async\\[" "$COMP_CODEX_CLI_FILE" || {
 
 grep -q -- "--cached\\[" "$COMP_CODEX_CLI_FILE" || {
   print -u2 -r -- "FAIL: codex-cli completion missing --cached"
+  exit 1
+}
+
+bash -c "set -euo pipefail; source \"$BASH_GIT_SCOPE_FILE\"; complete -p git-scope | grep -q _nils_cli_git_scope_complete" || {
+  print -u2 -r -- "FAIL: failed to source bash git-scope completion file"
+  exit 1
+}
+
+bash -c "set -euo pipefail; source \"$BASH_SUMMARY_FILE\"; complete -p git-summary | grep -q _nils_cli_git_summary_complete" || {
+  print -u2 -r -- "FAIL: failed to source bash git-summary completion file"
+  exit 1
+}
+
+bash -c "set -euo pipefail; source \"$BASH_LOCK_FILE\"; complete -p git-lock | grep -q _nils_cli_git_lock_complete" || {
+  print -u2 -r -- "FAIL: failed to source bash git-lock completion file"
+  exit 1
+}
+
+bash -c "set -euo pipefail; source \"$BASH_FZF_CLI_FILE\"; complete -p fzf-cli | grep -q _nils_cli_fzf_cli_complete; complete -p ff | grep -q _nils_cli_fzf_cli_complete" || {
+  print -u2 -r -- "FAIL: failed to source bash fzf-cli completion file"
+  exit 1
+}
+
+bash -c "set -euo pipefail; source \"$BASH_SEMANTIC_COMMIT_FILE\"; complete -p semantic-commit | grep -q _nils_cli_semantic_commit_complete" || {
+  print -u2 -r -- "FAIL: failed to source bash semantic-commit completion file"
+  exit 1
+}
+
+bash -c "set -euo pipefail; source \"$BASH_PLAN_TOOLING_FILE\"; complete -p plan-tooling | grep -q _nils_cli_plan_tooling_complete" || {
+  print -u2 -r -- "FAIL: failed to source bash plan-tooling completion file"
+  exit 1
+}
+
+bash -c "set -euo pipefail; source \"$BASH_API_REST_FILE\"; complete -p api-rest | grep -q _nils_cli_api_rest_complete" || {
+  print -u2 -r -- "FAIL: failed to source bash api-rest completion file"
+  exit 1
+}
+
+bash -c "set -euo pipefail; source \"$BASH_API_GQL_FILE\"; complete -p api-gql | grep -q _nils_cli_api_gql_complete" || {
+  print -u2 -r -- "FAIL: failed to source bash api-gql completion file"
+  exit 1
+}
+
+bash -c "set -euo pipefail; source \"$BASH_API_TEST_FILE\"; complete -p api-test | grep -q _nils_cli_api_test_complete" || {
+  print -u2 -r -- "FAIL: failed to source bash api-test completion file"
+  exit 1
+}
+
+bash -c "set -euo pipefail; source \"$BASH_CODEX_CLI_FILE\"; complete -p codex-cli | grep -q _nils_cli_codex_cli_complete; complete -p cx | grep -q _nils_cli_codex_cli_complete" || {
+  print -u2 -r -- "FAIL: failed to source bash codex-cli completion file"
+  exit 1
+}
+
+bash -c "set -euo pipefail; source \"$BASH_ALIASES_FILE\"; alias gs >/dev/null; alias cx >/dev/null; alias ff >/dev/null; declare -F ffd >/dev/null; declare -F ffh >/dev/null" || {
+  print -u2 -r -- "FAIL: failed to source bash nils-cli aliases file"
   exit 1
 }
 

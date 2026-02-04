@@ -43,9 +43,13 @@ Then download the matching `nils-cli-<tag>-<target>.tar.gz` asset, extract it, a
 For zsh completions, add `<extract_dir>/completions/zsh` to your `fpath` and run `compinit`.
 Optional: source `<extract_dir>/completions/zsh/aliases.zsh` to enable `gs*`/`cx*`/`ff*` aliases.
 
+For bash completions, copy `<extract_dir>/completions/bash/<command>` into your bash-completion directory
+(example: `~/.local/share/bash-completion/completions/`) or source it from your shell init.
+Optional: source `<extract_dir>/completions/bash/aliases.bash` to enable `gs*`/`cx*`/`ff*` aliases.
+
 ## git-scope
 - Example usage: `git-scope staged`, `git-scope all -p`, `git-scope commit HEAD -p`
-- Optional Zsh aliases (opt-in):
+- Optional aliases (opt-in; Zsh: `completions/zsh/aliases.zsh`, Bash: `completions/bash/aliases.bash`):
   - `gs` → `git-scope`
   - `gst` → `git-scope tracked`
   - `gss` → `git-scope staged`
@@ -64,12 +68,12 @@ Optional: source `<extract_dir>/completions/zsh/aliases.zsh` to enable `gs*`/`cx
 ## fzf-cli
 - Example usage: `fzf-cli file`, `fzf-cli directory`, `fzf-cli history`, `fzf-cli port`, `fzf-cli process`
 - Note: some subcommands print shell commands for `eval` (e.g. `fzf-cli directory` prints a `cd ...`), see `crates/fzf-cli/README.md`.
-- Optional Zsh aliases (opt-in): `ff*` (see `completions/zsh/aliases.zsh`); `ffd` and `ffh` are functions that `eval` the emitted command.
+- Optional aliases (opt-in): `ff*` (Zsh: `completions/zsh/aliases.zsh`, Bash: `completions/bash/aliases.bash`); `ffd` and `ffh` are functions that `eval` the emitted command.
 
 ## codex-cli
 - Docs: `crates/codex-cli/README.md`
 - Example usage: `codex-cli auth current`, `codex-cli diag rate-limits --one-line`
-- Optional Zsh aliases (opt-in): `cx*` (see `completions/zsh/aliases.zsh`).
+- Optional aliases (opt-in): `cx*` (Zsh: `completions/zsh/aliases.zsh`, Bash: `completions/bash/aliases.bash`).
 
 ## semantic-commit
 - Example usage:
@@ -116,11 +120,11 @@ See `crates/api-testing-core/README.md` for the recommended repo layout and end-
 5. Verify packaging picks it up (both local install + GitHub Releases use the same discovery):
    - `python3 scripts/workspace-bins.py | rg "^<cli-name>$"`
 
-## Zsh wrappers and completions
-This repo keeps optional zsh wrapper scripts and completion assets in-repo.
+## Shell wrappers and completions
+This repo keeps optional wrapper scripts and completion assets in-repo.
 
 Decision:
-- Keep zsh completion and wrapper assets under `completions/zsh/` and `wrappers/`.
+- Keep completion and wrapper assets under `completions/` and `wrappers/`.
 
 Rationale:
 - Keeps shell UX assets versioned alongside the Rust CLIs they accompany.
@@ -140,13 +144,27 @@ Location:
   - `completions/zsh/_codex-cli`
   - `completions/zsh/_semantic-commit`
   - `completions/zsh/_plan-tooling`
+- `completions/bash/`: bash completion files
+  - `completions/bash/aliases.bash`
+  - `completions/bash/api-rest`
+  - `completions/bash/api-gql`
+  - `completions/bash/api-test`
+  - `completions/bash/git-scope`
+  - `completions/bash/git-summary`
+  - `completions/bash/git-lock`
+  - `completions/bash/fzf-cli`
+  - `completions/bash/codex-cli`
+  - `completions/bash/semantic-commit`
+  - `completions/bash/plan-tooling`
 - `wrappers/`: wrapper scripts for invoking CLI binaries or enforcing env setup
 
 Integration steps:
-1. Add `completions/zsh/` to your `fpath`, then run `compinit` in your shell init.
-2. Optional: `source completions/zsh/aliases.zsh`
-3. Dev-only: add `wrappers/` to your PATH (or symlink wrapper scripts into a bin directory).
-4. Regenerate completions when CLIs change, and commit updates alongside code.
+1. Zsh: add `completions/zsh/` to your `fpath`, then run `compinit` in your shell init.
+2. Zsh (optional): `source completions/zsh/aliases.zsh`
+3. Bash: copy `completions/bash/<command>` into your bash-completion directory, or source them from your shell init.
+4. Bash (optional): `source completions/bash/aliases.bash`
+5. Dev-only: add `wrappers/` to your PATH (or symlink wrapper scripts into a bin directory).
+6. Regenerate completions when CLIs change, and commit updates alongside code.
 
 ## License
 

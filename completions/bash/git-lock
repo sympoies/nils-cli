@@ -1,0 +1,113 @@
+# nils-cli bash completion: git-lock
+
+if [[ -z ${BASH_VERSION-} ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+shopt -s progcomp 2>/dev/null || true
+
+_nils_cli_git_lock_labels() {
+  local lock_base="${ZSH_CACHE_DIR:-}"
+  local lock_dir=''
+  if [[ -z "$lock_base" ]]; then
+    lock_dir="/git-locks"
+  else
+    lock_dir="${lock_base%/}/git-locks"
+  fi
+
+  local toplevel=''
+  toplevel="$(command git rev-parse --show-toplevel 2>/dev/null)" || return 0
+  local repo_id="${toplevel##*/}"
+
+  [[ -d "$lock_dir" ]] || return 0
+
+  local file=''
+  while IFS= read -r file; do
+    [[ -f "$file" ]] || continue
+    local base="${file##*/}"
+    base="${base#${repo_id}-}"
+    base="${base%.lock}"
+    printf '%s\n' "$base"
+  done < <(compgen -G "$lock_dir/${repo_id}-"*.lock)
+}
+
+_nils_cli_git_lock_complete() {
+  local -a words=("${COMP_WORDS[@]}")
+  local cword="$COMP_CWORD"
+  local cur="${COMP_WORDS[COMP_CWORD]}"
+  local prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+  local -a subcmds=(lock unlock list copy delete diff tag help)
+  local -a root_opts=(-h --help)
+
+  if (( cword == 1 )); then
+    if [[ "$cur" == -* ]]; then
+      COMPREPLY=( $(compgen -W "${root_opts[*]}" -- "$cur") )
+      return 0
+    fi
+    COMPREPLY=( $(compgen -W "${subcmds[*]}" -- "$cur") )
+    return 0
+  fi
+
+  local subcmd="${words[1]-}"
+  case "$subcmd" in
+    -h|--help|help)
+      COMPREPLY=()
+      return 0
+      ;;
+  esac
+
+  local labels="$(_nils_cli_git_lock_labels)"
+
+  case "$subcmd" in
+    unlock|delete)
+      if (( cword == 2 )); then
+        COMPREPLY=( $(compgen -W "$labels" -- "$cur") )
+        return 0
+      fi
+      ;;
+    copy)
+      if (( cword == 2 )); then
+        COMPREPLY=( $(compgen -W "$labels" -- "$cur") )
+        return 0
+      fi
+      ;;
+    diff)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "--no-color no-color -h --help" -- "$cur") )
+        return 0
+      fi
+      if (( cword == 2 || cword == 3 )); then
+        COMPREPLY=( $(compgen -W "$labels" -- "$cur") )
+        return 0
+      fi
+      ;;
+    tag)
+      if [[ "$prev" == "-m" ]]; then
+        COMPREPLY=()
+        return 0
+      fi
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "--push -m" -- "$cur") )
+        return 0
+      fi
+      if (( cword == 2 )); then
+        COMPREPLY=( $(compgen -W "$labels" -- "$cur") )
+        return 0
+      fi
+      ;;
+    lock)
+      COMPREPLY=()
+      return 0
+      ;;
+    list)
+      COMPREPLY=()
+      return 0
+      ;;
+  esac
+
+  COMPREPLY=()
+}
+
+complete -F _nils_cli_git_lock_complete git-lock
+
