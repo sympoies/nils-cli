@@ -1,0 +1,289 @@
+#![allow(dead_code)]
+
+use anyhow::{anyhow, Context, Result};
+use std::process::{Command, Output, Stdio};
+
+pub(crate) fn trim_trailing_newlines(input: &str) -> String {
+    input.trim_end_matches(['\n', '\r']).to_string()
+}
+
+fn git_command(args: &[&str]) -> Command {
+    let mut cmd = Command::new("git");
+    cmd.args(args)
+        .env("GIT_PAGER", "cat")
+        .env("PAGER", "cat")
+        .stdin(Stdio::null());
+    cmd
+}
+
+pub(crate) fn git_output(args: &[&str]) -> Result<Output> {
+    let output = git_command(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .with_context(|| format!("spawn git {:?}", args))?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "git {:?} failed: {}{}",
+            args,
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout),
+        ));
+    }
+    Ok(output)
+}
+
+pub(crate) fn git_output_optional(args: &[&str]) -> Option<Output> {
+    let output = git_command(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(output)
+}
+
+pub(crate) fn git_status_success(args: &[&str]) -> bool {
+    git_command(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+pub(crate) fn git_status_code(args: &[&str]) -> Option<i32> {
+    git_command(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .ok()
+        .map(|status| status.code().unwrap_or(1))
+}
+
+pub(crate) fn git_stdout_trimmed(args: &[&str]) -> Result<String> {
+    let output = git_output(args)?;
+    Ok(trim_trailing_newlines(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
+}
+
+pub(crate) fn git_stdout_trimmed_optional(args: &[&str]) -> Option<String> {
+    let output = git_output_optional(args)?;
+    let out = trim_trailing_newlines(&String::from_utf8_lossy(&output.stdout));
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct NameStatusEntry {
+    pub status_raw: String,
+    pub path: String,
+    pub old_path: Option<String>,
+}
+
+pub(crate) fn parse_name_status_z(bytes: &[u8]) -> Result<Vec<NameStatusEntry>> {
+    let parts: Vec<&[u8]> = bytes.split(|b| *b == 0).filter(|p| !p.is_empty()).collect();
+    let mut out: Vec<NameStatusEntry> = Vec::new();
+    let mut i = 0;
+
+    while i < parts.len() {
+        let status_raw = String::from_utf8_lossy(parts[i]).to_string();
+        i += 1;
+
+        if status_raw.starts_with('R') || status_raw.starts_with('C') {
+            let old = parts
+                .get(i)
+                .ok_or_else(|| anyhow!("error: malformed name-status output"))?;
+            let new = parts
+                .get(i + 1)
+                .ok_or_else(|| anyhow!("error: malformed name-status output"))?;
+            i += 2;
+            out.push(NameStatusEntry {
+                status_raw,
+                path: String::from_utf8_lossy(new).to_string(),
+                old_path: Some(String::from_utf8_lossy(old).to_string()),
+            });
+        } else {
+            let file = parts
+                .get(i)
+                .ok_or_else(|| anyhow!("error: malformed name-status output"))?;
+            i += 1;
+            out.push(NameStatusEntry {
+                status_raw,
+                path: String::from_utf8_lossy(file).to_string(),
+                old_path: None,
+            });
+        }
+    }
+
+    Ok(out)
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DiffNumstat {
+    pub added: Option<i64>,
+    pub deleted: Option<i64>,
+    pub binary: bool,
+}
+
+pub(crate) fn diff_numstat(path: &str) -> Result<DiffNumstat> {
+    let output = git_stdout_trimmed(&[
+        "-c",
+        "core.quotepath=false",
+        "diff",
+        "--cached",
+        "--numstat",
+        "--",
+        path,
+    ])?;
+
+    let line = output.lines().next().unwrap_or("");
+    if line.trim().is_empty() {
+        return Ok(DiffNumstat {
+            added: None,
+            deleted: None,
+            binary: false,
+        });
+    }
+
+    let mut parts = line.split('\t');
+    let added = parts.next().unwrap_or("");
+    let deleted = parts.next().unwrap_or("");
+
+    if added == "-" || deleted == "-" {
+        return Ok(DiffNumstat {
+            added: None,
+            deleted: None,
+            binary: true,
+        });
+    }
+
+    let added_num = added.parse::<i64>().ok();
+    let deleted_num = deleted.parse::<i64>().ok();
+
+    Ok(DiffNumstat {
+        added: added_num,
+        deleted: deleted_num,
+        binary: false,
+    })
+}
+
+pub(crate) fn is_lockfile(path: &str) -> bool {
+    let name = std::path::Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    matches!(
+        name,
+        "yarn.lock"
+            | "package-lock.json"
+            | "pnpm-lock.yaml"
+            | "bun.lockb"
+            | "bun.lock"
+            | "npm-shrinkwrap.json"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nils_test_support::git::{commit_file, git, init_repo_with, InitRepoOptions};
+    use nils_test_support::{CwdGuard, GlobalStateLock};
+    use pretty_assertions::assert_eq;
+    use std::fs;
+
+    #[test]
+    fn parse_name_status_z_handles_rename_and_copy() {
+        let bytes = b"R100\0old.txt\0new.txt\0C90\0src.rs\0dst.rs\0M\0file.txt\0";
+        let entries = parse_name_status_z(bytes).expect("parse name-status");
+
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].status_raw, "R100");
+        assert_eq!(entries[0].path, "new.txt");
+        assert_eq!(entries[0].old_path.as_deref(), Some("old.txt"));
+        assert_eq!(entries[1].status_raw, "C90");
+        assert_eq!(entries[1].path, "dst.rs");
+        assert_eq!(entries[1].old_path.as_deref(), Some("src.rs"));
+        assert_eq!(entries[2].status_raw, "M");
+        assert_eq!(entries[2].path, "file.txt");
+        assert_eq!(entries[2].old_path, None);
+    }
+
+    #[test]
+    fn parse_name_status_z_errors_on_malformed_input() {
+        let err = parse_name_status_z(b"R100\0old.txt\0").expect_err("expected parse failure");
+        assert!(
+            err.to_string().contains("malformed name-status output"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn diff_numstat_reports_counts_for_text_changes() {
+        let lock = GlobalStateLock::new();
+        let repo = init_repo_with(InitRepoOptions::new().with_initial_commit());
+        commit_file(repo.path(), "file.txt", "one\n", "add file");
+        fs::write(repo.path().join("file.txt"), "one\ntwo\nthree\n").expect("write file");
+        git(repo.path(), &["add", "file.txt"]);
+
+        let _cwd = CwdGuard::set(&lock, repo.path()).expect("cwd");
+        let diff = diff_numstat("file.txt").expect("diff numstat");
+
+        assert_eq!(diff.added, Some(2));
+        assert_eq!(diff.deleted, Some(0));
+        assert!(!diff.binary);
+    }
+
+    #[test]
+    fn diff_numstat_reports_binary_for_binary_file() {
+        let lock = GlobalStateLock::new();
+        let repo = init_repo_with(InitRepoOptions::new().with_initial_commit());
+        fs::write(repo.path().join("bin.dat"), b"\x00\x01binary\x00").expect("write bin");
+        git(repo.path(), &["add", "bin.dat"]);
+
+        let _cwd = CwdGuard::set(&lock, repo.path()).expect("cwd");
+        let diff = diff_numstat("bin.dat").expect("diff numstat");
+
+        assert!(diff.binary);
+        assert_eq!(diff.added, None);
+        assert_eq!(diff.deleted, None);
+    }
+
+    #[test]
+    fn diff_numstat_reports_none_when_no_changes() {
+        let lock = GlobalStateLock::new();
+        let repo = init_repo_with(InitRepoOptions::new().with_initial_commit());
+        commit_file(repo.path(), "file.txt", "one\n", "add file");
+
+        let _cwd = CwdGuard::set(&lock, repo.path()).expect("cwd");
+        let diff = diff_numstat("file.txt").expect("diff numstat");
+
+        assert_eq!(diff.added, None);
+        assert_eq!(diff.deleted, None);
+        assert!(!diff.binary);
+    }
+
+    #[test]
+    fn is_lockfile_detects_known_names() {
+        for name in [
+            "yarn.lock",
+            "package-lock.json",
+            "pnpm-lock.yaml",
+            "bun.lockb",
+            "bun.lock",
+            "npm-shrinkwrap.json",
+            "path/to/yarn.lock",
+        ] {
+            assert!(is_lockfile(name), "expected {name} to be a lockfile");
+        }
+
+        assert!(!is_lockfile("Cargo.lock"));
+        assert!(!is_lockfile("README.md"));
+    }
+}

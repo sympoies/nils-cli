@@ -7,6 +7,7 @@ REPO_ROOT="${SCRIPT_PATH:h:h:h}"
 COMP_FILE="$REPO_ROOT/completions/zsh/_git-scope"
 COMP_SUMMARY_FILE="$REPO_ROOT/completions/zsh/_git-summary"
 COMP_LOCK_FILE="$REPO_ROOT/completions/zsh/_git-lock"
+COMP_GIT_CLI_FILE="$REPO_ROOT/completions/zsh/_git-cli"
 COMP_FZF_CLI_FILE="$REPO_ROOT/completions/zsh/_fzf-cli"
 COMP_SEMANTIC_COMMIT_FILE="$REPO_ROOT/completions/zsh/_semantic-commit"
 COMP_API_REST_FILE="$REPO_ROOT/completions/zsh/_api-rest"
@@ -19,6 +20,7 @@ ALIASES_FILE="$REPO_ROOT/completions/zsh/aliases.zsh"
 BASH_GIT_SCOPE_FILE="$REPO_ROOT/completions/bash/git-scope"
 BASH_SUMMARY_FILE="$REPO_ROOT/completions/bash/git-summary"
 BASH_LOCK_FILE="$REPO_ROOT/completions/bash/git-lock"
+BASH_GIT_CLI_FILE="$REPO_ROOT/completions/bash/git-cli"
 BASH_FZF_CLI_FILE="$REPO_ROOT/completions/bash/fzf-cli"
 BASH_SEMANTIC_COMMIT_FILE="$REPO_ROOT/completions/bash/semantic-commit"
 BASH_API_REST_FILE="$REPO_ROOT/completions/bash/api-rest"
@@ -40,6 +42,11 @@ fi
 
 if [[ ! -f "$COMP_LOCK_FILE" ]]; then
   print -u2 -r -- "FAIL: missing git-lock completion file"
+  exit 1
+fi
+
+if [[ ! -f "$COMP_GIT_CLI_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing git-cli completion file"
   exit 1
 fi
 
@@ -95,6 +102,11 @@ fi
 
 if [[ ! -f "$BASH_LOCK_FILE" ]]; then
   print -u2 -r -- "FAIL: missing bash git-lock completion file"
+  exit 1
+fi
+
+if [[ ! -f "$BASH_GIT_CLI_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing bash git-cli completion file"
   exit 1
 fi
 
@@ -156,6 +168,11 @@ source "$COMP_LOCK_FILE" || {
   exit 1
 }
 
+source "$COMP_GIT_CLI_FILE" || {
+  print -u2 -r -- "FAIL: failed to source git-cli completion file"
+  exit 1
+}
+
 source "$COMP_FZF_CLI_FILE" || {
   print -u2 -r -- "FAIL: failed to source fzf-cli completion file"
   exit 1
@@ -208,6 +225,11 @@ fi
 
 if (( ! $+functions[_git-lock] )); then
   print -u2 -r -- "FAIL: _git-lock function not defined"
+  exit 1
+fi
+
+if (( ! $+functions[_git-cli] )); then
+  print -u2 -r -- "FAIL: _git-cli function not defined"
   exit 1
 fi
 
@@ -283,6 +305,46 @@ fi
 
 if (( ! $+aliases[gsh] )); then
   print -u2 -r -- "FAIL: gsh alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[gx] )); then
+  print -u2 -r -- "FAIL: gx alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[gxh] )); then
+  print -u2 -r -- "FAIL: gxh alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[gxu] )); then
+  print -u2 -r -- "FAIL: gxu alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[gxrs] )); then
+  print -u2 -r -- "FAIL: gxrs alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[gxrr] )); then
+  print -u2 -r -- "FAIL: gxrr alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[gxcc] )); then
+  print -u2 -r -- "FAIL: gxcc alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[gxip] )); then
+  print -u2 -r -- "FAIL: gxip alias not defined"
+  exit 1
+fi
+
+if (( ! $+functions[gxur] )); then
+  print -u2 -r -- "FAIL: gxur function not defined"
   exit 1
 fi
 
@@ -451,6 +513,11 @@ bash -c "set -euo pipefail; source \"$BASH_LOCK_FILE\"; complete -p git-lock | g
   exit 1
 }
 
+bash -c "set -euo pipefail; source \"$BASH_GIT_CLI_FILE\"; complete -p git-cli | grep -q _nils_cli_git_cli_complete; complete -p gx | grep -q _nils_cli_git_cli_complete" || {
+  print -u2 -r -- "FAIL: failed to source bash git-cli completion file"
+  exit 1
+}
+
 bash -c "set -euo pipefail; source \"$BASH_FZF_CLI_FILE\"; complete -p fzf-cli | grep -q _nils_cli_fzf_cli_complete; complete -p fx | grep -q _nils_cli_fzf_cli_complete" || {
   print -u2 -r -- "FAIL: failed to source bash fzf-cli completion file"
   exit 1
@@ -486,7 +553,7 @@ bash -c "set -euo pipefail; source \"$BASH_CODEX_CLI_FILE\"; complete -p codex-c
   exit 1
 }
 
-bash -c "set -euo pipefail; source \"$BASH_ALIASES_FILE\"; alias gs >/dev/null; alias cx >/dev/null; alias fx >/dev/null; declare -F fxd >/dev/null; declare -F fxh >/dev/null" || {
+bash -c "set -euo pipefail; source \"$BASH_ALIASES_FILE\"; alias gs >/dev/null; alias gx >/dev/null; alias cx >/dev/null; alias fx >/dev/null; declare -F gxur >/dev/null; declare -F fxd >/dev/null; declare -F fxh >/dev/null" || {
   print -u2 -r -- "FAIL: failed to source bash nils-cli aliases file"
   exit 1
 }

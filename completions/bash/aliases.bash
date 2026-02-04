@@ -31,6 +31,39 @@ _nils_cli__has_alias gsc || alias gsc='git-scope commit'
 _nils_cli__has_alias gsh || alias gsh='git-scope help'
 
 # ---------------------------------------------------------------------------
+# git-cli (gx*)
+# ---------------------------------------------------------------------------
+_nils_cli__has_alias gx || alias gx='git-cli'
+_nils_cli__has_alias gxh || alias gxh='git-cli help'
+
+_nils_cli__has_alias gxu || alias gxu='git-cli utils'
+_nils_cli__has_alias gxr || alias gxr='git-cli reset'
+_nils_cli__has_alias gxc || alias gxc='git-cli commit'
+_nils_cli__has_alias gxb || alias gxb='git-cli branch'
+_nils_cli__has_alias gxi || alias gxi='git-cli ci'
+
+_nils_cli__has_alias gxuz || alias gxuz='git-cli utils zip'
+_nils_cli__has_alias gxuc || alias gxuc='git-cli utils copy-staged'
+_nils_cli__has_function gxur || gxur() { eval "$(git-cli utils root --shell)"; }
+_nils_cli__has_alias gxuh || alias gxuh='git-cli utils commit-hash'
+
+_nils_cli__has_alias gxrs || alias gxrs='git-cli reset soft'
+_nils_cli__has_alias gxrm || alias gxrm='git-cli reset mixed'
+_nils_cli__has_alias gxrh || alias gxrh='git-cli reset hard'
+_nils_cli__has_alias gxru || alias gxru='git-cli reset undo'
+_nils_cli__has_alias gxrbh || alias gxrbh='git-cli reset back-head'
+_nils_cli__has_alias gxrbc || alias gxrbc='git-cli reset back-checkout'
+_nils_cli__has_alias gxrr || alias gxrr='git-cli reset remote'
+
+_nils_cli__has_alias gxcc || alias gxcc='git-cli commit context'
+_nils_cli__has_alias gxcj || alias gxcj='git-cli commit context-json'
+_nils_cli__has_alias gxcs || alias gxcs='git-cli commit to-stash'
+
+_nils_cli__has_alias gxbc || alias gxbc='git-cli branch cleanup'
+
+_nils_cli__has_alias gxip || alias gxip='git-cli ci pick'
+
+# ---------------------------------------------------------------------------
 # codex-cli (cx*)
 # ---------------------------------------------------------------------------
 _nils_cli__has_alias cx || alias cx='codex-cli'
