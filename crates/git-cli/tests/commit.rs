@@ -6,6 +6,7 @@ use std::path::Path;
 use common::GitCliHarness;
 use nils_test_support::cmd::run_with;
 use nils_test_support::git::{git, git_with_env};
+use nils_test_support::stubs::STUB_LOG_ENV;
 use nils_test_support::StubBinDir;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
@@ -341,6 +342,219 @@ fn commit_context_missing_git_scope() {
 }
 
 #[test]
+fn commit_context_unknown_args_warning() {
+    let repo = TempDir::new().expect("tempdir");
+    git_init_repo(repo.path());
+
+    fs::write(repo.path().join("hello.txt"), "base\n").expect("write hello");
+    git_commit_all(repo.path(), "init", "2000-01-01T00:00:00+0000");
+
+    fs::write(repo.path().join("hello.txt"), "base\nchange\n").expect("write hello");
+    git(repo.path(), &["add", "hello.txt"]);
+
+    let harness = GitCliHarness::new();
+    let stubs = write_scope_stubs();
+    let options = harness
+        .cmd_options(repo.path())
+        .with_path_prepend(stubs.path());
+
+    let output = run_with(
+        &harness.git_cli_bin(),
+        &["commit", "context", "--stdout", "--bogus", "extra"],
+        &options,
+    );
+
+    assert_exit_code("F043", &output, 0);
+    let stdout = output.stdout_text();
+    let stderr = output.stderr_text();
+    assert_stderr_contains_all(
+        "F043",
+        &stderr,
+        &["⚠️  Ignoring unknown arguments: --bogus extra"],
+    );
+    assert_stdout_contains_all("F043", &stdout, &["# Commit Context"]);
+}
+
+#[test]
+fn commit_context_json_unknown_args_warning() {
+    let repo = TempDir::new().expect("tempdir");
+    git_init_repo(repo.path());
+
+    fs::write(repo.path().join("hello.txt"), "base\n").expect("write hello");
+    git_commit_all(repo.path(), "init", "2000-01-01T00:00:00+0000");
+
+    fs::write(repo.path().join("hello.txt"), "base\nchange\n").expect("write hello");
+    git(repo.path(), &["add", "hello.txt"]);
+
+    let harness = GitCliHarness::new();
+    let output = run_with(
+        &harness.git_cli_bin(),
+        &["commit", "context-json", "--stdout", "--bogus", "extra"],
+        &harness.cmd_options(repo.path()),
+    );
+
+    assert_exit_code("F049", &output, 0);
+    let stderr = output.stderr_text();
+    assert_stderr_contains_all(
+        "F049",
+        &stderr,
+        &["⚠️  Ignoring unknown arguments: --bogus extra"],
+    );
+    assert!(!output.stdout_text().trim().is_empty());
+}
+
+#[test]
+fn commit_context_no_color_env_propagates() {
+    let repo = TempDir::new().expect("tempdir");
+    git_init_repo(repo.path());
+
+    fs::write(repo.path().join("hello.txt"), "base\n").expect("write hello");
+    git_commit_all(repo.path(), "init", "2000-01-01T00:00:00+0000");
+
+    fs::write(repo.path().join("hello.txt"), "base\nchange\n").expect("write hello");
+    git(repo.path(), &["add", "hello.txt"]);
+
+    let scope_stub = r#"#!/bin/bash
+set -euo pipefail
+printf "SCOPE_ARGS: %s\n" "$*"
+"#;
+    let scope_bin = StubBinDir::new();
+    scope_bin.write_exe("git-scope", scope_stub);
+
+    let harness = GitCliHarness::new();
+    let options = harness
+        .cmd_options(repo.path())
+        .with_path_prepend(scope_bin.path())
+        .with_env("NO_COLOR", "1");
+
+    let output = run_with(
+        &harness.git_cli_bin(),
+        &["commit", "context", "--stdout"],
+        &options,
+    );
+
+    assert_exit_code("F044", &output, 0);
+    let stdout = output.stdout_text();
+    assert_stdout_contains_all("F044", &stdout, &["SCOPE_ARGS: staged --no-color"]);
+}
+
+#[test]
+fn commit_context_binary_missing_file_command() {
+    let repo = TempDir::new().expect("tempdir");
+    git_init_repo(repo.path());
+
+    fs::write(repo.path().join("hello.txt"), "base\n").expect("write hello");
+    git_commit_all(repo.path(), "init", "2000-01-01T00:00:00+0000");
+
+    fs::write(repo.path().join("bin.dat"), b"\x00\x01\x02binary\x00data\n").expect("write bin");
+    git(repo.path(), &["add", "bin.dat"]);
+
+    let harness = GitCliHarness::new();
+    let stubs = write_scope_stubs();
+    let options = harness
+        .cmd_options(repo.path())
+        .with_path_prepend(stubs.path())
+        .with_env("GIT_CLI_FIXTURE_FILE_MODE", "missing");
+
+    let output = run_with(
+        &harness.git_cli_bin(),
+        &["commit", "context", "--stdout"],
+        &options,
+    );
+
+    assert_exit_code("F045", &output, 0);
+    let stdout = output.stdout_text();
+    assert_stdout_contains_all(
+        "F045",
+        &stdout,
+        &["### bin.dat (A)", "[Binary file content hidden]"],
+    );
+    assert!(!stdout.contains("Type:"), "expected F045 no type line");
+}
+
+#[test]
+fn commit_context_deleted_file_content() {
+    let repo = TempDir::new().expect("tempdir");
+    git_init_repo(repo.path());
+
+    fs::write(repo.path().join("deleted.txt"), "keep me\n").expect("write file");
+    git_commit_all(repo.path(), "init", "2000-01-01T00:00:00+0000");
+
+    fs::remove_file(repo.path().join("deleted.txt")).expect("remove file");
+    git(repo.path(), &["add", "-A"]);
+
+    let harness = GitCliHarness::new();
+    let stubs = write_scope_stubs();
+    let options = harness
+        .cmd_options(repo.path())
+        .with_path_prepend(stubs.path());
+
+    let output = run_with(
+        &harness.git_cli_bin(),
+        &["commit", "context", "--stdout"],
+        &options,
+    );
+
+    assert_exit_code("F046", &output, 0);
+    let stdout = output.stdout_text();
+    assert_stdout_contains_all(
+        "F046",
+        &stdout,
+        &[
+            "### deleted.txt (D)",
+            "[Deleted file, showing HEAD version]",
+            "keep me",
+        ],
+    );
+}
+
+#[test]
+fn commit_context_lockfile_include_override() {
+    let repo = TempDir::new().expect("tempdir");
+    git_init_repo(repo.path());
+
+    fs::write(repo.path().join("hello.txt"), "base\n").expect("write hello");
+    git_commit_all(repo.path(), "init", "2000-01-01T00:00:00+0000");
+
+    fs::write(
+        repo.path().join("package-lock.json"),
+        "{\"name\":\"pkg\",\"lock\":true}\n",
+    )
+    .expect("write lockfile");
+    git(repo.path(), &["add", "package-lock.json"]);
+
+    let harness = GitCliHarness::new();
+    let stubs = write_scope_stubs();
+    let options = harness
+        .cmd_options(repo.path())
+        .with_path_prepend(stubs.path());
+
+    let output = run_with(
+        &harness.git_cli_bin(),
+        &[
+            "commit",
+            "context",
+            "--stdout",
+            "--include",
+            "package-lock.json",
+        ],
+        &options,
+    );
+
+    assert_exit_code("F047", &output, 0);
+    let stdout = output.stdout_text();
+    assert_stdout_contains_all(
+        "F047",
+        &stdout,
+        &["### package-lock.json (A)", "\"lock\":true"],
+    );
+    assert!(
+        !stdout.contains("Lockfile content hidden"),
+        "expected F047 lockfile to be included"
+    );
+}
+
+#[test]
 fn commit_context_json_fixture_f033() {
     let root = TempDir::new().expect("tempdir");
     let repo_path = root.path().join("f033-commit-context-json");
@@ -536,6 +750,225 @@ fn commit_context_json_help_output() {
 }
 
 #[test]
+fn commit_context_json_missing_out_dir_value() {
+    let repo = TempDir::new().expect("tempdir");
+    git_init_repo(repo.path());
+
+    let harness = GitCliHarness::new();
+    let output = run_with(
+        &harness.git_cli_bin(),
+        &["commit", "context-json", "--out-dir"],
+        &harness.cmd_options(repo.path()),
+    );
+
+    assert_exit_code("F050", &output, 2);
+    let stderr = output.stderr_text();
+    assert_stderr_contains_all("F050", &stderr, &["❌ Missing value for --out-dir"]);
+    assert_eq!(output.stdout_text(), "");
+}
+
+#[test]
+fn commit_context_json_both_outputs_bundle_and_clipboard() {
+    let repo = TempDir::new().expect("tempdir");
+    git_init_repo(repo.path());
+
+    fs::write(repo.path().join("hello.txt"), "base\n").expect("write hello");
+    git_commit_all(repo.path(), "init", "2000-01-01T00:00:00+0000");
+
+    fs::write(repo.path().join("hello.txt"), "base\nchange\n").expect("write hello");
+    git(repo.path(), &["add", "hello.txt"]);
+
+    let stubs = StubBinDir::new();
+    let pbcopy_out = repo.path().join("pbcopy-bundle.out");
+    stubs.write_exe(
+        "pbcopy",
+        r#"#!/bin/bash
+set -euo pipefail
+out="${PB_COPY_OUT:?PB_COPY_OUT is required}"
+/bin/cat > "$out"
+"#,
+    );
+
+    let harness = GitCliHarness::new();
+    let options = harness
+        .cmd_options(repo.path())
+        .with_path_prepend(stubs.path())
+        .with_env("PB_COPY_OUT", pbcopy_out.to_string_lossy().as_ref())
+        .with_env("GIT_CLI_FIXTURE_DATE_MODE", "fixed");
+
+    let output = run_with(
+        &harness.git_cli_bin(),
+        &["commit", "context-json", "--both", "--bundle"],
+        &options,
+    );
+
+    assert_exit_code("F043", &output, 0);
+    let stdout = output.stdout_text();
+    assert_stdout_contains_all(
+        "F043",
+        &stdout,
+        &[
+            "===== commit-context.json =====",
+            "===== staged.patch =====",
+        ],
+    );
+
+    let clipboard = fs::read_to_string(pbcopy_out).expect("read pbcopy output");
+    assert!(
+        clipboard.contains("===== commit-context.json ====="),
+        "expected F043 clipboard to contain bundle header"
+    );
+    assert!(
+        clipboard.contains("===== staged.patch ====="),
+        "expected F043 clipboard to contain patch header"
+    );
+}
+
+#[test]
+fn commit_context_json_both_outputs_json_and_clipboard() {
+    let repo = TempDir::new().expect("tempdir");
+    git_init_repo(repo.path());
+
+    fs::write(repo.path().join("hello.txt"), "base\n").expect("write hello");
+    git_commit_all(repo.path(), "init", "2000-01-01T00:00:00+0000");
+
+    fs::write(repo.path().join("hello.txt"), "base\nchange\n").expect("write hello");
+    git(repo.path(), &["add", "hello.txt"]);
+
+    let stubs = StubBinDir::new();
+    let pbcopy_out = repo.path().join("pbcopy-json.out");
+    stubs.write_exe(
+        "pbcopy",
+        r#"#!/bin/bash
+set -euo pipefail
+out="${PB_COPY_OUT:?PB_COPY_OUT is required}"
+/bin/cat > "$out"
+"#,
+    );
+
+    let harness = GitCliHarness::new();
+    let options = harness
+        .cmd_options(repo.path())
+        .with_path_prepend(stubs.path())
+        .with_env("PB_COPY_OUT", pbcopy_out.to_string_lossy().as_ref());
+
+    let output = run_with(
+        &harness.git_cli_bin(),
+        &["commit", "context-json", "--both"],
+        &options,
+    );
+
+    assert_exit_code("F044", &output, 0);
+    let stdout = output.stdout_text();
+    assert!(
+        !stdout.contains("===== commit-context.json ====="),
+        "expected F044 stdout to be JSON only"
+    );
+    let parsed: Value = serde_json::from_str(stdout.trim()).expect("parse json stdout");
+    assert_eq!(
+        parsed.get("schemaVersion").and_then(|value| value.as_i64()),
+        Some(1)
+    );
+
+    let clipboard = fs::read_to_string(pbcopy_out).expect("read pbcopy output");
+    assert!(
+        !clipboard.contains("===== commit-context.json ====="),
+        "expected F044 clipboard to be JSON only"
+    );
+    let parsed_clipboard: Value =
+        serde_json::from_str(clipboard.trim()).expect("parse json clipboard");
+    assert_eq!(
+        parsed_clipboard
+            .get("schemaVersion")
+            .and_then(|value| value.as_i64()),
+        Some(1)
+    );
+}
+
+#[test]
+fn commit_context_json_default_out_dir_uses_git_dir() {
+    let repo = TempDir::new().expect("tempdir");
+    git_init_repo(repo.path());
+
+    fs::write(repo.path().join("hello.txt"), "base\n").expect("write hello");
+    git_commit_all(repo.path(), "init", "2000-01-01T00:00:00+0000");
+
+    fs::write(repo.path().join("hello.txt"), "base\nchange\n").expect("write hello");
+    git(repo.path(), &["add", "hello.txt"]);
+
+    let harness = GitCliHarness::new();
+    let output = run_with(
+        &harness.git_cli_bin(),
+        &["commit", "context-json", "--stdout"],
+        &harness.cmd_options(repo.path()),
+    );
+
+    assert_exit_code("F045", &output, 0);
+    let manifest_path = repo.path().join(".git/commit-context/commit-context.json");
+    let patch_path = repo.path().join(".git/commit-context/staged.patch");
+    assert!(manifest_path.exists(), "expected F045 manifest to exist");
+    assert!(patch_path.exists(), "expected F045 patch to exist");
+}
+
+#[test]
+fn commit_context_json_missing_git_repo() {
+    let repo = TempDir::new().expect("tempdir");
+
+    let harness = GitCliHarness::new();
+    let output = run_with(
+        &harness.git_cli_bin(),
+        &["commit", "context-json"],
+        &harness.cmd_options(repo.path()),
+    );
+
+    assert_exit_code("F046", &output, 1);
+    let stderr = output.stderr_text();
+    assert_stderr_contains_all("F046", &stderr, &["❌ Not a git repository."]);
+}
+
+#[test]
+fn commit_context_json_diff_cached_error() {
+    let repo = TempDir::new().expect("tempdir");
+
+    let stubs = StubBinDir::new();
+    stubs.write_exe(
+        "git",
+        r#"#!/bin/bash
+set -euo pipefail
+
+if [[ "$1" == "rev-parse" && "$2" == "--is-inside-work-tree" ]]; then
+  exit 0
+fi
+
+if [[ "$1" == "diff" && "$2" == "--cached" && "$3" == "--quiet" && "$4" == "--exit-code" ]]; then
+  exit 2
+fi
+
+exit 0
+"#,
+    );
+
+    let harness = GitCliHarness::new();
+    let options = harness
+        .cmd_options(repo.path())
+        .with_path_prepend(stubs.path())
+        .with_env(
+            STUB_LOG_ENV,
+            repo.path().join("stub.log").to_string_lossy().as_ref(),
+        );
+
+    let output = run_with(
+        &harness.git_cli_bin(),
+        &["commit", "context-json"],
+        &options,
+    );
+
+    assert_exit_code("F047", &output, 1);
+    let stderr = output.stderr_text();
+    assert_stderr_contains_all("F047", &stderr, &["❌ Failed to check staged changes."]);
+}
+
+#[test]
 fn commit_to_stash_fixture_f034() {
     let repo = TempDir::new().expect("tempdir");
     git_init_repo(repo.path());
@@ -681,4 +1114,50 @@ fn commit_to_stash_fallback_refuses_dirty_tree() {
     let stdout = output.stdout_text();
     assert!(stdout.contains("Fallback would require touching the working tree"));
     assert!(stdout.contains("Working tree is not clean; fallback requires clean state."));
+}
+
+#[test]
+fn commit_to_stash_upstream_prompt_flow() {
+    let repo = TempDir::new().expect("tempdir");
+    git_init_repo(repo.path());
+
+    fs::write(repo.path().join("hello.txt"), "one\n").expect("write hello");
+    git_commit_all(repo.path(), "c1", "2000-01-01T00:00:00+0000");
+
+    let remote = common::init_bare_remote();
+    git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            remote.path().to_string_lossy().as_ref(),
+        ],
+    );
+    git(repo.path(), &["push", "-u", "origin", "main"]);
+
+    fs::write(repo.path().join("hello.txt"), "two\n").expect("write hello");
+    git_commit_all(repo.path(), "c2", "2000-01-02T00:00:00+0000");
+    git(repo.path(), &["push", "origin", "main"]);
+
+    let harness = GitCliHarness::new();
+    let options = harness.cmd_options(repo.path()).with_stdin_str("y\ny\nn\n");
+
+    let output = run_with(
+        &harness.git_cli_bin(),
+        &["commit", "to-stash", "HEAD"],
+        &options,
+    );
+
+    assert_exit_code("F048", &output, 0);
+    let stdout = output.stdout_text();
+    assert_stdout_contains_all(
+        "F048",
+        &stdout,
+        &[
+            "✅ Stash created:",
+            "⚠️  This commit appears to be reachable from upstream",
+            "❓ Still drop it? [y/N] ✅ Done. Commit kept; stash saved.",
+        ],
+    );
 }

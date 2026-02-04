@@ -70,6 +70,7 @@ pub fn run_capture(cmd: &str, args: &[&str]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nils_test_support::GlobalStateLock;
     use std::fs::File;
     use tempfile::TempDir;
 
@@ -127,6 +128,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn run_capture_reports_nonzero_exit() {
+        let _lock = GlobalStateLock::new();
         let err =
             run_capture("sh", &["-c", "printf 'oops' 1>&2; exit 1"]).expect_err("should fail");
 

@@ -189,3 +189,101 @@ pub(crate) fn is_lockfile(path: &str) -> bool {
             | "npm-shrinkwrap.json"
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nils_test_support::git::{commit_file, git, init_repo_with, InitRepoOptions};
+    use nils_test_support::{CwdGuard, GlobalStateLock};
+    use pretty_assertions::assert_eq;
+    use std::fs;
+
+    #[test]
+    fn parse_name_status_z_handles_rename_and_copy() {
+        let bytes = b"R100\0old.txt\0new.txt\0C90\0src.rs\0dst.rs\0M\0file.txt\0";
+        let entries = parse_name_status_z(bytes).expect("parse name-status");
+
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].status_raw, "R100");
+        assert_eq!(entries[0].path, "new.txt");
+        assert_eq!(entries[0].old_path.as_deref(), Some("old.txt"));
+        assert_eq!(entries[1].status_raw, "C90");
+        assert_eq!(entries[1].path, "dst.rs");
+        assert_eq!(entries[1].old_path.as_deref(), Some("src.rs"));
+        assert_eq!(entries[2].status_raw, "M");
+        assert_eq!(entries[2].path, "file.txt");
+        assert_eq!(entries[2].old_path, None);
+    }
+
+    #[test]
+    fn parse_name_status_z_errors_on_malformed_input() {
+        let err = parse_name_status_z(b"R100\0old.txt\0").expect_err("expected parse failure");
+        assert!(
+            err.to_string().contains("malformed name-status output"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn diff_numstat_reports_counts_for_text_changes() {
+        let lock = GlobalStateLock::new();
+        let repo = init_repo_with(InitRepoOptions::new().with_initial_commit());
+        commit_file(repo.path(), "file.txt", "one\n", "add file");
+        fs::write(repo.path().join("file.txt"), "one\ntwo\nthree\n").expect("write file");
+        git(repo.path(), &["add", "file.txt"]);
+
+        let _cwd = CwdGuard::set(&lock, repo.path()).expect("cwd");
+        let diff = diff_numstat("file.txt").expect("diff numstat");
+
+        assert_eq!(diff.added, Some(2));
+        assert_eq!(diff.deleted, Some(0));
+        assert!(!diff.binary);
+    }
+
+    #[test]
+    fn diff_numstat_reports_binary_for_binary_file() {
+        let lock = GlobalStateLock::new();
+        let repo = init_repo_with(InitRepoOptions::new().with_initial_commit());
+        fs::write(repo.path().join("bin.dat"), b"\x00\x01binary\x00").expect("write bin");
+        git(repo.path(), &["add", "bin.dat"]);
+
+        let _cwd = CwdGuard::set(&lock, repo.path()).expect("cwd");
+        let diff = diff_numstat("bin.dat").expect("diff numstat");
+
+        assert!(diff.binary);
+        assert_eq!(diff.added, None);
+        assert_eq!(diff.deleted, None);
+    }
+
+    #[test]
+    fn diff_numstat_reports_none_when_no_changes() {
+        let lock = GlobalStateLock::new();
+        let repo = init_repo_with(InitRepoOptions::new().with_initial_commit());
+        commit_file(repo.path(), "file.txt", "one\n", "add file");
+
+        let _cwd = CwdGuard::set(&lock, repo.path()).expect("cwd");
+        let diff = diff_numstat("file.txt").expect("diff numstat");
+
+        assert_eq!(diff.added, None);
+        assert_eq!(diff.deleted, None);
+        assert!(!diff.binary);
+    }
+
+    #[test]
+    fn is_lockfile_detects_known_names() {
+        for name in [
+            "yarn.lock",
+            "package-lock.json",
+            "pnpm-lock.yaml",
+            "bun.lockb",
+            "bun.lock",
+            "npm-shrinkwrap.json",
+            "path/to/yarn.lock",
+        ] {
+            assert!(is_lockfile(name), "expected {name} to be a lockfile");
+        }
+
+        assert!(!is_lockfile("Cargo.lock"));
+        assert!(!is_lockfile("README.md"));
+    }
+}

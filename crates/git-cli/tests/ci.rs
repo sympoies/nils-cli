@@ -103,6 +103,42 @@ fn ci_pick_refuses_in_progress_op() {
 }
 
 #[test]
+fn ci_pick_errors_without_remotes() {
+    let harness = GitCliHarness::new();
+    let dir = init_repo();
+
+    let output = harness.run(dir.path(), &["ci", "pick", "main", "HEAD", "test"]);
+
+    assert_eq!(output.code, 1);
+    assert_eq!(output.stdout_text(), "");
+    assert_eq!(
+        output.stderr_text(),
+        "❌ No git remotes found (need a remote to push CI branches).\n"
+    );
+}
+
+#[test]
+fn ci_pick_reports_invalid_target_ref() {
+    let harness = GitCliHarness::new();
+    let dir = init_repo();
+    let remote = init_bare_remote();
+
+    add_remote(dir.path(), "origin", &remote);
+
+    let output = harness.run(
+        dir.path(),
+        &["ci", "pick", "origin/missing", "HEAD", "test", "--no-fetch"],
+    );
+
+    assert_eq!(output.code, 1);
+    assert_eq!(output.stdout_text(), "");
+    assert_eq!(
+        output.stderr_text(),
+        "❌ Cannot resolve target ref: origin/missing\n"
+    );
+}
+
+#[test]
 fn ci_pick_refuses_remote_target_with_mismatched_remote() {
     let harness = GitCliHarness::new();
     let dir = init_repo();
@@ -195,6 +231,28 @@ fn ci_pick_reports_invalid_base_ref() {
 }
 
 #[test]
+fn ci_pick_reports_empty_commit_range() {
+    let harness = GitCliHarness::new();
+    let dir = init_repo();
+    let remote = init_bare_remote();
+
+    add_remote(dir.path(), "origin", &remote);
+    push_main(dir.path(), "origin");
+
+    let output = harness.run(
+        dir.path(),
+        &["ci", "pick", "main", "HEAD..HEAD", "empty", "--no-fetch"],
+    );
+
+    assert_eq!(output.code, 1);
+    assert_eq!(output.stdout_text(), "");
+    assert_eq!(
+        output.stderr_text(),
+        "❌ No commits resolved from range: HEAD..HEAD\n"
+    );
+}
+
+#[test]
 fn ci_pick_refuses_unstaged_changes() {
     let harness = GitCliHarness::new();
     let dir = init_repo();
@@ -230,6 +288,31 @@ fn ci_pick_refuses_staged_changes() {
 }
 
 #[test]
+fn ci_pick_no_fetch_path_uses_local_refs() {
+    let harness = GitCliHarness::new();
+    let dir = init_repo();
+    let remote = init_bare_remote();
+
+    add_remote(dir.path(), "origin", &remote);
+    push_main(dir.path(), "origin");
+
+    git(dir.path(), &["switch", "-q", "-c", "feature"]);
+    let commit_sha = commit_file(dir.path(), "feature.txt", "feature\n", "feature");
+    git(dir.path(), &["switch", "-q", "main"]);
+
+    let output = harness.run(
+        dir.path(),
+        &["ci", "pick", "main", &commit_sha, "no-fetch", "--no-fetch"],
+    );
+
+    assert_eq!(output.code, 0);
+    assert!(output
+        .stdout_text()
+        .contains("🌿 CI branch: ci/main/no-fetch\n"));
+    assert!(output.stdout_text().contains("🔧 Base     : main\n"));
+}
+
+#[test]
 fn ci_pick_creates_and_pushes_branch() {
     let harness = GitCliHarness::new();
     let dir = init_repo();
@@ -262,6 +345,111 @@ fn ci_pick_creates_and_pushes_branch() {
 
     let head = git(dir.path(), &["rev-parse", "--abbrev-ref", "HEAD"]);
     assert_eq!(head.trim(), "main");
+}
+
+#[test]
+fn ci_pick_refuses_existing_remote_branch_without_force() {
+    let harness = GitCliHarness::new();
+    let dir = init_repo();
+    let remote = init_bare_remote();
+
+    add_remote(dir.path(), "origin", &remote);
+    push_main(dir.path(), "origin");
+
+    git(dir.path(), &["switch", "-q", "-c", "feature"]);
+    let commit_sha = commit_file(dir.path(), "feature.txt", "feature\n", "feature");
+    git(dir.path(), &["switch", "-q", "main"]);
+
+    git(
+        dir.path(),
+        &["switch", "-q", "-c", "ci/main/existing", "main"],
+    );
+    git(dir.path(), &["push", "-u", "origin", "ci/main/existing"]);
+    git(dir.path(), &["switch", "-q", "main"]);
+    git(dir.path(), &["branch", "-D", "ci/main/existing"]);
+
+    let output = harness.run(
+        dir.path(),
+        &["ci", "pick", "main", &commit_sha, "existing", "--no-fetch"],
+    );
+
+    assert_eq!(output.code, 1);
+    assert_eq!(output.stdout_text(), "");
+    assert_eq!(
+        output.stderr_text(),
+        "❌ Remote branch already exists: origin/ci/main/existing\n   Use --force to reset/rebuild it.\n"
+    );
+}
+
+#[test]
+fn ci_pick_stays_on_ci_branch_when_requested() {
+    let harness = GitCliHarness::new();
+    let dir = init_repo();
+    let remote = init_bare_remote();
+
+    add_remote(dir.path(), "origin", &remote);
+    push_main(dir.path(), "origin");
+
+    git(dir.path(), &["switch", "-q", "-c", "feature"]);
+    let commit_sha = commit_file(dir.path(), "feature.txt", "feature\n", "feature");
+    git(dir.path(), &["switch", "-q", "main"]);
+
+    let output = harness.run(
+        dir.path(),
+        &[
+            "ci",
+            "pick",
+            "main",
+            &commit_sha,
+            "stay",
+            "--stay",
+            "--no-fetch",
+        ],
+    );
+
+    assert_eq!(output.code, 0);
+    let head = git(dir.path(), &["rev-parse", "--abbrev-ref", "HEAD"]);
+    assert_eq!(head.trim(), "ci/main/stay");
+}
+
+#[test]
+fn ci_pick_cleanup_switch_back_missing_original_branch() {
+    let harness = GitCliHarness::new();
+    let dir = init_repo();
+    let remote = init_bare_remote();
+
+    add_remote(dir.path(), "origin", &remote);
+    push_main(dir.path(), "origin");
+
+    git(dir.path(), &["switch", "-q", "-c", "feature"]);
+    let commit_sha = commit_file(dir.path(), "feature.txt", "feature\n", "feature");
+    git(dir.path(), &["switch", "-q", "main"]);
+
+    git(dir.path(), &["read-tree", "--empty"]);
+    for entry in fs::read_dir(dir.path()).expect("read repo root") {
+        let entry = entry.expect("dir entry");
+        if entry.file_name() == ".git" {
+            continue;
+        }
+        let path = entry.path();
+        if path.is_dir() {
+            fs::remove_dir_all(&path).expect("remove repo dir");
+        } else {
+            fs::remove_file(&path).expect("remove repo file");
+        }
+    }
+
+    let head_path = git_path(dir.path(), "HEAD");
+    fs::write(&head_path, "ref: refs/heads/missing\n").expect("write HEAD");
+
+    let output = harness.run(
+        dir.path(),
+        &["ci", "pick", "main", &commit_sha, "missing", "--no-fetch"],
+    );
+
+    assert_eq!(output.code, 0);
+    let head = git(dir.path(), &["rev-parse", "--abbrev-ref", "HEAD"]);
+    assert_eq!(head.trim(), "ci/main/missing");
 }
 
 #[test]
