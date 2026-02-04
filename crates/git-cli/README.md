@@ -1,18 +1,5 @@
 # git-cli
 
-Upstream (Zsh) references:
-- Repo: https://github.com/graysurf/zsh-kit
-- Pinned sources (vendored for parity work): `crates/git-cli/upstream/`
-- Upstream ref (pinned): `zsh-kit@83f0ef41b9ba16ac6ea0987e83685f35621f7c1e`
-- Local divergence vs `~/.config/zsh/scripts/git/*`: none detected (byte-identical)
-
-Notes:
-- This directory is created in Sprint 1 to hold the parity spec + fixtures + vendored upstream sources.
-- The Rust crate + workspace wiring lands in Sprint 2 (see `docs/plans/git-cli-rust-port-plan.md`).
-- Vendored Zsh sources are **reference-only** and must not be used by the Rust binary at runtime.
-
-# git-cli parity spec
-
 ## Purpose
 `git-cli` is a Rust port of the Zsh `git-tools` dispatcher and its subcommands, targeting behavioral
 parity:
