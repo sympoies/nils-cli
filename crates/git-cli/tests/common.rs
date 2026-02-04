@@ -87,3 +87,56 @@ pub fn init_bare_remote() -> tempfile::TempDir {
     git(dir.path(), &["init", "--bare", "-q"]);
     dir
 }
+
+pub fn write_context_json_git_stub(stubs: &StubBinDir) {
+    stubs.write_exe(
+        "git",
+        r#"#!/bin/bash
+set -euo pipefail
+
+args=("$@")
+
+if [[ ${#args[@]} -ge 2 && "${args[0]}" == "rev-parse" && "${args[1]}" == "--is-inside-work-tree" ]]; then
+  exit 0
+fi
+
+if [[ ${#args[@]} -ge 4 && "${args[0]}" == "diff" && "${args[1]}" == "--cached" && "${args[2]}" == "--quiet" && "${args[3]}" == "--exit-code" ]]; then
+  exit 1
+fi
+
+if [[ ${#args[@]} -ge 2 && "${args[0]}" == "symbolic-ref" && "${args[1]}" == "--quiet" ]]; then
+  echo "main"
+  exit 0
+fi
+
+if [[ ${#args[@]} -ge 2 && "${args[0]}" == "rev-parse" && "${args[1]}" == "--short" ]]; then
+  echo "abc123"
+  exit 0
+fi
+
+if [[ ${#args[@]} -ge 2 && "${args[0]}" == "rev-parse" && "${args[1]}" == "--show-toplevel" ]]; then
+  pwd
+  exit 0
+fi
+
+if [[ ${#args[@]} -ge 5 && "${args[0]}" == "-c" && "${args[1]}" == "core.quotepath=false" && "${args[2]}" == "diff" && "${args[3]}" == "--cached" && "${args[4]}" == "--no-color" ]]; then
+  echo "diff --git a/hello.txt b/hello.txt"
+  exit 0
+fi
+
+if [[ ${#args[@]} -ge 6 && "${args[0]}" == "-c" && "${args[1]}" == "core.quotepath=false" && "${args[2]}" == "diff" && "${args[3]}" == "--cached" && "${args[4]}" == "--name-status" && "${args[5]}" == "-z" ]]; then
+  printf "A\0hello.txt\0"
+  exit 0
+fi
+
+if [[ ${#args[@]} -ge 6 && "${args[0]}" == "-c" && "${args[1]}" == "core.quotepath=false" && "${args[2]}" == "diff" && "${args[3]}" == "--cached" && "${args[4]}" == "--numstat" ]]; then
+  last_index=$((${#args[@]} - 1))
+  path="${args[$last_index]}"
+  printf "1\t0\t%s\n" "$path"
+  exit 0
+fi
+
+exit 0
+"#,
+    );
+}

@@ -3,7 +3,7 @@ mod common;
 use std::fs;
 use std::path::Path;
 
-use common::GitCliHarness;
+use common::{write_context_json_git_stub, GitCliHarness};
 use nils_test_support::cmd::run_with;
 use nils_test_support::git::{git, git_with_env};
 use nils_test_support::stubs::STUB_LOG_ENV;
@@ -765,6 +765,128 @@ fn commit_context_json_missing_out_dir_value() {
     let stderr = output.stderr_text();
     assert_stderr_contains_all("F050", &stderr, &["❌ Missing value for --out-dir"]);
     assert_eq!(output.stdout_text(), "");
+}
+
+#[test]
+fn commit_context_json_resolve_out_dir_missing_git_dir() {
+    let repo = TempDir::new().expect("tempdir");
+
+    let stubs = StubBinDir::new();
+    stubs.write_exe(
+        "git",
+        r#"#!/bin/bash
+set -euo pipefail
+
+args=("$@")
+
+if [[ ${#args[@]} -ge 2 && "${args[0]}" == "rev-parse" && "${args[1]}" == "--is-inside-work-tree" ]]; then
+  exit 0
+fi
+
+if [[ ${#args[@]} -ge 4 && "${args[0]}" == "diff" && "${args[1]}" == "--cached" && "${args[2]}" == "--quiet" && "${args[3]}" == "--exit-code" ]]; then
+  exit 1
+fi
+
+if [[ ${#args[@]} -ge 2 && "${args[0]}" == "rev-parse" && "${args[1]}" == "--git-dir" ]]; then
+  exit 0
+fi
+
+exit 0
+"#,
+    );
+
+    let harness = GitCliHarness::new();
+    let options = harness
+        .cmd_options(repo.path())
+        .with_path_prepend(stubs.path());
+
+    let output = run_with(
+        &harness.git_cli_bin(),
+        &["commit", "context-json"],
+        &options,
+    );
+
+    assert_exit_code("F053", &output, 1);
+    let stderr = output.stderr_text();
+    assert_stderr_contains_all("F053", &stderr, &["❌ Failed to resolve git dir."]);
+}
+
+#[test]
+fn commit_context_json_patch_write_failure() {
+    let repo = TempDir::new().expect("tempdir");
+
+    let out_dir = repo.path().join("out/commit-context");
+    fs::create_dir_all(&out_dir).expect("create out dir");
+    fs::create_dir_all(out_dir.join("staged.patch")).expect("create staged.patch dir");
+
+    let harness = GitCliHarness::new();
+    let stubs = StubBinDir::new();
+    write_context_json_git_stub(&stubs);
+
+    let options = harness
+        .cmd_options(repo.path())
+        .with_path_prepend(stubs.path());
+
+    let output = run_with(
+        &harness.git_cli_bin(),
+        &[
+            "commit",
+            "context-json",
+            "--out-dir",
+            out_dir.to_string_lossy().as_ref(),
+        ],
+        &options,
+    );
+
+    assert_exit_code("F051", &output, 1);
+    let stderr = output.stderr_text();
+    assert_stderr_contains_all(
+        "F051",
+        &stderr,
+        &[&format!(
+            "❌ Failed to write staged patch: {}",
+            out_dir.join("staged.patch").to_string_lossy()
+        )],
+    );
+}
+
+#[test]
+fn commit_context_json_manifest_write_failure() {
+    let repo = TempDir::new().expect("tempdir");
+
+    let out_dir = repo.path().join("out/commit-context");
+    fs::create_dir_all(&out_dir).expect("create out dir");
+    fs::create_dir_all(out_dir.join("commit-context.json")).expect("create manifest dir");
+
+    let harness = GitCliHarness::new();
+    let stubs = StubBinDir::new();
+    write_context_json_git_stub(&stubs);
+
+    let options = harness
+        .cmd_options(repo.path())
+        .with_path_prepend(stubs.path());
+
+    let output = run_with(
+        &harness.git_cli_bin(),
+        &[
+            "commit",
+            "context-json",
+            "--out-dir",
+            out_dir.to_string_lossy().as_ref(),
+        ],
+        &options,
+    );
+
+    assert_exit_code("F052", &output, 1);
+    let stderr = output.stderr_text();
+    assert_stderr_contains_all(
+        "F052",
+        &stderr,
+        &[&format!(
+            "❌ Failed to write JSON manifest: {}",
+            out_dir.join("commit-context.json").to_string_lossy()
+        )],
+    );
 }
 
 #[test]
