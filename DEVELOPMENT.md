@@ -76,19 +76,9 @@
 
 ### Zsh
 
-- Completion files:
-  - `completions/zsh/_git-scope`
-  - `completions/zsh/_git-summary`
-  - `completions/zsh/_git-lock`
-  - `completions/zsh/_fzf-cli`
-  - `completions/zsh/_codex-cli`
-  - `completions/zsh/_semantic-commit`
-  - `completions/zsh/_plan-tooling`
-  - `completions/zsh/_api-rest`
-  - `completions/zsh/_api-gql`
-  - `completions/zsh/_api-test`
+- Completion files: `completions/zsh/`
 - Optional aliases (Zsh): `completions/zsh/aliases.zsh`
-- Wrapper scripts (dev-only): `wrappers/plan-tooling`, `wrappers/api-rest`, `wrappers/api-gql`, `wrappers/api-test`, `wrappers/git-scope`, `wrappers/codex-cli`, `wrappers/fzf-cli`
+- Wrapper scripts (dev-only): `wrappers/`
 - Setup:
   - Add `wrappers/` to `PATH`.
   - Add `completions/zsh/` to `fpath` and run `compinit`.
@@ -96,17 +86,7 @@
 
 ### Bash
 
-- Completion files:
-  - `completions/bash/git-scope`
-  - `completions/bash/git-summary`
-  - `completions/bash/git-lock`
-  - `completions/bash/fzf-cli`
-  - `completions/bash/codex-cli`
-  - `completions/bash/semantic-commit`
-  - `completions/bash/plan-tooling`
-  - `completions/bash/api-rest`
-  - `completions/bash/api-gql`
-  - `completions/bash/api-test`
+- Completion files: `completions/bash/`
 - Optional aliases (Bash): `completions/bash/aliases.bash`
 - Setup:
   - Install `bash-completion` (recommended), then copy `completions/bash/<command>` into your completions directory (example: `~/.local/share/bash-completion/completions/`).

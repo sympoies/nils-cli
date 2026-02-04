@@ -133,40 +133,10 @@ See [crates/api-testing-core/README.md](crates/api-testing-core/README.md) for t
 ## Shell wrappers and completions
 This repo keeps optional wrapper scripts and completion assets in-repo.
 
-Decision:
-- Keep completion and wrapper assets under [completions/](completions/) and [wrappers/](wrappers/).
-
-Rationale:
-- Keeps shell UX assets versioned alongside the Rust CLIs they accompany.
-- Makes local setup reproducible without hopping between repos.
-- Enables future automation to generate and update completions in one place.
-
 Location:
-- [completions/zsh/](completions/zsh/): zsh completion files (generated or curated)
-  - [completions/zsh/aliases.zsh](completions/zsh/aliases.zsh)
-  - [completions/zsh/_api-rest](completions/zsh/_api-rest)
-  - [completions/zsh/_api-gql](completions/zsh/_api-gql)
-  - [completions/zsh/_api-test](completions/zsh/_api-test)
-  - [completions/zsh/_git-scope](completions/zsh/_git-scope)
-  - [completions/zsh/_git-summary](completions/zsh/_git-summary)
-  - [completions/zsh/_git-lock](completions/zsh/_git-lock)
-  - [completions/zsh/_fzf-cli](completions/zsh/_fzf-cli)
-  - [completions/zsh/_codex-cli](completions/zsh/_codex-cli)
-  - [completions/zsh/_semantic-commit](completions/zsh/_semantic-commit)
-  - [completions/zsh/_plan-tooling](completions/zsh/_plan-tooling)
-- [completions/bash/](completions/bash/): bash completion files
-  - [completions/bash/aliases.bash](completions/bash/aliases.bash)
-  - [completions/bash/api-rest](completions/bash/api-rest)
-  - [completions/bash/api-gql](completions/bash/api-gql)
-  - [completions/bash/api-test](completions/bash/api-test)
-  - [completions/bash/git-scope](completions/bash/git-scope)
-  - [completions/bash/git-summary](completions/bash/git-summary)
-  - [completions/bash/git-lock](completions/bash/git-lock)
-  - [completions/bash/fzf-cli](completions/bash/fzf-cli)
-  - [completions/bash/codex-cli](completions/bash/codex-cli)
-  - [completions/bash/semantic-commit](completions/bash/semantic-commit)
-  - [completions/bash/plan-tooling](completions/bash/plan-tooling)
-- [wrappers/](wrappers/): wrapper scripts for invoking CLI binaries or enforcing env setup
+- [completions/zsh/](completions/zsh/): zsh completions (plus `aliases.zsh`)
+- [completions/bash/](completions/bash/): bash completions (plus `aliases.bash`)
+- [wrappers/](wrappers/): dev-only wrapper scripts
 
 Integration steps:
 1. Zsh: add [completions/zsh/](completions/zsh/) to your `fpath`, then run `compinit` in your shell init.
