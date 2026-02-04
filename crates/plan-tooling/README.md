@@ -1,36 +1,48 @@
 # plan-tooling
 
 ## Overview
-`plan-tooling` is a small CLI for working with Plan Format v1 markdown files (typically
-`docs/plans/*-plan.md`) in this repository.
+plan-tooling works with Plan Format v1 markdown files. It can parse plans to JSON, validate plan
+files, compute dependency batches for a sprint, and scaffold new plans.
 
-It is used to:
-- parse plans into a stable JSON schema (`to-json`)
-- lint/validate plans (`validate`)
-- compute parallelizable task layers for a sprint (`batches`)
-- scaffold new plans from a shared template (`scaffold`)
+## Usage
+```text
+Usage:
+  plan-tooling <command> [args]
+
+Commands:
+  to-json   Parse a plan markdown file into a stable JSON schema
+  validate  Lint plan markdown files
+  batches   Compute dependency layers (parallel batches) for a sprint
+  scaffold  Create a new plan from template
+  help      Display help message
+
+Help:
+  plan-tooling help
+  plan-tooling --help
+```
 
 ## Commands
-- `plan-tooling to-json ...`
-- `plan-tooling validate ...`
-- `plan-tooling batches ...`
-- `plan-tooling scaffold ...`
 
-## Examples
-```bash
-plan-tooling validate
-plan-tooling validate --format json | jq .
-plan-tooling to-json --file docs/plans/plan-tooling-cli-consolidation-plan.md --pretty | jq .
-plan-tooling batches --file docs/plans/plan-tooling-cli-consolidation-plan.md --sprint 1 --format text
-plan-tooling scaffold --slug my-new-cli --title "My new CLI plan"
-```
+### to-json
+- `to-json --file <plan.md> [--sprint <n>] [--pretty]`: Parse a plan file and output JSON.
 
-To run from the workspace without installing:
-```bash
-cargo run -p plan-tooling -- validate
-```
+### validate
+- `validate [--file <path>]... [--format text|json]`: Validate plan files. With no `--file`, scans
+  tracked `docs/plans/*-plan.md` files.
+
+### batches
+- `batches --file <plan.md> --sprint <n> [--format json|text]`: Compute dependency batches for a
+  sprint.
+
+### scaffold
+- `scaffold --slug <kebab-case> [--title <title>] [--force]`: Write to
+  `docs/plans/<slug>-plan.md` (or `<slug>.md` if the slug already ends with `-plan`).
+- `scaffold --file <path> [--title <title>] [--force]`: Write to a specific `-plan.md` path.
 
 ## Template
-The plan template embedded into the binary lives at:
-- `crates/plan-tooling/plan-template.md`
+- Plan template: `crates/plan-tooling/plan-template.md`.
 
+## Exit codes
+- `0`: success and help output.
+- `1`: validation or runtime errors.
+- `2`: usage errors.
