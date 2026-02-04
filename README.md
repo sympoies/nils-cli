@@ -5,19 +5,24 @@
 Rust CLI workspace scaffold for building multiple independently packaged binaries.
 
 ## Workspace layout
-- `crates/nils-common`: shared library crate for cross-CLI helpers
-- `crates/cli-template`: minimal binary crate for validating packaging
-- `crates/api-testing-core`: shared library crate for the API testing CLIs
-- `crates/api-rest`: Rust port of the REST testing CLI
-- `crates/api-gql`: Rust port of the GraphQL testing CLI
-- `crates/api-test`: Rust port of the API suite runner
-- `crates/git-scope`: Rust port of the git-scope CLI
-- `crates/git-summary`: Rust port of the git-summary CLI
-- `crates/git-lock`: Rust port of the git-lock CLI
-- `crates/fzf-cli`: Rust port of personal fzf helper CLI
-- `crates/codex-cli`: Rust port of the Zsh Codex helper CLIs (codex-tools, codex-use, etc.)
-- `crates/semantic-commit`: Rust port of Codex semantic commit entrypoints
-- `crates/plan-tooling`: Plan Format v1 tooling CLI (to-json/validate/batches/scaffold)
+Each crate is either a standalone CLI binary or a shared library used across the workspace.
+
+- `crates/nils-common`: Shared cross-CLI utilities (small helpers that don’t belong to a specific binary).
+- `crates/nils-term`: Terminal UX helpers (TTY detection + progress rendering on stderr).
+- `crates/nils-test-support`: Test-only helpers for deterministic workspace integration tests.
+- `crates/cli-template`: Minimal example CLI for validating packaging and new-crate patterns.
+- `crates/api-testing-core`: Shared library for the API testing CLIs (config/auth, history, reporting).
+- `crates/api-rest`: REST request runner from JSON request specs, with history + Markdown reports.
+- `crates/api-gql`: GraphQL operation runner for `.graphql` files (variables, history, reports, schema).
+- `crates/api-test`: Suite runner that orchestrates REST/GraphQL cases and outputs JSON (and optional JUnit).
+- `crates/git-scope`: Git change inspector (tracked/staged/unstaged/untracked/commit) with tree + optional file printing.
+- `crates/git-summary`: Per-author contribution summaries over a date range (adds/dels/net/commits).
+- `crates/git-lock`: Label-based commit locks per repo (lock/list/diff/unlock/tag).
+- `crates/fzf-cli`: Interactive `fzf` toolbox for files, Git, processes, ports, and shell history.
+- `crates/codex-cli`: Helper CLI for Codex workflows (auth, diagnostics, agent wrappers, starship snippets).
+- `crates/semantic-commit`: Helper CLI for generating staged context and creating semantic commits.
+- `crates/plan-tooling`: Plan Format v1 tooling CLI (to-json/validate/batches/scaffold).
+- `crates/image-processing`: Batch image transformation CLI (resize/crop/optimize) with JSON/report outputs.
 
 ## Local install (release)
 - Build + install all workspace binaries into `~/.local/nils-cli/`:
