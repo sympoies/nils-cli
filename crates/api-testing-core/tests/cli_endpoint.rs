@@ -182,6 +182,27 @@ fn list_available_env_suffixes_errors_when_missing_endpoints() {
 }
 
 #[test]
+fn list_available_env_suffixes_local_only() {
+    let tmp = TempDir::new().unwrap();
+    let endpoints_env = tmp.path().join("missing.env");
+    let endpoints_local = tmp.path().join("endpoints.local.env");
+    write_file(
+        &endpoints_local,
+        "REST_URL_LOCAL=http://local\nREST_URL_DEV=http://dev\n",
+    );
+
+    let out = list_available_env_suffixes(
+        &endpoints_env,
+        &endpoints_local,
+        "REST_URL_",
+        "endpoints.env not found (expected under setup/rest/)",
+    )
+    .unwrap();
+
+    assert_eq!(out, vec!["dev", "local"]);
+}
+
+#[test]
 fn list_available_env_suffixes_merges_and_sorts() {
     let tmp = TempDir::new().unwrap();
     let endpoints_env = tmp.path().join("endpoints.env");
