@@ -54,7 +54,7 @@ Optional: source `<extract_dir>/completions/bash/aliases.bash` to enable `gs*`/`
 
 ## git-scope
 - Example usage: `git-scope staged`, `git-scope all -p`, `git-scope commit HEAD -p`
-- Optional aliases (opt-in; Zsh: `completions/zsh/aliases.zsh`, Bash: `completions/bash/aliases.bash`):
+- Optional aliases (opt-in; Zsh: [completions/zsh/aliases.zsh](completions/zsh/aliases.zsh), Bash: [completions/bash/aliases.bash](completions/bash/aliases.bash)):
   - `gs` → `git-scope`
   - `gst` → `git-scope tracked`
   - `gss` → `git-scope staged`
@@ -72,13 +72,13 @@ Optional: source `<extract_dir>/completions/bash/aliases.bash` to enable `gs*`/`
 
 ## fzf-cli
 - Example usage: `fzf-cli file`, `fzf-cli directory`, `fzf-cli history`, `fzf-cli port`, `fzf-cli process`
-- Note: some subcommands print shell commands for `eval` (e.g. `fzf-cli directory` prints a `cd ...`), see `crates/fzf-cli/README.md`.
-- Optional aliases (opt-in): `ff*` (Zsh: `completions/zsh/aliases.zsh`, Bash: `completions/bash/aliases.bash`); `ffd` and `ffh` are functions that `eval` the emitted command.
+- Note: some subcommands print shell commands for `eval` (e.g. `fzf-cli directory` prints a `cd ...`), see [crates/fzf-cli/README.md](crates/fzf-cli/README.md).
+- Optional aliases (opt-in): `ff*` (Zsh: [completions/zsh/aliases.zsh](completions/zsh/aliases.zsh), Bash: [completions/bash/aliases.bash](completions/bash/aliases.bash)); `ffd` and `ffh` are functions that `eval` the emitted command.
 
 ## codex-cli
-- Docs: `crates/codex-cli/README.md`
+- Docs: [crates/codex-cli/README.md](crates/codex-cli/README.md)
 - Example usage: `codex-cli auth current`, `codex-cli diag rate-limits --one-line`
-- Optional aliases (opt-in): `cx*` (Zsh: `completions/zsh/aliases.zsh`, Bash: `completions/bash/aliases.bash`).
+- Optional aliases (opt-in): `cx*` (Zsh: [completions/zsh/aliases.zsh](completions/zsh/aliases.zsh), Bash: [completions/bash/aliases.bash](completions/bash/aliases.bash)).
 
 ## semantic-commit
 - Example usage:
@@ -94,7 +94,7 @@ Optional: source `<extract_dir>/completions/bash/aliases.bash` to enable `gs*`/`
   - `plan-tooling scaffold --slug my-new-cli --title "My new CLI plan"`
 
 ## API testing CLIs
-See `crates/api-testing-core/README.md` for the recommended repo layout and end-to-end examples.
+See [crates/api-testing-core/README.md](crates/api-testing-core/README.md) for the recommended repo layout and end-to-end examples.
 
 ### api-rest
 - Example usage:
@@ -117,19 +117,19 @@ See `crates/api-testing-core/README.md` for the recommended repo layout and end-
   - `api-test summary --in out/api-test-runner/results.json --out out/api-test-runner/summary.md`
 
 ## Adding a new CLI crate
-1. Create a new binary crate under `crates/`:
+1. Create a new binary crate under [crates/](crates/):
    - `cargo new crates/<cli-name> --bin`
-2. Add the crate path to the workspace `members` list in `Cargo.toml`.
-3. Use shared dependencies via `workspace = true` in the new crate's `Cargo.toml`.
+2. Add the crate path to the workspace `members` list in [Cargo.toml](Cargo.toml).
+3. Use shared dependencies via `workspace = true` in the new crate's [Cargo.toml](Cargo.toml).
 4. Build or run the new CLI with `cargo build -p <cli-name>` or `cargo run -p <cli-name> -- ...`.
 5. Verify packaging picks it up (both local install + GitHub Releases use the same discovery):
-   - `python3 scripts/workspace-bins.py | rg "^<cli-name>$"`
+   - `python3 scripts/workspace-bins.py | rg "^<cli-name>$"` (see [scripts/workspace-bins.py](scripts/workspace-bins.py))
 
 ## Shell wrappers and completions
 This repo keeps optional wrapper scripts and completion assets in-repo.
 
 Decision:
-- Keep completion and wrapper assets under `completions/` and `wrappers/`.
+- Keep completion and wrapper assets under [completions/](completions/) and [wrappers/](wrappers/).
 
 Rationale:
 - Keeps shell UX assets versioned alongside the Rust CLIs they accompany.
@@ -137,38 +137,38 @@ Rationale:
 - Enables future automation to generate and update completions in one place.
 
 Location:
-- `completions/zsh/`: zsh completion files (generated or curated)
-  - `completions/zsh/aliases.zsh`
-  - `completions/zsh/_api-rest`
-  - `completions/zsh/_api-gql`
-  - `completions/zsh/_api-test`
-  - `completions/zsh/_git-scope`
-  - `completions/zsh/_git-summary`
-  - `completions/zsh/_git-lock`
-  - `completions/zsh/_fzf-cli`
-  - `completions/zsh/_codex-cli`
-  - `completions/zsh/_semantic-commit`
-  - `completions/zsh/_plan-tooling`
-- `completions/bash/`: bash completion files
-  - `completions/bash/aliases.bash`
-  - `completions/bash/api-rest`
-  - `completions/bash/api-gql`
-  - `completions/bash/api-test`
-  - `completions/bash/git-scope`
-  - `completions/bash/git-summary`
-  - `completions/bash/git-lock`
-  - `completions/bash/fzf-cli`
-  - `completions/bash/codex-cli`
-  - `completions/bash/semantic-commit`
-  - `completions/bash/plan-tooling`
-- `wrappers/`: wrapper scripts for invoking CLI binaries or enforcing env setup
+- [completions/zsh/](completions/zsh/): zsh completion files (generated or curated)
+  - [completions/zsh/aliases.zsh](completions/zsh/aliases.zsh)
+  - [completions/zsh/_api-rest](completions/zsh/_api-rest)
+  - [completions/zsh/_api-gql](completions/zsh/_api-gql)
+  - [completions/zsh/_api-test](completions/zsh/_api-test)
+  - [completions/zsh/_git-scope](completions/zsh/_git-scope)
+  - [completions/zsh/_git-summary](completions/zsh/_git-summary)
+  - [completions/zsh/_git-lock](completions/zsh/_git-lock)
+  - [completions/zsh/_fzf-cli](completions/zsh/_fzf-cli)
+  - [completions/zsh/_codex-cli](completions/zsh/_codex-cli)
+  - [completions/zsh/_semantic-commit](completions/zsh/_semantic-commit)
+  - [completions/zsh/_plan-tooling](completions/zsh/_plan-tooling)
+- [completions/bash/](completions/bash/): bash completion files
+  - [completions/bash/aliases.bash](completions/bash/aliases.bash)
+  - [completions/bash/api-rest](completions/bash/api-rest)
+  - [completions/bash/api-gql](completions/bash/api-gql)
+  - [completions/bash/api-test](completions/bash/api-test)
+  - [completions/bash/git-scope](completions/bash/git-scope)
+  - [completions/bash/git-summary](completions/bash/git-summary)
+  - [completions/bash/git-lock](completions/bash/git-lock)
+  - [completions/bash/fzf-cli](completions/bash/fzf-cli)
+  - [completions/bash/codex-cli](completions/bash/codex-cli)
+  - [completions/bash/semantic-commit](completions/bash/semantic-commit)
+  - [completions/bash/plan-tooling](completions/bash/plan-tooling)
+- [wrappers/](wrappers/): wrapper scripts for invoking CLI binaries or enforcing env setup
 
 Integration steps:
-1. Zsh: add `completions/zsh/` to your `fpath`, then run `compinit` in your shell init.
-2. Zsh (optional): `source completions/zsh/aliases.zsh`
+1. Zsh: add [completions/zsh/](completions/zsh/) to your `fpath`, then run `compinit` in your shell init.
+2. Zsh (optional): `source completions/zsh/aliases.zsh` (see [completions/zsh/aliases.zsh](completions/zsh/aliases.zsh))
 3. Bash: copy `completions/bash/<command>` into your bash-completion directory, or source them from your shell init.
-4. Bash (optional): `source completions/bash/aliases.bash`
-5. Dev-only: add `wrappers/` to your PATH (or symlink wrapper scripts into a bin directory).
+4. Bash (optional): `source completions/bash/aliases.bash` (see [completions/bash/aliases.bash](completions/bash/aliases.bash))
+5. Dev-only: add [wrappers/](wrappers/) to your PATH (or symlink wrapper scripts into a bin directory).
 6. Regenerate completions when CLIs change, and commit updates alongside code.
 
 ## License
