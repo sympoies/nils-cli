@@ -4,17 +4,19 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
+use serde::Serialize;
 
 use crate::parse::{parse_plan_with_display, Plan, Task};
 
 const USAGE: &str = r#"Usage:
-  validate_plans.sh [--file <path>]...
+  validate_plans.sh [--file <path>]... [--format text|json]
 
 Purpose:
   Lint plan markdown files under docs/plans/ against Plan Format v1.
 
 Options:
   --file <path>  Validate a specific plan file (may be repeated)
+  --format <fmt> text (default) or json
   -h, --help     Show help
 
 Defaults:
@@ -35,8 +37,16 @@ fn die(msg: &str) -> i32 {
     2
 }
 
+#[derive(Debug, Serialize)]
+struct ValidateOutput {
+    ok: bool,
+    files: Vec<String>,
+    errors: Vec<String>,
+}
+
 pub fn run(args: &[String]) -> i32 {
     let mut files: Vec<String> = Vec::new();
+    let mut format = "text".to_string();
 
     let mut i = 0;
     while i < args.len() {
@@ -46,6 +56,13 @@ pub fn run(args: &[String]) -> i32 {
                     return die("--file requires a path");
                 }
                 files.push(args[i + 1].to_string());
+                i += 2;
+            }
+            "--format" => {
+                if args.get(i + 1).is_none() {
+                    return die("--format requires a value");
+                }
+                format = args[i + 1].to_string();
                 i += 2;
             }
             "-h" | "--help" => {
@@ -58,6 +75,10 @@ pub fn run(args: &[String]) -> i32 {
         }
     }
 
+    if format != "text" && format != "json" {
+        return die(&format!("invalid --format (expected text|json): {format}"));
+    }
+
     let repo_root = crate::repo_root::detect();
 
     let discovered = if files.is_empty() {
@@ -65,32 +86,63 @@ pub fn run(args: &[String]) -> i32 {
     } else {
         files
     };
+    let discovered_for_output = discovered.clone();
 
     if discovered.is_empty() {
+        if format == "json" {
+            let output = ValidateOutput {
+                ok: true,
+                files: Vec::new(),
+                errors: Vec::new(),
+            };
+            return print_json_output(output, 0);
+        }
         return 0;
     }
 
-    let progress = Progress::new(
-        discovered.len() as u64,
-        ProgressOptions::default().with_finish(ProgressFinish::Clear),
-    );
+    let progress = if format == "text" {
+        Some(Progress::new(
+            discovered.len() as u64,
+            ProgressOptions::default().with_finish(ProgressFinish::Clear),
+        ))
+    } else {
+        None
+    };
 
     let mut errors: Vec<String> = Vec::new();
     for (idx, display_path) in discovered.into_iter().enumerate() {
-        progress.set_message(display_path.clone());
+        if let Some(p) = progress.as_ref() {
+            p.set_message(display_path.clone());
+        }
 
         let read_path = resolve_repo_relative(&repo_root, Path::new(&display_path));
         if !read_path.is_file() {
             errors.push(format!("{display_path}: file not found"));
-            progress.set_position((idx + 1) as u64);
+            if let Some(p) = progress.as_ref() {
+                p.set_position((idx + 1) as u64);
+            }
             continue;
         }
         errors.extend(validate_plan(&display_path, &read_path));
 
-        progress.set_position((idx + 1) as u64);
+        if let Some(p) = progress.as_ref() {
+            p.set_position((idx + 1) as u64);
+        }
     }
 
-    progress.finish_and_clear();
+    if let Some(p) = progress.as_ref() {
+        p.finish_and_clear();
+    }
+
+    if format == "json" {
+        let code = if errors.is_empty() { 0 } else { 1 };
+        let output = ValidateOutput {
+            ok: errors.is_empty(),
+            files: discovered_for_output,
+            errors,
+        };
+        return print_json_output(output, code);
+    }
 
     if errors.is_empty() {
         return 0;
@@ -100,6 +152,19 @@ pub fn run(args: &[String]) -> i32 {
         eprintln!("error: {err}");
     }
     1
+}
+
+fn print_json_output(output: ValidateOutput, code: i32) -> i32 {
+    match serde_json::to_string(&output) {
+        Ok(s) => {
+            println!("{s}");
+            code
+        }
+        Err(err) => {
+            eprintln!("error: failed to encode JSON: {err}");
+            1
+        }
+    }
 }
 
 fn discover_default_plan_files(repo_root: &Path) -> Vec<String> {
