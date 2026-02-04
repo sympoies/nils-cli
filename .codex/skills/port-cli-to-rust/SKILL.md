@@ -21,7 +21,7 @@ Inputs:
 - The CLI to port:
   - crate/bin name (kebab-case; matches the binary name)
   - source script path (e.g. `~/.config/zsh/scripts/.../<cli>.zsh`)
-  - optional: completion script path and wrapper aliases to preserve
+  - optional: completion + alias surfaces to preserve (Zsh + Bash completions; alias prefixes)
 - Constraints:
   - “behavioral parity” requirements (output text, emojis, colors, exit codes, degradation paths)
   - any explicit out-of-scope items
@@ -31,12 +31,20 @@ Outputs:
 - A rigorous plan file: `docs/plans/<cli>-rust-port-plan.md` (sprints + atomic tasks + dependencies + complexity + validation commands).
 - Ported Rust crate: `crates/<cli>/...` and workspace wiring in `Cargo.toml`.
 - Parity docs:
-  - `docs/<cli>/spec.md`
-  - `docs/<cli>/fixtures.md`
+  - `crates/<cli>/README.md` (must include both sections):
+    - `# <cli> parity spec`
+    - `# <cli> fixtures`
   - The parity spec must include an explicit inventory of external dependencies (binaries + sourced scripts) and the chosen handling policy for each.
+- Completions + aliases (keep Zsh + Bash in sync):
+  - `completions/zsh/_<cli>`
+  - `completions/bash/<cli>`
+  - `completions/zsh/aliases.zsh` and `completions/bash/aliases.bash` updates (opt-in shortcuts and wrapper functions where needed)
+- Wrapper (binary runner only; single version):
+  - `wrappers/<cli>` (exec installed binary if present; else `cargo run -p <cli> -- ...`)
 - Comprehensive tests covering core flows + edge cases:
   - integration tests under `crates/<cli>/tests/` (use deterministic fixtures, PATH stubs, and temp git repos as needed)
-  - zsh completion tests when applicable
+  - completion gate update:
+    - add new completion files to `tests/zsh/completion.test.zsh` (Zsh is sourced; Bash files are existence-checked there)
 - Pre-delivery validation passes via:
   - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - If requested, a commit using the repo policy (`$semantic-commit` / `$semantic-commit-autostage`).
@@ -70,8 +78,14 @@ Failure modes:
   - `docs/plans/git-scope-rust-port-plan.md`
   - `docs/plans/fzf-cli-rust-port-plan.md`
 - Parity docs:
-  - `docs/git-scope/spec.md`, `docs/git-scope/fixtures.md`
-  - `docs/fzf-cli/spec.md`, `docs/fzf-cli/fixtures.md`
+  - `crates/git-scope/README.md`
+  - `crates/fzf-cli/README.md`
+- Completion + alias patterns:
+  - `completions/zsh/_git-scope`, `completions/bash/git-scope`
+  - `completions/zsh/_fzf-cli`, `completions/bash/fzf-cli`
+  - `completions/zsh/aliases.zsh`, `completions/bash/aliases.bash`
+- Wrapper patterns (binary runner only):
+  - `wrappers/git-scope`, `wrappers/fzf-cli`
 - Test patterns:
   - `crates/git-scope/tests/common.rs` (temp git repo + NO_COLOR for stable output)
   - `crates/fzf-cli/tests/common.rs` (PATH-stubbing external tools)
@@ -91,9 +105,9 @@ Failure modes:
       - `Optional (warn + fallback)` (and specify the warning text + fallback behavior)
       - `Eliminate (rewrite in Rust)` (and specify parity impact + acceptance criteria)
     - for each dependency decision, include matching deterministic tests (e.g. PATH-stubbing / missing-tool tests)
-    - ensure `docs/<cli>/spec.md` records the dependency inventory + missing-tool behavior contract (as the source of truth for tests)
+    - ensure `crates/<cli>/README.md` records the dependency inventory + missing-tool behavior contract (as the source of truth for tests)
 - Lint plan until it passes:
-  - `$CODEX_HOME/skills/workflows/plan/plan-tooling/scripts/validate_plans.sh --file docs/plans/<cli>-rust-port-plan.md`
+  - `plan-tooling validate --file docs/plans/<cli>-rust-port-plan.md`
 - Run a subagent plan review (required by `$create-plan-rigorous`) and incorporate fixes.
 
 4) Execute the plan in parallel (default: Sprint 1, then iterate)
@@ -114,7 +128,10 @@ Failure modes:
 - Degradation paths must match the script:
   - missing optional tools (e.g. `tree`, `file`, `fzf`) must print the same warnings and choose the same fallback behavior.
 - If the CLI needs “shell effects” (cd/eval/alias):
-  - emit a safe stdout contract (e.g. `cd <dir>`), document it in `docs/<cli>/spec.md`, and add a wrapper snippet under `wrappers/` if needed.
+  - emit a safe stdout contract (e.g. `cd DIR_PATH`), document it in `crates/<cli>/README.md`, and implement wrapper functions in:
+    - `completions/zsh/aliases.zsh`
+    - `completions/bash/aliases.bash`
+  - Do not add user-facing alias wrappers under `wrappers/` (that directory is for the single binary runner script only).
 
 6) Tests: required edge-case coverage
 
