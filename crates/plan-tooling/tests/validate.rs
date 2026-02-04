@@ -97,6 +97,84 @@ fn validate_missing_dependencies_is_error() {
     assert!(out.stderr.contains("missing Dependencies"));
 }
 
+#[test]
+fn validate_json_ok_with_explicit_file() {
+    let repo = init_repo();
+    write_file(&repo.path().join("plan.md"), VALID_PLAN);
+
+    let out = run_plan_tooling(
+        repo.path(),
+        &["validate", "--file", "plan.md", "--format", "json"],
+    );
+    assert_eq!(
+        out.code, 0,
+        "stdout: {}\nstderr: {}",
+        out.stdout, out.stderr
+    );
+    assert!(out.stderr.is_empty());
+
+    let v: serde_json::Value = serde_json::from_str(&out.stdout).expect("json");
+    assert_eq!(v["ok"], true);
+    assert_eq!(v["files"], serde_json::json!(["plan.md"]));
+    assert_eq!(v["errors"], serde_json::json!([]));
+}
+
+#[test]
+fn validate_json_returns_errors_and_exit_one() {
+    let repo = init_repo();
+    write_file(&repo.path().join("bad.md"), INVALID_PLAN);
+
+    let out = run_plan_tooling(
+        repo.path(),
+        &["validate", "--file", "bad.md", "--format", "json"],
+    );
+    assert_eq!(out.code, 1, "stdout: {}\nstderr: {}", out.stdout, out.stderr);
+    assert!(out.stderr.is_empty());
+
+    let v: serde_json::Value = serde_json::from_str(&out.stdout).expect("json");
+    assert_eq!(v["ok"], false);
+    assert_eq!(v["files"], serde_json::json!(["bad.md"]));
+    let errs = v["errors"].as_array().expect("errors array");
+    assert!(!errs.is_empty());
+    assert!(errs.iter().any(|e| {
+        e.as_str()
+            .is_some_and(|s| s.contains("Location must be repo-relative"))
+    }));
+}
+
+#[test]
+fn validate_json_no_files_emits_empty_payload() {
+    let dir = TempDir::new().expect("tempdir");
+
+    let out = run_plan_tooling(dir.path(), &["validate", "--format", "json"]);
+    assert_eq!(out.code, 0, "stdout: {}\nstderr: {}", out.stdout, out.stderr);
+    assert!(out.stderr.is_empty());
+
+    let v: serde_json::Value = serde_json::from_str(&out.stdout).expect("json");
+    assert_eq!(
+        v,
+        serde_json::json!({
+            "ok": true,
+            "files": [],
+            "errors": []
+        })
+    );
+}
+
+#[test]
+fn validate_invalid_format_is_usage_error() {
+    let repo = init_repo();
+    write_file(&repo.path().join("plan.md"), VALID_PLAN);
+
+    let out = run_plan_tooling(
+        repo.path(),
+        &["validate", "--file", "plan.md", "--format", "yaml"],
+    );
+    assert_eq!(out.code, 2);
+    assert!(out.stdout.is_empty());
+    assert!(out.stderr.contains("invalid --format"));
+}
+
 const VALID_PLAN: &str = r#"# Plan: Example
 
 ## Sprint 1: First sprint

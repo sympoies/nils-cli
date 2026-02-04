@@ -19,6 +19,7 @@ It is used to:
 ## Examples
 ```bash
 plan-tooling validate
+plan-tooling validate --format json | jq .
 plan-tooling to-json --file docs/plans/plan-tooling-cli-consolidation-plan.md --pretty | jq .
 plan-tooling batches --file docs/plans/plan-tooling-cli-consolidation-plan.md --sprint 1 --format text
 plan-tooling scaffold --slug my-new-cli --title "My new CLI plan"
