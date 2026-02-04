@@ -184,7 +184,7 @@ fn list_files_in_dir(dir: &Path, max_depth: usize) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let walker = WalkDir::new(dir)
         .follow_links(true)
-        .max_depth(max_depth.saturating_add(1))
+        .max_depth(max_depth)
         .into_iter()
         .filter_entry(|e| e.file_name() != ".git");
 
@@ -217,4 +217,21 @@ fn list_files_in_dir(dir: &Path, max_depth: usize) -> Vec<String> {
 
 fn canonicalize_or_fallback(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn list_files_in_dir_respects_max_depth() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("root.txt"), "x").unwrap();
+        std::fs::create_dir_all(dir.path().join("nested")).unwrap();
+        std::fs::write(dir.path().join("nested/deeper.txt"), "x").unwrap();
+
+        let files = list_files_in_dir(dir.path(), 1);
+        assert_eq!(files, vec!["root.txt"]);
+    }
 }

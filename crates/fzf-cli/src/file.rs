@@ -58,7 +58,7 @@ fn list_files(max_depth: usize) -> Vec<String> {
 
     let walker = WalkDir::new(".")
         .follow_links(true)
-        .max_depth(max_depth.saturating_add(1))
+        .max_depth(max_depth)
         .into_iter()
         .filter_entry(|e| e.file_name() != ".git");
 
@@ -132,5 +132,22 @@ mod tests {
 
         let files = list_files(5);
         assert_eq!(files, vec!["a.txt", "b.txt", "nested/c.txt"]);
+    }
+
+    #[test]
+    fn list_files_respects_max_depth() {
+        let _lock = CWD_LOCK.lock().unwrap();
+        let dir = TempDir::new().unwrap();
+
+        std::fs::write(dir.path().join("root.txt"), "x").unwrap();
+        std::fs::create_dir_all(dir.path().join("nested")).unwrap();
+        std::fs::write(dir.path().join("nested/deeper.txt"), "x").unwrap();
+
+        let original = std::env::current_dir().unwrap();
+        let _guard = CwdGuard::new(original);
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let files = list_files(1);
+        assert_eq!(files, vec!["root.txt"]);
     }
 }
