@@ -116,19 +116,22 @@ pub fn list_available_env_suffixes(
     url_prefix: &str,
     missing_message: &str,
 ) -> Result<Vec<String>> {
-    if !endpoints_env.is_file() {
+    if !endpoints_env.is_file() && !endpoints_local.is_file() {
         anyhow::bail!("{missing_message}");
     }
 
-    let mut out = cli_util::list_available_suffixes(endpoints_env, url_prefix);
+    let mut out = Vec::new();
+    if endpoints_env.is_file() {
+        out.extend(cli_util::list_available_suffixes(endpoints_env, url_prefix));
+    }
     if endpoints_local.is_file() {
         out.extend(cli_util::list_available_suffixes(
             endpoints_local,
             url_prefix,
         ));
-        out.sort();
-        out.dedup();
     }
+    out.sort();
+    out.dedup();
 
     Ok(out)
 }
