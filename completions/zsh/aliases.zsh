@@ -2,9 +2,6 @@
 #
 # Opt-in: source this file from your ~/.zshrc after installing nils-cli.
 # Designed to avoid clobbering user-defined aliases/functions.
-#
-# Example (Homebrew):
-#   source "$(brew --prefix nils-cli)/share/zsh/site-functions/aliases.zsh"
 
 if [[ -z ${ZSH_VERSION-} ]]; then
   return 0 2>/dev/null || exit 0
