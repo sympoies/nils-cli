@@ -1,0 +1,23 @@
+[package]
+name = "screen-record"
+version = "0.2.2"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+build = "build.rs"
+
+[dependencies]
+clap = { workspace = true }
+ctrlc = "3.5.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-foundation = "0.3.2"
+objc2-av-foundation = { version = "0.3.2", features = ["objc2-core-media"] }
+objc2-core-media = "0.3.2"
+objc2-screen-capture-kit = "0.3.2"
+objc2 = "0.6.3"
+block2 = "0.6.2"
+dispatch2 = "0.3.0"
+
+[dev-dependencies]
+nils-test-support = { path = "../nils-test-support" }
+tempfile = "3"
