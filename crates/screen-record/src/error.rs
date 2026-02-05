@@ -11,6 +11,10 @@ impl CliError {
         Self::new(message, 2)
     }
 
+    pub fn unsupported_platform() -> Self {
+        Self::usage("screen-record is only supported on macOS (12+) and Linux (X11)")
+    }
+
     pub fn runtime(message: impl Into<String>) -> Self {
         Self::new(message, 1)
     }

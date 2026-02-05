@@ -1,9 +1,79 @@
 # screen-record
 
 ## Overview
-screen-record is a macOS 12+ CLI that records a single window (or a full display) to a video file
-using ScreenCaptureKit and AVFoundation. It also exposes parseable window/app/display lists to make
-selection deterministic in scripts.
+screen-record is a macOS 12+ and Linux CLI that records a single window (or a full display)
+to a video file. On macOS it uses ScreenCaptureKit and AVFoundation; on Linux it relies on X11 for
+discovery and `ffmpeg` for capture/encoding. On Wayland-only sessions, it can use an interactive
+portal picker (`--portal`) via xdg-desktop-portal + PipeWire. It also exposes parseable
+window/app/display lists (X11) to make selection deterministic in scripts.
+
+## Linux (X11 + Wayland portal)
+Linux support targets X11/Xorg sessions (including XWayland when `DISPLAY` is set). Ubuntu 24.04 is
+the CI/validation baseline, but other distros with X11 should work. For Wayland-only sessions
+(no `DISPLAY`), `--portal` provides an interactive capture path.
+
+Prerequisites:
+- `ffmpeg` on `PATH` (example: `sudo apt-get install ffmpeg`).
+- For X11 selectors and list modes: an X11 session with `DISPLAY` set.
+- For `--portal` on Wayland-only sessions:
+  - xdg-desktop-portal + a desktop backend (e.g. `xdg-desktop-portal-gnome` or
+    `xdg-desktop-portal-kde`)
+  - a PipeWire session (Ubuntu default)
+
+Selection parity:
+- Recording selectors `--window-id`, `--active-window`, `--app`, `--display`, and `--display-id`
+  are supported (X11).
+- `--portal` is supported for recording and screenshots on Wayland-only sessions, but is
+  interactive/user-driven (not deterministic for scripts).
+- Screenshot mode remains window-only; `--display` and `--display-id` are invalid with
+  `--screenshot`.
+- Linux `display_id` values are X11/XRandR output ids. `--display` selects the XRandR primary output
+  when available; otherwise it selects the first display in the deterministic list.
+
+Linux examples:
+```bash
+screen-record --list-windows
+screen-record --display --duration 3 --audio off --path "./recordings/display.mp4"
+```
+
+### Troubleshooting (Linux)
+- **Wayland-only session + X11 selectors / list modes**: X11-only selectors and list modes require
+  an X11 session. Use `--portal` for recording/screenshot or log into an Xorg session (Ubuntu
+  example: **"Ubuntu on Xorg"**). You may see:
+  ```text
+  error: X11 selectors require X11 (DISPLAY is unset). Use --portal on Wayland-only sessions, or log into "Ubuntu on Xorg".
+  ```
+- **Wayland + XWayland (`DISPLAY` is set, but some apps are missing)**: only X11 client windows are
+  discoverable/capturable. Wayland-native apps won’t appear in `--list-windows`; switch to Xorg.
+- **Missing portal packages** (Wayland-only + `--portal`): install xdg-desktop-portal + a backend.
+  Error example:
+  ```text
+  error: Wayland-only session detected but xdg-desktop-portal is missing.
+  ```
+- **ffmpeg missing portal FD support** (Wayland-only + `--portal`): install an ffmpeg build with
+  PipeWire portal FD support. Error example:
+  ```text
+  error: ffmpeg PipeWire input does not appear to support portal FDs (missing -pipewire_fd in `ffmpeg -hide_banner -h demuxer=pipewire`).
+  ```
+- **Missing `ffmpeg`**: install it (Ubuntu):
+  ```text
+  sudo apt-get install ffmpeg
+  ```
+  Error example:
+  ```text
+  error: ffmpeg not found on PATH. Install it with: sudo apt-get install ffmpeg
+  ```
+- **Audio capture prerequisites (`--audio system|mic`)**: Linux audio capture uses PulseAudio
+  compatibility via `pactl`. On Ubuntu, install:
+  ```text
+  sudo apt-get install pulseaudio-utils pipewire-pulse
+  ```
+  Error example:
+  ```text
+  error: pactl not found on PATH (install pipewire-pulse or pulseaudio-utils)
+  ```
+- **Blank/occluded capture**: X11 region/window capture can include occlusion and typically cannot
+  capture minimized windows. Keep the target visible and un-minimized while recording.
 
 ## Usage
 ```text
@@ -14,6 +84,7 @@ screen-record [options]
 | Flag | Value | Default | Description |
 | --- | --- | --- | --- |
 | `--screenshot` | (none) | (none) | Capture a single window screenshot and exit. |
+| `--portal` | (none) | (none) | Use the system portal picker (Linux Wayland) instead of X11 selectors. |
 | `--list-windows` | (none) | (none) | Print selectable windows as TSV and exit. |
 | `--list-displays` | (none) | (none) | Print selectable displays as TSV and exit. |
 | `--list-apps` | (none) | (none) | Print selectable apps as TSV and exit. |
@@ -29,21 +100,24 @@ screen-record [options]
 | `--format` | `mov\|mp4` | (auto) | Explicit container selection. Overrides extension. |
 | `--image-format` | `png\|jpg\|webp` | (auto) | Screenshot output format. Overrides extension. |
 | `--dir` | `<path>` | `./screenshots` | Output directory for `--screenshot` when `--path` is omitted. |
-| `--preflight` | (none) | (none) | Check Screen Recording permission and exit. |
-| `--request-permission` | (none) | (none) | Best-effort permission request + status check, then exit. |
+| `--preflight` | (none) | (none) | Check macOS Screen Recording permission or Linux prerequisites, then exit. |
+| `--request-permission` | (none) | (none) | Best-effort permission request + status check on macOS; on Linux runs `--preflight`. |
 | `-h, --help` | (none) | (none) | Show help. |
 | `-V, --version` | (none) | (none) | Show version. |
 
 ## Mode rules
 - Exactly one mode must be selected: `--list-windows`, `--list-displays`, `--list-apps`,
   `--preflight`, `--request-permission`, `--screenshot`, or recording.
-- Recording mode requires exactly one selector: `--window-id`, `--active-window`, `--app`,
-  `--display`, or `--display-id`.
-- Screenshot mode requires exactly one selector: `--window-id`, `--active-window`, or `--app`.
+- Recording mode requires exactly one selector: `--portal`, `--window-id`, `--active-window`,
+  `--app`, `--display`, or `--display-id`.
+- Screenshot mode requires exactly one selector: `--portal`, `--window-id`, `--active-window`,
+  or `--app`.
+- Display selectors (`--display`, `--display-id`) are invalid with `--screenshot`.
 - `--window-name` is only valid together with `--app`.
 - `--duration` is required for recording mode.
 - `--dir` and `--image-format` are only valid with `--screenshot`.
 - Recording-only flags (`--duration`, `--audio`, `--format`) are not valid with `--screenshot`.
+  `--portal` currently supports `--audio off` only.
 
 ## Output contract
 - Success (recording/screenshot): stdout prints only the resolved output file path followed by `\n`.
@@ -76,8 +150,8 @@ Sorting: by `app_name`, then `pid`.
 
 ### `--list-displays` column order
 1. `display_id` (decimal)
-2. `width` (points)
-3. `height` (points)
+2. `width` (pixels; macOS reports points)
+3. `height` (pixels; macOS reports points)
 
 Sorting: by `display_id`.
 
@@ -86,8 +160,9 @@ Sorting: by `display_id`.
 - `--active-window` selects the single frontmost window on the current Space.
 - `--app <name>` matches windows by owner/app name substring (case-insensitive).
 - `--window-name <name>` further filters by title substring (case-insensitive).
-- `--display` selects the main display (the one macOS considers primary).
-- `--display-id <id>` selects exactly that display id.
+- `--display` selects the main display (macOS primary display; Linux XRandR primary output when
+  available, otherwise the first deterministic display).
+- `--display-id <id>` selects exactly that display id (macOS display id; Linux X11/XRandR output id).
 - If multiple windows remain after filtering, and no single frontmost window can be chosen,
   selection is ambiguous and the CLI exits 2 with candidate output.
 

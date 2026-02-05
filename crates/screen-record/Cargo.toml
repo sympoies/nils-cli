@@ -11,6 +11,11 @@ ctrlc = "3.5.1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 nils-common = { path = "../nils-common" }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "0.13", features = ["randr"] }
+zbus = { version = "4", features = ["blocking"] }
+libc = "0.2"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-foundation = "0.3.2"
 objc2-av-foundation = { version = "0.3.2", features = ["objc2-core-media"] }

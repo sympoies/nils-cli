@@ -18,6 +18,7 @@ fn help_includes_key_flags() {
     assert!(text.contains("--list-displays"));
     assert!(text.contains("--list-apps"));
     assert!(text.contains("--screenshot"));
+    assert!(text.contains("--portal"));
     assert!(text.contains("--image-format"));
     assert!(text.contains("--audio"));
     assert!(text.contains("--duration"));
