@@ -12,45 +12,22 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
     let test_mode_enabled = test_mode::enabled();
     let mode = determine_mode(&cli)?;
     validate_screenshot_flag_usage(&cli, mode)?;
-
-    if !test_mode_enabled && !cfg!(target_os = "macos") {
-        return Err(CliError::usage("screen-record is only supported on macOS"));
-    }
+    let backend = Backend::detect(test_mode_enabled)?;
 
     match mode {
         Mode::Preflight => {
             ensure_no_recording_flags(&cli)?;
-            if test_mode_enabled {
-                return Ok(());
-            }
-            #[cfg(target_os = "macos")]
-            {
-                crate::macos::permissions::preflight()?;
-                return Ok(());
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                return Err(CliError::usage("screen-record is only supported on macOS"));
-            }
+            backend.preflight()?;
+            return Ok(());
         }
         Mode::RequestPermission => {
             ensure_no_recording_flags(&cli)?;
-            if test_mode_enabled {
-                return Ok(());
-            }
-            #[cfg(target_os = "macos")]
-            {
-                crate::macos::permissions::request_permission()?;
-                return Ok(());
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                return Err(CliError::usage("screen-record is only supported on macOS"));
-            }
+            backend.request_permission()?;
+            return Ok(());
         }
         Mode::ListWindows => {
             ensure_no_recording_flags(&cli)?;
-            let content = fetch_shareable_content(test_mode_enabled)?;
+            let content = fetch_shareable_content(&backend)?;
             let mut windows = content.windows;
             windows.sort_by(|a, b| {
                 a.owner_name
@@ -64,7 +41,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         }
         Mode::ListDisplays => {
             ensure_no_recording_flags(&cli)?;
-            let content = fetch_shareable_content(test_mode_enabled)?;
+            let content = fetch_shareable_content(&backend)?;
             let mut displays = content.displays;
             displays.sort_by(|a, b| a.id.cmp(&b.id));
             for display in displays {
@@ -73,7 +50,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         }
         Mode::ListApps => {
             ensure_no_recording_flags(&cli)?;
-            let content = fetch_shareable_content(test_mode_enabled)?;
+            let content = fetch_shareable_content(&backend)?;
             let mut apps = content.apps;
             normalize_app_list(&mut apps);
             for app in apps {
@@ -83,7 +60,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Mode::Screenshot => {
             validate_screenshot_args(&cli)?;
 
-            let content = fetch_shareable_content(test_mode_enabled)?;
+            let content = fetch_shareable_content(&backend)?;
             let args = SelectionArgs {
                 window_id: cli.window_id,
                 app: cli.app.clone(),
@@ -94,24 +71,9 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
 
             let (output_path, format) =
                 resolve_screenshot_output(&cli, &selected, test_mode_enabled)?;
-
-            if test_mode_enabled {
-                test_mode::screenshot_fixture(&output_path, format)?;
-                println!("{}", output_path.display());
-                return Ok(());
-            }
-
-            #[cfg(target_os = "macos")]
-            {
-                crate::macos::screenshot::screenshot_window(&selected, &output_path, format)?;
-                println!("{}", output_path.display());
-                return Ok(());
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                let _ = selected;
-                return Err(CliError::usage("screen-record is only supported on macOS"));
-            }
+            backend.screenshot_window(&selected, &output_path, format)?;
+            println!("{}", output_path.display());
+            return Ok(());
         }
         Mode::Record => {
             validate_record_args(&cli)?;
@@ -121,54 +83,40 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
             if cli.audio == AudioMode::Both && container == ContainerFormat::Mp4 {
                 return Err(CliError::usage("--audio both requires .mov"));
             }
-
-            if test_mode_enabled {
-                test_mode::record_fixture(&output_path, container)?;
-                println!("{}", output_path.display());
-                return Ok(());
+            if cli.display {
+                backend.record_main_display(
+                    cli.duration.expect("duration validated"),
+                    cli.audio,
+                    &output_path,
+                    container,
+                )?;
+            } else if let Some(display_id) = cli.display_id {
+                backend.record_display(
+                    display_id,
+                    cli.duration.expect("duration validated"),
+                    cli.audio,
+                    &output_path,
+                    container,
+                )?;
+            } else {
+                let content = fetch_shareable_content(&backend)?;
+                let args = SelectionArgs {
+                    window_id: cli.window_id,
+                    app: cli.app.clone(),
+                    window_name: cli.window_name.clone(),
+                    active_window: cli.active_window,
+                };
+                let selected = select_window(&content.windows, &args)?;
+                backend.record_window(
+                    &selected,
+                    cli.duration.expect("duration validated"),
+                    cli.audio,
+                    &output_path,
+                    container,
+                )?;
             }
-
-            #[cfg(target_os = "macos")]
-            {
-                if cli.display {
-                    crate::macos::stream::record_main_display(
-                        cli.duration.expect("duration validated"),
-                        cli.audio,
-                        &output_path,
-                        container,
-                    )?;
-                } else if let Some(display_id) = cli.display_id {
-                    crate::macos::stream::record_display(
-                        display_id,
-                        cli.duration.expect("duration validated"),
-                        cli.audio,
-                        &output_path,
-                        container,
-                    )?;
-                } else {
-                    let content = fetch_shareable_content(test_mode_enabled)?;
-                    let args = SelectionArgs {
-                        window_id: cli.window_id,
-                        app: cli.app.clone(),
-                        window_name: cli.window_name.clone(),
-                        active_window: cli.active_window,
-                    };
-                    let selected = select_window(&content.windows, &args)?;
-                    crate::macos::stream::record_window(
-                        &selected,
-                        cli.duration.expect("duration validated"),
-                        cli.audio,
-                        &output_path,
-                        container,
-                    )?;
-                }
-                println!("{}", output_path.display());
-                return Ok(());
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                return Err(CliError::usage("screen-record is only supported on macOS"));
-            }
+            println!("{}", output_path.display());
+            return Ok(());
         }
     }
 
@@ -184,6 +132,249 @@ enum Mode {
     RequestPermission,
     Screenshot,
     Record,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Backend {
+    TestMode,
+    Macos,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Linux,
+}
+
+impl Backend {
+    fn detect(test_mode_enabled: bool) -> Result<Self, CliError> {
+        if test_mode_enabled {
+            return Ok(Backend::TestMode);
+        }
+        #[cfg(target_os = "macos")]
+        {
+            Ok(Backend::Macos)
+        }
+        #[cfg(target_os = "linux")]
+        {
+            Ok(Backend::Linux)
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            Err(CliError::unsupported_platform())
+        }
+    }
+
+    fn preflight(&self) -> Result<(), CliError> {
+        match self {
+            Backend::TestMode => Ok(()),
+            Backend::Macos => {
+                #[cfg(target_os = "macos")]
+                {
+                    crate::macos::permissions::preflight()
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    Err(CliError::unsupported_platform())
+                }
+            }
+            Backend::Linux => {
+                #[cfg(target_os = "linux")]
+                {
+                    crate::linux::preflight::preflight()
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    Err(CliError::unsupported_platform())
+                }
+            }
+        }
+    }
+
+    fn request_permission(&self) -> Result<(), CliError> {
+        match self {
+            Backend::TestMode => Ok(()),
+            Backend::Macos => {
+                #[cfg(target_os = "macos")]
+                {
+                    crate::macos::permissions::request_permission()
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    Err(CliError::unsupported_platform())
+                }
+            }
+            Backend::Linux => {
+                #[cfg(target_os = "linux")]
+                {
+                    crate::linux::preflight::request_permission()
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    Err(CliError::unsupported_platform())
+                }
+            }
+        }
+    }
+
+    fn shareable_content(&self) -> Result<ShareableContent, CliError> {
+        match self {
+            Backend::TestMode => Ok(test_mode::shareable_content()),
+            Backend::Macos => {
+                #[cfg(target_os = "macos")]
+                {
+                    crate::macos::shareable::fetch_shareable()
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    Err(CliError::unsupported_platform())
+                }
+            }
+            Backend::Linux => {
+                #[cfg(target_os = "linux")]
+                {
+                    crate::linux::shareable_content()
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    Err(CliError::unsupported_platform())
+                }
+            }
+        }
+    }
+
+    fn screenshot_window(
+        &self,
+        window: &WindowInfo,
+        path: &Path,
+        format: ImageFormat,
+    ) -> Result<(), CliError> {
+        match self {
+            Backend::TestMode => test_mode::screenshot_fixture(path, format),
+            Backend::Macos => {
+                #[cfg(target_os = "macos")]
+                {
+                    crate::macos::screenshot::screenshot_window(window, path, format)
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let _ = (window, path, format);
+                    Err(CliError::unsupported_platform())
+                }
+            }
+            Backend::Linux => {
+                #[cfg(target_os = "linux")]
+                {
+                    crate::linux::screenshot_window(window, path, format)
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    let _ = (window, path, format);
+                    Err(CliError::unsupported_platform())
+                }
+            }
+        }
+    }
+
+    fn record_window(
+        &self,
+        window: &WindowInfo,
+        duration: u64,
+        audio: AudioMode,
+        path: &Path,
+        format: ContainerFormat,
+    ) -> Result<(), CliError> {
+        match self {
+            Backend::TestMode => test_mode::record_fixture(path, format),
+            Backend::Macos => {
+                #[cfg(target_os = "macos")]
+                {
+                    crate::macos::stream::record_window(window, duration, audio, path, format)
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let _ = (window, duration, audio, path, format);
+                    Err(CliError::unsupported_platform())
+                }
+            }
+            Backend::Linux => {
+                #[cfg(target_os = "linux")]
+                {
+                    crate::linux::record_window(window, duration, audio, path, format)
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    let _ = (window, duration, audio, path, format);
+                    Err(CliError::unsupported_platform())
+                }
+            }
+        }
+    }
+
+    fn record_display(
+        &self,
+        display_id: u32,
+        duration: u64,
+        audio: AudioMode,
+        path: &Path,
+        format: ContainerFormat,
+    ) -> Result<(), CliError> {
+        match self {
+            Backend::TestMode => test_mode::record_fixture(path, format),
+            Backend::Macos => {
+                #[cfg(target_os = "macos")]
+                {
+                    crate::macos::stream::record_display(display_id, duration, audio, path, format)
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let _ = (display_id, duration, audio, path, format);
+                    Err(CliError::unsupported_platform())
+                }
+            }
+            Backend::Linux => {
+                #[cfg(target_os = "linux")]
+                {
+                    crate::linux::record_display(display_id, duration, audio, path, format)
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    let _ = (display_id, duration, audio, path, format);
+                    Err(CliError::unsupported_platform())
+                }
+            }
+        }
+    }
+
+    fn record_main_display(
+        &self,
+        duration: u64,
+        audio: AudioMode,
+        path: &Path,
+        format: ContainerFormat,
+    ) -> Result<(), CliError> {
+        match self {
+            Backend::TestMode => test_mode::record_fixture(path, format),
+            Backend::Macos => {
+                #[cfg(target_os = "macos")]
+                {
+                    crate::macos::stream::record_main_display(duration, audio, path, format)
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let _ = (duration, audio, path, format);
+                    Err(CliError::unsupported_platform())
+                }
+            }
+            Backend::Linux => {
+                #[cfg(target_os = "linux")]
+                {
+                    crate::linux::record_main_display(duration, audio, path, format)
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    let _ = (duration, audio, path, format);
+                    Err(CliError::unsupported_platform())
+                }
+            }
+        }
+    }
 }
 
 fn determine_mode(cli: &Cli) -> Result<Mode, CliError> {
@@ -589,20 +780,8 @@ fn format_label(format: ContainerFormat) -> &'static str {
     }
 }
 
-fn fetch_shareable_content(test_mode_enabled: bool) -> Result<ShareableContent, CliError> {
-    if test_mode_enabled {
-        return Ok(test_mode::shareable_content());
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        crate::macos::shareable::fetch_shareable()
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        Err(CliError::usage("screen-record is only supported on macOS"))
-    }
+fn fetch_shareable_content(backend: &Backend) -> Result<ShareableContent, CliError> {
+    backend.shareable_content()
 }
 
 fn normalize_app_list(apps: &mut Vec<AppInfo>) {

@@ -1,9 +1,32 @@
 # screen-record
 
 ## Overview
-screen-record is a macOS 12+ CLI that records a single window (or a full display) to a video file
-using ScreenCaptureKit and AVFoundation. It also exposes parseable window/app/display lists to make
-selection deterministic in scripts.
+screen-record is a macOS 12+ and Linux (X11) CLI that records a single window (or a full display)
+to a video file. On macOS it uses ScreenCaptureKit and AVFoundation; on Linux it relies on X11 for
+discovery and `ffmpeg` for capture/encoding. It also exposes parseable window/app/display lists to
+make selection deterministic in scripts.
+
+## Linux (X11)
+Linux support targets X11/Xorg sessions (including XWayland when `DISPLAY` is set). Ubuntu 24.04 is
+the CI/validation baseline, but other distros with X11 should work.
+
+Prerequisites:
+- X11 session with `DISPLAY` set (Wayland-only sessions are not supported yet; log into Xorg).
+- `ffmpeg` on `PATH` (example: `sudo apt-get install ffmpeg`).
+
+Selection parity:
+- Recording selectors `--window-id`, `--active-window`, `--app`, `--display`, and `--display-id`
+  are supported.
+- Screenshot mode remains window-only; `--display` and `--display-id` are invalid with
+  `--screenshot`.
+- Linux `display_id` values are X11/XRandR output ids. `--display` selects the XRandR primary output
+  when available; otherwise it selects the first display in the deterministic list.
+
+Linux examples:
+```bash
+screen-record --list-windows
+screen-record --display --duration 3 --audio off --path "./recordings/display.mp4"
+```
 
 ## Usage
 ```text
@@ -29,8 +52,8 @@ screen-record [options]
 | `--format` | `mov\|mp4` | (auto) | Explicit container selection. Overrides extension. |
 | `--image-format` | `png\|jpg\|webp` | (auto) | Screenshot output format. Overrides extension. |
 | `--dir` | `<path>` | `./screenshots` | Output directory for `--screenshot` when `--path` is omitted. |
-| `--preflight` | (none) | (none) | Check Screen Recording permission and exit. |
-| `--request-permission` | (none) | (none) | Best-effort permission request + status check, then exit. |
+| `--preflight` | (none) | (none) | Check macOS Screen Recording permission or Linux prerequisites, then exit. |
+| `--request-permission` | (none) | (none) | Best-effort permission request + status check on macOS; on Linux runs `--preflight`. |
 | `-h, --help` | (none) | (none) | Show help. |
 | `-V, --version` | (none) | (none) | Show version. |
 
@@ -40,6 +63,7 @@ screen-record [options]
 - Recording mode requires exactly one selector: `--window-id`, `--active-window`, `--app`,
   `--display`, or `--display-id`.
 - Screenshot mode requires exactly one selector: `--window-id`, `--active-window`, or `--app`.
+- Display selectors (`--display`, `--display-id`) are invalid with `--screenshot`.
 - `--window-name` is only valid together with `--app`.
 - `--duration` is required for recording mode.
 - `--dir` and `--image-format` are only valid with `--screenshot`.
@@ -76,8 +100,8 @@ Sorting: by `app_name`, then `pid`.
 
 ### `--list-displays` column order
 1. `display_id` (decimal)
-2. `width` (points)
-3. `height` (points)
+2. `width` (pixels; macOS reports points)
+3. `height` (pixels; macOS reports points)
 
 Sorting: by `display_id`.
 
@@ -86,8 +110,9 @@ Sorting: by `display_id`.
 - `--active-window` selects the single frontmost window on the current Space.
 - `--app <name>` matches windows by owner/app name substring (case-insensitive).
 - `--window-name <name>` further filters by title substring (case-insensitive).
-- `--display` selects the main display (the one macOS considers primary).
-- `--display-id <id>` selects exactly that display id.
+- `--display` selects the main display (macOS primary display; Linux XRandR primary output when
+  available, otherwise the first deterministic display).
+- `--display-id <id>` selects exactly that display id (macOS display id; Linux X11/XRandR output id).
 - If multiple windows remain after filtering, and no single frontmost window can be chosen,
   selection is ambiguous and the CLI exits 2 with candidate output.
 

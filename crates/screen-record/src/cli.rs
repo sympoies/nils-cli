@@ -6,7 +6,7 @@ use clap::{Parser, ValueEnum};
 #[command(
     name = "screen-record",
     version,
-    about = "Record a single window or display on macOS."
+    about = "Record a single window or display on macOS (12+) or Linux (X11)."
 )]
 pub struct Cli {
     /// Capture a single window screenshot and exit.
@@ -25,15 +25,15 @@ pub struct Cli {
     #[arg(long)]
     pub list_apps: bool,
 
-    /// Check Screen Recording permission and exit.
+    /// Check capture prerequisites (macOS permission or X11/ffmpeg availability) and exit.
     #[arg(long)]
     pub preflight: bool,
 
-    /// Best-effort permission request and exit.
+    /// Best-effort permission request (macOS) or prerequisite check (X11), then exit.
     #[arg(long)]
     pub request_permission: bool,
 
-    /// Record a specific window id.
+    /// Record a specific window id (from --list-windows).
     #[arg(long, value_name = "id")]
     pub window_id: Option<u32>,
 
@@ -49,11 +49,11 @@ pub struct Cli {
     #[arg(long)]
     pub active_window: bool,
 
-    /// Record the main display (what you see on screen).
+    /// Record the primary display.
     #[arg(long)]
     pub display: bool,
 
-    /// Record a specific display id.
+    /// Record a specific display id (from --list-displays).
     #[arg(long, value_name = "id")]
     pub display_id: Option<u32>,
 

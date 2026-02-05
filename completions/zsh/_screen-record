@@ -8,8 +8,8 @@ _screen-record() {
     '--list-windows[Print selectable windows as TSV and exit]' \
     '--list-displays[Print selectable displays as TSV and exit]' \
     '--list-apps[Print selectable apps as TSV and exit]' \
-    '--preflight[Check Screen Recording permission and exit]' \
-    '--request-permission[Best-effort permission request and exit]' \
+    '--preflight[Check macOS permission or Linux prerequisites and exit]' \
+    '--request-permission[Best-effort permission request (macOS) or preflight (Linux), then exit]' \
     '--window-id=[Record a specific window id]:id:' \
     '--app=[Select a window by app/owner name]:name:' \
     '--window-name=[Narrow app selection by window title]:name:' \
