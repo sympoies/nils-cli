@@ -1,4 +1,3 @@
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::ptr::NonNull;
@@ -8,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use block2::RcBlock;
 use dispatch2::DispatchQueue;
+use nils_common::process::find_in_path;
 use objc2::rc::{autoreleasepool, Allocated, Retained};
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly};
@@ -699,39 +699,4 @@ fn temp_path_for_target_with_suffix(target: &Path, suffix: &str) -> Result<PathB
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     Ok(parent.join(format!(".{name}.{suffix}-{pid}-{nanos}")))
-}
-
-fn find_in_path(program: &str) -> Option<PathBuf> {
-    if program.contains(std::path::MAIN_SEPARATOR) {
-        let p = PathBuf::from(program);
-        return if is_executable(&p) { Some(p) } else { None };
-    }
-
-    let path_var: OsString = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path_var) {
-        let candidate = dir.join(program);
-        if is_executable(&candidate) {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
-fn is_executable(path: &Path) -> bool {
-    let meta = match std::fs::metadata(path) {
-        Ok(m) => m,
-        Err(_) => return false,
-    };
-    if !meta.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        meta.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
 }

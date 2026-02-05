@@ -12,6 +12,7 @@ serde_json = { workspace = true }
 
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 globset = "0.4"
+nils-common = { path = "../nils-common" }
 nils-term = { path = "../nils-term" }
 uuid = { version = "1", features = ["v4"] }
 walkdir = "2"

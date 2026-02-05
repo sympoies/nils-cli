@@ -576,6 +576,7 @@ name = "git-cli"
 version = "0.2.3"
 dependencies = [
  "anyhow",
+ "nils-common",
  "nils-test-support",
  "pretty_assertions",
  "serde_json",
@@ -886,6 +887,7 @@ dependencies = [
  "chrono",
  "clap",
  "globset",
+ "nils-common",
  "nils-term",
  "nils-test-support",
  "pretty_assertions",
@@ -1134,7 +1136,9 @@ dependencies = [
 name = "nils-common"
 version = "0.2.3"
 dependencies = [
+ "nils-test-support",
  "pretty_assertions",
+ "tempfile",
 ]
 
 [[package]]
@@ -1826,6 +1830,7 @@ dependencies = [
  "clap",
  "ctrlc",
  "dispatch2",
+ "nils-common",
  "nils-test-support",
  "objc2",
  "objc2-av-foundation",

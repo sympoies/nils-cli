@@ -1,6 +1,6 @@
 use crate::model::ImageInfo;
-use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use nils_common::process::find_in_path;
+use std::path::Path;
 use std::process::Command;
 
 #[derive(Clone, Debug)]
@@ -125,39 +125,4 @@ pub fn probe_image(toolchain: &Toolchain, path: &Path) -> ImageInfo {
     }
 
     info
-}
-
-fn find_in_path(program: &str) -> Option<PathBuf> {
-    if program.contains(std::path::MAIN_SEPARATOR) {
-        let p = PathBuf::from(program);
-        return if is_executable(&p) { Some(p) } else { None };
-    }
-
-    let path_var: OsString = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path_var) {
-        let candidate = dir.join(program);
-        if is_executable(&candidate) {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
-fn is_executable(path: &Path) -> bool {
-    let meta = match std::fs::metadata(path) {
-        Ok(m) => m,
-        Err(_) => return false,
-    };
-    if !meta.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        meta.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
 }

@@ -1,3 +1,5 @@
+pub mod process;
+
 pub fn greeting(name: &str) -> String {
     format!("Hello, {name}!")
 }
