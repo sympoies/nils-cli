@@ -1,0 +1,24 @@
+#compdef screen-record
+
+_screen-record() {
+  emulate -L zsh -o extendedglob
+
+  _arguments -C \
+    '--list-windows[Print selectable windows as TSV and exit]' \
+    '--list-apps[Print selectable apps as TSV and exit]' \
+    '--preflight[Check Screen Recording permission and exit]' \
+    '--request-permission[Best-effort permission request and exit]' \
+    '--window-id=[Record a specific window id]:id:' \
+    '--app=[Select a window by app/owner name]:name:' \
+    '--window-name=[Narrow app selection by window title]:name:' \
+    '--active-window[Record the frontmost window on the current Space]' \
+    '--duration=[Record for N seconds]:seconds:' \
+    '--audio=[Audio capture mode]:audio:(off system mic both)' \
+    '--path=[Output file path]:path:_files' \
+    '--format=[Container format]:format:(mov mp4)' \
+    '(-h --help)'{-h,--help}'[Show help]' \
+    '(-V --version)'{-V,--version}'[Show version]' \
+    && return 0
+}
+
+compdef _screen-record screen-record
