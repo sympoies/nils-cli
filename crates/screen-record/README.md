@@ -20,9 +20,9 @@ screen-record [options]
 | `--window-name` | `<name>` | (none) | Narrow `--app` selection by window title substring. |
 | `--active-window` | (none) | (none) | Record the frontmost window on the current Space. |
 | `--duration` | `<seconds>` | (required for recording) | Record for N seconds. |
-| `--audio` | `off|system|mic|both` | `off` | Control audio capture. `both` requires `.mov`. |
+| `--audio` | `off\|system\|mic\|both` | `off` | Control audio capture. `both` requires `.mov`. |
 | `--path` | `<path>` | (required for recording) | Output file path. |
-| `--format` | `mov|mp4` | (auto) | Explicit container selection. Overrides extension. |
+| `--format` | `mov\|mp4` | (auto) | Explicit container selection. Overrides extension. |
 | `--preflight` | (none) | (none) | Check Screen Recording permission and exit. |
 | `--request-permission` | (none) | (none) | Best-effort permission request + status check, then exit. |
 | `-h, --help` | (none) | (none) | Show help. |
