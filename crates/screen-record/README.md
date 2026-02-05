@@ -102,6 +102,9 @@ Candidate rows are identical to `--list-windows` TSV output and are printed to s
 - Otherwise, `.png`, `.jpg`/`.jpeg`, or `.webp` is selected from the `--path` extension.
 - If `--path` has no extension (or `--path` is omitted), the format defaults to `.png`.
 - If `--image-format` conflicts with the `--path` extension, exit 2 with a usage error.
+- Note: WebP encoding is best-effort. `screen-record` tries macOS ImageIO first, then falls back to
+  `cwebp` (install: `brew install webp`). If no encoder is available, `--image-format webp` fails
+  with exit 1.
 
 ## Screenshot default naming
 When `--screenshot` is used without `--path`, output is written under `./screenshots/` and the
@@ -167,4 +170,25 @@ screen-record --screenshot --app Terminal --image-format webp
 Capture a screenshot to an explicit path:
 ```bash
 screen-record --screenshot --window-id 4811 --path "./screenshots/window-4811.jpg"
+```
+
+## Manual validation (macOS)
+Permission:
+```bash
+screen-record --preflight
+screen-record --request-permission
+```
+
+Screenshot selectors + formats:
+```bash
+screen-record --screenshot --active-window
+screen-record --screenshot --window-id 4811 --path "./screenshots/window-4811.png"
+screen-record --screenshot --app Terminal --image-format jpg
+screen-record --screenshot --app Terminal --image-format webp
+```
+
+Recording (sanity):
+```bash
+screen-record --active-window --duration 2 --audio off --path "./recordings/active.mov"
+screen-record --active-window --duration 2 --audio off --path "./recordings/active.mp4"
 ```
