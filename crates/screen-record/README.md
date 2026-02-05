@@ -171,24 +171,3 @@ Capture a screenshot to an explicit path:
 ```bash
 screen-record --screenshot --window-id 4811 --path "./screenshots/window-4811.jpg"
 ```
-
-## Manual validation (macOS)
-Permission:
-```bash
-screen-record --preflight
-screen-record --request-permission
-```
-
-Screenshot selectors + formats:
-```bash
-screen-record --screenshot --active-window
-screen-record --screenshot --window-id 4811 --path "./screenshots/window-4811.png"
-screen-record --screenshot --app Terminal --image-format jpg
-screen-record --screenshot --app Terminal --image-format webp
-```
-
-Recording (sanity):
-```bash
-screen-record --active-window --duration 2 --audio off --path "./recordings/active.mov"
-screen-record --active-window --duration 2 --audio off --path "./recordings/active.mp4"
-```
