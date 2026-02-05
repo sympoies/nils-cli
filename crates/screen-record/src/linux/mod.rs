@@ -5,11 +5,11 @@ use crate::error::CliError;
 use crate::types::{ShareableContent, WindowInfo};
 
 pub mod preflight;
+#[cfg(target_os = "linux")]
+pub(crate) mod x11;
 
 pub fn shareable_content() -> Result<ShareableContent, CliError> {
-    Err(CliError::runtime(
-        "Linux X11 backend is not implemented yet",
-    ))
+    x11::fetch_shareable_content()
 }
 
 pub fn screenshot_window(

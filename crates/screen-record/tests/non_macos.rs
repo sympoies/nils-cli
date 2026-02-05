@@ -14,3 +14,28 @@ mod non_macos {
             .contains("only supported on macOS (12+) and Linux (X11)"));
     }
 }
+
+#[cfg(target_os = "linux")]
+mod linux {
+    use nils_test_support::bin::resolve;
+    use nils_test_support::cmd::{run_with, CmdOptions};
+    use tempfile::TempDir;
+
+    #[test]
+    fn preflight_missing_ffmpeg_is_actionable() {
+        let bin = resolve("screen-record");
+        let empty_path = TempDir::new().expect("tempdir");
+
+        let options = CmdOptions::new()
+            .with_env_remove("CODEX_SCREEN_RECORD_TEST_MODE")
+            .with_env_remove("WAYLAND_DISPLAY")
+            .with_env_remove("DISPLAY")
+            .with_env("PATH", &empty_path.path().to_string_lossy());
+
+        let out = run_with(&bin, &["--preflight"], &options);
+        assert_eq!(out.code, 1);
+        let stderr = out.stderr_text();
+        assert!(stderr.contains("ffmpeg"));
+        assert!(stderr.contains("apt-get install ffmpeg"));
+    }
+}
