@@ -4,6 +4,8 @@ use crate::cli::{AudioMode, ContainerFormat, ImageFormat};
 use crate::error::CliError;
 use crate::types::{ShareableContent, WindowInfo};
 
+pub(crate) mod audio;
+pub(crate) mod ffmpeg;
 pub mod preflight;
 #[cfg(target_os = "linux")]
 pub(crate) mod x11;
@@ -13,46 +15,42 @@ pub fn shareable_content() -> Result<ShareableContent, CliError> {
 }
 
 pub fn screenshot_window(
-    _window: &WindowInfo,
-    _path: &Path,
-    _format: ImageFormat,
+    window: &WindowInfo,
+    path: &Path,
+    format: ImageFormat,
 ) -> Result<(), CliError> {
-    Err(CliError::runtime(
-        "Linux X11 backend is not implemented yet",
-    ))
+    preflight::preflight()?;
+    ffmpeg::screenshot_window(window, path, format)
 }
 
 pub fn record_window(
-    _window: &WindowInfo,
-    _duration: u64,
-    _audio: AudioMode,
-    _path: &Path,
-    _format: ContainerFormat,
+    window: &WindowInfo,
+    duration: u64,
+    audio: AudioMode,
+    path: &Path,
+    format: ContainerFormat,
 ) -> Result<(), CliError> {
-    Err(CliError::runtime(
-        "Linux X11 backend is not implemented yet",
-    ))
+    preflight::preflight()?;
+    ffmpeg::record_window(window, duration, audio, path, format)
 }
 
 pub fn record_display(
-    _display_id: u32,
-    _duration: u64,
-    _audio: AudioMode,
-    _path: &Path,
-    _format: ContainerFormat,
+    display_id: u32,
+    duration: u64,
+    audio: AudioMode,
+    path: &Path,
+    format: ContainerFormat,
 ) -> Result<(), CliError> {
-    Err(CliError::runtime(
-        "Linux X11 backend is not implemented yet",
-    ))
+    preflight::preflight()?;
+    ffmpeg::record_display(display_id, duration, audio, path, format)
 }
 
 pub fn record_main_display(
-    _duration: u64,
-    _audio: AudioMode,
-    _path: &Path,
-    _format: ContainerFormat,
+    duration: u64,
+    audio: AudioMode,
+    path: &Path,
+    format: ContainerFormat,
 ) -> Result<(), CliError> {
-    Err(CliError::runtime(
-        "Linux X11 backend is not implemented yet",
-    ))
+    preflight::preflight()?;
+    ffmpeg::record_main_display(duration, audio, path, format)
 }
