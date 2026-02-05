@@ -303,10 +303,12 @@ fn window_has_state<C: Connection>(
         Err(_) => return false,
     };
 
-    match reply.value32() {
+    // Avoid keeping the borrow from `reply.value32()` alive until the end of the block (E0597).
+    let has_state = match reply.value32() {
         Some(mut iter) => iter.any(|value| value == hidden_state),
         None => false,
-    }
+    };
+    has_state
 }
 
 fn get_property_bytes<C: Connection>(
