@@ -54,19 +54,22 @@ pub fn fetch_shareable_content() -> Result<ShareableContent, CliError> {
 
     let mut windows = Vec::new();
     for window in candidates.drain(..) {
-        let geom = match conn.get_geometry(window).and_then(|cookie| cookie.reply()) {
-            Ok(reply) => reply,
+        let geom = match conn.get_geometry(window) {
+            Ok(cookie) => match cookie.reply() {
+                Ok(reply) => reply,
+                Err(_) => continue,
+            },
             Err(_) => continue,
         };
-        let translate = conn
-            .translate_coordinates(window, root, 0, 0)
-            .and_then(|cookie| cookie.reply())
-            .ok();
+        let translate = match conn.translate_coordinates(window, root, 0, 0) {
+            Ok(cookie) => cookie.reply().ok(),
+            Err(_) => None,
+        };
 
-        let attrs = conn
-            .get_window_attributes(window)
-            .and_then(|cookie| cookie.reply())
-            .ok();
+        let attrs = match conn.get_window_attributes(window) {
+            Ok(cookie) => cookie.reply().ok(),
+            Err(_) => None,
+        };
 
         let map_state = attrs.as_ref().map(|attr| attr.map_state);
         let mut on_screen = matches!(map_state, Some(xproto::MapState::VIEWABLE));
@@ -119,21 +122,21 @@ fn query_displays<C: Connection>(
     screen: &xproto::Screen,
     root: Window,
 ) -> Result<Vec<DisplayInfo>, CliError> {
-    let resources = match conn
-        .randr_get_screen_resources_current(root)
-        .and_then(|cookie| cookie.reply())
-    {
-        Ok(reply) => reply,
+    let resources = match conn.randr_get_screen_resources_current(root) {
+        Ok(cookie) => match cookie.reply() {
+            Ok(reply) => reply,
+            Err(_) => return Ok(fallback_display(screen)),
+        },
         Err(_) => return Ok(fallback_display(screen)),
     };
 
     let mut displays = Vec::new();
     for output in resources.outputs {
-        let info = match conn
-            .randr_get_output_info(output, resources.config_timestamp)
-            .and_then(|cookie| cookie.reply())
-        {
-            Ok(reply) => reply,
+        let info = match conn.randr_get_output_info(output, resources.config_timestamp) {
+            Ok(cookie) => match cookie.reply() {
+                Ok(reply) => reply,
+                Err(_) => continue,
+            },
             Err(_) => continue,
         };
 
@@ -145,11 +148,11 @@ fn query_displays<C: Connection>(
             continue;
         }
 
-        let crtc_info = match conn
-            .randr_get_crtc_info(info.crtc, resources.config_timestamp)
-            .and_then(|cookie| cookie.reply())
-        {
-            Ok(reply) => reply,
+        let crtc_info = match conn.randr_get_crtc_info(info.crtc, resources.config_timestamp) {
+            Ok(cookie) => match cookie.reply() {
+                Ok(reply) => reply,
+                Err(_) => continue,
+            },
             Err(_) => continue,
         };
 
@@ -180,18 +183,24 @@ fn fallback_display(screen: &xproto::Screen) -> Vec<DisplayInfo> {
 }
 
 fn query_tree_windows<C: Connection>(conn: &C, root: Window) -> Result<Vec<Window>, CliError> {
-    let reply = conn
-        .query_tree(root)
-        .and_then(|cookie| cookie.reply())
-        .map_err(|err| CliError::runtime(format!("failed to query X11 window tree: {err}")))?;
+    let reply = match conn.query_tree(root) {
+        Ok(cookie) => cookie
+            .reply()
+            .map_err(|err| CliError::runtime(format!("failed to query X11 window tree: {err}")))?,
+        Err(err) => {
+            return Err(CliError::runtime(format!(
+                "failed to query X11 window tree: {err}"
+            )))
+        }
+    };
 
     let mut windows = Vec::new();
     for window in reply.children {
-        let attrs = match conn
-            .get_window_attributes(window)
-            .and_then(|cookie| cookie.reply())
-        {
-            Ok(reply) => reply,
+        let attrs = match conn.get_window_attributes(window) {
+            Ok(cookie) => match cookie.reply() {
+                Ok(reply) => reply,
+                Err(_) => continue,
+            },
             Err(_) => continue,
         };
 
@@ -208,11 +217,11 @@ fn get_window_list<C: Connection>(
     property: Atom,
     property_type: Atom,
 ) -> Result<Option<Vec<Window>>, CliError> {
-    let reply = match conn
-        .get_property(false, window, property, property_type, 0, u32::MAX)
-        .and_then(|cookie| cookie.reply())
-    {
-        Ok(reply) => reply,
+    let reply = match conn.get_property(false, window, property, property_type, 0, u32::MAX) {
+        Ok(cookie) => match cookie.reply() {
+            Ok(reply) => reply,
+            Err(_) => return Ok(None),
+        },
         Err(_) => return Ok(None),
     };
 
@@ -266,17 +275,18 @@ fn window_owner_name<C: Connection>(conn: &C, window: Window, atoms: &Atoms) -> 
 }
 
 fn window_owner_pid<C: Connection>(conn: &C, window: Window, property: Atom) -> i32 {
-    let reply = conn
-        .get_property(false, window, property, AtomEnum::CARDINAL, 0, 1)
-        .and_then(|cookie| cookie.reply());
-    match reply {
-        Ok(reply) => reply
-            .value32()
-            .and_then(|mut iter| iter.next())
-            .map(|value| value as i32)
-            .unwrap_or(0),
-        Err(_) => 0,
-    }
+    let reply = match conn.get_property(false, window, property, AtomEnum::CARDINAL, 0, 1) {
+        Ok(cookie) => match cookie.reply() {
+            Ok(reply) => reply,
+            Err(_) => return 0,
+        },
+        Err(_) => return 0,
+    };
+    reply
+        .value32()
+        .and_then(|mut iter| iter.next())
+        .map(|value| value as i32)
+        .unwrap_or(0)
 }
 
 fn window_has_state<C: Connection>(
@@ -285,16 +295,17 @@ fn window_has_state<C: Connection>(
     property: Atom,
     hidden_state: Atom,
 ) -> bool {
-    let reply = conn
-        .get_property(false, window, property, AtomEnum::ATOM, 0, u32::MAX)
-        .and_then(|cookie| cookie.reply());
+    let reply = match conn.get_property(false, window, property, AtomEnum::ATOM, 0, u32::MAX) {
+        Ok(cookie) => match cookie.reply() {
+            Ok(reply) => reply,
+            Err(_) => return false,
+        },
+        Err(_) => return false,
+    };
 
-    match reply {
-        Ok(reply) => reply
-            .value32()
-            .map(|mut iter| iter.any(|value| value == hidden_state))
-            .unwrap_or(false),
-        Err(_) => false,
+    match reply.value32() {
+        Some(iter) => iter.any(|value| value == hidden_state),
+        None => false,
     }
 }
 
@@ -304,10 +315,10 @@ fn get_property_bytes<C: Connection>(
     property: Atom,
     property_type: Atom,
 ) -> Option<Vec<u8>> {
-    let reply = conn
+    let cookie = conn
         .get_property(false, window, property, property_type, 0, u32::MAX)
-        .and_then(|cookie| cookie.reply())
         .ok()?;
+    let reply = cookie.reply().ok()?;
     if reply.value_len == 0 {
         return None;
     }
@@ -367,9 +378,11 @@ impl Atoms {
 }
 
 fn intern_atom<C: Connection>(conn: &C, name: &str) -> Result<Atom, CliError> {
-    let reply = conn
+    let cookie = conn
         .intern_atom(false, name.as_bytes())
-        .and_then(|cookie| cookie.reply())
+        .map_err(|err| CliError::runtime(format!("failed to intern atom {name}: {err}")))?;
+    let reply = cookie
+        .reply()
         .map_err(|err| CliError::runtime(format!("failed to intern atom {name}: {err}")))?;
     Ok(reply.atom)
 }
