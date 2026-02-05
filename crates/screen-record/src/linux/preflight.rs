@@ -63,3 +63,41 @@ fn x11_socket_path(display: &str) -> Option<PathBuf> {
     let display_num = display_num.parse::<u32>().ok()?;
     Some(PathBuf::from(format!("/tmp/.X11-unix/X{display_num}")))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::x11_socket_path;
+
+    #[test]
+    fn x11_socket_path_accepts_colon_display_zero() {
+        assert_eq!(
+            x11_socket_path(":0"),
+            Some(PathBuf::from("/tmp/.X11-unix/X0"))
+        );
+    }
+
+    #[test]
+    fn x11_socket_path_accepts_unix_with_screen_suffix() {
+        assert_eq!(
+            x11_socket_path("unix:1.0"),
+            Some(PathBuf::from("/tmp/.X11-unix/X1"))
+        );
+    }
+
+    #[test]
+    fn x11_socket_path_accepts_localhost_host_form() {
+        assert_eq!(
+            x11_socket_path("localhost:2"),
+            Some(PathBuf::from("/tmp/.X11-unix/X2"))
+        );
+    }
+
+    #[test]
+    fn x11_socket_path_rejects_remote_host_forms() {
+        for display in ["example.com:0", "192.168.1.10:1", "[::1]:2"] {
+            assert_eq!(x11_socket_path(display), None, "display={display}");
+        }
+    }
+}

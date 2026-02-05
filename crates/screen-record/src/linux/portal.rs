@@ -127,7 +127,7 @@ fn create_session(
         .map_err(|err| CliError::runtime(format!("portal CreateSession failed: {err}")))?;
 
     let results = wait_request_response(connection, request)?;
-    dict_get_objpath(&results, "session_handle").map_err(|err| {
+    parse_session_handle_from_results(&results).map_err(|err| {
         CliError::runtime(format!(
             "portal CreateSession response missing session_handle: {err}"
         ))
@@ -168,7 +168,7 @@ fn start_session(
         .map_err(|err| CliError::runtime(format!("portal Start failed: {err}")))?;
 
     let results = wait_request_response(connection, request)?;
-    let streams = dict_get_streams(&results, "streams").map_err(|err| {
+    let streams = parse_streams_from_results(&results).map_err(|err| {
         CliError::runtime(format!("portal Start response missing streams: {err}"))
     })?;
     let (node_id, _) = streams
@@ -203,12 +203,28 @@ fn wait_request_response(
         .deserialize()
         .map_err(|err| CliError::runtime(format!("failed to decode portal response: {err}")))?;
 
+    ensure_response_code_ok(code, results)
+}
+
+#[doc(hidden)]
+pub fn parse_session_handle_from_results(
+    dict: &PortalDict,
+) -> Result<zbus::zvariant::OwnedObjectPath, String> {
+    dict_get_objpath(dict, "session_handle")
+}
+
+#[doc(hidden)]
+pub fn parse_streams_from_results(dict: &PortalDict) -> Result<PortalStreams, String> {
+    dict_get_streams(dict, "streams")
+}
+
+#[doc(hidden)]
+pub fn ensure_response_code_ok(code: u32, results: PortalDict) -> Result<PortalDict, CliError> {
     if code != 0 {
         return Err(CliError::runtime(format!(
             "portal request failed or was cancelled (response={code})"
         )));
     }
-
     Ok(results)
 }
 

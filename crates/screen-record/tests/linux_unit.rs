@@ -1,10 +1,12 @@
 #[cfg(target_os = "linux")]
 mod linux_unit {
     use std::fs;
+    use std::path::{Path, PathBuf};
 
     use nils_test_support::{prepend_path, EnvGuard, GlobalStateLock, StubBinDir};
     use screen_record::cli::{AudioMode, ContainerFormat};
     use screen_record::linux::ffmpeg;
+    use screen_record::linux::portal::PortalCapture;
     use screen_record::types::{Rect, WindowInfo};
 
     fn window(id: u32) -> WindowInfo {
@@ -114,6 +116,29 @@ esac
             .lines()
             .map(|line| line.to_string())
             .collect()
+    }
+
+    fn path_with_stub_without_program(stub_dir: &Path, program: &str) -> String {
+        let mut paths: Vec<PathBuf> =
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+                .filter(|dir| !dir.join(program).is_file())
+                .collect();
+        paths.insert(0, stub_dir.to_path_buf());
+        std::env::join_paths(paths)
+            .expect("join PATH")
+            .to_string_lossy()
+            .to_string()
+    }
+
+    fn portal_capture_with_remote(node_id: u32) -> PortalCapture {
+        use std::os::fd::OwnedFd;
+
+        let file = fs::File::open("/dev/null").expect("open /dev/null");
+        let fd = OwnedFd::from(file);
+        PortalCapture {
+            node_id,
+            pipewire_remote: Some(zbus::zvariant::OwnedFd::from(fd)),
+        }
     }
 
     #[test]
@@ -340,5 +365,242 @@ exit 1
             .expect_err("unsupported");
         assert_eq!(err.exit_code(), 1);
         assert!(err.to_string().contains("PipeWire"));
+    }
+
+    #[test]
+    fn linux_unit_ffmpeg_record_window_audio_system_errors_when_pactl_missing() {
+        let lock = GlobalStateLock::new();
+        let stubs = StubBinDir::new();
+        write_ffmpeg_stub(&stubs);
+
+        let path = path_with_stub_without_program(stubs.path(), "pactl");
+        let _path_guard = EnvGuard::set(&lock, "PATH", &path);
+        let _display_guard = EnvGuard::set(&lock, "DISPLAY", ":99");
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let out_path = tmp.path().join("out.mp4");
+        let err = ffmpeg::record_window(
+            &window(500),
+            1,
+            AudioMode::System,
+            &out_path,
+            ContainerFormat::Mp4,
+        )
+        .expect_err("missing pactl");
+        assert_eq!(err.exit_code(), 1);
+        assert!(err.to_string().contains("pactl not found on PATH"));
+    }
+
+    #[test]
+    fn linux_unit_ffmpeg_record_window_audio_system_errors_on_pactl_spawn_failure() {
+        let lock = GlobalStateLock::new();
+        let stubs = StubBinDir::new();
+        write_ffmpeg_stub(&stubs);
+        stubs.write_exe("pactl", "this is not an executable format\n");
+
+        let _path_guard = prepend_path(&lock, stubs.path());
+        let _display_guard = EnvGuard::set(&lock, "DISPLAY", ":99");
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let out_path = tmp.path().join("out.mp4");
+        let err = ffmpeg::record_window(
+            &window(501),
+            1,
+            AudioMode::System,
+            &out_path,
+            ContainerFormat::Mp4,
+        )
+        .expect_err("spawn failure");
+        assert_eq!(err.exit_code(), 1);
+        assert!(err.to_string().contains("failed to spawn pactl"));
+    }
+
+    #[test]
+    fn linux_unit_ffmpeg_record_window_audio_system_errors_when_pactl_outputs_are_empty() {
+        let lock = GlobalStateLock::new();
+        let stubs = StubBinDir::new();
+        write_ffmpeg_stub(&stubs);
+        stubs.write_exe(
+            "pactl",
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+
+case "$*" in
+  "get-default-sink")
+    printf "\n"
+    ;;
+  "info")
+    echo "Server Name: PulseAudio (on PipeWire 1.0.0)"
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+"#,
+        );
+
+        let _path_guard = prepend_path(&lock, stubs.path());
+        let _display_guard = EnvGuard::set(&lock, "DISPLAY", ":99");
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let out_path = tmp.path().join("out.mp4");
+        let err = ffmpeg::record_window(
+            &window(502),
+            1,
+            AudioMode::System,
+            &out_path,
+            ContainerFormat::Mp4,
+        )
+        .expect_err("empty pactl output");
+        assert_eq!(err.exit_code(), 1);
+        assert!(err
+            .to_string()
+            .contains("failed to resolve default sink via pactl"));
+    }
+
+    #[test]
+    fn linux_unit_ffmpeg_record_window_audio_system_errors_when_sink_monitor_source_missing() {
+        let lock = GlobalStateLock::new();
+        let stubs = StubBinDir::new();
+        write_ffmpeg_stub(&stubs);
+        stubs.write_exe(
+            "pactl",
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+
+case "$*" in
+  "get-default-sink")
+    echo "dummy_sink"
+    ;;
+  "list short sources")
+    printf "0\tdummy_source\tmodule-null-sink.c\ts16le 2ch 44100Hz\tRUNNING\n"
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+"#,
+        );
+
+        let _path_guard = prepend_path(&lock, stubs.path());
+        let _display_guard = EnvGuard::set(&lock, "DISPLAY", ":99");
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let out_path = tmp.path().join("out.mp4");
+        let err = ffmpeg::record_window(
+            &window(503),
+            1,
+            AudioMode::System,
+            &out_path,
+            ContainerFormat::Mp4,
+        )
+        .expect_err("missing monitor");
+        assert_eq!(err.exit_code(), 1);
+        assert!(err.to_string().contains("dummy_sink.monitor not found"));
+    }
+
+    #[test]
+    fn linux_unit_ffmpeg_record_portal_node_errors_when_ffmpeg_devices_probe_fails() {
+        let lock = GlobalStateLock::new();
+        let stubs = StubBinDir::new();
+        stubs.write_exe(
+            "ffmpeg",
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$*" == *"-devices"* ]]; then
+  echo "device probe broke" >&2
+  exit 17
+fi
+
+exit 0
+"#,
+        );
+
+        let _path_guard = prepend_path(&lock, stubs.path());
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let out_path = tmp.path().join("out.mp4");
+        let err = ffmpeg::record_portal_node(2, 1, &out_path, ContainerFormat::Mp4)
+            .expect_err("devices probe failure");
+        assert_eq!(err.exit_code(), 1);
+        assert!(err
+            .to_string()
+            .contains("ffmpeg -devices failed (exit code 17)"));
+        assert!(err.to_string().contains("device probe broke"));
+    }
+
+    #[test]
+    fn linux_unit_ffmpeg_record_portal_errors_when_ffmpeg_pipewire_demuxer_probe_fails() {
+        let lock = GlobalStateLock::new();
+        let stubs = StubBinDir::new();
+        stubs.write_exe(
+            "ffmpeg",
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$*" == *"-devices"* ]]; then
+  cat <<'EOF'
+Devices:
+ D  pipewire           PipeWire audio and video capture
+EOF
+  exit 0
+fi
+
+if [[ "$*" == *"-h demuxer=pipewire"* ]]; then
+  echo "demuxer probe exploded" >&2
+  exit 23
+fi
+
+out="${@: -1}"
+mkdir -p "$(dirname "$out")"
+printf "stub" > "$out"
+"#,
+        );
+
+        let _path_guard = prepend_path(&lock, stubs.path());
+        let capture = portal_capture_with_remote(4242);
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let out_path = tmp.path().join("out.mp4");
+        let err = ffmpeg::record_portal(&capture, 1, &out_path, ContainerFormat::Mp4)
+            .expect_err("demuxer probe failure");
+        assert_eq!(err.exit_code(), 1);
+        assert!(err
+            .to_string()
+            .contains("ffmpeg -h demuxer=pipewire failed (exit code 23)"));
+        assert!(err.to_string().contains("demuxer probe exploded"));
+    }
+
+    #[test]
+    fn linux_unit_ffmpeg_record_window_reports_exit_code_and_stderr_on_failure() {
+        let lock = GlobalStateLock::new();
+        let stubs = StubBinDir::new();
+        stubs.write_exe(
+            "ffmpeg",
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+
+echo "encoder failed in stub" >&2
+exit 9
+"#,
+        );
+
+        let _path_guard = prepend_path(&lock, stubs.path());
+        let _display_guard = EnvGuard::set(&lock, "DISPLAY", ":99");
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let out_path = tmp.path().join("out.mp4");
+        let err = ffmpeg::record_window(
+            &window(504),
+            1,
+            AudioMode::Off,
+            &out_path,
+            ContainerFormat::Mp4,
+        )
+        .expect_err("ffmpeg non-zero");
+        assert_eq!(err.exit_code(), 1);
+        assert!(err.to_string().contains("ffmpeg failed (exit code 9)"));
+        assert!(err.to_string().contains("encoder failed in stub"));
     }
 }
