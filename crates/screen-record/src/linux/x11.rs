@@ -304,7 +304,7 @@ fn window_has_state<C: Connection>(
     };
 
     match reply.value32() {
-        Some(iter) => iter.any(|value| value == hidden_state),
+        Some(mut iter) => iter.any(|value| value == hidden_state),
         None => false,
     }
 }
