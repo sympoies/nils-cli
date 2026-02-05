@@ -208,23 +208,23 @@ fn wait_request_response(
 
 #[doc(hidden)]
 pub fn parse_session_handle_from_results(
-    dict: &HashMap<String, zbus::zvariant::OwnedValue>,
+    dict: &PortalDict,
 ) -> Result<zbus::zvariant::OwnedObjectPath, String> {
     dict_get_objpath(dict, "session_handle")
 }
 
 #[doc(hidden)]
 pub fn parse_streams_from_results(
-    dict: &HashMap<String, zbus::zvariant::OwnedValue>,
-) -> Result<Vec<(u32, HashMap<String, zbus::zvariant::OwnedValue>)>, String> {
+    dict: &PortalDict,
+) -> Result<PortalStreams, String> {
     dict_get_streams(dict, "streams")
 }
 
 #[doc(hidden)]
 pub fn ensure_response_code_ok(
     code: u32,
-    results: HashMap<String, zbus::zvariant::OwnedValue>,
-) -> Result<HashMap<String, zbus::zvariant::OwnedValue>, CliError> {
+    results: PortalDict,
+) -> Result<PortalDict, CliError> {
     if code != 0 {
         return Err(CliError::runtime(format!(
             "portal request failed or was cancelled (response={code})"
