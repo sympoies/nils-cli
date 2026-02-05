@@ -26,7 +26,7 @@ mod linux_request_permission {
     }
 
     #[test]
-    fn request_permission_wayland_requires_xorg() {
+    fn request_permission_wayland_without_portal_is_actionable() {
         let bin = resolve("screen-record");
         let temp_dir = TempDir::new().expect("tempdir");
         let ffmpeg_path = temp_dir.path().join("ffmpeg");
@@ -38,6 +38,7 @@ mod linux_request_permission {
 
         let options = CmdOptions::new()
             .with_env_remove("CODEX_SCREEN_RECORD_TEST_MODE")
+            .with_env("CODEX_SCREEN_RECORD_PORTAL_FORCE_MISSING", "1")
             .with_env_remove("DISPLAY")
             .with_env("WAYLAND_DISPLAY", "wayland-0")
             .with_env("PATH", &temp_dir.path().to_string_lossy());
@@ -45,7 +46,7 @@ mod linux_request_permission {
         let out = run_with(&bin, &["--request-permission"], &options);
         assert_eq!(out.code, 1);
         let stderr = out.stderr_text();
-        assert!(stderr.contains("DISPLAY"));
-        assert!(stderr.contains("Xorg"));
+        assert!(stderr.contains("xdg-desktop-portal"));
+        assert!(stderr.contains("org.freedesktop.portal.Desktop"));
     }
 }

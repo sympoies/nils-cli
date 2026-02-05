@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use nils_common::process::find_in_path;
 
 use crate::error::CliError;
+use crate::linux::portal;
 
 pub fn preflight() -> Result<(), CliError> {
     if find_in_path("ffmpeg").is_none() {
@@ -20,9 +21,8 @@ pub fn preflight() -> Result<(), CliError> {
 
     if display.is_none() {
         if env::var_os("WAYLAND_DISPLAY").is_some() {
-            return Err(CliError::runtime(
-                "X11 display not detected (DISPLAY is unset). Wayland-only sessions are not supported; log into \"Ubuntu on Xorg\".",
-            ));
+            portal::ensure_portal_available()?;
+            return Ok(());
         }
         return Err(CliError::runtime(
             "X11 display not detected (DISPLAY is unset).",

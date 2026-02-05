@@ -42,6 +42,35 @@ printf "stub" > "$out"
         );
     }
 
+    fn write_ffmpeg_stub_with_devices(dir: &StubBinDir) {
+        dir.write_exe(
+            "ffmpeg",
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -n "${CODEX_FFMPEG_LOG:-}" ]]; then
+  printf 'CALL\n' >> "${CODEX_FFMPEG_LOG}"
+  printf '%s\n' "$@" >> "${CODEX_FFMPEG_LOG}"
+  printf 'END\n' >> "${CODEX_FFMPEG_LOG}"
+fi
+
+for arg in "$@"; do
+  if [[ "$arg" == "-devices" ]]; then
+    cat <<'EOF'
+Devices:
+ D  pipewire           PipeWire audio and video capture
+EOF
+    exit 0
+  fi
+done
+
+out="${@: -1}"
+mkdir -p "$(dirname "$out")"
+printf "stub" > "$out"
+"#,
+        );
+    }
+
     fn write_pactl_stub(dir: &StubBinDir) {
         dir.write_exe(
             "pactl",
@@ -258,5 +287,58 @@ esac
         let pactl_calls = fs::read_to_string(&pactl_log_path).expect("read pactl log");
         assert!(pactl_calls.contains("get-default-sink"));
         assert!(pactl_calls.contains("get-default-source"));
+    }
+
+    #[test]
+    fn linux_unit_ffmpeg_record_portal_node_uses_pipewire_input() {
+        let lock = GlobalStateLock::new();
+        let stubs = StubBinDir::new();
+        write_ffmpeg_stub_with_devices(&stubs);
+
+        let _path_guard = prepend_path(&lock, stubs.path());
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let out_path = tmp.path().join("out.mp4");
+        let log_path = tmp.path().join("ffmpeg-args.txt");
+        let _ffmpeg_log = EnvGuard::set(&lock, "CODEX_FFMPEG_LOG", &log_path.to_string_lossy());
+
+        ffmpeg::record_portal_node(9001, 2, &out_path, ContainerFormat::Mp4).expect("record");
+
+        let args = read_log(&log_path);
+        assert!(args.iter().any(|arg| arg == "-devices"));
+        assert!(args.iter().any(|arg| arg == "pipewire"));
+        assert!(args.iter().any(|arg| arg == "9001"));
+        assert!(out_path.exists());
+    }
+
+    #[test]
+    fn linux_unit_ffmpeg_record_portal_node_errors_when_pipewire_unsupported() {
+        let lock = GlobalStateLock::new();
+        let stubs = StubBinDir::new();
+        stubs.write_exe(
+            "ffmpeg",
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+
+for arg in "$@"; do
+  if [[ "$arg" == "-devices" ]]; then
+    echo "Devices:"
+    echo " D  alsa            ALSA audio capture"
+    exit 0
+  fi
+done
+
+exit 1
+"#,
+        );
+
+        let _path_guard = prepend_path(&lock, stubs.path());
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let out_path = tmp.path().join("out.mp4");
+        let err = ffmpeg::record_portal_node(1, 1, &out_path, ContainerFormat::Mp4)
+            .expect_err("unsupported");
+        assert_eq!(err.exit_code(), 1);
+        assert!(err.to_string().contains("PipeWire"));
     }
 }

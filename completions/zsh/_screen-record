@@ -5,6 +5,7 @@ _screen-record() {
 
   _arguments -C \
     '--screenshot[Capture a single window screenshot and exit]' \
+    '--portal[Use the system portal picker (Linux Wayland) instead of X11 selectors]' \
     '--list-windows[Print selectable windows as TSV and exit]' \
     '--list-displays[Print selectable displays as TSV and exit]' \
     '--list-apps[Print selectable apps as TSV and exit]' \

@@ -12,6 +12,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
     let test_mode_enabled = test_mode::enabled();
     let mode = determine_mode(&cli)?;
     validate_screenshot_flag_usage(&cli, mode)?;
+    validate_portal_flag_usage(&cli, mode)?;
     let backend = Backend::detect(test_mode_enabled)?;
 
     match mode {
@@ -27,7 +28,9 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         }
         Mode::ListWindows => {
             ensure_no_recording_flags(&cli)?;
-            ensure_linux_x11_display()?;
+            if matches!(backend, Backend::Linux) {
+                ensure_linux_x11_only_mode_allowed()?;
+            }
             let content = fetch_shareable_content(&backend)?;
             let mut windows = content.windows;
             windows.sort_by(|a, b| {
@@ -42,7 +45,9 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         }
         Mode::ListDisplays => {
             ensure_no_recording_flags(&cli)?;
-            ensure_linux_x11_display()?;
+            if matches!(backend, Backend::Linux) {
+                ensure_linux_x11_only_mode_allowed()?;
+            }
             let content = fetch_shareable_content(&backend)?;
             let mut displays = content.displays;
             displays.sort_by(|a, b| a.id.cmp(&b.id));
@@ -52,7 +57,9 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         }
         Mode::ListApps => {
             ensure_no_recording_flags(&cli)?;
-            ensure_linux_x11_display()?;
+            if matches!(backend, Backend::Linux) {
+                ensure_linux_x11_only_mode_allowed()?;
+            }
             let content = fetch_shareable_content(&backend)?;
             let mut apps = content.apps;
             normalize_app_list(&mut apps);
@@ -62,6 +69,17 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         }
         Mode::Screenshot => {
             validate_screenshot_args(&cli)?;
+            if cli.portal {
+                let (output_path, format) =
+                    resolve_portal_screenshot_output(&cli, test_mode_enabled)?;
+                backend.screenshot_portal(&output_path, format)?;
+                println!("{}", output_path.display());
+                return Ok(());
+            }
+
+            if matches!(backend, Backend::Linux) {
+                ensure_linux_x11_selectors_allowed()?;
+            }
 
             let content = fetch_shareable_content(&backend)?;
             let args = SelectionArgs {
@@ -86,7 +104,47 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
             if cli.audio == AudioMode::Both && container == ContainerFormat::Mp4 {
                 return Err(CliError::usage("--audio both requires .mov"));
             }
-            if cli.display {
+            if cli.portal {
+                backend.record_portal(
+                    cli.duration.expect("duration validated"),
+                    &output_path,
+                    container,
+                )?;
+            } else if matches!(backend, Backend::Linux) {
+                ensure_linux_x11_selectors_allowed()?;
+                if cli.display {
+                    backend.record_main_display(
+                        cli.duration.expect("duration validated"),
+                        cli.audio,
+                        &output_path,
+                        container,
+                    )?;
+                } else if let Some(display_id) = cli.display_id {
+                    backend.record_display(
+                        display_id,
+                        cli.duration.expect("duration validated"),
+                        cli.audio,
+                        &output_path,
+                        container,
+                    )?;
+                } else {
+                    let content = fetch_shareable_content(&backend)?;
+                    let args = SelectionArgs {
+                        window_id: cli.window_id,
+                        app: cli.app.clone(),
+                        window_name: cli.window_name.clone(),
+                        active_window: cli.active_window,
+                    };
+                    let selected = select_window(&content.windows, &args)?;
+                    backend.record_window(
+                        &selected,
+                        cli.duration.expect("duration validated"),
+                        cli.audio,
+                        &output_path,
+                        container,
+                    )?;
+                }
+            } else if cli.display {
                 backend.record_main_display(
                     cli.duration.expect("duration validated"),
                     cli.audio,
@@ -276,6 +334,26 @@ impl Backend {
         }
     }
 
+    fn screenshot_portal(&self, path: &Path, format: ImageFormat) -> Result<(), CliError> {
+        match self {
+            Backend::TestMode => test_mode::screenshot_fixture(path, format),
+            Backend::Macos => Err(CliError::usage(
+                "--portal is only supported on Linux (Wayland)",
+            )),
+            Backend::Linux => {
+                #[cfg(target_os = "linux")]
+                {
+                    crate::linux::screenshot_portal(path, format)
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    let _ = (path, format);
+                    Err(CliError::unsupported_platform())
+                }
+            }
+        }
+    }
+
     fn record_window(
         &self,
         window: &WindowInfo,
@@ -379,6 +457,31 @@ impl Backend {
             }
         }
     }
+
+    fn record_portal(
+        &self,
+        duration: u64,
+        path: &Path,
+        format: ContainerFormat,
+    ) -> Result<(), CliError> {
+        match self {
+            Backend::TestMode => test_mode::record_fixture(path, format),
+            Backend::Macos => Err(CliError::usage(
+                "--portal is only supported on Linux (Wayland)",
+            )),
+            Backend::Linux => {
+                #[cfg(target_os = "linux")]
+                {
+                    crate::linux::record_portal(duration, path, format)
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    let _ = (duration, path, format);
+                    Err(CliError::unsupported_platform())
+                }
+            }
+        }
+    }
 }
 
 fn determine_mode(cli: &Cli) -> Result<Mode, CliError> {
@@ -418,6 +521,35 @@ fn validate_screenshot_flag_usage(cli: &Cli, mode: Mode) -> Result<(), CliError>
     Ok(())
 }
 
+fn validate_portal_flag_usage(cli: &Cli, mode: Mode) -> Result<(), CliError> {
+    if !cli.portal {
+        return Ok(());
+    }
+
+    match mode {
+        Mode::Record | Mode::Screenshot => {}
+        _ => {
+            return Err(CliError::usage(
+                "--portal is only valid with recording or --screenshot",
+            ));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let _ = mode;
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = mode;
+        Err(CliError::usage(
+            "--portal is only supported on Linux (Wayland)",
+        ))
+    }
+}
+
 fn validate_record_args(cli: &Cli) -> Result<(), CliError> {
     if cli.image_format.is_some() || cli.dir.is_some() {
         return Err(CliError::usage("screenshot flags require --screenshot"));
@@ -426,12 +558,13 @@ fn validate_record_args(cli: &Cli) -> Result<(), CliError> {
     let selection_count = cli.window_id.is_some() as u8
         + cli.active_window as u8
         + cli.app.is_some() as u8
+        + cli.portal as u8
         + cli.display as u8
         + cli.display_id.is_some() as u8;
 
     if selection_count != 1 {
         return Err(CliError::usage(
-            "recording requires exactly one selector: --window-id, --active-window, --app, --display, or --display-id",
+            "recording requires exactly one selector: --portal, --window-id, --active-window, --app, --display, or --display-id",
         ));
     }
 
@@ -441,6 +574,12 @@ fn validate_record_args(cli: &Cli) -> Result<(), CliError> {
 
     if (cli.display || cli.display_id.is_some()) && cli.window_name.is_some() {
         return Err(CliError::usage("--window-name is only valid with --app"));
+    }
+
+    if cli.portal && cli.audio != AudioMode::Off {
+        return Err(CliError::usage(
+            "--portal does not support audio; use --audio off",
+        ));
     }
 
     if cli.duration.is_none() {
@@ -465,12 +604,14 @@ fn validate_screenshot_args(cli: &Cli) -> Result<(), CliError> {
         ));
     }
 
-    let selection_count =
-        cli.window_id.is_some() as u8 + cli.active_window as u8 + cli.app.is_some() as u8;
+    let selection_count = cli.portal as u8
+        + cli.window_id.is_some() as u8
+        + cli.active_window as u8
+        + cli.app.is_some() as u8;
 
     if selection_count != 1 {
         return Err(CliError::usage(
-            "screenshot requires exactly one selector: --window-id, --active-window, or --app",
+            "screenshot requires exactly one selector: --portal, --window-id, --active-window, or --app",
         ));
     }
 
@@ -498,7 +639,8 @@ fn validate_screenshot_args(cli: &Cli) -> Result<(), CliError> {
 }
 
 fn ensure_no_recording_flags(cli: &Cli) -> Result<(), CliError> {
-    if cli.window_id.is_some()
+    if cli.portal
+        || cli.window_id.is_some()
         || cli.app.is_some()
         || cli.window_name.is_some()
         || cli.active_window
@@ -537,6 +679,75 @@ fn resolve_output_path(cli: &Cli) -> Result<PathBuf, CliError> {
     }
 
     Ok(path)
+}
+
+fn resolve_portal_screenshot_output(
+    cli: &Cli,
+    test_mode_enabled: bool,
+) -> Result<(PathBuf, ImageFormat), CliError> {
+    let format = resolve_image_format(cli.path.as_deref(), cli.image_format)?;
+    let cwd = std::env::current_dir()
+        .map_err(|err| CliError::runtime(format!("failed to resolve cwd: {err}")))?;
+
+    if let Some(path) = cli.path.as_ref() {
+        let mut path = if path.is_absolute() {
+            path.clone()
+        } else {
+            cwd.join(path)
+        };
+
+        if path.extension().is_none() {
+            path.set_extension(image_ext(format));
+        }
+
+        if path.is_dir() {
+            return Err(CliError::usage("--path must be a file path"));
+        }
+
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| CliError::runtime(format!("failed to create output dir: {err}")))?;
+        }
+
+        return Ok((path, format));
+    }
+
+    let dir = cli
+        .dir
+        .as_ref()
+        .map(|dir| {
+            if dir.is_absolute() {
+                dir.clone()
+            } else {
+                cwd.join(dir)
+            }
+        })
+        .unwrap_or_else(|| cwd.join("screenshots"));
+
+    if dir.exists() && !dir.is_dir() {
+        return Err(CliError::usage("--dir must be a directory"));
+    }
+
+    std::fs::create_dir_all(&dir)
+        .map_err(|err| CliError::runtime(format!("failed to create output dir: {err}")))?;
+
+    let timestamp = screenshot_timestamp(test_mode_enabled);
+    let stem = format!("screenshot-{timestamp}-portal");
+    let ext = image_ext(format);
+
+    let mut candidate = dir.join(format!("{stem}.{ext}"));
+    if !candidate.exists() {
+        return Ok((candidate, format));
+    }
+
+    for idx in 2..=u32::MAX {
+        candidate = dir.join(format!("{stem}-{idx}.{ext}"));
+        if !candidate.exists() {
+            return Ok((candidate, format));
+        }
+    }
+
+    Err(CliError::runtime("failed to choose a unique output path"))
 }
 
 fn resolve_screenshot_output(
@@ -788,32 +999,71 @@ fn fetch_shareable_content(backend: &Backend) -> Result<ShareableContent, CliErr
     backend.shareable_content()
 }
 
-fn ensure_linux_x11_display() -> Result<(), CliError> {
+fn ensure_linux_x11_only_mode_allowed() -> Result<(), CliError> {
     #[cfg(target_os = "linux")]
     {
-        let display = std::env::var_os("DISPLAY")
-            .map(|value| value.to_string_lossy().trim().to_string())
-            .filter(|value| !value.is_empty());
-
-        if display.is_some() {
-            return Ok(());
+        match linux_session_kind() {
+            LinuxSessionKind::X11 => Ok(()),
+            LinuxSessionKind::WaylandOnly => Err(CliError::usage(
+                "X11-only mode is unavailable on Wayland-only sessions. Use --portal for recording/screenshot, or log into \"Ubuntu on Xorg\".",
+            )),
+            LinuxSessionKind::NoDisplay => Err(CliError::runtime(
+                "X11 display not detected (DISPLAY is unset).",
+            )),
         }
-
-        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-            return Err(CliError::runtime(
-                "X11 display not detected (DISPLAY is unset). Wayland-only sessions are not supported; log into \"Ubuntu on Xorg\".",
-            ));
-        }
-
-        Err(CliError::runtime(
-            "X11 display not detected (DISPLAY is unset).",
-        ))
     }
 
     #[cfg(not(target_os = "linux"))]
     {
         Ok(())
     }
+}
+
+fn ensure_linux_x11_selectors_allowed() -> Result<(), CliError> {
+    #[cfg(target_os = "linux")]
+    {
+        match linux_session_kind() {
+            LinuxSessionKind::X11 => Ok(()),
+            LinuxSessionKind::WaylandOnly => Err(CliError::usage(
+                "X11 selectors require X11 (DISPLAY is unset). Use --portal on Wayland-only sessions, or log into \"Ubuntu on Xorg\".",
+            )),
+            LinuxSessionKind::NoDisplay => Err(CliError::runtime(
+                "X11 display not detected (DISPLAY is unset).",
+            )),
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinuxSessionKind {
+    X11,
+    WaylandOnly,
+    NoDisplay,
+}
+
+#[cfg(target_os = "linux")]
+fn linux_session_kind() -> LinuxSessionKind {
+    let display = std::env::var_os("DISPLAY")
+        .map(|value| value.to_string_lossy().trim().to_string())
+        .filter(|value| !value.is_empty());
+    if display.is_some() {
+        return LinuxSessionKind::X11;
+    }
+
+    let wayland = std::env::var_os("WAYLAND_DISPLAY")
+        .map(|value| value.to_string_lossy().trim().to_string())
+        .filter(|value| !value.is_empty());
+    if wayland.is_some() {
+        return LinuxSessionKind::WaylandOnly;
+    }
+
+    LinuxSessionKind::NoDisplay
 }
 
 fn normalize_app_list(apps: &mut Vec<AppInfo>) {
@@ -845,4 +1095,43 @@ fn normalize_tsv_field(value: &str) -> String {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn base_record_cli() -> Cli {
+        Cli {
+            screenshot: false,
+            list_windows: false,
+            list_displays: false,
+            list_apps: false,
+            preflight: false,
+            request_permission: false,
+            window_id: None,
+            app: None,
+            window_name: None,
+            active_window: false,
+            display: false,
+            display_id: None,
+            portal: false,
+            duration: Some(1),
+            audio: AudioMode::Off,
+            path: Some(PathBuf::from("out.mp4")),
+            format: None,
+            image_format: None,
+            dir: None,
+        }
+    }
+
+    #[test]
+    fn portal_requires_audio_off() {
+        let mut cli = base_record_cli();
+        cli.portal = true;
+        cli.audio = AudioMode::System;
+        let err = validate_record_args(&cli).expect_err("usage error");
+        assert_eq!(err.exit_code(), 2);
+        assert!(err.to_string().contains("--portal does not support audio"));
+    }
 }

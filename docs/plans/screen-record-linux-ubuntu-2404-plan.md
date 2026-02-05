@@ -459,7 +459,7 @@ Wayland behavior depends on whether XWayland is present and whether the target w
 - **Validation**:
   - `rg -n "Troubleshooting|Wayland|Xorg|ffmpeg|pactl" crates/screen-record/README.md`
 
-## Sprint 5 (optional): Wayland-native capture (xdg-desktop-portal + PipeWire)
+## Sprint 5: (optional) Wayland-native capture (xdg-desktop-portal + PipeWire)
 **Goal**: Add a Wayland-native capture path so `screen-record` can run on Wayland-only sessions without `DISPLAY`, using xdg-desktop-portal for explicit user-approved capture.
 **Demo/Validation**:
 - Command(s):

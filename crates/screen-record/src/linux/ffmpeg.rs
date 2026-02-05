@@ -1,4 +1,6 @@
 use std::io::Read;
+use std::os::unix::io::AsRawFd;
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,6 +12,7 @@ use x11rb::protocol::randr::{self, ConnectionExt as RandrExt, Output};
 use x11rb::protocol::xproto::Timestamp;
 
 use super::audio;
+use super::portal::PortalCapture;
 use crate::cli::{AudioMode, ContainerFormat, ImageFormat};
 use crate::error::CliError;
 use crate::types::WindowInfo;
@@ -54,6 +57,72 @@ pub fn record_window(
     run_ffmpeg(cmd)
 }
 
+pub fn record_portal_node(
+    node_id: u32,
+    duration: u64,
+    path: &Path,
+    format: ContainerFormat,
+) -> Result<(), CliError> {
+    ensure_pipewire_supported()?;
+
+    let mut cmd = ffmpeg_base();
+    cmd.args(["-f", "pipewire"])
+        .args(["-i", &node_id.to_string()])
+        .args(["-t", &duration.to_string()]);
+    apply_video_encoding(&mut cmd, format);
+    cmd.args(["-f", container_muxer(format)]);
+    cmd.arg(path);
+    run_ffmpeg(cmd)
+}
+
+pub fn record_portal(
+    capture: &PortalCapture,
+    duration: u64,
+    path: &Path,
+    format: ContainerFormat,
+) -> Result<(), CliError> {
+    if capture.pipewire_remote.is_none() {
+        return record_portal_node(capture.node_id, duration, path, format);
+    }
+
+    ensure_pipewire_supported()?;
+    let fd_flag = detect_pipewire_fd_flag()?.ok_or_else(|| {
+        CliError::runtime(
+            "ffmpeg PipeWire input does not appear to support portal FDs (missing -pipewire_fd in `ffmpeg -hide_banner -h demuxer=pipewire`). Install an ffmpeg build with portal/PipeWire FD support or switch to an Xorg session.",
+        )
+    })?;
+
+    let pipewire_fd = capture
+        .pipewire_remote
+        .as_ref()
+        .expect("checked")
+        .as_raw_fd();
+
+    let target_fd: i32 = 3;
+    let mut cmd = ffmpeg_base();
+    cmd.args(["-f", "pipewire"])
+        .args([fd_flag, &target_fd.to_string()])
+        .args(["-i", &capture.node_id.to_string()])
+        .args(["-t", &duration.to_string()]);
+    apply_video_encoding(&mut cmd, format);
+    cmd.args(["-f", container_muxer(format)]);
+    cmd.arg(path);
+
+    unsafe {
+        cmd.pre_exec(move || {
+            if libc::dup2(pipewire_fd, target_fd) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::fcntl(target_fd, libc::F_SETFD, 0) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+
+    run_ffmpeg(cmd)
+}
+
 pub fn screenshot_window(
     window: &WindowInfo,
     path: &Path,
@@ -69,6 +138,61 @@ pub fn screenshot_window(
         .args(["-frames:v", "1"]);
     cmd.arg(path);
 
+    run_ffmpeg(cmd)
+}
+
+pub fn screenshot_portal(
+    capture: &PortalCapture,
+    path: &Path,
+    _format: ImageFormat,
+) -> Result<(), CliError> {
+    if capture.pipewire_remote.is_none() {
+        return screenshot_portal_node(capture.node_id, path);
+    }
+
+    ensure_pipewire_supported()?;
+    let fd_flag = detect_pipewire_fd_flag()?.ok_or_else(|| {
+        CliError::runtime(
+            "ffmpeg PipeWire input does not appear to support portal FDs (missing -pipewire_fd in `ffmpeg -hide_banner -h demuxer=pipewire`). Install an ffmpeg build with portal/PipeWire FD support or switch to an Xorg session.",
+        )
+    })?;
+
+    let pipewire_fd = capture
+        .pipewire_remote
+        .as_ref()
+        .expect("checked")
+        .as_raw_fd();
+
+    let target_fd: i32 = 3;
+    let mut cmd = ffmpeg_base();
+    cmd.args(["-f", "pipewire"])
+        .args([fd_flag, &target_fd.to_string()])
+        .args(["-i", &capture.node_id.to_string()])
+        .args(["-frames:v", "1"]);
+    cmd.arg(path);
+
+    unsafe {
+        cmd.pre_exec(move || {
+            if libc::dup2(pipewire_fd, target_fd) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::fcntl(target_fd, libc::F_SETFD, 0) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+
+    run_ffmpeg(cmd)
+}
+
+fn screenshot_portal_node(node_id: u32, path: &Path) -> Result<(), CliError> {
+    ensure_pipewire_supported()?;
+    let mut cmd = ffmpeg_base();
+    cmd.args(["-f", "pipewire"])
+        .args(["-i", &node_id.to_string()])
+        .args(["-frames:v", "1"]);
+    cmd.arg(path);
     run_ffmpeg(cmd)
 }
 
@@ -135,6 +259,76 @@ fn ffmpeg_base() -> Command {
     let mut cmd = Command::new("ffmpeg");
     cmd.args(["-hide_banner", "-loglevel", "error", "-nostdin", "-y"]);
     cmd
+}
+
+fn ensure_pipewire_supported() -> Result<(), CliError> {
+    let supported = detect_pipewire_supported()?;
+
+    if supported {
+        return Ok(());
+    }
+
+    Err(CliError::runtime(
+        "ffmpeg does not support PipeWire input (missing \"pipewire\" in `ffmpeg -hide_banner -devices`). Install an ffmpeg build with PipeWire support or record via X11 (log into an Xorg session).",
+    ))
+}
+
+fn detect_pipewire_supported() -> Result<bool, CliError> {
+    let output = Command::new("ffmpeg")
+        .args(["-hide_banner", "-devices"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(map_spawn_error)?;
+
+    if !output.status.success() {
+        let mut bytes = output.stderr;
+        bytes.extend_from_slice(&output.stdout);
+        let snippet = stderr_snippet(&bytes);
+        return Err(CliError::runtime(format!(
+            "ffmpeg -devices failed{}{}",
+            exit_status_suffix(output.status),
+            snippet
+        )));
+    }
+
+    let mut text = String::new();
+    text.push_str(&String::from_utf8_lossy(&output.stdout));
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    Ok(text
+        .lines()
+        .any(|line| line.to_ascii_lowercase().contains("pipewire")))
+}
+
+fn detect_pipewire_fd_flag() -> Result<Option<&'static str>, CliError> {
+    let output = Command::new("ffmpeg")
+        .args(["-hide_banner", "-h", "demuxer=pipewire"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(map_spawn_error)?;
+
+    if !output.status.success() {
+        let mut bytes = output.stderr;
+        bytes.extend_from_slice(&output.stdout);
+        let snippet = stderr_snippet(&bytes);
+        return Err(CliError::runtime(format!(
+            "ffmpeg -h demuxer=pipewire failed{}{}",
+            exit_status_suffix(output.status),
+            snippet
+        )));
+    }
+
+    let mut text = String::new();
+    text.push_str(&String::from_utf8_lossy(&output.stdout));
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+
+    if text.contains("-pipewire_fd") {
+        return Ok(Some("-pipewire_fd"));
+    }
+    Ok(None)
 }
 
 fn apply_video_encoding(cmd: &mut Command, format: ContainerFormat) {

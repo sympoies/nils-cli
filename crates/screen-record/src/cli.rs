@@ -6,12 +6,16 @@ use clap::{Parser, ValueEnum};
 #[command(
     name = "screen-record",
     version,
-    about = "Record a single window or display on macOS (12+) or Linux (X11)."
+    about = "Record a single window or display on macOS (12+) or Linux (X11/Wayland portal)."
 )]
 pub struct Cli {
     /// Capture a single window screenshot and exit.
     #[arg(long)]
     pub screenshot: bool,
+
+    /// Use the system portal picker (Linux Wayland) instead of X11 selectors.
+    #[arg(long)]
+    pub portal: bool,
 
     /// Print selectable windows as TSV and exit.
     #[arg(long)]
