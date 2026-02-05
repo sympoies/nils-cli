@@ -805,9 +805,9 @@ fn ensure_linux_x11_display() -> Result<(), CliError> {
             ));
         }
 
-        return Err(CliError::runtime(
+        Err(CliError::runtime(
             "X11 display not detected (DISPLAY is unset).",
-        ));
+        ))
     }
 
     #[cfg(not(target_os = "linux"))]
