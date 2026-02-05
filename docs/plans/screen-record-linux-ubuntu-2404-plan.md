@@ -4,15 +4,17 @@
 Extend the existing `screen-record` CLI to run on Linux under X11/Xorg sessions (including XWayland
 when `DISPLAY` is set), with Ubuntu 24.04 used as the primary validation and CI baseline. The macOS
 backend remains unchanged (ScreenCaptureKit + AVFoundation), while Linux uses an X11 backend for
-deterministic window discovery and delegates capture/encoding to `ffmpeg`. The CLI surface, output
-contract, and deterministic `CODEX_SCREEN_RECORD_TEST_MODE=1` behavior stay backwards compatible.
+deterministic window and display discovery and delegates capture/encoding to `ffmpeg`. The CLI
+surface, output contract, and deterministic `CODEX_SCREEN_RECORD_TEST_MODE=1` behavior stay
+backwards compatible, including display recording parity (`--list-displays`, `--display`,
+`--display-id`).
 
 ## Scope
 - In scope:
   - Linux runtime support for X11/Xorg sessions across mainstream distros (Ubuntu 24.04 as validation baseline).
   - Preserve the existing flat-flag CLI contract, selection rules, and stdout/stderr contract.
   - Implement Linux backends for:
-    - `--list-windows`, `--list-apps`
+    - `--list-windows`, `--list-displays`, `--list-apps`
     - recording mode (`--duration`, `--audio`, `--path`, `--format`)
     - screenshot mode (`--screenshot`, `--image-format`, `--dir`, `--path`)
     - `--preflight` as a Linux prerequisite check (ffmpeg + X11 availability)
@@ -22,7 +24,7 @@ contract, and deterministic `CODEX_SCREEN_RECORD_TEST_MODE=1` behavior stay back
   - Documentation updates (crate README + repo root README).
 - Out of scope:
   - Wayland-native, non-interactive window enumeration and deterministic selectors (Wayland security model).
-  - Full-screen or region capture modes (the tool remains “single window” focused).
+  - Arbitrary region capture (beyond full display capture / portal selection).
   - Advanced audio device selection UI (multiple mics, per-app routing).
   - Windows support.
 
@@ -71,6 +73,9 @@ Wayland behavior depends on whether XWayland is present and whether the target w
 - **Description**: Update user-facing documentation and help strings to reflect cross-platform support:
   - README: change “macOS 12+ CLI” wording to “macOS 12+ and Linux (X11)”.
   - Clarify that Ubuntu 24.04 is the validation baseline, not a hard runtime restriction.
+  - Document Linux selector parity for recording: `--window-id`, `--active-window`, `--app`, `--display`, `--display-id`.
+  - Document that screenshot mode remains window-only (display selectors are invalid with `--screenshot`).
+  - Define Linux `display_id` semantics (X11/XRandR-derived numeric id) and what `--display` selects (primary display when available; otherwise the first in the deterministic list).
   - Document Linux runtime prerequisites (`ffmpeg`, X11 session / `DISPLAY`) and the explicit limitation
     for Wayland-only sessions.
   - Clarify Linux semantics for `--preflight` (prerequisite check) and `--request-permission` (alias of `--preflight`).
@@ -84,6 +89,7 @@ Wayland behavior depends on whether XWayland is present and whether the target w
   - `crates/screen-record/README.md` includes a short “Linux (X11)” section with prerequisites, supported
     session types, and at least 2 runnable Linux examples.
   - `crates/screen-record/README.md` states Ubuntu 24.04 as the CI/validation baseline.
+  - `crates/screen-record/README.md` documents `--list-displays`, `--display`, `--display-id` semantics on Linux (including `display_id` meaning).
   - Repo root `README.md` no longer describes `screen-record` as macOS-only.
   - `screen-record --help` no longer claims macOS-only behavior in the top-level description.
   - `completions/zsh/_screen-record` no longer describes `--preflight` as “permission” only.
@@ -161,15 +167,17 @@ Wayland behavior depends on whether XWayland is present and whether the target w
 - **Validation**:
   - `cargo test -p screen-record -- linux_request_permission`
 
-## Sprint 2: X11 window/app discovery (deterministic, scriptable)
-**Goal**: Implement `--list-windows` / `--list-apps` and provide the selection inputs needed for recording/screenshot on Linux.
+## Sprint 2: X11 window/app/display discovery (deterministic, scriptable)
+**Goal**: Implement `--list-windows` / `--list-displays` / `--list-apps` and provide the selection inputs needed for recording/screenshot on Linux.
 **Demo/Validation**:
 - Command(s):
   - `./wrappers/screen-record --list-windows | head -n 20`
+  - `./wrappers/screen-record --list-displays`
   - `./wrappers/screen-record --list-apps | head -n 20`
 - Verify:
   - Output is TSV-only and deterministically sorted.
   - Window IDs printed by list output are accepted by `--window-id`.
+  - Display IDs printed by list output are accepted by `--display-id`.
 
 ### Task 2.1: Add Linux X11 module scaffolding and dependencies
 - **Location**:
@@ -190,13 +198,18 @@ Wayland behavior depends on whether XWayland is present and whether the target w
   - `cargo build -p screen-record`
   - `cargo tree -p screen-record | rg "x11rb" || true`
 
-### Task 2.2: Implement X11 shareable content snapshot (windows + metadata)
+### Task 2.2: Implement X11 shareable content snapshot (windows + displays + metadata)
 - **Location**:
   - `crates/screen-record/src/linux/x11.rs`
   - `crates/screen-record/src/linux/mod.rs`
   - `crates/screen-record/src/types.rs`
 - **Description**: Implement a Linux X11 equivalent of “shareable content”:
   - Connect to the X server using `DISPLAY`.
+  - Enumerate displays/monitors via the XRandR extension when available:
+    - Prefer connected outputs and use a stable numeric id (`RROutput`) as `display_id`.
+    - Capture `width`/`height` from the active CRTC mode for list output.
+    - Determine the “main display” for `--display` via XRandR primary output when present; otherwise fall back to the first display in deterministic order.
+  - When XRandR is unavailable (or yields no connected outputs), fall back to a single display derived from the root window geometry (`display_id=1`).
   - Enumerate top-level client windows using `_NET_CLIENT_LIST` and stacking order using
     `_NET_CLIENT_LIST_STACKING` when available.
   - When EWMH client list atoms are missing (common under Xvfb without a window manager), fall back to
@@ -217,12 +230,15 @@ Wayland behavior depends on whether XWayland is present and whether the target w
 - **Complexity**: 8
 - **Acceptance criteria**:
   - On Ubuntu X11, `--list-windows` returns at least one row on a typical desktop.
+  - On Ubuntu X11, `--list-displays` returns at least one row on a typical desktop.
   - Under Xvfb without a window manager, a mapped window created by a test process is discoverable via the fallback enumeration path.
+  - Under Xvfb, `--list-displays` returns a deterministic single display (fallback or XRandR-backed) that can be selected via `--display` / `--display-id`.
   - The returned `WindowInfo` values are sufficient for existing selection logic (`--active-window`,
     `--app`, frontmost selection by `z_order`).
   - Missing X11 properties do not crash the process; they degrade to safe defaults.
 - **Validation**:
   - Manual (Ubuntu X11): `./wrappers/screen-record --list-windows | head -n 20`
+  - Manual (Ubuntu X11): `./wrappers/screen-record --list-displays`
   - CI: `cargo test -p screen-record` (compilation + unit tests)
 
 ### Task 2.3: Implement Linux `--list-apps` from window snapshot
@@ -265,6 +281,7 @@ Wayland behavior depends on whether XWayland is present and whether the target w
 **Demo/Validation**:
 - Command(s):
   - `./wrappers/screen-record --active-window --duration 2 --audio off --path ./recordings/active.mp4`
+  - `./wrappers/screen-record --display --duration 2 --audio off --path ./recordings/display.mp4`
   - `./wrappers/screen-record --screenshot --active-window --path ./screenshots/active.png`
 - Verify:
   - On success, stdout prints only the resolved output path.
@@ -276,7 +293,9 @@ Wayland behavior depends on whether XWayland is present and whether the target w
   - `crates/screen-record/src/linux/mod.rs`
   - `crates/screen-record/src/run.rs`
 - **Description**: Implement the Linux recording pipeline by spawning `ffmpeg`:
-  - Use X11 capture targeting the selected window id (pass `-window_id` using hex formatting).
+  - Support both window and display selectors:
+    - Window capture: use X11 capture targeting the selected window id (pass `-window_id` using hex formatting).
+    - Display capture: resolve the target display geometry (x/y/width/height) via XRandR (with a root-geometry fallback for a single-display server) and capture via `x11grab` region input.
   - Respect `--duration` via `ffmpeg -t N` (N is the CLI duration seconds) and return when the process exits.
   - Invoke `ffmpeg` with `-hide_banner -loglevel error -nostdin -y` to keep stderr quiet on success and avoid interactive prompts.
   - Encode using H.264 for video and choose container based on existing `ContainerFormat` resolution.
@@ -287,11 +306,14 @@ Wayland behavior depends on whether XWayland is present and whether the target w
 - **Complexity**: 7
 - **Acceptance criteria**:
   - On Ubuntu X11, recording a window for N seconds produces a playable `.mp4` or `.mov`.
+  - On Ubuntu X11, recording the main display (`--display`) for N seconds produces a playable `.mp4` or `.mov`.
+  - On Ubuntu X11 with multiple displays, `--display-id N` captures the selected display (as defined by `--list-displays`).
   - `--format` vs `--path` extension conflict rules remain enforced by existing code.
   - A missing `ffmpeg` binary produces a clear runtime error (exit 1) pointing to installation.
   - On success, stdout prints only the output path and stderr remains empty (no ffmpeg banner/progress noise).
 - **Validation**:
   - Manual (Ubuntu X11): `./wrappers/screen-record --active-window --duration 1 --audio off --path ./recordings/active.mp4`
+  - Manual (Ubuntu X11): `./wrappers/screen-record --display --duration 1 --audio off --path ./recordings/display.mp4`
   - `CODEX_SCREEN_RECORD_TEST_MODE=1 cargo test -p screen-record -- recording_test_mode`
 
 ### Task 3.2: Implement `ffmpeg` runner for screenshots (single frame)
@@ -395,6 +417,8 @@ Wayland behavior depends on whether XWayland is present and whether the target w
   - Create a minimal X11 window via `x11rb` in the test process with a known title/class.
   - Verify `screen-record --list-windows` returns the created window (without assuming a window manager is present)
     and that `--window-id` selection resolves it.
+  - Verify `screen-record --list-displays` returns at least one display row under Xvfb, and that `--display` / `--display-id`
+    selectors route into the Linux recording pipeline.
   - Stub `ffmpeg` so recording/screenshot commands complete quickly and deterministically (the stub should
     create the output file and record received args for assertions).
   - Keep the test hermetic (no dependence on host desktop state).
@@ -407,6 +431,7 @@ Wayland behavior depends on whether XWayland is present and whether the target w
   - GitHub Actions `runs-on` is pinned to `ubuntu-24.04` for both the `test` and `coverage` jobs.
   - CI installs `xvfb` and runs both the `test` and `coverage` jobs under `xvfb-run -a` (for any steps that execute tests).
   - The integration test asserts that Linux backend uses X11 window ids and passes them to `ffmpeg` via `-window_id`.
+  - The integration test asserts that `--display` / `--display-id` do not pass `-window_id` and instead use a region capture path.
   - The test suite remains fast (no real encoding) and stable on GitHub Actions.
 - **Validation**:
   - `rg -n "xvfb-run|xvfb" .github/workflows/ci.yml`
@@ -533,6 +558,7 @@ Wayland behavior depends on whether XWayland is present and whether the target w
 - Portal UX tradeoff: `--portal` is interactive and not deterministic; it is intended for humans, not scripts.
 - Portal availability: xdg-desktop-portal behavior varies by desktop environment; preflight should be explicit and actionable.
 - Window IDs: X11 XIDs are commonly displayed in hex elsewhere; this CLI prints decimal, so docs and errors must be clear.
+- Display IDs: XRandR output ids are numeric and stable for a given server session, but can vary across hardware/config changes; fall back to a single `display_id=1` when XRandR is unavailable.
 - Geometry correctness: window frames vs client area can differ (decorations); capture should prefer the full window surface.
 - Audio source resolution: default sink/source naming differs across PipeWire/Pulse setups; parsing must be resilient.
 - `ffmpeg` stderr noise: raw stderr can be huge; errors should be trimmed to relevant lines.
