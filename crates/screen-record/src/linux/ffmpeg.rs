@@ -18,7 +18,7 @@ const CAPTURE_FRAMERATE: u32 = 30;
 const STDERR_LIMIT_BYTES: usize = 32 * 1024;
 const KILL_GRACE: Duration = Duration::from_secs(10);
 
-static CTRL_C_INSTALLED: OnceLock<()> = OnceLock::new();
+static CTRL_C_INSTALLED: OnceLock<Result<(), CliError>> = OnceLock::new();
 static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Copy)]
@@ -362,17 +362,15 @@ fn run_ffmpeg(mut cmd: Command) -> Result<(), CliError> {
 }
 
 fn install_ctrlc_handler() -> Result<(), CliError> {
-    if CTRL_C_INSTALLED.get().is_some() {
-        return Ok(());
-    }
-
-    ctrlc::set_handler(|| {
-        STOP_REQUESTED.store(true, Ordering::SeqCst);
-    })
-    .map_err(|err| CliError::runtime(format!("failed to set Ctrl-C handler: {err}")))?;
-
-    let _ = CTRL_C_INSTALLED.set(());
-    Ok(())
+    CTRL_C_INSTALLED
+        .get_or_init(|| {
+            ctrlc::set_handler(|| {
+                STOP_REQUESTED.store(true, Ordering::SeqCst);
+            })
+            .map_err(|err| CliError::runtime(format!("failed to set Ctrl-C handler: {err}")))?;
+            Ok(())
+        })
+        .clone()
 }
 
 fn read_bounded(reader: &mut impl Read, limit: usize) -> Vec<u8> {

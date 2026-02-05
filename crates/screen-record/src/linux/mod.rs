@@ -4,8 +4,10 @@ use crate::cli::{AudioMode, ContainerFormat, ImageFormat};
 use crate::error::CliError;
 use crate::types::{ShareableContent, WindowInfo};
 
-pub(crate) mod audio;
-pub(crate) mod ffmpeg;
+#[doc(hidden)]
+pub mod audio;
+#[doc(hidden)]
+pub mod ffmpeg;
 pub mod preflight;
 #[cfg(target_os = "linux")]
 pub(crate) mod x11;

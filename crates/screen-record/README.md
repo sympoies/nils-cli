@@ -28,6 +28,35 @@ screen-record --list-windows
 screen-record --display --duration 3 --audio off --path "./recordings/display.mp4"
 ```
 
+### Troubleshooting (Linux)
+- **Wayland-only session (no `DISPLAY`)**: `screen-record` currently requires X11. Log into an Xorg
+  session (Ubuntu example: **"Ubuntu on Xorg"**). You may see:
+  ```text
+  error: X11 display not detected (DISPLAY is unset). Wayland-only sessions are not supported; log into "Ubuntu on Xorg".
+  ```
+- **Wayland + XWayland (`DISPLAY` is set, but some apps are missing)**: only X11 client windows are
+  discoverable/capturable. Wayland-native apps won’t appear in `--list-windows`; switch to Xorg.
+  A Wayland-native `--portal` selector is planned (Sprint 5).
+- **Missing `ffmpeg`**: install it (Ubuntu):
+  ```text
+  sudo apt-get install ffmpeg
+  ```
+  Error example:
+  ```text
+  error: ffmpeg not found on PATH. Install it with: sudo apt-get install ffmpeg
+  ```
+- **Audio capture prerequisites (`--audio system|mic`)**: Linux audio capture uses PulseAudio
+  compatibility via `pactl`. On Ubuntu, install:
+  ```text
+  sudo apt-get install pulseaudio-utils pipewire-pulse
+  ```
+  Error example:
+  ```text
+  error: pactl not found on PATH (install pipewire-pulse or pulseaudio-utils)
+  ```
+- **Blank/occluded capture**: X11 region/window capture can include occlusion and typically cannot
+  capture minimized windows. Keep the target visible and un-minimized while recording.
+
 ## Usage
 ```text
 screen-record [options]

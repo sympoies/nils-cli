@@ -27,6 +27,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         }
         Mode::ListWindows => {
             ensure_no_recording_flags(&cli)?;
+            ensure_linux_x11_display()?;
             let content = fetch_shareable_content(&backend)?;
             let mut windows = content.windows;
             windows.sort_by(|a, b| {
@@ -41,6 +42,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         }
         Mode::ListDisplays => {
             ensure_no_recording_flags(&cli)?;
+            ensure_linux_x11_display()?;
             let content = fetch_shareable_content(&backend)?;
             let mut displays = content.displays;
             displays.sort_by(|a, b| a.id.cmp(&b.id));
@@ -50,6 +52,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         }
         Mode::ListApps => {
             ensure_no_recording_flags(&cli)?;
+            ensure_linux_x11_display()?;
             let content = fetch_shareable_content(&backend)?;
             let mut apps = content.apps;
             normalize_app_list(&mut apps);
@@ -783,6 +786,34 @@ fn format_label(format: ContainerFormat) -> &'static str {
 
 fn fetch_shareable_content(backend: &Backend) -> Result<ShareableContent, CliError> {
     backend.shareable_content()
+}
+
+fn ensure_linux_x11_display() -> Result<(), CliError> {
+    #[cfg(target_os = "linux")]
+    {
+        let display = std::env::var_os("DISPLAY")
+            .map(|value| value.to_string_lossy().trim().to_string())
+            .filter(|value| !value.is_empty());
+
+        if display.is_some() {
+            return Ok(());
+        }
+
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            return Err(CliError::runtime(
+                "X11 display not detected (DISPLAY is unset). Wayland-only sessions are not supported; log into \"Ubuntu on Xorg\".",
+            ));
+        }
+
+        return Err(CliError::runtime(
+            "X11 display not detected (DISPLAY is unset).",
+        ));
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(())
+    }
 }
 
 fn normalize_app_list(apps: &mut Vec<AppInfo>) {
