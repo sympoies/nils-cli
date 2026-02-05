@@ -14,6 +14,10 @@ const PORTAL_OBJECT_PATH: &str = "/org/freedesktop/portal/desktop";
 const PORTAL_SCREENCAST_IFACE: &str = "org.freedesktop.portal.ScreenCast";
 const PORTAL_REQUEST_IFACE: &str = "org.freedesktop.portal.Request";
 
+type PortalDict = HashMap<String, zbus::zvariant::OwnedValue>;
+type PortalStream = (u32, PortalDict);
+type PortalStreams = Vec<PortalStream>;
+
 #[derive(Debug)]
 pub struct PortalCapture {
     pub node_id: u32,
@@ -177,7 +181,7 @@ fn start_session(
 fn wait_request_response(
     connection: &zbus::blocking::Connection,
     request_path: zbus::zvariant::OwnedObjectPath,
-) -> Result<HashMap<String, zbus::zvariant::OwnedValue>, CliError> {
+) -> Result<PortalDict, CliError> {
     let request = zbus::blocking::Proxy::new(
         connection,
         PORTAL_BUS_NAME,
@@ -194,7 +198,7 @@ fn wait_request_response(
         .next()
         .ok_or_else(|| CliError::runtime("portal response stream ended unexpectedly"))?;
 
-    let (code, results): (u32, HashMap<String, zbus::zvariant::OwnedValue>) = msg
+    let (code, results): (u32, PortalDict) = msg
         .body()
         .deserialize()
         .map_err(|err| CliError::runtime(format!("failed to decode portal response: {err}")))?;
@@ -209,7 +213,7 @@ fn wait_request_response(
 }
 
 fn dict_get_objpath(
-    dict: &HashMap<String, zbus::zvariant::OwnedValue>,
+    dict: &PortalDict,
     key: &str,
 ) -> Result<zbus::zvariant::OwnedObjectPath, String> {
     let value = dict.get(key).ok_or_else(|| format!("missing key {key}"))?;
@@ -220,10 +224,7 @@ fn dict_get_objpath(
         .map_err(|_| format!("key {key} has unexpected type"))
 }
 
-fn dict_get_streams(
-    dict: &HashMap<String, zbus::zvariant::OwnedValue>,
-    key: &str,
-) -> Result<Vec<(u32, HashMap<String, zbus::zvariant::OwnedValue>)>, String> {
+fn dict_get_streams(dict: &PortalDict, key: &str) -> Result<PortalStreams, String> {
     let value = dict.get(key).ok_or_else(|| format!("missing key {key}"))?;
     let owned = value
         .try_clone()
