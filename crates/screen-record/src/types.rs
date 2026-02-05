@@ -13,6 +13,7 @@ pub struct WindowInfo {
     pub title: String,
     pub bounds: Rect,
     pub on_screen: bool,
+    pub active: bool,
     pub owner_pid: i32,
     pub z_order: usize,
 }

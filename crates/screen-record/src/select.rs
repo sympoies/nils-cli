@@ -57,30 +57,41 @@ pub fn select_window(windows: &[WindowInfo], args: &SelectionArgs) -> Result<Win
 fn select_frontmost(windows: &[WindowInfo]) -> Option<WindowInfo> {
     windows
         .iter()
-        .filter(|window| window.on_screen)
+        .filter(|window| window.active && window.on_screen)
         .min_by_key(|window| window.z_order)
         .cloned()
+        .or_else(|| {
+            windows
+                .iter()
+                .filter(|window| window.on_screen)
+                .min_by_key(|window| window.z_order)
+                .cloned()
+        })
+        .or_else(|| {
+            windows
+                .iter()
+                .filter(|window| window.active)
+                .min_by_key(|window| window.z_order)
+                .cloned()
+        })
 }
 
 fn frontmost_for_app(candidates: &[WindowInfo]) -> Option<WindowInfo> {
-    let mut on_screen: Vec<&WindowInfo> = candidates
-        .iter()
-        .filter(|window| window.on_screen)
-        .collect();
-    if on_screen.is_empty() {
-        return None;
+    if let Some(window) = pick_unique_by_z_order(
+        candidates
+            .iter()
+            .filter(|window| window.active && window.on_screen),
+    ) {
+        return Some(window);
     }
 
-    on_screen.sort_by_key(|window| window.z_order);
-    let best = on_screen[0];
-    if on_screen
-        .iter()
-        .skip(1)
-        .any(|window| window.z_order == best.z_order)
+    if let Some(window) =
+        pick_unique_by_z_order(candidates.iter().filter(|window| window.on_screen))
     {
-        return None;
+        return Some(window);
     }
-    Some(best.clone())
+
+    pick_unique_by_z_order(candidates.iter().filter(|window| window.active))
 }
 
 fn contains_case_insensitive(haystack: &str, needle: &str) -> bool {
@@ -124,6 +135,26 @@ pub fn format_window_tsv(window: &WindowInfo) -> String {
     )
 }
 
+fn pick_unique_by_z_order<'a, I>(iter: I) -> Option<WindowInfo>
+where
+    I: IntoIterator<Item = &'a WindowInfo>,
+{
+    let mut list: Vec<&WindowInfo> = iter.into_iter().collect();
+    if list.is_empty() {
+        return None;
+    }
+    list.sort_by_key(|window| window.z_order);
+    let best = list[0];
+    if list
+        .iter()
+        .skip(1)
+        .any(|window| window.z_order == best.z_order)
+    {
+        return None;
+    }
+    Some(best.clone())
+}
+
 fn normalize_tsv_field(value: &str) -> String {
     value
         .chars()
@@ -142,7 +173,14 @@ mod tests {
     use super::*;
     use crate::types::Rect;
 
-    fn window(id: u32, owner: &str, title: &str, on_screen: bool, z: usize) -> WindowInfo {
+    fn window(
+        id: u32,
+        owner: &str,
+        title: &str,
+        on_screen: bool,
+        active: bool,
+        z: usize,
+    ) -> WindowInfo {
         WindowInfo {
             id,
             owner_name: owner.to_string(),
@@ -154,6 +192,7 @@ mod tests {
                 height: 100,
             },
             on_screen,
+            active,
             owner_pid: 1,
             z_order: z,
         }
@@ -161,7 +200,7 @@ mod tests {
 
     #[test]
     fn select_by_window_id() {
-        let windows = vec![window(10, "Terminal", "Inbox", true, 0)];
+        let windows = vec![window(10, "Terminal", "Inbox", true, false, 0)];
         let args = SelectionArgs {
             window_id: Some(10),
             ..SelectionArgs::default()
@@ -173,8 +212,8 @@ mod tests {
     #[test]
     fn select_by_app_picks_frontmost() {
         let windows = vec![
-            window(10, "Terminal", "Inbox", true, 1),
-            window(11, "Terminal", "Docs", true, 0),
+            window(10, "Terminal", "Inbox", true, false, 1),
+            window(11, "Terminal", "Docs", true, false, 0),
         ];
         let args = SelectionArgs {
             app: Some("Terminal".to_string()),
@@ -187,8 +226,8 @@ mod tests {
     #[test]
     fn select_by_app_and_window_name() {
         let windows = vec![
-            window(10, "Terminal", "Inbox", true, 0),
-            window(11, "Terminal", "Docs", true, 1),
+            window(10, "Terminal", "Inbox", true, false, 0),
+            window(11, "Terminal", "Docs", true, false, 1),
         ];
         let args = SelectionArgs {
             app: Some("Terminal".to_string()),
@@ -202,8 +241,8 @@ mod tests {
     #[test]
     fn ambiguous_app_selection_errors() {
         let windows = vec![
-            window(10, "Terminal", "Inbox", false, 0),
-            window(11, "Terminal", "Docs", false, 1),
+            window(10, "Terminal", "Inbox", false, false, 0),
+            window(11, "Terminal", "Docs", false, false, 1),
         ];
         let args = SelectionArgs {
             app: Some("Terminal".to_string()),
@@ -214,5 +253,33 @@ mod tests {
         assert!(err
             .to_string()
             .contains("multiple windows match --app \"Terminal\""));
+    }
+
+    #[test]
+    fn select_active_window_prefers_active() {
+        let windows = vec![
+            window(10, "Terminal", "Inbox", true, false, 0),
+            window(11, "Terminal", "Docs", true, true, 5),
+        ];
+        let args = SelectionArgs {
+            active_window: true,
+            ..SelectionArgs::default()
+        };
+        let selected = select_window(&windows, &args).expect("select window");
+        assert_eq!(selected.id, 11);
+    }
+
+    #[test]
+    fn select_by_app_prefers_active() {
+        let windows = vec![
+            window(10, "Terminal", "Inbox", true, false, 0),
+            window(11, "Terminal", "Docs", true, true, 3),
+        ];
+        let args = SelectionArgs {
+            app: Some("Terminal".to_string()),
+            ..SelectionArgs::default()
+        };
+        let selected = select_window(&windows, &args).expect("select window");
+        assert_eq!(selected.id, 11);
     }
 }

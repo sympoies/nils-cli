@@ -85,6 +85,7 @@ fn extract_windows(content: &SCShareableContent) -> Vec<WindowInfo> {
             let window = windows.objectAtIndex(idx);
             let id = unsafe { window.windowID() };
             let on_screen = unsafe { window.isOnScreen() };
+            let active = unsafe { window.isActive() };
             let title = unsafe { window.title() }
                 .map(|value| unsafe { value.to_str(pool) }.to_string())
                 .unwrap_or_default();
@@ -113,6 +114,7 @@ fn extract_windows(content: &SCShareableContent) -> Vec<WindowInfo> {
                 title,
                 bounds,
                 on_screen,
+                active,
                 owner_pid,
                 z_order: idx,
             });

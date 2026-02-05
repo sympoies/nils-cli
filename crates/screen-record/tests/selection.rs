@@ -1,7 +1,14 @@
 use screen_record::select::{select_window, SelectionArgs};
 use screen_record::types::{Rect, WindowInfo};
 
-fn window(id: u32, owner: &str, title: &str, on_screen: bool, z: usize) -> WindowInfo {
+fn window(
+    id: u32,
+    owner: &str,
+    title: &str,
+    on_screen: bool,
+    active: bool,
+    z: usize,
+) -> WindowInfo {
     WindowInfo {
         id,
         owner_name: owner.to_string(),
@@ -13,6 +20,7 @@ fn window(id: u32, owner: &str, title: &str, on_screen: bool, z: usize) -> Windo
             height: 100,
         },
         on_screen,
+        active,
         owner_pid: 1,
         z_order: z,
     }
@@ -21,8 +29,8 @@ fn window(id: u32, owner: &str, title: &str, on_screen: bool, z: usize) -> Windo
 #[test]
 fn ambiguous_app_selection_outputs_candidates() {
     let windows = vec![
-        window(10, "Terminal", "Inbox", false, 0),
-        window(11, "Terminal", "Docs", false, 1),
+        window(10, "Terminal", "Inbox", false, false, 0),
+        window(11, "Terminal", "Docs", false, false, 1),
     ];
     let args = SelectionArgs {
         app: Some("Terminal".to_string()),
