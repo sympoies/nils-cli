@@ -4,7 +4,7 @@
 This plan adds a new Rust CLI, `screen-record`, to the `nils-cli` workspace. The CLI records a single
 macOS 12+ window (or a single app via window selection) into a video file using ScreenCaptureKit for
 capture and AVFoundation for encoding/muxing. The primary target user is Codex workflows (capture a
-repeatable artifact under `$CODEX_HOME/out/`), but it should also be useful for humans to record and
+repeatable artifact to a user-provided path), but it should also be useful for humans to record and
 share step-by-step demos.
 
 ## Scope
@@ -19,7 +19,7 @@ share step-by-step demos.
     - system audio (from ScreenCaptureKit)
     - microphone audio (from AVFoundation capture) with `--audio mic` / `--audio both`
   - Output:
-    - `--path` output file path (default: `$CODEX_HOME/out/screen-recording.mov` when available, else CWD)
+    - `--path` output file path (required for recording)
     - container: `.mov` (default) and `.mp4` (when requested by extension)
   - Deterministic test mode for CI and unit/integration tests (no real OS capture required)
   - Shell completions: Zsh + Bash
@@ -47,8 +47,7 @@ share step-by-step demos.
   - `crates/screen-record/README.md`
 - **Description**: Define the `screen-record` CLI contract: flags, selection rules (`--app`, `--window-name`, `--window-id`),
   output paths, exit codes (0 success, 1 runtime failure, 2 usage error), and the stdout/stderr contract
-  (stdout prints only the output file path on success). Document deterministic test mode env vars and
-  how Codex should use `$CODEX_HOME/out/` for artifacts.
+  (stdout prints only the output file path on success). Document deterministic test mode env vars.
 - **Dependencies**:
   - none
 - **Complexity**: 4
@@ -131,7 +130,6 @@ share step-by-step demos.
 ### Task 2.2: Implement ScreenCaptureKit shareable content snapshot (windows + apps)
 - **Location**:
   - `crates/screen-record/Cargo.toml`
-  - `crates/screen-record/src/macos/ffi.rs`
   - `crates/screen-record/src/macos/shareable.rs`
   - `crates/screen-record/src/macos/mod.rs`
 - **Description**: Wrap the minimal ScreenCaptureKit calls needed to fetch `SCShareableContent` and extract a
@@ -204,7 +202,7 @@ share step-by-step demos.
 - **Complexity**: 6
 - **Acceptance criteria**:
   - With test mode enabled, `--list-windows` prints a stable fixture window list.
-  - With test mode enabled, `--app Arc --duration 1 --path out.mov` produces a non-empty file and prints its path.
+  - With test mode enabled, `--app Terminal --duration 1 --path out.mov` produces a non-empty file and prints its path.
   - With test mode enabled, `.mp4` output paths are supported for tests that exercise container selection.
   - Tests run on any OS and do not require external binaries.
 - **Validation**:
@@ -213,7 +211,7 @@ share step-by-step demos.
 ## Sprint 3: Record video to file (ScreenCaptureKit + AVAssetWriter)
 **Goal**: Implement end-to-end video recording for a selected window, with duration control and clean finalization.
 **Demo/Validation**:
-- Command(s): `cargo run -p screen-record -- --app Arc --duration 3 --audio off --path \"$CODEX_HOME/out/arc-video.mov\"`
+- Command(s): `cargo run -p screen-record -- --app Terminal --duration 3 --audio off --path \"./recordings/terminal-video.mov\"`
 - Verify: output file exists and is playable in QuickTime Player.
 
 ### Task 3.1: Implement AVAssetWriter wrapper (video track)
@@ -251,14 +249,14 @@ share step-by-step demos.
   - Stopping early (SIGINT) produces a finalized file (no corruption).
   - Errors include enough context to debug (selected window id, config, writer state).
 - **Validation**:
-  - `cargo run -p screen-record -- --active-window --duration 2 --audio off --path \"$CODEX_HOME/out/active-window.mov\"`
+  - `cargo run -p screen-record -- --active-window --duration 2 --audio off --path \"./recordings/active-window.mov\"`
 
 ### Task 3.3: Wire CLI runner (duration, output path resolution, stdout contract)
 - **Location**:
   - `crates/screen-record/src/run.rs`
   - `crates/screen-record/src/main.rs`
 - **Description**: Implement the high-level command flow:
-  - resolve output path (respect `--path`; otherwise prefer `$CODEX_HOME/out/` if set)
+  - resolve output path (require `--path`, resolve relative paths under CWD)
   - validate argument combinations (mutually exclusive flags)
   - select window (Sprint 2) then record (Sprint 3)
   - print only the final output path to stdout on success
@@ -269,14 +267,14 @@ share step-by-step demos.
 - **Acceptance criteria**:
   - Invalid flag combinations exit 2 with a single clear message.
   - Successful runs print exactly one line to stdout: the output path.
-  - The default output path is deterministic and under `$CODEX_HOME/out/` when the env var is set.
+  - Missing `--path` exits 2 with a clear usage error.
 - **Validation**:
-  - `CODEX_SCREEN_RECORD_TEST_MODE=1 cargo run -p screen-record -- --app Arc --duration 1 --audio off --path \"$CODEX_HOME/out/test.mov\"`
+  - `CODEX_SCREEN_RECORD_TEST_MODE=1 cargo run -p screen-record -- --app Terminal --duration 1 --audio off --path \"./recordings/test.mov\"`
 
 ## Sprint 4: Audio (system + microphone) + polish
 **Goal**: Add audio capture modes and ship a polished CLI with stable completions and tests.
 **Demo/Validation**:
-- Command(s): `cargo run -p screen-record -- --app Arc --duration 5 --audio both --path \"$CODEX_HOME/out/arc-audio.mov\"`
+- Command(s): `cargo run -p screen-record -- --app Terminal --duration 5 --audio both --path \"./recordings/terminal-audio.mov\"`
 - Verify: audio is present and the file plays in QuickTime Player.
 
 ### Task 4.1: Add system audio capture (ScreenCaptureKit audio output)
@@ -295,7 +293,7 @@ share step-by-step demos.
   - `--audio off` continues to produce video-only files with no audio track.
   - A/V sync is acceptable for short captures (no obvious drift over 30 seconds).
 - **Validation**:
-  - `cargo run -p screen-record -- --active-window --duration 3 --audio system --path \"$CODEX_HOME/out/system-audio.mov\"`
+  - `cargo run -p screen-record -- --active-window --duration 3 --audio system --path \"./recordings/system-audio.mov\"`
 
 ### Task 4.2: Add microphone capture (AVFoundation capture session)
 - **Location**:
@@ -317,7 +315,7 @@ share step-by-step demos.
   - `--audio both` with a `.mp4` path exits 2 with an actionable message.
   - Permission denial is reported as a runtime error (exit 1) with an actionable message.
 - **Validation**:
-  - `cargo run -p screen-record -- --active-window --duration 3 --audio mic --path \"$CODEX_HOME/out/mic.mov\"`
+  - `cargo run -p screen-record -- --active-window --duration 3 --audio mic --path \"./recordings/mic.mov\"`
 
 ### Task 4.3: Add completions (Zsh + Bash) and finalize docs
 - **Location**:
@@ -368,7 +366,7 @@ share step-by-step demos.
   - Deterministic test-mode end-to-end runs (writes a fixture `.mov`/`.mp4`, asserts stdout/stderr and exit codes)
   - Non-macOS behavior: compile + run tests asserting “macOS only” exit code and message (test mode bypasses this)
 - E2E/manual:
-  - macOS local run: record 5 seconds of Arc by app name and confirm playback in QuickTime Player
+  - macOS local run: record 5 seconds of Terminal by app name and confirm playback in QuickTime Player
   - Permission scenarios: run `--preflight` and `--request-permission` to confirm messaging
 
 ## Risks & gotchas
