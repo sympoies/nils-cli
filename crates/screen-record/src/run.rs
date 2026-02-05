@@ -1100,6 +1100,7 @@ fn normalize_tsv_field(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     fn base_record_cli() -> Cli {
         Cli {
@@ -1125,6 +1126,43 @@ mod tests {
         }
     }
 
+    fn base_screenshot_cli() -> Cli {
+        Cli {
+            screenshot: true,
+            list_windows: false,
+            list_displays: false,
+            list_apps: false,
+            preflight: false,
+            request_permission: false,
+            window_id: None,
+            app: Some("Terminal".to_string()),
+            window_name: None,
+            active_window: false,
+            display: false,
+            display_id: None,
+            portal: false,
+            duration: None,
+            audio: AudioMode::Off,
+            path: None,
+            format: None,
+            image_format: None,
+            dir: None,
+        }
+    }
+
+    fn sample_window(id: u32, owner_name: &str, title: &str) -> WindowInfo {
+        WindowInfo {
+            id,
+            owner_name: owner_name.to_string(),
+            title: title.to_string(),
+            bounds: crate::types::Rect::default(),
+            on_screen: true,
+            active: true,
+            owner_pid: 1,
+            z_order: 0,
+        }
+    }
+
     #[test]
     fn portal_requires_audio_off() {
         let mut cli = base_record_cli();
@@ -1133,5 +1171,222 @@ mod tests {
         let err = validate_record_args(&cli).expect_err("usage error");
         assert_eq!(err.exit_code(), 2);
         assert!(err.to_string().contains("--portal does not support audio"));
+    }
+
+    #[test]
+    fn portal_requires_record_or_screenshot_mode() {
+        let mut cli = base_record_cli();
+        cli.portal = true;
+        let err = validate_portal_flag_usage(&cli, Mode::ListApps).expect_err("usage error");
+        assert_eq!(err.exit_code(), 2);
+        assert!(err
+            .to_string()
+            .contains("--portal is only valid with recording or --screenshot"));
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn portal_is_rejected_on_non_linux_even_in_valid_mode() {
+        let mut cli = base_record_cli();
+        cli.portal = true;
+        let err = validate_portal_flag_usage(&cli, Mode::Record).expect_err("usage error");
+        assert_eq!(err.exit_code(), 2);
+        assert!(err
+            .to_string()
+            .contains("--portal is only supported on Linux (Wayland)"));
+    }
+
+    #[test]
+    fn record_window_name_requires_app() {
+        let mut cli = base_record_cli();
+        cli.window_id = Some(100);
+        cli.path = Some(PathBuf::from("recording.mov"));
+        cli.window_name = Some("Inbox".to_string());
+        let err = validate_record_args(&cli).expect_err("usage error");
+        assert_eq!(err.exit_code(), 2);
+        assert!(err.to_string().contains("--window-name requires --app"));
+    }
+
+    #[test]
+    fn screenshot_window_name_requires_app() {
+        let mut cli = base_screenshot_cli();
+        cli.app = None;
+        cli.window_id = Some(100);
+        cli.window_name = Some("Inbox".to_string());
+        let err = validate_screenshot_args(&cli).expect_err("usage error");
+        assert_eq!(err.exit_code(), 2);
+        assert!(err.to_string().contains("--window-name requires --app"));
+    }
+
+    #[test]
+    fn screenshot_rejects_recording_format_flag() {
+        let mut cli = base_screenshot_cli();
+        cli.format = Some(ContainerFormat::Mov);
+        let err = validate_screenshot_args(&cli).expect_err("usage error");
+        assert_eq!(err.exit_code(), 2);
+        assert!(err
+            .to_string()
+            .contains("--format is not valid with --screenshot"));
+    }
+
+    #[test]
+    fn ensure_no_recording_flags_rejects_capture_inputs() {
+        let mut cli = base_record_cli();
+        cli.duration = None;
+        cli.path = None;
+        cli.app = Some("Terminal".to_string());
+        let err = ensure_no_recording_flags(&cli).expect_err("usage error");
+        assert_eq!(err.exit_code(), 2);
+        assert!(err
+            .to_string()
+            .contains("capture flags are not valid with this mode"));
+    }
+
+    #[test]
+    fn resolve_container_defaults_to_mov_for_unknown_extension() {
+        let format = resolve_container(Path::new("capture.mkv"), None).expect("format");
+        assert_eq!(format, ContainerFormat::Mov);
+    }
+
+    #[test]
+    fn resolve_container_uses_path_extension_when_format_unspecified() {
+        let format = resolve_container(Path::new("capture.mp4"), None).expect("format");
+        assert_eq!(format, ContainerFormat::Mp4);
+    }
+
+    #[test]
+    fn resolve_container_conflict_returns_usage_error() {
+        let err = resolve_container(Path::new("capture.mov"), Some(ContainerFormat::Mp4))
+            .expect_err("usage error");
+        assert_eq!(err.exit_code(), 2);
+        assert!(err
+            .to_string()
+            .contains("--format mp4 conflicts with --path extension"));
+    }
+
+    #[test]
+    fn resolve_image_format_defaults_to_png() {
+        let format = resolve_image_format(None, None).expect("format");
+        assert_eq!(format, ImageFormat::Png);
+    }
+
+    #[test]
+    fn resolve_image_format_reads_extension_when_flag_is_absent() {
+        let format = resolve_image_format(Some(Path::new("shot.JPEG")), None).expect("format");
+        assert_eq!(format, ImageFormat::Jpg);
+    }
+
+    #[test]
+    fn resolve_image_format_conflict_returns_usage_error() {
+        let err = resolve_image_format(Some(Path::new("shot.png")), Some(ImageFormat::Webp))
+            .expect_err("usage error");
+        assert_eq!(err.exit_code(), 2);
+        assert!(err
+            .to_string()
+            .contains("--image-format webp conflicts with --path extension"));
+    }
+
+    #[test]
+    fn resolve_image_format_rejects_unknown_extension() {
+        let err = resolve_image_format(Some(Path::new("shot.tiff")), None).expect_err("usage");
+        assert_eq!(err.exit_code(), 2);
+        assert!(err
+            .to_string()
+            .contains("unsupported --path extension for screenshot"));
+    }
+
+    #[test]
+    fn resolve_image_format_rejects_unknown_extension_even_with_flag() {
+        let err = resolve_image_format(Some(Path::new("shot.bmp")), Some(ImageFormat::Png))
+            .expect_err("usage");
+        assert_eq!(err.exit_code(), 2);
+        assert!(err
+            .to_string()
+            .contains("unsupported --path extension for screenshot"));
+    }
+
+    #[test]
+    fn resolve_portal_screenshot_output_uses_portal_stem() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut cli = base_screenshot_cli();
+        cli.portal = true;
+        cli.app = None;
+        cli.dir = Some(dir.path().to_path_buf());
+
+        let (path, format) =
+            resolve_portal_screenshot_output(&cli, true).expect("portal screenshot output");
+        assert_eq!(format, ImageFormat::Png);
+        assert_eq!(
+            path,
+            dir.path().join("screenshot-20260101-000000-portal.png")
+        );
+    }
+
+    #[test]
+    fn resolve_portal_screenshot_output_adds_collision_suffix() {
+        let dir = TempDir::new().expect("tempdir");
+        let existing = dir.path().join("screenshot-20260101-000000-portal.png");
+        std::fs::write(&existing, b"existing").expect("write existing");
+
+        let mut cli = base_screenshot_cli();
+        cli.portal = true;
+        cli.app = None;
+        cli.dir = Some(dir.path().to_path_buf());
+
+        let (path, _) =
+            resolve_portal_screenshot_output(&cli, true).expect("portal screenshot output");
+        assert_eq!(
+            path,
+            dir.path().join("screenshot-20260101-000000-portal-2.png")
+        );
+    }
+
+    #[test]
+    fn resolve_portal_screenshot_output_rejects_file_dir() {
+        let dir = TempDir::new().expect("tempdir");
+        let not_a_dir = dir.path().join("not-a-dir");
+        std::fs::write(&not_a_dir, b"file").expect("write file");
+
+        let mut cli = base_screenshot_cli();
+        cli.portal = true;
+        cli.app = None;
+        cli.dir = Some(not_a_dir);
+
+        let err = resolve_portal_screenshot_output(&cli, true).expect_err("usage error");
+        assert_eq!(err.exit_code(), 2);
+        assert!(err.to_string().contains("--dir must be a directory"));
+    }
+
+    #[test]
+    fn sanitize_filename_segment_normalizes_punctuation_and_control_chars() {
+        let normalized = sanitize_filename_segment("Termi\tnal!!\nInbox").expect("segment");
+        assert_eq!(normalized, "Termi-nal-Inbox");
+        assert_eq!(sanitize_filename_segment(" \n\t!!!\r"), None);
+    }
+
+    #[test]
+    fn sanitize_filename_segment_truncates_to_max_length() {
+        let input = "a".repeat(80);
+        let normalized = sanitize_filename_segment(&input).expect("segment");
+        assert_eq!(normalized, "a".repeat(48));
+        assert_eq!(normalized.len(), 48);
+    }
+
+    #[test]
+    fn default_screenshot_stem_uses_sanitized_segments() {
+        let window = sample_window(17, "Termi\tnal!!", "  \nInbox??\r");
+        let stem = default_screenshot_stem("20260101-000000", &window);
+        assert_eq!(stem, "screenshot-20260101-000000-win17-Termi-nal-Inbox");
+    }
+
+    #[test]
+    fn format_app_tsv_normalizes_tabs_and_newlines() {
+        let app = AppInfo {
+            name: "Termi\t\nnal".to_string(),
+            pid: 42,
+            bundle_id: "com.example.\n\tapp".to_string(),
+        };
+        let line = format_app_tsv(&app);
+        assert_eq!(line, "Termi  nal\t42\tcom.example.  app");
     }
 }

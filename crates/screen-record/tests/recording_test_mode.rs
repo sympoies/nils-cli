@@ -442,3 +442,124 @@ fn screenshot_unsupported_extension_errors() {
         .stderr_text()
         .contains("unsupported --path extension for screenshot"));
 }
+
+#[test]
+fn portal_rejects_non_capture_modes() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+
+    let output = harness.run(cwd.path(), &["--portal", "--list-windows"]);
+
+    assert_eq!(output.code, 2);
+    assert!(output
+        .stderr_text()
+        .contains("--portal is only valid with recording or --screenshot"));
+}
+
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn portal_rejected_with_linux_only_message_on_non_linux() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+
+    let output = harness.run(cwd.path(), &["--portal", "--screenshot"]);
+
+    assert_eq!(output.code, 2);
+    assert!(output
+        .stderr_text()
+        .contains("--portal is only supported on Linux (Wayland)"));
+}
+
+#[test]
+fn screenshot_rejects_format_flag() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+
+    let output = harness.run(
+        cwd.path(),
+        &["--screenshot", "--app", "Terminal", "--format", "mov"],
+    );
+
+    assert_eq!(output.code, 2);
+    assert!(output
+        .stderr_text()
+        .contains("--format is not valid with --screenshot"));
+}
+
+#[test]
+fn preflight_mode_rejects_capture_flags() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+
+    let output = harness.run(cwd.path(), &["--preflight", "--app", "Terminal"]);
+
+    assert_eq!(output.code, 2);
+    assert!(output
+        .stderr_text()
+        .contains("capture flags are not valid with this mode"));
+}
+
+#[test]
+fn request_permission_mode_rejects_capture_flags() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+
+    let output = harness.run(cwd.path(), &["--request-permission", "--app", "Terminal"]);
+
+    assert_eq!(output.code, 2);
+    assert!(output
+        .stderr_text()
+        .contains("capture flags are not valid with this mode"));
+}
+
+#[test]
+fn record_relative_path_creates_parent_dirs() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let expected = cwd.path().join("captures").join("clip.mov");
+
+    let output = harness.run(
+        cwd.path(),
+        &[
+            "--app",
+            "Terminal",
+            "--duration",
+            "1",
+            "--audio",
+            "off",
+            "--path",
+            "captures/clip.mov",
+        ],
+    );
+
+    assert_eq!(output.code, 0, "stderr: {}", output.stderr_text());
+    let metadata = std::fs::metadata(&expected).expect("output exists");
+    assert!(metadata.len() > 0);
+    assert!(expected.parent().expect("parent").is_dir());
+    let stdout_path = std::path::PathBuf::from(output.stdout_text().trim());
+    let canonical_stdout = std::fs::canonicalize(stdout_path).expect("canonical stdout path");
+    let canonical_expected = std::fs::canonicalize(expected).expect("canonical expected path");
+    assert_eq!(canonical_stdout, canonical_expected);
+}
+
+#[test]
+fn screenshot_rejects_file_path_for_dir_flag() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let file_path = cwd.path().join("not-a-dir");
+    std::fs::write(&file_path, b"file").expect("write file");
+
+    let output = harness.run(
+        cwd.path(),
+        &[
+            "--screenshot",
+            "--app",
+            "Terminal",
+            "--dir",
+            file_path.to_str().unwrap(),
+        ],
+    );
+
+    assert_eq!(output.code, 2);
+    assert!(output.stderr_text().contains("--dir must be a directory"));
+}

@@ -79,6 +79,39 @@ fn select_active_window_missing_errors() {
 }
 
 #[test]
+fn select_by_app_no_match_errors() {
+    let windows = vec![window(10, "Terminal", "Inbox", true, false, 0)];
+    let args = SelectionArgs {
+        app: Some("Safari".to_string()),
+        ..SelectionArgs::default()
+    };
+    let err = select_window(&windows, &args).expect_err("no matching app");
+    assert_eq!(err.exit_code(), 2);
+    assert!(err
+        .to_string()
+        .contains("no windows match --app \"Safari\""));
+}
+
+#[test]
+fn select_by_app_and_window_name_ambiguous_with_tied_z_order() {
+    let windows = vec![
+        window(10, "Terminal", "Inbox", true, true, 0),
+        window(11, "Terminal", "Inbox (copy)", true, true, 0),
+    ];
+    let args = SelectionArgs {
+        app: Some("Terminal".to_string()),
+        window_name: Some("Inbox".to_string()),
+        ..SelectionArgs::default()
+    };
+
+    let err = select_window(&windows, &args).expect_err("ambiguous due tied z-order");
+    assert_eq!(err.exit_code(), 2);
+    let message = err.to_string();
+    assert!(message.contains("multiple windows match --app \"Terminal\""));
+    assert!(message.contains("refine with --window-name or use --window-id"));
+}
+
+#[test]
 fn format_window_tsv_normalizes_fields() {
     let mut win = window(10, "Te\tst", "Do\ncs", true, false, 0);
     win.owner_name = "Te\tst".to_string();
