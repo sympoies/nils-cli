@@ -1,3 +1,4 @@
+pub mod fs;
 pub mod process;
 
 pub fn greeting(name: &str) -> String {
