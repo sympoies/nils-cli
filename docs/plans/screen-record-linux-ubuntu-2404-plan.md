@@ -478,9 +478,9 @@ Wayland behavior depends on whether XWayland is present and whether the target w
   - `completions/bash/screen-record`
   - `crates/screen-record/tests/cli_smoke.rs`
 - **Description**: Define an additive Wayland selector that preserves the existing “exactly one selector” rule:
-  - Add `--portal` as a selector that is mutually exclusive with `--window-id`, `--active-window`, and `--app`.
+  - Add `--portal` as a selector that is mutually exclusive with `--window-id`, `--active-window`, `--app`, `--display`, and `--display-id`.
   - On Linux Wayland-only sessions (no `DISPLAY`, `WAYLAND_DISPLAY` set), require `--portal` for recording/screenshot and emit a clear usage error when using X11 selectors.
-  - Keep `--list-windows` / `--list-apps` defined as X11-only; on Wayland-only sessions, exit 2 with a message that lists options: use `--portal` or log into Xorg.
+  - Keep `--list-windows` / `--list-displays` / `--list-apps` defined as X11-only; on Wayland-only sessions, exit 2 with a message that lists options: use `--portal` or log into Xorg.
   - Document that portal selection is interactive and user-driven (not deterministic in scripts).
 - **Dependencies**:
   - Task 1.1
@@ -490,7 +490,7 @@ Wayland behavior depends on whether XWayland is present and whether the target w
   - `screen-record --help` includes `--portal` with accurate wording.
   - `crates/screen-record/README.md` documents Wayland-only behavior and `--portal` selector rules.
   - Mixing `--portal` with any X11 selector exits 2 with a clear usage error.
-  - On Linux Wayland-only sessions, `--list-windows` exits 2 with actionable guidance (no stdout).
+  - On Linux Wayland-only sessions, `--list-windows`, `--list-displays`, and `--list-apps` exit 2 with actionable guidance (no stdout).
 - **Validation**:
   - `cargo run -p screen-record -- --help | rg -- "--portal"`
   - `cargo test -p screen-record -- cli_smoke`
