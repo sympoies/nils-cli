@@ -18,6 +18,7 @@ fn base_cmd_options(cwd: &Path) -> CmdOptions {
     let mut options = CmdOptions::default().with_cwd(cwd);
     for key in [
         "ACCESS_TOKEN",
+        "SERVICE_TOKEN",
         "GQL_ALLOW_EMPTY_ENABLED",
         "GQL_ENV_DEFAULT",
         "GQL_HISTORY_ENABLED",

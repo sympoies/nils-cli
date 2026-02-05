@@ -326,8 +326,8 @@ fn append_history_best_effort(ctx: &CallHistoryContext, exit_code: i32) {
                 record.push_str(&format!(" jwt={name}"));
             }
         }
-        api_testing_core::graphql::auth::GraphqlAuthSourceUsed::EnvAccessToken => {
-            record.push_str(" token=ACCESS_TOKEN");
+        api_testing_core::graphql::auth::GraphqlAuthSourceUsed::EnvFallback { env_name } => {
+            record.push_str(&format!(" token={env_name}"));
         }
         api_testing_core::graphql::auth::GraphqlAuthSourceUsed::None => {}
     }

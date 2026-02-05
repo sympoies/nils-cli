@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use api_testing_core::{cli_endpoint, cli_util, config, env_file, history, jwt, Result};
+use api_testing_core::{auth_env, cli_endpoint, cli_util, config, env_file, history, jwt, Result};
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 
 use crate::cli::CallArgs;
@@ -112,29 +112,13 @@ pub(crate) fn resolve_auth_for_call(
         });
     }
 
-    let access_token = std::env::var("ACCESS_TOKEN")
-        .ok()
-        .and_then(|s| trim_non_empty(&s));
-    if let Some(t) = access_token {
+    if let Some((token, env_name)) =
+        auth_env::resolve_env_fallback(&["ACCESS_TOKEN", "SERVICE_TOKEN"])
+    {
         return Ok(AuthSelection {
-            bearer_token: Some(t),
+            bearer_token: Some(token),
             token_name,
-            auth_source_used: AuthSourceUsed::EnvFallback {
-                env_name: "ACCESS_TOKEN".to_string(),
-            },
-        });
-    }
-
-    let service_token = std::env::var("SERVICE_TOKEN")
-        .ok()
-        .and_then(|s| trim_non_empty(&s));
-    if let Some(t) = service_token {
-        return Ok(AuthSelection {
-            bearer_token: Some(t),
-            token_name,
-            auth_source_used: AuthSourceUsed::EnvFallback {
-                env_name: "SERVICE_TOKEN".to_string(),
-            },
+            auth_source_used: AuthSourceUsed::EnvFallback { env_name },
         });
     }
 
