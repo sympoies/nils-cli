@@ -137,6 +137,7 @@ enum Mode {
 #[derive(Debug, Clone, Copy)]
 enum Backend {
     TestMode,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Macos,
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     Linux,
