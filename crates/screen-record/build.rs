@@ -12,6 +12,7 @@ fn main() {
         "CoreMedia",
         "CoreVideo",
         "CoreGraphics",
+        "ImageIO",
         "Foundation",
     ];
 

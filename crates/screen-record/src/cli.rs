@@ -9,6 +9,10 @@ use clap::{Parser, ValueEnum};
     about = "Record a single window on macOS."
 )]
 pub struct Cli {
+    /// Capture a single window screenshot and exit.
+    #[arg(long)]
+    pub screenshot: bool,
+
     /// Print selectable windows as TSV and exit.
     #[arg(long)]
     pub list_windows: bool,
@@ -56,6 +60,14 @@ pub struct Cli {
     /// Explicit container selection. Overrides extension.
     #[arg(long, value_enum)]
     pub format: Option<ContainerFormat>,
+
+    /// Screenshot output image format. Overrides extension.
+    #[arg(long, value_enum)]
+    pub image_format: Option<ImageFormat>,
+
+    /// Output directory for screenshot mode when --path is omitted.
+    #[arg(long, value_name = "path")]
+    pub dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -70,4 +82,12 @@ pub enum AudioMode {
 pub enum ContainerFormat {
     Mov,
     Mp4,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ImageFormat {
+    Png,
+    #[value(alias = "jpeg")]
+    Jpg,
+    Webp,
 }

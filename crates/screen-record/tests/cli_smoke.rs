@@ -16,6 +16,8 @@ fn help_includes_key_flags() {
     let text = format!("{}{}", out.stdout_text(), out.stderr_text());
     assert!(text.contains("--list-windows"));
     assert!(text.contains("--list-apps"));
+    assert!(text.contains("--screenshot"));
+    assert!(text.contains("--image-format"));
     assert!(text.contains("--audio"));
     assert!(text.contains("--duration"));
 }

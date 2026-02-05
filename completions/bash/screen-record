@@ -17,6 +17,10 @@ _nils_cli_screen_record_complete() {
       COMPREPLY=( $(compgen -f -- "$cur") )
       return 0
       ;;
+    --dir)
+      COMPREPLY=( $(compgen -d -- "$cur") )
+      return 0
+      ;;
     --audio)
       COMPREPLY=( $(compgen -W "off system mic both" -- "$cur") )
       return 0
@@ -25,10 +29,14 @@ _nils_cli_screen_record_complete() {
       COMPREPLY=( $(compgen -W "mov mp4" -- "$cur") )
       return 0
       ;;
+    --image-format)
+      COMPREPLY=( $(compgen -W "png jpg webp" -- "$cur") )
+      return 0
+      ;;
   esac
 
   if [[ "$cur" == -* ]]; then
-    COMPREPLY=( $(compgen -W "-h --help -V --version --list-windows --list-apps --preflight --request-permission --window-id --app --window-name --active-window --duration --audio --path --format" -- "$cur") )
+    COMPREPLY=( $(compgen -W "-h --help -V --version --screenshot --list-windows --list-apps --preflight --request-permission --window-id --app --window-name --active-window --duration --audio --path --format --image-format --dir" -- "$cur") )
     return 0
   fi
 

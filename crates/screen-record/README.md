@@ -13,6 +13,7 @@ screen-record [options]
 ## Flags
 | Flag | Value | Default | Description |
 | --- | --- | --- | --- |
+| `--screenshot` | (none) | (none) | Capture a single window screenshot and exit. |
 | `--list-windows` | (none) | (none) | Print selectable windows as TSV and exit. |
 | `--list-apps` | (none) | (none) | Print selectable apps as TSV and exit. |
 | `--window-id` | `<id>` | (none) | Record a specific window id. |
@@ -21,8 +22,10 @@ screen-record [options]
 | `--active-window` | (none) | (none) | Record the frontmost window on the current Space. |
 | `--duration` | `<seconds>` | (required for recording) | Record for N seconds. |
 | `--audio` | `off\|system\|mic\|both` | `off` | Control audio capture. `both` requires `.mov`. |
-| `--path` | `<path>` | (required for recording) | Output file path. |
+| `--path` | `<path>` | (required for recording) | Output file path. Required for recording; optional for `--screenshot`. |
 | `--format` | `mov\|mp4` | (auto) | Explicit container selection. Overrides extension. |
+| `--image-format` | `png\|jpg\|webp` | (auto) | Screenshot output format. Overrides extension. |
+| `--dir` | `<path>` | `./screenshots` | Output directory for `--screenshot` when `--path` is omitted. |
 | `--preflight` | (none) | (none) | Check Screen Recording permission and exit. |
 | `--request-permission` | (none) | (none) | Best-effort permission request + status check, then exit. |
 | `-h, --help` | (none) | (none) | Show help. |
@@ -30,13 +33,16 @@ screen-record [options]
 
 ## Mode rules
 - Exactly one mode must be selected: `--list-windows`, `--list-apps`, `--preflight`,
-  `--request-permission`, or recording.
+  `--request-permission`, `--screenshot`, or recording.
 - Recording mode requires exactly one selector: `--window-id`, `--active-window`, or `--app`.
+- Screenshot mode requires exactly one selector: `--window-id`, `--active-window`, or `--app`.
 - `--window-name` is only valid together with `--app`.
 - `--duration` is required for recording mode.
+- `--dir` and `--image-format` are only valid with `--screenshot`.
+- Recording-only flags (`--duration`, `--audio`, `--format`) are not valid with `--screenshot`.
 
 ## Output contract
-- Success (recording): stdout prints only the resolved output file path followed by `\n`.
+- Success (recording/screenshot): stdout prints only the resolved output file path followed by `\n`.
 - Success (list): stdout prints only TSV rows followed by `\n`.
 - Success (preflight/request): stdout is empty; any user messaging goes to stderr.
 - Errors: stdout is empty; stderr contains user-facing errors (no stack traces).
@@ -91,6 +97,26 @@ Candidate rows are identical to `--list-windows` TSV output and are printed to s
 - If `--format` conflicts with the `--path` extension, exit 2 with a usage error.
 - `--audio both` requires `.mov`; using `.mp4` exits 2 with a clear error.
 
+## Screenshot format selection (.png vs .jpg vs .webp)
+- If `--image-format` is provided, its value selects the output format.
+- Otherwise, `.png`, `.jpg`/`.jpeg`, or `.webp` is selected from the `--path` extension.
+- If `--path` has no extension (or `--path` is omitted), the format defaults to `.png`.
+- If `--image-format` conflicts with the `--path` extension, exit 2 with a usage error.
+- Note: WebP encoding is best-effort. `screen-record` tries macOS ImageIO first, then falls back to
+  `cwebp` (install: `brew install webp`). If no encoder is available, `--image-format webp` fails
+  with exit 1.
+
+## Screenshot default naming
+When `--screenshot` is used without `--path`, output is written under `./screenshots/` and the
+filename is generated from:
+- Local timestamp (`YYYYMMDD-HHMMSS`)
+- Window identity: `win<id>` + owner name + window title (sanitized)
+
+Shape:
+```text
+./screenshots/screenshot-20260101-000000-win100-Terminal-Inbox.png
+```
+
 ## Exit codes
 - `0`: Success (recording completed, list output printed, or preflight success).
 - `1`: Runtime failure (permission denied, capture/encode failure).
@@ -129,4 +155,40 @@ screen-record --active-window --duration 2 --audio off --path "./recordings/acti
 Record with system audio:
 ```bash
 screen-record --app Terminal --duration 5 --audio system --path "./recordings/terminal-audio.mov"
+```
+
+Capture a screenshot (default png + default naming):
+```bash
+screen-record --screenshot --active-window
+```
+
+Capture a screenshot as WebP:
+```bash
+screen-record --screenshot --app Terminal --image-format webp
+```
+
+Capture a screenshot to an explicit path:
+```bash
+screen-record --screenshot --window-id 4811 --path "./screenshots/window-4811.jpg"
+```
+
+## Manual validation (macOS)
+Permission:
+```bash
+screen-record --preflight
+screen-record --request-permission
+```
+
+Screenshot selectors + formats:
+```bash
+screen-record --screenshot --active-window
+screen-record --screenshot --window-id 4811 --path "./screenshots/window-4811.png"
+screen-record --screenshot --app Terminal --image-format jpg
+screen-record --screenshot --app Terminal --image-format webp
+```
+
+Recording (sanity):
+```bash
+screen-record --active-window --duration 2 --audio off --path "./recordings/active.mov"
+screen-record --active-window --duration 2 --audio off --path "./recordings/active.mp4"
 ```
