@@ -19,6 +19,7 @@ fn run_api_gql(cwd: &Path, args: &[&str], envs: &[(&str, &str)]) -> CmdOutput {
         "GQL_ENV_DEFAULT",
         "GQL_JWT_NAME",
         "ACCESS_TOKEN",
+        "SERVICE_TOKEN",
         "GQL_SCHEMA_FILE",
     ] {
         options = options.with_env_remove(key);

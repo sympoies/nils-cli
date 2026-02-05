@@ -55,7 +55,7 @@ Notes:
   - REST: `--token <name>` or `REST_TOKEN_NAME` selects `REST_TOKEN_<NAME>`.
   - GraphQL: `--jwt <name>` or `GQL_JWT_NAME` selects `GQL_JWT_<NAME>`.
   - REST fallback: `ACCESS_TOKEN`, then `SERVICE_TOKEN` if no profile is selected.
-  - GraphQL fallback: `ACCESS_TOKEN` if no profile is selected.
+  - GraphQL fallback: `ACCESS_TOKEN`, then `SERVICE_TOKEN` if no profile is selected.
 - History
   - REST: `<setup_dir>/.rest_history`, GraphQL: `<setup_dir>/.gql_history`.
   - Enabled by default, can be disabled, and supports rotation/size limits.

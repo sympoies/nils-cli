@@ -1,13 +1,13 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::{cli_util, env_file, jwt, Result};
+use crate::{auth_env, cli_util, env_file, jwt, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GraphqlAuthSourceUsed {
     None,
     JwtProfile { name: String },
-    EnvAccessToken,
+    EnvFallback { env_name: String },
 }
 
 #[derive(Debug, Clone)]
@@ -235,11 +235,10 @@ pub fn resolve_bearer_token(
             Some(token),
             GraphqlAuthSourceUsed::JwtProfile { name: jwt_name },
         )
-    } else if let Some(t) = std::env::var("ACCESS_TOKEN")
-        .ok()
-        .and_then(|s| cli_util::trim_non_empty(&s))
+    } else if let Some((token, env_name)) =
+        auth_env::resolve_env_fallback(&["ACCESS_TOKEN", "SERVICE_TOKEN"])
     {
-        (Some(t), GraphqlAuthSourceUsed::EnvAccessToken)
+        (Some(token), GraphqlAuthSourceUsed::EnvFallback { env_name })
     } else {
         (None, GraphqlAuthSourceUsed::None)
     };
@@ -267,7 +266,7 @@ pub fn resolve_bearer_token(
 
         let label = match &source {
             GraphqlAuthSourceUsed::JwtProfile { name } => format!("jwt profile '{name}'"),
-            GraphqlAuthSourceUsed::EnvAccessToken => "ACCESS_TOKEN".to_string(),
+            GraphqlAuthSourceUsed::EnvFallback { env_name } => env_name.to_string(),
             GraphqlAuthSourceUsed::None => "token".to_string(),
         };
 
@@ -398,6 +397,7 @@ query Login {
     fn graphql_auth_resolve_uses_access_token_env() {
         let lock = GlobalStateLock::new();
         let _access = EnvGuard::set(&lock, "ACCESS_TOKEN", "env-token");
+        let _service = EnvGuard::set(&lock, "SERVICE_TOKEN", "service-token");
         let _jwt_enabled = EnvGuard::set(&lock, "GQL_JWT_VALIDATE_ENABLED", "false");
         let _jwt_name = EnvGuard::remove(&lock, "GQL_JWT_NAME");
 
@@ -413,7 +413,63 @@ query Login {
         .expect("resolve");
 
         assert_eq!(out.bearer_token.as_deref(), Some("env-token"));
-        assert_eq!(out.source, GraphqlAuthSourceUsed::EnvAccessToken);
+        assert_eq!(
+            out.source,
+            GraphqlAuthSourceUsed::EnvFallback {
+                env_name: "ACCESS_TOKEN".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn graphql_auth_resolve_falls_back_to_service_token_env() {
+        let lock = GlobalStateLock::new();
+        let _access = EnvGuard::set(&lock, "ACCESS_TOKEN", "  ");
+        let _service = EnvGuard::set(&lock, "SERVICE_TOKEN", "service-token");
+        let _jwt_enabled = EnvGuard::set(&lock, "GQL_JWT_VALIDATE_ENABLED", "false");
+        let _jwt_name = EnvGuard::remove(&lock, "GQL_JWT_NAME");
+
+        let tmp = TempDir::new().expect("tmp");
+        let mut stderr = Vec::new();
+        let out = resolve_bearer_token(
+            tmp.path(),
+            "http://localhost/graphql",
+            None,
+            None,
+            &mut stderr,
+        )
+        .expect("resolve");
+
+        assert_eq!(out.bearer_token.as_deref(), Some("service-token"));
+        assert_eq!(
+            out.source,
+            GraphqlAuthSourceUsed::EnvFallback {
+                env_name: "SERVICE_TOKEN".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn graphql_auth_resolve_ignores_blank_service_token() {
+        let lock = GlobalStateLock::new();
+        let _access = EnvGuard::remove(&lock, "ACCESS_TOKEN");
+        let _service = EnvGuard::set(&lock, "SERVICE_TOKEN", "  ");
+        let _jwt_enabled = EnvGuard::set(&lock, "GQL_JWT_VALIDATE_ENABLED", "false");
+        let _jwt_name = EnvGuard::remove(&lock, "GQL_JWT_NAME");
+
+        let tmp = TempDir::new().expect("tmp");
+        let mut stderr = Vec::new();
+        let out = resolve_bearer_token(
+            tmp.path(),
+            "http://localhost/graphql",
+            None,
+            None,
+            &mut stderr,
+        )
+        .expect("resolve");
+
+        assert_eq!(out.bearer_token, None);
+        assert_eq!(out.source, GraphqlAuthSourceUsed::None);
     }
 
     #[test]
