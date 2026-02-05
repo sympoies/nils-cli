@@ -430,8 +430,10 @@ fn append_history_best_effort(ctx: &CallHistoryContext, exit_code: i32) {
                 record.push_str(&format!(" token={}", ctx.token_name_for_log));
             }
         }
-        AuthSourceUsed::EnvFallback { .. } => {
-            record.push_str(" auth=ACCESS_TOKEN");
+        AuthSourceUsed::EnvFallback { env_name } => {
+            if !env_name.is_empty() {
+                record.push_str(&format!(" auth={env_name}"));
+            }
         }
         AuthSourceUsed::None => {}
     }

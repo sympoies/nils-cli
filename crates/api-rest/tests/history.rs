@@ -167,6 +167,37 @@ fn history_url_omitted_when_log_disabled() {
 }
 
 #[test]
+fn history_records_service_token_env_source() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("setup/rest")).expect("mkdir setup");
+    write_health_request(root);
+
+    let server = start_server();
+    let out = run_api_rest(
+        root,
+        &[
+            "call",
+            "--config-dir",
+            "setup/rest",
+            "--url",
+            &server.url(),
+            "requests/health.request.json",
+        ],
+        &[
+            ("REST_HISTORY_ENABLED", "true"),
+            ("SERVICE_TOKEN", "svc-token"),
+        ],
+    );
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+
+    let history_file = root.join("setup/rest/.rest_history");
+    let content = std::fs::read_to_string(&history_file).expect("read history");
+    assert!(content.contains("auth=SERVICE_TOKEN"));
+    assert!(!content.contains("auth=ACCESS_TOKEN"));
+}
+
+#[test]
 fn history_file_override_writes_to_custom_path() {
     let tmp = TempDir::new().expect("tmp");
     let root = tmp.path();
