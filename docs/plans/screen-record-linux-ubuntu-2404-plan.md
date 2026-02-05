@@ -1,14 +1,15 @@
-# Plan: Linux support for screen-record (Ubuntu 24.04, X11 + ffmpeg)
+# Plan: Linux (X11) support for screen-record (Ubuntu 24.04 validation baseline)
 
 ## Overview
-Extend the existing `screen-record` CLI to run on Linux, targeting Ubuntu 24.04. The macOS backend
-remains unchanged (ScreenCaptureKit + AVFoundation), while Linux uses an X11 backend for deterministic
-window discovery and delegates capture/encoding to `ffmpeg`. The CLI surface, output contract, and
-deterministic `CODEX_SCREEN_RECORD_TEST_MODE=1` behavior stay backwards compatible.
+Extend the existing `screen-record` CLI to run on Linux under X11/Xorg sessions (including XWayland
+when `DISPLAY` is set), with Ubuntu 24.04 used as the primary validation and CI baseline. The macOS
+backend remains unchanged (ScreenCaptureKit + AVFoundation), while Linux uses an X11 backend for
+deterministic window discovery and delegates capture/encoding to `ffmpeg`. The CLI surface, output
+contract, and deterministic `CODEX_SCREEN_RECORD_TEST_MODE=1` behavior stay backwards compatible.
 
 ## Scope
 - In scope:
-  - Linux runtime support on Ubuntu 24.04 for X11/Xorg sessions (and XWayland when `DISPLAY` is set).
+  - Linux runtime support for X11/Xorg sessions across mainstream distros (Ubuntu 24.04 as validation baseline).
   - Preserve the existing flat-flag CLI contract, selection rules, and stdout/stderr contract.
   - Implement Linux backends for:
     - `--list-windows`, `--list-apps`
@@ -16,20 +17,39 @@ deterministic `CODEX_SCREEN_RECORD_TEST_MODE=1` behavior stay backwards compatib
     - screenshot mode (`--screenshot`, `--image-format`, `--dir`, `--path`)
     - `--preflight` as a Linux prerequisite check (ffmpeg + X11 availability)
     - `--request-permission` on Linux as an alias of `--preflight` (no OS permission gate; still validates prerequisites)
+    - optional Wayland-native capture selector (`--portal`) via xdg-desktop-portal + PipeWire (Sprint 5)
   - Add Linux-focused tests and CI coverage on GitHub Actions `ubuntu-24.04`.
   - Documentation updates (crate README + repo root README).
 - Out of scope:
-  - Wayland-native window capture without XWayland (no `DISPLAY`): portal/PipeWire implementations.
+  - Wayland-native, non-interactive window enumeration and deterministic selectors (Wayland security model).
   - Full-screen or region capture modes (the tool remains “single window” focused).
   - Advanced audio device selection UI (multiple mics, per-app routing).
   - Windows support.
 
 ## Assumptions (if any)
-1. “Ubuntu 24.04 support” means “works in an X11/Xorg session” (including CI via Xvfb); Wayland-only
-   sessions will exit with a clear error and remediation guidance.
+1. “Linux (X11) support” means “works in an X11/Xorg session” across distros; Ubuntu 24.04 is the
+   CI and manual validation baseline.
 2. `ffmpeg` is considered a runtime prerequisite on Linux (installed via `apt-get install ffmpeg`).
 3. Audio capture uses PulseAudio-compatible APIs via PipeWire (`pipewire-pulse`), queried through
    `pactl` when `--audio` is not `off`.
+4. Wayland-native capture is expected to require explicit user consent (portal UI) and will not offer
+   deterministic, non-interactive window enumeration.
+
+## Distro/session matrix (expected)
+This plan aims to be distro-agnostic for X11/Xorg sessions; Ubuntu 24.04 is the validation baseline.
+Wayland behavior depends on whether XWayland is present and whether the target window is an X11 client.
+
+| Distro | Session | Expected support | Notes |
+| --- | --- | --- | --- |
+| Ubuntu 24.04 | Xorg (X11) | Supported | Primary CI + manual validation baseline |
+| Ubuntu 24.04 | Wayland + XWayland (`DISPLAY` set) | Partially supported | Only X11 client windows are discoverable/capturable |
+| Ubuntu 24.04 | Wayland-only (no `DISPLAY`) | Planned (Sprint 5) | Requires `--portal` + xdg-desktop-portal + PipeWire |
+| Debian (stable) | Xorg (X11) | Supported | Requires `ffmpeg` + X11 libraries |
+| Debian (stable) | Wayland + XWayland (`DISPLAY` set) | Partially supported | Only X11 client windows are discoverable/capturable |
+| Fedora (recent) | Xorg (X11) | Supported | Validate opportunistically when issues arise |
+| Fedora (recent) | Wayland + XWayland (`DISPLAY` set) | Partially supported | Only X11 client windows are discoverable/capturable |
+| Arch (rolling) | Xorg (X11) | Supported | Validate opportunistically when issues arise |
+| Arch (rolling) | Wayland + XWayland (`DISPLAY` set) | Partially supported | Only X11 client windows are discoverable/capturable |
 
 ## Sprint 1: Spec + platform dispatch
 **Goal**: Make Linux behavior explicit and refactor the runtime so macOS and Linux backends can coexist cleanly.
@@ -49,7 +69,8 @@ deterministic `CODEX_SCREEN_RECORD_TEST_MODE=1` behavior stay backwards compatib
   - `completions/zsh/_screen-record`
   - `completions/bash/screen-record`
 - **Description**: Update user-facing documentation and help strings to reflect cross-platform support:
-  - README: change “macOS 12+ CLI” wording to “macOS 12+ and Linux (Ubuntu 24.04 X11)”.
+  - README: change “macOS 12+ CLI” wording to “macOS 12+ and Linux (X11)”.
+  - Clarify that Ubuntu 24.04 is the validation baseline, not a hard runtime restriction.
   - Document Linux runtime prerequisites (`ffmpeg`, X11 session / `DISPLAY`) and the explicit limitation
     for Wayland-only sessions.
   - Clarify Linux semantics for `--preflight` (prerequisite check) and `--request-permission` (alias of `--preflight`).
@@ -60,8 +81,9 @@ deterministic `CODEX_SCREEN_RECORD_TEST_MODE=1` behavior stay backwards compatib
   - none
 - **Complexity**: 3
 - **Acceptance criteria**:
-  - `crates/screen-record/README.md` includes a short “Linux (Ubuntu 24.04)” section with prerequisites,
-    supported session types, and at least 2 runnable Linux examples.
+  - `crates/screen-record/README.md` includes a short “Linux (X11)” section with prerequisites, supported
+    session types, and at least 2 runnable Linux examples.
+  - `crates/screen-record/README.md` states Ubuntu 24.04 as the CI/validation baseline.
   - Repo root `README.md` no longer describes `screen-record` as macOS-only.
   - `screen-record --help` no longer claims macOS-only behavior in the top-level description.
   - `completions/zsh/_screen-record` no longer describes `--preflight` as “permission” only.
@@ -299,7 +321,7 @@ deterministic `CODEX_SCREEN_RECORD_TEST_MODE=1` behavior stay backwards compatib
   - `crates/screen-record/src/linux/audio.rs`
   - `crates/screen-record/src/linux/mod.rs`
   - `crates/screen-record/src/run.rs`
-- **Description**: Add Linux audio input selection logic compatible with Ubuntu 24.04 (PipeWire + Pulse):
+- **Description**: Add Linux audio input selection logic compatible with common PipeWire + PulseAudio-compatible setups (Ubuntu 24.04 baseline):
   - `--audio mic`: capture from the default source.
   - `--audio system`: capture from the default sink monitor source (`SINK_NAME.monitor`).
   - `--audio both`: capture two audio tracks (system + mic) and enforce the existing `.mov` restriction.
@@ -309,7 +331,7 @@ deterministic `CODEX_SCREEN_RECORD_TEST_MODE=1` behavior stay backwards compatib
   - Task 3.1
 - **Complexity**: 8
 - **Acceptance criteria**:
-  - On Ubuntu 24.04, `--audio system` and `--audio mic` start capture without requiring extra flags.
+  - On Ubuntu 24.04 baseline, `--audio system` and `--audio mic` start capture without requiring extra flags.
   - When audio prerequisites are missing, exit 1 with an actionable message (install pipewire-pulse/pulseaudio-utils).
   - `--audio both` continues to require `.mov` with a consistent usage error (exit 2) across platforms.
 - **Validation**:
@@ -395,9 +417,10 @@ deterministic `CODEX_SCREEN_RECORD_TEST_MODE=1` behavior stay backwards compatib
 - **Location**:
   - `crates/screen-record/README.md`
   - `crates/screen-record/src/run.rs`
-- **Description**: Add concise troubleshooting guidance for Ubuntu 24.04:
-  - Wayland-only session errors: how to switch to “Ubuntu on Xorg”.
+- **Description**: Add concise troubleshooting guidance for Linux (Ubuntu 24.04 baseline):
+  - Wayland-only session errors: how to switch to an Xorg session (Ubuntu example: “Ubuntu on Xorg”).
   - Wayland sessions with XWayland: only X11 client windows are capturable; for Wayland-native apps, switch to Xorg.
+  - Wayland-only sessions: document the planned `--portal` selector (Sprint 5) for Wayland-native capture.
   - Missing runtime prerequisites: `ffmpeg` and `pactl` install commands.
   - Common capture pitfalls (minimized windows, occlusion in X11 capture).
   - Ensure runtime errors mention the exact missing tool name when possible.
@@ -411,20 +434,104 @@ deterministic `CODEX_SCREEN_RECORD_TEST_MODE=1` behavior stay backwards compatib
 - **Validation**:
   - `rg -n "Troubleshooting|Wayland|Xorg|ffmpeg|pactl" crates/screen-record/README.md`
 
+## Sprint 5 (optional): Wayland-native capture (xdg-desktop-portal + PipeWire)
+**Goal**: Add a Wayland-native capture path so `screen-record` can run on Wayland-only sessions without `DISPLAY`, using xdg-desktop-portal for explicit user-approved capture.
+**Demo/Validation**:
+- Command(s):
+  - `./wrappers/screen-record --portal --duration 3 --audio off --path ./recordings/portal.mp4`
+  - `./wrappers/screen-record --portal --screenshot --audio off --path ./screenshots/portal.png`
+- Verify:
+  - A portal UI prompts for source selection (window/screen).
+  - On success, stdout prints only the resolved output path and stderr is empty.
+
+### Task 5.1: Add `--portal` selector flag and mode rules
+- **Location**:
+  - `crates/screen-record/src/cli.rs`
+  - `crates/screen-record/src/run.rs`
+  - `crates/screen-record/README.md`
+  - `completions/zsh/_screen-record`
+  - `completions/bash/screen-record`
+  - `crates/screen-record/tests/cli_smoke.rs`
+- **Description**: Define an additive Wayland selector that preserves the existing “exactly one selector” rule:
+  - Add `--portal` as a selector that is mutually exclusive with `--window-id`, `--active-window`, and `--app`.
+  - On Linux Wayland-only sessions (no `DISPLAY`, `WAYLAND_DISPLAY` set), require `--portal` for recording/screenshot and emit a clear usage error when using X11 selectors.
+  - Keep `--list-windows` / `--list-apps` defined as X11-only; on Wayland-only sessions, exit 2 with a message that lists options: use `--portal` or log into Xorg.
+  - Document that portal selection is interactive and user-driven (not deterministic in scripts).
+- **Dependencies**:
+  - Task 1.1
+  - Task 1.2
+- **Complexity**: 6
+- **Acceptance criteria**:
+  - `screen-record --help` includes `--portal` with accurate wording.
+  - `crates/screen-record/README.md` documents Wayland-only behavior and `--portal` selector rules.
+  - Mixing `--portal` with any X11 selector exits 2 with a clear usage error.
+  - On Linux Wayland-only sessions, `--list-windows` exits 2 with actionable guidance (no stdout).
+- **Validation**:
+  - `cargo run -p screen-record -- --help | rg -- "--portal"`
+  - `cargo test -p screen-record -- cli_smoke`
+
+### Task 5.2: Implement xdg-desktop-portal Screencast session acquisition
+- **Location**:
+  - `crates/screen-record/src/linux/portal.rs`
+  - `crates/screen-record/src/linux/mod.rs`
+  - `crates/screen-record/src/run.rs`
+  - `crates/screen-record/src/test_mode.rs`
+  - `crates/screen-record/tests/linux_portal_unit.rs`
+- **Description**: Implement a Wayland capture selector using DBus:
+  - Use `org.freedesktop.portal.ScreenCast` (xdg-desktop-portal) to create a session, prompt the user to select a source, and obtain a PipeWire node id for capture.
+  - Extend Linux `--preflight` / `--request-permission` behavior: if Wayland-only is detected, validate portal availability (and return a clear runtime error when missing).
+  - Keep stdout empty for preflight modes; write only user-facing guidance on stderr.
+  - Add deterministic test support: in `CODEX_SCREEN_RECORD_TEST_MODE=1`, bypass DBus and return a fixed PipeWire node id so unit tests can assert invocation wiring without requiring a real portal.
+- **Dependencies**:
+  - Task 5.1
+- **Complexity**: 9
+- **Acceptance criteria**:
+  - On Ubuntu 24.04 Wayland, `./wrappers/screen-record --preflight` succeeds when xdg-desktop-portal is available and fails with an actionable message when it is not.
+  - In test mode, portal acquisition does not attempt any DBus calls and returns a deterministic node id.
+  - Unit tests cover: missing portal error text, and test-mode deterministic path.
+- **Validation**:
+  - `CODEX_SCREEN_RECORD_TEST_MODE=1 cargo test -p screen-record -- linux_portal_unit`
+  - Manual (Wayland): `./wrappers/screen-record --preflight; echo $?`
+
+### Task 5.3: Capture Wayland portal stream via `ffmpeg` (PipeWire input)
+- **Location**:
+  - `crates/screen-record/src/linux/ffmpeg.rs`
+  - `crates/screen-record/src/run.rs`
+  - `crates/screen-record/README.md`
+- **Description**: Add a Wayland recording/screenshot path that continues to delegate encoding to `ffmpeg`:
+  - When `--portal` is selected, use the PipeWire node id from Task 5.2 and invoke `ffmpeg` using its PipeWire input support.
+  - If the installed `ffmpeg` does not support PipeWire input, return a runtime error that recommends installing an ffmpeg build with PipeWire enabled or switching to an Xorg session.
+  - Initially restrict `--portal` to `--audio off` (usage error for other audio modes) to keep scope bounded; document this limitation and add a follow-up task before enabling portal audio.
+  - Preserve the existing stdout/stderr contract: on success, stdout prints only the output path and stderr is empty.
+- **Dependencies**:
+  - Task 5.2
+- **Complexity**: 8
+- **Acceptance criteria**:
+  - On Ubuntu 24.04 Wayland, `--portal --duration N --audio off --path out.mp4` writes a non-empty file and prints only its path to stdout.
+  - On Ubuntu 24.04 Wayland, `--portal --screenshot --audio off --path out.png` writes a non-empty file and prints only its path to stdout.
+  - When PipeWire input is unsupported, the error is a runtime failure (exit 1) with a clear remediation message.
+- **Validation**:
+  - Manual (Wayland): `./wrappers/screen-record --portal --duration 1 --audio off --path ./recordings/portal.mp4`
+  - Manual (Wayland): `./wrappers/screen-record --portal --screenshot --audio off --path ./screenshots/portal.png`
+
 ## Testing Strategy
 - Unit:
   - Keep selection logic tests as-is (`crates/screen-record/src/select.rs`).
   - Add Linux unit tests for `ffmpeg` argument construction and `pactl` parsing (`Task 4.1`).
+  - Add Linux unit tests for portal wiring and test-mode behavior (`Task 5.2`).
 - Integration:
   - Linux X11 integration under Xvfb with stubbed `ffmpeg` (`Task 4.2`).
   - Preserve deterministic `CODEX_SCREEN_RECORD_TEST_MODE=1` integration tests as cross-platform baseline.
 - E2E/manual:
-  - On Ubuntu 24.04 Xorg: record `--active-window` for 2–3 seconds and verify output with `ffplay` or `mpv`.
+  - On Linux Xorg (Ubuntu 24.04 baseline): record `--active-window` for 2–3 seconds and verify output with `ffplay` or `mpv`.
   - Validate audio modes using `ffprobe` to confirm audio streams are present.
+  - On Linux Wayland: validate `--portal` manually (portal UI is interactive and not CI-friendly).
 
 ## Risks & gotchas
-- Wayland default: Ubuntu 24.04 uses Wayland by default; requiring Xorg is a product tradeoff and must be clearly messaged.
+- Wayland default: many distros default to Wayland; X11-only support is a product tradeoff and must be clearly messaged.
 - XWayland limitations: on Wayland, `DISPLAY` may be set but only X11 client windows are discoverable/capturable; docs should steer users to Xorg.
+- Portal UX tradeoff: `--portal` is interactive and not deterministic; it is intended for humans, not scripts.
+- Portal availability: xdg-desktop-portal behavior varies by desktop environment; preflight should be explicit and actionable.
 - Window IDs: X11 XIDs are commonly displayed in hex elsewhere; this CLI prints decimal, so docs and errors must be clear.
 - Geometry correctness: window frames vs client area can differ (decorations); capture should prefer the full window surface.
 - Audio source resolution: default sink/source naming differs across PipeWire/Pulse setups; parsing must be resilient.
