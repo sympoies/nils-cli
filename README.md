@@ -25,6 +25,7 @@ Each crate is either a standalone CLI binary or a shared library used across the
 - [crates/semantic-commit](crates/semantic-commit): Helper CLI for generating staged context and creating semantic commits.
 - [crates/plan-tooling](crates/plan-tooling): Plan Format v1 tooling CLI (to-json/validate/batches/scaffold).
 - [crates/image-processing](crates/image-processing): Batch image transformation CLI (resize/crop/optimize) with JSON/report outputs.
+- [crates/screen-record](crates/screen-record): macOS ScreenCaptureKit recorder for a single window with optional audio.
 
 ## Shell wrappers and completions
 
