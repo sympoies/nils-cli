@@ -214,17 +214,12 @@ pub fn parse_session_handle_from_results(
 }
 
 #[doc(hidden)]
-pub fn parse_streams_from_results(
-    dict: &PortalDict,
-) -> Result<PortalStreams, String> {
+pub fn parse_streams_from_results(dict: &PortalDict) -> Result<PortalStreams, String> {
     dict_get_streams(dict, "streams")
 }
 
 #[doc(hidden)]
-pub fn ensure_response_code_ok(
-    code: u32,
-    results: PortalDict,
-) -> Result<PortalDict, CliError> {
+pub fn ensure_response_code_ok(code: u32, results: PortalDict) -> Result<PortalDict, CliError> {
     if code != 0 {
         return Err(CliError::runtime(format!(
             "portal request failed or was cancelled (response={code})"
