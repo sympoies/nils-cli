@@ -33,7 +33,7 @@ fn bool_from_env_parses_and_warns_with_label() {
     );
     assert_eq!(got, false);
     let msg = String::from_utf8_lossy(&stderr);
-    assert!(msg.contains("api-gql: warning: GQL_FOO must be true|false"));
+    assert!(msg.contains("api-gql: warning: GQL_FOO must be true|false|1|0|yes|no|on|off"));
     assert!(msg.contains("nope"));
 }
 
@@ -49,7 +49,7 @@ fn bool_from_env_parses_and_warns_without_label() {
     );
     assert_eq!(got, false);
     assert_eq!(warnings.len(), 1);
-    assert!(warnings[0].contains("REST_FOO must be true|false"));
+    assert!(warnings[0].contains("REST_FOO must be true|false|1|0|yes|no|on|off"));
     assert!(!warnings[0].contains("warning:"));
 }
 
@@ -66,6 +66,54 @@ fn bool_from_env_uses_default_on_empty() {
     );
     assert_eq!(got, true);
     assert!(stderr.is_empty());
+}
+
+#[test]
+fn bool_from_env_accepts_truthy_and_falsey_aliases() {
+    let mut warnings: Vec<String> = Vec::new();
+    assert!(cli_util::bool_from_env(
+        Some("1".to_string()),
+        "REST_FOO",
+        false,
+        None,
+        &mut warnings,
+    ));
+    assert!(cli_util::bool_from_env(
+        Some("yes".to_string()),
+        "REST_FOO",
+        false,
+        None,
+        &mut warnings,
+    ));
+    assert!(cli_util::bool_from_env(
+        Some("on".to_string()),
+        "REST_FOO",
+        false,
+        None,
+        &mut warnings,
+    ));
+    assert!(!cli_util::bool_from_env(
+        Some("0".to_string()),
+        "REST_FOO",
+        true,
+        None,
+        &mut warnings,
+    ));
+    assert!(!cli_util::bool_from_env(
+        Some("no".to_string()),
+        "REST_FOO",
+        true,
+        None,
+        &mut warnings,
+    ));
+    assert!(!cli_util::bool_from_env(
+        Some("off".to_string()),
+        "REST_FOO",
+        true,
+        None,
+        &mut warnings,
+    ));
+    assert!(warnings.is_empty());
 }
 
 #[test]

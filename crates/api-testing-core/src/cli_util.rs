@@ -37,15 +37,17 @@ pub fn bool_from_env<S: WarnSink + ?Sized>(
         return default;
     }
     match raw.to_ascii_lowercase().as_str() {
-        "true" => true,
-        "false" => false,
+        "true" | "1" | "yes" | "on" => true,
+        "false" | "0" | "no" | "off" => false,
         _ => {
             let label = tool_label.and_then(|l| (!l.trim().is_empty()).then_some(l));
             let msg = match label {
                 Some(label) => format!(
-                    "{label}: warning: {name} must be true|false (got: {raw}); treating as false"
+                    "{label}: warning: {name} must be true|false|1|0|yes|no|on|off (got: {raw}); treating as false"
                 ),
-                None => format!("{name} must be true|false (got: {raw}); treating as false"),
+                None => format!(
+                    "{name} must be true|false|1|0|yes|no|on|off (got: {raw}); treating as false"
+                ),
             };
             warnings.warn(&msg);
             false
