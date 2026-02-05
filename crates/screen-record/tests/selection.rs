@@ -44,3 +44,46 @@ fn ambiguous_app_selection_outputs_candidates() {
     assert!(message.contains("Terminal\tInbox"));
     assert_eq!(err.exit_code(), 2);
 }
+
+#[test]
+fn missing_selection_flag_errors() {
+    let windows = vec![window(10, "Terminal", "Inbox", true, false, 0)];
+    let args = SelectionArgs::default();
+    let err = select_window(&windows, &args).expect_err("missing selection");
+    assert_eq!(err.exit_code(), 2);
+    assert!(err.to_string().contains("missing selection flag"));
+}
+
+#[test]
+fn select_by_window_id_missing_errors() {
+    let windows = vec![window(10, "Terminal", "Inbox", true, false, 0)];
+    let args = SelectionArgs {
+        window_id: Some(99),
+        ..SelectionArgs::default()
+    };
+    let err = select_window(&windows, &args).expect_err("missing window");
+    assert_eq!(err.exit_code(), 2);
+    assert!(err.to_string().contains("no window found with id 99"));
+}
+
+#[test]
+fn select_active_window_missing_errors() {
+    let windows = vec![window(10, "Terminal", "Inbox", false, false, 0)];
+    let args = SelectionArgs {
+        active_window: true,
+        ..SelectionArgs::default()
+    };
+    let err = select_window(&windows, &args).expect_err("no active window");
+    assert_eq!(err.exit_code(), 2);
+    assert!(err.to_string().contains("no active window found"));
+}
+
+#[test]
+fn format_window_tsv_normalizes_fields() {
+    let mut win = window(10, "Te\tst", "Do\ncs", true, false, 0);
+    win.owner_name = "Te\tst".to_string();
+    win.title = "Do\ncs".to_string();
+    let line = screen_record::select::format_window_tsv(&win);
+    assert!(line.contains("Te st"));
+    assert!(line.contains("Do cs"));
+}

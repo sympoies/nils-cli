@@ -6,7 +6,7 @@ use crate::cli::{AudioMode, Cli, ContainerFormat, ImageFormat};
 use crate::error::CliError;
 use crate::select::{format_window_tsv, select_window, SelectionArgs};
 use crate::test_mode;
-use crate::types::{AppInfo, ShareableContent, WindowInfo};
+use crate::types::{AppInfo, DisplayInfo, ShareableContent, WindowInfo};
 
 pub fn run(cli: Cli) -> Result<(), CliError> {
     let test_mode_enabled = test_mode::enabled();
@@ -62,6 +62,15 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                 println!("{}", format_window_tsv(&window));
             }
         }
+        Mode::ListDisplays => {
+            ensure_no_recording_flags(&cli)?;
+            let content = fetch_shareable_content(test_mode_enabled)?;
+            let mut displays = content.displays;
+            displays.sort_by(|a, b| a.id.cmp(&b.id));
+            for display in displays {
+                println!("{}", format_display_tsv(&display));
+            }
+        }
         Mode::ListApps => {
             ensure_no_recording_flags(&cli)?;
             let content = fetch_shareable_content(test_mode_enabled)?;
@@ -107,15 +116,6 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Mode::Record => {
             validate_record_args(&cli)?;
 
-            let content = fetch_shareable_content(test_mode_enabled)?;
-            let args = SelectionArgs {
-                window_id: cli.window_id,
-                app: cli.app.clone(),
-                window_name: cli.window_name.clone(),
-                active_window: cli.active_window,
-            };
-            let selected = select_window(&content.windows, &args)?;
-
             let output_path = resolve_output_path(&cli)?;
             let container = resolve_container(&output_path, cli.format)?;
             if cli.audio == AudioMode::Both && container == ContainerFormat::Mp4 {
@@ -130,19 +130,43 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
 
             #[cfg(target_os = "macos")]
             {
-                crate::macos::stream::record_window(
-                    &selected,
-                    cli.duration.expect("duration validated"),
-                    cli.audio,
-                    &output_path,
-                    container,
-                )?;
+                if cli.display {
+                    crate::macos::stream::record_main_display(
+                        cli.duration.expect("duration validated"),
+                        cli.audio,
+                        &output_path,
+                        container,
+                    )?;
+                } else if let Some(display_id) = cli.display_id {
+                    crate::macos::stream::record_display(
+                        display_id,
+                        cli.duration.expect("duration validated"),
+                        cli.audio,
+                        &output_path,
+                        container,
+                    )?;
+                } else {
+                    let content = fetch_shareable_content(test_mode_enabled)?;
+                    let args = SelectionArgs {
+                        window_id: cli.window_id,
+                        app: cli.app.clone(),
+                        window_name: cli.window_name.clone(),
+                        active_window: cli.active_window,
+                    };
+                    let selected = select_window(&content.windows, &args)?;
+                    crate::macos::stream::record_window(
+                        &selected,
+                        cli.duration.expect("duration validated"),
+                        cli.audio,
+                        &output_path,
+                        container,
+                    )?;
+                }
                 println!("{}", output_path.display());
                 return Ok(());
             }
             #[cfg(not(target_os = "macos"))]
             {
-                let _ = selected;
                 return Err(CliError::usage("screen-record is only supported on macOS"));
             }
         }
@@ -154,6 +178,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
     ListWindows,
+    ListDisplays,
     ListApps,
     Preflight,
     RequestPermission,
@@ -165,6 +190,9 @@ fn determine_mode(cli: &Cli) -> Result<Mode, CliError> {
     let mut modes = Vec::new();
     if cli.list_windows {
         modes.push(Mode::ListWindows);
+    }
+    if cli.list_displays {
+        modes.push(Mode::ListDisplays);
     }
     if cli.list_apps {
         modes.push(Mode::ListApps);
@@ -181,7 +209,7 @@ fn determine_mode(cli: &Cli) -> Result<Mode, CliError> {
 
     if modes.len() > 1 {
         return Err(CliError::usage(
-            "select exactly one mode: --list-windows, --list-apps, --preflight, --request-permission, or --screenshot",
+            "select exactly one mode: --list-windows, --list-displays, --list-apps, --preflight, --request-permission, or --screenshot",
         ));
     }
 
@@ -200,17 +228,24 @@ fn validate_record_args(cli: &Cli) -> Result<(), CliError> {
         return Err(CliError::usage("screenshot flags require --screenshot"));
     }
 
-    let selection_count =
-        cli.window_id.is_some() as u8 + cli.active_window as u8 + cli.app.is_some() as u8;
+    let selection_count = cli.window_id.is_some() as u8
+        + cli.active_window as u8
+        + cli.app.is_some() as u8
+        + cli.display as u8
+        + cli.display_id.is_some() as u8;
 
     if selection_count != 1 {
         return Err(CliError::usage(
-            "recording requires exactly one selector: --window-id, --active-window, or --app",
+            "recording requires exactly one selector: --window-id, --active-window, --app, --display, or --display-id",
         ));
     }
 
     if cli.window_name.is_some() && cli.app.is_none() {
         return Err(CliError::usage("--window-name requires --app"));
+    }
+
+    if (cli.display || cli.display_id.is_some()) && cli.window_name.is_some() {
+        return Err(CliError::usage("--window-name is only valid with --app"));
     }
 
     if cli.duration.is_none() {
@@ -227,6 +262,12 @@ fn validate_record_args(cli: &Cli) -> Result<(), CliError> {
 fn validate_screenshot_args(cli: &Cli) -> Result<(), CliError> {
     if !cli.screenshot {
         return Err(CliError::usage("missing --screenshot"));
+    }
+
+    if cli.display || cli.display_id.is_some() {
+        return Err(CliError::usage(
+            "display selectors are not valid with --screenshot",
+        ));
     }
 
     let selection_count =
@@ -266,6 +307,8 @@ fn ensure_no_recording_flags(cli: &Cli) -> Result<(), CliError> {
         || cli.app.is_some()
         || cli.window_name.is_some()
         || cli.active_window
+        || cli.display
+        || cli.display_id.is_some()
         || cli.duration.is_some()
         || cli.screenshot
         || cli.path.is_some()
@@ -574,6 +617,10 @@ fn format_app_tsv(app: &AppInfo) -> String {
         app.pid,
         normalize_tsv_field(&app.bundle_id)
     )
+}
+
+fn format_display_tsv(display: &DisplayInfo) -> String {
+    format!("{}\t{}\t{}", display.id, display.width, display.height)
 }
 
 fn normalize_tsv_field(value: &str) -> String {

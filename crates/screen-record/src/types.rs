@@ -7,6 +7,13 @@ pub struct Rect {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisplayInfo {
+    pub id: u32,
+    pub width: i32,
+    pub height: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowInfo {
     pub id: u32,
     pub owner_name: String,
@@ -27,6 +34,7 @@ pub struct AppInfo {
 
 #[derive(Debug, Clone, Default)]
 pub struct ShareableContent {
+    pub displays: Vec<DisplayInfo>,
     pub windows: Vec<WindowInfo>,
     pub apps: Vec<AppInfo>,
 }
