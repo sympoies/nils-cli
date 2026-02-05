@@ -15,7 +15,7 @@ use objc2::{define_class, msg_send, AnyThread, DefinedClass, MainThreadMarker, M
 use objc2_core_foundation::{CFData, CFDictionary, CFNumber, CFRetained, CFString, CFType, CFURL};
 use objc2_core_graphics::{
     kCGColorSpaceSRGB, CGBitmapInfo, CGColorRenderingIntent, CGColorSpace, CGDataProvider, CGImage,
-    CGImageAlphaInfo, CGImageByteOrderInfo,
+    CGImageAlphaInfo, CGImageByteOrderInfo, CGMainDisplayID,
 };
 use objc2_core_media::CMSampleBuffer;
 use objc2_core_video::{
@@ -41,6 +41,9 @@ pub fn screenshot_window(
     format: ImageFormat,
 ) -> Result<(), CliError> {
     autoreleasepool(|_| {
+        // macOS 26+ may abort inside CoreGraphics (CGS_REQUIRE_INIT) unless CG is initialized first.
+        let _ = CGMainDisplayID();
+
         let shareable = fetch_shareable_content()?;
         let sc_window = find_window(&shareable, window.id)?;
 
@@ -53,6 +56,7 @@ pub fn screenshot_window(
         unsafe {
             config.setWidth(width as usize);
             config.setHeight(height as usize);
+            config.setPixelFormat(kCVPixelFormatType_32BGRA);
             config.setScalesToFit(true);
             config.setPreservesAspectRatio(true);
             config.setShowsCursor(true);

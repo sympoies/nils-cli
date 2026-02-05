@@ -14,6 +14,7 @@ use objc2_av_foundation::{
     AVCaptureConnection, AVCaptureDevice, AVCaptureDeviceInput, AVCaptureOutput, AVCaptureSession,
     AVMediaTypeAudio,
 };
+use objc2_core_graphics::CGMainDisplayID;
 use objc2_core_media::{CMSampleBuffer, CMTime};
 use objc2_foundation::{NSDate, NSError, NSRunLoop};
 use objc2_screen_capture_kit::{
@@ -34,6 +35,9 @@ pub fn record_window(
     format: ContainerFormat,
 ) -> Result<(), CliError> {
     autoreleasepool(|_| {
+        // macOS 26+ may abort inside CoreGraphics (CGS_REQUIRE_INIT) unless CG is initialized first.
+        let _ = CGMainDisplayID();
+
         let shareable = fetch_shareable_content()?;
         let sc_window = find_window(&shareable, window.id)?;
         let captures_system_audio = matches!(audio, AudioMode::System | AudioMode::Both);
