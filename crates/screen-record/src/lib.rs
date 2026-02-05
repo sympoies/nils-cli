@@ -5,5 +5,5 @@ pub mod select;
 pub mod test_mode;
 pub mod types;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", coverage))]
 pub mod macos;

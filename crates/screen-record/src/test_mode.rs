@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::cli::{ContainerFormat, ImageFormat};
 use crate::error::CliError;
-use crate::types::{AppInfo, Rect, ShareableContent, WindowInfo};
+use crate::types::{AppInfo, DisplayInfo, Rect, ShareableContent, WindowInfo};
 
 pub fn enabled() -> bool {
     let Some(value) = std::env::var_os("CODEX_SCREEN_RECORD_TEST_MODE") else {
@@ -14,6 +14,12 @@ pub fn enabled() -> bool {
 }
 
 pub fn shareable_content() -> ShareableContent {
+    let displays = vec![DisplayInfo {
+        id: 1,
+        width: 1440,
+        height: 900,
+    }];
+
     let windows = vec![
         WindowInfo {
             id: 100,
@@ -75,7 +81,11 @@ pub fn shareable_content() -> ShareableContent {
         },
     ];
 
-    ShareableContent { windows, apps }
+    ShareableContent {
+        displays,
+        windows,
+        apps,
+    }
 }
 
 pub fn record_fixture(path: &Path, format: ContainerFormat) -> Result<(), CliError> {

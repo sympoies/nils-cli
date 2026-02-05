@@ -7,14 +7,19 @@ use objc2_foundation::{NSDate, NSError, NSRunLoop};
 use objc2_screen_capture_kit::{SCRunningApplication, SCShareableContent};
 
 use crate::error::CliError;
-use crate::types::{AppInfo, Rect, ShareableContent, WindowInfo};
+use crate::types::{AppInfo, DisplayInfo, Rect, ShareableContent, WindowInfo};
 
 pub fn fetch_shareable() -> Result<ShareableContent, CliError> {
     let content = fetch_shareable_content()?;
+    let displays = extract_displays(&content);
     let windows = extract_windows(&content);
     let apps = extract_apps(&content);
 
-    Ok(ShareableContent { windows, apps })
+    Ok(ShareableContent {
+        displays,
+        windows,
+        apps,
+    })
 }
 
 fn fetch_shareable_content() -> Result<Retained<SCShareableContent>, CliError> {
@@ -121,6 +126,21 @@ fn extract_windows(content: &SCShareableContent) -> Vec<WindowInfo> {
         }
         list
     })
+}
+
+fn extract_displays(content: &SCShareableContent) -> Vec<DisplayInfo> {
+    let displays = unsafe { content.displays() };
+    let count = displays.count();
+    let mut list = Vec::with_capacity(count);
+    for idx in 0..count {
+        let display = displays.objectAtIndex(idx);
+        let id = unsafe { display.displayID() };
+        let width = unsafe { display.width() } as i32;
+        let height = unsafe { display.height() } as i32;
+
+        list.push(DisplayInfo { id, width, height });
+    }
+    list
 }
 
 fn extract_apps(content: &SCShareableContent) -> Vec<AppInfo> {

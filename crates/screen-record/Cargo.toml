@@ -27,3 +27,6 @@ dispatch2 = "0.3.0"
 [dev-dependencies]
 nils-test-support = { path = "../nils-test-support" }
 tempfile = "3"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ["cfg(coverage)"] }

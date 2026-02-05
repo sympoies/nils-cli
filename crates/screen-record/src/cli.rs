@@ -6,7 +6,7 @@ use clap::{Parser, ValueEnum};
 #[command(
     name = "screen-record",
     version,
-    about = "Record a single window on macOS."
+    about = "Record a single window or display on macOS."
 )]
 pub struct Cli {
     /// Capture a single window screenshot and exit.
@@ -16,6 +16,10 @@ pub struct Cli {
     /// Print selectable windows as TSV and exit.
     #[arg(long)]
     pub list_windows: bool,
+
+    /// Print selectable displays as TSV and exit.
+    #[arg(long)]
+    pub list_displays: bool,
 
     /// Print selectable apps as TSV and exit.
     #[arg(long)]
@@ -44,6 +48,14 @@ pub struct Cli {
     /// Record the frontmost window on the current Space.
     #[arg(long)]
     pub active_window: bool,
+
+    /// Record the main display (what you see on screen).
+    #[arg(long)]
+    pub display: bool,
+
+    /// Record a specific display id.
+    #[arg(long, value_name = "id")]
+    pub display_id: Option<u32>,
 
     /// Record for N seconds.
     #[arg(long, value_name = "seconds")]

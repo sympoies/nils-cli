@@ -36,7 +36,7 @@ _nils_cli_screen_record_complete() {
   esac
 
   if [[ "$cur" == -* ]]; then
-    COMPREPLY=( $(compgen -W "-h --help -V --version --screenshot --list-windows --list-apps --preflight --request-permission --window-id --app --window-name --active-window --duration --audio --path --format --image-format --dir" -- "$cur") )
+    COMPREPLY=( $(compgen -W "-h --help -V --version --screenshot --list-windows --list-displays --list-apps --preflight --request-permission --window-id --app --window-name --active-window --display --display-id --duration --audio --path --format --image-format --dir" -- "$cur") )
     return 0
   fi
 

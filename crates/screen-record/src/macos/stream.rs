@@ -16,6 +16,7 @@ use objc2_av_foundation::{
 };
 use objc2_core_graphics::CGMainDisplayID;
 use objc2_core_media::{CMSampleBuffer, CMTime};
+use objc2_foundation::NSArray;
 use objc2_foundation::{NSDate, NSError, NSRunLoop};
 use objc2_screen_capture_kit::{
     SCContentFilter, SCShareableContent, SCStream, SCStreamConfiguration, SCStreamOutput,
@@ -48,6 +49,131 @@ pub fn record_window(
         };
 
         let (width, height) = window_capture_dimensions(&sc_window, &filter)?;
+
+        let config = unsafe { SCStreamConfiguration::new() };
+        unsafe {
+            config.setWidth(width as usize);
+            config.setHeight(height as usize);
+            config.setScalesToFit(true);
+            config.setPreservesAspectRatio(true);
+            config.setShowsCursor(true);
+            config.setCapturesAudio(captures_system_audio);
+            if captures_system_audio {
+                config.setSampleRate(48_000);
+                config.setChannelCount(2);
+            }
+            config.setMinimumFrameInterval(CMTime::new(1, 30));
+        }
+
+        let audio_config = AudioConfig {
+            system: captures_system_audio,
+            mic: captures_mic_audio,
+        };
+        let writer = AssetWriter::new(path, format, width, height, audio_config)?;
+        let capture_state = Rc::new(CaptureState::new(writer));
+        let mtm = MainThreadMarker::new()
+            .ok_or_else(|| CliError::runtime("screen recording must run on the main thread"))?;
+        let output = StreamOutput::new(capture_state.clone(), mtm);
+        let output_proto = ProtocolObject::from_ref(&*output);
+
+        let stream = unsafe {
+            SCStream::initWithFilter_configuration_delegate(
+                SCStream::alloc(),
+                &filter,
+                &config,
+                None,
+            )
+        };
+
+        unsafe {
+            stream
+                .addStreamOutput_type_sampleHandlerQueue_error(
+                    output_proto,
+                    SCStreamOutputType::Screen,
+                    Some(DispatchQueue::main()),
+                )
+                .map_err(|err| ns_error_to_cli("failed to add stream output", &err))?;
+        }
+        if captures_system_audio {
+            unsafe {
+                stream
+                    .addStreamOutput_type_sampleHandlerQueue_error(
+                        output_proto,
+                        SCStreamOutputType::Audio,
+                        Some(DispatchQueue::main()),
+                    )
+                    .map_err(|err| ns_error_to_cli("failed to add audio output", &err))?;
+            }
+        }
+
+        start_capture(&stream)?;
+        let mic_capture = if captures_mic_audio {
+            Some(MicCapture::start(capture_state.clone())?)
+        } else {
+            None
+        };
+
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        let stop_handle = stop_flag.clone();
+        ctrlc::set_handler(move || {
+            stop_handle.store(true, Ordering::SeqCst);
+        })
+        .map_err(|err| CliError::runtime(format!("failed to set Ctrl-C handler: {err}")))?;
+
+        run_capture_loop(Duration::from_secs(duration), &stop_flag);
+
+        stop_capture(&stream)?;
+        if let Some(mic_capture) = mic_capture.as_ref() {
+            mic_capture.stop();
+        }
+
+        let captured_error = output.take_error();
+        let finish_result = output.finish();
+        if let Some(err) = captured_error {
+            return Err(err);
+        }
+        finish_result?;
+
+        Ok(())
+    })
+}
+
+pub fn record_main_display(
+    duration: u64,
+    audio: AudioMode,
+    path: &Path,
+    format: ContainerFormat,
+) -> Result<(), CliError> {
+    let display_id = CGMainDisplayID();
+    record_display(display_id, duration, audio, path, format)
+}
+
+pub fn record_display(
+    display_id: u32,
+    duration: u64,
+    audio: AudioMode,
+    path: &Path,
+    format: ContainerFormat,
+) -> Result<(), CliError> {
+    autoreleasepool(|_| {
+        let shareable = fetch_shareable_content()?;
+        let sc_display = find_display(&shareable, display_id)?;
+        let captures_system_audio = matches!(audio, AudioMode::System | AudioMode::Both);
+        let captures_mic_audio = matches!(audio, AudioMode::Mic | AudioMode::Both);
+
+        let excluded: Retained<NSArray<SCWindow>> = NSArray::init(NSArray::alloc());
+        let filter = unsafe {
+            SCContentFilter::initWithDisplay_excludingWindows(
+                SCContentFilter::alloc(),
+                &sc_display,
+                &excluded,
+            )
+        };
+        unsafe {
+            filter.setIncludeMenuBar(true);
+        }
+
+        let (width, height) = display_capture_dimensions(&filter)?;
 
         let config = unsafe { SCStreamConfiguration::new() };
         unsafe {
@@ -508,6 +634,24 @@ fn find_window(
     )))
 }
 
+fn find_display(
+    content: &SCShareableContent,
+    display_id: u32,
+) -> Result<Retained<objc2_screen_capture_kit::SCDisplay>, CliError> {
+    let displays = unsafe { content.displays() };
+    let count = displays.count();
+    for idx in 0..count {
+        let display = displays.objectAtIndex(idx);
+        let id = unsafe { display.displayID() };
+        if id == display_id {
+            return Ok(display);
+        }
+    }
+    Err(CliError::runtime(format!(
+        "display id {display_id} is not available for capture"
+    )))
+}
+
 fn window_capture_dimensions(
     window: &SCWindow,
     filter: &SCContentFilter,
@@ -518,6 +662,17 @@ fn window_capture_dimensions(
     let height = (frame.size.height * scale).round();
     if width <= 0.0 || height <= 0.0 {
         return Err(CliError::runtime("invalid window bounds"));
+    }
+    Ok((width as i32, height as i32))
+}
+
+fn display_capture_dimensions(filter: &SCContentFilter) -> Result<(i32, i32), CliError> {
+    let rect = unsafe { filter.contentRect() };
+    let scale = unsafe { filter.pointPixelScale() } as f64;
+    let width = (rect.size.width * scale).round();
+    let height = (rect.size.height * scale).round();
+    if width <= 0.0 || height <= 0.0 {
+        return Err(CliError::runtime("invalid display bounds"));
     }
     Ok((width as i32, height as i32))
 }

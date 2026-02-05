@@ -44,6 +44,20 @@ fn list_apps_outputs_fixture() {
 }
 
 #[test]
+fn list_displays_outputs_fixture() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let output = harness.run(cwd.path(), &["--list-displays"]);
+
+    assert_eq!(output.code, 0, "stderr: {}", output.stderr_text());
+    let stdout = output.stdout_text();
+    let mut lines: Vec<&str> = stdout.trim().split('\n').collect();
+    lines.retain(|line| !line.is_empty());
+
+    assert_eq!(lines, vec!["1\t1440\t900"]);
+}
+
+#[test]
 fn record_mov_fixture_writes_file() {
     let harness = common::ScreenRecordHarness::new();
     let cwd = TempDir::new().expect("tempdir");
@@ -54,6 +68,59 @@ fn record_mov_fixture_writes_file() {
         &[
             "--app",
             "Terminal",
+            "--duration",
+            "1",
+            "--audio",
+            "off",
+            "--path",
+            output_path.to_str().unwrap(),
+        ],
+    );
+
+    assert_eq!(output.code, 0, "stderr: {}", output.stderr_text());
+    let stdout = output.stdout_text();
+    assert_eq!(stdout.trim(), output_path.display().to_string());
+    let metadata = std::fs::metadata(&output_path).expect("output exists");
+    assert!(metadata.len() > 0);
+}
+
+#[test]
+fn record_main_display_fixture_writes_file() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let output_path = cwd.path().join("display.mov");
+
+    let output = harness.run(
+        cwd.path(),
+        &[
+            "--display",
+            "--duration",
+            "1",
+            "--audio",
+            "off",
+            "--path",
+            output_path.to_str().unwrap(),
+        ],
+    );
+
+    assert_eq!(output.code, 0, "stderr: {}", output.stderr_text());
+    let stdout = output.stdout_text();
+    assert_eq!(stdout.trim(), output_path.display().to_string());
+    let metadata = std::fs::metadata(&output_path).expect("output exists");
+    assert!(metadata.len() > 0);
+}
+
+#[test]
+fn record_display_id_fixture_writes_file() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let output_path = cwd.path().join("display-1.mov");
+
+    let output = harness.run(
+        cwd.path(),
+        &[
+            "--display-id",
+            "1",
             "--duration",
             "1",
             "--audio",
@@ -245,4 +312,133 @@ fn list_mode_rejects_screenshot_flags() {
     assert!(output
         .stderr_text()
         .contains("screenshot flags require --screenshot"));
+}
+
+#[test]
+fn multiple_modes_error() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+
+    let output = harness.run(cwd.path(), &["--list-windows", "--list-apps"]);
+
+    assert_eq!(output.code, 2);
+    assert!(output.stderr_text().contains("select exactly one mode"));
+}
+
+#[test]
+fn record_requires_selector() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+
+    let output = harness.run(
+        cwd.path(),
+        &["--duration", "1", "--audio", "off", "--path", "out.mov"],
+    );
+
+    assert_eq!(output.code, 2);
+    assert!(output
+        .stderr_text()
+        .contains("recording requires exactly one selector"));
+}
+
+#[test]
+fn screenshot_rejects_display_selector() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+
+    let output = harness.run(cwd.path(), &["--screenshot", "--display"]);
+
+    assert_eq!(output.code, 2);
+    assert!(output
+        .stderr_text()
+        .contains("display selectors are not valid with --screenshot"));
+}
+
+#[test]
+fn screenshot_requires_selector() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+
+    let output = harness.run(cwd.path(), &["--screenshot"]);
+
+    assert_eq!(output.code, 2);
+    assert!(output
+        .stderr_text()
+        .contains("screenshot requires exactly one selector"));
+}
+
+#[test]
+fn screenshot_rejects_audio_flag() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+
+    let output = harness.run(
+        cwd.path(),
+        &["--screenshot", "--app", "Terminal", "--audio", "system"],
+    );
+
+    assert_eq!(output.code, 2);
+    assert!(output
+        .stderr_text()
+        .contains("--audio is not valid with --screenshot"));
+}
+
+#[test]
+fn screenshot_path_and_dir_conflict_errors() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+
+    let output = harness.run(
+        cwd.path(),
+        &[
+            "--screenshot",
+            "--app",
+            "Terminal",
+            "--path",
+            "out.png",
+            "--dir",
+            "screens",
+        ],
+    );
+
+    assert_eq!(output.code, 2);
+    assert!(output.stderr_text().contains("use either --path or --dir"));
+}
+
+#[test]
+fn screenshot_path_is_dir_errors() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let dir_path = cwd.path().join("out.png");
+    std::fs::create_dir_all(&dir_path).expect("dir");
+
+    let output = harness.run(
+        cwd.path(),
+        &[
+            "--screenshot",
+            "--app",
+            "Terminal",
+            "--path",
+            dir_path.to_str().unwrap(),
+        ],
+    );
+
+    assert_eq!(output.code, 2);
+    assert!(output.stderr_text().contains("--path must be a file path"));
+}
+
+#[test]
+fn screenshot_unsupported_extension_errors() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+
+    let output = harness.run(
+        cwd.path(),
+        &["--screenshot", "--app", "Terminal", "--path", "out.tiff"],
+    );
+
+    assert_eq!(output.code, 2);
+    assert!(output
+        .stderr_text()
+        .contains("unsupported --path extension for screenshot"));
 }

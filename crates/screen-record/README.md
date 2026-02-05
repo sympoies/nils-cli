@@ -1,9 +1,9 @@
 # screen-record
 
 ## Overview
-screen-record is a macOS 12+ CLI that records a single window to a video file using ScreenCaptureKit
-and AVFoundation. It also exposes parseable window/app lists to make selection deterministic in
-scripts.
+screen-record is a macOS 12+ CLI that records a single window (or a full display) to a video file
+using ScreenCaptureKit and AVFoundation. It also exposes parseable window/app/display lists to make
+selection deterministic in scripts.
 
 ## Usage
 ```text
@@ -15,11 +15,14 @@ screen-record [options]
 | --- | --- | --- | --- |
 | `--screenshot` | (none) | (none) | Capture a single window screenshot and exit. |
 | `--list-windows` | (none) | (none) | Print selectable windows as TSV and exit. |
+| `--list-displays` | (none) | (none) | Print selectable displays as TSV and exit. |
 | `--list-apps` | (none) | (none) | Print selectable apps as TSV and exit. |
 | `--window-id` | `<id>` | (none) | Record a specific window id. |
 | `--app` | `<name>` | (none) | Select a window by app/owner name (case-insensitive substring). |
 | `--window-name` | `<name>` | (none) | Narrow `--app` selection by window title substring. |
 | `--active-window` | (none) | (none) | Record the frontmost window on the current Space. |
+| `--display` | (none) | (none) | Record the main display. |
+| `--display-id` | `<id>` | (none) | Record a specific display id. |
 | `--duration` | `<seconds>` | (required for recording) | Record for N seconds. |
 | `--audio` | `off\|system\|mic\|both` | `off` | Control audio capture. `both` requires `.mov`. |
 | `--path` | `<path>` | (required for recording) | Output file path. Required for recording; optional for `--screenshot`. |
@@ -32,9 +35,10 @@ screen-record [options]
 | `-V, --version` | (none) | (none) | Show version. |
 
 ## Mode rules
-- Exactly one mode must be selected: `--list-windows`, `--list-apps`, `--preflight`,
-  `--request-permission`, `--screenshot`, or recording.
-- Recording mode requires exactly one selector: `--window-id`, `--active-window`, or `--app`.
+- Exactly one mode must be selected: `--list-windows`, `--list-displays`, `--list-apps`,
+  `--preflight`, `--request-permission`, `--screenshot`, or recording.
+- Recording mode requires exactly one selector: `--window-id`, `--active-window`, `--app`,
+  `--display`, or `--display-id`.
 - Screenshot mode requires exactly one selector: `--window-id`, `--active-window`, or `--app`.
 - `--window-name` is only valid together with `--app`.
 - `--duration` is required for recording mode.
@@ -70,11 +74,20 @@ Sorting: by `owner_name`, then `window_title`, then `window_id`.
 
 Sorting: by `app_name`, then `pid`.
 
+### `--list-displays` column order
+1. `display_id` (decimal)
+2. `width` (points)
+3. `height` (points)
+
+Sorting: by `display_id`.
+
 ## Selection rules
 - `--window-id <id>` selects exactly that window id.
 - `--active-window` selects the single frontmost window on the current Space.
 - `--app <name>` matches windows by owner/app name substring (case-insensitive).
 - `--window-name <name>` further filters by title substring (case-insensitive).
+- `--display` selects the main display (the one macOS considers primary).
+- `--display-id <id>` selects exactly that display id.
 - If multiple windows remain after filtering, and no single frontmost window can be chosen,
   selection is ambiguous and the CLI exits 2 with candidate output.
 
@@ -150,6 +163,21 @@ screen-record --window-id 4811 --duration 5 --audio off --path "./recordings/win
 Record for a short duration:
 ```bash
 screen-record --active-window --duration 2 --audio off --path "./recordings/active.mov"
+```
+
+Record the main display:
+```bash
+screen-record --display --duration 2 --audio off --path "./recordings/display.mov"
+```
+
+List displays:
+```bash
+screen-record --list-displays
+```
+
+Record a specific display id:
+```bash
+screen-record --display-id 1 --duration 2 --audio off --path "./recordings/display-1.mov"
 ```
 
 Record with system audio:
