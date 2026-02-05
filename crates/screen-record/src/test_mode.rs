@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::cli::ContainerFormat;
+use crate::cli::{ContainerFormat, ImageFormat};
 use crate::error::CliError;
 use crate::types::{AppInfo, Rect, ShareableContent, WindowInfo};
 
@@ -97,6 +97,25 @@ pub fn record_fixture(path: &Path, format: ContainerFormat) -> Result<(), CliErr
     Ok(())
 }
 
+pub fn screenshot_fixture(path: &Path, format: ImageFormat) -> Result<(), CliError> {
+    let source = screenshot_fixture_path(format);
+    if !source.exists() {
+        return Err(CliError::runtime(format!(
+            "fixture not found: {}",
+            source.display()
+        )));
+    }
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| CliError::runtime(format!("failed to create output dir: {err}")))?;
+    }
+
+    std::fs::copy(&source, path)
+        .map_err(|err| CliError::runtime(format!("failed to write output: {err}")))?;
+    Ok(())
+}
+
 pub struct TestWriter {
     path: PathBuf,
     format: ContainerFormat,
@@ -129,6 +148,18 @@ fn fixture_path(format: ContainerFormat) -> PathBuf {
     let filename = match format {
         ContainerFormat::Mov => "sample.mov",
         ContainerFormat::Mp4 => "sample.mp4",
+    };
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join(filename)
+}
+
+fn screenshot_fixture_path(format: ImageFormat) -> PathBuf {
+    let filename = match format {
+        ImageFormat::Png => "sample.png",
+        ImageFormat::Jpg => "sample.jpg",
+        ImageFormat::Webp => "sample.webp",
     };
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")

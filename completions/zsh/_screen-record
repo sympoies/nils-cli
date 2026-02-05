@@ -4,6 +4,7 @@ _screen-record() {
   emulate -L zsh -o extendedglob
 
   _arguments -C \
+    '--screenshot[Capture a single window screenshot and exit]' \
     '--list-windows[Print selectable windows as TSV and exit]' \
     '--list-apps[Print selectable apps as TSV and exit]' \
     '--preflight[Check Screen Recording permission and exit]' \
@@ -16,6 +17,8 @@ _screen-record() {
     '--audio=[Audio capture mode]:audio:(off system mic both)' \
     '--path=[Output file path]:path:_files' \
     '--format=[Container format]:format:(mov mp4)' \
+    '--image-format=[Screenshot output format]:format:(png jpg webp)' \
+    '--dir=[Output directory for screenshot mode]:path:_files -/' \
     '(-h --help)'{-h,--help}'[Show help]' \
     '(-V --version)'{-V,--version}'[Show version]' \
     && return 0

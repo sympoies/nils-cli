@@ -35,6 +35,7 @@ impl ScreenRecordHarness {
             .with_env("HOME", &home)
             .with_env("CODEX_HOME", &codex_home)
             .with_env("CODEX_SCREEN_RECORD_TEST_MODE", "1")
+            .with_env("CODEX_SCREEN_RECORD_TEST_TIMESTAMP", "20260101-000000")
     }
 
     pub fn run(&self, cwd: &Path, args: &[&str]) -> CmdOutput {
