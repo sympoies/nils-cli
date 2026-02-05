@@ -11,3 +11,8 @@ let greeting = nils_common::greeting("Nils");
 assert_eq!(greeting, "Hello, Nils!");
 ```
 
+## Process helpers
+```rust
+let git = nils_common::process::find_in_path("git");
+assert!(git.is_some());
+```

@@ -1,4 +1,3 @@
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::ptr::NonNull;
@@ -8,6 +7,8 @@ use std::time::{Duration, Instant};
 
 use block2::RcBlock;
 use dispatch2::DispatchQueue;
+use nils_common::fs::replace_file;
+use nils_common::process::find_in_path;
 use objc2::rc::{autoreleasepool, Allocated, Retained};
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly};
@@ -517,7 +518,8 @@ fn write_via_imageio(frame: &RgbaFrame, path: &Path, format: ImageFormat) -> Res
 
     encode_imageio_to_path(frame, &tmp, format)?;
 
-    rename_overwrite(&tmp, path)
+    replace_file(&tmp, path)
+        .map_err(|err| CliError::runtime(format!("failed to write output: {err}")))
 }
 
 fn encode_imageio_to_path(
@@ -644,23 +646,8 @@ fn write_webp_via_cwebp(frame: &RgbaFrame, path: &Path) -> Result<(), CliError> 
         )));
     }
 
-    rename_overwrite(&tmp_webp, path)
-}
-
-fn rename_overwrite(from: &Path, to: &Path) -> Result<(), CliError> {
-    match std::fs::rename(from, to) {
-        Ok(()) => Ok(()),
-        Err(err) => {
-            // On some platforms, rename may fail if the destination exists.
-            if to.exists() {
-                let _ = std::fs::remove_file(to);
-            }
-            std::fs::rename(from, to).map_err(|err2| {
-                CliError::runtime(format!("failed to write output: {err} ({err2})"))
-            })?;
-            Ok(())
-        }
-    }
+    replace_file(&tmp_webp, path)
+        .map_err(|err| CliError::runtime(format!("failed to write output: {err}")))
 }
 
 struct TempFileGuard {
@@ -699,39 +686,4 @@ fn temp_path_for_target_with_suffix(target: &Path, suffix: &str) -> Result<PathB
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     Ok(parent.join(format!(".{name}.{suffix}-{pid}-{nanos}")))
-}
-
-fn find_in_path(program: &str) -> Option<PathBuf> {
-    if program.contains(std::path::MAIN_SEPARATOR) {
-        let p = PathBuf::from(program);
-        return if is_executable(&p) { Some(p) } else { None };
-    }
-
-    let path_var: OsString = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path_var) {
-        let candidate = dir.join(program);
-        if is_executable(&candidate) {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
-fn is_executable(path: &Path) -> bool {
-    let meta = match std::fs::metadata(path) {
-        Ok(m) => m,
-        Err(_) => return false,
-    };
-    if !meta.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        meta.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
 }

@@ -177,7 +177,7 @@ pub fn atomic_replace(tmp: &Path, final_path: &Path, dry_run: bool) -> anyhow::R
     if dry_run {
         return Ok(());
     }
-    std::fs::rename(tmp, final_path)?;
+    nils_common::fs::replace_file(tmp, final_path)?;
     Ok(())
 }
 
