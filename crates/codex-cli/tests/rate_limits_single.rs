@@ -60,3 +60,25 @@ fn rate_limits_single_cached_missing_cache() {
     assert_exit(&output, 1);
     assert!(stderr(&output).contains("cache not found"));
 }
+
+#[test]
+fn rate_limits_single_cached_json_conflict() {
+    let output = run(
+        &["diag", "rate-limits", "--cached", "--json"],
+        &[],
+        &[("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false")],
+    );
+    assert_exit(&output, 64);
+    assert!(stderr(&output).contains("--json is not supported with --cached"));
+}
+
+#[test]
+fn rate_limits_single_cached_clear_cache_conflict() {
+    let output = run(
+        &["diag", "rate-limits", "--cached", "-c"],
+        &[],
+        &[("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false")],
+    );
+    assert_exit(&output, 64);
+    assert!(stderr(&output).contains("-c is not compatible with --cached"));
+}

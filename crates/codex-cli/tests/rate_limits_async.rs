@@ -73,3 +73,23 @@ fn rate_limits_async_missing_secret_dir() {
     assert_exit(&output, 1);
     assert!(stderr(&output).contains("CODEX_SECRET_DIR not found"));
 }
+
+#[test]
+fn rate_limits_async_rejects_positional_secret_arg() {
+    let output = run(&["diag", "rate-limits", "--async", "alpha.json"], &[], &[]);
+    assert_exit(&output, 64);
+    let err = stderr(&output);
+    assert!(err.contains("--async does not accept positional args: alpha.json"));
+    assert!(err.contains("hint: async always queries all secrets under CODEX_SECRET_DIR"));
+}
+
+#[test]
+fn rate_limits_async_rejects_cached_clear_cache_combo() {
+    let output = run(
+        &["diag", "rate-limits", "--async", "--cached", "-c"],
+        &[],
+        &[],
+    );
+    assert_exit(&output, 64);
+    assert!(stderr(&output).contains("--async: -c is not compatible with --cached"));
+}

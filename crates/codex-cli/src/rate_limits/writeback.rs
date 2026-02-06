@@ -96,3 +96,163 @@ fn epoch_to_iso(epoch: i64) -> Result<String> {
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{epoch_to_iso, write_weekly};
+    use serde_json::{json, Value};
+    use std::fs;
+    use std::path::Path;
+
+    fn write_json(path: &Path, value: &Value) {
+        let bytes = serde_json::to_vec(value).expect("serialize");
+        fs::write(path, bytes).expect("write json");
+    }
+
+    fn read_json(path: &Path) -> Value {
+        let bytes = fs::read(path).expect("read json");
+        serde_json::from_slice(&bytes).expect("parse json")
+    }
+
+    #[test]
+    fn write_weekly_uses_primary_window_when_primary_is_weekly() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let target = dir.path().join("alpha.json");
+        write_json(&target, &json!({ "tokens": { "access_token": "tok" } }));
+
+        let usage = json!({
+            "rate_limit": {
+                "primary_window": {
+                    "limit_window_seconds": 604800,
+                    "used_percent": 12.0,
+                    "reset_at": 1700700000
+                },
+                "secondary_window": {
+                    "limit_window_seconds": 18000,
+                    "used_percent": 6.0,
+                    "reset_at": 1700003600
+                }
+            }
+        });
+
+        write_weekly(&target, &usage).expect("write weekly");
+        let written = read_json(&target);
+        let limits = &written["codex_rate_limits"];
+
+        assert_eq!(limits["weekly_reset_at_epoch"].as_i64(), Some(1700700000));
+        assert_eq!(
+            limits["weekly_reset_at"].as_str(),
+            Some(epoch_to_iso(1700700000).expect("weekly iso").as_str())
+        );
+        assert_eq!(
+            limits["non_weekly_reset_at_epoch"].as_i64(),
+            Some(1700003600)
+        );
+        assert_eq!(
+            limits["non_weekly_reset_at"].as_str(),
+            Some(epoch_to_iso(1700003600).expect("non-weekly iso").as_str())
+        );
+        assert!(limits["weekly_fetched_at"].as_str().is_some());
+    }
+
+    #[test]
+    fn write_weekly_preserves_existing_codex_rate_limits_fields() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let target = dir.path().join("alpha.json");
+        write_json(
+            &target,
+            &json!({
+                "tokens": { "access_token": "tok" },
+                "codex_rate_limits": {
+                    "source": "legacy-metadata",
+                    "weekly_reset_at_epoch": 111
+                }
+            }),
+        );
+
+        let usage = json!({
+            "rate_limit": {
+                "primary_window": {
+                    "limit_window_seconds": 18000,
+                    "used_percent": 6.0,
+                    "reset_at": 1700003600
+                },
+                "secondary_window": {
+                    "limit_window_seconds": 604800,
+                    "used_percent": 12.0,
+                    "reset_at": 1700600000
+                }
+            }
+        });
+
+        write_weekly(&target, &usage).expect("write weekly");
+        let written = read_json(&target);
+        let limits = &written["codex_rate_limits"];
+
+        assert_eq!(limits["source"].as_str(), Some("legacy-metadata"));
+        assert_eq!(limits["weekly_reset_at_epoch"].as_i64(), Some(1700600000));
+        assert_eq!(
+            limits["non_weekly_reset_at_epoch"].as_i64(),
+            Some(1700003600)
+        );
+    }
+
+    #[test]
+    fn write_weekly_skips_write_when_weekly_epoch_is_non_positive() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let target = dir.path().join("alpha.json");
+        write_json(
+            &target,
+            &json!({
+                "tokens": { "access_token": "tok" },
+                "codex_rate_limits": {
+                    "weekly_reset_at_epoch": 111,
+                    "weekly_reset_at": "legacy"
+                }
+            }),
+        );
+        let before = read_json(&target);
+
+        let usage = json!({
+            "rate_limit": {
+                "primary_window": {
+                    "limit_window_seconds": 18000,
+                    "used_percent": 6.0,
+                    "reset_at": 1700003600
+                },
+                "secondary_window": {
+                    "limit_window_seconds": 604800,
+                    "used_percent": 12.0,
+                    "reset_at": 0
+                }
+            }
+        });
+
+        write_weekly(&target, &usage).expect("write weekly");
+        let after = read_json(&target);
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn write_weekly_fails_when_target_file_is_missing() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let target = dir.path().join("missing.json");
+        let usage = json!({
+            "rate_limit": {
+                "primary_window": {
+                    "limit_window_seconds": 18000,
+                    "used_percent": 6.0,
+                    "reset_at": 1700003600
+                },
+                "secondary_window": {
+                    "limit_window_seconds": 604800,
+                    "used_percent": 12.0,
+                    "reset_at": 1700600000
+                }
+            }
+        });
+
+        let err = write_weekly(&target, &usage).expect_err("missing target must fail");
+        assert!(err.to_string().contains("target file not found"));
+    }
+}

@@ -44,3 +44,10 @@ fn rate_limits_all_json_conflict() {
     assert_exit(&output, 64);
     assert!(stderr(&output).contains("--json is not supported with --all"));
 }
+
+#[test]
+fn rate_limits_all_rejects_positional_secret_arg() {
+    let output = run(&["diag", "rate-limits", "--all", "alpha.json"], &[]);
+    assert_exit(&output, 64);
+    assert!(stderr(&output).contains("usage: codex-rate-limits"));
+}
