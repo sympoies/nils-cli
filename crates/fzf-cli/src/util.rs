@@ -130,3 +130,101 @@ pub fn zsh_cache_dir() -> Result<PathBuf> {
     }
     Ok(zsh_root()?.join("cache"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir};
+    use pretty_assertions::assert_eq;
+    use tempfile::TempDir;
+
+    #[test]
+    fn env_is_true_accepts_known_truthy_values() {
+        let lock = GlobalStateLock::new();
+        for value in ["1", " true ", "YES", "y", "On"] {
+            let _guard = EnvGuard::set(&lock, "FZF_CLI_TEST_BOOL", value);
+            assert!(
+                env_is_true("FZF_CLI_TEST_BOOL"),
+                "expected truthy value: {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn env_is_true_rejects_missing_and_unknown_values() {
+        let lock = GlobalStateLock::new();
+        let _unset = EnvGuard::remove(&lock, "FZF_CLI_TEST_BOOL");
+        assert!(!env_is_true("FZF_CLI_TEST_BOOL"));
+
+        for value in ["", "0", "false", "no", "off", "2", " maybe "] {
+            let _guard = EnvGuard::set(&lock, "FZF_CLI_TEST_BOOL", value);
+            assert!(
+                !env_is_true("FZF_CLI_TEST_BOOL"),
+                "expected falsey value: {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn strip_ansi_removes_csi_sequences() {
+        let input = "\x1b[31mred\x1b[0m plain \x1b[38;5;110mblue\x1b[0m";
+        assert_eq!(strip_ansi(input), "red plain blue");
+    }
+
+    #[test]
+    fn shell_escape_single_quotes_matches_current_behavior() {
+        assert_eq!(shell_escape_single_quotes(""), "''");
+        assert_eq!(shell_escape_single_quotes("plain"), "'plain'");
+        assert_eq!(shell_escape_single_quotes("a'b"), "'a'\\''b'");
+        assert_eq!(
+            shell_escape_single_quotes("'start and end'"),
+            "''\\''start and end'\\'''"
+        );
+    }
+
+    #[test]
+    fn git_repo_probe_semantics_success_and_failure_are_stable() {
+        fn probe() -> bool {
+            run_output("git", &["rev-parse", "--is-inside-work-tree"])
+                .map(|output| output.status.success())
+                .unwrap_or(false)
+        }
+
+        let lock = GlobalStateLock::new();
+
+        let success_stubs = StubBinDir::new();
+        success_stubs.write_exe(
+            "git",
+            r#"#!/bin/bash
+set -euo pipefail
+if [[ "${1:-}" == "rev-parse" && "${2:-}" == "--is-inside-work-tree" ]]; then
+  exit 0
+fi
+exit 1
+"#,
+        );
+        let _path_success = EnvGuard::set(&lock, "PATH", &success_stubs.path_str());
+        assert!(probe());
+        drop(_path_success);
+
+        let fail_stubs = StubBinDir::new();
+        fail_stubs.write_exe(
+            "git",
+            r#"#!/bin/bash
+set -euo pipefail
+if [[ "${1:-}" == "rev-parse" && "${2:-}" == "--is-inside-work-tree" ]]; then
+  exit 128
+fi
+exit 1
+"#,
+        );
+        let _path_fail = EnvGuard::set(&lock, "PATH", &fail_stubs.path_str());
+        assert!(!probe());
+        drop(_path_fail);
+
+        let empty = TempDir::new().expect("tempdir");
+        let empty_path = empty.path().to_string_lossy().to_string();
+        let _path_missing = EnvGuard::set(&lock, "PATH", &empty_path);
+        assert!(!probe());
+    }
+}
