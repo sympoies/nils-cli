@@ -66,21 +66,49 @@ These are repository scripts (not third-party packages):
   - `scripts/ci/coverage-summary.sh`
   - `scripts/ci/coverage-badge.sh`
 
-## 5. Recommended Install Profiles
+## 5. `agent-docs` integration for `project-dev`
 
-### 5.1 Base contributor profile
+Use `agent-docs add` to register this file as a required project-level document for
+`project-dev` resolution.
+
+```bash
+cargo run -p agent-docs -- add \
+  --target project \
+  --context project-dev \
+  --scope project \
+  --path BINARY_DEPENDENCIES.md \
+  --required \
+  --when always \
+  --notes "External runtime tools required by the repo"
+```
+
+Expected stdout format:
+
+```text
+add: target=project action=<inserted|updated> config=<PROJECT_PATH>/AGENT_DOCS.toml entries=<N>
+```
+
+Verify resolution includes this document:
+
+```bash
+cargo run -p agent-docs -- resolve --context project-dev --format text | rg "BINARY_DEPENDENCIES\\.md"
+```
+
+## 6. Recommended Install Profiles
+
+### 6.1 Base contributor profile
 
 ```bash
 brew install git gh fzf tree imagemagick webp jpeg-turbo ffmpeg bat zsh python bash-completion rustup-init
 ```
 
-### 5.2 Linux extra profile (audio/clipboard/network ergonomics)
+### 6.2 Linux extra profile (audio/clipboard/network ergonomics)
 
 ```bash
 brew install lsof wl-clipboard xclip xsel pulseaudio
 ```
 
-## 6. Linuxbrew Bootstrap (if `brew` is not installed)
+## 7. Linuxbrew Bootstrap (if `brew` is not installed)
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -92,7 +120,7 @@ After installation, initialize Linuxbrew in shell startup (example):
 eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 ```
 
-## 7. Quick Environment Verification
+## 8. Quick Environment Verification
 
 ```bash
 for c in git gh fzf mktemp tree file magick ffmpeg bat; do

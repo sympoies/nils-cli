@@ -1,0 +1,442 @@
+# agent-docs
+
+## Overview
+
+`agent-docs` is a deterministic policy-document discovery CLI for Codex/agent workflows.
+
+It resolves required Markdown documents by context and scope, with explicit precedence rules for:
+
+- startup policy files (`AGENTS.override.md` > `AGENTS.md`)
+- home vs project extension config (`AGENT_DOCS.toml`)
+- strict vs non-strict missing-doc behavior
+
+The CLI does not replace runtime `AGENTS.md` loading. It provides a testable resolution contract.
+
+## Non-goals
+
+- Replacing or bypassing how any runtime natively loads `AGENTS.md`.
+- Auto-editing arbitrary existing policy files in-place.
+- Discovering non-markdown policy files without explicit `AGENT_DOCS.toml` entries.
+- Remote policy sync or network-backed policy lookups.
+
+## Path Resolution Precedence
+
+Path resolution is deterministic and applies to all commands.
+
+### `CODEX_HOME`
+
+1. `--codex-home <path>` (command flag)
+2. `CODEX_HOME` environment variable
+3. `$HOME/.codex`
+
+### `PROJECT_PATH`
+
+1. `--project-path <path>` (command flag)
+2. `PROJECT_PATH` environment variable
+3. `git rev-parse --show-toplevel` from current working directory
+4. current working directory
+
+### Normalization Rules
+
+- Paths are normalized lexically (`.` removed, duplicate separators collapsed).
+- Relative document paths in `AGENT_DOCS.toml` are resolved from their declared `scope` root.
+- Absolute document paths are kept absolute and ignore scope root joining.
+
+## Scope and Context Model
+
+### Scopes
+
+- `home`: rooted at effective `CODEX_HOME`
+- `project`: rooted at effective `PROJECT_PATH`
+
+### Built-in contexts
+
+- `startup`
+- `skill-dev`
+- `task-tools`
+- `project-dev`
+
+### Built-in required docs by context
+
+| Context | Scope | Required document contract | Required |
+| --- | --- | --- | --- |
+| `startup` | `home` | Use `AGENTS.override.md` when present; else `AGENTS.md` | `true` |
+| `startup` | `project` | Use `AGENTS.override.md` when present; else `AGENTS.md` | `true` |
+| `skill-dev` | `home` | `DEVELOPMENT.md` | `true` |
+| `task-tools` | `home` | `CLI_TOOLS.md` | `true` |
+| `project-dev` | `project` | `DEVELOPMENT.md` | `true` |
+
+`AGENTS.override.md` precedence is evaluated per scope independently.
+
+## Command Surface
+
+```text
+Usage:
+  agent-docs <command> [options]
+
+Commands:
+  resolve            Resolve required docs for a context
+  contexts           List supported contexts
+  add                Upsert one AGENT_DOCS.toml entry
+  scaffold-agents    Scaffold default AGENTS.md template
+  baseline           Check baseline doc coverage
+  scaffold-baseline  Scaffold missing baseline docs
+```
+
+Use `agent-docs --help` (or `agent-docs <command> --help`) for CLI help text.
+
+## Commands and Flags
+
+### `contexts`
+
+Print supported context names.
+
+Flags:
+
+- `--format text|json` (default: `text`)
+- `--codex-home <path>`
+- `--project-path <path>`
+
+### `resolve`
+
+Resolve effective required/optional docs for one context.
+
+Flags:
+
+- `--context startup|skill-dev|task-tools|project-dev` (required)
+- `--format text|json` (default: `text`)
+- `--strict` (missing required docs become exit code `1`)
+- `--codex-home <path>`
+- `--project-path <path>`
+
+### `add`
+
+Create/update one `AGENT_DOCS.toml` entry in home or project scope.
+
+Flags:
+
+- `--target home|project` (required)
+- `--context startup|skill-dev|task-tools|project-dev` (required)
+- `--scope home|project` (required; target root for `path` resolution)
+- `--path <doc-path>` (required)
+- `--required` (set `required=true`; omitted means `required=false`)
+- `--when <condition>` (default: `always`)
+- `--notes <text>`
+- `--codex-home <path>`
+- `--project-path <path>`
+
+### Copy-pastable `resolve` + `add` flow
+
+```bash
+# 1) Resolve built-in project-dev requirements
+agent-docs resolve --context project-dev --format text
+
+# 2) Register BINARY_DEPENDENCIES.md as required for project-dev
+agent-docs add \
+  --target project \
+  --context project-dev \
+  --scope project \
+  --path BINARY_DEPENDENCIES.md \
+  --required \
+  --when always \
+  --notes "External runtime tools required by the repo"
+```
+
+`add` stdout shape:
+
+```text
+add: target=project action=<inserted|updated> config=<PROJECT_PATH>/AGENT_DOCS.toml entries=<N>
+```
+
+Verify both built-in and extension docs are present:
+
+```bash
+agent-docs resolve --context project-dev --format text | rg "DEVELOPMENT\\.md|BINARY_DEPENDENCIES\\.md"
+```
+
+### `scaffold-agents`
+
+Scaffold default `AGENTS.md` template.
+
+Flags:
+
+- `--target home|project` (required)
+- `--output <path>` (optional explicit output file path)
+- `--force` (overwrite when file exists)
+- `--codex-home <path>`
+- `--project-path <path>`
+
+Semantics:
+
+- Default output: `<target-root>/AGENTS.md`
+- Without `--force`, existing target file is not modified.
+
+### `baseline`
+
+Audit minimum baseline documents.
+
+Flags:
+
+- `--check` (required in Sprint contract)
+- `--target home|project|all` (default: `all`)
+- `--format text|json` (default: `text`)
+- `--strict` (missing required docs become exit code `1`)
+- `--codex-home <path>`
+- `--project-path <path>`
+
+### `scaffold-baseline`
+
+Scaffold baseline docs from deterministic templates/inputs.
+
+Flags:
+
+- `--target home|project|all` (default: `all`)
+- `--missing-only` (create only missing baseline docs)
+- `--force` (overwrite existing files)
+- `--dry-run` (print planned writes only)
+- `--format text|json` (default: `text`)
+- `--codex-home <path>`
+- `--project-path <path>`
+
+## Exit Codes
+
+- `0`: success (or non-strict missing-doc report)
+- `1`: strict policy failure (`--strict` and one or more required docs missing)
+- `2`: usage error (invalid flags, invalid command, missing required argument)
+- `3`: config/schema error (`AGENT_DOCS.toml` invalid)
+- `4`: runtime error (I/O failure, git probe failure not recoverable)
+
+## Strict Semantics
+
+### `resolve --strict`
+
+- Required docs are evaluated after built-ins + TOML merge.
+- If any required doc is missing on disk, command exits `1`.
+- Without `--strict`, missing required docs are reported but exit code remains `0`.
+
+### `baseline --strict`
+
+- Evaluates baseline required docs for selected target scope(s).
+- Missing required baseline docs cause exit `1` only when `--strict` is set.
+
+## Output Contract
+
+### `resolve` text example
+
+```text
+$ agent-docs resolve --context startup
+CONTEXT: startup
+CODEX_HOME: /Users/example/.codex
+PROJECT_PATH: /Users/example/work/nils-cli
+
+[required] startup home /Users/example/.codex/AGENTS.override.md source=builtin status=present why="startup home policy (AGENTS.override.md preferred over AGENTS.md)"
+[required] startup project /Users/example/work/nils-cli/AGENTS.md source=builtin-fallback status=present why="startup project policy (AGENTS.override.md missing, fallback AGENTS.md)"
+
+summary: required_total=2 present_required=2 missing_required=0 strict=false
+```
+
+### `resolve` JSON example
+
+```json
+{
+  "context": "startup",
+  "strict": false,
+  "codex_home": "/Users/example/.codex",
+  "project_path": "/Users/example/work/nils-cli",
+  "documents": [
+    {
+      "context": "startup",
+      "scope": "home",
+      "path": "/Users/example/.codex/AGENTS.override.md",
+      "required": true,
+      "status": "present",
+      "source": "builtin",
+      "why": "startup home policy (AGENTS.override.md preferred over AGENTS.md)"
+    },
+    {
+      "context": "startup",
+      "scope": "project",
+      "path": "/Users/example/work/nils-cli/AGENTS.md",
+      "required": true,
+      "status": "present",
+      "source": "builtin-fallback",
+      "why": "startup project policy (AGENTS.override.md missing, fallback AGENTS.md)"
+    }
+  ],
+  "summary": {
+    "required_total": 2,
+    "present_required": 2,
+    "missing_required": 0
+  }
+}
+```
+
+### `baseline --check` text example
+
+```text
+$ agent-docs baseline --check --target all
+BASELINE CHECK: all
+CODEX_HOME: /Users/example/.codex
+PROJECT_PATH: /Users/example/work/nils-cli
+
+[home] startup policy /Users/example/.codex/AGENTS.md required present source=builtin-fallback why="startup home policy (AGENTS.override.md missing, fallback AGENTS.md)"
+[home] skill-dev /Users/example/.codex/DEVELOPMENT.md required missing source=builtin why="skill development guidance from CODEX_HOME/DEVELOPMENT.md"
+[home] task-tools /Users/example/.codex/CLI_TOOLS.md required present source=builtin why="tool-selection guidance from CODEX_HOME/CLI_TOOLS.md"
+[project] startup policy /Users/example/work/nils-cli/AGENTS.md required present source=builtin-fallback why="startup project policy (AGENTS.override.md missing, fallback AGENTS.md)"
+[project] project-dev /Users/example/work/nils-cli/DEVELOPMENT.md required present source=builtin why="project development guidance from PROJECT_PATH/DEVELOPMENT.md"
+
+missing_required: 1
+missing_optional: 0
+suggested_actions:
+  - agent-docs scaffold-baseline --missing-only --target home
+```
+
+### `baseline --check` JSON example
+
+```json
+{
+  "target": "all",
+  "strict": false,
+  "codex_home": "/Users/example/.codex",
+  "project_path": "/Users/example/work/nils-cli",
+  "items": [
+    {
+      "scope": "home",
+      "context": "skill-dev",
+      "label": "skill-dev",
+      "path": "/Users/example/.codex/DEVELOPMENT.md",
+      "required": true,
+      "status": "missing",
+      "source": "builtin",
+      "why": "skill development guidance from CODEX_HOME/DEVELOPMENT.md"
+    }
+  ],
+  "missing_required": 1,
+  "missing_optional": 0,
+  "suggested_actions": [
+    "agent-docs scaffold-baseline --missing-only --target home"
+  ]
+}
+```
+
+## `AGENT_DOCS.toml` Schema
+
+Each scope may define `AGENT_DOCS.toml` at:
+
+- `$CODEX_HOME/AGENT_DOCS.toml`
+- `$PROJECT_PATH/AGENT_DOCS.toml`
+
+Schema uses repeated `[[document]]` tables.
+
+```toml
+[[document]]
+context = "project-dev"
+scope = "project"
+path = "BINARY_DEPENDENCIES.md"
+required = true
+when = "always"
+notes = "Track required external CLIs for this project"
+```
+
+### Field contract
+
+| Field | Type | Required | Rules |
+| --- | --- | --- | --- |
+| `context` | string | yes | One of: `startup`, `skill-dev`, `task-tools`, `project-dev` |
+| `scope` | string | yes | One of: `home`, `project` |
+| `path` | string | yes | Relative or absolute path to markdown doc |
+| `required` | bool | no | Default `false` |
+| `when` | string | no | Default `always`; supported values: `always` |
+| `notes` | string | no | Free text, default empty string |
+
+### Deterministic merge contract
+
+For `resolve --context <ctx>`:
+
+1. Start with built-in entries for `<ctx>`.
+2. Load entries from `$CODEX_HOME/AGENT_DOCS.toml` (if file exists).
+3. Load entries from `$PROJECT_PATH/AGENT_DOCS.toml` (if file exists).
+4. Filter entries by exact `context == <ctx>`.
+5. Normalize each entry path:
+   - absolute path: keep as-is
+   - relative path: join with root selected by entry `scope`
+6. De-dup with merge key: `(context, scope, normalized_path)`.
+7. Conflict resolution order:
+   - built-in keys are immutable and cannot be removed or downgraded.
+   - for non-built-in duplicates, later source wins (`project` config overrides `home` config).
+   - within one file, later table wins (last-write-wins).
+8. Final output order is stable:
+   - built-ins in built-in declaration order
+   - merged extension entries in load order after de-dup replacement
+
+This merge behavior is deterministic and test-friendly.
+
+### De-dup examples
+
+- Same key appears twice in `$PROJECT_PATH/AGENT_DOCS.toml`: second entry wins.
+- Same key appears in both home and project configs: project entry wins.
+- Key matches built-in required doc (for example project `DEVELOPMENT.md` in `project-dev`): built-in contract remains required and present in output.
+
+## Invalid Schema Behavior
+
+If any `AGENT_DOCS.toml` entry is invalid, command exits `3` and prints actionable error.
+
+### Error example: invalid context
+
+```text
+error[AGENT_DOCS_SCHEMA]: /Users/example/work/nils-cli/AGENT_DOCS.toml:4:11
+invalid value for `context`: "project"
+allowed: startup, skill-dev, task-tools, project-dev
+```
+
+### Error example: missing required field
+
+```text
+error[AGENT_DOCS_SCHEMA]: /Users/example/.codex/AGENT_DOCS.toml:1:1
+missing required key `path` in [[document]]
+```
+
+### Error example: unsupported `when`
+
+```text
+error[AGENT_DOCS_SCHEMA]: /Users/example/work/nils-cli/AGENT_DOCS.toml:7:8
+invalid value for `when`: "if-env:CI"
+allowed: always
+```
+
+## Explicit `BINARY_DEPENDENCIES.md` Support Example
+
+Add required `BINARY_DEPENDENCIES.md` for `project-dev` context.
+
+CLI command:
+
+```bash
+agent-docs add \
+  --target project \
+  --context project-dev \
+  --scope project \
+  --path BINARY_DEPENDENCIES.md \
+  --required \
+  --when always \
+  --notes "External runtime tools required by the repo"
+```
+
+Equivalent TOML entry:
+
+```toml
+[[document]]
+context = "project-dev"
+scope = "project"
+path = "BINARY_DEPENDENCIES.md"
+required = true
+when = "always"
+notes = "External runtime tools required by the repo"
+```
+
+`resolve --context project-dev` must include this document after merge, without removing built-in project `DEVELOPMENT.md`.
+
+Verification command:
+
+```bash
+agent-docs resolve --context project-dev --format text | rg "DEVELOPMENT\\.md|BINARY_DEPENDENCIES\\.md"
+```
