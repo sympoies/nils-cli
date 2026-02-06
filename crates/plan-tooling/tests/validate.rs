@@ -98,6 +98,21 @@ fn validate_missing_dependencies_is_error() {
 }
 
 #[test]
+fn validate_redirect_command_is_not_placeholder() {
+    let repo = init_repo();
+    write_file(&repo.path().join("redirect.md"), REDIRECT_VALIDATION_PLAN);
+
+    let out = run_plan_tooling(repo.path(), &["validate", "--file", "redirect.md"]);
+    assert_eq!(
+        out.code, 0,
+        "stdout: {}\nstderr: {}",
+        out.stdout, out.stderr
+    );
+    assert!(out.stdout.is_empty());
+    assert!(out.stderr.is_empty());
+}
+
+#[test]
 fn validate_json_ok_with_explicit_file() {
     let repo = init_repo();
     write_file(&repo.path().join("plan.md"), VALID_PLAN);
@@ -228,4 +243,20 @@ const MISSING_DEPS_PLAN: &str = r#"# Plan: Missing deps
   - A works
 - **Validation**:
   - cargo test -p plan-tooling
+"#;
+
+const REDIRECT_VALIDATION_PLAN: &str = r#"# Plan: Redirect
+
+## Sprint 1: First sprint
+
+### Task 1.1: Validate shell redirect command
+- **Location**:
+  - `src/a.rs`
+- **Description**: Keep redirect-based checks
+- **Dependencies**:
+  - none
+- **Acceptance criteria**:
+  - Redirect command is accepted
+- **Validation**:
+  - cat < input.txt > output.txt
 "#;
