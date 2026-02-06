@@ -1,0 +1,105 @@
+# External Tooling Dependencies
+
+This document defines the external binaries and script-level tools used by the `nils-cli` workspace,
+and provides recommended installation commands for Homebrew (macOS) and Linuxbrew (Linux).
+
+## Scope and Intent
+
+- Focus: runtime dependencies invoked by workspace CLIs, plus development/test tooling used by repo workflows.
+- Source of truth: crate READMEs, runtime process invocations (`Command::new(...)`), and repository scripts.
+- Goal: make environment setup predictable for contributors and CI-like local validation.
+
+## 1. Runtime Dependencies (Core)
+
+These tools are required for common command paths.
+
+| Tool | Used By | Requirement Level | Install (brew/linuxbrew) |
+|---|---|---|---|
+| `git` | `git-scope`, `git-cli`, `git-summary`, `git-lock`, `semantic-commit`, `fzf-cli git-*` | Required | `brew install git` |
+| `fzf` | `fzf-cli` interactive commands | Required (for `fzf-cli`) | `brew install fzf` |
+| `mktemp` | `git-scope` print flows (`-p`, commit print modes) | Required for those modes | Usually preinstalled (verify with `command -v mktemp`) |
+| `magick` (or `convert` + `identify`) | `image-processing` | Required (for `image-processing`) | `brew install imagemagick` |
+| `ffmpeg` | `screen-record` on Linux | Required on Linux | `brew install ffmpeg` |
+| `codex` | `codex-cli agent *` flows | Required for agent commands | Install from official Codex distribution |
+
+## 2. Runtime Dependencies (Optional / Degradation Paths)
+
+These tools enable richer behavior. Missing tools typically trigger fallback behavior or reduced UX.
+
+| Tool | Behavior Impact | Install (brew/linuxbrew) |
+|---|---|---|
+| `tree` | Enables directory tree rendering in `git-scope` | `brew install tree` |
+| `file` | MIME-based binary detection in `git-scope` and `git-cli commit context` | Usually preinstalled |
+| `lsof` | Preferred backend for `fzf-cli port` (fallback: `netstat`) | `brew install lsof` |
+| `bat` | Syntax-highlighted previews in `fzf-cli file` | `brew install bat` |
+| `code` | VS Code open mode for `fzf-cli` (`--vscode`) | macOS: `brew install --cask visual-studio-code` |
+| `pbcopy` / `wl-copy` / `xclip` / `xsel` | Clipboard integration for `git-cli commit context` | Linux: `brew install wl-clipboard xclip xsel` |
+| `cjpeg` / `djpeg` | JPEG optimization path in `image-processing optimize` | `brew install jpeg-turbo` |
+| `cwebp` / `dwebp` | WebP optimization path; macOS WebP screenshot fallback in `screen-record` | `brew install webp` |
+| `pactl` | Linux audio source discovery for `screen-record --audio ...` | `brew install pulseaudio` |
+| `xdg-desktop-portal` + backend + PipeWire | Wayland portal capture path (`screen-record --portal`) | Prefer distro packages |
+| `open-changed-files` | Optional helper used by `fzf-cli git-commit` | Project-specific optional tool |
+
+## 3. Development and Validation Toolchain
+
+| Tool | Purpose | Recommended Install |
+|---|---|---|
+| Rust toolchain (`cargo`, `rustc`, `rustfmt`, `clippy`) | Build/lint/test pipeline | `brew install rustup-init && rustup-init -y && rustup component add rustfmt clippy` |
+| `cargo-nextest` | CI-style test execution | `cargo install cargo-nextest --locked` |
+| `cargo-llvm-cov` | Coverage workflows | `cargo install cargo-llvm-cov --locked` |
+| `zsh` | Required for `tests/zsh/completion.test.zsh` | `brew install zsh` |
+| `python3` | `scripts/workspace-bins.py` | `brew install python` |
+| `bash`, `awk`, `sed` | CI helper scripts in `scripts/ci/` | Typically preinstalled |
+| `bash-completion` | Bash completion loading (optional) | `brew install bash-completion` |
+| `gh` | PR/release operations in GitHub-driven workflows | `brew install gh` |
+
+## 4. Repository-Local Script Entry Points
+
+These are repository scripts (not third-party packages):
+
+- Install workspace binaries:
+  - `./.codex/skills/nils-cli-install/scripts/nils-cli-install.sh`
+- Run required repository checks:
+  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- Supporting utilities:
+  - `scripts/workspace-bins.py`
+  - `scripts/ci/coverage-summary.sh`
+  - `scripts/ci/coverage-badge.sh`
+
+## 5. Recommended Install Profiles
+
+### 5.1 Base contributor profile
+
+```bash
+brew install git gh fzf tree imagemagick webp jpeg-turbo ffmpeg bat zsh python bash-completion rustup-init
+```
+
+### 5.2 Linux extra profile (audio/clipboard/network ergonomics)
+
+```bash
+brew install lsof wl-clipboard xclip xsel pulseaudio
+```
+
+## 6. Linuxbrew Bootstrap (if `brew` is not installed)
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+After installation, initialize Linuxbrew in shell startup (example):
+
+```bash
+eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+```
+
+## 7. Quick Environment Verification
+
+```bash
+for c in git gh fzf mktemp tree file magick ffmpeg bat; do
+  if command -v "$c" >/dev/null 2>&1; then
+    echo "[OK]   $c -> $(command -v "$c")"
+  else
+    echo "[MISS] $c"
+  fi
+done
+```
