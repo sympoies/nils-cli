@@ -1,5 +1,6 @@
 use crate::{fzf, util};
 use anyhow::{Context, Result};
+use nils_common::shell::{self as common_shell, AnsiStripMode};
 
 pub struct CommitPick {
     pub query: String,
@@ -61,7 +62,7 @@ pub fn pick_commit(default_query: &str, selected: Option<&str>) -> Result<Option
         return Ok(None);
     };
 
-    let stripped = util::strip_ansi(&selected);
+    let stripped = common_shell::strip_ansi(&selected, AnsiStripMode::CsiAnyTerminator);
     let hash = stripped
         .split_whitespace()
         .next()

@@ -1,4 +1,5 @@
 use crate::{fzf, open, util};
+use nils_common::shell as common_shell;
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -107,7 +108,7 @@ pub fn run(args: &[String]) -> i32 {
 
             match key.as_str() {
                 "ctrl-d" => {
-                    let escaped = util::shell_escape_single_quotes(env_root.as_ref());
+                    let escaped = common_shell::quote_posix_single(env_root.as_ref());
                     println!("cd {escaped}");
                     return 0;
                 }

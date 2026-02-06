@@ -27,6 +27,18 @@ Each crate is either a standalone CLI binary or a shared library used across the
 - [crates/image-processing](crates/image-processing): Batch image transformation CLI (resize/crop/optimize) with JSON/report outputs.
 - [crates/screen-record](crates/screen-record): macOS ScreenCaptureKit + Linux (X11) recorder for a single window or display with optional audio.
 
+## Shared helper policy (`nils-common`)
+
+Contributors should treat `nils-common` as the shared helper boundary for cross-CLI primitives.
+
+- Put reusable, domain-neutral helpers in [crates/nils-common](crates/nils-common).
+- Keep crate-local adapters for user-facing copy, warning style, exit-code mapping, and CLI-specific UX policy.
+- During migration, preserve parity by keeping output text/warnings/colors/exit behavior byte-for-byte stable.
+- Characterize behavior with tests before moving helper logic, then re-run affected crate tests after migration.
+
+Detailed scope, API examples, migration conventions, and non-goals are documented in
+[crates/nils-common/README.md](crates/nils-common/README.md).
+
 ## Shell wrappers and completions
 
 This repo keeps optional wrapper scripts and completion assets in-repo.

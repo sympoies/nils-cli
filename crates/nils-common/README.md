@@ -1,153 +1,123 @@
 # nils-common
 
-## Overview
-`nils-common` is a small shared library crate for cross-CLI helpers within this workspace.
+`nils-common` is the workspace shared helper crate for cross-CLI primitives.
 
-It is intentionally minimal and only grows when a helper is needed by multiple CLIs.
-Behavioral parity is the first constraint: shared helpers must not change user-facing output text,
-warning copy, color behavior, or exit-code contracts of consuming CLIs.
+Primary constraint: shared helpers must preserve behavioral parity for each consuming CLI. Moving logic into this crate must not change user-facing output text, warnings, color behavior, or exit-code contracts.
 
-## Status
-- Implemented and exported today: `fs`, `process` (PATH lookup), `greeting`.
-- Planned in Task 1.2 (contract/spec only, not implemented/exported yet): `env`, `shell`, `git`,
-  `clipboard`, plus expanded `process` execution helpers.
+## Shared helper policy
 
-## Public API (implemented today)
-- `greeting(name: &str) -> String`: returns `Hello, {name}!` (used by `cli-template`).
-- `fs`:
-  - `replace_file(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()>`: rename `from` to `to`, overwriting `to`.
-  - `rename_overwrite(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()>`: alias for `replace_file`.
-- `process`:
-  - `cmd_exists(program: &str) -> bool`: true if `find_in_path` resolves the program.
-  - `find_in_path(program: &str) -> Option<std::path::PathBuf>`: resolve from `PATH` (or validate an explicit path).
+### What belongs in `nils-common`
 
-Notes:
-- On Unix, `replace_file` overwrites atomically when `from` and `to` are on the same filesystem.
-- On Windows, overwriting falls back to remove + rename when `to` exists (non-atomic).
+- Reusable helper logic used by multiple CLI crates.
+- Domain-neutral primitives (process/env/shell/git/clipboard/fs internals).
+- APIs that return structured results and let callers own final UX text.
+- Behavior that can be covered by deterministic unit tests.
 
-## Planned module contracts (Task 1.2, specification only)
+### What stays crate-local
 
-### `env`
-Proposed signatures:
-```text
-pub fn is_truthy(input: &str) -> bool;
-pub fn env_truthy(name: &str) -> bool;
-pub fn env_truthy_or(name: &str, default: bool) -> bool;
-pub fn no_color_enabled() -> bool;
-```
+- User-facing warning/error text (including emoji/prefix wording).
+- Exit-code mapping and command-level failure policy.
+- CLI-specific command composition and UX defaults.
+- Product/business/domain flows that only make sense in one crate.
 
-Semantics:
-- `is_truthy` is ASCII-case-insensitive and trims surrounding whitespace.
-- Accepted truthy tokens are exactly: `1`, `true`, `yes`, `on`.
-- `env_truthy*` treats missing variables as `false` unless `default` is provided.
-- `no_color_enabled` only checks `NO_COLOR` truthiness; caller crates keep any extra TTY/env rules.
+## Modules and purpose
 
-### `shell`
-Proposed signatures:
-```text
-pub enum AnsiStripMode { CsiSgrOnly, CsiAnyTerminator }
-pub fn quote_posix_single(input: &str) -> String;
-pub fn strip_ansi(input: &str, mode: AnsiStripMode) -> std::borrow::Cow<'_, str>;
-```
+- `env`: truthy parsing helpers and `NO_COLOR` presence checks.
+- `shell`: POSIX single-quote escaping and ANSI stripping modes.
+- `process`: command execution wrappers plus PATH lookup helpers.
+- `git`: `git` command wrappers for repo probes and `rev-parse` helpers.
+- `clipboard`: best-effort clipboard copy with explicit tool priority.
+- `fs`: cross-platform replace/rename-overwrite helper.
+- `greeting`: tiny sample helper used by `cli-template`.
 
-Semantics:
-- `quote_posix_single` returns a POSIX single-quoted shell token for whole-argument safety.
-- `strip_ansi` supports explicit parsing modes so CLIs can preserve current parity behavior.
+## API examples
 
-### `process` (expansion)
-Existing signatures stay unchanged:
-```text
-pub fn cmd_exists(program: &str) -> bool;
-pub fn find_in_path(program: &str) -> Option<std::path::PathBuf>;
-```
+`env`:
 
-Proposed expansion signatures:
-```text
-pub struct ProcessOutput {
-  pub status: std::process::ExitStatus,
-  pub stdout: Vec<u8>,
-  pub stderr: Vec<u8>,
-}
-pub enum ProcessError { Io(std::io::Error), NonZero(ProcessOutput) }
-pub fn run_output(program: &str, args: &[&str]) -> Result<ProcessOutput, ProcessError>;
-pub fn run_checked(program: &str, args: &[&str]) -> Result<(), ProcessError>;
-pub fn run_stdout_trimmed(program: &str, args: &[&str]) -> Result<String, ProcessError>;
-```
-
-Failure semantics:
-- `ProcessError::Io`: spawn/exec/pipe/read failure.
-- `ProcessError::NonZero`: command executed but exited non-zero, with raw `status/stdout/stderr`.
-- No user-facing message formatting in `nils-common::process`; caller adapters own final text.
-
-### `git`
-Proposed signatures:
-```text
-pub fn is_inside_work_tree(cwd: &std::path::Path) -> Result<bool, ProcessError>;
-pub fn repo_root(cwd: &std::path::Path) -> Result<Option<std::path::PathBuf>, ProcessError>;
-pub fn rev_parse(cwd: &std::path::Path, args: &[&str]) -> Result<String, ProcessError>;
-pub fn rev_parse_opt(cwd: &std::path::Path, args: &[&str]) -> Result<Option<String>, ProcessError>;
-```
-
-Semantics:
-- `git` module provides only repo probe and command primitives.
-- Git UX policy (warnings, parent-selection wording, pager/config policy) stays in each CLI adapter.
-
-### `clipboard`
-Proposed signatures:
-```text
-pub enum ClipboardTool { Pbcopy, WlCopy, Xclip, Xsel, Clip }
-pub struct ClipboardPolicy<'a> {
-  pub tool_order: &'a [ClipboardTool],
-  pub warn_on_failure: bool,
-}
-pub enum ClipboardOutcome { Copied(ClipboardTool), SkippedNoTool, SkippedFailure }
-pub fn copy_best_effort(text: &str, policy: &ClipboardPolicy<'_>) -> ClipboardOutcome;
-```
-
-Semantics:
-- `copy_best_effort` is best-effort and never panics.
-- Tool order and warn/silent behavior are policy inputs so crates can keep current UX parity.
-
-## Compatibility and adaptation rules
-- Keep crate-specific warning/error copy in local adapters (including emoji/prefix formatting).
-- Keep crate-specific exit-code mapping in local adapters.
-- Keep crate-specific color policy in local adapters (`NO_COLOR` is shared baseline only).
-- Keep crate-specific shell quote style selection in local adapters when user-visible snippets must
-  stay byte-for-byte identical.
-- Keep crate-specific git command composition in local adapters (`GIT_PAGER`, config, trim policy).
-- `nils-common` stays domain-neutral and must not absorb CLI command/business logic.
-
-## Examples
-Greeting (used by `cli-template`):
 ```rust
-let greeting = nils_common::greeting("Nils");
-assert_eq!(greeting, "Hello, Nils!");
+use nils_common::env;
+
+let starship_enabled = env::env_truthy_or("CODEX_CLI_STARSHIP", false);
+let no_color = env::no_color_enabled();
+println!("starship={starship_enabled}, no_color={no_color}");
 ```
 
-Find an executable:
+`shell`:
+
+```rust
+use nils_common::shell::{self, AnsiStripMode, SingleQuoteEscapeStyle};
+
+let quoted = shell::quote_posix_single_with_style("a'b", SingleQuoteEscapeStyle::Backslash);
+let plain = shell::strip_ansi("\x1b[31mred\x1b[0m", AnsiStripMode::CsiSgrOnly);
+assert_eq!(quoted, "'a'\\''b'");
+assert_eq!(plain, "red");
+```
+
+`process`:
+
 ```rust
 use nils_common::process;
 
 assert!(process::cmd_exists("git"));
-let git = process::find_in_path("git").expect("git on PATH");
-assert!(git.ends_with("git"));
+let git_path = process::find_in_path("git").expect("git should be on PATH");
+let out = process::run_stdout_trimmed(git_path.to_string_lossy().as_ref(), &["--version"])
+    .expect("git --version should run");
+println!("{out}");
 ```
 
-Replace a file (overwrite destination):
+`git`:
+
 ```rust
-use std::fs;
+use nils_common::git;
 
-let dir = std::env::temp_dir();
-let pid = std::process::id();
-
-let from = dir.join(format!("nils-common-{pid}.tmp"));
-let to = dir.join(format!("nils-common-{pid}.txt"));
-
-fs::write(&from, "new").unwrap();
-fs::write(&to, "old").unwrap();
-
-nils_common::fs::replace_file(&from, &to).unwrap();
-assert_eq!(fs::read_to_string(&to).unwrap(), "new");
-
-let _ = fs::remove_file(&to);
+let inside = git::is_inside_work_tree().expect("git check should run");
+if inside {
+    let root = git::repo_root().expect("repo root check");
+    println!("repo root: {root:?}");
+}
 ```
+
+`clipboard`:
+
+```rust
+use nils_common::clipboard::{copy_best_effort, ClipboardOutcome, ClipboardPolicy, ClipboardTool};
+
+let tool_order = [
+    ClipboardTool::Pbcopy,
+    ClipboardTool::WlCopy,
+    ClipboardTool::Xclip,
+    ClipboardTool::Xsel,
+    ClipboardTool::Clip,
+];
+let outcome = copy_best_effort("hello", &ClipboardPolicy::new(&tool_order));
+
+if matches!(outcome, ClipboardOutcome::SkippedNoTool) {
+    eprintln!("no clipboard tool found; keep crate-local fallback messaging");
+}
+```
+
+`fs`:
+
+```rust
+use std::path::Path;
+
+nils_common::fs::replace_file(Path::new("tmp.out"), Path::new("final.out"))?;
+# Ok::<(), std::io::Error>(())
+```
+
+## Migration conventions for parity
+
+When introducing a shared helper at a call site:
+
+1. Add or keep characterization tests in the caller crate first.
+2. Move only primitive logic; keep a crate-local adapter for message formatting and exit-code mapping.
+3. Preserve existing quote/ANSI mode choices and `NO_COLOR` behavior.
+4. Keep tool/command fallback order identical (for example clipboard tool order, git probe fallback behavior).
+5. Re-run crate tests that cover the touched command paths before merging.
+
+## Non-goals
+
+- Defining CLI-specific UX copy, warning templates, or emoji policy.
+- Owning command-level business logic for a single CLI.
+- Hiding meaningful behavior differences that should remain explicit in local adapters.
+- Replacing specialized shared crates such as `api-testing-core`, `nils-term`, or `nils-test-support`.

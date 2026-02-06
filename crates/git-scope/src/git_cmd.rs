@@ -1,12 +1,12 @@
 use anyhow::{Context, Result};
 use nils_common::git as common_git;
-use std::process::Output;
 
 const DEFAULT_GIT_CONFIG: [&str; 2] = ["-c", "core.quotepath=false"];
 
 pub(crate) fn run_git(args: &[&str]) -> Result<String> {
     let args = with_default_config(args);
-    let output = run_git_output(&args)?;
+    let output =
+        common_git::run_output(&args).with_context(|| format!("failed to run git {args:?}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -44,8 +44,4 @@ fn has_quotepath_override(args: &[&str]) -> bool {
         }
     }
     false
-}
-
-fn run_git_output(args: &[&str]) -> Result<Output> {
-    common_git::run_output(args).with_context(|| format!("failed to run git {args:?}"))
 }

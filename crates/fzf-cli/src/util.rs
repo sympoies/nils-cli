@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use nils_common::env as common_env;
 use nils_common::process as common_process;
-use nils_common::shell::{self as common_shell, AnsiStripMode};
 use std::env;
 use std::path::PathBuf;
 use std::process::Output;
@@ -64,14 +63,6 @@ fn run_checked_output(cmd: &str, args: &[&str]) -> Result<Output> {
     Ok(output)
 }
 
-pub fn strip_ansi(input: &str) -> String {
-    common_shell::strip_ansi(input, AnsiStripMode::CsiAnyTerminator).into_owned()
-}
-
-pub fn shell_escape_single_quotes(value: &str) -> String {
-    common_shell::quote_posix_single(value)
-}
-
 pub fn zsh_root() -> Result<PathBuf> {
     if let Ok(v) = env::var("ZDOTDIR") {
         return Ok(PathBuf::from(v));
@@ -91,7 +82,6 @@ pub fn zsh_cache_dir() -> Result<PathBuf> {
 mod tests {
     use super::*;
     use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir};
-    use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
     #[test]
@@ -119,23 +109,6 @@ mod tests {
                 "expected falsey value: {value}"
             );
         }
-    }
-
-    #[test]
-    fn strip_ansi_removes_csi_sequences() {
-        let input = "\x1b[31mred\x1b[0m plain \x1b[38;5;110mblue\x1b[0m";
-        assert_eq!(strip_ansi(input), "red plain blue");
-    }
-
-    #[test]
-    fn shell_escape_single_quotes_matches_current_behavior() {
-        assert_eq!(shell_escape_single_quotes(""), "''");
-        assert_eq!(shell_escape_single_quotes("plain"), "'plain'");
-        assert_eq!(shell_escape_single_quotes("a'b"), "'a'\\''b'");
-        assert_eq!(
-            shell_escape_single_quotes("'start and end'"),
-            "''\\''start and end'\\'''"
-        );
     }
 
     #[test]

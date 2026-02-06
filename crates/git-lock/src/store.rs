@@ -3,7 +3,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::fs as lock_fs;
-use crate::git;
 
 #[derive(Debug, Clone)]
 pub struct LockStore {
@@ -118,9 +117,15 @@ pub fn lock_dir_from_env() -> PathBuf {
 }
 
 fn repo_id() -> Result<String> {
-    let toplevel = git::run_capture(&["rev-parse", "--show-toplevel"])?
-        .trim()
-        .to_string();
+    const SHOW_TOPLEVEL_ARGS: [&str; 2] = ["rev-parse", "--show-toplevel"];
+    let output = nils_common::git::run_output(&SHOW_TOPLEVEL_ARGS)
+        .with_context(|| format!("git {SHOW_TOPLEVEL_ARGS:?}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git {SHOW_TOPLEVEL_ARGS:?} failed: {stderr}");
+    }
+
+    let toplevel = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let path = Path::new(&toplevel);
     let name = path
         .file_name()

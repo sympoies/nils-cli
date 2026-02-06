@@ -14,33 +14,6 @@ impl GitBackend for DefaultGitBackend {
     }
 }
 
-pub fn is_git_repo() -> bool {
-    common_git::is_git_repo().unwrap_or(false)
-}
-
-pub fn run_capture(args: &[&str]) -> Result<String> {
-    let output = run_git_output(args)?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git {args:?} failed: {stderr}");
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-pub fn run_capture_optional(args: &[&str]) -> Result<Option<String>> {
-    let output = run_git_output(args)?;
-
-    if !output.status.success() {
-        return Ok(None);
-    }
-
-    Ok(Some(
-        String::from_utf8_lossy(&output.stdout).trim().to_string(),
-    ))
-}
-
 pub fn run_status_inherit(args: &[&str]) -> Result<i32> {
     let status = common_git::run_status_inherit(args).with_context(|| format!("git {args:?}"))?;
 
@@ -52,11 +25,11 @@ pub fn rev_parse(value: &str) -> Result<Option<String>> {
 }
 
 pub fn show_subject(hash: &str) -> Result<Option<String>> {
-    run_capture_optional(&["show", "-s", "--format=%s", hash])
+    run_git_trimmed_optional(&["show", "-s", "--format=%s", hash])
 }
 
 pub fn log_subject(hash: &str) -> Result<Option<String>> {
-    run_capture_optional(&["log", "-1", "--pretty=format:%s", hash])
+    run_git_trimmed_optional(&["log", "-1", "--pretty=format:%s", hash])
 }
 
 pub fn tag_exists(tag: &str) -> Result<bool> {
@@ -66,6 +39,14 @@ pub fn tag_exists(tag: &str) -> Result<bool> {
     Ok(output.success())
 }
 
-fn run_git_output(args: &[&str]) -> Result<std::process::Output> {
-    common_git::run_output(args).with_context(|| format!("git {args:?}"))
+fn run_git_trimmed_optional(args: &[&str]) -> Result<Option<String>> {
+    let output = common_git::run_output(args).with_context(|| format!("git {args:?}"))?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    Ok(Some(
+        String::from_utf8_lossy(&output.stdout).trim().to_string(),
+    ))
 }
