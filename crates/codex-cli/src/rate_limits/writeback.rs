@@ -64,13 +64,17 @@ pub fn write_weekly(target_file: &Path, usage_json: &Value) -> Result<()> {
         Value::String(fetched_at_iso),
     );
 
-    if let Some(epoch) = non_weekly_reset_epoch {
-        if let Some(iso) = non_weekly_reset_iso {
+    match (non_weekly_reset_epoch, non_weekly_reset_iso) {
+        (Some(epoch), Some(iso)) => {
             codex_rate_limits.insert("non_weekly_reset_at".to_string(), Value::String(iso));
             codex_rate_limits.insert(
                 "non_weekly_reset_at_epoch".to_string(),
                 Value::Number(epoch.into()),
             );
+        }
+        _ => {
+            codex_rate_limits.remove("non_weekly_reset_at");
+            codex_rate_limits.remove("non_weekly_reset_at_epoch");
         }
     }
 
@@ -231,6 +235,63 @@ mod tests {
         write_weekly(&target, &usage).expect("write weekly");
         let after = read_json(&target);
         assert_eq!(after, before);
+    }
+
+    #[test]
+    fn write_weekly_clears_non_weekly_fields_when_non_weekly_epoch_is_non_positive() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let target = dir.path().join("alpha.json");
+        write_json(
+            &target,
+            &json!({
+                "tokens": { "access_token": "tok" },
+                "codex_rate_limits": {
+                    "source": "legacy-metadata",
+                    "non_weekly_reset_at_epoch": 1700003600,
+                    "non_weekly_reset_at": "2023-11-14T23:13:20Z"
+                }
+            }),
+        );
+
+        let usage = json!({
+            "rate_limit": {
+                "primary_window": {
+                    "limit_window_seconds": 18000,
+                    "used_percent": 6.0,
+                    "reset_at": 0
+                },
+                "secondary_window": {
+                    "limit_window_seconds": 604800,
+                    "used_percent": 12.0,
+                    "reset_at": 1700600000
+                }
+            }
+        });
+
+        write_weekly(&target, &usage).expect("write weekly");
+        let written = read_json(&target);
+        let limits = written["codex_rate_limits"]
+            .as_object()
+            .expect("limits object");
+
+        assert_eq!(
+            limits.get("source").and_then(Value::as_str),
+            Some("legacy-metadata")
+        );
+        assert_eq!(
+            limits.get("weekly_reset_at_epoch").and_then(Value::as_i64),
+            Some(1700600000)
+        );
+        assert!(limits
+            .get("weekly_reset_at")
+            .and_then(Value::as_str)
+            .is_some());
+        assert!(limits
+            .get("weekly_fetched_at")
+            .and_then(Value::as_str)
+            .is_some());
+        assert!(!limits.contains_key("non_weekly_reset_at"));
+        assert!(!limits.contains_key("non_weekly_reset_at_epoch"));
     }
 
     #[test]
