@@ -19,10 +19,11 @@ pub fn find_repo_root(start_dir: &Path) -> Result<PathBuf> {
 
 pub fn resolve_path_from_repo_root(repo_root: &Path, raw: &str) -> PathBuf {
     let raw = raw.trim();
-    if raw.starts_with('/') {
-        PathBuf::from(raw)
+    let path = Path::new(raw);
+    if path.is_absolute() {
+        path.to_path_buf()
     } else {
-        repo_root.join(raw)
+        repo_root.join(path)
     }
 }
 
@@ -235,6 +236,25 @@ mod tests {
         assert_eq!(
             resolve_path_from_repo_root(root, "/abs/path"),
             PathBuf::from("/abs/path")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn suite_resolve_path_from_repo_root_handles_windows_absolute_paths() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let drive_abs = r"C:\abs\path";
+        assert_eq!(
+            resolve_path_from_repo_root(root, drive_abs),
+            PathBuf::from(drive_abs)
+        );
+
+        let unc_abs = r"\\server\share\suite.yaml";
+        assert_eq!(
+            resolve_path_from_repo_root(root, unc_abs),
+            PathBuf::from(unc_abs)
         );
     }
 
