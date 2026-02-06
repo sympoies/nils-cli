@@ -1,7 +1,8 @@
 use crate::{confirm, fzf, util};
+use nils_common::git as common_git;
 
 pub fn run(args: &[String]) -> i32 {
-    if !is_git_repo() {
+    if !common_git::is_inside_work_tree().unwrap_or(false) {
         eprintln!("❌ Not inside a Git repository. Aborting.");
         return 1;
     }
@@ -70,8 +71,8 @@ pub fn run(args: &[String]) -> i32 {
         }
     }
 
-    if util::run_output("git", &["checkout", &hash])
-        .map(|o| o.status.success())
+    if common_git::run_status_quiet(&["checkout", &hash])
+        .map(|status| status.success())
         .unwrap_or(false)
     {
         println!("✅ Checked out to tag {tag} (commit {hash})");
@@ -84,21 +85,7 @@ pub fn run(args: &[String]) -> i32 {
 
 fn resolve_tag_to_commit(tag: &str) -> Option<String> {
     let arg = format!("{tag}^{{commit}}");
-    let out = util::run_output("git", &["rev-parse", "--verify", "--quiet", &arg]).ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let hash = stdout.lines().next().unwrap_or("").trim().to_string();
-    if hash.is_empty() {
-        None
-    } else {
-        Some(hash)
-    }
-}
-
-fn is_git_repo() -> bool {
-    util::run_output("git", &["rev-parse", "--is-inside-work-tree"])
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    common_git::rev_parse(&["--verify", "--quiet", &arg])
+        .ok()
+        .flatten()
 }

@@ -11,6 +11,7 @@ serde_json = { workspace = true }
 tempfile = "3"
 time = { version = "0.3", features = ["formatting"] }
 nils-term = { path = "../nils-term" }
+nils-common = { path = "../nils-common" }
 
 [dev-dependencies]
 nils-test-support = { path = "../nils-test-support" }

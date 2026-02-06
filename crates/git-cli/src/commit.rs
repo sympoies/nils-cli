@@ -7,6 +7,7 @@ use crate::commit_shared::{
 use crate::prompt;
 use crate::util;
 use anyhow::{anyhow, Result};
+use nils_common::shell::{strip_ansi as strip_ansi_impl, AnsiStripMode};
 use std::env;
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -223,25 +224,7 @@ fn git_scope_output(no_color: bool) -> Result<String> {
 }
 
 fn strip_ansi(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '\u{1b}' {
-            if let Some('[') = chars.peek() {
-                chars.next();
-                for next in chars.by_ref() {
-                    if next == 'm' {
-                        break;
-                    }
-                }
-                continue;
-            }
-        }
-        out.push(ch);
-    }
-
-    out
+    strip_ansi_impl(input, AnsiStripMode::CsiSgrOnly).into_owned()
 }
 
 fn build_staged_contents(include_patterns: &[String]) -> Result<String> {

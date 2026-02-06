@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Result};
+use nils_common::process::{self, ProcessError};
 use std::path::PathBuf;
-use std::process::{Command, Output, Stdio};
+use std::process::Output;
 
 pub fn cmd_exists(cmd: &str) -> bool {
     find_in_path(cmd).is_some()
@@ -11,24 +12,21 @@ pub fn find_in_path(cmd: &str) -> Option<PathBuf> {
 }
 
 pub fn run_output(cmd: &str, args: &[&str]) -> Result<Output> {
-    Command::new(cmd)
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
+    process::run_output(cmd, args)
+        .map(|output| output.into_std_output())
         .with_context(|| format!("spawn {cmd}"))
 }
 
 pub fn run_capture(cmd: &str, args: &[&str]) -> Result<String> {
-    let output = run_output(cmd, args)?;
-    if !output.status.success() {
-        return Err(anyhow!(
+    match process::run_checked(cmd, args) {
+        Ok(output) => Ok(output.stdout_lossy()),
+        Err(ProcessError::Io(err)) => Err(err).with_context(|| format!("spawn {cmd}")),
+        Err(ProcessError::NonZero(output)) => Err(anyhow!(
             "{cmd} failed: {}{}",
-            String::from_utf8_lossy(&output.stderr),
-            String::from_utf8_lossy(&output.stdout),
-        ));
+            output.stderr_lossy(),
+            output.stdout_lossy(),
+        )),
     }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 #[cfg(test)]

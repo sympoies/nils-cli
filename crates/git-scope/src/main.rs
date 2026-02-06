@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use nils_common::env as shared_env;
 use std::process;
 
 mod change;
@@ -129,7 +130,7 @@ fn run() -> Result<()> {
         process::exit(1);
     }
 
-    let no_color = cli.no_color || std::env::var_os("NO_COLOR").is_some();
+    let no_color = cli.no_color || shared_env::no_color_enabled();
     let progress_opt_in = git_scope_progress_opt_in();
 
     match cli.command.unwrap_or(Command::Help) {
@@ -207,6 +208,5 @@ fn git_scope_progress_opt_in() -> bool {
         return false;
     };
     let value = value.to_string_lossy();
-    let normalized = value.trim().to_ascii_lowercase();
-    matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+    shared_env::is_truthy(value.trim())
 }

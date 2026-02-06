@@ -1,4 +1,5 @@
 use chrono::{TimeZone, Utc};
+use nils_common::env as shared_env;
 use std::io::{self, IsTerminal};
 use std::path::Path;
 
@@ -96,18 +97,12 @@ fn format_epoch_utc(epoch: i64, fmt: &str) -> Option<String> {
 }
 
 fn should_color() -> bool {
-    if std::env::var_os("NO_COLOR").is_some() {
+    if shared_env::no_color_enabled() {
         return false;
     }
 
     if let Ok(raw) = std::env::var("CODEX_STARSHIP_COLOR_ENABLED") {
-        if raw.trim().is_empty() {
-            return false;
-        }
-        return matches!(
-            raw.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        );
+        return shared_env::is_truthy(raw.trim());
     }
 
     if std::env::var_os("STARSHIP_SESSION_KEY").is_some()

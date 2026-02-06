@@ -3,6 +3,7 @@ use crate::print::{emit_file, HeadFallback, PrintSource};
 use crate::progress::ProgressRunner;
 use crate::tree::{tree_support, TREE_MISSING_WARNING, TREE_UNSUPPORTED_WARNING};
 use anyhow::Result;
+use nils_common::shell::{strip_ansi as strip_ansi_impl, AnsiStripMode};
 use std::collections::BTreeSet;
 use std::process::Command;
 
@@ -249,21 +250,7 @@ fn expand_tree_paths(files: &[String]) -> Vec<String> {
 }
 
 fn strip_ansi(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' && matches!(chars.peek(), Some('[')) {
-            chars.next();
-            for c in chars.by_ref() {
-                if c == 'm' {
-                    break;
-                }
-            }
-            continue;
-        }
-        out.push(ch);
-    }
-    out
+    strip_ansi_impl(input, AnsiStripMode::CsiSgrOnly).into_owned()
 }
 
 #[cfg(test)]

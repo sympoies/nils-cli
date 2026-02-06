@@ -1,14 +1,20 @@
-use crate::{fzf, util};
+use crate::fzf;
 use anyhow::{Context, Result};
+use nils_common::clipboard::{copy_best_effort, ClipboardPolicy, ClipboardTool};
 use std::collections::HashMap;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
-use std::process::{Command, Stdio};
 
 pub struct Block {
     pub header: String,
     pub body: String,
 }
+
+const CLIPBOARD_TOOL_ORDER: [ClipboardTool; 3] = [
+    ClipboardTool::Pbcopy,
+    ClipboardTool::WlCopy,
+    ClipboardTool::Xclip,
+];
 
 pub fn run(blocks: &[Block], default_query: &str) -> Result<(i32, Option<String>)> {
     let delim = std::env::var("FZF_DEF_DELIM").unwrap_or_default();
@@ -114,37 +120,8 @@ BEGIN {
         None => return Ok((0, None)),
     };
 
-    set_clipboard_best_effort(&out);
+    let _ = copy_best_effort(&out, &ClipboardPolicy::new(&CLIPBOARD_TOOL_ORDER));
     Ok((0, Some(out)))
-}
-
-fn set_clipboard_best_effort(text: &str) {
-    if util::cmd_exists("pbcopy") {
-        let _ = pipe_to_command("pbcopy", &[], text);
-        return;
-    }
-    if util::cmd_exists("wl-copy") {
-        let _ = pipe_to_command("wl-copy", &[], text);
-        return;
-    }
-    if util::cmd_exists("xclip") {
-        let _ = pipe_to_command("xclip", &["-selection", "clipboard"], text);
-    }
-}
-
-fn pipe_to_command(cmd: &str, args: &[&str], text: &str) -> Result<()> {
-    let mut child = Command::new(cmd)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .with_context(|| format!("spawn {cmd}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(text.as_bytes());
-    }
-    let _ = child.wait();
-    Ok(())
 }
 
 #[cfg(test)]

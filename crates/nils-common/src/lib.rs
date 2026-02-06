@@ -52,8 +52,12 @@
 //! - APIs stay domain-neutral and must not encode crate-specific UX policies.
 //! - Quoting and ANSI differences are expressed via explicit mode/policy parameters.
 //!
+pub mod clipboard;
+pub mod env;
 pub mod fs;
+pub mod git;
 pub mod process;
+pub mod shell;
 
 pub fn greeting(name: &str) -> String {
     format!("Hello, {name}!")

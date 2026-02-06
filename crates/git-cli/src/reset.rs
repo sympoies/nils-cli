@@ -1,6 +1,7 @@
 use crate::prompt;
+use nils_common::git as common_git;
 use std::io::{self, BufRead, Write};
-use std::process::{Command, Output, Stdio};
+use std::process::Output;
 
 pub fn dispatch(cmd: &str, args: &[String]) -> Option<i32> {
     match cmd {
@@ -656,28 +657,12 @@ fn read_line(prompt: &str) -> io::Result<String> {
     Ok(input.trim_end_matches(['\n', '\r']).to_string())
 }
 
-fn git_command(args: &[&str]) -> Command {
-    let mut cmd = Command::new("git");
-    cmd.args(args)
-        .stdin(Stdio::null())
-        .env("GIT_PAGER", "cat")
-        .env("PAGER", "cat");
-    cmd
-}
-
 fn git_output(args: &[&str]) -> Option<Output> {
-    git_command(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .ok()
+    common_git::run_output(args).ok()
 }
 
 fn git_status(args: &[&str]) -> Option<i32> {
-    git_command(args)
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
+    common_git::run_status_inherit(args)
         .ok()
         .map(|status| status.code().unwrap_or(1))
 }

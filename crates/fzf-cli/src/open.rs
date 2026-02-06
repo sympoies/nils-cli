@@ -71,32 +71,8 @@ pub fn find_git_root_upwards(start_dir: &Path, max_depth: usize) -> Option<PathB
 }
 
 fn open_in_vscode_workspace(workspace_root: &Path, file: &Path, wait: bool) -> anyhow::Result<()> {
-    if !util::cmd_exists("code") {
-        eprintln!("❌ 'code' not found");
-        anyhow::bail!("code not found");
-    }
-
-    let mut args: Vec<String> = Vec::new();
-    if wait {
-        args.push("--wait".to_string());
-    }
-    args.push("--goto".to_string());
-    args.push(file.to_string_lossy().to_string());
-    args.push("--".to_string());
-    args.push(workspace_root.to_string_lossy().to_string());
-
-    let status = Command::new("code")
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
-
-    if !status.success() {
-        anyhow::bail!("code failed");
-    }
-
-    Ok(())
+    ensure_code_available()?;
+    run_code(&build_code_args(file, Some(workspace_root), wait))
 }
 
 pub fn open_in_vscode(file: &Path, wait: bool) -> anyhow::Result<()> {
@@ -106,30 +82,8 @@ pub fn open_in_vscode(file: &Path, wait: bool) -> anyhow::Result<()> {
         }
     }
 
-    if !util::cmd_exists("code") {
-        eprintln!("❌ 'code' not found");
-        anyhow::bail!("code not found");
-    }
-
-    let mut args: Vec<String> = Vec::new();
-    if wait {
-        args.push("--wait".to_string());
-    }
-    args.push("--goto".to_string());
-    args.push(file.to_string_lossy().to_string());
-
-    let status = Command::new("code")
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
-
-    if !status.success() {
-        anyhow::bail!("code failed");
-    }
-
-    Ok(())
+    ensure_code_available()?;
+    run_code(&build_code_args(file, None, wait))
 }
 
 pub fn open_file(open_with: OpenWith, file: &Path, wait: bool) -> i32 {
@@ -176,6 +130,41 @@ fn open_vi(file: &Path) -> i32 {
         Ok(s) => s.code().unwrap_or(1),
         Err(_) => 127,
     }
+}
+
+fn ensure_code_available() -> anyhow::Result<()> {
+    if !util::cmd_exists("code") {
+        eprintln!("❌ 'code' not found");
+        anyhow::bail!("code not found");
+    }
+    Ok(())
+}
+
+fn build_code_args(file: &Path, workspace_root: Option<&Path>, wait: bool) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
+    if wait {
+        args.push("--wait".to_string());
+    }
+    args.push("--goto".to_string());
+    args.push(file.to_string_lossy().to_string());
+    if let Some(root) = workspace_root {
+        args.push("--".to_string());
+        args.push(root.to_string_lossy().to_string());
+    }
+    args
+}
+
+fn run_code(args: &[String]) -> anyhow::Result<()> {
+    let status = Command::new("code")
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("code failed");
+    }
+    Ok(())
 }
 
 #[cfg(test)]

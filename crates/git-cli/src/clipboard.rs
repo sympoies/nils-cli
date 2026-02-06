@@ -1,8 +1,13 @@
-use crate::util;
-use anyhow::{Context, Result};
+use anyhow::Result;
+use nils_common::clipboard::{copy_best_effort, ClipboardOutcome, ClipboardPolicy, ClipboardTool};
 use std::env;
-use std::io::Write;
-use std::process::{Command, Stdio};
+
+const CLIPBOARD_TOOL_ORDER: [ClipboardTool; 4] = [
+    ClipboardTool::Pbcopy,
+    ClipboardTool::WlCopy,
+    ClipboardTool::Xclip,
+    ClipboardTool::Xsel,
+];
 
 pub fn set_clipboard_best_effort(text: &str) -> Result<()> {
     if env::var("GIT_CLI_FIXTURE_CLIPBOARD_MODE").ok().as_deref() == Some("missing") {
@@ -10,39 +15,13 @@ pub fn set_clipboard_best_effort(text: &str) -> Result<()> {
         return Ok(());
     }
 
-    if util::cmd_exists("pbcopy") {
-        let _ = pipe_to_command("pbcopy", &[], text);
-        return Ok(());
+    let policy = ClipboardPolicy::new(&CLIPBOARD_TOOL_ORDER);
+    if matches!(
+        copy_best_effort(text, &policy),
+        ClipboardOutcome::SkippedNoTool
+    ) {
+        eprintln!("⚠️  No clipboard tool found (requires pbcopy, xclip, or xsel)");
     }
-    if util::cmd_exists("wl-copy") {
-        let _ = pipe_to_command("wl-copy", &[], text);
-        return Ok(());
-    }
-    if util::cmd_exists("xclip") {
-        let _ = pipe_to_command("xclip", &["-selection", "clipboard"], text);
-        return Ok(());
-    }
-    if util::cmd_exists("xsel") {
-        let _ = pipe_to_command("xsel", &["--clipboard", "--input"], text);
-        return Ok(());
-    }
-
-    eprintln!("⚠️  No clipboard tool found (requires pbcopy, xclip, or xsel)");
-    Ok(())
-}
-
-fn pipe_to_command(cmd: &str, args: &[&str], text: &str) -> Result<()> {
-    let mut child = Command::new(cmd)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .with_context(|| format!("spawn {cmd}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(text.as_bytes()).context("write stdin")?;
-    }
-    let _ = child.wait();
     Ok(())
 }
 

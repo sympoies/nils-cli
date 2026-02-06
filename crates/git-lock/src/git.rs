@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use std::process::{Command, Stdio};
+use nils_common::git as common_git;
 
 pub trait GitBackend {
     fn log_subject(&self, hash: &str) -> Result<Option<String>>;
@@ -15,22 +15,11 @@ impl GitBackend for DefaultGitBackend {
 }
 
 pub fn is_git_repo() -> bool {
-    Command::new("git")
-        .args(["rev-parse", "--git-dir"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+    common_git::is_git_repo().unwrap_or(false)
 }
 
 pub fn run_capture(args: &[&str]) -> Result<String> {
-    let output = Command::new("git")
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .with_context(|| format!("git {args:?}"))?;
+    let output = run_git_output(args)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -41,12 +30,7 @@ pub fn run_capture(args: &[&str]) -> Result<String> {
 }
 
 pub fn run_capture_optional(args: &[&str]) -> Result<Option<String>> {
-    let output = Command::new("git")
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .with_context(|| format!("git {args:?}"))?;
+    let output = run_git_output(args)?;
 
     if !output.status.success() {
         return Ok(None);
@@ -58,18 +42,13 @@ pub fn run_capture_optional(args: &[&str]) -> Result<Option<String>> {
 }
 
 pub fn run_status_inherit(args: &[&str]) -> Result<i32> {
-    let status = Command::new("git")
-        .args(args)
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .with_context(|| format!("git {args:?}"))?;
+    let status = common_git::run_status_inherit(args).with_context(|| format!("git {args:?}"))?;
 
     Ok(status.code().unwrap_or(1))
 }
 
 pub fn rev_parse(value: &str) -> Result<Option<String>> {
-    run_capture_optional(&["rev-parse", value])
+    common_git::rev_parse(&[value]).with_context(|| format!("git rev-parse {value}"))
 }
 
 pub fn show_subject(hash: &str) -> Result<Option<String>> {
@@ -81,12 +60,12 @@ pub fn log_subject(hash: &str) -> Result<Option<String>> {
 }
 
 pub fn tag_exists(tag: &str) -> Result<bool> {
-    let output = Command::new("git")
-        .args(["rev-parse", tag])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+    let output = common_git::run_status_quiet(&["rev-parse", tag])
         .with_context(|| format!("git rev-parse {tag}"))?;
 
     Ok(output.success())
+}
+
+fn run_git_output(args: &[&str]) -> Result<std::process::Output> {
+    common_git::run_output(args).with_context(|| format!("git {args:?}"))
 }

@@ -458,6 +458,7 @@ dependencies = [
  "base64",
  "chrono",
  "clap",
+ "nils-common",
  "nils-term",
  "nils-test-support",
  "pretty_assertions",
@@ -756,6 +757,7 @@ name = "fzf-cli"
 version = "0.2.5"
 dependencies = [
  "anyhow",
+ "nils-common",
  "nils-term",
  "nils-test-support",
  "pretty_assertions",
@@ -833,6 +835,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "nils-common",
  "nils-term",
  "nils-test-support",
  "pretty_assertions",
@@ -845,6 +848,7 @@ version = "0.2.5"
 dependencies = [
  "anyhow",
  "clap",
+ "nils-common",
  "nils-term",
  "nils-test-support",
  "tempfile",
@@ -856,6 +860,7 @@ version = "0.2.5"
 dependencies = [
  "anyhow",
  "chrono",
+ "nils-common",
  "nils-term",
  "nils-test-support",
  "pretty_assertions",
@@ -1799,6 +1804,7 @@ name = "plan-tooling"
 version = "0.2.5"
 dependencies = [
  "anyhow",
+ "nils-common",
  "nils-term",
  "nils-test-support",
  "pretty_assertions",
@@ -2207,6 +2213,7 @@ name = "semantic-commit"
 version = "0.2.5"
 dependencies = [
  "anyhow",
+ "nils-common",
  "nils-term",
  "nils-test-support",
  "pretty_assertions",

@@ -1,7 +1,8 @@
 use crate::{confirm, git_commit_select, util};
+use nils_common::git as common_git;
 
 pub fn run(args: &[String]) -> i32 {
-    if !is_git_repo() {
+    if !common_git::is_inside_work_tree().unwrap_or(false) {
         eprintln!("❌ Not inside a Git repository. Aborting.");
         return 1;
     }
@@ -27,8 +28,8 @@ pub fn run(args: &[String]) -> i32 {
         }
     }
 
-    if util::run_output("git", &["checkout", &ref_hash])
-        .map(|o| o.status.success())
+    if common_git::run_status_quiet(&["checkout", &ref_hash])
+        .map(|status| status.success())
         .unwrap_or(false)
     {
         return 0;
@@ -54,8 +55,8 @@ pub fn run(args: &[String]) -> i32 {
         .to_string();
     let stash_msg = format!("auto-stash {timestamp} HEAD - {subject}");
 
-    if util::run_output("git", &["stash", "push", "-u", "-m", &stash_msg])
-        .map(|o| o.status.success())
+    if common_git::run_status_quiet(&["stash", "push", "-u", "-m", &stash_msg])
+        .map(|status| status.success())
         .unwrap_or(false)
     {
         println!("📦 Changes stashed: {stash_msg}");
@@ -63,8 +64,8 @@ pub fn run(args: &[String]) -> i32 {
         return 1;
     }
 
-    if util::run_output("git", &["checkout", &ref_hash])
-        .map(|o| o.status.success())
+    if common_git::run_status_quiet(&["checkout", &ref_hash])
+        .map(|status| status.success())
         .unwrap_or(false)
     {
         println!("✅ Checked out to {ref_hash}");
@@ -72,10 +73,4 @@ pub fn run(args: &[String]) -> i32 {
     } else {
         1
     }
-}
-
-fn is_git_repo() -> bool {
-    util::run_output("git", &["rev-parse", "--is-inside-work-tree"])
-        .map(|o| o.status.success())
-        .unwrap_or(false)
 }

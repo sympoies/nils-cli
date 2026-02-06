@@ -1,27 +1,15 @@
 #![allow(dead_code)]
 
 use anyhow::{anyhow, Context, Result};
-use std::process::{Command, Output, Stdio};
+use nils_common::git as common_git;
+use std::process::Output;
 
 pub(crate) fn trim_trailing_newlines(input: &str) -> String {
     input.trim_end_matches(['\n', '\r']).to_string()
 }
 
-fn git_command(args: &[&str]) -> Command {
-    let mut cmd = Command::new("git");
-    cmd.args(args)
-        .env("GIT_PAGER", "cat")
-        .env("PAGER", "cat")
-        .stdin(Stdio::null());
-    cmd
-}
-
 pub(crate) fn git_output(args: &[&str]) -> Result<Output> {
-    let output = git_command(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .with_context(|| format!("spawn git {:?}", args))?;
+    let output = run_git_output(args).with_context(|| format!("spawn git {:?}", args))?;
     if !output.status.success() {
         return Err(anyhow!(
             "git {:?} failed: {}{}",
@@ -34,11 +22,7 @@ pub(crate) fn git_output(args: &[&str]) -> Result<Output> {
 }
 
 pub(crate) fn git_output_optional(args: &[&str]) -> Option<Output> {
-    let output = git_command(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .ok()?;
+    let output = run_git_output(args).ok()?;
     if !output.status.success() {
         return None;
     }
@@ -46,19 +30,13 @@ pub(crate) fn git_output_optional(args: &[&str]) -> Option<Output> {
 }
 
 pub(crate) fn git_status_success(args: &[&str]) -> bool {
-    git_command(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+    common_git::run_status_quiet(args)
         .map(|status| status.success())
         .unwrap_or(false)
 }
 
 pub(crate) fn git_status_code(args: &[&str]) -> Option<i32> {
-    git_command(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+    common_git::run_status_quiet(args)
         .ok()
         .map(|status| status.code().unwrap_or(1))
 }
@@ -78,6 +56,10 @@ pub(crate) fn git_stdout_trimmed_optional(args: &[&str]) -> Option<String> {
     } else {
         Some(out)
     }
+}
+
+fn run_git_output(args: &[&str]) -> std::io::Result<Output> {
+    common_git::run_output(args)
 }
 
 #[derive(Debug, Clone)]
