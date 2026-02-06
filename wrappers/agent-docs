@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if command -v agent-docs >/dev/null 2>&1; then
+  exec agent-docs "$@"
+fi
+
+if command -v cargo >/dev/null 2>&1; then
+  exec cargo run -q -p agent-docs -- "$@"
+fi
+
+echo "agent-docs: binary not found (install via cargo install or build the workspace)" >&2
+exit 1

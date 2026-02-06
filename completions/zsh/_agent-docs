@@ -1,0 +1,117 @@
+#compdef agent-docs
+
+_agent-docs() {
+  emulate -L zsh -o extendedglob
+
+  local context='' state='' state_descr=''
+  local -a line=()
+  typeset -A opt_args=()
+
+  local -a subcommands=()
+  subcommands=(
+    'resolve:Resolve required docs for a context'
+    'contexts:List supported contexts'
+    'add:Upsert one AGENT_DOCS.toml entry'
+    'scaffold-agents:Scaffold default AGENTS.md template'
+    'baseline:Check baseline doc coverage'
+    'scaffold-baseline:Scaffold missing baseline docs'
+  )
+
+  local subcmd=''
+
+  _arguments -C \
+    '(-h --help)'{-h,--help}'[Print help]' \
+    '(-V --version)'{-V,--version}'[Print version]' \
+    '--codex-home=[Override CODEX_HOME root]:path:_files -/' \
+    '--project-path=[Override PROJECT_PATH root]:path:_files -/' \
+    '1:command:->subcmds' \
+    '*::arg:->args'
+
+  case "${state-}" in
+    subcmds)
+      _describe -t commands 'agent-docs command' subcommands && return 0
+      ;;
+    args)
+      subcmd="${line[1]-}"
+      subcmd="${subcmd%%[[:space:]]#}"
+      ;;
+  esac
+
+  case "$subcmd" in
+    resolve)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Print help]' \
+        '--codex-home=[Override CODEX_HOME root]:path:_files -/' \
+        '--project-path=[Override PROJECT_PATH root]:path:_files -/' \
+        '--context=[Context to resolve]:context:(startup skill-dev task-tools project-dev)' \
+        '--format=[Output format]:format:(text json)' \
+        '--strict[Return non-zero when required documents are missing]' \
+        && return 0
+      ;;
+    contexts)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Print help]' \
+        '--codex-home=[Override CODEX_HOME root]:path:_files -/' \
+        '--project-path=[Override PROJECT_PATH root]:path:_files -/' \
+        '--format=[Output format]:format:(text json)' \
+        && return 0
+      ;;
+    add)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Print help]' \
+        '--codex-home=[Override CODEX_HOME root]:path:_files -/' \
+        '--project-path=[Override PROJECT_PATH root]:path:_files -/' \
+        '--target=[Config scope file to update]:target:(home project)' \
+        '--context=[Context key]:context:(startup skill-dev task-tools project-dev)' \
+        '--scope=[Document root scope]:scope:(home project)' \
+        '--path=[Document path]:path:_files -/' \
+        '--required[Set required=true for this entry]' \
+        '--when=[Condition key]:when:(always)' \
+        '--notes=[Optional notes text]:notes:' \
+        && return 0
+      ;;
+    scaffold-agents)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Print help]' \
+        '--codex-home=[Override CODEX_HOME root]:path:_files -/' \
+        '--project-path=[Override PROJECT_PATH root]:path:_files -/' \
+        '--target=[Scope root to scaffold]:target:(home project)' \
+        '--output=[Write to explicit output file path]:path:_files -/' \
+        '--force[Overwrite output file when it exists]' \
+        && return 0
+      ;;
+    baseline)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Print help]' \
+        '--codex-home=[Override CODEX_HOME root]:path:_files -/' \
+        '--project-path=[Override PROJECT_PATH root]:path:_files -/' \
+        '--check[Run baseline coverage checks]' \
+        '--target=[Scope selection]:target:(home project all)' \
+        '--format=[Output format]:format:(text json)' \
+        '--strict[Return non-zero when required documents are missing]' \
+        && return 0
+      ;;
+    scaffold-baseline)
+      _arguments -C \
+        '(-h --help)'{-h,--help}'[Print help]' \
+        '--codex-home=[Override CODEX_HOME root]:path:_files -/' \
+        '--project-path=[Override PROJECT_PATH root]:path:_files -/' \
+        '--target=[Scope selection]:target:(home project all)' \
+        '--missing-only[Create only missing baseline files]' \
+        '--force[Overwrite existing files]' \
+        '--dry-run[Print planned writes without writing files]' \
+        '--format=[Output format]:format:(text json)' \
+        && return 0
+      ;;
+    '')
+      _message 'command (resolve|contexts|add|scaffold-agents|baseline|scaffold-baseline)'
+      return 0
+      ;;
+    *)
+      _message 'unknown command'
+      return 0
+      ;;
+  esac
+}
+
+compdef _agent-docs agent-docs
