@@ -239,3 +239,296 @@ fn cache_key(name: &str) -> Result<String> {
     }
     Ok(key)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        cache_file_for_target, clear_starship_cache, read_cache_entry, secret_name_for_target,
+        write_starship_cache,
+    };
+    use crate::fs as codex_fs;
+    use nils_test_support::{EnvGuard, GlobalStateLock};
+    use std::fs;
+    use std::path::Path;
+
+    const HEADER: &str = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0";
+    const PAYLOAD_ALPHA: &str = "eyJzdWIiOiJ1c2VyXzEyMyIsImVtYWlsIjoiYWxwaGFAZXhhbXBsZS5jb20iLCJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF91c2VyX2lkIjoidXNlcl8xMjMiLCJlbWFpbCI6ImFscGhhQGV4YW1wbGUuY29tIn19";
+
+    fn token(payload: &str) -> String {
+        format!("{HEADER}.{payload}.sig")
+    }
+
+    fn auth_json(
+        payload: &str,
+        account_id: &str,
+        refresh_token: &str,
+        last_refresh: &str,
+    ) -> String {
+        format!(
+            r#"{{"tokens":{{"access_token":"{}","id_token":"{}","refresh_token":"{}","account_id":"{}"}},"last_refresh":"{}"}}"#,
+            token(payload),
+            token(payload),
+            refresh_token,
+            account_id,
+            last_refresh
+        )
+    }
+
+    fn set_cache_env(
+        lock: &GlobalStateLock,
+        secret_dir: &Path,
+        cache_root: &Path,
+    ) -> (EnvGuard, EnvGuard) {
+        let secret = EnvGuard::set(
+            lock,
+            "CODEX_SECRET_DIR",
+            secret_dir.to_str().expect("secret dir path"),
+        );
+        let cache = EnvGuard::set(
+            lock,
+            "ZSH_CACHE_DIR",
+            cache_root.to_str().expect("cache root path"),
+        );
+        (secret, cache)
+    }
+
+    #[test]
+    fn clear_starship_cache_rejects_relative_cache_root() {
+        let lock = GlobalStateLock::new();
+        let _cache = EnvGuard::set(&lock, "ZSH_CACHE_DIR", "relative/cache");
+
+        let err = clear_starship_cache().expect_err("relative cache root should fail");
+        assert!(err.to_string().contains("non-absolute cache root"));
+    }
+
+    #[test]
+    fn clear_starship_cache_rejects_root_cache_path() {
+        let lock = GlobalStateLock::new();
+        let _cache = EnvGuard::set(&lock, "ZSH_CACHE_DIR", "/");
+
+        let err = clear_starship_cache().expect_err("root cache path should fail");
+        assert!(err.to_string().contains("invalid cache root"));
+    }
+
+    #[test]
+    fn clear_starship_cache_removes_only_starship_cache_dir() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let cache_root = dir.path().join("cache-root");
+        let remove_dir = cache_root.join("codex").join("starship-rate-limits");
+        let keep_dir = cache_root.join("codex").join("secrets");
+        fs::create_dir_all(&remove_dir).expect("remove dir");
+        fs::create_dir_all(&keep_dir).expect("keep dir");
+        fs::write(
+            remove_dir.join("alpha.kv"),
+            "weekly_remaining=1\nweekly_reset_epoch=2",
+        )
+        .expect("write cached file");
+        fs::write(keep_dir.join("keep.txt"), "keep").expect("write keep file");
+        let _cache = EnvGuard::set(
+            &lock,
+            "ZSH_CACHE_DIR",
+            cache_root.to_str().expect("cache root path"),
+        );
+
+        clear_starship_cache().expect("clear cache");
+
+        assert!(!remove_dir.exists(), "starship cache dir should be removed");
+        assert!(keep_dir.is_dir(), "non-target cache dir should remain");
+    }
+
+    #[test]
+    fn cache_file_for_secret_target_uses_sanitized_secret_name() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        let cache_root = dir.path().join("cache");
+        fs::create_dir_all(&secret_dir).expect("secret dir");
+        fs::create_dir_all(&cache_root).expect("cache root");
+        let _env = set_cache_env(&lock, &secret_dir, &cache_root);
+
+        let target = secret_dir.join("My.Secret+Name.json");
+        fs::write(&target, "{}").expect("write secret file");
+
+        let cache_file = cache_file_for_target(&target).expect("cache file");
+        assert_eq!(
+            cache_file,
+            cache_root
+                .join("codex")
+                .join("starship-rate-limits")
+                .join("my_secret_name.kv")
+        );
+    }
+
+    #[test]
+    fn cache_file_for_non_secret_target_falls_back_to_hashed_key() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        let cache_root = dir.path().join("cache");
+        fs::create_dir_all(&secret_dir).expect("secret dir");
+        fs::create_dir_all(&cache_root).expect("cache root");
+        let _env = set_cache_env(&lock, &secret_dir, &cache_root);
+
+        let target = dir.path().join("auth.json");
+        fs::write(&target, "{\"tokens\":{\"access_token\":\"tok\"}}").expect("write auth file");
+
+        let hash = codex_fs::sha256_file(&target).expect("sha256");
+        let cache_file = cache_file_for_target(&target).expect("cache file");
+        assert_eq!(
+            cache_file,
+            cache_root
+                .join("codex")
+                .join("starship-rate-limits")
+                .join(format!("auth_{hash}.kv"))
+        );
+    }
+
+    #[test]
+    fn cache_file_for_auth_target_reuses_matching_secret_identity() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        let cache_root = dir.path().join("cache");
+        fs::create_dir_all(&secret_dir).expect("secret dir");
+        fs::create_dir_all(&cache_root).expect("cache root");
+        let _env = set_cache_env(&lock, &secret_dir, &cache_root);
+
+        let target = dir.path().join("auth.json");
+        let target_content = auth_json(
+            PAYLOAD_ALPHA,
+            "acct_001",
+            "refresh_auth",
+            "2025-01-20T12:34:56Z",
+        );
+        fs::write(&target, target_content).expect("write auth file");
+
+        let secret_file = secret_dir.join("Alpha Team.json");
+        let secret_content = auth_json(
+            PAYLOAD_ALPHA,
+            "acct_001",
+            "refresh_secret",
+            "2025-01-21T12:34:56Z",
+        );
+        fs::write(&secret_file, secret_content).expect("write matching secret file");
+
+        let cache_file = cache_file_for_target(&target).expect("cache file");
+        assert_eq!(
+            cache_file.file_name().and_then(|name| name.to_str()),
+            Some("alpha_team.kv")
+        );
+        assert_eq!(
+            secret_name_for_target(&target),
+            Some("Alpha Team".to_string())
+        );
+    }
+
+    #[test]
+    fn write_then_read_cache_entry_preserves_optional_non_weekly_reset_epoch() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        let cache_root = dir.path().join("cache");
+        fs::create_dir_all(&secret_dir).expect("secret dir");
+        fs::create_dir_all(&cache_root).expect("cache root");
+        let _env = set_cache_env(&lock, &secret_dir, &cache_root);
+
+        let target = secret_dir.join("alpha.json");
+        fs::write(&target, "{}").expect("write target");
+
+        write_starship_cache(
+            &target,
+            1700000000,
+            "5h",
+            91,
+            12,
+            1700600000,
+            Some(1700003600),
+        )
+        .expect("write cache");
+
+        let entry = read_cache_entry(&target).expect("read cache");
+        assert_eq!(entry.non_weekly_label, "5h");
+        assert_eq!(entry.non_weekly_remaining, 91);
+        assert_eq!(entry.non_weekly_reset_epoch, Some(1700003600));
+        assert_eq!(entry.weekly_remaining, 12);
+        assert_eq!(entry.weekly_reset_epoch, 1700600000);
+    }
+
+    #[test]
+    fn write_cache_omits_optional_non_weekly_reset_epoch_when_absent() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        let cache_root = dir.path().join("cache");
+        fs::create_dir_all(&secret_dir).expect("secret dir");
+        fs::create_dir_all(&cache_root).expect("cache root");
+        let _env = set_cache_env(&lock, &secret_dir, &cache_root);
+
+        let target = secret_dir.join("alpha.json");
+        fs::write(&target, "{}").expect("write target");
+
+        write_starship_cache(&target, 1700000000, "daily", 45, 9, 1700600000, None)
+            .expect("write cache");
+
+        let cache_file = cache_file_for_target(&target).expect("cache path");
+        let content = fs::read_to_string(&cache_file).expect("read cache file");
+        assert!(!content.contains("non_weekly_reset_epoch="));
+
+        let entry = read_cache_entry(&target).expect("read cache");
+        assert_eq!(entry.non_weekly_label, "daily");
+        assert_eq!(entry.non_weekly_reset_epoch, None);
+    }
+
+    #[test]
+    fn read_cache_entry_reports_missing_weekly_data() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        let cache_root = dir.path().join("cache");
+        fs::create_dir_all(&secret_dir).expect("secret dir");
+        fs::create_dir_all(&cache_root).expect("cache root");
+        let _env = set_cache_env(&lock, &secret_dir, &cache_root);
+
+        let target = secret_dir.join("alpha.json");
+        fs::write(&target, "{}").expect("write target");
+        let cache_file = cache_file_for_target(&target).expect("cache path");
+        fs::create_dir_all(cache_file.parent().expect("cache parent")).expect("cache parent dir");
+        fs::write(
+            &cache_file,
+            "fetched_at=1\nnon_weekly_label=5h\nnon_weekly_remaining=90\nweekly_remaining=1\n",
+        )
+        .expect("write invalid cache");
+
+        let err = read_cache_entry(&target)
+            .err()
+            .expect("missing weekly reset should fail");
+        assert!(err.to_string().contains("missing weekly data"));
+    }
+
+    #[test]
+    fn read_cache_entry_reports_missing_non_weekly_data() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        let cache_root = dir.path().join("cache");
+        fs::create_dir_all(&secret_dir).expect("secret dir");
+        fs::create_dir_all(&cache_root).expect("cache root");
+        let _env = set_cache_env(&lock, &secret_dir, &cache_root);
+
+        let target = secret_dir.join("alpha.json");
+        fs::write(&target, "{}").expect("write target");
+        let cache_file = cache_file_for_target(&target).expect("cache path");
+        fs::create_dir_all(cache_file.parent().expect("cache parent")).expect("cache parent dir");
+        fs::write(
+            &cache_file,
+            "fetched_at=1\nweekly_remaining=1\nweekly_reset_epoch=1700600000\n",
+        )
+        .expect("write invalid cache");
+
+        let err = read_cache_entry(&target)
+            .err()
+            .expect("missing non-weekly fields should fail");
+        assert!(err.to_string().contains("missing non-weekly data"));
+    }
+}
