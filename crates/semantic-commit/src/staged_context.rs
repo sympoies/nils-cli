@@ -372,3 +372,78 @@ fn print_usage(stderr: bool) {
     let _ = writeln!(out, "Outputs:");
     let _ = writeln!(out, "  - Bundle: commit-context.json + staged.patch");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_name_status_z_parses_basic_entries() {
+        let buf = b"A\0src/main.rs\0M\0README.md\0";
+        let entries = parse_name_status_z(buf).expect("parse name-status output");
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].status, "A");
+        assert_eq!(entries[0].path, "src/main.rs");
+        assert_eq!(entries[0].score, None);
+        assert_eq!(entries[0].old_path, None);
+
+        assert_eq!(entries[1].status, "M");
+        assert_eq!(entries[1].path, "README.md");
+        assert_eq!(entries[1].score, None);
+        assert_eq!(entries[1].old_path, None);
+    }
+
+    #[test]
+    fn parse_name_status_z_parses_renames_and_copies_with_scores() {
+        let buf = b"R087\0old/path.txt\0new/path.txt\0C100\0src/lib.rs\0src/lib_copy.rs\0";
+        let entries = parse_name_status_z(buf).expect("parse rename/copy entries");
+
+        assert_eq!(entries.len(), 2);
+
+        assert_eq!(entries[0].status, "R");
+        assert_eq!(entries[0].score, Some(87));
+        assert_eq!(entries[0].path, "new/path.txt");
+        assert_eq!(entries[0].old_path.as_deref(), Some("old/path.txt"));
+
+        assert_eq!(entries[1].status, "C");
+        assert_eq!(entries[1].score, Some(100));
+        assert_eq!(entries[1].path, "src/lib_copy.rs");
+        assert_eq!(entries[1].old_path.as_deref(), Some("src/lib.rs"));
+    }
+
+    #[test]
+    fn parse_name_status_z_rejects_malformed_rename_entry() {
+        let result = parse_name_status_z(b"R100\0old/path.txt\0");
+        assert!(result.is_err());
+        let err = match result {
+            Ok(_) => panic!("expected malformed name-status output"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("malformed name-status output"));
+    }
+
+    #[test]
+    fn parse_name_status_z_tolerates_invalid_similarity_score() {
+        let entries = parse_name_status_z(b"Rxx\0old/path.txt\0new/path.txt\0")
+            .expect("parse rename with non-numeric score");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].status, "R");
+        assert_eq!(entries[0].score, None);
+        assert_eq!(entries[0].path, "new/path.txt");
+        assert_eq!(entries[0].old_path.as_deref(), Some("old/path.txt"));
+    }
+
+    #[test]
+    fn is_lockfile_matches_known_package_manager_lockfiles() {
+        assert!(is_lockfile("yarn.lock"));
+        assert!(is_lockfile("frontend/package-lock.json"));
+        assert!(is_lockfile("subdir/pnpm-lock.yaml"));
+        assert!(is_lockfile("bun.lockb"));
+        assert!(is_lockfile("bun.lock"));
+        assert!(is_lockfile("npm-shrinkwrap.json"));
+        assert!(!is_lockfile("package-lock.json.bak"));
+        assert!(!is_lockfile("Cargo.lock"));
+    }
+}
