@@ -422,8 +422,14 @@ fn contains_angle_placeholder(value: &str) -> bool {
             if start < bytes.len() {
                 if let Some(end) = bytes[start..].iter().position(|b| *b == b'>') {
                     if end >= 1 {
-                        return true;
+                        let inner = &value[start..start + end];
+                        // Treat only tight `<...>` tokens as placeholders. This avoids
+                        // false positives on shell redirects like `cat < in > out`.
+                        if inner.trim() == inner {
+                            return true;
+                        }
                     }
+                    i = start + end;
                 }
             }
         }
@@ -473,4 +479,19 @@ fn is_task_id(s: &str) -> bool {
         return false;
     }
     a.chars().all(|c| c.is_ascii_digit()) && b.chars().all(|c| c.is_ascii_digit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::contains_angle_placeholder;
+
+    #[test]
+    fn angle_placeholder_detects_tight_token() {
+        assert!(contains_angle_placeholder("needs <TBD>"));
+    }
+
+    #[test]
+    fn angle_placeholder_ignores_shell_redirect_spacing() {
+        assert!(!contains_angle_placeholder("cat < input.txt > output.txt"));
+    }
 }
