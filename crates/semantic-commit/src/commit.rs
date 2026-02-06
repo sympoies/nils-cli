@@ -396,3 +396,67 @@ fn print_usage(stderr: bool) {
     let _ = writeln!(out);
     let _ = writeln!(out, "  semantic-commit commit --message-file ./message.txt");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn message_file(contents: &str) -> tempfile::NamedTempFile {
+        let mut file = tempfile::NamedTempFile::new().expect("create temp message file");
+        file.write_all(contents.as_bytes())
+            .expect("write temp message file");
+        file
+    }
+
+    #[test]
+    fn validate_commit_message_accepts_valid_header_without_body() {
+        let file = message_file("feat: add parser coverage\n");
+        assert!(validate_commit_message(file.path()).is_ok());
+    }
+
+    #[test]
+    fn validate_commit_message_accepts_valid_scoped_header_with_body() {
+        let file = message_file("fix(parser-2): handle edge case\n\n- Handle malformed input\n");
+        assert!(validate_commit_message(file.path()).is_ok());
+    }
+
+    #[test]
+    fn validate_commit_message_rejects_header_over_100_chars() {
+        let subject = "a".repeat(95);
+        let file = message_file(&format!("feat: {subject}\n"));
+
+        assert_eq!(validate_commit_message(file.path()), Err(1));
+    }
+
+    #[test]
+    fn validate_commit_message_rejects_uppercase_scope() {
+        let file = message_file("feat(Core): add parser coverage\n");
+        assert_eq!(validate_commit_message(file.path()), Err(1));
+    }
+
+    #[test]
+    fn validate_commit_message_rejects_empty_line_inside_body() {
+        let file = message_file("feat: add parser coverage\n\n- First line\n\n- Second line\n");
+        assert_eq!(validate_commit_message(file.path()), Err(1));
+    }
+
+    #[test]
+    fn validate_commit_message_rejects_body_line_over_100_chars() {
+        let long_line = "A".repeat(99);
+        let file = message_file(&format!("feat: add parser coverage\n\n- {long_line}\n"));
+
+        assert_eq!(validate_commit_message(file.path()), Err(1));
+    }
+
+    #[test]
+    fn is_valid_header_enforces_shape_rules() {
+        assert!(is_valid_header("fix(core_2): handle edge case"));
+        assert!(is_valid_header("chore: update fixtures"));
+        assert!(!is_valid_header("Fix: uppercase type"));
+        assert!(!is_valid_header("fix(core!): invalid scope character"));
+        assert!(!is_valid_header("fix(scope):"));
+        assert!(!is_valid_header("fix(scope): "));
+        assert!(!is_valid_header("fix(scope) missing colon"));
+    }
+}

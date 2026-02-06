@@ -43,6 +43,26 @@ fn staged_context_outside_git_repo_errors() {
 }
 
 #[test]
+fn staged_context_help_flag_prints_usage() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let output =
+        common::run_semantic_commit_output(dir.path(), &["staged-context", "--help"], &[], None);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(as_str(&output.stdout).contains("Usage: semantic-commit staged-context"));
+}
+
+#[test]
+fn staged_context_unknown_argument_errors_before_git_checks() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let output =
+        common::run_semantic_commit_output(dir.path(), &["staged-context", "--bogus"], &[], None);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(as_str(&output.stderr).contains("error: unknown argument: --bogus"));
+}
+
+#[test]
 fn staged_context_no_staged_changes_exits_2() {
     let repo = common::init_repo();
     let output = common::run_semantic_commit_output(repo.path(), &["staged-context"], &[], None);

@@ -29,6 +29,45 @@ fn commit_outside_git_repo_errors() {
 }
 
 #[test]
+fn commit_help_flag_prints_usage() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let output = common::run_semantic_commit_output(dir.path(), &["commit", "--help"], &[], None);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(as_str(&output.stdout)
+        .contains("semantic-commit commit [--message <text> | --message-file <path>]"));
+}
+
+#[test]
+fn commit_unknown_argument_errors_before_git_checks() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let output = common::run_semantic_commit_output(dir.path(), &["commit", "--bogus"], &[], None);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(as_str(&output.stderr).contains("error: unknown argument: --bogus"));
+}
+
+#[test]
+fn commit_message_flag_requires_value() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let output =
+        common::run_semantic_commit_output(dir.path(), &["commit", "--message"], &[], None);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(as_str(&output.stderr).contains("error: --message requires a value"));
+}
+
+#[test]
+fn commit_message_file_flag_requires_path() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let output =
+        common::run_semantic_commit_output(dir.path(), &["commit", "--message-file"], &[], None);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(as_str(&output.stderr).contains("error: --message-file requires a path"));
+}
+
+#[test]
 fn commit_no_staged_changes_exits_2() {
     let repo = common::init_repo();
     let output = common::run_semantic_commit_output(
@@ -128,6 +167,17 @@ fn commit_message_file_missing_errors() {
 }
 
 #[test]
+fn commit_empty_stdin_message_errors() {
+    let repo = common::init_repo();
+    stage_file(repo.path(), "a.txt", "hello\n");
+
+    let output = common::run_semantic_commit_output(repo.path(), &["commit"], &[], Some(""));
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(as_str(&output.stderr).contains("error: commit message is empty"));
+}
+
+#[test]
 fn commit_fails_when_git_scope_missing() {
     let repo = common::init_repo();
     stage_file(repo.path(), "a.txt", "hello\n");
@@ -151,6 +201,51 @@ fn commit_fails_when_git_scope_missing() {
         !head.status.success(),
         "expected no commit to have been created"
     );
+}
+
+#[test]
+fn commit_message_file_successfully_commits() {
+    let repo = common::init_repo();
+    stage_file(repo.path(), "a.txt", "hello\n");
+    common::write_file(
+        repo.path(),
+        "message.txt",
+        "feat(core): add thing\n\n- Add thing\n",
+    );
+
+    let tool_dir = tempfile::TempDir::new().expect("tempdir");
+    common::write_executable(
+        tool_dir.path(),
+        "git-scope",
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1-}" == "help" ]]; then
+  exit 0
+fi
+if [[ "${1-}" != "commit" || "${2-}" != "HEAD" || "${3-}" != "--no-color" ]]; then
+  echo "unexpected args: $*" >&2
+  exit 2
+fi
+echo "GIT_SCOPE_OK"
+"#,
+    );
+
+    let tool_dir = tool_dir.path().to_str().expect("tool dir str");
+    let path_env = format!("{tool_dir}:/usr/bin:/bin:/usr/sbin:/sbin");
+    let envs = vec![
+        ("PATH", path_env.as_str()),
+        ("GIT_AUTHOR_DATE", "Thu, 01 Jan 1970 00:00:00 +0000"),
+        ("GIT_COMMITTER_DATE", "Thu, 01 Jan 1970 00:00:00 +0000"),
+    ];
+    let output = common::run_semantic_commit_output(
+        repo.path(),
+        &["commit", "--message-file", "message.txt"],
+        &envs,
+        None,
+    );
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(as_str(&output.stdout).contains("GIT_SCOPE_OK"));
 }
 
 #[test]
