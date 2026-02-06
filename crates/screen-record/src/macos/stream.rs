@@ -14,13 +14,14 @@ use objc2_av_foundation::{
     AVCaptureConnection, AVCaptureDevice, AVCaptureDeviceInput, AVCaptureOutput, AVCaptureSession,
     AVMediaTypeAudio,
 };
+use objc2_core_foundation::{CFArray, CFDictionary, CFNumber, CFString, CFType};
 use objc2_core_graphics::CGMainDisplayID;
 use objc2_core_media::{CMSampleBuffer, CMTime};
 use objc2_foundation::NSArray;
 use objc2_foundation::{NSDate, NSError, NSRunLoop};
 use objc2_screen_capture_kit::{
-    SCContentFilter, SCShareableContent, SCStream, SCStreamConfiguration, SCStreamOutput,
-    SCStreamOutputType, SCWindow,
+    SCContentFilter, SCFrameStatus, SCShareableContent, SCStream, SCStreamConfiguration,
+    SCStreamFrameInfoStatus, SCStreamOutput, SCStreamOutputType, SCWindow,
 };
 
 use crate::cli::{AudioMode, ContainerFormat};
@@ -389,8 +390,18 @@ define_class!(
             };
 
             match r#type {
-                SCStreamOutputType::Screen => capture_state.append_video(sample_buffer),
-                SCStreamOutputType::Audio => capture_state.append_system_audio(sample_buffer),
+                SCStreamOutputType::Screen => {
+                    if !is_writable_video_sample_buffer(sample_buffer) {
+                        return;
+                    }
+                    capture_state.append_video(sample_buffer);
+                }
+                SCStreamOutputType::Audio => {
+                    if !is_writable_sample_buffer(sample_buffer) {
+                        return;
+                    }
+                    capture_state.append_system_audio(sample_buffer);
+                }
                 _ => {}
             }
         }
@@ -463,6 +474,10 @@ define_class!(
             sample_buffer: &CMSampleBuffer,
             _connection: &AVCaptureConnection,
         ) {
+            if !is_writable_sample_buffer(sample_buffer) {
+                return;
+            }
+
             let capture_lock = self.ivars().capture.lock();
             let capture_guard = match capture_lock {
                 Ok(guard) => guard,
@@ -757,6 +772,36 @@ fn run_capture_loop(duration: Duration, stop_flag: &Arc<AtomicBool>) {
         let date = NSDate::dateWithTimeIntervalSinceNow(step.as_secs_f64());
         run_loop.runUntilDate(&date);
     }
+}
+
+fn is_writable_sample_buffer(sample_buffer: &CMSampleBuffer) -> bool {
+    unsafe {
+        sample_buffer.is_valid() && sample_buffer.data_is_ready() && sample_buffer.num_samples() > 0
+    }
+}
+
+fn is_writable_video_sample_buffer(sample_buffer: &CMSampleBuffer) -> bool {
+    if !is_writable_sample_buffer(sample_buffer) {
+        return false;
+    }
+
+    match screen_frame_status(sample_buffer) {
+        Some(SCFrameStatus::Complete) => true,
+        Some(_) => false,
+        None => true,
+    }
+}
+
+fn screen_frame_status(sample_buffer: &CMSampleBuffer) -> Option<SCFrameStatus> {
+    let attachments = unsafe { sample_buffer.sample_attachments_array(false) }?;
+    let attachments: &CFArray<CFDictionary<CFString, CFType>> =
+        unsafe { attachments.cast_unchecked() };
+    let attachment = attachments.get(0)?;
+    let status_key: &CFString = unsafe { SCStreamFrameInfoStatus.as_ref() };
+    let status_value = attachment.get(status_key)?;
+    let status_number = status_value.downcast::<CFNumber>().ok()?;
+    let raw_status = status_number.as_i64()?;
+    Some(SCFrameStatus(raw_status as _))
 }
 
 fn wait_for_callback<T>(receiver: &mpsc::Receiver<T>, label: &str) -> Result<T, CliError> {

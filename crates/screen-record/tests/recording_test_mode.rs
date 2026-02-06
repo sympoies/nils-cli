@@ -1,3 +1,10 @@
+use std::fs;
+#[cfg(unix)]
+use std::process::{Command, Stdio};
+#[cfg(unix)]
+use std::time::{Duration, Instant};
+
+use nils_test_support::cmd::run_with;
 use tempfile::TempDir;
 
 mod common;
@@ -108,6 +115,126 @@ fn record_main_display_fixture_writes_file() {
     assert_eq!(stdout.trim(), output_path.display().to_string());
     let metadata = std::fs::metadata(&output_path).expect("output exists");
     assert!(metadata.len() > 0);
+}
+
+#[test]
+fn record_failure_removes_staged_and_target_output() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let output_path = cwd.path().join("broken.mov");
+
+    let output = run_with(
+        &harness.screen_record_bin(),
+        &[
+            "--app",
+            "Terminal",
+            "--duration",
+            "1",
+            "--audio",
+            "off",
+            "--path",
+            output_path.to_str().unwrap(),
+        ],
+        &harness
+            .cmd_options(cwd.path())
+            .with_env("CODEX_SCREEN_RECORD_TEST_MODE_FAIL_APPEND", "1"),
+    );
+
+    assert_eq!(output.code, 1);
+    assert!(output
+        .stderr_text()
+        .contains("failed to append sample buffer"));
+    assert!(
+        !output_path.exists(),
+        "requested output should not exist on failure"
+    );
+
+    let staged_leftovers: Vec<_> = fs::read_dir(cwd.path())
+        .expect("read cwd")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name())
+        .filter_map(|name| name.into_string().ok())
+        .filter(|name| name.contains(".recording-"))
+        .collect();
+    assert!(
+        staged_leftovers.is_empty(),
+        "staged recording files should be cleaned up: {staged_leftovers:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn record_realtime_mode_sigint_stops_early_and_keeps_valid_output() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let output_path = cwd.path().join("interrupted.mov");
+    let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("sample.mov");
+
+    let mut cmd = Command::new(harness.screen_record_bin());
+    cmd.current_dir(cwd.path())
+        .args([
+            "--app",
+            "Terminal",
+            "--duration",
+            "30",
+            "--audio",
+            "off",
+            "--path",
+            output_path.to_str().unwrap(),
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let options = harness
+        .cmd_options(cwd.path())
+        .with_env("CODEX_SCREEN_RECORD_TEST_MODE_REALTIME", "1");
+    for key in options.env_remove {
+        cmd.env_remove(key);
+    }
+    for (key, value) in options.envs {
+        cmd.env(key, value);
+    }
+
+    let start = Instant::now();
+    let mut child = cmd.spawn().expect("spawn screen-record");
+    std::thread::sleep(Duration::from_millis(250));
+    assert!(
+        child.try_wait().expect("poll child").is_none(),
+        "recording finished before SIGINT"
+    );
+
+    let kill_status = Command::new("kill")
+        .args(["-s", "INT", &child.id().to_string()])
+        .status()
+        .expect("send SIGINT");
+    assert!(kill_status.success(), "failed to send SIGINT");
+
+    let output = child.wait_with_output().expect("wait screen-record");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "expected success after SIGINT"
+    );
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "recording should stop quickly after SIGINT"
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), output_path.display().to_string());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr.trim(), "");
+
+    assert!(output_path.exists(), "expected output file");
+    assert!(fs::metadata(&output_path).expect("metadata").len() > 0);
+    assert_eq!(
+        fs::read(&output_path).expect("read output"),
+        fs::read(&fixture_path).expect("read fixture")
+    );
 }
 
 #[test]

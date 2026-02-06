@@ -100,33 +100,27 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
             validate_record_args(&cli)?;
 
             let output_path = resolve_output_path(&cli)?;
+            let staged_output_path = staged_recording_output_path(&output_path)?;
             let container = resolve_container(&output_path, cli.format)?;
             if cli.audio == AudioMode::Both && container == ContainerFormat::Mp4 {
                 return Err(CliError::usage("--audio both requires .mov"));
             }
-            if cli.portal {
-                backend.record_portal(
-                    cli.duration.expect("duration validated"),
-                    &output_path,
-                    container,
-                )?;
+            let duration = cli.duration.expect("duration validated");
+
+            let record_result = if cli.portal {
+                backend.record_portal(duration, &staged_output_path, container)
             } else if matches!(backend, Backend::Linux) {
                 ensure_linux_x11_selectors_allowed()?;
                 if cli.display {
-                    backend.record_main_display(
-                        cli.duration.expect("duration validated"),
-                        cli.audio,
-                        &output_path,
-                        container,
-                    )?;
+                    backend.record_main_display(duration, cli.audio, &staged_output_path, container)
                 } else if let Some(display_id) = cli.display_id {
                     backend.record_display(
                         display_id,
-                        cli.duration.expect("duration validated"),
+                        duration,
                         cli.audio,
-                        &output_path,
+                        &staged_output_path,
                         container,
-                    )?;
+                    )
                 } else {
                     let content = fetch_shareable_content(&backend)?;
                     let args = SelectionArgs {
@@ -138,27 +132,22 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                     let selected = select_window(&content.windows, &args)?;
                     backend.record_window(
                         &selected,
-                        cli.duration.expect("duration validated"),
+                        duration,
                         cli.audio,
-                        &output_path,
+                        &staged_output_path,
                         container,
-                    )?;
+                    )
                 }
             } else if cli.display {
-                backend.record_main_display(
-                    cli.duration.expect("duration validated"),
-                    cli.audio,
-                    &output_path,
-                    container,
-                )?;
+                backend.record_main_display(duration, cli.audio, &staged_output_path, container)
             } else if let Some(display_id) = cli.display_id {
                 backend.record_display(
                     display_id,
-                    cli.duration.expect("duration validated"),
+                    duration,
                     cli.audio,
-                    &output_path,
+                    &staged_output_path,
                     container,
-                )?;
+                )
             } else {
                 let content = fetch_shareable_content(&backend)?;
                 let args = SelectionArgs {
@@ -170,11 +159,21 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                 let selected = select_window(&content.windows, &args)?;
                 backend.record_window(
                     &selected,
-                    cli.duration.expect("duration validated"),
+                    duration,
                     cli.audio,
-                    &output_path,
+                    &staged_output_path,
                     container,
-                )?;
+                )
+            };
+
+            if let Err(err) = record_result {
+                cleanup_recording_temp_file(&staged_output_path);
+                return Err(err);
+            }
+
+            if let Err(err) = publish_recording_output(&staged_output_path, &output_path) {
+                cleanup_recording_temp_file(&staged_output_path);
+                return Err(err);
             }
             println!("{}", output_path.display());
             return Ok(());
@@ -363,7 +362,7 @@ impl Backend {
         format: ContainerFormat,
     ) -> Result<(), CliError> {
         match self {
-            Backend::TestMode => test_mode::record_fixture(path, format),
+            Backend::TestMode => test_mode::record_fixture_for_duration(duration, path, format),
             Backend::Macos => {
                 #[cfg(target_os = "macos")]
                 {
@@ -398,7 +397,7 @@ impl Backend {
         format: ContainerFormat,
     ) -> Result<(), CliError> {
         match self {
-            Backend::TestMode => test_mode::record_fixture(path, format),
+            Backend::TestMode => test_mode::record_fixture_for_duration(duration, path, format),
             Backend::Macos => {
                 #[cfg(target_os = "macos")]
                 {
@@ -432,7 +431,7 @@ impl Backend {
         format: ContainerFormat,
     ) -> Result<(), CliError> {
         match self {
-            Backend::TestMode => test_mode::record_fixture(path, format),
+            Backend::TestMode => test_mode::record_fixture_for_duration(duration, path, format),
             Backend::Macos => {
                 #[cfg(target_os = "macos")]
                 {
@@ -465,7 +464,7 @@ impl Backend {
         format: ContainerFormat,
     ) -> Result<(), CliError> {
         match self {
-            Backend::TestMode => test_mode::record_fixture(path, format),
+            Backend::TestMode => test_mode::record_fixture_for_duration(duration, path, format),
             Backend::Macos => Err(CliError::usage(
                 "--portal is only supported on Linux (Wayland)",
             )),
@@ -679,6 +678,36 @@ fn resolve_output_path(cli: &Cli) -> Result<PathBuf, CliError> {
     }
 
     Ok(path)
+}
+
+fn staged_recording_output_path(output_path: &Path) -> Result<PathBuf, CliError> {
+    let parent = output_path
+        .parent()
+        .ok_or_else(|| CliError::runtime("missing output parent dir"))?;
+    let name = output_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("recording");
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    Ok(parent.join(format!(".{name}.recording-{pid}-{nanos}")))
+}
+
+fn cleanup_recording_temp_file(path: &Path) {
+    let _ = std::fs::remove_file(path);
+}
+
+fn publish_recording_output(staged_path: &Path, output_path: &Path) -> Result<(), CliError> {
+    if output_path.exists() {
+        std::fs::remove_file(output_path)
+            .map_err(|err| CliError::runtime(format!("failed to replace output file: {err}")))?;
+    }
+
+    std::fs::rename(staged_path, output_path)
+        .map_err(|err| CliError::runtime(format!("failed to write output: {err}")))
 }
 
 fn resolve_portal_screenshot_output(
@@ -1388,5 +1417,37 @@ mod tests {
         };
         let line = format_app_tsv(&app);
         assert_eq!(line, "Termi  nal\t42\tcom.example.  app");
+    }
+
+    #[test]
+    fn staged_recording_output_path_uses_hidden_temp_name() {
+        let dir = TempDir::new().expect("tempdir");
+        let output = dir.path().join("captures").join("clip.mov");
+        std::fs::create_dir_all(output.parent().expect("parent")).expect("create dir");
+
+        let staged = staged_recording_output_path(&output).expect("staged path");
+        let parent = staged.parent().expect("parent");
+        let name = staged
+            .file_name()
+            .and_then(|value| value.to_str())
+            .expect("filename");
+
+        assert_eq!(parent, output.parent().expect("output parent"));
+        assert!(name.starts_with(".clip.mov.recording-"));
+    }
+
+    #[test]
+    fn publish_recording_output_replaces_existing_target() {
+        let dir = TempDir::new().expect("tempdir");
+        let output = dir.path().join("clip.mov");
+        let staged = dir.path().join(".clip.mov.recording-temp");
+
+        std::fs::write(&output, b"old").expect("write old output");
+        std::fs::write(&staged, b"new").expect("write staged output");
+
+        publish_recording_output(&staged, &output).expect("publish output");
+
+        assert!(!staged.exists(), "staged file should be moved away");
+        assert_eq!(std::fs::read(&output).expect("read output"), b"new");
     }
 }
