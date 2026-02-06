@@ -1,5 +1,5 @@
+use nils_common::process as shared_process;
 use std::io::Write;
-use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const DEFAULT_MODEL: &str = "gpt-5.1-codex-mini";
@@ -65,23 +65,20 @@ pub fn exec_dangerous(prompt: &str, caller: &str, stderr: &mut impl Write) -> i3
     let model = env_or_default("CODEX_CLI_MODEL", DEFAULT_MODEL);
     let reasoning = env_or_default("CODEX_CLI_REASONING", DEFAULT_REASONING);
     let reasoning_arg = format!("model_reasoning_effort=\"{}\"", reasoning);
+    let args = [
+        "exec",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "-s",
+        "workspace-write",
+        "-m",
+        model.as_str(),
+        "-c",
+        reasoning_arg.as_str(),
+        "--",
+        prompt,
+    ];
 
-    let mut cmd = Command::new("codex");
-    cmd.arg("exec")
-        .arg("--dangerously-bypass-approvals-and-sandbox")
-        .arg("-s")
-        .arg("workspace-write")
-        .arg("-m")
-        .arg(model)
-        .arg("-c")
-        .arg(reasoning_arg)
-        .arg("--")
-        .arg(prompt)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-
-    match cmd.status() {
+    match shared_process::run_status_inherit("codex", &args) {
         Ok(status) => status.code().unwrap_or(1),
         Err(err) => {
             let _ = writeln!(stderr, "codex-tools: failed to run codex exec: {err}");

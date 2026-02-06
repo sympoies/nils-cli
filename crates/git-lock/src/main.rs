@@ -70,7 +70,7 @@ fn run() -> i32 {
         return 0;
     }
 
-    if !git::is_git_repo() {
+    if !nils_common::git::is_git_repo().unwrap_or(false) {
         println!("{}", messages::NOT_GIT_REPO);
         return 1;
     }

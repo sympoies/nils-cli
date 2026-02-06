@@ -6,6 +6,7 @@ use crate::model::{
 use crate::report::render_report_md;
 use crate::toolchain::{probe_image, Toolchain};
 use crate::util;
+use nils_common::process as common_process;
 use nils_term::progress::Progress;
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
@@ -1162,13 +1163,11 @@ fn run_one_magick(cmd: &[String], dry_run: bool) -> anyhow::Result<(i32, String,
     if dry_run {
         return Ok((0, String::new(), String::new()));
     }
-    let mut c = Command::new(&cmd[0]);
-    c.args(&cmd[1..]);
-    let out = c.output()?;
+    let out = run_output_argv(cmd)?;
     Ok((
         out.status.code().unwrap_or(1),
-        String::from_utf8_lossy(&out.stdout).to_string(),
-        String::from_utf8_lossy(&out.stderr).to_string(),
+        out.stdout_lossy(),
+        out.stderr_lossy(),
     ))
 }
 
@@ -1292,14 +1291,12 @@ fn compute_resize_box(
 }
 
 fn run_capture(argv: &[String], fallback_msg: &str) -> anyhow::Result<()> {
-    let mut cmd = Command::new(&argv[0]);
-    cmd.args(&argv[1..]);
-    let out = cmd.output()?;
+    let out = run_output_argv(argv)?;
     if out.status.success() {
         return Ok(());
     }
-    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let stderr = out.stderr_lossy().trim().to_string();
+    let stdout = out.stdout_lossy().trim().to_string();
     let msg = if !stderr.is_empty() {
         stderr
     } else if !stdout.is_empty() {
@@ -1308,6 +1305,12 @@ fn run_capture(argv: &[String], fallback_msg: &str) -> anyhow::Result<()> {
         fallback_msg.to_string()
     };
     Err(anyhow::anyhow!("{msg}"))
+}
+
+fn run_output_argv(argv: &[String]) -> std::io::Result<common_process::ProcessOutput> {
+    let program = argv.first().expect("argv[0]").as_str();
+    let args: Vec<&str> = argv[1..].iter().map(String::as_str).collect();
+    common_process::run_output(program, &args)
 }
 
 fn run_djpeg_cjpeg_pipeline(djpeg_cmd: &[String], cjpeg_cmd: &[String]) -> anyhow::Result<()> {

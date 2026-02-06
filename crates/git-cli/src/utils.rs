@@ -1,4 +1,5 @@
 use crate::{clipboard, util};
+use nils_common::shell::quote_posix_single;
 use std::io::{self, Write};
 use std::process::Output;
 
@@ -178,19 +179,7 @@ fn trim_trailing_newlines(input: &str) -> &str {
 }
 
 fn shell_escape(value: &str) -> String {
-    if value.is_empty() {
-        return "''".to_string();
-    }
-    let mut out = String::from("'");
-    for ch in value.chars() {
-        if ch == '\'' {
-            out.push_str("'\\''");
-        } else {
-            out.push(ch);
-        }
-    }
-    out.push('\'');
-    out
+    quote_posix_single(value)
 }
 
 fn print_copy_staged_help() {

@@ -70,4 +70,22 @@ mod tests {
         assert!(!ok);
         assert_eq!(String::from_utf8_lossy(&output), "Prompt 🚫 Aborted\n");
     }
+
+    #[test]
+    fn confirm_with_io_accepts_trimmed_y() {
+        let mut input = Cursor::new("  y  \n");
+        let mut output = Vec::new();
+        let ok = confirm_with_io("Prompt ", &mut input, &mut output).expect("confirm");
+        assert!(ok);
+        assert_eq!(String::from_utf8_lossy(&output), "Prompt ");
+    }
+
+    #[test]
+    fn confirm_with_io_rejects_yes_word() {
+        let mut input = Cursor::new("yes\n");
+        let mut output = Vec::new();
+        let ok = confirm_with_io("Prompt ", &mut input, &mut output).expect("confirm");
+        assert!(!ok);
+        assert_eq!(String::from_utf8_lossy(&output), "Prompt 🚫 Aborted\n");
+    }
 }

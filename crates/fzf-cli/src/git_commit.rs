@@ -1,10 +1,11 @@
 use crate::{confirm, fzf, git_commit_select, open, util};
+use nils_common::git as common_git;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 pub fn run(args: &[String]) -> i32 {
-    if !is_git_repo() {
+    if !common_git::is_inside_work_tree().unwrap_or(false) {
         eprintln!("❌ Not inside a Git repository. Aborting.");
         return 1;
     }
@@ -186,22 +187,11 @@ fn resolve_to_short_hash_or_query(input: &str) -> String {
     if input.trim().is_empty() {
         return String::new();
     }
-    let out = util::run_output(
-        "git",
-        &[
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &format!("{input}^{{commit}}"),
-        ],
-    );
-    if let Ok(o) = out {
-        if o.status.success() {
-            let stdout = String::from_utf8_lossy(&o.stdout);
-            let full = stdout.lines().next().unwrap_or("").trim();
-            if full.len() >= 7 {
-                return full[..7].to_string();
-            }
+    if let Ok(Some(full)) =
+        common_git::rev_parse(&["--verify", "--quiet", &format!("{input}^{{commit}}")])
+    {
+        if full.len() >= 7 {
+            return full[..7].to_string();
         }
     }
     input.to_string()
@@ -392,22 +382,11 @@ fn extract_snapshot(commit: &str, file: &str, out_path: &Path) -> bool {
 
 fn extract_snapshot_single(commitish: &str, file: &str, out_path: &Path) -> bool {
     let spec = format!("{commitish}:{file}");
-    let output = Command::new("git")
-        .args(["show", &spec])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output();
-    let Ok(output) = output else {
+    let Ok(output) = common_git::run_output(&["show", &spec]) else {
         return false;
     };
     if !output.status.success() {
         return false;
     }
     std::fs::write(out_path, output.stdout).is_ok()
-}
-
-fn is_git_repo() -> bool {
-    util::run_output("git", &["rev-parse", "--is-inside-work-tree"])
-        .map(|o| o.status.success())
-        .unwrap_or(false)
 }

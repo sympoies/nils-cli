@@ -1,8 +1,8 @@
 use std::collections::HashMap;
-use std::env;
 
 use crate::error::CliError;
 use crate::test_mode;
+use nils_common::env as shared_env;
 
 const ENV_FORCE_AVAILABLE: &str = "CODEX_SCREEN_RECORD_PORTAL_FORCE_AVAILABLE";
 const ENV_FORCE_MISSING: &str = "CODEX_SCREEN_RECORD_PORTAL_FORCE_MISSING";
@@ -271,10 +271,6 @@ Expected DBus service: org.freedesktop.portal.Desktop",
 }
 
 fn env_flag_enabled(key: &str) -> bool {
-    let Some(value) = env::var_os(key) else {
-        return false;
-    };
-    let value = value.to_string_lossy();
-    let normalized = value.trim().to_ascii_lowercase();
-    matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+    let value = std::env::var_os(key).map(|raw| raw.to_string_lossy().into_owned());
+    shared_env::is_truthy_or(value.as_deref().map(str::trim), false)
 }

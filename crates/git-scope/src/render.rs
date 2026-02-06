@@ -3,6 +3,7 @@ use crate::print::{emit_file, HeadFallback, PrintSource};
 use crate::progress::ProgressRunner;
 use crate::tree::{tree_support, TREE_MISSING_WARNING, TREE_UNSUPPORTED_WARNING};
 use anyhow::Result;
+use nils_common::shell::{strip_ansi as strip_ansi_impl, AnsiStripMode};
 use std::collections::BTreeSet;
 use std::process::Command;
 
@@ -249,19 +250,50 @@ fn expand_tree_paths(files: &[String]) -> Vec<String> {
 }
 
 fn strip_ansi(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' && matches!(chars.peek(), Some('[')) {
-            chars.next();
-            for c in chars.by_ref() {
-                if c == 'm' {
-                    break;
-                }
-            }
-            continue;
-        }
-        out.push(ch);
+    strip_ansi_impl(input, AnsiStripMode::CsiSgrOnly).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{color_reset_for_commit, expand_tree_paths, kind_color_for_commit, strip_ansi};
+
+    #[test]
+    fn no_color_mode_returns_empty_color_sequences() {
+        assert_eq!(kind_color_for_commit("A", true), "");
+        assert_eq!(kind_color_for_commit("M", true), "");
+        assert_eq!(kind_color_for_commit("D", true), "");
+        assert_eq!(color_reset_for_commit(true), "");
     }
-    out
+
+    #[test]
+    fn color_mode_uses_expected_commit_palette() {
+        assert_eq!(kind_color_for_commit("A", false), "\x1b[38;5;66m");
+        assert_eq!(kind_color_for_commit("M", false), "\x1b[38;5;110m");
+        assert_eq!(kind_color_for_commit("D", false), "\x1b[38;5;95m");
+        assert_eq!(color_reset_for_commit(false), "\x1b[0m");
+    }
+
+    #[test]
+    fn strip_ansi_removes_m_terminated_sequences() {
+        let input = "\x1b[31mred\x1b[0m plain \x1b[38;5;110mblue\x1b[0m";
+        assert_eq!(strip_ansi(input), "red plain blue");
+    }
+
+    #[test]
+    fn expand_tree_paths_deduplicates_and_sorts_paths() {
+        let files = vec![
+            "src/lib.rs".to_string(),
+            "src/main.rs".to_string(),
+            "README.md".to_string(),
+        ];
+        assert_eq!(
+            expand_tree_paths(&files),
+            vec![
+                "README.md".to_string(),
+                "src".to_string(),
+                "src/lib.rs".to_string(),
+                "src/main.rs".to_string(),
+            ]
+        );
+    }
 }

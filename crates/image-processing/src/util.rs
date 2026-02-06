@@ -1,5 +1,6 @@
+use nils_common::git as common_git;
+use nils_common::shell::{quote_posix_single_with_style, SingleQuoteEscapeStyle};
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
 
 #[derive(Debug)]
 pub struct UsageError {
@@ -27,16 +28,8 @@ pub fn now_run_id() -> String {
 }
 
 pub fn find_repo_root() -> PathBuf {
-    if let Ok(out) = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-    {
-        if out.status.success() {
-            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !s.is_empty() {
-                return normalize_path(Path::new(&s));
-            }
-        }
+    if let Ok(Some(root)) = common_git::repo_root() {
+        return normalize_path(&root);
     }
     std::env::current_dir()
         .map(|p| normalize_path(&p))
@@ -198,14 +191,5 @@ fn shell_escape(arg: &str) -> String {
         return arg.to_string();
     }
 
-    let mut out = String::from("'");
-    for ch in arg.chars() {
-        if ch == '\'' {
-            out.push_str("'\"'\"'");
-        } else {
-            out.push(ch);
-        }
-    }
-    out.push('\'');
-    out
+    quote_posix_single_with_style(arg, SingleQuoteEscapeStyle::DoubleQuoteBoundary)
 }

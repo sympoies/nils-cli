@@ -1,15 +1,11 @@
 use crate::git_cmd::run_git;
 use anyhow::Result;
+use nils_common::git as common_git;
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::process::Command;
 
 pub fn is_git_repo() -> bool {
-    Command::new("git")
-        .args(["rev-parse", "--git-dir"])
-        .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false)
+    common_git::is_git_repo().unwrap_or(false)
 }
 
 pub fn collect_staged() -> Result<Vec<String>> {

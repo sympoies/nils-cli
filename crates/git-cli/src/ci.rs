@@ -1,4 +1,5 @@
-use std::process::{Command, Output, Stdio};
+use nils_common::git as common_git;
+use std::process::Output;
 
 pub fn dispatch(cmd: &str, args: &[String]) -> Option<i32> {
     match cmd {
@@ -441,37 +442,18 @@ fn build_cherry_pick_args(commits: &[String]) -> Vec<&str> {
     args
 }
 
-fn git_command(args: &[&str]) -> Command {
-    let mut cmd = Command::new("git");
-    cmd.args(args)
-        .env("GIT_PAGER", "cat")
-        .env("PAGER", "cat")
-        .stdin(Stdio::null());
-    cmd
-}
-
 fn git_output(args: &[&str]) -> Option<Output> {
-    git_command(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .ok()
+    common_git::run_output(args).ok()
 }
 
 fn git_status_inherit(args: &[&str]) -> Option<i32> {
-    git_command(args)
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
+    common_git::run_status_inherit(args)
         .ok()
         .map(|status| status.code().unwrap_or(1))
 }
 
 fn git_status_quiet(args: &[&str]) -> Option<i32> {
-    git_command(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+    common_git::run_status_quiet(args)
         .ok()
         .map(|status| status.code().unwrap_or(1))
 }

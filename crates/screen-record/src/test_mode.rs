@@ -3,14 +3,12 @@ use std::path::{Path, PathBuf};
 use crate::cli::{ContainerFormat, ImageFormat};
 use crate::error::CliError;
 use crate::types::{AppInfo, DisplayInfo, Rect, ShareableContent, WindowInfo};
+use nils_common::env as shared_env;
 
 pub fn enabled() -> bool {
-    let Some(value) = std::env::var_os("CODEX_SCREEN_RECORD_TEST_MODE") else {
-        return false;
-    };
-    let value = value.to_string_lossy();
-    let normalized = value.trim().to_ascii_lowercase();
-    matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+    let value = std::env::var_os("CODEX_SCREEN_RECORD_TEST_MODE")
+        .map(|raw| raw.to_string_lossy().into_owned());
+    shared_env::is_truthy_or(value.as_deref().map(str::trim), false)
 }
 
 pub fn shareable_content() -> ShareableContent {
@@ -175,4 +173,35 @@ fn screenshot_fixture_path(format: ImageFormat) -> PathBuf {
         .join("tests")
         .join("fixtures")
         .join(filename)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::enabled;
+    use nils_test_support::{EnvGuard, GlobalStateLock};
+
+    #[test]
+    fn enabled_returns_false_when_env_missing() {
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::remove(&lock, "CODEX_SCREEN_RECORD_TEST_MODE");
+        assert!(!enabled());
+    }
+
+    #[test]
+    fn enabled_accepts_expected_truthy_values() {
+        let lock = GlobalStateLock::new();
+        for value in ["1", "true", " yes ", "ON"] {
+            let _guard = EnvGuard::set(&lock, "CODEX_SCREEN_RECORD_TEST_MODE", value);
+            assert!(enabled(), "expected truthy value: {value}");
+        }
+    }
+
+    #[test]
+    fn enabled_rejects_falsey_and_unknown_values() {
+        let lock = GlobalStateLock::new();
+        for value in ["", "0", "false", "no", "off", "y", "enabled"] {
+            let _guard = EnvGuard::set(&lock, "CODEX_SCREEN_RECORD_TEST_MODE", value);
+            assert!(!enabled(), "expected falsey value: {value}");
+        }
+    }
 }

@@ -1,4 +1,5 @@
 use crate::paths;
+use nils_common::shell::{quote_posix_single_with_style, SingleQuoteEscapeStyle};
 
 pub fn show() -> i32 {
     println!(
@@ -47,11 +48,17 @@ pub fn show() -> i32 {
 pub fn set(key: &str, value: &str) -> i32 {
     match key {
         "model" | "CODEX_CLI_MODEL" => {
-            println!("export CODEX_CLI_MODEL={}", shell_quote(value));
+            println!(
+                "export CODEX_CLI_MODEL={}",
+                quote_posix_single_with_style(value, SingleQuoteEscapeStyle::DoubleQuoteBoundary)
+            );
             0
         }
         "reasoning" | "reason" | "CODEX_CLI_REASONING" => {
-            println!("export CODEX_CLI_REASONING={}", shell_quote(value));
+            println!(
+                "export CODEX_CLI_REASONING={}",
+                quote_posix_single_with_style(value, SingleQuoteEscapeStyle::DoubleQuoteBoundary)
+            );
             0
         }
         "dangerous" | "allow-dangerous" | "CODEX_ALLOW_DANGEROUS_ENABLED" => {
@@ -76,21 +83,4 @@ pub fn set(key: &str, value: &str) -> i32 {
 
 fn env_or_default(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
-}
-
-fn shell_quote(value: &str) -> String {
-    if value.is_empty() {
-        return "''".to_string();
-    }
-
-    let mut quoted = String::from("'");
-    for ch in value.chars() {
-        if ch == '\'' {
-            quoted.push_str("'\"'\"'");
-        } else {
-            quoted.push(ch);
-        }
-    }
-    quoted.push('\'');
-    quoted
 }

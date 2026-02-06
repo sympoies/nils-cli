@@ -3,6 +3,7 @@ use std::path::Path;
 use crate::auth;
 use crate::paths;
 use crate::rate_limits::cache;
+use nils_common::env as shared_env;
 
 mod lock;
 mod refresh;
@@ -43,7 +44,8 @@ pub fn run(options: &StarshipOptions) -> i32 {
         None => return 0,
     };
 
-    let show_5h = env_truthy_default("CODEX_STARSHIP_SHOW_5H_ENABLED", true) && !options.no_5h;
+    let show_5h =
+        shared_env::env_truthy_or("CODEX_STARSHIP_SHOW_5H_ENABLED", true) && !options.no_5h;
     let time_format = options
         .time_format
         .as_deref()
@@ -84,21 +86,7 @@ pub fn run(options: &StarshipOptions) -> i32 {
 }
 
 fn starship_enabled() -> bool {
-    env_truthy("CODEX_STARSHIP_ENABLED")
-}
-
-fn env_truthy(key: &str) -> bool {
-    std::env::var(key)
-        .ok()
-        .map(|value| matches!(value.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
-        .unwrap_or(false)
-}
-
-fn env_truthy_default(key: &str, default: bool) -> bool {
-    match std::env::var(key) {
-        Ok(value) => matches!(value.to_lowercase().as_str(), "1" | "true" | "yes" | "on"),
-        Err(_) => default,
-    }
+    shared_env::env_truthy("CODEX_STARSHIP_ENABLED")
 }
 
 fn resolve_ttl_seconds(cli_ttl: Option<&str>) -> Result<u64, ()> {
@@ -188,8 +176,8 @@ fn resolve_name(target_file: &Path) -> Option<String> {
         .map(|value| value.to_ascii_lowercase())
         .unwrap_or_else(|| "secret".to_string());
 
-    let show_fallback = env_truthy("CODEX_STARSHIP_SHOW_FALLBACK_NAME_ENABLED");
-    let show_full_email = env_truthy("CODEX_STARSHIP_SHOW_FULL_EMAIL_ENABLED");
+    let show_fallback = shared_env::env_truthy("CODEX_STARSHIP_SHOW_FALLBACK_NAME_ENABLED");
+    let show_full_email = shared_env::env_truthy("CODEX_STARSHIP_SHOW_FULL_EMAIL_ENABLED");
 
     if name_source == "email" {
         if let Ok(Some(email)) = auth::email_from_auth_file(target_file) {

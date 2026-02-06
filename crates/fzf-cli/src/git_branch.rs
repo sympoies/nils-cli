@@ -1,7 +1,8 @@
 use crate::{confirm, fzf, util};
+use nils_common::git as common_git;
 
 pub fn run(args: &[String]) -> i32 {
-    if !is_git_repo() {
+    if !common_git::is_inside_work_tree().unwrap_or(false) {
         eprintln!("❌ Not inside a Git repository. Aborting.");
         return 1;
     }
@@ -71,8 +72,8 @@ pub fn run(args: &[String]) -> i32 {
         }
     }
 
-    if util::run_output("git", &["checkout", &branch])
-        .map(|o| o.status.success())
+    if common_git::run_status_quiet(&["checkout", &branch])
+        .map(|status| status.success())
         .unwrap_or(false)
     {
         println!("✅ Checked out to {branch}");
@@ -81,10 +82,4 @@ pub fn run(args: &[String]) -> i32 {
         println!("⚠️  Checkout to '{branch}' failed. Likely due to local changes or conflicts.");
         1
     }
-}
-
-fn is_git_repo() -> bool {
-    util::run_output("git", &["rev-parse", "--is-inside-work-tree"])
-        .map(|o| o.status.success())
-        .unwrap_or(false)
 }

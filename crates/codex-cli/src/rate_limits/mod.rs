@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use crate::auth;
 use crate::rate_limits::client::{fetch_usage, UsageRequest};
+use nils_common::env as shared_env;
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 
 pub mod ansi;
@@ -76,7 +77,7 @@ pub fn run(args: &RateLimitsOptions) -> Result<i32> {
         && !output_json
         && !cached_mode
         && args.secret.is_none()
-        && env_truthy("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED")
+        && shared_env::env_truthy("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED")
     {
         all_mode = true;
     }
@@ -94,13 +95,6 @@ pub fn run(args: &RateLimitsOptions) -> Result<i32> {
     }
 
     run_single_mode(args, cached_mode, one_line, output_json)
-}
-
-fn env_truthy(key: &str) -> bool {
-    std::env::var(key)
-        .ok()
-        .map(|value| matches!(value.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
-        .unwrap_or(false)
 }
 
 struct AsyncEvent {

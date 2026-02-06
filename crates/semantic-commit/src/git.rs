@@ -1,20 +1,11 @@
-use std::process::Command;
+use nils_common::git as common_git;
 
 pub fn is_inside_work_tree() -> bool {
-    Command::new("git")
-        .args(["rev-parse", "--is-inside-work-tree"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
+    common_git::is_inside_work_tree().unwrap_or(false)
 }
 
 pub fn has_staged_changes() -> anyhow::Result<bool> {
-    let status = Command::new("git")
-        .args(["diff", "--cached", "--quiet", "--"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()?;
+    let status = common_git::run_status_quiet(&["diff", "--cached", "--quiet", "--"])?;
 
     match status.code() {
         Some(0) => Ok(false),

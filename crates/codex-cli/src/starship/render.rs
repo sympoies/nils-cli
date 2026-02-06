@@ -1,4 +1,5 @@
 use chrono::{TimeZone, Utc};
+use nils_common::env as shared_env;
 use std::io::{self, IsTerminal};
 use std::path::Path;
 
@@ -96,18 +97,12 @@ fn format_epoch_utc(epoch: i64, fmt: &str) -> Option<String> {
 }
 
 fn should_color() -> bool {
-    if std::env::var_os("NO_COLOR").is_some() {
+    if shared_env::no_color_enabled() {
         return false;
     }
 
     if let Ok(raw) = std::env::var("CODEX_STARSHIP_COLOR_ENABLED") {
-        if raw.trim().is_empty() {
-            return false;
-        }
-        return matches!(
-            raw.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        );
+        return shared_env::is_truthy(raw.trim());
     }
 
     if std::env::var_os("STARSHIP_SESSION_KEY").is_some()
@@ -117,4 +112,46 @@ fn should_color() -> bool {
     }
 
     io::stdout().is_terminal()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_color;
+    use nils_test_support::{EnvGuard, GlobalStateLock};
+
+    #[test]
+    fn should_color_no_color_has_highest_priority() {
+        let lock = GlobalStateLock::new();
+        let _no_color = EnvGuard::set(&lock, "NO_COLOR", "1");
+        let _explicit = EnvGuard::set(&lock, "CODEX_STARSHIP_COLOR_ENABLED", "true");
+        let _session = EnvGuard::set(&lock, "STARSHIP_SESSION_KEY", "session");
+        assert!(!should_color());
+    }
+
+    #[test]
+    fn should_color_explicit_truthy_and_falsey_values_are_stable() {
+        let lock = GlobalStateLock::new();
+        let _no_color = EnvGuard::remove(&lock, "NO_COLOR");
+        let _session = EnvGuard::remove(&lock, "STARSHIP_SESSION_KEY");
+        let _shell = EnvGuard::remove(&lock, "STARSHIP_SHELL");
+
+        for value in ["1", " true ", "YES", "on"] {
+            let _explicit = EnvGuard::set(&lock, "CODEX_STARSHIP_COLOR_ENABLED", value);
+            assert!(should_color(), "expected truthy value: {value}");
+        }
+
+        for value in ["", " ", "0", "false", "no", "off", "y", "enabled"] {
+            let _explicit = EnvGuard::set(&lock, "CODEX_STARSHIP_COLOR_ENABLED", value);
+            assert!(!should_color(), "expected falsey value: {value}");
+        }
+    }
+
+    #[test]
+    fn should_color_falls_back_to_starship_markers_when_not_overridden() {
+        let lock = GlobalStateLock::new();
+        let _no_color = EnvGuard::remove(&lock, "NO_COLOR");
+        let _explicit = EnvGuard::remove(&lock, "CODEX_STARSHIP_COLOR_ENABLED");
+        let _session = EnvGuard::set(&lock, "STARSHIP_SESSION_KEY", "session");
+        assert!(should_color());
+    }
 }

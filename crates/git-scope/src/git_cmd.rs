@@ -1,14 +1,12 @@
 use anyhow::{Context, Result};
-use std::process::Command;
+use nils_common::git as common_git;
 
 const DEFAULT_GIT_CONFIG: [&str; 2] = ["-c", "core.quotepath=false"];
 
 pub(crate) fn run_git(args: &[&str]) -> Result<String> {
     let args = with_default_config(args);
-    let output = Command::new("git")
-        .args(&args)
-        .output()
-        .with_context(|| format!("failed to run git {args:?}"))?;
+    let output =
+        common_git::run_output(&args).with_context(|| format!("failed to run git {args:?}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
