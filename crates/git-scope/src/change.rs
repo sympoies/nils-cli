@@ -42,26 +42,24 @@ pub fn parse_name_status_output(output: &str) -> Vec<ChangeEntry> {
 }
 
 pub fn canonical_path(raw: &str) -> String {
-    if raw.contains("=>") {
-        if raw.contains('{') && raw.contains('}') {
-            let (prefix, after_open) = raw.split_once('{').unwrap_or((raw, ""));
-            let (inside, suffix) = after_open.split_once('}').unwrap_or((after_open, ""));
-
-            let mut new_part = inside.split("=>").last().unwrap_or(inside).trim();
-            if new_part.starts_with(' ') {
-                new_part = new_part.trim_start();
-            }
-
-            format!("{prefix}{new_part}{suffix}")
-        } else {
-            let mut new_part = raw.split("=>").last().unwrap_or(raw).trim();
-            if new_part.starts_with(' ') {
-                new_part = new_part.trim_start();
-            }
-            new_part.to_string()
-        }
-    } else {
+    if !raw.contains(" => ") {
         raw.to_string()
+    } else if raw.contains('{') && raw.contains('}') {
+        let (prefix, after_open) = raw.split_once('{').unwrap_or((raw, ""));
+        let (inside, suffix) = after_open.split_once('}').unwrap_or((after_open, ""));
+
+        let mut new_part = inside.split(" => ").last().unwrap_or(inside).trim();
+        if new_part.starts_with(' ') {
+            new_part = new_part.trim_start();
+        }
+
+        format!("{prefix}{new_part}{suffix}")
+    } else {
+        let mut new_part = raw.split(" => ").last().unwrap_or(raw).trim();
+        if new_part.starts_with(' ') {
+            new_part = new_part.trim_start();
+        }
+        new_part.to_string()
     }
 }
 
@@ -99,6 +97,18 @@ mod tests {
     fn canonical_path_brace_syntax() {
         let raw = "src/{old => new}/file.txt";
         assert_eq!(canonical_path(raw), "src/new/file.txt");
+    }
+
+    #[test]
+    fn canonical_path_plain_rename_syntax() {
+        let raw = "old/path.txt => new/path.txt";
+        assert_eq!(canonical_path(raw), "new/path.txt");
+    }
+
+    #[test]
+    fn canonical_path_keeps_literal_arrow_filename() {
+        let raw = "a=>b.txt";
+        assert_eq!(canonical_path(raw), "a=>b.txt");
     }
 
     #[test]
