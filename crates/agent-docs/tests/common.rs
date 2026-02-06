@@ -28,6 +28,7 @@ impl FixtureWorkspace {
 
         copy_fixture_tree(&fixture_path("home"), &codex_home);
         copy_fixture_tree(&fixture_path("project"), &project_path);
+        ensure_agents_fixture_docs(&codex_home, &project_path);
 
         Self {
             _temp: temp,
@@ -157,6 +158,32 @@ fn copy_fixture_tree(source: &Path, destination: &Path) {
             fs::copy(&source_path, &destination_path).expect("copy fixture file");
         }
     }
+}
+
+fn ensure_agents_fixture_docs(codex_home: &Path, project_path: &Path) {
+    ensure_text_file(
+        &codex_home.join("AGENTS.md"),
+        "# Fixture: home AGENTS default\n\nid: fixture-home-agents-default\n",
+    );
+    ensure_text_file(
+        &codex_home.join("AGENTS.override.md"),
+        "# Fixture: home AGENTS override\n\nid: fixture-home-agents-override\n",
+    );
+    ensure_text_file(
+        &project_path.join("AGENTS.md"),
+        "# Fixture: project AGENTS default\n\nid: fixture-project-agents-default\n",
+    );
+    ensure_text_file(
+        &project_path.join("AGENTS.override.md"),
+        "# Fixture: project AGENTS override\n\nid: fixture-project-agents-override\n",
+    );
+}
+
+fn ensure_text_file(path: &Path, body: &str) {
+    if path.exists() {
+        return;
+    }
+    write_text(path, body);
 }
 
 struct TestTempDir {
