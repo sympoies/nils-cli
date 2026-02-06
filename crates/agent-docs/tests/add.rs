@@ -1,5 +1,6 @@
 mod common;
 
+use std::fs;
 use std::path::Path;
 
 use agent_docs::config::{load_scope_config, CONFIG_FILE_NAME};
@@ -191,5 +192,88 @@ fn add_full_flow_for_home_and_project_scopes() {
         }),
         "project-dev output should include extension-project BINARY_DEPENDENCIES.md:\n{}",
         project_dev_resolve.stdout
+    );
+}
+
+fn run_home_task_tools_add_update(workspace: &common::FixtureWorkspace) -> common::CliOutput {
+    common::run_agent_docs_command(
+        workspace,
+        &[
+            "add",
+            "--target",
+            "home",
+            "--context",
+            "task-tools",
+            "--scope",
+            "home",
+            "--path",
+            "CLI_TOOLS.md",
+            "--required",
+            "--notes",
+            "after",
+        ],
+    )
+}
+
+fn assert_home_config_matches_golden(workspace: &common::FixtureWorkspace, fixture: &str) {
+    let actual = fs::read_to_string(workspace.codex_home.join(CONFIG_FILE_NAME))
+        .expect("read updated home config");
+    let expected = fs::read_to_string(common::fixture_path(fixture)).expect("read golden fixture");
+    assert_eq!(
+        actual, expected,
+        "home config should match golden fixture: {fixture}"
+    );
+}
+
+#[test]
+fn add_update_preserves_existing_key_order_in_snapshot() {
+    let workspace = common::FixtureWorkspace::from_fixtures();
+    let config_path = workspace.codex_home.join(CONFIG_FILE_NAME);
+    let input = fs::read_to_string(common::fixture_path("add/preserve-key-order.input.toml"))
+        .expect("read key-order input fixture");
+    common::write_text(&config_path, &input);
+
+    let output = run_home_task_tools_add_update(&workspace);
+    assert!(
+        output.success(),
+        "add update should succeed, got code={} stderr={}",
+        output.exit_code,
+        output.stderr
+    );
+    assert!(
+        output.stdout.contains("add: target=home action=updated"),
+        "expected update output, got:\n{}",
+        output.stdout
+    );
+
+    assert_home_config_matches_golden(&workspace, "add/preserve-key-order.expected.toml");
+}
+
+#[test]
+fn add_update_preserves_multisection_comment_style_in_snapshot() {
+    let workspace = common::FixtureWorkspace::from_fixtures();
+    let config_path = workspace.codex_home.join(CONFIG_FILE_NAME);
+    let input = fs::read_to_string(common::fixture_path(
+        "add/preserve-multisection-comments.input.toml",
+    ))
+    .expect("read comments input fixture");
+    common::write_text(&config_path, &input);
+
+    let output = run_home_task_tools_add_update(&workspace);
+    assert!(
+        output.success(),
+        "add update should succeed, got code={} stderr={}",
+        output.exit_code,
+        output.stderr
+    );
+    assert!(
+        output.stdout.contains("add: target=home action=updated"),
+        "expected update output, got:\n{}",
+        output.stdout
+    );
+
+    assert_home_config_matches_golden(
+        &workspace,
+        "add/preserve-multisection-comments.expected.toml",
     );
 }

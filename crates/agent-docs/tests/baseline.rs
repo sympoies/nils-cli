@@ -293,3 +293,74 @@ when = "always"
 
     assert_eq!(exit_code, 3);
 }
+
+#[test]
+fn baseline_check_same_key_project_override_keeps_first_seen_extension_position() {
+    let home = TempDir::new().expect("failed to create home tempdir");
+    let project = TempDir::new().expect("failed to create project tempdir");
+    write_markdown(&project.path().join("AGENTS.md"));
+    write_markdown(&project.path().join("DEVELOPMENT.md"));
+    write_markdown(&project.path().join("EXTRA_ALPHA.md"));
+    write_markdown(&project.path().join("EXTRA_BETA.md"));
+
+    write_text(
+        &home.path().join(CONFIG_FILE_NAME),
+        r#"
+[[document]]
+context = "project-dev"
+scope = "project"
+path = "EXTRA_ALPHA.md"
+required = true
+when = "always"
+notes = "home-alpha"
+
+[[document]]
+context = "project-dev"
+scope = "project"
+path = "EXTRA_BETA.md"
+required = true
+when = "always"
+notes = "home-beta"
+"#,
+    );
+    write_text(
+        &project.path().join(CONFIG_FILE_NAME),
+        r#"
+[[document]]
+context = "project-dev"
+scope = "project"
+path = "EXTRA_ALPHA.md"
+required = true
+when = "always"
+notes = "project-alpha"
+"#,
+    );
+
+    let report = check_builtin_baseline(BaselineTarget::Project, &roots(&home, &project), false)
+        .expect("baseline check should succeed");
+    let extension_items: Vec<_> = report
+        .items
+        .iter()
+        .filter(|item| {
+            matches!(
+                item.source,
+                DocumentSource::ExtensionHome | DocumentSource::ExtensionProject
+            )
+        })
+        .collect();
+
+    assert_eq!(extension_items.len(), 2);
+    assert_eq!(
+        extension_items[0].path,
+        project.path().join("EXTRA_ALPHA.md"),
+        "first-seen extension key position should remain stable after override"
+    );
+    assert_eq!(extension_items[0].source, DocumentSource::ExtensionProject);
+    assert!(extension_items[0].why.contains("project-alpha"));
+    assert_eq!(
+        extension_items[1].path,
+        project.path().join("EXTRA_BETA.md")
+    );
+    assert_eq!(extension_items[1].source, DocumentSource::ExtensionHome);
+    assert!(extension_items[1].why.contains("home-beta"));
+}

@@ -319,6 +319,23 @@ suggested_actions:
 }
 ```
 
+### `baseline` extension merge order (deterministic)
+
+`baseline --check` applies extension documents with explicit, deterministic merge rules:
+
+1. Start with built-in baseline items for selected `--target`.
+2. Load extension configs in fixed order: `$CODEX_HOME/AGENT_DOCS.toml` then `$PROJECT_PATH/AGENT_DOCS.toml`.
+3. Consider only extension entries with `required = true` and `scope` included by `--target`.
+4. Resolve each extension path, then de-dup by key: `(context, scope, normalized_path)`.
+5. Same-key override order:
+   - within one config file, later `[[document]]` wins (last-write-wins)
+   - across files, project config wins over home config (loaded later)
+6. Output order is stable:
+   - built-ins stay in built-in declaration order
+   - extension items keep first-seen key order; when overridden, the item is replaced in place
+
+This ensures baseline output is reproducible while still honoring later overrides.
+
 ## `AGENT_DOCS.toml` Schema
 
 Each scope may define `AGENT_DOCS.toml` at:
@@ -440,3 +457,19 @@ Verification command:
 ```bash
 agent-docs resolve --context project-dev --format text | rg "DEVELOPMENT\\.md|BINARY_DEPENDENCIES\\.md"
 ```
+
+## Snapshot Fixture Maintenance
+
+The `add` command has golden/snapshot fixtures under `tests/fixtures/add`.
+
+- Run snapshot-related tests:
+
+  ```bash
+  scripts/ci/agent-docs-snapshots.sh
+  ```
+
+- Re-generate expected snapshots (`--bless`) and immediately verify:
+
+  ```bash
+  scripts/ci/agent-docs-snapshots.sh --bless
+  ```
