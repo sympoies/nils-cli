@@ -379,6 +379,10 @@ define_class!(
             sample_buffer: &CMSampleBuffer,
             r#type: SCStreamOutputType,
         ) {
+            if !is_writable_sample_buffer(sample_buffer) {
+                return;
+            }
+
             let capture_lock = self.ivars().capture.lock();
             let capture_guard = match capture_lock {
                 Ok(guard) => guard,
@@ -463,6 +467,10 @@ define_class!(
             sample_buffer: &CMSampleBuffer,
             _connection: &AVCaptureConnection,
         ) {
+            if !is_writable_sample_buffer(sample_buffer) {
+                return;
+            }
+
             let capture_lock = self.ivars().capture.lock();
             let capture_guard = match capture_lock {
                 Ok(guard) => guard,
@@ -756,6 +764,12 @@ fn run_capture_loop(duration: Duration, stop_flag: &Arc<AtomicBool>) {
         let step = remaining.min(Duration::from_millis(100));
         let date = NSDate::dateWithTimeIntervalSinceNow(step.as_secs_f64());
         run_loop.runUntilDate(&date);
+    }
+}
+
+fn is_writable_sample_buffer(sample_buffer: &CMSampleBuffer) -> bool {
+    unsafe {
+        sample_buffer.is_valid() && sample_buffer.data_is_ready() && sample_buffer.num_samples() > 0
     }
 }
 

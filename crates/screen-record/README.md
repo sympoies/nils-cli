@@ -115,6 +115,7 @@ screen-record [options]
 - Display selectors (`--display`, `--display-id`) are invalid with `--screenshot`.
 - `--window-name` is only valid together with `--app`.
 - `--duration` is required for recording mode.
+- Press `Ctrl-C` to stop a recording early; `--duration` is still required and acts as an upper bound.
 - `--dir` and `--image-format` are only valid with `--screenshot`.
 - Recording-only flags (`--duration`, `--audio`, `--format`) are not valid with `--screenshot`.
   `--portal` currently supports `--audio off` only.
@@ -123,6 +124,7 @@ screen-record [options]
 - Success (recording/screenshot): stdout prints only the resolved output file path followed by `\n`.
 - Success (list): stdout prints only TSV rows followed by `\n`.
 - Success (preflight/request): stdout is empty; any user messaging goes to stderr.
+- Recording writes to a staging file and publishes the target path only on success.
 - Errors: stdout is empty; stderr contains user-facing errors (no stack traces).
 
 ## List output (TSV)
