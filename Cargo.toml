@@ -8,6 +8,7 @@ members = [
   "crates/fzf-cli",
   "crates/git-scope", "crates/git-summary", "crates/git-lock", "crates/git-cli",
   "crates/image-processing",
+  "crates/macos-agent",
   "crates/screen-record",
   "crates/api-testing-core",
   "crates/api-rest",
