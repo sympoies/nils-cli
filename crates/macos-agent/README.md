@@ -137,10 +137,34 @@ This mode is used by CI-safe integration tests.
 - TCC signal quality in `preflight` (Accessibility/Automation statuses + hints)
 - focus drift detection path for activation + `wait app-active`
 
+`crates/macos-agent/tests/e2e_real_apps.rs` contains app workflow checks for:
+- Finder activation + window presence + navigation hotkeys + screenshot evidence
+- Arc YouTube flow (open home, click 3 videos, play/pause, comment checkpoint)
+- Spotify flow (UI track click, play/pause toggles, player-state probe)
+- Cross-app Arc↔Spotify focus recovery and matrix artifact index output
+
 These checks are disabled by default and require explicit opt-in:
 
 ```bash
 MACOS_AGENT_REAL_E2E=1 cargo test -p macos-agent --test e2e_real_macos
 MACOS_AGENT_REAL_E2E=1 MACOS_AGENT_REAL_E2E_MUTATING=1 MACOS_AGENT_REAL_E2E_APP=Finder \
   cargo test -p macos-agent --test e2e_real_macos
+MACOS_AGENT_REAL_E2E=1 MACOS_AGENT_REAL_E2E_MUTATING=1 MACOS_AGENT_REAL_E2E_APPS=finder \
+  cargo test -p macos-agent --test e2e_real_apps -- finder_navigation_and_state_checks --nocapture
+MACOS_AGENT_REAL_E2E=1 MACOS_AGENT_REAL_E2E_MUTATING=1 MACOS_AGENT_REAL_E2E_APPS=arc,spotify,finder \
+  MACOS_AGENT_REAL_E2E_PROFILE=default-1440p \
+  cargo test -p macos-agent --test e2e_real_apps -- matrix_runner_supports_app_subset_selection_real --nocapture
 ```
+
+Real-app E2E environment variables:
+- `MACOS_AGENT_REAL_E2E=1`: enable real desktop tests.
+- `MACOS_AGENT_REAL_E2E_MUTATING=1`: allow mutating desktop actions (click/type/hotkey).
+- `MACOS_AGENT_REAL_E2E_APPS=arc,spotify,finder`: select app subset in deterministic order.
+- `MACOS_AGENT_REAL_E2E_PROFILE=default-1440p`: choose coordinate profile fixture.
+- `MACOS_AGENT_REAL_E2E_INPUT_SOURCE=com.apple.keylayout.ABC` (or `abc`): optional; if set, tests switch to the target input source once via `im-select` before text-entry flows.
+- `MACOS_AGENT_REAL_E2E_STEP_TIMEOUT_MS=15000`: optional per-step timeout guard for real-app helper commands.
+
+Input-method notes for reliability:
+- Arc YouTube navigation uses address-bar focus + clipboard paste + `Return` (not per-key character typing), then verifies the active URL contains `youtube.com` and is not a Google search URL.
+- Spotify search input uses clipboard paste (`Cmd+A` + `Cmd+V`) and then `Return`, avoiding IME-dependent character typing.
+- If you want deterministic keyboard layout, install `im-select` (`brew install im-select`) and set `MACOS_AGENT_REAL_E2E_INPUT_SOURCE=abc`.

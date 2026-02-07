@@ -1,0 +1,732 @@
+use std::env;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc;
+use std::sync::OnceLock;
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use nils_test_support::cmd::{CmdOptions, CmdOutput};
+use serde::Deserialize;
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct UiPoint {
+    pub x: i32,
+    pub y: i32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ArcProfile {
+    pub youtube_home_url: String,
+    pub video_tiles: Vec<UiPoint>,
+    pub player_focus: UiPoint,
+    pub comment_checkpoint: UiPoint,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SpotifyProfile {
+    pub search_box: UiPoint,
+    pub track_rows: Vec<UiPoint>,
+    pub play_toggle: UiPoint,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FinderProfile {
+    pub window_focus: UiPoint,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RealE2eProfile {
+    pub profile_name: String,
+    pub arc: ArcProfile,
+    pub spotify: SpotifyProfile,
+    pub finder: FinderProfile,
+}
+
+#[derive(Debug, Clone)]
+pub struct SpotifyPlaybackState {
+    pub player_state: String,
+    pub track_name: String,
+    pub artist: String,
+}
+
+pub struct ArcCleanupGuard;
+
+impl ArcCleanupGuard {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for ArcCleanupGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for ArcCleanupGuard {
+    fn drop(&mut self) {
+        best_effort_arc_reset_to_blank();
+    }
+}
+
+pub struct SpotifyPlaybackCleanupGuard {
+    initial_was_playing: Option<bool>,
+}
+
+impl SpotifyPlaybackCleanupGuard {
+    pub fn capture() -> Self {
+        Self {
+            initial_was_playing: try_spotify_is_playing(),
+        }
+    }
+}
+
+impl Drop for SpotifyPlaybackCleanupGuard {
+    fn drop(&mut self) {
+        let Some(initial_was_playing) = self.initial_was_playing else {
+            return;
+        };
+        let Some(currently_playing) = try_spotify_is_playing() else {
+            return;
+        };
+
+        if initial_was_playing != currently_playing {
+            let _ = try_spotify_playpause();
+        }
+    }
+}
+
+pub struct FinderWindowCleanupGuard {
+    armed: bool,
+}
+
+impl FinderWindowCleanupGuard {
+    pub fn new() -> Self {
+        Self { armed: false }
+    }
+
+    pub fn arm(&mut self) {
+        self.armed = true;
+    }
+}
+
+impl Default for FinderWindowCleanupGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for FinderWindowCleanupGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            best_effort_close_active_finder_window();
+        }
+    }
+}
+
+static ARTIFACT_COUNTER: AtomicU64 = AtomicU64::new(1);
+static INPUT_SOURCE_SETUP: OnceLock<Result<(), String>> = OnceLock::new();
+const DEFAULT_STEP_TIMEOUT_MS: u64 = 15_000;
+const STEP_TIMEOUT_MIN_MS: u64 = 1_000;
+const STEP_TIMEOUT_KILL_GRACE_MS: u64 = 2_000;
+
+pub fn real_e2e_enabled() -> bool {
+    cfg!(target_os = "macos")
+        && env::var("MACOS_AGENT_REAL_E2E")
+            .ok()
+            .map(|value| value == "1")
+            .unwrap_or(false)
+}
+
+pub fn real_mutation_enabled() -> bool {
+    env::var("MACOS_AGENT_REAL_E2E_MUTATING")
+        .ok()
+        .map(|value| value == "1")
+        .unwrap_or(false)
+}
+
+pub fn app_selected(app: &str) -> bool {
+    let Ok(raw) = env::var("MACOS_AGENT_REAL_E2E_APPS") else {
+        return true;
+    };
+    if raw.trim().is_empty() {
+        return true;
+    }
+
+    let app = app.to_ascii_lowercase();
+    raw.split(',')
+        .map(|item| item.trim().to_ascii_lowercase())
+        .any(|item| !item.is_empty() && item == app)
+}
+
+pub fn base_options(cwd: &Path) -> CmdOptions {
+    CmdOptions::new()
+        .with_cwd(cwd)
+        .with_env_remove("CODEX_MACOS_AGENT_TEST_MODE")
+        .with_env_remove("CODEX_MACOS_AGENT_TEST_TIMESTAMP")
+        .with_env_remove("CODEX_MACOS_AGENT_STUB_CLICLICK_MODE")
+        .with_env_remove("CODEX_MACOS_AGENT_STUB_OSASCRIPT_MODE")
+}
+
+pub fn create_artifact_dir(prefix: &str) -> PathBuf {
+    let base = codex_out_dir().join("macos-agent-e2e");
+    let timestamp_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let counter = ARTIFACT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = base.join(format!(
+        "{prefix}-{timestamp_ms}-{}-{counter}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("create real e2e artifact directory");
+    dir
+}
+
+pub fn selected_profile_name() -> String {
+    env::var("MACOS_AGENT_REAL_E2E_PROFILE").unwrap_or_else(|_| "default-1440p".to_string())
+}
+
+pub fn load_profile() -> RealE2eProfile {
+    let profile = selected_profile_name();
+    let fixture = format!(
+        "real_e2e_profile_{}.json",
+        profile.replace('-', "_").to_ascii_lowercase()
+    );
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join(fixture);
+
+    let raw = std::fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("failed to read profile at {}: {err}", path.display()));
+    serde_json::from_str::<RealE2eProfile>(&raw).unwrap_or_else(|err| {
+        panic!(
+            "failed to parse profile `{profile}` from {}: {err}",
+            path.display()
+        )
+    })
+}
+
+pub fn run_json_step(
+    bin: &Path,
+    options: &CmdOptions,
+    args: &[&str],
+    step: &str,
+) -> serde_json::Value {
+    let out = run_with_timeout(bin, args, options, step_timeout());
+    assert_eq!(
+        out.code,
+        0,
+        "step `{step}` failed\nstdout:\n{}\nstderr:\n{}",
+        out.stdout_text(),
+        out.stderr_text()
+    );
+    serde_json::from_str(&out.stdout_text())
+        .unwrap_or_else(|err| panic!("step `{step}` did not emit valid json: {err}"))
+}
+
+pub fn run_json_step_with_retry(
+    bin: &Path,
+    options: &CmdOptions,
+    args: &[&str],
+    step: &str,
+    retries: usize,
+    retry_delay: Duration,
+) -> serde_json::Value {
+    let mut attempt = 0usize;
+    loop {
+        attempt += 1;
+        let out = run_with_timeout(bin, args, options, step_timeout());
+        if out.code == 0 {
+            return serde_json::from_str(&out.stdout_text()).unwrap_or_else(|err| {
+                panic!("step `{step}` attempt {attempt} emitted invalid json: {err}")
+            });
+        }
+
+        if attempt > retries {
+            panic!(
+                "step `{step}` failed after {attempt} attempts\nstdout:\n{}\nstderr:\n{}",
+                out.stdout_text(),
+                out.stderr_text()
+            );
+        }
+        std::thread::sleep(retry_delay);
+    }
+}
+
+pub fn run_idempotent_with_retry<F, T>(step: &str, retries: usize, retry_delay: Duration, f: F) -> T
+where
+    F: Fn() -> T,
+{
+    let mut attempt = 0usize;
+    loop {
+        attempt += 1;
+        let started = Instant::now();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(&f));
+        match result {
+            Ok(value) => return value,
+            Err(payload) => {
+                if attempt > retries {
+                    std::panic::resume_unwind(payload);
+                }
+                eprintln!(
+                    "retrying step `{step}` after {} ms (attempt {attempt}/{})",
+                    started.elapsed().as_millis(),
+                    retries + 1
+                );
+                std::thread::sleep(retry_delay);
+            }
+        }
+    }
+}
+
+pub fn require_preflight_ready(payload: &serde_json::Value, ids: &[&str]) {
+    let checks = payload["result"]["checks"]
+        .as_array()
+        .expect("preflight result.checks should be an array");
+    for id in ids {
+        let check = checks
+            .iter()
+            .find(|check| check["id"] == serde_json::json!(*id))
+            .unwrap_or_else(|| panic!("missing preflight check `{id}`"));
+        let status = check["status"]
+            .as_str()
+            .unwrap_or("<non-string-status>")
+            .to_string();
+        if status != "ok" {
+            let message = check["message"].as_str().unwrap_or("");
+            let hint = check["hint"].as_str().unwrap_or("");
+            panic!("preflight `{id}` not ready (status={status}): {message}; hint: {hint}");
+        }
+    }
+}
+
+pub fn require_app_installed(app: &str) {
+    let script = format!("id of application \"{}\"", escape_applescript(app));
+    let out = Command::new("osascript")
+        .args(["-e", &script])
+        .output()
+        .unwrap_or_else(|err| panic!("failed to execute osascript for app `{app}`: {err}"));
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        panic!(
+            "required app `{app}` is not installed/available: {}",
+            stderr.trim()
+        );
+    }
+}
+
+pub fn spotify_playback_state() -> SpotifyPlaybackState {
+    let script = r#"tell application "Spotify"
+set stateText to (player state as text)
+set trackName to ""
+set artistName to ""
+if player state is not stopped then
+  set trackName to name of current track
+  set artistName to artist of current track
+end if
+return stateText & "|" & trackName & "|" & artistName
+end tell"#;
+    let out = Command::new("osascript")
+        .args(["-e", script])
+        .output()
+        .unwrap_or_else(|err| panic!("failed to execute spotify state probe: {err}"));
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        panic!(
+            "spotify state probe failed (check Automation permissions): {}",
+            stderr.trim()
+        );
+    }
+
+    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let mut parts = stdout.splitn(3, '|');
+    let state = parts.next().unwrap_or("").trim().to_string();
+    let track = parts.next().unwrap_or("").trim().to_string();
+    let artist = parts.next().unwrap_or("").trim().to_string();
+
+    SpotifyPlaybackState {
+        player_state: state,
+        track_name: track,
+        artist,
+    }
+}
+
+pub fn spotify_toggle_play_pause() {
+    let script = r#"tell application "Spotify" to playpause"#;
+    let out = Command::new("osascript")
+        .args(["-e", script])
+        .output()
+        .unwrap_or_else(|err| panic!("failed to execute spotify playpause probe: {err}"));
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        panic!(
+            "spotify playpause probe failed (check Automation permissions): {}",
+            stderr.trim()
+        );
+    }
+}
+
+pub fn ensure_input_source_for_text_entry() {
+    let result = INPUT_SOURCE_SETUP.get_or_init(configure_input_source_once);
+    if let Err(message) = result {
+        panic!("{message}");
+    }
+}
+
+pub fn send_hotkey(bin: &Path, options: &CmdOptions, mods: Option<&str>, key: &str, step: &str) {
+    if let Some(mods) = mods {
+        let mut args = vec!["--format", "json", "input", "hotkey"];
+        args.extend(["--mods", mods, "--key", key]);
+        let payload = run_json_step(bin, options, &args, step);
+        assert_eq!(payload["command"], serde_json::json!("input.hotkey"));
+        return;
+    }
+
+    send_unmodified_key(key, step);
+}
+
+pub fn replace_focused_text_with_clipboard(
+    bin: &Path,
+    options: &CmdOptions,
+    text: &str,
+    step_prefix: &str,
+) {
+    ensure_input_source_for_text_entry();
+    send_hotkey(
+        bin,
+        options,
+        Some("cmd"),
+        "a",
+        &format!("{step_prefix} select-all"),
+    );
+    set_clipboard_text(text);
+    send_hotkey(
+        bin,
+        options,
+        Some("cmd"),
+        "v",
+        &format!("{step_prefix} paste"),
+    );
+}
+
+pub fn read_clipboard_text() -> String {
+    let script = "the clipboard as text";
+    let out = Command::new("osascript")
+        .args(["-e", script])
+        .output()
+        .unwrap_or_else(|err| panic!("failed to read clipboard text: {err}"));
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        panic!("failed to read clipboard text: {}", stderr.trim());
+    }
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+pub fn write_json(path: &Path, value: &serde_json::Value) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .unwrap_or_else(|err| panic!("failed to create {}: {err}", parent.display()));
+    }
+    let raw = serde_json::to_vec_pretty(value)
+        .unwrap_or_else(|err| panic!("failed to serialize json {}: {err}", path.display()));
+    std::fs::write(path, raw)
+        .unwrap_or_else(|err| panic!("failed to write {}: {err}", path.display()));
+}
+
+fn codex_out_dir() -> PathBuf {
+    if let Ok(codex_home) = env::var("CODEX_HOME") {
+        return PathBuf::from(codex_home).join("out");
+    }
+    if let Some(home) = env::var_os("HOME") {
+        return PathBuf::from(home).join(".codex").join("out");
+    }
+    PathBuf::from(".codex").join("out")
+}
+
+fn escape_applescript(raw: &str) -> String {
+    raw.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn configure_input_source_once() -> Result<(), String> {
+    let Ok(raw) = env::var("MACOS_AGENT_REAL_E2E_INPUT_SOURCE") else {
+        return Ok(());
+    };
+    let token = raw.trim();
+    if token.is_empty() {
+        return Ok(());
+    }
+
+    let target = normalize_input_source_token(token);
+    let out = Command::new("im-select")
+        .arg(&target)
+        .output()
+        .map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                "MACOS_AGENT_REAL_E2E_INPUT_SOURCE is set but `im-select` is missing; install with `brew install im-select`"
+                    .to_string()
+            } else {
+                format!("failed to execute im-select for `{target}`: {err}")
+            }
+        })?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!(
+            "failed to switch input source to `{target}` via im-select: {}",
+            stderr.trim()
+        ));
+    }
+    Ok(())
+}
+
+fn normalize_input_source_token(raw: &str) -> String {
+    match raw.to_ascii_lowercase().as_str() {
+        "abc" | "english" | "us" => "com.apple.keylayout.ABC".to_string(),
+        _ => raw.to_string(),
+    }
+}
+
+fn set_clipboard_text(text: &str) {
+    let script = format!("set the clipboard to \"{}\"", escape_applescript(text));
+    let out = Command::new("osascript")
+        .args(["-e", &script])
+        .output()
+        .unwrap_or_else(|err| panic!("failed to set clipboard text: {err}"));
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        panic!("failed to set clipboard text: {}", stderr.trim());
+    }
+}
+
+fn best_effort_arc_reset_to_blank() {
+    if !try_activate_app("Arc") {
+        return;
+    }
+
+    std::thread::sleep(Duration::from_millis(250));
+
+    for _ in 0..3 {
+        if !try_set_clipboard_text("about:blank") {
+            return;
+        }
+        if !try_arc_replace_address_with_clipboard() {
+            continue;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+
+        if let Some(current_url) = try_arc_copy_active_url() {
+            let normalized = current_url.to_ascii_lowercase();
+            if normalized.contains("about:blank")
+                || (!normalized.contains("youtube.com")
+                    && !normalized.contains("google.com/search"))
+            {
+                break;
+            }
+        }
+    }
+
+    let _ = run_osascript_script(r#"tell application "System Events" to key code 53"#);
+}
+
+fn best_effort_close_active_finder_window() {
+    let _ = try_activate_app("Finder");
+    let script = r#"tell application "System Events" to keystroke "w" using command down"#;
+    let _ = run_osascript_script(script);
+}
+
+fn try_activate_app(app_name: &str) -> bool {
+    let script = format!(
+        r#"tell application "{}" to activate"#,
+        escape_applescript(app_name)
+    );
+    run_osascript_script(&script).is_some()
+}
+
+fn try_set_clipboard_text(text: &str) -> bool {
+    let script = format!("set the clipboard to \"{}\"", escape_applescript(text));
+    run_osascript_script(&script).is_some()
+}
+
+fn try_arc_replace_address_with_clipboard() -> bool {
+    let script = r#"tell application "System Events"
+keystroke "l" using command down
+delay 0.08
+keystroke "v" using command down
+delay 0.08
+key code 36
+end tell"#;
+    run_osascript_script(script).is_some()
+}
+
+fn try_arc_copy_active_url() -> Option<String> {
+    let script = r#"tell application "System Events"
+keystroke "l" using command down
+delay 0.08
+keystroke "c" using command down
+end tell"#;
+    run_osascript_script(script)?;
+    std::thread::sleep(Duration::from_millis(80));
+    try_read_clipboard_text()
+}
+
+fn try_read_clipboard_text() -> Option<String> {
+    let out = Command::new("osascript")
+        .args(["-e", "the clipboard as text"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+fn try_spotify_is_playing() -> Option<bool> {
+    let script = r#"tell application "Spotify" to return (player state as text)"#;
+    let raw = run_osascript_script(script)?;
+    let state = raw.trim().to_ascii_lowercase();
+    Some(state.contains("playing"))
+}
+
+fn try_spotify_playpause() -> bool {
+    let script = r#"tell application "Spotify" to playpause"#;
+    run_osascript_script(script).is_some()
+}
+
+fn run_osascript_script(script: &str) -> Option<String> {
+    let out = Command::new("osascript")
+        .args(["-e", script])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+fn send_unmodified_key(key: &str, step: &str) {
+    let keycode = match key.trim().to_ascii_lowercase().as_str() {
+        "space" => 49_u16,
+        "return" | "enter" => 36_u16,
+        "escape" => 53_u16,
+        _ => panic!("step `{step}` unsupported unmodified key `{key}`"),
+    };
+
+    let script = format!("tell application \"System Events\" to key code {keycode}");
+    let out = Command::new("osascript")
+        .args(["-e", &script])
+        .output()
+        .unwrap_or_else(|err| panic!("step `{step}` failed to execute osascript: {err}"));
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        panic!(
+            "step `{step}` failed sending key `{key}`: {}",
+            stderr.trim()
+        );
+    }
+}
+
+fn step_timeout() -> Duration {
+    env::var("MACOS_AGENT_REAL_E2E_STEP_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value >= STEP_TIMEOUT_MIN_MS)
+        .map(Duration::from_millis)
+        .unwrap_or_else(|| Duration::from_millis(DEFAULT_STEP_TIMEOUT_MS))
+}
+
+fn run_with_timeout(
+    bin: &Path,
+    args: &[&str],
+    options: &CmdOptions,
+    timeout: Duration,
+) -> CmdOutput {
+    let mut cmd = Command::new(bin);
+    if let Some(cwd) = options.cwd.as_deref() {
+        cmd.current_dir(cwd);
+    }
+    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    for key in &options.env_remove {
+        cmd.env_remove(key);
+    }
+    for (key, value) in &options.envs {
+        cmd.env(key, value);
+    }
+
+    if options.stdin.is_some() {
+        cmd.stdin(Stdio::piped());
+    } else if options.stdin_null {
+        cmd.stdin(Stdio::null());
+    }
+
+    let mut child = cmd.spawn().expect("spawn command");
+    if let Some(input) = options.stdin.as_ref() {
+        if let Some(mut writer) = child.stdin.take() {
+            writer.write_all(input).expect("write stdin");
+        }
+    }
+
+    let pid = child.id();
+    let (tx, rx) = mpsc::sync_channel(1);
+    thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+
+    match rx.recv_timeout(timeout) {
+        Ok(Ok(output)) => CmdOutput {
+            code: output.status.code().unwrap_or(-1),
+            stdout: output.stdout,
+            stderr: output.stderr,
+        },
+        Ok(Err(err)) => CmdOutput {
+            code: -1,
+            stdout: Vec::new(),
+            stderr: format!("wait command failed: {err}").into_bytes(),
+        },
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
+            let mut stderr = format!(
+                "command timed out after {} ms and was killed (pid={pid})",
+                timeout.as_millis()
+            )
+            .into_bytes();
+
+            match rx.recv_timeout(Duration::from_millis(STEP_TIMEOUT_KILL_GRACE_MS)) {
+                Ok(Ok(output)) => {
+                    if !output.stderr.is_empty() {
+                        stderr.extend_from_slice(b"\n");
+                        stderr.extend_from_slice(&output.stderr);
+                    }
+                    CmdOutput {
+                        code: -1,
+                        stdout: output.stdout,
+                        stderr,
+                    }
+                }
+                Ok(Err(err)) => {
+                    stderr.extend_from_slice(b"\n");
+                    stderr.extend_from_slice(format!("failed collecting output: {err}").as_bytes());
+                    CmdOutput {
+                        code: -1,
+                        stdout: Vec::new(),
+                        stderr,
+                    }
+                }
+                Err(_) => CmdOutput {
+                    code: -1,
+                    stdout: Vec::new(),
+                    stderr,
+                },
+            }
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => CmdOutput {
+            code: -1,
+            stdout: Vec::new(),
+            stderr: b"command output channel disconnected".to_vec(),
+        },
+    }
+}
