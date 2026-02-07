@@ -212,7 +212,11 @@ if [[ "$skip_checks" -eq 0 ]]; then
   if [[ ! -f "$checks_script" ]]; then
     die "missing checks script: $checks_script"
   fi
-  "$checks_script"
+  checks_runner="${NILS_CLI_TEST_RUNNER:-nextest}"
+  if [[ -z "${NILS_CLI_TEST_RUNNER:-}" ]]; then
+    note "NILS_CLI_TEST_RUNNER not set; defaulting to nextest for release checks"
+  fi
+  NILS_CLI_TEST_RUNNER="$checks_runner" "$checks_script"
 else
   cargo check --workspace
 fi
