@@ -426,7 +426,9 @@ fn probe_activate() -> CheckReport {
 }
 
 fn probe_input_hotkey() -> CheckReport {
-    let script = r#"tell application "System Events" to key code 53"#;
+    // Use a non-printing modifier key so probe execution does not leak visible
+    // escape/control glyphs into an interactive terminal session.
+    let script = r#"tell application "System Events" to key code 56"#;
     let output = run_osascript(script);
     if output.success {
         return CheckReport {
@@ -584,8 +586,8 @@ mod tests {
 
     use super::{
         collect_system_snapshot, find_in_path, looks_like_accessibility_blocked,
-        looks_like_automation_blocked, probe_accessibility, probe_automation, run_osascript,
-        sanitize_probe_detail, PermissionState,
+        looks_like_automation_blocked, probe_accessibility, probe_automation, probe_input_hotkey,
+        run_osascript, sanitize_probe_detail, CheckStatus, PermissionState, ACCESSIBILITY_HINT,
     };
 
     fn install_stub_tools(
@@ -636,6 +638,22 @@ if [[ "$script" == *"frontmost is true"* ]]; then
       ;;
     other_error)
       echo "automation probe exploded" >&2
+      exit 1
+      ;;
+  esac
+fi
+if [[ "$script" == *"key code 56"* ]]; then
+  mode="${MACOS_AGENT_TEST_HOTKEY_MODE:-ok}"
+  case "$mode" in
+    ok)
+      exit 0
+      ;;
+    block)
+      echo "Assistive access not allowed (-25211)" >&2
+      exit 1
+      ;;
+    other_error)
+      echo "hotkey probe exploded" >&2
       exit 1
       ;;
   esac
@@ -733,6 +751,21 @@ exit 1
         let _mode_other = EnvGuard::set(&lock, "MACOS_AGENT_TEST_AUTOMATION_MODE", "other_error");
         let unknown = probe_automation();
         assert_eq!(unknown.state, PermissionState::Unknown);
+    }
+
+    #[test]
+    fn probe_input_hotkey_uses_non_esc_key_and_maps_failures() {
+        let lock = GlobalStateLock::new();
+        let (_stubs, _path) = install_stub_tools(&lock, false);
+
+        let _mode_ok = EnvGuard::set(&lock, "MACOS_AGENT_TEST_HOTKEY_MODE", "ok");
+        let ready = probe_input_hotkey();
+        assert_eq!(ready.status, CheckStatus::Ok);
+
+        let _mode_block = EnvGuard::set(&lock, "MACOS_AGENT_TEST_HOTKEY_MODE", "block");
+        let blocked = probe_input_hotkey();
+        assert_eq!(blocked.status, CheckStatus::Warn);
+        assert_eq!(blocked.hint.as_deref(), Some(ACCESSIBILITY_HINT));
     }
 
     #[test]
