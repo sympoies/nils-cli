@@ -925,7 +925,11 @@ fn best_effort_arc_reset_to_blank() {
         }
     }
 
-    let _ = run_osascript_script(r#"tell application "System Events" to key code 53"#);
+    // Guard escape dispatch so we do not leak control glyphs to terminal when Arc
+    // activation loses focus unexpectedly in real E2E runs.
+    if frontmost_app_is("Arc") {
+        let _ = run_osascript_script(r#"tell application "System Events" to key code 53"#);
+    }
 }
 
 fn best_effort_close_active_finder_window() {
@@ -940,6 +944,13 @@ fn try_activate_app(app_name: &str) -> bool {
         escape_applescript(app_name)
     );
     run_osascript_script(&script).is_some()
+}
+
+fn frontmost_app_is(app_name: &str) -> bool {
+    let script = r#"tell application "System Events" to get name of first application process whose frontmost is true"#;
+    run_osascript_script(script)
+        .map(|name| name.trim().eq_ignore_ascii_case(app_name))
+        .unwrap_or(false)
 }
 
 fn try_set_clipboard_text(text: &str) -> bool {
