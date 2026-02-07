@@ -1,0 +1,147 @@
+# nils-cli bash completion: agent-docs
+
+if [[ -z ${BASH_VERSION-} ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+shopt -s progcomp 2>/dev/null || true
+
+_nils_cli_agent_docs_complete() {
+  local -a words=("${COMP_WORDS[@]}")
+  local cword="$COMP_CWORD"
+  local cur="${COMP_WORDS[COMP_CWORD]}"
+  local prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+  local -a subcmds=(resolve contexts add scaffold-agents baseline scaffold-baseline)
+  local -a root_opts=(-h --help -V --version --codex-home --project-path)
+  local -a contexts=(startup skill-dev task-tools project-dev)
+  local -a scopes=(home project)
+  local -a baseline_targets=(home project all)
+  local -a formats=(text json)
+
+  case "$prev" in
+    --codex-home|--project-path|--path|--output)
+      COMPREPLY=( $(compgen -f -- "$cur") )
+      return 0
+      ;;
+    --context)
+      COMPREPLY=( $(compgen -W "${contexts[*]}" -- "$cur") )
+      return 0
+      ;;
+    --scope)
+      COMPREPLY=( $(compgen -W "${scopes[*]}" -- "$cur") )
+      return 0
+      ;;
+    --target)
+      local target_subcmd="${words[1]-}"
+      case "$target_subcmd" in
+        baseline|scaffold-baseline)
+          COMPREPLY=( $(compgen -W "${baseline_targets[*]}" -- "$cur") )
+          return 0
+          ;;
+      esac
+      COMPREPLY=( $(compgen -W "${scopes[*]}" -- "$cur") )
+      return 0
+      ;;
+    --format)
+      COMPREPLY=( $(compgen -W "${formats[*]}" -- "$cur") )
+      return 0
+      ;;
+    --when)
+      COMPREPLY=( $(compgen -W "always" -- "$cur") )
+      return 0
+      ;;
+    --notes)
+      COMPREPLY=()
+      return 0
+      ;;
+  esac
+
+  local subcmd=''
+  local i=1
+  while (( i < ${#words[@]} )); do
+    local token="${words[i]}"
+    case "$token" in
+      --codex-home|--project-path)
+        ((i+=2))
+        continue
+        ;;
+      -h|--help|-V|--version)
+        ((i++))
+        continue
+        ;;
+      -*)
+        ((i++))
+        continue
+        ;;
+      *)
+        subcmd="$token"
+        break
+        ;;
+    esac
+  done
+
+  if [[ -z "$subcmd" || $cword -le $i ]]; then
+    if [[ "$cur" == -* ]]; then
+      COMPREPLY=( $(compgen -W "${root_opts[*]}" -- "$cur") )
+      return 0
+    fi
+    COMPREPLY=( $(compgen -W "${subcmds[*]}" -- "$cur") )
+    return 0
+  fi
+
+  case "$subcmd" in
+    resolve)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --codex-home --project-path --context --format --strict" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=()
+      return 0
+      ;;
+    contexts)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --codex-home --project-path --format" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=()
+      return 0
+      ;;
+    add)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --codex-home --project-path --target --context --scope --path --required --when --notes" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=()
+      return 0
+      ;;
+    scaffold-agents)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --codex-home --project-path --target --output --force" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=()
+      return 0
+      ;;
+    baseline)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --codex-home --project-path --check --target --format --strict" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=()
+      return 0
+      ;;
+    scaffold-baseline)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --codex-home --project-path --target --missing-only --force --dry-run --format" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=()
+      return 0
+      ;;
+  esac
+
+  COMPREPLY=()
+}
+
+complete -F _nils_cli_agent_docs_complete agent-docs

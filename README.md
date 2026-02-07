@@ -22,6 +22,7 @@ Each crate is either a standalone CLI binary or a shared library used across the
 - [crates/git-lock](crates/git-lock): Label-based commit locks per repo (lock/list/diff/unlock/tag).
 - [crates/fzf-cli](crates/fzf-cli): Interactive `fzf` toolbox for files, Git, processes, ports, and shell history.
 - [crates/codex-cli](crates/codex-cli): Helper CLI for Codex workflows (auth, diagnostics, agent wrappers, starship snippets).
+- [crates/agent-docs](crates/agent-docs): Deterministic policy-document resolver for Codex/agent workflows (`resolve`, `contexts`, `add`, `baseline`).
 - [crates/semantic-commit](crates/semantic-commit): Helper CLI for generating staged context and creating semantic commits.
 - [crates/plan-tooling](crates/plan-tooling): Plan Format v1 tooling CLI (to-json/validate/batches/scaffold).
 - [crates/image-processing](crates/image-processing): Batch image transformation CLI (resize/crop/optimize) with JSON/report outputs.
@@ -66,6 +67,26 @@ Integration steps:
   - `./.codex/skills/nils-cli-install/scripts/nils-cli-install.sh --bin git-scope`
 - Add the install dir to `PATH` (example):
   - `export PATH="$HOME/.local/nils-cli:$PATH"`
+
+## `agent-docs` quick usage
+
+```bash
+# List built-in contexts
+cargo run -p agent-docs -- contexts
+
+# Resolve effective documents for project development flows
+cargo run -p agent-docs -- resolve --context project-dev --format text
+
+# Register BINARY_DEPENDENCIES.md as a required project-dev document
+cargo run -p agent-docs -- add \
+  --target project \
+  --context project-dev \
+  --scope project \
+  --path BINARY_DEPENDENCIES.md \
+  --required \
+  --when always \
+  --notes "External runtime tools required by the repo"
+```
 
 ## GitHub Releases (prebuilt binaries)
 

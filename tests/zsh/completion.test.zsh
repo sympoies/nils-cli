@@ -15,6 +15,7 @@ COMP_API_GQL_FILE="$REPO_ROOT/completions/zsh/_api-gql"
 COMP_API_TEST_FILE="$REPO_ROOT/completions/zsh/_api-test"
 COMP_PLAN_TOOLING_FILE="$REPO_ROOT/completions/zsh/_plan-tooling"
 COMP_CODEX_CLI_FILE="$REPO_ROOT/completions/zsh/_codex-cli"
+COMP_AGENT_DOCS_FILE="$REPO_ROOT/completions/zsh/_agent-docs"
 COMP_MACOS_AGENT_FILE="$REPO_ROOT/completions/zsh/_macos-agent"
 ALIASES_FILE="$REPO_ROOT/completions/zsh/aliases.zsh"
 
@@ -29,6 +30,7 @@ BASH_API_GQL_FILE="$REPO_ROOT/completions/bash/api-gql"
 BASH_API_TEST_FILE="$REPO_ROOT/completions/bash/api-test"
 BASH_PLAN_TOOLING_FILE="$REPO_ROOT/completions/bash/plan-tooling"
 BASH_CODEX_CLI_FILE="$REPO_ROOT/completions/bash/codex-cli"
+BASH_AGENT_DOCS_FILE="$REPO_ROOT/completions/bash/agent-docs"
 BASH_MACOS_AGENT_FILE="$REPO_ROOT/completions/bash/macos-agent"
 BASH_ALIASES_FILE="$REPO_ROOT/completions/bash/aliases.bash"
 
@@ -84,6 +86,11 @@ fi
 
 if [[ ! -f "$COMP_CODEX_CLI_FILE" ]]; then
   print -u2 -r -- "FAIL: missing codex-cli completion file"
+  exit 1
+fi
+
+if [[ ! -f "$COMP_AGENT_DOCS_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing agent-docs completion file"
   exit 1
 fi
 
@@ -149,6 +156,11 @@ fi
 
 if [[ ! -f "$BASH_CODEX_CLI_FILE" ]]; then
   print -u2 -r -- "FAIL: missing bash codex-cli completion file"
+  exit 1
+fi
+
+if [[ ! -f "$BASH_AGENT_DOCS_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing bash agent-docs completion file"
   exit 1
 fi
 
@@ -220,6 +232,11 @@ source "$COMP_CODEX_CLI_FILE" || {
   exit 1
 }
 
+source "$COMP_AGENT_DOCS_FILE" || {
+  print -u2 -r -- "FAIL: failed to source agent-docs completion file"
+  exit 1
+}
+
 source "$COMP_MACOS_AGENT_FILE" || {
   print -u2 -r -- "FAIL: failed to source macos-agent completion file"
   exit 1
@@ -282,6 +299,11 @@ fi
 
 if (( ! $+functions[_codex-cli] )); then
   print -u2 -r -- "FAIL: _codex-cli function not defined"
+  exit 1
+fi
+
+if (( ! $+functions[_agent-docs] )); then
+  print -u2 -r -- "FAIL: _agent-docs function not defined"
   exit 1
 fi
 
@@ -520,6 +542,26 @@ grep -q -- "--cached\\[" "$COMP_CODEX_CLI_FILE" || {
   exit 1
 }
 
+grep -q "resolve:Resolve required docs for a context" "$COMP_AGENT_DOCS_FILE" || {
+  print -u2 -r -- "FAIL: agent-docs completion missing resolve command"
+  exit 1
+}
+
+grep -q "scaffold-baseline:Scaffold missing baseline docs" "$COMP_AGENT_DOCS_FILE" || {
+  print -u2 -r -- "FAIL: agent-docs completion missing scaffold-baseline command"
+  exit 1
+}
+
+grep -q -- "--strict\\[" "$COMP_AGENT_DOCS_FILE" || {
+  print -u2 -r -- "FAIL: agent-docs completion missing --strict"
+  exit 1
+}
+
+grep -q -- "--missing-only\\[" "$COMP_AGENT_DOCS_FILE" || {
+  print -u2 -r -- "FAIL: agent-docs completion missing --missing-only"
+  exit 1
+}
+
 grep -q "wait:UI stabilization wait primitives" "$COMP_MACOS_AGENT_FILE" || {
   print -u2 -r -- "FAIL: macos-agent completion missing wait command"
   exit 1
@@ -582,6 +624,11 @@ bash -c "set -euo pipefail; source \"$BASH_API_TEST_FILE\"; complete -p api-test
 
 bash -c "set -euo pipefail; source \"$BASH_CODEX_CLI_FILE\"; complete -p codex-cli | grep -q _nils_cli_codex_cli_complete; complete -p cx | grep -q _nils_cli_codex_cli_complete" || {
   print -u2 -r -- "FAIL: failed to source bash codex-cli completion file"
+  exit 1
+}
+
+bash -c "set -euo pipefail; source \"$BASH_AGENT_DOCS_FILE\"; complete -p agent-docs | grep -q _nils_cli_agent_docs_complete" || {
+  print -u2 -r -- "FAIL: failed to source bash agent-docs completion file"
   exit 1
 }
 

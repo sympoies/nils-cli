@@ -38,9 +38,10 @@
 - `cargo test --workspace`
 - `zsh -f tests/zsh/completion.test.zsh`
 - Coverage must be **>= 80.00%** total line coverage:
+  - `mkdir -p target/coverage`
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 80`
   - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
-- Or run the single entrypoint for fmt/clippy/tests: `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh` (still run coverage commands above)
+- Or run the single entrypoint for fmt/clippy/tests: `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh` (it pre-creates `target/coverage`; still run coverage commands above)
 
 ### CI-style test reporting (optional)
 
@@ -63,6 +64,7 @@
 - Generate coverage artifacts (recommended; matches CI runner):
 
   ```bash
+  mkdir -p target/coverage
   cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info
   cargo llvm-cov report --html --output-dir target/coverage
   ```

@@ -16,6 +16,8 @@ Environment:
   NILS_CLI_TEST_RUNNER=nextest
     Run `cargo nextest run --profile ci --workspace` and `cargo test --workspace --doc`
     instead of `cargo test --workspace`.
+  NILS_CLI_COVERAGE_DIR=target/coverage
+    Coverage output directory to create before checks.
 
 Exit codes:
   0  all checks passed
@@ -80,6 +82,9 @@ run() {
     exit 1
   fi
 }
+
+coverage_dir="${NILS_CLI_COVERAGE_DIR:-target/coverage}"
+run mkdir -p "$coverage_dir"
 
 run cargo fmt --all -- --check
 run cargo clippy --all-targets --all-features -- -D warnings
