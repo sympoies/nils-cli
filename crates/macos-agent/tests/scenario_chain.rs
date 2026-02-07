@@ -165,3 +165,64 @@ fn scenario_run_executes_fixture_steps() {
     assert_eq!(payload["result"]["failed_steps"], serde_json::json!(0));
     assert!(payload["result"]["passed_steps"].as_u64().unwrap_or(0) >= 3);
 }
+
+#[test]
+fn scenario_steps_report_ax_path_and_fallback_state() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("scenario-ax.json");
+
+    let options = harness
+        .cmd_options(cwd.path())
+        .with_env(
+            "CODEX_MACOS_AGENT_AX_LIST_JSON",
+            r#"{"nodes":[{"node_id":"1.1","role":"AXButton","enabled":true,"focused":false,"actions":["AXPress"],"path":["1","1"]}],"warnings":[]}"#,
+        )
+        .with_env(
+            "CODEX_MACOS_AGENT_AX_CLICK_JSON",
+            r#"{"node_id":"1.1","matched_count":1,"action":"ax-press-fallback","used_coordinate_fallback":true,"fallback_x":120,"fallback_y":220}"#,
+        )
+        .with_env(
+            "CODEX_MACOS_AGENT_AX_TYPE_JSON",
+            r#"{"node_id":"1.1","matched_count":1,"applied_via":"keyboard-keystroke-fallback","text_length":11,"submitted":false,"used_keyboard_fallback":true}"#,
+        );
+
+    let out = harness.run_with_options(
+        cwd.path(),
+        &[
+            "--format",
+            "json",
+            "scenario",
+            "run",
+            "--file",
+            fixture.to_str().unwrap(),
+        ],
+        options,
+    );
+
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr_text());
+    let payload: serde_json::Value =
+        serde_json::from_str(&out.stdout_text()).expect("scenario run json");
+    let steps = payload["result"]["steps"]
+        .as_array()
+        .expect("steps should be an array");
+
+    let click = steps
+        .iter()
+        .find(|step| step["step_id"] == serde_json::json!("ax-click"))
+        .expect("ax-click step should exist");
+    assert_eq!(click["operation"], serde_json::json!("ax.click"));
+    assert_eq!(click["ax_path"], serde_json::json!("coordinate-fallback"));
+    assert_eq!(click["fallback_used"], serde_json::json!(true));
+
+    let typ = steps
+        .iter()
+        .find(|step| step["step_id"] == serde_json::json!("ax-type"))
+        .expect("ax-type step should exist");
+    assert_eq!(typ["operation"], serde_json::json!("ax.type"));
+    assert_eq!(typ["ax_path"], serde_json::json!("keyboard-fallback"));
+    assert_eq!(typ["fallback_used"], serde_json::json!(true));
+}

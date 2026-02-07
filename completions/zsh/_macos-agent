@@ -9,10 +9,13 @@ _macos-agent() {
   local -a global_opts
   global_opts=(
     '--format=[Output format]:format:(text json tsv)'
+    '--error-format=[Error output format]:format:(text json)'
     '--dry-run[Print planned actions without mutating desktop state]'
     '--retries=[Retry count for mutating actions]:count:'
     '--retry-delay-ms=[Delay between retries in milliseconds]:ms:'
     '--timeout-ms=[Per-action timeout in milliseconds]:ms:'
+    '--trace[Emit per-command trace artifacts under CODEX_HOME/out]'
+    '--trace-dir=[Override trace output directory]:path:_files'
     '(-h --help)'{-h,--help}'[Show help]'
     '(-V --version)'{-V,--version}'[Show version]'
   )
@@ -24,15 +27,22 @@ _macos-agent() {
       'apps:List apps' \
       'window:Activate app/window target' \
       'input:Pointer and keyboard actions' \
+      'input-source:Inspect and switch keyboard input sources' \
+      'ax:Accessibility node operations' \
       'observe:Capture screenshot artifacts' \
-      'wait:UI stabilization wait primitives'
+      'wait:UI stabilization wait primitives' \
+      'scenario:Run declarative scenario files' \
+      'profile:Validate/init coordinate profiles'
     return 0
   fi
 
   local group="${words[2]}"
   case "$group" in
     preflight)
-      _arguments -C $global_opts '--strict[Treat advisory warnings as readiness failures]' && return 0
+      _arguments -C $global_opts \
+        '--strict[Treat advisory warnings as readiness failures]' \
+        '--include-probes[Run actionable probes in addition to static checks]' \
+        && return 0
       ;;
 
     windows)
@@ -109,6 +119,77 @@ _macos-agent() {
       esac
       ;;
 
+    input-source)
+      if (( CURRENT == 3 )); then
+        _describe -t subcommands 'input-source command' \
+          'current:Show current input source id' \
+          'switch:Switch input source id'
+        return 0
+      fi
+
+      local input_source_cmd="${words[3]}"
+      case "$input_source_cmd" in
+        current)
+          _arguments -C $global_opts && return 0
+          ;;
+        switch)
+          _arguments -C $global_opts \
+            '--id=[Input source id or alias (abc/us)]:id:' \
+            && return 0
+          ;;
+      esac
+      ;;
+
+    ax)
+      if (( CURRENT == 3 )); then
+        _describe -t subcommands 'ax command' \
+          'list:List AX nodes' \
+          'click:Click AX node' \
+          'type:Type into AX node'
+        return 0
+      fi
+
+      local ax_cmd="${words[3]}"
+      case "$ax_cmd" in
+        list)
+          _arguments -C $global_opts \
+            '--app=[Target app name]:name:' \
+            '--bundle-id=[Target bundle id]:bundle:' \
+            '--role=[Filter by AX role]:role:' \
+            '--title-contains=[Filter by title substring]:text:' \
+            '--max-depth=[Limit traversal depth]:depth:' \
+            '--limit=[Limit number of returned nodes]:count:' \
+            && return 0
+          ;;
+        click)
+          _arguments -C $global_opts \
+            '--node-id=[Select by node id]:id:' \
+            '--role=[Select by AX role]:role:' \
+            '--title-contains=[Select by title substring]:text:' \
+            '--nth=[Select nth match from role/title selector]:n:' \
+            '--app=[Target app name]:name:' \
+            '--bundle-id=[Target bundle id]:bundle:' \
+            '--allow-coordinate-fallback[Allow coordinate fallback when AXPress is unavailable]' \
+            && return 0
+          ;;
+        type)
+          _arguments -C $global_opts \
+            '--node-id=[Select by node id]:id:' \
+            '--role=[Select by AX role]:role:' \
+            '--title-contains=[Select by title substring]:text:' \
+            '--nth=[Select nth match from role/title selector]:n:' \
+            '--app=[Target app name]:name:' \
+            '--bundle-id=[Target bundle id]:bundle:' \
+            '--text=[Text to type]:text:' \
+            '--clear-first[Clear field before typing]' \
+            '--submit[Press Enter after typing]' \
+            '--paste[Use clipboard paste strategy]' \
+            '--allow-keyboard-fallback[Allow keyboard fallback when AX value set is unavailable]' \
+            && return 0
+          ;;
+      esac
+      ;;
+
     observe)
       if (( CURRENT == 3 )); then
         _describe -t subcommands 'observe command' 'screenshot:Capture screenshot'
@@ -155,6 +236,38 @@ _macos-agent() {
             '--window-name=[Narrow app selection by window title]:name:' \
             '--timeout-ms=[Timeout in milliseconds]:ms:' \
             '--poll-ms=[Poll interval in milliseconds]:ms:' \
+            && return 0
+          ;;
+      esac
+      ;;
+
+    scenario)
+      if (( CURRENT == 3 )); then
+        _describe -t subcommands 'scenario command' 'run:Run scenario JSON file'
+        return 0
+      fi
+      _arguments -C $global_opts \
+        '3:scenario command:(run)' \
+        '--file=[Scenario JSON file]:path:_files' \
+        && return 0
+      ;;
+
+    profile)
+      if (( CURRENT == 3 )); then
+        _describe -t subcommands 'profile command' \
+          'validate:Validate profile schema and coordinate bounds' \
+          'init:Write profile scaffold template'
+        return 0
+      fi
+      local profile_cmd="${words[3]}"
+      case "$profile_cmd" in
+        validate)
+          _arguments -C $global_opts '--file=[Profile JSON file]:path:_files' && return 0
+          ;;
+        init)
+          _arguments -C $global_opts \
+            '--name=[Profile name]:name:' \
+            '--path=[Output path]:path:_files' \
             && return 0
           ;;
       esac

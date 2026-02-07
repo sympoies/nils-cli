@@ -83,3 +83,44 @@ fn windows_list_json_and_apps_list_tsv_are_both_supported() {
         .collect::<Vec<_>>();
     assert_eq!(lines[0], "Finder\t222\tcom.apple.Finder");
 }
+
+#[test]
+fn ax_list_json_emits_expected_node_fields() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let options = harness.cmd_options(cwd.path()).with_env(
+        "CODEX_MACOS_AGENT_AX_LIST_JSON",
+        r#"{
+          "nodes":[
+            {
+              "node_id":"1.1",
+              "role":"AXButton",
+              "subrole":"AXStandardWindowButton",
+              "title":"Open",
+              "identifier":"open-button",
+              "value_preview":null,
+              "enabled":true,
+              "focused":false,
+              "frame":{"x":100.0,"y":120.0,"width":88.0,"height":22.0},
+              "actions":["AXPress"],
+              "path":["1","1"]
+            }
+          ],
+          "warnings":[]
+        }"#,
+    );
+
+    let out = harness.run_with_options(cwd.path(), &["--format", "json", "ax", "list"], options);
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr_text());
+    assert_eq!(out.stderr_text(), "");
+
+    let payload: serde_json::Value =
+        serde_json::from_str(&out.stdout_text()).expect("stdout should be valid json");
+    assert_eq!(payload["command"], serde_json::json!("ax.list"));
+    let node = &payload["result"]["nodes"][0];
+    assert_eq!(node["node_id"], serde_json::json!("1.1"));
+    assert_eq!(node["role"], serde_json::json!("AXButton"));
+    assert_eq!(node["title"], serde_json::json!("Open"));
+    assert_eq!(node["identifier"], serde_json::json!("open-button"));
+    assert_eq!(node["actions"][0], serde_json::json!("AXPress"));
+}

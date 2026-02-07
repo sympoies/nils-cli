@@ -3,6 +3,9 @@
 ## Overview
 This plan hardens `macos-agent` for real-world agent development loops where commands are run repeatedly with immediate feedback, not as fixed idealized E2E scripts. Current coverage is strong for happy paths, but several high-friction areas remain: silent gating/skips in real-app tests, heavy reliance on fixed sleeps, panic-style failure reporting, and limited machine-parseable error context for fast automated remediation. The approach focuses on three outcomes: actionable feedback contracts, resilient real-app diagnostics, and ergonomic CLI workflows for rapid modify-test cycles.
 
+## Related plans
+- AX-first command surface and MVP delivery plan: `docs/plans/macos-agent-ax-subcommands-mvp-plan.md`
+
 ## Scope
 - In scope:
   - Improve feedback quality for CLI failures and retries (structured diagnostics for fast triage).

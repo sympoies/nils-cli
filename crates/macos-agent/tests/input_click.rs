@@ -111,3 +111,59 @@ fn input_click_dry_run_does_not_execute_backend() {
         serde_json::json!(true)
     );
 }
+
+#[test]
+fn ax_click_dry_run_reports_policy_and_meta() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+
+    let out = harness.run(
+        cwd.path(),
+        &[
+            "--format",
+            "json",
+            "--dry-run",
+            "ax",
+            "click",
+            "--node-id",
+            "1.1",
+        ],
+    );
+
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr_text());
+    let payload: serde_json::Value =
+        serde_json::from_str(&out.stdout_text()).expect("stdout should be json");
+    assert_eq!(payload["command"], serde_json::json!("ax.click"));
+    assert_eq!(
+        payload["result"]["policy"]["dry_run"],
+        serde_json::json!(true)
+    );
+    assert_eq!(payload["result"]["action"], serde_json::json!("dry-run"));
+}
+
+#[test]
+fn ax_click_coordinate_fallback_executes_with_backend_coordinates() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let options = harness.cmd_options(cwd.path()).with_env(
+        "CODEX_MACOS_AGENT_AX_CLICK_JSON",
+        r#"{"node_id":"1.1","matched_count":1,"action":"ax-press-fallback","used_coordinate_fallback":true,"fallback_x":320,"fallback_y":240}"#,
+    );
+    let out = harness.run_with_options(
+        cwd.path(),
+        &["--format", "json", "ax", "click", "--node-id", "1.1"],
+        options,
+    );
+
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr_text());
+    let payload: serde_json::Value =
+        serde_json::from_str(&out.stdout_text()).expect("stdout should be json");
+    assert_eq!(
+        payload["result"]["used_coordinate_fallback"],
+        serde_json::json!(true)
+    );
+    assert_eq!(
+        payload["result"]["action"],
+        serde_json::json!("coordinate-fallback")
+    );
+}

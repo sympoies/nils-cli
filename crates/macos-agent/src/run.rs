@@ -3,8 +3,9 @@ use std::time::Instant;
 
 use crate::backend::process::RealProcessRunner;
 use crate::cli::{
-    AppsCommand, Cli, CommandGroup, InputCommand, ObserveCommand, OutputFormat, PreflightArgs,
-    ProfileCommand, ScenarioCommand, WaitCommand, WindowCommand, WindowsCommand,
+    AppsCommand, AxCommand, Cli, CommandGroup, InputCommand, InputSourceCommand, ObserveCommand,
+    OutputFormat, PreflightArgs, ProfileCommand, ScenarioCommand, WaitCommand, WindowCommand,
+    WindowsCommand,
 };
 use crate::commands;
 use crate::error::CliError;
@@ -85,6 +86,19 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         CommandGroup::Input {
             command: InputCommand::Hotkey(args),
         } => commands::input_hotkey::run(cli.format, &args, policy, &runner),
+        CommandGroup::InputSource { command } => match command {
+            InputSourceCommand::Current(args) => {
+                commands::input_source::run_current(cli.format, &args, policy, &runner)
+            }
+            InputSourceCommand::Switch(args) => {
+                commands::input_source::run_switch(cli.format, &args, policy, &runner)
+            }
+        },
+        CommandGroup::Ax { command } => match command {
+            AxCommand::List(args) => commands::ax_list::run(cli.format, &args, policy, &runner),
+            AxCommand::Click(args) => commands::ax_click::run(cli.format, &args, policy, &runner),
+            AxCommand::Type(args) => commands::ax_type::run(cli.format, &args, policy, &runner),
+        },
     }
 }
 

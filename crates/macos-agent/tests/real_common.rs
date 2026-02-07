@@ -8,6 +8,7 @@ use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use nils_test_support::bin::resolve;
 use nils_test_support::cmd::{CmdOptions, CmdOutput};
 use serde::{Deserialize, Serialize};
 
@@ -373,6 +374,27 @@ pub fn run_json_step(
     );
     serde_json::from_str(&out.stdout_text())
         .unwrap_or_else(|err| panic!("step `{step}` did not emit valid json: {err}"))
+}
+
+pub fn try_run_json_step(
+    bin: &Path,
+    options: &CmdOptions,
+    args: &[&str],
+    step: &str,
+) -> Result<serde_json::Value, String> {
+    let started = Instant::now();
+    let out = run_with_timeout(bin, args, options, step_timeout());
+    record_step_entry(step, args, 1, started.elapsed(), &out);
+    if out.code != 0 {
+        best_effort_failure_checkpoint(bin, options, step);
+        return Err(format!(
+            "step `{step}` failed\nstdout:\n{}\nstderr:\n{}",
+            out.stdout_text(),
+            out.stderr_text()
+        ));
+    }
+    serde_json::from_str(&out.stdout_text())
+        .map_err(|err| format!("step `{step}` did not emit valid json: {err}"))
 }
 
 pub fn run_json_step_with_retry(
@@ -851,32 +873,25 @@ fn configure_input_source_once() -> Result<(), String> {
     let strict = configured.is_some();
     let token = configured.unwrap_or_else(|| "com.apple.keylayout.ABC".to_string());
     let target = normalize_input_source_token(&token);
-    let out = match Command::new("im-select").arg(&target).output() {
-        Ok(output) => output,
+    match run_macos_agent_input_source_switch(&target) {
+        Ok(()) => Ok(()),
         Err(err) => {
-            if !strict && err.kind() == std::io::ErrorKind::NotFound {
+            if !strict && err.contains("missing dependency `im-select`") {
                 return Ok(());
             }
-            if err.kind() == std::io::ErrorKind::NotFound {
+            if strict && err.contains("missing dependency `im-select`") {
                 return Err(
                     "MACOS_AGENT_REAL_E2E_INPUT_SOURCE is set but `im-select` is missing; install with `brew install im-select`"
                         .to_string(),
                 );
             }
-            return Err(format!("failed to execute im-select for `{target}`: {err}"));
+            if strict {
+                Err(err)
+            } else {
+                Ok(())
+            }
         }
-    };
-    if !out.status.success() {
-        if !strict {
-            return Ok(());
-        }
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        return Err(format!(
-            "failed to switch input source to `{target}` via im-select: {}",
-            stderr.trim()
-        ));
     }
-    Ok(())
 }
 
 fn normalize_input_source_token(raw: &str) -> String {
@@ -884,6 +899,22 @@ fn normalize_input_source_token(raw: &str) -> String {
         "abc" | "english" | "us" => "com.apple.keylayout.ABC".to_string(),
         _ => raw.to_string(),
     }
+}
+
+fn run_macos_agent_input_source_switch(target: &str) -> Result<(), String> {
+    let bin = resolve("macos-agent");
+    let out = Command::new(bin)
+        .args(["--format", "json", "input-source", "switch", "--id", target])
+        .output()
+        .map_err(|err| format!("failed to execute macos-agent input-source switch: {err}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    if stderr.is_empty() {
+        return Err("input-source switch failed with empty stderr".to_string());
+    }
+    Err(stderr)
 }
 
 fn set_clipboard_text(text: &str) {

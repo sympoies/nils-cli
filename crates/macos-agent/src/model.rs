@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{CliError, ErrorCategory};
 use crate::screen_record_adapter::{AppInfo, WindowInfo};
@@ -224,12 +224,161 @@ pub struct InputHotkeyResult {
     pub meta: ActionMeta,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct AxFrame {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct AxNode {
+    pub node_id: String,
+    pub role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subrole: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identifier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_preview: Option<String>,
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub focused: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame: Option<AxFrame>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AxTarget {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundle_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AxSelector {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title_contains: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nth: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AxListRequest {
+    #[serde(default)]
+    pub target: AxTarget,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title_contains: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_depth: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AxClickRequest {
+    #[serde(default)]
+    pub target: AxTarget,
+    #[serde(default)]
+    pub selector: AxSelector,
+    #[serde(default)]
+    pub allow_coordinate_fallback: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AxTypeRequest {
+    #[serde(default)]
+    pub target: AxTarget,
+    #[serde(default)]
+    pub selector: AxSelector,
+    pub text: String,
+    #[serde(default)]
+    pub clear_first: bool,
+    #[serde(default)]
+    pub submit: bool,
+    #[serde(default)]
+    pub paste: bool,
+    #[serde(default)]
+    pub allow_keyboard_fallback: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct AxListResult {
+    pub nodes: Vec<AxNode>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AxClickResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    pub matched_count: usize,
+    pub action: String,
+    #[serde(default)]
+    pub used_coordinate_fallback: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_x: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_y: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AxTypeResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    pub matched_count: usize,
+    pub applied_via: String,
+    pub text_length: usize,
+    #[serde(default)]
+    pub submitted: bool,
+    #[serde(default)]
+    pub used_keyboard_fallback: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AxClickCommandResult {
+    #[serde(flatten)]
+    pub detail: AxClickResult,
+    pub policy: ActionPolicyResult,
+    pub meta: ActionMeta,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AxTypeCommandResult {
+    #[serde(flatten)]
+    pub detail: AxTypeResult,
+    pub policy: ActionPolicyResult,
+    pub meta: ActionMeta,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ScenarioStepResult {
     pub step_id: String,
     pub ok: bool,
     pub exit_code: i32,
     pub elapsed_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ax_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_used: Option<bool>,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub stdout: String,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -259,6 +408,18 @@ pub struct ProfileValidateResult {
 pub struct ProfileInitResult {
     pub path: String,
     pub profile_name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct InputSourceCurrentResult {
+    pub current: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct InputSourceSwitchResult {
+    pub previous: String,
+    pub current: String,
+    pub switched: bool,
 }
 
 fn normalize_tsv_field(value: &str) -> String {

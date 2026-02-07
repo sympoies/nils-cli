@@ -12,8 +12,8 @@ _nils_cli_macos_agent_complete() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-  local -a root_opts=(-h --help -V --version --format --dry-run --retries --retry-delay-ms --timeout-ms)
-  local -a groups=(preflight windows apps window input observe wait)
+  local -a root_opts=(-h --help -V --version --format --error-format --dry-run --retries --retry-delay-ms --timeout-ms --trace --trace-dir)
+  local -a groups=(preflight windows apps window input input-source ax observe wait scenario profile)
 
   if (( cword == 1 )); then
     if [[ "$cur" == -* ]]; then
@@ -27,46 +27,44 @@ _nils_cli_macos_agent_complete() {
   local group="${words[1]-}"
   case "$group" in
     windows)
-      if (( cword == 2 )); then
-        COMPREPLY=( $(compgen -W "list" -- "$cur") )
-        return 0
-      fi
+      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "list" -- "$cur") ); return 0; fi
       ;;
     apps)
-      if (( cword == 2 )); then
-        COMPREPLY=( $(compgen -W "list" -- "$cur") )
-        return 0
-      fi
+      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "list" -- "$cur") ); return 0; fi
       ;;
     window)
-      if (( cword == 2 )); then
-        COMPREPLY=( $(compgen -W "activate" -- "$cur") )
-        return 0
-      fi
+      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "activate" -- "$cur") ); return 0; fi
       ;;
     input)
-      if (( cword == 2 )); then
-        COMPREPLY=( $(compgen -W "click type hotkey" -- "$cur") )
-        return 0
-      fi
+      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "click type hotkey" -- "$cur") ); return 0; fi
+      ;;
+    input-source)
+      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "current switch" -- "$cur") ); return 0; fi
+      ;;
+    ax)
+      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "list click type" -- "$cur") ); return 0; fi
       ;;
     observe)
-      if (( cword == 2 )); then
-        COMPREPLY=( $(compgen -W "screenshot" -- "$cur") )
-        return 0
-      fi
+      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "screenshot" -- "$cur") ); return 0; fi
       ;;
     wait)
-      if (( cword == 2 )); then
-        COMPREPLY=( $(compgen -W "sleep app-active window-present" -- "$cur") )
-        return 0
-      fi
+      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "sleep app-active window-present" -- "$cur") ); return 0; fi
+      ;;
+    scenario)
+      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "run" -- "$cur") ); return 0; fi
+      ;;
+    profile)
+      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "validate init" -- "$cur") ); return 0; fi
       ;;
   esac
 
   case "$prev" in
     --format)
       COMPREPLY=( $(compgen -W "text json tsv" -- "$cur") )
+      return 0
+      ;;
+    --error-format)
+      COMPREPLY=( $(compgen -W "text json" -- "$cur") )
       return 0
       ;;
     --button)
@@ -77,7 +75,7 @@ _nils_cli_macos_agent_complete() {
       COMPREPLY=( $(compgen -W "png jpg webp" -- "$cur") )
       return 0
       ;;
-    --path)
+    --path|--file|--trace-dir)
       COMPREPLY=( $(compgen -f -- "$cur") )
       return 0
       ;;
@@ -85,12 +83,17 @@ _nils_cli_macos_agent_complete() {
 
   if [[ "$cur" == -* ]]; then
     local -a opts=(
-      --format --dry-run --retries --retry-delay-ms --timeout-ms
-      --strict --app --window-name --on-screen-only
+      --format --error-format --dry-run --retries --retry-delay-ms --timeout-ms --trace --trace-dir
+      --strict --include-probes
+      --app --window-name --on-screen-only
       --window-id --active-window --bundle-id --wait-ms
       --x --y --button --count --pre-wait-ms --post-wait-ms
       --text --delay-ms --enter --mods --key
+      --id
+      --role --title-contains --max-depth --limit --nth
+      --allow-coordinate-fallback --clear-first --submit --paste --allow-keyboard-fallback
       --path --image-format --ms --timeout-ms --poll-ms
+      --name
       -h --help -V --version
     )
     COMPREPLY=( $(compgen -W "${opts[*]}" -- "$cur") )
