@@ -1,6 +1,6 @@
 # nils-cli
 
-[![Coverage](https://raw.githubusercontent.com/graysurf/nils-cli/coverage-badge/badges/coverage.svg)](https://github.com/graysurf/nils-cli/actions/workflows/ci.yml)
+[![CI](https://github.com/graysurf/nils-cli/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/graysurf/nils-cli/actions/workflows/ci.yml) [![Coverage](https://raw.githubusercontent.com/graysurf/nils-cli/coverage-badge/badges/coverage.svg)](https://github.com/graysurf/nils-cli/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/graysurf/nils-cli?sort=semver)](https://github.com/graysurf/nils-cli/releases) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Rust CLI workspace scaffold for building multiple independently packaged binaries.
 
@@ -100,9 +100,3 @@ Optional: source `<extract_dir>/completions/bash/aliases.bash` to enable `gs*`/`
 4. Build or run the new CLI with `cargo build -p <cli-name>` or `cargo run -p <cli-name> -- ...`.
 5. Verify packaging picks it up (both local install + GitHub Releases use the same discovery):
    - `python3 scripts/workspace-bins.py | rg "^<cli-name>$"` (see [scripts/workspace-bins.py](scripts/workspace-bins.py))
-
-## License
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-
-This project is licensed under the MIT License. See [LICENSE](LICENSE).
