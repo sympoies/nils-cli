@@ -6,7 +6,9 @@ use crate::cli::{InputTypeArgs, OutputFormat};
 use crate::error::CliError;
 use crate::model::{InputTypeResult, SuccessEnvelope};
 use crate::retry::run_with_retry;
-use crate::run::{action_policy_result, build_action_meta, next_action_id, ActionPolicy};
+use crate::run::{
+    action_policy_result, build_action_meta_with_attempts, next_action_id, ActionPolicy,
+};
 
 pub fn run(
     format: OutputFormat,
@@ -20,10 +22,11 @@ pub fn run(
 
     let action_id = next_action_id("input.type");
     let started = Instant::now();
+    let mut attempts_used = 0u8;
 
     if !policy.dry_run {
         let retry = policy.retry_policy();
-        run_with_retry(retry, || {
+        let (_, attempts) = run_with_retry(retry, || {
             applescript::type_text(
                 runner,
                 &args.text,
@@ -32,6 +35,7 @@ pub fn run(
                 policy.timeout_ms,
             )
         })?;
+        attempts_used = attempts;
     }
 
     let result = InputTypeResult {
@@ -39,7 +43,7 @@ pub fn run(
         enter: args.enter,
         delay_ms: args.delay_ms,
         policy: action_policy_result(policy),
-        meta: build_action_meta(action_id, started, policy),
+        meta: build_action_meta_with_attempts(action_id, started, policy, attempts_used),
     };
 
     match format {

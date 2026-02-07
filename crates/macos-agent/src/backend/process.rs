@@ -135,20 +135,28 @@ pub fn map_failure(operation: &str, failure: ProcessFailure) -> CliError {
     match failure {
         ProcessFailure::NotFound { program } => CliError::runtime(format!(
             "{operation} failed: missing dependency `{program}` in PATH"
+        ))
+        .with_operation(operation)
+        .with_hint(format!(
+            "Install `{program}` and ensure it is available in PATH."
         )),
         ProcessFailure::Timeout {
             program,
             timeout_ms,
-        } => CliError::timeout(&format!("{operation} via `{program}`"), timeout_ms),
+        } => CliError::timeout(&format!("{operation} via `{program}`"), timeout_ms)
+            .with_operation(operation),
         ProcessFailure::NonZero {
             program,
             code,
             stderr,
         } => CliError::runtime(format!(
             "{operation} failed via `{program}` (exit {code}): {stderr}"
-        )),
+        ))
+        .with_operation(operation)
+        .with_hint("Check macOS Accessibility/Automation permissions if this action controls System Events."),
         ProcessFailure::Io { program, message } => {
             CliError::runtime(format!("{operation} failed to run `{program}`: {message}"))
+                .with_operation(operation)
         }
     }
 }

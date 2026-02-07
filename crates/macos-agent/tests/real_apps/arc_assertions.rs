@@ -17,6 +17,8 @@ pub fn arc_youtube_play_pause_and_comment_checkpoint(
     selected_video_indices: &[usize],
 ) -> ScenarioOutcome {
     let started = Instant::now();
+    let scenario_id = "arc_youtube_play_pause_and_comment_checkpoint";
+    let _ledger = real_common::begin_step_ledger(artifact_dir, scenario_id);
     let _cleanup_guard = real_common::ArcCleanupGuard::new();
     assert!(
         !selected_video_indices.is_empty(),
@@ -51,22 +53,10 @@ pub fn arc_youtube_play_pause_and_comment_checkpoint(
             "arc focus player for play/pause",
         );
         real_common::send_hotkey(bin, options, None, "space", "arc toggle play/pause #1");
-        let settle_1 = real_common::run_json_step(
-            bin,
-            options,
-            &["--format", "json", "wait", "sleep", "--ms", "450"],
-            "wait after play/pause #1",
-        );
-        assert_eq!(settle_1["command"], serde_json::json!("wait.sleep"));
+        wait_for_arc(bin, options, &profile.app_name);
 
         real_common::send_hotkey(bin, options, None, "space", "arc toggle play/pause #2");
-        let settle_2 = real_common::run_json_step(
-            bin,
-            options,
-            &["--format", "json", "wait", "sleep", "--ms", "450"],
-            "wait after play/pause #2",
-        );
-        assert_eq!(settle_2["command"], serde_json::json!("wait.sleep"));
+        wait_for_arc(bin, options, &profile.app_name);
 
         click(
             bin,
@@ -74,13 +64,6 @@ pub fn arc_youtube_play_pause_and_comment_checkpoint(
             &comment_checkpoint,
             "arc click comment checkpoint",
         );
-        let settle_comment = real_common::run_json_step(
-            bin,
-            options,
-            &["--format", "json", "wait", "sleep", "--ms", "700"],
-            "wait after comment checkpoint click",
-        );
-        assert_eq!(settle_comment["command"], serde_json::json!("wait.sleep"));
         wait_for_arc(bin, options, &profile.app_name);
 
         let playback_screenshot = artifact_dir.join(format!("arc-video-{index}-playback.png"));
@@ -92,11 +75,18 @@ pub fn arc_youtube_play_pause_and_comment_checkpoint(
         screenshots.push(comment_screenshot.to_string_lossy().to_string());
     }
 
+    let (step_ledger_path, failing_step_id, last_successful_step_id) =
+        real_common::step_ledger_summary_for(artifact_dir);
+
     ScenarioOutcome {
-        scenario_id: "arc_youtube_play_pause_and_comment_checkpoint".to_string(),
+        scenario_id: scenario_id.to_string(),
         status: ScenarioStatus::Passed,
         elapsed_ms: started.elapsed().as_millis() as u64,
         artifact_dir: artifact_dir.display().to_string(),
         screenshots,
+        step_ledger_path,
+        skip_reason: None,
+        failing_step_id,
+        last_successful_step_id,
     }
 }

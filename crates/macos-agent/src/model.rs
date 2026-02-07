@@ -1,5 +1,6 @@
 use serde::Serialize;
 
+use crate::error::{CliError, ErrorCategory};
 use crate::screen_record_adapter::{AppInfo, WindowInfo};
 
 #[derive(Debug, Clone, Serialize)]
@@ -28,11 +29,54 @@ where
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ErrorEnvelope {
+    pub schema_version: u8,
+    pub ok: bool,
+    pub error: ErrorResult,
+}
+
+impl ErrorEnvelope {
+    pub fn from_error(err: &CliError) -> Self {
+        Self {
+            schema_version: 1,
+            ok: false,
+            error: ErrorResult::from(err),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ErrorResult {
+    pub category: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation: Option<String>,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hints: Vec<String>,
+}
+
+impl From<&CliError> for ErrorResult {
+    fn from(err: &CliError) -> Self {
+        let category = match err.category() {
+            ErrorCategory::Usage => "usage",
+            ErrorCategory::Runtime => "runtime",
+        };
+        Self {
+            category,
+            operation: err.operation().map(str::to_string),
+            message: err.message().to_string(),
+            hints: err.hints().to_vec(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ActionMeta {
     pub action_id: String,
     pub elapsed_ms: u64,
     pub dry_run: bool,
     pub retries: u8,
+    pub attempts_used: u8,
     pub timeout_ms: u64,
 }
 
@@ -178,6 +222,43 @@ pub struct InputHotkeyResult {
     pub key: String,
     pub policy: ActionPolicyResult,
     pub meta: ActionMeta,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ScenarioStepResult {
+    pub step_id: String,
+    pub ok: bool,
+    pub exit_code: i32,
+    pub elapsed_ms: u64,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub stdout: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub stderr: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ScenarioRunResult {
+    pub file: String,
+    pub total_steps: usize,
+    pub passed_steps: usize,
+    pub failed_steps: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_failed_step_id: Option<String>,
+    pub steps: Vec<ScenarioStepResult>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProfileValidateResult {
+    pub file: String,
+    pub valid: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub issues: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProfileInitResult {
+    pub path: String,
+    pub profile_name: String,
 }
 
 fn normalize_tsv_field(value: &str) -> String {

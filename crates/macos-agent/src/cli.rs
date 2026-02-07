@@ -10,6 +10,12 @@ pub enum OutputFormat {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ErrorFormat {
+    Text,
+    Json,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum MouseButton {
     Left,
     Right,
@@ -36,6 +42,10 @@ pub struct Cli {
     #[arg(long, value_enum, default_value_t = OutputFormat::Text, global = true)]
     pub format: OutputFormat,
 
+    /// Error output format.
+    #[arg(long, value_enum, default_value_t = ErrorFormat::Text, global = true)]
+    pub error_format: ErrorFormat,
+
     /// Print planned actions without mutating desktop state.
     #[arg(long, global = true)]
     pub dry_run: bool,
@@ -51,6 +61,14 @@ pub struct Cli {
     /// Per-action timeout in milliseconds.
     #[arg(long, default_value_t = 4000, global = true)]
     pub timeout_ms: u64,
+
+    /// Emit per-command trace artifacts under CODEX_HOME/out.
+    #[arg(long, global = true)]
+    pub trace: bool,
+
+    /// Override trace output directory (requires --trace).
+    #[arg(long, global = true)]
+    pub trace_dir: Option<PathBuf>,
 
     #[command(subcommand)]
     pub command: CommandGroup,
@@ -96,6 +114,18 @@ pub enum CommandGroup {
         #[command(subcommand)]
         command: WaitCommand,
     },
+
+    /// Run declarative multi-step command chains.
+    Scenario {
+        #[command(subcommand)]
+        command: ScenarioCommand,
+    },
+
+    /// Validate and bootstrap coordinate profiles.
+    Profile {
+        #[command(subcommand)]
+        command: ProfileCommand,
+    },
 }
 
 #[derive(Debug, Clone, Args)]
@@ -103,6 +133,10 @@ pub struct PreflightArgs {
     /// Treat advisory warnings as readiness failures.
     #[arg(long)]
     pub strict: bool,
+
+    /// Run actionable probes (activate/input/screenshot) in addition to static checks.
+    #[arg(long)]
+    pub include_probes: bool,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -294,6 +328,45 @@ pub enum WaitCommand {
     WindowPresent(WaitWindowPresentArgs),
 }
 
+#[derive(Debug, Clone, Subcommand)]
+pub enum ScenarioCommand {
+    /// Run steps from a scenario JSON file.
+    Run(ScenarioRunArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct ScenarioRunArgs {
+    /// Scenario JSON file path.
+    #[arg(long)]
+    pub file: PathBuf,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum ProfileCommand {
+    /// Validate profile schema and coordinate bounds.
+    Validate(ProfileValidateArgs),
+    /// Write a scaffold profile template.
+    Init(ProfileInitArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct ProfileValidateArgs {
+    /// Profile JSON file path.
+    #[arg(long)]
+    pub file: PathBuf,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct ProfileInitArgs {
+    /// Profile name to embed in generated scaffold.
+    #[arg(long, default_value = "default-1440p")]
+    pub name: String,
+
+    /// Output path for scaffold JSON.
+    #[arg(long)]
+    pub path: Option<PathBuf>,
+}
+
 #[derive(Debug, Clone, Args)]
 pub struct WaitSleepArgs {
     /// Sleep duration in milliseconds.
@@ -368,7 +441,7 @@ mod tests {
     use clap::Parser;
     use pretty_assertions::assert_eq;
 
-    use super::{Cli, CommandGroup, OutputFormat, WaitCommand, WindowCommand};
+    use super::{Cli, CommandGroup, ErrorFormat, OutputFormat, WaitCommand, WindowCommand};
 
     #[test]
     fn parses_window_activate_command_tree() {
@@ -388,6 +461,7 @@ mod tests {
         .expect("window activate should parse");
 
         assert_eq!(cli.format, OutputFormat::Json);
+        assert_eq!(cli.error_format, ErrorFormat::Text);
         assert_eq!(cli.retries, 2);
         match cli.command {
             CommandGroup::Window {

@@ -12,6 +12,8 @@ pub fn spotify_player_state_transitions_are_observable(
     artifact_dir: &Path,
 ) -> ScenarioOutcome {
     let started = Instant::now();
+    let scenario_id = "spotify_player_state_transitions_are_observable";
+    let _ledger = real_common::begin_step_ledger(artifact_dir, scenario_id);
     real_common::require_app_installed("Spotify");
     let _cleanup_guard = real_common::SpotifyPlaybackCleanupGuard::capture();
 
@@ -29,13 +31,11 @@ pub fn spotify_player_state_transitions_are_observable(
         profile.track_rows[0].x,
         profile.track_rows[0].y,
     );
-    let post_track_wait = real_common::run_json_step(
+    wait_spotify_active(
         bin,
         options,
-        &["--format", "json", "wait", "sleep", "--ms", "700"],
         "wait after spotify track click for state probe",
     );
-    assert_eq!(post_track_wait["command"], serde_json::json!("wait.sleep"));
 
     states.push(real_common::spotify_playback_state());
     click(bin, options, profile.play_toggle.x, profile.play_toggle.y);
@@ -83,12 +83,19 @@ pub fn spotify_player_state_transitions_are_observable(
     });
     real_common::write_json(&state_json, &state_payload);
 
+    let (step_ledger_path, failing_step_id, last_successful_step_id) =
+        real_common::step_ledger_summary_for(artifact_dir);
+
     ScenarioOutcome {
-        scenario_id: "spotify_player_state_transitions_are_observable".to_string(),
+        scenario_id: scenario_id.to_string(),
         status: ScenarioStatus::Passed,
         elapsed_ms: started.elapsed().as_millis() as u64,
         artifact_dir: artifact_dir.display().to_string(),
         screenshots,
+        step_ledger_path,
+        skip_reason: None,
+        failing_step_id,
+        last_successful_step_id,
     }
 }
 
@@ -109,13 +116,7 @@ fn activate_spotify(bin: &Path, options: &CmdOptions) {
         "window.activate Spotify",
     );
     assert_eq!(activate["command"], serde_json::json!("window.activate"));
-    let settle = real_common::run_json_step(
-        bin,
-        options,
-        &["--format", "json", "wait", "sleep", "--ms", "1200"],
-        "wait after Spotify activate",
-    );
-    assert_eq!(settle["command"], serde_json::json!("wait.sleep"));
+    wait_spotify_active(bin, options, "wait after Spotify activate");
 }
 
 fn click(bin: &Path, options: &CmdOptions, x: i32, y: i32) {
@@ -174,4 +175,25 @@ fn capture_active_window(bin: &Path, options: &CmdOptions, screenshot_path: &Pat
         screenshot_path.is_file(),
         "spotify state screenshot should exist"
     );
+}
+
+fn wait_spotify_active(bin: &Path, options: &CmdOptions, step: &str) {
+    let payload = real_common::run_json_step(
+        bin,
+        options,
+        &[
+            "--format",
+            "json",
+            "wait",
+            "app-active",
+            "--app",
+            "Spotify",
+            "--timeout-ms",
+            "7000",
+            "--poll-ms",
+            "60",
+        ],
+        step,
+    );
+    assert_eq!(payload["command"], serde_json::json!("wait.app-active"));
 }

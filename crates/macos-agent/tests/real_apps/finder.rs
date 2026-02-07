@@ -14,6 +14,7 @@ pub fn finder_navigation_and_state_checks(
     artifact_dir: &Path,
 ) -> ScenarioOutcome {
     let started = Instant::now();
+    let _ledger = real_common::begin_step_ledger(artifact_dir, FINDER_SCENARIO_ID);
     let mut cleanup_guard = real_common::FinderWindowCleanupGuard::new();
     let screenshot_path = artifact_dir.join("finder-active-window.png");
     let screenshot_path_text = screenshot_path.to_string_lossy().to_string();
@@ -61,14 +62,6 @@ pub fn finder_navigation_and_state_checks(
         serde_json::json!("input.hotkey")
     );
     cleanup_guard.arm();
-
-    let wait_after_open = real_common::run_json_step(
-        bin,
-        options,
-        &["--format", "json", "wait", "sleep", "--ms", "900"],
-        "wait after opening Finder window",
-    );
-    assert_eq!(wait_after_open["command"], serde_json::json!("wait.sleep"));
 
     let wait_present = real_common::run_json_step(
         bin,
@@ -209,11 +202,18 @@ pub fn finder_navigation_and_state_checks(
         .expect("windows list should be an array");
     assert!(!rows.is_empty(), "Finder windows list should not be empty");
 
+    let (step_ledger_path, failing_step_id, last_successful_step_id) =
+        real_common::step_ledger_summary_for(artifact_dir);
+
     ScenarioOutcome {
         scenario_id: FINDER_SCENARIO_ID.to_string(),
         status: ScenarioStatus::Passed,
         elapsed_ms: started.elapsed().as_millis() as u64,
         artifact_dir: artifact_dir.display().to_string(),
         screenshots: vec![screenshot_path_text],
+        step_ledger_path,
+        skip_reason: None,
+        failing_step_id,
+        last_successful_step_id,
     }
 }

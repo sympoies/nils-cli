@@ -13,6 +13,8 @@ pub fn cross_app_arc_spotify_focus_and_state_recovery(
     artifact_dir: &Path,
 ) -> ScenarioOutcome {
     let started = Instant::now();
+    let scenario_id = "cross_app_arc_spotify_focus_and_state_recovery";
+    let _ledger = real_common::begin_step_ledger(artifact_dir, scenario_id);
     real_common::require_app_installed("Arc");
     real_common::require_app_installed("Spotify");
     let _arc_cleanup_guard = real_common::ArcCleanupGuard::new();
@@ -53,12 +55,19 @@ pub fn cross_app_arc_spotify_focus_and_state_recovery(
         &state_payload,
     );
 
+    let (step_ledger_path, failing_step_id, last_successful_step_id) =
+        real_common::step_ledger_summary_for(artifact_dir);
+
     ScenarioOutcome {
-        scenario_id: "cross_app_arc_spotify_focus_and_state_recovery".to_string(),
+        scenario_id: scenario_id.to_string(),
         status: ScenarioStatus::Passed,
         elapsed_ms: started.elapsed().as_millis() as u64,
         artifact_dir: artifact_dir.display().to_string(),
         screenshots,
+        step_ledger_path,
+        skip_reason: None,
+        failing_step_id,
+        last_successful_step_id,
     }
 }
 
@@ -79,13 +88,24 @@ fn activate_app(bin: &Path, options: &CmdOptions, app: &str) {
         &format!("window.activate {app}"),
     );
     assert_eq!(activate["command"], serde_json::json!("window.activate"));
-    let settle = real_common::run_json_step(
+    let active = real_common::run_json_step(
         bin,
         options,
-        &["--format", "json", "wait", "sleep", "--ms", "1200"],
-        &format!("wait after activate {app}"),
+        &[
+            "--format",
+            "json",
+            "wait",
+            "app-active",
+            "--app",
+            app,
+            "--timeout-ms",
+            "7000",
+            "--poll-ms",
+            "60",
+        ],
+        &format!("wait app-active after activate {app}"),
     );
-    assert_eq!(settle["command"], serde_json::json!("wait.sleep"));
+    assert_eq!(active["command"], serde_json::json!("wait.app-active"));
 }
 
 fn capture_active_window(bin: &Path, options: &CmdOptions, screenshot_path: &Path) {

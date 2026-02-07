@@ -20,6 +20,12 @@ where
             Ok(value) => return Ok((value, attempt)),
             Err(err) => {
                 if err.exit_code() != 1 || attempt > policy.retries {
+                    if err.exit_code() == 1 {
+                        return Err(err.with_hint(format!(
+                            "operation failed after {attempt} attempt(s) with retries={} and retry_delay_ms={}",
+                            policy.retries, policy.retry_delay_ms
+                        )));
+                    }
                     return Err(err);
                 }
                 if policy.retry_delay_ms > 0 {

@@ -6,7 +6,9 @@ use crate::cli::{InputHotkeyArgs, OutputFormat};
 use crate::error::CliError;
 use crate::model::{InputHotkeyResult, SuccessEnvelope};
 use crate::retry::run_with_retry;
-use crate::run::{action_policy_result, build_action_meta, next_action_id, ActionPolicy};
+use crate::run::{
+    action_policy_result, build_action_meta_with_attempts, next_action_id, ActionPolicy,
+};
 
 const NAMED_KEYS: &[&str] = &[
     "tab", "return", "enter", "escape", "space", "left", "right", "up", "down", "delete",
@@ -23,12 +25,14 @@ pub fn run(
 
     let action_id = next_action_id("input.hotkey");
     let started = Instant::now();
+    let mut attempts_used = 0u8;
 
     if !policy.dry_run {
         let retry = policy.retry_policy();
-        run_with_retry(retry, || {
+        let (_, attempts) = run_with_retry(retry, || {
             applescript::send_hotkey(runner, &modifiers, &args.key, policy.timeout_ms)
         })?;
+        attempts_used = attempts;
     }
 
     let mods = modifiers
@@ -40,7 +44,7 @@ pub fn run(
         mods,
         key: args.key.clone(),
         policy: action_policy_result(policy),
-        meta: build_action_meta(action_id, started, policy),
+        meta: build_action_meta_with_attempts(action_id, started, policy, attempts_used),
     };
 
     match format {

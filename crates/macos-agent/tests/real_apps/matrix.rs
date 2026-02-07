@@ -22,6 +22,14 @@ pub struct ScenarioOutcome {
     pub artifact_dir: String,
     #[serde(default)]
     pub screenshots: Vec<String>,
+    #[serde(default)]
+    pub step_ledger_path: Option<String>,
+    #[serde(default)]
+    pub skip_reason: Option<String>,
+    #[serde(default)]
+    pub failing_step_id: Option<String>,
+    #[serde(default)]
+    pub last_successful_step_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,6 +65,18 @@ pub struct ArtifactIndex {
     #[serde(default)]
     pub scenarios: Vec<ScenarioOutcome>,
     pub summary: MatrixSummary,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SoakSummary {
+    pub iterations: usize,
+    pub total_runs: usize,
+    pub passed_runs: usize,
+    pub failed_runs: usize,
+    pub skipped_runs: usize,
+    pub pass_rate_percent: f64,
+    #[serde(default)]
+    pub top_failing_step_ids: Vec<String>,
 }
 
 pub fn selected_apps_from_env(raw: Option<&str>) -> Vec<&'static str> {
@@ -147,6 +167,10 @@ pub fn artifact_index_has_required_fields(index: &ArtifactIndex) -> bool {
                 .get("screenshots")
                 .and_then(serde_json::Value::as_array)
                 .is_some()
+            && row
+                .get("step_ledger_path")
+                .map(|value| value.is_string() || value.is_null())
+                .unwrap_or(false)
     })
 }
 
@@ -169,6 +193,46 @@ pub fn summary_has_base_extended_separation(summary: &MatrixSummary) -> bool {
         && summary.extended.total == summary.extended.scenario_ids.len()
 }
 
+pub fn summarize_soak(outcomes: &[ScenarioOutcome], iterations: usize) -> SoakSummary {
+    let total_runs = outcomes.len();
+    let passed_runs = outcomes
+        .iter()
+        .filter(|outcome| outcome.status == ScenarioStatus::Passed)
+        .count();
+    let failed_runs = outcomes
+        .iter()
+        .filter(|outcome| outcome.status == ScenarioStatus::Failed)
+        .count();
+    let skipped_runs = outcomes
+        .iter()
+        .filter(|outcome| outcome.status == ScenarioStatus::Skipped)
+        .count();
+
+    let considered = total_runs.saturating_sub(skipped_runs);
+    let pass_rate_percent = if considered == 0 {
+        0.0
+    } else {
+        (passed_runs as f64 / considered as f64) * 100.0
+    };
+
+    let mut failing_steps = outcomes
+        .iter()
+        .filter_map(|outcome| outcome.failing_step_id.clone())
+        .collect::<Vec<_>>();
+    failing_steps.sort();
+    failing_steps.dedup();
+
+    SoakSummary {
+        iterations,
+        total_runs,
+        passed_runs,
+        failed_runs,
+        skipped_runs,
+        pass_rate_percent,
+        top_failing_step_ids: failing_steps,
+    }
+}
+
 fn is_extended_scenario_id(scenario_id: &str) -> bool {
     let normalized = scenario_id.trim().to_ascii_lowercase();
     normalized.starts_with("cross_app_")
@@ -184,8 +248,8 @@ mod tests {
 
     use super::{
         artifact_index_has_required_fields, classify_base_vs_extended, selected_apps_from_env,
-        subset_selection_matches, summary_has_base_extended_separation, write_artifact_index,
-        ScenarioOutcome, ScenarioStatus, SUPPORTED_APPS,
+        subset_selection_matches, summarize_soak, summary_has_base_extended_separation,
+        write_artifact_index, ScenarioOutcome, ScenarioStatus, SUPPORTED_APPS,
     };
 
     #[test]
@@ -220,6 +284,10 @@ mod tests {
             elapsed_ms: 1250,
             artifact_dir: "/tmp/finder".to_string(),
             screenshots: vec!["/tmp/finder/step-1.png".to_string()],
+            step_ledger_path: Some("/tmp/finder/steps.jsonl".to_string()),
+            skip_reason: None,
+            failing_step_id: None,
+            last_successful_step_id: Some("finder-3".to_string()),
         }];
 
         let index = write_artifact_index(&index_path, &scenarios).expect("write index");
@@ -245,6 +313,10 @@ mod tests {
                 elapsed_ms: 1200,
                 artifact_dir: "/tmp/finder".to_string(),
                 screenshots: vec![],
+                step_ledger_path: Some("/tmp/finder/steps.jsonl".to_string()),
+                skip_reason: None,
+                failing_step_id: None,
+                last_successful_step_id: Some("finder-9".to_string()),
             },
             ScenarioOutcome {
                 scenario_id: "cross_app_arc_spotify_focus_and_state_recovery".to_string(),
@@ -252,6 +324,10 @@ mod tests {
                 elapsed_ms: 2400,
                 artifact_dir: "/tmp/cross-app".to_string(),
                 screenshots: vec![],
+                step_ledger_path: Some("/tmp/cross-app/steps.jsonl".to_string()),
+                skip_reason: None,
+                failing_step_id: Some("cross-2".to_string()),
+                last_successful_step_id: Some("cross-1".to_string()),
             },
         ];
 
@@ -261,5 +337,39 @@ mod tests {
         assert_eq!(summary.base.passed, 1);
         assert_eq!(summary.extended.failed, 1);
         assert!(summary_has_base_extended_separation(&summary));
+    }
+
+    #[test]
+    fn summarize_soak_reports_pass_rate_and_failing_steps() {
+        let outcomes = vec![
+            ScenarioOutcome {
+                scenario_id: "finder_navigation_and_state_checks".to_string(),
+                status: ScenarioStatus::Passed,
+                elapsed_ms: 1000,
+                artifact_dir: "/tmp/finder".to_string(),
+                screenshots: vec![],
+                step_ledger_path: Some("/tmp/finder/steps.jsonl".to_string()),
+                skip_reason: None,
+                failing_step_id: None,
+                last_successful_step_id: Some("finder-2".to_string()),
+            },
+            ScenarioOutcome {
+                scenario_id: "cross_app_arc_spotify_focus_and_state_recovery".to_string(),
+                status: ScenarioStatus::Failed,
+                elapsed_ms: 1000,
+                artifact_dir: "/tmp/cross".to_string(),
+                screenshots: vec![],
+                step_ledger_path: Some("/tmp/cross/steps.jsonl".to_string()),
+                skip_reason: None,
+                failing_step_id: Some("cross-4".to_string()),
+                last_successful_step_id: Some("cross-3".to_string()),
+            },
+        ];
+        let summary = summarize_soak(&outcomes, 2);
+        assert_eq!(summary.iterations, 2);
+        assert_eq!(summary.total_runs, 2);
+        assert_eq!(summary.failed_runs, 1);
+        assert!(summary.pass_rate_percent > 0.0);
+        assert_eq!(summary.top_failing_step_ids, vec!["cross-4".to_string()]);
     }
 }

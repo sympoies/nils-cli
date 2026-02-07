@@ -9,8 +9,8 @@ mod real_common;
 
 use real_apps::matrix::{
     artifact_index_has_required_fields, classify_base_vs_extended, selected_apps_from_env,
-    subset_selection_matches, summary_has_base_extended_separation, write_artifact_index,
-    ScenarioOutcome, ScenarioStatus,
+    subset_selection_matches, summarize_soak, summary_has_base_extended_separation,
+    write_artifact_index, ScenarioOutcome, ScenarioStatus,
 };
 use real_apps::{
     arc_youtube_multi_video_play_pause_and_comments, arc_youtube_opens_home_and_clicks_three_tiles,
@@ -50,10 +50,21 @@ fn real_e2e_contract_enforces_skip_vs_fail_policy() {
     assert!(real_common::app_selected("arc"));
     assert!(real_common::app_selected("finder"));
     assert!(!real_common::app_selected("spotify"));
+
+    let invalid = real_common::validate_selected_apps_raw("arc,mail");
+    assert!(
+        invalid.is_err(),
+        "unsupported app selections should fail with actionable diagnostics"
+    );
 }
 
 #[test]
 fn real_e2e_foundation_reports_preflight_and_skip_reasons() {
+    if let Some(reason) = real_common::app_gate_reason("finder", false) {
+        eprintln!("SKIP[real_e2e_foundation_reports_preflight_and_skip_reasons]: {reason}");
+        return;
+    }
+
     if !real_common::real_e2e_enabled() {
         return;
     }
@@ -289,7 +300,8 @@ fn matrix_runner_reports_base_and_extended_scenarios_separately() {
 
 #[test]
 fn matrix_runner_supports_app_subset_selection_real() {
-    if !real_common::real_e2e_enabled() || !real_common::real_mutation_enabled() {
+    if let Some(reason) = real_common::app_gate_reason("finder", true) {
+        eprintln!("SKIP[matrix_runner_supports_app_subset_selection_real]: {reason}");
         return;
     }
 
@@ -300,7 +312,18 @@ fn matrix_runner_supports_app_subset_selection_real() {
 
     let selected =
         selected_apps_from_env(std::env::var("MACOS_AGENT_REAL_E2E_APPS").ok().as_deref());
-    let outcomes = run_selected_real_scenarios(&bin, &options, &root, &selected);
+    let iterations = std::env::var("MACOS_AGENT_REAL_E2E_ITERATIONS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(1);
+
+    let mut outcomes = Vec::new();
+    for _ in 0..iterations {
+        outcomes.extend(run_selected_real_scenarios(
+            &bin, &options, &root, &selected,
+        ));
+    }
     assert!(
         !outcomes.is_empty(),
         "expected at least one selected scenario"
@@ -310,12 +333,22 @@ fn matrix_runner_supports_app_subset_selection_real() {
     let index = write_artifact_index(&index_path, &outcomes).expect("write real artifact index");
     assert!(artifact_index_has_required_fields(&index));
     assert!(summary_has_base_extended_separation(&index.summary));
+
+    let soak_summary = summarize_soak(&outcomes, iterations);
+    let soak_summary_path = root.join("soak-summary.json");
+    real_common::write_json(&soak_summary_path, &serde_json::json!(soak_summary));
+    assert!(
+        soak_summary_path.is_file(),
+        "soak summary should be written"
+    );
 }
 
 fn should_run(app: &str) -> bool {
-    real_common::real_e2e_enabled()
-        && real_common::real_mutation_enabled()
-        && real_common::app_selected(app)
+    if let Some(reason) = real_common::app_gate_reason(app, true) {
+        eprintln!("SKIP[{app}]: {reason}");
+        return false;
+    }
+    true
 }
 
 fn sample_outcome(id: &str) -> ScenarioOutcome {
@@ -325,6 +358,10 @@ fn sample_outcome(id: &str) -> ScenarioOutcome {
         elapsed_ms: 100,
         artifact_dir: "/tmp/macos-agent-e2e".to_string(),
         screenshots: vec!["/tmp/macos-agent-e2e/checkpoint.png".to_string()],
+        step_ledger_path: Some("/tmp/macos-agent-e2e/steps.jsonl".to_string()),
+        skip_reason: None,
+        failing_step_id: None,
+        last_successful_step_id: Some("sample-1".to_string()),
     }
 }
 
@@ -339,6 +376,12 @@ fn run_selected_real_scenarios(
     if selected_apps.contains(&"finder") {
         let dir = root.join("finder_navigation_and_state_checks");
         outcomes.push(finder_navigation_and_state_checks(bin, options, &dir));
+    } else {
+        outcomes.push(skipped_outcome(
+            "finder_navigation_and_state_checks",
+            &root.join("finder_navigation_and_state_checks"),
+            "finder not selected by MACOS_AGENT_REAL_E2E_APPS",
+        ));
     }
 
     if selected_apps.contains(&"arc") {
@@ -350,12 +393,24 @@ fn run_selected_real_scenarios(
             &dir,
             &arc_profile,
         ));
+    } else {
+        outcomes.push(skipped_outcome(
+            "arc_youtube_multi_video_play_pause_and_comments",
+            &root.join("arc_youtube_multi_video_play_pause_and_comments"),
+            "arc not selected by MACOS_AGENT_REAL_E2E_APPS",
+        ));
     }
 
     if selected_apps.contains(&"spotify") {
         let dir = root.join("spotify_player_state_transitions_are_observable");
         outcomes.push(spotify_player_state_transitions_are_observable(
             bin, options, &dir,
+        ));
+    } else {
+        outcomes.push(skipped_outcome(
+            "spotify_player_state_transitions_are_observable",
+            &root.join("spotify_player_state_transitions_are_observable"),
+            "spotify not selected by MACOS_AGENT_REAL_E2E_APPS",
         ));
     }
 
@@ -364,7 +419,27 @@ fn run_selected_real_scenarios(
         outcomes.push(cross_app_arc_spotify_focus_and_state_recovery(
             bin, options, &dir,
         ));
+    } else {
+        outcomes.push(skipped_outcome(
+            "cross_app_arc_spotify_focus_and_state_recovery",
+            &root.join("cross_app_arc_spotify_focus_and_state_recovery"),
+            "cross-app scenario requires both arc and spotify selections",
+        ));
     }
 
     outcomes
+}
+
+fn skipped_outcome(id: &str, artifact_dir: &Path, reason: &str) -> ScenarioOutcome {
+    ScenarioOutcome {
+        scenario_id: id.to_string(),
+        status: ScenarioStatus::Skipped,
+        elapsed_ms: 0,
+        artifact_dir: artifact_dir.display().to_string(),
+        screenshots: vec![],
+        step_ledger_path: Some(real_common::step_ledger_path_for(artifact_dir)),
+        skip_reason: Some(reason.to_string()),
+        failing_step_id: None,
+        last_successful_step_id: None,
+    }
 }

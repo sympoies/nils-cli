@@ -6,7 +6,9 @@ use crate::cli::{OutputFormat, WindowActivateArgs};
 use crate::error::CliError;
 use crate::model::{SuccessEnvelope, WindowActivateResult};
 use crate::retry::run_with_retry;
-use crate::run::{action_policy_result, build_action_meta, next_action_id, ActionPolicy};
+use crate::run::{
+    action_policy_result, build_action_meta_with_attempts, next_action_id, ActionPolicy,
+};
 use crate::targets::{self, TargetSelector};
 use crate::test_mode;
 use crate::wait;
@@ -20,12 +22,14 @@ pub fn run(
     let (target, selected_app, selected_window_id) = resolve_target(args)?;
     let action_id = next_action_id("window.activate");
     let started = Instant::now();
+    let mut attempts_used = 0u8;
 
     if !policy.dry_run {
         let retry = policy.retry_policy();
-        run_with_retry(retry, || {
+        let (_, attempts) = run_with_retry(retry, || {
             applescript::activate(runner, &target, policy.timeout_ms)
         })?;
+        attempts_used = attempts;
 
         if let Some(wait_ms) = args.wait_ms {
             wait_for_active_confirmation(runner, &target, wait_ms)?;
@@ -37,7 +41,7 @@ pub fn run(
         selected_window_id,
         wait_ms: args.wait_ms,
         policy: action_policy_result(policy),
-        meta: build_action_meta(action_id, started, policy),
+        meta: build_action_meta_with_attempts(action_id, started, policy, attempts_used),
     };
 
     match format {

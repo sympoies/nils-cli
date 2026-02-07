@@ -31,6 +31,8 @@ pub fn arc_youtube_opens_home_and_clicks_three_tiles(
     profile: &ArcYoutubeProfile,
 ) -> ScenarioOutcome {
     let started = Instant::now();
+    let scenario_id = "arc_youtube_opens_home_and_clicks_three_tiles";
+    let _ledger = real_common::begin_step_ledger(artifact_dir, scenario_id);
     let _cleanup_guard = real_common::ArcCleanupGuard::new();
     assert!(
         profile.video_tiles.len() >= 3,
@@ -62,12 +64,19 @@ pub fn arc_youtube_opens_home_and_clicks_three_tiles(
         screenshots.push(checkpoint.to_string_lossy().to_string());
     }
 
+    let (step_ledger_path, failing_step_id, last_successful_step_id) =
+        real_common::step_ledger_summary_for(artifact_dir);
+
     ScenarioOutcome {
-        scenario_id: "arc_youtube_opens_home_and_clicks_three_tiles".to_string(),
+        scenario_id: scenario_id.to_string(),
         status: ScenarioStatus::Passed,
         elapsed_ms: started.elapsed().as_millis() as u64,
         artifact_dir: artifact_dir.display().to_string(),
         screenshots,
+        step_ledger_path,
+        skip_reason: None,
+        failing_step_id,
+        last_successful_step_id,
     }
 }
 
@@ -131,14 +140,6 @@ pub(crate) fn open_youtube_home(bin: &Path, options: &CmdOptions, app_name: &str
     );
     assert_eq!(wait_active["command"], serde_json::json!("wait.app-active"));
 
-    let settle = real_common::run_json_step(
-        bin,
-        options,
-        &["--format", "json", "wait", "sleep", "--ms", "1200"],
-        "wait after open youtube home",
-    );
-    assert_eq!(settle["command"], serde_json::json!("wait.sleep"));
-
     verify_active_address_bar_url(bin, options);
 }
 
@@ -173,10 +174,21 @@ pub(crate) fn wait_for_arc(bin: &Path, options: &CmdOptions, app_name: &str) {
     let payload = real_common::run_json_step(
         bin,
         options,
-        &["--format", "json", "wait", "sleep", "--ms", "1100"],
-        &format!("wait after activate {app_name}"),
+        &[
+            "--format",
+            "json",
+            "wait",
+            "app-active",
+            "--app",
+            app_name,
+            "--timeout-ms",
+            "7000",
+            "--poll-ms",
+            "60",
+        ],
+        &format!("wait app-active {app_name}"),
     );
-    assert_eq!(payload["command"], serde_json::json!("wait.sleep"));
+    assert_eq!(payload["command"], serde_json::json!("wait.app-active"));
 }
 
 pub(crate) fn capture_active_window(bin: &Path, options: &CmdOptions, screenshot_path: &Path) {

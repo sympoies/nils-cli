@@ -3,5 +3,7 @@ pub mod input_hotkey;
 pub mod input_type;
 pub mod list;
 pub mod observe;
+pub mod profile;
+pub mod scenario;
 pub mod wait;
 pub mod window_activate;

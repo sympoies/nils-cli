@@ -3,8 +3,8 @@ use std::time::Instant;
 
 use crate::backend::process::RealProcessRunner;
 use crate::cli::{
-    AppsCommand, Cli, CommandGroup, InputCommand, ObserveCommand, OutputFormat, WaitCommand,
-    WindowCommand, WindowsCommand,
+    AppsCommand, Cli, CommandGroup, InputCommand, ObserveCommand, OutputFormat, PreflightArgs,
+    ProfileCommand, ScenarioCommand, WaitCommand, WindowCommand, WindowsCommand,
 };
 use crate::commands;
 use crate::error::CliError;
@@ -64,6 +64,15 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         CommandGroup::Wait {
             command: WaitCommand::WindowPresent(args),
         } => commands::wait::run_window_present(cli.format, &args),
+        CommandGroup::Scenario {
+            command: ScenarioCommand::Run(args),
+        } => commands::scenario::run(cli.format, &args),
+        CommandGroup::Profile {
+            command: ProfileCommand::Validate(args),
+        } => commands::profile::run_validate(cli.format, &args),
+        CommandGroup::Profile {
+            command: ProfileCommand::Init(args),
+        } => commands::profile::run_init(cli.format, &args),
         CommandGroup::Window {
             command: WindowCommand::Activate(args),
         } => commands::window_activate::run(cli.format, &args, policy, &runner),
@@ -110,9 +119,14 @@ fn validate_format_support(cli: &Cli) -> Result<(), CliError> {
     }
 }
 
-fn run_preflight(format: OutputFormat, args: crate::cli::PreflightArgs) -> Result<(), CliError> {
+fn run_preflight(format: OutputFormat, args: PreflightArgs) -> Result<(), CliError> {
     let snapshot = preflight::collect_system_snapshot();
-    let report = preflight::build_report(snapshot, args.strict);
+    let probes = if args.include_probes {
+        preflight::run_live_probes()
+    } else {
+        Vec::new()
+    };
+    let report = preflight::build_report_with_probes(snapshot, args.strict, probes);
 
     match format {
         OutputFormat::Text => println!("{}", preflight::render_text(&report)),
@@ -133,11 +147,26 @@ pub fn next_action_id(command: &str) -> String {
 }
 
 pub fn build_action_meta(action_id: String, started: Instant, policy: ActionPolicy) -> ActionMeta {
+    build_action_meta_with_attempts(
+        action_id,
+        started,
+        policy,
+        if policy.dry_run { 0 } else { 1 },
+    )
+}
+
+pub fn build_action_meta_with_attempts(
+    action_id: String,
+    started: Instant,
+    policy: ActionPolicy,
+    attempts_used: u8,
+) -> ActionMeta {
     ActionMeta {
         action_id,
         elapsed_ms: started.elapsed().as_millis() as u64,
         dry_run: policy.dry_run,
         retries: policy.retries,
+        attempts_used,
         timeout_ms: policy.timeout_ms,
     }
 }

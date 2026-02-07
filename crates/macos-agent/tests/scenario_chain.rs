@@ -136,3 +136,32 @@ fn scenario_chain_activate_wait_click_type_and_observe_succeeds() {
         "scenario screenshot should exist"
     );
 }
+
+#[test]
+fn scenario_run_executes_fixture_steps() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("scenario-basic.json");
+
+    let out = harness.run(
+        cwd.path(),
+        &[
+            "--format",
+            "json",
+            "scenario",
+            "run",
+            "--file",
+            fixture.to_str().unwrap(),
+        ],
+    );
+
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr_text());
+    let payload: serde_json::Value =
+        serde_json::from_str(&out.stdout_text()).expect("scenario run json");
+    assert_eq!(payload["command"], serde_json::json!("scenario.run"));
+    assert_eq!(payload["result"]["failed_steps"], serde_json::json!(0));
+    assert!(payload["result"]["passed_steps"].as_u64().unwrap_or(0) >= 3);
+}

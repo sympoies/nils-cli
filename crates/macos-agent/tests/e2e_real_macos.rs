@@ -31,6 +31,7 @@ fn base_options(cwd: &std::path::Path) -> CmdOptions {
 #[test]
 fn real_macos_preflight_reports_tcc_signals_in_json() {
     if !real_e2e_enabled() {
+        eprintln!("SKIP[real_macos_preflight_reports_tcc_signals_in_json]: MACOS_AGENT_REAL_E2E is not enabled");
         return;
     }
 
@@ -74,6 +75,9 @@ fn real_macos_preflight_reports_tcc_signals_in_json() {
 #[test]
 fn real_macos_activate_and_wait_detects_focus_or_reports_actionable_tcc_error() {
     if !real_e2e_enabled() || !real_mutation_enabled() {
+        eprintln!(
+            "SKIP[real_macos_activate_and_wait_detects_focus_or_reports_actionable_tcc_error]: real e2e mutating gate is disabled"
+        );
         return;
     }
 

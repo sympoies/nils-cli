@@ -2,14 +2,14 @@ use std::env;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use nils_test_support::cmd::{CmdOptions, CmdOutput};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub struct UiPoint {
@@ -129,9 +129,167 @@ impl Drop for FinderWindowCleanupGuard {
 
 static ARTIFACT_COUNTER: AtomicU64 = AtomicU64::new(1);
 static INPUT_SOURCE_SETUP: OnceLock<Result<(), String>> = OnceLock::new();
+static STEP_LEDGER_ACTIVE: AtomicBool = AtomicBool::new(false);
 const DEFAULT_STEP_TIMEOUT_MS: u64 = 15_000;
 const STEP_TIMEOUT_MIN_MS: u64 = 1_000;
 const STEP_TIMEOUT_KILL_GRACE_MS: u64 = 2_000;
+const STEP_LOG_EXCERPT_MAX: usize = 500;
+const SUPPORTED_REAL_APPS: [&str; 3] = ["arc", "spotify", "finder"];
+
+#[derive(Debug, Clone, Serialize)]
+struct StepLogEntry {
+    step_id: String,
+    scenario_id: String,
+    step: String,
+    args: Vec<String>,
+    attempt: usize,
+    elapsed_ms: u64,
+    success: bool,
+    exit_code: i32,
+    stdout_excerpt: String,
+    stderr_excerpt: String,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+struct StepLedgerSummary {
+    scenario_id: String,
+    steps_path: String,
+    total_steps: usize,
+    last_successful_step_id: Option<String>,
+    failing_step_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct StepLedgerState {
+    scenario_id: String,
+    steps_path: PathBuf,
+    summary_path: PathBuf,
+    counter: u64,
+    total_steps: usize,
+    last_successful_step_id: Option<String>,
+    failing_step_id: Option<String>,
+}
+
+thread_local! {
+    static STEP_LEDGER_STATE: std::cell::RefCell<Option<StepLedgerState>> = const { std::cell::RefCell::new(None) };
+}
+
+pub struct StepLedgerGuard;
+
+impl Drop for StepLedgerGuard {
+    fn drop(&mut self) {
+        STEP_LEDGER_STATE.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            if let Some(state) = slot.take() {
+                let summary = StepLedgerSummary {
+                    scenario_id: state.scenario_id,
+                    steps_path: state.steps_path.display().to_string(),
+                    total_steps: state.total_steps,
+                    last_successful_step_id: state.last_successful_step_id,
+                    failing_step_id: state.failing_step_id,
+                };
+                let _ = write_json_to_path(&state.summary_path, &serde_json::json!(summary));
+            }
+        });
+        STEP_LEDGER_ACTIVE.store(false, Ordering::SeqCst);
+    }
+}
+
+pub fn begin_step_ledger(artifact_dir: &Path, scenario_id: &str) -> StepLedgerGuard {
+    let steps_path = artifact_dir.join("steps.jsonl");
+    let summary_path = artifact_dir.join("step-summary.json");
+    std::fs::create_dir_all(artifact_dir).expect("create artifact dir for step ledger");
+    if !steps_path.exists() {
+        std::fs::write(&steps_path, b"").expect("initialize step ledger");
+    }
+    let existing_steps = std::fs::read_to_string(&steps_path)
+        .ok()
+        .map(|raw| raw.lines().filter(|line| !line.trim().is_empty()).count() as u64)
+        .unwrap_or(0);
+
+    STEP_LEDGER_STATE.with(|slot| {
+        *slot.borrow_mut() = Some(StepLedgerState {
+            scenario_id: scenario_id.to_string(),
+            steps_path,
+            summary_path,
+            counter: existing_steps,
+            total_steps: existing_steps as usize,
+            last_successful_step_id: None,
+            failing_step_id: None,
+        });
+    });
+    STEP_LEDGER_ACTIVE.store(true, Ordering::SeqCst);
+    StepLedgerGuard
+}
+
+pub fn step_ledger_path_for(artifact_dir: &Path) -> String {
+    artifact_dir.join("steps.jsonl").display().to_string()
+}
+
+pub fn step_ledger_summary_for(
+    artifact_dir: &Path,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let path = artifact_dir.join("step-summary.json");
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return (None, None, None);
+    };
+    let Ok(payload) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return (None, None, None);
+    };
+    let failing = payload["failing_step_id"].as_str().map(str::to_string);
+    let last_success = payload["last_successful_step_id"]
+        .as_str()
+        .map(str::to_string);
+    let steps_path = payload["steps_path"].as_str().map(str::to_string);
+    (steps_path, failing, last_success)
+}
+
+pub fn app_gate_reason(app: &str, requires_mutation: bool) -> Option<String> {
+    validate_selected_apps_env().unwrap_or_else(|message| panic!("{message}"));
+    if !real_e2e_enabled() {
+        return Some("MACOS_AGENT_REAL_E2E is not enabled".to_string());
+    }
+    if requires_mutation && !real_mutation_enabled() {
+        return Some("MACOS_AGENT_REAL_E2E_MUTATING is not enabled".to_string());
+    }
+    if !app_selected(app) {
+        return Some(format!(
+            "app `{app}` is not selected by MACOS_AGENT_REAL_E2E_APPS"
+        ));
+    }
+    None
+}
+
+pub fn validate_selected_apps_env() -> Result<(), String> {
+    let Ok(raw) = env::var("MACOS_AGENT_REAL_E2E_APPS") else {
+        return Ok(());
+    };
+    validate_selected_apps_raw(&raw)
+}
+
+pub fn validate_selected_apps_raw(raw: &str) -> Result<(), String> {
+    if raw.trim().is_empty() {
+        return Ok(());
+    }
+    let tokens = raw
+        .split(',')
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    let unknown = tokens
+        .iter()
+        .filter(|token| !SUPPORTED_REAL_APPS.contains(&token.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if unknown.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "unsupported MACOS_AGENT_REAL_E2E_APPS entries: {}; supported values: {}",
+        unknown.join(","),
+        SUPPORTED_REAL_APPS.join(",")
+    ))
+}
 
 pub fn real_e2e_enabled() -> bool {
     cfg!(target_os = "macos")
@@ -149,6 +307,7 @@ pub fn real_mutation_enabled() -> bool {
 }
 
 pub fn app_selected(app: &str) -> bool {
+    validate_selected_apps_env().unwrap_or_else(|message| panic!("{message}"));
     let Ok(raw) = env::var("MACOS_AGENT_REAL_E2E_APPS") else {
         return true;
     };
@@ -217,7 +376,12 @@ pub fn run_json_step(
     args: &[&str],
     step: &str,
 ) -> serde_json::Value {
+    let started = Instant::now();
     let out = run_with_timeout(bin, args, options, step_timeout());
+    record_step_entry(step, args, 1, started.elapsed(), &out);
+    if out.code != 0 {
+        best_effort_failure_checkpoint(bin, options, step);
+    }
     assert_eq!(
         out.code,
         0,
@@ -240,7 +404,9 @@ pub fn run_json_step_with_retry(
     let mut attempt = 0usize;
     loop {
         attempt += 1;
+        let started = Instant::now();
         let out = run_with_timeout(bin, args, options, step_timeout());
+        record_step_entry(step, args, attempt, started.elapsed(), &out);
         if out.code == 0 {
             return serde_json::from_str(&out.stdout_text()).unwrap_or_else(|err| {
                 panic!("step `{step}` attempt {attempt} emitted invalid json: {err}")
@@ -248,6 +414,7 @@ pub fn run_json_step_with_retry(
         }
 
         if attempt > retries {
+            best_effort_failure_checkpoint(bin, options, step);
             panic!(
                 "step `{step}` failed after {attempt} attempts\nstdout:\n{}\nstderr:\n{}",
                 out.stdout_text(),
@@ -255,32 +422,6 @@ pub fn run_json_step_with_retry(
             );
         }
         std::thread::sleep(retry_delay);
-    }
-}
-
-pub fn run_idempotent_with_retry<F, T>(step: &str, retries: usize, retry_delay: Duration, f: F) -> T
-where
-    F: Fn() -> T,
-{
-    let mut attempt = 0usize;
-    loop {
-        attempt += 1;
-        let started = Instant::now();
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(&f));
-        match result {
-            Ok(value) => return value,
-            Err(payload) => {
-                if attempt > retries {
-                    std::panic::resume_unwind(payload);
-                }
-                eprintln!(
-                    "retrying step `{step}` after {} ms (attempt {attempt}/{})",
-                    started.elapsed().as_millis(),
-                    retries + 1
-                );
-                std::thread::sleep(retry_delay);
-            }
-        }
     }
 }
 
@@ -427,15 +568,150 @@ pub fn read_clipboard_text() -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
+fn record_step_entry(
+    step: &str,
+    args: &[&str],
+    attempt: usize,
+    elapsed: Duration,
+    out: &CmdOutput,
+) {
+    if !STEP_LEDGER_ACTIVE.load(Ordering::SeqCst) {
+        return;
+    }
+
+    STEP_LEDGER_STATE.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let Some(state) = slot.as_mut() else {
+            return;
+        };
+        state.counter = state.counter.saturating_add(1);
+        state.total_steps = state.total_steps.saturating_add(1);
+        let step_id = format!("{}-{}", state.scenario_id, state.counter);
+        let success = out.code == 0;
+        if success {
+            state.last_successful_step_id = Some(step_id.clone());
+        } else if state.failing_step_id.is_none() {
+            state.failing_step_id = Some(step_id.clone());
+        }
+
+        let entry = StepLogEntry {
+            step_id,
+            scenario_id: state.scenario_id.clone(),
+            step: step.to_string(),
+            args: args.iter().map(|arg| arg.to_string()).collect(),
+            attempt,
+            elapsed_ms: elapsed.as_millis() as u64,
+            success,
+            exit_code: out.code,
+            stdout_excerpt: compact_log_excerpt(&out.stdout_text()),
+            stderr_excerpt: compact_log_excerpt(&out.stderr_text()),
+        };
+
+        if let Ok(line) = serde_json::to_string(&entry) {
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(&state.steps_path)
+            {
+                let _ = writeln!(file, "{line}");
+            }
+        }
+    });
+}
+
+fn compact_log_excerpt(raw: &str) -> String {
+    let compact = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() <= STEP_LOG_EXCERPT_MAX {
+        return compact;
+    }
+    let mut out = String::new();
+    for (idx, ch) in compact.chars().enumerate() {
+        if idx >= STEP_LOG_EXCERPT_MAX {
+            break;
+        }
+        out.push(ch);
+    }
+    out.push_str("...");
+    out
+}
+
+fn best_effort_failure_checkpoint(bin: &Path, options: &CmdOptions, step: &str) {
+    if !STEP_LEDGER_ACTIVE.load(Ordering::SeqCst) {
+        return;
+    }
+
+    let capture = STEP_LEDGER_STATE.with(|slot| {
+        let slot = slot.borrow();
+        let state = slot.as_ref()?;
+        let parent = state.steps_path.parent()?;
+        Some(parent.join(format!(
+            "failure-{}-{}.png",
+            state.counter.saturating_add(1),
+            sanitize_filename(step)
+        )))
+    });
+    let Some(path) = capture else {
+        return;
+    };
+    let path_text = path.to_string_lossy().to_string();
+    let out = run_with_timeout(
+        bin,
+        &[
+            "--format",
+            "json",
+            "observe",
+            "screenshot",
+            "--active-window",
+            "--path",
+            &path_text,
+        ],
+        options,
+        Duration::from_millis(2_000),
+    );
+    if out.code == 0 {
+        record_step_entry(
+            "failure-checkpoint screenshot",
+            &[
+                "--format",
+                "json",
+                "observe",
+                "screenshot",
+                "--active-window",
+                "--path",
+                &path_text,
+            ],
+            1,
+            Duration::from_millis(0),
+            &out,
+        );
+    }
+}
+
+fn sanitize_filename(raw: &str) -> String {
+    raw.chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
 pub fn write_json(path: &Path, value: &serde_json::Value) {
+    write_json_to_path(path, value)
+        .unwrap_or_else(|err| panic!("failed to write {}: {err}", path.display()));
+}
+
+fn write_json_to_path(path: &Path, value: &serde_json::Value) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
-            .unwrap_or_else(|err| panic!("failed to create {}: {err}", parent.display()));
+            .map_err(|err| format!("create {}: {err}", parent.display()))?;
     }
     let raw = serde_json::to_vec_pretty(value)
-        .unwrap_or_else(|err| panic!("failed to serialize json {}: {err}", path.display()));
-    std::fs::write(path, raw)
-        .unwrap_or_else(|err| panic!("failed to write {}: {err}", path.display()));
+        .map_err(|err| format!("serialize {}: {err}", path.display()))?;
+    std::fs::write(path, raw).map_err(|err| format!("write {}: {err}", path.display()))
 }
 
 fn codex_out_dir() -> PathBuf {

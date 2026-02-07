@@ -176,6 +176,14 @@ pub fn collect_system_snapshot() -> ProbeSnapshot {
 }
 
 pub fn build_report(snapshot: ProbeSnapshot, strict: bool) -> PreflightReport {
+    build_report_with_probes(snapshot, strict, Vec::new())
+}
+
+pub fn build_report_with_probes(
+    snapshot: ProbeSnapshot,
+    strict: bool,
+    mut probe_checks: Vec<CheckReport>,
+) -> PreflightReport {
     let checks = vec![
         tool_check(
             "osascript",
@@ -214,7 +222,14 @@ pub fn build_report(snapshot: ProbeSnapshot, strict: bool) -> PreflightReport {
         ),
     ];
 
+    let mut checks = checks;
+    checks.append(&mut probe_checks);
+
     PreflightReport { strict, checks }
+}
+
+pub fn run_live_probes() -> Vec<CheckReport> {
+    vec![probe_activate(), probe_input_hotkey(), probe_screenshot()]
 }
 
 pub fn render_text(report: &PreflightReport) -> String {
@@ -384,6 +399,116 @@ fn probe_automation() -> PermissionSignal {
             sanitize_probe_detail(&normalized)
         ))
     }
+}
+
+fn probe_activate() -> CheckReport {
+    let output = run_osascript(AUTOMATION_SCRIPT);
+    if output.success {
+        return CheckReport {
+            id: "probe_activate",
+            label: "Probe: window activate",
+            status: CheckStatus::Ok,
+            blocking: false,
+            message: "Activation probe succeeded.".to_string(),
+            hint: None,
+        };
+    }
+
+    let detail = sanitize_probe_detail(&output.normalized_detail());
+    CheckReport {
+        id: "probe_activate",
+        label: "Probe: window activate",
+        status: CheckStatus::Warn,
+        blocking: false,
+        message: format!("Activation probe failed: {detail}"),
+        hint: Some(AUTOMATION_HINT.to_string()),
+    }
+}
+
+fn probe_input_hotkey() -> CheckReport {
+    let script = r#"tell application "System Events" to key code 53"#;
+    let output = run_osascript(script);
+    if output.success {
+        return CheckReport {
+            id: "probe_input_hotkey",
+            label: "Probe: input hotkey",
+            status: CheckStatus::Ok,
+            blocking: false,
+            message: "Input hotkey probe succeeded.".to_string(),
+            hint: None,
+        };
+    }
+
+    let detail = sanitize_probe_detail(&output.normalized_detail());
+    CheckReport {
+        id: "probe_input_hotkey",
+        label: "Probe: input hotkey",
+        status: CheckStatus::Warn,
+        blocking: false,
+        message: format!("Input probe failed: {detail}"),
+        hint: Some(ACCESSIBILITY_HINT.to_string()),
+    }
+}
+
+fn probe_screenshot() -> CheckReport {
+    if env_truthy("CODEX_MACOS_AGENT_TEST_MODE") {
+        return CheckReport {
+            id: "probe_screenshot",
+            label: "Probe: observe screenshot",
+            status: CheckStatus::Ok,
+            blocking: false,
+            message: "Screenshot probe succeeded in deterministic test mode.".to_string(),
+            hint: None,
+        };
+    }
+
+    #[cfg(target_os = "macos")]
+    let shareable =
+        screen_record::macos::shareable::fetch_shareable().map_err(|err| err.to_string());
+
+    #[cfg(not(target_os = "macos"))]
+    let shareable: Result<screen_record::types::ShareableContent, String> =
+        Err("macOS shareable probe is unavailable on this platform".to_string());
+
+    match shareable {
+        Ok(content) => {
+            if content.windows.is_empty() {
+                CheckReport {
+                    id: "probe_screenshot",
+                    label: "Probe: observe screenshot",
+                    status: CheckStatus::Warn,
+                    blocking: false,
+                    message: "Screenshot probe found no shareable windows.".to_string(),
+                    hint: Some(SCREEN_RECORDING_HINT.to_string()),
+                }
+            } else {
+                CheckReport {
+                    id: "probe_screenshot",
+                    label: "Probe: observe screenshot",
+                    status: CheckStatus::Ok,
+                    blocking: false,
+                    message: "Screenshot probe validated shareable content access.".to_string(),
+                    hint: None,
+                }
+            }
+        }
+        Err(err) => CheckReport {
+            id: "probe_screenshot",
+            label: "Probe: observe screenshot",
+            status: CheckStatus::Warn,
+            blocking: false,
+            message: format!("Screenshot probe failed: {err}"),
+            hint: Some(SCREEN_RECORDING_HINT.to_string()),
+        },
+    }
+}
+
+fn env_truthy(name: &str) -> bool {
+    let raw = env::var_os(name).map(|value| value.to_string_lossy().trim().to_ascii_lowercase());
+    matches!(
+        raw.as_deref(),
+        Some("1") | Some("true") | Some("yes") | Some("on")
+    )
 }
 
 fn find_in_path(bin: &str) -> Option<String> {
