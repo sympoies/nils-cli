@@ -44,7 +44,7 @@ _agent-docs() {
         '--codex-home=[Override CODEX_HOME root]:path:_files -/' \
         '--project-path=[Override PROJECT_PATH root]:path:_files -/' \
         '--context=[Context to resolve]:context:(startup skill-dev task-tools project-dev)' \
-        '--format=[Output format]:format:(text json)' \
+        '--format=[Output format]:format:(text json checklist)' \
         '--strict[Return non-zero when required documents are missing]' \
         && return 0
       ;;

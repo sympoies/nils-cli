@@ -18,44 +18,7 @@ _nils_cli_agent_docs_complete() {
   local -a scopes=(home project)
   local -a baseline_targets=(home project all)
   local -a formats=(text json)
-
-  case "$prev" in
-    --codex-home|--project-path|--path|--output)
-      COMPREPLY=( $(compgen -f -- "$cur") )
-      return 0
-      ;;
-    --context)
-      COMPREPLY=( $(compgen -W "${contexts[*]}" -- "$cur") )
-      return 0
-      ;;
-    --scope)
-      COMPREPLY=( $(compgen -W "${scopes[*]}" -- "$cur") )
-      return 0
-      ;;
-    --target)
-      local target_subcmd="${words[1]-}"
-      case "$target_subcmd" in
-        baseline|scaffold-baseline)
-          COMPREPLY=( $(compgen -W "${baseline_targets[*]}" -- "$cur") )
-          return 0
-          ;;
-      esac
-      COMPREPLY=( $(compgen -W "${scopes[*]}" -- "$cur") )
-      return 0
-      ;;
-    --format)
-      COMPREPLY=( $(compgen -W "${formats[*]}" -- "$cur") )
-      return 0
-      ;;
-    --when)
-      COMPREPLY=( $(compgen -W "always" -- "$cur") )
-      return 0
-      ;;
-    --notes)
-      COMPREPLY=()
-      return 0
-      ;;
-  esac
+  local -a resolve_formats=(text json checklist)
 
   local subcmd=''
   local i=1
@@ -80,6 +43,47 @@ _nils_cli_agent_docs_complete() {
         ;;
     esac
   done
+
+  case "$prev" in
+    --codex-home|--project-path|--path|--output)
+      COMPREPLY=( $(compgen -f -- "$cur") )
+      return 0
+      ;;
+    --context)
+      COMPREPLY=( $(compgen -W "${contexts[*]}" -- "$cur") )
+      return 0
+      ;;
+    --scope)
+      COMPREPLY=( $(compgen -W "${scopes[*]}" -- "$cur") )
+      return 0
+      ;;
+    --target)
+      case "$subcmd" in
+        baseline|scaffold-baseline)
+          COMPREPLY=( $(compgen -W "${baseline_targets[*]}" -- "$cur") )
+          return 0
+          ;;
+      esac
+      COMPREPLY=( $(compgen -W "${scopes[*]}" -- "$cur") )
+      return 0
+      ;;
+    --format)
+      if [[ "$subcmd" == "resolve" ]]; then
+        COMPREPLY=( $(compgen -W "${resolve_formats[*]}" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=( $(compgen -W "${formats[*]}" -- "$cur") )
+      return 0
+      ;;
+    --when)
+      COMPREPLY=( $(compgen -W "always" -- "$cur") )
+      return 0
+      ;;
+    --notes)
+      COMPREPLY=()
+      return 0
+      ;;
+  esac
 
   if [[ -z "$subcmd" || $cword -le $i ]]; then
     if [[ "$cur" == -* ]]; then

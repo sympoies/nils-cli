@@ -3,7 +3,7 @@ mod common;
 use std::fs;
 
 use agent_docs::config::CONFIG_FILE_NAME;
-use agent_docs::model::{Context, DocumentSource, DocumentStatus, OutputFormat};
+use agent_docs::model::{Context, DocumentSource, DocumentStatus, OutputFormat, ResolveFormat};
 use agent_docs::{output, resolver};
 use serde::Deserialize;
 
@@ -48,7 +48,7 @@ fn resolve_builtin_all_contexts_text_output_is_covered() {
 
     for context in all_contexts() {
         let report = resolver::resolve_builtin(context, &roots, false);
-        let rendered = output::render_resolve(OutputFormat::Text, &report).expect("render text");
+        let rendered = output::render_resolve(ResolveFormat::Text, &report).expect("render text");
         let required_lines = common::required_lines(&rendered);
         let expected = expected_documents(context);
 
@@ -94,7 +94,7 @@ fn resolve_builtin_all_contexts_json_output_is_covered() {
 
     for context in all_contexts() {
         let report = resolver::resolve_builtin(context, &roots, false);
-        let rendered = output::render_resolve(OutputFormat::Json, &report).expect("render json");
+        let rendered = output::render_resolve(ResolveFormat::Json, &report).expect("render json");
         let decoded: ResolveReportJson = serde_json::from_str(&rendered).expect("parse json");
         let expected = expected_documents(context);
 
@@ -123,12 +123,12 @@ fn resolve_builtin_startup_text_output_is_stable_ordered_and_deduped() {
     let roots = workspace.roots();
 
     let first = output::render_resolve(
-        OutputFormat::Text,
+        ResolveFormat::Text,
         &resolver::resolve_builtin(Context::Startup, &roots, false),
     )
     .expect("first render");
     let second = output::render_resolve(
-        OutputFormat::Text,
+        ResolveFormat::Text,
         &resolver::resolve_builtin(Context::Startup, &roots, false),
     )
     .expect("second render");
@@ -167,6 +167,105 @@ fn resolve_builtin_strict_and_non_strict_have_different_exit_codes_for_missing_r
     assert_eq!(
         strict, 1,
         "strict should fail when required docs are missing"
+    );
+}
+
+#[test]
+fn resolve_builtin_all_contexts_checklist_output_is_covered() {
+    let workspace = common::FixtureWorkspace::from_fixtures();
+    let roots = workspace.roots();
+
+    for context in all_contexts() {
+        let report = resolver::resolve_builtin(context, &roots, false);
+        let rendered =
+            output::render_resolve(ResolveFormat::Checklist, &report).expect("render checklist");
+        let lines: Vec<&str> = rendered.lines().collect();
+        let expected = expected_documents(context);
+
+        assert!(lines.first().is_some_and(
+            |line| *line == format!("REQUIRED_DOCS_BEGIN context={context} mode=non-strict")
+        ));
+        assert!(
+            lines
+                .last()
+                .is_some_and(|line| line.starts_with("REQUIRED_DOCS_END ")),
+            "checklist output must include end marker: {rendered}"
+        );
+
+        let doc_lines = &lines[1..lines.len() - 1];
+        assert_eq!(
+            doc_lines.len(),
+            expected.len(),
+            "unexpected checklist required line count for context {context}\n{rendered}"
+        );
+        for (line, expectation) in doc_lines.iter().zip(expected.iter()) {
+            let expected_prefix = format!(
+                "{} status={} path=",
+                expectation.file_name, expectation.status
+            );
+            assert!(
+                line.starts_with(&expected_prefix),
+                "line should follow checklist contract: {line}"
+            );
+        }
+
+        let end_line = lines.last().expect("end line");
+        assert!(
+            end_line.contains(&format!("required={}", report.summary.required_total)),
+            "end marker should include required count: {end_line}"
+        );
+        assert!(
+            end_line.contains(&format!("present={}", report.summary.present_required)),
+            "end marker should include present count: {end_line}"
+        );
+        assert!(
+            end_line.contains(&format!("missing={}", report.summary.missing_required)),
+            "end marker should include missing count: {end_line}"
+        );
+        assert!(
+            end_line.contains("mode=non-strict"),
+            "end marker should include mode: {end_line}"
+        );
+        assert!(
+            end_line.contains(&format!("context={context}")),
+            "end marker should include context: {end_line}"
+        );
+    }
+}
+
+#[test]
+fn resolve_builtin_startup_checklist_output_is_stable_ordered_and_deduped() {
+    let workspace = common::FixtureWorkspace::from_fixtures();
+    let roots = workspace.roots();
+
+    let first = output::render_resolve(
+        ResolveFormat::Checklist,
+        &resolver::resolve_builtin(Context::Startup, &roots, false),
+    )
+    .expect("first checklist render");
+    let second = output::render_resolve(
+        ResolveFormat::Checklist,
+        &resolver::resolve_builtin(Context::Startup, &roots, false),
+    )
+    .expect("second checklist render");
+
+    assert_eq!(first, second, "checklist rendering should be deterministic");
+    let lines: Vec<&str> = first.lines().collect();
+    assert_eq!(
+        lines[0],
+        "REQUIRED_DOCS_BEGIN context=startup mode=non-strict"
+    );
+    assert!(
+        lines[1].starts_with("AGENTS.override.md status=present path="),
+        "startup home override should appear first"
+    );
+    assert!(
+        lines[2].starts_with("AGENTS.override.md status=present path="),
+        "startup project override should appear second"
+    );
+    assert_eq!(
+        lines[3],
+        "REQUIRED_DOCS_END required=2 present=2 missing=0 mode=non-strict context=startup"
     );
 }
 
@@ -267,8 +366,8 @@ notes = "project-home-scope-entry"
     let first = resolver::resolve_builtin(Context::ProjectDev, &roots, false);
     let second = resolver::resolve_builtin(Context::ProjectDev, &roots, false);
 
-    let first_text = output::render_resolve(OutputFormat::Text, &first).expect("render first");
-    let second_text = output::render_resolve(OutputFormat::Text, &second).expect("render second");
+    let first_text = output::render_resolve(ResolveFormat::Text, &first).expect("render first");
+    let second_text = output::render_resolve(ResolveFormat::Text, &second).expect("render second");
     assert_eq!(
         first_text, second_text,
         "resolve output should be deterministic"

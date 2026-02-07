@@ -91,7 +91,8 @@ add: target=project action=<inserted|updated> config=<PROJECT_PATH>/AGENT_DOCS.t
 Verify resolution includes this document:
 
 ```bash
-cargo run -p agent-docs -- resolve --context project-dev --format text | rg "BINARY_DEPENDENCIES\\.md"
+cargo run -p agent-docs -- resolve --context project-dev --format checklist \
+  | rg "REQUIRED_DOCS_BEGIN|REQUIRED_DOCS_END|BINARY_DEPENDENCIES\\.md"
 ```
 
 ## 6. Recommended Install Profiles

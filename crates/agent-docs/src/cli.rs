@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::model::{BaselineTarget, Context, DocumentWhen, OutputFormat, Scope};
+use crate::model::{BaselineTarget, Context, DocumentWhen, OutputFormat, ResolveFormat, Scope};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -37,8 +37,8 @@ pub struct ResolveArgs {
     #[arg(long, value_enum)]
     pub context: Context,
 
-    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
-    pub format: OutputFormat,
+    #[arg(long, value_enum, default_value_t = ResolveFormat::Text)]
+    pub format: ResolveFormat,
 
     #[arg(long)]
     pub strict: bool,

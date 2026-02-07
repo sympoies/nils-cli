@@ -110,6 +110,31 @@ impl fmt::Display for OutputFormat {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ValueEnum, Default)]
 #[serde(rename_all = "kebab-case")]
+pub enum ResolveFormat {
+    #[default]
+    Text,
+    Json,
+    Checklist,
+}
+
+impl ResolveFormat {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Json => "json",
+            Self::Checklist => "checklist",
+        }
+    }
+}
+
+impl fmt::Display for ResolveFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ValueEnum, Default)]
+#[serde(rename_all = "kebab-case")]
 pub enum BaselineTarget {
     Home,
     Project,

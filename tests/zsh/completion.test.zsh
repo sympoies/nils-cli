@@ -562,6 +562,31 @@ grep -q -- "--missing-only\\[" "$COMP_AGENT_DOCS_FILE" || {
   exit 1
 }
 
+if [[ "$(grep -c -- "format:(text json checklist)" "$COMP_AGENT_DOCS_FILE")" -ne 1 ]]; then
+  print -u2 -r -- "FAIL: agent-docs resolve completion missing checklist format"
+  exit 1
+fi
+
+if [[ "$(grep -c -- "format:(text json)" "$COMP_AGENT_DOCS_FILE")" -ne 3 ]]; then
+  print -u2 -r -- "FAIL: non-resolve agent-docs format completions must remain text|json"
+  exit 1
+fi
+
+grep -q "local -a resolve_formats=(text json checklist)" "$BASH_AGENT_DOCS_FILE" || {
+  print -u2 -r -- "FAIL: bash agent-docs resolve format completion missing checklist"
+  exit 1
+}
+
+grep -q "local -a formats=(text json)" "$BASH_AGENT_DOCS_FILE" || {
+  print -u2 -r -- "FAIL: bash agent-docs non-resolve formats must remain text|json"
+  exit 1
+}
+
+grep -q -- "resolve_formats\\[\\*\\]" "$BASH_AGENT_DOCS_FILE" || {
+  print -u2 -r -- "FAIL: bash agent-docs resolve must use resolve-specific formats"
+  exit 1
+}
+
 grep -q "wait:UI stabilization wait primitives" "$COMP_MACOS_AGENT_FILE" || {
   print -u2 -r -- "FAIL: macos-agent completion missing wait command"
   exit 1

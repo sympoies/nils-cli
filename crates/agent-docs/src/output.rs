@@ -3,7 +3,8 @@ use serde::Serialize;
 
 use crate::commands::scaffold_baseline::ScaffoldBaselineReport;
 use crate::model::{
-    BaselineCheckReport, Context as DocContext, OutputFormat, ResolveReport, StubReport,
+    BaselineCheckReport, Context as DocContext, OutputFormat, ResolveFormat, ResolveReport,
+    StubReport,
 };
 
 #[derive(Debug, Serialize)]
@@ -23,12 +24,13 @@ pub fn render_contexts(format: OutputFormat, contexts: &[DocContext]) -> Result<
     }
 }
 
-pub fn render_resolve(format: OutputFormat, report: &ResolveReport) -> Result<String> {
+pub fn render_resolve(format: ResolveFormat, report: &ResolveReport) -> Result<String> {
     match format {
-        OutputFormat::Text => Ok(render_resolve_text(report)),
-        OutputFormat::Json => {
+        ResolveFormat::Text => Ok(render_resolve_text(report)),
+        ResolveFormat::Json => {
             serde_json::to_string_pretty(report).context("failed to serialize resolve output")
         }
+        ResolveFormat::Checklist => Ok(render_resolve_checklist(report)),
     }
 }
 
@@ -99,6 +101,44 @@ fn render_resolve_text(report: &ResolveReport) -> String {
         report.summary.present_required,
         report.summary.missing_required,
         report.strict
+    ));
+
+    lines.join("\n")
+}
+
+fn render_resolve_checklist(report: &ResolveReport) -> String {
+    let mode = if report.strict {
+        "strict"
+    } else {
+        "non-strict"
+    };
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "REQUIRED_DOCS_BEGIN context={} mode={mode}",
+        report.context
+    ));
+
+    for doc in report.documents.iter().filter(|doc| doc.required) {
+        let file_name = doc
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| doc.path.display().to_string());
+        lines.push(format!(
+            "{} status={} path={}",
+            file_name,
+            doc.status,
+            doc.path.display()
+        ));
+    }
+
+    lines.push(format!(
+        "REQUIRED_DOCS_END required={} present={} missing={} mode={mode} context={}",
+        report.summary.required_total,
+        report.summary.present_required,
+        report.summary.missing_required,
+        report.context
     ));
 
     lines.join("\n")

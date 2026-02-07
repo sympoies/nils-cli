@@ -104,10 +104,16 @@ Resolve effective required/optional docs for one context.
 Flags:
 
 - `--context startup|skill-dev|task-tools|project-dev` (required)
-- `--format text|json` (default: `text`)
+- `--format text|json|checklist` (default: `text`)
 - `--strict` (missing required docs become exit code `1`)
 - `--codex-home <path>`
 - `--project-path <path>`
+
+Format guidance:
+
+- `text`: human-readable output for manual inspection and debugging.
+- `json`: machine-readable output for structured parsing/integration.
+- `checklist`: line-oriented required-doc contract for shell verification and CI guards.
 
 ### `add`
 
@@ -151,7 +157,8 @@ add: target=project action=<inserted|updated> config=<PROJECT_PATH>/AGENT_DOCS.t
 Verify both built-in and extension docs are present:
 
 ```bash
-agent-docs resolve --context project-dev --format text | rg "DEVELOPMENT\\.md|BINARY_DEPENDENCIES\\.md"
+agent-docs resolve --context project-dev --format checklist \
+  | rg "REQUIRED_DOCS_BEGIN|REQUIRED_DOCS_END|DEVELOPMENT\\.md|BINARY_DEPENDENCIES\\.md"
 ```
 
 ### `scaffold-agents`
@@ -269,6 +276,20 @@ summary: required_total=2 present_required=2 missing_required=0 strict=false
     "missing_required": 0
   }
 }
+```
+
+### `resolve` checklist example
+
+Checklist mode is designed for copy-paste verification. The required-doc section is delimited by
+`REQUIRED_DOCS_BEGIN` and `REQUIRED_DOCS_END`, with one required document per line:
+`<filename> status=<present|missing> path=<absolute-path>`.
+
+```text
+$ agent-docs resolve --context project-dev --format checklist
+REQUIRED_DOCS_BEGIN context=project-dev mode=non-strict
+DEVELOPMENT.md status=present path=/Users/example/work/nils-cli/DEVELOPMENT.md
+BINARY_DEPENDENCIES.md status=present path=/Users/example/work/nils-cli/BINARY_DEPENDENCIES.md
+REQUIRED_DOCS_END required=2 present=2 missing=0 mode=non-strict context=project-dev
 ```
 
 ### `baseline --check` text example
@@ -455,7 +476,8 @@ notes = "External runtime tools required by the repo"
 Verification command:
 
 ```bash
-agent-docs resolve --context project-dev --format text | rg "DEVELOPMENT\\.md|BINARY_DEPENDENCIES\\.md"
+agent-docs resolve --context project-dev --format checklist \
+  | rg "REQUIRED_DOCS_BEGIN|REQUIRED_DOCS_END|DEVELOPMENT\\.md|BINARY_DEPENDENCIES\\.md"
 ```
 
 ## Snapshot Fixture Maintenance
