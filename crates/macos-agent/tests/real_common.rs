@@ -226,24 +226,6 @@ pub fn step_ledger_path_for(artifact_dir: &Path) -> String {
     artifact_dir.join("steps.jsonl").display().to_string()
 }
 
-pub fn step_ledger_summary_for(
-    artifact_dir: &Path,
-) -> (Option<String>, Option<String>, Option<String>) {
-    let path = artifact_dir.join("step-summary.json");
-    let Ok(raw) = std::fs::read_to_string(path) else {
-        return (None, None, None);
-    };
-    let Ok(payload) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        return (None, None, None);
-    };
-    let failing = payload["failing_step_id"].as_str().map(str::to_string);
-    let last_success = payload["last_successful_step_id"]
-        .as_str()
-        .map(str::to_string);
-    let steps_path = payload["steps_path"].as_str().map(str::to_string);
-    (steps_path, failing, last_success)
-}
-
 pub fn app_gate_reason(app: &str, requires_mutation: bool) -> Option<String> {
     validate_selected_apps_env().unwrap_or_else(|message| panic!("{message}"));
     if !real_e2e_enabled() {
@@ -459,6 +441,139 @@ pub fn require_app_installed(app: &str) {
             stderr.trim()
         );
     }
+}
+
+pub fn launch_app(app: &str) {
+    let script = format!(
+        r#"tell application "{}" to launch"#,
+        escape_applescript(app)
+    );
+    let out = Command::new("osascript")
+        .args(["-e", &script])
+        .output()
+        .unwrap_or_else(|err| panic!("failed to launch app `{app}` via osascript: {err}"));
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        panic!("failed to launch app `{app}`: {}", stderr.trim());
+    }
+}
+
+pub fn activate_app_with_retry(
+    bin: &Path,
+    options: &CmdOptions,
+    app: &str,
+    wait_ms: u64,
+    action_timeout_ms: u64,
+    retries: usize,
+    retry_delay: Duration,
+) -> serde_json::Value {
+    launch_app(app);
+    ensure_app_process_running(app, 10_000, 120);
+    let wait_ms_text = wait_ms.to_string();
+    let timeout_ms_text = action_timeout_ms.to_string();
+    let step = format!("window.activate {app}");
+    run_json_step_with_retry(
+        bin,
+        options,
+        &[
+            "--format",
+            "json",
+            "--timeout-ms",
+            &timeout_ms_text,
+            "window",
+            "activate",
+            "--app",
+            app,
+            "--wait-ms",
+            &wait_ms_text,
+        ],
+        &step,
+        retries,
+        retry_delay,
+    )
+}
+
+pub fn wait_app_active(
+    bin: &Path,
+    options: &CmdOptions,
+    app: &str,
+    timeout_ms: u64,
+    poll_ms: u64,
+    step: &str,
+) -> serde_json::Value {
+    let timeout_text = timeout_ms.to_string();
+    let poll_text = poll_ms.to_string();
+    run_json_step(
+        bin,
+        options,
+        &[
+            "--format",
+            "json",
+            "wait",
+            "app-active",
+            "--app",
+            app,
+            "--timeout-ms",
+            &timeout_text,
+            "--poll-ms",
+            &poll_text,
+        ],
+        step,
+    )
+}
+
+pub fn fail_step_with_checkpoint(bin: &Path, options: &CmdOptions, step: &str, message: &str) -> ! {
+    let out = CmdOutput {
+        code: 1,
+        stdout: Vec::new(),
+        stderr: message.as_bytes().to_vec(),
+    };
+    record_step_entry(step, &[], 1, Duration::from_millis(0), &out);
+    best_effort_failure_checkpoint(bin, options, step);
+    panic!("{message}");
+}
+
+pub fn current_step_ledger_snapshot() -> (Option<String>, Option<String>, Option<String>) {
+    STEP_LEDGER_STATE.with(|slot| {
+        let slot = slot.borrow();
+        let Some(state) = slot.as_ref() else {
+            return (None, None, None);
+        };
+        (
+            Some(state.steps_path.display().to_string()),
+            state.failing_step_id.clone(),
+            state.last_successful_step_id.clone(),
+        )
+    })
+}
+
+fn ensure_app_process_running(app: &str, timeout_ms: u64, poll_ms: u64) {
+    let started = Instant::now();
+    while started.elapsed().as_millis() < timeout_ms as u128 {
+        match app_process_running(app) {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(err) => panic!("failed probing running process for `{app}`: {err}"),
+        }
+        std::thread::sleep(Duration::from_millis(poll_ms));
+    }
+    panic!("app `{app}` did not appear as a running process within {timeout_ms}ms after launch");
+}
+
+fn app_process_running(app: &str) -> Result<bool, String> {
+    let script = format!(
+        r#"tell application "System Events" to return exists process "{}""#,
+        escape_applescript(app)
+    );
+    let out = Command::new("osascript")
+        .args(["-e", &script])
+        .output()
+        .map_err(|err| format!("run osascript for process check failed: {err}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(stderr.trim().to_string());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().eq("true"))
 }
 
 pub fn spotify_playback_state() -> SpotifyPlaybackState {
@@ -729,27 +844,32 @@ fn escape_applescript(raw: &str) -> String {
 }
 
 fn configure_input_source_once() -> Result<(), String> {
-    let Ok(raw) = env::var("MACOS_AGENT_REAL_E2E_INPUT_SOURCE") else {
-        return Ok(());
-    };
-    let token = raw.trim();
-    if token.is_empty() {
-        return Ok(());
-    }
-
-    let target = normalize_input_source_token(token);
-    let out = Command::new("im-select")
-        .arg(&target)
-        .output()
-        .map_err(|err| {
-            if err.kind() == std::io::ErrorKind::NotFound {
-                "MACOS_AGENT_REAL_E2E_INPUT_SOURCE is set but `im-select` is missing; install with `brew install im-select`"
-                    .to_string()
-            } else {
-                format!("failed to execute im-select for `{target}`: {err}")
+    let configured = env::var("MACOS_AGENT_REAL_E2E_INPUT_SOURCE")
+        .ok()
+        .map(|raw| raw.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let strict = configured.is_some();
+    let token = configured.unwrap_or_else(|| "com.apple.keylayout.ABC".to_string());
+    let target = normalize_input_source_token(&token);
+    let out = match Command::new("im-select").arg(&target).output() {
+        Ok(output) => output,
+        Err(err) => {
+            if !strict && err.kind() == std::io::ErrorKind::NotFound {
+                return Ok(());
             }
-        })?;
+            if err.kind() == std::io::ErrorKind::NotFound {
+                return Err(
+                    "MACOS_AGENT_REAL_E2E_INPUT_SOURCE is set but `im-select` is missing; install with `brew install im-select`"
+                        .to_string(),
+                );
+            }
+            return Err(format!("failed to execute im-select for `{target}`: {err}"));
+        }
+    };
     if !out.status.success() {
+        if !strict {
+            return Ok(());
+        }
         let stderr = String::from_utf8_lossy(&out.stderr);
         return Err(format!(
             "failed to switch input source to `{target}` via im-select: {}",

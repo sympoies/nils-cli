@@ -76,7 +76,7 @@ pub fn arc_youtube_play_pause_and_comment_checkpoint(
     }
 
     let (step_ledger_path, failing_step_id, last_successful_step_id) =
-        real_common::step_ledger_summary_for(artifact_dir);
+        real_common::current_step_ledger_snapshot();
 
     ScenarioOutcome {
         scenario_id: scenario_id.to_string(),

@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use nils_test_support::cmd::CmdOptions;
 
@@ -65,7 +65,7 @@ pub fn arc_youtube_opens_home_and_clicks_three_tiles(
     }
 
     let (step_ledger_path, failing_step_id, last_successful_step_id) =
-        real_common::step_ledger_summary_for(artifact_dir);
+        real_common::current_step_ledger_snapshot();
 
     ScenarioOutcome {
         scenario_id: scenario_id.to_string(),
@@ -82,20 +82,14 @@ pub fn arc_youtube_opens_home_and_clicks_three_tiles(
 
 pub(crate) fn activate_arc(bin: &Path, options: &CmdOptions, app_name: &str) {
     real_common::ensure_input_source_for_text_entry();
-    let payload = real_common::run_json_step(
+    let payload = real_common::activate_app_with_retry(
         bin,
         options,
-        &[
-            "--format",
-            "json",
-            "window",
-            "activate",
-            "--app",
-            app_name,
-            "--wait-ms",
-            "1800",
-        ],
-        "window.activate Arc",
+        app_name,
+        1800,
+        8_000,
+        2,
+        Duration::from_millis(400),
     );
     assert_eq!(payload["command"], serde_json::json!("window.activate"));
     assert_eq!(
@@ -107,40 +101,50 @@ pub(crate) fn activate_arc(bin: &Path, options: &CmdOptions, app_name: &str) {
 }
 
 pub(crate) fn open_youtube_home(bin: &Path, options: &CmdOptions, app_name: &str, url: &str) {
-    real_common::send_hotkey(
-        bin,
-        options,
-        Some("cmd"),
-        "l",
-        "arc focus address bar for open youtube home",
-    );
-    real_common::replace_focused_text_with_clipboard(
-        bin,
-        options,
-        url,
-        "arc open youtube home url",
-    );
-    real_common::send_hotkey(bin, options, None, "return", "arc open youtube home");
-    let wait_active = real_common::run_json_step(
-        bin,
-        options,
-        &[
-            "--format",
-            "json",
-            "wait",
-            "app-active",
-            "--app",
+    let mut last_error = String::new();
+    for attempt in 1..=3 {
+        real_common::send_hotkey(
+            bin,
+            options,
+            Some("cmd"),
+            "l",
+            "arc focus address bar for open youtube home",
+        );
+        real_common::replace_focused_text_with_clipboard(
+            bin,
+            options,
+            url,
+            "arc open youtube home url",
+        );
+        real_common::send_hotkey(bin, options, None, "return", "arc open youtube home");
+        let wait_active = real_common::wait_app_active(
+            bin,
+            options,
             app_name,
-            "--timeout-ms",
-            "7000",
-            "--poll-ms",
-            "60",
-        ],
-        "wait arc active after opening youtube home",
-    );
-    assert_eq!(wait_active["command"], serde_json::json!("wait.app-active"));
+            7000,
+            60,
+            "wait arc active after opening youtube home",
+        );
+        assert_eq!(wait_active["command"], serde_json::json!("wait.app-active"));
 
-    verify_active_address_bar_url(bin, options);
+        match verify_active_address_bar_url(bin, options) {
+            Ok(()) => return,
+            Err(message) => {
+                last_error = message;
+                if attempt < 3 {
+                    let settle = real_common::run_json_step(
+                        bin,
+                        options,
+                        &["--format", "json", "wait", "sleep", "--ms", "250"],
+                        "wait before retrying arc youtube navigation",
+                    );
+                    assert_eq!(settle["command"], serde_json::json!("wait.sleep"));
+                }
+            }
+        }
+    }
+
+    real_common::fail_step_with_checkpoint(bin, options, "verify arc address bar URL", &last_error);
 }
 
 pub(crate) fn click(bin: &Path, options: &CmdOptions, point: &UiPoint, step: &str) {
@@ -171,21 +175,12 @@ pub(crate) fn click(bin: &Path, options: &CmdOptions, point: &UiPoint, step: &st
 }
 
 pub(crate) fn wait_for_arc(bin: &Path, options: &CmdOptions, app_name: &str) {
-    let payload = real_common::run_json_step(
+    let payload = real_common::wait_app_active(
         bin,
         options,
-        &[
-            "--format",
-            "json",
-            "wait",
-            "app-active",
-            "--app",
-            app_name,
-            "--timeout-ms",
-            "7000",
-            "--poll-ms",
-            "60",
-        ],
+        app_name,
+        7000,
+        60,
         &format!("wait app-active {app_name}"),
     );
     assert_eq!(payload["command"], serde_json::json!("wait.app-active"));
@@ -211,7 +206,7 @@ pub(crate) fn capture_active_window(bin: &Path, options: &CmdOptions, screenshot
     assert!(screenshot_path.is_file(), "expected screenshot to exist");
 }
 
-fn verify_active_address_bar_url(bin: &Path, options: &CmdOptions) {
+fn verify_active_address_bar_url(bin: &Path, options: &CmdOptions) -> Result<(), String> {
     real_common::send_hotkey(
         bin,
         options,
@@ -230,14 +225,17 @@ fn verify_active_address_bar_url(bin: &Path, options: &CmdOptions) {
 
     let current_url = real_common::read_clipboard_text();
     let normalized = current_url.to_ascii_lowercase();
-    assert!(
-        normalized.contains("youtube.com"),
-        "expected Arc address bar to contain youtube.com, got `{current_url}`"
-    );
-    assert!(
-        !normalized.contains("google.com/search"),
-        "expected direct YouTube URL, got Google search URL `{current_url}`"
-    );
+    let result = if !normalized.contains("youtube.com") {
+        Err(format!(
+            "expected Arc address bar to contain youtube.com, got `{current_url}`"
+        ))
+    } else if normalized.contains("google.com/search") {
+        Err(format!(
+            "expected direct YouTube URL, got Google search URL `{current_url}`"
+        ))
+    } else {
+        Ok(())
+    };
 
     real_common::send_hotkey(
         bin,
@@ -246,4 +244,6 @@ fn verify_active_address_bar_url(bin: &Path, options: &CmdOptions) {
         "escape",
         "arc dismiss address bar focus",
     );
+
+    result
 }

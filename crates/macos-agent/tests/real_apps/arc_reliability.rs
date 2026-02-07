@@ -31,7 +31,7 @@ pub fn arc_youtube_multi_video_play_pause_and_comments(
 
     let elapsed = open_and_click.elapsed_ms + playback_and_comment.elapsed_ms;
     let (step_ledger_path, failing_step_id, last_successful_step_id) =
-        real_common::step_ledger_summary_for(artifact_dir);
+        real_common::current_step_ledger_snapshot();
 
     ScenarioOutcome {
         scenario_id: "arc_youtube_multi_video_play_pause_and_comments".to_string(),

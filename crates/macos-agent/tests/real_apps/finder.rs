@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use nils_test_support::cmd::CmdOptions;
 
@@ -28,20 +28,14 @@ pub fn finder_navigation_and_state_checks(
     assert_eq!(preflight["command"], serde_json::json!("preflight"));
     real_common::require_preflight_ready(&preflight, &["accessibility", "automation"]);
 
-    let activate = real_common::run_json_step(
+    let activate = real_common::activate_app_with_retry(
         bin,
         options,
-        &[
-            "--format",
-            "json",
-            "window",
-            "activate",
-            "--app",
-            "Finder",
-            "--wait-ms",
-            "1800",
-        ],
-        "window.activate Finder",
+        "Finder",
+        1800,
+        8_000,
+        2,
+        Duration::from_millis(350),
     );
     assert_eq!(activate["command"], serde_json::json!("window.activate"));
     assert_eq!(
@@ -203,7 +197,7 @@ pub fn finder_navigation_and_state_checks(
     assert!(!rows.is_empty(), "Finder windows list should not be empty");
 
     let (step_ledger_path, failing_step_id, last_successful_step_id) =
-        real_common::step_ledger_summary_for(artifact_dir);
+        real_common::current_step_ledger_snapshot();
 
     ScenarioOutcome {
         scenario_id: FINDER_SCENARIO_ID.to_string(),

@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use nils_test_support::cmd::CmdOptions;
 
@@ -56,7 +56,7 @@ pub fn cross_app_arc_spotify_focus_and_state_recovery(
     );
 
     let (step_ledger_path, failing_step_id, last_successful_step_id) =
-        real_common::step_ledger_summary_for(artifact_dir);
+        real_common::current_step_ledger_snapshot();
 
     ScenarioOutcome {
         scenario_id: scenario_id.to_string(),
@@ -72,37 +72,26 @@ pub fn cross_app_arc_spotify_focus_and_state_recovery(
 }
 
 fn activate_app(bin: &Path, options: &CmdOptions, app: &str) {
-    let activate = real_common::run_json_step(
+    let activate = real_common::activate_app_with_retry(
         bin,
         options,
-        &[
-            "--format",
-            "json",
-            "window",
-            "activate",
-            "--app",
-            app,
-            "--wait-ms",
-            "1800",
-        ],
-        &format!("window.activate {app}"),
+        app,
+        1800,
+        if app.eq_ignore_ascii_case("Spotify") {
+            12_000
+        } else {
+            8_000
+        },
+        2,
+        Duration::from_millis(450),
     );
     assert_eq!(activate["command"], serde_json::json!("window.activate"));
-    let active = real_common::run_json_step(
+    let active = real_common::wait_app_active(
         bin,
         options,
-        &[
-            "--format",
-            "json",
-            "wait",
-            "app-active",
-            "--app",
-            app,
-            "--timeout-ms",
-            "7000",
-            "--poll-ms",
-            "60",
-        ],
+        app,
+        7000,
+        60,
         &format!("wait app-active after activate {app}"),
     );
     assert_eq!(active["command"], serde_json::json!("wait.app-active"));

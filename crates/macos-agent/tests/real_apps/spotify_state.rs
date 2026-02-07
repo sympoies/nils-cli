@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use nils_test_support::cmd::CmdOptions;
 
@@ -84,7 +84,7 @@ pub fn spotify_player_state_transitions_are_observable(
     real_common::write_json(&state_json, &state_payload);
 
     let (step_ledger_path, failing_step_id, last_successful_step_id) =
-        real_common::step_ledger_summary_for(artifact_dir);
+        real_common::current_step_ledger_snapshot();
 
     ScenarioOutcome {
         scenario_id: scenario_id.to_string(),
@@ -100,20 +100,14 @@ pub fn spotify_player_state_transitions_are_observable(
 }
 
 fn activate_spotify(bin: &Path, options: &CmdOptions) {
-    let activate = real_common::run_json_step(
+    let activate = real_common::activate_app_with_retry(
         bin,
         options,
-        &[
-            "--format",
-            "json",
-            "window",
-            "activate",
-            "--app",
-            "Spotify",
-            "--wait-ms",
-            "1800",
-        ],
-        "window.activate Spotify",
+        "Spotify",
+        1800,
+        12_000,
+        3,
+        Duration::from_millis(500),
     );
     assert_eq!(activate["command"], serde_json::json!("window.activate"));
     wait_spotify_active(bin, options, "wait after Spotify activate");
@@ -178,22 +172,6 @@ fn capture_active_window(bin: &Path, options: &CmdOptions, screenshot_path: &Pat
 }
 
 fn wait_spotify_active(bin: &Path, options: &CmdOptions, step: &str) {
-    let payload = real_common::run_json_step(
-        bin,
-        options,
-        &[
-            "--format",
-            "json",
-            "wait",
-            "app-active",
-            "--app",
-            "Spotify",
-            "--timeout-ms",
-            "7000",
-            "--poll-ms",
-            "60",
-        ],
-        step,
-    );
+    let payload = real_common::wait_app_active(bin, options, "Spotify", 7000, 60, step);
     assert_eq!(payload["command"], serde_json::json!("wait.app-active"));
 }
