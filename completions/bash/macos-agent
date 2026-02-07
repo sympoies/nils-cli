@@ -1,0 +1,103 @@
+# nils-cli bash completion: macos-agent
+
+if [[ -z ${BASH_VERSION-} ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+shopt -s progcomp 2>/dev/null || true
+
+_nils_cli_macos_agent_complete() {
+  local -a words=("${COMP_WORDS[@]}")
+  local cword="$COMP_CWORD"
+  local cur="${COMP_WORDS[COMP_CWORD]}"
+  local prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+  local -a root_opts=(-h --help -V --version --format --dry-run --retries --retry-delay-ms --timeout-ms)
+  local -a groups=(preflight windows apps window input observe wait)
+
+  if (( cword == 1 )); then
+    if [[ "$cur" == -* ]]; then
+      COMPREPLY=( $(compgen -W "${root_opts[*]}" -- "$cur") )
+      return 0
+    fi
+    COMPREPLY=( $(compgen -W "${groups[*]}" -- "$cur") )
+    return 0
+  fi
+
+  local group="${words[1]-}"
+  case "$group" in
+    windows)
+      if (( cword == 2 )); then
+        COMPREPLY=( $(compgen -W "list" -- "$cur") )
+        return 0
+      fi
+      ;;
+    apps)
+      if (( cword == 2 )); then
+        COMPREPLY=( $(compgen -W "list" -- "$cur") )
+        return 0
+      fi
+      ;;
+    window)
+      if (( cword == 2 )); then
+        COMPREPLY=( $(compgen -W "activate" -- "$cur") )
+        return 0
+      fi
+      ;;
+    input)
+      if (( cword == 2 )); then
+        COMPREPLY=( $(compgen -W "click type hotkey" -- "$cur") )
+        return 0
+      fi
+      ;;
+    observe)
+      if (( cword == 2 )); then
+        COMPREPLY=( $(compgen -W "screenshot" -- "$cur") )
+        return 0
+      fi
+      ;;
+    wait)
+      if (( cword == 2 )); then
+        COMPREPLY=( $(compgen -W "sleep app-active window-present" -- "$cur") )
+        return 0
+      fi
+      ;;
+  esac
+
+  case "$prev" in
+    --format)
+      COMPREPLY=( $(compgen -W "text json tsv" -- "$cur") )
+      return 0
+      ;;
+    --button)
+      COMPREPLY=( $(compgen -W "left right middle" -- "$cur") )
+      return 0
+      ;;
+    --image-format)
+      COMPREPLY=( $(compgen -W "png jpg webp" -- "$cur") )
+      return 0
+      ;;
+    --path)
+      COMPREPLY=( $(compgen -f -- "$cur") )
+      return 0
+      ;;
+  esac
+
+  if [[ "$cur" == -* ]]; then
+    local -a opts=(
+      --format --dry-run --retries --retry-delay-ms --timeout-ms
+      --strict --app --window-name --on-screen-only
+      --window-id --active-window --bundle-id --wait-ms
+      --x --y --button --count --pre-wait-ms --post-wait-ms
+      --text --delay-ms --enter --mods --key
+      --path --image-format --ms --timeout-ms --poll-ms
+      -h --help -V --version
+    )
+    COMPREPLY=( $(compgen -W "${opts[*]}" -- "$cur") )
+    return 0
+  fi
+
+  COMPREPLY=()
+}
+
+complete -F _nils_cli_macos_agent_complete macos-agent

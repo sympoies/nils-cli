@@ -19,9 +19,11 @@ pub struct GlobalStateLock {
 
 impl GlobalStateLock {
     pub fn new() -> Self {
-        Self {
-            _guard: GLOBAL_STATE_LOCK.lock().expect("global state lock"),
-        }
+        let guard = match GLOBAL_STATE_LOCK.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        Self { _guard: guard }
     }
 }
 
@@ -140,4 +142,19 @@ pub fn prepend_path(lock: &GlobalStateLock, dir: &Path) -> EnvGuard {
     let joined = env::join_paths(paths).expect("join paths");
     let joined = joined.to_string_lossy().to_string();
     EnvGuard::set(lock, "PATH", &joined)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{GlobalStateLock, GLOBAL_STATE_LOCK};
+
+    #[test]
+    fn global_state_lock_recovers_after_poison() {
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = GLOBAL_STATE_LOCK.lock().expect("lock should be acquired");
+            panic!("intentional poison for recovery test");
+        });
+
+        let _lock = GlobalStateLock::new();
+    }
 }

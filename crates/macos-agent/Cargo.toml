@@ -1,0 +1,16 @@
+[package]
+name = "macos-agent"
+version = "0.2.6"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+screen-record = { path = "../screen-record" }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+nils-test-support = { path = "../nils-test-support" }
+tempfile = "3"

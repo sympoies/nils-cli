@@ -16,6 +16,7 @@ COMP_API_TEST_FILE="$REPO_ROOT/completions/zsh/_api-test"
 COMP_PLAN_TOOLING_FILE="$REPO_ROOT/completions/zsh/_plan-tooling"
 COMP_CODEX_CLI_FILE="$REPO_ROOT/completions/zsh/_codex-cli"
 COMP_AGENT_DOCS_FILE="$REPO_ROOT/completions/zsh/_agent-docs"
+COMP_MACOS_AGENT_FILE="$REPO_ROOT/completions/zsh/_macos-agent"
 ALIASES_FILE="$REPO_ROOT/completions/zsh/aliases.zsh"
 
 BASH_GIT_SCOPE_FILE="$REPO_ROOT/completions/bash/git-scope"
@@ -30,6 +31,7 @@ BASH_API_TEST_FILE="$REPO_ROOT/completions/bash/api-test"
 BASH_PLAN_TOOLING_FILE="$REPO_ROOT/completions/bash/plan-tooling"
 BASH_CODEX_CLI_FILE="$REPO_ROOT/completions/bash/codex-cli"
 BASH_AGENT_DOCS_FILE="$REPO_ROOT/completions/bash/agent-docs"
+BASH_MACOS_AGENT_FILE="$REPO_ROOT/completions/bash/macos-agent"
 BASH_ALIASES_FILE="$REPO_ROOT/completions/bash/aliases.bash"
 
 if [[ ! -f "$COMP_FILE" ]]; then
@@ -89,6 +91,11 @@ fi
 
 if [[ ! -f "$COMP_AGENT_DOCS_FILE" ]]; then
   print -u2 -r -- "FAIL: missing agent-docs completion file"
+  exit 1
+fi
+
+if [[ ! -f "$COMP_MACOS_AGENT_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing macos-agent completion file"
   exit 1
 fi
 
@@ -154,6 +161,11 @@ fi
 
 if [[ ! -f "$BASH_AGENT_DOCS_FILE" ]]; then
   print -u2 -r -- "FAIL: missing bash agent-docs completion file"
+  exit 1
+fi
+
+if [[ ! -f "$BASH_MACOS_AGENT_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing bash macos-agent completion file"
   exit 1
 fi
 
@@ -225,6 +237,11 @@ source "$COMP_AGENT_DOCS_FILE" || {
   exit 1
 }
 
+source "$COMP_MACOS_AGENT_FILE" || {
+  print -u2 -r -- "FAIL: failed to source macos-agent completion file"
+  exit 1
+}
+
 source "$ALIASES_FILE" || {
   print -u2 -r -- "FAIL: failed to source nils-cli aliases file"
   exit 1
@@ -287,6 +304,11 @@ fi
 
 if (( ! $+functions[_agent-docs] )); then
   print -u2 -r -- "FAIL: _agent-docs function not defined"
+  exit 1
+fi
+
+if (( ! $+functions[_macos-agent] )); then
+  print -u2 -r -- "FAIL: _macos-agent function not defined"
   exit 1
 fi
 
@@ -540,6 +562,16 @@ grep -q -- "--missing-only\\[" "$COMP_AGENT_DOCS_FILE" || {
   exit 1
 }
 
+grep -q "wait:UI stabilization wait primitives" "$COMP_MACOS_AGENT_FILE" || {
+  print -u2 -r -- "FAIL: macos-agent completion missing wait command"
+  exit 1
+}
+
+grep -q -- "--dry-run\\[" "$COMP_MACOS_AGENT_FILE" || {
+  print -u2 -r -- "FAIL: macos-agent completion missing --dry-run"
+  exit 1
+}
+
 bash -c "set -euo pipefail; source \"$BASH_GIT_SCOPE_FILE\"; complete -p git-scope | grep -q _nils_cli_git_scope_complete" || {
   print -u2 -r -- "FAIL: failed to source bash git-scope completion file"
   exit 1
@@ -597,6 +629,11 @@ bash -c "set -euo pipefail; source \"$BASH_CODEX_CLI_FILE\"; complete -p codex-c
 
 bash -c "set -euo pipefail; source \"$BASH_AGENT_DOCS_FILE\"; complete -p agent-docs | grep -q _nils_cli_agent_docs_complete" || {
   print -u2 -r -- "FAIL: failed to source bash agent-docs completion file"
+  exit 1
+}
+
+bash -c "set -euo pipefail; source \"$BASH_MACOS_AGENT_FILE\"; complete -p macos-agent | grep -q _nils_cli_macos_agent_complete" || {
+  print -u2 -r -- "FAIL: failed to source bash macos-agent completion file"
   exit 1
 }
 
