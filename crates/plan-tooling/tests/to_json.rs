@@ -63,6 +63,53 @@ fn to_json_invalid_sprint_is_usage_error() {
 }
 
 #[test]
+fn to_json_help_prints_usage_and_exits_zero() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+
+    let out = run_plan_tooling(dir.path(), &["to-json", "--help"]);
+    assert_eq!(out.code, 0);
+    assert!(out.stdout.is_empty());
+    assert!(out.stderr.contains("Usage:"));
+    assert!(out.stderr.contains("plan_to_json.sh"));
+}
+
+#[test]
+fn to_json_unknown_argument_is_usage_error() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+
+    let out = run_plan_tooling(dir.path(), &["to-json", "--wat"]);
+    assert_eq!(out.code, 2);
+    assert!(out.stdout.is_empty());
+    assert!(out.stderr.contains("plan_to_json: unknown argument: --wat"));
+}
+
+#[test]
+fn to_json_missing_value_for_file_is_usage_error() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+
+    let out = run_plan_tooling(dir.path(), &["to-json", "--file"]);
+    assert_eq!(out.code, 2);
+    assert!(out.stdout.is_empty());
+    assert!(out
+        .stderr
+        .contains("plan_to_json: missing value for --file"));
+}
+
+#[test]
+fn to_json_missing_value_for_sprint_is_usage_error() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let plan_path = dir.path().join("plan.md");
+    write_file(&plan_path, VALID_PLAN);
+
+    let out = run_plan_tooling(dir.path(), &["to-json", "--file", "plan.md", "--sprint"]);
+    assert_eq!(out.code, 2);
+    assert!(out.stdout.is_empty());
+    assert!(out
+        .stderr
+        .contains("plan_to_json: missing value for --sprint"));
+}
+
+#[test]
 fn to_json_missing_file_is_parse_error() {
     let dir = tempfile::TempDir::new().expect("tempdir");
 
