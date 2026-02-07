@@ -11,6 +11,7 @@ Prereqs:
 
 - Run inside the `nils-cli` git work tree (the script resolves the repo root via `git`).
 - `git`, `python3`, `cargo`, `semantic-commit`, and `git-scope` available on `PATH`.
+- `gh` available on `PATH` when using `--ci-gate-main`.
 - `cargo-nextest` available on `PATH` when using default release checks (`NILS_CLI_TEST_RUNNER=nextest`).
 - Release checks available at `.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh` (unless `--skip-checks`).
 
@@ -20,6 +21,7 @@ Inputs:
   - `--version X.Y.Z` (accepts `vX.Y.Z` and normalizes to `X.Y.Z`)
 - Optional:
   - `--skip-checks` (skip full lint/tests; still runs `cargo check --workspace` to refresh `Cargo.lock`)
+  - `--ci-gate-main` (skip full lint/tests only when `origin/main` HEAD matches local `HEAD` and has a successful CI run)
   - `--skip-readme` (do not update README release tag example)
   - `--skip-push` (do not push commit or tag to `origin`)
   - `--allow-dirty` (allow a dirty working tree)
@@ -30,7 +32,7 @@ Outputs:
 
 - Updates workspace version in `Cargo.toml` and any crate `Cargo.toml` files with explicit `version = "..."`.
 - Updates README release tag examples (unless `--skip-readme`).
-- Refreshes `Cargo.lock` via `cargo check` or the full checks script.
+- Refreshes `Cargo.lock` via `cargo check --workspace --locked` or the full checks script.
 - Runs release checks through `nils-cli-checks.sh` with `NILS_CLI_TEST_RUNNER=nextest` by default (unless overridden).
 - Creates a semantic commit for the version bump.
 - Creates an annotated tag `vX.Y.Z` and (unless `--skip-push`) pushes commit + tag to `origin`.
@@ -49,6 +51,8 @@ Failure modes:
 - Tag already exists without `--force-tag`.
 - Required commands missing (`git`, `python3`, `cargo`, `semantic-commit`, `git-scope`).
 - `cargo-nextest` missing while default check path (`nextest`) is active.
+- `--ci-gate-main` used outside `main`, or local `HEAD` does not match `origin/main`.
+- `--ci-gate-main` used but `origin/main` has no successful completed CI run.
 - Release checks or `cargo check` fail.
 - Commit or tag creation fails.
 
@@ -60,5 +64,5 @@ Failure modes:
 
 - Validate inputs and environment.
 - Bump workspace + crate versions and update README.
-- Run checks (defaulting to `nextest`, or `cargo check` with `--skip-checks`) to refresh `Cargo.lock`.
+- Run checks (defaulting to `nextest`, `cargo check --workspace --locked` with `--skip-checks`, or CI-gated `cargo check --workspace --locked` with `--ci-gate-main`) to refresh `Cargo.lock`.
 - Commit with `semantic-commit`, tag `vX.Y.Z`, and push to trigger the release workflow.

@@ -9,6 +9,7 @@ Usage:
 Options:
   --version X.Y.Z   Required. Accepts vX.Y.Z and normalizes to X.Y.Z.
   --skip-checks     Skip full lint/tests; runs cargo check to refresh Cargo.lock.
+  --ci-gate-main    Skip full lint/tests only when origin/main HEAD has a green CI run.
   --skip-readme     Do not update README release tag examples.
   --skip-push       Do not push commit or tag to origin.
   --allow-dirty     Allow a dirty working tree.
@@ -28,6 +29,7 @@ note() {
 
 version=""
 skip_checks=0
+ci_gate_main=0
 skip_readme=0
 skip_push=0
 allow_dirty=0
@@ -44,6 +46,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-checks)
       skip_checks=1
+      shift
+      ;;
+    --ci-gate-main)
+      ci_gate_main=1
       shift
       ;;
     --skip-readme)
@@ -92,6 +98,12 @@ for cmd in git python3 cargo semantic-commit git-scope; do
   fi
 done
 
+if [[ "$ci_gate_main" -eq 1 ]]; then
+  if ! command -v gh >/dev/null 2>&1; then
+    die "--ci-gate-main requires gh on PATH"
+  fi
+fi
+
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 if [[ -z "$repo_root" ]]; then
   die "must run inside a git work tree"
@@ -112,6 +124,60 @@ if [[ "$allow_dirty" -eq 0 ]]; then
   if [[ -n "$(git status --porcelain)" ]]; then
     die "working tree is not clean; commit/stash changes or use --allow-dirty"
   fi
+fi
+
+if [[ "$ci_gate_main" -eq 1 ]]; then
+  if [[ -z "$current_branch" || "$current_branch" != "main" ]]; then
+    die "--ci-gate-main requires running on branch 'main'"
+  fi
+
+  note "verifying CI status for origin/main"
+  git fetch origin main --quiet
+
+  head_sha="$(git rev-parse --verify HEAD)"
+  origin_main_sha="$(git rev-parse --verify origin/main)"
+  if [[ "$head_sha" != "$origin_main_sha" ]]; then
+    die "--ci-gate-main requires HEAD to match origin/main (pull/rebase main first)"
+  fi
+
+  ci_run_json="$(gh run list --workflow ci.yml --branch main --event push --commit "$origin_main_sha" --limit 20 --json databaseId,status,conclusion,url,headSha 2>/dev/null)" \
+    || die "failed to query CI runs from GitHub"
+
+  ci_run_result="$(
+    python3 - "$origin_main_sha" "$ci_run_json" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+
+sha = sys.argv[1]
+runs = json.loads(sys.argv[2])
+if not runs:
+    print(f"error:no CI run found for origin/main ({sha})")
+    raise SystemExit(2)
+
+run = runs[0]
+run_head_sha = run.get("headSha")
+status = run.get("status")
+conclusion = run.get("conclusion")
+url = run.get("url", "")
+
+if run_head_sha and run_head_sha != sha:
+    print(f"error:CI run SHA mismatch ({run_head_sha} != {sha}): {url}")
+    raise SystemExit(5)
+if status != "completed":
+    print(f"error:CI run is not completed yet ({status}): {url}")
+    raise SystemExit(3)
+if conclusion != "success":
+    print(f"error:CI run is not green ({conclusion}): {url}")
+    raise SystemExit(4)
+
+print(url)
+PY
+  )" || die "$ci_run_result"
+
+  note "main CI is green: ${ci_run_result}"
+  skip_checks=1
 fi
 
 python3 - "$version" <<'PY'
@@ -218,7 +284,7 @@ if [[ "$skip_checks" -eq 0 ]]; then
   fi
   NILS_CLI_TEST_RUNNER="$checks_runner" "$checks_script"
 else
-  cargo check --workspace
+  cargo check --workspace --locked
 fi
 
 git add -A
