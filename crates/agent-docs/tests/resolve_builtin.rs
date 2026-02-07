@@ -179,57 +179,39 @@ fn resolve_builtin_all_contexts_checklist_output_is_covered() {
         let report = resolver::resolve_builtin(context, &roots, false);
         let rendered =
             output::render_resolve(ResolveFormat::Checklist, &report).expect("render checklist");
-        let lines: Vec<&str> = rendered.lines().collect();
+        let parsed = common::parse_checklist(&rendered);
         let expected = expected_documents(context);
 
-        assert!(lines.first().is_some_and(
-            |line| *line == format!("REQUIRED_DOCS_BEGIN context={context} mode=non-strict")
-        ));
-        assert!(
-            lines
-                .last()
-                .is_some_and(|line| line.starts_with("REQUIRED_DOCS_END ")),
-            "checklist output must include end marker: {rendered}"
-        );
+        assert_eq!(parsed.begin.context, context.as_str());
+        assert_eq!(parsed.begin.mode, "non-strict");
 
-        let doc_lines = &lines[1..lines.len() - 1];
         assert_eq!(
-            doc_lines.len(),
+            parsed.docs.len(),
             expected.len(),
             "unexpected checklist required line count for context {context}\n{rendered}"
         );
-        for (line, expectation) in doc_lines.iter().zip(expected.iter()) {
-            let expected_prefix = format!(
-                "{} status={} path=",
-                expectation.file_name, expectation.status
+        for (doc, expectation) in parsed.docs.iter().zip(expected.iter()) {
+            assert_eq!(
+                doc.file_name, expectation.file_name,
+                "doc should keep expected file name for context {context}: {doc:?}"
+            );
+            assert_eq!(
+                doc.status, expectation.status,
+                "doc should keep expected status for context {context}: {doc:?}"
             );
             assert!(
-                line.starts_with(&expected_prefix),
-                "line should follow checklist contract: {line}"
+                doc.path.ends_with(expectation.file_name),
+                "doc path should match file name {}: {}",
+                expectation.file_name,
+                doc.path
             );
         }
 
-        let end_line = lines.last().expect("end line");
-        assert!(
-            end_line.contains(&format!("required={}", report.summary.required_total)),
-            "end marker should include required count: {end_line}"
-        );
-        assert!(
-            end_line.contains(&format!("present={}", report.summary.present_required)),
-            "end marker should include present count: {end_line}"
-        );
-        assert!(
-            end_line.contains(&format!("missing={}", report.summary.missing_required)),
-            "end marker should include missing count: {end_line}"
-        );
-        assert!(
-            end_line.contains("mode=non-strict"),
-            "end marker should include mode: {end_line}"
-        );
-        assert!(
-            end_line.contains(&format!("context={context}")),
-            "end marker should include context: {end_line}"
-        );
+        assert_eq!(parsed.end.required, report.summary.required_total);
+        assert_eq!(parsed.end.present, report.summary.present_required);
+        assert_eq!(parsed.end.missing, report.summary.missing_required);
+        assert_eq!(parsed.end.mode, "non-strict");
+        assert_eq!(parsed.end.context, context.as_str());
     }
 }
 
@@ -250,23 +232,29 @@ fn resolve_builtin_startup_checklist_output_is_stable_ordered_and_deduped() {
     .expect("second checklist render");
 
     assert_eq!(first, second, "checklist rendering should be deterministic");
-    let lines: Vec<&str> = first.lines().collect();
-    assert_eq!(
-        lines[0],
-        "REQUIRED_DOCS_BEGIN context=startup mode=non-strict"
-    );
+    let parsed = common::parse_checklist(&first);
+    let home_root = workspace.codex_home.display().to_string();
+    let project_root = workspace.project_path.display().to_string();
+    assert_eq!(parsed.begin.context, Context::Startup.as_str());
+    assert_eq!(parsed.begin.mode, "non-strict");
+    assert_eq!(parsed.docs.len(), 2);
+    assert_eq!(parsed.docs[0].file_name, "AGENTS.override.md");
+    assert_eq!(parsed.docs[0].status, "present");
     assert!(
-        lines[1].starts_with("AGENTS.override.md status=present path="),
+        parsed.docs[0].path.starts_with(&home_root),
         "startup home override should appear first"
     );
+    assert_eq!(parsed.docs[1].file_name, "AGENTS.override.md");
+    assert_eq!(parsed.docs[1].status, "present");
     assert!(
-        lines[2].starts_with("AGENTS.override.md status=present path="),
+        parsed.docs[1].path.starts_with(&project_root),
         "startup project override should appear second"
     );
-    assert_eq!(
-        lines[3],
-        "REQUIRED_DOCS_END required=2 present=2 missing=0 mode=non-strict context=startup"
-    );
+    assert_eq!(parsed.end.required, 2);
+    assert_eq!(parsed.end.present, 2);
+    assert_eq!(parsed.end.missing, 0);
+    assert_eq!(parsed.end.mode, "non-strict");
+    assert_eq!(parsed.end.context, Context::Startup.as_str());
 }
 
 #[test]

@@ -292,6 +292,20 @@ BINARY_DEPENDENCIES.md status=present path=/Users/example/work/nils-cli/BINARY_D
 REQUIRED_DOCS_END required=2 present=2 missing=0 mode=non-strict context=project-dev
 ```
 
+### `resolve` checklist strict + missing required example
+
+When `--strict` is set and any required doc is missing, checklist output is still emitted and
+the process exits with code `1`.
+
+```text
+$ agent-docs resolve --context skill-dev --format checklist --strict
+REQUIRED_DOCS_BEGIN context=skill-dev mode=strict
+DEVELOPMENT.md status=missing path=/Users/example/.codex/DEVELOPMENT.md
+REQUIRED_DOCS_END required=1 present=0 missing=1 mode=strict context=skill-dev
+$ echo $?
+1
+```
+
 ### `baseline --check` text example
 
 ```text

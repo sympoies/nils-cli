@@ -98,6 +98,52 @@ pub fn required_lines(text: &str) -> Vec<&str> {
 }
 
 #[derive(Debug)]
+pub struct ChecklistBegin<'a> {
+    pub context: &'a str,
+    pub mode: &'a str,
+}
+
+#[derive(Debug)]
+pub struct ChecklistDoc<'a> {
+    pub file_name: &'a str,
+    pub status: &'a str,
+    pub path: &'a str,
+}
+
+#[derive(Debug)]
+pub struct ChecklistEnd<'a> {
+    pub required: usize,
+    pub present: usize,
+    pub missing: usize,
+    pub mode: &'a str,
+    pub context: &'a str,
+}
+
+#[derive(Debug)]
+pub struct ParsedChecklist<'a> {
+    pub begin: ChecklistBegin<'a>,
+    pub docs: Vec<ChecklistDoc<'a>>,
+    pub end: ChecklistEnd<'a>,
+}
+
+pub fn parse_checklist(output: &str) -> ParsedChecklist<'_> {
+    let lines: Vec<&str> = output.lines().collect();
+    assert!(
+        lines.len() >= 2,
+        "checklist output requires at least begin/end markers:\n{output}"
+    );
+
+    let begin = parse_begin_line(lines[0]);
+    let end = parse_end_line(lines.last().expect("last line"));
+    let docs = lines[1..lines.len() - 1]
+        .iter()
+        .map(|line| parse_doc_line(line))
+        .collect();
+
+    ParsedChecklist { begin, docs, end }
+}
+
+#[derive(Debug)]
 pub struct CliOutput {
     pub exit_code: i32,
     pub stdout: String,
@@ -132,6 +178,66 @@ pub fn write_text(path: &Path, body: &str) {
         fs::create_dir_all(parent).expect("create parent directory");
     }
     fs::write(path, body).expect("write file");
+}
+
+fn parse_begin_line(line: &str) -> ChecklistBegin<'_> {
+    let payload = line
+        .strip_prefix("REQUIRED_DOCS_BEGIN ")
+        .expect("begin marker should start with REQUIRED_DOCS_BEGIN");
+    let context = parse_kv(payload, "context").expect("begin marker should include context");
+    let mode = parse_kv(payload, "mode").expect("begin marker should include mode");
+
+    ChecklistBegin { context, mode }
+}
+
+fn parse_doc_line(line: &str) -> ChecklistDoc<'_> {
+    let (file_name, remainder) = line
+        .split_once(" status=")
+        .expect("doc line should include status");
+    let (status, path_payload) = remainder
+        .split_once(" path=")
+        .expect("doc line should include path");
+
+    ChecklistDoc {
+        file_name,
+        status,
+        path: path_payload,
+    }
+}
+
+fn parse_end_line(line: &str) -> ChecklistEnd<'_> {
+    let payload = line
+        .strip_prefix("REQUIRED_DOCS_END ")
+        .expect("end marker should start with REQUIRED_DOCS_END");
+
+    let required = parse_kv(payload, "required")
+        .expect("end marker should include required")
+        .parse::<usize>()
+        .expect("required should be usize");
+    let present = parse_kv(payload, "present")
+        .expect("end marker should include present")
+        .parse::<usize>()
+        .expect("present should be usize");
+    let missing = parse_kv(payload, "missing")
+        .expect("end marker should include missing")
+        .parse::<usize>()
+        .expect("missing should be usize");
+    let mode = parse_kv(payload, "mode").expect("end marker should include mode");
+    let context = parse_kv(payload, "context").expect("end marker should include context");
+
+    ChecklistEnd {
+        required,
+        present,
+        missing,
+        mode,
+        context,
+    }
+}
+
+fn parse_kv<'a>(payload: &'a str, key: &str) -> Option<&'a str> {
+    payload
+        .split_whitespace()
+        .find_map(|part| part.strip_prefix(&format!("{key}=")))
 }
 
 fn copy_fixture_tree(source: &Path, destination: &Path) {
