@@ -19,10 +19,18 @@ impl CliError {
         Self::usage("macos-agent is only supported on macOS")
     }
 
+    pub fn timeout(operation: &str, timeout_ms: u64) -> Self {
+        Self::runtime(format!(
+            "{operation} timed out after {timeout_ms}ms; increase --timeout-ms or --retries"
+        ))
+    }
+
     pub fn exit_code(&self) -> u8 {
         self.exit_code
     }
+}
 
+impl CliError {
     fn new(message: impl Into<String>, exit_code: u8) -> Self {
         let mut message = message.into();
         if !message.starts_with("error:") {

@@ -36,9 +36,21 @@ pub struct Cli {
     #[arg(long, value_enum, default_value_t = OutputFormat::Text, global = true)]
     pub format: OutputFormat,
 
-    /// Print actions without mutating desktop state when supported.
+    /// Print planned actions without mutating desktop state.
     #[arg(long, global = true)]
     pub dry_run: bool,
+
+    /// Retry count for mutating actions.
+    #[arg(long, default_value_t = 0, global = true)]
+    pub retries: u8,
+
+    /// Delay between retries in milliseconds.
+    #[arg(long, default_value_t = 150, global = true)]
+    pub retry_delay_ms: u64,
+
+    /// Per-action timeout in milliseconds.
+    #[arg(long, default_value_t = 4000, global = true)]
+    pub timeout_ms: u64,
 
     #[command(subcommand)]
     pub command: CommandGroup,
@@ -78,11 +90,17 @@ pub enum CommandGroup {
         #[command(subcommand)]
         command: ObserveCommand,
     },
+
+    /// Wait primitives for UI stabilization.
+    Wait {
+        #[command(subcommand)]
+        command: WaitCommand,
+    },
 }
 
 #[derive(Debug, Clone, Args)]
 pub struct PreflightArgs {
-    /// Enable stricter checks in future preflight behavior.
+    /// Treat advisory warnings as readiness failures.
     #[arg(long)]
     pub strict: bool,
 }
@@ -153,7 +171,7 @@ pub struct WindowActivateArgs {
     #[arg(long)]
     pub bundle_id: Option<String>,
 
-    /// Wait this many milliseconds after activation.
+    /// Wait up to this many milliseconds for active confirmation.
     #[arg(long)]
     pub wait_ms: Option<u64>,
 }
@@ -187,6 +205,14 @@ pub struct InputClickArgs {
     /// Number of clicks.
     #[arg(long, default_value_t = 1)]
     pub count: u8,
+
+    /// Wait before clicking.
+    #[arg(long, default_value_t = 0)]
+    pub pre_wait_ms: u64,
+
+    /// Wait after clicking.
+    #[arg(long, default_value_t = 0)]
+    pub post_wait_ms: u64,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -256,12 +282,93 @@ pub struct ObserveScreenshotArgs {
     pub image_format: Option<ImageFormat>,
 }
 
+#[derive(Debug, Clone, Subcommand)]
+pub enum WaitCommand {
+    /// Sleep for a fixed duration.
+    Sleep(WaitSleepArgs),
+
+    /// Wait for app to become active.
+    AppActive(WaitAppActiveArgs),
+
+    /// Wait for target window to appear.
+    WindowPresent(WaitWindowPresentArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct WaitSleepArgs {
+    /// Sleep duration in milliseconds.
+    #[arg(long)]
+    pub ms: u64,
+}
+
+#[derive(Debug, Clone, Args)]
+#[command(
+    group(
+        ArgGroup::new("selector")
+            .required(true)
+            .multiple(false)
+            .args(["app", "bundle_id"])
+    )
+)]
+pub struct WaitAppActiveArgs {
+    /// App name.
+    #[arg(long)]
+    pub app: Option<String>,
+
+    /// Bundle id.
+    #[arg(long)]
+    pub bundle_id: Option<String>,
+
+    /// Timeout in milliseconds.
+    #[arg(long, default_value_t = 1500)]
+    pub timeout_ms: u64,
+
+    /// Poll interval in milliseconds.
+    #[arg(long, default_value_t = 50)]
+    pub poll_ms: u64,
+}
+
+#[derive(Debug, Clone, Args)]
+#[command(
+    group(
+        ArgGroup::new("selector")
+            .required(true)
+            .multiple(false)
+            .args(["window_id", "active_window", "app"])
+    )
+)]
+pub struct WaitWindowPresentArgs {
+    /// Select by window id.
+    #[arg(long)]
+    pub window_id: Option<u32>,
+
+    /// Select frontmost active window.
+    #[arg(long)]
+    pub active_window: bool,
+
+    /// Select by app name.
+    #[arg(long)]
+    pub app: Option<String>,
+
+    /// Narrow app selection by window title substring.
+    #[arg(long, requires = "app")]
+    pub window_name: Option<String>,
+
+    /// Timeout in milliseconds.
+    #[arg(long, default_value_t = 1500)]
+    pub timeout_ms: u64,
+
+    /// Poll interval in milliseconds.
+    #[arg(long, default_value_t = 50)]
+    pub poll_ms: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser;
     use pretty_assertions::assert_eq;
 
-    use super::{Cli, CommandGroup, OutputFormat, WindowCommand};
+    use super::{Cli, CommandGroup, OutputFormat, WaitCommand, WindowCommand};
 
     #[test]
     fn parses_window_activate_command_tree() {
@@ -269,6 +376,8 @@ mod tests {
             "macos-agent",
             "--format",
             "json",
+            "--retries",
+            "2",
             "window",
             "activate",
             "--app",
@@ -279,12 +388,43 @@ mod tests {
         .expect("window activate should parse");
 
         assert_eq!(cli.format, OutputFormat::Json);
+        assert_eq!(cli.retries, 2);
         match cli.command {
             CommandGroup::Window {
                 command: WindowCommand::Activate(args),
             } => {
                 assert_eq!(args.app.as_deref(), Some("Terminal"));
                 assert_eq!(args.wait_ms, Some(1500));
+            }
+            other => panic!("unexpected command variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_wait_window_present() {
+        let cli = Cli::try_parse_from([
+            "macos-agent",
+            "wait",
+            "window-present",
+            "--app",
+            "Terminal",
+            "--window-name",
+            "Inbox",
+            "--timeout-ms",
+            "2000",
+            "--poll-ms",
+            "100",
+        ])
+        .expect("wait window-present should parse");
+
+        match cli.command {
+            CommandGroup::Wait {
+                command: WaitCommand::WindowPresent(args),
+            } => {
+                assert_eq!(args.app.as_deref(), Some("Terminal"));
+                assert_eq!(args.window_name.as_deref(), Some("Inbox"));
+                assert_eq!(args.timeout_ms, 2000);
+                assert_eq!(args.poll_ms, 100);
             }
             other => panic!("unexpected command variant: {other:?}"),
         }
@@ -305,6 +445,23 @@ mod tests {
         let rendered = err.to_string();
         assert!(
             rendered.contains("cannot be used with")
+                || rendered.contains("required arguments were not provided")
+        );
+    }
+
+    #[test]
+    fn rejects_window_name_without_app() {
+        let err = Cli::try_parse_from([
+            "macos-agent",
+            "wait",
+            "window-present",
+            "--window-name",
+            "Inbox",
+        ])
+        .expect_err("window-name requires app");
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("requires")
                 || rendered.contains("required arguments were not provided")
         );
     }

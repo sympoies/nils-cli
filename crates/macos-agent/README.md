@@ -1,154 +1,146 @@
 # macos-agent
 
-## 概覽
-`macos-agent` 是 macOS 專用的 CLI，自動化桌面 UI 操作（切換視窗、點擊、輸入、快捷鍵、截圖觀察）。
-本文件定義 Task 1.1 的穩定合約：命令面、機器可讀輸出、stdout/stderr 行為與 exit code。
+`macos-agent` is a macOS-oriented CLI for agent desktop automation.
+It provides parseable primitives for discovery, observation, and input actions:
+window/app listing, window activation, click, type, hotkey, screenshot, and wait helpers.
 
-## Usage
-```text
-Usage:
-  macos-agent [--format <text|json|tsv>] [--dry-run] <group> <command> [options]
+## Quick Start
 
-Groups:
-  preflight   check runtime dependencies and permissions
-  windows     list windows
-  apps        list running apps
-  window      activate a target window/app
-  input       click | type | hotkey
-  observe     screenshot
+```bash
+# readiness check
+macos-agent preflight --format json
 
-Help:
-  macos-agent --help
-  macos-agent <group> --help
-  macos-agent <group> <command> --help
+# list targets
+macos-agent windows list --format tsv
+macos-agent apps list --format json
+
+# activate + input
+macos-agent window activate --app Terminal --wait-ms 1500
+macos-agent input click --x 200 --y 160
+macos-agent input type --text "hello world"
+macos-agent input hotkey --mods cmd,shift --key 4
+
+# observation
+macos-agent observe screenshot --active-window --path ./tmp/macos-agent.png
+
+# stabilization waits
+macos-agent wait app-active --app Terminal --timeout-ms 1500
+macos-agent wait window-present --app Terminal --window-name Inbox --timeout-ms 1500
 ```
 
 ## Command Surface
 
-### `preflight`
-- `macos-agent preflight [--strict]`
-- 用途：檢查 `osascript`、`cliclick`、Accessibility/Automation（及必要時 Screen Recording）狀態。
+- `preflight`
+  - `macos-agent preflight [--strict]`
+- `windows`
+  - `macos-agent windows list [--app <name>] [--window-name <name>] [--on-screen-only]`
+- `apps`
+  - `macos-agent apps list`
+- `window`
+  - `macos-agent window activate (--window-id <id> | --active-window | --app <name> [--window-name <name>] | --bundle-id <bundle_id>) [--wait-ms <ms>]`
+- `input`
+  - `macos-agent input click --x <px> --y <px> [--button <left|right|middle>] [--count <n>] [--pre-wait-ms <ms>] [--post-wait-ms <ms>]`
+  - `macos-agent input type --text <text> [--delay-ms <ms>] [--enter]`
+  - `macos-agent input hotkey --mods <cmd,ctrl,alt,shift,fn> --key <key>`
+- `observe`
+  - `macos-agent observe screenshot (--window-id <id> | --active-window | --app <name> [--window-name <name>]) [--path <file>] [--image-format <png|jpg|webp>]`
+- `wait`
+  - `macos-agent wait sleep --ms <ms>`
+  - `macos-agent wait app-active (--app <name> | --bundle-id <bundle_id>) [--timeout-ms <ms>] [--poll-ms <ms>]`
+  - `macos-agent wait window-present (--window-id <id> | --active-window | --app <name> [--window-name <name>]) [--timeout-ms <ms>] [--poll-ms <ms>]`
 
-### `windows`
-- `macos-agent windows list [--app <name>] [--window-name <name>] [--on-screen-only] [--format <json|tsv>]`
-- 用途：列出可選視窗目標。
+## Global Flags
 
-### `apps`
-- `macos-agent apps list [--format <json|tsv>]`
-- 用途：列出可操作 app 目標。
+- `--format <text|json|tsv>`
+- `--dry-run`
+- `--retries <n>`
+- `--retry-delay-ms <ms>`
+- `--timeout-ms <ms>`
 
-### `window`
-- `macos-agent window activate (--window-id <id> | --active-window | --app <name> [--window-name <name>] | --bundle-id <bundle_id>) [--wait-ms <ms>]`
-- 用途：切換前景 app/視窗，作為後續 `input` 命令上下文。
-
-### `input`
-- `macos-agent input click --x <px> --y <px> [--button <left|right|middle>] [--count <n>]`
-- `macos-agent input type --text <text> [--delay-ms <ms>] [--enter]`
-- `macos-agent input hotkey --mods <cmd,ctrl,alt,shift,fn> --key <key>`
-
-### `observe`
-- `macos-agent observe screenshot (--window-id <id> | --active-window | --app <name> [--window-name <name>]) [--path <file>] [--image-format <png|jpg|webp>]`
-- 用途：抓取目前目標視窗畫面作為可驗證 artifact。
-
-## Selector / Format Rules
-- `window activate` 與 `observe screenshot` 的 selector 必須且只能提供一組。
-- `--window-name` 只能搭配 `--app`。
-- `--format tsv` 只允許 `windows list`、`apps list`；其他命令使用 `--format tsv` 視為 usage error（exit 2）。
+Notes:
+- `--format tsv` is only supported by `windows list` and `apps list`.
+- `--dry-run` guarantees no OS automation command execution for mutating actions.
 
 ## Output Contract
 
-### stdout（穩定）
-- 成功時：stdout 僅輸出「命令結果 payload」並以 `\n` 結尾。
-- 失敗時：stdout 必須為空。
-- stdout 不得混入 log/progress/debug 訊息。
+- Success:
+  - Writes payload to `stdout` only.
+  - `stderr` remains empty.
+- Error:
+  - Writes message to `stderr` only.
+  - `stdout` remains empty.
+  - Messages start with `error:`.
 
-### stderr（穩定）
-- 錯誤與提示只走 stderr。
-- 禁止 stack trace、panic dump、非結構化除錯噪音。
-- `--format json` 時，錯誤 payload 以單一 JSON 物件輸出到 stderr。
+JSON envelope (`--format json`):
 
-### Machine-readable mode（穩定）
-- `--format json`：所有命令都可用，且為推薦的機器整合模式。
-- `--format tsv`：只供 `windows list` 與 `apps list`。
-- `--format text`：人類可讀，不保證跨版本文字完全不變；腳本請改用 `json/tsv`。
-
-### JSON envelope（`--format json`）
-成功輸出（stdout）：
 ```json
 {
   "schema_version": 1,
   "ok": true,
-  "command": "<group.command>",
-  "result": {}
-}
-```
-
-失敗輸出（stderr）：
-```json
-{
-  "schema_version": 1,
-  "ok": false,
-  "command": "<group.command>",
-  "error": {
-    "code": "<stable_snake_case>",
-    "message": "<human_readable_message>",
-    "hint": "<optional_hint>"
+  "command": "input.click",
+  "result": {
+    "policy": {
+      "dry_run": false,
+      "retries": 1,
+      "retry_delay_ms": 150,
+      "timeout_ms": 4000
+    },
+    "meta": {
+      "action_id": "input.click-20260101-000000-7",
+      "elapsed_ms": 12
+    }
   }
 }
 ```
 
-相容性規則：
-- `schema_version` 目前固定為 `1`。
-- 破壞性變更必須升版 `schema_version`。
-- 非破壞性擴充可新增欄位；consumer 應忽略未知欄位。
+Mutating action commands (`window activate`, `input click`, `input type`, `input hotkey`) always
+include `result.policy` in JSON output so agent-side retry and timeout policy can be parsed without
+guessing defaults.
 
-### List TSV contract（`windows/apps list --format tsv`）
-- 編碼：UTF-8，無 header，一列一筆。
-- 欄位中的 tab/newline 會正規化為單一空白。
-- 排序需 deterministic。
+Exit codes:
+- `0`: success
+- `1`: runtime failure
+- `2`: usage error
 
-`windows list` 欄位順序：
-1. `window_id`
-2. `owner_name`
-3. `window_title`
-4. `x`
-5. `y`
-6. `width`
-7. `height`
-8. `on_screen`
+## Permission Matrix
 
-`apps list` 欄位順序：
-1. `app_name`
-2. `pid`
-3. `bundle_id`
+| Capability | Required setup | Typical failure symptom | Mitigation |
+| --- | --- | --- | --- |
+| Accessibility | Terminal host allowed in **System Settings > Privacy & Security > Accessibility** | click/type/hotkey fail | Enable the shell host app (Terminal/iTerm/etc.) and retry |
+| Automation (Apple Events) | Terminal host allowed in **System Settings > Privacy & Security > Automation** | activation / System Events probe fails | Allow the terminal app to control System Events |
+| Screen Recording | Terminal host allowed in **System Settings > Privacy & Security > Screen Recording** | observe screenshot fails | Enable Screen Recording for terminal host |
+| `cliclick` binary | Installed and on `PATH` | preflight reports missing `cliclick` | `brew install cliclick` |
 
-## Exit Codes
-- `0`: success（命令完成且輸出符合契約）。
-- `1`: runtime failure（依賴缺失、權限不足、後端執行失敗、timeout 等）。
-- `2`: usage error（參數錯誤、selector 衝突、格式不支援、目標歧義等）。
+## Reliability Boundaries and Practices
 
-## Parseable Examples
+Desktop UI automation is inherently brittle due to animation timing, focus drift, and app responsiveness.
+Use these defaults for better stability:
 
-Window switching (`window activate`):
+- Always activate context before input:
+  - `window activate ... --wait-ms 1000`
+- Add small waits around click chains:
+  - `input click ... --pre-wait-ms 100 --post-wait-ms 100`
+- Enable retries for transient failures:
+  - `--retries 2 --retry-delay-ms 150`
+- Keep timeouts explicit for slow apps:
+  - `--timeout-ms 5000`
+- Use `wait app-active` / `wait window-present` before mutating actions.
+
+## Deterministic Test Mode
+
+Set `CODEX_MACOS_AGENT_TEST_MODE=1` to run with deterministic fixtures and without controlling the real desktop.
+This mode is used by CI-safe integration tests.
+
+## Opt-in Real macOS E2E Checks
+
+`crates/macos-agent/tests/e2e_real_macos.rs` contains real-desktop checks for:
+- TCC signal quality in `preflight` (Accessibility/Automation statuses + hints)
+- focus drift detection path for activation + `wait app-active`
+
+These checks are disabled by default and require explicit opt-in:
+
 ```bash
-macos-agent window activate --app Terminal --wait-ms 1500 --format json
-{"schema_version":1,"ok":true,"command":"window.activate","result":{"app":"Terminal","window_id":4811,"wait_ms":1500}}
-```
-
-Click (`input click`):
-```bash
-macos-agent input click --x 200 --y 160 --format json
-{"schema_version":1,"ok":true,"command":"input.click","result":{"x":200,"y":160,"button":"left","count":1}}
-```
-
-Type (`input type`):
-```bash
-macos-agent input type --text "hello world" --format json
-{"schema_version":1,"ok":true,"command":"input.type","result":{"text_length":11,"submitted_enter":false}}
-```
-
-Hotkey (`input hotkey`):
-```bash
-macos-agent input hotkey --mods cmd,shift --key 4 --format json
-{"schema_version":1,"ok":true,"command":"input.hotkey","result":{"mods":["cmd","shift"],"key":"4"}}
+MACOS_AGENT_REAL_E2E=1 cargo test -p macos-agent --test e2e_real_macos
+MACOS_AGENT_REAL_E2E=1 MACOS_AGENT_REAL_E2E_MUTATING=1 MACOS_AGENT_REAL_E2E_APP=Finder \
+  cargo test -p macos-agent --test e2e_real_macos
 ```

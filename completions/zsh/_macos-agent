@@ -1,0 +1,165 @@
+#compdef macos-agent
+
+_macos-agent() {
+  emulate -L zsh -o extendedglob
+
+  local context state state_descr
+  typeset -A opt_args
+
+  local -a global_opts
+  global_opts=(
+    '--format=[Output format]:format:(text json tsv)'
+    '--dry-run[Print planned actions without mutating desktop state]'
+    '--retries=[Retry count for mutating actions]:count:'
+    '--retry-delay-ms=[Delay between retries in milliseconds]:ms:'
+    '--timeout-ms=[Per-action timeout in milliseconds]:ms:'
+    '(-h --help)'{-h,--help}'[Show help]'
+    '(-V --version)'{-V,--version}'[Show version]'
+  )
+
+  if (( CURRENT == 2 )); then
+    _describe -t commands 'macos-agent command' \
+      'preflight:Check runtime dependencies and permissions' \
+      'windows:List windows' \
+      'apps:List apps' \
+      'window:Activate app/window target' \
+      'input:Pointer and keyboard actions' \
+      'observe:Capture screenshot artifacts' \
+      'wait:UI stabilization wait primitives'
+    return 0
+  fi
+
+  local group="${words[2]}"
+  case "$group" in
+    preflight)
+      _arguments -C $global_opts '--strict[Treat advisory warnings as readiness failures]' && return 0
+      ;;
+
+    windows)
+      if (( CURRENT == 3 )); then
+        _describe -t subcommands 'windows command' 'list:List windows'
+        return 0
+      fi
+      _arguments -C $global_opts \
+        '3:windows command:(list)' \
+        '--app=[Filter by app/owner name]:name:' \
+        '--window-name=[Narrow app selection by window title]:name:' \
+        '--on-screen-only[Include only on-screen windows]' \
+        && return 0
+      ;;
+
+    apps)
+      if (( CURRENT == 3 )); then
+        _describe -t subcommands 'apps command' 'list:List apps'
+        return 0
+      fi
+      _arguments -C $global_opts '3:apps command:(list)' && return 0
+      ;;
+
+    window)
+      if (( CURRENT == 3 )); then
+        _describe -t subcommands 'window command' 'activate:Activate app/window target'
+        return 0
+      fi
+      _arguments -C $global_opts \
+        '3:window command:(activate)' \
+        '--window-id=[Select by window id]:id:' \
+        '--active-window[Select frontmost active window]' \
+        '--app=[Select by app name]:name:' \
+        '--window-name=[Narrow app selection by window title]:name:' \
+        '--bundle-id=[Select by bundle id]:bundle:' \
+        '--wait-ms=[Wait up to this many milliseconds for active confirmation]:ms:' \
+        && return 0
+      ;;
+
+    input)
+      if (( CURRENT == 3 )); then
+        _describe -t subcommands 'input command' \
+          'click:Click at x/y coordinates' \
+          'type:Type text' \
+          'hotkey:Send hotkey chord'
+        return 0
+      fi
+
+      local input_cmd="${words[3]}"
+      case "$input_cmd" in
+        click)
+          _arguments -C $global_opts \
+            '--x=[X coordinate in pixels]:x:' \
+            '--y=[Y coordinate in pixels]:y:' \
+            '--button=[Mouse button]:button:(left right middle)' \
+            '--count=[Number of clicks]:count:' \
+            '--pre-wait-ms=[Wait before clicking]:ms:' \
+            '--post-wait-ms=[Wait after clicking]:ms:' \
+            && return 0
+          ;;
+        type)
+          _arguments -C $global_opts \
+            '--text=[Text to type]:text:' \
+            '--delay-ms=[Delay between key events]:ms:' \
+            '--enter[Press Enter after typing]' \
+            && return 0
+          ;;
+        hotkey)
+          _arguments -C $global_opts \
+            '--mods=[Modifier keys, comma-separated]:mods:' \
+            '--key=[Main key]:key:' \
+            && return 0
+          ;;
+      esac
+      ;;
+
+    observe)
+      if (( CURRENT == 3 )); then
+        _describe -t subcommands 'observe command' 'screenshot:Capture screenshot'
+        return 0
+      fi
+      _arguments -C $global_opts \
+        '3:observe command:(screenshot)' \
+        '--window-id=[Select by window id]:id:' \
+        '--active-window[Select frontmost active window]' \
+        '--app=[Select by app name]:name:' \
+        '--window-name=[Narrow app selection by window title]:name:' \
+        '--path=[Output path]:path:_files' \
+        '--image-format=[Output image format]:format:(png jpg webp)' \
+        && return 0
+      ;;
+
+    wait)
+      if (( CURRENT == 3 )); then
+        _describe -t subcommands 'wait command' \
+          'sleep:Sleep for a fixed duration' \
+          'app-active:Wait for app to become active' \
+          'window-present:Wait for target window to appear'
+        return 0
+      fi
+
+      local wait_cmd="${words[3]}"
+      case "$wait_cmd" in
+        sleep)
+          _arguments -C $global_opts '--ms=[Sleep duration in milliseconds]:ms:' && return 0
+          ;;
+        app-active)
+          _arguments -C $global_opts \
+            '--app=[App name]:name:' \
+            '--bundle-id=[Bundle id]:bundle:' \
+            '--timeout-ms=[Timeout in milliseconds]:ms:' \
+            '--poll-ms=[Poll interval in milliseconds]:ms:' \
+            && return 0
+          ;;
+        window-present)
+          _arguments -C $global_opts \
+            '--window-id=[Select by window id]:id:' \
+            '--active-window[Select frontmost active window]' \
+            '--app=[Select by app name]:name:' \
+            '--window-name=[Narrow app selection by window title]:name:' \
+            '--timeout-ms=[Timeout in milliseconds]:ms:' \
+            '--poll-ms=[Poll interval in milliseconds]:ms:' \
+            && return 0
+          ;;
+      esac
+      ;;
+  esac
+}
+
+compdef _macos-agent macos-agent

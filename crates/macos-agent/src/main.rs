@@ -1,17 +1,10 @@
-mod cli;
-mod error;
-mod preflight;
-mod run;
+use std::process::ExitCode;
 
 use clap::{error::ErrorKind, Parser};
+use macos_agent::cli::Cli;
+use macos_agent::run::run;
 
-use crate::cli::Cli;
-
-fn main() {
-    std::process::exit(run_cli());
-}
-
-fn run_cli() -> i32 {
+fn main() -> ExitCode {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(err) => {
@@ -21,15 +14,15 @@ fn run_cli() -> i32 {
             );
             let code = if is_info { 0 } else { err.exit_code() };
             let _ = err.print();
-            return code;
+            return ExitCode::from(code as u8);
         }
     };
 
-    match run::run(cli) {
-        Ok(()) => 0,
+    match run(cli) {
+        Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("{err}");
-            i32::from(err.exit_code())
+            ExitCode::from(err.exit_code())
         }
     }
 }

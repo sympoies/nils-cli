@@ -1353,8 +1353,12 @@ name = "macos-agent"
 version = "0.2.6"
 dependencies = [
  "clap",
+ "nils-test-support",
  "pretty_assertions",
+ "screen-record",
+ "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

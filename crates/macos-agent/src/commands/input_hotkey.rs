@@ -1,0 +1,106 @@
+use std::time::Instant;
+
+use crate::backend::applescript;
+use crate::backend::process::ProcessRunner;
+use crate::cli::{InputHotkeyArgs, OutputFormat};
+use crate::error::CliError;
+use crate::model::{InputHotkeyResult, SuccessEnvelope};
+use crate::retry::run_with_retry;
+use crate::run::{action_policy_result, build_action_meta, next_action_id, ActionPolicy};
+
+const NAMED_KEYS: &[&str] = &[
+    "tab", "return", "enter", "escape", "space", "left", "right", "up", "down", "delete",
+];
+
+pub fn run(
+    format: OutputFormat,
+    args: &InputHotkeyArgs,
+    policy: ActionPolicy,
+    runner: &dyn ProcessRunner,
+) -> Result<(), CliError> {
+    validate_key(&args.key)?;
+    let modifiers = applescript::parse_modifiers(&args.mods)?;
+
+    let action_id = next_action_id("input.hotkey");
+    let started = Instant::now();
+
+    if !policy.dry_run {
+        let retry = policy.retry_policy();
+        run_with_retry(retry, || {
+            applescript::send_hotkey(runner, &modifiers, &args.key, policy.timeout_ms)
+        })?;
+    }
+
+    let mods = modifiers
+        .iter()
+        .map(|modifier| modifier.canonical().to_string())
+        .collect::<Vec<_>>();
+
+    let result = InputHotkeyResult {
+        mods,
+        key: args.key.clone(),
+        policy: action_policy_result(policy),
+        meta: build_action_meta(action_id, started, policy),
+    };
+
+    match format {
+        OutputFormat::Json => {
+            let payload = SuccessEnvelope::new("input.hotkey", result);
+            println!(
+                "{}",
+                serde_json::to_string(&payload).map_err(|err| CliError::runtime(format!(
+                    "failed to serialize json output: {err}"
+                )))?
+            );
+        }
+        OutputFormat::Text => {
+            println!(
+                "input.hotkey\taction_id={}\tmods={}\tkey={}\telapsed_ms={}",
+                result.meta.action_id,
+                result.mods.join(","),
+                result.key,
+                result.meta.elapsed_ms,
+            );
+        }
+        OutputFormat::Tsv => {
+            return Err(CliError::usage(
+                "--format tsv is only supported for `windows list` and `apps list`",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_key(key: &str) -> Result<(), CliError> {
+    let token = key.trim();
+    if token.is_empty() {
+        return Err(CliError::usage("--key cannot be empty"));
+    }
+
+    if token.chars().count() == 1 || NAMED_KEYS.contains(&token.to_ascii_lowercase().as_str()) {
+        return Ok(());
+    }
+
+    Err(CliError::usage(format!(
+        "unsupported --key `{key}`; use a single character or one of: {}",
+        NAMED_KEYS.join(",")
+    )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_key;
+
+    #[test]
+    fn validate_key_accepts_single_char_and_named_key() {
+        validate_key("4").expect("single char should pass");
+        validate_key("tab").expect("named key should pass");
+    }
+
+    #[test]
+    fn validate_key_rejects_long_unknown_key() {
+        let err = validate_key("unknown-key").expect_err("should fail for unknown key");
+        assert_eq!(err.exit_code(), 2);
+    }
+}
