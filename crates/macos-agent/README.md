@@ -37,6 +37,20 @@ macos-agent observe screenshot --active-window --path ./tmp/macos-agent.png
 # stabilization waits
 macos-agent wait app-active --app Terminal --timeout-ms 1500
 macos-agent wait window-present --app Terminal --window-title-contains Inbox --timeout-ms 1500
+macos-agent wait ax-present --app Arc --role AXButton --title-contains "New" --timeout-ms 2000
+macos-agent wait ax-unique --app Arc --role AXTextField --title-contains "Search" --timeout-ms 2000
+
+# gate + postcondition for mutating AX actions
+macos-agent ax click --app Arc --role AXButton --title-contains "Submit" \
+  --gate-app-active --gate-window-present --gate-ax-unique \
+  --postcondition-focused true --postcondition-timeout-ms 2000
+
+# selector-frame screenshot
+macos-agent observe screenshot --active-window --role AXButton --title-contains "Play" \
+  --selector-padding 12 --path ./tmp/macos-agent-selector.png
+
+# one-shot debug bundle
+macos-agent debug bundle --active-window --format json
 ```
 
 ## Command Surface
@@ -58,8 +72,8 @@ macos-agent wait window-present --app Terminal --window-title-contains Inbox --t
   - `macos-agent input-source switch --id <source_id|abc|us>`
 - `ax`
   - `macos-agent ax list [--session-id <id> | --app <name> | --bundle-id <bundle_id>] [--window-title-contains <text>] [--role <AXRole>] [--title-contains <text>] [--identifier-contains <text>] [--value-contains <text>] [--subrole <AXSubrole>] [--focused <bool>] [--enabled <bool>] [--max-depth <n>] [--limit <n>]`
-  - `macos-agent ax click [--node-id <id> | --role <AXRole> | --title-contains <text> | --identifier-contains <text> | --value-contains <text> | --subrole <AXSubrole> | --focused <bool> | --enabled <bool>] [--nth <n>] [--session-id <id> | --app <name> | --bundle-id <bundle_id>] [--window-title-contains <text>] [--allow-coordinate-fallback]`
-  - `macos-agent ax type [--node-id <id> | --role <AXRole> | --title-contains <text> | --identifier-contains <text> | --value-contains <text> | --subrole <AXSubrole> | --focused <bool> | --enabled <bool>] [--nth <n>] [--session-id <id> | --app <name> | --bundle-id <bundle_id>] [--window-title-contains <text>] --text <text> [--clear-first] [--submit] [--paste] [--allow-keyboard-fallback]`
+  - `macos-agent ax click [selector flags...] [target flags...] [--match-strategy <contains|exact|prefix|suffix|regex>] [--selector-explain] [--reselect-before-click] [--allow-coordinate-fallback] [--fallback-order <ax-press,ax-confirm,frame-center,coordinate>] [--gate-app-active] [--gate-window-present] [--gate-ax-present] [--gate-ax-unique] [--gate-timeout-ms <ms>] [--gate-poll-ms <ms>] [--postcondition-focused <bool>] [--postcondition-attribute <AXAttr>] [--postcondition-attribute-value <value>] [--postcondition-timeout-ms <ms>] [--postcondition-poll-ms <ms>]`
+  - `macos-agent ax type [selector flags...] [target flags...] --text <text> [--match-strategy <contains|exact|prefix|suffix|regex>] [--selector-explain] [--clear-first] [--submit] [--paste] [--allow-keyboard-fallback] [--gate-app-active] [--gate-window-present] [--gate-ax-present] [--gate-ax-unique] [--gate-timeout-ms <ms>] [--gate-poll-ms <ms>] [--postcondition-focused <bool>] [--postcondition-attribute <AXAttr>] [--postcondition-attribute-value <value>] [--postcondition-timeout-ms <ms>] [--postcondition-poll-ms <ms>]`
   - `macos-agent ax attr get [selector flags...] [target flags...] --name <AXAttribute>`
   - `macos-agent ax attr set [selector flags...] [target flags...] --name <AXAttribute> --value <value> [--value-type <string|number|bool|json|null>]`
   - `macos-agent ax action perform [selector flags...] [target flags...] --name <AXAction>`
@@ -70,11 +84,15 @@ macos-agent wait window-present --app Terminal --window-title-contains Inbox --t
   - `macos-agent ax watch poll --watch-id <id> [--limit <n>] [--drain|--no-drain]`
   - `macos-agent ax watch stop --watch-id <id>`
 - `observe`
-  - `macos-agent observe screenshot (--window-id <id> | --active-window | --app <name> [--window-title-contains <name>]) [--path <file>] [--image-format <png|jpg|webp>]`
+  - `macos-agent observe screenshot (--window-id <id> | --active-window | --app <name> [--window-title-contains <name>]) [--path <file>] [--image-format <png|jpg|webp>] [selector flags...] [--selector-padding <px>]`
+- `debug`
+  - `macos-agent debug bundle [--window-id <id> | --active-window | --app <name> [--window-title-contains <name>]] [--output-dir <path>]`
 - `wait`
   - `macos-agent wait sleep --ms <ms>`
   - `macos-agent wait app-active (--app <name> | --bundle-id <bundle_id>) [--timeout-ms <ms>] [--poll-ms <ms>]`
   - `macos-agent wait window-present (--window-id <id> | --active-window | --app <name> [--window-title-contains <name>]) [--timeout-ms <ms>] [--poll-ms <ms>]`
+  - `macos-agent wait ax-present [selector flags...] [target flags...] [--timeout-ms <ms>] [--poll-ms <ms>]`
+  - `macos-agent wait ax-unique [selector flags...] [target flags...] [--timeout-ms <ms>] [--poll-ms <ms>]`
 - `scenario`
   - `macos-agent scenario run --file <scenario.json>`
 - `profile`
@@ -225,6 +243,31 @@ Use this matrix to pick commands consistently. Start from the decision row, then
 | `D5` | Text entry depends on deterministic keyboard layout | `input-source current` -> `input-source switch --id <id>` -> `ax type` or `input type` | Prefer paste/submit flow when IME variance is high | Backend-independent for `input-source`; AX typing still follows `D1`/`D2` backend rules | `T6` |
 
 This AX-first + fallback policy avoids brittle coordinate-only flows while keeping a reliable escape hatch.
+
+## Debug Bundle Triage Flow
+
+Copy-paste triage flow to collect deterministic artifacts after a flaky or failed run:
+
+```bash
+OUT="${CODEX_HOME:-$HOME/.codex}/out/macos-agent-debug-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$OUT"
+
+# 1) capture debug bundle + artifact index
+macos-agent debug bundle --active-window --output-dir "$OUT" --format json > "$OUT/debug-bundle.json"
+
+# 2) inspect artifact index and partial failures
+jq '.result.artifact_index_path, .result.partial_failure, (.result.artifacts[] | {id, ok, path, error})' \
+  "$OUT/debug-bundle.json"
+
+# 3) optional selector-frame screenshot for visual targeting proof
+macos-agent observe screenshot --active-window --role AXButton --title-contains "Play" \
+  --selector-padding 12 --path "$OUT/selector-frame.png" --format json > "$OUT/selector-frame.json"
+```
+
+Artifact index notes:
+- `result.artifact_index_path` points to the canonical artifact index JSON.
+- `result.partial_failure=true` means some artifacts failed but bundle capture still completed.
+- Each artifact entry records `id`, `ok`, `path`, and `error` for fast triage routing.
 
 ## Deterministic Test Mode
 

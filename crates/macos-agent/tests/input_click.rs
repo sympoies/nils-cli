@@ -145,10 +145,16 @@ fn ax_click_dry_run_reports_policy_and_meta() {
 fn ax_click_coordinate_fallback_executes_with_backend_coordinates() {
     let harness = common::MacosAgentHarness::new();
     let cwd = TempDir::new().expect("tempdir");
-    let options = harness.cmd_options(cwd.path()).with_env(
-        "CODEX_MACOS_AGENT_AX_CLICK_JSON",
-        r#"{"node_id":"1.1","matched_count":1,"action":"ax-press-fallback","used_coordinate_fallback":true,"fallback_x":320,"fallback_y":240}"#,
-    );
+    let options = harness
+        .cmd_options(cwd.path())
+        .with_env(
+            "CODEX_MACOS_AGENT_AX_LIST_JSON",
+            r#"{"nodes":[{"node_id":"1.1","role":"AXButton","title":"Run","identifier":"run-btn","enabled":true,"focused":false,"actions":["AXPress"],"path":["1","1"]}],"warnings":[]}"#,
+        )
+        .with_env(
+            "CODEX_MACOS_AGENT_AX_CLICK_JSON",
+            r#"{"node_id":"1.1","matched_count":1,"action":"ax-press-fallback","used_coordinate_fallback":true,"fallback_x":320,"fallback_y":240}"#,
+        );
     let out = harness.run_with_options(
         cwd.path(),
         &["--format", "json", "ax", "click", "--node-id", "1.1"],

@@ -200,10 +200,16 @@ fn ax_type_dry_run_reports_policy_and_text_length() {
 fn ax_type_reports_keyboard_fallback_when_backend_uses_it() {
     let harness = common::MacosAgentHarness::new();
     let cwd = TempDir::new().expect("tempdir");
-    let options = harness.cmd_options(cwd.path()).with_env(
-        "CODEX_MACOS_AGENT_AX_TYPE_JSON",
-        r#"{"node_id":"1.1","matched_count":1,"applied_via":"keyboard-keystroke-fallback","text_length":5,"submitted":true,"used_keyboard_fallback":true}"#,
-    );
+    let options = harness
+        .cmd_options(cwd.path())
+        .with_env(
+            "CODEX_MACOS_AGENT_AX_LIST_JSON",
+            r#"{"nodes":[{"node_id":"1.1","role":"AXTextField","title":"Input","identifier":"input-1","enabled":true,"focused":true,"actions":[],"path":["1","1"]}],"warnings":[]}"#,
+        )
+        .with_env(
+            "CODEX_MACOS_AGENT_AX_TYPE_JSON",
+            r#"{"node_id":"1.1","matched_count":1,"applied_via":"keyboard-keystroke-fallback","text_length":5,"submitted":true,"used_keyboard_fallback":true}"#,
+        );
     let out = harness.run_with_options(
         cwd.path(),
         &[
