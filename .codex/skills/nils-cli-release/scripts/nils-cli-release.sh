@@ -8,7 +8,7 @@ Usage:
 
 Options:
   --version X.Y.Z   Required. Accepts vX.Y.Z and normalizes to X.Y.Z.
-  --skip-checks     Skip full lint/tests; runs cargo check to refresh Cargo.lock.
+  --skip-checks     Skip full lint/tests; refresh Cargo.lock then run locked cargo check.
   --ci-gate-main    Require CI gate on main; fail if gate conditions are not met.
   --skip-readme     Do not update README release tag examples.
   --skip-push       Do not push commit or tag to origin.
@@ -29,6 +29,13 @@ die() {
 
 note() {
   echo "info: $*" >&2
+}
+
+refresh_lockfile_and_verify_locked() {
+  note "refreshing Cargo.lock for release changes"
+  cargo generate-lockfile
+  note "verifying workspace with cargo check --workspace --locked"
+  cargo check --workspace --locked
 }
 
 ci_gate_main_url=""
@@ -237,6 +244,7 @@ version = sys.argv[1]
 
 paths = [Path("Cargo.toml")] + sorted(Path("crates").glob("*/Cargo.toml"))
 updated: list[str] = []
+version_fields_found = 0
 
 for path in paths:
     text = path.read_text("utf-8")
@@ -252,6 +260,7 @@ for path in paths:
         if section in {"package", "workspace.package"}:
             match = re.match(r"(\s*version\s*=\s*)\"[^\"]+\"(.*)", line)
             if match:
+                version_fields_found += 1
                 new_line = f"{match.group(1)}\"{version}\"{match.group(2)}"
                 if new_line != line:
                     line = new_line
@@ -266,12 +275,14 @@ for path in paths:
         updated.append(path.as_posix())
 
 if not updated:
-    print("error: no version fields were updated", file=sys.stderr)
-    raise SystemExit(2)
-
-print("info: updated versions in:")
-for item in updated:
-    print(f"- {item}")
+    if version_fields_found == 0:
+        print("error: no version fields found in Cargo manifests", file=sys.stderr)
+        raise SystemExit(2)
+    print("info: all manifest versions already set to target; continuing")
+else:
+    print("info: updated versions in:")
+    for item in updated:
+        print(f"- {item}")
 PY
 
 if [[ "$skip_readme" -eq 0 ]]; then
@@ -330,7 +341,7 @@ if [[ "$skip_checks" -eq 0 ]]; then
   fi
   NILS_CLI_TEST_RUNNER="$checks_runner" "$checks_script"
 else
-  cargo check --workspace --locked
+  refresh_lockfile_and_verify_locked
 fi
 
 git add -A

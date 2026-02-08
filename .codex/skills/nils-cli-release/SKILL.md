@@ -20,7 +20,7 @@ Inputs:
 - Required:
   - `--version X.Y.Z` (accepts `vX.Y.Z` and normalizes to `X.Y.Z`)
 - Optional:
-  - `--skip-checks` (skip full lint/tests; still runs `cargo check --workspace` to refresh `Cargo.lock`)
+  - `--skip-checks` (skip full lint/tests; refreshes `Cargo.lock` then runs `cargo check --workspace --locked`)
   - `--ci-gate-main` (strict mode: require CI gate on `main`; fail when gate conditions are not met)
   - `--skip-readme` (do not update README release tag example)
   - `--skip-push` (do not push commit or tag to `origin`)
@@ -31,15 +31,16 @@ Inputs:
 Default check selection (no `--skip-checks` and no `--ci-gate-main`):
 
 - First try CI gate conditions (`main`, `HEAD == origin/main`, green `ci.yml` run).
-- If CI gate passes, run `cargo check --workspace --locked` only.
+- If CI gate passes, refresh `Cargo.lock` and run `cargo check --workspace --locked`.
 - If CI gate does not pass, run full release checks via `nils-cli-checks.sh`.
 
 Outputs:
 
 - Updates workspace version in `Cargo.toml` and any crate `Cargo.toml` files with explicit `version = "..."`.
+- If manifests are already at target version, treats version bump as idempotent and continues.
 - Updates README release tag examples (unless `--skip-readme`).
 - Selects check mode in this order: strict CI gate (`--ci-gate-main`) or auto CI gate attempt, then full checks fallback.
-- Refreshes `Cargo.lock` via `cargo check --workspace --locked` (CI-gated/skip-check path) or the full checks script.
+- Refreshes `Cargo.lock` via `cargo generate-lockfile` and then validates via `cargo check --workspace --locked` (CI-gated/skip-check path), or uses the full checks script.
 - Runs full release checks through `nils-cli-checks.sh` with `NILS_CLI_TEST_RUNNER=nextest` by default (unless overridden).
 - Creates a semantic commit for the version bump.
 - Creates an annotated tag `vX.Y.Z` and (unless `--skip-push`) pushes commit + tag to `origin`.
@@ -71,7 +72,7 @@ Failure modes:
 - Validate inputs and environment.
 - Bump workspace + crate versions and update README.
 - Run checks with CI-gate-first logic:
-  - `--skip-checks`: run `cargo check --workspace --locked`.
-  - `--ci-gate-main`: require CI gate; then run `cargo check --workspace --locked`.
+  - `--skip-checks`: refresh `Cargo.lock`; run `cargo check --workspace --locked`.
+  - `--ci-gate-main`: require CI gate; then refresh `Cargo.lock`; run `cargo check --workspace --locked`.
   - default: try CI gate first; if unavailable, run full checks (`nils-cli-checks.sh`).
 - Commit with `semantic-commit`, tag `vX.Y.Z`, and push to trigger the release workflow.
