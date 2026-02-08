@@ -120,20 +120,6 @@ Notes:
 - `--trace-dir` overrides trace artifact output directory.
 - When trace mode is enabled, `macos-agent` verifies trace directory writability before running actions.
 
-## Migration Guide: Legacy aliases to canonical flags
-
-Use canonical flags in all new scripts, fixtures, and runbooks.
-
-| Legacy alias | Canonical form | Migration action | Compatibility policy |
-| --- | --- | --- | --- |
-| `--window-name <text>` | `--window-title-contains <text>` | Replace in command invocations and saved recipes. | Accepted during the current `0.x` rollout window; removal requires an explicit future breaking-change release note. |
-| `input type --enter` | `input type --submit` | Replace alias flags in test fixtures and automation scripts. | Accepted during the current `0.x` rollout window with equivalent behavior. |
-
-Migration checklist:
-- `rg -n -- "--window-name|input type --enter" crates/macos-agent docs`
-- Convert results to canonical flags and keep command behavior unchanged.
-- If a migrated command fails, choose the command path from `Command Decision Matrix` first, then jump to the mapped row in `Troubleshooting matrix`.
-
 ## Output Contract
 
 - Success:
