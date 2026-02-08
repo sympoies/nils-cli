@@ -23,7 +23,7 @@ resolver = "2"
 [workspace.package]
 edition = "2021"
 license = "MIT OR Apache-2.0"
-version = "0.2.10"
+version = "0.2.11"
 
 [workspace.dependencies]
 anyhow = "1"
