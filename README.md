@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/graysurf/nils-cli/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/graysurf/nils-cli/actions/workflows/ci.yml) [![Coverage](https://raw.githubusercontent.com/graysurf/nils-cli/coverage-badge/badges/coverage.svg)](https://github.com/graysurf/nils-cli/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/graysurf/nils-cli?sort=semver)](https://github.com/graysurf/nils-cli/releases) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Rust CLI workspace scaffold for building multiple independently packaged binaries.
+A Rust workspace of focused CLI binaries for Git operations, API test orchestration, and workflow automation, unified by shared cross-crate helpers.
 
 ## Workspace layout
 
