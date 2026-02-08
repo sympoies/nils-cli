@@ -32,9 +32,15 @@ Each crate is either a standalone CLI binary or a shared library used across the
 ### Agent and workflow tooling
 
 - [crates/agent-docs](crates/agent-docs): Deterministic policy-document resolver for Codex/agent workflows (`resolve`, `contexts`, `add`, `baseline`).
-- [crates/codex-cli](crates/codex-cli): Helper CLI for Codex workflows (auth, diagnostics, agent wrappers, starship snippets).
+- [crates/codex-cli](crates/codex-cli): Provider-specific CLI for OpenAI/Codex workflows (auth, Codex diagnostics, Codex execution wrappers, Starship snippets).
 - [crates/semantic-commit](crates/semantic-commit): Helper CLI for generating staged context and creating semantic commits.
 - [crates/plan-tooling](crates/plan-tooling): Plan Format v1 tooling CLI (to-json/validate/batches/scaffold).
+
+#### Command ownership split (migration boundary)
+
+- `codex-cli`: provider-specific OpenAI/Codex operations only (`agent`, `auth`, Codex diagnostics, Codex config/starship).
+- `agentctl` (planned by the migration plan): provider-neutral orchestration (`provider`, `diag`, `debug`, `workflow`, `automation`) and local automation integration.
+- Migration note: keep existing `codex-cli` workflows stable during migration, and move provider-neutral ownership to `agentctl` with explicit docs/help redirection.
 
 ### Automation and utility CLIs
 

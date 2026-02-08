@@ -1,8 +1,8 @@
 # codex-cli
 
 ## Overview
-codex-cli is a Rust CLI that groups Codex workflows: agent prompts, auth/secret management,
-rate-limit diagnostics, config output, and Starship rendering.
+codex-cli is a provider-specific Rust CLI for OpenAI/Codex workflows: Codex execution wrappers,
+auth/secret management, Codex diagnostics, config output, and Starship rendering.
 
 ## Usage
 ```text
@@ -21,6 +21,12 @@ Help:
   codex-cli help
   codex-cli <group> help
 ```
+
+## Scope boundary
+- `codex-cli` owns provider-specific OpenAI/Codex commands only (`agent`, `auth`, `diag rate-limits`, `config`, `starship`).
+- `codex-cli` does not own provider-neutral orchestration concerns (multi-provider registry/selection, provider-neutral doctor/debug/workflow, or local automation integration).
+- `agentctl` owns those provider-neutral concerns and integration contracts during migration.
+- Compatibility note: existing `codex-cli` command behavior remains stable during migration, while provider-neutral ownership moves to `agentctl`.
 
 ## Commands
 
