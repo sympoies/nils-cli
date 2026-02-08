@@ -150,3 +150,20 @@ fn paths_resolve_auth_file_prefers_env() {
 
     assert_eq!(paths::resolve_auth_file().expect("auth file"), auth_file);
 }
+
+#[test]
+fn paths_resolve_script_dir_ignores_empty_env_override() {
+    let lock = GlobalStateLock::new();
+    let dir = tempfile::TempDir::new().expect("tempdir");
+
+    let zdotdir = dir.path().join("zdotdir");
+    fs::create_dir_all(&zdotdir).expect("zdotdir");
+
+    let _zdotdir = EnvGuard::set(&lock, "ZDOTDIR", zdotdir.to_str().expect("zdotdir"));
+    let _script = EnvGuard::set(&lock, "ZSH_SCRIPT_DIR", "");
+
+    assert_eq!(
+        paths::resolve_script_dir().expect("script dir"),
+        zdotdir.join("scripts")
+    );
+}

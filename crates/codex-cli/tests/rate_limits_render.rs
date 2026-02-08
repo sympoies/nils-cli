@@ -62,7 +62,22 @@ fn rate_limits_render_formats_time_and_remaining() {
     );
 
     assert!(render::format_epoch_local_datetime(1700600000).is_some());
+    assert_eq!(
+        render::format_epoch_local_datetime_with_offset(1700600000).as_deref(),
+        Some("11-21 20:53 +00:00")
+    );
     assert!(render::format_epoch_local(1700600000, "%Y").is_some());
+}
+
+#[test]
+fn rate_limits_render_formats_time_with_local_timezone_offset() {
+    let lock = GlobalStateLock::new();
+    let _tz = EnvGuard::set(&lock, "TZ", "Asia/Taipei");
+
+    assert_eq!(
+        render::format_epoch_local_datetime_with_offset(1700600000).as_deref(),
+        Some("11-22 04:53 +08:00")
+    );
 }
 
 #[test]

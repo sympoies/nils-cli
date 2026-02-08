@@ -37,3 +37,9 @@ fn jwt_identity_key_from_auth_file() {
         .expect("identity key");
     assert_eq!(key, "user_123::acct_001");
 }
+
+#[test]
+fn jwt_decode_payload_rejects_empty_payload_segment() {
+    let token = format!("{HEADER}..sig");
+    assert_eq!(jwt::decode_payload(&token), None);
+}
