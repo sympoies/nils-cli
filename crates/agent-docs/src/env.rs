@@ -17,16 +17,23 @@ pub struct PathOverrides {
 pub struct ResolvedRoots {
     pub codex_home: PathBuf,
     pub project_path: PathBuf,
+    pub is_linked_worktree: bool,
+    pub git_common_dir: Option<PathBuf>,
+    pub primary_worktree_path: Option<PathBuf>,
 }
 
 pub fn resolve_roots(overrides: &PathOverrides) -> Result<ResolvedRoots> {
     let cwd = env::current_dir().context("failed to read current directory")?;
     let codex_home = resolve_codex_home(overrides.codex_home.as_deref(), &cwd);
     let project_path = resolve_project_path(overrides.project_path.as_deref(), &cwd);
+    let metadata = resolve_linked_worktree_metadata(&project_path);
 
     Ok(ResolvedRoots {
         codex_home,
         project_path,
+        is_linked_worktree: metadata.is_linked_worktree,
+        git_common_dir: metadata.git_common_dir,
+        primary_worktree_path: metadata.primary_worktree_path,
     })
 }
 
@@ -73,8 +80,43 @@ fn read_env_path(name: &str) -> Option<PathBuf> {
 }
 
 fn git_top_level(cwd: &Path) -> Option<PathBuf> {
+    git_rev_parse_path(cwd, "--show-toplevel")
+}
+
+#[derive(Debug, Default)]
+struct LinkedWorktreeMetadata {
+    is_linked_worktree: bool,
+    git_common_dir: Option<PathBuf>,
+    primary_worktree_path: Option<PathBuf>,
+}
+
+fn resolve_linked_worktree_metadata(cwd: &Path) -> LinkedWorktreeMetadata {
+    let absolute_git_dir = git_rev_parse_path(cwd, "--absolute-git-dir");
+    let git_common_dir = git_rev_parse_path(cwd, "--git-common-dir");
+
+    let Some(git_common_dir) = git_common_dir else {
+        return LinkedWorktreeMetadata::default();
+    };
+
+    let is_linked_worktree = absolute_git_dir
+        .as_ref()
+        .is_some_and(|git_dir| git_dir != &git_common_dir);
+    let primary_worktree_path = if is_linked_worktree {
+        git_common_dir.parent().map(Path::to_path_buf)
+    } else {
+        None
+    };
+
+    LinkedWorktreeMetadata {
+        is_linked_worktree,
+        git_common_dir: Some(git_common_dir),
+        primary_worktree_path,
+    }
+}
+
+fn git_rev_parse_path(cwd: &Path, arg: &str) -> Option<PathBuf> {
     let output = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
+        .args(["rev-parse", arg])
         .current_dir(cwd)
         .output()
         .ok()?;
@@ -88,6 +130,6 @@ fn git_top_level(cwd: &Path) -> Option<PathBuf> {
     if trimmed.is_empty() {
         None
     } else {
-        Some(PathBuf::from(trimmed))
+        Some(normalize_root_path(Path::new(trimmed), cwd))
     }
 }

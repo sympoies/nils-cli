@@ -42,6 +42,9 @@ impl FixtureWorkspace {
         ResolvedRoots {
             codex_home: self.codex_home.clone(),
             project_path: self.project_path.clone(),
+            is_linked_worktree: false,
+            git_common_dir: None,
+            primary_worktree_path: None,
         }
     }
 }

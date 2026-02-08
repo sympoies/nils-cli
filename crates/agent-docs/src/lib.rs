@@ -44,6 +44,7 @@ where
 }
 
 fn dispatch(cli: Cli) -> i32 {
+    let fallback_mode = cli.worktree_fallback;
     let overrides = PathOverrides {
         codex_home: cli.codex_home,
         project_path: cli.project_path,
@@ -60,13 +61,15 @@ fn dispatch(cli: Cli) -> i32 {
                 Err(code) => return code,
             };
 
-            let report = match resolver::resolve(args.context, &roots, args.strict) {
-                Ok(report) => report,
-                Err(err) => {
-                    eprintln!("error: {err}");
-                    return config_error_exit_code(&err);
-                }
-            };
+            let report =
+                match resolver::resolve_with_mode(args.context, &roots, args.strict, fallback_mode)
+                {
+                    Ok(report) => report,
+                    Err(err) => {
+                        eprintln!("error: {err}");
+                        return config_error_exit_code(&err);
+                    }
+                };
             let exit_code = if args.strict && report.has_missing_required() {
                 EXIT_STRICT_MISSING_REQUIRED
             } else {
@@ -151,10 +154,11 @@ fn dispatch(cli: Cli) -> i32 {
                 Ok(roots) => roots,
                 Err(code) => return code,
             };
-            let report = match commands::baseline::check_builtin_baseline(
+            let report = match commands::baseline::check_builtin_baseline_with_mode(
                 args.target,
                 &roots,
                 args.strict,
+                fallback_mode,
             ) {
                 Ok(report) => report,
                 Err(err) => {
