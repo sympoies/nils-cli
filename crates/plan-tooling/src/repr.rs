@@ -28,3 +28,27 @@ pub fn py_list_repr(items: &[String]) -> String {
     out.push(']');
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{py_list_repr, py_repr};
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn py_repr_escapes_control_and_quotes() {
+        let raw = "a'b\\c\n\r\t";
+        assert_eq!(py_repr(raw), "'a\\'b\\\\c\\n\\r\\t'");
+    }
+
+    #[test]
+    fn py_repr_escapes_nul_byte() {
+        let raw = format!("a{}b", '\0');
+        assert_eq!(py_repr(&raw), "'a\\x00b'");
+    }
+
+    #[test]
+    fn py_list_repr_wraps_items_like_python_list_literals() {
+        let items = vec!["a".to_string(), "b c".to_string(), "d'e".to_string()];
+        assert_eq!(py_list_repr(&items), "['a', 'b c', 'd\\'e']");
+    }
+}

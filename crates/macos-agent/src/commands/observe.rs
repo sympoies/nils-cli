@@ -133,8 +133,11 @@ fn padded_region(
 mod tests {
     use std::path::PathBuf;
 
-    use super::resolve_output_path;
+    use super::{padded_region, resolve_output_path};
     use crate::cli::ObserveScreenshotArgs;
+    use crate::model::AxFrame;
+    use crate::screen_record_adapter::WindowInfo;
+    use screen_record::types::Rect;
 
     #[test]
     fn preserve_explicit_output_path() {
@@ -153,5 +156,71 @@ mod tests {
             resolve_output_path(&args, 123),
             PathBuf::from("./out/image.png")
         );
+    }
+
+    #[test]
+    fn padded_region_clamps_to_window_bounds() {
+        let frame = AxFrame {
+            x: 100.0,
+            y: 60.0,
+            width: 40.0,
+            height: 20.0,
+        };
+        let window = WindowInfo {
+            id: 1,
+            owner_name: "Terminal".to_string(),
+            title: "Main".to_string(),
+            bounds: Rect {
+                x: 90,
+                y: 50,
+                width: 45,
+                height: 25,
+            },
+            on_screen: true,
+            active: true,
+            owner_pid: 1,
+            z_order: 0,
+        };
+
+        let region = padded_region(&frame, 20, &window).expect("region");
+        assert_eq!(
+            region,
+            AxFrame {
+                x: 90.0,
+                y: 50.0,
+                width: 45.0,
+                height: 25.0,
+            }
+        );
+    }
+
+    #[test]
+    fn padded_region_errors_when_result_collapses() {
+        let frame = AxFrame {
+            x: 10.0,
+            y: 10.0,
+            width: 0.0,
+            height: 0.0,
+        };
+        let window = WindowInfo {
+            id: 2,
+            owner_name: "Terminal".to_string(),
+            title: "Main".to_string(),
+            bounds: Rect {
+                x: 100,
+                y: 100,
+                width: 10,
+                height: 10,
+            },
+            on_screen: true,
+            active: true,
+            owner_pid: 1,
+            z_order: 0,
+        };
+
+        let err = padded_region(&frame, 0, &window).expect_err("expected collapsed region");
+        assert!(err
+            .message()
+            .contains("selector frame collapsed after applying padding/window bounds"));
     }
 }

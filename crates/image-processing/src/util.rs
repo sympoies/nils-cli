@@ -193,3 +193,119 @@ fn shell_escape(arg: &str) -> String {
 
     quote_posix_single_with_style(arg, SingleQuoteEscapeStyle::DoubleQuoteBoundary)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    struct EnvGuard {
+        key: &'static str,
+        old: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let old = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, old }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.old.take() {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    #[test]
+    fn expand_user_supports_tilde_and_home_prefix() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let _guard = EnvGuard::set("HOME", temp.path());
+
+        assert_eq!(expand_user("~"), temp.path().to_path_buf());
+        assert_eq!(expand_user("~/x/y"), temp.path().join("x/y"));
+        assert_eq!(expand_user("relative/path"), PathBuf::from("relative/path"));
+    }
+
+    #[test]
+    fn normalize_and_abs_path_remove_dot_segments() {
+        let normalized = normalize_path(Path::new("/tmp/repo/./a/../b"));
+        assert_eq!(normalized, PathBuf::from("/tmp/repo/b"));
+
+        let abs = abs_path(Path::new("a/../b"), Path::new("/tmp/repo"));
+        assert_eq!(abs, PathBuf::from("/tmp/repo/b"));
+    }
+
+    #[test]
+    fn maybe_relpath_prefers_repo_relative_when_possible() {
+        let repo_root = PathBuf::from("/tmp/repo");
+        assert_eq!(
+            maybe_relpath(Path::new("/tmp/repo/src/main.rs"), &repo_root),
+            "src/main.rs"
+        );
+        assert_eq!(
+            maybe_relpath(Path::new("/opt/elsewhere/main.rs"), &repo_root),
+            "/opt/elsewhere/main.rs"
+        );
+    }
+
+    #[test]
+    fn ensure_parent_dir_and_check_overwrite_behave_as_expected() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let output = temp.path().join("nested/out.txt");
+
+        ensure_parent_dir(&output, true).expect("dry-run create should be noop");
+        assert!(!temp.path().join("nested").exists());
+
+        ensure_parent_dir(&output, false).expect("create parent");
+        assert!(temp.path().join("nested").is_dir());
+
+        std::fs::write(&output, "x").expect("write output");
+        assert!(check_overwrite(&output, false).is_err());
+        assert!(check_overwrite(&output, true).is_ok());
+    }
+
+    #[test]
+    fn safe_write_path_preserves_extension_and_atomic_replace_updates_target() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let final_path = temp.path().join("result.png");
+
+        let dry = safe_write_path(&final_path, true);
+        assert_eq!(dry, final_path);
+
+        let staged = safe_write_path(&final_path, false);
+        assert_ne!(staged, final_path);
+        assert_eq!(staged.extension().and_then(|x| x.to_str()), Some("png"));
+        assert!(staged
+            .file_name()
+            .and_then(|x| x.to_str())
+            .unwrap_or_default()
+            .starts_with(".result.tmp-"));
+
+        std::fs::write(&staged, "hello").expect("write staged");
+        atomic_replace(&staged, &final_path, false).expect("replace");
+        assert_eq!(
+            std::fs::read_to_string(&final_path).expect("read final"),
+            "hello"
+        );
+    }
+
+    #[test]
+    fn command_str_quotes_arguments_for_shell_safety() {
+        let cmd = command_str(&[
+            "convert".to_string(),
+            "a b.png".to_string(),
+            "quote's".to_string(),
+            "".to_string(),
+        ]);
+        assert!(cmd.starts_with("convert "));
+        assert!(cmd.contains("'a b.png'"));
+        assert!(cmd.contains("'quote'\"'\"'s'"));
+        assert!(cmd.ends_with(" ''"));
+    }
+}

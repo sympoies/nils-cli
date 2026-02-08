@@ -390,3 +390,71 @@ fn extract_snapshot_single(commitish: &str, file: &str, out_path: &Path) -> bool
     }
     std::fs::write(out_path, output.stdout).is_ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        parse_file_path_from_line, parse_numstat, parse_snapshot_flag,
+        resolve_to_short_hash_or_query,
+    };
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn parse_snapshot_flag_accepts_snapshot_and_positional_query() {
+        let args = vec![
+            "--snapshot".to_string(),
+            "feat".to_string(),
+            "search".to_string(),
+        ];
+        let (snapshot, rest) = parse_snapshot_flag(&args).expect("parse");
+        assert!(snapshot);
+        assert_eq!(rest, vec!["feat".to_string(), "search".to_string()]);
+    }
+
+    #[test]
+    fn parse_snapshot_flag_rejects_unknown_flags() {
+        let args = vec!["--bad".to_string()];
+        let err = parse_snapshot_flag(&args).expect_err("expected usage error");
+        assert_eq!(err, 2);
+    }
+
+    #[test]
+    fn parse_snapshot_flag_keeps_plain_args_when_no_flags() {
+        let args = vec!["abc".to_string(), "def".to_string()];
+        let (snapshot, rest) = parse_snapshot_flag(&args).expect("parse");
+        assert!(!snapshot);
+        assert_eq!(rest, args);
+    }
+
+    #[test]
+    fn parse_numstat_ignores_malformed_rows() {
+        let map = parse_numstat("10\t2\tsrc/a.rs\nbad\n-\t-\tbinary.bin\n");
+        assert_eq!(map.get("src/a.rs"), Some(&(10, 2)));
+        assert_eq!(map.get("binary.bin"), Some(&(0, 0)));
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn parse_file_path_from_line_extracts_path_and_stat_suffix() {
+        assert_eq!(
+            parse_file_path_from_line("[M] src/main.rs  [+10 / -2]"),
+            "src/main.rs"
+        );
+        assert_eq!(
+            parse_file_path_from_line("plain/path.rs  [+1 / -0]"),
+            "plain/path.rs"
+        );
+        assert_eq!(parse_file_path_from_line(""), "");
+    }
+
+    #[test]
+    fn resolve_to_short_hash_or_query_returns_empty_for_blank() {
+        assert_eq!(resolve_to_short_hash_or_query("   "), "");
+    }
+
+    #[test]
+    fn resolve_to_short_hash_or_query_keeps_unknown_ref() {
+        let query = "not-a-real-ref-123456789";
+        assert_eq!(resolve_to_short_hash_or_query(query), query);
+    }
+}
