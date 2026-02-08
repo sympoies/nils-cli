@@ -186,3 +186,133 @@ fn print_set_result(format: OutputFormat, result: AxAttrSetResult) -> Result<(),
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use nils_test_support::{EnvGuard, GlobalStateLock};
+    use serde_json::json;
+
+    use super::{parse_value, run_get, run_set, value_type_name};
+    use crate::backend::process::RealProcessRunner;
+    use crate::cli::{AxAttrGetArgs, AxAttrSetArgs, AxValueType, OutputFormat};
+    use crate::run::ActionPolicy;
+
+    fn policy(dry_run: bool) -> ActionPolicy {
+        ActionPolicy {
+            dry_run,
+            retries: 0,
+            retry_delay_ms: 150,
+            timeout_ms: 1000,
+        }
+    }
+
+    fn sample_get_args() -> AxAttrGetArgs {
+        AxAttrGetArgs {
+            node_id: Some("1.1".to_string()),
+            role: None,
+            title_contains: None,
+            identifier_contains: None,
+            value_contains: None,
+            subrole: None,
+            focused: None,
+            enabled: None,
+            nth: None,
+            session_id: None,
+            app: None,
+            bundle_id: None,
+            window_title_contains: None,
+            name: "AXRole".to_string(),
+        }
+    }
+
+    fn sample_set_args(value_type: AxValueType, value: &str) -> AxAttrSetArgs {
+        AxAttrSetArgs {
+            node_id: Some("1.1".to_string()),
+            role: None,
+            title_contains: None,
+            identifier_contains: None,
+            value_contains: None,
+            subrole: None,
+            focused: None,
+            enabled: None,
+            nth: None,
+            session_id: None,
+            app: None,
+            bundle_id: None,
+            window_title_contains: None,
+            name: "AXValue".to_string(),
+            value: value.to_string(),
+            value_type,
+        }
+    }
+
+    #[test]
+    fn parse_value_covers_supported_types() {
+        assert_eq!(
+            parse_value(AxValueType::String, "hello").expect("string"),
+            json!("hello")
+        );
+        assert_eq!(
+            parse_value(AxValueType::Number, "42").expect("integer"),
+            json!(42)
+        );
+        assert_eq!(
+            parse_value(AxValueType::Bool, "true").expect("bool"),
+            json!(true)
+        );
+        assert_eq!(
+            parse_value(AxValueType::Json, "{\"k\":1}").expect("json"),
+            json!({"k": 1})
+        );
+        assert_eq!(
+            parse_value(AxValueType::Null, "ignored").expect("null"),
+            serde_json::Value::Null
+        );
+    }
+
+    #[test]
+    fn parse_value_reports_expected_usage_errors() {
+        let bool_err = parse_value(AxValueType::Bool, "maybe").expect_err("invalid bool");
+        assert!(bool_err.to_string().contains("true or false"));
+
+        let number_err = parse_value(AxValueType::Number, "NaN").expect_err("invalid number");
+        assert!(number_err.to_string().contains("finite number"));
+
+        let json_err = parse_value(AxValueType::Json, "{invalid json").expect_err("invalid json");
+        assert!(json_err.to_string().contains("valid json"));
+    }
+
+    #[test]
+    fn value_type_name_matches_cli_values() {
+        assert_eq!(value_type_name(AxValueType::String), "string");
+        assert_eq!(value_type_name(AxValueType::Number), "number");
+        assert_eq!(value_type_name(AxValueType::Bool), "bool");
+        assert_eq!(value_type_name(AxValueType::Json), "json");
+        assert_eq!(value_type_name(AxValueType::Null), "null");
+    }
+
+    #[test]
+    fn run_get_and_set_return_usage_error_for_tsv_format() {
+        let lock = GlobalStateLock::new();
+        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let runner = RealProcessRunner;
+
+        let get_err = run_get(
+            OutputFormat::Tsv,
+            &sample_get_args(),
+            policy(false),
+            &runner,
+        )
+        .expect_err("tsv should be rejected");
+        assert!(get_err.to_string().contains("windows list"));
+
+        let set_err = run_set(
+            OutputFormat::Tsv,
+            &sample_set_args(AxValueType::String, "hello"),
+            policy(true),
+            &runner,
+        )
+        .expect_err("tsv should be rejected");
+        assert!(set_err.to_string().contains("windows list"));
+    }
+}
