@@ -131,6 +131,11 @@ pub fn format_epoch_local_datetime(epoch: i64) -> Option<String> {
     Some(dt.format("%m-%d %H:%M").to_string())
 }
 
+pub fn format_epoch_local_datetime_with_offset(epoch: i64) -> Option<String> {
+    let dt = Local.timestamp_opt(epoch, 0).single()?;
+    Some(dt.format("%m-%d %H:%M %:z").to_string())
+}
+
 pub fn format_epoch_local(epoch: i64, fmt: &str) -> Option<String> {
     let dt = Local.timestamp_opt(epoch, 0).single()?;
     Some(dt.format(fmt).to_string())
