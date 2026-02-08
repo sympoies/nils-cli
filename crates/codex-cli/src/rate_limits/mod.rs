@@ -346,7 +346,7 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
 
     println!(
         "{:<15}  {:>8}  {:>7}  {:>8}  {:>7}  {:<18}",
-        "Name", non_weekly_header, "Left", "Weekly", "Left", "Reset(Local)"
+        "Name", non_weekly_header, "Left", "Weekly", "Left", "Reset"
     );
     println!("----------------------------------------------------------------------------");
 
@@ -863,7 +863,7 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
 
     println!(
         "{:<15}  {:>8}  {:>7}  {:>8}  {:>7}  {:<18}",
-        "Name", non_weekly_header, "Left", "Weekly", "Left", "Reset(Local)"
+        "Name", non_weekly_header, "Left", "Weekly", "Left", "Reset"
     );
     println!("----------------------------------------------------------------------------");
 
