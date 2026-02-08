@@ -3,8 +3,9 @@ use std::time::Instant;
 use crate::backend::applescript;
 use crate::backend::process::ProcessRunner;
 use crate::cli::{InputTypeArgs, OutputFormat};
+use crate::commands::{emit_json_success, reject_tsv_for_list_only};
 use crate::error::CliError;
-use crate::model::{InputTypeResult, SuccessEnvelope};
+use crate::model::InputTypeResult;
 use crate::retry::run_with_retry;
 use crate::run::{
     action_policy_result, build_action_meta_with_attempts, next_action_id, ActionPolicy,
@@ -48,13 +49,7 @@ pub fn run(
 
     match format {
         OutputFormat::Json => {
-            let payload = SuccessEnvelope::new("input.type", result);
-            println!(
-                "{}",
-                serde_json::to_string(&payload).map_err(|err| CliError::runtime(format!(
-                    "failed to serialize json output: {err}"
-                )))?
-            );
+            emit_json_success("input.type", result)?;
         }
         OutputFormat::Text => {
             println!(
@@ -63,9 +58,7 @@ pub fn run(
             );
         }
         OutputFormat::Tsv => {
-            return Err(CliError::usage(
-                "--format tsv is only supported for `windows list` and `apps list`",
-            ));
+            return reject_tsv_for_list_only();
         }
     }
 

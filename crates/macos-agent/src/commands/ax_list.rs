@@ -1,9 +1,10 @@
 use crate::backend::process::ProcessRunner;
 use crate::backend::{AutoAxBackend, AxBackendAdapter};
 use crate::cli::{AxListArgs, OutputFormat};
-use crate::commands::ax_common::build_target;
+use crate::commands::ax_common::build_target_from_args;
+use crate::commands::{emit_json_success, reject_tsv_for_list_only};
 use crate::error::CliError;
-use crate::model::{AxListRequest, SuccessEnvelope};
+use crate::model::AxListRequest;
 use crate::run::ActionPolicy;
 
 pub fn run(
@@ -12,22 +13,17 @@ pub fn run(
     policy: ActionPolicy,
     runner: &dyn ProcessRunner,
 ) -> Result<(), CliError> {
-    let target = build_target(
-        args.session_id.clone(),
-        args.app.clone(),
-        args.bundle_id.clone(),
-        args.window_title_contains.clone(),
-    )?;
+    let target = build_target_from_args(&args.target)?;
 
     let request = AxListRequest {
         target,
-        role: args.role.clone(),
-        title_contains: args.title_contains.clone(),
-        identifier_contains: args.identifier_contains.clone(),
-        value_contains: args.value_contains.clone(),
-        subrole: args.subrole.clone(),
-        focused: args.focused,
-        enabled: args.enabled,
+        role: args.filters.role.clone(),
+        title_contains: args.filters.title_contains.clone(),
+        identifier_contains: args.filters.identifier_contains.clone(),
+        value_contains: args.filters.value_contains.clone(),
+        subrole: args.filters.subrole.clone(),
+        focused: args.filters.focused,
+        enabled: args.filters.enabled,
         max_depth: args.max_depth,
         limit: args.limit.map(|value| value as usize),
     };
@@ -36,13 +32,7 @@ pub fn run(
 
     match format {
         OutputFormat::Json => {
-            let payload = SuccessEnvelope::new("ax.list", result);
-            println!(
-                "{}",
-                serde_json::to_string(&payload).map_err(|err| CliError::runtime(format!(
-                    "failed to serialize json output: {err}"
-                )))?
-            );
+            emit_json_success("ax.list", result)?;
         }
         OutputFormat::Text => {
             if result.nodes.is_empty() {
@@ -60,9 +50,7 @@ pub fn run(
             }
         }
         OutputFormat::Tsv => {
-            return Err(CliError::usage(
-                "--format tsv is only supported for `windows list` and `apps list`",
-            ));
+            return reject_tsv_for_list_only();
         }
     }
 

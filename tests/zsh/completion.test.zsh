@@ -597,6 +597,46 @@ grep -q -- "--dry-run\\[" "$COMP_MACOS_AGENT_FILE" || {
   exit 1
 }
 
+grep -q -- "--window-title-contains=\\[Narrow app selection by window title\\]" "$COMP_MACOS_AGENT_FILE" || {
+  print -u2 -r -- "FAIL: macos-agent completion missing canonical --window-title-contains"
+  exit 1
+}
+
+grep -q -- "--window-name=\\[Deprecated alias of --window-title-contains\\]" "$COMP_MACOS_AGENT_FILE" || {
+  print -u2 -r -- "FAIL: macos-agent completion missing --window-name alias contract"
+  exit 1
+}
+
+grep -q -- "--submit\\[Press Enter after typing\\]" "$COMP_MACOS_AGENT_FILE" || {
+  print -u2 -r -- "FAIL: macos-agent completion missing canonical --submit"
+  exit 1
+}
+
+grep -q -- "--enter\\[Deprecated alias of --submit\\]" "$COMP_MACOS_AGENT_FILE" || {
+  print -u2 -r -- "FAIL: macos-agent completion missing --enter alias contract"
+  exit 1
+}
+
+grep -q -- "--window-title-contains" "$BASH_MACOS_AGENT_FILE" || {
+  print -u2 -r -- "FAIL: bash macos-agent completion missing canonical --window-title-contains"
+  exit 1
+}
+
+grep -q -- "--window-name" "$BASH_MACOS_AGENT_FILE" || {
+  print -u2 -r -- "FAIL: bash macos-agent completion missing --window-name alias"
+  exit 1
+}
+
+grep -q -- "--submit" "$BASH_MACOS_AGENT_FILE" || {
+  print -u2 -r -- "FAIL: bash macos-agent completion missing canonical --submit"
+  exit 1
+}
+
+grep -q -- "--enter" "$BASH_MACOS_AGENT_FILE" || {
+  print -u2 -r -- "FAIL: bash macos-agent completion missing --enter alias"
+  exit 1
+}
+
 bash -c "set -euo pipefail; source \"$BASH_GIT_SCOPE_FILE\"; complete -p git-scope | grep -q _nils_cli_git_scope_complete" || {
   print -u2 -r -- "FAIL: failed to source bash git-scope completion file"
   exit 1

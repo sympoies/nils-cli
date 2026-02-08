@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
 use crate::cli::{OutputFormat, ProfileInitArgs, ProfileValidateArgs};
+use crate::commands::{emit_json_success, reject_tsv_for_list_only};
 use crate::error::CliError;
-use crate::model::{ProfileInitResult, ProfileValidateResult, SuccessEnvelope};
+use crate::model::{ProfileInitResult, ProfileValidateResult};
 use crate::test_mode;
 
 pub fn run_validate(format: OutputFormat, args: &ProfileValidateArgs) -> Result<(), CliError> {
@@ -42,21 +43,13 @@ pub fn run_validate(format: OutputFormat, args: &ProfileValidateArgs) -> Result<
 
     match format {
         OutputFormat::Json => {
-            let payload = SuccessEnvelope::new("profile.validate", result);
-            println!(
-                "{}",
-                serde_json::to_string(&payload).map_err(|err| CliError::runtime(format!(
-                    "failed to serialize json output: {err}"
-                )))?
-            );
+            emit_json_success("profile.validate", result)?;
         }
         OutputFormat::Text => {
             println!("profile.validate\tfile={}\tvalid=true", result.file);
         }
         OutputFormat::Tsv => {
-            return Err(CliError::usage(
-                "--format tsv is only supported for `windows list` and `apps list`",
-            ));
+            return reject_tsv_for_list_only();
         }
     }
 
@@ -118,21 +111,13 @@ pub fn run_init(format: OutputFormat, args: &ProfileInitArgs) -> Result<(), CliE
 
     match format {
         OutputFormat::Json => {
-            let payload = SuccessEnvelope::new("profile.init", result);
-            println!(
-                "{}",
-                serde_json::to_string(&payload).map_err(|err| CliError::runtime(format!(
-                    "failed to serialize json output: {err}"
-                )))?
-            );
+            emit_json_success("profile.init", result)?;
         }
         OutputFormat::Text => {
             println!("{}", output_path.display());
         }
         OutputFormat::Tsv => {
-            return Err(CliError::usage(
-                "--format tsv is only supported for `windows list` and `apps list`",
-            ));
+            return reject_tsv_for_list_only();
         }
     }
 

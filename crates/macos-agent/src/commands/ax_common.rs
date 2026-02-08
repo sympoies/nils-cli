@@ -1,3 +1,4 @@
+use crate::cli::{AxSelectorArgs, AxTargetArgs};
 use crate::error::CliError;
 use crate::model::{AxSelector, AxTarget};
 
@@ -45,6 +46,29 @@ pub fn build_target(
     })
 }
 
+pub fn build_target_from_args(args: &AxTargetArgs) -> Result<AxTarget, CliError> {
+    build_target(
+        args.session_id.clone(),
+        args.app.clone(),
+        args.bundle_id.clone(),
+        args.window_title_contains.clone(),
+    )
+}
+
+pub fn selector_input_from_args(args: &AxSelectorArgs) -> AxSelectorInput {
+    AxSelectorInput {
+        node_id: args.node_id.clone(),
+        role: args.filters.role.clone(),
+        title_contains: args.filters.title_contains.clone(),
+        identifier_contains: args.filters.identifier_contains.clone(),
+        value_contains: args.filters.value_contains.clone(),
+        subrole: args.filters.subrole.clone(),
+        focused: args.filters.focused,
+        enabled: args.filters.enabled,
+        nth: args.nth,
+    }
+}
+
 pub fn build_selector(input: AxSelectorInput) -> Result<AxSelector, CliError> {
     if input.nth == Some(0) {
         return Err(CliError::usage("--nth must be at least 1"));
@@ -87,4 +111,8 @@ pub fn build_selector(input: AxSelectorInput) -> Result<AxSelector, CliError> {
         enabled: input.enabled,
         nth: input.nth.map(|value| value as usize),
     })
+}
+
+pub fn build_selector_from_args(args: &AxSelectorArgs) -> Result<AxSelector, CliError> {
+    build_selector(selector_input_from_args(args))
 }

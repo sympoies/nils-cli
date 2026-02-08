@@ -36,7 +36,7 @@ macos-agent observe screenshot --active-window --path ./tmp/macos-agent.png
 
 # stabilization waits
 macos-agent wait app-active --app Terminal --timeout-ms 1500
-macos-agent wait window-present --app Terminal --window-name Inbox --timeout-ms 1500
+macos-agent wait window-present --app Terminal --window-title-contains Inbox --timeout-ms 1500
 ```
 
 ## Command Surface
@@ -44,14 +44,14 @@ macos-agent wait window-present --app Terminal --window-name Inbox --timeout-ms 
 - `preflight`
   - `macos-agent preflight [--strict] [--include-probes]`
 - `windows`
-  - `macos-agent windows list [--app <name>] [--window-name <name>] [--on-screen-only]`
+  - `macos-agent windows list [--app <name>] [--window-title-contains <name>] [--on-screen-only]`
 - `apps`
   - `macos-agent apps list`
 - `window`
-  - `macos-agent window activate (--window-id <id> | --active-window | --app <name> [--window-name <name>] | --bundle-id <bundle_id>) [--wait-ms <ms>]`
+  - `macos-agent window activate (--window-id <id> | --active-window | --app <name> [--window-title-contains <name>] | --bundle-id <bundle_id>) [--wait-ms <ms>]`
 - `input`
   - `macos-agent input click --x <px> --y <px> [--button <left|right|middle>] [--count <n>] [--pre-wait-ms <ms>] [--post-wait-ms <ms>]`
-  - `macos-agent input type --text <text> [--delay-ms <ms>] [--enter]`
+  - `macos-agent input type --text <text> [--delay-ms <ms>] [--submit]`
   - `macos-agent input hotkey --mods <cmd,ctrl,alt,shift,fn> --key <key>`
 - `input-source`
   - `macos-agent input-source current`
@@ -70,11 +70,11 @@ macos-agent wait window-present --app Terminal --window-name Inbox --timeout-ms 
   - `macos-agent ax watch poll --watch-id <id> [--limit <n>] [--drain|--no-drain]`
   - `macos-agent ax watch stop --watch-id <id>`
 - `observe`
-  - `macos-agent observe screenshot (--window-id <id> | --active-window | --app <name> [--window-name <name>]) [--path <file>] [--image-format <png|jpg|webp>]`
+  - `macos-agent observe screenshot (--window-id <id> | --active-window | --app <name> [--window-title-contains <name>]) [--path <file>] [--image-format <png|jpg|webp>]`
 - `wait`
   - `macos-agent wait sleep --ms <ms>`
   - `macos-agent wait app-active (--app <name> | --bundle-id <bundle_id>) [--timeout-ms <ms>] [--poll-ms <ms>]`
-  - `macos-agent wait window-present (--window-id <id> | --active-window | --app <name> [--window-name <name>]) [--timeout-ms <ms>] [--poll-ms <ms>]`
+  - `macos-agent wait window-present (--window-id <id> | --active-window | --app <name> [--window-title-contains <name>]) [--timeout-ms <ms>] [--poll-ms <ms>]`
 - `scenario`
   - `macos-agent scenario run --file <scenario.json>`
 - `profile`
@@ -94,11 +94,27 @@ macos-agent wait window-present --app Terminal --window-name Inbox --timeout-ms 
 
 Notes:
 - `--format tsv` is only supported by `windows list` and `apps list`.
+- Canonical flags: use `--window-title-contains` and `input type --submit`.
+- Backward-compatible aliases are still accepted: `--window-name`, `input type --enter`.
 - `--dry-run` guarantees no OS automation command execution for mutating actions.
 - `--error-format json` emits machine-parseable error payloads on `stderr`.
 - `--trace` writes per-command trace artifacts to `CODEX_HOME/out/macos-agent-trace/`.
 - `--trace-dir` overrides trace artifact output directory.
 - When trace mode is enabled, `macos-agent` verifies trace directory writability before running actions.
+
+## Migration Guide: Legacy aliases to canonical flags
+
+Use canonical flags in all new scripts, fixtures, and runbooks.
+
+| Legacy alias | Canonical form | Migration action | Compatibility policy |
+| --- | --- | --- | --- |
+| `--window-name <text>` | `--window-title-contains <text>` | Replace in command invocations and saved recipes. | Accepted during the current `0.x` rollout window; removal requires an explicit future breaking-change release note. |
+| `input type --enter` | `input type --submit` | Replace alias flags in test fixtures and automation scripts. | Accepted during the current `0.x` rollout window with equivalent behavior. |
+
+Migration checklist:
+- `rg -n -- "--window-name|input type --enter" crates/macos-agent docs`
+- Convert results to canonical flags and keep command behavior unchanged.
+- If a migrated command fails, choose the command path from `Command Decision Matrix` first, then jump to the mapped row in `Troubleshooting matrix`.
 
 ## Output Contract
 
@@ -168,6 +184,16 @@ Error envelope (`--error-format json`):
 | Screen Recording | Terminal host allowed in **System Settings > Privacy & Security > Screen Recording** | observe screenshot fails | Enable Screen Recording for terminal host |
 | `cliclick` binary | Installed and on `PATH` | preflight reports missing `cliclick` | `brew install cliclick` |
 
+## AX Backend Capability Matrix
+
+| Backend preference | `ax list/click/type` | `ax attr/action/session/watch` | Notes |
+| --- | --- | --- | --- |
+| `auto` (default) | Hammerspoon first, fallback to AppleScript (JXA) when Hammerspoon is unavailable | Hammerspoon-only | Best default for resilience; fallback does not apply to extended AX commands |
+| `hammerspoon` | Supported | Supported | Full AX surface; requires `hs` CLI and `hs.ipc` enabled |
+| `applescript` | Supported (JXA) | Not supported directly | Extended AX commands still depend on Hammerspoon runtime |
+
+Preflight now emits an `ax_backend_capabilities` row so operators can verify backend mode and fallback expectations before failures.
+
 ## Reliability Boundaries and Practices
 
 Desktop UI automation is inherently brittle due to animation timing, focus drift, and app responsiveness.
@@ -185,6 +211,20 @@ Use these defaults for better stability:
 - Prefer `ax click/type` first, then opt in to fallback flags when app AX trees are unstable.
 - AX backend selection defaults to `auto` (Hammerspoon first, JXA fallback).
   - Override with `CODEX_MACOS_AGENT_AX_BACKEND=hammerspoon|applescript|auto`.
+
+## Command Decision Matrix (AX/Input/Wait/Fallback/Backend)
+
+Use this matrix to pick commands consistently. Start from the decision row, then use the mapped troubleshooting row on failure.
+
+| Decision ID | When | Command choice (`ax`/`input`/`wait`) | Fallback policy | Backend policy | Troubleshooting row |
+| --- | --- | --- | --- | --- | --- |
+| `D1` | Target element is discoverable in AX tree | `ax list` -> `ax click` / `ax type`; gate with `wait app-active` and (if needed) `wait window-present` | Keep fallback flags off first | `auto` default is preferred; see `AX Backend Capability Matrix` | `T3`, `T5` |
+| `D2` | AX selector exists but can be unstable across reruns | Same as `D1`, plus `--allow-coordinate-fallback` or `--allow-keyboard-fallback`; keep wait gates explicit | Opt in per command (`ax click/type` only) | Keep `auto` so `ax click/type` can fall back to JXA when Hammerspoon is unavailable | `T4`, `T5` |
+| `D3` | AX path is unavailable for the target app | `window activate` + `input click` / `input type` / `input hotkey`; use `wait app-active/window-present` before mutation | No AX fallback path; use coordinate/keyboard input directly | Backend-independent for pure `input` flow | `T1`, `T2` |
+| `D4` | Need extended AX operations (`attr`, `action`, `session`, `watch`) | Use `ax attr/action/session/watch` commands; add wait gate before mutating action | No fallback support for extended AX commands | Requires Hammerspoon runtime support (see `AX Backend Capability Matrix`) | `T5` |
+| `D5` | Text entry depends on deterministic keyboard layout | `input-source current` -> `input-source switch --id <id>` -> `ax type` or `input type` | Prefer paste/submit flow when IME variance is high | Backend-independent for `input-source`; AX typing still follows `D1`/`D2` backend rules | `T6` |
+
+This AX-first + fallback policy avoids brittle coordinate-only flows while keeping a reliable escape hatch.
 
 ## Deterministic Test Mode
 
@@ -266,14 +306,16 @@ macos-agent profile init --name local-1440p --path "$CODEX_HOME/out/local-profil
 
 ## Troubleshooting matrix
 
-| Symptom | Next command | What to inspect |
-| --- | --- | --- |
-| `not authorized` or Apple Events failures | `macos-agent --format json preflight --include-probes` | `error.hints`, Automation/Accessibility rows |
-| Flaky click/input behavior | `macos-agent --trace --error-format json input click ...` | latest trace JSON (`attempts_used`, timeout/retry policy) |
-| AX selector no match / ambiguous match | `macos-agent --format json ax list --app <name> --role <AXRole> --title-contains <text>` | node candidates (`node_id`, `role`, `title`, `identifier`) and refine selector / `--nth` |
-| AX press/type fails but coordinate/keyboard path should continue | rerun with `ax click --allow-coordinate-fallback` or `ax type --allow-keyboard-fallback` | whether `used_coordinate_fallback` / `used_keyboard_fallback` is true in JSON result |
-| Hammerspoon AX backend unavailable | `hs -t 1 -q -c 'return \"ok\"'` | ensure Hammerspoon is running and `require('hs.ipc')` is enabled, or keep backend `auto` for JXA fallback |
-| Input source mismatch before typing | `macos-agent --format json input-source current` then `... switch --id abc` | current source id and switch result (`switched=true`) |
-| Trace enabled but command does not start | `macos-agent --trace --trace-dir <path> --error-format json preflight` | `trace.write` error and writable-path hint |
-| Real-app scenario failed mid-flow | run target `e2e_real_apps` command with `--nocapture` | `steps.jsonl`, `step-summary.json`, `artifact-index.json` |
-| Profile coordinate drift | `macos-agent profile validate --file <profile.json>` | key-path validation errors and bounds issues |
+Use the `Decision ID` from `Command Decision Matrix` to choose the row quickly.
+
+| ID | Symptom | Next command | What to inspect | Decision row |
+| --- | --- | --- | --- | --- |
+| `T1` | `not authorized` or Apple Events failures | `macos-agent --format json preflight --include-probes` | `error.hints`, Automation/Accessibility rows | `D3` |
+| `T2` | Flaky click/input behavior | `macos-agent --trace --error-format json input click ...` | latest trace JSON (`attempts_used`, timeout/retry policy) | `D3` |
+| `T3` | AX selector no match / ambiguous match | `macos-agent --format json ax list --app <name> --role <AXRole> --title-contains <text>` | node candidates (`node_id`, `role`, `title`, `identifier`) and refine selector / `--nth` | `D1` |
+| `T4` | AX press/type fails but coordinate/keyboard path should continue | rerun with `ax click --allow-coordinate-fallback` or `ax type --allow-keyboard-fallback` | whether `used_coordinate_fallback` / `used_keyboard_fallback` is true in JSON result | `D2` |
+| `T5` | Hammerspoon AX backend unavailable | `hs -t 1 -q -c 'return \"ok\"'` | ensure Hammerspoon is running and `require('hs.ipc')` is enabled, or keep backend `auto` for JXA fallback | `D1`, `D2`, `D4` |
+| `T6` | Input source mismatch before typing | `macos-agent --format json input-source current` then `... switch --id abc` | current source id and switch result (`switched=true`) | `D5` |
+| `T7` | Trace enabled but command does not start | `macos-agent --trace --trace-dir <path> --error-format json preflight` | `trace.write` error and writable-path hint | `D3` |
+| `T8` | Real-app scenario failed mid-flow | run target `e2e_real_apps` command with `--nocapture` | `steps.jsonl`, `step-summary.json`, `artifact-index.json` | `D1`, `D2`, `D3` |
+| `T9` | Profile coordinate drift | `macos-agent profile validate --file <profile.json>` | key-path validation errors and bounds issues | `D3` |

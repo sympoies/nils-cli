@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
+use crate::backend;
 use crate::backend::process::RealProcessRunner;
 use crate::cli::{
     AppsCommand, AxActionCommand, AxAttrCommand, AxCommand, AxSessionCommand, AxWatchCommand, Cli,
@@ -30,6 +31,67 @@ impl ActionPolicy {
             retries: self.retries,
             retry_delay_ms: self.retry_delay_ms,
         }
+    }
+}
+
+pub fn command_label(cli: &Cli) -> &'static str {
+    command_group_label(&cli.command)
+}
+
+pub fn command_group_label(command: &CommandGroup) -> &'static str {
+    match command {
+        CommandGroup::Preflight(_) => "preflight",
+        CommandGroup::Windows { .. } => "windows.list",
+        CommandGroup::Apps { .. } => "apps.list",
+        CommandGroup::Window { command } => match command {
+            WindowCommand::Activate(_) => "window.activate",
+        },
+        CommandGroup::Input { command } => match command {
+            InputCommand::Click(_) => "input.click",
+            InputCommand::Type(_) => "input.type",
+            InputCommand::Hotkey(_) => "input.hotkey",
+        },
+        CommandGroup::InputSource { command } => match command {
+            InputSourceCommand::Current(_) => "input-source.current",
+            InputSourceCommand::Switch(_) => "input-source.switch",
+        },
+        CommandGroup::Ax { command } => match command {
+            AxCommand::List(_) => "ax.list",
+            AxCommand::Click(_) => "ax.click",
+            AxCommand::Type(_) => "ax.type",
+            AxCommand::Attr { command } => match command {
+                AxAttrCommand::Get(_) => "ax.attr.get",
+                AxAttrCommand::Set(_) => "ax.attr.set",
+            },
+            AxCommand::Action { command } => match command {
+                AxActionCommand::Perform(_) => "ax.action.perform",
+            },
+            AxCommand::Session { command } => match command {
+                AxSessionCommand::Start(_) => "ax.session.start",
+                AxSessionCommand::List(_) => "ax.session.list",
+                AxSessionCommand::Stop(_) => "ax.session.stop",
+            },
+            AxCommand::Watch { command } => match command {
+                AxWatchCommand::Start(_) => "ax.watch.start",
+                AxWatchCommand::Poll(_) => "ax.watch.poll",
+                AxWatchCommand::Stop(_) => "ax.watch.stop",
+            },
+        },
+        CommandGroup::Observe { command } => match command {
+            ObserveCommand::Screenshot(_) => "observe.screenshot",
+        },
+        CommandGroup::Wait { command } => match command {
+            WaitCommand::Sleep(_) => "wait.sleep",
+            WaitCommand::AppActive(_) => "wait.app-active",
+            WaitCommand::WindowPresent(_) => "wait.window-present",
+        },
+        CommandGroup::Scenario { command } => match command {
+            ScenarioCommand::Run(_) => "scenario.run",
+        },
+        CommandGroup::Profile { command } => match command {
+            ProfileCommand::Validate(_) => "profile.validate",
+            ProfileCommand::Init(_) => "profile.init",
+        },
     }
 }
 
@@ -175,7 +237,16 @@ fn run_preflight(format: OutputFormat, args: PreflightArgs) -> Result<(), CliErr
     } else {
         Vec::new()
     };
-    let report = preflight::build_report_with_probes(snapshot, args.strict, probes);
+    let mut report = preflight::build_report_with_probes(snapshot, args.strict, probes);
+    let backend_capability = backend::preflight_capability_check();
+    report.checks.push(preflight::CheckReport {
+        id: "ax_backend_capabilities",
+        label: "AX backend capabilities",
+        status: preflight::CheckStatus::Ok,
+        blocking: false,
+        message: backend_capability.message,
+        hint: backend_capability.hint,
+    });
 
     match format {
         OutputFormat::Text => println!("{}", preflight::render_text(&report)),

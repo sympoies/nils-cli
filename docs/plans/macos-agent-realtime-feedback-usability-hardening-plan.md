@@ -339,6 +339,14 @@ This plan hardens `macos-agent` for real-world agent development loops where com
   - `MACOS_AGENT_REAL_E2E=1 MACOS_AGENT_REAL_E2E_MUTATING=1 MACOS_AGENT_REAL_E2E_APPS=arc MACOS_AGENT_REAL_E2E_PROFILE=default-1440p cargo test -p macos-agent --test e2e_real_apps -- matrix_runner_supports_app_subset_selection_real -- --nocapture --test-threads=1`
   - `echo "manual-only real-app validation; do not include in CI default test jobs"`
 
+### Sprint 4 migration and rollout notes (Task 4.2 publish)
+- Publish a README command decision matrix that explicitly maps `ax`/`input`/`wait` choices, fallback usage, and backend expectations.
+- Set canonical invocation baseline for docs/examples: `--window-title-contains` and `input type --submit`.
+- Keep compatibility aliases (`--window-name`, `input type --enter`) accepted during the current `0.x` rollout window; do not change default text output/error contracts in Sprint 4.
+- Link decision matrix rows to troubleshooting and backend capability sections so fallback/backend incidents are diagnosable without changing command contracts.
+- Verification command:
+  - `rg -n "decision matrix|migration|alias|fallback|backend" crates/macos-agent/README.md`
+
 ### Task 4.3: Final compatibility checks and release guardrails
 - **Location**:
   - `crates/macos-agent/README.md`

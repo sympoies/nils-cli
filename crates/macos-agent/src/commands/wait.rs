@@ -1,8 +1,9 @@
 use std::time::Instant;
 
 use crate::cli::{OutputFormat, WaitAppActiveArgs, WaitSleepArgs, WaitWindowPresentArgs};
+use crate::commands::{emit_json_success, reject_tsv_for_list_only};
 use crate::error::CliError;
-use crate::model::{SuccessEnvelope, WaitResult};
+use crate::model::WaitResult;
 use crate::targets::{self, TargetSelector};
 use crate::wait;
 
@@ -66,13 +67,7 @@ fn emit_wait_result(
 ) -> Result<(), CliError> {
     match format {
         OutputFormat::Json => {
-            let payload = SuccessEnvelope::new(command, result);
-            println!(
-                "{}",
-                serde_json::to_string(&payload).map_err(|err| CliError::runtime(format!(
-                    "failed to serialize json output: {err}"
-                )))?
-            );
+            emit_json_success(command, result)?;
         }
         OutputFormat::Text => {
             println!(
@@ -81,9 +76,7 @@ fn emit_wait_result(
             );
         }
         OutputFormat::Tsv => {
-            return Err(CliError::usage(
-                "--format tsv is only supported for `windows list` and `apps list`",
-            ));
+            return reject_tsv_for_list_only();
         }
     }
 

@@ -5,8 +5,9 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::cli::{OutputFormat, ScenarioRunArgs};
+use crate::commands::{emit_json_success, reject_tsv_for_list_only};
 use crate::error::CliError;
-use crate::model::{ScenarioRunResult, ScenarioStepResult, SuccessEnvelope};
+use crate::model::{ScenarioRunResult, ScenarioStepResult};
 
 #[derive(Debug, Deserialize)]
 struct ScenarioFile {
@@ -131,13 +132,7 @@ pub fn run(format: OutputFormat, args: &ScenarioRunArgs) -> Result<(), CliError>
 
     match format {
         OutputFormat::Json => {
-            let payload = SuccessEnvelope::new("scenario.run", result);
-            println!(
-                "{}",
-                serde_json::to_string(&payload).map_err(|err| CliError::runtime(format!(
-                    "failed to serialize json output: {err}"
-                )))?
-            );
+            emit_json_success("scenario.run", result)?;
         }
         OutputFormat::Text => {
             println!(
@@ -146,9 +141,7 @@ pub fn run(format: OutputFormat, args: &ScenarioRunArgs) -> Result<(), CliError>
             );
         }
         OutputFormat::Tsv => {
-            return Err(CliError::usage(
-                "--format tsv is only supported for `windows list` and `apps list`",
-            ));
+            return reject_tsv_for_list_only();
         }
     }
 

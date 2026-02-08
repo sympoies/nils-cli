@@ -3,8 +3,9 @@ use std::time::Instant;
 use crate::backend::applescript::{self, ActivationTarget};
 use crate::backend::process::ProcessRunner;
 use crate::cli::{OutputFormat, WindowActivateArgs};
+use crate::commands::{emit_json_success, reject_tsv_for_list_only};
 use crate::error::CliError;
-use crate::model::{SuccessEnvelope, WindowActivateResult};
+use crate::model::WindowActivateResult;
 use crate::retry::run_with_retry;
 use crate::run::{
     action_policy_result, build_action_meta_with_attempts, next_action_id, ActionPolicy,
@@ -46,13 +47,7 @@ pub fn run(
 
     match format {
         OutputFormat::Json => {
-            let payload = SuccessEnvelope::new("window.activate", result);
-            println!(
-                "{}",
-                serde_json::to_string(&payload).map_err(|err| CliError::runtime(format!(
-                    "failed to serialize json output: {err}"
-                )))?
-            );
+            emit_json_success("window.activate", result)?;
         }
         OutputFormat::Text => {
             println!(
@@ -67,9 +62,7 @@ pub fn run(
             );
         }
         OutputFormat::Tsv => {
-            return Err(CliError::usage(
-                "--format tsv is only supported for `windows list` and `apps list`",
-            ));
+            return reject_tsv_for_list_only();
         }
     }
 
@@ -100,7 +93,7 @@ fn resolve_target(
 
     let window = targets::resolve_window(&selector).map_err(|err| {
         CliError::runtime(format!(
-            "window activate failed for selector `{}`: {}; try --window-id <id> or --app <name> --window-name <title>",
+            "window activate failed for selector `{}`: {}; try --window-id <id> or --app <name> --window-title-contains <title>",
             selector_label(args),
             err
         ))
@@ -122,7 +115,7 @@ fn selector_label(args: &WindowActivateArgs) -> String {
     }
     if let Some(app) = args.app.as_deref() {
         if let Some(window_name) = args.window_name.as_deref() {
-            return format!("--app {app} --window-name {window_name}");
+            return format!("--app {app} --window-title-contains {window_name}");
         }
         return format!("--app {app}");
     }
@@ -207,7 +200,7 @@ mod tests {
         };
         assert_eq!(
             selector_label(&app_window),
-            "--app Terminal --window-name Inbox"
+            "--app Terminal --window-title-contains Inbox"
         );
 
         let bundle = WindowActivateArgs {

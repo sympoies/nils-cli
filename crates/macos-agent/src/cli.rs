@@ -35,6 +35,11 @@ pub enum ImageFormat {
     name = "macos-agent",
     version,
     about = "Automate macOS desktop actions for agent workflows.",
+    after_help = "Decision guide (AX-first):\n\
+1) Prefer `ax` commands for element-targeted interaction.\n\
+2) If AX is flaky, enable fallback flags (`--allow-coordinate-fallback`, `--allow-keyboard-fallback`).\n\
+3) If AX is unavailable, use `window activate` + `input` commands.\n\
+4) Add `wait` commands around mutating steps for stability.",
     disable_help_subcommand = true
 )]
 pub struct Cli {
@@ -75,6 +80,7 @@ pub struct Cli {
 }
 
 #[derive(Debug, Clone, Subcommand)]
+#[allow(clippy::large_enum_variant)]
 pub enum CommandGroup {
     /// Check runtime dependencies and permissions.
     Preflight(PreflightArgs),
@@ -164,7 +170,11 @@ pub struct ListWindowsArgs {
     pub app: Option<String>,
 
     /// Narrow app selection by window title substring.
-    #[arg(long, requires = "app")]
+    #[arg(
+        long = "window-title-contains",
+        visible_alias = "window-name",
+        requires = "app"
+    )]
     pub window_name: Option<String>,
 
     /// Include only on-screen windows.
@@ -210,7 +220,11 @@ pub struct WindowActivateArgs {
     pub app: Option<String>,
 
     /// Narrow app selection by window title substring.
-    #[arg(long, requires = "app")]
+    #[arg(
+        long = "window-title-contains",
+        visible_alias = "window-name",
+        requires = "app"
+    )]
     pub window_name: Option<String>,
 
     /// Select by bundle id.
@@ -328,16 +342,8 @@ pub enum AxWatchCommand {
     Stop(AxWatchStopArgs),
 }
 
-#[derive(Debug, Clone, Args)]
-#[command(
-    group(
-        ArgGroup::new("target")
-            .required(false)
-            .multiple(false)
-            .args(["session_id", "app", "bundle_id"])
-    )
-)]
-pub struct AxListArgs {
+#[derive(Debug, Clone, Args, Default)]
+pub struct AxTargetArgs {
     /// Select target by existing session id.
     #[arg(long)]
     pub session_id: Option<String>,
@@ -353,34 +359,80 @@ pub struct AxListArgs {
     /// Filter roots by window title substring.
     #[arg(long)]
     pub window_title_contains: Option<String>,
+}
 
-    /// Filter by AX role.
+#[derive(Debug, Clone, Args, Default)]
+pub struct AxMatchFiltersArgs {
+    /// Select by AX role.
     #[arg(long)]
     pub role: Option<String>,
 
-    /// Filter by title substring.
+    /// Select by title substring.
     #[arg(long)]
     pub title_contains: Option<String>,
 
-    /// Filter by identifier substring.
+    /// Select by identifier substring.
     #[arg(long)]
     pub identifier_contains: Option<String>,
 
-    /// Filter by value substring.
+    /// Select by value substring.
     #[arg(long)]
     pub value_contains: Option<String>,
 
-    /// Filter by subrole.
+    /// Select by AX subrole.
     #[arg(long)]
     pub subrole: Option<String>,
 
-    /// Filter by focused flag.
+    /// Select by focused state.
     #[arg(long)]
     pub focused: Option<bool>,
 
-    /// Filter by enabled flag.
+    /// Select by enabled state.
     #[arg(long)]
     pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct AxSelectorArgs {
+    /// Select by node id from `ax list`.
+    #[arg(
+        long,
+        conflicts_with_all = [
+            "role",
+            "title_contains",
+            "identifier_contains",
+            "value_contains",
+            "subrole",
+            "focused",
+            "enabled",
+            "nth"
+        ]
+    )]
+    pub node_id: Option<String>,
+
+    #[command(flatten)]
+    pub filters: AxMatchFiltersArgs,
+
+    /// Select the nth match from compound selector results.
+    #[arg(long)]
+    pub nth: Option<u32>,
+}
+
+#[derive(Debug, Clone, Args)]
+#[command(
+    group(
+        ArgGroup::new("target")
+            .required(false)
+            .multiple(false)
+            .args(["session_id", "app", "bundle_id"])
+    )
+)]
+pub struct AxListArgs {
+    #[command(flatten)]
+    pub target: AxTargetArgs,
+
+    #[command(flatten)]
+    pub filters: AxMatchFiltersArgs,
 
     /// Limit traversal depth.
     #[arg(long)]
@@ -416,69 +468,11 @@ pub struct AxListArgs {
     )
 )]
 pub struct AxClickArgs {
-    /// Select by node id from `ax list`.
-    #[arg(
-        long,
-        conflicts_with_all = [
-            "role",
-            "title_contains",
-            "identifier_contains",
-            "value_contains",
-            "subrole",
-            "focused",
-            "enabled",
-            "nth"
-        ]
-    )]
-    pub node_id: Option<String>,
+    #[command(flatten)]
+    pub selector: AxSelectorArgs,
 
-    /// Select by AX role.
-    #[arg(long)]
-    pub role: Option<String>,
-
-    /// Select by title substring.
-    #[arg(long)]
-    pub title_contains: Option<String>,
-
-    /// Select by identifier substring.
-    #[arg(long)]
-    pub identifier_contains: Option<String>,
-
-    /// Select by value substring.
-    #[arg(long)]
-    pub value_contains: Option<String>,
-
-    /// Select by AX subrole.
-    #[arg(long)]
-    pub subrole: Option<String>,
-
-    /// Select by focused state.
-    #[arg(long)]
-    pub focused: Option<bool>,
-
-    /// Select by enabled state.
-    #[arg(long)]
-    pub enabled: Option<bool>,
-
-    /// Select the nth match from compound selector results.
-    #[arg(long)]
-    pub nth: Option<u32>,
-
-    /// Select target by existing session id.
-    #[arg(long)]
-    pub session_id: Option<String>,
-
-    /// Narrow selector to app name.
-    #[arg(long)]
-    pub app: Option<String>,
-
-    /// Narrow selector to bundle id.
-    #[arg(long)]
-    pub bundle_id: Option<String>,
-
-    /// Narrow to windows whose title contains this value.
-    #[arg(long)]
-    pub window_title_contains: Option<String>,
+    #[command(flatten)]
+    pub target: AxTargetArgs,
 
     /// Allow coordinate fallback when AX press is unavailable.
     #[arg(long)]
@@ -510,69 +504,11 @@ pub struct AxClickArgs {
     )
 )]
 pub struct AxTypeArgs {
-    /// Select by node id from `ax list`.
-    #[arg(
-        long,
-        conflicts_with_all = [
-            "role",
-            "title_contains",
-            "identifier_contains",
-            "value_contains",
-            "subrole",
-            "focused",
-            "enabled",
-            "nth"
-        ]
-    )]
-    pub node_id: Option<String>,
+    #[command(flatten)]
+    pub selector: AxSelectorArgs,
 
-    /// Select by AX role.
-    #[arg(long)]
-    pub role: Option<String>,
-
-    /// Select by title substring.
-    #[arg(long)]
-    pub title_contains: Option<String>,
-
-    /// Select by identifier substring.
-    #[arg(long)]
-    pub identifier_contains: Option<String>,
-
-    /// Select by value substring.
-    #[arg(long)]
-    pub value_contains: Option<String>,
-
-    /// Select by AX subrole.
-    #[arg(long)]
-    pub subrole: Option<String>,
-
-    /// Select by focused state.
-    #[arg(long)]
-    pub focused: Option<bool>,
-
-    /// Select by enabled state.
-    #[arg(long)]
-    pub enabled: Option<bool>,
-
-    /// Select the nth match from compound selector results.
-    #[arg(long)]
-    pub nth: Option<u32>,
-
-    /// Select target by existing session id.
-    #[arg(long)]
-    pub session_id: Option<String>,
-
-    /// Narrow selector to app name.
-    #[arg(long)]
-    pub app: Option<String>,
-
-    /// Narrow selector to bundle id.
-    #[arg(long)]
-    pub bundle_id: Option<String>,
-
-    /// Narrow to windows whose title contains this value.
-    #[arg(long)]
-    pub window_title_contains: Option<String>,
+    #[command(flatten)]
+    pub target: AxTargetArgs,
 
     /// Text to type.
     #[arg(long, value_parser = clap::builder::NonEmptyStringValueParser::new())]
@@ -620,69 +556,11 @@ pub struct AxTypeArgs {
     )
 )]
 pub struct AxAttrGetArgs {
-    /// Select by node id from `ax list`.
-    #[arg(
-        long,
-        conflicts_with_all = [
-            "role",
-            "title_contains",
-            "identifier_contains",
-            "value_contains",
-            "subrole",
-            "focused",
-            "enabled",
-            "nth"
-        ]
-    )]
-    pub node_id: Option<String>,
+    #[command(flatten)]
+    pub selector: AxSelectorArgs,
 
-    /// Select by AX role.
-    #[arg(long)]
-    pub role: Option<String>,
-
-    /// Select by title substring.
-    #[arg(long)]
-    pub title_contains: Option<String>,
-
-    /// Select by identifier substring.
-    #[arg(long)]
-    pub identifier_contains: Option<String>,
-
-    /// Select by value substring.
-    #[arg(long)]
-    pub value_contains: Option<String>,
-
-    /// Select by AX subrole.
-    #[arg(long)]
-    pub subrole: Option<String>,
-
-    /// Select by focused state.
-    #[arg(long)]
-    pub focused: Option<bool>,
-
-    /// Select by enabled state.
-    #[arg(long)]
-    pub enabled: Option<bool>,
-
-    /// Select the nth match from compound selector results.
-    #[arg(long)]
-    pub nth: Option<u32>,
-
-    /// Select target by existing session id.
-    #[arg(long)]
-    pub session_id: Option<String>,
-
-    /// Narrow selector to app name.
-    #[arg(long)]
-    pub app: Option<String>,
-
-    /// Narrow selector to bundle id.
-    #[arg(long)]
-    pub bundle_id: Option<String>,
-
-    /// Narrow to windows whose title contains this value.
-    #[arg(long)]
-    pub window_title_contains: Option<String>,
+    #[command(flatten)]
+    pub target: AxTargetArgs,
 
     /// AX attribute name.
     #[arg(long)]
@@ -723,69 +601,11 @@ pub enum AxValueType {
     )
 )]
 pub struct AxAttrSetArgs {
-    /// Select by node id from `ax list`.
-    #[arg(
-        long,
-        conflicts_with_all = [
-            "role",
-            "title_contains",
-            "identifier_contains",
-            "value_contains",
-            "subrole",
-            "focused",
-            "enabled",
-            "nth"
-        ]
-    )]
-    pub node_id: Option<String>,
+    #[command(flatten)]
+    pub selector: AxSelectorArgs,
 
-    /// Select by AX role.
-    #[arg(long)]
-    pub role: Option<String>,
-
-    /// Select by title substring.
-    #[arg(long)]
-    pub title_contains: Option<String>,
-
-    /// Select by identifier substring.
-    #[arg(long)]
-    pub identifier_contains: Option<String>,
-
-    /// Select by value substring.
-    #[arg(long)]
-    pub value_contains: Option<String>,
-
-    /// Select by AX subrole.
-    #[arg(long)]
-    pub subrole: Option<String>,
-
-    /// Select by focused state.
-    #[arg(long)]
-    pub focused: Option<bool>,
-
-    /// Select by enabled state.
-    #[arg(long)]
-    pub enabled: Option<bool>,
-
-    /// Select the nth match from compound selector results.
-    #[arg(long)]
-    pub nth: Option<u32>,
-
-    /// Select target by existing session id.
-    #[arg(long)]
-    pub session_id: Option<String>,
-
-    /// Narrow selector to app name.
-    #[arg(long)]
-    pub app: Option<String>,
-
-    /// Narrow selector to bundle id.
-    #[arg(long)]
-    pub bundle_id: Option<String>,
-
-    /// Narrow to windows whose title contains this value.
-    #[arg(long)]
-    pub window_title_contains: Option<String>,
+    #[command(flatten)]
+    pub target: AxTargetArgs,
 
     /// AX attribute name.
     #[arg(long)]
@@ -825,69 +645,11 @@ pub struct AxAttrSetArgs {
     )
 )]
 pub struct AxActionPerformArgs {
-    /// Select by node id from `ax list`.
-    #[arg(
-        long,
-        conflicts_with_all = [
-            "role",
-            "title_contains",
-            "identifier_contains",
-            "value_contains",
-            "subrole",
-            "focused",
-            "enabled",
-            "nth"
-        ]
-    )]
-    pub node_id: Option<String>,
+    #[command(flatten)]
+    pub selector: AxSelectorArgs,
 
-    /// Select by AX role.
-    #[arg(long)]
-    pub role: Option<String>,
-
-    /// Select by title substring.
-    #[arg(long)]
-    pub title_contains: Option<String>,
-
-    /// Select by identifier substring.
-    #[arg(long)]
-    pub identifier_contains: Option<String>,
-
-    /// Select by value substring.
-    #[arg(long)]
-    pub value_contains: Option<String>,
-
-    /// Select by AX subrole.
-    #[arg(long)]
-    pub subrole: Option<String>,
-
-    /// Select by focused state.
-    #[arg(long)]
-    pub focused: Option<bool>,
-
-    /// Select by enabled state.
-    #[arg(long)]
-    pub enabled: Option<bool>,
-
-    /// Select the nth match from compound selector results.
-    #[arg(long)]
-    pub nth: Option<u32>,
-
-    /// Select target by existing session id.
-    #[arg(long)]
-    pub session_id: Option<String>,
-
-    /// Narrow selector to app name.
-    #[arg(long)]
-    pub app: Option<String>,
-
-    /// Narrow selector to bundle id.
-    #[arg(long)]
-    pub bundle_id: Option<String>,
-
-    /// Narrow to windows whose title contains this value.
-    #[arg(long)]
-    pub window_title_contains: Option<String>,
+    #[command(flatten)]
+    pub target: AxTargetArgs,
 
     /// AX action name.
     #[arg(long)]
@@ -1014,7 +776,7 @@ pub struct InputTypeArgs {
     pub delay_ms: Option<u64>,
 
     /// Press Enter after typing.
-    #[arg(long)]
+    #[arg(long = "submit", visible_alias = "enter")]
     pub enter: bool,
 }
 
@@ -1058,7 +820,11 @@ pub struct ObserveScreenshotArgs {
     pub app: Option<String>,
 
     /// Narrow app selection by window title substring.
-    #[arg(long, requires = "app")]
+    #[arg(
+        long = "window-title-contains",
+        visible_alias = "window-name",
+        requires = "app"
+    )]
     pub window_name: Option<String>,
 
     /// Output path.
@@ -1178,7 +944,11 @@ pub struct WaitWindowPresentArgs {
     pub app: Option<String>,
 
     /// Narrow app selection by window title substring.
-    #[arg(long, requires = "app")]
+    #[arg(
+        long = "window-title-contains",
+        visible_alias = "window-name",
+        requires = "app"
+    )]
     pub window_name: Option<String>,
 
     /// Timeout in milliseconds.
@@ -1239,7 +1009,7 @@ mod tests {
             "window-present",
             "--app",
             "Terminal",
-            "--window-name",
+            "--window-title-contains",
             "Inbox",
             "--timeout-ms",
             "2000",
@@ -1281,20 +1051,43 @@ mod tests {
     }
 
     #[test]
-    fn rejects_window_name_without_app() {
+    fn rejects_window_title_contains_without_app() {
         let err = Cli::try_parse_from([
             "macos-agent",
             "wait",
             "window-present",
-            "--window-name",
+            "--window-title-contains",
             "Inbox",
         ])
-        .expect_err("window-name requires app");
+        .expect_err("window-title-contains requires app");
         let rendered = err.to_string();
         assert!(
             rendered.contains("requires")
                 || rendered.contains("required arguments were not provided")
         );
+    }
+
+    #[test]
+    fn supports_window_name_alias_for_backward_compatibility() {
+        let cli = Cli::try_parse_from([
+            "macos-agent",
+            "wait",
+            "window-present",
+            "--app",
+            "Terminal",
+            "--window-name",
+            "Inbox",
+        ])
+        .expect("legacy --window-name alias should parse");
+
+        match cli.command {
+            CommandGroup::Wait {
+                command: WaitCommand::WindowPresent(args),
+            } => {
+                assert_eq!(args.window_name.as_deref(), Some("Inbox"));
+            }
+            other => panic!("unexpected command variant: {other:?}"),
+        }
     }
 
     #[test]
@@ -1308,6 +1101,35 @@ mod tests {
             } => {
                 assert_eq!(args.id, "abc".to_string());
             }
+            other => panic!("unexpected command variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_input_type_submit_and_enter_alias() {
+        let canonical = Cli::try_parse_from([
+            "macos-agent",
+            "input",
+            "type",
+            "--text",
+            "hello",
+            "--submit",
+        ])
+        .expect("input type --submit should parse");
+        match canonical.command {
+            CommandGroup::Input {
+                command: super::InputCommand::Type(args),
+            } => assert!(args.enter),
+            other => panic!("unexpected command variant: {other:?}"),
+        }
+
+        let alias =
+            Cli::try_parse_from(["macos-agent", "input", "type", "--text", "hello", "--enter"])
+                .expect("input type --enter alias should parse");
+        match alias.command {
+            CommandGroup::Input {
+                command: super::InputCommand::Type(args),
+            } => assert!(args.enter),
             other => panic!("unexpected command variant: {other:?}"),
         }
     }
@@ -1335,9 +1157,9 @@ mod tests {
             CommandGroup::Ax {
                 command: AxCommand::List(args),
             } => {
-                assert_eq!(args.app.as_deref(), Some("Arc"));
-                assert_eq!(args.role.as_deref(), Some("AXButton"));
-                assert_eq!(args.title_contains.as_deref(), Some("New tab"));
+                assert_eq!(args.target.app.as_deref(), Some("Arc"));
+                assert_eq!(args.filters.role.as_deref(), Some("AXButton"));
+                assert_eq!(args.filters.title_contains.as_deref(), Some("New tab"));
                 assert_eq!(args.max_depth, Some(4));
                 assert_eq!(args.limit, Some(20));
             }
@@ -1362,7 +1184,7 @@ mod tests {
             CommandGroup::Ax {
                 command: AxCommand::Click(args),
             } => {
-                assert_eq!(args.node_id.as_deref(), Some("node-17"));
+                assert_eq!(args.selector.node_id.as_deref(), Some("node-17"));
                 assert!(args.allow_coordinate_fallback);
             }
             other => panic!("unexpected command variant: {other:?}"),
@@ -1394,9 +1216,12 @@ mod tests {
             CommandGroup::Ax {
                 command: AxCommand::Type(args),
             } => {
-                assert_eq!(args.role.as_deref(), Some("AXTextField"));
-                assert_eq!(args.title_contains.as_deref(), Some("Search"));
-                assert_eq!(args.nth, Some(2));
+                assert_eq!(args.selector.filters.role.as_deref(), Some("AXTextField"));
+                assert_eq!(
+                    args.selector.filters.title_contains.as_deref(),
+                    Some("Search")
+                );
+                assert_eq!(args.selector.nth, Some(2));
                 assert_eq!(args.text, "hello");
                 assert!(args.clear_first);
                 assert!(args.submit);
@@ -1444,8 +1269,8 @@ mod tests {
             CommandGroup::Ax {
                 command: AxCommand::Type(args),
             } => {
-                assert_eq!(args.role.as_deref(), Some("AXTextField"));
-                assert!(args.title_contains.is_none());
+                assert_eq!(args.selector.filters.role.as_deref(), Some("AXTextField"));
+                assert!(args.selector.filters.title_contains.is_none());
             }
             other => panic!("unexpected command variant: {other:?}"),
         }
@@ -1496,7 +1321,7 @@ mod tests {
                         command: AxAttrCommand::Get(args),
                     },
             } => {
-                assert_eq!(args.node_id.as_deref(), Some("1.2"));
+                assert_eq!(args.selector.node_id.as_deref(), Some("1.2"));
                 assert_eq!(args.name, "AXRole");
             }
             other => panic!("unexpected command variant: {other:?}"),
@@ -1526,8 +1351,11 @@ mod tests {
                         command: AxAttrCommand::Set(args),
                     },
             } => {
-                assert_eq!(args.role.as_deref(), Some("AXTextField"));
-                assert_eq!(args.title_contains.as_deref(), Some("Search"));
+                assert_eq!(args.selector.filters.role.as_deref(), Some("AXTextField"));
+                assert_eq!(
+                    args.selector.filters.title_contains.as_deref(),
+                    Some("Search")
+                );
                 assert_eq!(args.name, "AXValue");
                 assert_eq!(args.value, "hello");
             }
@@ -1555,7 +1383,7 @@ mod tests {
                         command: AxActionCommand::Perform(args),
                     },
             } => {
-                assert_eq!(args.node_id.as_deref(), Some("1.1"));
+                assert_eq!(args.selector.node_id.as_deref(), Some("1.1"));
                 assert_eq!(args.name, "AXPress");
             }
             other => panic!("unexpected command variant: {other:?}"),
