@@ -8,24 +8,38 @@ Rust CLI workspace scaffold for building multiple independently packaged binarie
 
 Each crate is either a standalone CLI binary or a shared library used across the workspace.
 
+### Shared foundations
+
 - [crates/nils-common](crates/nils-common): Shared cross-CLI utilities (small helpers that don’t belong to a specific binary).
 - [crates/nils-term](crates/nils-term): Terminal UX helpers (TTY detection + progress rendering on stderr).
 - [crates/nils-test-support](crates/nils-test-support): Test-only helpers for deterministic workspace integration tests.
 - [crates/cli-template](crates/cli-template): Minimal example CLI for validating packaging and new-crate patterns.
+
+### API testing stack
+
 - [crates/api-testing-core](crates/api-testing-core): Shared library for the API testing CLIs (config/auth, history, reporting).
 - [crates/api-rest](crates/api-rest): REST request runner from JSON request specs, with history + Markdown reports.
 - [crates/api-gql](crates/api-gql): GraphQL operation runner for `.graphql` files (variables, history, reports, schema).
 - [crates/api-test](crates/api-test): Suite runner that orchestrates REST/GraphQL cases and outputs JSON (and optional JUnit).
+
+### Git tooling
+
 - [crates/git-scope](crates/git-scope): Git change inspector (tracked/staged/unstaged/untracked/commit) with tree + optional file printing.
 - [crates/git-cli](crates/git-cli): Git tools dispatcher (utils/reset/commit/branch/ci).
 - [crates/git-summary](crates/git-summary): Per-author contribution summaries over a date range (adds/dels/net/commits).
 - [crates/git-lock](crates/git-lock): Label-based commit locks per repo (lock/list/diff/unlock/tag).
-- [crates/fzf-cli](crates/fzf-cli): Interactive `fzf` toolbox for files, Git, processes, ports, and shell history.
-- [crates/codex-cli](crates/codex-cli): Helper CLI for Codex workflows (auth, diagnostics, agent wrappers, starship snippets).
+
+### Agent and workflow tooling
+
 - [crates/agent-docs](crates/agent-docs): Deterministic policy-document resolver for Codex/agent workflows (`resolve`, `contexts`, `add`, `baseline`).
-- [crates/macos-agent](crates/macos-agent): macOS desktop automation primitives for app/window discovery, input actions, screenshot, and wait helpers.
+- [crates/codex-cli](crates/codex-cli): Helper CLI for Codex workflows (auth, diagnostics, agent wrappers, starship snippets).
 - [crates/semantic-commit](crates/semantic-commit): Helper CLI for generating staged context and creating semantic commits.
 - [crates/plan-tooling](crates/plan-tooling): Plan Format v1 tooling CLI (to-json/validate/batches/scaffold).
+
+### Automation and utility CLIs
+
+- [crates/macos-agent](crates/macos-agent): macOS desktop automation primitives for app/window discovery, input actions, screenshot, and wait helpers.
+- [crates/fzf-cli](crates/fzf-cli): Interactive `fzf` toolbox for files, Git, processes, ports, and shell history.
 - [crates/image-processing](crates/image-processing): Batch image transformation CLI (resize/crop/optimize) with JSON/report outputs.
 - [crates/screen-record](crates/screen-record): macOS ScreenCaptureKit + Linux (X11) recorder for a single window or display with optional audio.
 
