@@ -259,3 +259,110 @@ fn resolve_base_local(base_ref: &str) -> Option<String> {
 
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{dispatch, parse_args, parse_lines, resolve_base_local};
+    use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir};
+    use pretty_assertions::assert_eq;
+    use std::process::Command;
+
+    #[test]
+    fn dispatch_unknown_returns_none() {
+        assert_eq!(dispatch("unknown", &[]), None);
+    }
+
+    #[test]
+    fn cleanup_help_exits_success_without_git_runtime() {
+        let args = vec!["--help".to_string()];
+        assert_eq!(dispatch("cleanup", &args), Some(0));
+        assert_eq!(dispatch("delete-merged", &args), Some(0));
+    }
+
+    #[test]
+    fn parse_args_supports_base_and_squash_flags() {
+        let args = vec![
+            "--base".to_string(),
+            "origin/main".to_string(),
+            "--squash".to_string(),
+            "--unknown".to_string(),
+        ];
+        let parsed = parse_args(&args).expect("parsed");
+        assert_eq!(parsed.base_ref, "origin/main");
+        assert!(parsed.squash_mode);
+        assert!(!parsed.help);
+    }
+
+    #[test]
+    fn parse_args_requires_value_for_base_flag() {
+        let args = vec!["--base".to_string()];
+        let err_code = match parse_args(&args) {
+            Ok(_) => panic!("expected usage error"),
+            Err(code) => code,
+        };
+        assert_eq!(err_code, 2);
+    }
+
+    #[test]
+    fn parse_lines_skips_blank_entries() {
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg("printf 'main\\n\\nfeature/a\\n'")
+            .output()
+            .expect("output");
+        let lines = parse_lines(&output);
+        assert_eq!(lines, vec!["main".to_string(), "feature/a".to_string()]);
+    }
+
+    #[test]
+    fn resolve_base_local_prefers_remote_then_local_then_none() {
+        let lock = GlobalStateLock::new();
+
+        let remote_stubs = StubBinDir::new();
+        remote_stubs.write_exe(
+            "git",
+            r#"#!/bin/bash
+set -euo pipefail
+if [[ "${1:-}" == "show-ref" && "${2:-}" == "--verify" && "${3:-}" == "--quiet" ]]; then
+  if [[ "${4:-}" == "refs/remotes/origin/main" ]]; then
+    exit 0
+  fi
+  exit 1
+fi
+exit 1
+"#,
+        );
+        let remote_guard = EnvGuard::set(&lock, "PATH", &remote_stubs.path_str());
+        assert_eq!(resolve_base_local("origin/main"), Some("main".to_string()));
+        drop(remote_guard);
+
+        let local_stubs = StubBinDir::new();
+        local_stubs.write_exe(
+            "git",
+            r#"#!/bin/bash
+set -euo pipefail
+if [[ "${1:-}" == "show-ref" && "${2:-}" == "--verify" && "${3:-}" == "--quiet" ]]; then
+  if [[ "${4:-}" == "refs/heads/main" ]]; then
+    exit 0
+  fi
+  exit 1
+fi
+exit 1
+"#,
+        );
+        let local_guard = EnvGuard::set(&lock, "PATH", &local_stubs.path_str());
+        assert_eq!(resolve_base_local("main"), Some("main".to_string()));
+        drop(local_guard);
+
+        let none_stubs = StubBinDir::new();
+        none_stubs.write_exe(
+            "git",
+            r#"#!/bin/bash
+set -euo pipefail
+exit 1
+"#,
+        );
+        let _none_guard = EnvGuard::set(&lock, "PATH", &none_stubs.path_str());
+        assert_eq!(resolve_base_local("feature/topic"), None);
+    }
+}

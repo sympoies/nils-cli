@@ -354,3 +354,134 @@ fn usage_error(msg: &str) -> ! {
     eprintln!("image-processing: error: {msg}");
     process::exit(2);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{validate, Cli, Operation};
+
+    fn base_cli(op: Operation) -> Cli {
+        Cli {
+            subcommand: op,
+            inputs: vec!["in.png".to_string()],
+            recursive: false,
+            glob: Vec::new(),
+            out: Some("out.png".to_string()),
+            out_dir: None,
+            in_place: false,
+            yes: false,
+            overwrite: false,
+            dry_run: true,
+            json: false,
+            report: false,
+            auto_orient: true,
+            strip_metadata: false,
+            background: None,
+            to: None,
+            quality: None,
+            scale: None,
+            width: None,
+            height: None,
+            aspect: None,
+            fit: None,
+            no_pre_upscale: false,
+            degrees: None,
+            rect: None,
+            size: None,
+            gravity: "center".to_string(),
+            lossless: false,
+            progressive: true,
+        }
+    }
+
+    #[test]
+    fn validate_convert_requires_supported_to_values() {
+        let mut cli = base_cli(Operation::Convert);
+        let err = validate(&cli).expect_err("missing --to should fail");
+        assert!(err.to_string().contains("convert requires --to"));
+
+        cli.to = Some("gif".to_string());
+        let err = validate(&cli).expect_err("unsupported --to should fail");
+        assert!(err.to_string().contains("must be one of: png|jpg|webp"));
+
+        cli.to = Some("webp".to_string());
+        assert!(validate(&cli).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_convert_only_flags_on_other_subcommands() {
+        let mut cli = base_cli(Operation::Rotate);
+        cli.to = Some("png".to_string());
+        let err = validate(&cli).expect_err("rotate should reject --to");
+        assert!(err.to_string().contains("rotate does not support --to"));
+
+        let mut cli = base_cli(Operation::Flip);
+        cli.quality = Some(90);
+        let err = validate(&cli).expect_err("flip should reject --quality");
+        assert!(err.to_string().contains("flip does not support --quality"));
+    }
+
+    #[test]
+    fn validate_resize_requires_fit_for_box_and_aspect() {
+        let mut cli = base_cli(Operation::Resize);
+        cli.to = None;
+        cli.width = Some(100);
+        cli.height = Some(50);
+        let err = validate(&cli).expect_err("missing fit for width+height should fail");
+        assert!(err.to_string().contains("requires --fit"));
+
+        cli.fit = Some("contain".to_string());
+        assert!(validate(&cli).is_ok());
+
+        cli.aspect = Some("16:9".to_string());
+        cli.fit = None;
+        let err = validate(&cli).expect_err("aspect without fit should fail");
+        assert!(err.to_string().contains("with --aspect requires --fit"));
+    }
+
+    #[test]
+    fn validate_rotate_and_pad_require_specific_arguments() {
+        let mut rotate = base_cli(Operation::Rotate);
+        rotate.to = None;
+        let err = validate(&rotate).expect_err("rotate requires degrees");
+        assert!(err.to_string().contains("rotate requires --degrees"));
+        rotate.degrees = Some(90);
+        assert!(validate(&rotate).is_ok());
+
+        let mut pad = base_cli(Operation::Pad);
+        pad.to = None;
+        let err = validate(&pad).expect_err("pad requires dimensions");
+        assert!(err
+            .to_string()
+            .contains("pad requires --width and --height"));
+        pad.width = Some(640);
+        pad.height = Some(480);
+        assert!(validate(&pad).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_crop_and_optimize_flag_misuse() {
+        let mut crop = base_cli(Operation::Crop);
+        crop.to = None;
+        crop.rect = Some("1x1+0+0".to_string());
+        crop.gravity = "south".to_string();
+        assert!(validate(&crop).is_ok());
+
+        let mut flip = base_cli(Operation::Flip);
+        flip.rect = Some("1x1+0+0".to_string());
+        let err = validate(&flip).expect_err("flip should reject crop-only flag");
+        assert!(err.to_string().contains("flip does not support --rect"));
+
+        let mut optimize = base_cli(Operation::Optimize);
+        optimize.to = None;
+        optimize.progressive = false;
+        assert!(validate(&optimize).is_ok());
+
+        let mut non_opt = base_cli(Operation::Resize);
+        non_opt.to = None;
+        non_opt.progressive = false;
+        let err = validate(&non_opt).expect_err("non-optimize should reject --no-progressive");
+        assert!(err
+            .to_string()
+            .contains("resize does not support --no-progressive"));
+    }
+}

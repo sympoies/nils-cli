@@ -175,3 +175,66 @@ fn print_top_level_usage(out: &mut dyn Write) {
     writeln!(out, "  git-cli utils zip").ok();
     writeln!(out, "  git-cli reset hard 3").ok();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{dispatch, is_help_token, print_group_usage, print_top_level_usage, Group};
+    use std::ffi::OsString;
+
+    fn to_args(args: &[&str]) -> Vec<OsString> {
+        args.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn group_parse_recognizes_known_groups() {
+        assert!(matches!(Group::parse("utils"), Some(Group::Utils)));
+        assert!(matches!(Group::parse("reset"), Some(Group::Reset)));
+        assert!(matches!(Group::parse("commit"), Some(Group::Commit)));
+        assert!(matches!(Group::parse("branch"), Some(Group::Branch)));
+        assert!(matches!(Group::parse("ci"), Some(Group::Ci)));
+        assert!(Group::parse("unknown").is_none());
+    }
+
+    #[test]
+    fn help_token_detection_matches_cli_aliases() {
+        assert!(is_help_token("-h"));
+        assert!(is_help_token("--help"));
+        assert!(is_help_token("help"));
+        assert!(!is_help_token("HELP"));
+    }
+
+    #[test]
+    fn dispatch_returns_two_for_unknown_group_or_command() {
+        assert_eq!(dispatch(to_args(&["unknown", "cmd"])), 2);
+        assert_eq!(dispatch(to_args(&["reset", "unknown"])), 2);
+        assert_eq!(dispatch(to_args(&["branch", "unknown"])), 2);
+        assert_eq!(dispatch(to_args(&["ci", "unknown"])), 2);
+    }
+
+    #[test]
+    fn commit_group_unknown_command_is_rejected_before_runtime() {
+        assert_eq!(dispatch(to_args(&["commit", "unknown"])), 2);
+    }
+
+    #[test]
+    fn print_group_usage_supports_each_group_and_unknown() {
+        assert_eq!(print_group_usage("utils"), 0);
+        assert_eq!(print_group_usage("reset"), 0);
+        assert_eq!(print_group_usage("commit"), 0);
+        assert_eq!(print_group_usage("branch"), 0);
+        assert_eq!(print_group_usage("ci"), 0);
+        assert_eq!(print_group_usage("unknown"), 2);
+    }
+
+    #[test]
+    fn print_top_level_usage_includes_required_sections() {
+        let mut out = Vec::<u8>::new();
+        print_top_level_usage(&mut out);
+        let text = String::from_utf8(out).expect("utf8");
+
+        assert!(text.contains("Usage:"));
+        assert!(text.contains("Groups:"));
+        assert!(text.contains("Examples:"));
+        assert!(text.contains("git-cli reset hard 3"));
+    }
+}
