@@ -49,20 +49,29 @@ impl<'a> ClipboardPolicy<'a> {
 pub enum ClipboardOutcome {
     Copied(ClipboardTool),
     SkippedNoTool,
+    SkippedFailure,
 }
 
 pub fn copy_best_effort(text: &str, policy: &ClipboardPolicy<'_>) -> ClipboardOutcome {
+    let mut saw_tool = false;
+
     for tool in policy.tool_order {
         let program = tool.program();
         if !process::cmd_exists(program) {
             continue;
         }
 
-        let _ = pipe_to_command(program, tool.args(), text);
-        return ClipboardOutcome::Copied(*tool);
+        saw_tool = true;
+        if pipe_to_command(program, tool.args(), text).is_ok() {
+            return ClipboardOutcome::Copied(*tool);
+        }
     }
 
-    ClipboardOutcome::SkippedNoTool
+    if saw_tool {
+        ClipboardOutcome::SkippedFailure
+    } else {
+        ClipboardOutcome::SkippedNoTool
+    }
 }
 
 fn pipe_to_command(cmd: &str, args: &[&str], text: &str) -> io::Result<()> {
@@ -74,11 +83,17 @@ fn pipe_to_command(cmd: &str, args: &[&str], text: &str) -> io::Result<()> {
         .spawn()?;
 
     if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(text.as_bytes());
+        stdin.write_all(text.as_bytes())?;
     }
 
-    let _ = child.wait();
-    Ok(())
+    let status = child.wait()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "{cmd} exited with status {status}"
+        )))
+    }
 }
 
 #[cfg(test)]
@@ -169,6 +184,63 @@ printf "%s" "{name}" > "$chosen"
         let tool_order: [ClipboardTool; 0] = [];
         let outcome = copy_best_effort("hello", &ClipboardPolicy::new(&tool_order));
         assert_eq!(outcome, ClipboardOutcome::SkippedNoTool);
+    }
+
+    #[test]
+    fn copy_best_effort_falls_back_when_first_tool_fails() {
+        let lock = GlobalStateLock::new();
+        let stubs = StubBinDir::new();
+        stubs.write_exe(
+            "pbcopy",
+            r#"#!/bin/bash
+exit 1
+"#,
+        );
+        stubs.write_exe(
+            "xclip",
+            r#"#!/bin/bash
+set -euo pipefail
+payload="${CLIPBOARD_PAYLOAD_OUT:?CLIPBOARD_PAYLOAD_OUT is required}"
+/bin/cat > "$payload"
+"#,
+        );
+
+        let out_dir = TempDir::new().expect("tempdir");
+        let payload_path = out_dir.path().join("payload.txt");
+
+        let _path_guard = prepend_path(&lock, stubs.path());
+        let payload_path_str = payload_path.to_string_lossy();
+        let _payload_guard =
+            EnvGuard::set(&lock, "CLIPBOARD_PAYLOAD_OUT", payload_path_str.as_ref());
+
+        let tool_order = [ClipboardTool::Pbcopy, ClipboardTool::Xclip];
+        let outcome = copy_best_effort("hello", &ClipboardPolicy::new(&tool_order));
+        assert_eq!(outcome, ClipboardOutcome::Copied(ClipboardTool::Xclip));
+        assert_eq!(fs::read_to_string(payload_path).expect("payload"), "hello");
+    }
+
+    #[test]
+    fn copy_best_effort_returns_skipped_failure_when_all_tools_fail() {
+        let lock = GlobalStateLock::new();
+        let stubs = StubBinDir::new();
+        stubs.write_exe(
+            "pbcopy",
+            r#"#!/bin/bash
+exit 1
+"#,
+        );
+        stubs.write_exe(
+            "xclip",
+            r#"#!/bin/bash
+exit 2
+"#,
+        );
+
+        let _path_guard = prepend_path(&lock, stubs.path());
+
+        let tool_order = [ClipboardTool::Pbcopy, ClipboardTool::Xclip];
+        let outcome = copy_best_effort("hello", &ClipboardPolicy::new(&tool_order));
+        assert_eq!(outcome, ClipboardOutcome::SkippedFailure);
     }
 
     #[test]

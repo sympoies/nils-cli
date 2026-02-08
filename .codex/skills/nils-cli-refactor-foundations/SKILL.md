@@ -26,12 +26,11 @@ Inputs:
 Outputs:
 
 - One of two outcomes:
-  - `Implement`: at least one high-value refactor is implemented with tests and validation evidence.
+  - `Implement`: at least one high-value refactor is implemented with tests and validation evidence, then delivered via `$create-feature-pr`.
   - `No Action`: no high-value target found; return concrete recommendations and potential issue list.
-- Standardized report formatted from:
-  - `.codex/skills/nils-cli-refactor-foundations/references/IMPLEMENTATION_RESPONSE_TEMPLATE.md`
-  - `.codex/skills/nils-cli-refactor-foundations/references/NO_ACTION_RESPONSE_TEMPLATE.md`
-- Delivery via `$create-feature-pr` when code changes are implemented.
+- Reporting split (strict):
+  - `Implement`: use `$create-feature-pr` delivery + response format contract end-to-end (including final assistant output format).
+  - `No Action`: use `.codex/skills/nils-cli-refactor-foundations/references/NO_ACTION_RESPONSE_TEMPLATE.md`.
 
 Exit codes:
 
@@ -48,7 +47,7 @@ Failure modes:
 
 ## Scripts (only entrypoints)
 
-- `.codex/skills/nils-cli-refactor-foundations/scripts/render-refactor-response-template.sh`
+- `.codex/skills/nils-cli-refactor-foundations/scripts/render-refactor-response-template.sh` (`No Action` response only)
 
 ## Workflow
 
@@ -101,11 +100,14 @@ Failure modes:
   - create feature branch
   - commit with semantic commit policy
   - push and open PR with summary, changes, testing, and risk notes
+- The `Implement` branch is not complete until `$create-feature-pr` finishes successfully.
+- After successful PR creation, final user-facing response must follow `$create-feature-pr` output contract
+  (`references/ASSISTANT_RESPONSE_TEMPLATE.md` via its render script).
 
 7. Response contract (always required)
 
-- `Implement` path: use the implementation template.
+- `Implement` path: **do not** use this skill's implementation template; follow `$create-feature-pr`
+  response format exactly.
 - `No Action` path: use the no-action template with concrete recommendation list and potential issues.
 - Render helpers:
-  - `./.codex/skills/nils-cli-refactor-foundations/scripts/render-refactor-response-template.sh --mode implement`
   - `./.codex/skills/nils-cli-refactor-foundations/scripts/render-refactor-response-template.sh --mode no-action`
