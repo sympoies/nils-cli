@@ -154,6 +154,10 @@ fn print_subcommand_help(name: &str) -> i32 {
 fn handle_legacy_redirect(args: &[String]) -> Option<i32> {
     let cmd = args.first()?.as_str();
     match cmd {
+        "provider" | "debug" | "workflow" | "automation" => {
+            eprintln!("codex-cli: use `agentctl {cmd}` for provider-neutral orchestration");
+            Some(64)
+        }
         "help" => {
             let mut command = cli::Cli::command();
             if command.print_help().is_ok() {

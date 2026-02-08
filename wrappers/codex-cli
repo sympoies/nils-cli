@@ -3,16 +3,34 @@ set -euo pipefail
 
 self_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 self_path="$self_dir/$(basename -- "${BASH_SOURCE[0]}")"
+args=("$@")
+
+migrated_cmd=''
+if [[ ${#args[@]} -gt 0 ]]; then
+  case "${args[0]}" in
+    provider|debug|workflow|automation)
+      migrated_cmd="${args[0]}"
+      ;;
+  esac
+fi
+
+if [[ -n "${migrated_cmd}" ]] && command -v agentctl >/dev/null 2>&1; then
+  exec agentctl "${args[@]}"
+fi
+
+if [[ -n "${migrated_cmd}" ]]; then
+  echo "codex-cli: use \`agentctl ${migrated_cmd}\` for provider-neutral orchestration" >&2
+  exit 64
+fi
 
 installed="$(command -v codex-cli || true)"
 if [[ -n "${installed}" && "${installed}" != "${self_path}" ]]; then
-  exec "${installed}" "$@"
+  exec "${installed}" "${args[@]}"
 fi
 
 if command -v cargo >/dev/null 2>&1; then
-  exec cargo run -q -p codex-cli -- "$@"
+  exec cargo run -q -p codex-cli -- "${args[@]}"
 fi
 
 echo "codex-cli: binary not found (install via cargo install or build the workspace)" >&2
 exit 1
-

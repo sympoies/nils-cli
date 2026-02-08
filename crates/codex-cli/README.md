@@ -25,8 +25,11 @@ Help:
 ## Scope boundary
 - `codex-cli` owns provider-specific OpenAI/Codex commands only (`agent`, `auth`, `diag rate-limits`, `config`, `starship`).
 - `codex-cli` does not own provider-neutral orchestration concerns (multi-provider registry/selection, provider-neutral doctor/debug/workflow, or local automation integration).
+- `codex-cli` rejects provider-neutral orchestration entrypoints (`provider`, `debug`, `workflow`, `automation`) with migration hints to `agentctl`.
 - `agentctl` owns those provider-neutral concerns and integration contracts during migration.
 - Compatibility note: existing `codex-cli` command behavior remains stable during migration, while provider-neutral ownership moves to `agentctl`.
+- Wrapper compatibility shim: `wrappers/codex-cli` forwards `provider|debug|workflow|automation` to `agentctl` when `agentctl` is available.
+- Canonical migration hint text: `use agentctl <command> for provider-neutral orchestration`.
 
 ## Commands
 

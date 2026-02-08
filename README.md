@@ -41,6 +41,8 @@ Each crate is either a standalone CLI binary or a shared library used across the
 - `codex-cli`: provider-specific OpenAI/Codex operations only (`agent`, `auth`, Codex diagnostics, Codex config/starship).
 - `agentctl` (planned by the migration plan): provider-neutral orchestration (`provider`, `diag`, `debug`, `workflow`, `automation`) and local automation integration.
 - Migration note: keep existing `codex-cli` workflows stable during migration, and move provider-neutral ownership to `agentctl` with explicit docs/help redirection.
+- Compatibility shim: `wrappers/codex-cli` forwards `provider|debug|workflow|automation` to `agentctl` when `agentctl` is available.
+- Migration hint text (wrapper/help/docs): `use agentctl <command> for provider-neutral orchestration`.
 
 ### Automation and utility CLIs
 

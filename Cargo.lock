@@ -23,6 +23,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-provider-codex"
+version = "0.2.11"
+dependencies = [
+ "agent-runtime-core",
+ "codex-cli",
+ "nils-common",
+ "nils-test-support",
+ "pretty_assertions",
+ "serde_json",
+]
+
+[[package]]
 name = "agent-runtime-core"
 version = "0.2.11"
 dependencies = [

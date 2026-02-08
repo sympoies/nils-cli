@@ -94,6 +94,10 @@ _codex-cli() {
     'diag:Diagnostics'
     'config:Configuration'
     'starship:Starship integration'
+    'provider:Provider-neutral migration (use agentctl provider)'
+    'debug:Provider-neutral migration (use agentctl debug)'
+    'workflow:Provider-neutral migration (use agentctl workflow)'
+    'automation:Provider-neutral migration (use agentctl automation)'
     'help:Display help message'
   )
 
@@ -384,12 +388,16 @@ _codex-cli() {
         '--is-enabled[Exit 0 if starship is enabled]' \
         && return 0
       ;;
+    provider|debug|workflow|automation)
+      _message "codex-cli migration: use agentctl $subcmd for provider-neutral orchestration"
+      return 0
+      ;;
     help)
       _message 'no additional arguments'
       return 0
       ;;
     '')
-      _message 'command (agent|auth|diag|config|starship|help)'
+      _message 'command (agent|auth|diag|config|starship|help; provider/debug/workflow/automation -> agentctl)'
       return 0
       ;;
     *)
