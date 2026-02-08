@@ -1,12 +1,11 @@
 use std::time::Instant;
 
 use crate::backend::process::ProcessRunner;
-use crate::backend::{AppleScriptAxBackend, AxBackendAdapter};
+use crate::backend::{AutoAxBackend, AxBackendAdapter};
 use crate::cli::{AxTypeArgs, OutputFormat};
+use crate::commands::ax_common::{build_selector, build_target, AxSelectorInput};
 use crate::error::CliError;
-use crate::model::{
-    AxSelector, AxTarget, AxTypeCommandResult, AxTypeRequest, AxTypeResult, SuccessEnvelope,
-};
+use crate::model::{AxTypeCommandResult, AxTypeRequest, AxTypeResult, SuccessEnvelope};
 use crate::retry::run_with_retry;
 use crate::run::{
     action_policy_result, build_action_meta_with_attempts, next_action_id, ActionPolicy,
@@ -32,7 +31,7 @@ pub fn run(
     };
 
     if !policy.dry_run {
-        let backend = AppleScriptAxBackend;
+        let backend = AutoAxBackend::default();
         let retry = policy.retry_policy();
         let (backend_result, attempts) = run_with_retry(retry, || {
             backend.type_text(runner, &request, policy.timeout_ms)
@@ -78,20 +77,26 @@ pub fn run(
 }
 
 fn build_request(args: &AxTypeArgs) -> Result<AxTypeRequest, CliError> {
-    if args.nth == Some(0) {
-        return Err(CliError::usage("--nth must be at least 1"));
-    }
+    let target = build_target(
+        args.session_id.clone(),
+        args.app.clone(),
+        args.bundle_id.clone(),
+        args.window_title_contains.clone(),
+    )?;
+    let selector = build_selector(AxSelectorInput {
+        node_id: args.node_id.clone(),
+        role: args.role.clone(),
+        title_contains: args.title_contains.clone(),
+        identifier_contains: args.identifier_contains.clone(),
+        value_contains: args.value_contains.clone(),
+        subrole: args.subrole.clone(),
+        focused: args.focused,
+        enabled: args.enabled,
+        nth: args.nth,
+    })?;
     Ok(AxTypeRequest {
-        target: AxTarget {
-            app: args.app.clone(),
-            bundle_id: args.bundle_id.clone(),
-        },
-        selector: AxSelector {
-            node_id: args.node_id.clone(),
-            role: args.role.clone(),
-            title_contains: args.title_contains.clone(),
-            nth: args.nth.map(|value| value as usize),
-        },
+        target,
+        selector,
         text: args.text.clone(),
         clear_first: args.clear_first,
         submit: args.submit,

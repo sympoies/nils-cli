@@ -26,6 +26,10 @@ macos-agent input-source switch --id abc
 macos-agent ax list --app Arc --role AXButton --title-contains "New"
 macos-agent ax click --app Arc --role AXLink --title-contains "YouTube" --nth 1 --allow-coordinate-fallback
 macos-agent ax type --app Arc --role AXTextField --title-contains "Search" --text "lofi" --submit --allow-keyboard-fallback
+macos-agent ax attr get --app Arc --role AXTextField --name AXValue
+macos-agent ax action perform --app Arc --role AXButton --title-contains "Submit" --name AXPress
+macos-agent ax session start --app Arc --session-id arc-main
+macos-agent ax watch start --session-id arc-main --events AXTitleChanged,AXFocusedUIElementChanged
 
 # observation
 macos-agent observe screenshot --active-window --path ./tmp/macos-agent.png
@@ -53,9 +57,18 @@ macos-agent wait window-present --app Terminal --window-name Inbox --timeout-ms 
   - `macos-agent input-source current`
   - `macos-agent input-source switch --id <source_id|abc|us>`
 - `ax`
-  - `macos-agent ax list [--app <name> | --bundle-id <bundle_id>] [--role <AXRole>] [--title-contains <text>] [--max-depth <n>] [--limit <n>]`
-  - `macos-agent ax click (--node-id <id> | --role <AXRole> --title-contains <text> [--nth <n>]) [--app <name> | --bundle-id <bundle_id>] [--allow-coordinate-fallback]`
-  - `macos-agent ax type (--node-id <id> | --role <AXRole> --title-contains <text> [--nth <n>]) --text <text> [--clear-first] [--submit] [--paste] [--allow-keyboard-fallback]`
+  - `macos-agent ax list [--session-id <id> | --app <name> | --bundle-id <bundle_id>] [--window-title-contains <text>] [--role <AXRole>] [--title-contains <text>] [--identifier-contains <text>] [--value-contains <text>] [--subrole <AXSubrole>] [--focused <bool>] [--enabled <bool>] [--max-depth <n>] [--limit <n>]`
+  - `macos-agent ax click [--node-id <id> | --role <AXRole> | --title-contains <text> | --identifier-contains <text> | --value-contains <text> | --subrole <AXSubrole> | --focused <bool> | --enabled <bool>] [--nth <n>] [--session-id <id> | --app <name> | --bundle-id <bundle_id>] [--window-title-contains <text>] [--allow-coordinate-fallback]`
+  - `macos-agent ax type [--node-id <id> | --role <AXRole> | --title-contains <text> | --identifier-contains <text> | --value-contains <text> | --subrole <AXSubrole> | --focused <bool> | --enabled <bool>] [--nth <n>] [--session-id <id> | --app <name> | --bundle-id <bundle_id>] [--window-title-contains <text>] --text <text> [--clear-first] [--submit] [--paste] [--allow-keyboard-fallback]`
+  - `macos-agent ax attr get [selector flags...] [target flags...] --name <AXAttribute>`
+  - `macos-agent ax attr set [selector flags...] [target flags...] --name <AXAttribute> --value <value> [--value-type <string|number|bool|json|null>]`
+  - `macos-agent ax action perform [selector flags...] [target flags...] --name <AXAction>`
+  - `macos-agent ax session start [--session-id <id>] [--app <name> | --bundle-id <bundle_id>] [--window-title-contains <text>]`
+  - `macos-agent ax session list`
+  - `macos-agent ax session stop --session-id <id>`
+  - `macos-agent ax watch start --session-id <id> [--watch-id <id>] [--events <comma-separated-AX-notifications>] [--max-buffer <n>]`
+  - `macos-agent ax watch poll --watch-id <id> [--limit <n>] [--drain|--no-drain]`
+  - `macos-agent ax watch stop --watch-id <id>`
 - `observe`
   - `macos-agent observe screenshot (--window-id <id> | --active-window | --app <name> [--window-name <name>]) [--path <file>] [--image-format <png|jpg|webp>]`
 - `wait`
@@ -170,6 +183,8 @@ Use these defaults for better stability:
   - `--timeout-ms 5000`
 - Use `wait app-active` / `wait window-present` before mutating actions.
 - Prefer `ax click/type` first, then opt in to fallback flags when app AX trees are unstable.
+- AX backend selection defaults to `auto` (Hammerspoon first, JXA fallback).
+  - Override with `CODEX_MACOS_AGENT_AX_BACKEND=hammerspoon|applescript|auto`.
 
 ## Deterministic Test Mode
 
@@ -257,6 +272,7 @@ macos-agent profile init --name local-1440p --path "$CODEX_HOME/out/local-profil
 | Flaky click/input behavior | `macos-agent --trace --error-format json input click ...` | latest trace JSON (`attempts_used`, timeout/retry policy) |
 | AX selector no match / ambiguous match | `macos-agent --format json ax list --app <name> --role <AXRole> --title-contains <text>` | node candidates (`node_id`, `role`, `title`, `identifier`) and refine selector / `--nth` |
 | AX press/type fails but coordinate/keyboard path should continue | rerun with `ax click --allow-coordinate-fallback` or `ax type --allow-keyboard-fallback` | whether `used_coordinate_fallback` / `used_keyboard_fallback` is true in JSON result |
+| Hammerspoon AX backend unavailable | `hs -t 1 -q -c 'return \"ok\"'` | ensure Hammerspoon is running and `require('hs.ipc')` is enabled, or keep backend `auto` for JXA fallback |
 | Input source mismatch before typing | `macos-agent --format json input-source current` then `... switch --id abc` | current source id and switch result (`switched=true`) |
 | Trace enabled but command does not start | `macos-agent --trace --trace-dir <path> --error-format json preflight` | `trace.write` error and writable-path hint |
 | Real-app scenario failed mid-flow | run target `e2e_real_apps` command with `--nocapture` | `steps.jsonl`, `step-summary.json`, `artifact-index.json` |

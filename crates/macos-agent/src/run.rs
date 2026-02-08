@@ -3,9 +3,9 @@ use std::time::Instant;
 
 use crate::backend::process::RealProcessRunner;
 use crate::cli::{
-    AppsCommand, AxCommand, Cli, CommandGroup, InputCommand, InputSourceCommand, ObserveCommand,
-    OutputFormat, PreflightArgs, ProfileCommand, ScenarioCommand, WaitCommand, WindowCommand,
-    WindowsCommand,
+    AppsCommand, AxActionCommand, AxAttrCommand, AxCommand, AxSessionCommand, AxWatchCommand, Cli,
+    CommandGroup, InputCommand, InputSourceCommand, ObserveCommand, OutputFormat, PreflightArgs,
+    ProfileCommand, ScenarioCommand, WaitCommand, WindowCommand, WindowsCommand,
 };
 use crate::commands;
 use crate::error::CliError;
@@ -98,6 +98,41 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
             AxCommand::List(args) => commands::ax_list::run(cli.format, &args, policy, &runner),
             AxCommand::Click(args) => commands::ax_click::run(cli.format, &args, policy, &runner),
             AxCommand::Type(args) => commands::ax_type::run(cli.format, &args, policy, &runner),
+            AxCommand::Attr { command } => match command {
+                AxAttrCommand::Get(args) => {
+                    commands::ax_attr::run_get(cli.format, &args, policy, &runner)
+                }
+                AxAttrCommand::Set(args) => {
+                    commands::ax_attr::run_set(cli.format, &args, policy, &runner)
+                }
+            },
+            AxCommand::Action { command } => match command {
+                AxActionCommand::Perform(args) => {
+                    commands::ax_action::run_perform(cli.format, &args, policy, &runner)
+                }
+            },
+            AxCommand::Session { command } => match command {
+                AxSessionCommand::Start(args) => {
+                    commands::ax_session::run_start(cli.format, &args, policy, &runner)
+                }
+                AxSessionCommand::List(args) => {
+                    commands::ax_session::run_list(cli.format, &args, policy, &runner)
+                }
+                AxSessionCommand::Stop(args) => {
+                    commands::ax_session::run_stop(cli.format, &args, policy, &runner)
+                }
+            },
+            AxCommand::Watch { command } => match command {
+                AxWatchCommand::Start(args) => {
+                    commands::ax_watch::run_start(cli.format, &args, policy, &runner)
+                }
+                AxWatchCommand::Poll(args) => {
+                    commands::ax_watch::run_poll(cli.format, &args, policy, &runner)
+                }
+                AxWatchCommand::Stop(args) => {
+                    commands::ax_watch::run_stop(cli.format, &args, policy, &runner)
+                }
+            },
         },
     }
 }
