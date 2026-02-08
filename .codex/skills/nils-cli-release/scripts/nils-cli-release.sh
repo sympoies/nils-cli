@@ -9,12 +9,16 @@ Usage:
 Options:
   --version X.Y.Z   Required. Accepts vX.Y.Z and normalizes to X.Y.Z.
   --skip-checks     Skip full lint/tests; runs cargo check to refresh Cargo.lock.
-  --ci-gate-main    Skip full lint/tests only when origin/main HEAD has a green CI run.
+  --ci-gate-main    Require CI gate on main; fail if gate conditions are not met.
   --skip-readme     Do not update README release tag examples.
   --skip-push       Do not push commit or tag to origin.
   --allow-dirty     Allow a dirty working tree.
   --force-tag       Delete existing local/remote tag before re-tagging.
   -h, --help        Show help.
+
+Default behavior:
+  Without --skip-checks/--ci-gate-main, the script first tries CI gate on main.
+  If CI gate is unavailable, it falls back to full release checks.
 USAGE
 }
 
@@ -25,6 +29,89 @@ die() {
 
 note() {
   echo "info: $*" >&2
+}
+
+ci_gate_main_url=""
+ci_gate_main_error=""
+
+check_ci_gate_main() {
+  ci_gate_main_url=""
+  ci_gate_main_error=""
+
+  if [[ -z "${current_branch:-}" || "${current_branch}" != "main" ]]; then
+    ci_gate_main_error="current branch is '${current_branch:-detached}' (requires main)"
+    return 10
+  fi
+
+  if ! command -v gh >/dev/null 2>&1; then
+    ci_gate_main_error="gh is not available on PATH"
+    return 11
+  fi
+
+  note "verifying CI status for origin/main"
+  if ! git fetch origin main --quiet; then
+    ci_gate_main_error="failed to fetch origin/main"
+    return 12
+  fi
+
+  local head_sha origin_main_sha
+  head_sha="$(git rev-parse --verify HEAD)"
+  origin_main_sha="$(git rev-parse --verify origin/main)"
+  if [[ "$head_sha" != "$origin_main_sha" ]]; then
+    ci_gate_main_error="HEAD (${head_sha}) does not match origin/main (${origin_main_sha})"
+    return 13
+  fi
+
+  local ci_run_json ci_run_result
+  ci_run_json="$(gh run list --workflow ci.yml --branch main --event push --commit "$origin_main_sha" --limit 20 --json databaseId,status,conclusion,url,headSha 2>/dev/null)" \
+    || {
+      ci_gate_main_error="failed to query CI runs from GitHub"
+      return 14
+    }
+
+  ci_run_result="$(
+    python3 - "$origin_main_sha" "$ci_run_json" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+
+sha = sys.argv[1]
+runs = json.loads(sys.argv[2])
+if not runs:
+    print(f"error:no CI run found for origin/main ({sha})")
+    raise SystemExit(2)
+
+run = runs[0]
+run_head_sha = run.get("headSha")
+status = run.get("status")
+conclusion = run.get("conclusion")
+url = run.get("url", "")
+
+if run_head_sha and run_head_sha != sha:
+    print(f"error:CI run SHA mismatch ({run_head_sha} != {sha}): {url}")
+    raise SystemExit(5)
+if status != "completed":
+    print(f"error:CI run is not completed yet ({status}): {url}")
+    raise SystemExit(3)
+if conclusion != "success":
+    print(f"error:CI run is not green ({conclusion}): {url}")
+    raise SystemExit(4)
+
+print(f"ok:{url}")
+PY
+  )" || {
+    ci_gate_main_error="${ci_run_result#error:}"
+    return 15
+  }
+
+  if [[ "$ci_run_result" != ok:* ]]; then
+    ci_gate_main_error="unexpected CI gate result"
+    return 16
+  fi
+
+  ci_gate_main_url="${ci_run_result#ok:}"
+  return 0
 }
 
 version=""
@@ -98,12 +185,6 @@ for cmd in git python3 cargo semantic-commit git-scope; do
   fi
 done
 
-if [[ "$ci_gate_main" -eq 1 ]]; then
-  if ! command -v gh >/dev/null 2>&1; then
-    die "--ci-gate-main requires gh on PATH"
-  fi
-fi
-
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 if [[ -z "$repo_root" ]]; then
   die "must run inside a git work tree"
@@ -126,58 +207,23 @@ if [[ "$allow_dirty" -eq 0 ]]; then
   fi
 fi
 
-if [[ "$ci_gate_main" -eq 1 ]]; then
-  if [[ -z "$current_branch" || "$current_branch" != "main" ]]; then
-    die "--ci-gate-main requires running on branch 'main'"
+if [[ "$skip_checks" -eq 0 ]]; then
+  if [[ "$ci_gate_main" -eq 1 ]]; then
+    if check_ci_gate_main; then
+      note "main CI is green: ${ci_gate_main_url}"
+      skip_checks=1
+    else
+      die "--ci-gate-main requirement failed: ${ci_gate_main_error}"
+    fi
+  else
+    if check_ci_gate_main; then
+      note "main CI is green: ${ci_gate_main_url}"
+      note "using CI gate result; skipping full release checks"
+      skip_checks=1
+    else
+      note "CI gate unavailable (${ci_gate_main_error}); running full release checks"
+    fi
   fi
-
-  note "verifying CI status for origin/main"
-  git fetch origin main --quiet
-
-  head_sha="$(git rev-parse --verify HEAD)"
-  origin_main_sha="$(git rev-parse --verify origin/main)"
-  if [[ "$head_sha" != "$origin_main_sha" ]]; then
-    die "--ci-gate-main requires HEAD to match origin/main (pull/rebase main first)"
-  fi
-
-  ci_run_json="$(gh run list --workflow ci.yml --branch main --event push --commit "$origin_main_sha" --limit 20 --json databaseId,status,conclusion,url,headSha 2>/dev/null)" \
-    || die "failed to query CI runs from GitHub"
-
-  ci_run_result="$(
-    python3 - "$origin_main_sha" "$ci_run_json" <<'PY'
-from __future__ import annotations
-
-import json
-import sys
-
-sha = sys.argv[1]
-runs = json.loads(sys.argv[2])
-if not runs:
-    print(f"error:no CI run found for origin/main ({sha})")
-    raise SystemExit(2)
-
-run = runs[0]
-run_head_sha = run.get("headSha")
-status = run.get("status")
-conclusion = run.get("conclusion")
-url = run.get("url", "")
-
-if run_head_sha and run_head_sha != sha:
-    print(f"error:CI run SHA mismatch ({run_head_sha} != {sha}): {url}")
-    raise SystemExit(5)
-if status != "completed":
-    print(f"error:CI run is not completed yet ({status}): {url}")
-    raise SystemExit(3)
-if conclusion != "success":
-    print(f"error:CI run is not green ({conclusion}): {url}")
-    raise SystemExit(4)
-
-print(url)
-PY
-  )" || die "$ci_run_result"
-
-  note "main CI is green: ${ci_run_result}"
-  skip_checks=1
 fi
 
 python3 - "$version" <<'PY'

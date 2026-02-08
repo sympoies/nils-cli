@@ -11,8 +11,8 @@ Prereqs:
 
 - Run inside the `nils-cli` git work tree (the script resolves the repo root via `git`).
 - `git`, `python3`, `cargo`, `semantic-commit`, and `git-scope` available on `PATH`.
-- `gh` available on `PATH` when using `--ci-gate-main`.
-- `cargo-nextest` available on `PATH` when using default release checks (`NILS_CLI_TEST_RUNNER=nextest`).
+- `gh` available on `PATH` to use the CI-gated fast path (required for strict `--ci-gate-main`).
+- `cargo-nextest` available on `PATH` when full release checks are required (`NILS_CLI_TEST_RUNNER=nextest`).
 - Release checks available at `.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh` (unless `--skip-checks`).
 
 Inputs:
@@ -21,19 +21,26 @@ Inputs:
   - `--version X.Y.Z` (accepts `vX.Y.Z` and normalizes to `X.Y.Z`)
 - Optional:
   - `--skip-checks` (skip full lint/tests; still runs `cargo check --workspace` to refresh `Cargo.lock`)
-  - `--ci-gate-main` (skip full lint/tests only when `origin/main` HEAD matches local `HEAD` and has a successful CI run)
+  - `--ci-gate-main` (strict mode: require CI gate on `main`; fail when gate conditions are not met)
   - `--skip-readme` (do not update README release tag example)
   - `--skip-push` (do not push commit or tag to `origin`)
   - `--allow-dirty` (allow a dirty working tree)
   - `--force-tag` (delete existing local/remote tag before re-tagging)
   - `NILS_CLI_TEST_RUNNER=cargo|nextest` (environment variable; default is `nextest` in this release script)
 
+Default check selection (no `--skip-checks` and no `--ci-gate-main`):
+
+- First try CI gate conditions (`main`, `HEAD == origin/main`, green `ci.yml` run).
+- If CI gate passes, run `cargo check --workspace --locked` only.
+- If CI gate does not pass, run full release checks via `nils-cli-checks.sh`.
+
 Outputs:
 
 - Updates workspace version in `Cargo.toml` and any crate `Cargo.toml` files with explicit `version = "..."`.
 - Updates README release tag examples (unless `--skip-readme`).
-- Refreshes `Cargo.lock` via `cargo check --workspace --locked` or the full checks script.
-- Runs release checks through `nils-cli-checks.sh` with `NILS_CLI_TEST_RUNNER=nextest` by default (unless overridden).
+- Selects check mode in this order: strict CI gate (`--ci-gate-main`) or auto CI gate attempt, then full checks fallback.
+- Refreshes `Cargo.lock` via `cargo check --workspace --locked` (CI-gated/skip-check path) or the full checks script.
+- Runs full release checks through `nils-cli-checks.sh` with `NILS_CLI_TEST_RUNNER=nextest` by default (unless overridden).
 - Creates a semantic commit for the version bump.
 - Creates an annotated tag `vX.Y.Z` and (unless `--skip-push`) pushes commit + tag to `origin`.
 - GitHub Release artifacts are built by `.github/workflows/release.yml` and include all workspace `bin` targets (auto-discovered via `scripts/workspace-bins.py`).
@@ -51,8 +58,7 @@ Failure modes:
 - Tag already exists without `--force-tag`.
 - Required commands missing (`git`, `python3`, `cargo`, `semantic-commit`, `git-scope`).
 - `cargo-nextest` missing while default check path (`nextest`) is active.
-- `--ci-gate-main` used outside `main`, or local `HEAD` does not match `origin/main`.
-- `--ci-gate-main` used but `origin/main` has no successful completed CI run.
+- Strict `--ci-gate-main` requested but CI gate conditions are not met (`main`, `HEAD == origin/main`, green CI run, `gh` available).
 - Release checks or `cargo check` fail.
 - Commit or tag creation fails.
 
@@ -64,5 +70,8 @@ Failure modes:
 
 - Validate inputs and environment.
 - Bump workspace + crate versions and update README.
-- Run checks (defaulting to `nextest`, `cargo check --workspace --locked` with `--skip-checks`, or CI-gated `cargo check --workspace --locked` with `--ci-gate-main`) to refresh `Cargo.lock`.
+- Run checks with CI-gate-first logic:
+  - `--skip-checks`: run `cargo check --workspace --locked`.
+  - `--ci-gate-main`: require CI gate; then run `cargo check --workspace --locked`.
+  - default: try CI gate first; if unavailable, run full checks (`nils-cli-checks.sh`).
 - Commit with `semantic-commit`, tag `vX.Y.Z`, and push to trigger the release workflow.
