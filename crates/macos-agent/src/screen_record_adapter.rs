@@ -6,6 +6,14 @@ use crate::error::CliError;
 
 pub(crate) use screen_record::types::{AppInfo, ShareableContent, WindowInfo};
 
+#[derive(Debug, Clone, Copy)]
+pub struct ImageCropRegion {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScreenshotFormat {
     Png,
@@ -88,6 +96,28 @@ pub fn map_error(err: screen_record::error::CliError) -> CliError {
     }
 }
 
+pub fn crop_image(input: &Path, output: &Path, region: ImageCropRegion) -> Result<(), CliError> {
+    let image = image::open(input).map_err(|err| {
+        CliError::runtime(format!("failed to decode screenshot for cropping: {err}"))
+    })?;
+
+    let max_width = image.width();
+    let max_height = image.height();
+    if max_width == 0 || max_height == 0 {
+        return Err(CliError::runtime("cannot crop empty screenshot image"));
+    }
+
+    let x = region.x.min(max_width.saturating_sub(1));
+    let y = region.y.min(max_height.saturating_sub(1));
+    let width = region.width.max(1).min(max_width.saturating_sub(x));
+    let height = region.height.max(1).min(max_height.saturating_sub(y));
+
+    let cropped = image.crop_imm(x, y, width, height);
+    cropped
+        .save(output)
+        .map_err(|err| CliError::runtime(format!("failed to write cropped screenshot: {err}")))
+}
+
 fn to_screen_record_format(format: ScreenshotFormat) -> screen_record::cli::ImageFormat {
     match format {
         ScreenshotFormat::Png => screen_record::cli::ImageFormat::Png,
@@ -99,8 +129,9 @@ fn to_screen_record_format(format: ScreenshotFormat) -> screen_record::cli::Imag
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
+    use tempfile::TempDir;
 
-    use super::map_error;
+    use super::{crop_image, map_error, ImageCropRegion};
 
     #[test]
     fn map_error_preserves_usage_and_runtime_exit_code() {
@@ -114,5 +145,31 @@ mod tests {
         let mapped_runtime = map_error(runtime);
         assert_eq!(mapped_runtime.exit_code(), 1);
         assert!(mapped_runtime.to_string().contains("capture failed"));
+    }
+
+    #[test]
+    fn crop_image_writes_bounded_output() {
+        let temp = TempDir::new().expect("tempdir");
+        let input = temp.path().join("in.png");
+        let output = temp.path().join("out.png");
+
+        let image = image::DynamicImage::new_rgba8(100, 80);
+        image.save(&input).expect("save input");
+
+        crop_image(
+            &input,
+            &output,
+            ImageCropRegion {
+                x: 10,
+                y: 12,
+                width: 20,
+                height: 16,
+            },
+        )
+        .expect("crop should succeed");
+
+        let cropped = image::open(&output).expect("open output");
+        assert_eq!(cropped.width(), 20);
+        assert_eq!(cropped.height(), 16);
     }
 }

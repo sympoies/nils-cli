@@ -170,3 +170,87 @@ fn wait_json_and_tsv_contracts() {
         .stderr_text()
         .contains("only supported for `windows list` and `apps list`"));
 }
+
+#[test]
+fn wait_ax_present_reports_matched_count_in_json() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let options = harness.cmd_options(cwd.path()).with_env(
+        "CODEX_MACOS_AGENT_AX_LIST_JSON",
+        r#"{"nodes":[{"node_id":"1.1","role":"AXButton","enabled":true,"focused":false}],"warnings":[]}"#,
+    );
+
+    let out = harness.run_with_options(
+        cwd.path(),
+        &[
+            "--format",
+            "json",
+            "wait",
+            "ax-present",
+            "--role",
+            "AXButton",
+            "--timeout-ms",
+            "50",
+            "--poll-ms",
+            "5",
+        ],
+        options,
+    );
+
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr_text());
+    let payload: serde_json::Value =
+        serde_json::from_str(&out.stdout_text()).expect("stdout should be json");
+    assert_eq!(payload["command"], serde_json::json!("wait.ax-present"));
+    assert_eq!(payload["result"]["matched_count"], serde_json::json!(1));
+}
+
+#[test]
+fn wait_ax_unique_timeout_reports_last_match_count_hint() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let options = harness
+        .cmd_options(cwd.path())
+        .with_env(
+            "CODEX_MACOS_AGENT_AX_LIST_JSON",
+            r#"{"nodes":[{"node_id":"1.1","role":"AXButton","enabled":true,"focused":false},{"node_id":"1.2","role":"AXButton","enabled":true,"focused":false}],"warnings":[]}"#,
+        );
+
+    let out = harness.run_with_options(
+        cwd.path(),
+        &[
+            "--error-format",
+            "json",
+            "wait",
+            "ax-unique",
+            "--role",
+            "AXButton",
+            "--timeout-ms",
+            "20",
+            "--poll-ms",
+            "5",
+        ],
+        options,
+    );
+
+    assert_eq!(out.code, 1);
+    let payload: serde_json::Value =
+        serde_json::from_str(&out.stderr_text()).expect("stderr should be json");
+    assert_eq!(
+        payload["error"]["operation"],
+        serde_json::json!("wait.ax-unique")
+    );
+    let has_hint = payload["error"]["hints"]
+        .as_array()
+        .map(|hints| {
+            hints.iter().any(|hint| {
+                hint.as_str()
+                    .unwrap_or("")
+                    .contains("Last selector match count before timeout: 2")
+            })
+        })
+        .unwrap_or(false);
+    assert!(
+        has_hint,
+        "expected last-match-count hint in wait.ax-unique error"
+    );
+}
