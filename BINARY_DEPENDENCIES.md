@@ -39,6 +39,7 @@ These tools enable richer behavior. Missing tools typically trigger fallback beh
 | `pactl` | Linux audio source discovery for `screen-record --audio ...` | `brew install pulseaudio` |
 | `xdg-desktop-portal` + backend + PipeWire | Wayland portal capture path (`screen-record --portal`) | Prefer distro packages |
 | `open-changed-files` | Optional helper used by `fzf-cli git-commit` | Project-specific optional tool |
+| `hs` (Hammerspoon CLI) | Preferred AX backend path for `macos-agent ax *` (fallback to JXA when unavailable) | `brew install --cask hammerspoon` |
 
 ## 3. Development and Validation Toolchain
 

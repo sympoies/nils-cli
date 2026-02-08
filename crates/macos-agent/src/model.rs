@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::error::{CliError, ErrorCategory};
 use crate::screen_record_adapter::{AppInfo, WindowInfo};
@@ -259,9 +260,13 @@ pub struct AxNode {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct AxTarget {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub app: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bundle_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_title_contains: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -272,6 +277,16 @@ pub struct AxSelector {
     pub role: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title_contains: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identifier_contains: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_contains: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subrole: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub focused: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nth: Option<usize>,
 }
@@ -284,6 +299,16 @@ pub struct AxListRequest {
     pub role: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title_contains: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identifier_contains: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_contains: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subrole: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub focused: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_depth: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -349,6 +374,171 @@ pub struct AxTypeResult {
     pub submitted: bool,
     #[serde(default)]
     pub used_keyboard_fallback: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AxAttrGetRequest {
+    #[serde(default)]
+    pub target: AxTarget,
+    #[serde(default)]
+    pub selector: AxSelector,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AxAttrSetRequest {
+    #[serde(default)]
+    pub target: AxTarget,
+    #[serde(default)]
+    pub selector: AxSelector,
+    pub name: String,
+    pub value: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AxActionPerformRequest {
+    #[serde(default)]
+    pub target: AxTarget,
+    #[serde(default)]
+    pub selector: AxSelector,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AxAttrGetResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    pub matched_count: usize,
+    pub name: String,
+    pub value: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AxAttrSetResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    pub matched_count: usize,
+    pub name: String,
+    pub applied: bool,
+    pub value_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AxActionPerformResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    pub matched_count: usize,
+    pub name: String,
+    pub performed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AxSessionStartRequest {
+    #[serde(default)]
+    pub target: AxTarget,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AxSessionStopRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AxSessionInfo {
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundle_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_title_contains: Option<String>,
+    pub created_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AxSessionStartResult {
+    #[serde(flatten)]
+    pub session: AxSessionInfo,
+    pub created: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AxSessionListResult {
+    pub sessions: Vec<AxSessionInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AxSessionStopResult {
+    pub session_id: String,
+    pub removed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AxWatchStartRequest {
+    pub session_id: String,
+    #[serde(default)]
+    pub events: Vec<String>,
+    #[serde(default)]
+    pub max_buffer: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub watch_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AxWatchPollRequest {
+    pub watch_id: String,
+    #[serde(default)]
+    pub limit: usize,
+    #[serde(default)]
+    pub drain: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AxWatchStopRequest {
+    pub watch_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AxWatchEvent {
+    pub watch_id: String,
+    pub event: String,
+    pub at_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identifier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AxWatchStartResult {
+    pub watch_id: String,
+    pub session_id: String,
+    pub events: Vec<String>,
+    pub max_buffer: usize,
+    pub started: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AxWatchPollResult {
+    pub watch_id: String,
+    pub events: Vec<AxWatchEvent>,
+    pub dropped: usize,
+    pub running: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AxWatchStopResult {
+    pub watch_id: String,
+    pub stopped: bool,
+    pub drained: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]

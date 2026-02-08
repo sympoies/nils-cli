@@ -1,8 +1,9 @@
 use crate::backend::process::ProcessRunner;
-use crate::backend::{AppleScriptAxBackend, AxBackendAdapter};
+use crate::backend::{AutoAxBackend, AxBackendAdapter};
 use crate::cli::{AxListArgs, OutputFormat};
+use crate::commands::ax_common::build_target;
 use crate::error::CliError;
-use crate::model::{AxListRequest, AxTarget, SuccessEnvelope};
+use crate::model::{AxListRequest, SuccessEnvelope};
 use crate::run::ActionPolicy;
 
 pub fn run(
@@ -11,17 +12,26 @@ pub fn run(
     policy: ActionPolicy,
     runner: &dyn ProcessRunner,
 ) -> Result<(), CliError> {
+    let target = build_target(
+        args.session_id.clone(),
+        args.app.clone(),
+        args.bundle_id.clone(),
+        args.window_title_contains.clone(),
+    )?;
+
     let request = AxListRequest {
-        target: AxTarget {
-            app: args.app.clone(),
-            bundle_id: args.bundle_id.clone(),
-        },
+        target,
         role: args.role.clone(),
         title_contains: args.title_contains.clone(),
+        identifier_contains: args.identifier_contains.clone(),
+        value_contains: args.value_contains.clone(),
+        subrole: args.subrole.clone(),
+        focused: args.focused,
+        enabled: args.enabled,
         max_depth: args.max_depth,
         limit: args.limit.map(|value| value as usize),
     };
-    let backend = AppleScriptAxBackend;
+    let backend = AutoAxBackend::default();
     let result = backend.list(runner, &request, policy.timeout_ms)?;
 
     match format {

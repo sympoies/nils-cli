@@ -5,8 +5,9 @@ use std::time::Instant;
 
 use clap::{error::ErrorKind, Parser};
 use macos_agent::cli::{
-    AxCommand, Cli, CommandGroup, ErrorFormat, InputCommand, InputSourceCommand, ObserveCommand,
-    ProfileCommand, ScenarioCommand, WaitCommand, WindowCommand,
+    AxActionCommand, AxAttrCommand, AxCommand, AxSessionCommand, AxWatchCommand, Cli, CommandGroup,
+    ErrorFormat, InputCommand, InputSourceCommand, ObserveCommand, ProfileCommand, ScenarioCommand,
+    WaitCommand, WindowCommand,
 };
 use macos_agent::error::CliError;
 use macos_agent::model::ErrorEnvelope;
@@ -243,6 +244,23 @@ fn command_label(cli: &Cli) -> String {
             AxCommand::List(_) => "ax.list".to_string(),
             AxCommand::Click(_) => "ax.click".to_string(),
             AxCommand::Type(_) => "ax.type".to_string(),
+            AxCommand::Attr { command } => match command {
+                AxAttrCommand::Get(_) => "ax.attr.get".to_string(),
+                AxAttrCommand::Set(_) => "ax.attr.set".to_string(),
+            },
+            AxCommand::Action { command } => match command {
+                AxActionCommand::Perform(_) => "ax.action.perform".to_string(),
+            },
+            AxCommand::Session { command } => match command {
+                AxSessionCommand::Start(_) => "ax.session.start".to_string(),
+                AxSessionCommand::List(_) => "ax.session.list".to_string(),
+                AxSessionCommand::Stop(_) => "ax.session.stop".to_string(),
+            },
+            AxCommand::Watch { command } => match command {
+                AxWatchCommand::Start(_) => "ax.watch.start".to_string(),
+                AxWatchCommand::Poll(_) => "ax.watch.poll".to_string(),
+                AxWatchCommand::Stop(_) => "ax.watch.stop".to_string(),
+            },
         },
         CommandGroup::Observe { command } => match command {
             ObserveCommand::Screenshot(_) => "observe.screenshot".to_string(),
@@ -289,6 +307,41 @@ mod tests {
         ])
         .expect("ax type parse");
         assert_eq!(command_label(&typ), "ax.type");
+
+        let attr_get = Cli::try_parse_from([
+            "macos-agent",
+            "ax",
+            "attr",
+            "get",
+            "--node-id",
+            "1.1",
+            "--name",
+            "AXRole",
+        ])
+        .expect("ax attr get parse");
+        assert_eq!(command_label(&attr_get), "ax.attr.get");
+
+        let action = Cli::try_parse_from([
+            "macos-agent",
+            "ax",
+            "action",
+            "perform",
+            "--node-id",
+            "1.1",
+            "--name",
+            "AXPress",
+        ])
+        .expect("ax action perform parse");
+        assert_eq!(command_label(&action), "ax.action.perform");
+
+        let session_start = Cli::try_parse_from(["macos-agent", "ax", "session", "start"])
+            .expect("ax session start parse");
+        assert_eq!(command_label(&session_start), "ax.session.start");
+
+        let watch_poll =
+            Cli::try_parse_from(["macos-agent", "ax", "watch", "poll", "--watch-id", "axw-1"])
+                .expect("ax watch poll parse");
+        assert_eq!(command_label(&watch_poll), "ax.watch.poll");
 
         let current = Cli::try_parse_from(["macos-agent", "input-source", "current"])
             .expect("input-source current parse");

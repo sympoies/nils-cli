@@ -1,6 +1,11 @@
+pub mod ax_action;
+pub mod ax_attr;
 pub mod ax_click;
+pub mod ax_common;
 pub mod ax_list;
+pub mod ax_session;
 pub mod ax_type;
+pub mod ax_watch;
 pub mod input_click;
 pub mod input_hotkey;
 pub mod input_source;
