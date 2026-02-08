@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::model::{BaselineTarget, Context, DocumentWhen, OutputFormat, ResolveFormat, Scope};
+use crate::model::{
+    BaselineTarget, Context, DocumentWhen, FallbackMode, OutputFormat, ResolveFormat, Scope,
+};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -17,6 +19,17 @@ pub struct Cli {
 
     #[arg(long, global = true, value_name = "PATH")]
     pub project_path: Option<PathBuf>,
+
+    #[arg(
+        long = "worktree-fallback",
+        global = true,
+        value_enum,
+        default_value_t = FallbackMode::Auto,
+        value_name = "MODE",
+        help = "Project worktree fallback mode",
+        long_help = "Project worktree fallback mode. auto enables linked-worktree fallback to the primary worktree; local-only disables fallback and enforces local project files only."
+    )]
+    pub worktree_fallback: FallbackMode,
 
     #[command(subcommand)]
     pub command: Command,

@@ -469,6 +469,9 @@ mod tests {
         ResolvedRoots {
             codex_home: home.path().to_path_buf(),
             project_path: project.path().to_path_buf(),
+            is_linked_worktree: false,
+            git_common_dir: None,
+            primary_worktree_path: None,
         }
     }
 

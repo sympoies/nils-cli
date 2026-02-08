@@ -226,6 +226,47 @@ Flags:
 - Evaluates baseline required docs for selected target scope(s).
 - Missing required baseline docs cause exit `1` only when `--strict` is set.
 
+## Worktree fallback
+
+Worktree fallback is deterministic and applies only to project-scope required docs when running
+from a linked worktree in `auto` mode.
+
+### Fallback order (project scope)
+
+`startup` project policy:
+
+1. `<PROJECT_PATH>/AGENTS.override.md`
+2. `<PROJECT_PATH>/AGENTS.md`
+3. `<PRIMARY_WORKTREE_PATH>/AGENTS.override.md` (fallback)
+4. `<PRIMARY_WORKTREE_PATH>/AGENTS.md` (fallback)
+
+`project-dev` required project docs (built-ins and required project-scope extension entries):
+
+1. `<PROJECT_PATH>/<doc-path>`
+2. `<PRIMARY_WORKTREE_PATH>/<doc-path>` (fallback)
+
+### Strict and compatibility semantics
+
+- `--strict` exits `1` only when all candidates in the deterministic order are missing.
+- `local-only` mode disables `<PRIMARY_WORKTREE_PATH>` fallback candidates and enforces local
+  project paths only.
+- Non-worktree repositories are unchanged: only `<PROJECT_PATH>` candidates are evaluated.
+
+### Output disclosure and local-only operation
+
+When fallback is used, output must disclose fallback provenance in addition to required-doc
+presence.
+
+- `text`/`json`: include a fallback source marker and the resolved fallback path.
+- `checklist`: keep required-doc status lines and include fallback provenance in the same report.
+
+To disable fallback, run resolve/baseline in `local-only` mode.
+
+```bash
+agent-docs --worktree-fallback local-only resolve --context startup --strict --format checklist
+agent-docs --worktree-fallback local-only baseline --check --target project --strict --format text
+```
+
 ## Output Contract
 
 ### `resolve` text example

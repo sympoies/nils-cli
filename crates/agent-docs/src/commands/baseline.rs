@@ -5,7 +5,7 @@ use crate::config::load_configs_from_roots;
 use crate::env::ResolvedRoots;
 use crate::model::{
     BaselineCheckItem, BaselineCheckReport, BaselineTarget, ConfigDocumentEntry, ConfigLoadError,
-    ConfigScopeFile, Context, DocumentSource, DocumentStatus, Scope,
+    ConfigScopeFile, Context, DocumentSource, DocumentStatus, FallbackMode, Scope,
 };
 use crate::paths::normalize_path;
 
@@ -14,7 +14,16 @@ pub fn check_builtin_baseline(
     roots: &ResolvedRoots,
     strict: bool,
 ) -> Result<BaselineCheckReport, ConfigLoadError> {
-    let mut items = builtin_items_for_target(target, roots);
+    check_builtin_baseline_with_mode(target, roots, strict, FallbackMode::Auto)
+}
+
+pub fn check_builtin_baseline_with_mode(
+    target: BaselineTarget,
+    roots: &ResolvedRoots,
+    strict: bool,
+    fallback_mode: FallbackMode,
+) -> Result<BaselineCheckReport, ConfigLoadError> {
+    let mut items = builtin_items_for_target(target, roots, fallback_mode);
     let builtin_keys: HashSet<BaselineKey> = items.iter().map(BaselineKey::from_item).collect();
 
     let configs = load_configs_from_roots(roots)?;
@@ -22,6 +31,7 @@ pub fn check_builtin_baseline(
     items.extend(required_extension_items(
         target,
         roots,
+        fallback_mode,
         &configs_in_load_order,
         &builtin_keys,
     ));
@@ -41,14 +51,15 @@ pub fn check_builtin_baseline(
 fn builtin_items_for_target(
     target: BaselineTarget,
     roots: &ResolvedRoots,
+    fallback_mode: FallbackMode,
 ) -> Vec<BaselineCheckItem> {
     let mut items = Vec::new();
     match target {
         BaselineTarget::Home => items.extend(home_items(roots)),
-        BaselineTarget::Project => items.extend(project_items(roots)),
+        BaselineTarget::Project => items.extend(project_items(roots, fallback_mode)),
         BaselineTarget::All => {
             items.extend(home_items(roots));
-            items.extend(project_items(roots));
+            items.extend(project_items(roots, fallback_mode));
         }
     }
     items
@@ -56,7 +67,7 @@ fn builtin_items_for_target(
 
 fn home_items(roots: &ResolvedRoots) -> Vec<BaselineCheckItem> {
     vec![
-        startup_policy_item(Scope::Home, &roots.codex_home),
+        startup_policy_item(Scope::Home, &roots.codex_home, None),
         required_item(
             Scope::Home,
             Context::SkillDev,
@@ -78,22 +89,19 @@ fn home_items(roots: &ResolvedRoots) -> Vec<BaselineCheckItem> {
     ]
 }
 
-fn project_items(roots: &ResolvedRoots) -> Vec<BaselineCheckItem> {
+fn project_items(roots: &ResolvedRoots, fallback_mode: FallbackMode) -> Vec<BaselineCheckItem> {
+    let project_fallback_root = project_fallback_root(roots, fallback_mode);
     vec![
-        startup_policy_item(Scope::Project, &roots.project_path),
-        required_item(
-            Scope::Project,
-            Context::ProjectDev,
-            "project-dev",
-            &roots.project_path,
-            "DEVELOPMENT.md",
-            "project development guidance from PROJECT_PATH/DEVELOPMENT.md",
-            DocumentSource::Builtin,
-        ),
+        startup_policy_item(Scope::Project, &roots.project_path, project_fallback_root),
+        project_dev_item(&roots.project_path, project_fallback_root),
     ]
 }
 
-fn startup_policy_item(scope: Scope, root: &Path) -> BaselineCheckItem {
+fn startup_policy_item(
+    scope: Scope,
+    root: &Path,
+    fallback_root: Option<&Path>,
+) -> BaselineCheckItem {
     let override_path = normalize_path(&root.join("AGENTS.override.md"));
     if override_path.exists() {
         return BaselineCheckItem {
@@ -111,20 +119,66 @@ fn startup_policy_item(scope: Scope, root: &Path) -> BaselineCheckItem {
         };
     }
 
-    let fallback_path = normalize_path(&root.join("AGENTS.md"));
-    let status = if fallback_path.exists() {
-        DocumentStatus::Present
-    } else {
-        DocumentStatus::Missing
-    };
+    let local_agents = normalize_path(&root.join("AGENTS.md"));
+    if local_agents.exists() {
+        return BaselineCheckItem {
+            scope,
+            context: Context::Startup,
+            label: "startup policy".to_string(),
+            path: local_agents,
+            required: true,
+            status: DocumentStatus::Present,
+            source: DocumentSource::BuiltinFallback,
+            why: format!(
+                "startup {} policy (AGENTS.override.md missing, fallback AGENTS.md)",
+                scope
+            ),
+        };
+    }
+
+    if let Some(fallback_root) = fallback_root {
+        let fallback_override = normalize_path(&fallback_root.join("AGENTS.override.md"));
+        if fallback_override.exists() {
+            return BaselineCheckItem {
+                scope,
+                context: Context::Startup,
+                label: "startup policy".to_string(),
+                path: fallback_override,
+                required: true,
+                status: DocumentStatus::Present,
+                source: DocumentSource::Builtin,
+                why: format!(
+                    "startup {} policy (local missing, fallback to primary AGENTS.override.md)",
+                    scope
+                ),
+            };
+        }
+
+        let fallback_agents = normalize_path(&fallback_root.join("AGENTS.md"));
+        if fallback_agents.exists() {
+            return BaselineCheckItem {
+                scope,
+                context: Context::Startup,
+                label: "startup policy".to_string(),
+                path: fallback_agents,
+                required: true,
+                status: DocumentStatus::Present,
+                source: DocumentSource::BuiltinFallback,
+                why: format!(
+                    "startup {} policy (local missing, fallback to primary AGENTS.md)",
+                    scope
+                ),
+            };
+        }
+    }
 
     BaselineCheckItem {
         scope,
         context: Context::Startup,
         label: "startup policy".to_string(),
-        path: fallback_path,
+        path: local_agents,
         required: true,
-        status,
+        status: DocumentStatus::Missing,
         source: DocumentSource::BuiltinFallback,
         why: format!(
             "startup {} policy (AGENTS.override.md missing, fallback AGENTS.md)",
@@ -161,9 +215,53 @@ fn required_item(
     }
 }
 
+fn project_dev_item(root: &Path, fallback_root: Option<&Path>) -> BaselineCheckItem {
+    let local_path = normalize_path(&root.join("DEVELOPMENT.md"));
+    if local_path.exists() {
+        return BaselineCheckItem {
+            scope: Scope::Project,
+            context: Context::ProjectDev,
+            label: "project-dev".to_string(),
+            path: local_path,
+            required: true,
+            status: DocumentStatus::Present,
+            source: DocumentSource::Builtin,
+            why: "project development guidance from PROJECT_PATH/DEVELOPMENT.md".to_string(),
+        };
+    }
+
+    if let Some(fallback_root) = fallback_root {
+        let fallback_path = normalize_path(&fallback_root.join("DEVELOPMENT.md"));
+        if fallback_path.exists() {
+            return BaselineCheckItem {
+                scope: Scope::Project,
+                context: Context::ProjectDev,
+                label: "project-dev".to_string(),
+                path: fallback_path,
+                required: true,
+                status: DocumentStatus::Present,
+                source: DocumentSource::Builtin,
+                why: "project development guidance from PROJECT_PATH/DEVELOPMENT.md (fallback to primary worktree)".to_string(),
+            };
+        }
+    }
+
+    BaselineCheckItem {
+        scope: Scope::Project,
+        context: Context::ProjectDev,
+        label: "project-dev".to_string(),
+        path: local_path,
+        required: true,
+        status: DocumentStatus::Missing,
+        source: DocumentSource::Builtin,
+        why: "project development guidance from PROJECT_PATH/DEVELOPMENT.md".to_string(),
+    }
+}
+
 fn required_extension_items(
     target: BaselineTarget,
     roots: &ResolvedRoots,
+    fallback_mode: FallbackMode,
     configs_in_load_order: &[&ConfigScopeFile],
     builtin_keys: &HashSet<BaselineKey>,
 ) -> Vec<BaselineCheckItem> {
@@ -174,6 +272,7 @@ fn required_extension_items(
         merge_required_extension_items(
             target,
             roots,
+            fallback_mode,
             config,
             builtin_keys,
             &mut extension_items,
@@ -187,6 +286,7 @@ fn required_extension_items(
 fn merge_required_extension_items(
     target: BaselineTarget,
     roots: &ResolvedRoots,
+    fallback_mode: FallbackMode,
     config: &ConfigScopeFile,
     builtin_keys: &HashSet<BaselineKey>,
     extension_items: &mut Vec<BaselineCheckItem>,
@@ -197,7 +297,7 @@ fn merge_required_extension_items(
             continue;
         }
 
-        let path = resolve_extension_path(entry, roots);
+        let path = resolve_extension_path_with_project_fallback(entry, roots, fallback_mode);
         let key = BaselineKey::new(entry.context, entry.scope, path.clone());
         if builtin_keys.contains(&key) {
             continue;
@@ -249,6 +349,30 @@ fn resolve_extension_path(entry: &ConfigDocumentEntry, roots: &ResolvedRoots) ->
         Scope::Project => &roots.project_path,
     };
     normalize_path(&root.join(&entry.path))
+}
+
+fn resolve_extension_path_with_project_fallback(
+    entry: &ConfigDocumentEntry,
+    roots: &ResolvedRoots,
+    fallback_mode: FallbackMode,
+) -> PathBuf {
+    let local_path = resolve_extension_path(entry, roots);
+    if local_path.exists()
+        || !should_use_project_fallback(entry.scope, entry.required, fallback_mode)
+    {
+        return local_path;
+    }
+
+    let Some(primary_root) = project_fallback_root(roots, fallback_mode) else {
+        return local_path;
+    };
+
+    let fallback_path = normalize_path(&primary_root.join(&entry.path));
+    if fallback_path.exists() {
+        fallback_path
+    } else {
+        local_path
+    }
 }
 
 fn extension_why(config: &ConfigScopeFile, index: usize, entry: &ConfigDocumentEntry) -> String {
@@ -309,4 +433,16 @@ fn suggested_actions(items: &[BaselineCheckItem]) -> Vec<String> {
     }
 
     actions
+}
+
+fn project_fallback_root(roots: &ResolvedRoots, fallback_mode: FallbackMode) -> Option<&Path> {
+    if fallback_mode == FallbackMode::Auto && roots.is_linked_worktree {
+        roots.primary_worktree_path.as_deref()
+    } else {
+        None
+    }
+}
+
+fn should_use_project_fallback(scope: Scope, required: bool, fallback_mode: FallbackMode) -> bool {
+    scope == Scope::Project && required && fallback_mode == FallbackMode::Auto
 }

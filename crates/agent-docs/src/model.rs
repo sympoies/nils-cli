@@ -110,6 +110,29 @@ impl fmt::Display for OutputFormat {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ValueEnum, Default)]
 #[serde(rename_all = "kebab-case")]
+pub enum FallbackMode {
+    #[default]
+    Auto,
+    LocalOnly,
+}
+
+impl FallbackMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::LocalOnly => "local-only",
+        }
+    }
+}
+
+impl fmt::Display for FallbackMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ValueEnum, Default)]
+#[serde(rename_all = "kebab-case")]
 pub enum ResolveFormat {
     #[default]
     Text,
@@ -247,6 +270,9 @@ pub struct ResolveReport {
     pub strict: bool,
     pub codex_home: PathBuf,
     pub project_path: PathBuf,
+    pub is_linked_worktree: bool,
+    pub git_common_dir: Option<PathBuf>,
+    pub primary_worktree_path: Option<PathBuf>,
     pub documents: Vec<ResolvedDocument>,
     pub summary: ResolveSummary,
 }
