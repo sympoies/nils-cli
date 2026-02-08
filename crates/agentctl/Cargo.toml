@@ -6,6 +6,10 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 clap = { workspace = true }
+agent-provider-codex = { path = "../agent-provider-codex" }
+agent-runtime-core = { path = "../agent-runtime-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 nils-test-support = { path = "../nils-test-support" }

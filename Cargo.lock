@@ -47,9 +47,13 @@ dependencies = [
 name = "agentctl"
 version = "0.2.11"
 dependencies = [
+ "agent-provider-codex",
+ "agent-runtime-core",
  "clap",
  "nils-test-support",
  "pretty_assertions",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

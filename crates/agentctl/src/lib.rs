@@ -1,4 +1,8 @@
 pub mod cli;
+pub mod debug;
+pub mod diag;
+pub mod provider;
+pub mod workflow;
 
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
@@ -25,10 +29,22 @@ where
     };
 
     match cli.command {
-        Some(cli::Command::Provider) => print_group_help("provider"),
-        Some(cli::Command::Diag) => print_group_help("diag"),
-        Some(cli::Command::Debug) => print_group_help("debug"),
-        Some(cli::Command::Workflow) => print_group_help("workflow"),
+        Some(cli::Command::Provider(args)) => match args.command {
+            Some(command) => provider::commands::run(command),
+            None => print_group_help("provider"),
+        },
+        Some(cli::Command::Diag(args)) => match args.command {
+            Some(command) => diag::run(command),
+            None => print_group_help("diag"),
+        },
+        Some(cli::Command::Debug(args)) => match args.command {
+            Some(command) => debug::run(command),
+            None => print_group_help("debug"),
+        },
+        Some(cli::Command::Workflow(args)) => match args.command {
+            Some(command) => workflow::run(command),
+            None => print_group_help("workflow"),
+        },
         Some(cli::Command::Automation) => print_group_help("automation"),
         None => print_root_help(),
     }

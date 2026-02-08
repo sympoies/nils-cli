@@ -1,3 +1,7 @@
+use crate::debug::DebugArgs;
+use crate::diag::DiagArgs;
+use crate::provider::commands::ProviderArgs;
+use crate::workflow::WorkflowArgs;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -15,13 +19,13 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Command {
     /// Provider registry and selection
-    Provider,
+    Provider(ProviderArgs),
     /// Provider-neutral diagnostics
-    Diag,
+    Diag(DiagArgs),
     /// Debug bundle and troubleshooting tools
-    Debug,
+    Debug(DebugArgs),
     /// Declarative workflow orchestration
-    Workflow,
+    Workflow(WorkflowArgs),
     /// Local automation integrations
     Automation,
 }
