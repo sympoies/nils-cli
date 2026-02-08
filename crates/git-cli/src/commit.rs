@@ -751,3 +751,147 @@ fn synthesize_stash_object(
 fn short_sha(value: &str) -> String {
     value.chars().take(7).collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        dispatch, file_probe, git_scope_available, parse_command, parse_context_args,
+        pattern_matches, short_sha, strip_ansi, wildcard_match, CommitCommand, OutputMode,
+        ParseOutcome,
+    };
+    use nils_test_support::{CwdGuard, GlobalStateLock};
+    use pretty_assertions::assert_eq;
+
+    struct EnvGuard {
+        key: &'static str,
+        old: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let old = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, old }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.old.take() {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    #[test]
+    fn parse_command_supports_aliases() {
+        assert!(matches!(
+            parse_command("context"),
+            Some(CommitCommand::Context)
+        ));
+        assert!(matches!(
+            parse_command("context-json"),
+            Some(CommitCommand::ContextJson)
+        ));
+        assert!(matches!(
+            parse_command("context_json"),
+            Some(CommitCommand::ContextJson)
+        ));
+        assert!(matches!(
+            parse_command("json"),
+            Some(CommitCommand::ContextJson)
+        ));
+        assert!(matches!(
+            parse_command("stash"),
+            Some(CommitCommand::ToStash)
+        ));
+        assert!(parse_command("unknown").is_none());
+    }
+
+    #[test]
+    fn parse_context_args_supports_modes_and_include_forms() {
+        let args = vec![
+            "--both".to_string(),
+            "--no-color".to_string(),
+            "--include".to_string(),
+            "src/*.rs".to_string(),
+            "--include=README.md".to_string(),
+            "--extra".to_string(),
+        ];
+
+        match parse_context_args(&args) {
+            ParseOutcome::Continue(parsed) => {
+                assert_eq!(parsed.mode, OutputMode::Both);
+                assert!(parsed.no_color);
+                assert_eq!(
+                    parsed.include_patterns,
+                    vec!["src/*.rs".to_string(), "README.md".to_string()]
+                );
+                assert_eq!(parsed.extra_args, vec!["--extra".to_string()]);
+            }
+            ParseOutcome::Exit(code) => panic!("unexpected early exit: {code}"),
+        }
+    }
+
+    #[test]
+    fn parse_context_args_reports_missing_include_value() {
+        let args = vec!["--include".to_string()];
+        match parse_context_args(&args) {
+            ParseOutcome::Exit(code) => assert_eq!(code, 2),
+            ParseOutcome::Continue(_) => panic!("expected usage exit"),
+        }
+    }
+
+    #[test]
+    fn wildcard_matching_handles_star_and_question_mark() {
+        assert!(wildcard_match("src/*.rs", "src/main.rs"));
+        assert!(wildcard_match("a?c", "abc"));
+        assert!(wildcard_match("*commit*", "git-commit"));
+        assert!(!wildcard_match("src/*.rs", "src/main.ts"));
+        assert!(!wildcard_match("a?c", "ac"));
+        assert!(pattern_matches("docs/**", "docs/plans/test.md"));
+    }
+
+    #[test]
+    fn short_sha_truncates_to_seven_chars() {
+        assert_eq!(short_sha("abcdef123456"), "abcdef1");
+        assert_eq!(short_sha("abc"), "abc");
+    }
+
+    #[test]
+    fn parse_context_args_help_exits_zero() {
+        let args = vec!["--help".to_string()];
+        match parse_context_args(&args) {
+            ParseOutcome::Exit(code) => assert_eq!(code, 0),
+            ParseOutcome::Continue(_) => panic!("expected help exit"),
+        }
+    }
+
+    #[test]
+    fn git_scope_available_honors_fixture_override() {
+        let _guard = EnvGuard::set("GIT_CLI_FIXTURE_GIT_SCOPE_MODE", "missing");
+        assert!(!git_scope_available());
+    }
+
+    #[test]
+    fn file_probe_respects_missing_file_fixture() {
+        let _guard = EnvGuard::set("GIT_CLI_FIXTURE_FILE_MODE", "missing");
+        assert_eq!(file_probe("HEAD:README.md"), None);
+    }
+
+    #[test]
+    fn strip_ansi_removes_sgr_sequences() {
+        assert_eq!(strip_ansi("\u{1b}[31mred\u{1b}[0m"), "red");
+    }
+
+    #[test]
+    fn dispatch_context_and_stash_fail_fast_outside_git_repo() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let _cwd = CwdGuard::set(&lock, dir.path()).expect("cwd");
+        assert_eq!(dispatch("context", &[]), 1);
+        assert_eq!(dispatch("stash", &[]), 1);
+    }
+}

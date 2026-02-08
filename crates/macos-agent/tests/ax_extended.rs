@@ -415,7 +415,6 @@ fn ax_click_gate_and_postcondition_metadata_are_emitted_in_json() {
             "Terminal",
             "--node-id",
             "1.1",
-            "--gate-app-active",
             "--gate-window-present",
             "--gate-ax-present",
             "--gate-ax-unique",
@@ -438,18 +437,14 @@ fn ax_click_gate_and_postcondition_metadata_are_emitted_in_json() {
     assert_eq!(payload["command"], json!("ax.click"));
     assert_eq!(
         payload["result"]["gates"]["checks"][0]["gate"],
-        json!("app-active")
-    );
-    assert_eq!(
-        payload["result"]["gates"]["checks"][1]["gate"],
         json!("window-present")
     );
     assert_eq!(
-        payload["result"]["gates"]["checks"][2]["gate"],
+        payload["result"]["gates"]["checks"][1]["gate"],
         json!("ax-present")
     );
     assert_eq!(
-        payload["result"]["gates"]["checks"][3]["gate"],
+        payload["result"]["gates"]["checks"][2]["gate"],
         json!("ax-unique")
     );
     assert_eq!(

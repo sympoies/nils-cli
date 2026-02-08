@@ -734,3 +734,80 @@ fn print_reset_remote_help() {
     );
     println!("  -y, --yes                  Skip confirmations");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{dispatch, non_empty, parse_positive_int, trim_trailing_newlines};
+    use nils_test_support::{CwdGuard, GlobalStateLock};
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn dispatch_returns_none_for_unknown_subcommand() {
+        assert_eq!(dispatch("unknown", &[]), None);
+    }
+
+    #[test]
+    fn parse_positive_int_accepts_digits_only() {
+        assert_eq!(parse_positive_int("1"), Some(1));
+        assert_eq!(parse_positive_int("42"), Some(42));
+        assert_eq!(parse_positive_int("001"), Some(1));
+    }
+
+    #[test]
+    fn parse_positive_int_rejects_invalid_values() {
+        assert_eq!(parse_positive_int(""), None);
+        assert_eq!(parse_positive_int("0"), None);
+        assert_eq!(parse_positive_int("-1"), None);
+        assert_eq!(parse_positive_int("1.0"), None);
+        assert_eq!(parse_positive_int("abc"), None);
+    }
+
+    #[test]
+    fn trim_trailing_newlines_only_removes_line_endings() {
+        assert_eq!(trim_trailing_newlines("line\n"), "line");
+        assert_eq!(trim_trailing_newlines("line\r\n"), "line");
+        assert_eq!(trim_trailing_newlines("line  "), "line  ");
+    }
+
+    #[test]
+    fn non_empty_returns_none_for_empty_string() {
+        assert_eq!(non_empty(String::new()), None);
+        assert_eq!(non_empty("value".to_string()), Some("value".to_string()));
+    }
+
+    #[test]
+    fn reset_by_count_modes_return_usage_errors_for_invalid_arguments() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let _cwd = CwdGuard::set(&lock, dir.path()).expect("cwd");
+
+        let args = vec!["1".to_string(), "2".to_string()];
+        assert_eq!(dispatch("soft", &args), Some(2));
+        assert_eq!(dispatch("mixed", &args), Some(2));
+        assert_eq!(dispatch("hard", &args), Some(2));
+
+        let args = vec!["abc".to_string()];
+        assert_eq!(dispatch("soft", &args), Some(2));
+    }
+
+    #[test]
+    fn reset_by_count_returns_runtime_error_when_target_commit_missing() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let _cwd = CwdGuard::set(&lock, dir.path()).expect("cwd");
+        let args = vec!["999999".to_string()];
+        assert_eq!(dispatch("soft", &args), Some(1));
+    }
+
+    #[test]
+    fn reset_remote_argument_parsing_covers_help_and_usage_failures() {
+        let help_args = vec!["--help".to_string()];
+        assert_eq!(dispatch("remote", &help_args), Some(0));
+
+        let bad_ref_args = vec!["--ref".to_string(), "invalid".to_string()];
+        assert_eq!(dispatch("remote", &bad_ref_args), Some(2));
+
+        let missing_remote_value = vec!["--remote".to_string()];
+        assert_eq!(dispatch("remote", &missing_remote_value), Some(2));
+    }
+}
