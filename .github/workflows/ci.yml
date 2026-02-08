@@ -63,7 +63,7 @@ jobs:
       contents: read
       pull-requests: write
     env:
-      COVERAGE_FAIL_UNDER_LINES: "80"
+      COVERAGE_FAIL_UNDER_LINES: "85"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
