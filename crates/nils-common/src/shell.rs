@@ -45,14 +45,16 @@ pub fn strip_ansi(input: &str, mode: AnsiStripMode) -> Cow<'_, str> {
     while i < bytes.len() {
         if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
             let mut j = i + 2;
+            let mut should_strip = false;
             match mode {
                 AnsiStripMode::CsiSgrOnly => {
                     while j < bytes.len() {
-                        if bytes[j] == b'm' {
-                            j += 1;
+                        let b = bytes[j];
+                        j += 1;
+                        if (0x40..=0x7e).contains(&b) {
+                            should_strip = b == b'm';
                             break;
                         }
-                        j += 1;
                     }
                 }
                 AnsiStripMode::CsiAnyTerminator => {
@@ -60,17 +62,20 @@ pub fn strip_ansi(input: &str, mode: AnsiStripMode) -> Cow<'_, str> {
                         let b = bytes[j];
                         j += 1;
                         if (0x40..=0x7e).contains(&b) {
+                            should_strip = true;
                             break;
                         }
                     }
                 }
             }
 
-            let buffer = out.get_or_insert_with(|| String::with_capacity(input.len()));
-            buffer.push_str(&input[copied_from..i]);
-            copied_from = j;
-            i = j;
-            continue;
+            if should_strip {
+                let buffer = out.get_or_insert_with(|| String::with_capacity(input.len()));
+                buffer.push_str(&input[copied_from..i]);
+                copied_from = j;
+                i = j;
+                continue;
+            }
         }
 
         i += 1;
@@ -116,6 +121,18 @@ mod tests {
     fn strip_ansi_any_terminator_removes_k_sequence() {
         let input = "a\x1b[2Kb";
         assert_eq!(strip_ansi(input, AnsiStripMode::CsiAnyTerminator), "ab");
+    }
+
+    #[test]
+    fn strip_ansi_sgr_only_keeps_non_sgr_csi_sequences() {
+        let input = "a\x1b[2Kb";
+        assert_eq!(strip_ansi(input, AnsiStripMode::CsiSgrOnly), input);
+    }
+
+    #[test]
+    fn strip_ansi_sgr_only_keeps_incomplete_csi_sequences() {
+        let input = "a\x1b[31";
+        assert_eq!(strip_ansi(input, AnsiStripMode::CsiSgrOnly), input);
     }
 
     #[test]
