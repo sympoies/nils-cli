@@ -1,6 +1,6 @@
 [package]
 name = "plan-tooling"
-version = "0.2.9"
+version = "2.2.10"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
