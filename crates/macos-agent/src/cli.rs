@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 
+use crate::model::{AxClickFallbackStage, AxMatchStrategy};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum OutputFormat {
     Text,
@@ -125,6 +127,12 @@ pub enum CommandGroup {
     Observe {
         #[command(subcommand)]
         command: ObserveCommand,
+    },
+
+    /// Collect one-shot debug artifacts for triage.
+    Debug {
+        #[command(subcommand)]
+        command: DebugCommand,
     },
 
     /// Wait primitives for UI stabilization.
@@ -420,6 +428,14 @@ pub struct AxSelectorArgs {
     /// Select the nth match from compound selector results.
     #[arg(long)]
     pub nth: Option<u32>,
+
+    /// Text match strategy for selector filters.
+    #[arg(long, value_enum, default_value_t = AxMatchStrategy::Contains)]
+    pub match_strategy: AxMatchStrategy,
+
+    /// Emit selector explain diagnostics in JSON output.
+    #[arg(long)]
+    pub selector_explain: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -445,6 +461,56 @@ pub struct AxListArgs {
     /// Limit number of returned nodes.
     #[arg(long)]
     pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct AxActionGateArgs {
+    /// Require app active gate before mutation.
+    #[arg(long)]
+    pub gate_app_active: bool,
+
+    /// Require target window present gate before mutation.
+    #[arg(long)]
+    pub gate_window_present: bool,
+
+    /// Require AX selector to resolve to at least one node before mutation.
+    #[arg(long)]
+    pub gate_ax_present: bool,
+
+    /// Require AX selector to resolve to exactly one node before mutation.
+    #[arg(long)]
+    pub gate_ax_unique: bool,
+
+    /// Timeout for gate checks in milliseconds.
+    #[arg(long, default_value_t = 1500)]
+    pub gate_timeout_ms: u64,
+
+    /// Poll interval for gate checks in milliseconds.
+    #[arg(long, default_value_t = 50)]
+    pub gate_poll_ms: u64,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct AxPostconditionArgs {
+    /// Require focused state after mutation.
+    #[arg(long)]
+    pub postcondition_focused: Option<bool>,
+
+    /// Require an AX attribute/value pair after mutation.
+    #[arg(long, requires = "postcondition_attribute_value")]
+    pub postcondition_attribute: Option<String>,
+
+    /// Expected value for --postcondition-attribute.
+    #[arg(long, requires = "postcondition_attribute")]
+    pub postcondition_attribute_value: Option<String>,
+
+    /// Timeout for postcondition checks in milliseconds.
+    #[arg(long, default_value_t = 1500)]
+    pub postcondition_timeout_ms: u64,
+
+    /// Poll interval for postcondition checks in milliseconds.
+    #[arg(long, default_value_t = 50)]
+    pub postcondition_poll_ms: u64,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -481,6 +547,20 @@ pub struct AxClickArgs {
     /// Allow coordinate fallback when AX press is unavailable.
     #[arg(long)]
     pub allow_coordinate_fallback: bool,
+
+    /// Re-resolve selector to node id immediately before click execution.
+    #[arg(long)]
+    pub reselect_before_click: bool,
+
+    /// Configure click fallback stage order (`ax-press,ax-confirm,frame-center,coordinate`).
+    #[arg(long, value_enum, value_delimiter = ',', num_args = 1.., value_name = "STAGE")]
+    pub fallback_order: Vec<AxClickFallbackStage>,
+
+    #[command(flatten)]
+    pub gate: AxActionGateArgs,
+
+    #[command(flatten)]
+    pub postcondition: AxPostconditionArgs,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -533,6 +613,12 @@ pub struct AxTypeArgs {
     /// Allow keyboard fallback when AX value set/focus is unavailable.
     #[arg(long)]
     pub allow_keyboard_fallback: bool,
+
+    #[command(flatten)]
+    pub gate: AxActionGateArgs,
+
+    #[command(flatten)]
+    pub postcondition: AxPostconditionArgs,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -801,6 +887,47 @@ pub enum ObserveCommand {
     Screenshot(ObserveScreenshotArgs),
 }
 
+#[derive(Debug, Clone, Subcommand)]
+pub enum DebugCommand {
+    /// Capture a deterministic triage artifact bundle.
+    Bundle(DebugBundleArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+#[command(
+    group(
+        ArgGroup::new("selector")
+            .required(false)
+            .multiple(false)
+            .args(["window_id", "active_window", "app"])
+    )
+)]
+pub struct DebugBundleArgs {
+    /// Select by window id.
+    #[arg(long)]
+    pub window_id: Option<u32>,
+
+    /// Select frontmost active window.
+    #[arg(long)]
+    pub active_window: bool,
+
+    /// Select by app name.
+    #[arg(long)]
+    pub app: Option<String>,
+
+    /// Narrow app selection by window title substring.
+    #[arg(
+        long = "window-title-contains",
+        visible_alias = "window-name",
+        requires = "app"
+    )]
+    pub window_name: Option<String>,
+
+    /// Output directory for debug artifacts.
+    #[arg(long)]
+    pub output_dir: Option<PathBuf>,
+}
+
 #[derive(Debug, Clone, Args)]
 #[command(
     group(
@@ -838,6 +965,13 @@ pub struct ObserveScreenshotArgs {
     /// Output image format.
     #[arg(long, value_enum)]
     pub image_format: Option<ImageFormat>,
+
+    #[command(flatten)]
+    pub ax_selector: AxSelectorArgs,
+
+    /// Expand selector frame by N pixels in each direction.
+    #[arg(long, default_value_t = 0)]
+    pub selector_padding: i32,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -850,6 +984,12 @@ pub enum WaitCommand {
 
     /// Wait for target window to appear.
     WindowPresent(WaitWindowPresentArgs),
+
+    /// Wait until AX selector resolves to at least one node.
+    AxPresent(WaitAxPresentArgs),
+
+    /// Wait until AX selector resolves to exactly one node.
+    AxUnique(WaitAxUniqueArgs),
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -964,14 +1104,97 @@ pub struct WaitWindowPresentArgs {
     pub poll_ms: u64,
 }
 
+#[derive(Debug, Clone, Args)]
+#[command(
+    group(
+        ArgGroup::new("selector")
+            .required(true)
+            .multiple(true)
+            .args([
+                "node_id",
+                "role",
+                "title_contains",
+                "identifier_contains",
+                "value_contains",
+                "subrole",
+                "focused",
+                "enabled",
+            ])
+    ),
+    group(
+        ArgGroup::new("target")
+            .required(false)
+            .multiple(false)
+            .args(["session_id", "app", "bundle_id"])
+    )
+)]
+pub struct WaitAxPresentArgs {
+    #[command(flatten)]
+    pub selector: AxSelectorArgs,
+
+    #[command(flatten)]
+    pub target: AxTargetArgs,
+
+    /// Timeout in milliseconds.
+    #[arg(long, default_value_t = 1500)]
+    pub timeout_ms: u64,
+
+    /// Poll interval in milliseconds.
+    #[arg(long, default_value_t = 50)]
+    pub poll_ms: u64,
+}
+
+#[derive(Debug, Clone, Args)]
+#[command(
+    group(
+        ArgGroup::new("selector")
+            .required(true)
+            .multiple(true)
+            .args([
+                "node_id",
+                "role",
+                "title_contains",
+                "identifier_contains",
+                "value_contains",
+                "subrole",
+                "focused",
+                "enabled",
+            ])
+    ),
+    group(
+        ArgGroup::new("target")
+            .required(false)
+            .multiple(false)
+            .args(["session_id", "app", "bundle_id"])
+    )
+)]
+pub struct WaitAxUniqueArgs {
+    #[command(flatten)]
+    pub selector: AxSelectorArgs,
+
+    #[command(flatten)]
+    pub target: AxTargetArgs,
+
+    /// Timeout in milliseconds.
+    #[arg(long, default_value_t = 1500)]
+    pub timeout_ms: u64,
+
+    /// Poll interval in milliseconds.
+    #[arg(long, default_value_t = 50)]
+    pub poll_ms: u64,
+}
+
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use clap::Parser;
     use pretty_assertions::assert_eq;
 
     use super::{
         AxActionCommand, AxAttrCommand, AxCommand, AxSessionCommand, AxWatchCommand, Cli,
-        CommandGroup, ErrorFormat, InputSourceCommand, OutputFormat, WaitCommand, WindowCommand,
+        CommandGroup, DebugCommand, ErrorFormat, InputSourceCommand, ObserveCommand, OutputFormat,
+        WaitCommand, WindowCommand,
     };
 
     #[test]
@@ -1054,6 +1277,160 @@ mod tests {
                 assert_eq!(args.window_name.as_deref(), Some("Inbox"));
                 assert_eq!(args.timeout_ms, 2000);
                 assert_eq!(args.poll_ms, 100);
+            }
+            other => panic!("unexpected command variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_wait_ax_present_with_match_strategy_and_explain() {
+        let cli = Cli::try_parse_from([
+            "macos-agent",
+            "wait",
+            "ax-present",
+            "--app",
+            "Arc",
+            "--role",
+            "AXButton",
+            "--title-contains",
+            "^Run$",
+            "--match-strategy",
+            "regex",
+            "--selector-explain",
+            "--timeout-ms",
+            "1800",
+            "--poll-ms",
+            "25",
+        ])
+        .expect("wait ax-present should parse");
+
+        match cli.command {
+            CommandGroup::Wait {
+                command: WaitCommand::AxPresent(args),
+            } => {
+                assert_eq!(args.target.app.as_deref(), Some("Arc"));
+                assert_eq!(args.selector.filters.role.as_deref(), Some("AXButton"));
+                assert_eq!(
+                    args.selector.filters.title_contains.as_deref(),
+                    Some("^Run$")
+                );
+                assert_eq!(
+                    args.selector.match_strategy,
+                    crate::model::AxMatchStrategy::Regex
+                );
+                assert!(args.selector.selector_explain);
+                assert_eq!(args.timeout_ms, 1800);
+                assert_eq!(args.poll_ms, 25);
+            }
+            other => panic!("unexpected command variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_ax_click_gate_and_postcondition_flags() {
+        let cli = Cli::try_parse_from([
+            "macos-agent",
+            "ax",
+            "click",
+            "--app",
+            "Terminal",
+            "--node-id",
+            "1.1",
+            "--gate-app-active",
+            "--gate-window-present",
+            "--gate-ax-present",
+            "--gate-ax-unique",
+            "--gate-timeout-ms",
+            "2100",
+            "--gate-poll-ms",
+            "25",
+            "--postcondition-focused",
+            "true",
+            "--postcondition-attribute",
+            "AXRole",
+            "--postcondition-attribute-value",
+            "AXButton",
+            "--postcondition-timeout-ms",
+            "1800",
+            "--postcondition-poll-ms",
+            "20",
+        ])
+        .expect("ax click gate/postcondition flags should parse");
+
+        match cli.command {
+            CommandGroup::Ax {
+                command: AxCommand::Click(args),
+            } => {
+                assert!(args.gate.gate_app_active);
+                assert!(args.gate.gate_window_present);
+                assert!(args.gate.gate_ax_present);
+                assert!(args.gate.gate_ax_unique);
+                assert_eq!(args.gate.gate_timeout_ms, 2100);
+                assert_eq!(args.gate.gate_poll_ms, 25);
+                assert_eq!(args.postcondition.postcondition_focused, Some(true));
+                assert_eq!(
+                    args.postcondition.postcondition_attribute.as_deref(),
+                    Some("AXRole")
+                );
+                assert_eq!(
+                    args.postcondition.postcondition_attribute_value.as_deref(),
+                    Some("AXButton")
+                );
+                assert_eq!(args.postcondition.postcondition_timeout_ms, 1800);
+                assert_eq!(args.postcondition.postcondition_poll_ms, 20);
+            }
+            other => panic!("unexpected command variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_debug_bundle_and_observe_selector_padding_flags() {
+        let debug_cli = Cli::try_parse_from([
+            "macos-agent",
+            "debug",
+            "bundle",
+            "--active-window",
+            "--output-dir",
+            "/tmp/debug-bundle",
+        ])
+        .expect("debug bundle should parse");
+        match debug_cli.command {
+            CommandGroup::Debug {
+                command: DebugCommand::Bundle(args),
+            } => {
+                assert!(args.active_window);
+                assert_eq!(
+                    args.output_dir.expect("output-dir should parse"),
+                    PathBuf::from("/tmp/debug-bundle")
+                );
+            }
+            other => panic!("unexpected command variant: {other:?}"),
+        }
+
+        let observe_cli = Cli::try_parse_from([
+            "macos-agent",
+            "observe",
+            "screenshot",
+            "--active-window",
+            "--role",
+            "AXButton",
+            "--title-contains",
+            "Run",
+            "--selector-padding",
+            "12",
+        ])
+        .expect("observe screenshot selector flags should parse");
+        match observe_cli.command {
+            CommandGroup::Observe {
+                command: ObserveCommand::Screenshot(args),
+            } => {
+                assert!(args.active_window);
+                assert_eq!(args.ax_selector.filters.role.as_deref(), Some("AXButton"));
+                assert_eq!(
+                    args.ax_selector.filters.title_contains.as_deref(),
+                    Some("Run")
+                );
+                assert_eq!(args.selector_padding, 12);
             }
             other => panic!("unexpected command variant: {other:?}"),
         }
@@ -1214,6 +1591,42 @@ mod tests {
             } => {
                 assert_eq!(args.selector.node_id.as_deref(), Some("node-17"));
                 assert!(args.allow_coordinate_fallback);
+            }
+            other => panic!("unexpected command variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_ax_click_reselect_and_fallback_order() {
+        let cli = Cli::try_parse_from([
+            "macos-agent",
+            "ax",
+            "click",
+            "--role",
+            "AXButton",
+            "--title-contains",
+            "Run",
+            "--reselect-before-click",
+            "--allow-coordinate-fallback",
+            "--fallback-order",
+            "ax-press,ax-confirm,frame-center,coordinate",
+        ])
+        .expect("ax click reselect/fallback-order should parse");
+
+        match cli.command {
+            CommandGroup::Ax {
+                command: AxCommand::Click(args),
+            } => {
+                assert!(args.reselect_before_click);
+                assert_eq!(
+                    args.fallback_order,
+                    vec![
+                        crate::model::AxClickFallbackStage::AxPress,
+                        crate::model::AxClickFallbackStage::AxConfirm,
+                        crate::model::AxClickFallbackStage::FrameCenter,
+                        crate::model::AxClickFallbackStage::Coordinate,
+                    ]
+                );
             }
             other => panic!("unexpected command variant: {other:?}"),
         }

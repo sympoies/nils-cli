@@ -5,8 +5,8 @@ use crate::backend;
 use crate::backend::process::RealProcessRunner;
 use crate::cli::{
     AppsCommand, AxActionCommand, AxAttrCommand, AxCommand, AxSessionCommand, AxWatchCommand, Cli,
-    CommandGroup, InputCommand, InputSourceCommand, ObserveCommand, OutputFormat, PreflightArgs,
-    ProfileCommand, ScenarioCommand, WaitCommand, WindowCommand, WindowsCommand,
+    CommandGroup, DebugCommand, InputCommand, InputSourceCommand, ObserveCommand, OutputFormat,
+    PreflightArgs, ProfileCommand, ScenarioCommand, WaitCommand, WindowCommand, WindowsCommand,
 };
 use crate::commands;
 use crate::error::CliError;
@@ -80,10 +80,15 @@ pub fn command_group_label(command: &CommandGroup) -> &'static str {
         CommandGroup::Observe { command } => match command {
             ObserveCommand::Screenshot(_) => "observe.screenshot",
         },
+        CommandGroup::Debug { command } => match command {
+            DebugCommand::Bundle(_) => "debug.bundle",
+        },
         CommandGroup::Wait { command } => match command {
             WaitCommand::Sleep(_) => "wait.sleep",
             WaitCommand::AppActive(_) => "wait.app-active",
             WaitCommand::WindowPresent(_) => "wait.window-present",
+            WaitCommand::AxPresent(_) => "wait.ax-present",
+            WaitCommand::AxUnique(_) => "wait.ax-unique",
         },
         CommandGroup::Scenario { command } => match command {
             ScenarioCommand::Run(_) => "scenario.run",
@@ -118,6 +123,9 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         CommandGroup::Observe {
             command: ObserveCommand::Screenshot(args),
         } => commands::observe::run_screenshot(cli.format, &args),
+        CommandGroup::Debug {
+            command: DebugCommand::Bundle(args),
+        } => commands::list::run_debug_bundle(cli.format, &args, policy, &runner),
         CommandGroup::Wait {
             command: WaitCommand::Sleep(args),
         } => commands::wait::run_sleep(cli.format, &args),
@@ -127,6 +135,12 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         CommandGroup::Wait {
             command: WaitCommand::WindowPresent(args),
         } => commands::wait::run_window_present(cli.format, &args),
+        CommandGroup::Wait {
+            command: WaitCommand::AxPresent(args),
+        } => commands::wait::run_ax_present(cli.format, &args, policy, &runner),
+        CommandGroup::Wait {
+            command: WaitCommand::AxUnique(args),
+        } => commands::wait::run_ax_unique(cli.format, &args, policy, &runner),
         CommandGroup::Scenario {
             command: ScenarioCommand::Run(args),
         } => commands::scenario::run(cli.format, &args),

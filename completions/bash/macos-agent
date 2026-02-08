@@ -13,7 +13,7 @@ _nils_cli_macos_agent_complete() {
   local prev="${COMP_WORDS[COMP_CWORD-1]}"
 
   local -a root_opts=(-h --help -V --version --format --error-format --dry-run --retries --retry-delay-ms --timeout-ms --trace --trace-dir)
-  local -a groups=(preflight windows apps window input input-source ax observe wait scenario profile)
+  local -a groups=(preflight windows apps window input input-source ax observe debug wait scenario profile)
 
   if (( cword == 1 )); then
     if [[ "$cur" == -* ]]; then
@@ -47,8 +47,11 @@ _nils_cli_macos_agent_complete() {
     observe)
       if (( cword == 2 )); then COMPREPLY=( $(compgen -W "screenshot" -- "$cur") ); return 0; fi
       ;;
+    debug)
+      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "bundle" -- "$cur") ); return 0; fi
+      ;;
     wait)
-      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "sleep app-active window-present" -- "$cur") ); return 0; fi
+      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "sleep app-active window-present ax-present ax-unique" -- "$cur") ); return 0; fi
       ;;
     scenario)
       if (( cword == 2 )); then COMPREPLY=( $(compgen -W "run" -- "$cur") ); return 0; fi
@@ -75,8 +78,24 @@ _nils_cli_macos_agent_complete() {
       COMPREPLY=( $(compgen -W "png jpg webp" -- "$cur") )
       return 0
       ;;
+    --match-strategy)
+      COMPREPLY=( $(compgen -W "contains exact prefix suffix regex" -- "$cur") )
+      return 0
+      ;;
+    --fallback-order)
+      COMPREPLY=( $(compgen -W "ax-press ax-confirm frame-center coordinate" -- "$cur") )
+      return 0
+      ;;
+    --postcondition-focused|--focused|--enabled)
+      COMPREPLY=( $(compgen -W "true false" -- "$cur") )
+      return 0
+      ;;
     --path|--file|--trace-dir)
       COMPREPLY=( $(compgen -f -- "$cur") )
+      return 0
+      ;;
+    --output-dir)
+      COMPREPLY=( $(compgen -d -- "$cur") )
       return 0
       ;;
   esac
@@ -94,7 +113,13 @@ _nils_cli_macos_agent_complete() {
       --session-id --identifier-contains --value-contains --subrole --focused --enabled
       --name --value --value-type --watch-id --events --max-buffer --drain
       --allow-coordinate-fallback --clear-first --paste --allow-keyboard-fallback
-      --path --image-format --ms --timeout-ms --poll-ms
+      --reselect-before-click --fallback-order
+      --match-strategy --selector-explain --selector-padding
+      --gate-app-active --gate-window-present --gate-ax-present --gate-ax-unique
+      --gate-timeout-ms --gate-poll-ms
+      --postcondition-focused --postcondition-attribute --postcondition-attribute-value
+      --postcondition-timeout-ms --postcondition-poll-ms
+      --path --output-dir --image-format --ms --timeout-ms --poll-ms
       -h --help -V --version
     )
     COMPREPLY=( $(compgen -W "${opts[*]}" -- "$cur") )

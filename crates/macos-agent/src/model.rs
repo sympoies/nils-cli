@@ -1,3 +1,4 @@
+use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -180,6 +181,8 @@ pub struct ListAppsResult {
 pub struct ScreenshotResult {
     pub path: String,
     pub target: WindowRow,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selector: Option<ScreenshotSelectorResult>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -187,6 +190,20 @@ pub struct WaitResult {
     pub condition: &'static str,
     pub attempts: u32,
     pub elapsed_ms: u64,
+    pub terminal_status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matched_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selector_explain: Option<AxSelectorExplain>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ScreenshotSelectorResult {
+    pub node_id: String,
+    pub matched_count: usize,
+    pub padding: i32,
+    pub frame: AxFrame,
+    pub capture_region: AxFrame,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -269,6 +286,46 @@ pub struct AxTarget {
     pub window_title_contains: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+#[value(rename_all = "kebab-case")]
+pub enum AxMatchStrategy {
+    #[default]
+    Contains,
+    Exact,
+    Prefix,
+    Suffix,
+    Regex,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+#[value(rename_all = "kebab-case")]
+pub enum AxClickFallbackStage {
+    AxPress,
+    AxConfirm,
+    FrameCenter,
+    Coordinate,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AxSelectorExplainStage {
+    pub stage: String,
+    pub before_count: usize,
+    pub after_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AxSelectorExplain {
+    pub strategy: AxMatchStrategy,
+    pub total_candidates: usize,
+    pub matched_count: usize,
+    pub selected_count: usize,
+    pub stage_results: Vec<AxSelectorExplainStage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_node_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct AxSelector {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -289,6 +346,10 @@ pub struct AxSelector {
     pub enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nth: Option<usize>,
+    #[serde(default, skip_serializing_if = "is_match_strategy_contains")]
+    pub match_strategy: AxMatchStrategy,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub explain: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -323,6 +384,10 @@ pub struct AxClickRequest {
     pub selector: AxSelector,
     #[serde(default)]
     pub allow_coordinate_fallback: bool,
+    #[serde(default)]
+    pub reselect_before_click: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fallback_order: Vec<AxClickFallbackStage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -349,7 +414,7 @@ pub struct AxListResult {
     pub warnings: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct AxClickResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node_id: Option<String>,
@@ -361,9 +426,19 @@ pub struct AxClickResult {
     pub fallback_x: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fallback_y: Option<i32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fallback_order: Vec<AxClickFallbackStage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attempted_stages: Vec<AxClickFallbackStage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selector_explain: Option<AxSelectorExplain>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gates: Option<AxGateResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub postconditions: Option<AxPostconditionResult>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct AxTypeResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node_id: Option<String>,
@@ -374,6 +449,69 @@ pub struct AxTypeResult {
     pub submitted: bool,
     #[serde(default)]
     pub used_keyboard_fallback: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selector_explain: Option<AxSelectorExplain>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gates: Option<AxGateResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub postconditions: Option<AxPostconditionResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AxGateCheckResult {
+    pub gate: String,
+    pub terminal_status: String,
+    pub attempts: u32,
+    pub elapsed_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matched_count: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AxGateResult {
+    pub timeout_ms: u64,
+    pub poll_ms: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<AxGateCheckResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct AxPostconditionCheckResult {
+    pub check: String,
+    pub terminal_status: String,
+    pub attempts: u32,
+    pub elapsed_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attribute: Option<String>,
+    pub expected: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct AxPostconditionResult {
+    pub timeout_ms: u64,
+    pub poll_ms: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<AxPostconditionCheckResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DebugBundleArtifactEntry {
+    pub id: String,
+    pub path: String,
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DebugBundleResult {
+    pub output_dir: String,
+    pub artifact_index_path: String,
+    pub partial_failure: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifacts: Vec<DebugBundleArtifactEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -671,6 +809,14 @@ fn normalize_tsv_field(value: &str) -> String {
             }
         })
         .collect()
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+fn is_match_strategy_contains(value: &AxMatchStrategy) -> bool {
+    *value == AxMatchStrategy::Contains
 }
 
 #[cfg(test)]
