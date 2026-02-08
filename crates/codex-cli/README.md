@@ -45,7 +45,7 @@ Help:
 - `set <key> <value>`: Emit a shell snippet for the current shell.
 
 ### starship
-- `starship [--no-5h] [--ttl <duration>] [--time-format <strftime>] [--refresh] [--is-enabled]`: Render or refresh the Starship line.
+- `starship [--no-5h] [--ttl <duration>] [--time-format <strftime>] [--show-timezone] [--refresh] [--is-enabled]`: Render or refresh the Starship line. Default reset time uses local time without timezone; `--show-timezone` adds the local offset.
 
 ## Environment
 - `CODEX_ALLOW_DANGEROUS_ENABLED=true` is required for `agent` commands.

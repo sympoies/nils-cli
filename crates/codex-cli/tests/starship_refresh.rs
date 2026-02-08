@@ -15,6 +15,7 @@ fn run(args: &[&str], envs: &[(&str, &Path)], vars: &[(&str, &str)]) -> CmdOutpu
     let mut options = CmdOptions::default()
         // Stabilize output for tests regardless of user shell/starship environment.
         .with_env("NO_COLOR", "1")
+        .with_env("TZ", "UTC")
         .with_env_remove("STARSHIP_SESSION_KEY")
         .with_env_remove("STARSHIP_SHELL");
     for (key, path) in envs {

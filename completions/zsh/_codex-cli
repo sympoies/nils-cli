@@ -378,7 +378,8 @@ _codex-cli() {
         '(-h --help)'{-h,--help}'[Show help]' \
         '--no-5h[Hide the 5h window output]' \
         '--ttl=[Cache TTL]:duration:' \
-        '--time-format=[Reset time format (UTC)]:strftime:' \
+        '--time-format=[Reset time format (local time)]:strftime:' \
+        '--show-timezone[Show timezone offset in default reset time display]' \
         '--refresh[Force a blocking refresh]' \
         '--is-enabled[Exit 0 if starship is enabled]' \
         && return 0

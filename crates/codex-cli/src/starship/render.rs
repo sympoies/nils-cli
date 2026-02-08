@@ -1,4 +1,4 @@
-use chrono::{TimeZone, Utc};
+use chrono::{Local, TimeZone};
 use nils_common::env as shared_env;
 use std::io::{self, IsTerminal};
 use std::path::Path;
@@ -69,7 +69,7 @@ pub fn render_line(
     show_5h: bool,
     weekly_reset_time_format: &str,
 ) -> Option<String> {
-    let weekly_reset_time = format_epoch_utc(entry.weekly_reset_epoch, weekly_reset_time_format)
+    let weekly_reset_time = format_epoch_local(entry.weekly_reset_epoch, weekly_reset_time_format)
         .unwrap_or_else(|| "?".to_string());
 
     let color_enabled = should_color();
@@ -91,8 +91,8 @@ pub fn render_line(
     Some(format!("{prefix}{weekly_token} {weekly_reset_time}"))
 }
 
-fn format_epoch_utc(epoch: i64, fmt: &str) -> Option<String> {
-    let dt = Utc.timestamp_opt(epoch, 0).single()?;
+fn format_epoch_local(epoch: i64, fmt: &str) -> Option<String> {
+    let dt = Local.timestamp_opt(epoch, 0).single()?;
     Some(dt.format(fmt).to_string())
 }
 

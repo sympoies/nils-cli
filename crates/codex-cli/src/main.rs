@@ -133,6 +133,7 @@ fn handle_starship(args: &cli::StarshipArgs) -> i32 {
         no_5h: args.no_5h,
         ttl: args.ttl.clone(),
         time_format: args.time_format.clone(),
+        show_timezone: args.show_timezone,
         refresh: args.refresh,
         is_enabled: args.is_enabled,
     };

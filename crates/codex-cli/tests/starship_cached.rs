@@ -13,6 +13,7 @@ fn run(args: &[&str], envs: &[(&str, &Path)], vars: &[(&str, &str)]) -> CmdOutpu
     let mut options = CmdOptions::default()
         // Stabilize output for tests regardless of user shell/starship environment.
         .with_env("NO_COLOR", "1")
+        .with_env("TZ", "UTC")
         .with_env_remove("STARSHIP_SESSION_KEY")
         .with_env_remove("STARSHIP_SHELL");
     for (key, path) in envs {
@@ -178,6 +179,45 @@ fn starship_cached_output_formats_and_supports_no_5h() {
     );
     assert_exit(&output, 0);
     assert_eq!(stdout(&output), "alpha W:88% 2023-11-21T20:53Z\n");
+}
+
+#[test]
+fn starship_default_time_uses_local_format_and_show_timezone_flag() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let (auth_file, secrets, cache_root) = write_auth_and_secret(&dir);
+
+    let fetched_at = now_epoch().saturating_sub(1).max(1);
+    write_starship_cache_kv(
+        &cache_root,
+        "alpha",
+        &format!(
+            "fetched_at={fetched_at}\nnon_weekly_label=5h\nnon_weekly_remaining=94\nweekly_remaining=88\nweekly_reset_epoch=1700600000\n"
+        ),
+    );
+
+    let output = run(
+        &["starship"],
+        &[
+            ("CODEX_AUTH_FILE", &auth_file),
+            ("CODEX_SECRET_DIR", &secrets),
+            ("ZSH_CACHE_DIR", &cache_root),
+        ],
+        &[("CODEX_STARSHIP_ENABLED", "true")],
+    );
+    assert_exit(&output, 0);
+    assert_eq!(stdout(&output), "alpha 5h:94% W:88% 11-21 20:53\n");
+
+    let output = run(
+        &["starship", "--show-timezone"],
+        &[
+            ("CODEX_AUTH_FILE", &auth_file),
+            ("CODEX_SECRET_DIR", &secrets),
+            ("ZSH_CACHE_DIR", &cache_root),
+        ],
+        &[("CODEX_STARSHIP_ENABLED", "true")],
+    );
+    assert_exit(&output, 0);
+    assert_eq!(stdout(&output), "alpha 5h:94% W:88% 11-21 20:53 +00:00\n");
 }
 
 #[test]

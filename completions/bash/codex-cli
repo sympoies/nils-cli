@@ -210,7 +210,7 @@ _nils_cli_codex_cli_complete() {
         return 0
       fi
       if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "-h --help --no-5h --ttl --time-format --refresh --is-enabled" -- "$cur") )
+        COMPREPLY=( $(compgen -W "-h --help --no-5h --ttl --time-format --show-timezone --refresh --is-enabled" -- "$cur") )
         return 0
       fi
       COMPREPLY=()
@@ -229,4 +229,3 @@ complete -F _nils_cli_codex_cli_complete \
   codex-cli cx \
   cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxst cxdr cxdra \
   cxcs cxct
-

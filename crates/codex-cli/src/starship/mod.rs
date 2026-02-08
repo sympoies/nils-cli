@@ -15,12 +15,14 @@ pub struct StarshipOptions {
     pub no_5h: bool,
     pub ttl: Option<String>,
     pub time_format: Option<String>,
+    pub show_timezone: bool,
     pub refresh: bool,
     pub is_enabled: bool,
 }
 
 const DEFAULT_TTL_SECONDS: u64 = 300;
 const DEFAULT_TIME_FORMAT: &str = "%m-%d %H:%M";
+const DEFAULT_TIME_FORMAT_WITH_TIMEZONE: &str = "%m-%d %H:%M %:z";
 
 pub fn run(options: &StarshipOptions) -> i32 {
     if options.is_enabled {
@@ -46,10 +48,11 @@ pub fn run(options: &StarshipOptions) -> i32 {
 
     let show_5h =
         shared_env::env_truthy_or("CODEX_STARSHIP_SHOW_5H_ENABLED", true) && !options.no_5h;
-    let time_format = options
-        .time_format
-        .as_deref()
-        .unwrap_or(DEFAULT_TIME_FORMAT);
+    let time_format = match options.time_format.as_deref() {
+        Some(value) => value,
+        None if options.show_timezone => DEFAULT_TIME_FORMAT_WITH_TIMEZONE,
+        None => DEFAULT_TIME_FORMAT,
+    };
     let stale_suffix =
         std::env::var("CODEX_STARSHIP_STALE_SUFFIX").unwrap_or_else(|_| " (stale)".to_string());
 
@@ -135,7 +138,9 @@ fn parse_duration_seconds(raw: &str) -> Option<u64> {
 
 fn print_ttl_usage() {
     eprintln!("codex-cli starship: invalid --ttl");
-    eprintln!("usage: codex-cli starship [--no-5h] [--ttl <duration>] [--time-format <strftime>] [--refresh] [--is-enabled]");
+    eprintln!(
+        "usage: codex-cli starship [--no-5h] [--ttl <duration>] [--time-format <strftime>] [--show-timezone] [--refresh] [--is-enabled]"
+    );
 }
 
 fn read_cached_entry(target_file: &Path, ttl_seconds: u64) -> (Option<CacheEntry>, bool) {

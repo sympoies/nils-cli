@@ -155,9 +155,12 @@ pub struct StarshipArgs {
     /// Cache TTL
     #[arg(long = "ttl")]
     pub ttl: Option<String>,
-    /// Reset time format (UTC)
+    /// Reset time format (local time)
     #[arg(long = "time-format")]
     pub time_format: Option<String>,
+    /// Show timezone offset in the default reset time display
+    #[arg(long = "show-timezone")]
+    pub show_timezone: bool,
     /// Force a blocking refresh
     #[arg(long = "refresh")]
     pub refresh: bool,
