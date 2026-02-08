@@ -18,7 +18,7 @@ pub fn set_clipboard_best_effort(text: &str) -> Result<()> {
     let policy = ClipboardPolicy::new(&CLIPBOARD_TOOL_ORDER);
     if matches!(
         copy_best_effort(text, &policy),
-        ClipboardOutcome::SkippedNoTool
+        ClipboardOutcome::SkippedNoTool | ClipboardOutcome::SkippedFailure
     ) {
         eprintln!("⚠️  No clipboard tool found (requires pbcopy, xclip, or xsel)");
     }
@@ -175,6 +175,38 @@ out="${XSEL_OUT:?XSEL_OUT is required}"
         let _path_guard = EnvGuard::set(&lock, "PATH", &stubs.path_str());
         let out_path_str = out_path.to_string_lossy();
         let _out_guard = EnvGuard::set(&lock, "XSEL_OUT", out_path_str.as_ref());
+
+        set_clipboard_best_effort("hello").expect("copy");
+        let out = fs::read_to_string(out_path).expect("read stub output");
+        assert_eq!(out, "hello");
+    }
+
+    #[test]
+    fn set_clipboard_best_effort_falls_back_when_pbcopy_fails() {
+        let lock = GlobalStateLock::new();
+
+        let stubs = StubBinDir::new();
+        let out_dir = TempDir::new().expect("tempdir");
+        let out_path = out_dir.path().join("wl-copy.out");
+
+        stubs.write_exe(
+            "pbcopy",
+            r#"#!/bin/bash
+exit 1
+"#,
+        );
+        stubs.write_exe(
+            "wl-copy",
+            r#"#!/bin/bash
+set -euo pipefail
+out="${WL_COPY_OUT:?WL_COPY_OUT is required}"
+/bin/cat > "$out"
+"#,
+        );
+
+        let _path_guard = EnvGuard::set(&lock, "PATH", &stubs.path_str());
+        let out_path_str = out_path.to_string_lossy();
+        let _out_guard = EnvGuard::set(&lock, "WL_COPY_OUT", out_path_str.as_ref());
 
         set_clipboard_best_effort("hello").expect("copy");
         let out = fs::read_to_string(out_path).expect("read stub output");

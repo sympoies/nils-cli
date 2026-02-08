@@ -91,8 +91,11 @@ let tool_order = [
 ];
 let outcome = copy_best_effort("hello", &ClipboardPolicy::new(&tool_order));
 
-if matches!(outcome, ClipboardOutcome::SkippedNoTool) {
-    eprintln!("no clipboard tool found; keep crate-local fallback messaging");
+if matches!(
+    outcome,
+    ClipboardOutcome::SkippedNoTool | ClipboardOutcome::SkippedFailure
+) {
+    eprintln!("clipboard copy unavailable; keep crate-local fallback messaging");
 }
 ```
 
