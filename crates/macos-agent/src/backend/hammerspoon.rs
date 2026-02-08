@@ -29,7 +29,10 @@ const AX_WATCH_POLL_TEST_MODE_ENV: &str = "CODEX_MACOS_AGENT_AX_WATCH_POLL_JSON"
 const AX_WATCH_STOP_TEST_MODE_ENV: &str = "CODEX_MACOS_AGENT_AX_WATCH_STOP_JSON";
 const BACKEND_UNAVAILABLE_HINT_PREFIX: &str = "Hammerspoon backend unavailable";
 
-const AX_LIST_HS_SCRIPT: &str = r#"
+macro_rules! hs_ax_script_with_targeting_prelude {
+    ($operation:literal, $body:literal) => {
+        concat!(
+            r#"
 local json = hs.json
 local appmod = hs.application
 local ax = hs.axuielement
@@ -91,6 +94,77 @@ local function boolAttr(element, name, fallback)
   return tostring(value):lower() == "true"
 end
 
+local function children(element)
+  return asTable(attr(element, "AXChildren", {}))
+end
+
+local function resolveApp(target)
+  target = resolveTarget(target)
+
+  if target.pid then
+    local byPid = appmod.applicationForPID(tonumber(target.pid))
+    if byPid then return byPid, target end
+  end
+
+  if target.app and tostring(target.app) ~= "" then
+    local found = appmod.find(tostring(target.app))
+    if found then return found, target end
+  end
+
+  if target.bundle_id and tostring(target.bundle_id) ~= "" then
+    local apps = appmod.applicationsForBundleID(tostring(target.bundle_id))
+    if type(apps) == "table" and #apps > 0 then
+      return apps[1], target
+    end
+  end
+
+  return appmod.frontmostApplication(), target
+end
+
+local function rootsForApp(app, target)
+  local appElement = ax.applicationElement(app)
+  if not appElement then
+    fail("unable to resolve target app process for "#,
+            $operation,
+            r#")
+  end
+
+  local roots = asTable(attr(appElement, "AXWindows", {}))
+  if #roots == 0 then
+    roots = children(appElement)
+  end
+  local windowFilter = target and target.window_title_contains and string.lower(tostring(target.window_title_contains)) or nil
+  if not windowFilter then
+    return roots
+  end
+
+  local filtered = {}
+  for _, root in ipairs(roots) do
+    local title = string.lower(normalize(attr(root, "AXTitle", "")))
+    if string.find(title, windowFilter, 1, true) then
+      table.insert(filtered, root)
+    end
+  end
+  return filtered
+end
+
+local function copyPath(path)
+  local out = {}
+  for i, value in ipairs(path) do
+    out[i] = value
+  end
+  return out
+end
+
+"#,
+            $body
+        )
+    };
+}
+
+const AX_LIST_HS_SCRIPT: &str = hs_ax_script_with_targeting_prelude!(
+    "ax.list",
+    r#"
 local function frameFor(element)
   local pos = attr(element, "AXPosition", nil)
   local size = attr(element, "AXSize", nil)
@@ -124,66 +198,6 @@ local function valuePreview(element)
     text = string.sub(text, 1, 160) .. "..."
   end
   return text
-end
-
-local function children(element)
-  return asTable(attr(element, "AXChildren", {}))
-end
-
-local function resolveApp(target)
-  target = resolveTarget(target)
-
-  if target.pid then
-    local byPid = appmod.applicationForPID(tonumber(target.pid))
-    if byPid then return byPid, target end
-  end
-
-  if target.app and tostring(target.app) ~= "" then
-    local found = appmod.find(tostring(target.app))
-    if found then return found, target end
-  end
-
-  if target.bundle_id and tostring(target.bundle_id) ~= "" then
-    local apps = appmod.applicationsForBundleID(tostring(target.bundle_id))
-    if type(apps) == "table" and #apps > 0 then
-      return apps[1], target
-    end
-  end
-
-  return appmod.frontmostApplication(), target
-end
-
-local function rootsForApp(app, target)
-  local appElement = ax.applicationElement(app)
-  if not appElement then
-    fail("unable to resolve target app process for ax.list")
-  end
-
-  local roots = asTable(attr(appElement, "AXWindows", {}))
-  if #roots == 0 then
-    roots = children(appElement)
-  end
-  local windowFilter = target and target.window_title_contains and string.lower(tostring(target.window_title_contains)) or nil
-  if not windowFilter then
-    return roots
-  end
-
-  local filtered = {}
-  for _, root in ipairs(roots) do
-    local title = string.lower(normalize(attr(root, "AXTitle", "")))
-    if string.find(title, windowFilter, 1, true) then
-      table.insert(filtered, root)
-    end
-  end
-  return filtered
-end
-
-local function copyPath(path)
-  local out = {}
-  for i, value in ipairs(path) do
-    out[i] = value
-  end
-  return out
 end
 
 local function parsePayload()
@@ -305,123 +319,12 @@ for rootIndex, root in ipairs(roots) do
 end
 
 return json.encode({ nodes = nodes, warnings = {} })
-"#;
+"#
+);
 
-const AX_CLICK_HS_SCRIPT: &str = r#"
-local json = hs.json
-local appmod = hs.application
-local ax = hs.axuielement
-
-local function fail(message)
-  error(message, 0)
-end
-
-local function safe(callable, fallback)
-  local ok, value = pcall(callable)
-  if ok then return value end
-  return fallback
-end
-
-local function normalize(value)
-  if value == nil then return "" end
-  return tostring(value)
-end
-
-local function asTable(value)
-  if type(value) == "table" then return value end
-  return {}
-end
-
-local function ensureState()
-  _G.__codex_macos_agent_ax = _G.__codex_macos_agent_ax or { sessions = {}, watchers = {} }
-  return _G.__codex_macos_agent_ax
-end
-
-local function resolveTarget(rawTarget)
-  local target = rawTarget or {}
-  local state = ensureState()
-  if target.session_id and tostring(target.session_id) ~= "" then
-    local session = state.sessions[tostring(target.session_id)]
-    if not session then
-      fail("session_id does not exist")
-    end
-    return {
-      session_id = tostring(target.session_id),
-      app = target.app or session.app,
-      bundle_id = target.bundle_id or session.bundle_id,
-      pid = session.pid,
-      window_title_contains = target.window_title_contains or session.window_title_contains,
-    }
-  end
-  return target
-end
-
-local function attr(element, name, fallback)
-  local value = safe(function() return element:attributeValue(name) end, fallback)
-  if value == nil then return fallback end
-  return value
-end
-
-local function children(element)
-  return asTable(attr(element, "AXChildren", {}))
-end
-
-local function resolveApp(target)
-  target = resolveTarget(target)
-
-  if target.pid then
-    local byPid = appmod.applicationForPID(tonumber(target.pid))
-    if byPid then return byPid, target end
-  end
-
-  if target.app and tostring(target.app) ~= "" then
-    local found = appmod.find(tostring(target.app))
-    if found then return found, target end
-  end
-
-  if target.bundle_id and tostring(target.bundle_id) ~= "" then
-    local apps = appmod.applicationsForBundleID(tostring(target.bundle_id))
-    if type(apps) == "table" and #apps > 0 then
-      return apps[1], target
-    end
-  end
-
-  return appmod.frontmostApplication(), target
-end
-
-local function rootsForApp(app, target)
-  local appElement = ax.applicationElement(app)
-  if not appElement then
-    fail("unable to resolve target app process for ax.click")
-  end
-
-  local roots = asTable(attr(appElement, "AXWindows", {}))
-  if #roots == 0 then
-    roots = children(appElement)
-  end
-  local windowFilter = target and target.window_title_contains and string.lower(tostring(target.window_title_contains)) or nil
-  if not windowFilter then
-    return roots
-  end
-
-  local filtered = {}
-  for _, root in ipairs(roots) do
-    local title = string.lower(normalize(attr(root, "AXTitle", "")))
-    if string.find(title, windowFilter, 1, true) then
-      table.insert(filtered, root)
-    end
-  end
-  return filtered
-end
-
-local function copyPath(path)
-  local out = {}
-  for i, value in ipairs(path) do
-    out[i] = value
-  end
-  return out
-end
-
+const AX_CLICK_HS_SCRIPT: &str = hs_ax_script_with_targeting_prelude!(
+    "ax.click",
+    r#"
 local function nodeFrom(element, path)
   local role = normalize(attr(element, "AXRole", ""))
   local title = normalize(attr(element, "AXTitle", ""))
@@ -613,132 +516,14 @@ if not performOk then
 end
 
 return json.encode(result)
-"#;
+"#
+);
 
-const AX_TYPE_HS_SCRIPT: &str = r#"
-local json = hs.json
-local appmod = hs.application
-local ax = hs.axuielement
+const AX_TYPE_HS_SCRIPT: &str = hs_ax_script_with_targeting_prelude!(
+    "ax.type",
+    r#"
 local eventtap = hs.eventtap
 local pasteboard = hs.pasteboard
-
-local function fail(message)
-  error(message, 0)
-end
-
-local function safe(callable, fallback)
-  local ok, value = pcall(callable)
-  if ok then return value end
-  return fallback
-end
-
-local function normalize(value)
-  if value == nil then return "" end
-  return tostring(value)
-end
-
-local function asTable(value)
-  if type(value) == "table" then return value end
-  return {}
-end
-
-local function ensureState()
-  _G.__codex_macos_agent_ax = _G.__codex_macos_agent_ax or { sessions = {}, watchers = {} }
-  return _G.__codex_macos_agent_ax
-end
-
-local function attr(element, name, fallback)
-  local value = safe(function() return element:attributeValue(name) end, fallback)
-  if value == nil then return fallback end
-  return value
-end
-
-local function boolAttr(element, name, fallback)
-  local value = attr(element, name, fallback)
-  if type(value) == "boolean" then return value end
-  if value == nil then return fallback end
-  return tostring(value):lower() == "true"
-end
-
-local function children(element)
-  return asTable(attr(element, "AXChildren", {}))
-end
-
-local function resolveTarget(rawTarget)
-  local target = rawTarget or {}
-  local state = ensureState()
-  if target.session_id and tostring(target.session_id) ~= "" then
-    local session = state.sessions[tostring(target.session_id)]
-    if not session then
-      fail("session_id does not exist")
-    end
-    return {
-      session_id = tostring(target.session_id),
-      app = target.app or session.app,
-      bundle_id = target.bundle_id or session.bundle_id,
-      pid = session.pid,
-      window_title_contains = target.window_title_contains or session.window_title_contains,
-    }
-  end
-  return target
-end
-
-local function resolveApp(target)
-  target = resolveTarget(target)
-
-  if target.pid then
-    local byPid = appmod.applicationForPID(tonumber(target.pid))
-    if byPid then return byPid, target end
-  end
-
-  if target.app and tostring(target.app) ~= "" then
-    local found = appmod.find(tostring(target.app))
-    if found then return found, target end
-  end
-
-  if target.bundle_id and tostring(target.bundle_id) ~= "" then
-    local apps = appmod.applicationsForBundleID(tostring(target.bundle_id))
-    if type(apps) == "table" and #apps > 0 then
-      return apps[1], target
-    end
-  end
-
-  return appmod.frontmostApplication(), target
-end
-
-local function rootsForApp(app, target)
-  local appElement = ax.applicationElement(app)
-  if not appElement then
-    fail("unable to resolve target app process for ax.type")
-  end
-
-  local roots = asTable(attr(appElement, "AXWindows", {}))
-  if #roots == 0 then
-    roots = children(appElement)
-  end
-
-  local windowFilter = target and target.window_title_contains and string.lower(tostring(target.window_title_contains)) or nil
-  if not windowFilter then
-    return roots
-  end
-
-  local filtered = {}
-  for _, root in ipairs(roots) do
-    local title = string.lower(normalize(attr(root, "AXTitle", "")))
-    if string.find(title, windowFilter, 1, true) then
-      table.insert(filtered, root)
-    end
-  end
-  return filtered
-end
-
-local function copyPath(path)
-  local out = {}
-  for i, value in ipairs(path) do
-    out[i] = value
-  end
-  return out
-end
 
 local function nodeFrom(element, path)
   local role = normalize(attr(element, "AXRole", ""))
@@ -931,76 +716,12 @@ return json.encode({
   submitted = submit,
   used_keyboard_fallback = usedKeyboardFallback,
 })
-"#;
+"#
+);
 
-const AX_ATTR_GET_HS_SCRIPT: &str = r#"
-local json = hs.json
-local appmod = hs.application
-local ax = hs.axuielement
-
-local function fail(message)
-  error(message, 0)
-end
-
-local function safe(callable, fallback)
-  local ok, value = pcall(callable)
-  if ok then return value end
-  return fallback
-end
-
-local function normalize(value)
-  if value == nil then return "" end
-  return tostring(value)
-end
-
-local function asTable(value)
-  if type(value) == "table" then return value end
-  return {}
-end
-
-local function ensureState()
-  _G.__codex_macos_agent_ax = _G.__codex_macos_agent_ax or { sessions = {}, watchers = {} }
-  return _G.__codex_macos_agent_ax
-end
-
-local function attr(element, name, fallback)
-  local value = safe(function() return element:attributeValue(name) end, fallback)
-  if value == nil then return fallback end
-  return value
-end
-
-local function boolAttr(element, name, fallback)
-  local value = attr(element, name, fallback)
-  if type(value) == "boolean" then return value end
-  if value == nil then return fallback end
-  return tostring(value):lower() == "true"
-end
-
-local function children(element)
-  return asTable(attr(element, "AXChildren", {}))
-end
-
-local function resolveTarget(rawTarget)
-  local target = rawTarget or {}
-  local state = ensureState()
-
-  if target.session_id and tostring(target.session_id) ~= "" then
-    local session = state.sessions[tostring(target.session_id)]
-    if not session then
-      fail("session_id does not exist")
-    end
-    return {
-      session_id = tostring(target.session_id),
-      app = target.app or session.app,
-      bundle_id = target.bundle_id or session.bundle_id,
-      pid = session.pid,
-      window_title_contains = target.window_title_contains or session.window_title_contains,
-    }
-  end
-
-  return target
-end
-
+const AX_ATTR_GET_HS_SCRIPT: &str = hs_ax_script_with_targeting_prelude!(
+    "ax.attr.get",
+    r#"
 local function resolveApp(target)
   target = resolveTarget(target)
 
@@ -1022,40 +743,6 @@ local function resolveApp(target)
   end
 
   return appmod.frontmostApplication(), target
-end
-
-local function rootsForApp(app, target)
-  local appElement = ax.applicationElement(app)
-  if not appElement then
-    fail("unable to resolve target app process for ax.attr.get")
-  end
-
-  local roots = asTable(attr(appElement, "AXWindows", {}))
-  if #roots == 0 then
-    roots = children(appElement)
-  end
-
-  local windowFilter = target and target.window_title_contains and string.lower(tostring(target.window_title_contains)) or nil
-  if not windowFilter then
-    return roots
-  end
-
-  local filtered = {}
-  for _, root in ipairs(roots) do
-    local title = string.lower(normalize(attr(root, "AXTitle", "")))
-    if string.find(title, windowFilter, 1, true) then
-      table.insert(filtered, root)
-    end
-  end
-  return filtered
-end
-
-local function copyPath(path)
-  local out = {}
-  for i, value in ipairs(path) do
-    out[i] = value
-  end
-  return out
 end
 
 local function nodeFrom(element, path)
@@ -1256,121 +943,12 @@ return json.encode({
   name = name,
   value = value,
 })
-"#;
+"#
+);
 
-const AX_ATTR_SET_HS_SCRIPT: &str = r#"
-local json = hs.json
-local appmod = hs.application
-local ax = hs.axuielement
-
-local function fail(message)
-  error(message, 0)
-end
-
-local function safe(callable, fallback)
-  local ok, value = pcall(callable)
-  if ok then return value end
-  return fallback
-end
-
-local function normalize(value)
-  if value == nil then return "" end
-  return tostring(value)
-end
-
-local function asTable(value)
-  if type(value) == "table" then return value end
-  return {}
-end
-
-local function ensureState()
-  _G.__codex_macos_agent_ax = _G.__codex_macos_agent_ax or { sessions = {}, watchers = {} }
-  return _G.__codex_macos_agent_ax
-end
-
-local function attr(element, name, fallback)
-  local value = safe(function() return element:attributeValue(name) end, fallback)
-  if value == nil then return fallback end
-  return value
-end
-
-local function boolAttr(element, name, fallback)
-  local value = attr(element, name, fallback)
-  if type(value) == "boolean" then return value end
-  if value == nil then return fallback end
-  return tostring(value):lower() == "true"
-end
-
-local function children(element)
-  return asTable(attr(element, "AXChildren", {}))
-end
-
-local function resolveTarget(rawTarget)
-  local target = rawTarget or {}
-  local state = ensureState()
-  if target.session_id and tostring(target.session_id) ~= "" then
-    local session = state.sessions[tostring(target.session_id)]
-    if not session then fail("session_id does not exist") end
-    return {
-      session_id = tostring(target.session_id),
-      app = target.app or session.app,
-      bundle_id = target.bundle_id or session.bundle_id,
-      pid = session.pid,
-      window_title_contains = target.window_title_contains or session.window_title_contains,
-    }
-  end
-  return target
-end
-
-local function resolveApp(target)
-  target = resolveTarget(target)
-
-  if target.pid then
-    local byPid = appmod.applicationForPID(tonumber(target.pid))
-    if byPid then return byPid, target end
-  end
-
-  if target.app and tostring(target.app) ~= "" then
-    local found = appmod.find(tostring(target.app))
-    if found then return found, target end
-  end
-
-  if target.bundle_id and tostring(target.bundle_id) ~= "" then
-    local apps = appmod.applicationsForBundleID(tostring(target.bundle_id))
-    if type(apps) == "table" and #apps > 0 then
-      return apps[1], target
-    end
-  end
-
-  return appmod.frontmostApplication(), target
-end
-
-local function rootsForApp(app, target)
-  local appElement = ax.applicationElement(app)
-  if not appElement then fail("unable to resolve target app process for ax.attr.set") end
-
-  local roots = asTable(attr(appElement, "AXWindows", {}))
-  if #roots == 0 then roots = children(appElement) end
-
-  local windowFilter = target and target.window_title_contains and string.lower(tostring(target.window_title_contains)) or nil
-  if not windowFilter then return roots end
-
-  local filtered = {}
-  for _, root in ipairs(roots) do
-    local title = string.lower(normalize(attr(root, "AXTitle", "")))
-    if string.find(title, windowFilter, 1, true) then
-      table.insert(filtered, root)
-    end
-  end
-  return filtered
-end
-
-local function copyPath(path)
-  local out = {}
-  for i, value in ipairs(path) do out[i] = value end
-  return out
-end
-
+const AX_ATTR_SET_HS_SCRIPT: &str = hs_ax_script_with_targeting_prelude!(
+    "ax.attr.set",
+    r#"
 local function nodeFrom(element, path)
   return {
     node_id = table.concat(path, "."),
@@ -1492,96 +1070,12 @@ return json.encode({
   applied = true,
   value_type = valueType,
 })
-"#;
+"#
+);
 
-const AX_ACTION_PERFORM_HS_SCRIPT: &str = r#"
-local json = hs.json
-local appmod = hs.application
-local ax = hs.axuielement
-
-local function fail(message) error(message, 0) end
-local function safe(callable, fallback)
-  local ok, value = pcall(callable)
-  if ok then return value end
-  return fallback
-end
-local function normalize(value)
-  if value == nil then return "" end
-  return tostring(value)
-end
-local function asTable(value)
-  if type(value) == "table" then return value end
-  return {}
-end
-local function ensureState()
-  _G.__codex_macos_agent_ax = _G.__codex_macos_agent_ax or { sessions = {}, watchers = {} }
-  return _G.__codex_macos_agent_ax
-end
-local function attr(element, name, fallback)
-  local value = safe(function() return element:attributeValue(name) end, fallback)
-  if value == nil then return fallback end
-  return value
-end
-local function boolAttr(element, name, fallback)
-  local value = attr(element, name, fallback)
-  if type(value) == "boolean" then return value end
-  if value == nil then return fallback end
-  return tostring(value):lower() == "true"
-end
-local function children(element)
-  return asTable(attr(element, "AXChildren", {}))
-end
-local function resolveTarget(rawTarget)
-  local target = rawTarget or {}
-  local state = ensureState()
-  if target.session_id and tostring(target.session_id) ~= "" then
-    local session = state.sessions[tostring(target.session_id)]
-    if not session then fail("session_id does not exist") end
-    return {
-      session_id = tostring(target.session_id),
-      app = target.app or session.app,
-      bundle_id = target.bundle_id or session.bundle_id,
-      pid = session.pid,
-      window_title_contains = target.window_title_contains or session.window_title_contains,
-    }
-  end
-  return target
-end
-local function resolveApp(target)
-  target = resolveTarget(target)
-  if target.pid then
-    local byPid = appmod.applicationForPID(tonumber(target.pid))
-    if byPid then return byPid, target end
-  end
-  if target.app and tostring(target.app) ~= "" then
-    local found = appmod.find(tostring(target.app))
-    if found then return found, target end
-  end
-  if target.bundle_id and tostring(target.bundle_id) ~= "" then
-    local apps = appmod.applicationsForBundleID(tostring(target.bundle_id))
-    if type(apps) == "table" and #apps > 0 then return apps[1], target end
-  end
-  return appmod.frontmostApplication(), target
-end
-local function rootsForApp(app, target)
-  local appElement = ax.applicationElement(app)
-  if not appElement then fail("unable to resolve target app process for ax.action.perform") end
-  local roots = asTable(attr(appElement, "AXWindows", {}))
-  if #roots == 0 then roots = children(appElement) end
-  local windowFilter = target and target.window_title_contains and string.lower(tostring(target.window_title_contains)) or nil
-  if not windowFilter then return roots end
-  local filtered = {}
-  for _, root in ipairs(roots) do
-    local title = string.lower(normalize(attr(root, "AXTitle", "")))
-    if string.find(title, windowFilter, 1, true) then table.insert(filtered, root) end
-  end
-  return filtered
-end
-local function copyPath(path)
-  local out = {}
-  for i, value in ipairs(path) do out[i] = value end
-  return out
-end
+const AX_ACTION_PERFORM_HS_SCRIPT: &str = hs_ax_script_with_targeting_prelude!(
+    "ax.action.perform",
+    r#"
 local function nodeFrom(element, path)
   return {
     node_id = table.concat(path, "."),
@@ -1681,7 +1175,8 @@ return json.encode({
   name = name,
   performed = true,
 })
-"#;
+"#
+);
 
 const AX_SESSION_START_HS_SCRIPT: &str = r#"
 local json = hs.json

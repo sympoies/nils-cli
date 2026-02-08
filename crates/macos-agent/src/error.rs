@@ -67,6 +67,7 @@ impl CliError {
         ))
         .with_operation(operation)
         .with_hint("Run `macos-agent preflight --include-probes --strict` to verify Accessibility/Automation access.")
+        .with_hint("Review preflight `ax_backend_capabilities` to confirm backend support and fallback behavior.")
         .with_hint("Use --trace to capture raw backend output for diagnosis.")
     }
 
@@ -77,6 +78,7 @@ impl CliError {
         ))
         .with_operation(operation)
         .with_hint("Adjust AX selector filters so exactly one element is targeted.")
+        .with_hint("For attr/action/session/watch flows, ensure Hammerspoon backend is available.")
     }
 
     pub fn exit_code(&self) -> u8 {

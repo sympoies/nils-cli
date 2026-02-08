@@ -1,12 +1,18 @@
+use std::time::Instant;
+
 use crate::backend::process::ProcessRunner;
 use crate::backend::{AutoAxBackend, AxBackendAdapter};
 use crate::cli::{AxWatchPollArgs, AxWatchStartArgs, AxWatchStopArgs, OutputFormat};
+use crate::commands::{emit_json_success, reject_tsv_for_list_only};
 use crate::error::CliError;
 use crate::model::{
-    AxWatchPollRequest, AxWatchPollResult, AxWatchStartRequest, AxWatchStartResult,
-    AxWatchStopRequest, AxWatchStopResult, SuccessEnvelope,
+    AxWatchPollRequest, AxWatchPollResult, AxWatchStartCommandResult, AxWatchStartRequest,
+    AxWatchStartResult, AxWatchStopCommandResult, AxWatchStopRequest, AxWatchStopResult,
 };
-use crate::run::ActionPolicy;
+use crate::retry::run_with_retry;
+use crate::run::{
+    action_policy_result, build_action_meta_with_attempts, next_action_id, ActionPolicy,
+};
 
 pub fn run_start(
     format: OutputFormat,
@@ -21,50 +27,37 @@ pub fn run_start(
         watch_id: args.watch_id.clone(),
     };
 
-    let result = if policy.dry_run {
-        AxWatchStartResult {
-            watch_id: request
-                .watch_id
-                .clone()
-                .unwrap_or_else(|| "axw-dry-run".to_string()),
-            session_id: request.session_id,
-            events: request.events,
-            max_buffer: request.max_buffer,
-            started: false,
-        }
-    } else {
-        let backend = AutoAxBackend::default();
-        backend.watch_start(runner, &request, policy.timeout_ms)?
+    let action_id = next_action_id("ax.watch.start");
+    let started = Instant::now();
+    let mut attempts_used = 0u8;
+    let mut detail = AxWatchStartResult {
+        watch_id: request
+            .watch_id
+            .clone()
+            .unwrap_or_else(|| "axw-dry-run".to_string()),
+        session_id: request.session_id.clone(),
+        events: request.events.clone(),
+        max_buffer: request.max_buffer,
+        started: false,
     };
 
-    match format {
-        OutputFormat::Json => {
-            let payload = SuccessEnvelope::new("ax.watch.start", result);
-            println!(
-                "{}",
-                serde_json::to_string(&payload).map_err(|err| CliError::runtime(format!(
-                    "failed to serialize json output: {err}"
-                )))?
-            );
-        }
-        OutputFormat::Text => {
-            println!(
-                "ax.watch.start\twatch_id={}\tsession_id={}\tstarted={}\tevents={}\tmax_buffer={}",
-                result.watch_id,
-                result.session_id,
-                result.started,
-                result.events.join(","),
-                result.max_buffer
-            );
-        }
-        OutputFormat::Tsv => {
-            return Err(CliError::usage(
-                "--format tsv is only supported for `windows list` and `apps list`",
-            ));
-        }
+    if !policy.dry_run {
+        let backend = AutoAxBackend::default();
+        let retry = policy.retry_policy();
+        let (backend_result, attempts) = run_with_retry(retry, || {
+            backend.watch_start(runner, &request, policy.timeout_ms)
+        })?;
+        attempts_used = attempts;
+        detail = backend_result;
     }
 
-    Ok(())
+    let result = AxWatchStartCommandResult {
+        detail,
+        policy: action_policy_result(policy),
+        meta: build_action_meta_with_attempts(action_id, started, policy, attempts_used),
+    };
+
+    print_start(format, result)
 }
 
 pub fn run_poll(
@@ -84,13 +77,7 @@ pub fn run_poll(
 
     match format {
         OutputFormat::Json => {
-            let payload = SuccessEnvelope::new("ax.watch.poll", result);
-            println!(
-                "{}",
-                serde_json::to_string(&payload).map_err(|err| CliError::runtime(format!(
-                    "failed to serialize json output: {err}"
-                )))?
-            );
+            emit_json_success("ax.watch.poll", result)?;
         }
         OutputFormat::Text => {
             println!(
@@ -112,9 +99,7 @@ pub fn run_poll(
             }
         }
         OutputFormat::Tsv => {
-            return Err(CliError::usage(
-                "--format tsv is only supported for `windows list` and `apps list`",
-            ));
+            return reject_tsv_for_list_only();
         }
     }
 
@@ -131,37 +116,76 @@ pub fn run_stop(
         watch_id: args.watch_id.clone(),
     };
 
-    let result = if policy.dry_run {
-        AxWatchStopResult {
-            watch_id: request.watch_id,
-            stopped: false,
-            drained: 0,
-        }
-    } else {
-        let backend = AutoAxBackend::default();
-        backend.watch_stop(runner, &request, policy.timeout_ms)?
+    let action_id = next_action_id("ax.watch.stop");
+    let started = Instant::now();
+    let mut attempts_used = 0u8;
+    let mut detail = AxWatchStopResult {
+        watch_id: request.watch_id.clone(),
+        stopped: false,
+        drained: 0,
     };
 
+    if !policy.dry_run {
+        let backend = AutoAxBackend::default();
+        let retry = policy.retry_policy();
+        let (backend_result, attempts) = run_with_retry(retry, || {
+            backend.watch_stop(runner, &request, policy.timeout_ms)
+        })?;
+        attempts_used = attempts;
+        detail = backend_result;
+    }
+
+    let result = AxWatchStopCommandResult {
+        detail,
+        policy: action_policy_result(policy),
+        meta: build_action_meta_with_attempts(action_id, started, policy, attempts_used),
+    };
+
+    print_stop(format, result)
+}
+
+fn print_start(format: OutputFormat, result: AxWatchStartCommandResult) -> Result<(), CliError> {
     match format {
         OutputFormat::Json => {
-            let payload = SuccessEnvelope::new("ax.watch.stop", result);
-            println!(
-                "{}",
-                serde_json::to_string(&payload).map_err(|err| CliError::runtime(format!(
-                    "failed to serialize json output: {err}"
-                )))?
-            );
+            emit_json_success("ax.watch.start", result)?;
         }
         OutputFormat::Text => {
             println!(
-                "ax.watch.stop\twatch_id={}\tstopped={}\tdrained={}",
-                result.watch_id, result.stopped, result.drained
+                "ax.watch.start\twatch_id={}\tsession_id={}\tstarted={}\tevents={}\tmax_buffer={}\taction_id={}\telapsed_ms={}",
+                result.detail.watch_id,
+                result.detail.session_id,
+                result.detail.started,
+                result.detail.events.join(","),
+                result.detail.max_buffer,
+                result.meta.action_id,
+                result.meta.elapsed_ms,
             );
         }
         OutputFormat::Tsv => {
-            return Err(CliError::usage(
-                "--format tsv is only supported for `windows list` and `apps list`",
-            ));
+            return reject_tsv_for_list_only();
+        }
+    }
+
+    Ok(())
+}
+
+fn print_stop(format: OutputFormat, result: AxWatchStopCommandResult) -> Result<(), CliError> {
+    match format {
+        OutputFormat::Json => {
+            emit_json_success("ax.watch.stop", result)?;
+        }
+        OutputFormat::Text => {
+            println!(
+                "ax.watch.stop\twatch_id={}\tstopped={}\tdrained={}\taction_id={}\telapsed_ms={}",
+                result.detail.watch_id,
+                result.detail.stopped,
+                result.detail.drained,
+                result.meta.action_id,
+                result.meta.elapsed_ms,
+            );
+        }
+        OutputFormat::Tsv => {
+            return reject_tsv_for_list_only();
         }
     }
 

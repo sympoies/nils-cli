@@ -16,6 +16,11 @@ use crate::model::{
 };
 use crate::test_mode;
 
+const AX_EXTENDED_CAPABILITY_HINT: &str =
+    "AX attr/action/session/watch commands require Hammerspoon backend (`hs`).";
+const AX_EXTENDED_CAPABILITY_ACTION_HINT: &str =
+    "Use `CODEX_MACOS_AGENT_AX_BACKEND=hammerspoon|auto` and run `macos-agent preflight --include-probes` to verify readiness.";
+
 pub trait AxBackendAdapter {
     fn list(
         &self,
@@ -44,9 +49,12 @@ pub trait AxBackendAdapter {
         _request: &AxAttrGetRequest,
         _timeout_ms: u64,
     ) -> Result<AxAttrGetResult, CliError> {
-        Err(CliError::runtime(
-            "AX attribute get is not supported by this backend",
-        ))
+        Err(
+            CliError::runtime("AX attribute get is not supported by this backend")
+                .with_operation("ax.attr.get")
+                .with_hint(AX_EXTENDED_CAPABILITY_HINT)
+                .with_hint(AX_EXTENDED_CAPABILITY_ACTION_HINT),
+        )
     }
 
     fn attr_set(
@@ -55,9 +63,12 @@ pub trait AxBackendAdapter {
         _request: &AxAttrSetRequest,
         _timeout_ms: u64,
     ) -> Result<AxAttrSetResult, CliError> {
-        Err(CliError::runtime(
-            "AX attribute set is not supported by this backend",
-        ))
+        Err(
+            CliError::runtime("AX attribute set is not supported by this backend")
+                .with_operation("ax.attr.set")
+                .with_hint(AX_EXTENDED_CAPABILITY_HINT)
+                .with_hint(AX_EXTENDED_CAPABILITY_ACTION_HINT),
+        )
     }
 
     fn action_perform(
@@ -66,9 +77,12 @@ pub trait AxBackendAdapter {
         _request: &AxActionPerformRequest,
         _timeout_ms: u64,
     ) -> Result<AxActionPerformResult, CliError> {
-        Err(CliError::runtime(
-            "AX action perform is not supported by this backend",
-        ))
+        Err(
+            CliError::runtime("AX action perform is not supported by this backend")
+                .with_operation("ax.action.perform")
+                .with_hint(AX_EXTENDED_CAPABILITY_HINT)
+                .with_hint(AX_EXTENDED_CAPABILITY_ACTION_HINT),
+        )
     }
 
     fn session_start(
@@ -77,9 +91,12 @@ pub trait AxBackendAdapter {
         _request: &AxSessionStartRequest,
         _timeout_ms: u64,
     ) -> Result<AxSessionStartResult, CliError> {
-        Err(CliError::runtime(
-            "AX session start is not supported by this backend",
-        ))
+        Err(
+            CliError::runtime("AX session start is not supported by this backend")
+                .with_operation("ax.session.start")
+                .with_hint(AX_EXTENDED_CAPABILITY_HINT)
+                .with_hint(AX_EXTENDED_CAPABILITY_ACTION_HINT),
+        )
     }
 
     fn session_list(
@@ -87,9 +104,12 @@ pub trait AxBackendAdapter {
         _runner: &dyn ProcessRunner,
         _timeout_ms: u64,
     ) -> Result<AxSessionListResult, CliError> {
-        Err(CliError::runtime(
-            "AX session list is not supported by this backend",
-        ))
+        Err(
+            CliError::runtime("AX session list is not supported by this backend")
+                .with_operation("ax.session.list")
+                .with_hint(AX_EXTENDED_CAPABILITY_HINT)
+                .with_hint(AX_EXTENDED_CAPABILITY_ACTION_HINT),
+        )
     }
 
     fn session_stop(
@@ -98,9 +118,12 @@ pub trait AxBackendAdapter {
         _request: &AxSessionStopRequest,
         _timeout_ms: u64,
     ) -> Result<AxSessionStopResult, CliError> {
-        Err(CliError::runtime(
-            "AX session stop is not supported by this backend",
-        ))
+        Err(
+            CliError::runtime("AX session stop is not supported by this backend")
+                .with_operation("ax.session.stop")
+                .with_hint(AX_EXTENDED_CAPABILITY_HINT)
+                .with_hint(AX_EXTENDED_CAPABILITY_ACTION_HINT),
+        )
     }
 
     fn watch_start(
@@ -109,9 +132,12 @@ pub trait AxBackendAdapter {
         _request: &AxWatchStartRequest,
         _timeout_ms: u64,
     ) -> Result<AxWatchStartResult, CliError> {
-        Err(CliError::runtime(
-            "AX watch start is not supported by this backend",
-        ))
+        Err(
+            CliError::runtime("AX watch start is not supported by this backend")
+                .with_operation("ax.watch.start")
+                .with_hint(AX_EXTENDED_CAPABILITY_HINT)
+                .with_hint(AX_EXTENDED_CAPABILITY_ACTION_HINT),
+        )
     }
 
     fn watch_poll(
@@ -120,9 +146,12 @@ pub trait AxBackendAdapter {
         _request: &AxWatchPollRequest,
         _timeout_ms: u64,
     ) -> Result<AxWatchPollResult, CliError> {
-        Err(CliError::runtime(
-            "AX watch poll is not supported by this backend",
-        ))
+        Err(
+            CliError::runtime("AX watch poll is not supported by this backend")
+                .with_operation("ax.watch.poll")
+                .with_hint(AX_EXTENDED_CAPABILITY_HINT)
+                .with_hint(AX_EXTENDED_CAPABILITY_ACTION_HINT),
+        )
     }
 
     fn watch_stop(
@@ -131,9 +160,12 @@ pub trait AxBackendAdapter {
         _request: &AxWatchStopRequest,
         _timeout_ms: u64,
     ) -> Result<AxWatchStopResult, CliError> {
-        Err(CliError::runtime(
-            "AX watch stop is not supported by this backend",
-        ))
+        Err(
+            CliError::runtime("AX watch stop is not supported by this backend")
+                .with_operation("ax.watch.stop")
+                .with_hint(AX_EXTENDED_CAPABILITY_HINT)
+                .with_hint(AX_EXTENDED_CAPABILITY_ACTION_HINT),
+        )
     }
 }
 
@@ -176,7 +208,21 @@ pub enum AxBackendPreference {
     AppleScript,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AxBackendCapabilityCheck {
+    pub message: String,
+    pub hint: Option<String>,
+}
+
 impl AxBackendPreference {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Hammerspoon => "hammerspoon",
+            Self::AppleScript => "applescript",
+        }
+    }
+
     pub fn resolve() -> Self {
         if let Ok(raw) = std::env::var("CODEX_MACOS_AGENT_AX_BACKEND") {
             match raw.trim().to_ascii_lowercase().as_str() {
@@ -193,6 +239,33 @@ impl AxBackendPreference {
         } else {
             Self::Auto
         }
+    }
+
+    fn capability_message(self) -> &'static str {
+        match self {
+            Self::Auto => {
+                "AX backend preference=auto; list/click/type use Hammerspoon first and may fallback to AppleScript (JXA). attr/action/session/watch remain Hammerspoon-only."
+            }
+            Self::Hammerspoon => {
+                "AX backend preference=hammerspoon; list/click/type and attr/action/session/watch all use Hammerspoon."
+            }
+            Self::AppleScript => {
+                "AX backend preference=applescript; list/click/type use AppleScript (JXA), while attr/action/session/watch still require Hammerspoon."
+            }
+        }
+    }
+}
+
+pub fn preflight_capability_check() -> AxBackendCapabilityCheck {
+    let preference = AxBackendPreference::resolve();
+    let hint = if preference == AxBackendPreference::Hammerspoon {
+        None
+    } else {
+        Some(AX_EXTENDED_CAPABILITY_ACTION_HINT.to_string())
+    };
+    AxBackendCapabilityCheck {
+        message: preference.capability_message().to_string(),
+        hint,
     }
 }
 

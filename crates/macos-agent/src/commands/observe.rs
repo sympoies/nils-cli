@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
 use crate::cli::{ObserveScreenshotArgs, OutputFormat};
+use crate::commands::{emit_json_success, reject_tsv_for_list_only};
 use crate::error::CliError;
-use crate::model::{ScreenshotResult, SuccessEnvelope, WindowRow};
+use crate::model::{ScreenshotResult, WindowRow};
 use crate::targets::{self, TargetSelector};
 use crate::test_mode;
 
@@ -29,21 +30,13 @@ pub fn run_screenshot(format: OutputFormat, args: &ObserveScreenshotArgs) -> Res
                 path: output_path.display().to_string(),
                 target: WindowRow::from(&window),
             };
-            let payload = SuccessEnvelope::new("observe.screenshot", result);
-            println!(
-                "{}",
-                serde_json::to_string(&payload).map_err(|err| CliError::runtime(format!(
-                    "failed to serialize json output: {err}"
-                )))?
-            );
+            emit_json_success("observe.screenshot", result)?;
         }
         OutputFormat::Text => {
             println!("{}", output_path.display());
         }
         OutputFormat::Tsv => {
-            return Err(CliError::usage(
-                "--format tsv is only supported for `windows list` and `apps list`",
-            ));
+            return reject_tsv_for_list_only();
         }
     }
 

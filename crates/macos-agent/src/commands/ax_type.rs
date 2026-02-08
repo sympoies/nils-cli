@@ -3,9 +3,10 @@ use std::time::Instant;
 use crate::backend::process::ProcessRunner;
 use crate::backend::{AutoAxBackend, AxBackendAdapter};
 use crate::cli::{AxTypeArgs, OutputFormat};
-use crate::commands::ax_common::{build_selector, build_target, AxSelectorInput};
+use crate::commands::ax_common::{build_selector_from_args, build_target_from_args};
+use crate::commands::{emit_json_success, reject_tsv_for_list_only};
 use crate::error::CliError;
-use crate::model::{AxTypeCommandResult, AxTypeRequest, AxTypeResult, SuccessEnvelope};
+use crate::model::{AxTypeCommandResult, AxTypeRequest, AxTypeResult};
 use crate::retry::run_with_retry;
 use crate::run::{
     action_policy_result, build_action_meta_with_attempts, next_action_id, ActionPolicy,
@@ -48,13 +49,7 @@ pub fn run(
 
     match format {
         OutputFormat::Json => {
-            let payload = SuccessEnvelope::new("ax.type", result);
-            println!(
-                "{}",
-                serde_json::to_string(&payload).map_err(|err| CliError::runtime(format!(
-                    "failed to serialize json output: {err}"
-                )))?
-            );
+            emit_json_success("ax.type", result)?;
         }
         OutputFormat::Text => {
             println!(
@@ -67,9 +62,7 @@ pub fn run(
             );
         }
         OutputFormat::Tsv => {
-            return Err(CliError::usage(
-                "--format tsv is only supported for `windows list` and `apps list`",
-            ));
+            return reject_tsv_for_list_only();
         }
     }
 
@@ -77,23 +70,8 @@ pub fn run(
 }
 
 fn build_request(args: &AxTypeArgs) -> Result<AxTypeRequest, CliError> {
-    let target = build_target(
-        args.session_id.clone(),
-        args.app.clone(),
-        args.bundle_id.clone(),
-        args.window_title_contains.clone(),
-    )?;
-    let selector = build_selector(AxSelectorInput {
-        node_id: args.node_id.clone(),
-        role: args.role.clone(),
-        title_contains: args.title_contains.clone(),
-        identifier_contains: args.identifier_contains.clone(),
-        value_contains: args.value_contains.clone(),
-        subrole: args.subrole.clone(),
-        focused: args.focused,
-        enabled: args.enabled,
-        nth: args.nth,
-    })?;
+    let target = build_target_from_args(&args.target)?;
+    let selector = build_selector_from_args(&args.selector)?;
     Ok(AxTypeRequest {
         target,
         selector,

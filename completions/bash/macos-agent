@@ -42,7 +42,7 @@ _nils_cli_macos_agent_complete() {
       if (( cword == 2 )); then COMPREPLY=( $(compgen -W "current switch" -- "$cur") ); return 0; fi
       ;;
     ax)
-      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "list click type" -- "$cur") ); return 0; fi
+      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "list click type attr action session watch" -- "$cur") ); return 0; fi
       ;;
     observe)
       if (( cword == 2 )); then COMPREPLY=( $(compgen -W "screenshot" -- "$cur") ); return 0; fi
@@ -85,15 +85,16 @@ _nils_cli_macos_agent_complete() {
     local -a opts=(
       --format --error-format --dry-run --retries --retry-delay-ms --timeout-ms --trace --trace-dir
       --strict --include-probes
-      --app --window-name --on-screen-only
+      --app --window-title-contains --window-name --on-screen-only
       --window-id --active-window --bundle-id --wait-ms
       --x --y --button --count --pre-wait-ms --post-wait-ms
-      --text --delay-ms --enter --mods --key
+      --text --delay-ms --submit --enter --mods --key
       --id
       --role --title-contains --max-depth --limit --nth
-      --allow-coordinate-fallback --clear-first --submit --paste --allow-keyboard-fallback
+      --session-id --identifier-contains --value-contains --subrole --focused --enabled
+      --name --value --value-type --watch-id --events --max-buffer --drain
+      --allow-coordinate-fallback --clear-first --paste --allow-keyboard-fallback
       --path --image-format --ms --timeout-ms --poll-ms
-      --name
       -h --help -V --version
     )
     COMPREPLY=( $(compgen -W "${opts[*]}" -- "$cur") )

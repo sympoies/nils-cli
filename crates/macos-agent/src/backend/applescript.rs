@@ -1,5 +1,6 @@
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde_json::{Map, Value};
 
 use crate::backend::process::{map_failure, ProcessFailure, ProcessRequest, ProcessRunner};
 use crate::error::CliError;
@@ -213,24 +214,6 @@ const AX_CLICK_JXA_SCRIPT: &str = r#"function run(argv) {
     return { element: element, node: nodeFrom(element, path) };
   }
 
-  function resolveByNodeId(roots, nodeId) {
-    var segments = String(nodeId).split(".");
-    if (segments.length === 0) { return null; }
-    var rootIndex = Number(segments[0]);
-    if (!rootIndex || rootIndex < 1 || rootIndex > roots.length) { return null; }
-    var element = roots[rootIndex - 1];
-    var path = [String(rootIndex)];
-    for (var i = 1; i < segments.length; i += 1) {
-      var index = Number(segments[i]);
-      if (!index || index < 1) { return null; }
-      var children = safe(function () { return element.uiElements(); }, []);
-      if (!children || index > children.length) { return null; }
-      element = children[index - 1];
-      path.push(String(index));
-    }
-    return { element: element, node: nodeFrom(element, path) };
-  }
-
   var payload = {};
   if (argv.length > 0 && argv[0]) { payload = JSON.parse(argv[0]); }
   var selector = payload.selector || {};
@@ -365,6 +348,24 @@ const AX_TYPE_JXA_SCRIPT: &str = r#"function run(argv) {
       title: title,
       identifier: identifier
     };
+  }
+
+  function resolveByNodeId(roots, nodeId) {
+    var segments = String(nodeId).split(".");
+    if (segments.length === 0) { return null; }
+    var rootIndex = Number(segments[0]);
+    if (!rootIndex || rootIndex < 1 || rootIndex > roots.length) { return null; }
+    var element = roots[rootIndex - 1];
+    var path = [String(rootIndex)];
+    for (var i = 1; i < segments.length; i += 1) {
+      var index = Number(segments[i]);
+      if (!index || index < 1) { return null; }
+      var children = safe(function () { return element.uiElements(); }, []);
+      if (!children || index > children.length) { return null; }
+      element = children[index - 1];
+      path.push(String(index));
+    }
+    return { element: element, node: nodeFrom(element, path) };
   }
 
   var payload = {};
@@ -764,11 +765,20 @@ where
 {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return Err(CliError::ax_parse_failure(operation, "stdout was empty"));
+        return Err(ax_parse_error(operation, "stdout was empty"));
     }
 
-    serde_json::from_str(trimmed).map_err(|err| {
-        CliError::ax_parse_failure(
+    let value: Value = serde_json::from_str(trimmed).map_err(|err| {
+        ax_parse_error(
+            operation,
+            format!("{err}; stdout preview=`{}`", output_preview(trimmed, 120)),
+        )
+    })?;
+
+    validate_jxa_contract(operation, &value)?;
+
+    serde_json::from_value(value).map_err(|err| {
+        ax_parse_error(
             operation,
             format!("{err}; stdout preview=`{}`", output_preview(trimmed, 120)),
         )
@@ -785,6 +795,285 @@ fn map_ax_failure(operation: &str, failure: ProcessFailure) -> CliError {
 
 fn selector_is_empty(selector: &AxSelector) -> bool {
     selector.node_id.is_none() && selector.role.is_none() && selector.title_contains.is_none()
+}
+
+fn ax_parse_error(operation: &str, detail: impl Into<String>) -> CliError {
+    let mut err = CliError::ax_parse_failure(operation, detail);
+    if let Some(hint) = ax_contract_hint(operation) {
+        err = err.with_hint(hint);
+    }
+    err
+}
+
+fn ax_contract_error(operation: &str, detail: impl Into<String>) -> CliError {
+    let mut err = CliError::runtime(format!(
+        "{operation} failed: AX backend contract violation ({})",
+        detail.into().trim()
+    ))
+    .with_operation(operation)
+    .with_hint("Run `macos-agent preflight --include-probes --strict` to verify Accessibility/Automation access.")
+    .with_hint("Use --trace to capture raw backend output for diagnosis.");
+    if let Some(hint) = ax_contract_hint(operation) {
+        err = err.with_hint(hint);
+    }
+    err
+}
+
+fn ax_contract_hint(operation: &str) -> Option<&'static str> {
+    match operation {
+        "ax.list" => {
+            Some("Expected object contract: { nodes: [...], warnings: [...] } (warnings optional).")
+        }
+        "ax.click" => Some(
+            "Expected object contract: { matched_count, action, node_id?, used_coordinate_fallback?, fallback_x?, fallback_y? }.",
+        ),
+        "ax.type" => Some(
+            "Expected object contract: { matched_count, applied_via, text_length, node_id?, submitted?, used_keyboard_fallback? }.",
+        ),
+        _ => None,
+    }
+}
+
+fn validate_jxa_contract(operation: &str, value: &Value) -> Result<(), CliError> {
+    match operation {
+        "ax.list" => validate_ax_list_contract(operation, value),
+        "ax.click" => validate_ax_click_contract(operation, value),
+        "ax.type" => validate_ax_type_contract(operation, value),
+        _ => Ok(()),
+    }
+}
+
+fn expect_object<'a>(
+    operation: &str,
+    value: &'a Value,
+) -> Result<&'a Map<String, Value>, CliError> {
+    value
+        .as_object()
+        .ok_or_else(|| ax_contract_error(operation, "top-level payload must be a JSON object"))
+}
+
+fn json_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+fn ensure_required_array<'a>(
+    operation: &str,
+    object: &'a Map<String, Value>,
+    field: &str,
+) -> Result<&'a Vec<Value>, CliError> {
+    let value = object
+        .get(field)
+        .ok_or_else(|| ax_contract_error(operation, format!("missing required `{field}` array")))?;
+    value.as_array().ok_or_else(|| {
+        ax_contract_error(
+            operation,
+            format!(
+                "`{field}` must be an array (received {})",
+                json_type_name(value)
+            ),
+        )
+    })
+}
+
+fn ensure_optional_array<'a>(
+    operation: &str,
+    object: &'a Map<String, Value>,
+    field: &str,
+) -> Result<Option<&'a Vec<Value>>, CliError> {
+    match object.get(field) {
+        None => Ok(None),
+        Some(value) => value.as_array().map(Some).ok_or_else(|| {
+            ax_contract_error(
+                operation,
+                format!(
+                    "`{field}` must be an array when present (received {})",
+                    json_type_name(value)
+                ),
+            )
+        }),
+    }
+}
+
+fn ensure_required_u64(
+    operation: &str,
+    object: &Map<String, Value>,
+    field: &str,
+) -> Result<u64, CliError> {
+    let value = object.get(field).ok_or_else(|| {
+        ax_contract_error(operation, format!("missing required `{field}` number"))
+    })?;
+    value.as_u64().ok_or_else(|| {
+        ax_contract_error(
+            operation,
+            format!(
+                "`{field}` must be a non-negative integer (received {})",
+                json_type_name(value)
+            ),
+        )
+    })
+}
+
+fn ensure_required_non_empty_string(
+    operation: &str,
+    object: &Map<String, Value>,
+    field: &str,
+) -> Result<(), CliError> {
+    let value = object.get(field).ok_or_else(|| {
+        ax_contract_error(operation, format!("missing required `{field}` string"))
+    })?;
+    let text = value.as_str().ok_or_else(|| {
+        ax_contract_error(
+            operation,
+            format!(
+                "`{field}` must be a string (received {})",
+                json_type_name(value)
+            ),
+        )
+    })?;
+    if text.trim().is_empty() {
+        return Err(ax_contract_error(
+            operation,
+            format!("`{field}` must be a non-empty string"),
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_optional_bool(
+    operation: &str,
+    object: &Map<String, Value>,
+    field: &str,
+) -> Result<(), CliError> {
+    if let Some(value) = object.get(field) {
+        if !value.is_boolean() {
+            return Err(ax_contract_error(
+                operation,
+                format!(
+                    "`{field}` must be a boolean when present (received {})",
+                    json_type_name(value)
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_optional_string_or_null(
+    operation: &str,
+    object: &Map<String, Value>,
+    field: &str,
+) -> Result<(), CliError> {
+    if let Some(value) = object.get(field) {
+        if !value.is_null() && !value.is_string() {
+            return Err(ax_contract_error(
+                operation,
+                format!(
+                    "`{field}` must be a string or null when present (received {})",
+                    json_type_name(value)
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_optional_i64(
+    operation: &str,
+    object: &Map<String, Value>,
+    field: &str,
+) -> Result<Option<i64>, CliError> {
+    match object.get(field) {
+        None => Ok(None),
+        Some(value) => value.as_i64().map(Some).ok_or_else(|| {
+            ax_contract_error(
+                operation,
+                format!(
+                    "`{field}` must be an integer when present (received {})",
+                    json_type_name(value)
+                ),
+            )
+        }),
+    }
+}
+
+fn validate_ax_list_contract(operation: &str, value: &Value) -> Result<(), CliError> {
+    let object = expect_object(operation, value)?;
+    let nodes = ensure_required_array(operation, object, "nodes")?;
+    for (index, node) in nodes.iter().enumerate() {
+        if !node.is_object() {
+            return Err(ax_contract_error(
+                operation,
+                format!(
+                    "`nodes[{index}]` must be an object (received {})",
+                    json_type_name(node)
+                ),
+            ));
+        }
+    }
+
+    if let Some(warnings) = ensure_optional_array(operation, object, "warnings")? {
+        for (index, warning) in warnings.iter().enumerate() {
+            if !warning.is_string() {
+                return Err(ax_contract_error(
+                    operation,
+                    format!(
+                        "`warnings[{index}]` must be a string (received {})",
+                        json_type_name(warning)
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_ax_click_contract(operation: &str, value: &Value) -> Result<(), CliError> {
+    let object = expect_object(operation, value)?;
+    ensure_required_u64(operation, object, "matched_count")?;
+    ensure_required_non_empty_string(operation, object, "action")?;
+    ensure_optional_bool(operation, object, "used_coordinate_fallback")?;
+    ensure_optional_string_or_null(operation, object, "node_id")?;
+    let fallback_x = ensure_optional_i64(operation, object, "fallback_x")?;
+    let fallback_y = ensure_optional_i64(operation, object, "fallback_y")?;
+
+    let used_coordinate_fallback = object
+        .get("used_coordinate_fallback")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    if fallback_x.is_some() ^ fallback_y.is_some() {
+        return Err(ax_contract_error(
+            operation,
+            "`fallback_x` and `fallback_y` must either both be present or both be omitted",
+        ));
+    }
+
+    if used_coordinate_fallback && (fallback_x.is_none() || fallback_y.is_none()) {
+        return Err(ax_contract_error(
+            operation,
+            "`fallback_x` and `fallback_y` are required when `used_coordinate_fallback` is true",
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_ax_type_contract(operation: &str, value: &Value) -> Result<(), CliError> {
+    let object = expect_object(operation, value)?;
+    ensure_required_u64(operation, object, "matched_count")?;
+    ensure_required_u64(operation, object, "text_length")?;
+    ensure_required_non_empty_string(operation, object, "applied_via")?;
+    ensure_optional_bool(operation, object, "submitted")?;
+    ensure_optional_bool(operation, object, "used_keyboard_fallback")?;
+    ensure_optional_string_or_null(operation, object, "node_id")?;
+    Ok(())
 }
 
 fn test_mode_override_json(operation: &str) -> Option<String> {
@@ -842,7 +1131,10 @@ mod tests {
     use crate::backend::process::{ProcessFailure, ProcessOutput, ProcessRequest, ProcessRunner};
     use crate::model::{AxClickRequest, AxListRequest, AxSelector, AxTypeRequest};
 
-    use super::{ax_click, ax_list, ax_type, escape_applescript, parse_modifiers, Modifier};
+    use super::{
+        ax_click, ax_list, ax_type, escape_applescript, parse_modifiers, Modifier,
+        AX_CLICK_JXA_SCRIPT, AX_TYPE_JXA_SCRIPT,
+    };
 
     struct FixedOutputRunner {
         stdout: String,
@@ -929,6 +1221,88 @@ mod tests {
             .hints()
             .iter()
             .any(|hint| hint.contains("preflight") || hint.contains("--trace")));
+    }
+
+    #[test]
+    fn ax_click_script_declares_node_id_helper_once() {
+        assert_eq!(
+            AX_CLICK_JXA_SCRIPT
+                .matches("function resolveByNodeId")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn ax_type_script_declares_node_id_helper_once() {
+        assert_eq!(
+            AX_TYPE_JXA_SCRIPT
+                .matches("function resolveByNodeId")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn ax_list_contract_failure_reports_missing_nodes_array() {
+        let lock = GlobalStateLock::new();
+        let _mode = EnvGuard::remove(&lock, "CODEX_MACOS_AGENT_TEST_MODE");
+        let _override = EnvGuard::remove(&lock, "CODEX_MACOS_AGENT_AX_LIST_JSON");
+        let runner = FixedOutputRunner::new(r#"{"warnings":[]}"#);
+
+        let err = ax_list(&runner, &AxListRequest::default(), 250)
+            .expect_err("missing nodes contract field should fail");
+        assert_eq!(err.operation(), Some("ax.list"));
+        assert!(err.message().contains("AX backend contract violation"));
+        assert!(err.message().contains("nodes"));
+        assert!(err.hints().iter().any(|hint| hint.contains("nodes")));
+    }
+
+    #[test]
+    fn ax_click_contract_failure_requires_fallback_coordinate_pair() {
+        let lock = GlobalStateLock::new();
+        let _mode = EnvGuard::remove(&lock, "CODEX_MACOS_AGENT_TEST_MODE");
+        let _override = EnvGuard::remove(&lock, "CODEX_MACOS_AGENT_AX_CLICK_JSON");
+        let runner = FixedOutputRunner::new(
+            r#"{"node_id":"1.1","matched_count":1,"action":"ax-press-fallback","used_coordinate_fallback":true,"fallback_x":42}"#,
+        );
+        let request = AxClickRequest {
+            selector: AxSelector {
+                node_id: Some("1.1".to_string()),
+                ..AxSelector::default()
+            },
+            ..AxClickRequest::default()
+        };
+
+        let err = ax_click(&runner, &request, 250)
+            .expect_err("fallback coordinates without pair should fail");
+        assert_eq!(err.operation(), Some("ax.click"));
+        assert!(err.message().contains("AX backend contract violation"));
+        assert!(err.message().contains("fallback_x"));
+        assert!(err.message().contains("fallback_y"));
+    }
+
+    #[test]
+    fn ax_type_contract_failure_requires_text_length() {
+        let lock = GlobalStateLock::new();
+        let _mode = EnvGuard::remove(&lock, "CODEX_MACOS_AGENT_TEST_MODE");
+        let _override = EnvGuard::remove(&lock, "CODEX_MACOS_AGENT_AX_TYPE_JSON");
+        let runner = FixedOutputRunner::new(
+            r#"{"node_id":"1.2","matched_count":1,"applied_via":"ax-set-value"}"#,
+        );
+        let request = AxTypeRequest {
+            selector: AxSelector {
+                node_id: Some("1.2".to_string()),
+                ..AxSelector::default()
+            },
+            text: "hello".to_string(),
+            ..AxTypeRequest::default()
+        };
+
+        let err = ax_type(&runner, &request, 250).expect_err("missing text_length should fail");
+        assert_eq!(err.operation(), Some("ax.type"));
+        assert!(err.message().contains("AX backend contract violation"));
+        assert!(err.message().contains("text_length"));
     }
 
     #[test]

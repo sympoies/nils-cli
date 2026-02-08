@@ -4,14 +4,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use clap::{error::ErrorKind, Parser};
-use macos_agent::cli::{
-    AxActionCommand, AxAttrCommand, AxCommand, AxSessionCommand, AxWatchCommand, Cli, CommandGroup,
-    ErrorFormat, InputCommand, InputSourceCommand, ObserveCommand, ProfileCommand, ScenarioCommand,
-    WaitCommand, WindowCommand,
-};
+use macos_agent::cli::{Cli, ErrorFormat};
 use macos_agent::error::CliError;
 use macos_agent::model::ErrorEnvelope;
-use macos_agent::run::run;
+use macos_agent::run::{command_label, run};
 use macos_agent::test_mode;
 
 static TRACE_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -176,7 +172,7 @@ fn write_trace(
         "schema_version": 1,
         "ok": ok,
         "elapsed_ms": elapsed_ms,
-        "command": cli.map(command_label).unwrap_or_else(|| "<parse-error>".to_string()),
+        "command": cli.map(command_label).unwrap_or("<parse-error>").to_string(),
         "args": raw_args,
         "error": err.map(|value| ErrorEnvelope::from_error(value).error),
         "policy": cli.map(|value| serde_json::json!({
@@ -223,69 +219,12 @@ fn codex_out_dir() -> PathBuf {
     PathBuf::from(".codex").join("out")
 }
 
-fn command_label(cli: &Cli) -> String {
-    match &cli.command {
-        CommandGroup::Preflight(_) => "preflight".to_string(),
-        CommandGroup::Windows { .. } => "windows.list".to_string(),
-        CommandGroup::Apps { .. } => "apps.list".to_string(),
-        CommandGroup::Window { command } => match command {
-            WindowCommand::Activate(_) => "window.activate".to_string(),
-        },
-        CommandGroup::Input { command } => match command {
-            InputCommand::Click(_) => "input.click".to_string(),
-            InputCommand::Type(_) => "input.type".to_string(),
-            InputCommand::Hotkey(_) => "input.hotkey".to_string(),
-        },
-        CommandGroup::InputSource { command } => match command {
-            InputSourceCommand::Current(_) => "input-source.current".to_string(),
-            InputSourceCommand::Switch(_) => "input-source.switch".to_string(),
-        },
-        CommandGroup::Ax { command } => match command {
-            AxCommand::List(_) => "ax.list".to_string(),
-            AxCommand::Click(_) => "ax.click".to_string(),
-            AxCommand::Type(_) => "ax.type".to_string(),
-            AxCommand::Attr { command } => match command {
-                AxAttrCommand::Get(_) => "ax.attr.get".to_string(),
-                AxAttrCommand::Set(_) => "ax.attr.set".to_string(),
-            },
-            AxCommand::Action { command } => match command {
-                AxActionCommand::Perform(_) => "ax.action.perform".to_string(),
-            },
-            AxCommand::Session { command } => match command {
-                AxSessionCommand::Start(_) => "ax.session.start".to_string(),
-                AxSessionCommand::List(_) => "ax.session.list".to_string(),
-                AxSessionCommand::Stop(_) => "ax.session.stop".to_string(),
-            },
-            AxCommand::Watch { command } => match command {
-                AxWatchCommand::Start(_) => "ax.watch.start".to_string(),
-                AxWatchCommand::Poll(_) => "ax.watch.poll".to_string(),
-                AxWatchCommand::Stop(_) => "ax.watch.stop".to_string(),
-            },
-        },
-        CommandGroup::Observe { command } => match command {
-            ObserveCommand::Screenshot(_) => "observe.screenshot".to_string(),
-        },
-        CommandGroup::Wait { command } => match command {
-            WaitCommand::Sleep(_) => "wait.sleep".to_string(),
-            WaitCommand::AppActive(_) => "wait.app-active".to_string(),
-            WaitCommand::WindowPresent(_) => "wait.window-present".to_string(),
-        },
-        CommandGroup::Scenario { command } => match command {
-            ScenarioCommand::Run(_) => "scenario.run".to_string(),
-        },
-        CommandGroup::Profile { command } => match command {
-            ProfileCommand::Validate(_) => "profile.validate".to_string(),
-            ProfileCommand::Init(_) => "profile.init".to_string(),
-        },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use clap::Parser;
 
-    use super::command_label;
     use macos_agent::cli::Cli;
+    use macos_agent::run::command_label;
 
     #[test]
     fn command_label_maps_ax_subcommands() {

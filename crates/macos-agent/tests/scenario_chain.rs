@@ -162,8 +162,36 @@ fn scenario_run_executes_fixture_steps() {
     let payload: serde_json::Value =
         serde_json::from_str(&out.stdout_text()).expect("scenario run json");
     assert_eq!(payload["command"], serde_json::json!("scenario.run"));
+    assert_eq!(payload["result"]["total_steps"], serde_json::json!(3));
+    assert_eq!(payload["result"]["passed_steps"], serde_json::json!(3));
     assert_eq!(payload["result"]["failed_steps"], serde_json::json!(0));
-    assert!(payload["result"]["passed_steps"].as_u64().unwrap_or(0) >= 3);
+    let steps = payload["result"]["steps"]
+        .as_array()
+        .expect("steps should be an array");
+
+    let preflight = steps
+        .iter()
+        .find(|step| step["step_id"] == serde_json::json!("preflight"))
+        .expect("preflight step should exist");
+    assert_eq!(preflight["operation"], serde_json::json!("preflight"));
+    assert_eq!(preflight["ax_path"], serde_json::Value::Null);
+    assert_eq!(preflight["fallback_used"], serde_json::Value::Null);
+
+    let activate = steps
+        .iter()
+        .find(|step| step["step_id"] == serde_json::json!("activate"))
+        .expect("activate step should exist");
+    assert_eq!(activate["operation"], serde_json::json!("window.activate"));
+    assert_eq!(activate["ax_path"], serde_json::Value::Null);
+    assert_eq!(activate["fallback_used"], serde_json::Value::Null);
+
+    let click = steps
+        .iter()
+        .find(|step| step["step_id"] == serde_json::json!("click-dry-run"))
+        .expect("click step should exist");
+    assert_eq!(click["operation"], serde_json::json!("input.click"));
+    assert_eq!(click["ax_path"], serde_json::Value::Null);
+    assert_eq!(click["fallback_used"], serde_json::Value::Null);
 }
 
 #[test]
@@ -225,4 +253,73 @@ fn scenario_steps_report_ax_path_and_fallback_state() {
     assert_eq!(typ["operation"], serde_json::json!("ax.type"));
     assert_eq!(typ["ax_path"], serde_json::json!("keyboard-fallback"));
     assert_eq!(typ["fallback_used"], serde_json::json!(true));
+}
+
+#[test]
+fn scenario_steps_report_ax_native_path_when_fallback_not_used() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("scenario-ax.json");
+
+    let options = harness
+        .cmd_options(cwd.path())
+        .with_env(
+            "CODEX_MACOS_AGENT_AX_LIST_JSON",
+            r#"{"nodes":[{"node_id":"1.1","role":"AXButton","enabled":true,"focused":false,"actions":["AXPress"],"path":["1","1"]}],"warnings":[]}"#,
+        )
+        .with_env(
+            "CODEX_MACOS_AGENT_AX_CLICK_JSON",
+            r#"{"node_id":"1.1","matched_count":1,"action":"ax-press","used_coordinate_fallback":false}"#,
+        )
+        .with_env(
+            "CODEX_MACOS_AGENT_AX_TYPE_JSON",
+            r#"{"node_id":"1.1","matched_count":1,"applied_via":"ax-set-value","text_length":11,"submitted":false,"used_keyboard_fallback":false}"#,
+        );
+
+    let out = harness.run_with_options(
+        cwd.path(),
+        &[
+            "--format",
+            "json",
+            "scenario",
+            "run",
+            "--file",
+            fixture.to_str().unwrap(),
+        ],
+        options,
+    );
+
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr_text());
+    let payload: serde_json::Value =
+        serde_json::from_str(&out.stdout_text()).expect("scenario run json");
+    let steps = payload["result"]["steps"]
+        .as_array()
+        .expect("steps should be an array");
+
+    let ax_list = steps
+        .iter()
+        .find(|step| step["step_id"] == serde_json::json!("ax-list"))
+        .expect("ax-list step should exist");
+    assert_eq!(ax_list["operation"], serde_json::json!("ax.list"));
+    assert_eq!(ax_list["ax_path"], serde_json::Value::Null);
+    assert_eq!(ax_list["fallback_used"], serde_json::Value::Null);
+
+    let click = steps
+        .iter()
+        .find(|step| step["step_id"] == serde_json::json!("ax-click"))
+        .expect("ax-click step should exist");
+    assert_eq!(click["operation"], serde_json::json!("ax.click"));
+    assert_eq!(click["ax_path"], serde_json::json!("ax-native"));
+    assert_eq!(click["fallback_used"], serde_json::json!(false));
+
+    let typ = steps
+        .iter()
+        .find(|step| step["step_id"] == serde_json::json!("ax-type"))
+        .expect("ax-type step should exist");
+    assert_eq!(typ["operation"], serde_json::json!("ax.type"));
+    assert_eq!(typ["ax_path"], serde_json::json!("ax-native"));
+    assert_eq!(typ["fallback_used"], serde_json::json!(false));
 }

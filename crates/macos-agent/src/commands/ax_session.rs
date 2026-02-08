@@ -1,13 +1,19 @@
+use std::time::Instant;
+
 use crate::backend::process::ProcessRunner;
 use crate::backend::{AutoAxBackend, AxBackendAdapter};
 use crate::cli::{AxSessionListArgs, AxSessionStartArgs, AxSessionStopArgs, OutputFormat};
 use crate::commands::ax_common::build_target;
+use crate::commands::{emit_json_success, reject_tsv_for_list_only};
 use crate::error::CliError;
 use crate::model::{
-    AxSessionListResult, AxSessionStartRequest, AxSessionStartResult, AxSessionStopRequest,
-    AxSessionStopResult, SuccessEnvelope,
+    AxSessionListResult, AxSessionStartCommandResult, AxSessionStartRequest, AxSessionStartResult,
+    AxSessionStopCommandResult, AxSessionStopRequest, AxSessionStopResult,
 };
-use crate::run::ActionPolicy;
+use crate::retry::run_with_retry;
+use crate::run::{
+    action_policy_result, build_action_meta_with_attempts, next_action_id, ActionPolicy,
+};
 
 pub fn run_start(
     format: OutputFormat,
@@ -25,24 +31,38 @@ pub fn run_start(
         session_id: args.session_id.clone(),
     };
 
-    let result = if policy.dry_run {
-        AxSessionStartResult {
-            session: crate::model::AxSessionInfo {
-                session_id: request
-                    .session_id
-                    .clone()
-                    .unwrap_or_else(|| "axs-dry-run".to_string()),
-                app: request.target.app.clone(),
-                bundle_id: request.target.bundle_id.clone(),
-                pid: None,
-                window_title_contains: request.target.window_title_contains.clone(),
-                created_at_ms: 0,
-            },
-            created: false,
-        }
-    } else {
+    let action_id = next_action_id("ax.session.start");
+    let started = Instant::now();
+    let mut attempts_used = 0u8;
+    let mut detail = AxSessionStartResult {
+        session: crate::model::AxSessionInfo {
+            session_id: request
+                .session_id
+                .clone()
+                .unwrap_or_else(|| "axs-dry-run".to_string()),
+            app: request.target.app.clone(),
+            bundle_id: request.target.bundle_id.clone(),
+            pid: None,
+            window_title_contains: request.target.window_title_contains.clone(),
+            created_at_ms: 0,
+        },
+        created: false,
+    };
+
+    if !policy.dry_run {
         let backend = AutoAxBackend::default();
-        backend.session_start(runner, &request, policy.timeout_ms)?
+        let retry = policy.retry_policy();
+        let (backend_result, attempts) = run_with_retry(retry, || {
+            backend.session_start(runner, &request, policy.timeout_ms)
+        })?;
+        attempts_used = attempts;
+        detail = backend_result;
+    }
+
+    let result = AxSessionStartCommandResult {
+        detail,
+        policy: action_policy_result(policy),
+        meta: build_action_meta_with_attempts(action_id, started, policy, attempts_used),
     };
 
     print_start(format, result)
@@ -59,13 +79,7 @@ pub fn run_list(
 
     match format {
         OutputFormat::Json => {
-            let payload = SuccessEnvelope::new("ax.session.list", result);
-            println!(
-                "{}",
-                serde_json::to_string(&payload).map_err(|err| CliError::runtime(format!(
-                    "failed to serialize json output: {err}"
-                )))?
-            );
+            emit_json_success("ax.session.list", result)?;
         }
         OutputFormat::Text => {
             if result.sessions.is_empty() {
@@ -84,9 +98,7 @@ pub fn run_list(
             }
         }
         OutputFormat::Tsv => {
-            return Err(CliError::usage(
-                "--format tsv is only supported for `windows list` and `apps list`",
-            ));
+            return reject_tsv_for_list_only();
         }
     }
 
@@ -103,68 +115,75 @@ pub fn run_stop(
         session_id: args.session_id.clone(),
     };
 
-    let result = if policy.dry_run {
-        AxSessionStopResult {
-            session_id: request.session_id,
-            removed: false,
-        }
-    } else {
-        let backend = AutoAxBackend::default();
-        backend.session_stop(runner, &request, policy.timeout_ms)?
+    let action_id = next_action_id("ax.session.stop");
+    let started = Instant::now();
+    let mut attempts_used = 0u8;
+    let mut detail = AxSessionStopResult {
+        session_id: request.session_id.clone(),
+        removed: false,
     };
 
+    if !policy.dry_run {
+        let backend = AutoAxBackend::default();
+        let retry = policy.retry_policy();
+        let (backend_result, attempts) = run_with_retry(retry, || {
+            backend.session_stop(runner, &request, policy.timeout_ms)
+        })?;
+        attempts_used = attempts;
+        detail = backend_result;
+    }
+
+    let result = AxSessionStopCommandResult {
+        detail,
+        policy: action_policy_result(policy),
+        meta: build_action_meta_with_attempts(action_id, started, policy, attempts_used),
+    };
+
+    print_stop(format, result)
+}
+
+fn print_start(format: OutputFormat, result: AxSessionStartCommandResult) -> Result<(), CliError> {
     match format {
         OutputFormat::Json => {
-            let payload = SuccessEnvelope::new("ax.session.stop", result);
-            println!(
-                "{}",
-                serde_json::to_string(&payload).map_err(|err| CliError::runtime(format!(
-                    "failed to serialize json output: {err}"
-                )))?
-            );
+            emit_json_success("ax.session.start", result)?;
         }
         OutputFormat::Text => {
             println!(
-                "ax.session.stop\tsession_id={}\tremoved={}",
-                result.session_id, result.removed
+                "ax.session.start\tsession_id={}\tapp={}\tbundle_id={}\tpid={}\tcreated={}\tcreated_at_ms={}\taction_id={}\telapsed_ms={}",
+                result.detail.session.session_id,
+                result.detail.session.app.unwrap_or_default(),
+                result.detail.session.bundle_id.unwrap_or_default(),
+                result.detail.session.pid.unwrap_or_default(),
+                result.detail.created,
+                result.detail.session.created_at_ms,
+                result.meta.action_id,
+                result.meta.elapsed_ms,
             );
         }
         OutputFormat::Tsv => {
-            return Err(CliError::usage(
-                "--format tsv is only supported for `windows list` and `apps list`",
-            ));
+            return reject_tsv_for_list_only();
         }
     }
 
     Ok(())
 }
 
-fn print_start(format: OutputFormat, result: AxSessionStartResult) -> Result<(), CliError> {
+fn print_stop(format: OutputFormat, result: AxSessionStopCommandResult) -> Result<(), CliError> {
     match format {
         OutputFormat::Json => {
-            let payload = SuccessEnvelope::new("ax.session.start", result);
-            println!(
-                "{}",
-                serde_json::to_string(&payload).map_err(|err| CliError::runtime(format!(
-                    "failed to serialize json output: {err}"
-                )))?
-            );
+            emit_json_success("ax.session.stop", result)?;
         }
         OutputFormat::Text => {
             println!(
-                "ax.session.start\tsession_id={}\tapp={}\tbundle_id={}\tpid={}\tcreated={}\tcreated_at_ms={}",
-                result.session.session_id,
-                result.session.app.unwrap_or_default(),
-                result.session.bundle_id.unwrap_or_default(),
-                result.session.pid.unwrap_or_default(),
-                result.created,
-                result.session.created_at_ms,
+                "ax.session.stop\tsession_id={}\tremoved={}\taction_id={}\telapsed_ms={}",
+                result.detail.session_id,
+                result.detail.removed,
+                result.meta.action_id,
+                result.meta.elapsed_ms,
             );
         }
         OutputFormat::Tsv => {
-            return Err(CliError::usage(
-                "--format tsv is only supported for `windows list` and `apps list`",
-            ));
+            return reject_tsv_for_list_only();
         }
     }
 

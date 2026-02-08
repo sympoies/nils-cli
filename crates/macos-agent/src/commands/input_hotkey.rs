@@ -3,8 +3,9 @@ use std::time::Instant;
 use crate::backend::applescript;
 use crate::backend::process::ProcessRunner;
 use crate::cli::{InputHotkeyArgs, OutputFormat};
+use crate::commands::{emit_json_success, reject_tsv_for_list_only};
 use crate::error::CliError;
-use crate::model::{InputHotkeyResult, SuccessEnvelope};
+use crate::model::InputHotkeyResult;
 use crate::retry::run_with_retry;
 use crate::run::{
     action_policy_result, build_action_meta_with_attempts, next_action_id, ActionPolicy,
@@ -49,13 +50,7 @@ pub fn run(
 
     match format {
         OutputFormat::Json => {
-            let payload = SuccessEnvelope::new("input.hotkey", result);
-            println!(
-                "{}",
-                serde_json::to_string(&payload).map_err(|err| CliError::runtime(format!(
-                    "failed to serialize json output: {err}"
-                )))?
-            );
+            emit_json_success("input.hotkey", result)?;
         }
         OutputFormat::Text => {
             println!(
@@ -67,9 +62,7 @@ pub fn run(
             );
         }
         OutputFormat::Tsv => {
-            return Err(CliError::usage(
-                "--format tsv is only supported for `windows list` and `apps list`",
-            ));
+            return reject_tsv_for_list_only();
         }
     }
 

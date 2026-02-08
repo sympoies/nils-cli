@@ -74,6 +74,31 @@ fn wait_window_present_succeeds_for_terminal() {
             "window-present",
             "--app",
             "Terminal",
+            "--window-title-contains",
+            "Docs",
+            "--timeout-ms",
+            "50",
+            "--poll-ms",
+            "5",
+        ],
+    );
+
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr_text());
+    assert_eq!(out.stderr_text(), "");
+}
+
+#[test]
+fn wait_window_present_supports_window_name_alias() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+
+    let out = harness.run(
+        cwd.path(),
+        &[
+            "wait",
+            "window-present",
+            "--app",
+            "Terminal",
             "--window-name",
             "Docs",
             "--timeout-ms",

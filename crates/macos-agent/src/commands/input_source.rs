@@ -1,8 +1,9 @@
 use crate::backend::input_source;
 use crate::backend::process::ProcessRunner;
 use crate::cli::{InputSourceCurrentArgs, InputSourceSwitchArgs, OutputFormat};
+use crate::commands::{emit_json_success, reject_tsv_for_list_only};
 use crate::error::CliError;
-use crate::model::{InputSourceCurrentResult, InputSourceSwitchResult, SuccessEnvelope};
+use crate::model::{InputSourceCurrentResult, InputSourceSwitchResult};
 use crate::run::ActionPolicy;
 
 pub fn run_current(
@@ -16,21 +17,13 @@ pub fn run_current(
     };
     match format {
         OutputFormat::Json => {
-            let payload = SuccessEnvelope::new("input-source.current", result);
-            println!(
-                "{}",
-                serde_json::to_string(&payload).map_err(|err| CliError::runtime(format!(
-                    "failed to serialize json output: {err}"
-                )))?
-            );
+            emit_json_success("input-source.current", result)?;
         }
         OutputFormat::Text => {
             println!("input-source.current\tcurrent={}", result.current);
         }
         OutputFormat::Tsv => {
-            return Err(CliError::usage(
-                "--format tsv is only supported for `windows list` and `apps list`",
-            ));
+            return reject_tsv_for_list_only();
         }
     }
 
@@ -51,13 +44,7 @@ pub fn run_switch(
     };
     match format {
         OutputFormat::Json => {
-            let payload = SuccessEnvelope::new("input-source.switch", result);
-            println!(
-                "{}",
-                serde_json::to_string(&payload).map_err(|err| CliError::runtime(format!(
-                    "failed to serialize json output: {err}"
-                )))?
-            );
+            emit_json_success("input-source.switch", result)?;
         }
         OutputFormat::Text => {
             println!(
@@ -66,9 +53,7 @@ pub fn run_switch(
             );
         }
         OutputFormat::Tsv => {
-            return Err(CliError::usage(
-                "--format tsv is only supported for `windows list` and `apps list`",
-            ));
+            return reject_tsv_for_list_only();
         }
     }
 

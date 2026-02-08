@@ -16,7 +16,7 @@ fn input_type_accepts_whitespace_and_punctuation() {
             "type",
             "--text",
             "hello, world!",
-            "--enter",
+            "--submit",
         ],
     );
 

@@ -423,6 +423,14 @@ pub struct AxAttrSetResult {
     pub value_type: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct AxAttrSetCommandResult {
+    #[serde(flatten)]
+    pub detail: AxAttrSetResult,
+    pub policy: ActionPolicyResult,
+    pub meta: ActionMeta,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AxActionPerformResult {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -430,6 +438,14 @@ pub struct AxActionPerformResult {
     pub matched_count: usize,
     pub name: String,
     pub performed: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AxActionPerformCommandResult {
+    #[serde(flatten)]
+    pub detail: AxActionPerformResult,
+    pub policy: ActionPolicyResult,
+    pub meta: ActionMeta,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -466,6 +482,14 @@ pub struct AxSessionStartResult {
     pub created: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct AxSessionStartCommandResult {
+    #[serde(flatten)]
+    pub detail: AxSessionStartResult,
+    pub policy: ActionPolicyResult,
+    pub meta: ActionMeta,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct AxSessionListResult {
     pub sessions: Vec<AxSessionInfo>,
@@ -475,6 +499,14 @@ pub struct AxSessionListResult {
 pub struct AxSessionStopResult {
     pub session_id: String,
     pub removed: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AxSessionStopCommandResult {
+    #[serde(flatten)]
+    pub detail: AxSessionStopResult,
+    pub policy: ActionPolicyResult,
+    pub meta: ActionMeta,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -526,6 +558,14 @@ pub struct AxWatchStartResult {
     pub started: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct AxWatchStartCommandResult {
+    #[serde(flatten)]
+    pub detail: AxWatchStartResult,
+    pub policy: ActionPolicyResult,
+    pub meta: ActionMeta,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct AxWatchPollResult {
     pub watch_id: String,
@@ -539,6 +579,14 @@ pub struct AxWatchStopResult {
     pub watch_id: String,
     pub stopped: bool,
     pub drained: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AxWatchStopCommandResult {
+    #[serde(flatten)]
+    pub detail: AxWatchStopResult,
+    pub policy: ActionPolicyResult,
+    pub meta: ActionMeta,
 }
 
 #[derive(Debug, Clone, Serialize)]

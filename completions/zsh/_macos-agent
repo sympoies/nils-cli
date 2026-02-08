@@ -53,7 +53,8 @@ _macos-agent() {
       _arguments -C $global_opts \
         '3:windows command:(list)' \
         '--app=[Filter by app/owner name]:name:' \
-        '--window-name=[Narrow app selection by window title]:name:' \
+        '--window-title-contains=[Narrow app selection by window title]:name:' \
+        '--window-name=[Deprecated alias of --window-title-contains]:name:' \
         '--on-screen-only[Include only on-screen windows]' \
         && return 0
       ;;
@@ -76,7 +77,8 @@ _macos-agent() {
         '--window-id=[Select by window id]:id:' \
         '--active-window[Select frontmost active window]' \
         '--app=[Select by app name]:name:' \
-        '--window-name=[Narrow app selection by window title]:name:' \
+        '--window-title-contains=[Narrow app selection by window title]:name:' \
+        '--window-name=[Deprecated alias of --window-title-contains]:name:' \
         '--bundle-id=[Select by bundle id]:bundle:' \
         '--wait-ms=[Wait up to this many milliseconds for active confirmation]:ms:' \
         && return 0
@@ -107,7 +109,8 @@ _macos-agent() {
           _arguments -C $global_opts \
             '--text=[Text to type]:text:' \
             '--delay-ms=[Delay between key events]:ms:' \
-            '--enter[Press Enter after typing]' \
+            '--submit[Press Enter after typing]' \
+            '--enter[Deprecated alias of --submit]' \
             && return 0
           ;;
         hotkey)
@@ -145,7 +148,11 @@ _macos-agent() {
         _describe -t subcommands 'ax command' \
           'list:List AX nodes' \
           'click:Click AX node' \
-          'type:Type into AX node'
+          'type:Type into AX node' \
+          'attr:Read or set AX attributes' \
+          'action:Perform AX actions' \
+          'session:Manage AX sessions' \
+          'watch:Manage AX watchers'
         return 0
       fi
 
@@ -153,10 +160,17 @@ _macos-agent() {
       case "$ax_cmd" in
         list)
           _arguments -C $global_opts \
+            '--session-id=[Target session id]:id:' \
             '--app=[Target app name]:name:' \
             '--bundle-id=[Target bundle id]:bundle:' \
+            '--window-title-contains=[Narrow to windows by title]:text:' \
             '--role=[Filter by AX role]:role:' \
             '--title-contains=[Filter by title substring]:text:' \
+            '--identifier-contains=[Filter by identifier substring]:text:' \
+            '--value-contains=[Filter by value substring]:text:' \
+            '--subrole=[Filter by AX subrole]:subrole:' \
+            '--focused=[Filter by focused state]:bool:(true false)' \
+            '--enabled=[Filter by enabled state]:bool:(true false)' \
             '--max-depth=[Limit traversal depth]:depth:' \
             '--limit=[Limit number of returned nodes]:count:' \
             && return 0
@@ -166,9 +180,16 @@ _macos-agent() {
             '--node-id=[Select by node id]:id:' \
             '--role=[Select by AX role]:role:' \
             '--title-contains=[Select by title substring]:text:' \
+            '--identifier-contains=[Select by identifier substring]:text:' \
+            '--value-contains=[Select by value substring]:text:' \
+            '--subrole=[Select by AX subrole]:subrole:' \
+            '--focused=[Select by focused state]:bool:(true false)' \
+            '--enabled=[Select by enabled state]:bool:(true false)' \
             '--nth=[Select nth match from role/title selector]:n:' \
+            '--session-id=[Target session id]:id:' \
             '--app=[Target app name]:name:' \
             '--bundle-id=[Target bundle id]:bundle:' \
+            '--window-title-contains=[Narrow to windows by title]:text:' \
             '--allow-coordinate-fallback[Allow coordinate fallback when AXPress is unavailable]' \
             && return 0
           ;;
@@ -177,15 +198,149 @@ _macos-agent() {
             '--node-id=[Select by node id]:id:' \
             '--role=[Select by AX role]:role:' \
             '--title-contains=[Select by title substring]:text:' \
+            '--identifier-contains=[Select by identifier substring]:text:' \
+            '--value-contains=[Select by value substring]:text:' \
+            '--subrole=[Select by AX subrole]:subrole:' \
+            '--focused=[Select by focused state]:bool:(true false)' \
+            '--enabled=[Select by enabled state]:bool:(true false)' \
             '--nth=[Select nth match from role/title selector]:n:' \
+            '--session-id=[Target session id]:id:' \
             '--app=[Target app name]:name:' \
             '--bundle-id=[Target bundle id]:bundle:' \
+            '--window-title-contains=[Narrow to windows by title]:text:' \
             '--text=[Text to type]:text:' \
             '--clear-first[Clear field before typing]' \
             '--submit[Press Enter after typing]' \
             '--paste[Use clipboard paste strategy]' \
             '--allow-keyboard-fallback[Allow keyboard fallback when AX value set is unavailable]' \
             && return 0
+          ;;
+        attr)
+          if (( CURRENT == 4 )); then
+            _describe -t subcommands 'ax attr command' \
+              'get:Read AX attribute value' \
+              'set:Set AX attribute value'
+            return 0
+          fi
+          local ax_attr_cmd="${words[4]}"
+          case "$ax_attr_cmd" in
+            get)
+              _arguments -C $global_opts \
+                '--node-id=[Select by node id]:id:' \
+                '--role=[Select by AX role]:role:' \
+                '--title-contains=[Select by title substring]:text:' \
+                '--identifier-contains=[Select by identifier substring]:text:' \
+                '--value-contains=[Select by value substring]:text:' \
+                '--subrole=[Select by AX subrole]:subrole:' \
+                '--focused=[Select by focused state]:bool:(true false)' \
+                '--enabled=[Select by enabled state]:bool:(true false)' \
+                '--nth=[Select nth match]:n:' \
+                '--session-id=[Target session id]:id:' \
+                '--app=[Target app name]:name:' \
+                '--bundle-id=[Target bundle id]:bundle:' \
+                '--window-title-contains=[Narrow to windows by title]:text:' \
+                '--name=[AX attribute name]:name:' \
+                && return 0
+              ;;
+            set)
+              _arguments -C $global_opts \
+                '--node-id=[Select by node id]:id:' \
+                '--role=[Select by AX role]:role:' \
+                '--title-contains=[Select by title substring]:text:' \
+                '--identifier-contains=[Select by identifier substring]:text:' \
+                '--value-contains=[Select by value substring]:text:' \
+                '--subrole=[Select by AX subrole]:subrole:' \
+                '--focused=[Select by focused state]:bool:(true false)' \
+                '--enabled=[Select by enabled state]:bool:(true false)' \
+                '--nth=[Select nth match]:n:' \
+                '--session-id=[Target session id]:id:' \
+                '--app=[Target app name]:name:' \
+                '--bundle-id=[Target bundle id]:bundle:' \
+                '--window-title-contains=[Narrow to windows by title]:text:' \
+                '--name=[AX attribute name]:name:' \
+                '--value=[AX attribute value]:value:' \
+                '--value-type=[Parse type for --value]:type:(string number bool json null)' \
+                && return 0
+              ;;
+          esac
+          ;;
+        action)
+          if (( CURRENT == 4 )); then
+            _describe -t subcommands 'ax action command' 'perform:Perform AX action'
+            return 0
+          fi
+          _arguments -C $global_opts \
+            '--node-id=[Select by node id]:id:' \
+            '--role=[Select by AX role]:role:' \
+            '--title-contains=[Select by title substring]:text:' \
+            '--identifier-contains=[Select by identifier substring]:text:' \
+            '--value-contains=[Select by value substring]:text:' \
+            '--subrole=[Select by AX subrole]:subrole:' \
+            '--focused=[Select by focused state]:bool:(true false)' \
+            '--enabled=[Select by enabled state]:bool:(true false)' \
+            '--nth=[Select nth match]:n:' \
+            '--session-id=[Target session id]:id:' \
+            '--app=[Target app name]:name:' \
+            '--bundle-id=[Target bundle id]:bundle:' \
+            '--window-title-contains=[Narrow to windows by title]:text:' \
+            '--name=[AX action name]:name:' \
+            && return 0
+          ;;
+        session)
+          if (( CURRENT == 4 )); then
+            _describe -t subcommands 'ax session command' \
+              'start:Create or update AX session' \
+              'list:List AX sessions' \
+              'stop:Stop AX session'
+            return 0
+          fi
+          local ax_session_cmd="${words[4]}"
+          case "$ax_session_cmd" in
+            start)
+              _arguments -C $global_opts \
+                '--app=[Target app name]:name:' \
+                '--bundle-id=[Target bundle id]:bundle:' \
+                '--session-id=[Session id]:id:' \
+                '--window-title-contains=[Persist window title filter]:text:' \
+                && return 0
+              ;;
+            list)
+              _arguments -C $global_opts && return 0
+              ;;
+            stop)
+              _arguments -C $global_opts '--session-id=[Session id to remove]:id:' && return 0
+              ;;
+          esac
+          ;;
+        watch)
+          if (( CURRENT == 4 )); then
+            _describe -t subcommands 'ax watch command' \
+              'start:Start AX watcher' \
+              'poll:Poll AX watcher events' \
+              'stop:Stop AX watcher'
+            return 0
+          fi
+          local ax_watch_cmd="${words[4]}"
+          case "$ax_watch_cmd" in
+            start)
+              _arguments -C $global_opts \
+                '--session-id=[Session id to bind watcher]:id:' \
+                '--watch-id=[Optional watcher id]:id:' \
+                '--events=[Comma-separated AX notifications]:events:' \
+                '--max-buffer=[Maximum in-memory event buffer size]:count:' \
+                && return 0
+              ;;
+            poll)
+              _arguments -C $global_opts \
+                '--watch-id=[Watch id to poll]:id:' \
+                '--limit=[Max events to return]:count:' \
+                '--drain=[Drain returned events]:bool:(true false)' \
+                && return 0
+              ;;
+            stop)
+              _arguments -C $global_opts '--watch-id=[Watch id to stop]:id:' && return 0
+              ;;
+          esac
           ;;
       esac
       ;;
@@ -200,7 +355,8 @@ _macos-agent() {
         '--window-id=[Select by window id]:id:' \
         '--active-window[Select frontmost active window]' \
         '--app=[Select by app name]:name:' \
-        '--window-name=[Narrow app selection by window title]:name:' \
+        '--window-title-contains=[Narrow app selection by window title]:name:' \
+        '--window-name=[Deprecated alias of --window-title-contains]:name:' \
         '--path=[Output path]:path:_files' \
         '--image-format=[Output image format]:format:(png jpg webp)' \
         && return 0
@@ -233,7 +389,8 @@ _macos-agent() {
             '--window-id=[Select by window id]:id:' \
             '--active-window[Select frontmost active window]' \
             '--app=[Select by app name]:name:' \
-            '--window-name=[Narrow app selection by window title]:name:' \
+            '--window-title-contains=[Narrow app selection by window title]:name:' \
+            '--window-name=[Deprecated alias of --window-title-contains]:name:' \
             '--timeout-ms=[Timeout in milliseconds]:ms:' \
             '--poll-ms=[Poll interval in milliseconds]:ms:' \
             && return 0

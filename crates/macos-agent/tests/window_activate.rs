@@ -73,5 +73,5 @@ fn window_activate_error_includes_selector_and_fallback_hint() {
     assert_eq!(out.stdout_text(), "");
     let stderr = out.stderr_text();
     assert!(stderr.contains("--window-id 999"));
-    assert!(stderr.contains("try --window-id <id> or --app <name> --window-name <title>"));
+    assert!(stderr.contains("try --window-id <id> or --app <name> --window-title-contains <title>"));
 }

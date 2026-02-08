@@ -75,6 +75,140 @@ fn success_commands_write_stdout_only() {
 }
 
 #[test]
+fn mutating_commands_emit_unified_json_envelope_schema() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+
+    let cases: Vec<(&str, Vec<&str>)> = vec![
+        (
+            "window.activate",
+            vec![
+                "--format",
+                "json",
+                "--dry-run",
+                "--retries",
+                "2",
+                "--retry-delay-ms",
+                "9",
+                "--timeout-ms",
+                "1234",
+                "window",
+                "activate",
+                "--app",
+                "Terminal",
+            ],
+        ),
+        (
+            "input.click",
+            vec![
+                "--format",
+                "json",
+                "--dry-run",
+                "--retries",
+                "2",
+                "--retry-delay-ms",
+                "9",
+                "--timeout-ms",
+                "1234",
+                "input",
+                "click",
+                "--x",
+                "10",
+                "--y",
+                "10",
+            ],
+        ),
+        (
+            "input.type",
+            vec![
+                "--format",
+                "json",
+                "--dry-run",
+                "--retries",
+                "2",
+                "--retry-delay-ms",
+                "9",
+                "--timeout-ms",
+                "1234",
+                "input",
+                "type",
+                "--text",
+                "hello",
+                "--submit",
+            ],
+        ),
+        (
+            "input.hotkey",
+            vec![
+                "--format",
+                "json",
+                "--dry-run",
+                "--retries",
+                "2",
+                "--retry-delay-ms",
+                "9",
+                "--timeout-ms",
+                "1234",
+                "input",
+                "hotkey",
+                "--mods",
+                "cmd",
+                "--key",
+                "4",
+            ],
+        ),
+        (
+            "ax.click",
+            vec![
+                "--format",
+                "json",
+                "--dry-run",
+                "--retries",
+                "2",
+                "--retry-delay-ms",
+                "9",
+                "--timeout-ms",
+                "1234",
+                "ax",
+                "click",
+                "--node-id",
+                "1.1",
+            ],
+        ),
+        (
+            "ax.type",
+            vec![
+                "--format",
+                "json",
+                "--dry-run",
+                "--retries",
+                "2",
+                "--retry-delay-ms",
+                "9",
+                "--timeout-ms",
+                "1234",
+                "ax",
+                "type",
+                "--node-id",
+                "1.1",
+                "--text",
+                "hello",
+            ],
+        ),
+    ];
+
+    for (command, args) in cases {
+        let out = harness.run(cwd.path(), &args);
+        assert_eq!(out.code, 0, "args={args:?}, stderr={}", out.stderr_text());
+        assert_eq!(out.stderr_text(), "", "args={args:?}");
+
+        let payload: serde_json::Value =
+            serde_json::from_str(&out.stdout_text()).expect("mutating command should emit json");
+        assert_action_envelope_contract(&payload, command);
+    }
+}
+
+#[test]
 fn error_commands_write_stderr_only_with_error_prefix() {
     let harness = common::MacosAgentHarness::new();
     let cwd = TempDir::new().expect("tempdir");
@@ -183,12 +317,48 @@ fn trace_writes_artifacts_for_success_and_failure() {
                 .map(|ext| ext == "json")
                 .unwrap_or(false)
         })
+        .map(|entry| {
+            let path = entry.path();
+            let raw = std::fs::read_to_string(path).expect("trace payload should be readable");
+            serde_json::from_str::<serde_json::Value>(&raw).expect("trace payload should be json")
+        })
         .collect::<Vec<_>>();
     assert!(
         entries.len() >= 2,
         "expected at least two trace files, got {}",
         entries.len()
     );
+
+    let success = entries
+        .iter()
+        .find(|payload| {
+            payload["command"] == serde_json::json!("input.click")
+                && payload["ok"] == serde_json::json!(true)
+        })
+        .expect("success trace payload should exist");
+    assert_eq!(success["schema_version"], serde_json::json!(1));
+    assert!(success["elapsed_ms"].as_u64().is_some());
+    assert!(success["args"].is_array());
+    assert_eq!(success["error"], serde_json::Value::Null);
+    assert_eq!(success["policy"]["dry_run"], serde_json::json!(true));
+    assert_eq!(success["policy"]["retries"], serde_json::json!(0));
+
+    let failure = entries
+        .iter()
+        .find(|payload| {
+            payload["command"] == serde_json::json!("input.hotkey")
+                && payload["ok"] == serde_json::json!(false)
+        })
+        .expect("failure trace payload should exist");
+    assert_eq!(failure["schema_version"], serde_json::json!(1));
+    assert!(failure["elapsed_ms"].as_u64().is_some());
+    assert!(failure["args"].is_array());
+    assert_eq!(failure["policy"]["dry_run"], serde_json::json!(false));
+    assert_eq!(failure["error"]["category"], serde_json::json!("usage"));
+    assert!(failure["error"]["message"]
+        .as_str()
+        .unwrap_or("")
+        .contains("invalid modifier"));
 }
 
 #[test]
@@ -316,4 +486,38 @@ fn trace_command_labels_include_ax_commands() {
     assert!(commands.iter().any(|command| command == "ax.list"));
     assert!(commands.iter().any(|command| command == "ax.click"));
     assert!(commands.iter().any(|command| command == "ax.type"));
+}
+
+fn assert_action_envelope_contract(payload: &serde_json::Value, expected_command: &str) {
+    assert_eq!(payload["schema_version"], serde_json::json!(1));
+    assert_eq!(payload["ok"], serde_json::json!(true));
+    assert_eq!(payload["command"], serde_json::json!(expected_command));
+
+    let result = payload["result"]
+        .as_object()
+        .expect("result should be object");
+    assert!(result.contains_key("policy"), "missing policy block");
+    assert!(result.contains_key("meta"), "missing meta block");
+
+    let policy = result["policy"]
+        .as_object()
+        .expect("policy should be object");
+    assert_eq!(policy["dry_run"], serde_json::json!(true));
+    assert_eq!(policy["retries"], serde_json::json!(2));
+    assert_eq!(policy["retry_delay_ms"], serde_json::json!(9));
+    assert_eq!(policy["timeout_ms"], serde_json::json!(1234));
+
+    let meta = result["meta"].as_object().expect("meta should be object");
+    let action_id = meta["action_id"]
+        .as_str()
+        .expect("meta.action_id should be string");
+    assert!(
+        action_id.starts_with(expected_command),
+        "action_id `{action_id}` should start with `{expected_command}`"
+    );
+    assert!(meta["elapsed_ms"].as_u64().is_some());
+    assert_eq!(meta["dry_run"], policy["dry_run"]);
+    assert_eq!(meta["retries"], policy["retries"]);
+    assert_eq!(meta["attempts_used"], serde_json::json!(0));
+    assert_eq!(meta["timeout_ms"], policy["timeout_ms"]);
 }
