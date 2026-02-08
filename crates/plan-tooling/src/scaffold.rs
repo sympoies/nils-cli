@@ -194,3 +194,72 @@ fn relativize_for_created(path: &Path, repo_root: &Path) -> String {
     }
     path.to_string_lossy().to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        is_kebab_case, relativize_for_created, resolve_repo_relative, write_template, TEMPLATE,
+    };
+    use pretty_assertions::assert_eq;
+    use std::path::PathBuf;
+
+    #[test]
+    fn is_kebab_case_enforces_expected_shape() {
+        assert!(is_kebab_case("hello-world"));
+        assert!(is_kebab_case("a1-b2-c3"));
+        assert!(!is_kebab_case(""));
+        assert!(!is_kebab_case("Hello-world"));
+        assert!(!is_kebab_case("hello--world"));
+        assert!(!is_kebab_case("-hello"));
+    }
+
+    #[test]
+    fn resolve_repo_relative_joins_relative_and_preserves_absolute() {
+        let repo = PathBuf::from("/tmp/repo");
+        assert_eq!(
+            resolve_repo_relative(&repo, std::path::Path::new("docs/plans/p.md")),
+            PathBuf::from("/tmp/repo/docs/plans/p.md")
+        );
+        assert_eq!(
+            resolve_repo_relative(&repo, std::path::Path::new("/opt/plan.md")),
+            PathBuf::from("/opt/plan.md")
+        );
+    }
+
+    #[test]
+    fn relativize_for_created_prefers_repo_relative_display() {
+        let repo = PathBuf::from("/tmp/repo");
+        let inside = PathBuf::from("/tmp/repo/docs/plans/demo-plan.md");
+        let outside = PathBuf::from("/tmp/other/demo-plan.md");
+        assert_eq!(
+            relativize_for_created(&inside, &repo),
+            "docs/plans/demo-plan.md"
+        );
+        assert_eq!(
+            relativize_for_created(&outside, &repo),
+            "/tmp/other/demo-plan.md"
+        );
+    }
+
+    #[test]
+    fn write_template_overrides_title_when_provided() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let path = dir.path().join("plan.md");
+        write_template(&path, Some("Custom title")).expect("write");
+        let rendered = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(
+            rendered.lines().next().unwrap_or_default(),
+            "# Plan: Custom title"
+        );
+        assert!(rendered.contains("## Sprint 1:"));
+    }
+
+    #[test]
+    fn write_template_without_title_writes_raw_template() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let path = dir.path().join("plan.md");
+        write_template(&path, None).expect("write");
+        let rendered = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(rendered, TEMPLATE);
+    }
+}

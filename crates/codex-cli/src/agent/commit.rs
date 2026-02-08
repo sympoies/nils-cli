@@ -339,3 +339,84 @@ fn command_exists(name: &str) -> bool {
 
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{command_exists, semantic_commit_prompt, suggested_scope_from_staged};
+    use pretty_assertions::assert_eq;
+
+    struct EnvGuard {
+        key: &'static str,
+        old: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let old = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, old }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.old.take() {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    #[test]
+    fn suggested_scope_prefers_single_top_level_directory() {
+        let staged = "src/main.rs\nsrc/lib.rs\n";
+        assert_eq!(suggested_scope_from_staged(staged), "src");
+    }
+
+    #[test]
+    fn suggested_scope_ignores_root_file_when_single_directory_exists() {
+        let staged = "README.md\nsrc/main.rs\n";
+        assert_eq!(suggested_scope_from_staged(staged), "src");
+    }
+
+    #[test]
+    fn suggested_scope_returns_empty_for_multiple_directories() {
+        let staged = "src/main.rs\ncrates/a.rs\n";
+        assert_eq!(suggested_scope_from_staged(staged), "");
+    }
+
+    #[test]
+    fn semantic_commit_prompt_rejects_invalid_mode() {
+        assert!(semantic_commit_prompt("unknown").is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn command_exists_checks_executable_bit() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let executable = dir.path().join("tool-ok");
+        let non_executable = dir.path().join("tool-no");
+        std::fs::write(&executable, "#!/bin/sh\necho ok\n").expect("write executable");
+        std::fs::write(&non_executable, "plain text").expect("write non executable");
+
+        let mut perms = std::fs::metadata(&executable)
+            .expect("metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&executable, perms).expect("chmod executable");
+
+        let mut perms = std::fs::metadata(&non_executable)
+            .expect("metadata")
+            .permissions();
+        perms.set_mode(0o644);
+        std::fs::set_permissions(&non_executable, perms).expect("chmod non executable");
+
+        let _path_guard = EnvGuard::set("PATH", dir.path().as_os_str());
+        assert!(command_exists("tool-ok"));
+        assert!(!command_exists("tool-no"));
+        assert!(!command_exists("tool-missing"));
+    }
+}

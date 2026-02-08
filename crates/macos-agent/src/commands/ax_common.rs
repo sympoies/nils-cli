@@ -878,3 +878,304 @@ fn build_text_matcher(raw: &str, strategy: AxMatchStrategy) -> Result<TextMatche
     };
     Ok(matcher)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_selector, build_target, evaluate_selector_against_nodes,
+        parse_postcondition_expected_value, selector_selection_error, AxActionGateOptions,
+        AxSelectorInput, SelectorSelectionStatus,
+    };
+    use crate::model::{AxMatchStrategy, AxNode};
+    use pretty_assertions::assert_eq;
+
+    #[allow(clippy::too_many_arguments)]
+    fn node(
+        node_id: &str,
+        role: &str,
+        title: Option<&str>,
+        identifier: Option<&str>,
+        value_preview: Option<&str>,
+        subrole: Option<&str>,
+        focused: bool,
+        enabled: bool,
+    ) -> AxNode {
+        AxNode {
+            node_id: node_id.to_string(),
+            role: role.to_string(),
+            title: title.map(|v| v.to_string()),
+            identifier: identifier.map(|v| v.to_string()),
+            value_preview: value_preview.map(|v| v.to_string()),
+            subrole: subrole.map(|v| v.to_string()),
+            focused,
+            enabled,
+            ..AxNode::default()
+        }
+    }
+
+    #[test]
+    fn action_gate_options_any_enabled_checks_all_flags() {
+        let options = AxActionGateOptions::default();
+        assert!(!options.any_enabled());
+
+        let options = AxActionGateOptions {
+            app_active: true,
+            ..AxActionGateOptions::default()
+        };
+        assert!(options.any_enabled());
+    }
+
+    #[test]
+    fn build_target_rejects_conflicting_target_modes() {
+        let err = build_target(
+            Some("session".to_string()),
+            Some("Terminal".to_string()),
+            None,
+            None,
+        )
+        .expect_err("expected usage error");
+        assert!(err
+            .message()
+            .contains("--session-id cannot be combined with --app/--bundle-id"));
+
+        let target = build_target(None, Some("Terminal".to_string()), None, None).expect("target");
+        assert_eq!(target.app.as_deref(), Some("Terminal"));
+        assert_eq!(target.bundle_id, None);
+    }
+
+    #[test]
+    fn build_selector_rejects_invalid_combinations() {
+        let err = build_selector(AxSelectorInput {
+            nth: Some(0),
+            ..AxSelectorInput::default()
+        })
+        .expect_err("nth=0 should fail");
+        assert!(err.message().contains("--nth must be at least 1"));
+
+        let err = build_selector(AxSelectorInput {
+            node_id: Some("node-1".to_string()),
+            role: Some("AXButton".to_string()),
+            ..AxSelectorInput::default()
+        })
+        .expect_err("node-id with other filters should fail");
+        assert!(err.message().contains("--node-id cannot be combined"));
+
+        let err = build_selector(AxSelectorInput {
+            nth: Some(1),
+            ..AxSelectorInput::default()
+        })
+        .expect_err("nth without filters should fail");
+        assert!(err
+            .message()
+            .contains("--nth requires at least one selector filter"));
+
+        let err = build_selector(AxSelectorInput::default()).expect_err("missing filters");
+        assert!(err
+            .message()
+            .contains("provide --node-id or at least one selector filter"));
+    }
+
+    #[test]
+    fn build_selector_validates_regex_patterns() {
+        let err = build_selector(AxSelectorInput {
+            title_contains: Some("(".to_string()),
+            match_strategy: AxMatchStrategy::Regex,
+            ..AxSelectorInput::default()
+        })
+        .expect_err("invalid regex should fail");
+        assert!(err.message().contains("invalid regex"));
+
+        let selector = build_selector(AxSelectorInput {
+            role: Some("AXButton".to_string()),
+            nth: Some(2),
+            ..AxSelectorInput::default()
+        })
+        .expect("valid selector");
+        assert_eq!(selector.role.as_deref(), Some("AXButton"));
+        assert_eq!(selector.nth, Some(2));
+    }
+
+    #[test]
+    fn evaluate_selector_by_node_id_and_role_filters() {
+        let nodes = vec![
+            node(
+                "node-1",
+                "AXButton",
+                Some("Save"),
+                Some("save"),
+                Some("save value"),
+                None,
+                true,
+                true,
+            ),
+            node(
+                "node-2",
+                "AXTextField",
+                Some("Search"),
+                Some("search"),
+                Some("query"),
+                Some("AXSearchField"),
+                false,
+                true,
+            ),
+        ];
+
+        let by_id = build_selector(AxSelectorInput {
+            node_id: Some("node-1".to_string()),
+            ..AxSelectorInput::default()
+        })
+        .expect("selector");
+        let eval = evaluate_selector_against_nodes(&nodes, &by_id).expect("eval");
+        assert_eq!(eval.matched_count, 1);
+        assert_eq!(eval.selected_node_id.as_deref(), Some("node-1"));
+        assert_eq!(eval.selection_status, SelectorSelectionStatus::Selected);
+
+        let by_role = build_selector(AxSelectorInput {
+            role: Some("axtextfield".to_string()),
+            ..AxSelectorInput::default()
+        })
+        .expect("selector");
+        let eval = evaluate_selector_against_nodes(&nodes, &by_role).expect("eval");
+        assert_eq!(eval.selection_status, SelectorSelectionStatus::Selected);
+        assert_eq!(eval.selected_node_id.as_deref(), Some("node-2"));
+    }
+
+    #[test]
+    fn evaluate_selector_reports_ambiguous_and_nth_out_of_range() {
+        let nodes = vec![
+            node(
+                "n1",
+                "AXButton",
+                Some("Save"),
+                None,
+                None,
+                None,
+                false,
+                true,
+            ),
+            node(
+                "n2",
+                "AXButton",
+                Some("Save As"),
+                None,
+                None,
+                None,
+                false,
+                true,
+            ),
+        ];
+
+        let ambiguous = build_selector(AxSelectorInput {
+            role: Some("AXButton".to_string()),
+            ..AxSelectorInput::default()
+        })
+        .expect("selector");
+        let eval = evaluate_selector_against_nodes(&nodes, &ambiguous).expect("eval");
+        assert_eq!(eval.selection_status, SelectorSelectionStatus::Ambiguous);
+        assert_eq!(eval.selected_node_id, None);
+
+        let nth = build_selector(AxSelectorInput {
+            role: Some("AXButton".to_string()),
+            nth: Some(3),
+            ..AxSelectorInput::default()
+        })
+        .expect("selector");
+        let eval = evaluate_selector_against_nodes(&nodes, &nth).expect("eval");
+        assert_eq!(
+            eval.selection_status,
+            SelectorSelectionStatus::NthOutOfRange
+        );
+        assert_eq!(eval.selected_node_id, None);
+    }
+
+    #[test]
+    fn evaluate_selector_supports_match_strategies_and_explain_output() {
+        let nodes = vec![
+            node(
+                "n1",
+                "AXButton",
+                Some("Save As"),
+                Some("com.app.save"),
+                Some("value one"),
+                None,
+                false,
+                true,
+            ),
+            node(
+                "n2",
+                "AXButton",
+                Some("Open"),
+                Some("com.app.open"),
+                Some("value two"),
+                None,
+                true,
+                true,
+            ),
+        ];
+
+        let exact = build_selector(AxSelectorInput {
+            title_contains: Some("save as".to_string()),
+            match_strategy: AxMatchStrategy::Exact,
+            explain: true,
+            ..AxSelectorInput::default()
+        })
+        .expect("selector");
+        let eval = evaluate_selector_against_nodes(&nodes, &exact).expect("eval");
+        assert_eq!(eval.selection_status, SelectorSelectionStatus::Selected);
+        assert_eq!(eval.selected_node_id.as_deref(), Some("n1"));
+        let explain = eval.explain.expect("explain");
+        assert_eq!(explain.strategy, AxMatchStrategy::Exact);
+        assert!(!explain.stage_results.is_empty());
+
+        let prefix = build_selector(AxSelectorInput {
+            identifier_contains: Some("com.app.op".to_string()),
+            match_strategy: AxMatchStrategy::Prefix,
+            ..AxSelectorInput::default()
+        })
+        .expect("selector");
+        let eval = evaluate_selector_against_nodes(&nodes, &prefix).expect("eval");
+        assert_eq!(eval.selected_node_id.as_deref(), Some("n2"));
+
+        let suffix = build_selector(AxSelectorInput {
+            identifier_contains: Some(".save".to_string()),
+            match_strategy: AxMatchStrategy::Suffix,
+            ..AxSelectorInput::default()
+        })
+        .expect("selector");
+        let eval = evaluate_selector_against_nodes(&nodes, &suffix).expect("eval");
+        assert_eq!(eval.selected_node_id.as_deref(), Some("n1"));
+
+        let regex = build_selector(AxSelectorInput {
+            value_contains: Some("value\\s+two".to_string()),
+            match_strategy: AxMatchStrategy::Regex,
+            ..AxSelectorInput::default()
+        })
+        .expect("selector");
+        let eval = evaluate_selector_against_nodes(&nodes, &regex).expect("eval");
+        assert_eq!(eval.selected_node_id.as_deref(), Some("n2"));
+    }
+
+    #[test]
+    fn selector_selection_error_and_postcondition_parsing_are_stable() {
+        assert!(selector_selection_error("op", SelectorSelectionStatus::Selected).is_none());
+
+        let no_match = selector_selection_error("op", SelectorSelectionStatus::NoMatches)
+            .expect("no-match error");
+        assert!(no_match
+            .message()
+            .contains("selector returned zero AX matches"));
+
+        let ambiguous = selector_selection_error("op", SelectorSelectionStatus::Ambiguous)
+            .expect("ambiguous error");
+        assert!(ambiguous.message().contains("selector is ambiguous"));
+
+        assert_eq!(
+            parse_postcondition_expected_value(r#"{"ok":true}"#),
+            serde_json::json!({"ok": true})
+        );
+        assert_eq!(
+            parse_postcondition_expected_value("plain"),
+            serde_json::Value::String("plain".to_string())
+        );
+    }
+}

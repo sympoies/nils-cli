@@ -483,7 +483,14 @@ fn is_task_id(s: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::contains_angle_placeholder;
+    use std::collections::HashSet;
+
+    use crate::parse::Task;
+
+    use super::{
+        contains_angle_placeholder, contains_word_case_insensitive, has_placeholder,
+        is_non_empty_list, is_task_id, validate_task,
+    };
 
     #[test]
     fn angle_placeholder_detects_tight_token() {
@@ -493,5 +500,88 @@ mod tests {
     #[test]
     fn angle_placeholder_ignores_shell_redirect_spacing() {
         assert!(!contains_angle_placeholder("cat < input.txt > output.txt"));
+    }
+
+    #[test]
+    fn contains_word_case_insensitive_respects_word_boundaries() {
+        assert!(contains_word_case_insensitive("TODO: fix this", "todo"));
+        assert!(contains_word_case_insensitive("set tbd value", "tbd"));
+        assert!(!contains_word_case_insensitive("methodology", "todo"));
+        assert!(!contains_word_case_insensitive("set_tbd_value", "tbd"));
+        assert!(!contains_word_case_insensitive("tbdvalue", "tbd"));
+    }
+
+    #[test]
+    fn has_placeholder_detects_todo_and_tbd() {
+        assert!(has_placeholder("still TODO"));
+        assert!(has_placeholder("mark as tBd"));
+        assert!(!has_placeholder("cat < input > output"));
+        assert!(!has_placeholder("all good"));
+    }
+
+    #[test]
+    fn is_task_id_accepts_expected_shape_only() {
+        assert!(is_task_id("Task 1.1"));
+        assert!(is_task_id("Task 10.42"));
+        assert!(!is_task_id("task 1.1"));
+        assert!(!is_task_id("Task 1"));
+        assert!(!is_task_id("Task 1.a"));
+    }
+
+    #[test]
+    fn is_non_empty_list_checks_trimmed_values() {
+        assert!(is_non_empty_list(&["x".to_string()]));
+        assert!(is_non_empty_list(&["   ".to_string(), "x".to_string()]));
+        assert!(!is_non_empty_list(&[]));
+        assert!(!is_non_empty_list(&["  ".to_string(), "\t".to_string()]));
+    }
+
+    #[test]
+    fn validate_task_reports_location_and_dependency_violations() {
+        let task = Task {
+            id: "Task 1.1".to_string(),
+            name: "demo".to_string(),
+            sprint: 1,
+            start_line: 1,
+            location: vec![
+                "/abs/path.rs".to_string(),
+                "dir/".to_string(),
+                "src/*/x.rs".to_string(),
+                "src/<name>.rs".to_string(),
+            ],
+            description: Some("TODO".to_string()),
+            dependencies: Some(vec!["Task x.y".to_string(), "Task 9.9".to_string()]),
+            complexity: Some(11),
+            acceptance_criteria: vec!["<TBD>".to_string()],
+            validation: vec!["TBD".to_string()],
+        };
+        let all_ids = HashSet::from(["Task 1.1".to_string()]);
+        let errs = validate_task("plan.md", &task, &all_ids);
+        assert!(errs.iter().any(|e| e.contains("repo-relative")));
+        assert!(errs.iter().any(|e| e.contains("not a directory")));
+        assert!(errs.iter().any(|e| e.contains("must not use globs")));
+        assert!(errs.iter().any(|e| e.contains("contains placeholder")));
+        assert!(errs.iter().any(|e| e.contains("invalid dependency")));
+        assert!(errs.iter().any(|e| e.contains("unknown dependency")));
+        assert!(errs.iter().any(|e| e.contains("Complexity out of range")));
+    }
+
+    #[test]
+    fn validate_task_accepts_well_formed_task() {
+        let task = Task {
+            id: "Task 2.3".to_string(),
+            name: "good".to_string(),
+            sprint: 2,
+            start_line: 10,
+            location: vec!["src/lib.rs".to_string()],
+            description: Some("Ship feature".to_string()),
+            dependencies: Some(vec!["Task 2.1".to_string()]),
+            complexity: Some(5),
+            acceptance_criteria: vec!["Done".to_string()],
+            validation: vec!["cargo test".to_string()],
+        };
+        let all_ids = HashSet::from(["Task 2.1".to_string(), "Task 2.3".to_string()]);
+        let errs = validate_task("plan.md", &task, &all_ids);
+        assert!(errs.is_empty(), "{errs:?}");
     }
 }
