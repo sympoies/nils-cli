@@ -249,6 +249,7 @@ fn rate_limits_all_mode_renders_table() {
     assert!(out.contains("Name"));
     assert!(out.contains("alpha"));
     assert!(out.contains("beta"));
+    assert!(out.contains("+00:00"));
 }
 
 #[test]
@@ -300,6 +301,7 @@ fn rate_limits_async_falls_back_to_cache_in_debug_mode() {
     assert_exit(&output, 0);
 
     assert!(stdout(&output).contains("🚦 Codex rate limits for all accounts"));
+    assert!(stdout(&output).contains("+00:00"));
     assert!(stderr(&output).contains("falling back to cache for beta"));
     assert!(stderr(&output).contains("missing access_token"));
 }

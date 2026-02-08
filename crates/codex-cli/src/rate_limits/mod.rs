@@ -345,10 +345,10 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
     let now_epoch = Utc::now().timestamp();
 
     println!(
-        "{:<15}  {:>8}  {:>7}  {:>8}  {:>7}  {:<11}",
-        "Name", non_weekly_header, "Left", "Weekly", "Left", "Reset"
+        "{:<15}  {:>8}  {:>7}  {:>8}  {:>7}  {:<18}",
+        "Name", non_weekly_header, "Left", "Weekly", "Left", "Reset(Local)"
     );
-    println!("-----------------------------------------------------------------------");
+    println!("----------------------------------------------------------------------------");
 
     rows.sort_by_key(|row| row.sort_key());
 
@@ -375,7 +375,7 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
             .unwrap_or_else(|| "-".to_string());
         let reset_display = row
             .weekly_reset_epoch
-            .and_then(render::format_epoch_local_datetime)
+            .and_then(render::format_epoch_local_datetime_with_offset)
             .unwrap_or_else(|| "-".to_string());
 
         let non_weekly_display = ansi::format_percent_cell(&display_non_weekly, 8, None);
@@ -389,7 +389,7 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
         let name_display = ansi::format_name_cell(&row.name, 15, is_current, None);
 
         println!(
-            "{}  {}  {:>7}  {}  {:>7}  {:<11}",
+            "{}  {}  {:>7}  {}  {:>7}  {:<18}",
             name_display,
             non_weekly_display,
             non_weekly_left,
@@ -862,10 +862,10 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
     let now_epoch = Utc::now().timestamp();
 
     println!(
-        "{:<15}  {:>8}  {:>7}  {:>8}  {:>7}  {:<11}",
-        "Name", non_weekly_header, "Left", "Weekly", "Left", "Reset"
+        "{:<15}  {:>8}  {:>7}  {:>8}  {:>7}  {:<18}",
+        "Name", non_weekly_header, "Left", "Weekly", "Left", "Reset(Local)"
     );
-    println!("-----------------------------------------------------------------------");
+    println!("----------------------------------------------------------------------------");
 
     rows.sort_by_key(|row| row.sort_key());
 
@@ -892,7 +892,7 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
             .unwrap_or_else(|| "-".to_string());
         let reset_display = row
             .weekly_reset_epoch
-            .and_then(render::format_epoch_local_datetime)
+            .and_then(render::format_epoch_local_datetime_with_offset)
             .unwrap_or_else(|| "-".to_string());
 
         let non_weekly_display = ansi::format_percent_cell(&display_non_weekly, 8, None);
@@ -906,7 +906,7 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
         let name_display = ansi::format_name_cell(&row.name, 15, is_current, None);
 
         println!(
-            "{}  {}  {:>7}  {}  {:>7}  {:<11}",
+            "{}  {}  {:>7}  {}  {:>7}  {:<18}",
             name_display,
             non_weekly_display,
             non_weekly_left,

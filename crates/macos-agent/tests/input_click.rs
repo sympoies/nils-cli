@@ -6,8 +6,11 @@ mod common;
 fn input_click_double_click_succeeds() {
     let harness = common::MacosAgentHarness::new();
     let cwd = TempDir::new().expect("tempdir");
+    let options = harness
+        .cmd_options(cwd.path())
+        .with_env("CODEX_MACOS_AGENT_STUB_CLICLICK_MODE", "ok");
 
-    let out = harness.run(
+    let out = harness.run_with_options(
         cwd.path(),
         &[
             "input",
@@ -18,11 +21,14 @@ fn input_click_double_click_succeeds() {
             "160",
             "--count",
             "2",
+            "--timeout-ms",
+            "10000",
             "--pre-wait-ms",
             "1",
             "--post-wait-ms",
             "1",
         ],
+        options,
     );
 
     assert_eq!(out.code, 0, "stderr: {}", out.stderr_text());
