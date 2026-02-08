@@ -263,7 +263,9 @@ fn workflow_run_provider_step_surfaces_missing_codex_binary_error() {
 fn workflow_run_automation_step_times_out_with_exit_code_124() {
     let lock = GlobalStateLock::new();
     let stub = StubBinDir::new();
-    stub.write_exe("fzf-cli", "#!/bin/sh\nsleep 1\n");
+    // Avoid external binaries (like `sleep`) because this test intentionally
+    // constrains PATH to stubs only.
+    stub.write_exe("fzf-cli", "#!/bin/sh\nwhile :; do\n  :\ndone\n");
     let path_only_stub = stub.path().to_string_lossy().to_string();
     let _path = EnvGuard::set(&lock, "PATH", &path_only_stub);
     let codex_home = stub.path().join("codex-home");
