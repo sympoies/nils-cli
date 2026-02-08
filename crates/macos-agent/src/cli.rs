@@ -103,6 +103,18 @@ pub enum CommandGroup {
         command: InputCommand,
     },
 
+    /// Query and switch macOS keyboard input sources.
+    InputSource {
+        #[command(subcommand)]
+        command: InputSourceCommand,
+    },
+
+    /// Query and interact with Accessibility (AX) nodes.
+    Ax {
+        #[command(subcommand)]
+        command: AxCommand,
+    },
+
     /// Capture screenshots for observation.
     Observe {
         #[command(subcommand)]
@@ -220,6 +232,178 @@ pub enum InputCommand {
 
     /// Send hotkey chord.
     Hotkey(InputHotkeyArgs),
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum InputSourceCommand {
+    /// Show current keyboard input source id.
+    Current(InputSourceCurrentArgs),
+
+    /// Switch to a keyboard input source id.
+    Switch(InputSourceSwitchArgs),
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct InputSourceCurrentArgs {}
+
+#[derive(Debug, Clone, Args)]
+pub struct InputSourceSwitchArgs {
+    /// Input source id or alias (`abc`, `us`, or full source id).
+    #[arg(long)]
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum AxCommand {
+    /// List AX nodes.
+    List(AxListArgs),
+
+    /// Click an AX node.
+    Click(AxClickArgs),
+
+    /// Type text into an AX node.
+    Type(AxTypeArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+#[command(
+    group(
+        ArgGroup::new("target")
+            .required(false)
+            .multiple(false)
+            .args(["app", "bundle_id"])
+    )
+)]
+pub struct AxListArgs {
+    /// Select target app by name.
+    #[arg(long)]
+    pub app: Option<String>,
+
+    /// Select target app by bundle id.
+    #[arg(long)]
+    pub bundle_id: Option<String>,
+
+    /// Filter by AX role.
+    #[arg(long)]
+    pub role: Option<String>,
+
+    /// Filter by title substring.
+    #[arg(long)]
+    pub title_contains: Option<String>,
+
+    /// Limit traversal depth.
+    #[arg(long)]
+    pub max_depth: Option<u32>,
+
+    /// Limit number of returned nodes.
+    #[arg(long)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Args)]
+#[command(
+    group(
+        ArgGroup::new("selector")
+            .required(true)
+            .multiple(false)
+            .args(["node_id", "role"])
+    ),
+    group(
+        ArgGroup::new("target")
+            .required(false)
+            .multiple(false)
+            .args(["app", "bundle_id"])
+    )
+)]
+pub struct AxClickArgs {
+    /// Select by node id from `ax list`.
+    #[arg(long)]
+    pub node_id: Option<String>,
+
+    /// Select by AX role (requires --title-contains).
+    #[arg(long, requires = "title_contains")]
+    pub role: Option<String>,
+
+    /// Select by title substring (requires --role).
+    #[arg(long, requires = "role")]
+    pub title_contains: Option<String>,
+
+    /// Select the nth match from compound selector results.
+    #[arg(long, requires = "role")]
+    pub nth: Option<u32>,
+
+    /// Narrow selector to app name.
+    #[arg(long)]
+    pub app: Option<String>,
+
+    /// Narrow selector to bundle id.
+    #[arg(long)]
+    pub bundle_id: Option<String>,
+
+    /// Allow coordinate fallback when AX press is unavailable.
+    #[arg(long)]
+    pub allow_coordinate_fallback: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+#[command(
+    group(
+        ArgGroup::new("selector")
+            .required(true)
+            .multiple(false)
+            .args(["node_id", "role"])
+    ),
+    group(
+        ArgGroup::new("target")
+            .required(false)
+            .multiple(false)
+            .args(["app", "bundle_id"])
+    )
+)]
+pub struct AxTypeArgs {
+    /// Select by node id from `ax list`.
+    #[arg(long)]
+    pub node_id: Option<String>,
+
+    /// Select by AX role (requires --title-contains).
+    #[arg(long, requires = "title_contains")]
+    pub role: Option<String>,
+
+    /// Select by title substring (requires --role).
+    #[arg(long, requires = "role")]
+    pub title_contains: Option<String>,
+
+    /// Select the nth match from compound selector results.
+    #[arg(long, requires = "role")]
+    pub nth: Option<u32>,
+
+    /// Narrow selector to app name.
+    #[arg(long)]
+    pub app: Option<String>,
+
+    /// Narrow selector to bundle id.
+    #[arg(long)]
+    pub bundle_id: Option<String>,
+
+    /// Text to type.
+    #[arg(long, value_parser = clap::builder::NonEmptyStringValueParser::new())]
+    pub text: String,
+
+    /// Clear field value before typing.
+    #[arg(long)]
+    pub clear_first: bool,
+
+    /// Submit (Enter) after typing.
+    #[arg(long)]
+    pub submit: bool,
+
+    /// Use clipboard paste strategy.
+    #[arg(long)]
+    pub paste: bool,
+
+    /// Allow keyboard fallback when AX value set/focus is unavailable.
+    #[arg(long)]
+    pub allow_keyboard_fallback: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -441,7 +625,10 @@ mod tests {
     use clap::Parser;
     use pretty_assertions::assert_eq;
 
-    use super::{Cli, CommandGroup, ErrorFormat, OutputFormat, WaitCommand, WindowCommand};
+    use super::{
+        AxCommand, Cli, CommandGroup, ErrorFormat, InputSourceCommand, OutputFormat, WaitCommand,
+        WindowCommand,
+    };
 
     #[test]
     fn parses_window_activate_command_tree() {
@@ -538,5 +725,171 @@ mod tests {
             rendered.contains("requires")
                 || rendered.contains("required arguments were not provided")
         );
+    }
+
+    #[test]
+    fn parses_input_source_switch_command() {
+        let cli = Cli::try_parse_from(["macos-agent", "input-source", "switch", "--id", "abc"])
+            .expect("input-source switch should parse");
+
+        match cli.command {
+            CommandGroup::InputSource {
+                command: InputSourceCommand::Switch(args),
+            } => {
+                assert_eq!(args.id, "abc".to_string());
+            }
+            other => panic!("unexpected command variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_ax_list_with_filters() {
+        let cli = Cli::try_parse_from([
+            "macos-agent",
+            "ax",
+            "list",
+            "--app",
+            "Arc",
+            "--role",
+            "AXButton",
+            "--title-contains",
+            "New tab",
+            "--max-depth",
+            "4",
+            "--limit",
+            "20",
+        ])
+        .expect("ax list should parse");
+
+        match cli.command {
+            CommandGroup::Ax {
+                command: AxCommand::List(args),
+            } => {
+                assert_eq!(args.app.as_deref(), Some("Arc"));
+                assert_eq!(args.role.as_deref(), Some("AXButton"));
+                assert_eq!(args.title_contains.as_deref(), Some("New tab"));
+                assert_eq!(args.max_depth, Some(4));
+                assert_eq!(args.limit, Some(20));
+            }
+            other => panic!("unexpected command variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_ax_click_node_id_selector() {
+        let cli = Cli::try_parse_from([
+            "macos-agent",
+            "--dry-run",
+            "ax",
+            "click",
+            "--node-id",
+            "node-17",
+            "--allow-coordinate-fallback",
+        ])
+        .expect("ax click should parse");
+
+        match cli.command {
+            CommandGroup::Ax {
+                command: AxCommand::Click(args),
+            } => {
+                assert_eq!(args.node_id.as_deref(), Some("node-17"));
+                assert!(args.allow_coordinate_fallback);
+            }
+            other => panic!("unexpected command variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_ax_type_compound_selector() {
+        let cli = Cli::try_parse_from([
+            "macos-agent",
+            "ax",
+            "type",
+            "--role",
+            "AXTextField",
+            "--title-contains",
+            "Search",
+            "--nth",
+            "2",
+            "--text",
+            "hello",
+            "--clear-first",
+            "--submit",
+            "--paste",
+            "--allow-keyboard-fallback",
+        ])
+        .expect("ax type should parse");
+
+        match cli.command {
+            CommandGroup::Ax {
+                command: AxCommand::Type(args),
+            } => {
+                assert_eq!(args.role.as_deref(), Some("AXTextField"));
+                assert_eq!(args.title_contains.as_deref(), Some("Search"));
+                assert_eq!(args.nth, Some(2));
+                assert_eq!(args.text, "hello");
+                assert!(args.clear_first);
+                assert!(args.submit);
+                assert!(args.paste);
+                assert!(args.allow_keyboard_fallback);
+            }
+            other => panic!("unexpected command variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_ax_click_mixed_selectors() {
+        let err = Cli::try_parse_from([
+            "macos-agent",
+            "ax",
+            "click",
+            "--node-id",
+            "node-17",
+            "--role",
+            "AXButton",
+            "--title-contains",
+            "Save",
+        ])
+        .expect_err("selector mix should be rejected");
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("cannot be used with")
+                || rendered.contains("required arguments were not provided")
+        );
+    }
+
+    #[test]
+    fn rejects_ax_type_role_without_title_contains() {
+        let err = Cli::try_parse_from([
+            "macos-agent",
+            "ax",
+            "type",
+            "--role",
+            "AXTextField",
+            "--text",
+            "hello",
+        ])
+        .expect_err("role requires title-contains");
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("requires")
+                || rendered.contains("required arguments were not provided")
+        );
+    }
+
+    #[test]
+    fn rejects_ax_list_multiple_target_selectors() {
+        let err = Cli::try_parse_from([
+            "macos-agent",
+            "ax",
+            "list",
+            "--app",
+            "Arc",
+            "--bundle-id",
+            "com.apple.Safari",
+        ])
+        .expect_err("app and bundle-id should be mutually exclusive");
+        let rendered = err.to_string();
+        assert!(rendered.contains("cannot be used with"));
     }
 }

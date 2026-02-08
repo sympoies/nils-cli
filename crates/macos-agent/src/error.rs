@@ -38,11 +38,45 @@ impl CliError {
     }
 
     pub fn timeout(operation: &str, timeout_ms: u64) -> Self {
-        Self::runtime(format!("{operation} timed out after {timeout_ms}ms"))
+        let mut err = Self::runtime(format!("{operation} timed out after {timeout_ms}ms"))
             .with_operation(operation)
             .with_hint(
                 "Increase --timeout-ms for slower apps or enable --retries for transient failures.",
-            )
+            );
+        if operation.starts_with("ax.") {
+            err = err.with_hint(
+                "For large UI trees, reduce --max-depth/--limit before retrying to keep AX queries bounded.",
+            );
+        }
+        err
+    }
+
+    pub fn ax_payload_encode(operation: &str, detail: impl Into<String>) -> Self {
+        Self::runtime(format!(
+            "{operation} failed: unable to encode AX request payload ({})",
+            detail.into().trim()
+        ))
+        .with_operation(operation)
+        .with_hint("Simplify selector/text input and retry.")
+    }
+
+    pub fn ax_parse_failure(operation: &str, detail: impl Into<String>) -> Self {
+        Self::runtime(format!(
+            "{operation} failed: invalid AX backend JSON response ({})",
+            detail.into().trim()
+        ))
+        .with_operation(operation)
+        .with_hint("Run `macos-agent preflight --include-probes --strict` to verify Accessibility/Automation access.")
+        .with_hint("Use --trace to capture raw backend output for diagnosis.")
+    }
+
+    pub fn ax_contract_failure(operation: &str, detail: impl Into<String>) -> Self {
+        Self::runtime(format!(
+            "{operation} failed: AX backend contract violation ({})",
+            detail.into().trim()
+        ))
+        .with_operation(operation)
+        .with_hint("Adjust AX selector filters so exactly one element is targeted.")
     }
 
     pub fn exit_code(&self) -> u8 {

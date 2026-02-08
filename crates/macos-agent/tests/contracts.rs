@@ -9,6 +9,27 @@ fn success_commands_write_stdout_only() {
 
     let cases: Vec<Vec<&str>> = vec![
         vec!["--format", "json", "preflight"],
+        vec!["--format", "json", "ax", "list"],
+        vec![
+            "--format",
+            "json",
+            "--dry-run",
+            "ax",
+            "click",
+            "--node-id",
+            "1.1",
+        ],
+        vec![
+            "--format",
+            "json",
+            "--dry-run",
+            "ax",
+            "type",
+            "--node-id",
+            "1.1",
+            "--text",
+            "hello",
+        ],
         vec![
             "--format", "json", "window", "activate", "--app", "Terminal",
         ],
@@ -219,4 +240,80 @@ fn trace_dir_not_writable_is_actionable_runtime_error() {
         has_hint,
         "expected writable-directory hint in error payload"
     );
+}
+
+#[test]
+fn trace_command_labels_include_ax_commands() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let trace_dir = cwd.path().join("trace-ax");
+    let trace_dir_text = trace_dir.to_string_lossy().to_string();
+
+    let list = harness.run(
+        cwd.path(),
+        &[
+            "--trace",
+            "--trace-dir",
+            &trace_dir_text,
+            "--format",
+            "json",
+            "ax",
+            "list",
+        ],
+    );
+    assert_eq!(list.code, 0, "stderr: {}", list.stderr_text());
+
+    let click = harness.run(
+        cwd.path(),
+        &[
+            "--trace",
+            "--trace-dir",
+            &trace_dir_text,
+            "--format",
+            "json",
+            "--dry-run",
+            "ax",
+            "click",
+            "--node-id",
+            "1.1",
+        ],
+    );
+    assert_eq!(click.code, 0, "stderr: {}", click.stderr_text());
+
+    let typ = harness.run(
+        cwd.path(),
+        &[
+            "--trace",
+            "--trace-dir",
+            &trace_dir_text,
+            "--format",
+            "json",
+            "--dry-run",
+            "ax",
+            "type",
+            "--node-id",
+            "1.1",
+            "--text",
+            "hello",
+        ],
+    );
+    assert_eq!(typ.code, 0, "stderr: {}", typ.stderr_text());
+
+    let mut commands = std::fs::read_dir(&trace_dir)
+        .expect("trace dir should exist")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().map(|ext| ext == "json").unwrap_or(false))
+        .map(|path| {
+            let raw = std::fs::read_to_string(path).expect("trace file should be readable");
+            let payload: serde_json::Value =
+                serde_json::from_str(&raw).expect("trace payload should be json");
+            payload["command"].as_str().unwrap_or_default().to_string()
+        })
+        .collect::<Vec<_>>();
+
+    commands.sort();
+    assert!(commands.iter().any(|command| command == "ax.list"));
+    assert!(commands.iter().any(|command| command == "ax.click"));
+    assert!(commands.iter().any(|command| command == "ax.type"));
 }

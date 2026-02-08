@@ -2,7 +2,8 @@
 
 `macos-agent` is a macOS-oriented CLI for agent desktop automation.
 It provides parseable primitives for discovery, observation, and input actions:
-window/app listing, window activation, click, type, hotkey, screenshot, and wait helpers.
+window/app listing, window activation, click, type, hotkey, AX (Accessibility) actions,
+input-source switching, screenshot, and wait helpers.
 
 ## Quick Start
 
@@ -19,6 +20,12 @@ macos-agent window activate --app Terminal --wait-ms 1500
 macos-agent input click --x 200 --y 160
 macos-agent input type --text "hello world"
 macos-agent input hotkey --mods cmd,shift --key 4
+macos-agent input-source switch --id abc
+
+# ax-first interaction
+macos-agent ax list --app Arc --role AXButton --title-contains "New"
+macos-agent ax click --app Arc --role AXLink --title-contains "YouTube" --nth 1 --allow-coordinate-fallback
+macos-agent ax type --app Arc --role AXTextField --title-contains "Search" --text "lofi" --submit --allow-keyboard-fallback
 
 # observation
 macos-agent observe screenshot --active-window --path ./tmp/macos-agent.png
@@ -42,6 +49,13 @@ macos-agent wait window-present --app Terminal --window-name Inbox --timeout-ms 
   - `macos-agent input click --x <px> --y <px> [--button <left|right|middle>] [--count <n>] [--pre-wait-ms <ms>] [--post-wait-ms <ms>]`
   - `macos-agent input type --text <text> [--delay-ms <ms>] [--enter]`
   - `macos-agent input hotkey --mods <cmd,ctrl,alt,shift,fn> --key <key>`
+- `input-source`
+  - `macos-agent input-source current`
+  - `macos-agent input-source switch --id <source_id|abc|us>`
+- `ax`
+  - `macos-agent ax list [--app <name> | --bundle-id <bundle_id>] [--role <AXRole>] [--title-contains <text>] [--max-depth <n>] [--limit <n>]`
+  - `macos-agent ax click (--node-id <id> | --role <AXRole> --title-contains <text> [--nth <n>]) [--app <name> | --bundle-id <bundle_id>] [--allow-coordinate-fallback]`
+  - `macos-agent ax type (--node-id <id> | --role <AXRole> --title-contains <text> [--nth <n>]) --text <text> [--clear-first] [--submit] [--paste] [--allow-keyboard-fallback]`
 - `observe`
   - `macos-agent observe screenshot (--window-id <id> | --active-window | --app <name> [--window-name <name>]) [--path <file>] [--image-format <png|jpg|webp>]`
 - `wait`
@@ -105,7 +119,7 @@ JSON envelope (`--format json`):
 }
 ```
 
-Mutating action commands (`window activate`, `input click`, `input type`, `input hotkey`) always
+Mutating action commands (`window activate`, `input click`, `input type`, `input hotkey`, `ax click`, `ax type`) always
 include `result.policy` in JSON output so agent-side retry and timeout policy can be parsed without
 guessing defaults.
 These action results also include `result.meta.attempts_used` so flaky steps can be detected quickly.
@@ -155,6 +169,7 @@ Use these defaults for better stability:
 - Keep timeouts explicit for slow apps:
   - `--timeout-ms 5000`
 - Use `wait app-active` / `wait window-present` before mutating actions.
+- Prefer `ax click/type` first, then opt in to fallback flags when app AX trees are unstable.
 
 ## Deterministic Test Mode
 
@@ -200,6 +215,9 @@ Input-method notes for reliability:
 - Arc YouTube navigation uses address-bar focus + clipboard paste + `Return` (not per-key character typing), then verifies the active URL contains `youtube.com` and is not a Google search URL.
 - Spotify search input uses clipboard paste (`Cmd+A` + `Cmd+V`) and then `Return`, avoiding IME-dependent character typing.
 - If you want deterministic keyboard layout, install `im-select` (`brew install im-select`) and set `MACOS_AGENT_REAL_E2E_INPUT_SOURCE=abc`.
+- You can verify/switch layout directly with:
+  - `macos-agent --format json input-source current`
+  - `macos-agent --format json input-source switch --id abc`
 
 Real-app artifact notes:
 - Every real-app scenario writes `steps.jsonl` and `step-summary.json` under its artifact directory.
@@ -237,6 +255,9 @@ macos-agent profile init --name local-1440p --path "$CODEX_HOME/out/local-profil
 | --- | --- | --- |
 | `not authorized` or Apple Events failures | `macos-agent --format json preflight --include-probes` | `error.hints`, Automation/Accessibility rows |
 | Flaky click/input behavior | `macos-agent --trace --error-format json input click ...` | latest trace JSON (`attempts_used`, timeout/retry policy) |
+| AX selector no match / ambiguous match | `macos-agent --format json ax list --app <name> --role <AXRole> --title-contains <text>` | node candidates (`node_id`, `role`, `title`, `identifier`) and refine selector / `--nth` |
+| AX press/type fails but coordinate/keyboard path should continue | rerun with `ax click --allow-coordinate-fallback` or `ax type --allow-keyboard-fallback` | whether `used_coordinate_fallback` / `used_keyboard_fallback` is true in JSON result |
+| Input source mismatch before typing | `macos-agent --format json input-source current` then `... switch --id abc` | current source id and switch result (`switched=true`) |
 | Trace enabled but command does not start | `macos-agent --trace --trace-dir <path> --error-format json preflight` | `trace.write` error and writable-path hint |
 | Real-app scenario failed mid-flow | run target `e2e_real_apps` command with `--nocapture` | `steps.jsonl`, `step-summary.json`, `artifact-index.json` |
 | Profile coordinate drift | `macos-agent profile validate --file <profile.json>` | key-path validation errors and bounds issues |

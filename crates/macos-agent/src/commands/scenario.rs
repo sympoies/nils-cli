@@ -2,6 +2,7 @@ use std::process::Command;
 use std::time::Instant;
 
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::cli::{OutputFormat, ScenarioRunArgs};
 use crate::error::CliError;
@@ -86,13 +87,19 @@ pub fn run(format: OutputFormat, args: &ScenarioRunArgs) -> Result<(), CliError>
 
         let exit_code = output.status.code().unwrap_or(-1);
         let ok = output.status.success();
+        let stdout_text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr_text = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let (operation, ax_path, fallback_used) = extract_step_telemetry(&stdout_text);
         let step_result = ScenarioStepResult {
             step_id: step_id.clone(),
             ok,
             exit_code,
             elapsed_ms: started.elapsed().as_millis() as u64,
-            stdout: String::from_utf8_lossy(&output.stdout).trim().to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            operation,
+            ax_path,
+            fallback_used,
+            stdout: stdout_text,
+            stderr: stderr_text,
         };
 
         step_results.push(step_result);
@@ -148,6 +155,48 @@ pub fn run(format: OutputFormat, args: &ScenarioRunArgs) -> Result<(), CliError>
     Ok(())
 }
 
+fn extract_step_telemetry(stdout: &str) -> (Option<String>, Option<String>, Option<bool>) {
+    let payload: Value = match serde_json::from_str(stdout) {
+        Ok(value) => value,
+        Err(_) => return (None, None, None),
+    };
+    let command = payload
+        .get("command")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let operation = command.clone();
+
+    match command.as_deref() {
+        Some("ax.click") => {
+            let fallback = payload
+                .pointer("/result/used_coordinate_fallback")
+                .and_then(Value::as_bool);
+            let ax_path = fallback.map(|value| {
+                if value {
+                    "coordinate-fallback".to_string()
+                } else {
+                    "ax-native".to_string()
+                }
+            });
+            (operation, ax_path, fallback)
+        }
+        Some("ax.type") => {
+            let fallback = payload
+                .pointer("/result/used_keyboard_fallback")
+                .and_then(Value::as_bool);
+            let ax_path = fallback.map(|value| {
+                if value {
+                    "keyboard-fallback".to_string()
+                } else {
+                    "ax-native".to_string()
+                }
+            });
+            (operation, ax_path, fallback)
+        }
+        _ => (operation, None, None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,5 +207,20 @@ mod tests {
         let parsed: ScenarioFile = serde_json::from_str(raw).expect("scenario json should parse");
         assert_eq!(parsed.steps.len(), 1);
         assert_eq!(parsed.steps[0].id.as_deref(), Some("s1"));
+    }
+
+    #[test]
+    fn extract_step_telemetry_maps_ax_fallback_modes() {
+        let click_payload = r#"{"command":"ax.click","result":{"used_coordinate_fallback":true}}"#;
+        let (operation, ax_path, fallback) = extract_step_telemetry(click_payload);
+        assert_eq!(operation.as_deref(), Some("ax.click"));
+        assert_eq!(ax_path.as_deref(), Some("coordinate-fallback"));
+        assert_eq!(fallback, Some(true));
+
+        let type_payload = r#"{"command":"ax.type","result":{"used_keyboard_fallback":false}}"#;
+        let (operation, ax_path, fallback) = extract_step_telemetry(type_payload);
+        assert_eq!(operation.as_deref(), Some("ax.type"));
+        assert_eq!(ax_path.as_deref(), Some("ax-native"));
+        assert_eq!(fallback, Some(false));
     }
 }

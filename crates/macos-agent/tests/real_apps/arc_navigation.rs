@@ -13,6 +13,13 @@ pub struct ArcYoutubeProfile {
     pub video_tiles: Vec<UiPoint>,
 }
 
+pub(crate) struct AxClickSpec<'a> {
+    pub app_name: &'a str,
+    pub role: &'a str,
+    pub title_contains: &'a str,
+    pub nth: Option<usize>,
+}
+
 impl ArcYoutubeProfile {
     pub fn from_default_profile() -> Self {
         let profile = real_common::load_profile();
@@ -52,9 +59,15 @@ pub fn arc_youtube_opens_home_and_clicks_three_tiles(
     for (idx, point) in profile.video_tiles.iter().take(3).enumerate() {
         activate_arc(bin, options, &profile.app_name);
         open_youtube_home(bin, options, &profile.app_name, &profile.youtube_home_url);
-        click(
+        click_ax_or_coordinate(
             bin,
             options,
+            AxClickSpec {
+                app_name: &profile.app_name,
+                role: "AXLink",
+                title_contains: "YouTube",
+                nth: Some(idx + 1),
+            },
             point,
             &format!("arc click youtube tile {}", idx + 1),
         );
@@ -172,6 +185,47 @@ pub(crate) fn click(bin: &Path, options: &CmdOptions, point: &UiPoint, step: &st
         std::time::Duration::from_millis(250),
     );
     assert_eq!(payload["command"], serde_json::json!("input.click"));
+}
+
+pub(crate) fn click_ax_or_coordinate(
+    bin: &Path,
+    options: &CmdOptions,
+    ax_spec: AxClickSpec<'_>,
+    fallback_point: &UiPoint,
+    step: &str,
+) {
+    let mut ax_args = vec![
+        "--format".to_string(),
+        "json".to_string(),
+        "ax".to_string(),
+        "click".to_string(),
+        "--app".to_string(),
+        ax_spec.app_name.to_string(),
+        "--role".to_string(),
+        ax_spec.role.to_string(),
+        "--title-contains".to_string(),
+        ax_spec.title_contains.to_string(),
+        "--allow-coordinate-fallback".to_string(),
+    ];
+    if let Some(nth) = ax_spec.nth {
+        ax_args.push("--nth".to_string());
+        ax_args.push(nth.to_string());
+    }
+    let ax_args_ref = ax_args.iter().map(String::as_str).collect::<Vec<_>>();
+    let ax_step = format!("{step} (ax-first)");
+    match real_common::try_run_json_step(bin, options, &ax_args_ref, &ax_step) {
+        Ok(payload) => {
+            assert_eq!(payload["command"], serde_json::json!("ax.click"));
+        }
+        Err(_err) => {
+            click(
+                bin,
+                options,
+                fallback_point,
+                &format!("{step} (coordinate-fallback)"),
+            );
+        }
+    }
 }
 
 pub(crate) fn wait_for_arc(bin: &Path, options: &CmdOptions, app_name: &str) {

@@ -160,3 +160,77 @@ fn input_keyboard_rejects_tsv_output_mode() {
         .stderr_text()
         .contains("only supported for `windows list` and `apps list`"));
 }
+
+#[test]
+fn ax_type_dry_run_reports_policy_and_text_length() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+
+    let out = harness.run(
+        cwd.path(),
+        &[
+            "--format",
+            "json",
+            "--dry-run",
+            "ax",
+            "type",
+            "--node-id",
+            "1.1",
+            "--text",
+            "hello",
+        ],
+    );
+
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr_text());
+    let payload: serde_json::Value =
+        serde_json::from_str(&out.stdout_text()).expect("stdout should be json");
+    assert_eq!(payload["command"], serde_json::json!("ax.type"));
+    assert_eq!(
+        payload["result"]["applied_via"],
+        serde_json::json!("dry-run")
+    );
+    assert_eq!(payload["result"]["text_length"], serde_json::json!(5));
+    assert_eq!(
+        payload["result"]["policy"]["dry_run"],
+        serde_json::json!(true)
+    );
+}
+
+#[test]
+fn ax_type_reports_keyboard_fallback_when_backend_uses_it() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let options = harness.cmd_options(cwd.path()).with_env(
+        "CODEX_MACOS_AGENT_AX_TYPE_JSON",
+        r#"{"node_id":"1.1","matched_count":1,"applied_via":"keyboard-keystroke-fallback","text_length":5,"submitted":true,"used_keyboard_fallback":true}"#,
+    );
+    let out = harness.run_with_options(
+        cwd.path(),
+        &[
+            "--format",
+            "json",
+            "ax",
+            "type",
+            "--node-id",
+            "1.1",
+            "--text",
+            "hello",
+            "--submit",
+            "--allow-keyboard-fallback",
+        ],
+        options,
+    );
+
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr_text());
+    let payload: serde_json::Value =
+        serde_json::from_str(&out.stdout_text()).expect("stdout should be json");
+    assert_eq!(
+        payload["result"]["used_keyboard_fallback"],
+        serde_json::json!(true)
+    );
+    assert_eq!(
+        payload["result"]["applied_via"],
+        serde_json::json!("keyboard-keystroke-fallback")
+    );
+    assert_eq!(payload["result"]["submitted"], serde_json::json!(true));
+}
