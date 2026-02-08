@@ -5,7 +5,7 @@ use nils_test_support::cmd::CmdOptions;
 
 use crate::real_apps::arc_navigation::{
     activate_arc, capture_active_window, click_ax_or_coordinate, open_youtube_home, wait_for_arc,
-    ArcYoutubeProfile, AxClickSpec,
+    ArcYoutubeProfile, AxLocateSpec,
 };
 use crate::real_apps::matrix::{ScenarioOutcome, ScenarioStatus};
 use crate::real_common;
@@ -42,11 +42,12 @@ pub fn arc_youtube_play_pause_and_comment_checkpoint(
         click_ax_or_coordinate(
             bin,
             options,
-            AxClickSpec {
+            AxLocateSpec {
                 app_name: &profile.app_name,
                 role: "AXLink",
-                title_contains: "YouTube",
-                nth: Some(index + 1),
+                title_contains: None,
+                near: Some(*point),
+                nth: None,
             },
             point,
             &format!("arc select video index {index}"),
@@ -56,11 +57,12 @@ pub fn arc_youtube_play_pause_and_comment_checkpoint(
         click_ax_or_coordinate(
             bin,
             options,
-            AxClickSpec {
+            AxLocateSpec {
                 app_name: &profile.app_name,
                 role: "AXWebArea",
-                title_contains: "YouTube",
-                nth: Some(1),
+                title_contains: None,
+                near: Some(player_focus),
+                nth: None,
             },
             &player_focus,
             "arc focus player for play/pause",
@@ -74,11 +76,12 @@ pub fn arc_youtube_play_pause_and_comment_checkpoint(
         click_ax_or_coordinate(
             bin,
             options,
-            AxClickSpec {
+            AxLocateSpec {
                 app_name: &profile.app_name,
                 role: "AXStaticText",
-                title_contains: "Comments",
-                nth: Some(1),
+                title_contains: None,
+                near: Some(comment_checkpoint),
+                nth: None,
             },
             &comment_checkpoint,
             "arc click comment checkpoint",

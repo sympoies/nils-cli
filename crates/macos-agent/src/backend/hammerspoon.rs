@@ -124,9 +124,7 @@ end
 local function rootsForApp(app, target)
   local appElement = ax.applicationElement(app)
   if not appElement then
-    fail("unable to resolve target app process for "#,
-            $operation,
-            r#")
+    fail("unable to resolve target app process")
   end
 
   local roots = asTable(attr(appElement, "AXWindows", {}))
@@ -154,6 +152,18 @@ local function copyPath(path)
     out[i] = value
   end
   return out
+end
+
+local function cliPayloadArg(defaultValue)
+  local args = (_cli and _cli.args) or {}
+  local raw = args[1]
+  if raw == "--" then
+    raw = args[2]
+  end
+  if raw == nil or tostring(raw) == "" then
+    return defaultValue
+  end
+  return raw
 end
 
 "#,
@@ -201,7 +211,7 @@ local function valuePreview(element)
 end
 
 local function parsePayload()
-  local raw = (_cli and _cli.args and _cli.args[1]) or "{}"
+  local raw = cliPayloadArg("{}")
   local payload = json.decode(raw)
   if type(payload) ~= "table" then
     fail("invalid payload JSON")
@@ -394,7 +404,7 @@ local function resolveByNodeId(roots, nodeId)
 end
 
 local function parsePayload()
-  local raw = (_cli and _cli.args and _cli.args[1]) or "{}"
+  local raw = cliPayloadArg("{}")
   local payload = json.decode(raw)
   if type(payload) ~= "table" then
     fail("invalid payload JSON")
@@ -575,7 +585,7 @@ local function resolveByNodeId(roots, nodeId)
 end
 
 local function parsePayload()
-  local raw = (_cli and _cli.args and _cli.args[1]) or "{}"
+  local raw = cliPayloadArg("{}")
   local payload = json.decode(raw)
   if type(payload) ~= "table" then
     fail("invalid payload JSON")
@@ -913,7 +923,7 @@ local function sanitize(value, depth)
 end
 
 local function parsePayload()
-  local raw = (_cli and _cli.args and _cli.args[1]) or "{}"
+  local raw = cliPayloadArg("{}")
   local payload = json.decode(raw)
   if type(payload) ~= "table" then
     fail("invalid payload JSON")
@@ -1033,7 +1043,7 @@ local function selectOne(matchesOut, selector)
 end
 
 local function parsePayload()
-  local raw = (_cli and _cli.args and _cli.args[1]) or "{}"
+  local raw = cliPayloadArg("{}")
   local payload = json.decode(raw)
   if type(payload) ~= "table" then fail("invalid payload JSON") end
   return payload
@@ -1147,7 +1157,7 @@ local function selectOne(matchesOut, selector)
   return matchesOut[1], #matchesOut
 end
 local function parsePayload()
-  local raw = (_cli and _cli.args and _cli.args[1]) or "{}"
+  local raw = cliPayloadArg("{}")
   local payload = json.decode(raw)
   if type(payload) ~= "table" then fail("invalid payload JSON") end
   return payload
@@ -1196,7 +1206,7 @@ local function nowMs()
   return math.floor((timer.secondsSinceEpoch and timer.secondsSinceEpoch() or os.time()) * 1000)
 end
 local function parsePayload()
-  local raw = (_cli and _cli.args and _cli.args[1]) or "{}"
+  local raw = cliPayloadArg("{}")
   local payload = json.decode(raw)
   if type(payload) ~= "table" then fail("invalid payload JSON") end
   return payload
@@ -1287,7 +1297,7 @@ local function ensureState()
   return _G.__codex_macos_agent_ax
 end
 local function parsePayload()
-  local raw = (_cli and _cli.args and _cli.args[1]) or "{}"
+  local raw = cliPayloadArg("{}")
   local payload = json.decode(raw)
   if type(payload) ~= "table" then fail("invalid payload JSON") end
   return payload
@@ -1338,7 +1348,7 @@ local function nowMs()
   return math.floor((timer.secondsSinceEpoch and timer.secondsSinceEpoch() or os.time()) * 1000)
 end
 local function parsePayload()
-  local raw = (_cli and _cli.args and _cli.args[1]) or "{}"
+  local raw = cliPayloadArg("{}")
   local payload = json.decode(raw)
   if type(payload) ~= "table" then fail("invalid payload JSON") end
   return payload
@@ -1496,7 +1506,7 @@ local function ensureState()
   return _G.__codex_macos_agent_ax
 end
 local function parsePayload()
-  local raw = (_cli and _cli.args and _cli.args[1]) or "{}"
+  local raw = cliPayloadArg("{}")
   local payload = json.decode(raw)
   if type(payload) ~= "table" then fail("invalid payload JSON") end
   return payload
@@ -1554,7 +1564,7 @@ local function ensureState()
   return _G.__codex_macos_agent_ax
 end
 local function parsePayload()
-  local raw = (_cli and _cli.args and _cli.args[1]) or "{}"
+  local raw = cliPayloadArg("{}")
   local payload = json.decode(raw)
   if type(payload) ~= "table" then fail("invalid payload JSON") end
   return payload
@@ -2479,5 +2489,30 @@ mod tests {
 
         let preview = output_preview("abcdefghijklmnopqrstuvwxyz", 8);
         assert_eq!(preview, "abcdefgh...");
+    }
+
+    #[test]
+    fn ax_list_script_prelude_has_valid_unquoted_fail_message() {
+        assert!(
+            !super::AX_LIST_HS_SCRIPT
+                .contains("fail(\"unable to resolve target app process for \"#,"),
+            "AX list prelude should not contain broken Rust concat tokens"
+        );
+        assert!(
+            super::AX_LIST_HS_SCRIPT.contains(r#"fail("unable to resolve target app process")"#),
+            "AX list prelude should keep an actionable target resolution failure"
+        );
+        assert!(
+            super::AX_LIST_HS_SCRIPT.contains("local function cliPayloadArg(defaultValue)"),
+            "AX list script should include CLI payload normalization helper"
+        );
+        assert!(
+            super::AX_LIST_HS_SCRIPT.contains("if raw == \"--\" then"),
+            "AX list script should skip CLI `--` separator before JSON decoding"
+        );
+        assert!(
+            super::AX_LIST_HS_SCRIPT.contains("local raw = cliPayloadArg(\"{}\")"),
+            "AX list parsePayload should read normalized CLI payload argument"
+        );
     }
 }

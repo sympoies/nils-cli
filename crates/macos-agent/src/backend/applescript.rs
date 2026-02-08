@@ -11,6 +11,7 @@ use crate::model::{
 use crate::test_mode;
 
 const FRONTMOST_APP_SCRIPT: &str = r#"tell application "System Events" to get name of first application process whose frontmost is true"#;
+const FRONTMOST_BUNDLE_ID_SCRIPT: &str = r#"tell application "System Events" to get bundle identifier of first application process whose frontmost is true"#;
 
 const AX_LIST_JXA_SCRIPT: &str = r#"function run(argv) {
   function safe(callable, fallbackValue) {
@@ -509,6 +510,38 @@ pub fn activate(
     run_osascript(runner, "window.activate", script, timeout_ms).map(|_| ())
 }
 
+pub fn reopen(
+    runner: &dyn ProcessRunner,
+    target: &ActivationTarget,
+    timeout_ms: u64,
+) -> Result<(), CliError> {
+    let script = match target {
+        ActivationTarget::App(app) => {
+            let escaped = escape_applescript(app);
+            format!(
+                r#"try
+  tell application "{escaped}" to quit
+on error
+end try
+delay 0.25
+tell application "{escaped}" to activate"#
+            )
+        }
+        ActivationTarget::BundleId(bundle_id) => {
+            let escaped = escape_applescript(bundle_id);
+            format!(
+                r#"try
+  tell application id "{escaped}" to quit
+on error
+end try
+delay 0.25
+tell application id "{escaped}" to activate"#
+            )
+        }
+    };
+    run_osascript(runner, "window.activate.reopen", script, timeout_ms).map(|_| ())
+}
+
 pub fn type_text(
     runner: &dyn ProcessRunner,
     text: &str,
@@ -568,6 +601,19 @@ pub fn frontmost_app_name(runner: &dyn ProcessRunner, timeout_ms: u64) -> Result
         runner,
         "wait.app-active",
         FRONTMOST_APP_SCRIPT.to_string(),
+        timeout_ms,
+    )
+    .map(|out| out.trim().to_string())
+}
+
+pub fn frontmost_bundle_id(
+    runner: &dyn ProcessRunner,
+    timeout_ms: u64,
+) -> Result<String, CliError> {
+    run_osascript(
+        runner,
+        "wait.app-active",
+        FRONTMOST_BUNDLE_ID_SCRIPT.to_string(),
         timeout_ms,
     )
     .map(|out| out.trim().to_string())

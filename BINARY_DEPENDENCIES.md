@@ -40,6 +40,7 @@ These tools enable richer behavior. Missing tools typically trigger fallback beh
 | `xdg-desktop-portal` + backend + PipeWire | Wayland portal capture path (`screen-record --portal`) | Prefer distro packages |
 | `open-changed-files` | Optional helper used by `fzf-cli git-commit` | Project-specific optional tool |
 | `hs` (Hammerspoon CLI) | Preferred AX backend path for `macos-agent ax *` (fallback to JXA when unavailable) | `brew install --cask hammerspoon` |
+| `im-select` | Required by `macos-agent input-source *` and macOS real E2E keyboard/input-source setup | `brew install im-select` |
 
 ## 3. Development and Validation Toolchain
 
@@ -101,7 +102,7 @@ cargo run -p agent-docs -- resolve --context project-dev --format checklist \
 ### 6.1 Base contributor profile
 
 ```bash
-brew install git gh fzf tree imagemagick webp jpeg-turbo ffmpeg bat zsh python bash-completion rustup-init
+brew install git gh fzf tree imagemagick webp jpeg-turbo ffmpeg bat zsh python bash-completion rustup-init im-select
 ```
 
 ### 6.2 Linux extra profile (audio/clipboard/network ergonomics)
@@ -125,7 +126,7 @@ eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 ## 8. Quick Environment Verification
 
 ```bash
-for c in git gh fzf mktemp tree file magick ffmpeg bat; do
+for c in git gh fzf mktemp tree file magick ffmpeg bat im-select; do
   if command -v "$c" >/dev/null 2>&1; then
     echo "[OK]   $c -> $(command -v "$c")"
   else

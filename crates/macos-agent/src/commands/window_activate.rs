@@ -24,16 +24,39 @@ pub fn run(
     let action_id = next_action_id("window.activate");
     let started = Instant::now();
     let mut attempts_used = 0u8;
+    let retry = policy.retry_policy();
 
     if !policy.dry_run {
-        let retry = policy.retry_policy();
-        let (_, attempts) = run_with_retry(retry, || {
+        attempts_used = match run_with_retry(retry, || {
             applescript::activate(runner, &target, policy.timeout_ms)
-        })?;
-        attempts_used = attempts;
+        }) {
+            Ok((_, attempts)) => attempts,
+            Err(err) => {
+                if !args.reopen_on_fail {
+                    return Err(add_reopen_hint(err));
+                }
+                applescript::reopen(runner, &target, policy.timeout_ms).map_err(add_reopen_hint)?;
+                let (_, attempts) = run_with_retry(retry, || {
+                    applescript::activate(runner, &target, policy.timeout_ms)
+                })
+                .map_err(add_reopen_hint)?;
+                attempts
+            }
+        };
 
         if let Some(wait_ms) = args.wait_ms {
-            wait_for_active_confirmation(runner, &target, wait_ms)?;
+            if let Err(wait_err) = wait_for_active_confirmation(runner, &target, wait_ms) {
+                if !args.reopen_on_fail {
+                    return Err(add_reopen_hint(wait_err));
+                }
+                applescript::reopen(runner, &target, policy.timeout_ms).map_err(add_reopen_hint)?;
+                let (_, wait_recover_attempts) = run_with_retry(retry, || {
+                    applescript::activate(runner, &target, policy.timeout_ms)
+                })
+                .map_err(add_reopen_hint)?;
+                attempts_used = attempts_used.saturating_add(wait_recover_attempts);
+                wait_for_active_confirmation(runner, &target, wait_ms).map_err(add_reopen_hint)?;
+            }
         }
     }
 
@@ -67,6 +90,12 @@ pub fn run(
     }
 
     Ok(())
+}
+
+fn add_reopen_hint(err: CliError) -> CliError {
+    err.with_hint(
+        "Try --reopen-on-fail to quit/relaunch the target app before retrying activation.",
+    )
 }
 
 fn resolve_target(
@@ -174,6 +203,7 @@ mod tests {
             window_name: None,
             bundle_id: None,
             wait_ms: None,
+            reopen_on_fail: false,
         };
         assert_eq!(selector_label(&args), "--window-id 42");
     }
@@ -187,6 +217,7 @@ mod tests {
             window_name: None,
             bundle_id: None,
             wait_ms: None,
+            reopen_on_fail: false,
         };
         assert_eq!(selector_label(&active), "--active-window");
 
@@ -197,6 +228,7 @@ mod tests {
             window_name: Some("Inbox".to_string()),
             bundle_id: None,
             wait_ms: None,
+            reopen_on_fail: false,
         };
         assert_eq!(
             selector_label(&app_window),
@@ -210,6 +242,7 @@ mod tests {
             window_name: None,
             bundle_id: Some("com.apple.Terminal".to_string()),
             wait_ms: None,
+            reopen_on_fail: false,
         };
         assert_eq!(selector_label(&bundle), "--bundle-id com.apple.Terminal");
     }
@@ -223,6 +256,7 @@ mod tests {
             window_name: None,
             bundle_id: Some("com.apple.Terminal".to_string()),
             wait_ms: None,
+            reopen_on_fail: false,
         };
         let (target, selected_app, selected_window_id) =
             resolve_target(&bundle_args).expect("bundle selector should resolve");
@@ -240,6 +274,7 @@ mod tests {
             window_name: None,
             bundle_id: None,
             wait_ms: None,
+            reopen_on_fail: false,
         };
         let (target, selected_app, selected_window_id) =
             resolve_target(&app_args).expect("app selector should resolve");
@@ -260,6 +295,7 @@ mod tests {
             window_name: None,
             bundle_id: None,
             wait_ms: None,
+            reopen_on_fail: false,
         };
         let (target, selected_app, selected_window_id) =
             resolve_target(&args).expect("active-window selector should resolve");

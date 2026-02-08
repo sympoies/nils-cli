@@ -37,6 +37,29 @@ fn wait_app_active_succeeds_for_terminal_fixture() {
 }
 
 #[test]
+fn wait_app_active_succeeds_for_terminal_bundle_id_fixture() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+
+    let out = harness.run(
+        cwd.path(),
+        &[
+            "wait",
+            "app-active",
+            "--bundle-id",
+            "com.apple.Terminal",
+            "--timeout-ms",
+            "50",
+            "--poll-ms",
+            "5",
+        ],
+    );
+
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr_text());
+    assert_eq!(out.stderr_text(), "");
+}
+
+#[test]
 fn wait_app_active_timeout_is_runtime_error() {
     let harness = common::MacosAgentHarness::new();
     let cwd = TempDir::new().expect("tempdir");

@@ -136,6 +136,12 @@ const STEP_TIMEOUT_MIN_MS: u64 = 1_000;
 const STEP_TIMEOUT_KILL_GRACE_MS: u64 = 2_000;
 const STEP_LOG_EXCERPT_MAX: usize = 500;
 const SUPPORTED_REAL_APPS: [&str; 3] = ["arc", "spotify", "finder"];
+const ABC_INPUT_SOURCE_IDS: [&str; 4] = [
+    "com.apple.keylayout.abc",
+    "com.apple.keylayout.us",
+    "abc",
+    "us",
+];
 
 #[derive(Debug, Clone, Serialize)]
 struct StepLogEntry {
@@ -508,6 +514,7 @@ pub fn activate_app_with_retry(
             app,
             "--wait-ms",
             &wait_ms_text,
+            "--reopen-on-fail",
         ],
         &step,
         retries,
@@ -542,6 +549,109 @@ pub fn wait_app_active(
         ],
         step,
     )
+}
+
+pub fn ensure_input_source_is_abc(step: &str) {
+    let current = run_macos_agent_input_source_current().unwrap_or_else(|err| {
+        panic!("step `{step}` failed to query current input source: {err}");
+    });
+    if !is_abc_input_source(&current) {
+        panic!(
+            "step `{step}` expected ABC input source (e.g. `com.apple.keylayout.ABC`) but got `{current}`"
+        );
+    }
+}
+
+pub fn ensure_app_active_or_frontmost(
+    bin: &Path,
+    options: &CmdOptions,
+    app: &str,
+    timeout_ms: u64,
+    poll_ms: u64,
+    step: &str,
+) {
+    let timeout_text = timeout_ms.to_string();
+    let poll_text = poll_ms.to_string();
+    let wait_error = match try_run_json_step(
+        bin,
+        options,
+        &[
+            "--format",
+            "json",
+            "wait",
+            "app-active",
+            "--app",
+            app,
+            "--timeout-ms",
+            &timeout_text,
+            "--poll-ms",
+            &poll_text,
+        ],
+        &format!("{step} (wait.app-active)"),
+    ) {
+        Ok(payload) => {
+            assert_eq!(payload["command"], serde_json::json!("wait.app-active"));
+            None
+        }
+        Err(err) => Some(err),
+    };
+
+    if wait_for_frontmost_app(app, timeout_ms, poll_ms) {
+        if let Some(err) = wait_error.as_ref() {
+            eprintln!(
+                "WARN[{step}]: wait.app-active failed but frontmost app is `{app}`; continuing.\n{err}"
+            );
+        }
+        return;
+    }
+
+    let observed_before_recovery = frontmost_app_name().unwrap_or_else(|| "<unknown>".to_string());
+    eprintln!(
+        "WARN[{step}]: `{app}` is not frontmost (observed `{observed_before_recovery}`); attempting recovery via window.activate"
+    );
+    let recover_error = try_activate_frontmost_for_recovery(bin, options, app, step).err();
+    if wait_for_frontmost_app(app, 3_000, poll_ms) {
+        if let Some(err) = wait_error.as_ref() {
+            eprintln!(
+                "WARN[{step}]: recovered frontmost `{app}` after window.activate; initial wait.app-active error:\n{err}"
+            );
+        }
+        return;
+    }
+
+    let observed_after_recovery = frontmost_app_name().unwrap_or_else(|| "<unknown>".to_string());
+    if wait_error.is_none() && recover_error.is_none() {
+        panic!(
+            "step `{step}` expected frontmost app `{app}` within {timeout_ms}ms; observed `{observed_after_recovery}`"
+        );
+    }
+
+    let mut details = Vec::new();
+    if let Some(err) = wait_error {
+        details.push(format!("wait.app-active error:\n{err}"));
+    }
+    if let Some(err) = recover_error {
+        details.push(format!("window.activate recovery error:\n{err}"));
+    }
+    panic!(
+        "step `{step}` expected frontmost app `{app}` within {timeout_ms}ms; observed `{observed_after_recovery}`;\n{}",
+        details.join("\n")
+    );
+}
+
+pub fn ensure_app_ready_for_keyboard_input(
+    bin: &Path,
+    options: &CmdOptions,
+    app: &str,
+    timeout_ms: u64,
+    poll_ms: u64,
+    step: &str,
+) {
+    ensure_input_source_for_text_entry();
+    let input_step = format!("{step} (input-source=ABC)");
+    ensure_input_source_is_abc(&input_step);
+    let app_step = format!("{step} (frontmost={app})");
+    ensure_app_active_or_frontmost(bin, options, app, timeout_ms, poll_ms, &app_step);
 }
 
 pub fn fail_step_with_checkpoint(bin: &Path, options: &CmdOptions, step: &str, message: &str) -> ! {
@@ -596,6 +706,51 @@ fn app_process_running(app: &str) -> Result<bool, String> {
         return Err(stderr.trim().to_string());
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().eq("true"))
+}
+
+fn wait_for_frontmost_app(app: &str, timeout_ms: u64, poll_ms: u64) -> bool {
+    let started = Instant::now();
+    let delay = Duration::from_millis(poll_ms.max(40));
+    while started.elapsed().as_millis() < timeout_ms as u128 {
+        if frontmost_app_is(app) {
+            return true;
+        }
+        std::thread::sleep(delay);
+    }
+    frontmost_app_is(app)
+}
+
+fn try_activate_frontmost_for_recovery(
+    bin: &Path,
+    options: &CmdOptions,
+    app: &str,
+    step: &str,
+) -> Result<(), String> {
+    let payload = try_run_json_step(
+        bin,
+        options,
+        &[
+            "--format",
+            "json",
+            "--timeout-ms",
+            "6000",
+            "window",
+            "activate",
+            "--app",
+            app,
+            "--wait-ms",
+            "1200",
+            "--reopen-on-fail",
+        ],
+        &format!("{step} (window.activate recovery)"),
+    )?;
+    if payload["command"] != serde_json::json!("window.activate") {
+        return Err(format!(
+            "unexpected command field for window.activate recovery: {}",
+            payload["command"]
+        ));
+    }
+    Ok(())
 }
 
 pub fn spotify_playback_state() -> SpotifyPlaybackState {
@@ -657,6 +812,7 @@ pub fn ensure_input_source_for_text_entry() {
 }
 
 pub fn send_hotkey(bin: &Path, options: &CmdOptions, mods: Option<&str>, key: &str, step: &str) {
+    ensure_input_source_for_text_entry();
     if let Some(mods) = mods {
         let mut args = vec!["--format", "json", "input", "hotkey"];
         args.extend(["--mods", mods, "--key", key]);
@@ -870,26 +1026,18 @@ fn configure_input_source_once() -> Result<(), String> {
         .ok()
         .map(|raw| raw.trim().to_string())
         .filter(|value| !value.is_empty());
-    let strict = configured.is_some();
     let token = configured.unwrap_or_else(|| "com.apple.keylayout.ABC".to_string());
     let target = normalize_input_source_token(&token);
     match run_macos_agent_input_source_switch(&target) {
         Ok(()) => Ok(()),
         Err(err) => {
-            if !strict && err.contains("missing dependency `im-select`") {
-                return Ok(());
-            }
-            if strict && err.contains("missing dependency `im-select`") {
+            if err.contains("missing dependency `im-select`") {
                 return Err(
-                    "MACOS_AGENT_REAL_E2E_INPUT_SOURCE is set but `im-select` is missing; install with `brew install im-select`"
+                    "real e2e keyboard setup requires `im-select`; install with `brew install im-select`"
                         .to_string(),
                 );
             }
-            if strict {
-                Err(err)
-            } else {
-                Ok(())
-            }
+            Err(err)
         }
     }
 }
@@ -915,6 +1063,44 @@ fn run_macos_agent_input_source_switch(target: &str) -> Result<(), String> {
         return Err("input-source switch failed with empty stderr".to_string());
     }
     Err(stderr)
+}
+
+fn run_macos_agent_input_source_current() -> Result<String, String> {
+    run_macos_agent_input_source_current_via_cli()
+}
+
+fn run_macos_agent_input_source_current_via_cli() -> Result<String, String> {
+    let bin = resolve("macos-agent");
+    let out = Command::new(bin)
+        .args(["--format", "json", "input-source", "current"])
+        .output()
+        .map_err(|err| format!("failed to execute macos-agent input-source current: {err}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        if stderr.is_empty() {
+            return Err("input-source current failed with empty stderr".to_string());
+        }
+        return Err(stderr);
+    }
+
+    let payload: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .map_err(|err| format!("input-source current emitted invalid JSON: {err}"))?;
+    let current = payload
+        .get("result")
+        .and_then(|result| result.get("current"))
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            format!(
+                "input-source current response missing result.current: {}",
+                String::from_utf8_lossy(&out.stdout).trim()
+            )
+        })?;
+    Ok(current.to_string())
+}
+
+fn is_abc_input_source(current: &str) -> bool {
+    let normalized = current.trim().to_ascii_lowercase();
+    ABC_INPUT_SOURCE_IDS.contains(&normalized.as_str())
 }
 
 fn set_clipboard_text(text: &str) {
@@ -978,10 +1164,19 @@ fn try_activate_app(app_name: &str) -> bool {
 }
 
 fn frontmost_app_is(app_name: &str) -> bool {
-    let script = r#"tell application "System Events" to get name of first application process whose frontmost is true"#;
-    run_osascript_script(script)
-        .map(|name| name.trim().eq_ignore_ascii_case(app_name))
+    frontmost_app_name()
+        .map(|name| name.eq_ignore_ascii_case(app_name))
         .unwrap_or(false)
+}
+
+fn frontmost_app_name() -> Option<String> {
+    let script = r#"tell application "System Events" to get name of first application process whose frontmost is true"#;
+    let raw = run_osascript_script(script)?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.to_string())
 }
 
 fn try_set_clipboard_text(text: &str) -> bool {

@@ -234,6 +234,10 @@ pub struct WindowActivateArgs {
     /// Wait up to this many milliseconds for active confirmation.
     #[arg(long)]
     pub wait_ms: Option<u64>,
+
+    /// If activation/confirmation fails, quit and relaunch the target app once then retry.
+    #[arg(long, default_value_t = false)]
+    pub reopen_on_fail: bool,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -996,6 +1000,30 @@ mod tests {
             } => {
                 assert_eq!(args.app.as_deref(), Some("Terminal"));
                 assert_eq!(args.wait_ms, Some(1500));
+                assert!(!args.reopen_on_fail);
+            }
+            other => panic!("unexpected command variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_window_activate_reopen_on_fail_flag() {
+        let cli = Cli::try_parse_from([
+            "macos-agent",
+            "window",
+            "activate",
+            "--app",
+            "Arc",
+            "--reopen-on-fail",
+        ])
+        .expect("window activate reopen-on-fail should parse");
+
+        match cli.command {
+            CommandGroup::Window {
+                command: WindowCommand::Activate(args),
+            } => {
+                assert_eq!(args.app.as_deref(), Some("Arc"));
+                assert!(args.reopen_on_fail);
             }
             other => panic!("unexpected command variant: {other:?}"),
         }

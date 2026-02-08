@@ -21,6 +21,10 @@ if [[ "$script" == *"UI elements enabled"* ]]; then
 fi
 
 if [[ "$script" == *"first application process whose frontmost is true"* ]]; then
+  if [[ "$script" == *"bundle identifier"* ]]; then
+    echo "${CODEX_MACOS_AGENT_STUB_FRONTMOST_BUNDLE_ID:-com.apple.Terminal}"
+    exit 0
+  fi
   echo "${CODEX_MACOS_AGENT_STUB_FRONTMOST_APP:-Terminal}"
   exit 0
 fi

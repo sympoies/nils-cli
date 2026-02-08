@@ -1,7 +1,9 @@
+use std::cmp::Ordering;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use nils_test_support::cmd::CmdOptions;
+use serde_json::Value;
 
 use crate::real_apps::matrix::{ScenarioOutcome, ScenarioStatus};
 use crate::real_common::{self, UiPoint};
@@ -13,12 +15,27 @@ pub struct ArcYoutubeProfile {
     pub video_tiles: Vec<UiPoint>,
 }
 
-pub(crate) struct AxClickSpec<'a> {
+pub(crate) struct AxLocateSpec<'a> {
     pub app_name: &'a str,
     pub role: &'a str,
-    pub title_contains: &'a str,
+    pub title_contains: Option<&'a str>,
+    pub near: Option<UiPoint>,
     pub nth: Option<usize>,
 }
+
+#[derive(Debug, Clone)]
+struct AxClickCandidate {
+    node_id: String,
+    center: UiPoint,
+    area: f64,
+    title: Option<String>,
+}
+
+const AX_LOCATE_MAX_DEPTH: &str = "14";
+const AX_LOCATE_LIMIT: &str = "600";
+const MIN_FRAME_EDGE: f64 = 2.0;
+const MAX_ANCHOR_DRIFT_PX: i64 = 420;
+const MAX_ANCHOR_DRIFT_SQUARED: i64 = MAX_ANCHOR_DRIFT_PX * MAX_ANCHOR_DRIFT_PX;
 
 impl ArcYoutubeProfile {
     pub fn from_default_profile() -> Self {
@@ -62,11 +79,12 @@ pub fn arc_youtube_opens_home_and_clicks_three_tiles(
         click_ax_or_coordinate(
             bin,
             options,
-            AxClickSpec {
+            AxLocateSpec {
                 app_name: &profile.app_name,
                 role: "AXLink",
-                title_contains: "YouTube",
-                nth: Some(idx + 1),
+                title_contains: None,
+                near: Some(*point),
+                nth: None,
             },
             point,
             &format!("arc click youtube tile {}", idx + 1),
@@ -94,7 +112,6 @@ pub fn arc_youtube_opens_home_and_clicks_three_tiles(
 }
 
 pub(crate) fn activate_arc(bin: &Path, options: &CmdOptions, app_name: &str) {
-    real_common::ensure_input_source_for_text_entry();
     let payload = real_common::activate_app_with_retry(
         bin,
         options,
@@ -111,11 +128,22 @@ pub(crate) fn activate_arc(bin: &Path, options: &CmdOptions, app_name: &str) {
             .map(|value| value.eq_ignore_ascii_case(app_name)),
         Some(true)
     );
+    let step = format!("ensure {app_name} ready for keyboard input after activate");
+    real_common::ensure_app_ready_for_keyboard_input(bin, options, app_name, 7000, 60, &step);
 }
 
 pub(crate) fn open_youtube_home(bin: &Path, options: &CmdOptions, app_name: &str, url: &str) {
     let mut last_error = String::new();
     for attempt in 1..=3 {
+        let preflight_step = format!("arc pre-navigation readiness attempt {attempt}");
+        real_common::ensure_app_ready_for_keyboard_input(
+            bin,
+            options,
+            app_name,
+            7000,
+            60,
+            &preflight_step,
+        );
         real_common::send_hotkey(
             bin,
             options,
@@ -130,15 +158,14 @@ pub(crate) fn open_youtube_home(bin: &Path, options: &CmdOptions, app_name: &str
             "arc open youtube home url",
         );
         real_common::send_hotkey(bin, options, None, "return", "arc open youtube home");
-        let wait_active = real_common::wait_app_active(
+        real_common::ensure_app_active_or_frontmost(
             bin,
             options,
             app_name,
             7000,
             60,
-            "wait arc active after opening youtube home",
+            &format!("wait arc active after opening youtube home attempt {attempt}"),
         );
-        assert_eq!(wait_active["command"], serde_json::json!("wait.app-active"));
 
         match verify_active_address_bar_url(bin, options) {
             Ok(()) => return,
@@ -190,34 +217,29 @@ pub(crate) fn click(bin: &Path, options: &CmdOptions, point: &UiPoint, step: &st
 pub(crate) fn click_ax_or_coordinate(
     bin: &Path,
     options: &CmdOptions,
-    ax_spec: AxClickSpec<'_>,
+    ax_spec: AxLocateSpec<'_>,
     fallback_point: &UiPoint,
     step: &str,
 ) {
-    let mut ax_args = vec![
-        "--format".to_string(),
-        "json".to_string(),
-        "ax".to_string(),
-        "click".to_string(),
-        "--app".to_string(),
-        ax_spec.app_name.to_string(),
-        "--role".to_string(),
-        ax_spec.role.to_string(),
-        "--title-contains".to_string(),
-        ax_spec.title_contains.to_string(),
-        "--allow-coordinate-fallback".to_string(),
-    ];
-    if let Some(nth) = ax_spec.nth {
-        ax_args.push("--nth".to_string());
-        ax_args.push(nth.to_string());
-    }
-    let ax_args_ref = ax_args.iter().map(String::as_str).collect::<Vec<_>>();
-    let ax_step = format!("{step} (ax-first)");
-    match real_common::try_run_json_step(bin, options, &ax_args_ref, &ax_step) {
-        Ok(payload) => {
-            assert_eq!(payload["command"], serde_json::json!("ax.click"));
-        }
-        Err(_err) => {
+    let ready_step = format!("{step} (pre-click readiness)");
+    real_common::ensure_app_ready_for_keyboard_input(
+        bin,
+        options,
+        ax_spec.app_name,
+        7000,
+        60,
+        &ready_step,
+    );
+    let locate_step = format!("{step} (ax-locate)");
+    match resolve_ax_click_point(bin, options, &ax_spec, &locate_step) {
+        Ok(point) => click(
+            bin,
+            options,
+            &point,
+            &format!("{step} (ax-located-input-click)"),
+        ),
+        Err(err) => {
+            eprintln!("WARN[{step}]: {err}; fallback to profile coordinate click");
             click(
                 bin,
                 options,
@@ -229,15 +251,14 @@ pub(crate) fn click_ax_or_coordinate(
 }
 
 pub(crate) fn wait_for_arc(bin: &Path, options: &CmdOptions, app_name: &str) {
-    let payload = real_common::wait_app_active(
+    real_common::ensure_app_active_or_frontmost(
         bin,
         options,
         app_name,
         7000,
         60,
-        &format!("wait app-active {app_name}"),
+        &format!("wait app-active/frontmost {app_name}"),
     );
-    assert_eq!(payload["command"], serde_json::json!("wait.app-active"));
 }
 
 pub(crate) fn capture_active_window(bin: &Path, options: &CmdOptions, screenshot_path: &Path) {
@@ -300,4 +321,260 @@ fn verify_active_address_bar_url(bin: &Path, options: &CmdOptions) -> Result<(),
     );
 
     result
+}
+
+fn resolve_ax_click_point(
+    bin: &Path,
+    options: &CmdOptions,
+    spec: &AxLocateSpec<'_>,
+    step: &str,
+) -> Result<UiPoint, String> {
+    let nodes = run_ax_list_nodes(bin, options, spec, step, true)?;
+    let mut candidates = collect_click_candidates(&nodes);
+    if candidates.is_empty() {
+        let relaxed_nodes =
+            run_ax_list_nodes(bin, options, spec, &format!("{step} (role-relaxed)"), false)?;
+        candidates = collect_click_candidates(&relaxed_nodes);
+        if candidates.is_empty() {
+            return Err(format!(
+                "ax.list returned no frame-bearing candidates for role `{}` (including relaxed retry)",
+                spec.role
+            ));
+        }
+    }
+
+    let selected = select_ax_candidate(candidates, spec).ok_or_else(|| {
+        format!(
+            "no selectable AX candidate for role `{}` after filters",
+            spec.role
+        )
+    })?;
+    if let Some(anchor) = spec.near {
+        let drift_sq = squared_distance(anchor, selected.center);
+        if drift_sq > MAX_ANCHOR_DRIFT_SQUARED {
+            return Err(format!(
+                "selected AX node `{}` is too far from anchor (drift={}px > {}px)",
+                selected.node_id,
+                (drift_sq as f64).sqrt().round(),
+                MAX_ANCHOR_DRIFT_PX
+            ));
+        }
+    }
+
+    Ok(selected.center)
+}
+
+fn run_ax_list_nodes(
+    bin: &Path,
+    options: &CmdOptions,
+    spec: &AxLocateSpec<'_>,
+    step: &str,
+    include_role_filter: bool,
+) -> Result<Vec<Value>, String> {
+    let mut args = vec![
+        "--format".to_string(),
+        "json".to_string(),
+        "ax".to_string(),
+        "list".to_string(),
+        "--app".to_string(),
+        spec.app_name.to_string(),
+        "--max-depth".to_string(),
+        AX_LOCATE_MAX_DEPTH.to_string(),
+        "--limit".to_string(),
+        AX_LOCATE_LIMIT.to_string(),
+    ];
+    if include_role_filter {
+        args.push("--role".to_string());
+        args.push(spec.role.to_string());
+    }
+    if let Some(title_contains) = spec.title_contains {
+        args.push("--title-contains".to_string());
+        args.push(title_contains.to_string());
+    }
+
+    let args_ref = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let payload = real_common::try_run_json_step(bin, options, &args_ref, step)?;
+    if payload["command"] != serde_json::json!("ax.list") {
+        return Err(format!(
+            "expected ax.list command in locate step, got `{}`",
+            payload["command"]
+        ));
+    }
+    let nodes = payload["result"]["nodes"]
+        .as_array()
+        .ok_or_else(|| "ax.list response missing result.nodes array".to_string())?;
+    Ok(nodes.to_vec())
+}
+
+fn collect_click_candidates(nodes: &[Value]) -> Vec<AxClickCandidate> {
+    let mut out = Vec::new();
+    for (idx, node) in nodes.iter().enumerate() {
+        let Some((center, area)) = parse_frame_center(node) else {
+            continue;
+        };
+        let node_id = node
+            .get("node_id")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .unwrap_or_else(|| format!("node-{idx}"));
+        let title = node
+            .get("title")
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
+        out.push(AxClickCandidate {
+            node_id,
+            center,
+            area,
+            title,
+        });
+    }
+    out
+}
+
+fn parse_frame_center(node: &Value) -> Option<(UiPoint, f64)> {
+    let frame = node.get("frame")?.as_object()?;
+    let x = frame.get("x")?.as_f64()?;
+    let y = frame.get("y")?.as_f64()?;
+    let width = frame.get("width")?.as_f64()?;
+    let height = frame.get("height")?.as_f64()?;
+    if !(x.is_finite() && y.is_finite() && width.is_finite() && height.is_finite()) {
+        return None;
+    }
+    if width < MIN_FRAME_EDGE || height < MIN_FRAME_EDGE {
+        return None;
+    }
+
+    let center_x = x + (width / 2.0);
+    let center_y = y + (height / 2.0);
+    Some((
+        UiPoint {
+            x: round_to_i32(center_x)?,
+            y: round_to_i32(center_y)?,
+        },
+        width * height,
+    ))
+}
+
+fn round_to_i32(value: f64) -> Option<i32> {
+    if !value.is_finite() {
+        return None;
+    }
+    let rounded = value.round();
+    if rounded < i32::MIN as f64 || rounded > i32::MAX as f64 {
+        return None;
+    }
+    Some(rounded as i32)
+}
+
+fn select_ax_candidate(
+    mut candidates: Vec<AxClickCandidate>,
+    spec: &AxLocateSpec<'_>,
+) -> Option<AxClickCandidate> {
+    if let Some(title_contains) = spec.title_contains {
+        let needle = title_contains.to_ascii_lowercase();
+        candidates.retain(|candidate| {
+            candidate
+                .title
+                .as_ref()
+                .map(|title| title.to_ascii_lowercase().contains(&needle))
+                .unwrap_or(false)
+        });
+    }
+    if candidates.is_empty() {
+        return None;
+    }
+
+    if let Some(anchor) = spec.near {
+        candidates.sort_by(|lhs, rhs| {
+            let lhs_dist = squared_distance(lhs.center, anchor);
+            let rhs_dist = squared_distance(rhs.center, anchor);
+            lhs_dist
+                .cmp(&rhs_dist)
+                .then_with(|| match rhs.area.partial_cmp(&lhs.area) {
+                    Some(order) => order,
+                    None => Ordering::Equal,
+                })
+                .then_with(|| lhs.node_id.cmp(&rhs.node_id))
+        });
+    }
+
+    let index = spec.nth.unwrap_or(1).saturating_sub(1);
+    candidates.into_iter().nth(index)
+}
+
+fn squared_distance(lhs: UiPoint, rhs: UiPoint) -> i64 {
+    let dx = i64::from(lhs.x) - i64::from(rhs.x);
+    let dy = i64::from(lhs.y) - i64::from(rhs.y);
+    (dx * dx) + (dy * dy)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{collect_click_candidates, select_ax_candidate, AxLocateSpec};
+    use crate::real_common::UiPoint;
+    use serde_json::json;
+
+    fn spec_with_anchor(anchor: UiPoint) -> AxLocateSpec<'static> {
+        AxLocateSpec {
+            app_name: "Arc",
+            role: "AXLink",
+            title_contains: None,
+            near: Some(anchor),
+            nth: None,
+        }
+    }
+
+    #[test]
+    fn collect_click_candidates_ignores_invalid_frames() {
+        let nodes = vec![
+            json!({"node_id":"missing-frame"}),
+            json!({"node_id":"tiny","frame":{"x":10.0,"y":10.0,"width":1.0,"height":1.0}}),
+            json!({"node_id":"ok","title":"Tile","frame":{"x":100.0,"y":60.0,"width":50.0,"height":20.0}}),
+        ];
+        let candidates = collect_click_candidates(&nodes);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].node_id, "ok");
+        assert_eq!(candidates[0].center.x, 125);
+        assert_eq!(candidates[0].center.y, 70);
+    }
+
+    #[test]
+    fn select_ax_candidate_prefers_nearest_anchor() {
+        let nodes = vec![
+            json!({"node_id":"far","frame":{"x":700.0,"y":700.0,"width":40.0,"height":40.0}}),
+            json!({"node_id":"near","frame":{"x":95.0,"y":95.0,"width":20.0,"height":20.0}}),
+            json!({"node_id":"mid","frame":{"x":250.0,"y":250.0,"width":30.0,"height":30.0}}),
+        ];
+        let candidates = collect_click_candidates(&nodes);
+        let picked = select_ax_candidate(candidates, &spec_with_anchor(UiPoint { x: 100, y: 100 }))
+            .expect("candidate should be selected");
+        assert_eq!(picked.node_id, "near");
+    }
+
+    #[test]
+    fn select_ax_candidate_respects_nth_after_anchor_sort() {
+        let nodes = vec![
+            json!({"node_id":"c1","frame":{"x":100.0,"y":100.0,"width":20.0,"height":20.0}}),
+            json!({"node_id":"c2","frame":{"x":180.0,"y":180.0,"width":20.0,"height":20.0}}),
+            json!({"node_id":"c3","frame":{"x":260.0,"y":260.0,"width":20.0,"height":20.0}}),
+        ];
+        let mut spec = spec_with_anchor(UiPoint { x: 100, y: 100 });
+        spec.nth = Some(2);
+        let candidates = collect_click_candidates(&nodes);
+        let picked = select_ax_candidate(candidates, &spec).expect("second candidate should exist");
+        assert_eq!(picked.node_id, "c2");
+    }
+
+    #[test]
+    fn select_ax_candidate_filters_title_case_insensitively() {
+        let nodes = vec![
+            json!({"node_id":"ignore","title":"Top Stories","frame":{"x":200.0,"y":200.0,"width":60.0,"height":20.0}}),
+            json!({"node_id":"match","title":"COMMENTS","frame":{"x":100.0,"y":100.0,"width":60.0,"height":20.0}}),
+        ];
+        let mut spec = spec_with_anchor(UiPoint { x: 110, y: 110 });
+        spec.title_contains = Some("comments");
+        let candidates = collect_click_candidates(&nodes);
+        let picked = select_ax_candidate(candidates, &spec).expect("title-filtered candidate");
+        assert_eq!(picked.node_id, "match");
+    }
 }

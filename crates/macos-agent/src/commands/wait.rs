@@ -1,3 +1,5 @@
+use crate::backend::applescript;
+use crate::backend::process::RealProcessRunner;
 use std::time::Instant;
 
 use crate::cli::{OutputFormat, WaitAppActiveArgs, WaitSleepArgs, WaitWindowPresentArgs};
@@ -19,11 +21,15 @@ pub fn run_sleep(format: OutputFormat, args: &WaitSleepArgs) -> Result<(), CliEr
 }
 
 pub fn run_app_active(format: OutputFormat, args: &WaitAppActiveArgs) -> Result<(), CliError> {
+    let runner = RealProcessRunner;
+    let probe_timeout_ms = args.timeout_ms.max(2_000);
     let check = || {
         if let Some(app) = args.app.as_deref() {
-            targets::app_active_by_name(app)
+            applescript::frontmost_app_name(&runner, probe_timeout_ms)
+                .map(|frontmost| frontmost.eq_ignore_ascii_case(app))
         } else if let Some(bundle_id) = args.bundle_id.as_deref() {
-            targets::app_active_by_bundle_id(bundle_id)
+            applescript::frontmost_bundle_id(&runner, probe_timeout_ms)
+                .map(|frontmost| frontmost.eq_ignore_ascii_case(bundle_id))
         } else {
             Ok(false)
         }

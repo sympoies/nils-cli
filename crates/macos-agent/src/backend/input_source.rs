@@ -64,9 +64,10 @@ pub fn switch(
 }
 
 pub fn normalize_input_source_token(raw: &str) -> String {
-    match raw.trim().to_ascii_lowercase().as_str() {
+    let trimmed = raw.trim();
+    match trimmed.to_ascii_lowercase().as_str() {
         "abc" | "english" | "us" | "u.s." => DEFAULT_ABC_SOURCE.to_string(),
-        token => token.to_string(),
+        _ => trimmed.to_string(),
     }
 }
 
@@ -112,6 +113,14 @@ mod tests {
         );
         assert_eq!(
             normalize_input_source_token("US"),
+            "com.apple.keylayout.ABC"
+        );
+    }
+
+    #[test]
+    fn normalize_token_preserves_case_for_full_source_id() {
+        assert_eq!(
+            normalize_input_source_token("com.apple.keylayout.ABC"),
             "com.apple.keylayout.ABC"
         );
     }
