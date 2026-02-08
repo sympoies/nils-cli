@@ -3,7 +3,7 @@ use agent_runtime_core::schema::{
     AuthStateRequest, AuthStateResponse, AuthStateStatus, CapabilitiesRequest,
     CapabilitiesResponse, Capability, ExecuteRequest, ExecuteResponse, HealthStatus,
     HealthcheckRequest, HealthcheckResponse, LimitsRequest, LimitsResponse, ProviderError,
-    ProviderErrorCategory, ProviderMetadata, ProviderResult,
+    ProviderErrorCategory, ProviderMaturity, ProviderMetadata, ProviderResult,
 };
 use codex_cli::{agent, auth, paths};
 use nils_common::process;
@@ -25,7 +25,7 @@ impl CodexProviderAdapter {
 
 impl ProviderAdapterV1 for CodexProviderAdapter {
     fn metadata(&self) -> ProviderMetadata {
-        ProviderMetadata::new(PROVIDER_ID)
+        ProviderMetadata::new(PROVIDER_ID).with_maturity(ProviderMaturity::Stable)
     }
 
     fn capabilities(&self, request: CapabilitiesRequest) -> ProviderResult<CapabilitiesResponse> {

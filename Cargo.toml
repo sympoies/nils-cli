@@ -19,6 +19,8 @@ members = [
   "crates/agent-docs",
   "crates/agent-runtime-core",
   "crates/agent-provider-codex",
+  "crates/agent-provider-claude",
+  "crates/agent-provider-gemini",
   "crates/agentctl",
 ]
 resolver = "2"

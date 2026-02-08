@@ -1,6 +1,6 @@
 use agent_provider_codex::CodexProviderAdapter;
 use agent_runtime_core::provider::ProviderAdapterV1;
-use agent_runtime_core::schema::{ExecuteRequest, ProviderErrorCategory};
+use agent_runtime_core::schema::{ExecuteRequest, ProviderErrorCategory, ProviderMaturity};
 use nils_test_support::{prepend_path, EnvGuard, GlobalStateLock, StubBinDir};
 use pretty_assertions::assert_eq;
 
@@ -11,6 +11,7 @@ fn metadata_uses_normalized_provider_identity() {
 
     assert_eq!(metadata.id, "codex");
     assert_eq!(metadata.contract_version.as_str(), "provider-adapter.v1");
+    assert_eq!(metadata.maturity, ProviderMaturity::Stable);
 }
 
 #[test]

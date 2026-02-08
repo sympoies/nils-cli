@@ -397,3 +397,23 @@ This plan redesigns the current direction so `codex-cli` remains strictly OpenAI
 - If `agentctl` rollout is unstable, keep `codex-cli` provider flows as primary path and disable affected `agentctl` groups temporarily.
 - Revert individual adapter crates (`agent-provider-*`) independently without reverting core provider-specific functionality.
 - Retain migration shims/docs for previous command paths until two release cycles after stabilization.
+
+## Sprint 4 rollout checklist (2026-02-08)
+- [x] Added provider onboarding runbook: `docs/runbooks/provider-onboarding.md`.
+- [x] Added compile-only provider stubs: `agent-provider-claude` and `agent-provider-gemini`.
+- [x] Registered built-in provider set in `agentctl` registry (`codex`, `claude`, `gemini`) with maturity metadata.
+- [x] Updated docs + ownership matrix for split architecture (`README.md`, `crates/agentctl/README.md`, `crates/codex-cli/README.md`).
+- [x] Added `agentctl` shell completions (`completions/zsh/_agentctl`, `completions/bash/agentctl`) and wired completion tests.
+- [x] Updated dependency inventory with provider maturity/runtime expectations (`BINARY_DEPENDENCIES.md`).
+- [x] Validation completed:
+  - `plan-tooling validate --file docs/plans/codex-local-dev-debug-automation-upgrade-plan.md`
+  - `cargo test -p agentctl -p agent-runtime-core -p agent-provider-codex -p codex-cli`
+  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- [x] Coverage target met:
+  - `cargo llvm-cov --workspace --summary-only`
+  - Workspace line coverage: `85.04%` (threshold `>=85%`).
+
+### Sprint 4 release confidence summary
+- Provider-neutral split is stable: `codex-cli` remains provider-specific; `agentctl` owns orchestration groups.
+- Built-in provider registry now proves future-provider extensibility with explicit maturity signaling.
+- Full repository gates and completion tests passed in this rollout check.

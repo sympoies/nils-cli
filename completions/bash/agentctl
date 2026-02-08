@@ -1,0 +1,102 @@
+# nils-cli bash completion: agentctl
+
+if [[ -z ${BASH_VERSION-} ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+shopt -s progcomp 2>/dev/null || true
+
+_nils_cli_agentctl_complete() {
+  local -a words=("${COMP_WORDS[@]}")
+  local cword="$COMP_CWORD"
+  local cur="${COMP_WORDS[COMP_CWORD]}"
+  local prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+  local -a root_cmds=(provider diag debug workflow automation help)
+  local -a root_opts=(-h --help -V --version)
+
+  if (( cword == 1 )); then
+    if [[ "$cur" == -* ]]; then
+      COMPREPLY=( $(compgen -W "${root_opts[*]}" -- "$cur") )
+      return 0
+    fi
+    COMPREPLY=( $(compgen -W "${root_cmds[*]}" -- "$cur") )
+    return 0
+  fi
+
+  local cmd="${words[1]-}"
+  case "$cmd" in
+    provider)
+      local -a provider_cmds=(list healthcheck)
+      if (( cword == 2 )); then
+        COMPREPLY=( $(compgen -W "${provider_cmds[*]}" -- "$cur") )
+        return 0
+      fi
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --provider --timeout-ms --format" -- "$cur") )
+      else
+        COMPREPLY=()
+      fi
+      return 0
+      ;;
+    diag)
+      local -a diag_cmds=(doctor capabilities)
+      if (( cword == 2 )); then
+        COMPREPLY=( $(compgen -W "${diag_cmds[*]}" -- "$cur") )
+        return 0
+      fi
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --provider --include-experimental --timeout-ms --format --probe-mode" -- "$cur") )
+      elif [[ "$prev" == "--format" ]]; then
+        COMPREPLY=( $(compgen -W "text json" -- "$cur") )
+      elif [[ "$prev" == "--probe-mode" ]]; then
+        COMPREPLY=( $(compgen -W "auto live test" -- "$cur") )
+      else
+        COMPREPLY=()
+      fi
+      return 0
+      ;;
+    debug)
+      if (( cword == 2 )); then
+        COMPREPLY=( $(compgen -W "bundle" -- "$cur") )
+        return 0
+      fi
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --output-dir --format" -- "$cur") )
+      elif [[ "$prev" == "--format" ]]; then
+        COMPREPLY=( $(compgen -W "text json" -- "$cur") )
+      else
+        COMPREPLY=( $(compgen -d -- "$cur") )
+      fi
+      return 0
+      ;;
+    workflow)
+      if (( cword == 2 )); then
+        COMPREPLY=( $(compgen -W "run" -- "$cur") )
+        return 0
+      fi
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --file --format" -- "$cur") )
+      elif [[ "$prev" == "--format" ]]; then
+        COMPREPLY=( $(compgen -W "text json" -- "$cur") )
+      elif [[ "$prev" == "--file" ]]; then
+        COMPREPLY=( $(compgen -f -- "$cur") )
+      else
+        COMPREPLY=()
+      fi
+      return 0
+      ;;
+    automation|help)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
+      else
+        COMPREPLY=()
+      fi
+      return 0
+      ;;
+  esac
+
+  COMPREPLY=()
+}
+
+complete -F _nils_cli_agentctl_complete agentctl

@@ -42,6 +42,16 @@ These tools enable richer behavior. Missing tools typically trigger fallback beh
 | `hs` (Hammerspoon CLI) | Preferred AX backend path for `macos-agent ax *` (fallback to JXA when unavailable) | `brew install --cask hammerspoon` |
 | `im-select` | Required by `macos-agent input-source *` and macOS real E2E keyboard/input-source setup | `brew install im-select` |
 
+## 2.1 Agent provider adapter maturity and runtime expectations
+
+`agentctl` now ships with three built-in provider adapters. Runtime requirements differ by maturity.
+
+| Provider crate | Provider ID | Maturity | Runtime requirement |
+|---|---|---|---|
+| `agent-provider-codex` | `codex` | `stable` | Requires `codex` binary for execute flows |
+| `agent-provider-claude` | `claude` | `stub` | Compile-only stub (no external binary required yet) |
+| `agent-provider-gemini` | `gemini` | `stub` | Compile-only stub (no external binary required yet) |
+
 ## 3. Development and Validation Toolchain
 
 | Tool | Purpose | Recommended Install |

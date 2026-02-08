@@ -32,17 +32,32 @@ Each crate is either a standalone CLI binary or a shared library used across the
 ### Agent and workflow tooling
 
 - [crates/agent-docs](crates/agent-docs): Deterministic policy-document resolver for Codex/agent workflows (`resolve`, `contexts`, `add`, `baseline`).
+- [crates/agent-runtime-core](crates/agent-runtime-core): Provider-neutral runtime contract (`provider-adapter.v1`) shared by `agentctl` and provider adapters.
+- [crates/agent-provider-codex](crates/agent-provider-codex): Stable OpenAI/Codex adapter implementation for the provider-neutral contract.
+- [crates/agent-provider-claude](crates/agent-provider-claude): Compile-only `claude` onboarding stub adapter (`maturity=stub`).
+- [crates/agent-provider-gemini](crates/agent-provider-gemini): Compile-only `gemini` onboarding stub adapter (`maturity=stub`).
+- [crates/agentctl](crates/agentctl): Provider-neutral control plane (`provider`, `diag`, `debug`, `workflow`, `automation`).
 - [crates/codex-cli](crates/codex-cli): Provider-specific CLI for OpenAI/Codex workflows (auth, Codex diagnostics, Codex execution wrappers, Starship snippets).
 - [crates/semantic-commit](crates/semantic-commit): Helper CLI for generating staged context and creating semantic commits.
 - [crates/plan-tooling](crates/plan-tooling): Plan Format v1 tooling CLI (to-json/validate/batches/scaffold).
 
+#### Command ownership matrix (use this CLI for this job)
+
+| Job | CLI |
+|---|---|
+| OpenAI/Codex auth, Codex prompt wrappers, Codex rate-limit diagnostics, Starship | `codex-cli` |
+| Multi-provider registry/selection (`provider`), provider-neutral doctor/debug/workflow | `agentctl` |
+| Local automation tool orchestration (`macos-agent`, `screen-record`, `image-processing`, `fzf-cli`) | `agentctl` |
+| Provider adapter implementation against `provider-adapter.v1` | `agent-provider-*` crates + `agent-runtime-core` |
+
 #### Command ownership split (migration boundary)
 
 - `codex-cli`: provider-specific OpenAI/Codex operations only (`agent`, `auth`, Codex diagnostics, Codex config/starship).
-- `agentctl` (planned by the migration plan): provider-neutral orchestration (`provider`, `diag`, `debug`, `workflow`, `automation`) and local automation integration.
-- Migration note: keep existing `codex-cli` workflows stable during migration, and move provider-neutral ownership to `agentctl` with explicit docs/help redirection.
+- `agentctl`: provider-neutral orchestration (`provider`, `diag`, `debug`, `workflow`, `automation`) and local automation integration.
+- Migration note: keep existing `codex-cli` workflows stable while provider-neutral ownership lives in `agentctl` with explicit docs/help redirection.
 - Compatibility shim: `wrappers/codex-cli` forwards `provider|debug|workflow|automation` to `agentctl` when `agentctl` is available.
 - Migration hint text (wrapper/help/docs): `use agentctl <command> for provider-neutral orchestration`.
+- Future providers (`claude`, `gemini`, etc.) follow [`docs/runbooks/provider-onboarding.md`](docs/runbooks/provider-onboarding.md).
 
 ### Automation and utility CLIs
 

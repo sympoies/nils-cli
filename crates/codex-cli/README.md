@@ -23,6 +23,13 @@ Help:
 ```
 
 ## Scope boundary
+- Quick ownership matrix:
+
+| Use case | CLI |
+|---|---|
+| OpenAI/Codex auth, prompt wrappers, rate-limit diagnostics, Starship | `codex-cli` |
+| Multi-provider registry/selection, provider-neutral debug/diag/workflow/automation | `agentctl` |
+
 - `codex-cli` owns provider-specific OpenAI/Codex commands only (`agent`, `auth`, `diag rate-limits`, `config`, `starship`).
 - `codex-cli` does not own provider-neutral orchestration concerns (multi-provider registry/selection, provider-neutral doctor/debug/workflow, or local automation integration).
 - `codex-cli` rejects provider-neutral orchestration entrypoints (`provider`, `debug`, `workflow`, `automation`) with migration hints to `agentctl`.
@@ -30,6 +37,7 @@ Help:
 - Compatibility note: existing `codex-cli` command behavior remains stable during migration, while provider-neutral ownership moves to `agentctl`.
 - Wrapper compatibility shim: `wrappers/codex-cli` forwards `provider|debug|workflow|automation` to `agentctl` when `agentctl` is available.
 - Canonical migration hint text: `use agentctl <command> for provider-neutral orchestration`.
+- Future provider adapters (`claude`, `gemini`, etc.) are onboarded under `agent-provider-*` crates via `../../docs/runbooks/provider-onboarding.md`.
 
 ## Commands
 

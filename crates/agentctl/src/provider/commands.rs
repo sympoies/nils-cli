@@ -93,6 +93,7 @@ fn run_list(args: ProviderListArgs) -> i32 {
             ProviderListItem {
                 id: provider_id.to_string(),
                 contract_version: metadata.contract_version.as_str().to_string(),
+                maturity: metadata.maturity.as_str().to_string(),
                 status: health_status_text(status).to_string(),
                 summary,
                 is_default: default_provider.as_deref() == Some(provider_id),
@@ -189,12 +190,16 @@ fn emit_list_output(output: &ProviderListOutput, format: OutputFormat) -> i32 {
                 }
 
                 if tags.is_empty() {
-                    println!("- {} [{}]", provider.id, provider.status);
+                    println!(
+                        "- {} [{}] (maturity: {})",
+                        provider.id, provider.status, provider.maturity
+                    );
                 } else {
                     println!(
-                        "- {} [{}] ({})",
+                        "- {} [{}] (maturity: {}, {})",
                         provider.id,
                         provider.status,
+                        provider.maturity,
                         tags.join(", ")
                     );
                 }
@@ -274,6 +279,7 @@ struct ProviderListOutput {
 struct ProviderListItem {
     id: String,
     contract_version: String,
+    maturity: String,
     status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     summary: Option<String>,

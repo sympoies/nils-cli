@@ -2,12 +2,13 @@ use agent_runtime_core::provider::ProviderAdapterV1;
 use agent_runtime_core::schema::{
     AuthStateRequest, AuthStateResponse, CapabilitiesRequest, CapabilitiesResponse, ExecuteRequest,
     ExecuteResponse, HealthStatus, HealthcheckRequest, HealthcheckResponse, LimitsRequest,
-    LimitsResponse, ProviderMetadata, ProviderResult,
+    LimitsResponse, ProviderMaturity, ProviderMetadata, ProviderResult,
 };
 use agentctl::provider::registry::{
     ProviderRegistry, ProviderSelectionSource, ResolveProviderError,
 };
 use pretty_assertions::assert_eq;
+use std::collections::BTreeMap;
 
 #[test]
 fn registry_iter_is_sorted_and_default_falls_back_deterministically() {
@@ -75,6 +76,26 @@ fn selection_rejects_unknown_override_and_exposes_source() {
             source: ProviderSelectionSource::CliArgument,
         }
     );
+}
+
+#[test]
+fn with_builtins_registers_codex_and_stub_providers_with_expected_maturity() {
+    let registry = ProviderRegistry::with_builtins();
+    assert_eq!(registry.default_provider_id(), Some("codex"));
+
+    let providers = registry
+        .iter()
+        .map(|(provider_id, _)| provider_id.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(providers, vec!["claude", "codex", "gemini"]);
+
+    let maturity_map = registry
+        .iter()
+        .map(|(provider_id, adapter)| (provider_id.to_string(), adapter.metadata().maturity))
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(maturity_map.get("codex"), Some(&ProviderMaturity::Stable));
+    assert_eq!(maturity_map.get("claude"), Some(&ProviderMaturity::Stub));
+    assert_eq!(maturity_map.get("gemini"), Some(&ProviderMaturity::Stub));
 }
 
 struct FakeProvider {

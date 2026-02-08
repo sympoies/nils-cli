@@ -23,6 +23,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-provider-claude"
+version = "0.2.11"
+dependencies = [
+ "agent-runtime-core",
+ "pretty_assertions",
+ "serde_json",
+]
+
+[[package]]
 name = "agent-provider-codex"
 version = "0.2.11"
 dependencies = [
@@ -30,6 +39,15 @@ dependencies = [
  "codex-cli",
  "nils-common",
  "nils-test-support",
+ "pretty_assertions",
+ "serde_json",
+]
+
+[[package]]
+name = "agent-provider-gemini"
+version = "0.2.11"
+dependencies = [
+ "agent-runtime-core",
  "pretty_assertions",
  "serde_json",
 ]
@@ -47,7 +65,9 @@ dependencies = [
 name = "agentctl"
 version = "0.2.11"
 dependencies = [
+ "agent-provider-claude",
  "agent-provider-codex",
+ "agent-provider-gemini",
  "agent-runtime-core",
  "clap",
  "nils-test-support",

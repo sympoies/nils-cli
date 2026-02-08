@@ -3,8 +3,8 @@ use agent_runtime_core::schema::{
     AuthStateRequest, AuthStateResponse, AuthStateStatus, CapabilitiesRequest,
     CapabilitiesResponse, Capability, ContractVersion, ExecuteRequest, ExecuteResponse,
     HealthStatus, HealthcheckRequest, HealthcheckResponse, LimitsRequest, LimitsResponse,
-    ProviderEnvelope, ProviderError, ProviderErrorCategory, ProviderMetadata, ProviderOperation,
-    ProviderRef, ProviderResult,
+    ProviderEnvelope, ProviderError, ProviderErrorCategory, ProviderMaturity, ProviderMetadata,
+    ProviderOperation, ProviderRef, ProviderResult,
 };
 use pretty_assertions::assert_eq;
 
@@ -74,6 +74,13 @@ fn capabilities_envelope_roundtrip_is_stable() {
     let decoded: ProviderEnvelope<CapabilitiesResponse> =
         serde_json::from_value(json).expect("deserialize envelope");
     assert_eq!(decoded, envelope);
+}
+
+#[test]
+fn provider_metadata_defaults_to_stable_maturity() {
+    let metadata = ProviderMetadata::new("mock");
+    assert_eq!(metadata.maturity, ProviderMaturity::Stable);
+    assert_eq!(metadata.maturity.as_str(), "stable");
 }
 
 #[test]

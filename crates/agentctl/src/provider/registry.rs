@@ -1,4 +1,6 @@
+use agent_provider_claude::ClaudeProviderAdapter;
 use agent_provider_codex::CodexProviderAdapter;
+use agent_provider_gemini::GeminiProviderAdapter;
 use agent_runtime_core::provider::ProviderAdapterV1;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -15,6 +17,8 @@ impl ProviderRegistry {
     pub fn with_builtins() -> Self {
         let mut registry = Self::new(DEFAULT_PROVIDER_ID);
         registry.register(CodexProviderAdapter::new());
+        registry.register(ClaudeProviderAdapter::new());
+        registry.register(GeminiProviderAdapter::new());
         registry
     }
 

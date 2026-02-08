@@ -30,6 +30,26 @@ impl ContractVersion {
     }
 }
 
+/// Provider maturity used for rollout and UX messaging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderMaturity {
+    /// Stable and fully supported adapter.
+    #[default]
+    Stable,
+    /// Compile-only/onboarding adapter stub.
+    Stub,
+}
+
+impl ProviderMaturity {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Stable => "stable",
+            Self::Stub => "stub",
+        }
+    }
+}
+
 /// Provider identity included in each envelope for routing and diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderRef {
@@ -48,6 +68,8 @@ pub struct ProviderMetadata {
     pub id: String,
     #[serde(default)]
     pub contract_version: ContractVersion,
+    #[serde(default)]
+    pub maturity: ProviderMaturity,
 }
 
 impl ProviderMetadata {
@@ -55,7 +77,13 @@ impl ProviderMetadata {
         Self {
             id: id.into(),
             contract_version: ContractVersion::V1,
+            maturity: ProviderMaturity::Stable,
         }
+    }
+
+    pub fn with_maturity(mut self, maturity: ProviderMaturity) -> Self {
+        self.maturity = maturity;
+        self
     }
 
     pub fn provider_ref(&self) -> ProviderRef {
