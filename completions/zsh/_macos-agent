@@ -30,6 +30,7 @@ _macos-agent() {
       'input-source:Inspect and switch keyboard input sources' \
       'ax:Accessibility node operations' \
       'observe:Capture screenshot artifacts' \
+      'debug:Capture deterministic triage bundles' \
       'wait:UI stabilization wait primitives' \
       'scenario:Run declarative scenario files' \
       'profile:Validate/init coordinate profiles'
@@ -186,11 +187,26 @@ _macos-agent() {
             '--focused=[Select by focused state]:bool:(true false)' \
             '--enabled=[Select by enabled state]:bool:(true false)' \
             '--nth=[Select nth match from role/title selector]:n:' \
+            '--match-strategy=[Text match strategy]:strategy:(contains exact prefix suffix regex)' \
+            '--selector-explain[Emit selector explain diagnostics in JSON output]' \
             '--session-id=[Target session id]:id:' \
             '--app=[Target app name]:name:' \
             '--bundle-id=[Target bundle id]:bundle:' \
             '--window-title-contains=[Narrow to windows by title]:text:' \
+            '--reselect-before-click[Re-resolve selector immediately before click]' \
             '--allow-coordinate-fallback[Allow coordinate fallback when AXPress is unavailable]' \
+            '--fallback-order=[Fallback stage order]:stages:' \
+            '--gate-app-active[Require app-active gate before mutation]' \
+            '--gate-window-present[Require window-present gate before mutation]' \
+            '--gate-ax-present[Require selector gate with >= 1 match]' \
+            '--gate-ax-unique[Require selector gate with exactly one match]' \
+            '--gate-timeout-ms=[Timeout for gate checks in milliseconds]:ms:' \
+            '--gate-poll-ms=[Poll interval for gate checks in milliseconds]:ms:' \
+            '--postcondition-focused=[Expected focused state after mutation]:bool:(true false)' \
+            '--postcondition-attribute=[Expected AX attribute name after mutation]:name:' \
+            '--postcondition-attribute-value=[Expected AX attribute value after mutation]:value:' \
+            '--postcondition-timeout-ms=[Timeout for postcondition checks in milliseconds]:ms:' \
+            '--postcondition-poll-ms=[Poll interval for postcondition checks in milliseconds]:ms:' \
             && return 0
           ;;
         type)
@@ -204,6 +220,8 @@ _macos-agent() {
             '--focused=[Select by focused state]:bool:(true false)' \
             '--enabled=[Select by enabled state]:bool:(true false)' \
             '--nth=[Select nth match from role/title selector]:n:' \
+            '--match-strategy=[Text match strategy]:strategy:(contains exact prefix suffix regex)' \
+            '--selector-explain[Emit selector explain diagnostics in JSON output]' \
             '--session-id=[Target session id]:id:' \
             '--app=[Target app name]:name:' \
             '--bundle-id=[Target bundle id]:bundle:' \
@@ -213,6 +231,17 @@ _macos-agent() {
             '--submit[Press Enter after typing]' \
             '--paste[Use clipboard paste strategy]' \
             '--allow-keyboard-fallback[Allow keyboard fallback when AX value set is unavailable]' \
+            '--gate-app-active[Require app-active gate before mutation]' \
+            '--gate-window-present[Require window-present gate before mutation]' \
+            '--gate-ax-present[Require selector gate with >= 1 match]' \
+            '--gate-ax-unique[Require selector gate with exactly one match]' \
+            '--gate-timeout-ms=[Timeout for gate checks in milliseconds]:ms:' \
+            '--gate-poll-ms=[Poll interval for gate checks in milliseconds]:ms:' \
+            '--postcondition-focused=[Expected focused state after mutation]:bool:(true false)' \
+            '--postcondition-attribute=[Expected AX attribute name after mutation]:name:' \
+            '--postcondition-attribute-value=[Expected AX attribute value after mutation]:value:' \
+            '--postcondition-timeout-ms=[Timeout for postcondition checks in milliseconds]:ms:' \
+            '--postcondition-poll-ms=[Poll interval for postcondition checks in milliseconds]:ms:' \
             && return 0
           ;;
         attr)
@@ -359,6 +388,34 @@ _macos-agent() {
         '--window-name=[Deprecated alias of --window-title-contains]:name:' \
         '--path=[Output path]:path:_files' \
         '--image-format=[Output image format]:format:(png jpg webp)' \
+        '--node-id=[Select AX node by node id]:id:' \
+        '--role=[Select AX node by role]:role:' \
+        '--title-contains=[Select AX node by title substring]:text:' \
+        '--identifier-contains=[Select AX node by identifier substring]:text:' \
+        '--value-contains=[Select AX node by value substring]:text:' \
+        '--subrole=[Select AX node by subrole]:subrole:' \
+        '--focused=[Select AX node by focused state]:bool:(true false)' \
+        '--enabled=[Select AX node by enabled state]:bool:(true false)' \
+        '--nth=[Select nth AX node match]:n:' \
+        '--match-strategy=[Text match strategy]:strategy:(contains exact prefix suffix regex)' \
+        '--selector-explain[Emit selector explain diagnostics in JSON output]' \
+        '--selector-padding=[Expand selector frame by N pixels]:px:' \
+        && return 0
+      ;;
+
+    debug)
+      if (( CURRENT == 3 )); then
+        _describe -t subcommands 'debug command' 'bundle:Capture deterministic triage artifact bundle'
+        return 0
+      fi
+      _arguments -C $global_opts \
+        '3:debug command:(bundle)' \
+        '--window-id=[Select by window id]:id:' \
+        '--active-window[Select frontmost active window]' \
+        '--app=[Select by app name]:name:' \
+        '--window-title-contains=[Narrow app selection by window title]:name:' \
+        '--window-name=[Deprecated alias of --window-title-contains]:name:' \
+        '--output-dir=[Output directory for debug artifacts]:path:_files -/' \
         && return 0
       ;;
 
@@ -367,7 +424,9 @@ _macos-agent() {
         _describe -t subcommands 'wait command' \
           'sleep:Sleep for a fixed duration' \
           'app-active:Wait for app to become active' \
-          'window-present:Wait for target window to appear'
+          'window-present:Wait for target window to appear' \
+          'ax-present:Wait until AX selector resolves to at least one node' \
+          'ax-unique:Wait until AX selector resolves to exactly one node'
         return 0
       fi
 
@@ -391,6 +450,27 @@ _macos-agent() {
             '--app=[Select by app name]:name:' \
             '--window-title-contains=[Narrow app selection by window title]:name:' \
             '--window-name=[Deprecated alias of --window-title-contains]:name:' \
+            '--timeout-ms=[Timeout in milliseconds]:ms:' \
+            '--poll-ms=[Poll interval in milliseconds]:ms:' \
+            && return 0
+          ;;
+        ax-present|ax-unique)
+          _arguments -C $global_opts \
+            '--node-id=[Select by node id]:id:' \
+            '--role=[Select by AX role]:role:' \
+            '--title-contains=[Select by title substring]:text:' \
+            '--identifier-contains=[Select by identifier substring]:text:' \
+            '--value-contains=[Select by value substring]:text:' \
+            '--subrole=[Select by AX subrole]:subrole:' \
+            '--focused=[Select by focused state]:bool:(true false)' \
+            '--enabled=[Select by enabled state]:bool:(true false)' \
+            '--nth=[Select nth match from selector]:n:' \
+            '--match-strategy=[Text match strategy]:strategy:(contains exact prefix suffix regex)' \
+            '--selector-explain[Emit selector explain diagnostics in JSON output]' \
+            '--session-id=[Target session id]:id:' \
+            '--app=[Target app name]:name:' \
+            '--bundle-id=[Target bundle id]:bundle:' \
+            '--window-title-contains=[Narrow to windows by title]:text:' \
             '--timeout-ms=[Timeout in milliseconds]:ms:' \
             '--poll-ms=[Poll interval in milliseconds]:ms:' \
             && return 0
