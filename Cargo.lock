@@ -10,7 +10,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agent-docs"
-version = "2.2.10"
+version = "2.2.11"
 dependencies = [
  "anyhow",
  "clap",
@@ -98,7 +98,7 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
 name = "api-gql"
-version = "2.2.10"
+version = "2.2.11"
 dependencies = [
  "anyhow",
  "api-testing-core",
@@ -112,7 +112,7 @@ dependencies = [
 
 [[package]]
 name = "api-rest"
-version = "2.2.10"
+version = "2.2.11"
 dependencies = [
  "anyhow",
  "api-testing-core",
@@ -127,7 +127,7 @@ dependencies = [
 
 [[package]]
 name = "api-test"
-version = "2.2.10"
+version = "2.2.11"
 dependencies = [
  "anyhow",
  "api-testing-core",
@@ -142,7 +142,7 @@ dependencies = [
 
 [[package]]
 name = "api-testing-core"
-version = "2.2.10"
+version = "2.2.11"
 dependencies = [
  "anyhow",
  "base64",
@@ -470,7 +470,7 @@ checksum = "c3e64b0cc0439b12df2fa678eae89a1c56a529fd067a9115f7827f1fffd22b32"
 
 [[package]]
 name = "cli-template"
-version = "2.2.10"
+version = "2.2.11"
 dependencies = [
  "anyhow",
  "clap",
@@ -484,7 +484,7 @@ dependencies = [
 
 [[package]]
 name = "codex-cli"
-version = "2.2.10"
+version = "2.2.11"
 dependencies = [
  "anyhow",
  "base64",
@@ -835,7 +835,7 @@ dependencies = [
 
 [[package]]
 name = "fzf-cli"
-version = "2.2.10"
+version = "2.2.11"
 dependencies = [
  "anyhow",
  "nils-common",
@@ -897,7 +897,7 @@ dependencies = [
 
 [[package]]
 name = "git-cli"
-version = "2.2.10"
+version = "2.2.11"
 dependencies = [
  "anyhow",
  "nils-common",
@@ -911,7 +911,7 @@ dependencies = [
 
 [[package]]
 name = "git-lock"
-version = "2.2.10"
+version = "2.2.11"
 dependencies = [
  "anyhow",
  "chrono",
@@ -925,7 +925,7 @@ dependencies = [
 
 [[package]]
 name = "git-scope"
-version = "2.2.10"
+version = "2.2.11"
 dependencies = [
  "anyhow",
  "clap",
@@ -937,7 +937,7 @@ dependencies = [
 
 [[package]]
 name = "git-summary"
-version = "2.2.10"
+version = "2.2.11"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1236,7 +1236,7 @@ dependencies = [
 
 [[package]]
 name = "image-processing"
-version = "2.2.10"
+version = "2.2.11"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1467,7 +1467,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "macos-agent"
-version = "2.2.10"
+version = "2.2.11"
 dependencies = [
  "clap",
  "image",
@@ -1553,7 +1553,7 @@ dependencies = [
 
 [[package]]
 name = "nils-common"
-version = "2.2.10"
+version = "2.2.11"
 dependencies = [
  "nils-test-support",
  "pretty_assertions",
@@ -1562,7 +1562,7 @@ dependencies = [
 
 [[package]]
 name = "nils-term"
-version = "2.2.10"
+version = "2.2.11"
 dependencies = [
  "indicatif",
  "pretty_assertions",
@@ -1570,7 +1570,7 @@ dependencies = [
 
 [[package]]
 name = "nils-test-support"
-version = "2.2.10"
+version = "2.2.11"
 dependencies = [
  "pretty_assertions",
  "serde",
@@ -1959,7 +1959,7 @@ dependencies = [
 
 [[package]]
 name = "plan-tooling"
-version = "2.2.10"
+version = "2.2.11"
 dependencies = [
  "anyhow",
  "nils-common",
@@ -2387,7 +2387,7 @@ dependencies = [
 
 [[package]]
 name = "screen-record"
-version = "2.2.10"
+version = "2.2.11"
 dependencies = [
  "block2",
  "chrono",
@@ -2419,7 +2419,7 @@ checksum = "b12e76d157a900eb52e81bc6e9f3069344290341720e9178cde2407113ac8d89"
 
 [[package]]
 name = "semantic-commit"
-version = "2.2.10"
+version = "2.2.11"
 dependencies = [
  "anyhow",
  "nils-common",
