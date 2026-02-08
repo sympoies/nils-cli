@@ -203,13 +203,7 @@ fn render_tree(files: &[String], no_color: bool) -> Result<()> {
         .stdout(std::process::Stdio::piped());
 
     let mut child = cmd.spawn()?;
-    {
-        let stdin = child.stdin.as_mut().expect("tree stdin");
-        use std::io::Write;
-        for line in tree_input {
-            writeln!(stdin, "{line}")?;
-        }
-    }
+    write_tree_input(child.stdin.take(), &tree_input)?;
 
     let output = child.wait_with_output()?;
     let mut text = String::from_utf8_lossy(&output.stdout).to_string();
@@ -217,6 +211,14 @@ fn render_tree(files: &[String], no_color: bool) -> Result<()> {
         text = strip_ansi(&text);
     }
     print!("{text}");
+    Ok(())
+}
+
+fn write_tree_input<W: std::io::Write>(stdin: Option<W>, tree_input: &[String]) -> Result<()> {
+    let mut stdin = stdin.ok_or_else(|| anyhow::anyhow!("tree stdin unavailable"))?;
+    for line in tree_input {
+        writeln!(stdin, "{line}")?;
+    }
     Ok(())
 }
 
@@ -255,7 +257,10 @@ fn strip_ansi(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{color_reset_for_commit, expand_tree_paths, kind_color_for_commit, strip_ansi};
+    use super::{
+        color_reset_for_commit, expand_tree_paths, kind_color_for_commit, strip_ansi,
+        write_tree_input,
+    };
 
     #[test]
     fn no_color_mode_returns_empty_color_sequences() {
@@ -277,6 +282,24 @@ mod tests {
     fn strip_ansi_removes_m_terminated_sequences() {
         let input = "\x1b[31mred\x1b[0m plain \x1b[38;5;110mblue\x1b[0m";
         assert_eq!(strip_ansi(input), "red plain blue");
+    }
+
+    #[test]
+    fn write_tree_input_errors_when_stdin_is_missing() {
+        let tree_input = vec!["src/main.rs".to_string()];
+        let err = write_tree_input::<Vec<u8>>(None, &tree_input).expect_err("missing stdin");
+        assert_eq!(err.to_string(), "tree stdin unavailable");
+    }
+
+    #[test]
+    fn write_tree_input_uses_newline_delimited_paths() {
+        let tree_input = vec!["src/main.rs".to_string(), "src/lib.rs".to_string()];
+        let mut sink = Vec::new();
+        write_tree_input(Some(&mut sink), &tree_input).expect("write tree input");
+        assert_eq!(
+            String::from_utf8(sink).expect("utf8"),
+            "src/main.rs\nsrc/lib.rs\n"
+        );
     }
 
     #[test]
