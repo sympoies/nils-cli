@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::cli::{ImageFormat, ListWindowsArgs};
 use crate::error::CliError;
 use crate::model::{AppRow, WindowRow};
 use crate::screen_record_adapter::{
-    self, AppInfo, ScreenshotFormat, ShareableContent, WindowInfo, WindowSelection,
+    self, AppInfo, ImageCropRegion, ScreenshotFormat, ShareableContent, WindowInfo, WindowSelection,
 };
 use crate::test_mode;
 
@@ -115,6 +115,15 @@ pub fn app_active_by_bundle_id(bundle_id: &str) -> Result<bool, CliError> {
     }
 }
 
+pub fn app_name_for_bundle_id(bundle_id: &str) -> Result<Option<String>, CliError> {
+    let content = fetch_shareable_content()?;
+    Ok(content
+        .apps
+        .iter()
+        .find(|app| app.bundle_id.eq_ignore_ascii_case(bundle_id))
+        .map(|app| app.name.clone()))
+}
+
 pub fn capture_screenshot(
     path: &Path,
     window: &WindowInfo,
@@ -135,6 +144,32 @@ pub fn capture_screenshot(
     screen_record_adapter::capture_window_screenshot_macos(window, path, format)
 }
 
+pub fn capture_screenshot_region(
+    path: &Path,
+    window: &WindowInfo,
+    format: ImageFormat,
+    region: &crate::model::AxFrame,
+) -> Result<(), CliError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| {
+            CliError::runtime(format!("failed to create output directory: {err}"))
+        })?;
+    }
+
+    if test_mode::enabled() {
+        return screen_record_adapter::test_screenshot_fixture(path, to_screenshot_format(format));
+    }
+
+    let crop_region = crop_region_for_window(window, region)?;
+    let mut full_path = PathBuf::from(path);
+    full_path.set_extension("full.png");
+
+    capture_screenshot(&full_path, window, format)?;
+    let result = screen_record_adapter::crop_image(&full_path, path, crop_region);
+    let _ = std::fs::remove_file(&full_path);
+    result
+}
+
 pub fn extension_format(path: &Path) -> Option<ImageFormat> {
     let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
     match ext.as_str() {
@@ -151,6 +186,40 @@ fn to_screenshot_format(format: ImageFormat) -> ScreenshotFormat {
         ImageFormat::Jpg => ScreenshotFormat::Jpg,
         ImageFormat::Webp => ScreenshotFormat::Webp,
     }
+}
+
+fn crop_region_for_window(
+    window: &WindowInfo,
+    region: &crate::model::AxFrame,
+) -> Result<ImageCropRegion, CliError> {
+    let window_left = window.bounds.x as f64;
+    let window_top = window.bounds.y as f64;
+    let window_right = window_left + (window.bounds.width.max(1) as f64);
+    let window_bottom = window_top + (window.bounds.height.max(1) as f64);
+
+    let left = region.x.max(window_left).min(window_right);
+    let top = region.y.max(window_top).min(window_bottom);
+    let right = (region.x + region.width).max(window_left).min(window_right);
+    let bottom = (region.y + region.height)
+        .max(window_top)
+        .min(window_bottom);
+
+    if right <= left || bottom <= top {
+        return Err(CliError::runtime(
+            "selector frame is outside the target window bounds",
+        ));
+    }
+
+    let x = (left - window_left).floor().max(0.0) as u32;
+    let y = (top - window_top).floor().max(0.0) as u32;
+    let width = (right - left).ceil().max(1.0) as u32;
+    let height = (bottom - top).ceil().max(1.0) as u32;
+    Ok(ImageCropRegion {
+        x,
+        y,
+        width,
+        height,
+    })
 }
 
 fn fetch_shareable_content() -> Result<ShareableContent, CliError> {
@@ -175,8 +244,9 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        app_active_by_bundle_id, capture_screenshot, extension_format, list_apps, list_windows,
-        resolve_window, window_present, TargetSelector,
+        app_active_by_bundle_id, app_name_for_bundle_id, capture_screenshot,
+        capture_screenshot_region, extension_format, list_apps, list_windows, resolve_window,
+        window_present, TargetSelector,
     };
     use crate::cli::{ImageFormat, ListWindowsArgs};
 
@@ -272,6 +342,14 @@ mod tests {
 
         assert!(app_active_by_bundle_id("com.apple.Terminal").expect("bundle exists"));
         assert!(!app_active_by_bundle_id("com.example.missing").expect("bundle missing"));
+        assert_eq!(
+            app_name_for_bundle_id("com.apple.Terminal").expect("bundle name"),
+            Some("Terminal".to_string())
+        );
+        assert_eq!(
+            app_name_for_bundle_id("com.example.missing").expect("missing bundle name"),
+            None
+        );
     }
 
     #[test]
@@ -289,6 +367,35 @@ mod tests {
         let path = temp.path().join("capture.png");
         capture_screenshot(&path, &target, ImageFormat::Png).expect("capture screenshot");
         assert!(path.is_file(), "screenshot file should exist");
+        assert!(std::fs::metadata(&path).expect("metadata").len() > 0);
+    }
+
+    #[test]
+    fn capture_screenshot_region_crops_fixture_in_test_mode() {
+        let lock = GlobalStateLock::new();
+        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+
+        let target = resolve_window(&TargetSelector {
+            window_id: Some(100),
+            ..TargetSelector::default()
+        })
+        .expect("resolve target");
+
+        let temp = TempDir::new().expect("tempdir");
+        let path = temp.path().join("capture-region.png");
+        capture_screenshot_region(
+            &path,
+            &target,
+            ImageFormat::Png,
+            &crate::model::AxFrame {
+                x: target.bounds.x as f64 + 10.0,
+                y: target.bounds.y as f64 + 12.0,
+                width: 30.0,
+                height: 24.0,
+            },
+        )
+        .expect("capture screenshot region");
+        assert!(path.is_file(), "region screenshot file should exist");
         assert!(std::fs::metadata(&path).expect("metadata").len() > 0);
     }
 

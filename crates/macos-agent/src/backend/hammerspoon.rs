@@ -2130,16 +2130,11 @@ mod tests {
             target: crate::model::AxTarget::default(),
             selector: crate::model::AxSelector {
                 node_id: Some("1.1".to_string()),
-                role: None,
-                title_contains: None,
-                identifier_contains: None,
-                value_contains: None,
-                subrole: None,
-                focused: None,
-                enabled: None,
-                nth: None,
+                ..crate::model::AxSelector::default()
             },
             allow_coordinate_fallback: false,
+            reselect_before_click: false,
+            fallback_order: Vec::new(),
         };
 
         let result = super::HammerspoonAxBackend
@@ -2168,6 +2163,8 @@ mod tests {
                     target: AxTarget::default(),
                     selector: node_selector(),
                     allow_coordinate_fallback: false,
+                    reselect_before_click: false,
+                    fallback_order: Vec::new(),
                 },
                 1000,
             )
@@ -2310,6 +2307,8 @@ mod tests {
                     target: AxTarget::default(),
                     selector: AxSelector::default(),
                     allow_coordinate_fallback: false,
+                    reselect_before_click: false,
+                    fallback_order: Vec::new(),
                 },
                 1000,
             )

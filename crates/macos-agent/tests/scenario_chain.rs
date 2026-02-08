@@ -323,3 +323,83 @@ fn scenario_steps_report_ax_native_path_when_fallback_not_used() {
     assert_eq!(typ["ax_path"], serde_json::json!("ax-native"));
     assert_eq!(typ["fallback_used"], serde_json::json!(false));
 }
+
+#[test]
+fn scenario_ax_step_supports_gate_and_postcondition_flags() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let scenario_path = cwd.path().join("scenario-ax-gate-post.json");
+    let scenario_json = serde_json::json!({
+        "steps": [
+            {
+                "id": "ax-click-gated",
+                "args": [
+                    "--format", "json",
+                    "ax", "click",
+                    "--app", "Terminal",
+                    "--node-id", "1.1",
+                    "--gate-app-active",
+                    "--gate-window-present",
+                    "--gate-ax-present",
+                    "--gate-ax-unique",
+                    "--postcondition-focused", "false",
+                    "--postcondition-attribute", "AXRole",
+                    "--postcondition-attribute-value", "AXButton"
+                ]
+            }
+        ]
+    });
+    std::fs::write(
+        &scenario_path,
+        serde_json::to_vec_pretty(&scenario_json).expect("scenario json bytes"),
+    )
+    .expect("write scenario");
+
+    let options = harness
+        .cmd_options(cwd.path())
+        .with_env(
+            "CODEX_MACOS_AGENT_AX_LIST_JSON",
+            r#"{"nodes":[{"node_id":"1.1","role":"AXButton","title":"Run","identifier":"run-btn","enabled":true,"focused":false,"actions":["AXPress"],"path":["1","1"]}],"warnings":[]}"#,
+        )
+        .with_env(
+            "CODEX_MACOS_AGENT_AX_CLICK_JSON",
+            r#"{"node_id":"1.1","matched_count":1,"action":"ax-press","used_coordinate_fallback":false}"#,
+        )
+        .with_env(
+            "CODEX_MACOS_AGENT_AX_ATTR_GET_JSON",
+            r#"{"node_id":"1.1","matched_count":1,"name":"AXRole","value":"AXButton"}"#,
+        );
+
+    let out = harness.run_with_options(
+        cwd.path(),
+        &[
+            "--format",
+            "json",
+            "scenario",
+            "run",
+            "--file",
+            scenario_path.to_str().expect("scenario path"),
+        ],
+        options,
+    );
+
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr_text());
+    let payload: serde_json::Value =
+        serde_json::from_str(&out.stdout_text()).expect("scenario json");
+    assert_eq!(payload["result"]["passed_steps"], serde_json::json!(1));
+    let step = payload["result"]["steps"][0].clone();
+    assert_eq!(step["operation"], serde_json::json!("ax.click"));
+    assert_eq!(step["ax_path"], serde_json::json!("ax-native"));
+
+    let step_stdout = step["stdout"].as_str().expect("step stdout");
+    let step_payload: serde_json::Value =
+        serde_json::from_str(step_stdout).expect("step stdout json");
+    assert_eq!(
+        step_payload["result"]["gates"]["checks"][0]["gate"],
+        serde_json::json!("app-active")
+    );
+    assert_eq!(
+        step_payload["result"]["postconditions"]["checks"][1]["attribute"],
+        serde_json::json!("AXRole")
+    );
+}

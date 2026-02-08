@@ -319,7 +319,7 @@ fn ax_commands_can_force_hammerspoon_backend_for_list_click_type() {
         .with_env("CODEX_MACOS_AGENT_AX_BACKEND", "hammerspoon")
         .with_env(
             "CODEX_MACOS_AGENT_AX_LIST_JSON",
-            r#"{"nodes":[{"node_id":"1.1","role":"AXButton","title":"Run","identifier":"run-btn","enabled":true,"focused":false,"actions":["AXPress"],"path":["1","1"]}],"warnings":[]}"#,
+            r#"{"nodes":[{"node_id":"1.1","role":"AXButton","title":"Run","identifier":"run-btn","enabled":true,"focused":false,"actions":["AXPress"],"path":["1","1"]},{"node_id":"1.2","role":"AXTextField","title":"Search","identifier":"search-field","enabled":true,"focused":true,"actions":["AXSetValue"],"path":["1","2"]}],"warnings":[]}"#,
         )
         .with_env(
             "CODEX_MACOS_AGENT_AX_CLICK_JSON",
@@ -383,4 +383,166 @@ fn ax_commands_can_force_hammerspoon_backend_for_list_click_type() {
         serde_json::from_str(&type_out.stdout_text()).expect("stdout json");
     assert_eq!(type_payload["command"], json!("ax.type"));
     assert_eq!(type_payload["result"]["submitted"], json!(true));
+}
+
+#[test]
+fn ax_click_gate_and_postcondition_metadata_are_emitted_in_json() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let options = harness
+        .cmd_options(cwd.path())
+        .with_env(
+            "CODEX_MACOS_AGENT_AX_LIST_JSON",
+            r#"{"nodes":[{"node_id":"1.1","role":"AXButton","title":"Run","identifier":"run-btn","enabled":true,"focused":false,"actions":["AXPress"],"path":["1","1"]}],"warnings":[]}"#,
+        )
+        .with_env(
+            "CODEX_MACOS_AGENT_AX_CLICK_JSON",
+            r#"{"node_id":"1.1","matched_count":1,"action":"ax-press","used_coordinate_fallback":false}"#,
+        )
+        .with_env(
+            "CODEX_MACOS_AGENT_AX_ATTR_GET_JSON",
+            r#"{"node_id":"1.1","matched_count":1,"name":"AXRole","value":"AXButton"}"#,
+        );
+
+    let out = harness.run_with_options(
+        cwd.path(),
+        &[
+            "--format",
+            "json",
+            "ax",
+            "click",
+            "--app",
+            "Terminal",
+            "--node-id",
+            "1.1",
+            "--gate-app-active",
+            "--gate-window-present",
+            "--gate-ax-present",
+            "--gate-ax-unique",
+            "--postcondition-focused",
+            "false",
+            "--postcondition-attribute",
+            "AXRole",
+            "--postcondition-attribute-value",
+            "AXButton",
+            "--postcondition-timeout-ms",
+            "50",
+            "--postcondition-poll-ms",
+            "5",
+        ],
+        options,
+    );
+
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr_text());
+    let payload: serde_json::Value = serde_json::from_str(&out.stdout_text()).expect("stdout json");
+    assert_eq!(payload["command"], json!("ax.click"));
+    assert_eq!(
+        payload["result"]["gates"]["checks"][0]["gate"],
+        json!("app-active")
+    );
+    assert_eq!(
+        payload["result"]["gates"]["checks"][1]["gate"],
+        json!("window-present")
+    );
+    assert_eq!(
+        payload["result"]["gates"]["checks"][2]["gate"],
+        json!("ax-present")
+    );
+    assert_eq!(
+        payload["result"]["gates"]["checks"][3]["gate"],
+        json!("ax-unique")
+    );
+    assert_eq!(
+        payload["result"]["postconditions"]["checks"][0]["check"],
+        json!("focused=false")
+    );
+    assert_eq!(
+        payload["result"]["postconditions"]["checks"][1]["attribute"],
+        json!("AXRole")
+    );
+}
+
+#[test]
+fn ax_type_postcondition_mismatch_has_distinct_operation() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let options = harness
+        .cmd_options(cwd.path())
+        .with_env(
+            "CODEX_MACOS_AGENT_AX_LIST_JSON",
+            r#"{"nodes":[{"node_id":"1.2","role":"AXTextField","title":"Search","identifier":"search-field","enabled":true,"focused":false,"actions":["AXSetValue"],"path":["1","2"]}],"warnings":[]}"#,
+        )
+        .with_env(
+            "CODEX_MACOS_AGENT_AX_TYPE_JSON",
+            r#"{"node_id":"1.2","matched_count":1,"applied_via":"ax-set-value","text_length":4,"submitted":false,"used_keyboard_fallback":false}"#,
+        );
+
+    let out = harness.run_with_options(
+        cwd.path(),
+        &[
+            "--error-format",
+            "json",
+            "ax",
+            "type",
+            "--node-id",
+            "1.2",
+            "--text",
+            "test",
+            "--postcondition-focused",
+            "true",
+            "--postcondition-timeout-ms",
+            "20",
+            "--postcondition-poll-ms",
+            "5",
+        ],
+        options,
+    );
+
+    assert_eq!(out.code, 1);
+    let payload: serde_json::Value = serde_json::from_str(&out.stderr_text()).expect("stderr json");
+    assert_eq!(
+        payload["error"]["operation"],
+        json!("ax.type.postcondition")
+    );
+    assert!(payload["error"]["message"]
+        .as_str()
+        .unwrap_or("")
+        .contains("postcondition mismatch"));
+}
+
+#[test]
+fn ax_click_gate_timeout_reports_actionable_gate_operation() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+
+    let out = harness.run(
+        cwd.path(),
+        &[
+            "--error-format",
+            "json",
+            "ax",
+            "click",
+            "--app",
+            "MissingApp",
+            "--node-id",
+            "1.1",
+            "--gate-window-present",
+            "--gate-timeout-ms",
+            "20",
+            "--gate-poll-ms",
+            "5",
+        ],
+    );
+
+    assert_eq!(out.code, 1);
+    let payload: serde_json::Value =
+        serde_json::from_str(&out.stderr_text()).expect("stderr should be json");
+    assert_eq!(
+        payload["error"]["operation"],
+        json!("ax.click.gate.window-present")
+    );
+    assert!(payload["error"]["message"]
+        .as_str()
+        .unwrap_or("")
+        .contains("pre-action gate"));
 }

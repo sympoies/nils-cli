@@ -488,6 +488,78 @@ fn trace_command_labels_include_ax_commands() {
     assert!(commands.iter().any(|command| command == "ax.type"));
 }
 
+#[test]
+fn debug_bundle_emits_artifact_index_and_partial_failure_entries() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let bundle_dir = cwd.path().join("debug-bundle");
+
+    let out = harness.run(
+        cwd.path(),
+        &[
+            "--format",
+            "json",
+            "debug",
+            "bundle",
+            "--window-id",
+            "999",
+            "--output-dir",
+            bundle_dir.to_str().expect("bundle dir"),
+        ],
+    );
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr_text());
+    assert_eq!(out.stderr_text(), "");
+
+    let payload: serde_json::Value =
+        serde_json::from_str(&out.stdout_text()).expect("stdout should be json");
+    assert_eq!(payload["command"], serde_json::json!("debug.bundle"));
+    assert_eq!(
+        payload["result"]["partial_failure"],
+        serde_json::json!(true)
+    );
+
+    let artifacts = payload["result"]["artifacts"]
+        .as_array()
+        .expect("artifacts should be array");
+    let ids = artifacts
+        .iter()
+        .map(|entry| entry["id"].as_str().unwrap_or_default().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ids,
+        vec![
+            "target-window".to_string(),
+            "windows-list".to_string(),
+            "active-window-screenshot".to_string(),
+            "ax-links".to_string(),
+            "ax-buttons".to_string(),
+            "ax-textfields".to_string(),
+            "ax-focused".to_string(),
+        ]
+    );
+    assert!(
+        artifacts
+            .iter()
+            .any(|entry| entry["ok"] == serde_json::json!(false)),
+        "expected at least one partial-failure artifact entry"
+    );
+
+    let index_path = payload["result"]["artifact_index_path"]
+        .as_str()
+        .expect("artifact index path should be string");
+    let index_raw = std::fs::read_to_string(index_path).expect("read artifact-index.json");
+    let index_payload: serde_json::Value =
+        serde_json::from_str(&index_raw).expect("artifact index json");
+    assert_eq!(
+        index_payload["artifacts"][0]["id"],
+        serde_json::json!("target-window")
+    );
+    assert_eq!(
+        index_payload["artifacts"][6]["id"],
+        serde_json::json!("ax-focused")
+    );
+}
+
 fn assert_action_envelope_contract(payload: &serde_json::Value, expected_command: &str) {
     assert_eq!(payload["schema_version"], serde_json::json!(1));
     assert_eq!(payload["ok"], serde_json::json!(true));

@@ -583,6 +583,8 @@ mod tests {
                     target: AxTarget::default(),
                     selector: node_selector(),
                     allow_coordinate_fallback: false,
+                    reselect_before_click: false,
+                    fallback_order: Vec::new(),
                 },
                 1000,
             )
