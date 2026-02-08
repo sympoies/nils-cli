@@ -103,3 +103,26 @@ fn diag_capabilities_unknown_provider_exits_usage() {
     assert_eq!(output.code, 64);
     assert!(output.stderr_text().contains("unknown provider"));
 }
+
+#[test]
+fn diag_capabilities_text_output_includes_provider_and_automation_sections() {
+    let lock = GlobalStateLock::new();
+    let stub = StubBinDir::new();
+    install_stub_tools(&stub);
+    let auth_file = stub.path().join("auth.json");
+    std::fs::write(&auth_file, "{}").expect("write auth file");
+    let auth_file_str = auth_file.to_string_lossy().to_string();
+
+    let _path = prepend_path(&lock, stub.path());
+    let _dangerous = EnvGuard::set(&lock, "CODEX_ALLOW_DANGEROUS_ENABLED", "true");
+    let _auth_file = EnvGuard::set(&lock, "CODEX_AUTH_FILE", &auth_file_str);
+    let _macos_test_mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+    let _screen_record_test_mode = EnvGuard::set(&lock, "CODEX_SCREEN_RECORD_TEST_MODE", "1");
+
+    let output = run(&["diag", "capabilities", "--format", "text"]);
+    assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
+    let stdout = output.stdout_text();
+    assert!(stdout.contains("probe_mode: test"));
+    assert!(stdout.contains("providers:"));
+    assert!(stdout.contains("automation_tools:"));
+}

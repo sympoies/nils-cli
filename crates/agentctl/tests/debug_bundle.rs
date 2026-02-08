@@ -206,3 +206,71 @@ fn debug_bundle_artifact_layout_is_deterministic_under_output_dir() {
         output_dir
     );
 }
+
+#[test]
+fn debug_bundle_reports_spawn_failures_when_tool_launch_itself_fails() {
+    let lock = GlobalStateLock::new();
+    let stub = StubBinDir::new();
+    stub.write_exe(
+        "macos-agent",
+        "#!/bin/sh\necho '{\"ok\":true,\"command\":\"preflight\"}'\n",
+    );
+    stub.write_exe("screen-record", "#!/bin/sh\necho 'preflight ok'\n");
+    // Intentionally do not install image-processing and restrict PATH to stubs only.
+    let repo = git::init_repo_with(
+        InitRepoOptions::new()
+            .with_branch("main")
+            .with_initial_commit(),
+    );
+
+    let path_only_stub = stub.path().to_string_lossy().to_string();
+    let _path = EnvGuard::set(&lock, "PATH", &path_only_stub);
+    let _cwd = CwdGuard::set(&lock, repo.path()).expect("set cwd");
+    let output_dir = repo.path().join("bundle-spawn-failure");
+
+    let manifest = debug::bundle::collect_bundle(&output_dir).expect("collect debug bundle");
+    assert!(manifest.partial_failure);
+
+    let image_processing = manifest
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.id == debug::sources::image_processing::ARTIFACT_ID)
+        .expect("image processing artifact should exist");
+    assert_eq!(image_processing.status, ArtifactStatus::Failed);
+    assert!(image_processing
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("failed to launch `image-processing`"));
+}
+
+#[test]
+fn debug_bundle_run_supports_text_and_json_output_formats() {
+    let lock = GlobalStateLock::new();
+    let stub = StubBinDir::new();
+    install_success_stubs(&stub);
+    let repo = git::init_repo_with(
+        InitRepoOptions::new()
+            .with_branch("main")
+            .with_initial_commit(),
+    );
+
+    let _path = prepend_path(&lock, stub.path());
+    let _cwd = CwdGuard::set(&lock, repo.path()).expect("set cwd");
+
+    let text_output_dir = repo.path().join("bundle-run-text");
+    let text_exit = debug::bundle::run(debug::bundle::BundleArgs {
+        output_dir: Some(text_output_dir.clone()),
+        format: debug::bundle::BundleOutputFormat::Text,
+    });
+    assert_eq!(text_exit, 0);
+    assert!(text_output_dir.join(BUNDLE_MANIFEST_FILE_NAME).is_file());
+
+    let json_output_dir = repo.path().join("bundle-run-json");
+    let json_exit = debug::bundle::run(debug::bundle::BundleArgs {
+        output_dir: Some(json_output_dir.clone()),
+        format: debug::bundle::BundleOutputFormat::Json,
+    });
+    assert_eq!(json_exit, 0);
+    assert!(json_output_dir.join(BUNDLE_MANIFEST_FILE_NAME).is_file());
+}

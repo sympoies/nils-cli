@@ -1,5 +1,6 @@
 use nils_test_support::bin;
 use nils_test_support::cmd::{self, CmdOptions, CmdOutput};
+use nils_test_support::{EnvGuard, GlobalStateLock};
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -88,4 +89,41 @@ fn provider_list_unknown_override_exits_usage() {
 
     assert_eq!(output.code, 64);
     assert!(output.stderr_text().contains("unknown provider"));
+}
+
+#[test]
+fn provider_list_text_respects_environment_override_and_prints_maturity() {
+    let lock = GlobalStateLock::new();
+    let _provider = EnvGuard::set(&lock, "AGENTCTL_PROVIDER", "claude");
+
+    let output = run_with(&["provider", "list"], CmdOptions::default());
+    assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
+    let stdout = output.stdout_text();
+    assert!(stdout.contains("selected_provider: claude (environment)"));
+    assert!(stdout.contains("maturity: stub"));
+}
+
+#[test]
+fn provider_healthcheck_text_reports_selected_source_and_status() {
+    let output = run_with(
+        &["provider", "healthcheck", "--provider", "gemini"],
+        CmdOptions::default().with_env_remove("AGENTCTL_PROVIDER"),
+    );
+    assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
+    let stdout = output.stdout_text();
+    assert!(stdout.contains("provider: gemini"));
+    assert!(stdout.contains("selected_source: cli-argument"));
+    assert!(stdout.contains("status: degraded"));
+}
+
+#[test]
+fn provider_healthcheck_unknown_override_exits_usage() {
+    let output = run_with(
+        &["provider", "healthcheck", "--provider", "missing"],
+        CmdOptions::default().with_env_remove("AGENTCTL_PROVIDER"),
+    );
+
+    assert_eq!(output.code, 64);
+    assert!(output.stderr_text().contains("unknown provider"));
+    assert!(output.stderr_text().contains("available providers:"));
 }

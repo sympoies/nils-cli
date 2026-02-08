@@ -1,4 +1,6 @@
-use agentctl::workflow::run::{execute_workflow_document, load_workflow_file, StepStatus};
+use agentctl::workflow::run::{
+    execute_workflow_document, load_workflow_file, run, RunArgs, RunOutputFormat, StepStatus,
+};
 use agentctl::workflow::schema::{
     AutomationStep, AutomationTool, ProviderStep, RetryPolicy, WorkflowDocument, WorkflowOnError,
     WorkflowStep, WORKFLOW_SCHEMA_VERSION,
@@ -187,4 +189,200 @@ fn workflow_run_step_ledger_includes_stdout_stderr_exit_code_and_elapsed_ms() {
     }
     assert!(automation_step.elapsed_ms <= report.summary.elapsed_ms);
     std::hint::black_box(&env_guards);
+}
+
+#[test]
+fn workflow_run_load_workflow_file_reports_read_parse_and_schema_errors() {
+    let dir = StubBinDir::new();
+    let missing = dir.path().join("missing.json");
+    let missing_err = load_workflow_file(missing.as_path()).expect_err("missing should error");
+    assert!(
+        missing_err
+            .to_string()
+            .contains("failed to read workflow file"),
+        "error={missing_err}"
+    );
+
+    let parse_path = dir.path().join("invalid.json");
+    std::fs::write(&parse_path, "{ invalid json").expect("write invalid json");
+    let parse_err = load_workflow_file(parse_path.as_path()).expect_err("parse should error");
+    assert!(
+        parse_err
+            .to_string()
+            .contains("failed to parse workflow file"),
+        "error={parse_err}"
+    );
+
+    let schema_path = dir.path().join("schema.json");
+    std::fs::write(
+        &schema_path,
+        r#"{"schema_version":"agentctl.workflow.v1","name":"bad","on_error":"fail-fast","steps":[]}"#,
+    )
+    .expect("write schema json");
+    let schema_err = load_workflow_file(schema_path.as_path()).expect_err("schema should error");
+    assert!(
+        schema_err
+            .to_string()
+            .contains("workflow must define at least one step"),
+        "error={schema_err}"
+    );
+}
+
+#[test]
+fn workflow_run_provider_step_surfaces_missing_codex_binary_error() {
+    let lock = GlobalStateLock::new();
+    let _path = EnvGuard::set(&lock, "PATH", "/usr/bin:/bin");
+    let _dangerous = EnvGuard::set(&lock, "CODEX_ALLOW_DANGEROUS_ENABLED", "true");
+    let _auth_file = EnvGuard::remove(&lock, "CODEX_AUTH_FILE");
+
+    let workflow = WorkflowDocument {
+        schema_version: WORKFLOW_SCHEMA_VERSION.to_string(),
+        name: Some("provider-missing-binary".to_string()),
+        on_error: WorkflowOnError::FailFast,
+        steps: vec![WorkflowStep::Provider(ProviderStep {
+            id: "provider-step".to_string(),
+            provider: Some("codex".to_string()),
+            task: "ping".to_string(),
+            input: Some("missing binary path".to_string()),
+            timeout_ms: Some(5000),
+            retry: RetryPolicy::default(),
+        })],
+    };
+
+    let report = execute_workflow_document(&workflow);
+    assert_eq!(report.summary.failed_steps, 1);
+    assert_eq!(report.ledger.len(), 1);
+    let step = &report.ledger[0];
+    assert_eq!(step.status, StepStatus::Failed);
+    assert!(step
+        .stderr
+        .contains("codex binary is not available on PATH"));
+}
+
+#[test]
+fn workflow_run_automation_step_times_out_with_exit_code_124() {
+    let lock = GlobalStateLock::new();
+    let stub = StubBinDir::new();
+    stub.write_exe("fzf-cli", "#!/bin/sh\nsleep 1\n");
+    let path_only_stub = stub.path().to_string_lossy().to_string();
+    let _path = EnvGuard::set(&lock, "PATH", &path_only_stub);
+    let codex_home = stub.path().join("codex-home");
+    std::fs::create_dir_all(&codex_home).expect("create codex home");
+    let codex_home_str = codex_home.to_string_lossy().to_string();
+    let _codex_home = EnvGuard::set(&lock, "CODEX_HOME", &codex_home_str);
+
+    let workflow = WorkflowDocument {
+        schema_version: WORKFLOW_SCHEMA_VERSION.to_string(),
+        name: Some("timeout-check".to_string()),
+        on_error: WorkflowOnError::FailFast,
+        steps: vec![WorkflowStep::Automation(AutomationStep {
+            id: "timeout-step".to_string(),
+            tool: AutomationTool::FzfCli,
+            args: vec!["help".to_string()],
+            timeout_ms: Some(10),
+            retry: RetryPolicy::default(),
+        })],
+    };
+
+    let report = execute_workflow_document(&workflow);
+    assert_eq!(report.summary.failed_steps, 1);
+    assert_eq!(report.ledger.len(), 1);
+    let step = &report.ledger[0];
+    assert_eq!(step.status, StepStatus::Failed);
+    assert_eq!(step.exit_code, 124);
+    assert!(step.stderr.contains("step timed out"));
+}
+
+#[test]
+fn workflow_run_appends_artifact_persist_errors_without_masking_success() {
+    let lock = GlobalStateLock::new();
+    let stub = StubBinDir::new();
+    stub.write_exe("fzf-cli", "#!/bin/sh\necho ok\n");
+    let path_only_stub = stub.path().to_string_lossy().to_string();
+    let _path = EnvGuard::set(&lock, "PATH", &path_only_stub);
+    let bad_codex_home = stub.path().join("codex-home-file");
+    std::fs::write(&bad_codex_home, "not a dir").expect("write codex home file");
+    let bad_codex_home_str = bad_codex_home.to_string_lossy().to_string();
+    let _codex_home = EnvGuard::set(&lock, "CODEX_HOME", &bad_codex_home_str);
+
+    let workflow = WorkflowDocument {
+        schema_version: WORKFLOW_SCHEMA_VERSION.to_string(),
+        name: Some("artifact-failure".to_string()),
+        on_error: WorkflowOnError::FailFast,
+        steps: vec![WorkflowStep::Automation(AutomationStep {
+            id: "artifact-step".to_string(),
+            tool: AutomationTool::FzfCli,
+            args: vec!["help".to_string()],
+            timeout_ms: Some(5000),
+            retry: RetryPolicy::default(),
+        })],
+    };
+
+    let report = execute_workflow_document(&workflow);
+    assert_eq!(report.summary.succeeded_steps, 1);
+    let step = &report.ledger[0];
+    assert_eq!(step.status, StepStatus::Succeeded);
+    assert!(step.artifact_paths.is_empty());
+    assert!(step.stderr.contains("failed to persist step artifacts"));
+}
+
+#[test]
+fn workflow_run_entrypoint_returns_expected_exit_codes_for_failure_and_success() {
+    let lock = GlobalStateLock::new();
+    let stub = StubBinDir::new();
+    stub.write_exe("fzf-cli", "#!/bin/sh\necho run-fzf\nexit 7\n");
+    stub.write_exe(
+        "image-processing",
+        "#!/bin/sh\necho image-processing-help\nexit 0\n",
+    );
+    let path_only_stub = stub.path().to_string_lossy().to_string();
+    let _path = EnvGuard::set(&lock, "PATH", &path_only_stub);
+    let codex_home = stub.path().join("codex-home");
+    std::fs::create_dir_all(&codex_home).expect("create codex home");
+    let codex_home_str = codex_home.to_string_lossy().to_string();
+    let _codex_home = EnvGuard::set(&lock, "CODEX_HOME", &codex_home_str);
+
+    let missing_exit = run(RunArgs {
+        file: stub.path().join("missing.json"),
+        format: RunOutputFormat::Json,
+    });
+    assert_eq!(missing_exit, 64);
+
+    let failing_path = stub.path().join("failing-workflow.json");
+    std::fs::write(
+        &failing_path,
+        r#"{
+  "schema_version":"agentctl.workflow.v1",
+  "name":"failing-run",
+  "on_error":"fail-fast",
+  "steps":[
+    {"type":"automation","id":"fzf-fail","tool":"fzf-cli","args":["help"],"timeout_ms":5000}
+  ]
+}"#,
+    )
+    .expect("write failing workflow");
+    let failing_exit = run(RunArgs {
+        file: failing_path,
+        format: RunOutputFormat::Text,
+    });
+    assert_eq!(failing_exit, 1);
+
+    let success_path = stub.path().join("success-workflow.json");
+    std::fs::write(
+        &success_path,
+        r#"{
+  "schema_version":"agentctl.workflow.v1",
+  "name":"success-run",
+  "on_error":"fail-fast",
+  "steps":[
+    {"type":"automation","id":"image-ok","tool":"image-processing","args":["info","--help"],"timeout_ms":5000}
+  ]
+}"#,
+    )
+    .expect("write success workflow");
+    let success_exit = run(RunArgs {
+        file: success_path,
+        format: RunOutputFormat::Text,
+    });
+    assert_eq!(success_exit, 0);
 }
