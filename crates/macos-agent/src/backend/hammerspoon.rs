@@ -2576,10 +2576,25 @@ fn output_preview(raw: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use nils_test_support::{EnvGuard, GlobalStateLock};
+    use serde_json::json;
 
-    use crate::backend::hammerspoon::{is_backend_unavailable_error, map_hs_failure};
+    use crate::backend::hammerspoon::{
+        is_backend_unavailable_error, map_hs_failure, output_preview, selector_is_empty,
+    };
     use crate::backend::process::ProcessFailure;
     use crate::backend::AxBackendAdapter;
+    use crate::model::{
+        AxActionPerformRequest, AxAttrGetRequest, AxAttrSetRequest, AxClickRequest, AxSelector,
+        AxSessionStartRequest, AxSessionStopRequest, AxTarget, AxTypeRequest, AxWatchPollRequest,
+        AxWatchStartRequest, AxWatchStopRequest,
+    };
+
+    fn node_selector() -> AxSelector {
+        AxSelector {
+            node_id: Some("1.1".to_string()),
+            ..AxSelector::default()
+        }
+    }
 
     #[test]
     fn message_port_error_is_marked_backend_unavailable() {
@@ -2627,5 +2642,347 @@ mod tests {
             .expect("click should parse test override");
         assert_eq!(result.node_id.as_deref(), Some("1.1"));
         assert_eq!(result.matched_count, 1);
+    }
+
+    #[test]
+    fn default_test_mode_fixtures_cover_all_hammerspoon_ax_operations() {
+        let lock = GlobalStateLock::new();
+        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let backend = super::HammerspoonAxBackend;
+        let runner = crate::backend::process::RealProcessRunner;
+
+        let list = backend
+            .list(&runner, &crate::model::AxListRequest::default(), 1000)
+            .expect("list default fixture");
+        assert!(list.nodes.is_empty());
+
+        let click = backend
+            .click(
+                &runner,
+                &AxClickRequest {
+                    target: AxTarget::default(),
+                    selector: node_selector(),
+                    allow_coordinate_fallback: false,
+                },
+                1000,
+            )
+            .expect("click default fixture");
+        assert_eq!(click.matched_count, 1);
+
+        let typ = backend
+            .type_text(
+                &runner,
+                &AxTypeRequest {
+                    target: AxTarget::default(),
+                    selector: node_selector(),
+                    text: "test".to_string(),
+                    clear_first: false,
+                    submit: false,
+                    paste: false,
+                    allow_keyboard_fallback: false,
+                },
+                1000,
+            )
+            .expect("type default fixture");
+        assert_eq!(typ.applied_via, "ax-set-value");
+
+        let attr_get = backend
+            .attr_get(
+                &runner,
+                &AxAttrGetRequest {
+                    target: AxTarget::default(),
+                    selector: node_selector(),
+                    name: "AXRole".to_string(),
+                },
+                1000,
+            )
+            .expect("attr get default fixture");
+        assert_eq!(attr_get.name, "AXRole");
+
+        let attr_set = backend
+            .attr_set(
+                &runner,
+                &AxAttrSetRequest {
+                    target: AxTarget::default(),
+                    selector: node_selector(),
+                    name: "AXValue".to_string(),
+                    value: json!("hello"),
+                },
+                1000,
+            )
+            .expect("attr set default fixture");
+        assert!(attr_set.applied);
+
+        let action = backend
+            .action_perform(
+                &runner,
+                &AxActionPerformRequest {
+                    target: AxTarget::default(),
+                    selector: node_selector(),
+                    name: "AXPress".to_string(),
+                },
+                1000,
+            )
+            .expect("action default fixture");
+        assert!(action.performed);
+
+        let session_start = backend
+            .session_start(
+                &runner,
+                &AxSessionStartRequest {
+                    target: AxTarget::default(),
+                    session_id: Some("axs-test".to_string()),
+                },
+                1000,
+            )
+            .expect("session start default fixture");
+        assert_eq!(session_start.session.session_id, "axs-test");
+
+        let session_list = backend
+            .session_list(&runner, 1000)
+            .expect("session list default fixture");
+        assert!(session_list.sessions.is_empty());
+
+        let session_stop = backend
+            .session_stop(
+                &runner,
+                &AxSessionStopRequest {
+                    session_id: "axs-test".to_string(),
+                },
+                1000,
+            )
+            .expect("session stop default fixture");
+        assert!(session_stop.removed);
+
+        let watch_start = backend
+            .watch_start(
+                &runner,
+                &AxWatchStartRequest {
+                    session_id: "axs-test".to_string(),
+                    events: vec!["AXTitleChanged".to_string()],
+                    max_buffer: 64,
+                    watch_id: Some("axw-test".to_string()),
+                },
+                1000,
+            )
+            .expect("watch start default fixture");
+        assert_eq!(watch_start.watch_id, "axw-test");
+
+        let watch_poll = backend
+            .watch_poll(
+                &runner,
+                &AxWatchPollRequest {
+                    watch_id: "axw-test".to_string(),
+                    limit: 10,
+                    drain: true,
+                },
+                1000,
+            )
+            .expect("watch poll default fixture");
+        assert!(watch_poll.running);
+
+        let watch_stop = backend
+            .watch_stop(
+                &runner,
+                &AxWatchStopRequest {
+                    watch_id: "axw-test".to_string(),
+                },
+                1000,
+            )
+            .expect("watch stop default fixture");
+        assert!(watch_stop.stopped);
+    }
+
+    #[test]
+    fn validation_errors_are_reported_for_empty_hammerspoon_inputs() {
+        let backend = super::HammerspoonAxBackend;
+        let runner = crate::backend::process::RealProcessRunner;
+
+        let click_err = backend
+            .click(
+                &runner,
+                &AxClickRequest {
+                    target: AxTarget::default(),
+                    selector: AxSelector::default(),
+                    allow_coordinate_fallback: false,
+                },
+                1000,
+            )
+            .expect_err("empty click selector should fail");
+        assert!(click_err.to_string().contains("selector is empty"));
+
+        let type_err = backend
+            .type_text(
+                &runner,
+                &AxTypeRequest {
+                    target: AxTarget::default(),
+                    selector: node_selector(),
+                    text: "   ".to_string(),
+                    clear_first: false,
+                    submit: false,
+                    paste: false,
+                    allow_keyboard_fallback: false,
+                },
+                1000,
+            )
+            .expect_err("empty text should fail");
+        assert!(type_err.to_string().contains("--text cannot be empty"));
+
+        let attr_get_err = backend
+            .attr_get(
+                &runner,
+                &AxAttrGetRequest {
+                    target: AxTarget::default(),
+                    selector: node_selector(),
+                    name: " ".to_string(),
+                },
+                1000,
+            )
+            .expect_err("empty attr get name should fail");
+        assert!(attr_get_err.to_string().contains("--name cannot be empty"));
+
+        let attr_set_err = backend
+            .attr_set(
+                &runner,
+                &AxAttrSetRequest {
+                    target: AxTarget::default(),
+                    selector: AxSelector::default(),
+                    name: "AXValue".to_string(),
+                    value: json!("hello"),
+                },
+                1000,
+            )
+            .expect_err("empty attr set selector should fail");
+        assert!(attr_set_err.to_string().contains("selector is empty"));
+
+        let action_err = backend
+            .action_perform(
+                &runner,
+                &AxActionPerformRequest {
+                    target: AxTarget::default(),
+                    selector: node_selector(),
+                    name: " ".to_string(),
+                },
+                1000,
+            )
+            .expect_err("empty action name should fail");
+        assert!(action_err.to_string().contains("--name cannot be empty"));
+
+        let session_stop_err = backend
+            .session_stop(
+                &runner,
+                &AxSessionStopRequest {
+                    session_id: " ".to_string(),
+                },
+                1000,
+            )
+            .expect_err("empty session id should fail");
+        assert!(session_stop_err
+            .to_string()
+            .contains("--session-id cannot be empty"));
+
+        let watch_start_err = backend
+            .watch_start(
+                &runner,
+                &AxWatchStartRequest {
+                    session_id: " ".to_string(),
+                    events: vec![],
+                    max_buffer: 10,
+                    watch_id: None,
+                },
+                1000,
+            )
+            .expect_err("empty watch session should fail");
+        assert!(watch_start_err
+            .to_string()
+            .contains("--session-id cannot be empty"));
+
+        let watch_poll_err = backend
+            .watch_poll(
+                &runner,
+                &AxWatchPollRequest {
+                    watch_id: " ".to_string(),
+                    limit: 10,
+                    drain: true,
+                },
+                1000,
+            )
+            .expect_err("empty watch id should fail");
+        assert!(watch_poll_err
+            .to_string()
+            .contains("--watch-id cannot be empty"));
+
+        let watch_stop_err = backend
+            .watch_stop(
+                &runner,
+                &AxWatchStopRequest {
+                    watch_id: " ".to_string(),
+                },
+                1000,
+            )
+            .expect_err("empty watch id should fail");
+        assert!(watch_stop_err
+            .to_string()
+            .contains("--watch-id cannot be empty"));
+    }
+
+    #[test]
+    fn invalid_override_json_reports_parse_hint() {
+        let lock = GlobalStateLock::new();
+        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _override = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_AX_ATTR_GET_JSON", "not-json");
+
+        let backend = super::HammerspoonAxBackend;
+        let runner = crate::backend::process::RealProcessRunner;
+        let err = backend
+            .attr_get(
+                &runner,
+                &AxAttrGetRequest {
+                    target: AxTarget::default(),
+                    selector: node_selector(),
+                    name: "AXRole".to_string(),
+                },
+                1000,
+            )
+            .expect_err("invalid json override should fail");
+        let rendered = err.to_string();
+        assert!(rendered.contains("output preview"));
+    }
+
+    #[test]
+    fn empty_override_value_falls_back_to_default_fixture() {
+        let lock = GlobalStateLock::new();
+        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _override = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_AX_SESSION_LIST_JSON", "   ");
+
+        let backend = super::HammerspoonAxBackend;
+        let runner = crate::backend::process::RealProcessRunner;
+        let result = backend
+            .session_list(&runner, 1000)
+            .expect("default fixture should be used");
+        assert!(result.sessions.is_empty());
+    }
+
+    #[test]
+    fn not_found_failure_is_marked_backend_unavailable() {
+        let error = map_hs_failure(
+            "ax.list",
+            ProcessFailure::NotFound {
+                program: "hs".to_string(),
+            },
+        );
+        assert!(is_backend_unavailable_error(&error));
+    }
+
+    #[test]
+    fn selector_and_preview_helpers_cover_expected_cases() {
+        assert!(selector_is_empty(&AxSelector::default()));
+        assert!(!selector_is_empty(&AxSelector {
+            title_contains: Some("Save".to_string()),
+            ..AxSelector::default()
+        }));
+
+        let preview = output_preview("abcdefghijklmnopqrstuvwxyz", 8);
+        assert_eq!(preview, "abcdefgh...");
     }
 }

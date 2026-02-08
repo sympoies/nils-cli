@@ -393,8 +393,24 @@ impl AxBackendAdapter for AutoAxBackend {
 mod tests {
     use nils_test_support::{EnvGuard, GlobalStateLock};
     use pretty_assertions::assert_eq;
+    use serde_json::json;
 
-    use crate::backend::AxBackendPreference;
+    use crate::backend::process::RealProcessRunner;
+    use crate::backend::{
+        AppleScriptAxBackend, AutoAxBackend, AxBackendAdapter, AxBackendPreference,
+    };
+    use crate::model::{
+        AxActionPerformRequest, AxAttrGetRequest, AxAttrSetRequest, AxClickRequest, AxListRequest,
+        AxSelector, AxSessionStartRequest, AxSessionStopRequest, AxTarget, AxTypeRequest,
+        AxWatchPollRequest, AxWatchStartRequest, AxWatchStopRequest,
+    };
+
+    fn node_selector() -> AxSelector {
+        AxSelector {
+            node_id: Some("1.1".to_string()),
+            ..AxSelector::default()
+        }
+    }
 
     #[test]
     fn backend_preference_defaults_to_applescript_in_test_mode() {
@@ -416,5 +432,286 @@ mod tests {
             AxBackendPreference::resolve(),
             AxBackendPreference::Hammerspoon
         );
+    }
+
+    #[test]
+    fn applescript_backend_reports_unsupported_for_ax_extension_methods() {
+        let runner = RealProcessRunner;
+        let request_target = AxTarget::default();
+        let selector = node_selector();
+
+        let attr_get = AppleScriptAxBackend.attr_get(
+            &runner,
+            &AxAttrGetRequest {
+                target: request_target.clone(),
+                selector: selector.clone(),
+                name: "AXRole".to_string(),
+            },
+            1000,
+        );
+        assert!(attr_get.is_err());
+
+        let attr_set = AppleScriptAxBackend.attr_set(
+            &runner,
+            &AxAttrSetRequest {
+                target: request_target.clone(),
+                selector: selector.clone(),
+                name: "AXValue".to_string(),
+                value: json!("hello"),
+            },
+            1000,
+        );
+        assert!(attr_set.is_err());
+
+        let action = AppleScriptAxBackend.action_perform(
+            &runner,
+            &AxActionPerformRequest {
+                target: request_target,
+                selector,
+                name: "AXPress".to_string(),
+            },
+            1000,
+        );
+        assert!(action.is_err());
+    }
+
+    #[test]
+    fn auto_backend_hammerspoon_preference_routes_list_click_type() {
+        let lock = GlobalStateLock::new();
+        let _test_mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _backend = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_AX_BACKEND", "hammerspoon");
+        let _list = EnvGuard::set(
+            &lock,
+            "CODEX_MACOS_AGENT_AX_LIST_JSON",
+            r#"{"nodes":[{"node_id":"1.1","role":"AXButton","enabled":true,"focused":false,"actions":[],"path":["1","1"]}],"warnings":[]}"#,
+        );
+        let _click = EnvGuard::set(
+            &lock,
+            "CODEX_MACOS_AGENT_AX_CLICK_JSON",
+            r#"{"node_id":"1.1","matched_count":1,"action":"ax-press","used_coordinate_fallback":false}"#,
+        );
+        let _typ = EnvGuard::set(
+            &lock,
+            "CODEX_MACOS_AGENT_AX_TYPE_JSON",
+            r#"{"node_id":"1.1","matched_count":1,"applied_via":"ax-set-value","text_length":4,"submitted":false,"used_keyboard_fallback":false}"#,
+        );
+
+        let backend = AutoAxBackend::default();
+        let runner = RealProcessRunner;
+        let list = backend
+            .list(&runner, &AxListRequest::default(), 1000)
+            .expect("list should succeed");
+        assert_eq!(list.nodes.len(), 1);
+
+        let click = backend
+            .click(
+                &runner,
+                &AxClickRequest {
+                    target: AxTarget::default(),
+                    selector: node_selector(),
+                    allow_coordinate_fallback: false,
+                },
+                1000,
+            )
+            .expect("click should succeed");
+        assert_eq!(click.matched_count, 1);
+
+        let typ = backend
+            .type_text(
+                &runner,
+                &AxTypeRequest {
+                    target: AxTarget::default(),
+                    selector: node_selector(),
+                    text: "test".to_string(),
+                    clear_first: false,
+                    submit: false,
+                    paste: false,
+                    allow_keyboard_fallback: false,
+                },
+                1000,
+            )
+            .expect("type should succeed");
+        assert_eq!(typ.text_length, 4);
+    }
+
+    #[test]
+    fn auto_backend_auto_preference_uses_hammerspoon_first_when_available() {
+        let lock = GlobalStateLock::new();
+        let _test_mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _backend = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_AX_BACKEND", "auto");
+        let _list = EnvGuard::set(
+            &lock,
+            "CODEX_MACOS_AGENT_AX_LIST_JSON",
+            r#"{"nodes":[{"node_id":"9.9","role":"AXButton","enabled":true,"focused":false,"actions":[],"path":["9","9"]}],"warnings":[]}"#,
+        );
+
+        let backend = AutoAxBackend::default();
+        let runner = RealProcessRunner;
+        let list = backend
+            .list(&runner, &AxListRequest::default(), 1000)
+            .expect("list should succeed");
+        assert_eq!(list.nodes[0].node_id, "9.9");
+    }
+
+    #[test]
+    fn auto_backend_ax_extension_methods_route_through_hammerspoon() {
+        let lock = GlobalStateLock::new();
+        let _test_mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _backend = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_AX_BACKEND", "applescript");
+
+        let _attr_get = EnvGuard::set(
+            &lock,
+            "CODEX_MACOS_AGENT_AX_ATTR_GET_JSON",
+            r#"{"node_id":"1.1","matched_count":1,"name":"AXRole","value":"AXButton"}"#,
+        );
+        let _attr_set = EnvGuard::set(
+            &lock,
+            "CODEX_MACOS_AGENT_AX_ATTR_SET_JSON",
+            r#"{"node_id":"1.1","matched_count":1,"name":"AXValue","applied":true,"value_type":"string"}"#,
+        );
+        let _action = EnvGuard::set(
+            &lock,
+            "CODEX_MACOS_AGENT_AX_ACTION_PERFORM_JSON",
+            r#"{"node_id":"1.1","matched_count":1,"name":"AXPress","performed":true}"#,
+        );
+        let _session_start = EnvGuard::set(
+            &lock,
+            "CODEX_MACOS_AGENT_AX_SESSION_START_JSON",
+            r#"{"session_id":"axs-1","app":"Arc","bundle_id":"company.thebrowser.Browser","pid":1001,"created_at_ms":1700000000000,"created":true}"#,
+        );
+        let _session_list = EnvGuard::set(
+            &lock,
+            "CODEX_MACOS_AGENT_AX_SESSION_LIST_JSON",
+            r#"{"sessions":[{"session_id":"axs-1","app":"Arc","bundle_id":"company.thebrowser.Browser","pid":1001,"created_at_ms":1700000000000}]}"#,
+        );
+        let _session_stop = EnvGuard::set(
+            &lock,
+            "CODEX_MACOS_AGENT_AX_SESSION_STOP_JSON",
+            r#"{"session_id":"axs-1","removed":true}"#,
+        );
+        let _watch_start = EnvGuard::set(
+            &lock,
+            "CODEX_MACOS_AGENT_AX_WATCH_START_JSON",
+            r#"{"watch_id":"axw-1","session_id":"axs-1","events":["AXTitleChanged"],"max_buffer":64,"started":true}"#,
+        );
+        let _watch_poll = EnvGuard::set(
+            &lock,
+            "CODEX_MACOS_AGENT_AX_WATCH_POLL_JSON",
+            r#"{"watch_id":"axw-1","events":[],"dropped":0,"running":true}"#,
+        );
+        let _watch_stop = EnvGuard::set(
+            &lock,
+            "CODEX_MACOS_AGENT_AX_WATCH_STOP_JSON",
+            r#"{"watch_id":"axw-1","stopped":true,"drained":0}"#,
+        );
+
+        let backend = AutoAxBackend::default();
+        let runner = RealProcessRunner;
+
+        let attr_get = backend
+            .attr_get(
+                &runner,
+                &AxAttrGetRequest {
+                    target: AxTarget::default(),
+                    selector: node_selector(),
+                    name: "AXRole".to_string(),
+                },
+                1000,
+            )
+            .expect("attr get should succeed");
+        assert_eq!(attr_get.name, "AXRole");
+
+        let attr_set = backend
+            .attr_set(
+                &runner,
+                &AxAttrSetRequest {
+                    target: AxTarget::default(),
+                    selector: node_selector(),
+                    name: "AXValue".to_string(),
+                    value: json!("hello"),
+                },
+                1000,
+            )
+            .expect("attr set should succeed");
+        assert!(attr_set.applied);
+
+        let action = backend
+            .action_perform(
+                &runner,
+                &AxActionPerformRequest {
+                    target: AxTarget::default(),
+                    selector: node_selector(),
+                    name: "AXPress".to_string(),
+                },
+                1000,
+            )
+            .expect("action should succeed");
+        assert!(action.performed);
+
+        let start = backend
+            .session_start(
+                &runner,
+                &AxSessionStartRequest {
+                    target: AxTarget::default(),
+                    session_id: Some("axs-1".to_string()),
+                },
+                1000,
+            )
+            .expect("session start should succeed");
+        assert_eq!(start.session.session_id, "axs-1");
+
+        let listed = backend
+            .session_list(&runner, 1000)
+            .expect("session list should succeed");
+        assert_eq!(listed.sessions.len(), 1);
+
+        let stop = backend
+            .session_stop(
+                &runner,
+                &AxSessionStopRequest {
+                    session_id: "axs-1".to_string(),
+                },
+                1000,
+            )
+            .expect("session stop should succeed");
+        assert!(stop.removed);
+
+        let watch_start = backend
+            .watch_start(
+                &runner,
+                &AxWatchStartRequest {
+                    session_id: "axs-1".to_string(),
+                    events: vec!["AXTitleChanged".to_string()],
+                    max_buffer: 64,
+                    watch_id: Some("axw-1".to_string()),
+                },
+                1000,
+            )
+            .expect("watch start should succeed");
+        assert_eq!(watch_start.watch_id, "axw-1");
+
+        let watch_poll = backend
+            .watch_poll(
+                &runner,
+                &AxWatchPollRequest {
+                    watch_id: "axw-1".to_string(),
+                    limit: 10,
+                    drain: true,
+                },
+                1000,
+            )
+            .expect("watch poll should succeed");
+        assert!(watch_poll.running);
+
+        let watch_stop = backend
+            .watch_stop(
+                &runner,
+                &AxWatchStopRequest {
+                    watch_id: "axw-1".to_string(),
+                },
+                1000,
+            )
+            .expect("watch stop should succeed");
+        assert!(watch_stop.stopped);
     }
 }
