@@ -1,6 +1,6 @@
 mod common;
 
-use common::{git, init_bare_remote, init_repo, GitCliHarness};
+use common::{GitCliHarness, git, init_bare_remote, init_repo};
 use nils_test_support::git::commit_file;
 use std::fs;
 use std::path::Path;
@@ -48,12 +48,16 @@ fn ci_pick_help_shows_usage() {
     let output = harness.run(dir.path(), &["ci", "pick", "--help"]);
 
     assert_eq!(output.code, 0);
-    assert!(output
-        .stdout_text()
-        .contains("git-pick: create and push a CI branch"));
-    assert!(output
-        .stdout_text()
-        .contains("Usage:\n  git-pick <target> <commit-or-range> <name>\n"));
+    assert!(
+        output
+            .stdout_text()
+            .contains("git-pick: create and push a CI branch")
+    );
+    assert!(
+        output
+            .stdout_text()
+            .contains("Usage:\n  git-pick <target> <commit-or-range> <name>\n")
+    );
     assert_eq!(output.stderr_text(), "");
 }
 
@@ -306,9 +310,11 @@ fn ci_pick_no_fetch_path_uses_local_refs() {
     );
 
     assert_eq!(output.code, 0);
-    assert!(output
-        .stdout_text()
-        .contains("🌿 CI branch: ci/main/no-fetch\n"));
+    assert!(
+        output
+            .stdout_text()
+            .contains("🌿 CI branch: ci/main/no-fetch\n")
+    );
     assert!(output.stdout_text().contains("🔧 Base     : main\n"));
 }
 
@@ -333,12 +339,16 @@ fn ci_pick_creates_and_pushes_branch() {
     assert_eq!(output.code, 0);
     assert!(output.stdout_text().contains("🌿 CI branch: ci/main/try\n"));
     assert!(output.stdout_text().contains("🔧 Base     : origin/main\n"));
-    assert!(output
-        .stdout_text()
-        .contains(&format!("🍒 Pick     : {commit_sha} (1 commit(s))\n")));
-    assert!(output
-        .stdout_text()
-        .contains("✅ Pushed: origin/ci/main/try (CI should run on branch push)\n"));
+    assert!(
+        output
+            .stdout_text()
+            .contains(&format!("🍒 Pick     : {commit_sha} (1 commit(s))\n"))
+    );
+    assert!(
+        output
+            .stdout_text()
+            .contains("✅ Pushed: origin/ci/main/try (CI should run on branch push)\n")
+    );
 
     let remote_refs = git(remote.path(), &["show-ref", "--heads", "ci/main/try"]);
     assert!(remote_refs.contains("ci/main/try"));
@@ -469,13 +479,19 @@ fn ci_pick_reports_cherry_pick_failure() {
     let output = harness.run(dir.path(), &["ci", "pick", "main", &commit_sha, "conflict"]);
 
     assert_eq!(output.code, 1);
-    assert!(output
-        .stderr_text()
-        .contains("❌ Cherry-pick failed on branch: ci/main/conflict\n"));
-    assert!(output
-        .stderr_text()
-        .contains("🧠 Resolve conflicts then run: git cherry-pick --continue\n"));
-    assert!(output
-        .stderr_text()
-        .contains("    Or abort and retry:        git cherry-pick --abort\n"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("❌ Cherry-pick failed on branch: ci/main/conflict\n")
+    );
+    assert!(
+        output
+            .stderr_text()
+            .contains("🧠 Resolve conflicts then run: git cherry-pick --continue\n")
+    );
+    assert!(
+        output
+            .stderr_text()
+            .contains("    Or abort and retry:        git cherry-pick --abort\n")
+    );
 }

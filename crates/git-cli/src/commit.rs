@@ -1,13 +1,13 @@
 use crate::clipboard;
 use crate::commit_json;
 use crate::commit_shared::{
-    diff_numstat, git_output, git_status_success, git_stdout_trimmed_optional, is_lockfile,
-    parse_name_status_z, trim_trailing_newlines, DiffNumstat,
+    DiffNumstat, diff_numstat, git_output, git_status_success, git_stdout_trimmed_optional,
+    is_lockfile, parse_name_status_z, trim_trailing_newlines,
 };
 use crate::prompt;
 use crate::util;
-use anyhow::{anyhow, Result};
-use nils_common::shell::{strip_ansi as strip_ansi_impl, AnsiStripMode};
+use anyhow::{Result, anyhow};
+use nils_common::shell::{AnsiStripMode, strip_ansi as strip_ansi_impl};
 use std::env;
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -424,11 +424,7 @@ fn file_probe(blob_ref: &str) -> Option<String> {
 
     let out = String::from_utf8_lossy(&output.stdout).to_string();
     let out = trim_trailing_newlines(&out);
-    if out.is_empty() {
-        None
-    } else {
-        Some(out)
-    }
+    if out.is_empty() { None } else { Some(out) }
 }
 
 fn run_to_stash(args: &[String]) -> i32 {
@@ -534,7 +530,9 @@ fn run_to_stash(args: &[String]) -> i32 {
             != Some(commit_sha.as_str())
     {
         println!("ℹ️  Not dropping commit automatically because target is not HEAD.");
-        println!("🧠 If you want to remove it, do so explicitly (e.g., interactive rebase) after verifying stash.");
+        println!(
+            "🧠 If you want to remove it, do so explicitly (e.g., interactive rebase) after verifying stash."
+        );
         return 0;
     }
 
@@ -586,7 +584,9 @@ fn run_to_stash(args: &[String]) -> i32 {
 
     if !git_status_success(&["reset", "--hard", &parent_sha]) {
         println!("❌ Failed to reset branch to parent.");
-        println!("🧠 Your stash is still saved. You can manually recover the commit via reflog if needed.");
+        println!(
+            "🧠 Your stash is still saved. You can manually recover the commit via reflog if needed."
+        );
         return 1;
     }
 
@@ -754,9 +754,8 @@ fn short_sha(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        dispatch, file_probe, git_scope_available, parse_command, parse_context_args,
-        pattern_matches, short_sha, strip_ansi, wildcard_match, CommitCommand, OutputMode,
-        ParseOutcome,
+        CommitCommand, OutputMode, ParseOutcome, dispatch, file_probe, git_scope_available,
+        parse_command, parse_context_args, pattern_matches, short_sha, strip_ansi, wildcard_match,
     };
     use nils_test_support::{CwdGuard, GlobalStateLock};
     use pretty_assertions::assert_eq;

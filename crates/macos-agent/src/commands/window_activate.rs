@@ -8,7 +8,7 @@ use crate::error::CliError;
 use crate::model::WindowActivateResult;
 use crate::retry::run_with_retry;
 use crate::run::{
-    action_policy_result, build_action_meta_with_attempts, next_action_id, ActionPolicy,
+    ActionPolicy, action_policy_result, build_action_meta_with_attempts, next_action_id,
 };
 use crate::targets::{self, TargetSelector};
 use crate::test_mode;
@@ -181,7 +181,7 @@ mod tests {
     use nils_test_support::{EnvGuard, GlobalStateLock};
     use pretty_assertions::assert_eq;
 
-    use super::{resolve_target, selector_label, wait_for_active_confirmation, ActivationTarget};
+    use super::{ActivationTarget, resolve_target, selector_label, wait_for_active_confirmation};
     use crate::backend::process::{ProcessFailure, ProcessOutput, ProcessRequest, ProcessRunner};
     use crate::cli::WindowActivateArgs;
 

@@ -8,15 +8,15 @@ mod real_apps;
 mod real_common;
 
 use real_apps::matrix::{
-    artifact_index_has_required_fields, classify_base_vs_extended, selected_apps_from_env,
-    subset_selection_matches, summarize_soak, summary_has_base_extended_separation,
-    write_artifact_index, ScenarioOutcome, ScenarioStatus,
+    ScenarioOutcome, ScenarioStatus, artifact_index_has_required_fields, classify_base_vs_extended,
+    selected_apps_from_env, subset_selection_matches, summarize_soak,
+    summary_has_base_extended_separation, write_artifact_index,
 };
 use real_apps::{
-    arc_youtube_multi_video_play_pause_and_comments, arc_youtube_opens_home_and_clicks_three_tiles,
-    arc_youtube_play_pause_and_comment_checkpoint, cross_app_arc_spotify_focus_and_state_recovery,
-    finder_navigation_and_state_checks, spotify_player_state_transitions_are_observable,
-    spotify_ui_selects_track_and_toggles_playback, ArcYoutubeProfile, FINDER_SCENARIO_ID,
+    ArcYoutubeProfile, FINDER_SCENARIO_ID, arc_youtube_multi_video_play_pause_and_comments,
+    arc_youtube_opens_home_and_clicks_three_tiles, arc_youtube_play_pause_and_comment_checkpoint,
+    cross_app_arc_spotify_focus_and_state_recovery, finder_navigation_and_state_checks,
+    spotify_player_state_transitions_are_observable, spotify_ui_selects_track_and_toggles_playback,
 };
 
 #[test]

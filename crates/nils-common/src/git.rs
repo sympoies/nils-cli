@@ -114,7 +114,7 @@ fn trimmed_stdout_if_success(output: &Output) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nils_test_support::git::{git as run_git, init_repo_with, InitRepoOptions};
+    use nils_test_support::git::{InitRepoOptions, git as run_git, init_repo_with};
     use nils_test_support::{CwdGuard, GlobalStateLock};
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;

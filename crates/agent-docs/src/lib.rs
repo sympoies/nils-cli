@@ -10,7 +10,7 @@ pub mod resolver;
 use clap::Parser;
 
 use cli::{Cli, Command};
-use env::{resolve_roots, PathOverrides};
+use env::{PathOverrides, resolve_roots};
 use model::{ConfigErrorKind, OutputFormat};
 use output::{
     render_baseline, render_contexts, render_resolve, render_scaffold_baseline, render_stub,

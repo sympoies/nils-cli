@@ -2,7 +2,7 @@ use super::schema::{
     AutomationStep, ProviderStep, WorkflowDocument, WorkflowOnError, WorkflowSchemaError,
     WorkflowStep,
 };
-use super::steps::automation::{resolve_automation_invocation, AutomationCommandProvenance};
+use super::steps::automation::{AutomationCommandProvenance, resolve_automation_invocation};
 use crate::provider::registry::ProviderRegistry;
 use agent_runtime_core::schema::{ExecuteRequest, ProviderError};
 use clap::{Args, ValueEnum};

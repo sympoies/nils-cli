@@ -167,9 +167,11 @@ fn record_failure_removes_staged_and_target_output() {
     );
 
     assert_eq!(output.code, 1);
-    assert!(output
-        .stderr_text()
-        .contains("failed to append sample buffer"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("failed to append sample buffer")
+    );
     assert!(
         !output_path.exists(),
         "requested output should not exist on failure"
@@ -258,9 +260,11 @@ fn metadata_out_failure_path() {
     );
 
     assert_eq!(output.code, 1);
-    assert!(output
-        .stderr_text()
-        .contains("failed to append sample buffer"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("failed to append sample buffer")
+    );
     assert!(
         !output_path.exists(),
         "requested output should not exist on failure"
@@ -273,11 +277,9 @@ fn metadata_out_failure_path() {
     assert!(metadata_text.contains("\"format\": \"mov\""));
     assert!(metadata_text.contains(&format!("\"output_path\": \"{}\"", output_path.display())));
     assert!(metadata_text.contains("\"output_bytes\": null"));
-    assert!(
-        metadata_text.contains(
-            "\"error\": \"error: failed to append sample buffer: The operation could not be completed\""
-        )
-    );
+    assert!(metadata_text.contains(
+        "\"error\": \"error: failed to append sample buffer: The operation could not be completed\""
+    ));
 }
 
 #[test]
@@ -363,9 +365,11 @@ fn diagnostics_out_failure_keeps_primary_output() {
     );
 
     assert_eq!(output.code, 1);
-    assert!(output
-        .stderr_text()
-        .contains("diagnostics generation failed in test mode"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("diagnostics generation failed in test mode")
+    );
     assert!(
         output_path.exists(),
         "primary output should still be published"
@@ -578,9 +582,11 @@ fn record_requires_path() {
     );
 
     assert_eq!(output.code, 2);
-    assert!(output
-        .stderr_text()
-        .contains("--path is required for recording"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("--path is required for recording")
+    );
 }
 
 #[test]
@@ -646,9 +652,11 @@ fn screenshot_path_and_image_format_conflict_errors() {
     );
 
     assert_eq!(output.code, 2);
-    assert!(output
-        .stderr_text()
-        .contains("--image-format jpg conflicts with --path extension"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("--image-format jpg conflicts with --path extension")
+    );
 }
 
 #[test]
@@ -662,9 +670,11 @@ fn screenshot_rejects_duration_flag() {
     );
 
     assert_eq!(output.code, 2);
-    assert!(output
-        .stderr_text()
-        .contains("--duration is not valid with --screenshot"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("--duration is not valid with --screenshot")
+    );
 }
 
 #[test]
@@ -675,9 +685,11 @@ fn screenshot_only_flags_require_screenshot_mode() {
     let output = harness.run(cwd.path(), &["--dir", "screens"]);
 
     assert_eq!(output.code, 2);
-    assert!(output
-        .stderr_text()
-        .contains("screenshot flags require --screenshot"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("screenshot flags require --screenshot")
+    );
 }
 
 #[test]
@@ -688,9 +700,11 @@ fn list_mode_rejects_screenshot_flags() {
     let output = harness.run(cwd.path(), &["--list-windows", "--image-format", "png"]);
 
     assert_eq!(output.code, 2);
-    assert!(output
-        .stderr_text()
-        .contains("screenshot flags require --screenshot"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("screenshot flags require --screenshot")
+    );
 }
 
 #[test]
@@ -707,9 +721,11 @@ fn list_mode_rejects_metadata_out_flag() {
     );
 
     assert_eq!(output.code, 2);
-    assert!(output
-        .stderr_text()
-        .contains("--metadata-out is only valid with recording"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("--metadata-out is only valid with recording")
+    );
 }
 
 #[test]
@@ -726,9 +742,11 @@ fn list_mode_rejects_diagnostics_out_flag() {
     );
 
     assert_eq!(output.code, 2);
-    assert!(output
-        .stderr_text()
-        .contains("--diagnostics-out is only valid with recording"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("--diagnostics-out is only valid with recording")
+    );
 }
 
 #[test]
@@ -753,9 +771,11 @@ fn record_requires_selector() {
     );
 
     assert_eq!(output.code, 2);
-    assert!(output
-        .stderr_text()
-        .contains("recording requires exactly one selector"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("recording requires exactly one selector")
+    );
 }
 
 #[test]
@@ -766,9 +786,11 @@ fn screenshot_rejects_display_selector() {
     let output = harness.run(cwd.path(), &["--screenshot", "--display"]);
 
     assert_eq!(output.code, 2);
-    assert!(output
-        .stderr_text()
-        .contains("display selectors are not valid with --screenshot"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("display selectors are not valid with --screenshot")
+    );
 }
 
 #[test]
@@ -779,9 +801,11 @@ fn screenshot_requires_selector() {
     let output = harness.run(cwd.path(), &["--screenshot"]);
 
     assert_eq!(output.code, 2);
-    assert!(output
-        .stderr_text()
-        .contains("screenshot requires exactly one selector"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("screenshot requires exactly one selector")
+    );
 }
 
 #[test]
@@ -795,9 +819,11 @@ fn screenshot_rejects_audio_flag() {
     );
 
     assert_eq!(output.code, 2);
-    assert!(output
-        .stderr_text()
-        .contains("--audio is not valid with --screenshot"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("--audio is not valid with --screenshot")
+    );
 }
 
 #[test]
@@ -855,9 +881,11 @@ fn screenshot_unsupported_extension_errors() {
     );
 
     assert_eq!(output.code, 2);
-    assert!(output
-        .stderr_text()
-        .contains("unsupported --path extension for screenshot"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("unsupported --path extension for screenshot")
+    );
 }
 
 #[test]
@@ -868,9 +896,11 @@ fn portal_rejects_non_capture_modes() {
     let output = harness.run(cwd.path(), &["--portal", "--list-windows"]);
 
     assert_eq!(output.code, 2);
-    assert!(output
-        .stderr_text()
-        .contains("--portal is only valid with recording or --screenshot"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("--portal is only valid with recording or --screenshot")
+    );
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -882,9 +912,11 @@ fn portal_rejected_with_linux_only_message_on_non_linux() {
     let output = harness.run(cwd.path(), &["--portal", "--screenshot"]);
 
     assert_eq!(output.code, 2);
-    assert!(output
-        .stderr_text()
-        .contains("--portal is only supported on Linux (Wayland)"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("--portal is only supported on Linux (Wayland)")
+    );
 }
 
 #[test]
@@ -898,9 +930,11 @@ fn screenshot_rejects_format_flag() {
     );
 
     assert_eq!(output.code, 2);
-    assert!(output
-        .stderr_text()
-        .contains("--format is not valid with --screenshot"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("--format is not valid with --screenshot")
+    );
 }
 
 #[test]
@@ -953,9 +987,11 @@ fn if_changed_rejects_record_mode() {
     );
 
     assert_eq!(output.code, 2);
-    assert!(output
-        .stderr_text()
-        .contains("--if-changed is only valid with --screenshot"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("--if-changed is only valid with --screenshot")
+    );
 }
 
 #[test]
@@ -986,9 +1022,11 @@ fn preflight_mode_rejects_capture_flags() {
     let output = harness.run(cwd.path(), &["--preflight", "--app", "Terminal"]);
 
     assert_eq!(output.code, 2);
-    assert!(output
-        .stderr_text()
-        .contains("capture flags are not valid with this mode"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("capture flags are not valid with this mode")
+    );
 }
 
 #[test]
@@ -999,9 +1037,11 @@ fn request_permission_mode_rejects_capture_flags() {
     let output = harness.run(cwd.path(), &["--request-permission", "--app", "Terminal"]);
 
     assert_eq!(output.code, 2);
-    assert!(output
-        .stderr_text()
-        .contains("capture flags are not valid with this mode"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("capture flags are not valid with this mode")
+    );
 }
 
 #[test]

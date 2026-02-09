@@ -5,8 +5,8 @@ use crate::config::load_configs_from_roots;
 use crate::env::ResolvedRoots;
 use crate::model::{
     ConfigDocumentEntry, ConfigLoadError, ConfigScopeFile, Context, DocumentSource, DocumentStatus,
-    FallbackMode, LoadedConfigs, ResolveReport, ResolveSummary, ResolvedDocument, Scope,
-    SUPPORTED_CONTEXTS,
+    FallbackMode, LoadedConfigs, ResolveReport, ResolveSummary, ResolvedDocument,
+    SUPPORTED_CONTEXTS, Scope,
 };
 use crate::paths::normalize_path;
 

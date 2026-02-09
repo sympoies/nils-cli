@@ -1,8 +1,8 @@
 use crate::diag::{
-    automation_tools, classify_hint_category, current_platform, emit_json, resolve_probe_mode,
-    AutomationToolSpec, CheckStatus, Component, FailureHint, FailureHintCategory, OutputFormat,
-    ProbeMode, ProbeModeArg, ReadinessCheck, ReadinessSection, DIAG_SCHEMA_VERSION, EXIT_OK,
-    EXIT_USAGE,
+    AutomationToolSpec, CheckStatus, Component, DIAG_SCHEMA_VERSION, EXIT_OK, EXIT_USAGE,
+    FailureHint, FailureHintCategory, OutputFormat, ProbeMode, ProbeModeArg, ReadinessCheck,
+    ReadinessSection, automation_tools, classify_hint_category, current_platform, emit_json,
+    resolve_probe_mode,
 };
 use crate::provider::registry::ProviderRegistry;
 use agent_runtime_core::schema::{
@@ -10,7 +10,7 @@ use agent_runtime_core::schema::{
 };
 use clap::Args;
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

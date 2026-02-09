@@ -5,9 +5,9 @@ use crate::backend::process::ProcessRunner;
 use crate::backend::{AutoAxBackend, AxBackendAdapter};
 use crate::cli::{AxClickArgs, AxPostconditionArgs, MouseButton, OutputFormat};
 use crate::commands::ax_common::{
-    build_selector_from_args, build_target_from_args, evaluate_selector_against_backend,
-    parse_postcondition_expected_value, run_action_gates, run_postconditions,
-    selector_selection_error, AxActionGateOptions, AxPostconditionCheck, AxPostconditionOptions,
+    AxActionGateOptions, AxPostconditionCheck, AxPostconditionOptions, build_selector_from_args,
+    build_target_from_args, evaluate_selector_against_backend, parse_postcondition_expected_value,
+    run_action_gates, run_postconditions, selector_selection_error,
 };
 use crate::commands::{emit_json_success, reject_tsv_for_list_only};
 use crate::error::CliError;
@@ -16,7 +16,7 @@ use crate::model::{
 };
 use crate::retry::run_with_retry;
 use crate::run::{
-    action_policy_result, build_action_meta_with_attempts, next_action_id, ActionPolicy,
+    ActionPolicy, action_policy_result, build_action_meta_with_attempts, next_action_id,
 };
 
 pub fn run(

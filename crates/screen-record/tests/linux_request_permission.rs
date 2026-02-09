@@ -4,7 +4,7 @@ mod linux_request_permission {
     use std::os::unix::fs::PermissionsExt;
 
     use nils_test_support::bin::resolve;
-    use nils_test_support::cmd::{run_with, CmdOptions};
+    use nils_test_support::cmd::{CmdOptions, run_with};
     use tempfile::TempDir;
 
     fn ffmpeg_stub_dir() -> TempDir {
@@ -92,8 +92,9 @@ mod linux_request_permission {
 
         let out = run_with(&bin, &["--request-permission"], &options);
         assert_eq!(out.code, 1);
-        assert!(out
-            .stderr_text()
-            .contains("X11 display not detected (DISPLAY is unset)."));
+        assert!(
+            out.stderr_text()
+                .contains("X11 display not detected (DISPLAY is unset).")
+        );
     }
 }

@@ -272,8 +272,10 @@ mod tests {
         let issues = collect_profile_issues(&bad);
         assert!(issues.iter().any(|issue| issue.contains("profile_name")));
         assert!(issues.iter().any(|issue| issue.contains("arc.video_tiles")));
-        assert!(issues
-            .iter()
-            .any(|issue| issue.contains("finder.window_focus")));
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.contains("finder.window_focus"))
+        );
     }
 }

@@ -1,4 +1,4 @@
-use crate::backend::process::{map_failure, ProcessRequest, ProcessRunner};
+use crate::backend::process::{ProcessRequest, ProcessRunner, map_failure};
 use crate::error::CliError;
 use crate::test_mode;
 

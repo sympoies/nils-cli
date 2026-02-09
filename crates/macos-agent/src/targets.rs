@@ -244,9 +244,9 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        app_active_by_bundle_id, app_name_for_bundle_id, capture_screenshot,
+        TargetSelector, app_active_by_bundle_id, app_name_for_bundle_id, capture_screenshot,
         capture_screenshot_region, extension_format, list_apps, list_windows, resolve_window,
-        window_present, TargetSelector,
+        window_present,
     };
     use crate::cli::{ImageFormat, ListWindowsArgs};
 
@@ -315,30 +315,38 @@ mod tests {
         let lock = GlobalStateLock::new();
         let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
 
-        assert!(window_present(&TargetSelector {
-            window_id: Some(100),
-            ..TargetSelector::default()
-        })
-        .expect("window id exists"));
+        assert!(
+            window_present(&TargetSelector {
+                window_id: Some(100),
+                ..TargetSelector::default()
+            })
+            .expect("window id exists")
+        );
 
-        assert!(window_present(&TargetSelector {
-            active_window: true,
-            ..TargetSelector::default()
-        })
-        .expect("active window exists"));
+        assert!(
+            window_present(&TargetSelector {
+                active_window: true,
+                ..TargetSelector::default()
+            })
+            .expect("active window exists")
+        );
 
-        assert!(window_present(&TargetSelector {
-            app: Some("Terminal".to_string()),
-            window_name: Some("Docs".to_string()),
-            ..TargetSelector::default()
-        })
-        .expect("app/window selector exists"));
+        assert!(
+            window_present(&TargetSelector {
+                app: Some("Terminal".to_string()),
+                window_name: Some("Docs".to_string()),
+                ..TargetSelector::default()
+            })
+            .expect("app/window selector exists")
+        );
 
-        assert!(!window_present(&TargetSelector {
-            app: Some("Safari".to_string()),
-            ..TargetSelector::default()
-        })
-        .expect("missing app should be false"));
+        assert!(
+            !window_present(&TargetSelector {
+                app: Some("Safari".to_string()),
+                ..TargetSelector::default()
+            })
+            .expect("missing app should be false")
+        );
 
         assert!(app_active_by_bundle_id("com.apple.Terminal").expect("bundle exists"));
         assert!(!app_active_by_bundle_id("com.example.missing").expect("bundle missing"));

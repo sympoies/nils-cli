@@ -1,7 +1,7 @@
 use agent_provider_codex::CodexProviderAdapter;
 use agent_runtime_core::provider::ProviderAdapterV1;
 use agent_runtime_core::schema::{ExecuteRequest, ProviderErrorCategory, ProviderMaturity};
-use nils_test_support::{prepend_path, EnvGuard, GlobalStateLock, StubBinDir};
+use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
 use pretty_assertions::assert_eq;
 
 #[test]

@@ -99,7 +99,7 @@ fn pipe_to_command(cmd: &str, args: &[&str], text: &str) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nils_test_support::{prepend_path, EnvGuard, GlobalStateLock, StubBinDir};
+    use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
     use pretty_assertions::assert_eq;
     use std::fs;
     use tempfile::TempDir;

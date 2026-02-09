@@ -2,7 +2,7 @@ use codex_cli::agent;
 
 use std::io::{BufReader, Cursor};
 
-use nils_test_support::{prepend_path, EnvGuard, GlobalStateLock, StubBinDir};
+use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
 use pretty_assertions::assert_eq;
 
 fn write_codex_stub(stub: &StubBinDir) -> tempfile::NamedTempFile {
@@ -47,8 +47,10 @@ fn agent_prompt_requires_dangerous_mode() {
     let mut stderr: Vec<u8> = Vec::new();
     let code = agent::prompt_with_io(&["hello".into()], &mut stdin, &mut stdout, &mut stderr);
     assert_eq!(code, 1);
-    assert!(String::from_utf8_lossy(&stderr)
-        .contains("codex-tools:prompt: disabled (set CODEX_ALLOW_DANGEROUS_ENABLED=true)"));
+    assert!(
+        String::from_utf8_lossy(&stderr)
+            .contains("codex-tools:prompt: disabled (set CODEX_ALLOW_DANGEROUS_ENABLED=true)")
+    );
     assert!(read_args(&args_log).is_empty());
 }
 

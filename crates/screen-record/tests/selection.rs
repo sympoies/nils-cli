@@ -1,4 +1,4 @@
-use screen_record::select::{select_window, SelectionArgs};
+use screen_record::select::{SelectionArgs, select_window};
 use screen_record::types::{Rect, WindowInfo};
 
 fn window(
@@ -87,9 +87,10 @@ fn select_by_app_no_match_errors() {
     };
     let err = select_window(&windows, &args).expect_err("no matching app");
     assert_eq!(err.exit_code(), 2);
-    assert!(err
-        .to_string()
-        .contains("no windows match --app \"Safari\""));
+    assert!(
+        err.to_string()
+            .contains("no windows match --app \"Safari\"")
+    );
 }
 
 #[test]

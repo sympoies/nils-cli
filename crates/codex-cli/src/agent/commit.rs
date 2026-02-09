@@ -286,7 +286,9 @@ fn semantic_commit_prompt(mode: &str) -> Option<String> {
     let prompts_dir = match prompts::resolve_prompts_dir() {
         Some(value) => value,
         None => {
-            eprintln!("_codex_tools_semantic_commit_prompt: prompts dir not found (expected: $ZDOTDIR/prompts)");
+            eprintln!(
+                "_codex_tools_semantic_commit_prompt: prompts dir not found (expected: $ZDOTDIR/prompts)"
+            );
             return None;
         }
     };

@@ -154,7 +154,7 @@ pub fn prepend_path(lock: &GlobalStateLock, dir: &Path) -> EnvGuard {
 
 #[cfg(test)]
 mod tests {
-    use super::{GlobalStateLock, GLOBAL_STATE_LOCK};
+    use super::{GLOBAL_STATE_LOCK, GlobalStateLock};
 
     #[test]
     fn global_state_lock_recovers_after_poison() {

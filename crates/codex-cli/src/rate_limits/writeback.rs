@@ -104,7 +104,7 @@ fn epoch_to_iso(epoch: i64) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::{epoch_to_iso, write_weekly};
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     use std::fs;
     use std::path::Path;
 
@@ -299,14 +299,18 @@ mod tests {
             limits.get("weekly_reset_at_epoch").and_then(Value::as_i64),
             Some(1700600000)
         );
-        assert!(limits
-            .get("weekly_reset_at")
-            .and_then(Value::as_str)
-            .is_some());
-        assert!(limits
-            .get("weekly_fetched_at")
-            .and_then(Value::as_str)
-            .is_some());
+        assert!(
+            limits
+                .get("weekly_reset_at")
+                .and_then(Value::as_str)
+                .is_some()
+        );
+        assert!(
+            limits
+                .get("weekly_fetched_at")
+                .and_then(Value::as_str)
+                .is_some()
+        );
         assert!(!limits.contains_key("non_weekly_reset_at"));
         assert!(!limits.contains_key("non_weekly_reset_at_epoch"));
     }
@@ -378,10 +382,12 @@ mod tests {
                 .and_then(Value::as_i64),
             Some(1700003600)
         );
-        assert!(limits
-            .get("weekly_fetched_at")
-            .and_then(Value::as_str)
-            .is_some());
+        assert!(
+            limits
+                .get("weekly_fetched_at")
+                .and_then(Value::as_str)
+                .is_some()
+        );
     }
 
     #[test]

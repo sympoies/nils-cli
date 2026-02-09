@@ -1,11 +1,11 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use crate::Result;
 use crate::suite::resolve::{
     resolve_gql_url_for_env, resolve_path_from_repo_root, resolve_rest_base_url_for_env,
 };
 use crate::suite::schema::SuiteDefaults;
-use crate::Result;
 
 pub(crate) fn sanitize_id(id: &str) -> String {
     let mut out = String::new();

@@ -115,7 +115,9 @@ fn run() -> i32 {
         for p in &inputs {
             let info = toolchain::probe_image(&toolchain, p);
             if info.alpha.unwrap_or(false) {
-                usage_error("alpha input cannot be converted to JPEG without a background (provide --background <color>)");
+                usage_error(
+                    "alpha input cannot be converted to JPEG without a background (provide --background <color>)",
+                );
             }
         }
     }
@@ -223,11 +225,7 @@ fn run() -> i32 {
     }
 
     let any_error = summary.items.iter().any(|i| i.status == "error");
-    if any_error {
-        1
-    } else {
-        0
-    }
+    if any_error { 1 } else { 0 }
 }
 
 fn validate(cli: &Cli) -> Result<(), util::UsageError> {
@@ -357,7 +355,7 @@ fn usage_error(msg: &str) -> ! {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate, Cli, Operation};
+    use super::{Cli, Operation, validate};
 
     fn base_cli(op: Operation) -> Cli {
         Cli {
@@ -450,9 +448,10 @@ mod tests {
         let mut pad = base_cli(Operation::Pad);
         pad.to = None;
         let err = validate(&pad).expect_err("pad requires dimensions");
-        assert!(err
-            .to_string()
-            .contains("pad requires --width and --height"));
+        assert!(
+            err.to_string()
+                .contains("pad requires --width and --height")
+        );
         pad.width = Some(640);
         pad.height = Some(480);
         assert!(validate(&pad).is_ok());
@@ -480,8 +479,9 @@ mod tests {
         non_opt.to = None;
         non_opt.progressive = false;
         let err = validate(&non_opt).expect_err("non-optimize should reject --no-progressive");
-        assert!(err
-            .to_string()
-            .contains("resize does not support --no-progressive"));
+        assert!(
+            err.to_string()
+                .contains("resize does not support --no-progressive")
+        );
     }
 }

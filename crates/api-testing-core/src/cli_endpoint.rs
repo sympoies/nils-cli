@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::{cli_util, env_file, Result};
+use crate::{Result, cli_util, env_file};
 
 #[derive(Debug, Clone)]
 pub struct EndpointSelection {

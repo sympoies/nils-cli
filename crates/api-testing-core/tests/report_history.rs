@@ -1,9 +1,9 @@
-use api_testing_core::graphql::report::{render_graphql_report_markdown, GraphqlReport};
-use api_testing_core::history::{read_records, HistoryWriter, RotationPolicy};
+use api_testing_core::graphql::report::{GraphqlReport, render_graphql_report_markdown};
+use api_testing_core::history::{HistoryWriter, RotationPolicy, read_records};
 use api_testing_core::markdown::format_json_pretty_sorted;
-use api_testing_core::redact::{redact_json, REDACTED};
+use api_testing_core::redact::{REDACTED, redact_json};
 use api_testing_core::rest::report::{
-    render_rest_report_markdown, RestReport, RestReportAssertion,
+    RestReport, RestReportAssertion, render_rest_report_markdown,
 };
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;

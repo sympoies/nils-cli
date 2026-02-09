@@ -4,8 +4,7 @@ use chrono::Local;
 use common::{git, git_with_env, init_repo, run_git_summary, run_git_summary_allow_fail};
 use std::fs;
 
-const SEPARATOR: &str =
-    "----------------------------------------------------------------------------------------------------------------------------------------";
+const SEPARATOR: &str = "----------------------------------------------------------------------------------------------------------------------------------------";
 
 fn commit_with_author(
     dir: &std::path::Path,

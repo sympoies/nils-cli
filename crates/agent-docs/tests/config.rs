@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use agent_docs::config::{load_configs, load_scope_config, CONFIG_FILE_NAME};
+use agent_docs::config::{CONFIG_FILE_NAME, load_configs, load_scope_config};
 use agent_docs::model::{ConfigErrorKind, Context, DocumentWhen, Scope};
 use tempfile::TempDir;
 

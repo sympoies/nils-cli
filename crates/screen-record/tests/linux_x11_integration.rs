@@ -4,7 +4,7 @@ mod linux_x11_integration {
     use std::time::{Duration, Instant};
 
     use nils_test_support::bin::resolve;
-    use nils_test_support::cmd::{run_with, CmdOptions};
+    use nils_test_support::cmd::{CmdOptions, run_with};
     use nils_test_support::{GlobalStateLock, StubBinDir};
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::{
@@ -192,9 +192,10 @@ printf "stub" > "$out"
         let args = read_ffmpeg_args(&display_log);
         assert!(!args.contains(&"-window_id".to_string()));
         assert!(args.contains(&"-video_size".to_string()));
-        assert!(args
-            .iter()
-            .any(|arg| arg.contains('+') && arg.contains(',')));
+        assert!(
+            args.iter()
+                .any(|arg| arg.contains('+') && arg.contains(','))
+        );
 
         // Display-id recording should also use region capture.
         let list = run_with(&bin, &["--list-displays"], &options_base);
@@ -226,8 +227,9 @@ printf "stub" > "$out"
         let args = read_ffmpeg_args(&display_id_log);
         assert!(!args.contains(&"-window_id".to_string()));
         assert!(args.contains(&"-video_size".to_string()));
-        assert!(args
-            .iter()
-            .any(|arg| arg.contains('+') && arg.contains(',')));
+        assert!(
+            args.iter()
+                .any(|arg| arg.contains('+') && arg.contains(','))
+        );
     }
 }

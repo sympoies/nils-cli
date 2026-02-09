@@ -6,8 +6,7 @@ use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 use crate::dates::{build_range_args, validate_date};
 use crate::git::run_git;
 
-const SEPARATOR: &str =
-    "----------------------------------------------------------------------------------------------------------------------------------------";
+const SEPARATOR: &str = "----------------------------------------------------------------------------------------------------------------------------------------";
 
 pub fn summary(since: Option<&str>, until: Option<&str>) -> i32 {
     if (since.is_some() && until.is_none()) || (since.is_none() && until.is_some()) {

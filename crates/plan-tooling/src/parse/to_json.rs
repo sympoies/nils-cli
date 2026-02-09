@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::parse::{parse_plan_with_display, Plan};
+use crate::parse::{Plan, parse_plan_with_display};
 
 const USAGE: &str = r#"Usage:
   plan_to_json.sh --file <plan.md> [--sprint <n>] [--pretty]

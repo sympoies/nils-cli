@@ -2,8 +2,8 @@ use std::path::Path;
 
 use anyhow::Context;
 
-use crate::suite::results::SuiteRunResults;
 use crate::Result;
+use crate::suite::results::SuiteRunResults;
 
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")

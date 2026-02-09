@@ -1,7 +1,7 @@
 mod common;
 
 use std::fs;
-use std::os::unix::fs::{symlink, PermissionsExt};
+use std::os::unix::fs::{PermissionsExt, symlink};
 
 #[test]
 fn no_color_outputs_no_ansi() {

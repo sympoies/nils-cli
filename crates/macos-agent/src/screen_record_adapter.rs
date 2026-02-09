@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use screen_record::select::{select_window, SelectionArgs};
+use screen_record::select::{SelectionArgs, select_window};
 
 use crate::error::CliError;
 
@@ -131,7 +131,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
-    use super::{crop_image, map_error, ImageCropRegion};
+    use super::{ImageCropRegion, crop_image, map_error};
 
     #[test]
     fn map_error_preserves_usage_and_runtime_exit_code() {

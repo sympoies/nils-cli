@@ -137,9 +137,11 @@ fn input_keyboard_rejects_tsv_output_mode() {
         ],
     );
     assert_eq!(type_out.code, 2);
-    assert!(type_out
-        .stderr_text()
-        .contains("only supported for `windows list` and `apps list`"));
+    assert!(
+        type_out
+            .stderr_text()
+            .contains("only supported for `windows list` and `apps list`")
+    );
 
     let hotkey_out = harness.run(
         cwd.path(),
@@ -156,9 +158,11 @@ fn input_keyboard_rejects_tsv_output_mode() {
         ],
     );
     assert_eq!(hotkey_out.code, 2);
-    assert!(hotkey_out
-        .stderr_text()
-        .contains("only supported for `windows list` and `apps list`"));
+    assert!(
+        hotkey_out
+            .stderr_text()
+            .contains("only supported for `windows list` and `apps list`")
+    );
 }
 
 #[test]

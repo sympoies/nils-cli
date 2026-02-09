@@ -144,7 +144,7 @@ enum ResolveResult {
 
 #[cfg(test)]
 mod tests {
-    use super::{file_name, resolve_by_email, secret_timestamp_path, ResolveResult};
+    use super::{ResolveResult, file_name, resolve_by_email, secret_timestamp_path};
     use pretty_assertions::assert_eq;
     use std::path::Path;
 

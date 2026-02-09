@@ -499,10 +499,12 @@ fn ax_type_postcondition_mismatch_has_distinct_operation() {
         payload["error"]["operation"],
         json!("ax.type.postcondition")
     );
-    assert!(payload["error"]["message"]
-        .as_str()
-        .unwrap_or("")
-        .contains("postcondition mismatch"));
+    assert!(
+        payload["error"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("postcondition mismatch")
+    );
 }
 
 #[test]
@@ -536,8 +538,10 @@ fn ax_click_gate_timeout_reports_actionable_gate_operation() {
         payload["error"]["operation"],
         json!("ax.click.gate.window-present")
     );
-    assert!(payload["error"]["message"]
-        .as_str()
-        .unwrap_or("")
-        .contains("pre-action gate"));
+    assert!(
+        payload["error"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("pre-action gate")
+    );
 }

@@ -4,7 +4,7 @@ use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
 use nils_test_support::bin::resolve;
-use nils_test_support::cmd::{run_with, CmdOptions, CmdOutput};
+use nils_test_support::cmd::{CmdOptions, CmdOutput, run_with};
 use nils_test_support::fs::{write_json, write_text};
 use nils_test_support::http::{HttpResponse, RecordedRequest, TestServer};
 
@@ -138,7 +138,8 @@ fn call_with_missing_config_dir_errors() {
         &[("REST_JWT_VALIDATE_ENABLED", "false")],
     );
     assert_eq!(out.code, 1);
-    assert!(out
-        .stderr_text()
-        .contains("Failed to resolve setup dir (try --config-dir)."));
+    assert!(
+        out.stderr_text()
+            .contains("Failed to resolve setup dir (try --config-dir).")
+    );
 }

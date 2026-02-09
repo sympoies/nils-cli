@@ -6,7 +6,7 @@ use std::process::Command;
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 use serde::Serialize;
 
-use crate::parse::{parse_plan_with_display, Plan, Task};
+use crate::parse::{Plan, Task, parse_plan_with_display};
 
 const USAGE: &str = r#"Usage:
   validate_plans.sh [--file <path>]... [--format text|json]

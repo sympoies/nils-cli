@@ -4,11 +4,11 @@ use std::path::Path;
 use std::process::Output;
 
 use nils_test_support::bin::resolve;
-use nils_test_support::cmd::{run_with, CmdOptions, CmdOutput};
+use nils_test_support::cmd::{CmdOptions, CmdOutput, run_with};
 use nils_test_support::fs::{write_executable as write_executable_file, write_text};
+use nils_test_support::git::{InitRepoOptions, init_repo_with};
 #[allow(unused_imports)]
 pub use nils_test_support::git::{git, git_output};
-use nils_test_support::git::{init_repo_with, InitRepoOptions};
 
 pub fn init_repo() -> tempfile::TempDir {
     init_repo_with(InitRepoOptions::new().with_branch("main"))

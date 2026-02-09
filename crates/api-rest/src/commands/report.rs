@@ -164,11 +164,7 @@ pub(crate) fn cmd_report(
     let mut assertions: Vec<api_testing_core::rest::report::RestReportAssertion> = Vec::new();
     if let Some(expect) = &request_file.request.expect {
         let status_state = if args.run {
-            if run_exit_code == 0 {
-                "PASS"
-            } else {
-                "FAIL"
-            }
+            if run_exit_code == 0 { "PASS" } else { "FAIL" }
         } else {
             "NOT_EVALUATED"
         };
@@ -179,11 +175,7 @@ pub(crate) fn cmd_report(
 
         if let Some(expr) = expect.jq.as_deref() {
             let jq_state = if args.run {
-                if run_exit_code == 0 {
-                    "PASS"
-                } else {
-                    "FAIL"
-                }
+                if run_exit_code == 0 { "PASS" } else { "FAIL" }
             } else if let Some(json) = response_json_for_eval.as_ref() {
                 if api_testing_core::jq::eval_exit_status(json, expr).unwrap_or(false) {
                     "PASS"
@@ -419,7 +411,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
-    use crate::test_support::{write_file, write_json, EnvGuard, ENV_LOCK};
+    use crate::test_support::{ENV_LOCK, EnvGuard, write_file, write_json};
 
     #[test]
     fn build_report_commands_include_expected_flags() {

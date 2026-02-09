@@ -1,5 +1,5 @@
 use nils_common::git as common_git;
-use nils_common::shell::{quote_posix_single_with_style, SingleQuoteEscapeStyle};
+use nils_common::shell::{SingleQuoteEscapeStyle, quote_posix_single_with_style};
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug)]
@@ -284,11 +284,13 @@ mod tests {
         let staged = safe_write_path(&final_path, false);
         assert_ne!(staged, final_path);
         assert_eq!(staged.extension().and_then(|x| x.to_str()), Some("png"));
-        assert!(staged
-            .file_name()
-            .and_then(|x| x.to_str())
-            .unwrap_or_default()
-            .starts_with(".result.tmp-"));
+        assert!(
+            staged
+                .file_name()
+                .and_then(|x| x.to_str())
+                .unwrap_or_default()
+                .starts_with(".result.tmp-")
+        );
 
         std::fs::write(&staged, "hello").expect("write staged");
         atomic_replace(&staged, &final_path, false).expect("replace");

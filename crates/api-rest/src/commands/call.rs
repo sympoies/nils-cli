@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use api_testing_core::{auth_env, cli_endpoint, cli_util, config, env_file, history, jwt, Result};
+use api_testing_core::{Result, auth_env, cli_endpoint, cli_util, config, env_file, history, jwt};
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 
 use crate::cli::CallArgs;
@@ -102,7 +102,9 @@ pub(crate) fn resolve_auth_for_call(
             } else {
                 available.join(" ")
             };
-            anyhow::bail!("Token profile '{token_name}' is empty/missing (available: {available}). Set it in setup/rest/tokens.local.env or use ACCESS_TOKEN without selecting a token profile.");
+            anyhow::bail!(
+                "Token profile '{token_name}' is empty/missing (available: {available}). Set it in setup/rest/tokens.local.env or use ACCESS_TOKEN without selecting a token profile."
+            );
         };
 
         return Ok(AuthSelection {
@@ -485,12 +487,12 @@ fn maybe_print_failure_body_to_stderr(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
-    use crate::test_support::{write_file, EnvGuard, ENV_LOCK};
+    use crate::test_support::{ENV_LOCK, EnvGuard, write_file};
 
     fn b64url_json(value: &serde_json::Value) -> String {
         let bytes = serde_json::to_vec(value).expect("json");

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use nils_test_support::bin::resolve;
-use nils_test_support::cmd::{run, CmdOutput};
+use nils_test_support::cmd::{CmdOutput, run};
 use pretty_assertions::{assert_eq, assert_ne};
 
 fn api_test_bin() -> PathBuf {

@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use nils_test_support::cmd::CmdOptions;
 
-use crate::real_apps::arc_navigation::{click as arc_click, ArcYoutubeProfile};
+use crate::real_apps::arc_navigation::{ArcYoutubeProfile, click as arc_click};
 use crate::real_apps::matrix::{ScenarioOutcome, ScenarioStatus};
 use crate::real_common::{self, SpotifyPlaybackState};
 

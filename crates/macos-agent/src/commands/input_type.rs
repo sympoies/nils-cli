@@ -8,7 +8,7 @@ use crate::error::CliError;
 use crate::model::InputTypeResult;
 use crate::retry::run_with_retry;
 use crate::run::{
-    action_policy_result, build_action_meta_with_attempts, next_action_id, ActionPolicy,
+    ActionPolicy, action_policy_result, build_action_meta_with_attempts, next_action_id,
 };
 
 pub fn run(

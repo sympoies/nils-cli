@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use nils_test_support::fixtures::{
-    write_text, GraphqlSetupFixture, RestSetupFixture, SuiteFixture,
+    GraphqlSetupFixture, RestSetupFixture, SuiteFixture, write_text,
 };
 
 #[test]

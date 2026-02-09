@@ -510,7 +510,7 @@ fn squared_distance(lhs: UiPoint, rhs: UiPoint) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_click_candidates, select_ax_candidate, AxLocateSpec};
+    use super::{AxLocateSpec, collect_click_candidates, select_ax_candidate};
     use crate::real_common::UiPoint;
     use serde_json::json;
 

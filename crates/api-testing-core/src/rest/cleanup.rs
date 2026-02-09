@@ -1,7 +1,7 @@
 use anyhow::Context;
 
-use crate::rest::schema::RestCleanup;
 use crate::Result;
+use crate::rest::schema::RestCleanup;
 
 pub fn render_cleanup_path(cleanup: &RestCleanup, main_response_body: &[u8]) -> Result<String> {
     let response_json: Option<serde_json::Value> = serde_json::from_slice(main_response_body).ok();

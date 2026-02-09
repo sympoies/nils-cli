@@ -88,8 +88,10 @@ fn profile_validate_reports_actionable_error_for_missing_keys() {
         payload["error"]["operation"],
         serde_json::json!("profile.validate")
     );
-    assert!(payload["error"]["message"]
-        .as_str()
-        .unwrap_or("")
-        .contains("profile_name"));
+    assert!(
+        payload["error"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("profile_name")
+    );
 }

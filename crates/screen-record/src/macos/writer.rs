@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use objc2::rc::{autoreleasepool, Retained};
+use objc2::rc::{Retained, autoreleasepool};
 use objc2::runtime::AnyObject;
 use objc2_av_foundation::{
     AVAssetWriter, AVAssetWriterInput, AVFileTypeMPEG4, AVFileTypeQuickTimeMovie, AVMediaTypeAudio,

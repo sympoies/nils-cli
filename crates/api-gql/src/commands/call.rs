@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use api_testing_core::{cli_endpoint, config, history, Result};
+use api_testing_core::{Result, cli_endpoint, config, history};
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 
 use crate::cli::CallArgs;

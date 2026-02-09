@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use api_testing_core::cli_report::{build_report_metadata, endpoint_note, ReportMetadataConfig};
+use api_testing_core::cli_report::{ReportMetadataConfig, build_report_metadata, endpoint_note};
 use nils_test_support::{EnvGuard, GlobalStateLock};
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;

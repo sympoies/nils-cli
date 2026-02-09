@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use anyhow::Context;
 use jaq_core::load::{Arena, File, Loader};
-use jaq_core::{data, unwrap_valr, Ctx, Vars};
-use jaq_json::{write, Val};
+use jaq_core::{Ctx, Vars, data, unwrap_valr};
+use jaq_json::{Val, write};
 
 use crate::Result;
 

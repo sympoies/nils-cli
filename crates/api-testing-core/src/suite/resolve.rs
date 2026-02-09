@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 
-use crate::{cli_util, Result};
+use crate::{Result, cli_util};
 
 pub fn find_repo_root(start_dir: &Path) -> Result<PathBuf> {
     let mut dir = start_dir;
@@ -347,9 +347,10 @@ mod tests {
         .unwrap();
 
         let sel = resolve_suite_selection(root, Some("smoke"), None).unwrap();
-        assert!(sel
-            .suite_path
-            .ends_with("tests/api/suites/smoke.suite.json"));
+        assert!(
+            sel.suite_path
+                .ends_with("tests/api/suites/smoke.suite.json")
+        );
     }
 
     #[test]
@@ -368,9 +369,10 @@ mod tests {
         .unwrap();
 
         let sel = resolve_suite_selection(root, Some("smoke"), None).unwrap();
-        assert!(sel
-            .suite_path
-            .ends_with("setup/api/suites/smoke.suite.json"));
+        assert!(
+            sel.suite_path
+                .ends_with("setup/api/suites/smoke.suite.json")
+        );
     }
 
     #[test]
@@ -399,8 +401,9 @@ mod tests {
         let sel =
             resolve_suite_selection(root, None, Some("setup/api/suites/smoke.suite.json")).unwrap();
         assert_eq!(sel.suite_key, "smoke.suite.json");
-        assert!(sel
-            .suite_path
-            .ends_with("setup/api/suites/smoke.suite.json"));
+        assert!(
+            sel.suite_path
+                .ends_with("setup/api/suites/smoke.suite.json")
+        );
     }
 }

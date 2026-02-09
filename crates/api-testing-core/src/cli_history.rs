@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::{cli_util, history, Result};
+use crate::{Result, cli_util, history};
 
 pub fn resolve_history_file<F>(
     cwd: &Path,

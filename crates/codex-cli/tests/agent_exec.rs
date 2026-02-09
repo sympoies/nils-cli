@@ -18,8 +18,10 @@ fn require_allow_dangerous_without_caller_uses_codex_prefix() {
     let mut stderr: Vec<u8> = Vec::new();
     let allowed = exec::require_allow_dangerous(None, &mut stderr);
     assert!(!allowed);
-    assert!(String::from_utf8_lossy(&stderr)
-        .contains("codex: disabled (set CODEX_ALLOW_DANGEROUS_ENABLED=true)"));
+    assert!(
+        String::from_utf8_lossy(&stderr)
+            .contains("codex: disabled (set CODEX_ALLOW_DANGEROUS_ENABLED=true)")
+    );
 }
 
 #[test]

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use nils_common::clipboard::{copy_best_effort, ClipboardOutcome, ClipboardPolicy, ClipboardTool};
+use nils_common::clipboard::{ClipboardOutcome, ClipboardPolicy, ClipboardTool, copy_best_effort};
 use std::env;
 
 const CLIPBOARD_TOOL_ORDER: [ClipboardTool; 4] = [
@@ -28,7 +28,7 @@ pub fn set_clipboard_best_effort(text: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nils_test_support::{prepend_path, EnvGuard, GlobalStateLock, StubBinDir};
+    use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
     use pretty_assertions::assert_eq;
     use std::fs;
     use tempfile::TempDir;

@@ -165,7 +165,7 @@ pub fn map_failure(operation: &str, failure: ProcessFailure) -> CliError {
 mod tests {
     use pretty_assertions::assert_eq;
 
-    use super::{map_failure, ProcessFailure, ProcessRequest, ProcessRunner, RealProcessRunner};
+    use super::{ProcessFailure, ProcessRequest, ProcessRunner, RealProcessRunner, map_failure};
 
     #[test]
     fn reports_not_found() {

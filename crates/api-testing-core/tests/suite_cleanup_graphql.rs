@@ -1,4 +1,4 @@
-use api_testing_core::suite::cleanup::{run_case_cleanup, CleanupContext};
+use api_testing_core::suite::cleanup::{CleanupContext, run_case_cleanup};
 use api_testing_core::suite::schema::{SuiteCleanup, SuiteCleanupStep, SuiteDefaults};
 use nils_test_support::fixtures::write_text;
 use nils_test_support::http::{HttpResponse, LoopbackServer};
@@ -103,11 +103,12 @@ fn suite_cleanup_graphql_success_sends_vars() {
         .find(|r| r.method == "POST" && r.path == "/graphql")
         .expect("graphql request");
     let body: serde_json::Value = serde_json::from_str(&req.body_text()).expect("json body");
-    assert!(body
-        .get("query")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .contains("query Cleanup"));
+    assert!(
+        body.get("query")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .contains("query Cleanup")
+    );
     assert_eq!(
         body.get("variables"),
         Some(&serde_json::json!({"id":"123"}))
@@ -182,5 +183,7 @@ fn suite_cleanup_graphql_failure_errors_present_is_logged() {
     assert!(!run_case_cleanup(&mut ctx).unwrap());
 
     let stderr_text = std::fs::read_to_string(&main_stderr_file).expect("stderr read");
-    assert!(stderr_text.contains("cleanup(graphql) errors present: step[0] op=ops/cleanup.graphql"));
+    assert!(
+        stderr_text.contains("cleanup(graphql) errors present: step[0] op=ops/cleanup.graphql")
+    );
 }

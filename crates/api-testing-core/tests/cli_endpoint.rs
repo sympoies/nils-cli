@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use api_testing_core::cli_endpoint::{
-    list_available_env_suffixes, resolve_cli_endpoint, EndpointConfig,
+    EndpointConfig, list_available_env_suffixes, resolve_cli_endpoint,
 };
 use nils_test_support::{EnvGuard, GlobalStateLock};
 use pretty_assertions::assert_eq;

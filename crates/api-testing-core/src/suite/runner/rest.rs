@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use crate::Result;
 use crate::cli_util;
 use crate::suite::auth::SuiteAuthManager;
 use crate::suite::resolve::{resolve_path_from_repo_root, write_file};
@@ -8,11 +9,10 @@ use crate::suite::runtime::{
     resolve_rest_token_profile,
 };
 use crate::suite::safety::{
-    rest_method_is_write, writes_enabled, MSG_WRITE_CAPABLE_REQUIRES_ALLOW_WRITE_TRUE,
-    MSG_WRITE_CASES_DISABLED,
+    MSG_WRITE_CAPABLE_REQUIRES_ALLOW_WRITE_TRUE, MSG_WRITE_CASES_DISABLED, rest_method_is_write,
+    writes_enabled,
 };
 use crate::suite::schema::{SuiteCase, SuiteDefaults};
-use crate::Result;
 
 pub(super) enum PrepareOutcome<T> {
     Ready(T),

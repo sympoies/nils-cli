@@ -3,8 +3,8 @@
 mod preflight;
 
 use preflight::{
-    build_report, render_json, render_text, PermissionSignal, PermissionState, ProbeSnapshot,
-    ACCESSIBILITY_HINT, AUTOMATION_HINT, CLICLICK_INSTALL_HINT, SCREEN_RECORDING_HINT,
+    ACCESSIBILITY_HINT, AUTOMATION_HINT, CLICLICK_INSTALL_HINT, PermissionSignal, PermissionState,
+    ProbeSnapshot, SCREEN_RECORDING_HINT, build_report, render_json, render_text,
 };
 use pretty_assertions::assert_eq;
 use serde_json::json;

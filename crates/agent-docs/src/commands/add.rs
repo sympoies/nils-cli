@@ -1,9 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use toml_edit::{value, ArrayOfTables, DocumentMut, Item, Table, Value};
+use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, Value, value};
 
-use crate::config::{config_path_for_root, load_scope_config, CONFIG_FILE_NAME};
+use crate::config::{CONFIG_FILE_NAME, config_path_for_root, load_scope_config};
 use crate::env::ResolvedRoots;
 use crate::model::{
     AddDocumentAction, AddDocumentReport, ConfigDocumentEntry, ConfigLoadError, Context,
@@ -277,7 +277,7 @@ fn path_to_utf8(path: &Path, config_path: &Path) -> Result<String, ConfigLoadErr
 mod tests {
     use super::*;
 
-    use crate::config::{load_scope_config, CONFIG_FILE_NAME};
+    use crate::config::{CONFIG_FILE_NAME, load_scope_config};
     use crate::model::ConfigErrorKind;
     use tempfile::TempDir;
 

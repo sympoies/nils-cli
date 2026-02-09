@@ -1,11 +1,11 @@
 use crate::git;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
 const EXIT_ERROR: i32 = 1;
 const EXIT_NO_STAGED_CHANGES: i32 = 2;
@@ -484,11 +484,7 @@ fn git_string_ok(repo: Option<&Path>, args: &[&str]) -> Option<String> {
     }
 
     let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    if s.is_empty() { None } else { Some(s) }
 }
 
 fn git_bytes(repo: Option<&Path>, args: &[&str]) -> anyhow::Result<Vec<u8>> {

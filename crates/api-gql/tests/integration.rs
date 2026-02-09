@@ -4,7 +4,7 @@ use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
 use nils_test_support::bin::resolve;
-use nils_test_support::cmd::{run_with, CmdOptions, CmdOutput};
+use nils_test_support::cmd::{CmdOptions, CmdOutput, run_with};
 use nils_test_support::fs::write_text;
 use nils_test_support::http::{HttpResponse, RecordedRequest, TestServer};
 
@@ -154,9 +154,10 @@ fn call_non_2xx_exits_1() {
         ],
     );
     assert_eq!(out.code, 1);
-    assert!(out
-        .stderr_text()
-        .contains("HTTP request failed with status"));
+    assert!(
+        out.stderr_text()
+            .contains("HTTP request failed with status")
+    );
 }
 
 #[test]
@@ -362,9 +363,10 @@ fn report_rejects_non_json_response_without_allow_empty() {
         ],
     );
     assert_eq!(out.code, 1);
-    assert!(out
-        .stderr_text()
-        .contains("Response is not JSON; refusing to write a no-data report."));
+    assert!(
+        out.stderr_text()
+            .contains("Response is not JSON; refusing to write a no-data report.")
+    );
 }
 
 #[test]

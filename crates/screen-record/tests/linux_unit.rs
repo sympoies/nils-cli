@@ -3,7 +3,7 @@ mod linux_unit {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    use nils_test_support::{prepend_path, EnvGuard, GlobalStateLock, StubBinDir};
+    use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
     use screen_record::cli::{AudioMode, ContainerFormat};
     use screen_record::linux::ffmpeg;
     use screen_record::linux::portal::PortalCapture;
@@ -453,9 +453,10 @@ esac
         )
         .expect_err("empty pactl output");
         assert_eq!(err.exit_code(), 1);
-        assert!(err
-            .to_string()
-            .contains("failed to resolve default sink via pactl"));
+        assert!(
+            err.to_string()
+                .contains("failed to resolve default sink via pactl")
+        );
     }
 
     #[test]
@@ -524,9 +525,10 @@ exit 0
         let err = ffmpeg::record_portal_node(2, 1, &out_path, ContainerFormat::Mp4)
             .expect_err("devices probe failure");
         assert_eq!(err.exit_code(), 1);
-        assert!(err
-            .to_string()
-            .contains("ffmpeg -devices failed (exit code 17)"));
+        assert!(
+            err.to_string()
+                .contains("ffmpeg -devices failed (exit code 17)")
+        );
         assert!(err.to_string().contains("device probe broke"));
     }
 
@@ -566,9 +568,10 @@ printf "stub" > "$out"
         let err = ffmpeg::record_portal(&capture, 1, &out_path, ContainerFormat::Mp4)
             .expect_err("demuxer probe failure");
         assert_eq!(err.exit_code(), 1);
-        assert!(err
-            .to_string()
-            .contains("ffmpeg -h demuxer=pipewire failed (exit code 23)"));
+        assert!(
+            err.to_string()
+                .contains("ffmpeg -h demuxer=pipewire failed (exit code 23)")
+        );
         assert!(err.to_string().contains("demuxer probe exploded"));
     }
 

@@ -1,7 +1,7 @@
 mod common;
 
-use common::{init_bare_remote, init_repo, GitCliHarness};
-use nils_test_support::cmd::{run_with, CmdOutput};
+use common::{GitCliHarness, init_bare_remote, init_repo};
+use nils_test_support::cmd::{CmdOutput, run_with};
 use nils_test_support::git::{commit_file, git};
 use std::fs;
 use std::path::Path;
@@ -50,9 +50,11 @@ fn reset_mixed_invalid_count_errors() {
     let output = harness.run(dir.path(), &["reset", "mixed", "0"]);
 
     assert_eq!(output.code, 2);
-    assert!(output
-        .stderr_text()
-        .contains("❌ Invalid commit count: 0 (must be a positive integer)."));
+    assert!(
+        output
+            .stderr_text()
+            .contains("❌ Invalid commit count: 0 (must be a positive integer).")
+    );
 }
 
 #[test]
@@ -64,9 +66,11 @@ fn reset_soft_insufficient_commits_errors() {
 
     assert_eq!(output.code, 1);
     assert_eq!(output.stdout_text(), "");
-    assert!(output
-        .stderr_text()
-        .contains("❌ Cannot resolve HEAD~2 (not enough commits?)."));
+    assert!(
+        output
+            .stderr_text()
+            .contains("❌ Cannot resolve HEAD~2 (not enough commits?).")
+    );
 }
 
 #[test]
@@ -77,12 +81,16 @@ fn reset_hard_confirm_succeeds() {
     let output = run_with_stdin(&harness, dir.path(), &["reset", "hard", "1"], "y\n");
 
     assert_eq!(output.code, 0);
-    assert!(output
-        .stdout_text()
-        .contains("❓ Are you absolutely sure? [y/N] "));
-    assert!(output
-        .stdout_text()
-        .contains("✅ Hard reset completed. HEAD moved back to HEAD~1."));
+    assert!(
+        output
+            .stdout_text()
+            .contains("❓ Are you absolutely sure? [y/N] ")
+    );
+    assert!(
+        output
+            .stdout_text()
+            .contains("✅ Hard reset completed. HEAD moved back to HEAD~1.")
+    );
 }
 
 #[test]
@@ -107,9 +115,11 @@ fn reset_undo_no_reflog_entry_errors() {
     let output = harness.run(dir.path(), &["reset", "undo"]);
 
     assert_eq!(output.code, 1);
-    assert!(output
-        .stdout_text()
-        .contains("❌ Cannot resolve HEAD@{1} (no previous HEAD position in reflog)."));
+    assert!(
+        output
+            .stdout_text()
+            .contains("❌ Cannot resolve HEAD@{1} (no previous HEAD position in reflog).")
+    );
 }
 
 #[test]
@@ -121,12 +131,16 @@ fn reset_undo_clean_tree_fast_path() {
     let output = harness.run(dir.path(), &["reset", "undo"]);
 
     assert_eq!(output.code, 0);
-    assert!(output
-        .stdout_text()
-        .contains("✅ Working tree clean. Proceeding with: git reset --hard "));
-    assert!(output
-        .stdout_text()
-        .contains("✅ Repository reset back to previous HEAD: "));
+    assert!(
+        output
+            .stdout_text()
+            .contains("✅ Working tree clean. Proceeding with: git reset --hard ")
+    );
+    assert!(
+        output
+            .stdout_text()
+            .contains("✅ Repository reset back to previous HEAD: ")
+    );
 }
 
 #[test]
@@ -138,12 +152,16 @@ fn reset_undo_dirty_choice_soft_succeeds() {
     let output = run_with_stdin(&harness, dir.path(), &["reset", "undo"], "1\n");
 
     assert_eq!(output.code, 0);
-    assert!(output
-        .stdout_text()
-        .contains("🧷 Preserving INDEX (staged) and working tree. Running: git reset --soft "));
-    assert!(output
-        .stdout_text()
-        .contains("✅ HEAD moved back while preserving index + working tree: "));
+    assert!(
+        output
+            .stdout_text()
+            .contains("🧷 Preserving INDEX (staged) and working tree. Running: git reset --soft ")
+    );
+    assert!(
+        output
+            .stdout_text()
+            .contains("✅ HEAD moved back while preserving index + working tree: ")
+    );
 }
 
 #[test]
@@ -158,9 +176,11 @@ fn reset_undo_dirty_choice_mixed_succeeds() {
     assert!(output.stdout_text().contains(
         "🧷 Preserving working tree but clearing INDEX (unstage all). Running: git reset --mixed "
     ));
-    assert!(output
-        .stdout_text()
-        .contains("✅ HEAD moved back; working tree preserved; index reset: "));
+    assert!(
+        output
+            .stdout_text()
+            .contains("✅ HEAD moved back; working tree preserved; index reset: ")
+    );
 }
 
 #[test]
@@ -172,9 +192,11 @@ fn reset_undo_dirty_choice_hard_decline_aborts() {
     let output = run_with_stdin(&harness, dir.path(), &["reset", "undo"], "3\nn\n");
 
     assert_eq!(output.code, 1);
-    assert!(output
-        .stdout_text()
-        .contains("❓ Are you absolutely sure? [y/N] "));
+    assert!(
+        output
+            .stdout_text()
+            .contains("❓ Are you absolutely sure? [y/N] ")
+    );
     assert!(output.stdout_text().contains("🚫 Aborted"));
 }
 
@@ -186,9 +208,11 @@ fn reset_back_head_abort() {
     let output = run_with_stdin(&harness, dir.path(), &["reset", "back-head"], "n\n");
 
     assert_eq!(output.code, 1);
-    assert!(output
-        .stdout_text()
-        .contains("❓ Proceed with 'git checkout HEAD@{1}'? [y/N] "));
+    assert!(
+        output
+            .stdout_text()
+            .contains("❓ Proceed with 'git checkout HEAD@{1}'? [y/N] ")
+    );
     assert!(output.stdout_text().contains("🚫 Aborted"));
 }
 
@@ -201,9 +225,11 @@ fn reset_back_head_checkout_failure_prints_error() {
     let output = run_with_stdin(&harness, dir.path(), &["reset", "back-head"], "y\n");
 
     assert_eq!(output.code, 1);
-    assert!(output
-        .stdout_text()
-        .contains("❌ Checkout failed (likely due to local changes or invalid reflog state)."));
+    assert!(
+        output
+            .stdout_text()
+            .contains("❌ Checkout failed (likely due to local changes or invalid reflog state).")
+    );
 }
 
 #[test]
@@ -232,9 +258,11 @@ fn reset_back_checkout_missing_reflog_entry_errors() {
     let output = harness.run(dir.path(), &["reset", "back-checkout"]);
 
     assert_eq!(output.code, 1);
-    assert!(output
-        .stdout_text()
-        .contains("❌ Could not find a previous checkout that switched to main."));
+    assert!(
+        output
+            .stdout_text()
+            .contains("❌ Could not find a previous checkout that switched to main.")
+    );
 }
 
 #[test]
@@ -247,9 +275,11 @@ fn reset_back_checkout_sha_like_from_refuses() {
     let output = harness.run(dir.path(), &["reset", "back-checkout"]);
 
     assert_eq!(output.code, 1);
-    assert!(output
-        .stdout_text()
-        .contains("❌ Previous 'from' looks like a commit SHA"));
+    assert!(
+        output
+            .stdout_text()
+            .contains("❌ Previous 'from' looks like a commit SHA")
+    );
 }
 
 #[test]
@@ -286,9 +316,11 @@ fn reset_remote_yes_mode_resets_and_cleans() {
     );
 
     assert_eq!(output.code, 0);
-    assert!(output
-        .stdout_text()
-        .contains("✅ Done. 'main' now matches 'origin/main'."));
+    assert!(
+        output
+            .stdout_text()
+            .contains("✅ Done. 'main' now matches 'origin/main'.")
+    );
     assert!(!untracked.exists(), "expected untracked file to be removed");
 }
 
@@ -315,9 +347,11 @@ fn reset_remote_detached_head_refuses() {
     let output = harness.run(dir.path(), &["reset", "remote"]);
 
     assert_eq!(output.code, 1);
-    assert!(output
-        .stderr_text()
-        .contains("❌ Detached HEAD. Switch to a branch first."));
+    assert!(
+        output
+            .stderr_text()
+            .contains("❌ Detached HEAD. Switch to a branch first.")
+    );
 }
 
 #[test]
@@ -334,9 +368,11 @@ fn reset_remote_missing_tracking_ref_errors() {
     );
 
     assert_eq!(output.code, 1);
-    assert!(output
-        .stderr_text()
-        .contains("❌ Remote-tracking branch not found: origin/main"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("❌ Remote-tracking branch not found: origin/main")
+    );
 }
 
 #[test]

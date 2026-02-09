@@ -247,9 +247,9 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        artifact_index_has_required_fields, classify_base_vs_extended, selected_apps_from_env,
-        subset_selection_matches, summarize_soak, summary_has_base_extended_separation,
-        write_artifact_index, ScenarioOutcome, ScenarioStatus, SUPPORTED_APPS,
+        SUPPORTED_APPS, ScenarioOutcome, ScenarioStatus, artifact_index_has_required_fields,
+        classify_base_vs_extended, selected_apps_from_env, subset_selection_matches,
+        summarize_soak, summary_has_base_extended_separation, write_artifact_index,
     };
 
     #[test]

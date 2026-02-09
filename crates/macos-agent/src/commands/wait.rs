@@ -1,6 +1,6 @@
+use crate::backend::AutoAxBackend;
 use crate::backend::applescript;
 use crate::backend::process::{ProcessRunner, RealProcessRunner};
-use crate::backend::AutoAxBackend;
 use std::time::Instant;
 
 use crate::cli::{

@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use crate::Result;
 use crate::cli_util;
 use crate::suite::auth::SuiteAuthManager;
 use crate::suite::resolve::{resolve_path_from_repo_root, write_file};
@@ -9,7 +10,6 @@ use crate::suite::runtime::{
 };
 use crate::suite::safety::graphql_safety_decision;
 use crate::suite::schema::{SuiteCase, SuiteDefaults};
-use crate::Result;
 
 pub(super) enum PrepareOutcome<T> {
     Ready(T),

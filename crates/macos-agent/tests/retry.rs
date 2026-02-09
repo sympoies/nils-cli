@@ -87,10 +87,12 @@ fn click_without_retries_fails_on_first_transient_error() {
         payload["error"]["operation"],
         serde_json::json!("input.click")
     );
-    assert!(payload["error"]["message"]
-        .as_str()
-        .unwrap_or("")
-        .contains("input.click failed via `cliclick`"));
+    assert!(
+        payload["error"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("input.click failed via `cliclick`")
+    );
     assert!(payload["error"]["hints"].is_array());
 }
 

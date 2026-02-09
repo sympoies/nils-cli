@@ -1,4 +1,4 @@
-use codex_cli::rate_limits::client::{fetch_usage, read_tokens, UsageRequest};
+use codex_cli::rate_limits::client::{UsageRequest, fetch_usage, read_tokens};
 use nils_test_support::http::{HttpResponse, LoopbackServer};
 use nils_test_support::{EnvGuard, GlobalStateLock};
 use pretty_assertions::assert_eq;

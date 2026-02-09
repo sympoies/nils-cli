@@ -1,7 +1,7 @@
 use std::env;
 
 use nils_test_support::bin::resolve;
-use nils_test_support::cmd::{run_with, CmdOptions};
+use nils_test_support::cmd::{CmdOptions, run_with};
 use tempfile::TempDir;
 
 fn real_e2e_enabled() -> bool {
@@ -31,7 +31,9 @@ fn base_options(cwd: &std::path::Path) -> CmdOptions {
 #[test]
 fn real_macos_preflight_reports_tcc_signals_in_json() {
     if !real_e2e_enabled() {
-        eprintln!("SKIP[real_macos_preflight_reports_tcc_signals_in_json]: MACOS_AGENT_REAL_E2E is not enabled");
+        eprintln!(
+            "SKIP[real_macos_preflight_reports_tcc_signals_in_json]: MACOS_AGENT_REAL_E2E is not enabled"
+        );
         return;
     }
 
