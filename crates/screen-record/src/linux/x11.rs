@@ -242,16 +242,16 @@ fn z_order_map(windows: &[Window]) -> std::collections::HashMap<Window, usize> {
 }
 
 fn window_title<C: Connection>(conn: &C, window: Window, atoms: &Atoms) -> String {
-    if let Some(bytes) = get_property_bytes(conn, window, atoms.net_wm_name, atoms.utf8_string) {
-        if let Some(title) = bytes_to_string(&bytes) {
-            return title;
-        }
+    if let Some(bytes) = get_property_bytes(conn, window, atoms.net_wm_name, atoms.utf8_string)
+        && let Some(title) = bytes_to_string(&bytes)
+    {
+        return title;
     }
 
-    if let Some(bytes) = get_property_bytes(conn, window, atoms.wm_name, AtomEnum::STRING.into()) {
-        if let Some(title) = bytes_to_string(&bytes) {
-            return title;
-        }
+    if let Some(bytes) = get_property_bytes(conn, window, atoms.wm_name, AtomEnum::STRING.into())
+        && let Some(title) = bytes_to_string(&bytes)
+    {
+        return title;
     }
 
     String::new()
@@ -303,12 +303,11 @@ fn window_has_state<C: Connection>(
         Err(_) => return false,
     };
 
-    // Avoid keeping the borrow from `reply.value32()` alive until the end of the block (E0597).
-    let has_state = match reply.value32() {
+    // Keep the iterator borrow scoped to this expression to avoid E0597.
+    match reply.value32() {
         Some(mut iter) => iter.any(|value| value == hidden_state),
         None => false,
-    };
-    has_state
+    }
 }
 
 fn get_property_bytes<C: Connection>(
