@@ -2,9 +2,12 @@
 
 ## Setup
 
-- Install Rust via rustup (stable toolchain).
-- Ensure `rustfmt` and `clippy` components are installed:
-  - `rustup component add rustfmt clippy`
+- If Rust/cargo (or required cargo tools) are not installed yet, run:
+  - `scripts/setup-rust-tooling.sh`
+- Manual setup fallback:
+  - Install Rust via rustup (stable toolchain).
+  - Ensure `rustfmt` and `clippy` components are installed:
+    - `rustup component add rustfmt clippy`
 - Optional tools for full CLI output fidelity:
   - `tree` (directory tree rendering)
   - `file` (binary/text detection)
@@ -45,7 +48,7 @@
 
 ### CI-style test reporting (optional)
 
-- Install `cargo-nextest`: `cargo install cargo-nextest --locked`
+- If `cargo nextest` is missing, run `scripts/setup-rust-tooling.sh`
 - Run CI-style tests + generate JUnit: `cargo nextest run --profile ci --workspace` (writes `target/nextest/ci/junit.xml`)
 - Note: nextest does not run doctests; run separately: `cargo test --workspace --doc`
 
@@ -56,9 +59,7 @@
 - Prereqs:
 
   ```bash
-  rustup component add llvm-tools-preview
-  cargo install cargo-llvm-cov --locked
-  cargo install cargo-nextest --locked
+  scripts/setup-rust-tooling.sh
   ```
 
 - Generate coverage artifacts (recommended; matches CI runner):
