@@ -9,7 +9,7 @@ anyhow = { workspace = true }
 clap = { workspace = true }
 nils-term = { path = "../nils-term" }
 nils-common = { path = "../nils-common" }
+tempfile = "3"
 
 [dev-dependencies]
 nils-test-support = { path = "../nils-test-support" }
-tempfile = "3"

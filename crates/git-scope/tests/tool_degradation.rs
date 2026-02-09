@@ -40,9 +40,7 @@ fn tracked_print_works_when_file_missing() {
 
     let stub = tempfile::TempDir::new().unwrap();
     let git_path = which_cmd("git");
-    let mktemp_path = which_cmd("mktemp");
     symlink(&git_path, stub.path().join("git")).unwrap();
-    symlink(&mktemp_path, stub.path().join("mktemp")).unwrap();
 
     let path_env = stub.path().to_string_lossy().to_string();
     let output = common::run_git_scope(
@@ -66,6 +64,39 @@ fn tracked_print_works_when_file_missing() {
     assert!(
         output.contains("[Binary file content omitted]"),
         "binary placeholder missing: {output}"
+    );
+}
+
+#[test]
+fn staged_print_works_without_mktemp_or_file() {
+    let repo = common::init_repo();
+    let root = repo.path();
+
+    fs::write(root.join("tracked.txt"), "base line\n").unwrap();
+    common::git(root, &["add", "tracked.txt"]);
+    common::git(root, &["commit", "-m", "base"]);
+
+    fs::write(root.join("tracked.txt"), "STAGED_LINE\n").unwrap();
+    common::git(root, &["add", "tracked.txt"]);
+
+    let stub = tempfile::TempDir::new().unwrap();
+    let git_path = which_cmd("git");
+    symlink(&git_path, stub.path().join("git")).unwrap();
+
+    let path_env = stub.path().to_string_lossy().to_string();
+    let output = common::run_git_scope(
+        root,
+        &["staged", "-p"],
+        &[("NO_COLOR", "1"), ("PATH", path_env.as_str())],
+    );
+
+    assert!(
+        output.contains("📄 tracked.txt (index)"),
+        "index label missing: {output}"
+    );
+    assert!(
+        output.contains("STAGED_LINE"),
+        "staged content missing: {output}"
     );
 }
 

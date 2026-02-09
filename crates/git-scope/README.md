@@ -43,7 +43,6 @@ Options:
 - `git` is required for all commands.
 - `tree` is optional; missing or unsupported versions emit a warning and skip tree output.
 - `file` is optional; when unavailable, binary detection falls back to content inspection.
-- `mktemp` is required for printing contents from the index or commit history.
 
 ## Environment
 - `NO_COLOR`: Disable ANSI colors.
