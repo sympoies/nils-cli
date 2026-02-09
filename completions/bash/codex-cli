@@ -57,6 +57,8 @@ _nils_cli_codex_cli_complete() {
   fi
 
   local -a root_cmds=(agent auth diag config starship help)
+  # Compatibility shim: provider-neutral groups move to agentctl.
+  local -a migrated_cmds=(provider debug workflow automation)
   local -a root_opts=(-h --help -V --version)
 
   if (( cword == 1 )); then
@@ -64,7 +66,7 @@ _nils_cli_codex_cli_complete() {
       COMPREPLY=( $(compgen -W "${root_opts[*]}" -- "$cur") )
       return 0
     fi
-    COMPREPLY=( $(compgen -W "${root_cmds[*]}" -- "$cur") )
+    COMPREPLY=( $(compgen -W "${root_cmds[*]} ${migrated_cmds[*]}" -- "$cur") )
     return 0
   fi
 
@@ -211,6 +213,14 @@ _nils_cli_codex_cli_complete() {
       fi
       if [[ "$cur" == -* ]]; then
         COMPREPLY=( $(compgen -W "-h --help --no-5h --ttl --time-format --show-timezone --refresh --is-enabled" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=()
+      return 0
+      ;;
+    provider|debug|workflow|automation)
+      if (( cword == 2 )); then
+        COMPREPLY=( $(compgen -W "agentctl" -- "$cur") )
         return 0
       fi
       COMPREPLY=()

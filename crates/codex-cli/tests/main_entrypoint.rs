@@ -67,3 +67,29 @@ fn main_unknown_command_exits_64() {
     assert_exit(&output, 64);
     assert!(!stderr(&output).trim().is_empty());
 }
+
+#[test]
+fn main_provider_neutral_groups_redirect_to_agentctl() {
+    for group in ["provider", "debug", "workflow", "automation"] {
+        let output = run(&[group]);
+        assert_exit(&output, 64);
+        assert!(
+            stderr(&output).contains("use `agentctl"),
+            "stderr should contain migration hint: {}",
+            stderr(&output)
+        );
+    }
+}
+
+#[test]
+fn main_help_excludes_provider_neutral_groups() {
+    let output = run(&["--help"]);
+    assert_exit(&output, 0);
+    let help = stdout(&output);
+    for group in ["provider", "debug", "workflow", "automation"] {
+        assert!(
+            !help.contains(group),
+            "unexpected provider-neutral group in help: {group}\n{help}"
+        );
+    }
+}

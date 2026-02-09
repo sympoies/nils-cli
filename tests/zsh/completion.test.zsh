@@ -17,6 +17,7 @@ COMP_PLAN_TOOLING_FILE="$REPO_ROOT/completions/zsh/_plan-tooling"
 COMP_CODEX_CLI_FILE="$REPO_ROOT/completions/zsh/_codex-cli"
 COMP_AGENT_DOCS_FILE="$REPO_ROOT/completions/zsh/_agent-docs"
 COMP_MACOS_AGENT_FILE="$REPO_ROOT/completions/zsh/_macos-agent"
+COMP_AGENTCTL_FILE="$REPO_ROOT/completions/zsh/_agentctl"
 ALIASES_FILE="$REPO_ROOT/completions/zsh/aliases.zsh"
 
 BASH_GIT_SCOPE_FILE="$REPO_ROOT/completions/bash/git-scope"
@@ -32,6 +33,7 @@ BASH_PLAN_TOOLING_FILE="$REPO_ROOT/completions/bash/plan-tooling"
 BASH_CODEX_CLI_FILE="$REPO_ROOT/completions/bash/codex-cli"
 BASH_AGENT_DOCS_FILE="$REPO_ROOT/completions/bash/agent-docs"
 BASH_MACOS_AGENT_FILE="$REPO_ROOT/completions/bash/macos-agent"
+BASH_AGENTCTL_FILE="$REPO_ROOT/completions/bash/agentctl"
 BASH_ALIASES_FILE="$REPO_ROOT/completions/bash/aliases.bash"
 
 if [[ ! -f "$COMP_FILE" ]]; then
@@ -96,6 +98,11 @@ fi
 
 if [[ ! -f "$COMP_MACOS_AGENT_FILE" ]]; then
   print -u2 -r -- "FAIL: missing macos-agent completion file"
+  exit 1
+fi
+
+if [[ ! -f "$COMP_AGENTCTL_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing agentctl completion file"
   exit 1
 fi
 
@@ -166,6 +173,11 @@ fi
 
 if [[ ! -f "$BASH_MACOS_AGENT_FILE" ]]; then
   print -u2 -r -- "FAIL: missing bash macos-agent completion file"
+  exit 1
+fi
+
+if [[ ! -f "$BASH_AGENTCTL_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing bash agentctl completion file"
   exit 1
 fi
 
@@ -242,6 +254,11 @@ source "$COMP_MACOS_AGENT_FILE" || {
   exit 1
 }
 
+source "$COMP_AGENTCTL_FILE" || {
+  print -u2 -r -- "FAIL: failed to source agentctl completion file"
+  exit 1
+}
+
 source "$ALIASES_FILE" || {
   print -u2 -r -- "FAIL: failed to source nils-cli aliases file"
   exit 1
@@ -309,6 +326,11 @@ fi
 
 if (( ! $+functions[_macos-agent] )); then
   print -u2 -r -- "FAIL: _macos-agent function not defined"
+  exit 1
+fi
+
+if (( ! $+functions[_agentctl] )); then
+  print -u2 -r -- "FAIL: _agentctl function not defined"
   exit 1
 fi
 
@@ -617,6 +639,26 @@ grep -q -- "--enter\\[Deprecated alias of --submit\\]" "$COMP_MACOS_AGENT_FILE" 
   exit 1
 }
 
+grep -q "provider:Provider registry and selection" "$COMP_AGENTCTL_FILE" || {
+  print -u2 -r -- "FAIL: agentctl completion missing provider command"
+  exit 1
+}
+
+grep -q "diag:Provider-neutral diagnostics" "$COMP_AGENTCTL_FILE" || {
+  print -u2 -r -- "FAIL: agentctl completion missing diag command"
+  exit 1
+}
+
+grep -q "workflow:Declarative workflow orchestration" "$COMP_AGENTCTL_FILE" || {
+  print -u2 -r -- "FAIL: agentctl completion missing workflow command"
+  exit 1
+}
+
+grep -q -- "--probe-mode" "$COMP_AGENTCTL_FILE" || {
+  print -u2 -r -- "FAIL: agentctl completion missing --probe-mode"
+  exit 1
+}
+
 grep -q -- "--window-title-contains" "$BASH_MACOS_AGENT_FILE" || {
   print -u2 -r -- "FAIL: bash macos-agent completion missing canonical --window-title-contains"
   exit 1
@@ -634,6 +676,21 @@ grep -q -- "--submit" "$BASH_MACOS_AGENT_FILE" || {
 
 grep -q -- "--enter" "$BASH_MACOS_AGENT_FILE" || {
   print -u2 -r -- "FAIL: bash macos-agent completion missing --enter alias"
+  exit 1
+}
+
+grep -q "_nils_cli_agentctl_complete" "$BASH_AGENTCTL_FILE" || {
+  print -u2 -r -- "FAIL: bash agentctl completion missing completion function"
+  exit 1
+}
+
+grep -q -- "--include-experimental" "$BASH_AGENTCTL_FILE" || {
+  print -u2 -r -- "FAIL: bash agentctl completion missing --include-experimental"
+  exit 1
+}
+
+grep -q -- "--probe-mode" "$BASH_AGENTCTL_FILE" || {
+  print -u2 -r -- "FAIL: bash agentctl completion missing --probe-mode"
   exit 1
 }
 
@@ -699,6 +756,11 @@ bash -c "set -euo pipefail; source \"$BASH_AGENT_DOCS_FILE\"; complete -p agent-
 
 bash -c "set -euo pipefail; source \"$BASH_MACOS_AGENT_FILE\"; complete -p macos-agent | grep -q _nils_cli_macos_agent_complete" || {
   print -u2 -r -- "FAIL: failed to source bash macos-agent completion file"
+  exit 1
+}
+
+bash -c "set -euo pipefail; source \"$BASH_AGENTCTL_FILE\"; complete -p agentctl | grep -q _nils_cli_agentctl_complete" || {
+  print -u2 -r -- "FAIL: failed to source bash agentctl completion file"
   exit 1
 }
 

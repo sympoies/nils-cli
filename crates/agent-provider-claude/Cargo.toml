@@ -1,0 +1,12 @@
+[package]
+name = "agent-provider-claude"
+version = "0.2.11"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+agent-runtime-core = { path = "../agent-runtime-core" }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
