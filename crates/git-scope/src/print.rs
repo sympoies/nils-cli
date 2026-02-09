@@ -4,6 +4,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
+use tempfile::NamedTempFile;
 
 #[derive(Debug, Clone, Copy)]
 pub enum PrintSource {
@@ -53,31 +54,29 @@ pub fn emit_file_from_commit(commit: &str, path: &str) -> Result<()> {
         return Ok(());
     }
 
-    let tmp = mktemp_path()?;
-    if git_show_to_file(&format!("{commit}:{path}"), &tmp).is_err() {
-        let _ = fs::remove_file(&tmp);
+    let tmp = new_temp_file()?;
+    if git_show_to_file(&format!("{commit}:{path}"), tmp.path()).is_err() {
         println!("❗ File not found in commit {commit}: {path}");
         return Ok(());
     }
 
-    if is_binary_file(&tmp)? {
+    if is_binary_file(tmp.path())? {
         println!("📄 {path} (binary file in {commit})");
         println!("🔹 [Binary file content omitted]");
     } else {
         println!("📄 {path} (from {commit})");
         println!("```");
-        let content = fs::read(&tmp)?;
+        let content = fs::read(tmp.path())?;
         std::io::stdout().write_all(&content)?;
         println!();
         println!("```");
     }
 
-    let _ = fs::remove_file(&tmp);
     Ok(())
 }
 
 fn emit_from_worktree(path: &str) -> Result<()> {
-    if is_binary_file(path)? {
+    if is_binary_file(Path::new(path))? {
         println!("📄 {path} (binary file in working tree)");
         println!("🔹 [Binary file content omitted]");
     } else {
@@ -92,34 +91,32 @@ fn emit_from_worktree(path: &str) -> Result<()> {
 }
 
 fn emit_from_index(path: &str) -> Result<()> {
-    let tmp = mktemp_path()?;
-    if git_show_to_file(&format!(":{path}"), &tmp).is_err() {
-        let _ = fs::remove_file(&tmp);
+    let tmp = new_temp_file()?;
+    if git_show_to_file(&format!(":{path}"), tmp.path()).is_err() {
         println!("❗ Failed to read file from index: {path}");
         return Ok(());
     }
 
-    if is_binary_file(&tmp)? {
+    if is_binary_file(tmp.path())? {
         println!("📄 {path} (binary file in index)");
         println!("🔹 [Binary file content omitted]");
     } else {
         println!("📄 {path} (index)");
         println!("```");
-        let content = fs::read(&tmp)?;
+        let content = fs::read(tmp.path())?;
         std::io::stdout().write_all(&content)?;
         println!();
         println!("```");
     }
 
-    let _ = fs::remove_file(&tmp);
     Ok(())
 }
 
 fn emit_from_head(path: &str, fallback: HeadFallback) -> Result<()> {
-    let tmp = mktemp_path()?;
-    git_show_to_file(&format!("HEAD:{path}"), &tmp)?;
+    let tmp = new_temp_file()?;
+    git_show_to_file(&format!("HEAD:{path}"), tmp.path())?;
 
-    if is_binary_file(&tmp)? {
+    if is_binary_file(tmp.path())? {
         match fallback {
             HeadFallback::DeletedInIndex => {
                 println!("📄 {path} (deleted in index; binary file in HEAD)");
@@ -139,13 +136,12 @@ fn emit_from_head(path: &str, fallback: HeadFallback) -> Result<()> {
             }
         }
         println!("```");
-        let content = fs::read(&tmp)?;
+        let content = fs::read(tmp.path())?;
         std::io::stdout().write_all(&content)?;
         println!();
         println!("```");
     }
 
-    let _ = fs::remove_file(&tmp);
     Ok(())
 }
 
@@ -158,7 +154,7 @@ fn git_has_object(spec: &str) -> Result<bool> {
     Ok(status.success())
 }
 
-fn git_show_to_file(spec: &str, dest: &str) -> Result<()> {
+fn git_show_to_file(spec: &str, dest: &Path) -> Result<()> {
     let output = Command::new("git")
         .args(["show", spec])
         .output()
@@ -171,7 +167,9 @@ fn git_show_to_file(spec: &str, dest: &str) -> Result<()> {
     Ok(())
 }
 
-fn is_binary_file(path: &str) -> Result<bool> {
+fn is_binary_file(path: &Path) -> Result<bool> {
+    let path_display = path.display();
+
     if let Some(false) = file_mime_available().get() {
         return is_binary_file_fallback(path);
     }
@@ -188,7 +186,7 @@ fn is_binary_file(path: &str) -> Result<bool> {
             file_mime_available().get_or_init(|| false);
             return is_binary_file_fallback(path);
         }
-        Err(err) => return Err(err).with_context(|| format!("file --mime {path}")),
+        Err(err) => return Err(err).with_context(|| format!("file --mime {path_display}")),
     }
 
     is_binary_file_fallback(path)
@@ -199,38 +197,17 @@ fn file_mime_available() -> &'static OnceLock<bool> {
     &FILE_MIME_AVAILABLE
 }
 
-fn is_binary_file_fallback(path: &str) -> Result<bool> {
+fn is_binary_file_fallback(path: &Path) -> Result<bool> {
+    let path_display = path.display();
     const CHUNK_SIZE: usize = 8192;
-    let mut file = fs::File::open(path).with_context(|| format!("open {path}"))?;
+    let mut file = fs::File::open(path).with_context(|| format!("open {path_display}"))?;
     let mut buf = [0u8; CHUNK_SIZE];
     let n = file
         .read(&mut buf)
-        .with_context(|| format!("read {path}"))?;
+        .with_context(|| format!("read {path_display}"))?;
     Ok(buf[..n].contains(&0))
 }
 
-fn mktemp_path() -> Result<String> {
-    if let Ok(path) = run_mktemp(&["mktemp"]) {
-        return Ok(path);
-    }
-
-    if let Ok(path) = run_mktemp(&["mktemp", "-t", "git-scope.XXXXXX"]) {
-        return Ok(path);
-    }
-
-    println!("❗ Failed to create temp file");
-    anyhow::bail!("mktemp failed")
-}
-
-fn run_mktemp(args: &[&str]) -> Result<String> {
-    let output = Command::new(args[0]).args(&args[1..]).output()?;
-    if !output.status.success() {
-        anyhow::bail!("mktemp failed")
-    }
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if path.is_empty() {
-        anyhow::bail!("mktemp produced empty output")
-    } else {
-        Ok(path)
-    }
+fn new_temp_file() -> Result<NamedTempFile> {
+    NamedTempFile::new().context("create temp file")
 }

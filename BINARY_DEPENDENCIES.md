@@ -17,7 +17,6 @@ These tools are required for common command paths.
 |---|---|---|---|
 | `git` | `git-scope`, `git-cli`, `git-summary`, `git-lock`, `semantic-commit`, `fzf-cli git-*` | Required | `brew install git` |
 | `fzf` | `fzf-cli` interactive commands | Required (for `fzf-cli`) | `brew install fzf` |
-| `mktemp` | `git-scope` print flows (`-p`, commit print modes) | Required for those modes | Usually preinstalled (verify with `command -v mktemp`) |
 | `magick` (or `convert` + `identify`) | `image-processing` | Required (for `image-processing`) | `brew install imagemagick` |
 | `ffmpeg` | `screen-record` on Linux | Required on Linux | `brew install ffmpeg` |
 | `codex` | `codex-cli agent *` flows | Required for agent commands | Install from official Codex distribution |
@@ -136,7 +135,7 @@ eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 ## 8. Quick Environment Verification
 
 ```bash
-for c in git gh fzf mktemp tree file magick ffmpeg bat im-select; do
+for c in git gh fzf tree file magick ffmpeg bat im-select; do
   if command -v "$c" >/dev/null 2>&1; then
     echo "[OK]   $c -> $(command -v "$c")"
   else
