@@ -23,21 +23,18 @@ Help:
 ```
 
 ## Scope boundary
-- Quick ownership matrix:
-
-| Use case | CLI |
+| Job | Primary owner |
 |---|---|
-| OpenAI/Codex auth, prompt wrappers, rate-limit diagnostics, Starship | `codex-cli` |
-| Multi-provider registry/selection, provider-neutral debug/diag/workflow/automation | `agentctl` |
+| OpenAI/Codex auth, Codex prompt wrappers, Codex rate-limit diagnostics, Starship | `codex-cli` |
+| Multi-provider registry/selection (`provider`), provider-neutral doctor/debug/workflow | `agentctl` |
+| Local automation tool orchestration (`macos-agent`, `screen-record`, `image-processing`, `fzf-cli`) | `agentctl` |
 
-- `codex-cli` owns provider-specific OpenAI/Codex commands only (`agent`, `auth`, `diag rate-limits`, `config`, `starship`).
-- `codex-cli` does not own provider-neutral orchestration concerns (multi-provider registry/selection, provider-neutral doctor/debug/workflow, or local automation integration).
-- `codex-cli` rejects provider-neutral orchestration entrypoints (`provider`, `debug`, `workflow`, `automation`) with migration hints to `agentctl`.
-- `agentctl` owns those provider-neutral concerns and integration contracts during migration.
-- Compatibility note: existing `codex-cli` command behavior remains stable during migration, while provider-neutral ownership moves to `agentctl`.
-- Wrapper compatibility shim: `wrappers/codex-cli` forwards `provider|debug|workflow|automation` to `agentctl` when `agentctl` is available.
-- Canonical migration hint text: `use agentctl <command> for provider-neutral orchestration`.
-- Future provider adapters (`claude`, `gemini`, etc.) are onboarded under `agent-provider-*` crates via `../../docs/runbooks/provider-onboarding.md`.
+- `codex-cli` owns only provider-specific OpenAI/Codex operations (`agent`, `auth`, `diag rate-limits`, `config`, `starship`).
+- Provider-neutral orchestration (`provider`, `diag`, `debug`, `workflow`, `automation`) belongs to `agentctl`.
+- Compatibility behavior: existing `codex-cli` commands stay stable for provider-specific workflows.
+- Compatibility shim: `wrappers/codex-cli` forwards `provider|debug|workflow|automation` to `agentctl` when available.
+- Canonical hint text (wrapper/help/docs): `use agentctl <command> for provider-neutral orchestration`.
+- Provider adapter implementation guidance: `../agent-runtime-core/README.md` and `../../docs/runbooks/provider-onboarding.md`.
 
 ## Commands
 

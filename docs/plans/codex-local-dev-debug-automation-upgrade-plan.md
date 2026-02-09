@@ -23,6 +23,66 @@ This plan redesigns the current direction so `codex-cli` remains strictly OpenAI
 4. Desktop automation checks require environment-aware fallbacks (stub/test-mode in CI).
 5. Artifact outputs can be written under `${CODEX_HOME}/out` with deterministic structure.
 
+## Inlined ADR: `codex-cli` / `agentctl` provider boundary
+- Status: Accepted
+- Date: 2026-02-08
+- Owners: `codex-cli` maintainers, `agentctl` maintainers
+
+### Context
+The workspace is moving to a multi-provider architecture. We need a strict boundary so
+provider-specific logic does not leak into provider-neutral orchestration.
+
+### Decision
+- `codex-cli` owns OpenAI/Codex provider-specific operations only.
+- `agentctl` owns provider-neutral orchestration and local automation integration.
+- Cross-provider control-plane features must live in `agentctl`, not `codex-cli`.
+
+### Scope and ownership
+#### `codex-cli` (provider-specific)
+Allow list:
+- OpenAI/Codex auth and secret lifecycle (`use`, `refresh`, `auto-refresh`, `current`, `sync`).
+- OpenAI/Codex execution wrappers and prompt tooling (`agent prompt/advice/knowledge/commit`).
+- OpenAI/Codex diagnostics (for example, rate-limit and provider health signals).
+- OpenAI/Codex-specific config and UX helpers (for example, `config`, `starship`) that do not
+  orchestrate other providers.
+
+Deny list:
+- Provider-neutral provider registry, default-provider selection, or cross-provider routing.
+- Provider-neutral workflow orchestration (`workflow run`, retries, multi-step execution).
+- Provider-neutral diagnostics that aggregate multiple providers or local automation tools.
+- Local automation integration contracts (`macos-agent`, `screen-record`, `image-processing`,
+  `fzf-cli`) as first-class command ownership.
+
+#### `agentctl` (provider-neutral)
+Allow list:
+- Provider-neutral orchestration entrypoints (`provider`, `diag`, `debug`, `workflow`,
+  `automation`).
+- Provider registry and adapter dispatch across Codex and future providers.
+- Unified diagnostics and debug bundles that combine provider + local automation readiness.
+- Stable machine-readable contracts for local automation CLIs.
+
+Deny list:
+- OpenAI/Codex-only auth/secret mutation commands.
+- OpenAI/Codex-only prompt convenience wrappers.
+- Provider-specific policy flags or defaults that should remain in provider CLIs.
+
+### Boundary principles
+1. Boundary-first: new commands must be placed by ownership first, then implemented.
+2. Adapter-first: `agentctl` consumes provider adapters; it does not re-implement provider internals.
+3. No dual ownership: a command family cannot be simultaneously owned by both CLIs.
+4. Parity-preserving: existing `codex-cli` behavior remains stable during transition periods.
+5. Redirection by ownership: provider-neutral behavior belongs in `agentctl` with explicit guidance.
+
+### Compatibility policy
+- Existing `codex-cli` commands stay available unless a documented breaking change is approved.
+- Provider-neutral flows should keep a compatibility shim period with explicit guidance to `agentctl`.
+- Help/docs must consistently state `codex-cli` is provider-specific and `agentctl` is provider-neutral.
+- Command ownership changes must include explicit documentation and release notes.
+
+### Consequences
+- Future providers can be added via `agentctl` adapter onboarding without expanding `codex-cli` scope.
+- Local automation integrations remain centralized in one provider-neutral control plane.
+
 ## Sprint 1: Architecture boundary and shared runtime contract
 **Goal**: Lock the separation model and create a reusable provider-neutral foundation.
 **Demo/Validation**:
@@ -38,21 +98,21 @@ This plan redesigns the current direction so `codex-cli` remains strictly OpenAI
 - `Task 1.1` should run first.
 - `Task 1.2` and `Task 1.3` can run in parallel after `Task 1.1`.
 
-### Task 1.1: Write boundary spec and migration ADR
+### Task 1.1: Write boundary spec and inlined ADR section
 - **Location**:
-  - `docs/adr/adr-agentctl-provider-boundary.md`
+  - `docs/plans/codex-local-dev-debug-automation-upgrade-plan.md`
   - `crates/codex-cli/README.md`
   - `README.md`
-- **Description**: Define strict role boundaries: `codex-cli` handles provider-specific OpenAI/Codex operations only; `agentctl` handles provider-neutral orchestration and local automation integration. Document migration principles, ownership boundaries, and compatibility policy.
+- **Description**: Define strict role boundaries: `codex-cli` handles provider-specific OpenAI/Codex operations only; `agentctl` handles provider-neutral orchestration and local automation integration. Keep ownership boundaries, compatibility policy, and transition principles in this plan as the canonical record.
 - **Dependencies**:
   - none
 - **Complexity**: 5
 - **Acceptance criteria**:
-  - ADR contains explicit allow/deny lists for each CLI scope.
+  - Inlined ADR section contains explicit allow/deny lists for each CLI scope.
   - README docs show command ownership split with migration notes.
   - No contradictory ownership statements remain in docs.
 - **Validation**:
-  - `rg -n "codex-cli|agentctl|provider-specific|provider-neutral" docs/adr/adr-agentctl-provider-boundary.md README.md crates/codex-cli/README.md`
+  - `rg -n "codex-cli|agentctl|provider-specific|provider-neutral" docs/plans/codex-local-dev-debug-automation-upgrade-plan.md README.md crates/codex-cli/README.md`
 
 ### Task 1.2: Introduce provider-neutral core crate (`agent-runtime-core`)
 - **Location**:

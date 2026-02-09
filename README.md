@@ -41,24 +41,6 @@ Each crate is either a standalone CLI binary or a shared library used across the
 - [crates/semantic-commit](crates/semantic-commit): Helper CLI for generating staged context and creating semantic commits.
 - [crates/plan-tooling](crates/plan-tooling): Plan Format v1 tooling CLI (to-json/validate/batches/scaffold).
 
-#### Command ownership matrix (use this CLI for this job)
-
-| Job | CLI |
-|---|---|
-| OpenAI/Codex auth, Codex prompt wrappers, Codex rate-limit diagnostics, Starship | `codex-cli` |
-| Multi-provider registry/selection (`provider`), provider-neutral doctor/debug/workflow | `agentctl` |
-| Local automation tool orchestration (`macos-agent`, `screen-record`, `image-processing`, `fzf-cli`) | `agentctl` |
-| Provider adapter implementation against `provider-adapter.v1` | `agent-provider-*` crates + `agent-runtime-core` |
-
-#### Command ownership split (migration boundary)
-
-- `codex-cli`: provider-specific OpenAI/Codex operations only (`agent`, `auth`, Codex diagnostics, Codex config/starship).
-- `agentctl`: provider-neutral orchestration (`provider`, `diag`, `debug`, `workflow`, `automation`) and local automation integration.
-- Migration note: keep existing `codex-cli` workflows stable while provider-neutral ownership lives in `agentctl` with explicit docs/help redirection.
-- Compatibility shim: `wrappers/codex-cli` forwards `provider|debug|workflow|automation` to `agentctl` when `agentctl` is available.
-- Migration hint text (wrapper/help/docs): `use agentctl <command> for provider-neutral orchestration`.
-- Future providers (`claude`, `gemini`, etc.) follow [`docs/runbooks/provider-onboarding.md`](docs/runbooks/provider-onboarding.md).
-
 ### Automation and utility CLIs
 
 - [crates/macos-agent](crates/macos-agent): macOS desktop automation primitives for app/window discovery, input actions, screenshot, and wait helpers.

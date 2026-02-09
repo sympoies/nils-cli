@@ -12,16 +12,20 @@ It owns:
 - declarative orchestration (`workflow`)
 - local automation integrations (`automation`)
 
-## Ownership boundary
+## Command ownership boundary
 
-| Concern | Owner |
+| Job | Primary owner |
 |---|---|
-| OpenAI/Codex-specific auth + execution wrappers | `codex-cli` |
-| Provider-neutral orchestration and multi-provider contracts | `agentctl` |
-| Adapter implementations (`codex`, `claude`, `gemini`) | `agent-provider-*` crates |
+| OpenAI/Codex auth, Codex prompt wrappers, Codex rate-limit diagnostics, Starship | `codex-cli` |
+| Multi-provider registry/selection (`provider`), provider-neutral doctor/debug/workflow | `agentctl` |
+| Local automation tool orchestration (`macos-agent`, `screen-record`, `image-processing`, `fzf-cli`) | `agentctl` |
+| Provider adapter implementation against `provider-adapter.v1` | `agent-provider-*` crates + `agent-runtime-core` |
 
-If you need provider-neutral orchestration, use `agentctl`.
-If you need Codex-specific auth/prompt tooling, use `codex-cli`.
+- `agentctl` owns provider-neutral orchestration (`provider`, `diag`, `debug`, `workflow`, `automation`) and local automation integration.
+- `codex-cli` remains responsible for provider-specific OpenAI/Codex operations.
+- Migration note: keep existing `codex-cli` workflows stable while provider-neutral ownership lives in `agentctl`.
+- Compatibility shim: `wrappers/codex-cli` forwards `provider|debug|workflow|automation` to `agentctl` when `agentctl` is available.
+- Migration hint text (wrapper/help/docs): `use agentctl <command> for provider-neutral orchestration`.
 
 ## Usage
 
@@ -66,6 +70,7 @@ Override selection:
 
 For new providers, follow:
 
+- `../agent-runtime-core/README.md`
 - `../../docs/runbooks/provider-onboarding.md`
 
 Required minimum:
