@@ -1,6 +1,6 @@
 ---
 name: nils-cli-refactor-foundations
-description: Find and implement high-value test/stability/shared-foundation refactors across crates, then deliver via create-feature-pr.
+description: Find and implement high-value test/stability/shared-foundation refactors across crates, then deliver via deliver-feature-pr.
 ---
 
 # Nils CLI Refactor Foundations
@@ -11,9 +11,10 @@ Prereqs:
 
 - Run inside the `nils-cli` git work tree.
 - Rust toolchain available on `PATH` (`cargo`, `rustfmt`, `clippy`).
-- `git`, `gh`, `semantic-commit`, and `git-scope` available when creating the delivery PR.
+- `git`, `gh`, `semantic-commit`, and `git-scope` available when delivering the PR end-to-end.
 - Use this skill together with:
-  - `$create-feature-pr` for branch/commit/PR delivery.
+  - `$deliver-feature-pr` as the canonical delivery policy.
+  - `$create-feature-pr` and `$close-feature-pr` through `$deliver-feature-pr`.
 
 Inputs:
 
@@ -26,10 +27,10 @@ Inputs:
 Outputs:
 
 - One of two outcomes:
-  - `Implement`: at least one high-value refactor is implemented with tests and validation evidence, then delivered via `$create-feature-pr`.
+  - `Implement`: at least one high-value refactor is implemented with tests and validation evidence, then delivered via `$deliver-feature-pr`.
   - `No Action`: no high-value target found; return concrete recommendations and potential issue list.
 - Reporting split (strict):
-  - `Implement`: use `$create-feature-pr` delivery + response format contract end-to-end (including final assistant output format).
+  - `Implement`: use `$deliver-feature-pr` delivery contract end-to-end (open PR, wait CI green, close PR).
   - `No Action`: use `.codex/skills/nils-cli-refactor-foundations/references/NO_ACTION_RESPONSE_TEMPLATE.md`.
 
 Exit codes:
@@ -48,6 +49,7 @@ Failure modes:
 ## Scripts (only entrypoints)
 
 - `.codex/skills/nils-cli-refactor-foundations/scripts/render-refactor-response-template.sh` (`No Action` response only)
+- `$CODEX_HOME/skills/workflows/pr/feature/deliver-feature-pr/scripts/deliver-feature-pr.sh` (`Implement` delivery only)
 
 ## Workflow
 
@@ -96,18 +98,23 @@ Failure modes:
 
 6. Delivery (required for implemented changes)
 
-- Use `$create-feature-pr` to:
-  - create feature branch
-  - commit with semantic commit policy
-  - push and open PR with summary, changes, testing, and risk notes
-- The `Implement` branch is not complete until `$create-feature-pr` finishes successfully.
-- After successful PR creation, final user-facing response must follow `$create-feature-pr` output contract
-  (`references/ASSISTANT_RESPONSE_TEMPLATE.md` via its render script).
+- Run branch-intent preflight:
+  - `deliver-feature-pr.sh preflight --base main`
+- Use `$create-feature-pr` to create branch/commit/open PR from confirmed base branch.
+- Wait for checks to become fully green:
+  - `deliver-feature-pr.sh wait-ci --pr <number>`
+- If checks fail, fix on the same feature branch, push, and re-run `wait-ci` until green.
+- Close after CI is green:
+  - `deliver-feature-pr.sh close --pr <number>`
+- The `Implement` branch is not complete until `$deliver-feature-pr` workflow finishes successfully.
 
 7. Response contract (always required)
 
-- `Implement` path: **do not** use this skill's implementation template; follow `$create-feature-pr`
-  response format exactly.
+- `Implement` path: report `$deliver-feature-pr` artifacts:
+  - PR URL
+  - CI status summary
+  - merge commit SHA
+  - final branch state
 - `No Action` path: use the no-action template with concrete recommendation list and potential issues.
 - Render helpers:
   - `./.codex/skills/nils-cli-refactor-foundations/scripts/render-refactor-response-template.sh --mode no-action`
