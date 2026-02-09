@@ -30,6 +30,33 @@ fn resolve_prefers_env_var_with_underscore() {
     assert_eq!(bin::resolve("test-bin"), path);
 }
 
+#[test]
+fn cmd_output_into_output_preserves_fields_and_exit_code() {
+    let output = cmd::CmdOutput {
+        code: 7,
+        stdout: b"stdout bytes".to_vec(),
+        stderr: b"stderr bytes".to_vec(),
+    };
+
+    let output = output.into_output();
+    assert_eq!(output.status.code(), Some(7));
+    assert_eq!(output.stdout, b"stdout bytes");
+    assert_eq!(output.stderr, b"stderr bytes");
+}
+
+#[test]
+fn cmd_output_into_output_maps_negative_code_to_failure() {
+    let output = cmd::CmdOutput {
+        code: -1,
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+    };
+
+    let output = output.into_output();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(!output.status.success());
+}
+
 #[cfg(unix)]
 #[test]
 fn run_captures_exit_code_stdout_stderr_and_env() {
