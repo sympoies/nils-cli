@@ -1,7 +1,6 @@
-use std::env;
-use std::path::PathBuf;
 use std::process::Command;
 
+use nils_common::{env as shared_env, process as shared_process};
 use screen_record::types::PermissionStatusSchema;
 use serde_json::{Value, json};
 
@@ -488,7 +487,7 @@ fn probe_input_hotkey() -> CheckReport {
 }
 
 fn probe_screenshot() -> CheckReport {
-    if env_truthy("CODEX_MACOS_AGENT_TEST_MODE") {
+    if shared_env::env_truthy("CODEX_MACOS_AGENT_TEST_MODE") {
         return CheckReport {
             id: "probe_screenshot",
             label: "Probe: observe screenshot",
@@ -540,28 +539,8 @@ fn probe_screenshot() -> CheckReport {
     }
 }
 
-fn env_truthy(name: &str) -> bool {
-    let raw = env::var_os(name).map(|value| value.to_string_lossy().trim().to_ascii_lowercase());
-    matches!(
-        raw.as_deref(),
-        Some("1") | Some("true") | Some("yes") | Some("on")
-    )
-}
-
 fn find_in_path(bin: &str) -> Option<String> {
-    if bin.contains(std::path::MAIN_SEPARATOR) {
-        let path = PathBuf::from(bin);
-        if path.is_file() {
-            return Some(path.display().to_string());
-        }
-        return None;
-    }
-
-    let path_var = env::var_os("PATH")?;
-    env::split_paths(&path_var)
-        .map(|dir| dir.join(bin))
-        .find(|candidate| candidate.is_file())
-        .map(|candidate| candidate.display().to_string())
+    shared_process::find_in_path(bin).map(|path| path.display().to_string())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

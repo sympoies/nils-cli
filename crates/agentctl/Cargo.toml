@@ -10,6 +10,7 @@ agent-provider-codex = { path = "../agent-provider-codex" }
 agent-provider-claude = { path = "../agent-provider-claude" }
 agent-provider-gemini = { path = "../agent-provider-gemini" }
 agent-runtime-core = { path = "../agent-runtime-core" }
+nils-common = { path = "../nils-common" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

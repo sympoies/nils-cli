@@ -2,6 +2,7 @@ pub mod capabilities;
 pub mod doctor;
 
 use clap::{Args, Subcommand, ValueEnum};
+use nils_common::env as shared_env;
 use serde::Serialize;
 
 pub const DIAG_SCHEMA_VERSION: &str = "agentctl.diag.v1";
@@ -67,7 +68,9 @@ impl ProbeMode {
 pub fn resolve_probe_mode(mode: ProbeModeArg) -> ProbeMode {
     match mode {
         ProbeModeArg::Auto => {
-            if env_truthy(MACOS_AGENT_TEST_MODE_ENV) || env_truthy(SCREEN_RECORD_TEST_MODE_ENV) {
+            if shared_env::env_truthy(MACOS_AGENT_TEST_MODE_ENV)
+                || shared_env::env_truthy(SCREEN_RECORD_TEST_MODE_ENV)
+            {
                 ProbeMode::Test
             } else {
                 ProbeMode::Live
@@ -235,15 +238,6 @@ pub fn emit_json<T: Serialize>(value: &T) -> i32 {
             EXIT_RUNTIME_ERROR
         }
     }
-}
-
-pub fn env_truthy(name: &str) -> bool {
-    let raw =
-        std::env::var_os(name).map(|value| value.to_string_lossy().trim().to_ascii_lowercase());
-    matches!(
-        raw.as_deref(),
-        Some("1") | Some("true") | Some("yes") | Some("on")
-    )
 }
 
 pub fn classify_hint_category(text: &str) -> FailureHintCategory {
