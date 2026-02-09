@@ -1,5 +1,5 @@
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use crate::backend::process::{ProcessFailure, ProcessRequest, ProcessRunner};
 use crate::error::CliError;
@@ -2083,11 +2083,11 @@ mod tests {
     use nils_test_support::{EnvGuard, GlobalStateLock};
     use serde_json::json;
 
+    use crate::backend::AxBackendAdapter;
     use crate::backend::hammerspoon::{
         is_backend_unavailable_error, map_hs_failure, output_preview, selector_is_empty,
     };
     use crate::backend::process::ProcessFailure;
-    use crate::backend::AxBackendAdapter;
     use crate::model::{
         AxActionPerformRequest, AxAttrGetRequest, AxAttrSetRequest, AxClickRequest, AxSelector,
         AxSessionStartRequest, AxSessionStopRequest, AxTarget, AxTypeRequest, AxWatchPollRequest,
@@ -2381,9 +2381,11 @@ mod tests {
                 1000,
             )
             .expect_err("empty session id should fail");
-        assert!(session_stop_err
-            .to_string()
-            .contains("--session-id cannot be empty"));
+        assert!(
+            session_stop_err
+                .to_string()
+                .contains("--session-id cannot be empty")
+        );
 
         let watch_start_err = backend
             .watch_start(
@@ -2397,9 +2399,11 @@ mod tests {
                 1000,
             )
             .expect_err("empty watch session should fail");
-        assert!(watch_start_err
-            .to_string()
-            .contains("--session-id cannot be empty"));
+        assert!(
+            watch_start_err
+                .to_string()
+                .contains("--session-id cannot be empty")
+        );
 
         let watch_poll_err = backend
             .watch_poll(
@@ -2412,9 +2416,11 @@ mod tests {
                 1000,
             )
             .expect_err("empty watch id should fail");
-        assert!(watch_poll_err
-            .to_string()
-            .contains("--watch-id cannot be empty"));
+        assert!(
+            watch_poll_err
+                .to_string()
+                .contains("--watch-id cannot be empty")
+        );
 
         let watch_stop_err = backend
             .watch_stop(
@@ -2425,9 +2431,11 @@ mod tests {
                 1000,
             )
             .expect_err("empty watch id should fail");
-        assert!(watch_stop_err
-            .to_string()
-            .contains("--watch-id cannot be empty"));
+        assert!(
+            watch_stop_err
+                .to_string()
+                .contains("--watch-id cannot be empty")
+        );
     }
 
     #[test]

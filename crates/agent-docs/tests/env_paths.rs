@@ -193,9 +193,11 @@ fn resolve_detects_linked_worktree_metadata_when_project_path_not_set() {
         canonical_string(&json_path(&json, "project_path")),
         canonical_string(&linked_worktree)
     );
-    assert!(json["is_linked_worktree"]
-        .as_bool()
-        .expect("json[is_linked_worktree] should be bool"));
+    assert!(
+        json["is_linked_worktree"]
+            .as_bool()
+            .expect("json[is_linked_worktree] should be bool")
+    );
     assert_eq!(
         canonical_string(
             &json_optional_path(&json, "git_common_dir").expect("git_common_dir should be present")
@@ -231,9 +233,11 @@ fn resolve_falls_back_to_cwd_when_not_git_repo_and_no_project_path() {
         canonical_string(&json_path(&json, "project_path")),
         canonical_string(cwd.path())
     );
-    assert!(!json["is_linked_worktree"]
-        .as_bool()
-        .expect("json[is_linked_worktree] should be bool"));
+    assert!(
+        !json["is_linked_worktree"]
+            .as_bool()
+            .expect("json[is_linked_worktree] should be bool")
+    );
     assert!(json["git_common_dir"].is_null());
     assert!(json["primary_worktree_path"].is_null());
 }

@@ -1,4 +1,4 @@
-use codex_cli::fs::{sha256_file, write_atomic, write_timestamp, SECRET_FILE_MODE};
+use codex_cli::fs::{SECRET_FILE_MODE, sha256_file, write_atomic, write_timestamp};
 use pretty_assertions::assert_eq;
 use std::fs;
 

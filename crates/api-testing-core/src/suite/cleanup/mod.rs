@@ -3,9 +3,9 @@ use std::path::Path;
 
 use anyhow::Context;
 
+use crate::Result;
 use crate::suite::safety::writes_enabled;
 use crate::suite::schema::SuiteCleanupStep;
-use crate::Result;
 
 mod context;
 mod graphql;
@@ -54,11 +54,7 @@ fn read_json_file(path: &Path) -> Result<serde_json::Value> {
 
 fn cleanup_step_type(raw: &str) -> String {
     let t = raw.trim().to_ascii_lowercase();
-    if t == "gql" {
-        "graphql".to_string()
-    } else {
-        t
-    }
+    if t == "gql" { "graphql".to_string() } else { t }
 }
 
 fn rest_cleanup_step(
@@ -167,9 +163,10 @@ mod tests {
 
         let v = serde_json::json!({"id": 1});
         let err = parse_vars_map(Some(&v)).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("cleanup.vars values must be strings"));
+        assert!(
+            err.to_string()
+                .contains("cleanup.vars values must be strings")
+        );
     }
 
     #[test]
@@ -325,9 +322,10 @@ mod tests {
         let mut vars = BTreeMap::new();
         vars.insert("id".to_string(), ".data.missing".to_string());
         let err = render_template("/items/{{id}}", &response, &vars).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("template var 'id' failed to resolve"));
+        assert!(
+            err.to_string()
+                .contains("template var 'id' failed to resolve")
+        );
     }
 
     #[test]
@@ -922,9 +920,10 @@ mod tests {
         };
 
         let err = graphql_cleanup_step(&mut ctx, &response_json, &step, 2).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("varsTemplate rendered invalid JSON"));
+        assert!(
+            err.to_string()
+                .contains("varsTemplate rendered invalid JSON")
+        );
     }
 
     #[test]

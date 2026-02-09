@@ -1,5 +1,5 @@
 use crate::paths;
-use nils_common::shell::{quote_posix_single_with_style, SingleQuoteEscapeStyle};
+use nils_common::shell::{SingleQuoteEscapeStyle, quote_posix_single_with_style};
 
 pub fn show() -> i32 {
     println!(

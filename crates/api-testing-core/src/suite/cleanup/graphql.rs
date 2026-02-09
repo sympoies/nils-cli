@@ -1,12 +1,12 @@
 use anyhow::Context;
 
+use crate::Result;
 use crate::suite::resolve::{resolve_path_from_repo_root, write_file};
 use crate::suite::runtime::{resolve_gql_url, resolve_graphql_bearer_token};
 use crate::suite::schema::SuiteCleanupStep;
-use crate::Result;
 
 use super::template::{parse_vars_map, render_template};
-use super::{append_log, log_failure_with_error, read_json_file, CleanupContext};
+use super::{CleanupContext, append_log, log_failure_with_error, read_json_file};
 
 pub(super) fn graphql_cleanup_step(
     ctx: &mut CleanupContext<'_>,
@@ -113,11 +113,11 @@ pub(super) fn graphql_cleanup_step(
             Err(err) => {
                 if access_token.is_empty() {
                     append_log(
-                            ctx.main_stderr_file,
-                            &format!(
-                                "cleanup(graphql) auth failed: step[{step_index}] profile={cleanup_jwt}"
-                            ),
-                        )?;
+                        ctx.main_stderr_file,
+                        &format!(
+                            "cleanup(graphql) auth failed: step[{step_index}] profile={cleanup_jwt}"
+                        ),
+                    )?;
                     append_log(ctx.main_stderr_file, &err)?;
                     return Ok(false);
                 }

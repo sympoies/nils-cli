@@ -1,11 +1,11 @@
 use agentctl::workflow::run::{
-    execute_workflow_document, load_workflow_file, run, RunArgs, RunOutputFormat, StepStatus,
+    RunArgs, RunOutputFormat, StepStatus, execute_workflow_document, load_workflow_file, run,
 };
 use agentctl::workflow::schema::{
-    AutomationStep, AutomationTool, ProviderStep, RetryPolicy, WorkflowDocument, WorkflowOnError,
-    WorkflowStep, WORKFLOW_SCHEMA_VERSION,
+    AutomationStep, AutomationTool, ProviderStep, RetryPolicy, WORKFLOW_SCHEMA_VERSION,
+    WorkflowDocument, WorkflowOnError, WorkflowStep,
 };
-use nils_test_support::{prepend_path, EnvGuard, GlobalStateLock, StubBinDir};
+use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
 use pretty_assertions::assert_eq;
 use std::path::PathBuf;
 
@@ -254,9 +254,10 @@ fn workflow_run_provider_step_surfaces_missing_codex_binary_error() {
     assert_eq!(report.ledger.len(), 1);
     let step = &report.ledger[0];
     assert_eq!(step.status, StepStatus::Failed);
-    assert!(step
-        .stderr
-        .contains("codex binary is not available on PATH"));
+    assert!(
+        step.stderr
+            .contains("codex binary is not available on PATH")
+    );
 }
 
 #[test]

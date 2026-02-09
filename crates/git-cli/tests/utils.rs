@@ -1,6 +1,6 @@
 mod common;
 
-use common::{init_repo, GitCliHarness};
+use common::{GitCliHarness, init_repo};
 use nils_test_support::git::{commit_file, git};
 use std::fs;
 use std::path::Path;

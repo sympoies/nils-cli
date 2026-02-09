@@ -2,9 +2,9 @@ use nils_test_support::bin;
 use nils_test_support::cmd::{self, CmdOptions};
 use std::path::{Path, PathBuf};
 
+use nils_test_support::StubBinDir;
 #[allow(unused_imports)]
 pub use nils_test_support::write_exe;
-use nils_test_support::StubBinDir;
 
 #[allow(dead_code)]
 pub struct CmdOutput {

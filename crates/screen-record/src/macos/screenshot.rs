@@ -9,23 +9,23 @@ use block2::RcBlock;
 use dispatch2::DispatchQueue;
 use nils_common::fs::replace_file;
 use nils_common::process::find_in_path;
-use objc2::rc::{autoreleasepool, Allocated, Retained};
+use objc2::rc::{Allocated, Retained, autoreleasepool};
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
-use objc2::{define_class, msg_send, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly};
+use objc2::{AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_core_foundation::{CFData, CFDictionary, CFNumber, CFRetained, CFString, CFType, CFURL};
 use objc2_core_graphics::{
-    kCGColorSpaceSRGB, CGBitmapInfo, CGColorRenderingIntent, CGColorSpace, CGDataProvider, CGImage,
-    CGImageAlphaInfo, CGImageByteOrderInfo, CGMainDisplayID,
+    CGBitmapInfo, CGColorRenderingIntent, CGColorSpace, CGDataProvider, CGImage, CGImageAlphaInfo,
+    CGImageByteOrderInfo, CGMainDisplayID, kCGColorSpaceSRGB,
 };
 use objc2_core_media::CMSampleBuffer;
 use objc2_core_video::{
-    kCVPixelFormatType_32BGRA, kCVPixelFormatType_32RGBA, kCVReturnSuccess, CVPixelBuffer,
-    CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow, CVPixelBufferGetHeight,
-    CVPixelBufferGetPixelFormatType, CVPixelBufferGetWidth, CVPixelBufferLockBaseAddress,
-    CVPixelBufferLockFlags, CVPixelBufferUnlockBaseAddress,
+    CVPixelBuffer, CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow,
+    CVPixelBufferGetHeight, CVPixelBufferGetPixelFormatType, CVPixelBufferGetWidth,
+    CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags, CVPixelBufferUnlockBaseAddress,
+    kCVPixelFormatType_32BGRA, kCVPixelFormatType_32RGBA, kCVReturnSuccess,
 };
 use objc2_foundation::{NSDate, NSError, NSRunLoop};
-use objc2_image_io::{kCGImageDestinationLossyCompressionQuality, CGImageDestination};
+use objc2_image_io::{CGImageDestination, kCGImageDestinationLossyCompressionQuality};
 use objc2_screen_capture_kit::{
     SCContentFilter, SCShareableContent, SCStream, SCStreamConfiguration, SCStreamOutput,
     SCStreamOutputType, SCWindow,

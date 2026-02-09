@@ -174,8 +174,8 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        default_template, scaffold_agents, ScaffoldAgentsErrorKind, ScaffoldAgentsRequest,
-        ScaffoldAgentsWriteMode,
+        ScaffoldAgentsErrorKind, ScaffoldAgentsRequest, ScaffoldAgentsWriteMode, default_template,
+        scaffold_agents,
     };
     use crate::env::ResolvedRoots;
     use crate::model::Scope;

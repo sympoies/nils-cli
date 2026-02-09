@@ -1,10 +1,10 @@
 use crate::cli::Operation;
 use crate::model::{
-    Collision, ImageInfo, ItemResult, OutputMode, Summary, SummaryOptions, SCHEMA_VERSION,
-    SUPPORTED_CONVERT_TARGETS,
+    Collision, ImageInfo, ItemResult, OutputMode, SCHEMA_VERSION, SUPPORTED_CONVERT_TARGETS,
+    Summary, SummaryOptions,
 };
 use crate::report::render_report_md;
-use crate::toolchain::{probe_image, Toolchain};
+use crate::toolchain::{Toolchain, probe_image};
 use crate::util;
 use nils_common::process as common_process;
 use nils_term::progress::Progress;
@@ -507,7 +507,7 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
                     _ => {
                         return Err(anyhow::anyhow!(
                             "unable to read input dimensions for resize"
-                        ))
+                        ));
                     }
                 };
                 let (tw, th, fit_mode, uses_box) = compute_resize_box(
@@ -553,11 +553,11 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
                             }
                             if bg.is_none() && is_non_alpha_format(&out_ext) {
                                 return Err(anyhow::anyhow!(
-                                        "{}",
-                                        require_background(
-                                            "contain fit requires padding background for non-alpha outputs"
-                                        )?
-                                    ));
+                                    "{}",
+                                    require_background(
+                                        "contain fit requires padding background for non-alpha outputs"
+                                    )?
+                                ));
                             }
                             if let Some(bg) = bg {
                                 cmd.extend(["-background".to_string(), bg]);
@@ -572,7 +572,7 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
                         _ => {
                             return Err(anyhow::anyhow!(
                                 "internal error: unknown fit_mode {fit_mode}"
-                            ))
+                            ));
                         }
                     }
                 } else {
@@ -1410,9 +1410,10 @@ mod tests {
     #[test]
     fn compute_resize_box_requires_fit_for_box_and_validates_fit_values() {
         let err = compute_resize_box(200, 100, None, Some(100), Some(100), None, None).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("--fit contain|cover|stretch is required"));
+        assert!(
+            err.to_string()
+                .contains("--fit contain|cover|stretch is required")
+        );
 
         let err = compute_resize_box(200, 100, None, Some(100), Some(100), None, Some("bad"))
             .unwrap_err();
@@ -1428,9 +1429,10 @@ mod tests {
     #[test]
     fn compute_resize_box_aspect_validates_and_derives_size() {
         let err = compute_resize_box(200, 100, None, None, None, Some((16, 9)), None).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("must also specify --width or --height"));
+        assert!(
+            err.to_string()
+                .contains("must also specify --width or --height")
+        );
 
         let err = compute_resize_box(
             200,
@@ -1492,9 +1494,11 @@ mod tests {
         assert!(!output_supports_alpha("jpg"));
         assert!(is_non_alpha_format("jpg"));
         assert!(!is_non_alpha_format("png"));
-        assert!(require_background("needs color")
-            .unwrap()
-            .contains("needs color"));
+        assert!(
+            require_background("needs color")
+                .unwrap()
+                .contains("needs color")
+        );
     }
 
     #[test]
@@ -1509,9 +1513,10 @@ mod tests {
         );
 
         let err = validate_output_mode(Operation::Convert, None, None, false, false).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("must specify exactly one output mode"));
+        assert!(
+            err.to_string()
+                .contains("must specify exactly one output mode")
+        );
 
         let err = validate_output_mode(
             Operation::Convert,
@@ -1521,14 +1526,16 @@ mod tests {
             false,
         )
         .unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("must specify exactly one output mode"));
+        assert!(
+            err.to_string()
+                .contains("must specify exactly one output mode")
+        );
 
         let err = validate_output_mode(Operation::Convert, None, None, true, false).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("--in-place is destructive and requires --yes"));
+        assert!(
+            err.to_string()
+                .contains("--in-place is destructive and requires --yes")
+        );
 
         let out = validate_output_mode(Operation::Convert, Some("out.png"), None, false, false)
             .unwrap()
@@ -1597,9 +1604,10 @@ mod tests {
         assert!(err.to_string().contains("input not found"));
 
         let err = expand_inputs(&inputs, false, &["*.gif".to_string()]).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("no input files resolved from --in/--glob"));
+        assert!(
+            err.to_string()
+                .contains("no input files resolved from --in/--glob")
+        );
     }
 
     #[test]

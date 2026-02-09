@@ -1,13 +1,13 @@
 use std::net::TcpListener;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
 use nils_test_support::bin::resolve;
-use nils_test_support::cmd::{run_with, CmdOptions, CmdOutput};
+use nils_test_support::cmd::{CmdOptions, CmdOutput, run_with};
 use nils_test_support::fs::{write_json, write_text};
 use nils_test_support::http::{HttpResponse, TestServer};
 

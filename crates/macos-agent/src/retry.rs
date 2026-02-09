@@ -42,7 +42,7 @@ mod tests {
 
     use pretty_assertions::assert_eq;
 
-    use super::{run_with_retry, RetryPolicy};
+    use super::{RetryPolicy, run_with_retry};
     use crate::error::CliError;
 
     #[test]

@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use base64::Engine;
 
-use crate::rest::schema::{RestMultipartPart, RestRequestFile};
 use crate::Result;
+use crate::rest::schema::{RestMultipartPart, RestRequestFile};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RestHttpResponse {

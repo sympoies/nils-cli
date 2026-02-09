@@ -4,7 +4,7 @@ use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
 use nils_test_support::bin::resolve;
-use nils_test_support::cmd::{run_with, CmdOptions, CmdOutput};
+use nils_test_support::cmd::{CmdOptions, CmdOutput, run_with};
 use nils_test_support::fs::{write_json, write_text};
 use nils_test_support::http::{HttpResponse, RecordedRequest, TestServer};
 
@@ -183,8 +183,10 @@ fn query_string_is_encoded_and_sorted_in_error() {
     );
     assert_eq!(out.code, 1);
     let stderr = out.stderr_text();
-    assert!(stderr
-        .contains("HTTP request failed: GET http://127.0.0.1:9/query?a=hello%20world&b=2&b=1"));
+    assert!(
+        stderr
+            .contains("HTTP request failed: GET http://127.0.0.1:9/query?a=hello%20world&b=2&b=1")
+    );
 }
 
 #[test]

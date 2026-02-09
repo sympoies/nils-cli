@@ -4,7 +4,7 @@ use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
 use nils_test_support::bin::resolve;
-use nils_test_support::cmd::{run_with, CmdOptions, CmdOutput};
+use nils_test_support::cmd::{CmdOptions, CmdOutput, run_with};
 use nils_test_support::fs::write_text;
 use nils_test_support::http::{HttpResponse, RecordedRequest, TestServer};
 
@@ -135,9 +135,10 @@ fn list_jwts_errors_when_missing_jwts_files() {
         &[],
     );
     assert_eq!(out.code, 1);
-    assert!(out
-        .stderr_text()
-        .contains("jwts(.local).env not found (expected under setup/graphql/)"));
+    assert!(
+        out.stderr_text()
+            .contains("jwts(.local).env not found (expected under setup/graphql/)")
+    );
 }
 
 #[test]

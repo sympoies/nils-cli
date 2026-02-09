@@ -472,11 +472,7 @@ fn git_stdout_trimmed_optional(args: &[&str]) -> Option<String> {
         return None;
     }
     let value = trim_trailing_newlines(&String::from_utf8_lossy(&output.stdout));
-    if value.is_empty() {
-        None
-    } else {
-        Some(value)
-    }
+    if value.is_empty() { None } else { Some(value) }
 }
 
 fn trim_trailing_newlines(input: &str) -> String {

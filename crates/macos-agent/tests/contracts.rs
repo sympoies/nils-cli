@@ -311,10 +311,12 @@ fn error_format_json_emits_machine_parseable_payload() {
     assert_eq!(payload["schema_version"], serde_json::json!(1));
     assert_eq!(payload["ok"], serde_json::json!(false));
     assert_eq!(payload["error"]["category"], serde_json::json!("usage"));
-    assert!(payload["error"]["message"]
-        .as_str()
-        .unwrap_or("")
-        .contains("invalid modifier"));
+    assert!(
+        payload["error"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("invalid modifier")
+    );
     assert!(
         payload["error"]["hints"].is_array() || payload["error"]["hints"].is_null(),
         "hints should be an array when present"
@@ -413,10 +415,12 @@ fn trace_writes_artifacts_for_success_and_failure() {
     assert!(failure["args"].is_array());
     assert_eq!(failure["policy"]["dry_run"], serde_json::json!(false));
     assert_eq!(failure["error"]["category"], serde_json::json!("usage"));
-    assert!(failure["error"]["message"]
-        .as_str()
-        .unwrap_or("")
-        .contains("invalid modifier"));
+    assert!(
+        failure["error"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("invalid modifier")
+    );
 }
 
 #[test]
@@ -452,10 +456,12 @@ fn trace_dir_not_writable_is_actionable_runtime_error() {
         payload["error"]["operation"],
         serde_json::json!("trace.write")
     );
-    assert!(payload["error"]["message"]
-        .as_str()
-        .unwrap_or("")
-        .contains("not writable"));
+    assert!(
+        payload["error"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("not writable")
+    );
     let has_hint = payload["error"]["hints"]
         .as_array()
         .map(|hints| {

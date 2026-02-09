@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use nils_test_support::bin::resolve;
-use nils_test_support::cmd::{run_with, CmdOptions, CmdOutput};
+use nils_test_support::cmd::{CmdOptions, CmdOutput, run_with};
 use tempfile::TempDir;
 
 pub struct ScreenRecordHarness {

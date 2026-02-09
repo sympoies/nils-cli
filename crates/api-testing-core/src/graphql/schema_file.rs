@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::{env_file, Result};
+use crate::{Result, env_file};
 
 const FALLBACK_CANDIDATES: &[&str] = &[
     "schema.gql",
@@ -201,9 +201,10 @@ mod tests {
         let setup_dir = std::fs::canonicalize(tmp.path()).expect("setup abs");
 
         let err = resolve_schema_path(&setup_dir, None).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("Schema file not configured. Set GQL_SCHEMA_FILE"));
+        assert!(
+            err.to_string()
+                .contains("Schema file not configured. Set GQL_SCHEMA_FILE")
+        );
 
         match old {
             Some(v) => {

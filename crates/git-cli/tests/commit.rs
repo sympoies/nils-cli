@@ -3,11 +3,11 @@ mod common;
 use std::fs;
 use std::path::Path;
 
-use common::{write_context_json_git_stub, GitCliHarness};
+use common::{GitCliHarness, write_context_json_git_stub};
+use nils_test_support::StubBinDir;
 use nils_test_support::cmd::run_with;
 use nils_test_support::git::{git, git_with_env};
 use nils_test_support::stubs::STUB_LOG_ENV;
-use nils_test_support::StubBinDir;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use tempfile::TempDir;

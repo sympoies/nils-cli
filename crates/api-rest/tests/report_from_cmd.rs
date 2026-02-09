@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use nils_test_support::bin::resolve;
-use nils_test_support::cmd::{run, run_with, CmdOptions, CmdOutput};
+use nils_test_support::cmd::{CmdOptions, CmdOutput, run, run_with};
 use pretty_assertions::assert_eq;
 
 fn api_rest_bin() -> PathBuf {
@@ -25,12 +25,14 @@ fn report_from_cmd_dry_run_uses_positional_snippet() {
     assert_eq!(out.code, 0);
 
     assert!(out.stdout_text().starts_with("api-rest report"));
-    assert!(out
-        .stdout_text()
-        .contains("--case 'health (staging, token:service)'"));
-    assert!(out
-        .stdout_text()
-        .contains("--request 'setup/rest/requests/health.request.json'"));
+    assert!(
+        out.stdout_text()
+            .contains("--case 'health (staging, token:service)'")
+    );
+    assert!(
+        out.stdout_text()
+            .contains("--request 'setup/rest/requests/health.request.json'")
+    );
     assert!(out.stdout_text().contains("--config-dir 'setup/rest'"));
     assert!(out.stdout_text().contains("--env 'staging'"));
     assert!(out.stdout_text().contains("--token 'service'"));
@@ -46,21 +48,24 @@ fn report_from_cmd_dry_run_uses_stdin_snippet() {
     assert_eq!(out.code, 0);
 
     assert!(out.stdout_text().starts_with("api-rest report"));
-    assert!(out
-        .stdout_text()
-        .contains("--case 'health (staging, token:service)'"));
-    assert!(out
-        .stdout_text()
-        .contains("--request 'setup/rest/requests/health.request.json'"));
+    assert!(
+        out.stdout_text()
+            .contains("--case 'health (staging, token:service)'")
+    );
+    assert!(
+        out.stdout_text()
+            .contains("--request 'setup/rest/requests/health.request.json'")
+    );
 }
 
 #[test]
 fn report_from_cmd_response_stdin_conflicts_with_snippet_stdin() {
     let out = run_api_rest(&["report-from-cmd", "--response", "-", "--stdin", "--dry-run"]);
     assert_eq!(out.code, 1);
-    assert!(out
-        .stderr_text()
-        .contains("When using --response -, stdin is reserved"));
+    assert!(
+        out.stderr_text()
+            .contains("When using --response -, stdin is reserved")
+    );
 }
 
 #[test]

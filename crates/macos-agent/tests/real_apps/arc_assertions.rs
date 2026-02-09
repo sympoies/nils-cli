@@ -4,8 +4,8 @@ use std::time::Instant;
 use nils_test_support::cmd::CmdOptions;
 
 use crate::real_apps::arc_navigation::{
-    activate_arc, capture_active_window, click_ax_or_coordinate, open_youtube_home, wait_for_arc,
-    ArcYoutubeProfile, AxLocateSpec,
+    ArcYoutubeProfile, AxLocateSpec, activate_arc, capture_active_window, click_ax_or_coordinate,
+    open_youtube_home, wait_for_arc,
 };
 use crate::real_apps::matrix::{ScenarioOutcome, ScenarioStatus};
 use crate::real_common;

@@ -2,7 +2,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use block2::RcBlock;
-use objc2::rc::{autoreleasepool, Retained};
+use objc2::rc::{Retained, autoreleasepool};
 use objc2_foundation::{NSDate, NSError, NSRunLoop};
 use objc2_screen_capture_kit::{SCRunningApplication, SCShareableContent};
 

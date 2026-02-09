@@ -55,7 +55,7 @@ pub fn timestamp_epoch(timestamp: &str) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_lock_file, parse_lock_line, timestamp_epoch, TIMESTAMP_PREFIX};
+    use super::{TIMESTAMP_PREFIX, parse_lock_file, parse_lock_line, timestamp_epoch};
     use chrono::{Local, NaiveDateTime, TimeZone};
     use pretty_assertions::assert_eq;
 

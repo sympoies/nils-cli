@@ -1,7 +1,7 @@
-use agentctl::diag::{classify_hint_category, FailureHintCategory};
+use agentctl::diag::{FailureHintCategory, classify_hint_category};
 use nils_test_support::bin;
 use nils_test_support::cmd::{self, CmdOptions, CmdOutput};
-use nils_test_support::{prepend_path, EnvGuard, GlobalStateLock, StubBinDir};
+use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -147,17 +147,21 @@ fn diag_doctor_json_covers_probe_error_missing_binary_and_permission_hint_paths(
 
     let image_processing = check_by_subject(checks, "image-processing");
     assert_eq!(image_processing["status"], "not-ready");
-    assert!(image_processing["summary"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("binary is missing from PATH"));
+    assert!(
+        image_processing["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("binary is missing from PATH")
+    );
 
     let macos_agent = check_by_subject(checks, "macos-agent");
     assert_eq!(macos_agent["status"], "not-ready");
-    assert!(macos_agent["summary"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("failed to execute"));
+    assert!(
+        macos_agent["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("failed to execute")
+    );
 }
 
 #[test]
@@ -193,10 +197,12 @@ fn diag_doctor_json_parses_macos_agent_non_ok_preflight_payload() {
         .expect("checks array");
     let macos_agent = check_by_subject(checks, "macos-agent");
     assert_eq!(macos_agent["status"], "not-ready");
-    assert!(macos_agent["summary"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("Accessibility"));
+    assert!(
+        macos_agent["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Accessibility")
+    );
     assert_eq!(
         macos_agent
             .pointer("/hint/category")
@@ -234,10 +240,12 @@ fn diag_doctor_live_mode_reports_platform_limitations_on_unsupported_hosts() {
         assert_eq!(macos_agent["status"], "ready");
     } else {
         assert_eq!(macos_agent["status"], "not-ready");
-        assert!(macos_agent["summary"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("not supported on"));
+        assert!(
+            macos_agent["summary"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("not supported on")
+        );
     }
 }
 

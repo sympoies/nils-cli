@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 use tracing::info;
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt};
 
 #[derive(Parser)]
 #[command(

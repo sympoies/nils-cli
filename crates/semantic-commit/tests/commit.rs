@@ -54,8 +54,10 @@ fn commit_help_flag_prints_usage() {
     let output = common::run_semantic_commit_output(dir.path(), &["commit", "--help"], &[], None);
 
     assert_eq!(output.status.code(), Some(0));
-    assert!(as_str(&output.stdout)
-        .contains("semantic-commit commit [--message <text>|--message-file <path>] [options]"));
+    assert!(
+        as_str(&output.stdout)
+            .contains("semantic-commit commit [--message <text>|--message-file <path>] [options]")
+    );
 }
 
 #[test]
@@ -107,8 +109,10 @@ fn commit_no_staged_changes_exits_2() {
     );
 
     assert_eq!(output.status.code(), Some(2));
-    assert!(as_str(&output.stderr)
-        .contains("error: no staged changes (stage files with git add first)"));
+    assert!(
+        as_str(&output.stderr)
+            .contains("error: no staged changes (stage files with git add first)")
+    );
 }
 
 #[test]
@@ -142,8 +146,10 @@ fn commit_body_requires_blank_line() {
     let output = common::run_semantic_commit_output(repo.path(), &["commit"], &[], Some(message));
 
     assert_eq!(output.status.code(), Some(4));
-    assert!(as_str(&output.stderr)
-        .contains("error: commit body must be separated from header by a blank line"));
+    assert!(
+        as_str(&output.stderr)
+            .contains("error: commit body must be separated from header by a blank line")
+    );
 }
 
 #[test]
@@ -155,8 +161,11 @@ fn commit_body_line_requires_capitalized_bullet() {
     let output = common::run_semantic_commit_output(repo.path(), &["commit"], &[], Some(message));
 
     assert_eq!(output.status.code(), Some(4));
-    assert!(as_str(&output.stderr)
-        .contains("error: commit body line 3 must start with '- ' followed by uppercase letter"));
+    assert!(
+        as_str(&output.stderr).contains(
+            "error: commit body line 3 must start with '- ' followed by uppercase letter"
+        )
+    );
 }
 
 #[test]
@@ -226,7 +235,9 @@ fn commit_automation_requires_message_flag_or_file() {
         common::run_semantic_commit_output(repo.path(), &["commit", "--automation"], &[], Some(""));
 
     assert_eq!(output.status.code(), Some(3));
-    assert!(as_str(&output.stderr).contains("error: no commit message provided in automation mode"));
+    assert!(
+        as_str(&output.stderr).contains("error: no commit message provided in automation mode")
+    );
 }
 
 #[test]

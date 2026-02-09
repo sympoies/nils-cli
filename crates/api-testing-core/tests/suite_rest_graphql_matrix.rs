@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use api_testing_core::suite::runner::{run_suite, SuiteRunOptions};
+use api_testing_core::suite::runner::{SuiteRunOptions, run_suite};
 use api_testing_core::suite::schema::load_and_validate_suite;
 use nils_test_support::fixtures::write_text;
 use nils_test_support::http::{HttpResponse, LoopbackServer};

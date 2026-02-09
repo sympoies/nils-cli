@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use chrono::Utc;
 
 use crate::rate_limits::cache;
-use crate::rate_limits::client::{fetch_usage, UsageRequest};
+use crate::rate_limits::client::{UsageRequest, fetch_usage};
 use crate::rate_limits::render;
 
 use super::lock;

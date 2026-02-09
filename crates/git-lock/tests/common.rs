@@ -4,10 +4,10 @@ use std::path::Path;
 use std::process::Output;
 
 use nils_test_support::bin::resolve;
-use nils_test_support::cmd::{run_with, CmdOptions, CmdOutput};
+use nils_test_support::cmd::{CmdOptions, CmdOutput, run_with};
+use nils_test_support::git::{InitRepoOptions, init_repo_with};
 #[allow(unused_imports)]
 pub use nils_test_support::git::{commit_file, git, repo_id};
-use nils_test_support::git::{init_repo_with, InitRepoOptions};
 
 pub fn init_repo() -> tempfile::TempDir {
     init_repo_with(

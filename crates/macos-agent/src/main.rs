@@ -3,7 +3,7 @@ use std::process::ExitCode;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use clap::{error::ErrorKind, Parser};
+use clap::{Parser, error::ErrorKind};
 use macos_agent::cli::{Cli, ErrorFormat};
 use macos_agent::error::CliError;
 use macos_agent::model::ErrorEnvelope;

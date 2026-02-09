@@ -3,9 +3,9 @@ use std::time::Instant;
 use regex::{Regex, RegexBuilder};
 use serde_json::Value;
 
+use crate::backend::AxBackendAdapter;
 use crate::backend::applescript;
 use crate::backend::process::ProcessRunner;
-use crate::backend::AxBackendAdapter;
 use crate::cli::{AxSelectorArgs, AxTargetArgs};
 use crate::error::CliError;
 use crate::model::{
@@ -871,9 +871,9 @@ fn build_text_matcher(raw: &str, strategy: AxMatchStrategy) -> Result<TextMatche
 #[cfg(test)]
 mod tests {
     use super::{
-        build_selector, build_target, evaluate_selector_against_nodes,
-        parse_postcondition_expected_value, selector_selection_error, AxActionGateOptions,
-        AxSelectorInput, SelectorSelectionStatus,
+        AxActionGateOptions, AxSelectorInput, SelectorSelectionStatus, build_selector,
+        build_target, evaluate_selector_against_nodes, parse_postcondition_expected_value,
+        selector_selection_error,
     };
     use crate::model::{AxMatchStrategy, AxNode};
     use pretty_assertions::assert_eq;
@@ -923,9 +923,10 @@ mod tests {
             None,
         )
         .expect_err("expected usage error");
-        assert!(err
-            .message()
-            .contains("--session-id cannot be combined with --app/--bundle-id"));
+        assert!(
+            err.message()
+                .contains("--session-id cannot be combined with --app/--bundle-id")
+        );
 
         let target = build_target(None, Some("Terminal".to_string()), None, None).expect("target");
         assert_eq!(target.app.as_deref(), Some("Terminal"));
@@ -954,14 +955,16 @@ mod tests {
             ..AxSelectorInput::default()
         })
         .expect_err("nth without filters should fail");
-        assert!(err
-            .message()
-            .contains("--nth requires at least one selector filter"));
+        assert!(
+            err.message()
+                .contains("--nth requires at least one selector filter")
+        );
 
         let err = build_selector(AxSelectorInput::default()).expect_err("missing filters");
-        assert!(err
-            .message()
-            .contains("provide --node-id or at least one selector filter"));
+        assert!(
+            err.message()
+                .contains("provide --node-id or at least one selector filter")
+        );
     }
 
     #[test]
@@ -1150,9 +1153,11 @@ mod tests {
 
         let no_match = selector_selection_error("op", SelectorSelectionStatus::NoMatches)
             .expect("no-match error");
-        assert!(no_match
-            .message()
-            .contains("selector returned zero AX matches"));
+        assert!(
+            no_match
+                .message()
+                .contains("selector returned zero AX matches")
+        );
 
         let ambiguous = selector_selection_error("op", SelectorSelectionStatus::Ambiguous)
             .expect("ambiguous error");

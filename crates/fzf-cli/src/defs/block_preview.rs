@@ -1,6 +1,6 @@
 use crate::fzf;
 use anyhow::{Context, Result};
-use nils_common::clipboard::{copy_best_effort, ClipboardPolicy, ClipboardTool};
+use nils_common::clipboard::{ClipboardPolicy, ClipboardTool, copy_best_effort};
 use std::collections::HashMap;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
@@ -127,7 +127,7 @@ BEGIN {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nils_test_support::{prepend_path, EnvGuard, GlobalStateLock, StubBinDir};
+    use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
     use pretty_assertions::assert_eq;
     use std::fs;
     use tempfile::TempDir;

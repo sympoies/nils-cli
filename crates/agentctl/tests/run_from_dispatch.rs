@@ -1,6 +1,6 @@
 use agentctl::debug::schema::BUNDLE_MANIFEST_FILE_NAME;
 use nils_test_support::git::{self, InitRepoOptions};
-use nils_test_support::{prepend_path, CwdGuard, EnvGuard, GlobalStateLock, StubBinDir};
+use nils_test_support::{CwdGuard, EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
 
 #[test]
 fn run_from_group_help_and_parse_errors_return_expected_exit_codes() {

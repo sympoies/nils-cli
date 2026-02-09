@@ -251,7 +251,9 @@ fn reset_undo() -> i32 {
             println!(
                 "🧷 Preserving INDEX (staged) and working tree. Running: git reset --soft {target_commit}"
             );
-            println!("⚠️  Note: The index is preserved, but what appears staged is relative to the new HEAD.");
+            println!(
+                "⚠️  Note: The index is preserved, but what appears staged is relative to the new HEAD."
+            );
             let code = git_status(&["reset", "--soft", &target_commit]).unwrap_or(1);
             if code != 0 {
                 println!("❌ Soft reset failed.");
@@ -354,7 +356,9 @@ fn back_checkout() -> i32 {
         && from_branch.len() <= 40
         && from_branch.chars().all(|c| c.is_ascii_hexdigit())
     {
-        println!("❌ Previous 'from' looks like a commit SHA ({from_branch}). Refusing to checkout to avoid detached HEAD.");
+        println!(
+            "❌ Previous 'from' looks like a commit SHA ({from_branch}). Refusing to checkout to avoid detached HEAD."
+        );
         println!("🧠 Use `git reflog` to choose the correct branch explicitly.");
         return 1;
     }
@@ -577,11 +581,7 @@ fn parse_positive_int(raw: &str) -> Option<i64> {
         return None;
     }
     let value = raw.parse::<i64>().ok()?;
-    if value <= 0 {
-        None
-    } else {
-        Some(value)
-    }
+    if value <= 0 { None } else { Some(value) }
 }
 
 fn detect_in_progress_ops() -> Vec<String> {
@@ -694,11 +694,7 @@ fn trim_trailing_newlines(input: &str) -> String {
 }
 
 fn non_empty(value: String) -> Option<String> {
-    if value.is_empty() {
-        None
-    } else {
-        Some(value)
-    }
+    if value.is_empty() { None } else { Some(value) }
 }
 
 fn emit_output(output: &Output) {

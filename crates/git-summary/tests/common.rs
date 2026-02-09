@@ -3,10 +3,10 @@
 use std::path::Path;
 
 use nils_test_support::bin::resolve;
-use nils_test_support::cmd::{run_with, CmdOptions};
+use nils_test_support::cmd::{CmdOptions, run_with};
+use nils_test_support::git::{InitRepoOptions, init_repo_with};
 #[allow(unused_imports)]
 pub use nils_test_support::git::{git, git_with_env};
-use nils_test_support::git::{init_repo_with, InitRepoOptions};
 
 pub fn init_repo() -> tempfile::TempDir {
     init_repo_with(InitRepoOptions::new().without_branch())

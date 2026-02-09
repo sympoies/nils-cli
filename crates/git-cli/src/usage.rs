@@ -178,7 +178,7 @@ fn print_top_level_usage(out: &mut dyn Write) {
 
 #[cfg(test)]
 mod tests {
-    use super::{dispatch, is_help_token, print_group_usage, print_top_level_usage, Group};
+    use super::{Group, dispatch, is_help_token, print_group_usage, print_top_level_usage};
     use std::ffi::OsString;
 
     fn to_args(args: &[&str]) -> Vec<OsString> {

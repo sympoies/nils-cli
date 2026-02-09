@@ -67,9 +67,10 @@ fn input_click_runtime_error_from_cliclick_is_concise() {
 
     assert_eq!(out.code, 1);
     assert_eq!(out.stdout_text(), "");
-    assert!(out
-        .stderr_text()
-        .contains("input.click failed via `cliclick`"));
+    assert!(
+        out.stderr_text()
+            .contains("input.click failed via `cliclick`")
+    );
 }
 
 #[test]

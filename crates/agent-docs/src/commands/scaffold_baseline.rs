@@ -606,8 +606,10 @@ mod tests {
         let development_written =
             fs::read_to_string(project.path().join("DEVELOPMENT.md")).expect("read development");
         assert!(development_written.contains("cargo fmt --all -- --check"));
-        assert!(development_written
-            .contains("cargo clippy --all-targets --all-features -- -D warnings"));
+        assert!(
+            development_written
+                .contains("cargo clippy --all-targets --all-features -- -D warnings")
+        );
         assert!(development_written.contains("cargo test --workspace"));
     }
 
@@ -681,8 +683,10 @@ mod tests {
         scaffold_baseline(&request, &roots(&home, &project)).expect("scaffold");
         let development_written =
             fs::read_to_string(project.path().join("DEVELOPMENT.md")).expect("read development");
-        assert!(development_written
-            .contains("./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh"));
+        assert!(
+            development_written
+                .contains("./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh")
+        );
         assert!(development_written.contains("cargo test --workspace"));
     }
 }

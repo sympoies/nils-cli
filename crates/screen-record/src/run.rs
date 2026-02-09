@@ -7,13 +7,13 @@ use chrono::{Local, SecondsFormat, Utc};
 
 use crate::cli::{AudioMode, Cli, ContainerFormat, ImageFormat};
 use crate::error::CliError;
-use crate::select::{format_window_tsv, select_window, SelectionArgs};
+use crate::select::{SelectionArgs, format_window_tsv, select_window};
 use crate::test_mode;
 use crate::types::{
-    AppInfo, DisplayInfo, RecordingDiagnosticsArtifacts, ShareableContent, WindowInfo,
-    CONTACT_SHEET_ARTIFACT_SUFFIX, MOTION_INTERVALS_ARTIFACT_SUFFIX,
+    AppInfo, CONTACT_SHEET_ARTIFACT_SUFFIX, DisplayInfo, MOTION_INTERVALS_ARTIFACT_SUFFIX,
     RECORDING_DIAGNOSTICS_ARTIFACT_DIR_SUFFIX, RECORDING_DIAGNOSTICS_CONTRACT_VERSION,
-    RECORDING_DIAGNOSTICS_SCHEMA_VERSION,
+    RECORDING_DIAGNOSTICS_SCHEMA_VERSION, RecordingDiagnosticsArtifacts, ShareableContent,
+    WindowInfo,
 };
 
 pub fn run(cli: Cli) -> Result<(), CliError> {
@@ -1769,9 +1769,10 @@ mod tests {
         cli.portal = true;
         let err = validate_portal_flag_usage(&cli, Mode::ListApps).expect_err("usage error");
         assert_eq!(err.exit_code(), 2);
-        assert!(err
-            .to_string()
-            .contains("--portal is only valid with recording or --screenshot"));
+        assert!(
+            err.to_string()
+                .contains("--portal is only valid with recording or --screenshot")
+        );
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -1781,9 +1782,10 @@ mod tests {
         cli.portal = true;
         let err = validate_portal_flag_usage(&cli, Mode::Record).expect_err("usage error");
         assert_eq!(err.exit_code(), 2);
-        assert!(err
-            .to_string()
-            .contains("--portal is only supported on Linux (Wayland)"));
+        assert!(
+            err.to_string()
+                .contains("--portal is only supported on Linux (Wayland)")
+        );
     }
 
     #[test]
@@ -1814,9 +1816,10 @@ mod tests {
         cli.format = Some(ContainerFormat::Mov);
         let err = validate_screenshot_args(&cli).expect_err("usage error");
         assert_eq!(err.exit_code(), 2);
-        assert!(err
-            .to_string()
-            .contains("--format is not valid with --screenshot"));
+        assert!(
+            err.to_string()
+                .contains("--format is not valid with --screenshot")
+        );
     }
 
     #[test]
@@ -1825,9 +1828,10 @@ mod tests {
         cli.diagnostics_out = Some(PathBuf::from("diag.json"));
         let err = validate_diagnostics_flag_usage(&cli, Mode::Screenshot).expect_err("usage");
         assert_eq!(err.exit_code(), 2);
-        assert!(err
-            .to_string()
-            .contains("--diagnostics-out is only valid with recording"));
+        assert!(
+            err.to_string()
+                .contains("--diagnostics-out is only valid with recording")
+        );
     }
 
     #[test]
@@ -1838,9 +1842,10 @@ mod tests {
         cli.app = Some("Terminal".to_string());
         let err = ensure_no_recording_flags(&cli).expect_err("usage error");
         assert_eq!(err.exit_code(), 2);
-        assert!(err
-            .to_string()
-            .contains("capture flags are not valid with this mode"));
+        assert!(
+            err.to_string()
+                .contains("capture flags are not valid with this mode")
+        );
     }
 
     #[test]
@@ -1860,9 +1865,10 @@ mod tests {
         let err = resolve_container(Path::new("capture.mov"), Some(ContainerFormat::Mp4))
             .expect_err("usage error");
         assert_eq!(err.exit_code(), 2);
-        assert!(err
-            .to_string()
-            .contains("--format mp4 conflicts with --path extension"));
+        assert!(
+            err.to_string()
+                .contains("--format mp4 conflicts with --path extension")
+        );
     }
 
     #[test]
@@ -1882,18 +1888,20 @@ mod tests {
         let err = resolve_image_format(Some(Path::new("shot.png")), Some(ImageFormat::Webp))
             .expect_err("usage error");
         assert_eq!(err.exit_code(), 2);
-        assert!(err
-            .to_string()
-            .contains("--image-format webp conflicts with --path extension"));
+        assert!(
+            err.to_string()
+                .contains("--image-format webp conflicts with --path extension")
+        );
     }
 
     #[test]
     fn resolve_image_format_rejects_unknown_extension() {
         let err = resolve_image_format(Some(Path::new("shot.tiff")), None).expect_err("usage");
         assert_eq!(err.exit_code(), 2);
-        assert!(err
-            .to_string()
-            .contains("unsupported --path extension for screenshot"));
+        assert!(
+            err.to_string()
+                .contains("unsupported --path extension for screenshot")
+        );
     }
 
     #[test]
@@ -1901,9 +1909,10 @@ mod tests {
         let err = resolve_image_format(Some(Path::new("shot.bmp")), Some(ImageFormat::Png))
             .expect_err("usage");
         assert_eq!(err.exit_code(), 2);
-        assert!(err
-            .to_string()
-            .contains("unsupported --path extension for screenshot"));
+        assert!(
+            err.to_string()
+                .contains("unsupported --path extension for screenshot")
+        );
     }
 
     #[test]

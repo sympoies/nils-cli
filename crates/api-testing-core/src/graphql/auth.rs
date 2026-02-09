@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::{auth_env, cli_util, env_file, jwt, Result};
+use crate::{Result, auth_env, cli_util, env_file, jwt};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GraphqlAuthSourceUsed {
@@ -228,7 +228,9 @@ pub fn resolve_bearer_token(
         {
             token
         } else {
-            anyhow::bail!("JWT profile '{jwt_name}' is selected but no token was found and auto-login is not configured.");
+            anyhow::bail!(
+                "JWT profile '{jwt_name}' is selected but no token was found and auto-login is not configured."
+            );
         };
 
         (

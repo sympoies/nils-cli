@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use api_testing_core::suite::runner::{run_suite, SuiteRunOptions};
+use api_testing_core::suite::runner::{SuiteRunOptions, run_suite};
 use api_testing_core::suite::safety::MSG_WRITE_CASES_DISABLED;
 use api_testing_core::suite::schema::load_and_validate_suite;
 use nils_test_support::fixtures::write_text;
@@ -209,7 +209,9 @@ fn suite_runner_loopback_runs_and_cleans_up() {
     assert_eq!(std::fs::read_to_string(&cleanup_stderr_path).unwrap(), "");
 
     let requests = server.take_requests();
-    assert!(requests
-        .iter()
-        .any(|r| r.method == "DELETE" && r.path == "/cleanup/123"));
+    assert!(
+        requests
+            .iter()
+            .any(|r| r.method == "DELETE" && r.path == "/cleanup/123")
+    );
 }

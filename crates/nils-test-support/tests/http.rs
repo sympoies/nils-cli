@@ -76,10 +76,11 @@ fn loopback_server_captures_headers_and_body() {
     assert_eq!(req.method, "POST");
     assert_eq!(req.path, "/submit");
     assert_eq!(req.body, body.as_bytes());
-    assert!(req
-        .headers
-        .iter()
-        .any(|(k, v)| k == "x-test" && v == "Value"));
+    assert!(
+        req.headers
+            .iter()
+            .any(|(k, v)| k == "x-test" && v == "Value")
+    );
 }
 
 #[test]
@@ -106,8 +107,9 @@ fn test_server_uses_handler_and_records_request() {
     let req = &requests[0];
     assert_eq!(req.method, "GET");
     assert_eq!(req.path, "/ok");
-    assert!(req
-        .headers
-        .iter()
-        .any(|(k, v)| k == "x-client" && v == "tester"));
+    assert!(
+        req.headers
+            .iter()
+            .any(|(k, v)| k == "x-client" && v == "tester")
+    );
 }

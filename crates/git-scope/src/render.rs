@@ -1,9 +1,9 @@
 use crate::change::parse_name_status_lines;
-use crate::print::{emit_file, HeadFallback, PrintSource};
+use crate::print::{HeadFallback, PrintSource, emit_file};
 use crate::progress::ProgressRunner;
-use crate::tree::{tree_support, TREE_MISSING_WARNING, TREE_UNSUPPORTED_WARNING};
+use crate::tree::{TREE_MISSING_WARNING, TREE_UNSUPPORTED_WARNING, tree_support};
 use anyhow::Result;
-use nils_common::shell::{strip_ansi as strip_ansi_impl, AnsiStripMode};
+use nils_common::shell::{AnsiStripMode, strip_ansi as strip_ansi_impl};
 use std::collections::BTreeSet;
 use std::process::Command;
 
@@ -96,11 +96,7 @@ pub fn print_all_files(
             let staged = staged_paths.contains(file) as u64;
             let unstaged = unstaged_paths.contains(file) as u64;
             let ops = staged + unstaged;
-            if ops == 0 {
-                1
-            } else {
-                ops
-            }
+            if ops == 0 { 1 } else { ops }
         })
         .sum::<u64>();
 
@@ -163,11 +159,7 @@ fn kind_color(kind: &str, no_color: bool) -> &'static str {
 }
 
 fn color_reset(no_color: bool) -> &'static str {
-    if no_color {
-        ""
-    } else {
-        "\x1b[0m"
-    }
+    if no_color { "" } else { "\x1b[0m" }
 }
 
 fn render_tree(files: &[String], no_color: bool) -> Result<()> {

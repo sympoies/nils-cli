@@ -53,8 +53,10 @@ fn staged_context_help_flag_prints_usage() {
         common::run_semantic_commit_output(dir.path(), &["staged-context", "--help"], &[], None);
 
     assert_eq!(output.status.code(), Some(0));
-    assert!(as_str(&output.stdout)
-        .contains("semantic-commit staged-context [--format <bundle|json|patch>]"));
+    assert!(
+        as_str(&output.stdout)
+            .contains("semantic-commit staged-context [--format <bundle|json|patch>]")
+    );
 }
 
 #[test]
@@ -89,8 +91,10 @@ fn staged_context_no_staged_changes_exits_2() {
     let output = common::run_semantic_commit_output(repo.path(), &["staged-context"], &[], None);
 
     assert_eq!(output.status.code(), Some(2));
-    assert!(as_str(&output.stderr)
-        .contains("error: no staged changes (stage files with git add first)"));
+    assert!(
+        as_str(&output.stderr)
+            .contains("error: no staged changes (stage files with git add first)")
+    );
 }
 
 #[test]
@@ -260,9 +264,11 @@ fn staged_context_records_renames() {
     let status_counts = context["staged"]["statusCounts"]
         .as_array()
         .expect("statusCounts array");
-    assert!(status_counts
-        .iter()
-        .any(|item| item["status"].as_str() == Some("R")));
+    assert!(
+        status_counts
+            .iter()
+            .any(|item| item["status"].as_str() == Some("R"))
+    );
 }
 
 #[test]

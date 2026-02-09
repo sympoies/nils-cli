@@ -198,7 +198,7 @@ fn relativize_for_created(path: &Path, repo_root: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_kebab_case, relativize_for_created, resolve_repo_relative, write_template, TEMPLATE,
+        TEMPLATE, is_kebab_case, relativize_for_created, resolve_repo_relative, write_template,
     };
     use pretty_assertions::assert_eq;
     use std::path::PathBuf;

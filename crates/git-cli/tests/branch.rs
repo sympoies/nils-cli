@@ -1,7 +1,7 @@
 mod common;
 
-use common::{init_repo, GitCliHarness};
-use nils_test_support::cmd::{run_with, CmdOutput};
+use common::{GitCliHarness, init_repo};
+use nils_test_support::cmd::{CmdOutput, run_with};
 use nils_test_support::git::{commit_file, git};
 use std::path::Path;
 
@@ -44,9 +44,11 @@ fn branch_cleanup_help() {
     let output = harness.run(dir.path(), &["branch", "cleanup", "--help"]);
 
     assert_eq!(output.code, 0);
-    assert!(output
-        .stdout_text()
-        .contains("Usage: git-delete-merged-branches [-b|--base <ref>] [-s|--squash]\n"));
+    assert!(
+        output
+            .stdout_text()
+            .contains("Usage: git-delete-merged-branches [-b|--base <ref>] [-s|--squash]\n")
+    );
     assert_eq!(output.stderr_text(), "");
 }
 
@@ -94,9 +96,11 @@ fn branch_cleanup_merged_lists_candidates_and_aborts() {
     let output = run_with_stdin(&harness, dir.path(), &["branch", "cleanup"], "n\n");
 
     assert_eq!(output.code, 1);
-    assert!(output
-        .stdout_text()
-        .contains("🧹 Merged branches to delete (base: HEAD):"));
+    assert!(
+        output
+            .stdout_text()
+            .contains("🧹 Merged branches to delete (base: HEAD):")
+    );
     assert!(output.stdout_text().contains("  - feature-merged"));
     assert!(!output.stdout_text().contains("feature-squash"));
     assert!(!output.stdout_text().contains("develop"));
@@ -116,9 +120,11 @@ fn branch_cleanup_squash_lists_squash_candidates_and_aborts() {
     );
 
     assert_eq!(output.code, 1);
-    assert!(output
-        .stdout_text()
-        .contains("🧹 Branches to delete (base: HEAD, mode: squash):"));
+    assert!(
+        output
+            .stdout_text()
+            .contains("🧹 Branches to delete (base: HEAD, mode: squash):")
+    );
     assert!(output.stdout_text().contains("  - feature-merged"));
     assert!(output.stdout_text().contains("  - feature-squash"));
     assert!(!output.stdout_text().contains("develop"));
@@ -138,9 +144,11 @@ fn branch_cleanup_protects_base_and_main() {
     );
 
     assert_eq!(output.code, 1);
-    assert!(output
-        .stdout_text()
-        .contains("🧹 Merged branches to delete (base: main):"));
+    assert!(
+        output
+            .stdout_text()
+            .contains("🧹 Merged branches to delete (base: main):")
+    );
     assert!(output.stdout_text().contains("  - feature-merged"));
     assert!(!output.stdout_text().contains("  - main"));
     assert!(output.stdout_text().contains("🚫 Aborted"));

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::parse::{parse_plan_with_display, Plan, Sprint, Task};
+use crate::parse::{Plan, Sprint, Task, parse_plan_with_display};
 
 const USAGE: &str = r#"Usage:
   plan_batches.sh --file <plan.md> --sprint <n> [--format json|text]

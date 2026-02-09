@@ -164,7 +164,7 @@ fn is_executable_file(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nils_test_support::{prepend_path, GlobalStateLock, StubBinDir};
+    use nils_test_support::{GlobalStateLock, StubBinDir, prepend_path};
     use std::fs;
 
     #[test]

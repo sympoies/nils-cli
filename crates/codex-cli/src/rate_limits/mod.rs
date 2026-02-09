@@ -6,7 +6,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::auth;
-use crate::rate_limits::client::{fetch_usage, UsageRequest};
+use crate::rate_limits::client::{UsageRequest, fetch_usage};
 use nils_common::env as shared_env;
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 
@@ -87,7 +87,9 @@ pub fn run(args: &RateLimitsOptions) -> Result<i32> {
             return Ok(64);
         }
         if args.secret.is_some() {
-            eprintln!("codex-rate-limits: usage: codex-rate-limits [-c] [-d] [--cached] [--no-refresh-auth] [--json] [--one-line] [--all] [secret.json]");
+            eprintln!(
+                "codex-rate-limits: usage: codex-rate-limits [-c] [-d] [--cached] [--no-refresh-auth] [--json] [--one-line] [--all] [secret.json]"
+            );
             return Ok(64);
         }
         return run_all_mode(args, cached_mode, debug_mode);
@@ -678,7 +680,7 @@ fn sync_auth_silent() -> Result<(i32, Option<String>)> {
             return Ok((
                 1,
                 Some(format!("codex: failed to hash {}", auth_file.display())),
-            ))
+            ));
         }
     };
 
@@ -701,7 +703,7 @@ fn sync_auth_silent() -> Result<(i32, Option<String>)> {
             let secret_hash = match crate::fs::sha256_file(&path) {
                 Ok(hash) => hash,
                 Err(_) => {
-                    return Ok((1, Some(format!("codex: failed to hash {}", path.display()))))
+                    return Ok((1, Some(format!("codex: failed to hash {}", path.display()))));
                 }
             };
             if secret_hash == auth_hash {

@@ -1,6 +1,6 @@
 use std::env;
 
-use nils_test_support::{prepend_path, CwdGuard, EnvGuard, GlobalStateLock, StubBinDir};
+use nils_test_support::{CwdGuard, EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
 
 #[test]
 fn env_guard_restores_original_value() {

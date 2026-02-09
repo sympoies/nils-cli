@@ -250,9 +250,10 @@ mod tests {
         };
         let err = select_window(&windows, &args).expect_err("ambiguous error");
         assert_eq!(err.exit_code(), 2);
-        assert!(err
-            .to_string()
-            .contains("multiple windows match --app \"Terminal\""));
+        assert!(
+            err.to_string()
+                .contains("multiple windows match --app \"Terminal\"")
+        );
     }
 
     #[test]

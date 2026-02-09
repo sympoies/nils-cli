@@ -6,8 +6,8 @@ mod test_support;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 
-use clap::error::ErrorKind;
 use clap::Parser;
+use clap::error::ErrorKind;
 
 use crate::cli::{Cli, Command};
 use crate::commands::{cmd_call, cmd_history, cmd_report, cmd_report_from_cmd};

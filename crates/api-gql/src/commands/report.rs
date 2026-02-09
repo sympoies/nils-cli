@@ -109,9 +109,9 @@ pub(crate) fn cmd_report(
                 Ok(v) => {
                     let note = if vars_min_limit > 0 && v.bumped_limit_fields > 0 {
                         Some(format!(
-                        "> NOTE: variables normalized: bumped {} limit field(s) to at least {} (GQL_VARS_MIN_LIMIT).",
-                        v.bumped_limit_fields, vars_min_limit
-                    ))
+                            "> NOTE: variables normalized: bumped {} limit field(s) to at least {} (GQL_VARS_MIN_LIMIT).",
+                            v.bumped_limit_fields, vars_min_limit
+                        ))
                     } else {
                         None
                     };
@@ -205,7 +205,10 @@ pub(crate) fn cmd_report(
 
     if !allow_empty {
         if !args.run && args.response.as_deref().and_then(trim_non_empty).is_none() {
-            let _ = writeln!(stderr, "Refusing to write a report without a real response. Use --run or --response (or pass --allow-empty for an intentionally empty/draft report).");
+            let _ = writeln!(
+                stderr,
+                "Refusing to write a report without a real response. Use --run or --response (or pass --allow-empty for an intentionally empty/draft report)."
+            );
             return 1;
         }
 
@@ -218,7 +221,10 @@ pub(crate) fn cmd_report(
         }
 
         if !response_has_meaningful_data_records(response_json_for_eval.as_ref().expect("json")) {
-            let _ = writeln!(stderr, "Response appears to contain no data records; refusing to write report. Adjust query/variables to return at least one record, or pass --allow-empty if an empty result is expected.");
+            let _ = writeln!(
+                stderr,
+                "Response appears to contain no data records; refusing to write report. Adjust query/variables to return at least one record, or pass --allow-empty if an empty result is expected."
+            );
             return 1;
         }
     }

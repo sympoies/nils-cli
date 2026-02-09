@@ -4,7 +4,7 @@ mod debug;
 
 use debug::schema::{ArtifactStatus, BUNDLE_MANIFEST_FILE_NAME, BUNDLE_MANIFEST_SCHEMA_VERSION};
 use nils_test_support::git::{self, InitRepoOptions};
-use nils_test_support::{prepend_path, CwdGuard, EnvGuard, GlobalStateLock, StubBinDir};
+use nils_test_support::{CwdGuard, EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use std::path::Path;
@@ -131,11 +131,13 @@ fn debug_bundle_partial_failures_keep_successful_artifact_refs() {
         .find(|artifact| artifact.id == debug::sources::image_processing::ARTIFACT_ID)
         .expect("image processing artifact should exist");
     assert_eq!(image_processing.status, ArtifactStatus::Failed);
-    assert!(image_processing
-        .error
-        .as_deref()
-        .unwrap_or_default()
-        .contains("image-processing"));
+    assert!(
+        image_processing
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("image-processing")
+    );
 
     let persisted = read_manifest_json(&output_dir);
     assert_eq!(persisted["partial_failure"], true);
@@ -237,11 +239,13 @@ fn debug_bundle_reports_spawn_failures_when_tool_launch_itself_fails() {
         .find(|artifact| artifact.id == debug::sources::image_processing::ARTIFACT_ID)
         .expect("image processing artifact should exist");
     assert_eq!(image_processing.status, ArtifactStatus::Failed);
-    assert!(image_processing
-        .error
-        .as_deref()
-        .unwrap_or_default()
-        .contains("failed to launch `image-processing`"));
+    assert!(
+        image_processing
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("failed to launch `image-processing`")
+    );
 }
 
 #[test]

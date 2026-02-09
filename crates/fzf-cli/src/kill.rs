@@ -105,7 +105,7 @@ fn run_kill(pids: &[String], force: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nils_test_support::{prepend_path, GlobalStateLock, StubBinDir};
+    use nils_test_support::{GlobalStateLock, StubBinDir, prepend_path};
 
     #[test]
     fn parse_kill_flags_collects_flags_and_rest() {

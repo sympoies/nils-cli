@@ -8,9 +8,9 @@ use api_testing_core::suite::filter::parse_csv_list;
 use api_testing_core::suite::resolve::{
     find_repo_root, resolve_path_from_repo_root, resolve_suite_selection,
 };
-use api_testing_core::suite::runner::{run_suite, SuiteRunOptions};
+use api_testing_core::suite::runner::{SuiteRunOptions, run_suite};
 use api_testing_core::suite::schema::load_and_validate_suite;
-use api_testing_core::suite::summary::{render_summary_from_json_str, SummaryOptions};
+use api_testing_core::suite::summary::{SummaryOptions, render_summary_from_json_str};
 use nils_term::progress::{Progress, ProgressOptions};
 
 #[derive(Parser)]

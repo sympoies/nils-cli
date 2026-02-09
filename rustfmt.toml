@@ -1,2 +1,2 @@
-# Keep formatting stable while workspace crates migrate to Rust 2024 edition.
-style_edition = "2021"
+# Keep formatting aligned with the workspace Rust 2024 edition.
+style_edition = "2024"

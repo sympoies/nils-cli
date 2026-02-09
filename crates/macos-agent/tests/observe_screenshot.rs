@@ -53,10 +53,12 @@ fn observe_screenshot_json_contract() {
     assert_eq!(payload["schema_version"], serde_json::json!(1));
     assert_eq!(payload["ok"], serde_json::json!(true));
     assert_eq!(payload["command"], serde_json::json!("observe.screenshot"));
-    assert!(payload["result"]["path"]
-        .as_str()
-        .unwrap()
-        .contains("window-100"));
+    assert!(
+        payload["result"]["path"]
+            .as_str()
+            .unwrap()
+            .contains("window-100")
+    );
 }
 
 #[test]

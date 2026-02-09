@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use nils_common::git as common_git;
 use std::process::Output;
 
@@ -51,11 +51,7 @@ pub(crate) fn git_stdout_trimmed(args: &[&str]) -> Result<String> {
 pub(crate) fn git_stdout_trimmed_optional(args: &[&str]) -> Option<String> {
     let output = git_output_optional(args)?;
     let out = trim_trailing_newlines(&String::from_utf8_lossy(&output.stdout));
-    if out.is_empty() {
-        None
-    } else {
-        Some(out)
-    }
+    if out.is_empty() { None } else { Some(out) }
 }
 
 fn run_git_output(args: &[&str]) -> std::io::Result<Output> {
@@ -175,7 +171,7 @@ pub(crate) fn is_lockfile(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nils_test_support::git::{commit_file, git, init_repo_with, InitRepoOptions};
+    use nils_test_support::git::{InitRepoOptions, commit_file, git, init_repo_with};
     use nils_test_support::{CwdGuard, GlobalStateLock};
     use pretty_assertions::assert_eq;
     use std::fs;

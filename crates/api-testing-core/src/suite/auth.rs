@@ -3,11 +3,11 @@ use std::path::Path;
 
 use anyhow::Context;
 
+use crate::Result;
 use crate::suite::resolve::{
     resolve_gql_url_for_env, resolve_path_from_repo_root, resolve_rest_base_url_for_env,
 };
 use crate::suite::schema::{SuiteAuth, SuiteDefaults};
-use crate::Result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthProvider {
@@ -243,7 +243,7 @@ impl SuiteAuthManager {
             _ => {
                 return Err(format!(
                     "auth_login_template_render_failed(provider={provider},profile={profile})"
-                ))
+                ));
             }
         };
 
@@ -333,7 +333,7 @@ impl SuiteAuthManager {
             _ => {
                 return Err(format!(
                     "auth_login_template_render_failed(provider={provider},profile={profile})"
-                ))
+                ));
             }
         };
 
@@ -390,7 +390,9 @@ fn canonical_provider(auth: &SuiteAuth) -> Result<AuthProvider> {
             (Some(_), Some(_)) => anyhow::bail!(
                 "Invalid suite auth block: .auth.provider is required when both .auth.rest and .auth.graphql are present"
             ),
-            (None, None) => anyhow::bail!("Invalid suite auth block: missing auth.rest/auth.graphql"),
+            (None, None) => {
+                anyhow::bail!("Invalid suite auth block: missing auth.rest/auth.graphql")
+            }
         }
     } else if provider_raw == "gql" {
         "graphql".to_string()

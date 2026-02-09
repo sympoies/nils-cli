@@ -18,8 +18,7 @@ use crate::test_mode;
 
 const AX_EXTENDED_CAPABILITY_HINT: &str =
     "AX attr/action/session/watch commands require Hammerspoon backend (`hs`).";
-const AX_EXTENDED_CAPABILITY_ACTION_HINT: &str =
-    "Use `CODEX_MACOS_AGENT_AX_BACKEND=hammerspoon|auto` and run `macos-agent preflight --include-probes` to verify readiness.";
+const AX_EXTENDED_CAPABILITY_ACTION_HINT: &str = "Use `CODEX_MACOS_AGENT_AX_BACKEND=hammerspoon|auto` and run `macos-agent preflight --include-probes` to verify readiness.";
 
 pub trait AxBackendAdapter {
     fn list(

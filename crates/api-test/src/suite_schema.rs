@@ -217,16 +217,18 @@ impl fmt::Display for SuiteSchemaValidationError {
                 )
             }
 
-            SuiteSchemaValidationError::InvalidSuiteAuthSecretEnvEmpty => write!(
-                f,
-                "Invalid suite auth block: .auth.secretEnv is empty"
-            ),
+            SuiteSchemaValidationError::InvalidSuiteAuthSecretEnvEmpty => {
+                write!(f, "Invalid suite auth block: .auth.secretEnv is empty")
+            }
             SuiteSchemaValidationError::InvalidSuiteAuthSecretEnvNotEnvVarName { value } => write!(
                 f,
                 "Invalid suite auth block: .auth.secretEnv must be a valid env var name (got: {value})"
             ),
             SuiteSchemaValidationError::InvalidSuiteAuthRequiredNotBoolean => {
-                write!(f, "Invalid suite auth block: .auth.required must be boolean")
+                write!(
+                    f,
+                    "Invalid suite auth block: .auth.required must be boolean"
+                )
             }
             SuiteSchemaValidationError::InvalidSuiteAuthProviderRequiredWhenBothPresent => write!(
                 f,
@@ -252,10 +254,9 @@ impl fmt::Display for SuiteSchemaValidationError {
                 f,
                 "Invalid suite auth.graphql block: missing loginVarsTemplate"
             ),
-            SuiteSchemaValidationError::InvalidSuiteAuthGraphqlMissingCredentialsJq => write!(
-                f,
-                "Invalid suite auth.graphql block: missing credentialsJq"
-            ),
+            SuiteSchemaValidationError::InvalidSuiteAuthGraphqlMissingCredentialsJq => {
+                write!(f, "Invalid suite auth.graphql block: missing credentialsJq")
+            }
 
             SuiteSchemaValidationError::CaseMissingId { index } => {
                 write!(f, "Case is missing id at index {index}")
@@ -281,10 +282,12 @@ impl fmt::Display for SuiteSchemaValidationError {
                 f,
                 "GraphQL case '{id}' has invalid allowErrors (expected boolean)"
             ),
-            SuiteSchemaValidationError::GraphqlCaseAllowErrorsTrueRequiresExpectJq { id } => write!(
-                f,
-                "GraphQL case '{id}' with allowErrors=true must set expect.jq"
-            ),
+            SuiteSchemaValidationError::GraphqlCaseAllowErrorsTrueRequiresExpectJq { id } => {
+                write!(
+                    f,
+                    "GraphQL case '{id}' with allowErrors=true must set expect.jq"
+                )
+            }
 
             SuiteSchemaValidationError::UnknownCaseType { id, case_type } => {
                 write!(f, "Unknown case type '{case_type}' for case '{id}'")

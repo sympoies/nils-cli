@@ -1,5 +1,5 @@
 use super::schema::{
-    BundleArtifact, BundleManifest, BUNDLE_ARTIFACTS_DIR, BUNDLE_MANIFEST_FILE_NAME,
+    BUNDLE_ARTIFACTS_DIR, BUNDLE_MANIFEST_FILE_NAME, BundleArtifact, BundleManifest,
 };
 use super::sources::{git_context, image_processing, macos_agent, screen_record};
 use super::{EXIT_OK, EXIT_RUNTIME_ERROR};

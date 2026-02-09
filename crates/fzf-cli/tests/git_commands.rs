@@ -116,9 +116,10 @@ exit 0
 
     let out = common::run_fzf_cli(temp.path(), &["git-tag"], &envs, Some("y\n"));
     assert_eq!(out.code, 0);
-    assert!(out
-        .stdout
-        .contains("✅ Checked out to tag v1.0.0 (commit abc123)"));
+    assert!(
+        out.stdout
+            .contains("✅ Checked out to tag v1.0.0 (commit abc123)")
+    );
     let log = fs::read_to_string(&git_log).unwrap();
     assert!(log.contains("checkout abc123"));
 }

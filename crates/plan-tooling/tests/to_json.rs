@@ -90,9 +90,10 @@ fn to_json_missing_value_for_file_is_usage_error() {
     let out = run_plan_tooling(dir.path(), &["to-json", "--file"]);
     assert_eq!(out.code, 2);
     assert!(out.stdout.is_empty());
-    assert!(out
-        .stderr
-        .contains("plan_to_json: missing value for --file"));
+    assert!(
+        out.stderr
+            .contains("plan_to_json: missing value for --file")
+    );
 }
 
 #[test]
@@ -104,9 +105,10 @@ fn to_json_missing_value_for_sprint_is_usage_error() {
     let out = run_plan_tooling(dir.path(), &["to-json", "--file", "plan.md", "--sprint"]);
     assert_eq!(out.code, 2);
     assert!(out.stdout.is_empty());
-    assert!(out
-        .stderr
-        .contains("plan_to_json: missing value for --sprint"));
+    assert!(
+        out.stderr
+            .contains("plan_to_json: missing value for --sprint")
+    );
 }
 
 #[test]
@@ -115,9 +117,10 @@ fn to_json_missing_file_is_parse_error() {
 
     let out = run_plan_tooling(dir.path(), &["to-json", "--file", "missing.md"]);
     assert_eq!(out.code, 1);
-    assert!(out
-        .stderr
-        .contains("error: plan file not found: missing.md"));
+    assert!(
+        out.stderr
+            .contains("error: plan file not found: missing.md")
+    );
 }
 
 const VALID_PLAN: &str = r#"# Plan: Example

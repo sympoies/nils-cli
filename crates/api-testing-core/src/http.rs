@@ -18,8 +18,9 @@ mod tests {
     #[test]
     fn execute_request_reports_unimplemented() {
         let err = execute_request(&serde_json::json!({"method": "GET"})).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("api-testing-core::http::execute_request is not implemented"));
+        assert!(
+            err.to_string()
+                .contains("api-testing-core::http::execute_request is not implemented")
+        );
     }
 }

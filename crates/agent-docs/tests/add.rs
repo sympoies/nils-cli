@@ -3,7 +3,7 @@ mod common;
 use std::fs;
 use std::path::Path;
 
-use agent_docs::config::{load_scope_config, CONFIG_FILE_NAME};
+use agent_docs::config::{CONFIG_FILE_NAME, load_scope_config};
 use agent_docs::model::{Context, Scope};
 
 #[test]

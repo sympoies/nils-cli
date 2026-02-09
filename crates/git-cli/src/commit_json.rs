@@ -1,17 +1,17 @@
 use crate::clipboard;
 use crate::commit_shared::{
-    diff_numstat, git_output, git_status_code, git_status_success, git_stdout_trimmed_optional,
-    is_lockfile, parse_name_status_z, DiffNumstat,
+    DiffNumstat, diff_numstat, git_output, git_status_code, git_status_success,
+    git_stdout_trimmed_optional, is_lockfile, parse_name_status_z,
 };
 use crate::util;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde_json::{Map, Number, Value};
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::Path;
-use time::format_description;
 use time::OffsetDateTime;
+use time::format_description;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OutputMode {
@@ -198,7 +198,9 @@ fn print_usage() {
         "Usage: git-commit-context-json [--stdout|--both] [--pretty] [--bundle] [--out-dir <path>]"
     );
     println!("  --stdout    Print to stdout only (JSON by default; bundle with --bundle)");
-    println!("  --both      Print to stdout and copy to clipboard (JSON by default; bundle with --bundle)");
+    println!(
+        "  --both      Print to stdout and copy to clipboard (JSON by default; bundle with --bundle)"
+    );
     println!("  --pretty    Pretty-print JSON (default is compact)");
     println!("  --bundle    Print/copy a single bundle (JSON + patch content)");
     println!("  --out-dir   Write files to this directory (default: <git-dir>/commit-context)");

@@ -3,8 +3,8 @@ use std::os::unix::io::AsRawFd;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use x11rb::connection::Connection;
@@ -525,7 +525,7 @@ fn run_ffmpeg(mut cmd: Command) -> Result<(), CliError> {
             Err(err) => {
                 return Err(CliError::runtime(format!(
                     "failed to wait for ffmpeg: {err}"
-                )))
+                )));
             }
         }
 

@@ -137,7 +137,7 @@ fn repo_id() -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{lock_dir_from_env, LockStore};
+    use super::{LockStore, lock_dir_from_env};
     use nils_test_support::{EnvGuard, GlobalStateLock};
     use pretty_assertions::assert_eq;
     use std::fs;

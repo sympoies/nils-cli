@@ -92,7 +92,7 @@ pub fn strip_ansi(input: &str, mode: AnsiStripMode) -> Cow<'_, str> {
 #[cfg(test)]
 mod tests {
     use super::SingleQuoteEscapeStyle;
-    use super::{quote_posix_single, quote_posix_single_with_style, strip_ansi, AnsiStripMode};
+    use super::{AnsiStripMode, quote_posix_single, quote_posix_single_with_style, strip_ansi};
     use std::borrow::Cow;
 
     #[test]

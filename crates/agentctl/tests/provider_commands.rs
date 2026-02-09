@@ -74,10 +74,12 @@ fn provider_healthcheck_json_supports_stub_provider_selection() {
     assert_eq!(parsed["provider"], "claude");
     assert_eq!(parsed["selected_source"], "cli-argument");
     assert_eq!(parsed["status"], "degraded");
-    assert!(parsed["summary"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("stub"));
+    assert!(
+        parsed["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("stub")
+    );
 }
 
 #[test]

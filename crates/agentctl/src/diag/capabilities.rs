@@ -1,7 +1,7 @@
 use crate::diag::{
-    automation_tools, current_platform, doctor, emit_json, resolve_probe_mode, AutomationToolSpec,
-    OutputFormat, ProbeMode, ProbeModeArg, ReadinessSection, DIAG_SCHEMA_VERSION, EXIT_OK,
-    EXIT_USAGE,
+    AutomationToolSpec, DIAG_SCHEMA_VERSION, EXIT_OK, EXIT_USAGE, OutputFormat, ProbeMode,
+    ProbeModeArg, ReadinessSection, automation_tools, current_platform, doctor, emit_json,
+    resolve_probe_mode,
 };
 use crate::provider::registry::ProviderRegistry;
 use agent_runtime_core::schema::CapabilitiesRequest;

@@ -80,9 +80,10 @@ fn wait_app_active_timeout_is_runtime_error() {
 
     assert_eq!(out.code, 1);
     assert_eq!(out.stdout_text(), "");
-    assert!(out
-        .stderr_text()
-        .contains("timed out waiting for app-active"));
+    assert!(
+        out.stderr_text()
+            .contains("timed out waiting for app-active")
+    );
 }
 
 #[test]
@@ -189,9 +190,11 @@ fn wait_json_and_tsv_contracts() {
     );
     assert_eq!(tsv_out.code, 2);
     assert_eq!(tsv_out.stdout_text(), "");
-    assert!(tsv_out
-        .stderr_text()
-        .contains("only supported for `windows list` and `apps list`"));
+    assert!(
+        tsv_out
+            .stderr_text()
+            .contains("only supported for `windows list` and `apps list`")
+    );
 }
 
 #[test]

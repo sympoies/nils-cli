@@ -4,8 +4,8 @@ mod commands;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 
-use clap::error::ErrorKind;
 use clap::Parser;
+use clap::error::ErrorKind;
 
 use crate::cli::{Cli, Command};
 use crate::commands::{cmd_call, cmd_history, cmd_report, cmd_report_from_cmd, cmd_schema};
@@ -36,7 +36,9 @@ fn print_root_help() {
     println!("Usage: api-gql <command> [args]");
     println!();
     println!("Commands:");
-    println!("  call     Execute an operation (and optional variables) and print response JSON (default)");
+    println!(
+        "  call     Execute an operation (and optional variables) and print response JSON (default)"
+    );
     println!("  history  Print the last (or last N) history entries");
     println!("  report   Generate a Markdown API test report");
     println!("  report-from-cmd  Generate a report from a command snippet (arg or stdin)");

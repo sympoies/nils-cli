@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use screen_record::types::PermissionStatusSchema;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub use screen_record::types::PermissionState;
 
@@ -89,19 +89,11 @@ pub struct PreflightSummary {
 
 impl PreflightSummary {
     pub fn status(self) -> &'static str {
-        if self.ok {
-            "ready"
-        } else {
-            "not_ready"
-        }
+        if self.ok { "ready" } else { "not_ready" }
     }
 
     fn title(self) -> &'static str {
-        if self.ok {
-            "ready"
-        } else {
-            "not ready"
-        }
+        if self.ok { "ready" } else { "not ready" }
     }
 }
 
@@ -625,12 +617,12 @@ fn looks_like_accessibility_blocked(message: &str) -> bool {
 mod tests {
     use std::path::PathBuf;
 
-    use nils_test_support::{prepend_path, EnvGuard, GlobalStateLock, StubBinDir};
+    use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
 
     use super::{
-        collect_system_snapshot, find_in_path, looks_like_accessibility_blocked,
-        looks_like_automation_blocked, probe_accessibility, probe_automation, probe_input_hotkey,
-        run_osascript, sanitize_probe_detail, CheckStatus, PermissionState, ACCESSIBILITY_HINT,
+        ACCESSIBILITY_HINT, CheckStatus, PermissionState, collect_system_snapshot, find_in_path,
+        looks_like_accessibility_blocked, looks_like_automation_blocked, probe_accessibility,
+        probe_automation, probe_input_hotkey, run_osascript, sanitize_probe_detail,
     };
 
     fn install_stub_tools(

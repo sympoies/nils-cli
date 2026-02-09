@@ -1,6 +1,6 @@
+use crate::Result;
 use crate::rest::runner::RestExecutedRequest;
 use crate::rest::schema::RestRequest;
-use crate::Result;
 
 pub fn evaluate_main_response(request: &RestRequest, executed: &RestExecutedRequest) -> Result<()> {
     let status = executed.response.status;
@@ -61,9 +61,10 @@ mod tests {
         .unwrap();
         let executed = executed_with(500, serde_json::json!({"ok": false}));
         let err = evaluate_main_response(&request, &executed).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("Expected HTTP status 200 but got 500"));
+        assert!(
+            err.to_string()
+                .contains("Expected HTTP status 200 but got 500")
+        );
     }
 
     #[test]
@@ -88,8 +89,9 @@ mod tests {
         .unwrap();
         let executed = executed_with(404, serde_json::json!({"error": "no"}));
         let err = evaluate_main_response(&request, &executed).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("HTTP request failed with status 404"));
+        assert!(
+            err.to_string()
+                .contains("HTTP request failed with status 404")
+        );
     }
 }

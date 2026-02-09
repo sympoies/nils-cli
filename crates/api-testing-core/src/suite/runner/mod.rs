@@ -3,9 +3,10 @@ use std::time::Instant;
 
 use anyhow::Context;
 
+use crate::Result;
 use crate::cli_util;
 use crate::suite::auth::{AuthInit, SuiteAuthManager};
-use crate::suite::cleanup::{run_case_cleanup, CleanupContext};
+use crate::suite::cleanup::{CleanupContext, run_case_cleanup};
 use crate::suite::filter::selection_skip_reason;
 use crate::suite::resolve::write_file;
 use crate::suite::results::{SuiteCaseResult, SuiteRunResults, SuiteRunSummary};
@@ -14,7 +15,6 @@ use crate::suite::runtime::{
     resolve_rest_base_url, sanitize_id, time_iso_now, time_run_id_now,
 };
 use crate::suite::schema::LoadedSuite;
-use crate::Result;
 
 mod context;
 mod graphql;
@@ -314,12 +314,12 @@ pub fn run_suite(
                         let main_args_snip = mask_args_for_command_snippet(&main_args);
                         let token_expr_q = cli_util::shell_quote(&token_jq);
                         command_snippet = Some(format!(
-                        "ACCESS_TOKEN=\"$(REST_TOKEN_NAME= ACCESS_TOKEN= {} {} | jq -r {token_expr_q})\" REST_TOKEN_NAME= {} {}",
-                        cli_util::shell_quote("api-rest"),
-                        login_args_snip,
-                        cli_util::shell_quote("api-rest"),
-                        main_args_snip
-                    ));
+                            "ACCESS_TOKEN=\"$(REST_TOKEN_NAME= ACCESS_TOKEN= {} {} | jq -r {token_expr_q})\" REST_TOKEN_NAME= {} {}",
+                            cli_util::shell_quote("api-rest"),
+                            login_args_snip,
+                            cli_util::shell_quote("api-rest"),
+                            main_args_snip
+                        ));
 
                         // Login request
                         let login_executed = match crate::rest::runner::execute_rest_request(
@@ -786,19 +786,21 @@ mod tests {
         let base_url = format!("http://{addr}");
 
         let (tx, rx) = mpsc::channel::<()>();
-        let join = thread::spawn(move || loop {
-            if rx.try_recv().is_ok() {
-                break;
-            }
-            match listener.accept() {
-                Ok((mut stream, _peer)) => {
-                    read_until_headers_end(&mut stream);
-                    write_json_response(&mut stream, br#"{"ok":true}"#);
+        let join = thread::spawn(move || {
+            loop {
+                if rx.try_recv().is_ok() {
+                    break;
                 }
-                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(5));
+                match listener.accept() {
+                    Ok((mut stream, _peer)) => {
+                        read_until_headers_end(&mut stream);
+                        write_json_response(&mut stream, br#"{"ok":true}"#);
+                    }
+                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(_) => break,
                 }
-                Err(_) => break,
             }
         });
 

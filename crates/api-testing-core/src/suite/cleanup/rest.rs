@@ -1,12 +1,12 @@
 use anyhow::Context;
 
+use crate::Result;
 use crate::suite::resolve::{resolve_path_from_repo_root, write_file};
 use crate::suite::runtime::{resolve_rest_base_url, resolve_rest_token_profile};
 use crate::suite::schema::SuiteCleanupStep;
-use crate::Result;
 
 use super::template::{parse_vars_map, render_template};
-use super::{append_log, log_failure_with_stderr_file, CleanupContext};
+use super::{CleanupContext, append_log, log_failure_with_stderr_file};
 
 pub(super) fn rest_cleanup_step(
     ctx: &mut CleanupContext<'_>,

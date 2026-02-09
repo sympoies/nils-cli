@@ -1,4 +1,4 @@
-use nils_test_support::{bin, cmd, write_exe, EnvGuard, GlobalStateLock};
+use nils_test_support::{EnvGuard, GlobalStateLock, bin, cmd, write_exe};
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 

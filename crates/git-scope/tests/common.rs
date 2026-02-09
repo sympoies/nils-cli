@@ -2,9 +2,9 @@ use std::path::Path;
 use std::process::Output;
 
 use nils_test_support::bin::resolve;
-use nils_test_support::cmd::{run_with, CmdOptions, CmdOutput};
+use nils_test_support::cmd::{CmdOptions, CmdOutput, run_with};
 pub use nils_test_support::git::git;
-use nils_test_support::git::{init_repo_with, InitRepoOptions};
+use nils_test_support::git::{InitRepoOptions, init_repo_with};
 
 pub fn init_repo() -> tempfile::TempDir {
     init_repo_with(InitRepoOptions::new().with_branch("main"))

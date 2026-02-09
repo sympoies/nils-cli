@@ -52,11 +52,7 @@ pub struct SuiteRunResults {
 
 impl SuiteRunResults {
     pub fn exit_code(&self) -> i32 {
-        if self.summary.failed > 0 {
-            2
-        } else {
-            0
-        }
+        if self.summary.failed > 0 { 2 } else { 0 }
     }
 }
 

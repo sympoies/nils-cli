@@ -3,11 +3,11 @@
 use std::path::Path;
 
 use nils_test_support::bin::resolve;
-use nils_test_support::cmd::{run_with, CmdOptions};
+use nils_test_support::cmd::{CmdOptions, run_with};
 use nils_test_support::fs::write_text;
 #[allow(unused_imports)]
 pub use nils_test_support::git::git;
-use nils_test_support::git::{init_repo_with, InitRepoOptions};
+use nils_test_support::git::{InitRepoOptions, init_repo_with};
 
 pub struct CmdOut {
     pub code: i32,

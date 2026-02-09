@@ -1,8 +1,8 @@
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
-use crate::backend::process::{map_failure, ProcessFailure, ProcessRequest, ProcessRunner};
+use crate::backend::process::{ProcessFailure, ProcessRequest, ProcessRunner, map_failure};
 use crate::error::CliError;
 use crate::model::{
     AxClickRequest, AxClickResult, AxListRequest, AxListResult, AxSelector, AxTypeRequest,
@@ -1180,8 +1180,8 @@ mod tests {
     use crate::model::{AxClickRequest, AxListRequest, AxSelector, AxTypeRequest};
 
     use super::{
-        ax_click, ax_list, ax_type, escape_applescript, parse_modifiers, Modifier,
-        AX_CLICK_JXA_SCRIPT, AX_TYPE_JXA_SCRIPT,
+        AX_CLICK_JXA_SCRIPT, AX_TYPE_JXA_SCRIPT, Modifier, ax_click, ax_list, ax_type,
+        escape_applescript, parse_modifiers,
     };
 
     struct FixedOutputRunner {
@@ -1265,10 +1265,11 @@ mod tests {
         let err = ax_click(&runner, &request, 250).expect_err("invalid json should fail");
         assert_eq!(err.operation(), Some("ax.click"));
         assert!(err.message().contains("invalid AX backend JSON response"));
-        assert!(err
-            .hints()
-            .iter()
-            .any(|hint| hint.contains("preflight") || hint.contains("--trace")));
+        assert!(
+            err.hints()
+                .iter()
+                .any(|hint| hint.contains("preflight") || hint.contains("--trace"))
+        );
     }
 
     #[test]

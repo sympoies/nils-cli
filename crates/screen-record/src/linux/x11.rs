@@ -190,7 +190,7 @@ fn query_tree_windows<C: Connection>(conn: &C, root: Window) -> Result<Vec<Windo
         Err(err) => {
             return Err(CliError::runtime(format!(
                 "failed to query X11 window tree: {err}"
-            )))
+            )));
         }
     };
 
@@ -328,11 +328,7 @@ fn get_property_bytes<C: Connection>(
 
 fn bytes_to_string(bytes: &[u8]) -> Option<String> {
     let value = String::from_utf8_lossy(bytes).trim().to_string();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value)
-    }
+    if value.is_empty() { None } else { Some(value) }
 }
 
 fn derive_apps(windows: &[WindowInfo]) -> Vec<AppInfo> {

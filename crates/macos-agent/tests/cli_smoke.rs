@@ -307,9 +307,10 @@ fn tsv_mode_is_rejected_for_input_commands() {
 
     assert_eq!(out.code, 2);
     assert_eq!(out.stdout_text(), "");
-    assert!(out
-        .stderr_text()
-        .contains("only supported for `windows list` and `apps list`"));
+    assert!(
+        out.stderr_text()
+            .contains("only supported for `windows list` and `apps list`")
+    );
 }
 
 #[test]

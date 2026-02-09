@@ -1,5 +1,5 @@
 use nils_test_support::bin::resolve;
-use nils_test_support::cmd::{run, CmdOutput};
+use nils_test_support::cmd::{CmdOutput, run};
 use tempfile::TempDir;
 
 mod common;

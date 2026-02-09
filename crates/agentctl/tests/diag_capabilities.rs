@@ -1,6 +1,6 @@
 use nils_test_support::bin;
 use nils_test_support::cmd::{self, CmdOptions, CmdOutput};
-use nils_test_support::{prepend_path, EnvGuard, GlobalStateLock, StubBinDir};
+use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -71,9 +71,11 @@ fn diag_capabilities_json_reports_inventory_and_readiness() {
         .get("capabilities")
         .and_then(Value::as_array)
         .expect("capabilities");
-    assert!(capabilities
-        .iter()
-        .any(|capability| capability.get("name").and_then(Value::as_str) == Some("execute")));
+    assert!(
+        capabilities
+            .iter()
+            .any(|capability| capability.get("name").and_then(Value::as_str) == Some("execute"))
+    );
     assert!(capabilities.iter().any(
         |capability| capability.get("name").and_then(Value::as_str) == Some("diag.rate-limits")
     ));

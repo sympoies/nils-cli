@@ -15,7 +15,7 @@ impl RefreshLock {
             Ok(()) => {
                 return Some(Self {
                     dir: dir.to_path_buf(),
-                })
+                });
             }
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(_) => return None,

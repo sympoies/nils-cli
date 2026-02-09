@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::{env_file, Result};
+use crate::{Result, env_file};
 
 pub trait WarnSink {
     fn warn(&mut self, message: &str);

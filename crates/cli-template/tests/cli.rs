@@ -1,5 +1,5 @@
 use nils_test_support::bin;
-use nils_test_support::cmd::{self, run_with, CmdOptions, CmdOutput};
+use nils_test_support::cmd::{self, CmdOptions, CmdOutput, run_with};
 use std::path::PathBuf;
 
 fn cli_template_bin() -> PathBuf {

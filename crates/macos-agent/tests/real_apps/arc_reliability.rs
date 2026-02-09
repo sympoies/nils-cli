@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::real_apps::arc_assertions::arc_youtube_play_pause_and_comment_checkpoint;
 use crate::real_apps::arc_navigation::{
-    arc_youtube_opens_home_and_clicks_three_tiles, ArcYoutubeProfile,
+    ArcYoutubeProfile, arc_youtube_opens_home_and_clicks_three_tiles,
 };
 use crate::real_apps::matrix::{ScenarioOutcome, ScenarioStatus};
 use crate::real_common;

@@ -2,8 +2,8 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
-use crate::backend::process::RealProcessRunner;
 use crate::backend::AutoAxBackend;
+use crate::backend::process::RealProcessRunner;
 use crate::cli::{ObserveScreenshotArgs, OutputFormat};
 use crate::commands::ax_common::{
     build_selector_from_args, build_target, resolve_selector_node_against_backend,
@@ -362,8 +362,9 @@ mod tests {
         };
 
         let err = padded_region(&frame, 0, &window).expect_err("expected collapsed region");
-        assert!(err
-            .message()
-            .contains("selector frame collapsed after applying padding/window bounds"));
+        assert!(
+            err.message()
+                .contains("selector frame collapsed after applying padding/window bounds")
+        );
     }
 }
