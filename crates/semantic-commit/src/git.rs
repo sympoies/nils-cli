@@ -1,14 +1,9 @@
+use nils_common::process;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
 pub fn command_exists(program: &str) -> bool {
-    Command::new(program)
-        .arg("--help")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok()
+    process::cmd_exists(program)
 }
 
 pub fn is_inside_work_tree(repo: Option<&Path>) -> bool {

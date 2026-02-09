@@ -3,7 +3,7 @@ use tempfile::TempDir;
 use screen_record::cli::ContainerFormat;
 use screen_record::test_mode::TestWriter;
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 use screen_record::macos::writer::{
     write_diagnostics_contact_sheet, write_diagnostics_motion_intervals,
 };
@@ -34,7 +34,7 @@ fn test_writer_finish_without_frame_returns_error() {
     assert!(err.to_string().contains("no frames appended"));
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[test]
 fn diagnostics_artifact_writers_create_readable_files() {
     let dir = TempDir::new().expect("tempdir");
