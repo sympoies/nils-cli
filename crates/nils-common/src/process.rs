@@ -1,4 +1,4 @@
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -128,13 +128,73 @@ pub fn find_in_path(program: &str) -> Option<PathBuf> {
     }
 
     let path_var: OsString = std::env::var_os("PATH")?;
+    let windows_extensions = if cfg!(windows) {
+        Some(windows_pathext_extensions())
+    } else {
+        None
+    };
+
     for dir in std::env::split_paths(&path_var) {
-        let candidate = dir.join(program);
-        if is_executable_file(&candidate) {
-            return Some(candidate);
+        for candidate in path_lookup_candidates(&dir, program, windows_extensions.as_deref()) {
+            if is_executable_file(&candidate) {
+                return Some(candidate);
+            }
         }
     }
     None
+}
+
+fn path_lookup_candidates(
+    dir: &Path,
+    program: &str,
+    windows_extensions: Option<&[OsString]>,
+) -> Vec<PathBuf> {
+    let mut candidates = vec![dir.join(program)];
+
+    if let Some(windows_extensions) = windows_extensions
+        && Path::new(program).extension().is_none()
+    {
+        for extension in windows_extensions {
+            let mut file_name = OsString::from(program);
+            file_name.push(extension);
+            candidates.push(dir.join(file_name));
+        }
+    }
+
+    candidates
+}
+
+fn windows_pathext_extensions() -> Vec<OsString> {
+    let raw = std::env::var_os("PATHEXT")
+        .unwrap_or_else(|| OsString::from(".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH"));
+    parse_windows_extensions(raw.as_os_str())
+}
+
+fn parse_windows_extensions(raw: &OsStr) -> Vec<OsString> {
+    let mut extensions = Vec::new();
+    let mut seen_lowercase = Vec::new();
+
+    for segment in raw.to_string_lossy().split(';') {
+        let segment = segment.trim();
+        if segment.is_empty() {
+            continue;
+        }
+
+        let normalized = if segment.starts_with('.') {
+            segment.to_string()
+        } else {
+            format!(".{segment}")
+        };
+        let lowercase = normalized.to_ascii_lowercase();
+        if seen_lowercase.iter().any(|existing| existing == &lowercase) {
+            continue;
+        }
+
+        seen_lowercase.push(lowercase);
+        extensions.push(OsString::from(normalized));
+    }
+
+    extensions
 }
 
 fn looks_like_path(program: &str) -> bool {
@@ -223,6 +283,43 @@ mod tests {
 
         let found = find_in_path("hello-stub").expect("found");
         assert!(found.ends_with("hello-stub"));
+    }
+
+    #[test]
+    fn parse_windows_extensions_normalizes_and_deduplicates_entries() {
+        let parsed = parse_windows_extensions(OsStr::new("EXE; .Cmd ; ; .BAT ;.exe"));
+        assert_eq!(
+            parsed,
+            vec![
+                OsString::from(".EXE"),
+                OsString::from(".Cmd"),
+                OsString::from(".BAT"),
+            ]
+        );
+    }
+
+    #[test]
+    fn path_lookup_candidates_adds_windows_extensions_for_extensionless_program() {
+        let dir = Path::new("/tmp/path-candidates");
+        let windows_extensions = vec![OsString::from(".EXE"), OsString::from(".CMD")];
+
+        let candidates = path_lookup_candidates(dir, "git", Some(windows_extensions.as_slice()));
+
+        assert_eq!(
+            candidates,
+            vec![dir.join("git"), dir.join("git.EXE"), dir.join("git.CMD"),]
+        );
+    }
+
+    #[test]
+    fn path_lookup_candidates_skips_windows_extensions_when_program_already_has_extension() {
+        let dir = Path::new("/tmp/path-candidates");
+        let windows_extensions = vec![OsString::from(".EXE"), OsString::from(".CMD")];
+
+        let candidates =
+            path_lookup_candidates(dir, "git.exe", Some(windows_extensions.as_slice()));
+
+        assert_eq!(candidates, vec![dir.join("git.exe")]);
     }
 
     #[cfg(unix)]
