@@ -2,6 +2,12 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Output, Stdio};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitContextError {
+    GitNotFound,
+    NotRepository,
+}
+
 pub fn run_output(args: &[&str]) -> io::Result<Output> {
     run_output_inner(None, args)
 }
@@ -24,6 +30,28 @@ pub fn run_status_inherit(args: &[&str]) -> io::Result<ExitStatus> {
 
 pub fn run_status_inherit_in(cwd: &Path, args: &[&str]) -> io::Result<ExitStatus> {
     run_status_inherit_inner(Some(cwd), args)
+}
+
+pub fn is_git_available() -> bool {
+    run_status_quiet(&["--version"])
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+pub fn require_repo() -> Result<(), GitContextError> {
+    require_context(None, &["rev-parse", "--git-dir"])
+}
+
+pub fn require_repo_in(cwd: &Path) -> Result<(), GitContextError> {
+    require_context(Some(cwd), &["rev-parse", "--git-dir"])
+}
+
+pub fn require_work_tree() -> Result<(), GitContextError> {
+    require_context(None, &["rev-parse", "--is-inside-work-tree"])
+}
+
+pub fn require_work_tree_in(cwd: &Path) -> Result<(), GitContextError> {
+    require_context(Some(cwd), &["rev-parse", "--is-inside-work-tree"])
 }
 
 pub fn is_inside_work_tree() -> io::Result<bool> {
@@ -91,6 +119,25 @@ fn run_status_inherit_inner(cwd: Option<&Path>, args: &[&str]) -> io::Result<Exi
     cmd.status()
 }
 
+fn require_context(cwd: Option<&Path>, probe_args: &[&str]) -> Result<(), GitContextError> {
+    if !is_git_available() {
+        return Err(GitContextError::GitNotFound);
+    }
+
+    let in_context = match cwd {
+        Some(cwd) => run_status_quiet_in(cwd, probe_args),
+        None => run_status_quiet(probe_args),
+    }
+    .map(|status| status.success())
+    .unwrap_or(false);
+
+    if in_context {
+        Ok(())
+    } else {
+        Err(GitContextError::NotRepository)
+    }
+}
+
 fn rev_parse_args<'a>(args: &'a [&'a str]) -> Vec<&'a str> {
     let mut full = Vec::with_capacity(args.len() + 1);
     full.push("rev-parse");
@@ -115,7 +162,7 @@ fn trimmed_stdout_if_success(output: &Output) -> Option<String> {
 mod tests {
     use super::*;
     use nils_test_support::git::{InitRepoOptions, git as run_git, init_repo_with};
-    use nils_test_support::{CwdGuard, GlobalStateLock};
+    use nils_test_support::{CwdGuard, EnvGuard, GlobalStateLock};
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
@@ -204,7 +251,39 @@ mod tests {
 
         assert!(is_git_repo().expect("is_git_repo"));
         assert!(is_inside_work_tree().expect("is_inside_work_tree"));
+        assert_eq!(require_repo(), Ok(()));
+        assert_eq!(require_work_tree(), Ok(()));
         assert_eq!(repo_root().expect("repo_root"), Some(root.into()));
         assert_eq!(rev_parse(&["HEAD"]).expect("rev_parse"), Some(head));
+    }
+
+    #[test]
+    fn require_work_tree_in_reports_missing_git_or_repo_state() {
+        let lock = GlobalStateLock::new();
+        let outside = TempDir::new().expect("tempdir");
+        let empty = TempDir::new().expect("tempdir");
+        let _path = EnvGuard::set(&lock, "PATH", &empty.path().to_string_lossy());
+
+        assert_eq!(
+            require_work_tree_in(outside.path()),
+            Err(GitContextError::GitNotFound)
+        );
+    }
+
+    #[test]
+    fn require_repo_and_work_tree_in_report_context_readiness() {
+        let repo = init_repo_with(InitRepoOptions::new());
+        let outside = TempDir::new().expect("tempdir");
+
+        assert_eq!(require_repo_in(repo.path()), Ok(()));
+        assert_eq!(require_work_tree_in(repo.path()), Ok(()));
+        assert_eq!(
+            require_repo_in(outside.path()),
+            Err(GitContextError::NotRepository)
+        );
+        assert_eq!(
+            require_work_tree_in(outside.path()),
+            Err(GitContextError::NotRepository)
+        );
     }
 }

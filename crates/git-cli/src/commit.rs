@@ -7,6 +7,7 @@ use crate::commit_shared::{
 use crate::prompt;
 use crate::util;
 use anyhow::{Result, anyhow};
+use nils_common::git::{self as common_git, GitContextError};
 use nils_common::shell::{AnsiStripMode, strip_ansi as strip_ansi_impl};
 use std::env;
 use std::io::Write;
@@ -61,13 +62,7 @@ fn parse_command(raw: &str) -> Option<CommitCommand> {
 }
 
 fn run_context(args: &[String]) -> i32 {
-    if !util::cmd_exists("git") {
-        eprintln!("❗ git is required but was not found in PATH.");
-        return 1;
-    }
-
-    if !git_status_success(&["rev-parse", "--is-inside-work-tree"]) {
-        eprintln!("❌ Not a git repository.");
+    if !ensure_git_work_tree() {
         return 1;
     }
 
@@ -428,13 +423,7 @@ fn file_probe(blob_ref: &str) -> Option<String> {
 }
 
 fn run_to_stash(args: &[String]) -> i32 {
-    if !util::cmd_exists("git") {
-        eprintln!("❗ git is required but was not found in PATH.");
-        return 1;
-    }
-
-    if !git_status_success(&["rev-parse", "--is-inside-work-tree"]) {
-        eprintln!("❌ Not a git repository.");
+    if !ensure_git_work_tree() {
         return 1;
     }
 
@@ -749,6 +738,20 @@ fn synthesize_stash_object(
 
 fn short_sha(value: &str) -> String {
     value.chars().take(7).collect()
+}
+
+fn ensure_git_work_tree() -> bool {
+    match common_git::require_work_tree() {
+        Ok(()) => true,
+        Err(GitContextError::GitNotFound) => {
+            eprintln!("❗ git is required but was not found in PATH.");
+            false
+        }
+        Err(GitContextError::NotRepository) => {
+            eprintln!("❌ Not a git repository.");
+            false
+        }
+    }
 }
 
 #[cfg(test)]
