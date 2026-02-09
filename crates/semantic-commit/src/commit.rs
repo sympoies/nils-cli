@@ -2,210 +2,418 @@ use crate::git;
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 use std::fs::File;
 use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+const EXIT_ERROR: i32 = 1;
+const EXIT_NO_STAGED_CHANGES: i32 = 2;
+const EXIT_MESSAGE_REQUIRED: i32 = 3;
+const EXIT_VALIDATION_FAILED: i32 = 4;
+const EXIT_DEPENDENCY_ERROR: i32 = 5;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SummaryMode {
+    GitScope,
+    GitShow,
+    None,
+}
+
+impl SummaryMode {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "git-scope" => Some(Self::GitScope),
+            "git-show" => Some(Self::GitShow),
+            "none" => Some(Self::None),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CommitOptions {
+    message: Option<String>,
+    message_file: Option<String>,
+    message_out: Option<PathBuf>,
+    summary_mode: SummaryMode,
+    no_progress: bool,
+    quiet: bool,
+    automation: bool,
+    validate_only: bool,
+    dry_run: bool,
+    repo: Option<PathBuf>,
+}
+
+impl Default for CommitOptions {
+    fn default() -> Self {
+        Self {
+            message: None,
+            message_file: None,
+            message_out: None,
+            summary_mode: SummaryMode::GitScope,
+            no_progress: false,
+            quiet: false,
+            automation: false,
+            validate_only: false,
+            dry_run: false,
+            repo: None,
+        }
+    }
+}
+
 pub fn run(args: &[String]) -> i32 {
-    let mut message: Option<String> = None;
-    let mut message_file: Option<String> = None;
+    let mut options = match parse_args(args) {
+        Ok(options) => options,
+        Err(code) => return code,
+    };
+
+    if !git::command_exists("git") {
+        eprintln!("error: git is required (ensure it is installed and on PATH)");
+        return EXIT_DEPENDENCY_ERROR;
+    }
+
+    if options.quiet {
+        options.no_progress = true;
+        options.summary_mode = SummaryMode::None;
+    }
+
+    let message_contents = match read_message_contents(&options) {
+        Ok(contents) => contents,
+        Err(code) => return code,
+    };
+
+    if let Some(path) = options.message_out.as_deref() {
+        if let Err(err) = write_message_file(path, &message_contents) {
+            eprintln!("error: failed to write --message-out file: {err}");
+            return EXIT_ERROR;
+        }
+    }
+
+    let tmpfile = match tempfile::NamedTempFile::new() {
+        Ok(file) => file,
+        Err(_) => {
+            eprintln!("error: failed to create temp file for commit message");
+            return EXIT_ERROR;
+        }
+    };
+
+    if let Err(err) = write_message_file(tmpfile.path(), &message_contents) {
+        eprintln!("{err:#}");
+        return EXIT_ERROR;
+    }
+
+    if let Err(code) = validate_commit_message(tmpfile.path()) {
+        return code;
+    }
+
+    if options.validate_only {
+        return 0;
+    }
+
+    if !git::is_inside_work_tree(options.repo.as_deref()) {
+        eprintln!("error: must run inside a git work tree");
+        return EXIT_ERROR;
+    }
+
+    match git::has_staged_changes(options.repo.as_deref()) {
+        Ok(true) => {}
+        Ok(false) => {
+            eprintln!("error: no staged changes (stage files with git add first)");
+            return EXIT_NO_STAGED_CHANGES;
+        }
+        Err(err) => {
+            eprintln!("{err:#}");
+            return EXIT_ERROR;
+        }
+    }
+
+    if options.dry_run {
+        return 0;
+    }
+
+    let show_progress = !options.no_progress && std::io::stderr().is_terminal();
+    let progress = if show_progress {
+        Some(Progress::spinner(
+            ProgressOptions::default()
+                .with_prefix("semantic-commit ")
+                .with_finish(ProgressFinish::Clear),
+        ))
+    } else {
+        None
+    };
+
+    if let Some(progress) = &progress {
+        progress.set_message("git commit");
+        progress.tick();
+    }
+
+    let status = git_commit(tmpfile.path(), options.repo.as_deref());
+
+    if let Some(progress) = &progress {
+        progress.finish_and_clear();
+    }
+
+    match status {
+        Ok(status) if status.success() => {}
+        Ok(status) => {
+            let rc = status.code().unwrap_or(EXIT_ERROR);
+            eprintln!("error: git commit failed (exit code: {rc})");
+            return rc;
+        }
+        Err(err) => {
+            eprintln!("{err:#}");
+            return EXIT_ERROR;
+        }
+    }
+
+    print_summary(options.summary_mode, options.repo.as_deref())
+}
+
+fn parse_args(args: &[String]) -> Result<CommitOptions, i32> {
+    let mut options = CommitOptions::default();
 
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "-h" | "--help" => {
                 print_usage_stdout();
-                return 0;
+                return Err(0);
             }
-            "--message" => {
+            "--message" | "-m" => {
                 let value = match args.get(i + 1) {
                     Some(value) => value.clone(),
                     None => {
-                        eprintln!("error: --message requires a value");
+                        eprintln!("error: {} requires a value", args[i]);
                         print_usage_stderr();
-                        return 1;
+                        return Err(EXIT_ERROR);
                     }
                 };
-                message = Some(value);
+                options.message = Some(value);
                 i += 2;
             }
-            "--message-file" => {
+            "--message-file" | "-F" => {
                 let value = match args.get(i + 1) {
                     Some(value) => value.clone(),
                     None => {
-                        eprintln!("error: --message-file requires a path");
+                        eprintln!("error: {} requires a path", args[i]);
                         print_usage_stderr();
-                        return 1;
+                        return Err(EXIT_ERROR);
                     }
                 };
-                message_file = Some(value);
+                options.message_file = Some(value);
+                i += 2;
+            }
+            "--message-out" => {
+                let value = match args.get(i + 1) {
+                    Some(value) => value.clone(),
+                    None => {
+                        eprintln!("error: --message-out requires a path");
+                        print_usage_stderr();
+                        return Err(EXIT_ERROR);
+                    }
+                };
+                options.message_out = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--summary" => {
+                let value = match args.get(i + 1) {
+                    Some(value) => value,
+                    None => {
+                        eprintln!("error: --summary requires a value");
+                        print_usage_stderr();
+                        return Err(EXIT_ERROR);
+                    }
+                };
+
+                let Some(mode) = SummaryMode::parse(value) else {
+                    eprintln!(
+                        "error: invalid --summary value: {value} (expected: git-scope, git-show, none)"
+                    );
+                    print_usage_stderr();
+                    return Err(EXIT_ERROR);
+                };
+
+                options.summary_mode = mode;
+                i += 2;
+            }
+            "--no-summary" => {
+                options.summary_mode = SummaryMode::None;
+                i += 1;
+            }
+            "--no-progress" => {
+                options.no_progress = true;
+                i += 1;
+            }
+            "--quiet" => {
+                options.quiet = true;
+                i += 1;
+            }
+            "--automation" | "--non-interactive" => {
+                options.automation = true;
+                i += 1;
+            }
+            "--validate-only" => {
+                options.validate_only = true;
+                i += 1;
+            }
+            "--dry-run" => {
+                options.dry_run = true;
+                i += 1;
+            }
+            "--repo" => {
+                let value = match args.get(i + 1) {
+                    Some(value) => value.clone(),
+                    None => {
+                        eprintln!("error: --repo requires a path");
+                        print_usage_stderr();
+                        return Err(EXIT_ERROR);
+                    }
+                };
+                options.repo = Some(PathBuf::from(value));
                 i += 2;
             }
             other => {
                 eprintln!("error: unknown argument: {other}");
                 print_usage_stderr();
-                return 1;
+                return Err(EXIT_ERROR);
             }
         }
     }
 
-    if message.is_some() && message_file.is_some() {
+    if options.message.is_some() && options.message_file.is_some() {
         eprintln!("error: use only one of --message or --message-file");
-        return 1;
+        return Err(EXIT_ERROR);
     }
 
-    if !git::is_inside_work_tree() {
-        eprintln!("error: must run inside a git work tree");
-        return 1;
-    }
+    Ok(options)
+}
 
-    match git::has_staged_changes() {
-        Ok(true) => {}
-        Ok(false) => {
-            eprintln!("error: no staged changes (stage files with git add first)");
-            return 2;
-        }
-        Err(err) => {
-            eprintln!("{err:#}");
-            return 1;
-        }
-    }
-
-    let message_contents = match (message, message_file) {
-        (Some(text), None) => text,
-        (None, Some(path)) => match std::fs::read_to_string(&path) {
+fn read_message_contents(options: &CommitOptions) -> Result<String, i32> {
+    let message_contents = match (&options.message, &options.message_file) {
+        (Some(text), None) => text.clone(),
+        (None, Some(path)) => match std::fs::read_to_string(path) {
             Ok(contents) => contents,
             Err(_) => {
                 eprintln!("error: message file not found: {path}");
-                return 1;
+                return Err(EXIT_ERROR);
             }
         },
         (None, None) => {
+            if options.automation {
+                eprintln!(
+                    "error: no commit message provided in automation mode (use --message or --message-file)"
+                );
+                return Err(EXIT_MESSAGE_REQUIRED);
+            }
+
             if std::io::stdin().is_terminal() {
                 eprintln!(
                     "error: no commit message provided (use stdin, --message, or --message-file)"
                 );
                 print_usage_stderr();
-                return 1;
+                return Err(EXIT_MESSAGE_REQUIRED);
             }
 
             let mut buf = String::new();
             if let Err(err) = std::io::stdin().read_to_string(&mut buf) {
                 eprintln!("{err:#}");
-                return 1;
+                return Err(EXIT_ERROR);
             }
             buf
         }
         (Some(_), Some(_)) => unreachable!("validated above"),
     };
 
-    if message_contents.is_empty() {
+    if message_contents.trim().is_empty() {
         eprintln!("error: commit message is empty");
-        return 1;
+        return Err(EXIT_MESSAGE_REQUIRED);
     }
 
-    let progress = Progress::spinner(
-        ProgressOptions::default()
-            .with_prefix("semantic-commit ")
-            .with_finish(ProgressFinish::Clear),
-    );
+    Ok(message_contents)
+}
 
-    progress.set_message("prepare message");
-    progress.tick();
-
-    let tmpfile = match tempfile::NamedTempFile::new() {
-        Ok(file) => file,
-        Err(_) => {
-            progress.finish_and_clear();
-            eprintln!("error: failed to create temp file for commit message");
-            return 1;
-        }
-    };
-
-    if let Err(err) = write_message_file(tmpfile.path(), &message_contents) {
-        progress.finish_and_clear();
-        eprintln!("{err:#}");
-        return 1;
+fn git_commit(
+    message_path: &Path,
+    repo: Option<&Path>,
+) -> anyhow::Result<std::process::ExitStatus> {
+    let mut command = Command::new("git");
+    if let Some(repo) = repo {
+        command.arg("-C").arg(repo);
     }
 
-    progress.set_message("validate message");
-    progress.tick();
-    if let Err(code) = progress.suspend(|| validate_commit_message(tmpfile.path())) {
-        progress.finish_and_clear();
-        return code;
-    }
-
-    progress.set_message("check git-scope");
-    progress.tick();
-    if let Err(code) = progress.suspend(ensure_git_scope_available) {
-        progress.finish_and_clear();
-        return code;
-    }
-
-    progress.set_message("git commit");
-    progress.tick();
-    progress.finish_and_clear();
-
-    let status = Command::new("git")
+    command
         .args(["commit", "-F"])
-        .arg(tmpfile.path())
+        .arg(message_path)
         .env("GIT_PAGER", "cat")
         .env("PAGER", "cat")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
-        .status();
-
-    match status {
-        Ok(status) if status.success() => {}
-        Ok(status) => {
-            let rc = status.code().unwrap_or(1);
-            eprintln!("error: git commit failed (exit code: {rc})");
-            return rc;
-        }
-        Err(err) => {
-            eprintln!("{err:#}");
-            return 1;
-        }
-    }
-
-    print_summary()
+        .status()
+        .map_err(Into::into)
 }
 
-fn ensure_git_scope_available() -> Result<(), i32> {
-    let status = Command::new("git-scope")
-        .arg("help")
+fn print_summary(summary_mode: SummaryMode, repo: Option<&Path>) -> i32 {
+    match summary_mode {
+        SummaryMode::None => 0,
+        SummaryMode::GitShow => print_git_show_summary(repo),
+        SummaryMode::GitScope => {
+            if run_git_scope_summary(repo) {
+                0
+            } else {
+                eprintln!(
+                    "warning: git-scope summary unavailable; falling back to git show --name-status"
+                );
+                print_git_show_summary(repo)
+            }
+        }
+    }
+}
+
+fn run_git_scope_summary(repo: Option<&Path>) -> bool {
+    let mut command = Command::new("git-scope");
+    if let Some(repo) = repo {
+        command.current_dir(repo);
+    }
+
+    let status = command
+        .args(["commit", "HEAD", "--no-color"])
         .env("GIT_PAGER", "cat")
         .env("PAGER", "cat")
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
         .status();
 
     match status {
-        Ok(status) if status.success() => Ok(()),
+        Ok(status) if status.success() => true,
         Ok(status) => {
-            let rc = status.code().unwrap_or(1);
-            eprintln!("error: git-scope failed (exit code: {rc})");
-            Err(1)
+            let rc = status.code().unwrap_or(EXIT_ERROR);
+            eprintln!("warning: git-scope commit failed (exit code: {rc})");
+            false
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!("error: git-scope is required (ensure it is installed and on PATH)");
-            Err(1)
+            eprintln!("warning: git-scope not found on PATH");
+            false
         }
         Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
-            eprintln!("error: git-scope is required (ensure it is executable and on PATH)");
-            Err(1)
+            eprintln!("warning: git-scope is not executable");
+            false
         }
         Err(err) => {
-            eprintln!("error: git-scope is required (failed to run git-scope: {err})");
-            Err(1)
+            eprintln!("warning: git-scope commit failed: {err}");
+            false
         }
     }
 }
 
-fn print_summary() -> i32 {
-    let status = Command::new("git-scope")
-        .args(["commit", "HEAD", "--no-color"])
+fn print_git_show_summary(repo: Option<&Path>) -> i32 {
+    let mut command = Command::new("git");
+    if let Some(repo) = repo {
+        command.arg("-C").arg(repo);
+    }
+
+    let status = command
+        .args(["show", "-1", "--name-status", "--oneline", "--no-color"])
         .env("GIT_PAGER", "cat")
         .env("PAGER", "cat")
         .stdin(Stdio::null())
@@ -216,21 +424,13 @@ fn print_summary() -> i32 {
     match status {
         Ok(status) if status.success() => 0,
         Ok(status) => {
-            let rc = status.code().unwrap_or(1);
-            eprintln!("error: git-scope commit failed (exit code: {rc})");
+            let rc = status.code().unwrap_or(EXIT_ERROR);
+            eprintln!("error: git show summary failed (exit code: {rc})");
             rc
         }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!("error: git-scope is required (ensure it is installed and on PATH)");
-            1
-        }
-        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
-            eprintln!("error: git-scope is required (ensure it is executable and on PATH)");
-            1
-        }
         Err(err) => {
-            eprintln!("error: git-scope commit failed: {err}");
-            1
+            eprintln!("error: git show summary failed: {err}");
+            EXIT_ERROR
         }
     }
 }
@@ -244,7 +444,7 @@ fn write_message_file(path: &Path, contents: &str) -> anyhow::Result<()> {
 fn validate_commit_message(path: &Path) -> Result<(), i32> {
     let file = File::open(path).map_err(|_| {
         eprintln!("error: commit message validation failed");
-        1
+        EXIT_VALIDATION_FAILED
     })?;
 
     let reader = BufReader::new(file);
@@ -312,7 +512,7 @@ fn validate_commit_message(path: &Path) -> Result<(), i32> {
 
 fn fail_validation(message: &str) -> Result<(), i32> {
     eprintln!("error: {message}");
-    Err(1)
+    Err(EXIT_VALIDATION_FAILED)
 }
 
 fn is_valid_header(header: &str) -> bool {
@@ -376,16 +576,51 @@ fn print_usage(stderr: bool) {
     let _ = writeln!(out, "Usage:");
     let _ = writeln!(
         out,
-        "  semantic-commit commit [--message <text> | --message-file <path>]"
+        "  semantic-commit commit [--message <text>|--message-file <path>] [options]"
     );
     let _ = writeln!(out);
+    let _ = writeln!(out, "Options:");
+    let _ = writeln!(out, "  -m, --message <text>         Commit message text");
     let _ = writeln!(
         out,
-        "Reads a prepared commit message (prefer stdin for multi-line messages), runs:"
+        "  -F, --message-file <path>    Read commit message from file"
     );
-    let _ = writeln!(out, "  git commit -F <temp-file>");
-    let _ = writeln!(out, "Then prints:");
-    let _ = writeln!(out, "  git-scope commit HEAD --no-color");
+    let _ = writeln!(
+        out,
+        "      --message-out <path>     Save prepared message for recovery"
+    );
+    let _ = writeln!(
+        out,
+        "      --summary <mode>         Summary mode: git-scope | git-show | none"
+    );
+    let _ = writeln!(
+        out,
+        "      --no-summary             Equivalent to --summary none"
+    );
+    let _ = writeln!(
+        out,
+        "      --repo <path>            Run git commands against repo path"
+    );
+    let _ = writeln!(
+        out,
+        "      --automation             Disallow stdin message fallback"
+    );
+    let _ = writeln!(
+        out,
+        "      --validate-only          Validate message format only"
+    );
+    let _ = writeln!(
+        out,
+        "      --dry-run                Validate + staged checks, skip git commit"
+    );
+    let _ = writeln!(
+        out,
+        "      --no-progress            Disable progress spinner"
+    );
+    let _ = writeln!(
+        out,
+        "      --quiet                  Suppress progress and summary output"
+    );
     let _ = writeln!(out);
     let _ = writeln!(out, "Examples:");
     let _ = writeln!(out, "  cat <<'MSG' | semantic-commit commit");
@@ -394,7 +629,10 @@ fn print_usage(stderr: bool) {
     let _ = writeln!(out, "  - Add thing");
     let _ = writeln!(out, "  MSG");
     let _ = writeln!(out);
-    let _ = writeln!(out, "  semantic-commit commit --message-file ./message.txt");
+    let _ = writeln!(
+        out,
+        "  semantic-commit commit -F ./message.txt --summary git-show"
+    );
 }
 
 #[cfg(test)]
@@ -407,6 +645,14 @@ mod tests {
         file.write_all(contents.as_bytes())
             .expect("write temp message file");
         file
+    }
+
+    #[test]
+    fn summary_mode_parse_supports_known_values() {
+        assert_eq!(SummaryMode::parse("git-scope"), Some(SummaryMode::GitScope));
+        assert_eq!(SummaryMode::parse("git-show"), Some(SummaryMode::GitShow));
+        assert_eq!(SummaryMode::parse("none"), Some(SummaryMode::None));
+        assert_eq!(SummaryMode::parse("other"), None);
     }
 
     #[test]
@@ -426,19 +672,28 @@ mod tests {
         let subject = "a".repeat(95);
         let file = message_file(&format!("feat: {subject}\n"));
 
-        assert_eq!(validate_commit_message(file.path()), Err(1));
+        assert_eq!(
+            validate_commit_message(file.path()),
+            Err(EXIT_VALIDATION_FAILED)
+        );
     }
 
     #[test]
     fn validate_commit_message_rejects_uppercase_scope() {
         let file = message_file("feat(Core): add parser coverage\n");
-        assert_eq!(validate_commit_message(file.path()), Err(1));
+        assert_eq!(
+            validate_commit_message(file.path()),
+            Err(EXIT_VALIDATION_FAILED)
+        );
     }
 
     #[test]
     fn validate_commit_message_rejects_empty_line_inside_body() {
         let file = message_file("feat: add parser coverage\n\n- First line\n\n- Second line\n");
-        assert_eq!(validate_commit_message(file.path()), Err(1));
+        assert_eq!(
+            validate_commit_message(file.path()),
+            Err(EXIT_VALIDATION_FAILED)
+        );
     }
 
     #[test]
@@ -446,7 +701,10 @@ mod tests {
         let long_line = "A".repeat(99);
         let file = message_file(&format!("feat: add parser coverage\n\n- {long_line}\n"));
 
-        assert_eq!(validate_commit_message(file.path()), Err(1));
+        assert_eq!(
+            validate_commit_message(file.path()),
+            Err(EXIT_VALIDATION_FAILED)
+        );
     }
 
     #[test]
