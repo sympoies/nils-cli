@@ -1,10 +1,10 @@
 use crate::clipboard;
 use crate::commit_shared::{
-    DiffNumstat, diff_numstat, git_output, git_status_code, git_status_success,
-    git_stdout_trimmed_optional, is_lockfile, parse_name_status_z,
+    DiffNumstat, diff_numstat, git_output, git_status_code, git_stdout_trimmed_optional,
+    is_lockfile, parse_name_status_z,
 };
-use crate::util;
 use anyhow::{Result, anyhow};
+use nils_common::git::{self as common_git, GitContextError};
 use serde_json::{Map, Number, Value};
 use std::collections::BTreeMap;
 use std::env;
@@ -34,14 +34,16 @@ enum ParseOutcome<T> {
 }
 
 pub fn run(args: &[String]) -> i32 {
-    if !util::cmd_exists("git") {
-        eprintln!("❗ git is required but was not found in PATH.");
-        return 1;
-    }
-
-    if !git_status_success(&["rev-parse", "--is-inside-work-tree"]) {
-        eprintln!("❌ Not a git repository.");
-        return 1;
+    match common_git::require_work_tree() {
+        Ok(()) => {}
+        Err(GitContextError::GitNotFound) => {
+            eprintln!("❗ git is required but was not found in PATH.");
+            return 1;
+        }
+        Err(GitContextError::NotRepository) => {
+            eprintln!("❌ Not a git repository.");
+            return 1;
+        }
     }
 
     let parsed = match parse_args(args) {

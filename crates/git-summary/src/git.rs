@@ -1,18 +1,15 @@
 use anyhow::{Context, Result};
 use nils_common::git as common_git;
+use nils_common::git::GitContextError;
 
 pub fn require_git() -> Result<(), &'static str> {
-    if common_git::run_status_quiet(&["--version"]).is_err() {
-        return Err("❗ git is required but was not found in PATH.");
+    match common_git::require_repo() {
+        Ok(()) => Ok(()),
+        Err(GitContextError::GitNotFound) => Err("❗ git is required but was not found in PATH."),
+        Err(GitContextError::NotRepository) => {
+            Err("⚠️ Not a Git repository. Run this command inside a Git project.")
+        }
     }
-
-    let status = common_git::run_status_quiet(&["rev-parse", "--git-dir"]);
-
-    if !status.map(|s| s.success()).unwrap_or(false) {
-        return Err("⚠️ Not a Git repository. Run this command inside a Git project.");
-    }
-
-    Ok(())
 }
 
 pub fn run_git(args: &[String]) -> Result<String> {
