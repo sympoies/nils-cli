@@ -305,7 +305,7 @@ mod tests {
 
     #[test]
     fn parse_lines_skips_blank_entries() {
-        let output = Command::new("sh")
+        let output = Command::new("/bin/sh")
             .arg("-c")
             .arg("printf 'main\\n\\nfeature/a\\n'")
             .output()

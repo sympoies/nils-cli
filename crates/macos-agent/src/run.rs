@@ -317,6 +317,7 @@ pub fn action_policy_result(policy: ActionPolicy) -> ActionPolicyResult {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+    use nils_test_support::{EnvGuard, GlobalStateLock};
     use pretty_assertions::assert_eq;
 
     use crate::cli::{Cli, OutputFormat};
@@ -342,6 +343,8 @@ mod tests {
 
     #[test]
     fn platform_gate_maps_non_macos_to_usage_error_unless_test_mode() {
+        let lock = GlobalStateLock::new();
+        let _mode = EnvGuard::remove(&lock, "CODEX_MACOS_AGENT_TEST_MODE");
         let result = ensure_supported_platform();
         #[cfg(target_os = "macos")]
         assert!(result.is_ok());
