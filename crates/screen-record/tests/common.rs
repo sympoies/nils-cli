@@ -41,6 +41,10 @@ impl ScreenRecordHarness {
     pub fn run(&self, cwd: &Path, args: &[&str]) -> CmdOutput {
         run_with(&self.screen_record_bin(), args, &self.cmd_options(cwd))
     }
+
+    pub fn run_with_options(&self, cwd: &Path, args: &[&str], options: CmdOptions) -> CmdOutput {
+        run_with(&self.screen_record_bin(), args, &options.with_cwd(cwd))
+    }
 }
 
 impl Default for ScreenRecordHarness {

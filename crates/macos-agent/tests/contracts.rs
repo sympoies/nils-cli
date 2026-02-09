@@ -75,6 +75,64 @@ fn success_commands_write_stdout_only() {
 }
 
 #[test]
+fn preflight_permissions_contract_has_stable_keys() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+
+    let out = harness.run(cwd.path(), &["--format", "json", "preflight"]);
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr_text());
+    assert_eq!(out.stderr_text(), "");
+
+    let payload: serde_json::Value =
+        serde_json::from_str(&out.stdout_text()).expect("preflight should emit json");
+    assert_eq!(payload["command"], serde_json::json!("preflight"));
+
+    let permissions = payload["result"]["permissions"]
+        .as_object()
+        .expect("result.permissions should be an object");
+    let mut keys = permissions
+        .keys()
+        .map(|key| key.as_str())
+        .collect::<Vec<_>>();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        vec![
+            "accessibility",
+            "automation",
+            "hints",
+            "ready",
+            "screen_recording"
+        ]
+    );
+
+    for key in ["screen_recording", "accessibility", "automation"] {
+        let state = permissions
+            .get(key)
+            .and_then(|value| value.as_str())
+            .expect("permission state should be a string");
+        assert!(
+            matches!(state, "ready" | "blocked" | "unknown"),
+            "unexpected {key} state: {state}"
+        );
+    }
+    assert!(
+        permissions
+            .get("ready")
+            .and_then(|value| value.as_bool())
+            .is_some(),
+        "permissions.ready should be bool"
+    );
+    assert!(
+        permissions
+            .get("hints")
+            .and_then(|value| value.as_array())
+            .is_some(),
+        "permissions.hints should be array"
+    );
+}
+
+#[test]
 fn mutating_commands_emit_unified_json_envelope_schema() {
     let harness = common::MacosAgentHarness::new();
     let cwd = TempDir::new().expect("tempdir");

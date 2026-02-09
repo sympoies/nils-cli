@@ -245,6 +245,57 @@ impl AssetWriter {
     }
 }
 
+pub fn write_diagnostics_contact_sheet(
+    path: &Path,
+    source_output_path: &Path,
+    duration_ms: u64,
+) -> Result<(), CliError> {
+    let source_name = source_output_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("recording");
+    let escaped_name = escape_svg(source_name);
+    let view_duration = duration_ms.max(1);
+
+    let svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"960\" height=\"540\" viewBox=\"0 0 960 540\">
+  <defs>
+    <linearGradient id=\"bg\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\">
+      <stop offset=\"0%\" stop-color=\"#0d1b2a\" />
+      <stop offset=\"100%\" stop-color=\"#1b263b\" />
+    </linearGradient>
+  </defs>
+  <rect x=\"0\" y=\"0\" width=\"960\" height=\"540\" fill=\"url(#bg)\" />
+  <rect x=\"40\" y=\"80\" width=\"400\" height=\"220\" fill=\"#415a77\" rx=\"12\" />
+  <rect x=\"520\" y=\"80\" width=\"400\" height=\"220\" fill=\"#415a77\" rx=\"12\" />
+  <rect x=\"40\" y=\"320\" width=\"400\" height=\"180\" fill=\"#778da9\" rx=\"12\" />
+  <rect x=\"520\" y=\"320\" width=\"400\" height=\"180\" fill=\"#778da9\" rx=\"12\" />
+  <text x=\"48\" y=\"42\" fill=\"#e0e1dd\" font-size=\"28\" font-family=\"Menlo, monospace\">screen-record diagnostics</text>
+  <text x=\"48\" y=\"508\" fill=\"#e0e1dd\" font-size=\"18\" font-family=\"Menlo, monospace\">source={escaped_name} duration_ms={view_duration}</text>
+</svg>
+"
+    );
+    std::fs::write(path, svg)
+        .map_err(|err| CliError::runtime(format!("failed to write contact sheet: {err}")))
+}
+
+pub fn write_diagnostics_motion_intervals(
+    path: &Path,
+    source_output_path: &Path,
+    duration_ms: u64,
+) -> Result<usize, CliError> {
+    let source_path = source_output_path.display().to_string();
+    let escaped_source_path = escape_json(&source_path);
+    let span = duration_ms.max(1);
+    let text = format!(
+        "{{\n  \"schema_version\": 1,\n  \"contract_version\": \"1.0\",\n  \"source_output_path\": \"{}\",\n  \"intervals\": [\n    {{ \"start_ms\": 0, \"end_ms\": {}, \"score\": 100 }}\n  ]\n}}\n",
+        escaped_source_path, span
+    );
+    std::fs::write(path, text)
+        .map_err(|err| CliError::runtime(format!("failed to write motion intervals: {err}")))?;
+    Ok(1)
+}
+
 fn audio_settings(
     sample_rate_hz: f64,
     channel_count: i32,
@@ -298,4 +349,36 @@ fn wait_for_completion(receiver: &mpsc::Receiver<()>, label: &str) -> Result<(),
             }
         }
     }
+}
+
+fn escape_json(value: &str) -> String {
+    let mut escaped = String::new();
+    for ch in value.chars() {
+        match ch {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            '\u{08}' => escaped.push_str("\\b"),
+            '\u{0C}' => escaped.push_str("\\f"),
+            ch if ch <= '\u{1F}' => escaped.push_str(&format!("\\u{:04x}", ch as u32)),
+            ch => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
+fn escape_svg(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| match ch {
+            '&' => "&amp;".to_string(),
+            '<' => "&lt;".to_string(),
+            '>' => "&gt;".to_string(),
+            '"' => "&quot;".to_string(),
+            '\'' => "&apos;".to_string(),
+            _ => ch.to_string(),
+        })
+        .collect()
 }

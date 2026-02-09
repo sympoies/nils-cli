@@ -245,6 +245,33 @@ fn input_type_enter_alias_matches_submit_behavior() {
 }
 
 #[test]
+fn observe_screenshot_help_lists_if_changed_flags() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+
+    let out = harness.run(cwd.path(), &["observe", "screenshot", "--help"]);
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr_text());
+
+    let text = format!("{}{}", out.stdout_text(), out.stderr_text());
+    assert!(text.contains("--if-changed"));
+    assert!(text.contains("--if-changed-baseline"));
+    assert!(text.contains("--if-changed-threshold"));
+}
+
+#[test]
+fn ax_click_help_lists_wait_policy_overrides() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+
+    let out = harness.run(cwd.path(), &["ax", "click", "--help"]);
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr_text());
+
+    let text = format!("{}{}", out.stdout_text(), out.stderr_text());
+    assert!(text.contains("--wait-timeout-ms"));
+    assert!(text.contains("--wait-poll-ms"));
+}
+
+#[test]
 fn preflight_json_smoke() {
     let harness = common::MacosAgentHarness::new();
     let cwd = TempDir::new().expect("tempdir");

@@ -46,7 +46,8 @@ pub fn run_app_active(format: OutputFormat, args: &WaitAppActiveArgs) -> Result<
         }
     };
 
-    let outcome = wait::wait_until("app-active", args.timeout_ms, args.poll_ms, check)?;
+    let policy = wait::WaitPolicy::new(args.timeout_ms, args.poll_ms);
+    let outcome = wait::wait_until_with_policy("app-active", policy, check)?;
     let result = WaitResult {
         condition: "wait.app-active",
         attempts: outcome.attempts,
@@ -70,7 +71,8 @@ pub fn run_window_present(
     };
 
     let check = || targets::window_present(&selector);
-    let outcome = wait::wait_until("window-present", args.timeout_ms, args.poll_ms, check)?;
+    let policy = wait::WaitPolicy::new(args.timeout_ms, args.poll_ms);
+    let outcome = wait::wait_until_with_policy("window-present", policy, check)?;
 
     let result = WaitResult {
         condition: "wait.window-present",
@@ -142,7 +144,8 @@ where
     let mut last_matched_count = 0usize;
     let mut last_explain = None;
 
-    let outcome = wait::wait_until(command, timeout_ms, poll_ms, || {
+    let policy = wait::WaitPolicy::new(timeout_ms, poll_ms);
+    let outcome = wait::wait_until_with_policy(command, policy, || {
         let evaluation = evaluate_selector_against_backend(
             runner,
             &backend,

@@ -457,19 +457,14 @@ pub fn run_action_gates(
         return Ok(None);
     }
 
-    let timeout_ms = options.timeout_ms.max(1);
-    let poll_ms = options.poll_ms.max(1);
+    let policy = wait::WaitPolicy::new(options.timeout_ms, options.poll_ms);
     let mut checks = Vec::new();
 
     if options.app_active {
-        checks.push(run_gate_app_active(
-            operation, runner, target, timeout_ms, poll_ms,
-        )?);
+        checks.push(run_gate_app_active(operation, runner, target, policy)?);
     }
     if options.window_present {
-        checks.push(run_gate_window_present(
-            operation, target, timeout_ms, poll_ms,
-        )?);
+        checks.push(run_gate_window_present(operation, target, policy)?);
     }
     if options.ax_present {
         checks.push(run_gate_ax_selector(
@@ -479,8 +474,7 @@ pub fn run_action_gates(
             backend,
             target,
             selector,
-            timeout_ms,
-            poll_ms,
+            policy,
             backend_timeout_ms,
             |matched| matched >= 1,
         )?);
@@ -493,16 +487,15 @@ pub fn run_action_gates(
             backend,
             target,
             selector,
-            timeout_ms,
-            poll_ms,
+            policy,
             backend_timeout_ms,
             |matched| matched == 1,
         )?);
     }
 
     Ok(Some(AxGateResult {
-        timeout_ms,
-        poll_ms,
+        timeout_ms: policy.timeout_ms,
+        poll_ms: policy.poll_ms,
         checks,
     }))
 }
@@ -520,8 +513,7 @@ pub fn run_postconditions(
         return Ok(None);
     }
 
-    let timeout_ms = options.timeout_ms.max(1);
-    let poll_ms = options.poll_ms.max(1);
+    let policy = wait::WaitPolicy::new(options.timeout_ms, options.poll_ms);
     let mut results = Vec::new();
 
     for check in &options.checks {
@@ -529,8 +521,8 @@ pub fn run_postconditions(
         let mut observed = None;
         let outcome = wait::wait_until(
             &format!("{operation}.postcondition.{}", check.name()),
-            timeout_ms,
-            poll_ms,
+            policy.timeout_ms,
+            policy.poll_ms,
             || {
                 let (satisfied, current) = evaluate_postcondition_check(
                     runner,
@@ -545,7 +537,7 @@ pub fn run_postconditions(
             },
         )
         .map_err(|error| {
-            map_postcondition_error(operation, check, timeout_ms, observed.clone(), error)
+            map_postcondition_error(operation, check, policy.timeout_ms, observed.clone(), error)
         })?;
 
         results.push(AxPostconditionCheckResult {
@@ -560,8 +552,8 @@ pub fn run_postconditions(
     }
 
     Ok(Some(AxPostconditionResult {
-        timeout_ms,
-        poll_ms,
+        timeout_ms: policy.timeout_ms,
+        poll_ms: policy.poll_ms,
         checks: results,
     }))
 }
@@ -570,21 +562,20 @@ fn run_gate_app_active(
     operation: &str,
     runner: &dyn ProcessRunner,
     target: &AxTarget,
-    timeout_ms: u64,
-    poll_ms: u64,
+    policy: wait::WaitPolicy,
 ) -> Result<AxGateCheckResult, CliError> {
     let mut check: Box<dyn FnMut() -> Result<bool, CliError>> =
         if let Some(app) = target.app.as_deref() {
             let app = app.to_string();
             Box::new(move || {
-                let probe_timeout = timeout_ms.max(2_000);
+                let probe_timeout = policy.timeout_ms.max(2_000);
                 applescript::frontmost_app_name(runner, probe_timeout)
                     .map(|frontmost| frontmost.eq_ignore_ascii_case(&app))
             })
         } else if let Some(bundle_id) = target.bundle_id.as_deref() {
             let bundle_id = bundle_id.to_string();
             Box::new(move || {
-                let probe_timeout = timeout_ms.max(2_000);
+                let probe_timeout = policy.timeout_ms.max(2_000);
                 applescript::frontmost_bundle_id(runner, probe_timeout)
                     .map(|frontmost| frontmost.eq_ignore_ascii_case(&bundle_id))
             })
@@ -597,8 +588,8 @@ fn run_gate_app_active(
         };
 
     let started = Instant::now();
-    let outcome = wait::wait_until("gate.app-active", timeout_ms, poll_ms, &mut check)
-        .map_err(|error| map_gate_error(operation, "app-active", timeout_ms, None, error))?;
+    let outcome = wait::wait_until_with_policy("gate.app-active", policy, &mut check)
+        .map_err(|error| map_gate_error(operation, "app-active", policy.timeout_ms, None, error))?;
     Ok(AxGateCheckResult {
         gate: "app-active".to_string(),
         terminal_status: "satisfied".to_string(),
@@ -611,8 +602,7 @@ fn run_gate_app_active(
 fn run_gate_window_present(
     operation: &str,
     target: &AxTarget,
-    timeout_ms: u64,
-    poll_ms: u64,
+    policy: wait::WaitPolicy,
 ) -> Result<AxGateCheckResult, CliError> {
     if target.session_id.is_some() && target.app.is_none() && target.bundle_id.is_none() {
         return Err(CliError::usage(
@@ -627,7 +617,7 @@ fn run_gate_window_present(
     let bundle_id = target.bundle_id.clone();
 
     let started = Instant::now();
-    let outcome = wait::wait_until("gate.window-present", timeout_ms, poll_ms, || {
+    let outcome = wait::wait_until_with_policy("gate.window-present", policy, || {
         if let Some(app) = app.as_deref() {
             return targets::window_present(&TargetSelector {
                 window_id: None,
@@ -651,7 +641,7 @@ fn run_gate_window_present(
 
         Ok(false)
     })
-    .map_err(|error| map_gate_error(operation, "window-present", timeout_ms, None, error))?;
+    .map_err(|error| map_gate_error(operation, "window-present", policy.timeout_ms, None, error))?;
 
     Ok(AxGateCheckResult {
         gate: "window-present".to_string(),
@@ -670,8 +660,7 @@ fn run_gate_ax_selector<F>(
     backend: &dyn AxBackendAdapter,
     target: &AxTarget,
     selector: &AxSelector,
-    timeout_ms: u64,
-    poll_ms: u64,
+    policy: wait::WaitPolicy,
     backend_timeout_ms: u64,
     predicate: F,
 ) -> Result<AxGateCheckResult, CliError>
@@ -680,7 +669,7 @@ where
 {
     let mut last_matched_count = 0usize;
     let started = Instant::now();
-    let outcome = wait::wait_until(&format!("gate.{gate_name}"), timeout_ms, poll_ms, || {
+    let outcome = wait::wait_until_with_policy(&format!("gate.{gate_name}"), policy, || {
         let evaluation = evaluate_selector_against_backend(
             runner,
             backend,
@@ -695,7 +684,7 @@ where
         map_gate_error(
             operation,
             gate_name,
-            timeout_ms,
+            policy.timeout_ms,
             Some(last_matched_count),
             error,
         )

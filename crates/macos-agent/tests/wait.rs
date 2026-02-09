@@ -86,6 +86,29 @@ fn wait_app_active_timeout_is_runtime_error() {
 }
 
 #[test]
+fn wait_policy_flags_aliases_work_for_wait_commands() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+
+    let out = harness.run(
+        cwd.path(),
+        &[
+            "wait",
+            "app-active",
+            "--app",
+            "Terminal",
+            "--wait-timeout-ms",
+            "60",
+            "--wait-poll-ms",
+            "5",
+        ],
+    );
+
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr_text());
+    assert_eq!(out.stderr_text(), "");
+}
+
+#[test]
 fn wait_window_present_succeeds_for_terminal() {
     let harness = common::MacosAgentHarness::new();
     let cwd = TempDir::new().expect("tempdir");

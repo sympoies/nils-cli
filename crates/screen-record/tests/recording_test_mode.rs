@@ -9,6 +9,32 @@ use tempfile::TempDir;
 
 mod common;
 
+fn assert_metadata_shape_and_order(text: &str) {
+    let keys = [
+        "\"target\"",
+        "\"duration_ms\"",
+        "\"audio_mode\"",
+        "\"format\"",
+        "\"output_path\"",
+        "\"output_bytes\"",
+        "\"started_at\"",
+        "\"ended_at\"",
+        "\"error\"",
+    ];
+    let mut offset = 0usize;
+    for key in keys {
+        assert_eq!(
+            text.matches(key).count(),
+            1,
+            "metadata key should appear exactly once: {key}"
+        );
+        let rel = text[offset..]
+            .find(key)
+            .unwrap_or_else(|| panic!("missing metadata key: {key}"));
+        offset += rel + key.len();
+    }
+}
+
 #[test]
 fn list_windows_outputs_fixture() {
     let harness = common::ScreenRecordHarness::new();
@@ -159,6 +185,232 @@ fn record_failure_removes_staged_and_target_output() {
     assert!(
         staged_leftovers.is_empty(),
         "staged recording files should be cleaned up: {staged_leftovers:?}"
+    );
+}
+
+#[test]
+fn metadata_out_success_path() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let output_path = cwd.path().join("with-metadata.mov");
+    let metadata_path = cwd.path().join("recording-metadata.json");
+
+    let output = harness.run(
+        cwd.path(),
+        &[
+            "--app",
+            "Terminal",
+            "--duration",
+            "1",
+            "--audio",
+            "off",
+            "--path",
+            output_path.to_str().unwrap(),
+            "--metadata-out",
+            metadata_path.to_str().unwrap(),
+        ],
+    );
+
+    assert_eq!(output.code, 0, "stderr: {}", output.stderr_text());
+    assert_eq!(
+        output.stdout_text().trim(),
+        output_path.display().to_string()
+    );
+    let metadata_text = fs::read_to_string(&metadata_path).expect("read metadata");
+    assert_metadata_shape_and_order(&metadata_text);
+    assert!(metadata_text.contains("\"target\": \"app:Terminal\""));
+    assert!(metadata_text.contains("\"audio_mode\": \"off\""));
+    assert!(metadata_text.contains("\"format\": \"mov\""));
+    assert!(metadata_text.contains(&format!("\"output_path\": \"{}\"", output_path.display())));
+    assert!(
+        metadata_text.contains("\"output_bytes\": ")
+            && !metadata_text.contains("\"output_bytes\": null")
+    );
+    assert!(metadata_text.contains("\"started_at\": \"2026-01-01T00:00:00.000Z\""));
+    assert!(metadata_text.contains("\"ended_at\": \"2026-01-01T00:00:00.000Z\""));
+    assert!(metadata_text.contains("\"error\": null"));
+}
+
+#[test]
+fn metadata_out_failure_path() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let output_path = cwd.path().join("broken-with-metadata.mov");
+    let metadata_path = cwd.path().join("recording-metadata-failure.json");
+
+    let output = run_with(
+        &harness.screen_record_bin(),
+        &[
+            "--app",
+            "Terminal",
+            "--duration",
+            "1",
+            "--audio",
+            "off",
+            "--path",
+            output_path.to_str().unwrap(),
+            "--metadata-out",
+            metadata_path.to_str().unwrap(),
+        ],
+        &harness
+            .cmd_options(cwd.path())
+            .with_env("CODEX_SCREEN_RECORD_TEST_MODE_FAIL_APPEND", "1"),
+    );
+
+    assert_eq!(output.code, 1);
+    assert!(output
+        .stderr_text()
+        .contains("failed to append sample buffer"));
+    assert!(
+        !output_path.exists(),
+        "requested output should not exist on failure"
+    );
+
+    let metadata_text = fs::read_to_string(&metadata_path).expect("read metadata");
+    assert_metadata_shape_and_order(&metadata_text);
+    assert!(metadata_text.contains("\"target\": \"app:Terminal\""));
+    assert!(metadata_text.contains("\"audio_mode\": \"off\""));
+    assert!(metadata_text.contains("\"format\": \"mov\""));
+    assert!(metadata_text.contains(&format!("\"output_path\": \"{}\"", output_path.display())));
+    assert!(metadata_text.contains("\"output_bytes\": null"));
+    assert!(
+        metadata_text.contains(
+            "\"error\": \"error: failed to append sample buffer: The operation could not be completed\""
+        )
+    );
+}
+
+#[test]
+fn diagnostics_out_success_writes_manifest_and_artifacts() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let output_path = cwd.path().join("with-diagnostics.mov");
+    let diagnostics_path = cwd.path().join("recording-diagnostics.json");
+
+    let output = harness.run(
+        cwd.path(),
+        &[
+            "--app",
+            "Terminal",
+            "--duration",
+            "1",
+            "--audio",
+            "off",
+            "--path",
+            output_path.to_str().unwrap(),
+            "--diagnostics-out",
+            diagnostics_path.to_str().unwrap(),
+        ],
+    );
+
+    assert_eq!(output.code, 0, "stderr: {}", output.stderr_text());
+    assert_eq!(
+        output.stdout_text().trim(),
+        output_path.display().to_string()
+    );
+    let diagnostics_text = fs::read_to_string(&diagnostics_path).expect("read diagnostics");
+    assert!(diagnostics_text.contains("\"schema_version\": 1"));
+    assert!(diagnostics_text.contains("\"contract_version\": \"1.0\""));
+    assert!(diagnostics_text.contains("\"format\": \"svg\""));
+    assert!(diagnostics_text.contains("\"format\": \"json\""));
+    assert!(diagnostics_text.contains("\"interval_count\": 1"));
+    assert!(diagnostics_text.contains("\"error\": null"));
+
+    let artifacts_dir = diagnostics_path.with_extension("diagnostics");
+    let stem = output_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap();
+    let contact_sheet = artifacts_dir.join(format!("{stem}-contact-sheet.svg"));
+    let motion_intervals = artifacts_dir.join(format!("{stem}-motion-intervals.json"));
+    assert!(contact_sheet.exists(), "contact sheet should exist");
+    assert!(motion_intervals.exists(), "motion intervals should exist");
+    assert!(
+        fs::metadata(&contact_sheet)
+            .expect("contact metadata")
+            .len()
+            > 0
+    );
+    let intervals_text = fs::read_to_string(&motion_intervals).expect("read intervals");
+    assert!(intervals_text.contains("\"intervals\""));
+    assert!(intervals_text.contains("\"start_ms\": 0"));
+}
+
+#[test]
+fn diagnostics_out_failure_keeps_primary_output() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let output_path = cwd.path().join("diagnostics-failure.mov");
+    let diagnostics_path = cwd.path().join("diagnostics-failure.json");
+
+    let output = harness.run_with_options(
+        cwd.path(),
+        &[
+            "--app",
+            "Terminal",
+            "--duration",
+            "1",
+            "--audio",
+            "off",
+            "--path",
+            output_path.to_str().unwrap(),
+            "--diagnostics-out",
+            diagnostics_path.to_str().unwrap(),
+        ],
+        harness
+            .cmd_options(cwd.path())
+            .with_env("CODEX_SCREEN_RECORD_TEST_MODE_FAIL_DIAGNOSTICS", "1"),
+    );
+
+    assert_eq!(output.code, 1);
+    assert!(output
+        .stderr_text()
+        .contains("diagnostics generation failed in test mode"));
+    assert!(
+        output_path.exists(),
+        "primary output should still be published"
+    );
+    assert!(
+        fs::metadata(&output_path).expect("output metadata").len() > 0,
+        "primary output should stay readable"
+    );
+    assert!(
+        !diagnostics_path.exists(),
+        "diagnostics manifest should not be written on forced failure"
+    );
+}
+
+#[test]
+fn default_recording_run_does_not_create_diagnostics_artifacts() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let output_path = cwd.path().join("without-diagnostics.mov");
+
+    let output = harness.run(
+        cwd.path(),
+        &[
+            "--app",
+            "Terminal",
+            "--duration",
+            "1",
+            "--audio",
+            "off",
+            "--path",
+            output_path.to_str().unwrap(),
+        ],
+    );
+
+    assert_eq!(output.code, 0, "stderr: {}", output.stderr_text());
+    let leftovers: Vec<_> = fs::read_dir(cwd.path())
+        .expect("read cwd")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name())
+        .filter_map(|name| name.into_string().ok())
+        .filter(|name| name.ends_with(".diagnostics"))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "default recording should not emit diagnostics artifacts: {leftovers:?}"
     );
 }
 
@@ -442,6 +694,44 @@ fn list_mode_rejects_screenshot_flags() {
 }
 
 #[test]
+fn list_mode_rejects_metadata_out_flag() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let output = harness.run(
+        cwd.path(),
+        &[
+            "--list-windows",
+            "--metadata-out",
+            "recording-metadata.json",
+        ],
+    );
+
+    assert_eq!(output.code, 2);
+    assert!(output
+        .stderr_text()
+        .contains("--metadata-out is only valid with recording"));
+}
+
+#[test]
+fn list_mode_rejects_diagnostics_out_flag() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let output = harness.run(
+        cwd.path(),
+        &[
+            "--list-windows",
+            "--diagnostics-out",
+            "recording-diagnostics.json",
+        ],
+    );
+
+    assert_eq!(output.code, 2);
+    assert!(output
+        .stderr_text()
+        .contains("--diagnostics-out is only valid with recording"));
+}
+
+#[test]
 fn multiple_modes_error() {
     let harness = common::ScreenRecordHarness::new();
     let cwd = TempDir::new().expect("tempdir");
@@ -611,6 +901,81 @@ fn screenshot_rejects_format_flag() {
     assert!(output
         .stderr_text()
         .contains("--format is not valid with --screenshot"));
+}
+
+#[test]
+fn screenshot_if_changed_writes_output() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let output_path = cwd.path().join("if-changed.png");
+
+    let output = harness.run(
+        cwd.path(),
+        &[
+            "--screenshot",
+            "--app",
+            "Terminal",
+            "--path",
+            output_path.to_str().unwrap(),
+            "--if-changed",
+            "--if-changed-threshold",
+            "0",
+        ],
+    );
+
+    assert_eq!(output.code, 0, "stderr: {}", output.stderr_text());
+    assert_eq!(
+        output.stdout_text().trim(),
+        output_path.display().to_string()
+    );
+    assert!(std::fs::metadata(&output_path).expect("metadata").len() > 0);
+}
+
+#[test]
+fn if_changed_rejects_record_mode() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let output_path = cwd.path().join("recording.mov");
+
+    let output = harness.run(
+        cwd.path(),
+        &[
+            "--app",
+            "Terminal",
+            "--duration",
+            "1",
+            "--audio",
+            "off",
+            "--path",
+            output_path.to_str().unwrap(),
+            "--if-changed",
+        ],
+    );
+
+    assert_eq!(output.code, 2);
+    assert!(output
+        .stderr_text()
+        .contains("--if-changed is only valid with --screenshot"));
+}
+
+#[test]
+fn if_changed_threshold_requires_if_changed() {
+    let harness = common::ScreenRecordHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+
+    let output = harness.run(
+        cwd.path(),
+        &[
+            "--screenshot",
+            "--app",
+            "Terminal",
+            "--if-changed-threshold",
+            "4",
+        ],
+    );
+
+    assert_eq!(output.code, 2);
+    assert!(output.stderr_text().contains("--if-changed"));
 }
 
 #[test]

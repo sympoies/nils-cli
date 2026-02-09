@@ -1,18 +1,29 @@
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
-use chrono::Local;
+use chrono::{Local, SecondsFormat, Utc};
 
 use crate::cli::{AudioMode, Cli, ContainerFormat, ImageFormat};
 use crate::error::CliError;
 use crate::select::{format_window_tsv, select_window, SelectionArgs};
 use crate::test_mode;
-use crate::types::{AppInfo, DisplayInfo, ShareableContent, WindowInfo};
+use crate::types::{
+    AppInfo, DisplayInfo, RecordingDiagnosticsArtifacts, ShareableContent, WindowInfo,
+    CONTACT_SHEET_ARTIFACT_SUFFIX, MOTION_INTERVALS_ARTIFACT_SUFFIX,
+    RECORDING_DIAGNOSTICS_ARTIFACT_DIR_SUFFIX, RECORDING_DIAGNOSTICS_CONTRACT_VERSION,
+    RECORDING_DIAGNOSTICS_SCHEMA_VERSION,
+};
 
 pub fn run(cli: Cli) -> Result<(), CliError> {
     let test_mode_enabled = test_mode::enabled();
     let mode = determine_mode(&cli)?;
     validate_screenshot_flag_usage(&cli, mode)?;
     validate_portal_flag_usage(&cli, mode)?;
+    validate_metadata_flag_usage(&cli, mode)?;
+    validate_diagnostics_flag_usage(&cli, mode)?;
+    validate_if_changed_flag_usage(&cli, mode)?;
     let backend = Backend::detect(test_mode_enabled)?;
 
     match mode {
@@ -92,91 +103,16 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
 
             let (output_path, format) =
                 resolve_screenshot_output(&cli, &selected, test_mode_enabled)?;
-            backend.screenshot_window(&selected, &output_path, format)?;
+            if cli.if_changed {
+                capture_if_changed_screenshot(&cli, &backend, &selected, format, &output_path)?;
+            } else {
+                backend.screenshot_window(&selected, &output_path, format)?;
+            }
             println!("{}", output_path.display());
             return Ok(());
         }
         Mode::Record => {
-            validate_record_args(&cli)?;
-
-            let output_path = resolve_output_path(&cli)?;
-            let staged_output_path = staged_recording_output_path(&output_path)?;
-            let container = resolve_container(&output_path, cli.format)?;
-            if cli.audio == AudioMode::Both && container == ContainerFormat::Mp4 {
-                return Err(CliError::usage("--audio both requires .mov"));
-            }
-            let duration = cli.duration.expect("duration validated");
-
-            let record_result = if cli.portal {
-                backend.record_portal(duration, &staged_output_path, container)
-            } else if matches!(backend, Backend::Linux) {
-                ensure_linux_x11_selectors_allowed()?;
-                if cli.display {
-                    backend.record_main_display(duration, cli.audio, &staged_output_path, container)
-                } else if let Some(display_id) = cli.display_id {
-                    backend.record_display(
-                        display_id,
-                        duration,
-                        cli.audio,
-                        &staged_output_path,
-                        container,
-                    )
-                } else {
-                    let content = fetch_shareable_content(&backend)?;
-                    let args = SelectionArgs {
-                        window_id: cli.window_id,
-                        app: cli.app.clone(),
-                        window_name: cli.window_name.clone(),
-                        active_window: cli.active_window,
-                    };
-                    let selected = select_window(&content.windows, &args)?;
-                    backend.record_window(
-                        &selected,
-                        duration,
-                        cli.audio,
-                        &staged_output_path,
-                        container,
-                    )
-                }
-            } else if cli.display {
-                backend.record_main_display(duration, cli.audio, &staged_output_path, container)
-            } else if let Some(display_id) = cli.display_id {
-                backend.record_display(
-                    display_id,
-                    duration,
-                    cli.audio,
-                    &staged_output_path,
-                    container,
-                )
-            } else {
-                let content = fetch_shareable_content(&backend)?;
-                let args = SelectionArgs {
-                    window_id: cli.window_id,
-                    app: cli.app.clone(),
-                    window_name: cli.window_name.clone(),
-                    active_window: cli.active_window,
-                };
-                let selected = select_window(&content.windows, &args)?;
-                backend.record_window(
-                    &selected,
-                    duration,
-                    cli.audio,
-                    &staged_output_path,
-                    container,
-                )
-            };
-
-            if let Err(err) = record_result {
-                cleanup_recording_temp_file(&staged_output_path);
-                return Err(err);
-            }
-
-            if let Err(err) = publish_recording_output(&staged_output_path, &output_path) {
-                cleanup_recording_temp_file(&staged_output_path);
-                return Err(err);
-            }
-            println!("{}", output_path.display());
-            return Ok(());
+            return run_record_mode(&cli, &backend, test_mode_enabled);
         }
     }
 
@@ -483,6 +419,580 @@ impl Backend {
     }
 }
 
+#[derive(Debug, Clone)]
+struct RecordingMetadata {
+    target: String,
+    duration_ms: u64,
+    audio_mode: String,
+    format: Option<String>,
+    output_path: Option<String>,
+    output_bytes: Option<u64>,
+    started_at: String,
+    ended_at: String,
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct RecordingDiagnosticsMetadata {
+    schema_version: u32,
+    contract_version: &'static str,
+    source_output_path: String,
+    source_output_bytes: u64,
+    generated_at: String,
+    contact_sheet_path: String,
+    motion_intervals_path: String,
+    motion_interval_count: usize,
+    error: Option<String>,
+}
+
+fn run_record_mode(cli: &Cli, backend: &Backend, test_mode_enabled: bool) -> Result<(), CliError> {
+    let metadata_out = resolve_metadata_out_path(cli.metadata_out.as_deref())?;
+    let diagnostics_out = resolve_diagnostics_out_path(cli.diagnostics_out.as_deref())?;
+    let started_at = metadata_timestamp(test_mode_enabled);
+    let started = Instant::now();
+    let target = recording_target(cli);
+    let audio_mode = audio_mode_label(cli.audio).to_string();
+    let mut resolved_format: Option<ContainerFormat> = None;
+    let mut resolved_output_path: Option<PathBuf> = None;
+
+    let record_result = (|| {
+        validate_record_args(cli)?;
+
+        let output_path = resolve_output_path(cli)?;
+        let staged_output_path = staged_recording_output_path(&output_path)?;
+        let container = resolve_container(&output_path, cli.format)?;
+        if cli.audio == AudioMode::Both && container == ContainerFormat::Mp4 {
+            return Err(CliError::usage("--audio both requires .mov"));
+        }
+        let duration = cli.duration.expect("duration validated");
+
+        resolved_output_path = Some(output_path.clone());
+        resolved_format = Some(container);
+
+        let record_result = if cli.portal {
+            backend.record_portal(duration, &staged_output_path, container)
+        } else if matches!(backend, Backend::Linux) {
+            ensure_linux_x11_selectors_allowed()?;
+            if cli.display {
+                backend.record_main_display(duration, cli.audio, &staged_output_path, container)
+            } else if let Some(display_id) = cli.display_id {
+                backend.record_display(
+                    display_id,
+                    duration,
+                    cli.audio,
+                    &staged_output_path,
+                    container,
+                )
+            } else {
+                let content = fetch_shareable_content(backend)?;
+                let args = SelectionArgs {
+                    window_id: cli.window_id,
+                    app: cli.app.clone(),
+                    window_name: cli.window_name.clone(),
+                    active_window: cli.active_window,
+                };
+                let selected = select_window(&content.windows, &args)?;
+                backend.record_window(
+                    &selected,
+                    duration,
+                    cli.audio,
+                    &staged_output_path,
+                    container,
+                )
+            }
+        } else if cli.display {
+            backend.record_main_display(duration, cli.audio, &staged_output_path, container)
+        } else if let Some(display_id) = cli.display_id {
+            backend.record_display(
+                display_id,
+                duration,
+                cli.audio,
+                &staged_output_path,
+                container,
+            )
+        } else {
+            let content = fetch_shareable_content(backend)?;
+            let args = SelectionArgs {
+                window_id: cli.window_id,
+                app: cli.app.clone(),
+                window_name: cli.window_name.clone(),
+                active_window: cli.active_window,
+            };
+            let selected = select_window(&content.windows, &args)?;
+            backend.record_window(
+                &selected,
+                duration,
+                cli.audio,
+                &staged_output_path,
+                container,
+            )
+        };
+
+        if let Err(err) = record_result {
+            cleanup_recording_temp_file(&staged_output_path);
+            return Err(err);
+        }
+
+        if let Err(err) = publish_recording_output(&staged_output_path, &output_path) {
+            cleanup_recording_temp_file(&staged_output_path);
+            return Err(err);
+        }
+
+        println!("{}", output_path.display());
+        Ok(())
+    })();
+
+    let duration_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    let ended_at = metadata_timestamp(test_mode_enabled);
+    let mut final_result = record_result;
+
+    if final_result.is_ok() {
+        if let (Some(diagnostics_path), Some(output_path)) =
+            (diagnostics_out.as_deref(), resolved_output_path.as_deref())
+        {
+            if let Err(err) = write_recording_diagnostics(
+                diagnostics_path,
+                output_path,
+                duration_ms,
+                &ended_at,
+                test_mode_enabled,
+            ) {
+                final_result = Err(err);
+            }
+        }
+    }
+
+    if let Some(metadata_path) = metadata_out.as_deref() {
+        let output_bytes = resolved_output_path
+            .as_deref()
+            .and_then(|path| std::fs::metadata(path).ok())
+            .map(|meta| meta.len());
+        let metadata = RecordingMetadata {
+            target,
+            duration_ms,
+            audio_mode,
+            format: resolved_format.map(|format| format_label(format).to_string()),
+            output_path: resolved_output_path
+                .as_ref()
+                .map(|path| path.display().to_string()),
+            output_bytes,
+            started_at,
+            ended_at,
+            error: final_result.as_ref().err().map(ToString::to_string),
+        };
+
+        if let Err(err) = write_recording_metadata(metadata_path, &metadata) {
+            if final_result.is_ok() {
+                return Err(err);
+            }
+        }
+    }
+
+    final_result
+}
+
+fn recording_target(cli: &Cli) -> String {
+    if cli.portal {
+        return "portal".to_string();
+    }
+    if cli.display {
+        return "display".to_string();
+    }
+    if let Some(display_id) = cli.display_id {
+        return format!("display-id:{display_id}");
+    }
+    if let Some(window_id) = cli.window_id {
+        return format!("window-id:{window_id}");
+    }
+    if cli.active_window {
+        return "active-window".to_string();
+    }
+    if let Some(app) = cli.app.as_ref() {
+        if let Some(window_name) = cli.window_name.as_ref() {
+            return format!("app:{app};window-name:{window_name}");
+        }
+        return format!("app:{app}");
+    }
+    "unknown".to_string()
+}
+
+fn audio_mode_label(mode: AudioMode) -> &'static str {
+    match mode {
+        AudioMode::Off => "off",
+        AudioMode::System => "system",
+        AudioMode::Mic => "mic",
+        AudioMode::Both => "both",
+    }
+}
+
+fn metadata_timestamp(test_mode_enabled: bool) -> String {
+    if test_mode_enabled {
+        return "2026-01-01T00:00:00.000Z".to_string();
+    }
+    Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
+}
+
+fn resolve_metadata_out_path(path: Option<&Path>) -> Result<Option<PathBuf>, CliError> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+
+    let mut resolved = path.to_path_buf();
+    if !resolved.is_absolute() {
+        let cwd = std::env::current_dir()
+            .map_err(|err| CliError::runtime(format!("failed to resolve cwd: {err}")))?;
+        resolved = cwd.join(resolved);
+    }
+
+    if let Some(parent) = resolved.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| CliError::runtime(format!("failed to create output dir: {err}")))?;
+    }
+
+    Ok(Some(resolved))
+}
+
+fn resolve_diagnostics_out_path(path: Option<&Path>) -> Result<Option<PathBuf>, CliError> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+
+    let mut resolved = path.to_path_buf();
+    if !resolved.is_absolute() {
+        let cwd = std::env::current_dir()
+            .map_err(|err| CliError::runtime(format!("failed to resolve cwd: {err}")))?;
+        resolved = cwd.join(resolved);
+    }
+
+    if let Some(parent) = resolved.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| CliError::runtime(format!("failed to create output dir: {err}")))?;
+    }
+
+    Ok(Some(resolved))
+}
+
+fn write_recording_diagnostics(
+    diagnostics_path: &Path,
+    source_output_path: &Path,
+    duration_ms: u64,
+    generated_at: &str,
+    test_mode_enabled: bool,
+) -> Result<(), CliError> {
+    if test_mode_enabled && diagnostics_failure_forced() {
+        return Err(CliError::runtime(
+            "diagnostics generation failed in test mode (forced)",
+        ));
+    }
+
+    let source_output_bytes = std::fs::metadata(source_output_path)
+        .map_err(|err| {
+            CliError::runtime(format!(
+                "failed to read recording output metadata: {} ({err})",
+                source_output_path.display()
+            ))
+        })?
+        .len();
+
+    let artifacts =
+        prepare_diagnostics_artifacts(diagnostics_path, source_output_path, duration_ms)?;
+    let metadata = RecordingDiagnosticsMetadata {
+        schema_version: RECORDING_DIAGNOSTICS_SCHEMA_VERSION,
+        contract_version: RECORDING_DIAGNOSTICS_CONTRACT_VERSION,
+        source_output_path: source_output_path.display().to_string(),
+        source_output_bytes,
+        generated_at: generated_at.to_string(),
+        contact_sheet_path: artifacts.contact_sheet_path.display().to_string(),
+        motion_intervals_path: artifacts.motion_intervals_path.display().to_string(),
+        motion_interval_count: artifacts.interval_count,
+        error: None,
+    };
+
+    write_recording_diagnostics_manifest(diagnostics_path, &metadata)
+}
+
+fn prepare_diagnostics_artifacts(
+    diagnostics_path: &Path,
+    source_output_path: &Path,
+    duration_ms: u64,
+) -> Result<RecordingDiagnosticsArtifacts, CliError> {
+    let output_stem = source_output_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("recording");
+    let artifacts_dir = diagnostics_path.with_extension(RECORDING_DIAGNOSTICS_ARTIFACT_DIR_SUFFIX);
+    std::fs::create_dir_all(&artifacts_dir)
+        .map_err(|err| CliError::runtime(format!("failed to create diagnostics dir: {err}")))?;
+
+    let contact_sheet_path =
+        artifacts_dir.join(format!("{output_stem}-{CONTACT_SHEET_ARTIFACT_SUFFIX}"));
+    let motion_intervals_path =
+        artifacts_dir.join(format!("{output_stem}-{MOTION_INTERVALS_ARTIFACT_SUFFIX}"));
+
+    write_contact_sheet_artifact(&contact_sheet_path, source_output_path, duration_ms)?;
+    let interval_count =
+        write_motion_intervals_artifact(&motion_intervals_path, source_output_path, duration_ms)?;
+
+    Ok(RecordingDiagnosticsArtifacts {
+        contact_sheet_path,
+        motion_intervals_path,
+        interval_count,
+    })
+}
+
+fn write_recording_diagnostics_manifest(
+    path: &Path,
+    diagnostics: &RecordingDiagnosticsMetadata,
+) -> Result<(), CliError> {
+    let text = format!(
+        "{{\n  \"schema_version\": {},\n  \"contract_version\": \"{}\",\n  \"source_output_path\": \"{}\",\n  \"source_output_bytes\": {},\n  \"generated_at\": \"{}\",\n  \"artifacts\": {{\n    \"contact_sheet\": {{ \"path\": \"{}\", \"format\": \"svg\" }},\n    \"motion_intervals\": {{ \"path\": \"{}\", \"format\": \"json\", \"interval_count\": {} }}\n  }},\n  \"error\": {}\n}}\n",
+        diagnostics.schema_version,
+        escape_json(diagnostics.contract_version),
+        escape_json(&diagnostics.source_output_path),
+        diagnostics.source_output_bytes,
+        escape_json(&diagnostics.generated_at),
+        escape_json(&diagnostics.contact_sheet_path),
+        escape_json(&diagnostics.motion_intervals_path),
+        diagnostics.motion_interval_count,
+        format_optional_string(diagnostics.error.as_deref()),
+    );
+    std::fs::write(path, text)
+        .map_err(|err| CliError::runtime(format!("failed to write diagnostics: {err}")))
+}
+
+fn write_contact_sheet_artifact(
+    path: &Path,
+    source_output_path: &Path,
+    duration_ms: u64,
+) -> Result<(), CliError> {
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    {
+        crate::macos::writer::write_diagnostics_contact_sheet(path, source_output_path, duration_ms)
+    }
+
+    #[cfg(not(all(target_os = "macos", not(coverage))))]
+    {
+        let source_name = source_output_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("recording");
+        let escaped_name = escape_svg(source_name);
+        let view_duration = duration_ms.max(1);
+        let svg = format!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"960\" height=\"540\" viewBox=\"0 0 960 540\">\n  <rect x=\"0\" y=\"0\" width=\"960\" height=\"540\" fill=\"#0d1b2a\" />\n  <text x=\"48\" y=\"64\" fill=\"#e0e1dd\" font-size=\"28\" font-family=\"Menlo, monospace\">screen-record diagnostics</text>\n  <text x=\"48\" y=\"112\" fill=\"#e0e1dd\" font-size=\"18\" font-family=\"Menlo, monospace\">source={escaped_name} duration_ms={view_duration}</text>\n</svg>\n"
+        );
+        return std::fs::write(path, svg)
+            .map_err(|err| CliError::runtime(format!("failed to write contact sheet: {err}")));
+    }
+}
+
+fn write_motion_intervals_artifact(
+    path: &Path,
+    source_output_path: &Path,
+    duration_ms: u64,
+) -> Result<usize, CliError> {
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    {
+        crate::macos::writer::write_diagnostics_motion_intervals(
+            path,
+            source_output_path,
+            duration_ms,
+        )
+    }
+
+    #[cfg(not(all(target_os = "macos", not(coverage))))]
+    {
+        let source_path = source_output_path.display().to_string();
+        let escaped_source_path = escape_json(&source_path);
+        let span = duration_ms.max(1);
+        let text = format!(
+            "{{\n  \"schema_version\": 1,\n  \"contract_version\": \"1.0\",\n  \"source_output_path\": \"{}\",\n  \"intervals\": [\n    {{ \"start_ms\": 0, \"end_ms\": {}, \"score\": 100 }}\n  ]\n}}\n",
+            escaped_source_path, span
+        );
+        std::fs::write(path, text)
+            .map_err(|err| CliError::runtime(format!("failed to write motion intervals: {err}")))?;
+        Ok(1)
+    }
+}
+
+fn diagnostics_failure_forced() -> bool {
+    let value = std::env::var_os("CODEX_SCREEN_RECORD_TEST_MODE_FAIL_DIAGNOSTICS")
+        .map(|raw| raw.to_string_lossy().trim().to_ascii_lowercase());
+    matches!(value.as_deref(), Some("1" | "true" | "yes" | "on"))
+}
+
+fn write_recording_metadata(path: &Path, metadata: &RecordingMetadata) -> Result<(), CliError> {
+    let text = format!(
+        "{{\n  \"target\": \"{}\",\n  \"duration_ms\": {},\n  \"audio_mode\": \"{}\",\n  \"format\": {},\n  \"output_path\": {},\n  \"output_bytes\": {},\n  \"started_at\": \"{}\",\n  \"ended_at\": \"{}\",\n  \"error\": {}\n}}\n",
+        escape_json(&metadata.target),
+        metadata.duration_ms,
+        escape_json(&metadata.audio_mode),
+        format_optional_string(metadata.format.as_deref()),
+        format_optional_string(metadata.output_path.as_deref()),
+        format_optional_u64(metadata.output_bytes),
+        escape_json(&metadata.started_at),
+        escape_json(&metadata.ended_at),
+        format_optional_string(metadata.error.as_deref()),
+    );
+
+    std::fs::write(path, text)
+        .map_err(|err| CliError::runtime(format!("failed to write metadata: {err}")))
+}
+
+fn format_optional_string(value: Option<&str>) -> String {
+    match value {
+        Some(value) => format!("\"{}\"", escape_json(value)),
+        None => "null".to_string(),
+    }
+}
+
+fn format_optional_u64(value: Option<u64>) -> String {
+    match value {
+        Some(value) => value.to_string(),
+        None => "null".to_string(),
+    }
+}
+
+fn escape_json(value: &str) -> String {
+    let mut escaped = String::new();
+    for ch in value.chars() {
+        match ch {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            '\u{08}' => escaped.push_str("\\b"),
+            '\u{0C}' => escaped.push_str("\\f"),
+            ch if ch <= '\u{1F}' => escaped.push_str(&format!("\\u{:04x}", ch as u32)),
+            ch => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
+#[cfg(not(all(target_os = "macos", not(coverage))))]
+fn escape_svg(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| match ch {
+            '&' => "&amp;".to_string(),
+            '<' => "&lt;".to_string(),
+            '>' => "&gt;".to_string(),
+            '"' => "&quot;".to_string(),
+            '\'' => "&apos;".to_string(),
+            _ => ch.to_string(),
+        })
+        .collect()
+}
+
+fn capture_if_changed_screenshot(
+    cli: &Cli,
+    backend: &Backend,
+    window: &WindowInfo,
+    format: ImageFormat,
+    output_path: &Path,
+) -> Result<(), CliError> {
+    let threshold = cli.if_changed_threshold.unwrap_or(0);
+    let baseline_path = resolve_if_changed_baseline_path(cli, output_path)?;
+    let baseline_hash = baseline_path.as_deref().map(hash_file_u64).transpose()?;
+
+    let staged_path = staged_if_changed_path(output_path)?;
+    let capture_result = backend.screenshot_window(window, &staged_path, format);
+    if let Err(err) = capture_result {
+        let _ = std::fs::remove_file(&staged_path);
+        return Err(err);
+    }
+
+    let current_hash = match hash_file_u64(&staged_path) {
+        Ok(value) => value,
+        Err(err) => {
+            let _ = std::fs::remove_file(&staged_path);
+            return Err(err);
+        }
+    };
+
+    let changed_by_threshold = baseline_hash
+        .map(|baseline| hamming_distance(baseline, current_hash) > threshold)
+        .unwrap_or(true);
+    let changed = changed_by_threshold || !output_path.exists();
+    if changed {
+        publish_if_changed_capture(&staged_path, output_path)?;
+    } else {
+        let _ = std::fs::remove_file(&staged_path);
+    }
+    Ok(())
+}
+
+fn resolve_if_changed_baseline_path(
+    cli: &Cli,
+    output_path: &Path,
+) -> Result<Option<PathBuf>, CliError> {
+    if let Some(path) = cli.if_changed_baseline.as_ref() {
+        let baseline_path = if path.is_absolute() {
+            path.clone()
+        } else {
+            let cwd = std::env::current_dir()
+                .map_err(|err| CliError::runtime(format!("failed to resolve cwd: {err}")))?;
+            cwd.join(path)
+        };
+        if !baseline_path.exists() {
+            return Err(CliError::runtime(format!(
+                "--if-changed-baseline path does not exist: {}",
+                baseline_path.display()
+            )));
+        }
+        return Ok(Some(baseline_path));
+    }
+
+    if output_path.exists() {
+        return Ok(Some(output_path.to_path_buf()));
+    }
+    Ok(None)
+}
+
+fn staged_if_changed_path(output_path: &Path) -> Result<PathBuf, CliError> {
+    let parent = output_path
+        .parent()
+        .ok_or_else(|| CliError::runtime("missing output parent dir"))?;
+    let name = output_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("screenshot");
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    Ok(parent.join(format!(".{name}.ifchanged-{pid}-{nanos}")))
+}
+
+fn publish_if_changed_capture(staged_path: &Path, output_path: &Path) -> Result<(), CliError> {
+    if output_path.exists() {
+        std::fs::remove_file(output_path)
+            .map_err(|err| CliError::runtime(format!("failed to replace output file: {err}")))?;
+    }
+    std::fs::rename(staged_path, output_path)
+        .map_err(|err| CliError::runtime(format!("failed to write output: {err}")))
+}
+
+fn hash_file_u64(path: &Path) -> Result<u64, CliError> {
+    let bytes = std::fs::read(path).map_err(|err| {
+        CliError::runtime(format!(
+            "failed to read screenshot for --if-changed hash: {} ({err})",
+            path.display()
+        ))
+    })?;
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    Ok(hasher.finish())
+}
+
+fn hamming_distance(a: u64, b: u64) -> u32 {
+    (a ^ b).count_ones()
+}
+
 fn determine_mode(cli: &Cli) -> Result<Mode, CliError> {
     let mut modes = Vec::new();
     if cli.list_windows {
@@ -547,6 +1057,43 @@ fn validate_portal_flag_usage(cli: &Cli, mode: Mode) -> Result<(), CliError> {
             "--portal is only supported on Linux (Wayland)",
         ))
     }
+}
+
+fn validate_metadata_flag_usage(cli: &Cli, mode: Mode) -> Result<(), CliError> {
+    if mode != Mode::Record && cli.metadata_out.is_some() {
+        return Err(CliError::usage(
+            "--metadata-out is only valid with recording",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_diagnostics_flag_usage(cli: &Cli, mode: Mode) -> Result<(), CliError> {
+    if mode != Mode::Record && cli.diagnostics_out.is_some() {
+        return Err(CliError::usage(
+            "--diagnostics-out is only valid with recording",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_if_changed_flag_usage(cli: &Cli, mode: Mode) -> Result<(), CliError> {
+    if !cli.if_changed {
+        if cli.if_changed_baseline.is_some() || cli.if_changed_threshold.is_some() {
+            return Err(CliError::usage(
+                "--if-changed-baseline/--if-changed-threshold requires --if-changed",
+            ));
+        }
+        return Ok(());
+    }
+
+    if mode != Mode::Screenshot {
+        return Err(CliError::usage(
+            "--if-changed is only valid with --screenshot",
+        ));
+    }
+
+    Ok(())
 }
 
 fn validate_record_args(cli: &Cli) -> Result<(), CliError> {
@@ -651,6 +1198,8 @@ fn ensure_no_recording_flags(cli: &Cli) -> Result<(), CliError> {
         || cli.format.is_some()
         || cli.image_format.is_some()
         || cli.dir.is_some()
+        || cli.metadata_out.is_some()
+        || cli.diagnostics_out.is_some()
         || cli.audio != AudioMode::Off
     {
         return Err(CliError::usage(
@@ -1149,9 +1698,14 @@ mod tests {
             duration: Some(1),
             audio: AudioMode::Off,
             path: Some(PathBuf::from("out.mp4")),
+            metadata_out: None,
+            diagnostics_out: None,
             format: None,
             image_format: None,
             dir: None,
+            if_changed: false,
+            if_changed_baseline: None,
+            if_changed_threshold: None,
         }
     }
 
@@ -1173,9 +1727,14 @@ mod tests {
             duration: None,
             audio: AudioMode::Off,
             path: None,
+            metadata_out: None,
+            diagnostics_out: None,
             format: None,
             image_format: None,
             dir: None,
+            if_changed: false,
+            if_changed_baseline: None,
+            if_changed_threshold: None,
         }
     }
 
@@ -1256,6 +1815,17 @@ mod tests {
         assert!(err
             .to_string()
             .contains("--format is not valid with --screenshot"));
+    }
+
+    #[test]
+    fn diagnostics_out_requires_record_mode() {
+        let mut cli = base_screenshot_cli();
+        cli.diagnostics_out = Some(PathBuf::from("diag.json"));
+        let err = validate_diagnostics_flag_usage(&cli, Mode::Screenshot).expect_err("usage");
+        assert_eq!(err.exit_code(), 2);
+        assert!(err
+            .to_string()
+            .contains("--diagnostics-out is only valid with recording"));
     }
 
     #[test]

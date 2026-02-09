@@ -556,6 +556,14 @@ pub struct AxClickArgs {
     #[arg(long, value_enum, value_delimiter = ',', num_args = 1.., value_name = "STAGE")]
     pub fallback_order: Vec<AxClickFallbackStage>,
 
+    /// Unified wait-policy timeout override for gate/postcondition checks.
+    #[arg(long)]
+    pub wait_timeout_ms: Option<u64>,
+
+    /// Unified wait-policy poll interval override for gate/postcondition checks.
+    #[arg(long)]
+    pub wait_poll_ms: Option<u64>,
+
     #[command(flatten)]
     pub gate: AxActionGateArgs,
 
@@ -613,6 +621,14 @@ pub struct AxTypeArgs {
     /// Allow keyboard fallback when AX value set/focus is unavailable.
     #[arg(long)]
     pub allow_keyboard_fallback: bool,
+
+    /// Unified wait-policy timeout override for gate/postcondition checks.
+    #[arg(long)]
+    pub wait_timeout_ms: Option<u64>,
+
+    /// Unified wait-policy poll interval override for gate/postcondition checks.
+    #[arg(long)]
+    pub wait_poll_ms: Option<u64>,
 
     #[command(flatten)]
     pub gate: AxActionGateArgs,
@@ -972,6 +988,23 @@ pub struct ObserveScreenshotArgs {
     /// Expand selector frame by N pixels in each direction.
     #[arg(long, default_value_t = 0)]
     pub selector_padding: i32,
+
+    /// Skip writing a new screenshot when the capture hash stays within threshold.
+    #[arg(long)]
+    pub if_changed: bool,
+
+    /// Optional baseline image path used for hash comparison.
+    #[arg(long, value_name = "path", requires = "if_changed")]
+    pub if_changed_baseline: Option<PathBuf>,
+
+    /// Maximum allowed hash-distance bits before capture is considered changed.
+    #[arg(
+        long,
+        value_name = "bits",
+        value_parser = clap::value_parser!(u32).range(0..=64),
+        requires = "if_changed"
+    )]
+    pub if_changed_threshold: Option<u32>,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -1057,11 +1090,11 @@ pub struct WaitAppActiveArgs {
     pub bundle_id: Option<String>,
 
     /// Timeout in milliseconds.
-    #[arg(long, default_value_t = 1500)]
+    #[arg(long, default_value_t = 1500, visible_alias = "wait-timeout-ms")]
     pub timeout_ms: u64,
 
     /// Poll interval in milliseconds.
-    #[arg(long, default_value_t = 50)]
+    #[arg(long, default_value_t = 50, visible_alias = "wait-poll-ms")]
     pub poll_ms: u64,
 }
 
@@ -1096,11 +1129,11 @@ pub struct WaitWindowPresentArgs {
     pub window_name: Option<String>,
 
     /// Timeout in milliseconds.
-    #[arg(long, default_value_t = 1500)]
+    #[arg(long, default_value_t = 1500, visible_alias = "wait-timeout-ms")]
     pub timeout_ms: u64,
 
     /// Poll interval in milliseconds.
-    #[arg(long, default_value_t = 50)]
+    #[arg(long, default_value_t = 50, visible_alias = "wait-poll-ms")]
     pub poll_ms: u64,
 }
 
@@ -1136,11 +1169,11 @@ pub struct WaitAxPresentArgs {
     pub target: AxTargetArgs,
 
     /// Timeout in milliseconds.
-    #[arg(long, default_value_t = 1500)]
+    #[arg(long, default_value_t = 1500, visible_alias = "wait-timeout-ms")]
     pub timeout_ms: u64,
 
     /// Poll interval in milliseconds.
-    #[arg(long, default_value_t = 50)]
+    #[arg(long, default_value_t = 50, visible_alias = "wait-poll-ms")]
     pub poll_ms: u64,
 }
 
@@ -1176,11 +1209,11 @@ pub struct WaitAxUniqueArgs {
     pub target: AxTargetArgs,
 
     /// Timeout in milliseconds.
-    #[arg(long, default_value_t = 1500)]
+    #[arg(long, default_value_t = 1500, visible_alias = "wait-timeout-ms")]
     pub timeout_ms: u64,
 
     /// Poll interval in milliseconds.
-    #[arg(long, default_value_t = 50)]
+    #[arg(long, default_value_t = 50, visible_alias = "wait-poll-ms")]
     pub poll_ms: u64,
 }
 
@@ -1384,6 +1417,36 @@ mod tests {
     }
 
     #[test]
+    fn parses_ax_wait_policy_overrides() {
+        let cli = Cli::try_parse_from([
+            "macos-agent",
+            "ax",
+            "type",
+            "--app",
+            "Terminal",
+            "--node-id",
+            "1.1",
+            "--text",
+            "hello",
+            "--wait-timeout-ms",
+            "2200",
+            "--wait-poll-ms",
+            "40",
+        ])
+        .expect("ax type wait policy flags should parse");
+
+        match cli.command {
+            CommandGroup::Ax {
+                command: AxCommand::Type(args),
+            } => {
+                assert_eq!(args.wait_timeout_ms, Some(2200));
+                assert_eq!(args.wait_poll_ms, Some(40));
+            }
+            other => panic!("unexpected command variant: {other:?}"),
+        }
+    }
+
+    #[test]
     fn parses_debug_bundle_and_observe_selector_padding_flags() {
         let debug_cli = Cli::try_parse_from([
             "macos-agent",
@@ -1418,6 +1481,9 @@ mod tests {
             "Run",
             "--selector-padding",
             "12",
+            "--if-changed",
+            "--if-changed-threshold",
+            "4",
         ])
         .expect("observe screenshot selector flags should parse");
         match observe_cli.command {
@@ -1431,6 +1497,9 @@ mod tests {
                     Some("Run")
                 );
                 assert_eq!(args.selector_padding, 12);
+                assert!(args.if_changed);
+                assert_eq!(args.if_changed_threshold, Some(4));
+                assert_eq!(args.if_changed_baseline, None);
             }
             other => panic!("unexpected command variant: {other:?}"),
         }
