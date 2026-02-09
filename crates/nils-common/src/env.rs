@@ -6,18 +6,19 @@ pub fn is_truthy_or(input: Option<&str>, default: bool) -> bool {
     input.map(is_truthy).unwrap_or(default)
 }
 
+fn truthy_from_env(name: &str) -> Option<bool> {
+    std::env::var_os(name).map(|value| {
+        let value = value.to_string_lossy();
+        is_truthy(value.trim())
+    })
+}
+
 pub fn env_truthy(name: &str) -> bool {
-    std::env::var(name)
-        .ok()
-        .map(|value| is_truthy(value.as_str()))
-        .unwrap_or(false)
+    truthy_from_env(name).unwrap_or(false)
 }
 
 pub fn env_truthy_or(name: &str, default: bool) -> bool {
-    match std::env::var(name) {
-        Ok(value) => is_truthy(value.as_str()),
-        Err(_) => default,
-    }
+    truthy_from_env(name).unwrap_or(default)
 }
 
 pub fn no_color_enabled() -> bool {
@@ -58,11 +59,25 @@ mod tests {
     }
 
     #[test]
+    fn env_truthy_trims_whitespace() {
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::set(&lock, "NILS_COMMON_ENV_TRUTHY_TRIM_TEST", " yes ");
+        assert!(env_truthy("NILS_COMMON_ENV_TRUTHY_TRIM_TEST"));
+    }
+
+    #[test]
     fn env_truthy_or_falls_back_to_default() {
         let lock = GlobalStateLock::new();
         let _guard = EnvGuard::remove(&lock, "NILS_COMMON_ENV_TRUTHY_OR_TEST");
         assert!(env_truthy_or("NILS_COMMON_ENV_TRUTHY_OR_TEST", true));
         assert!(!env_truthy_or("NILS_COMMON_ENV_TRUTHY_OR_TEST", false));
+    }
+
+    #[test]
+    fn env_truthy_or_prefers_present_trimmed_values() {
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::set(&lock, "NILS_COMMON_ENV_TRUTHY_OR_VALUE_TEST", " off ");
+        assert!(!env_truthy_or("NILS_COMMON_ENV_TRUTHY_OR_VALUE_TEST", true));
     }
 
     #[test]

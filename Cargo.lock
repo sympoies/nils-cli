@@ -70,6 +70,7 @@ dependencies = [
  "agent-provider-gemini",
  "agent-runtime-core",
  "clap",
+ "nils-common",
  "nils-test-support",
  "pretty_assertions",
  "serde",
@@ -1524,6 +1525,7 @@ version = "0.3.0"
 dependencies = [
  "clap",
  "image",
+ "nils-common",
  "nils-test-support",
  "pretty_assertions",
  "regex",

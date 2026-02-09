@@ -9,6 +9,7 @@ clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 regex = "1"
+nils-common = { path = "../nils-common" }
 screen-record = { path = "../screen-record" }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 

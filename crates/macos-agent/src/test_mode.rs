@@ -1,7 +1,8 @@
+use nils_common::env as shared_env;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn enabled() -> bool {
-    env_truthy("CODEX_MACOS_AGENT_TEST_MODE")
+    shared_env::env_truthy("CODEX_MACOS_AGENT_TEST_MODE")
 }
 
 pub fn timestamp_token() -> String {
@@ -17,15 +18,6 @@ pub fn timestamp_token() -> String {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     secs.to_string()
-}
-
-pub fn env_truthy(name: &str) -> bool {
-    let raw =
-        std::env::var_os(name).map(|value| value.to_string_lossy().trim().to_ascii_lowercase());
-    matches!(
-        raw.as_deref(),
-        Some("1") | Some("true") | Some("yes") | Some("on")
-    )
 }
 
 #[cfg(test)]
