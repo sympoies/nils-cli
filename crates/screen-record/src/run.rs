@@ -546,20 +546,23 @@ fn run_record_mode(cli: &Cli, backend: &Backend, test_mode_enabled: bool) -> Res
     let ended_at = metadata_timestamp(test_mode_enabled);
     let mut final_result = record_result;
 
-    if final_result.is_ok() {
-        if let (Some(diagnostics_path), Some(output_path)) =
-            (diagnostics_out.as_deref(), resolved_output_path.as_deref())
-        {
-            if let Err(err) = write_recording_diagnostics(
+    let diagnostics_error = if final_result.is_ok() {
+        match (diagnostics_out.as_deref(), resolved_output_path.as_deref()) {
+            (Some(diagnostics_path), Some(output_path)) => write_recording_diagnostics(
                 diagnostics_path,
                 output_path,
                 duration_ms,
                 &ended_at,
                 test_mode_enabled,
-            ) {
-                final_result = Err(err);
-            }
+            )
+            .err(),
+            _ => None,
         }
+    } else {
+        None
+    };
+    if let Some(err) = diagnostics_error {
+        final_result = Err(err);
     }
 
     if let Some(metadata_path) = metadata_out.as_deref() {
@@ -581,10 +584,9 @@ fn run_record_mode(cli: &Cli, backend: &Backend, test_mode_enabled: bool) -> Res
             error: final_result.as_ref().err().map(ToString::to_string),
         };
 
-        if let Err(err) = write_recording_metadata(metadata_path, &metadata) {
-            if final_result.is_ok() {
-                return Err(err);
-            }
+        match write_recording_metadata(metadata_path, &metadata) {
+            Err(err) if final_result.is_ok() => return Err(err),
+            _ => {}
         }
     }
 
@@ -782,8 +784,8 @@ fn write_contact_sheet_artifact(
         let svg = format!(
             "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"960\" height=\"540\" viewBox=\"0 0 960 540\">\n  <rect x=\"0\" y=\"0\" width=\"960\" height=\"540\" fill=\"#0d1b2a\" />\n  <text x=\"48\" y=\"64\" fill=\"#e0e1dd\" font-size=\"28\" font-family=\"Menlo, monospace\">screen-record diagnostics</text>\n  <text x=\"48\" y=\"112\" fill=\"#e0e1dd\" font-size=\"18\" font-family=\"Menlo, monospace\">source={escaped_name} duration_ms={view_duration}</text>\n</svg>\n"
         );
-        return std::fs::write(path, svg)
-            .map_err(|err| CliError::runtime(format!("failed to write contact sheet: {err}")));
+        std::fs::write(path, svg)
+            .map_err(|err| CliError::runtime(format!("failed to write contact sheet: {err}")))
     }
 }
 
