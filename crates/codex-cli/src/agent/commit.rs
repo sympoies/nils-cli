@@ -1,4 +1,5 @@
 use anyhow::Result;
+use nils_common::process;
 use std::collections::BTreeSet;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -315,31 +316,7 @@ fn semantic_commit_prompt(mode: &str) -> Option<String> {
 }
 
 fn command_exists(name: &str) -> bool {
-    let Ok(path) = std::env::var("PATH") else {
-        return false;
-    };
-
-    for dir in std::env::split_paths(&path) {
-        let full = dir.join(name);
-        if !full.is_file() {
-            continue;
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Ok(meta) = std::fs::metadata(&full)
-                && meta.permissions().mode() & 0o111 != 0
-            {
-                return true;
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            return true;
-        }
-    }
-
-    false
+    process::cmd_exists(name)
 }
 
 #[cfg(test)]

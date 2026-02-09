@@ -11,6 +11,12 @@ fn as_str(output: &[u8]) -> String {
     String::from_utf8_lossy(output).to_string()
 }
 
+fn env_refs<'a>(envs: &'a [(&'static str, String)]) -> Vec<(&'static str, &'a str)> {
+    envs.iter()
+        .map(|(key, value)| (*key, value.as_str()))
+        .collect()
+}
+
 fn stage_file(repo: &Path, name: &str, contents: &str) {
     common::write_file(repo, name, contents);
     common::git(repo, &["add", name]);
@@ -44,6 +50,21 @@ fn staged_context_outside_git_repo_errors() {
 
     assert_eq!(output.status.code(), Some(1));
     assert!(as_str(&output.stderr).contains("error: must run inside a git work tree"));
+}
+
+#[test]
+fn staged_context_missing_git_dependency_exits_5() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let tool_dir = tempfile::TempDir::new().expect("tempdir");
+    let path_env = tool_dir.path().to_str().expect("tool dir path");
+    let envs_owned = vec![("PATH", path_env.to_string())];
+    let envs = env_refs(&envs_owned);
+
+    let output =
+        common::run_semantic_commit_output(dir.path(), &["staged-context", "--json"], &envs, None);
+
+    assert_eq!(output.status.code(), Some(5));
+    assert!(as_str(&output.stderr).contains("error: git is required"));
 }
 
 #[test]

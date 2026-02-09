@@ -49,6 +49,25 @@ fn commit_outside_git_repo_errors() {
 }
 
 #[test]
+fn commit_missing_git_dependency_exits_5() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let tool_dir = tempfile::TempDir::new().expect("tempdir");
+    let path_env = tool_dir.path().to_str().expect("tool dir path");
+    let envs_owned = deterministic_env(path_env);
+    let envs = env_refs(&envs_owned);
+
+    let output = common::run_semantic_commit_output(
+        dir.path(),
+        &["commit", "--message", "chore: test"],
+        &envs,
+        None,
+    );
+
+    assert_eq!(output.status.code(), Some(5));
+    assert!(as_str(&output.stderr).contains("error: git is required"));
+}
+
+#[test]
 fn commit_help_flag_prints_usage() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let output = common::run_semantic_commit_output(dir.path(), &["commit", "--help"], &[], None);
