@@ -34,10 +34,10 @@ impl<'a> SetupDiscovery<'a> {
             return Ok(dir);
         }
 
-        if let FallbackMode::Upwards(subdir) = self.seed_fallback {
-            if let Some(found_setup) = find_upwards_for_setup_subdir(&seed_abs, subdir) {
-                return Ok(found_setup);
-            }
+        if let FallbackMode::Upwards(subdir) = self.seed_fallback
+            && let Some(found_setup) = find_upwards_for_setup_subdir(&seed_abs, subdir)
+        {
+            return Ok(found_setup);
         }
 
         if self.config_dir_explicit {

@@ -190,27 +190,27 @@ fn error_summary(body: &str) -> Option<String> {
 
     if let Some(error) = value.get("error") {
         if error.is_object() {
-            if let Some(code) = error.get("code").and_then(|v| v.as_str()) {
-                if !code.is_empty() {
-                    parts.push(code.to_string());
-                }
+            if let Some(code) = error.get("code").and_then(|v| v.as_str())
+                && !code.is_empty()
+            {
+                parts.push(code.to_string());
             }
-            if let Some(message) = error.get("message").and_then(|v| v.as_str()) {
-                if !message.is_empty() {
-                    parts.push(message.to_string());
-                }
+            if let Some(message) = error.get("message").and_then(|v| v.as_str())
+                && !message.is_empty()
+            {
+                parts.push(message.to_string());
             }
-        } else if let Some(error_str) = error.as_str() {
-            if !error_str.is_empty() {
-                parts.push(error_str.to_string());
-            }
+        } else if let Some(error_str) = error.as_str()
+            && !error_str.is_empty()
+        {
+            parts.push(error_str.to_string());
         }
     }
 
-    if let Some(desc) = value.get("error_description").and_then(|v| v.as_str()) {
-        if !desc.is_empty() {
-            parts.push(desc.to_string());
-        }
+    if let Some(desc) = value.get("error_description").and_then(|v| v.as_str())
+        && !desc.is_empty()
+    {
+        parts.push(desc.to_string());
     }
 
     if parts.is_empty() {
@@ -235,10 +235,10 @@ fn file_name(path: &Path) -> String {
 }
 
 fn is_auth_file(target: &Path) -> bool {
-    if let Some(auth_file) = paths::resolve_auth_file() {
-        if auth_file == target {
-            return true;
-        }
+    if let Some(auth_file) = paths::resolve_auth_file()
+        && auth_file == target
+    {
+        return true;
     }
     false
 }
@@ -256,7 +256,8 @@ mod tests {
     impl EnvVarGuard {
         fn set(key: &str, value: &str) -> Self {
             let previous = std::env::var_os(key);
-            std::env::set_var(key, value);
+            // SAFETY: tests mutate process env only in scoped guard usage.
+            unsafe { std::env::set_var(key, value) };
             Self {
                 key: key.to_string(),
                 previous,
@@ -265,7 +266,8 @@ mod tests {
 
         fn remove(key: &str) -> Self {
             let previous = std::env::var_os(key);
-            std::env::remove_var(key);
+            // SAFETY: tests mutate process env only in scoped guard usage.
+            unsafe { std::env::remove_var(key) };
             Self {
                 key: key.to_string(),
                 previous,
@@ -276,9 +278,11 @@ mod tests {
     impl Drop for EnvVarGuard {
         fn drop(&mut self) {
             if let Some(previous) = self.previous.take() {
-                std::env::set_var(&self.key, previous);
+                // SAFETY: tests restore process env only in scoped guard usage.
+                unsafe { std::env::set_var(&self.key, previous) };
             } else {
-                std::env::remove_var(&self.key);
+                // SAFETY: tests restore process env only in scoped guard usage.
+                unsafe { std::env::remove_var(&self.key) };
             }
         }
     }

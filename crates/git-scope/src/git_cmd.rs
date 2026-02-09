@@ -32,15 +32,15 @@ fn has_quotepath_override(args: &[&str]) -> bool {
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         if *arg == "-c" {
-            if let Some(value) = iter.next() {
-                if value.starts_with("core.quotepath=") {
-                    return true;
-                }
-            }
-        } else if let Some(rest) = arg.strip_prefix("-c") {
-            if rest.starts_with("core.quotepath=") {
+            if let Some(value) = iter.next()
+                && value.starts_with("core.quotepath=")
+            {
                 return true;
             }
+        } else if let Some(rest) = arg.strip_prefix("-c")
+            && rest.starts_with("core.quotepath=")
+        {
+            return true;
         }
     }
     false

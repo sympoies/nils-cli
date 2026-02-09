@@ -302,10 +302,10 @@ impl CaptureState {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
         };
-        if let Some(writer) = writer_guard.as_mut() {
-            if let Err(err) = append_fn(writer) {
-                self.set_error(err);
-            }
+        if let Some(writer) = writer_guard.as_mut()
+            && let Err(err) = append_fn(writer)
+        {
+            self.set_error(err);
         }
     }
 

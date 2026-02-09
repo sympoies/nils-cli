@@ -276,13 +276,12 @@ fn build_staged_contents(include_patterns: &[String]) -> Result<String> {
             format!(":{content_path}")
         };
 
-        if !binary_file {
-            if let Some(detected) = file_probe(&blob_ref) {
-                if detected.contains("charset=binary") {
-                    binary_file = true;
-                    blob_type = Some(detected);
-                }
-            }
+        if !binary_file
+            && let Some(detected) = file_probe(&blob_ref)
+            && detected.contains("charset=binary")
+        {
+            binary_file = true;
+            blob_type = Some(detected);
         }
 
         if binary_file {
@@ -770,7 +769,8 @@ mod tests {
     impl EnvGuard {
         fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
             let old = std::env::var_os(key);
-            std::env::set_var(key, value);
+            // SAFETY: tests mutate process env only in scoped guard usage.
+            unsafe { std::env::set_var(key, value) };
             Self { key, old }
         }
     }
@@ -778,9 +778,11 @@ mod tests {
     impl Drop for EnvGuard {
         fn drop(&mut self) {
             if let Some(value) = self.old.take() {
-                std::env::set_var(self.key, value);
+                // SAFETY: tests restore process env only in scoped guard usage.
+                unsafe { std::env::set_var(self.key, value) };
             } else {
-                std::env::remove_var(self.key);
+                // SAFETY: tests restore process env only in scoped guard usage.
+                unsafe { std::env::remove_var(self.key) };
             }
         }
     }

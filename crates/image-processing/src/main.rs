@@ -302,12 +302,12 @@ fn validate(cli: &Cli) -> Result<(), util::UsageError> {
                 message: "convert requires --to png|jpg|webp".to_string(),
             });
         }
-        if let Some(to) = cli.to.as_deref() {
-            if !model::SUPPORTED_CONVERT_TARGETS.contains(&to) {
-                return Err(util::UsageError {
-                    message: "convert --to must be one of: png|jpg|webp".to_string(),
-                });
-            }
+        if let Some(to) = cli.to.as_deref()
+            && !model::SUPPORTED_CONVERT_TARGETS.contains(&to)
+        {
+            return Err(util::UsageError {
+                message: "convert --to must be one of: png|jpg|webp".to_string(),
+            });
         }
     }
 
@@ -324,12 +324,12 @@ fn validate(cli: &Cli) -> Result<(), util::UsageError> {
     }
 
     if cli.subcommand == Operation::Resize {
-        if let Some(fit) = cli.fit.as_deref() {
-            if !matches!(fit, "contain" | "cover" | "stretch") {
-                return Err(util::UsageError {
-                    message: "resize --fit must be one of: contain, cover, stretch".to_string(),
-                });
-            }
+        if let Some(fit) = cli.fit.as_deref()
+            && !matches!(fit, "contain" | "cover" | "stretch")
+        {
+            return Err(util::UsageError {
+                message: "resize --fit must be one of: contain, cover, stretch".to_string(),
+            });
         }
         if cli.aspect.is_some() && cli.fit.is_none() {
             return Err(util::UsageError {

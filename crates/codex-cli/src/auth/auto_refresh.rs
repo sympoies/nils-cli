@@ -39,13 +39,13 @@ pub fn run() -> Result<i32> {
     if let Some(auth_file) = auth_file.as_ref() {
         targets.push(auth_file.clone());
     }
-    if let Some(secret_dir) = paths::resolve_secret_dir() {
-        if let Ok(entries) = std::fs::read_dir(&secret_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("json") {
-                    targets.push(path);
-                }
+    if let Some(secret_dir) = paths::resolve_secret_dir()
+        && let Ok(entries) = std::fs::read_dir(&secret_dir)
+    {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("json") {
+                targets.push(path);
             }
         }
     }
@@ -110,13 +110,13 @@ fn is_configured() -> bool {
     if let Some(auth_file) = paths::resolve_auth_file() {
         candidates.push(auth_file);
     }
-    if let Some(secret_dir) = paths::resolve_secret_dir() {
-        if let Ok(entries) = std::fs::read_dir(&secret_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("json") {
-                    candidates.push(path);
-                }
+    if let Some(secret_dir) = paths::resolve_secret_dir()
+        && let Ok(entries) = std::fs::read_dir(&secret_dir)
+    {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("json") {
+                candidates.push(path);
             }
         }
     }
@@ -172,11 +172,11 @@ fn normalize_iso(raw: &str) -> String {
         .next()
         .unwrap_or("")
         .to_string();
-    if let Some(dot) = trimmed.find('.') {
-        if trimmed.ends_with('Z') {
-            trimmed.truncate(dot);
-            trimmed.push('Z');
-        }
+    if let Some(dot) = trimmed.find('.')
+        && trimmed.ends_with('Z')
+    {
+        trimmed.truncate(dot);
+        trimmed.push('Z');
     }
     trimmed
 }

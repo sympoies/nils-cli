@@ -331,22 +331,21 @@ fn probe_automation_tool(spec: &AutomationToolSpec, probe_mode: ProbeMode) -> Re
     };
 
     if probe_output.success {
-        if spec.id == "macos-agent" {
-            if let Some((status, summary, hint, details)) =
+        if spec.id == "macos-agent"
+            && let Some((status, summary, hint, details)) =
                 parse_macos_agent_preflight(&probe_output.stdout)
-            {
-                return ReadinessCheck {
-                    id,
-                    component: Component::Automation,
-                    subject: spec.id.to_string(),
-                    probe: "readiness".to_string(),
-                    status,
-                    summary,
-                    hint,
-                    details: Some(details),
-                    probe_mode,
-                };
-            }
+        {
+            return ReadinessCheck {
+                id,
+                component: Component::Automation,
+                subject: spec.id.to_string(),
+                probe: "readiness".to_string(),
+                status,
+                summary,
+                hint,
+                details: Some(details),
+                probe_mode,
+            };
         }
 
         return ReadinessCheck {
@@ -526,10 +525,10 @@ fn run_probe_command(
 ) -> Result<ProbeOutput, String> {
     let mut command = Command::new(spec.command);
     command.args(spec.probe_args);
-    if probe_mode == ProbeMode::Test {
-        if let Some(test_mode_env) = spec.test_mode_env {
-            command.env(test_mode_env, "1");
-        }
+    if probe_mode == ProbeMode::Test
+        && let Some(test_mode_env) = spec.test_mode_env
+    {
+        command.env(test_mode_env, "1");
     }
 
     let output = command

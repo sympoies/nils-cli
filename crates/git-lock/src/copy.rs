@@ -72,10 +72,10 @@ pub fn run(args: &[String]) -> Result<i32> {
     if !details.lock.note.is_empty() {
         println!("   📝 note:    {}", details.lock.note);
     }
-    if let Some(timestamp) = details.lock.timestamp.as_deref() {
-        if !timestamp.is_empty() {
-            println!("   📅 time:    {timestamp}");
-        }
+    if let Some(timestamp) = details.lock.timestamp.as_deref()
+        && !timestamp.is_empty()
+    {
+        println!("   📅 time:    {timestamp}");
     }
 
     Ok(0)

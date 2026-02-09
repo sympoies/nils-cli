@@ -28,35 +28,19 @@ pub fn run() -> Result<i32> {
     let secret_dir = paths::resolve_secret_dir();
     let mut matched: Option<(String, MatchMode)> = None;
 
-    if let Some(secret_dir) = secret_dir {
-        if let Ok(entries) = std::fs::read_dir(&secret_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) != Some("json") {
-                    continue;
-                }
+    if let Some(secret_dir) = secret_dir
+        && let Ok(entries) = std::fs::read_dir(&secret_dir)
+    {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
 
-                if let Some(key) = auth_key.as_deref() {
-                    if let Ok(Some(candidate_key)) = auth::identity_key_from_auth_file(&path) {
-                        if candidate_key == key {
-                            let candidate_hash = match fs::sha256_file(&path) {
-                                Ok(hash) => hash,
-                                Err(_) => {
-                                    eprintln!("codex: failed to hash {}", path.display());
-                                    return Ok(1);
-                                }
-                            };
-                            let mode = if candidate_hash == auth_hash {
-                                MatchMode::Exact
-                            } else {
-                                MatchMode::Identity
-                            };
-                            matched = Some((file_name(&path), mode));
-                            break;
-                        }
-                    }
-                }
-
+            if let Some(key) = auth_key.as_deref()
+                && let Ok(Some(candidate_key)) = auth::identity_key_from_auth_file(&path)
+                && candidate_key == key
+            {
                 let candidate_hash = match fs::sha256_file(&path) {
                     Ok(hash) => hash,
                     Err(_) => {
@@ -64,10 +48,25 @@ pub fn run() -> Result<i32> {
                         return Ok(1);
                     }
                 };
-                if candidate_hash == auth_hash {
-                    matched = Some((file_name(&path), MatchMode::Exact));
-                    break;
+                let mode = if candidate_hash == auth_hash {
+                    MatchMode::Exact
+                } else {
+                    MatchMode::Identity
+                };
+                matched = Some((file_name(&path), mode));
+                break;
+            }
+
+            let candidate_hash = match fs::sha256_file(&path) {
+                Ok(hash) => hash,
+                Err(_) => {
+                    eprintln!("codex: failed to hash {}", path.display());
+                    return Ok(1);
                 }
+            };
+            if candidate_hash == auth_hash {
+                matched = Some((file_name(&path), MatchMode::Exact));
+                break;
             }
         }
     }

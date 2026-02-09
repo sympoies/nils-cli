@@ -364,16 +364,16 @@ fn cmd_summary(args: &SummaryArgs) -> i32 {
         }
     }
 
-    if !args.no_github_summary {
-        if let Ok(path) = std::env::var("GITHUB_STEP_SUMMARY") {
-            let path = path.trim();
-            if !path.is_empty() {
-                let _ = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(path)
-                    .and_then(|mut f| writeln!(f, "\n{md}\n"));
-            }
+    if !args.no_github_summary
+        && let Ok(path) = std::env::var("GITHUB_STEP_SUMMARY")
+    {
+        let path = path.trim();
+        if !path.is_empty() {
+            let _ = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .and_then(|mut f| writeln!(f, "\n{md}\n"));
         }
     }
 

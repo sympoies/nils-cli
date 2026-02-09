@@ -81,11 +81,11 @@ pub fn run(args: &[String]) -> i32 {
         Err(code) => return code,
     };
 
-    if let Some(path) = options.message_out.as_deref() {
-        if let Err(err) = write_message_file(path, &message_contents) {
-            eprintln!("error: failed to write --message-out file: {err}");
-            return EXIT_ERROR;
-        }
+    if let Some(path) = options.message_out.as_deref()
+        && let Err(err) = write_message_file(path, &message_contents)
+    {
+        eprintln!("error: failed to write --message-out file: {err}");
+        return EXIT_ERROR;
     }
 
     let tmpfile = match tempfile::NamedTempFile::new() {

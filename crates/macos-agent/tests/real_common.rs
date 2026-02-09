@@ -900,14 +900,13 @@ fn record_step_entry(
             stderr_excerpt: compact_log_excerpt(&out.stderr_text()),
         };
 
-        if let Ok(line) = serde_json::to_string(&entry) {
-            if let Ok(mut file) = std::fs::OpenOptions::new()
+        if let Ok(line) = serde_json::to_string(&entry)
+            && let Ok(mut file) = std::fs::OpenOptions::new()
                 .append(true)
                 .create(true)
                 .open(&state.steps_path)
-            {
-                let _ = writeln!(file, "{line}");
-            }
+        {
+            let _ = writeln!(file, "{line}");
         }
     });
 }
@@ -1297,10 +1296,10 @@ fn run_with_timeout(
     }
 
     let mut child = cmd.spawn().expect("spawn command");
-    if let Some(input) = options.stdin.as_ref() {
-        if let Some(mut writer) = child.stdin.take() {
-            writer.write_all(input).expect("write stdin");
-        }
+    if let Some(input) = options.stdin.as_ref()
+        && let Some(mut writer) = child.stdin.take()
+    {
+        writer.write_all(input).expect("write stdin");
     }
 
     let pid = child.id();

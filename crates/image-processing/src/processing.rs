@@ -246,10 +246,11 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
         return Err(util::usage_err("--report is not supported for info"));
     }
 
-    if let Some(mode) = output_mode {
-        if mode.mode == "out" && inputs.len() != 1 {
-            return Err(util::usage_err("--out requires exactly one input file"));
-        }
+    if let Some(mode) = output_mode
+        && mode.mode == "out"
+        && inputs.len() != 1
+    {
+        return Err(util::usage_err("--out requires exactly one input file"));
     }
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -301,15 +302,15 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
 
             let out_abs = util::abs_path(&out_path, &cwd);
 
-            if subcommand == Operation::Convert {
-                if let Some(to) = convert_to {
-                    let ext = ext_normalize(&out_abs);
-                    if ext != to {
-                        return Err(util::usage_err(format!(
-                            "--out extension must match --to {to}: {}",
-                            out_abs.display()
-                        )));
-                    }
+            if subcommand == Operation::Convert
+                && let Some(to) = convert_to
+            {
+                let ext = ext_normalize(&out_abs);
+                if ext != to {
+                    return Err(util::usage_err(format!(
+                        "--out extension must match --to {to}: {}",
+                        out_abs.display()
+                    )));
                 }
             }
 
@@ -361,11 +362,9 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
                 util::check_overwrite(out_abs, overwrite)?;
             }
 
-            if report_enabled {
-                if let Some(run_dir) = run_dir {
-                    let report_path = run_dir.join("report.md");
-                    util::check_overwrite(&report_path, overwrite)?;
-                }
+            if report_enabled && let Some(run_dir) = run_dir {
+                let report_path = run_dir.join("report.md");
+                util::check_overwrite(&report_path, overwrite)?;
             }
         }
     } else {
@@ -822,10 +821,10 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
             Operation::Optimize => {
                 let out_abs = out_abs.as_ref().expect("out_abs");
                 let tmp = util::safe_write_path(out_abs, dry_run);
-                if let Some(q) = quality {
-                    if !(0..=100).contains(&q) {
-                        return Err(anyhow::anyhow!("--quality must be 0..100"));
-                    }
+                if let Some(q) = quality
+                    && !(0..=100).contains(&q)
+                {
+                    return Err(anyhow::anyhow!("--quality must be 0..100"));
                 }
 
                 if out_ext == "jpg" {
@@ -992,18 +991,15 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
     }
 
     let mut report_path: Option<String> = None;
-    if report_enabled {
-        if let Some(run_dir) = run_dir {
-            let run_id = run_dir
-                .file_name()
-                .map(|x| x.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let report_md =
-                render_report_md(&run_id, subcommand.as_str(), &items, &commands, dry_run);
-            let report_file = run_dir.join("report.md");
-            std::fs::write(&report_file, report_md)?;
-            report_path = Some(util::maybe_relpath(&report_file, repo_root));
-        }
+    if report_enabled && let Some(run_dir) = run_dir {
+        let run_id = run_dir
+            .file_name()
+            .map(|x| x.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let report_md = render_report_md(&run_id, subcommand.as_str(), &items, &commands, dry_run);
+        let report_file = run_dir.join("report.md");
+        std::fs::write(&report_file, report_md)?;
+        report_path = Some(util::maybe_relpath(&report_file, repo_root));
     }
 
     let summary = Summary {

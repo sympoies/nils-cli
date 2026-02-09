@@ -43,7 +43,8 @@ impl EnvGuard {
     pub fn set(lock: &GlobalStateLock, key: &str, value: &str) -> Self {
         let _ = lock;
         let original = env::var(key).ok();
-        env::set_var(key, value);
+        // SAFETY: tests mutate process environment only while holding GlobalStateLock.
+        unsafe { env::set_var(key, value) };
         Self {
             key: key.to_string(),
             original,
@@ -54,7 +55,8 @@ impl EnvGuard {
     pub fn remove(lock: &GlobalStateLock, key: &str) -> Self {
         let _ = lock;
         let original = env::var(key).ok();
-        env::remove_var(key);
+        // SAFETY: tests mutate process environment only while holding GlobalStateLock.
+        unsafe { env::remove_var(key) };
         Self {
             key: key.to_string(),
             original,
@@ -65,8 +67,14 @@ impl EnvGuard {
 impl Drop for EnvGuard {
     fn drop(&mut self) {
         match &self.original {
-            Some(value) => env::set_var(&self.key, value),
-            None => env::remove_var(&self.key),
+            Some(value) => {
+                // SAFETY: tests mutate process environment only while holding GlobalStateLock.
+                unsafe { env::set_var(&self.key, value) };
+            }
+            None => {
+                // SAFETY: tests mutate process environment only while holding GlobalStateLock.
+                unsafe { env::remove_var(&self.key) };
+            }
         }
     }
 }

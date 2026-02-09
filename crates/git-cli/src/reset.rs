@@ -482,20 +482,20 @@ fn reset_remote(args: &[String]) -> i32 {
         git_stdout_trimmed(&["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
             .unwrap_or_default();
 
-    if remote.is_empty() {
-        if let Some((remote_ref, _)) = upstream.split_once('/') {
-            remote = remote_ref.to_string();
-        }
+    if remote.is_empty()
+        && let Some((remote_ref, _)) = upstream.split_once('/')
+    {
+        remote = remote_ref.to_string();
     }
     if remote.is_empty() {
         remote = "origin".to_string();
     }
 
     if remote_branch.is_empty() {
-        if let Some((_, branch_ref)) = upstream.split_once('/') {
-            if branch_ref != "HEAD" {
-                remote_branch = branch_ref.to_string();
-            }
+        if let Some((_, branch_ref)) = upstream.split_once('/')
+            && branch_ref != "HEAD"
+        {
+            remote_branch = branch_ref.to_string();
         }
         if remote_branch.is_empty() {
             remote_branch = current_branch.clone();

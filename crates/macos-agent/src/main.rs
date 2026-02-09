@@ -32,16 +32,16 @@ fn main() -> ExitCode {
                 let mut parse_error = CliError::usage(err.to_string())
                     .with_operation("cli.parse")
                     .with_hint("Run `macos-agent --help` to inspect supported command syntax.");
-                if requested_trace {
-                    if let Err(trace_error) = write_trace(
+                if requested_trace
+                    && let Err(trace_error) = write_trace(
                         None,
                         &raw_args,
                         started.elapsed().as_millis() as u64,
                         false,
                         Some(&parse_error),
-                    ) {
-                        parse_error = parse_error.with_hint(trace_write_hint(&trace_error));
-                    }
+                    )
+                {
+                    parse_error = parse_error.with_hint(trace_write_hint(&trace_error));
                 }
                 emit_error(&parse_error, requested_error_format);
             }
@@ -50,11 +50,9 @@ fn main() -> ExitCode {
     };
 
     let trace_enabled = cli.trace || cli.trace_dir.is_some();
-    if trace_enabled {
-        if let Err(error) = ensure_trace_dir_writable(&cli) {
-            emit_error(&error, cli.error_format);
-            return ExitCode::from(error.exit_code());
-        }
+    if trace_enabled && let Err(error) = ensure_trace_dir_writable(&cli) {
+        emit_error(&error, cli.error_format);
+        return ExitCode::from(error.exit_code());
     }
 
     match run(cli.clone()) {
@@ -72,16 +70,16 @@ fn main() -> ExitCode {
         }
         Err(err) => {
             let mut err = err;
-            if trace_enabled {
-                if let Err(trace_error) = write_trace(
+            if trace_enabled
+                && let Err(trace_error) = write_trace(
                     Some(&cli),
                     &raw_args,
                     started.elapsed().as_millis() as u64,
                     false,
                     Some(&err),
-                ) {
-                    err = err.with_hint(trace_write_hint(&trace_error));
-                }
+                )
+            {
+                err = err.with_hint(trace_write_hint(&trace_error));
             }
             emit_error(&err, cli.error_format);
             ExitCode::from(err.exit_code())
@@ -120,17 +118,17 @@ fn detect_error_format(args: &[String]) -> ErrorFormat {
     let mut iter = args.iter().skip(1);
     while let Some(arg) = iter.next() {
         if arg == "--error-format" {
-            if let Some(value) = iter.next() {
-                if value.eq_ignore_ascii_case("json") {
-                    return ErrorFormat::Json;
-                }
+            if let Some(value) = iter.next()
+                && value.eq_ignore_ascii_case("json")
+            {
+                return ErrorFormat::Json;
             }
             continue;
         }
-        if let Some(value) = arg.strip_prefix("--error-format=") {
-            if value.eq_ignore_ascii_case("json") {
-                return ErrorFormat::Json;
-            }
+        if let Some(value) = arg.strip_prefix("--error-format=")
+            && value.eq_ignore_ascii_case("json")
+        {
+            return ErrorFormat::Json;
         }
     }
     ErrorFormat::Text
@@ -201,10 +199,10 @@ fn trace_write_hint(error: &std::io::Error) -> String {
 }
 
 fn trace_dir(cli: Option<&Cli>) -> PathBuf {
-    if let Some(cli) = cli {
-        if let Some(path) = cli.trace_dir.clone() {
-            return path;
-        }
+    if let Some(cli) = cli
+        && let Some(path) = cli.trace_dir.clone()
+    {
+        return path;
     }
     codex_out_dir().join("macos-agent-trace")
 }

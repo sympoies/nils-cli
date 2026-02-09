@@ -166,13 +166,14 @@ fn parse_graphql_call_args(
     let mut jwt: Option<String> = None;
 
     let mut args: Vec<String> = raw_args.to_vec();
-    if let Some(first) = args.first().cloned() {
-        if !first.starts_with('-') && first != "--" {
-            if first == "call" {
-                args.remove(0);
-            } else if matches!(first.as_str(), "history" | "report" | "schema") {
-                return Err(CmdSnippetError::UnsupportedSubcommand { subcommand: first });
-            }
+    if let Some(first) = args.first().cloned()
+        && !first.starts_with('-')
+        && first != "--"
+    {
+        if first == "call" {
+            args.remove(0);
+        } else if matches!(first.as_str(), "history" | "report" | "schema") {
+            return Err(CmdSnippetError::UnsupportedSubcommand { subcommand: first });
         }
     }
 
@@ -274,13 +275,14 @@ fn parse_rest_call_args(
     let mut token: Option<String> = None;
 
     let mut args: Vec<String> = raw_args.to_vec();
-    if let Some(first) = args.first().cloned() {
-        if !first.starts_with('-') && first != "--" {
-            if first == "call" {
-                args.remove(0);
-            } else if matches!(first.as_str(), "history" | "report") {
-                return Err(CmdSnippetError::UnsupportedSubcommand { subcommand: first });
-            }
+    if let Some(first) = args.first().cloned()
+        && !first.starts_with('-')
+        && first != "--"
+    {
+        if first == "call" {
+            args.remove(0);
+        } else if matches!(first.as_str(), "history" | "report") {
+            return Err(CmdSnippetError::UnsupportedSubcommand { subcommand: first });
         }
     }
 
@@ -612,7 +614,8 @@ mod tests {
         let _g = ENV_LOCK.lock().expect("lock");
         let key = "NILS_TEST_HOME";
         let prev = std::env::var(key).ok();
-        std::env::set_var(key, "/tmp/nils-test-home");
+        // SAFETY: tests mutate process env while guarded by ENV_LOCK.
+        unsafe { std::env::set_var(key, "/tmp/nils-test-home") };
 
         let s = "$NILS_TEST_HOME/bin/api-gql call --env staging op.graphql";
         let tokens = tokenize_call_snippet(s).expect("tokens");
@@ -628,9 +631,11 @@ mod tests {
         );
 
         if let Some(v) = prev {
-            std::env::set_var(key, v);
+            // SAFETY: tests restore process env while guarded by ENV_LOCK.
+            unsafe { std::env::set_var(key, v) };
         } else {
-            std::env::remove_var(key);
+            // SAFETY: tests restore process env while guarded by ENV_LOCK.
+            unsafe { std::env::remove_var(key) };
         }
     }
 

@@ -44,10 +44,10 @@ pub fn timestamp_epoch(timestamp: &str) -> i64 {
         return 0;
     }
 
-    if let Ok(parsed) = NaiveDateTime::parse_from_str(timestamp.trim(), "%Y-%m-%d %H:%M:%S") {
-        if let Some(local) = Local.from_local_datetime(&parsed).single() {
-            return local.timestamp();
-        }
+    if let Ok(parsed) = NaiveDateTime::parse_from_str(timestamp.trim(), "%Y-%m-%d %H:%M:%S")
+        && let Some(local) = Local.from_local_datetime(&parsed).single()
+    {
+        return local.timestamp();
     }
 
     0

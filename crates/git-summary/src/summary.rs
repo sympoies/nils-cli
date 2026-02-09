@@ -15,24 +15,24 @@ pub fn summary(since: Option<&str>, until: Option<&str>) -> i32 {
         return 1;
     }
 
-    if let Some(value) = since {
-        if let Err(msg) = validate_date(value) {
-            println!("{msg}");
-            return 1;
-        }
+    if let Some(value) = since
+        && let Err(msg) = validate_date(value)
+    {
+        println!("{msg}");
+        return 1;
     }
-    if let Some(value) = until {
-        if let Err(msg) = validate_date(value) {
-            println!("{msg}");
-            return 1;
-        }
+    if let Some(value) = until
+        && let Err(msg) = validate_date(value)
+    {
+        println!("{msg}");
+        return 1;
     }
 
-    if let (Some(start), Some(end)) = (since, until) {
-        if start > end {
-            println!("❌ Start date must be on or before end date.");
-            return 1;
-        }
+    if let (Some(start), Some(end)) = (since, until)
+        && start > end
+    {
+        println!("❌ Start date must be on or before end date.");
+        return 1;
     }
 
     let log_args = match (since, until) {
@@ -137,12 +137,12 @@ fn collect_author_row(author: &str, log_args: &[String]) -> Result<Row> {
 }
 
 fn split_author(author: &str) -> (String, String) {
-    if let (Some(start), Some(end)) = (author.find('<'), author.rfind('>')) {
-        if start < end {
-            let name = author[..start].trim().to_string();
-            let email = author[start + 1..end].trim().to_string();
-            return (name, email);
-        }
+    if let (Some(start), Some(end)) = (author.find('<'), author.rfind('>'))
+        && start < end
+    {
+        let name = author[..start].trim().to_string();
+        let email = author[start + 1..end].trim().to_string();
+        return (name, email);
     }
     (author.trim().to_string(), String::new())
 }

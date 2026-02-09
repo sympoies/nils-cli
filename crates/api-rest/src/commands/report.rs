@@ -337,11 +337,11 @@ fn build_report_from_cmd_dry_run_command(args: &ReportArgs) -> String {
         cmd.push_str(" --url ");
         cmd.push_str(&shell_quote(&url));
     }
-    if let Some(env) = args.env.as_deref().and_then(trim_non_empty) {
-        if args.url.as_deref().and_then(trim_non_empty).is_none() {
-            cmd.push_str(" --env ");
-            cmd.push_str(&shell_quote(&env));
-        }
+    if let Some(env) = args.env.as_deref().and_then(trim_non_empty)
+        && args.url.as_deref().and_then(trim_non_empty).is_none()
+    {
+        cmd.push_str(" --env ");
+        cmd.push_str(&shell_quote(&env));
     }
     if let Some(token) = args.token.as_deref().and_then(trim_non_empty) {
         cmd.push_str(" --token ");
@@ -399,10 +399,10 @@ fn build_report_command_snippet(
         };
         out.push_str(&format!("  --url {} \\\n", shell_quote(&value)));
     }
-    if let Some(env) = args.env.as_deref().and_then(trim_non_empty) {
-        if args.url.as_deref().and_then(trim_non_empty).is_none() {
-            out.push_str(&format!("  --env {} \\\n", shell_quote(&env)));
-        }
+    if let Some(env) = args.env.as_deref().and_then(trim_non_empty)
+        && args.url.as_deref().and_then(trim_non_empty).is_none()
+    {
+        out.push_str(&format!("  --env {} \\\n", shell_quote(&env)));
     }
     if let Some(token) = args.token.as_deref().and_then(trim_non_empty) {
         out.push_str(&format!("  --token {} \\\n", shell_quote(&token)));

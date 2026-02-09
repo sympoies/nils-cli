@@ -108,10 +108,10 @@ fn find_token_in_value(value: &serde_json::Value) -> Option<String> {
         }
         serde_json::Value::Array(values) => values.iter().find_map(find_token_in_value),
         serde_json::Value::Object(map) => {
-            if let Some(v) = map.get("accessToken").or_else(|| map.get("token")) {
-                if let Some(t) = find_token_in_value(v) {
-                    return Some(t);
-                }
+            if let Some(v) = map.get("accessToken").or_else(|| map.get("token"))
+                && let Some(t) = find_token_in_value(v)
+            {
+                return Some(t);
             }
             for v in map.values() {
                 if let Some(t) = find_token_in_value(v) {

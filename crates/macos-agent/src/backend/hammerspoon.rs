@@ -1881,10 +1881,10 @@ where
         return parse_hs_output(operation, &override_json);
     }
 
-    if test_mode::enabled() {
-        if let Some(default_json) = test_mode_default_json(operation) {
-            return parse_hs_output(operation, default_json);
-        }
+    if test_mode::enabled()
+        && let Some(default_json) = test_mode_default_json(operation)
+    {
+        return parse_hs_output(operation, default_json);
     }
 
     let payload_json = serde_json::to_string(payload).map_err(|err| {

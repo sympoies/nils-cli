@@ -41,11 +41,11 @@ fn mask_args_for_command_snippet(args: &[String]) -> String {
             mask_next = true;
             continue;
         }
-        if let Some((k, _v)) = a.split_once('=') {
-            if k == "--token" || k == "--jwt" {
-                out.push(format!("{k}=REDACTED"));
-                continue;
-            }
+        if let Some((k, _v)) = a.split_once('=')
+            && (k == "--token" || k == "--jwt")
+        {
+            out.push(format!("{k}=REDACTED"));
+            continue;
         }
         out.push(a.clone());
     }

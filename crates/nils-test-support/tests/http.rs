@@ -22,23 +22,23 @@ fn read_response(stream: &mut TcpStream) -> Vec<u8> {
             Ok(0) => break,
             Ok(n) => {
                 buf.extend_from_slice(&tmp[..n]);
-                if header_end.is_none() {
-                    if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-                        header_end = Some(pos + 4);
-                        let header_text = String::from_utf8_lossy(&buf[..pos]);
-                        for line in header_text.split("\r\n") {
-                            if let Some((k, v)) = line.split_once(':') {
-                                if k.trim().eq_ignore_ascii_case("content-length") {
-                                    content_len = v.trim().parse::<usize>().ok();
-                                }
-                            }
+                if header_end.is_none()
+                    && let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n")
+                {
+                    header_end = Some(pos + 4);
+                    let header_text = String::from_utf8_lossy(&buf[..pos]);
+                    for line in header_text.split("\r\n") {
+                        if let Some((k, v)) = line.split_once(':')
+                            && k.trim().eq_ignore_ascii_case("content-length")
+                        {
+                            content_len = v.trim().parse::<usize>().ok();
                         }
                     }
                 }
-                if let (Some(end), Some(len)) = (header_end, content_len) {
-                    if buf.len() >= end + len {
-                        break;
-                    }
+                if let (Some(end), Some(len)) = (header_end, content_len)
+                    && buf.len() >= end + len
+                {
+                    break;
                 }
             }
             Err(err)

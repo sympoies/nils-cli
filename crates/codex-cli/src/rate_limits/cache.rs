@@ -177,10 +177,10 @@ fn starship_cache_dir() -> Result<PathBuf> {
 }
 
 fn cache_root() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("ZSH_CACHE_DIR") {
-        if !path.is_empty() {
-            return Some(PathBuf::from(path));
-        }
+    if let Ok(path) = std::env::var("ZSH_CACHE_DIR")
+        && !path.is_empty()
+    {
+        return Some(PathBuf::from(path));
     }
     let zdotdir = paths::resolve_zdotdir()?;
     Some(zdotdir.join("cache"))

@@ -200,7 +200,8 @@ mod tests {
     impl EnvGuard {
         fn set(key: &'static str, value: &str) -> Self {
             let original = std::env::var(key).ok();
-            std::env::set_var(key, value);
+            // SAFETY: tests mutate process env only in scoped guard usage.
+            unsafe { std::env::set_var(key, value) };
             Self { key, original }
         }
     }
@@ -208,8 +209,14 @@ mod tests {
     impl Drop for EnvGuard {
         fn drop(&mut self) {
             match &self.original {
-                Some(value) => std::env::set_var(self.key, value),
-                None => std::env::remove_var(self.key),
+                Some(value) => {
+                    // SAFETY: tests restore process env only in scoped guard usage.
+                    unsafe { std::env::set_var(self.key, value) };
+                }
+                None => {
+                    // SAFETY: tests restore process env only in scoped guard usage.
+                    unsafe { std::env::remove_var(self.key) };
+                }
             }
         }
     }

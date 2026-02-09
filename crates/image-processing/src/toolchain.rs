@@ -99,14 +99,14 @@ pub fn probe_image(toolchain: &Toolchain, path: &Path) -> ImageInfo {
     if let Some(fmt) = parts.first().copied().filter(|s| !s.trim().is_empty()) {
         info.format = Some(fmt.trim().to_string());
     }
-    if parts.len() >= 3 {
-        if let (Ok(w), Ok(h)) = (
+    if parts.len() >= 3
+        && let (Ok(w), Ok(h)) = (
             parts[1].trim().parse::<i32>(),
             parts[2].trim().parse::<i32>(),
-        ) {
-            info.width = Some(w);
-            info.height = Some(h);
-        }
+        )
+    {
+        info.width = Some(w);
+        info.height = Some(h);
     }
     if parts.len() >= 4 {
         let ch = parts[3].trim();

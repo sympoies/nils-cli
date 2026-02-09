@@ -41,10 +41,10 @@ pub fn expand_user(raw: &str) -> PathBuf {
         return home_dir().unwrap_or_else(|| PathBuf::from(raw));
     }
 
-    if let Some(rest) = raw.strip_prefix("~/") {
-        if let Some(home) = home_dir() {
-            return home.join(rest);
-        }
+    if let Some(rest) = raw.strip_prefix("~/")
+        && let Some(home) = home_dir()
+    {
+        return home.join(rest);
     }
 
     PathBuf::from(raw)
@@ -207,7 +207,8 @@ mod tests {
     impl EnvGuard {
         fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
             let old = std::env::var_os(key);
-            std::env::set_var(key, value);
+            // SAFETY: test code mutates process env in a scoped guard.
+            unsafe { std::env::set_var(key, value) };
             Self { key, old }
         }
     }
@@ -215,9 +216,11 @@ mod tests {
     impl Drop for EnvGuard {
         fn drop(&mut self) {
             if let Some(value) = self.old.take() {
-                std::env::set_var(self.key, value);
+                // SAFETY: test code restores process env in a scoped guard.
+                unsafe { std::env::set_var(self.key, value) };
             } else {
-                std::env::remove_var(self.key);
+                // SAFETY: test code restores process env in a scoped guard.
+                unsafe { std::env::remove_var(self.key) };
             }
         }
     }

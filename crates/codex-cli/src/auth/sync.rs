@@ -30,38 +30,38 @@ pub fn run() -> Result<i32> {
     };
 
     let secret_dir = paths::resolve_secret_dir();
-    if let Some(secret_dir) = secret_dir {
-        if let Ok(entries) = std::fs::read_dir(&secret_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) != Some("json") {
-                    continue;
-                }
-                let candidate_key = match auth::identity_key_from_auth_file(&path) {
-                    Ok(Some(key)) => key,
-                    _ => continue,
-                };
-                if candidate_key != auth_key {
-                    continue;
-                }
-
-                let secret_hash = match fs::sha256_file(&path) {
-                    Ok(hash) => hash,
-                    Err(_) => {
-                        eprintln!("codex: failed to hash {}", path.display());
-                        return Ok(1);
-                    }
-                };
-                if secret_hash == auth_hash {
-                    continue;
-                }
-
-                let contents = std::fs::read(&auth_file)?;
-                fs::write_atomic(&path, &contents, fs::SECRET_FILE_MODE)?;
-
-                let timestamp_path = secret_timestamp_path(&path)?;
-                fs::write_timestamp(&timestamp_path, auth_last_refresh.as_deref())?;
+    if let Some(secret_dir) = secret_dir
+        && let Ok(entries) = std::fs::read_dir(&secret_dir)
+    {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
             }
+            let candidate_key = match auth::identity_key_from_auth_file(&path) {
+                Ok(Some(key)) => key,
+                _ => continue,
+            };
+            if candidate_key != auth_key {
+                continue;
+            }
+
+            let secret_hash = match fs::sha256_file(&path) {
+                Ok(hash) => hash,
+                Err(_) => {
+                    eprintln!("codex: failed to hash {}", path.display());
+                    return Ok(1);
+                }
+            };
+            if secret_hash == auth_hash {
+                continue;
+            }
+
+            let contents = std::fs::read(&auth_file)?;
+            fs::write_atomic(&path, &contents, fs::SECRET_FILE_MODE)?;
+
+            let timestamp_path = secret_timestamp_path(&path)?;
+            fs::write_timestamp(&timestamp_path, auth_last_refresh.as_deref())?;
         }
     }
 

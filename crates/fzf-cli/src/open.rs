@@ -76,10 +76,10 @@ fn open_in_vscode_workspace(workspace_root: &Path, file: &Path, wait: bool) -> a
 }
 
 pub fn open_in_vscode(file: &Path, wait: bool) -> anyhow::Result<()> {
-    if let Some(parent) = file.parent() {
-        if let Some(git_root) = find_git_root_upwards(parent, 5) {
-            return open_in_vscode_workspace(&git_root, file, wait);
-        }
+    if let Some(parent) = file.parent()
+        && let Some(git_root) = find_git_root_upwards(parent, 5)
+    {
+        return open_in_vscode_workspace(&git_root, file, wait);
     }
 
     ensure_code_available()?;
@@ -184,7 +184,8 @@ mod tests {
     impl EnvGuard {
         fn set(key: &'static str, value: &str) -> Self {
             let original = std::env::var(key).ok();
-            std::env::set_var(key, value);
+            // SAFETY: tests mutate process env only in scoped guard usage.
+            unsafe { std::env::set_var(key, value) };
             Self { key, original }
         }
     }
@@ -192,8 +193,14 @@ mod tests {
     impl Drop for EnvGuard {
         fn drop(&mut self) {
             match &self.original {
-                Some(value) => std::env::set_var(self.key, value),
-                None => std::env::remove_var(self.key),
+                Some(value) => {
+                    // SAFETY: tests restore process env only in scoped guard usage.
+                    unsafe { std::env::set_var(self.key, value) };
+                }
+                None => {
+                    // SAFETY: tests restore process env only in scoped guard usage.
+                    unsafe { std::env::remove_var(self.key) };
+                }
             }
         }
     }

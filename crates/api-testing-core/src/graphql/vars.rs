@@ -17,15 +17,13 @@ fn bump_limits_in_json(value: &mut serde_json::Value, min_limit: u64) -> usize {
         serde_json::Value::Object(map) => {
             let mut bumped = 0usize;
             for (k, v) in map.iter_mut() {
-                if k == "limit" {
-                    if let serde_json::Value::Number(n) = v {
-                        if let Some(as_f64) = n.as_f64() {
-                            if as_f64 < (min_limit as f64) {
-                                *n = serde_json::Number::from(min_limit);
-                                bumped += 1;
-                            }
-                        }
-                    }
+                if k == "limit"
+                    && let serde_json::Value::Number(n) = v
+                    && let Some(as_f64) = n.as_f64()
+                    && as_f64 < (min_limit as f64)
+                {
+                    *n = serde_json::Number::from(min_limit);
+                    bumped += 1;
                 }
                 bumped += bump_limits_in_json(v, min_limit);
             }

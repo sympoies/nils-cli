@@ -333,7 +333,8 @@ mod tests {
 
     #[test]
     fn suite_resolve_resolves_suite_name_under_tests_dir() {
-        std::env::remove_var("API_TEST_SUITES_DIR");
+        // SAFETY: tests mutate process env in isolated test scope.
+        unsafe { std::env::remove_var("API_TEST_SUITES_DIR") };
 
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
@@ -353,7 +354,8 @@ mod tests {
 
     #[test]
     fn suite_resolve_resolves_suite_name_under_setup_dir() {
-        std::env::remove_var("API_TEST_SUITES_DIR");
+        // SAFETY: tests mutate process env in isolated test scope.
+        unsafe { std::env::remove_var("API_TEST_SUITES_DIR") };
 
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();

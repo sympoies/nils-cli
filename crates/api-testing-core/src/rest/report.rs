@@ -49,10 +49,10 @@ pub fn render_rest_report_markdown(report: &RestReport) -> String {
         true,
     );
 
-    if let Some(stderr_note) = &report.stderr_note {
-        if !stderr_note.is_empty() {
-            builder.push_code_section("stderr", "text", stderr_note, None, false);
-        }
+    if let Some(stderr_note) = &report.stderr_note
+        && !stderr_note.is_empty()
+    {
+        builder.push_code_section("stderr", "text", stderr_note, None, false);
     }
 
     builder.finish()

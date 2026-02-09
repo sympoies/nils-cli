@@ -44,19 +44,19 @@ pub fn run(
             }
         };
 
-        if let Some(wait_ms) = args.wait_ms {
-            if let Err(wait_err) = wait_for_active_confirmation(runner, &target, wait_ms) {
-                if !args.reopen_on_fail {
-                    return Err(add_reopen_hint(wait_err));
-                }
-                applescript::reopen(runner, &target, policy.timeout_ms).map_err(add_reopen_hint)?;
-                let (_, wait_recover_attempts) = run_with_retry(retry, || {
-                    applescript::activate(runner, &target, policy.timeout_ms)
-                })
-                .map_err(add_reopen_hint)?;
-                attempts_used = attempts_used.saturating_add(wait_recover_attempts);
-                wait_for_active_confirmation(runner, &target, wait_ms).map_err(add_reopen_hint)?;
+        if let Some(wait_ms) = args.wait_ms
+            && let Err(wait_err) = wait_for_active_confirmation(runner, &target, wait_ms)
+        {
+            if !args.reopen_on_fail {
+                return Err(add_reopen_hint(wait_err));
             }
+            applescript::reopen(runner, &target, policy.timeout_ms).map_err(add_reopen_hint)?;
+            let (_, wait_recover_attempts) = run_with_retry(retry, || {
+                applescript::activate(runner, &target, policy.timeout_ms)
+            })
+            .map_err(add_reopen_hint)?;
+            attempts_used = attempts_used.saturating_add(wait_recover_attempts);
+            wait_for_active_confirmation(runner, &target, wait_ms).map_err(add_reopen_hint)?;
         }
     }
 

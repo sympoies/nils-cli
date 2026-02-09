@@ -325,10 +325,10 @@ fn command_exists(name: &str) -> bool {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            if let Ok(meta) = std::fs::metadata(&full) {
-                if meta.permissions().mode() & 0o111 != 0 {
-                    return true;
-                }
+            if let Ok(meta) = std::fs::metadata(&full)
+                && meta.permissions().mode() & 0o111 != 0
+            {
+                return true;
             }
         }
         #[cfg(not(unix))]
@@ -353,7 +353,8 @@ mod tests {
     impl EnvGuard {
         fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
             let old = std::env::var_os(key);
-            std::env::set_var(key, value);
+            // SAFETY: tests mutate process env only in scoped guard usage.
+            unsafe { std::env::set_var(key, value) };
             Self { key, old }
         }
     }
@@ -361,9 +362,11 @@ mod tests {
     impl Drop for EnvGuard {
         fn drop(&mut self) {
             if let Some(value) = self.old.take() {
-                std::env::set_var(self.key, value);
+                // SAFETY: tests restore process env only in scoped guard usage.
+                unsafe { std::env::set_var(self.key, value) };
             } else {
-                std::env::remove_var(self.key);
+                // SAFETY: tests restore process env only in scoped guard usage.
+                unsafe { std::env::remove_var(self.key) };
             }
         }
     }
