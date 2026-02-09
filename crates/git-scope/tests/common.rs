@@ -2,7 +2,7 @@ use std::path::Path;
 use std::process::Output;
 
 use nils_test_support::bin::resolve;
-use nils_test_support::cmd::{CmdOptions, CmdOutput, run_with};
+use nils_test_support::cmd::{CmdOptions, run_with};
 pub use nils_test_support::git::git;
 use nils_test_support::git::{InitRepoOptions, init_repo_with};
 
@@ -33,27 +33,5 @@ pub fn run_git_scope_output(dir: &Path, args: &[&str], envs: &[(&str, &str)]) ->
             output.stdout_text()
         );
     }
-    output_from_cmd(output)
-}
-
-fn output_from_cmd(output: CmdOutput) -> Output {
-    Output {
-        status: exit_status_from_code(output.code),
-        stdout: output.stdout,
-        stderr: output.stderr,
-    }
-}
-
-#[cfg(unix)]
-fn exit_status_from_code(code: i32) -> std::process::ExitStatus {
-    use std::os::unix::process::ExitStatusExt;
-    let raw = if code >= 0 { code << 8 } else { 1 << 8 };
-    std::process::ExitStatus::from_raw(raw)
-}
-
-#[cfg(windows)]
-fn exit_status_from_code(code: i32) -> std::process::ExitStatus {
-    use std::os::windows::process::ExitStatusExt;
-    let raw = if code >= 0 { code as u32 } else { 1 };
-    std::process::ExitStatus::from_raw(raw)
+    output.into_output()
 }

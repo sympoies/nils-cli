@@ -1,6 +1,6 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 
 /// Output captured from a command invocation.
 #[derive(Debug)]
@@ -22,6 +22,30 @@ impl CmdOutput {
     pub fn stderr_text(&self) -> String {
         String::from_utf8_lossy(&self.stderr).to_string()
     }
+
+    /// Convert to `std::process::Output` for integration with assertion APIs
+    /// that expect process output semantics.
+    pub fn into_output(self) -> Output {
+        Output {
+            status: exit_status_from_code(self.code),
+            stdout: self.stdout,
+            stderr: self.stderr,
+        }
+    }
+}
+
+#[cfg(unix)]
+fn exit_status_from_code(code: i32) -> std::process::ExitStatus {
+    use std::os::unix::process::ExitStatusExt;
+    let raw = if code >= 0 { code << 8 } else { 1 << 8 };
+    std::process::ExitStatus::from_raw(raw)
+}
+
+#[cfg(windows)]
+fn exit_status_from_code(code: i32) -> std::process::ExitStatus {
+    use std::os::windows::process::ExitStatusExt;
+    let raw = if code >= 0 { code as u32 } else { 1 };
+    std::process::ExitStatus::from_raw(raw)
 }
 
 #[derive(Debug, Clone)]

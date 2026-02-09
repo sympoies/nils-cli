@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::Output;
 
 use nils_test_support::bin::resolve;
-use nils_test_support::cmd::{CmdOptions, CmdOutput, run_with};
+use nils_test_support::cmd::{CmdOptions, run_with};
 use nils_test_support::git::{InitRepoOptions, init_repo_with};
 #[allow(unused_imports)]
 pub use nils_test_support::git::{commit_file, git, repo_id};
@@ -37,7 +37,7 @@ pub fn run_git_lock_output(
     };
 
     let output = run_with(&git_lock_bin(), args, &options);
-    output_from_cmd(output)
+    output.into_output()
 }
 
 pub fn run_git_lock(
@@ -56,26 +56,4 @@ pub fn run_git_lock(
         );
     }
     String::from_utf8_lossy(&output.stdout).to_string()
-}
-
-fn output_from_cmd(output: CmdOutput) -> Output {
-    Output {
-        status: exit_status_from_code(output.code),
-        stdout: output.stdout,
-        stderr: output.stderr,
-    }
-}
-
-#[cfg(unix)]
-fn exit_status_from_code(code: i32) -> std::process::ExitStatus {
-    use std::os::unix::process::ExitStatusExt;
-    let raw = if code >= 0 { code << 8 } else { 1 << 8 };
-    std::process::ExitStatus::from_raw(raw)
-}
-
-#[cfg(windows)]
-fn exit_status_from_code(code: i32) -> std::process::ExitStatus {
-    use std::os::windows::process::ExitStatusExt;
-    let raw = if code >= 0 { code as u32 } else { 1 };
-    std::process::ExitStatus::from_raw(raw)
 }
