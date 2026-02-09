@@ -2,83 +2,207 @@ use crate::git;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
+const EXIT_ERROR: i32 = 1;
+const EXIT_NO_STAGED_CHANGES: i32 = 2;
+const EXIT_DEPENDENCY_ERROR: i32 = 5;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OutputFormat {
+    Bundle,
+    Json,
+    Patch,
+}
+
+impl OutputFormat {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "bundle" => Some(Self::Bundle),
+            "json" => Some(Self::Json),
+            "patch" => Some(Self::Patch),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct StagedContextOptions {
+    format: OutputFormat,
+    repo: Option<PathBuf>,
+}
+
+impl Default for StagedContextOptions {
+    fn default() -> Self {
+        Self {
+            format: OutputFormat::Bundle,
+            repo: None,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Bundle {
+    context_json: String,
+    patch: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct NumstatEntry {
+    insertions: Option<i64>,
+    deletions: Option<i64>,
+    binary: bool,
+}
+
 pub fn run(args: &[String]) -> i32 {
-    if args.iter().any(|arg| arg == "-h" || arg == "--help") {
-        print_usage_stdout();
-        return 0;
+    let options = match parse_args(args) {
+        Ok(options) => options,
+        Err(code) => return code,
+    };
+
+    if !git::command_exists("git") {
+        eprintln!("error: git is required (ensure it is installed and on PATH)");
+        return EXIT_DEPENDENCY_ERROR;
     }
 
-    if let Some(arg) = args.first() {
-        eprintln!("error: unknown argument: {arg}");
-        print_usage_stderr();
-        return 1;
-    }
-
-    if !git::is_inside_work_tree() {
+    if !git::is_inside_work_tree(options.repo.as_deref()) {
         eprintln!("error: must run inside a git work tree");
-        return 1;
+        return EXIT_ERROR;
     }
 
-    match git::has_staged_changes() {
+    match git::has_staged_changes(options.repo.as_deref()) {
         Ok(true) => {}
         Ok(false) => {
             eprintln!("error: no staged changes (stage files with git add first)");
-            return 2;
+            return EXIT_NO_STAGED_CHANGES;
         }
         Err(err) => {
             eprintln!("{err:#}");
-            return 1;
+            return EXIT_ERROR;
         }
     }
 
-    let (context_json, patch) = match build_bundle() {
+    let bundle = match build_bundle(options.repo.as_deref()) {
         Ok(bundle) => bundle,
         Err(err) => {
             eprintln!("{err:#}");
-            return 1;
+            return EXIT_ERROR;
         }
     };
 
-    println!("===== commit-context.json =====");
-    println!("{context_json}");
-    println!();
-    println!("===== staged.patch =====");
-    if let Err(err) = std::io::stdout().write_all(&patch) {
-        eprintln!("{err:#}");
-        return 1;
+    match options.format {
+        OutputFormat::Bundle => {
+            println!("===== commit-context.json =====");
+            println!("{}", bundle.context_json);
+            println!();
+            println!("===== staged.patch =====");
+            if let Err(err) = std::io::stdout().write_all(&bundle.patch) {
+                eprintln!("{err:#}");
+                return EXIT_ERROR;
+            }
+        }
+        OutputFormat::Json => {
+            println!("{}", bundle.context_json);
+        }
+        OutputFormat::Patch => {
+            if let Err(err) = std::io::stdout().write_all(&bundle.patch) {
+                eprintln!("{err:#}");
+                return EXIT_ERROR;
+            }
+        }
     }
 
     0
 }
 
-fn build_bundle() -> anyhow::Result<(String, Vec<u8>)> {
+fn parse_args(args: &[String]) -> Result<StagedContextOptions, i32> {
+    let mut options = StagedContextOptions::default();
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-h" | "--help" => {
+                print_usage_stdout();
+                return Err(0);
+            }
+            "--format" => {
+                let value = match args.get(i + 1) {
+                    Some(value) => value,
+                    None => {
+                        eprintln!("error: --format requires a value");
+                        print_usage_stderr();
+                        return Err(EXIT_ERROR);
+                    }
+                };
+
+                let Some(format) = OutputFormat::parse(value) else {
+                    eprintln!(
+                        "error: invalid --format value: {value} (expected: bundle, json, patch)"
+                    );
+                    print_usage_stderr();
+                    return Err(EXIT_ERROR);
+                };
+
+                options.format = format;
+                i += 2;
+            }
+            "--json" => {
+                options.format = OutputFormat::Json;
+                i += 1;
+            }
+            "--repo" => {
+                let value = match args.get(i + 1) {
+                    Some(value) => value.clone(),
+                    None => {
+                        eprintln!("error: --repo requires a path");
+                        print_usage_stderr();
+                        return Err(EXIT_ERROR);
+                    }
+                };
+                options.repo = Some(PathBuf::from(value));
+                i += 2;
+            }
+            other => {
+                eprintln!("error: unknown argument: {other}");
+                print_usage_stderr();
+                return Err(EXIT_ERROR);
+            }
+        }
+    }
+
+    Ok(options)
+}
+
+fn build_bundle(repo: Option<&Path>) -> anyhow::Result<Bundle> {
     let generated_at = OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .ok()
         .map(|s| s.to_string());
 
-    let repo_root = git_string(&["rev-parse", "--show-toplevel"])?;
+    let repo_root = git_string(repo, &["rev-parse", "--show-toplevel"])?;
     let repo_name = Path::new(&repo_root)
         .file_name()
         .and_then(|name| name.to_str())
         .map(|s| s.to_string());
 
-    let branch = git_string_ok(&["symbolic-ref", "--quiet", "--short", "HEAD"]);
-    let head = git_string_ok(&["rev-parse", "--short", "HEAD"]);
+    let branch = git_string_ok(repo, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    let head = git_string_ok(repo, &["rev-parse", "--short", "HEAD"]);
 
-    let name_status = git_bytes(&[
-        "-c",
-        "core.quotepath=false",
-        "diff",
-        "--cached",
-        "--name-status",
-        "-z",
-    ])?;
+    let name_status = git_bytes(
+        repo,
+        &[
+            "-c",
+            "core.quotepath=false",
+            "diff",
+            "--cached",
+            "--name-status",
+            "-z",
+        ],
+    )?;
+    let numstats = diff_numstat_map(repo)?;
 
     let mut status_counts: BTreeMap<String, u32> = BTreeMap::new();
     let mut top_dir_counts: BTreeMap<String, u32> = BTreeMap::new();
@@ -106,14 +230,14 @@ fn build_bundle() -> anyhow::Result<(String, Vec<u8>)> {
             lockfile_count += 1;
         }
 
-        let (file_insertions, file_deletions, binary) = diff_numstat(&entry.path)?;
-        if binary {
+        let file_stats = numstats.get(&entry.path).copied().unwrap_or_default();
+        if file_stats.binary {
             binary_file_count += 1;
         } else {
-            if let Some(n) = file_insertions {
+            if let Some(n) = file_stats.insertions {
                 insertions += n;
             }
-            if let Some(n) = file_deletions {
+            if let Some(n) = file_stats.deletions {
                 deletions += n;
             }
         }
@@ -129,13 +253,13 @@ fn build_bundle() -> anyhow::Result<(String, Vec<u8>)> {
         }
         obj.insert(
             "insertions".to_string(),
-            file_insertions.map_or(Value::Null, |n| json!(n)),
+            file_stats.insertions.map_or(Value::Null, |n| json!(n)),
         );
         obj.insert(
             "deletions".to_string(),
-            file_deletions.map_or(Value::Null, |n| json!(n)),
+            file_stats.deletions.map_or(Value::Null, |n| json!(n)),
         );
-        obj.insert("binary".to_string(), json!(binary));
+        obj.insert("binary".to_string(), json!(file_stats.binary));
         obj.insert("lockfile".to_string(), json!(lockfile));
         files.push(Value::Object(obj));
     }
@@ -175,15 +299,21 @@ fn build_bundle() -> anyhow::Result<(String, Vec<u8>)> {
     });
 
     let context_json = serde_json::to_string(&context)?;
-    let patch = git_bytes(&[
-        "-c",
-        "core.quotepath=false",
-        "diff",
-        "--cached",
-        "--no-color",
-    ])?;
+    let patch = git_bytes(
+        repo,
+        &[
+            "-c",
+            "core.quotepath=false",
+            "diff",
+            "--cached",
+            "--no-color",
+        ],
+    )?;
 
-    Ok((context_json, patch))
+    Ok(Bundle {
+        context_json,
+        patch,
+    })
 }
 
 struct NameStatusEntry {
@@ -241,33 +371,78 @@ fn parse_name_status_z(buf: &[u8]) -> anyhow::Result<Vec<NameStatusEntry>> {
     Ok(out)
 }
 
-fn diff_numstat(path: &str) -> anyhow::Result<(Option<i64>, Option<i64>, bool)> {
-    let stdout = git_string(&[
-        "-c",
-        "core.quotepath=false",
-        "diff",
-        "--cached",
-        "--numstat",
-        "--",
-        path,
-    ])?;
+fn diff_numstat_map(repo: Option<&Path>) -> anyhow::Result<BTreeMap<String, NumstatEntry>> {
+    let stdout = git_bytes(
+        repo,
+        &[
+            "-c",
+            "core.quotepath=false",
+            "diff",
+            "--cached",
+            "--numstat",
+            "-z",
+        ],
+    )?;
 
-    let line = stdout.lines().next().unwrap_or("").to_string();
-    if line.trim().is_empty() {
-        return Ok((None, None, false));
+    parse_numstat_z(&stdout)
+}
+
+fn parse_numstat_z(buf: &[u8]) -> anyhow::Result<BTreeMap<String, NumstatEntry>> {
+    let mut map: BTreeMap<String, NumstatEntry> = BTreeMap::new();
+
+    let mut i = 0;
+    while i < buf.len() {
+        let added = read_field(buf, &mut i, b'\t')?;
+        let deleted = read_field(buf, &mut i, b'\t')?;
+
+        let path = if i < buf.len() && buf[i] == 0 {
+            i += 1;
+            let _old_path = read_field(buf, &mut i, b'\0')?;
+            read_field(buf, &mut i, b'\0')?
+        } else {
+            read_field(buf, &mut i, b'\0')?
+        };
+
+        let (insertions, deletions, binary) = if added == "-" || deleted == "-" {
+            (None, None, true)
+        } else {
+            (parse_i64_opt(&added), parse_i64_opt(&deleted), false)
+        };
+
+        map.insert(
+            path,
+            NumstatEntry {
+                insertions,
+                deletions,
+                binary,
+            },
+        );
     }
 
-    let mut parts = line.split('\t');
-    let added = parts.next().unwrap_or("");
-    let deleted = parts.next().unwrap_or("");
+    Ok(map)
+}
 
-    if added == "-" || deleted == "-" {
-        return Ok((None, None, true));
+fn parse_i64_opt(value: &str) -> Option<i64> {
+    value.parse::<i64>().ok()
+}
+
+fn read_field(buf: &[u8], index: &mut usize, delimiter: u8) -> anyhow::Result<String> {
+    if *index > buf.len() {
+        return Err(anyhow::anyhow!("error: malformed numstat output"));
     }
 
-    let ins = added.parse::<i64>().ok();
-    let del = deleted.parse::<i64>().ok();
-    Ok((ins, del, false))
+    let start = *index;
+    while *index < buf.len() && buf[*index] != delimiter {
+        *index += 1;
+    }
+
+    if *index >= buf.len() {
+        return Err(anyhow::anyhow!("error: malformed numstat output"));
+    }
+
+    let field = std::str::from_utf8(&buf[start..*index])?.to_string();
+    *index += 1;
+    Ok(field)
 }
 
 fn is_lockfile(path: &str) -> bool {
@@ -286,13 +461,8 @@ fn is_lockfile(path: &str) -> bool {
     )
 }
 
-fn git_string(args: &[&str]) -> anyhow::Result<String> {
-    let output = Command::new("git")
-        .args(args)
-        .env("GIT_PAGER", "cat")
-        .env("PAGER", "cat")
-        .stdin(Stdio::null())
-        .output()?;
+fn git_string(repo: Option<&Path>, args: &[&str]) -> anyhow::Result<String> {
+    let output = git_output(repo, args)?;
 
     if !output.status.success() {
         return Err(anyhow::anyhow!(
@@ -306,14 +476,8 @@ fn git_string(args: &[&str]) -> anyhow::Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn git_string_ok(args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
-        .args(args)
-        .env("GIT_PAGER", "cat")
-        .env("PAGER", "cat")
-        .stdin(Stdio::null())
-        .output()
-        .ok()?;
+fn git_string_ok(repo: Option<&Path>, args: &[&str]) -> Option<String> {
+    let output = git_output(repo, args).ok()?;
 
     if !output.status.success() {
         return None;
@@ -327,13 +491,8 @@ fn git_string_ok(args: &[&str]) -> Option<String> {
     }
 }
 
-fn git_bytes(args: &[&str]) -> anyhow::Result<Vec<u8>> {
-    let output = Command::new("git")
-        .args(args)
-        .env("GIT_PAGER", "cat")
-        .env("PAGER", "cat")
-        .stdin(Stdio::null())
-        .output()?;
+fn git_bytes(repo: Option<&Path>, args: &[&str]) -> anyhow::Result<Vec<u8>> {
+    let output = git_output(repo, args)?;
 
     if !output.status.success() {
         return Err(anyhow::anyhow!(
@@ -345,6 +504,21 @@ fn git_bytes(args: &[&str]) -> anyhow::Result<Vec<u8>> {
     }
 
     Ok(output.stdout)
+}
+
+fn git_output(repo: Option<&Path>, args: &[&str]) -> anyhow::Result<std::process::Output> {
+    let mut command = Command::new("git");
+    if let Some(repo) = repo {
+        command.arg("-C").arg(repo);
+    }
+
+    command
+        .args(args)
+        .env("GIT_PAGER", "cat")
+        .env("PAGER", "cat")
+        .stdin(Stdio::null())
+        .output()
+        .map_err(Into::into)
 }
 
 fn print_usage_stdout() {
@@ -362,20 +536,89 @@ fn print_usage(stderr: bool) {
         &mut std::io::stdout()
     };
 
-    let _ = writeln!(out, "Usage: semantic-commit staged-context");
+    let _ = writeln!(
+        out,
+        "Usage: semantic-commit staged-context [--format <bundle|json|patch>] [--repo <path>]"
+    );
     let _ = writeln!(out);
     let _ = writeln!(
         out,
         "Print staged change context for commit message generation."
     );
     let _ = writeln!(out);
+    let _ = writeln!(out, "Options:");
+    let _ = writeln!(
+        out,
+        "  --format <mode>  Output format: bundle (default), json, patch"
+    );
+    let _ = writeln!(out, "  --json           Equivalent to --format json");
+    let _ = writeln!(out, "  --repo <path>    Run git commands against repo path");
+    let _ = writeln!(out);
     let _ = writeln!(out, "Outputs:");
-    let _ = writeln!(out, "  - Bundle: commit-context.json + staged.patch");
+    let _ = writeln!(out, "  - bundle: commit-context.json + staged.patch");
+    let _ = writeln!(out, "  - json: commit-context.json only");
+    let _ = writeln!(out, "  - patch: staged.patch only");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn output_format_parse_supports_known_values() {
+        assert_eq!(OutputFormat::parse("bundle"), Some(OutputFormat::Bundle));
+        assert_eq!(OutputFormat::parse("json"), Some(OutputFormat::Json));
+        assert_eq!(OutputFormat::parse("patch"), Some(OutputFormat::Patch));
+        assert_eq!(OutputFormat::parse("other"), None);
+    }
+
+    #[test]
+    fn parse_numstat_z_parses_standard_rows() {
+        let map = parse_numstat_z(b"12\t3\tsrc/main.rs\0").expect("parse numstat");
+        let value = map.get("src/main.rs").expect("missing numstat entry");
+        assert_eq!(
+            *value,
+            NumstatEntry {
+                insertions: Some(12),
+                deletions: Some(3),
+                binary: false,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_numstat_z_parses_binary_rows() {
+        let map = parse_numstat_z(b"-\t-\tassets/logo.bin\0").expect("parse binary numstat");
+        let value = map.get("assets/logo.bin").expect("missing numstat entry");
+        assert_eq!(
+            *value,
+            NumstatEntry {
+                insertions: None,
+                deletions: None,
+                binary: true,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_numstat_z_parses_rename_rows() {
+        let map = parse_numstat_z(b"3\t1\t\0old.txt\0new.txt\0").expect("parse rename numstat");
+        let value = map.get("new.txt").expect("missing numstat entry");
+        assert_eq!(
+            *value,
+            NumstatEntry {
+                insertions: Some(3),
+                deletions: Some(1),
+                binary: false,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_numstat_z_rejects_malformed_rows() {
+        let result = parse_numstat_z(b"12\t3\tno-null-terminator");
+        assert!(result.is_err());
+    }
 
     #[test]
     fn parse_name_status_z_parses_basic_entries() {

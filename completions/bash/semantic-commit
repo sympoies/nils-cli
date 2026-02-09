@@ -26,17 +26,41 @@ _nils_cli_semantic_commit_complete() {
 
   local subcmd="${words[1]-}"
   case "$subcmd" in
-    staged-context|help)
+    staged-context)
+      if [[ "$prev" == "--format" ]]; then
+        COMPREPLY=( $(compgen -W "bundle json patch" -- "$cur") )
+        return 0
+      fi
+      if [[ "$prev" == "--repo" ]]; then
+        COMPREPLY=( $(compgen -d -- "$cur") )
+        return 0
+      fi
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --format --json --repo" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=()
+      return 0
+      ;;
+    help)
       COMPREPLY=()
       return 0
       ;;
     commit)
-      if [[ "$prev" == "--message-file" ]]; then
+      if [[ "$prev" == "--message-file" || "$prev" == "-F" || "$prev" == "--message-out" ]]; then
         COMPREPLY=( $(compgen -f -- "$cur") )
         return 0
       fi
+      if [[ "$prev" == "--repo" ]]; then
+        COMPREPLY=( $(compgen -d -- "$cur") )
+        return 0
+      fi
+      if [[ "$prev" == "--summary" ]]; then
+        COMPREPLY=( $(compgen -W "git-scope git-show none" -- "$cur") )
+        return 0
+      fi
       if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "-h --help --message --message-file" -- "$cur") )
+        COMPREPLY=( $(compgen -W "-h --help -m --message -F --message-file --message-out --summary --no-summary --repo --automation --non-interactive --validate-only --dry-run --no-progress --quiet" -- "$cur") )
         return 0
       fi
       COMPREPLY=()
@@ -48,4 +72,3 @@ _nils_cli_semantic_commit_complete() {
 }
 
 complete -F _nils_cli_semantic_commit_complete semantic-commit
-

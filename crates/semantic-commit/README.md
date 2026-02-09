@@ -22,11 +22,28 @@ Help:
 ## Commands
 
 ### staged-context
-- `staged-context`: Emit a bundle to stdout containing `commit-context.json` and `staged.patch`.
+- `staged-context [--format <bundle|json|patch>] [--json] [--repo <path>]`
+- Output formats:
+  - `bundle` (default): `commit-context.json` + `staged.patch`
+  - `json`: only `commit-context.json`
+  - `patch`: only `staged.patch`
+- `--repo <path>` runs against a repository path without changing shell cwd.
 
 ### commit
-- `commit [--message <text> | --message-file <path>]`: Validate and commit staged changes. When no
-  flags are provided, the message is read from stdin.
+- `commit [options]`
+- Message sources:
+  - `-m, --message <text>`
+  - `-F, --message-file <path>`
+  - stdin (disabled with `--automation`)
+- Useful options:
+  - `--summary <git-scope|git-show|none>` (default: `git-scope` with fallback to `git-show`)
+  - `--no-summary`
+  - `--validate-only`
+  - `--dry-run`
+  - `--message-out <path>`
+  - `--repo <path>`
+  - `--no-progress`
+  - `--quiet`
 
 ## Commit Message Validation
 - Header must be non-empty, `<= 100` characters, and use a lowercase type.
@@ -36,9 +53,12 @@ Help:
 
 ## Exit codes
 - `0`: success and help output.
-- `1`: usage errors, validation failures, or operational errors.
+- `1`: usage errors or operational errors.
 - `2`: no staged changes.
+- `3`: commit message missing/empty.
+- `4`: commit message validation failed.
+- `5`: required dependency missing (for example, `git`).
 
 ## Dependencies
 - `git` is required.
-- `git-scope` is required to print the commit summary after a successful commit.
+- `git-scope` is optional; when unavailable, commit summary falls back to `git show -1`.

@@ -14,6 +14,26 @@ fn stage_file(repo: &Path, name: &str, contents: &str) {
     common::git(repo, &["add", name]);
 }
 
+fn deterministic_env(path: &str) -> Vec<(&'static str, String)> {
+    vec![
+        ("PATH", path.to_string()),
+        (
+            "GIT_AUTHOR_DATE",
+            "Thu, 01 Jan 1970 00:00:00 +0000".to_string(),
+        ),
+        (
+            "GIT_COMMITTER_DATE",
+            "Thu, 01 Jan 1970 00:00:00 +0000".to_string(),
+        ),
+    ]
+}
+
+fn env_refs<'a>(envs: &'a [(&'static str, String)]) -> Vec<(&'static str, &'a str)> {
+    envs.iter()
+        .map(|(key, value)| (*key, value.as_str()))
+        .collect()
+}
+
 #[test]
 fn commit_outside_git_repo_errors() {
     let dir = tempfile::TempDir::new().expect("tempdir");
@@ -35,7 +55,7 @@ fn commit_help_flag_prints_usage() {
 
     assert_eq!(output.status.code(), Some(0));
     assert!(as_str(&output.stdout)
-        .contains("semantic-commit commit [--message <text> | --message-file <path>]"));
+        .contains("semantic-commit commit [--message <text>|--message-file <path>] [options]"));
 }
 
 #[test]
@@ -55,6 +75,15 @@ fn commit_message_flag_requires_value() {
 
     assert_eq!(output.status.code(), Some(1));
     assert!(as_str(&output.stderr).contains("error: --message requires a value"));
+}
+
+#[test]
+fn commit_short_message_flag_requires_value() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let output = common::run_semantic_commit_output(dir.path(), &["commit", "-m"], &[], None);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(as_str(&output.stderr).contains("error: -m requires a value"));
 }
 
 #[test]
@@ -94,7 +123,7 @@ fn commit_invalid_header_format_is_hard_fail() {
         None,
     );
 
-    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.status.code(), Some(4));
     assert!(as_str(&output.stderr).contains("error: invalid header format"));
 
     let head = common::git_output(repo.path(), &["rev-parse", "--verify", "HEAD"]);
@@ -112,7 +141,7 @@ fn commit_body_requires_blank_line() {
     let message = "feat: test\n- Bad body without blank line\n";
     let output = common::run_semantic_commit_output(repo.path(), &["commit"], &[], Some(message));
 
-    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.status.code(), Some(4));
     assert!(as_str(&output.stderr)
         .contains("error: commit body must be separated from header by a blank line"));
 }
@@ -125,7 +154,7 @@ fn commit_body_line_requires_capitalized_bullet() {
     let message = "feat: test\n\n- bad\n";
     let output = common::run_semantic_commit_output(repo.path(), &["commit"], &[], Some(message));
 
-    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.status.code(), Some(4));
     assert!(as_str(&output.stderr)
         .contains("error: commit body line 3 must start with '- ' followed by uppercase letter"));
 }
@@ -167,44 +196,193 @@ fn commit_message_file_missing_errors() {
 }
 
 #[test]
-fn commit_empty_stdin_message_errors() {
+fn commit_empty_stdin_message_errors_with_exit_3() {
     let repo = common::init_repo();
     stage_file(repo.path(), "a.txt", "hello\n");
 
     let output = common::run_semantic_commit_output(repo.path(), &["commit"], &[], Some(""));
 
-    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.status.code(), Some(3));
     assert!(as_str(&output.stderr).contains("error: commit message is empty"));
 }
 
 #[test]
-fn commit_fails_when_git_scope_missing() {
+fn commit_whitespace_stdin_message_errors_with_exit_3() {
+    let repo = common::init_repo();
+    stage_file(repo.path(), "a.txt", "hello\n");
+
+    let output = common::run_semantic_commit_output(repo.path(), &["commit"], &[], Some(" \n\t\n"));
+
+    assert_eq!(output.status.code(), Some(3));
+    assert!(as_str(&output.stderr).contains("error: commit message is empty"));
+}
+
+#[test]
+fn commit_automation_requires_message_flag_or_file() {
+    let repo = common::init_repo();
+    stage_file(repo.path(), "a.txt", "hello\n");
+
+    let output =
+        common::run_semantic_commit_output(repo.path(), &["commit", "--automation"], &[], Some(""));
+
+    assert_eq!(output.status.code(), Some(3));
+    assert!(as_str(&output.stderr).contains("error: no commit message provided in automation mode"));
+}
+
+#[test]
+fn commit_validate_only_allows_outside_repo() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let output = common::run_semantic_commit_output(
+        dir.path(),
+        &[
+            "commit",
+            "--validate-only",
+            "--message",
+            "feat(core): add thing",
+        ],
+        &[],
+        None,
+    );
+
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn commit_validate_only_invalid_message_returns_4() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let output = common::run_semantic_commit_output(
+        dir.path(),
+        &[
+            "commit",
+            "--validate-only",
+            "--message",
+            "Feat(core): add thing",
+        ],
+        &[],
+        None,
+    );
+
+    assert_eq!(output.status.code(), Some(4));
+}
+
+#[test]
+fn commit_dry_run_validates_and_checks_staged_without_committing() {
     let repo = common::init_repo();
     stage_file(repo.path(), "a.txt", "hello\n");
 
     let output = common::run_semantic_commit_output(
         repo.path(),
-        &["commit"],
-        &[
-            ("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"),
-            ("GIT_AUTHOR_DATE", "Thu, 01 Jan 1970 00:00:00 +0000"),
-            ("GIT_COMMITTER_DATE", "Thu, 01 Jan 1970 00:00:00 +0000"),
-        ],
-        Some("feat(core): add thing\n\n- Add thing\n"),
+        &["commit", "--dry-run", "--message", "feat(core): add thing"],
+        &[],
+        None,
     );
 
-    assert_eq!(output.status.code(), Some(1));
-    assert!(as_str(&output.stderr).contains("error: git-scope is required"));
+    assert_eq!(output.status.code(), Some(0));
 
     let head = common::git_output(repo.path(), &["rev-parse", "--verify", "HEAD"]);
-    assert!(
-        !head.status.success(),
-        "expected no commit to have been created"
-    );
+    assert!(!head.status.success(), "expected no commit during dry-run");
 }
 
 #[test]
-fn commit_message_file_successfully_commits() {
+fn commit_default_summary_falls_back_to_git_show_when_git_scope_missing() {
+    let repo = common::init_repo();
+    stage_file(repo.path(), "a.txt", "hello\n");
+
+    let envs_owned = deterministic_env("/usr/bin:/bin:/usr/sbin:/sbin");
+    let envs = env_refs(&envs_owned);
+    let output = common::run_semantic_commit_output(
+        repo.path(),
+        &[
+            "commit",
+            "--message",
+            "feat(core): add thing",
+            "--no-progress",
+        ],
+        &envs,
+        None,
+    );
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(as_str(&output.stderr).contains("warning: git-scope summary unavailable"));
+    assert!(as_str(&output.stdout).contains("feat(core): add thing"));
+}
+
+#[test]
+fn commit_no_summary_suppresses_summary_output() {
+    let repo = common::init_repo();
+    stage_file(repo.path(), "a.txt", "hello\n");
+
+    let envs_owned = deterministic_env("/usr/bin:/bin:/usr/sbin:/sbin");
+    let envs = env_refs(&envs_owned);
+    let output = common::run_semantic_commit_output(
+        repo.path(),
+        &[
+            "commit",
+            "-m",
+            "feat(core): add thing",
+            "--no-summary",
+            "--no-progress",
+        ],
+        &envs,
+        None,
+    );
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(as_str(&output.stdout).trim().is_empty());
+}
+
+#[test]
+fn commit_git_show_summary_mode_works_without_git_scope() {
+    let repo = common::init_repo();
+    stage_file(repo.path(), "a.txt", "hello\n");
+
+    let envs_owned = deterministic_env("/usr/bin:/bin:/usr/sbin:/sbin");
+    let envs = env_refs(&envs_owned);
+    let output = common::run_semantic_commit_output(
+        repo.path(),
+        &[
+            "commit",
+            "--message",
+            "feat(core): add thing",
+            "--summary",
+            "git-show",
+            "--no-progress",
+        ],
+        &envs,
+        None,
+    );
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(as_str(&output.stdout).contains("feat(core): add thing"));
+    assert!(!as_str(&output.stderr).contains("warning: git-scope"));
+}
+
+#[test]
+fn commit_message_out_writes_recovery_message() {
+    let repo = common::init_repo();
+    stage_file(repo.path(), "a.txt", "hello\n");
+    let out_path = repo.path().join("commit-message.txt");
+
+    let output = common::run_semantic_commit_output(
+        repo.path(),
+        &[
+            "commit",
+            "--message",
+            "Feat(core): bad",
+            "--message-out",
+            "commit-message.txt",
+        ],
+        &[],
+        None,
+    );
+
+    assert_eq!(output.status.code(), Some(4));
+    let saved = fs::read_to_string(out_path).expect("read message-out file");
+    assert_eq!(saved, "Feat(core): bad");
+}
+
+#[test]
+fn commit_message_file_successfully_commits_with_git_scope() {
     let repo = common::init_repo();
     stage_file(repo.path(), "a.txt", "hello\n");
     common::write_file(
@@ -219,9 +397,6 @@ fn commit_message_file_successfully_commits() {
         "git-scope",
         r#"#!/usr/bin/env bash
 set -euo pipefail
-if [[ "${1-}" == "help" ]]; then
-  exit 0
-fi
 if [[ "${1-}" != "commit" || "${2-}" != "HEAD" || "${3-}" != "--no-color" ]]; then
   echo "unexpected args: $*" >&2
   exit 2
@@ -232,66 +407,22 @@ echo "GIT_SCOPE_OK"
 
     let tool_dir = tool_dir.path().to_str().expect("tool dir str");
     let path_env = format!("{tool_dir}:/usr/bin:/bin:/usr/sbin:/sbin");
-    let envs = vec![
-        ("PATH", path_env.as_str()),
-        ("GIT_AUTHOR_DATE", "Thu, 01 Jan 1970 00:00:00 +0000"),
-        ("GIT_COMMITTER_DATE", "Thu, 01 Jan 1970 00:00:00 +0000"),
-    ];
+    let envs_owned = deterministic_env(&path_env);
+    let envs = env_refs(&envs_owned);
     let output = common::run_semantic_commit_output(
         repo.path(),
-        &["commit", "--message-file", "message.txt"],
+        &["commit", "-F", "message.txt", "--no-progress"],
         &envs,
         None,
     );
 
     assert_eq!(output.status.code(), Some(0));
     assert!(as_str(&output.stdout).contains("GIT_SCOPE_OK"));
-}
-
-#[test]
-fn commit_success_uses_git_scope_when_available() {
-    let repo = common::init_repo();
-    stage_file(repo.path(), "a.txt", "hello\n");
-
-    let tool_dir = tempfile::TempDir::new().expect("tempdir");
-    common::write_executable(
-        tool_dir.path(),
-        "git-scope",
-        r#"#!/usr/bin/env bash
-set -euo pipefail
-if [[ "${1-}" == "help" ]]; then
-  exit 0
-fi
-if [[ "${1-}" != "commit" || "${2-}" != "HEAD" || "${3-}" != "--no-color" ]]; then
-  echo "unexpected args: $*" >&2
-  exit 2
-fi
-echo "GIT_SCOPE_OK"
-"#,
-    );
-
-    let tool_dir = tool_dir.path().to_str().unwrap();
-    let path_env = format!("{tool_dir}:/usr/bin:/bin:/usr/sbin:/sbin");
-    let envs = vec![
-        ("PATH", path_env.as_str()),
-        ("GIT_AUTHOR_DATE", "Thu, 01 Jan 1970 00:00:00 +0000"),
-        ("GIT_COMMITTER_DATE", "Thu, 01 Jan 1970 00:00:00 +0000"),
-    ];
-    let output = common::run_semantic_commit_output(
-        repo.path(),
-        &["commit", "--message", "feat(core): add thing"],
-        &envs,
-        None,
-    );
-
-    assert_eq!(output.status.code(), Some(0));
-    assert!(as_str(&output.stdout).contains("GIT_SCOPE_OK"));
-    assert!(!as_str(&output.stderr).contains("warning:"));
 }
 
 #[cfg(unix)]
 #[test]
-fn commit_fails_when_git_scope_is_not_executable() {
+fn commit_falls_back_when_git_scope_is_not_executable() {
     use std::os::unix::fs::PermissionsExt;
 
     let repo = common::init_repo();
@@ -306,24 +437,54 @@ fn commit_fails_when_git_scope_is_not_executable() {
 
     let tool_dir = tool_dir.path().to_str().unwrap();
     let path_env = format!("{tool_dir}:/usr/bin:/bin:/usr/sbin:/sbin");
-    let envs = vec![
-        ("PATH", path_env.as_str()),
-        ("GIT_AUTHOR_DATE", "Thu, 01 Jan 1970 00:00:00 +0000"),
-        ("GIT_COMMITTER_DATE", "Thu, 01 Jan 1970 00:00:00 +0000"),
-    ];
+    let envs_owned = deterministic_env(&path_env);
+    let envs = env_refs(&envs_owned);
     let output = common::run_semantic_commit_output(
         repo.path(),
-        &["commit", "--message", "feat(core): add thing"],
+        &[
+            "commit",
+            "--message",
+            "feat(core): add thing",
+            "--no-progress",
+        ],
         &envs,
         None,
     );
 
-    assert_eq!(output.status.code(), Some(1));
-    assert!(as_str(&output.stderr).contains("error: git-scope is required"));
+    assert_eq!(output.status.code(), Some(0));
+    assert!(as_str(&output.stderr).contains("warning: git-scope summary unavailable"));
+    assert!(as_str(&output.stdout).contains("feat(core): add thing"));
+}
 
+#[test]
+fn commit_repo_flag_commits_from_external_cwd() {
+    let outer = tempfile::TempDir::new().expect("tempdir");
+    let repo = common::init_repo();
+    stage_file(repo.path(), "a.txt", "hello\n");
+
+    let envs_owned = deterministic_env("/usr/bin:/bin:/usr/sbin:/sbin");
+    let envs = env_refs(&envs_owned);
+    let repo_path = repo.path().to_str().expect("repo path");
+    let output = common::run_semantic_commit_output(
+        outer.path(),
+        &[
+            "commit",
+            "--repo",
+            repo_path,
+            "--message",
+            "feat(core): add thing",
+            "--summary",
+            "none",
+            "--no-progress",
+        ],
+        &envs,
+        None,
+    );
+
+    assert_eq!(output.status.code(), Some(0));
     let head = common::git_output(repo.path(), &["rev-parse", "--verify", "HEAD"]);
     assert!(
-        !head.status.success(),
-        "expected no commit to have been created"
+        head.status.success(),
+        "expected commit to be created in --repo target"
     );
 }

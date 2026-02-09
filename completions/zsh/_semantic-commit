@@ -34,18 +34,29 @@ _semantic-commit() {
         staged-context)
           _arguments -C \
             '(-h --help)'{-h,--help}'[Show help message]' \
+            '--format=[Output format]:format:(bundle json patch)' \
+            '--json[Equivalent to --format json]' \
+            '--repo=[Path to git repository]:repository:_files -/' \
             && return 0
-          _message 'no additional arguments'
-          return 0
           ;;
         commit)
           _arguments -C \
             '(-h --help)'{-h,--help}'[Show help message]' \
+            '-m+[Commit message text]:message:' \
             '--message=[Commit message text]:message:' \
+            '-F+[Path to commit message file]:file:_files' \
             '--message-file=[Path to commit message file]:file:_files' \
+            '--message-out=[Write prepared message to path]:file:_files' \
+            '--summary=[Summary output mode]:mode:(git-scope git-show none)' \
+            '--no-summary[Do not print summary after commit]' \
+            '--repo=[Path to git repository]:repository:_files -/' \
+            '--automation[Disable stdin fallback and require --message/--message-file]' \
+            '--non-interactive[Alias of --automation]' \
+            '--validate-only[Validate message format and exit]' \
+            '--dry-run[Validate and staged-check without creating a commit]' \
+            '--no-progress[Disable progress spinner]' \
+            '--quiet[Suppress progress and summary output]' \
             && return 0
-          _message 'commit message'
-          return 0
           ;;
         help)
           _message 'no additional arguments'

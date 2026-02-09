@@ -26,6 +26,10 @@ fn extract_context_json(stdout: &str) -> Value {
     serde_json::from_str(json_part.trim()).expect("parse commit-context.json")
 }
 
+fn parse_json(stdout: &str) -> Value {
+    serde_json::from_str(stdout.trim()).expect("parse json output")
+}
+
 fn find_file<'a>(files: &'a [Value], path: &str) -> &'a Value {
     files
         .iter()
@@ -49,7 +53,8 @@ fn staged_context_help_flag_prints_usage() {
         common::run_semantic_commit_output(dir.path(), &["staged-context", "--help"], &[], None);
 
     assert_eq!(output.status.code(), Some(0));
-    assert!(as_str(&output.stdout).contains("Usage: semantic-commit staged-context"));
+    assert!(as_str(&output.stdout)
+        .contains("semantic-commit staged-context [--format <bundle|json|patch>]"));
 }
 
 #[test]
@@ -63,6 +68,22 @@ fn staged_context_unknown_argument_errors_before_git_checks() {
 }
 
 #[test]
+fn staged_context_invalid_format_value_errors() {
+    let repo = common::init_repo();
+    stage_file(repo.path(), "a.txt", "hello\n");
+
+    let output = common::run_semantic_commit_output(
+        repo.path(),
+        &["staged-context", "--format", "yaml"],
+        &[],
+        None,
+    );
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(as_str(&output.stderr).contains("error: invalid --format value: yaml"));
+}
+
+#[test]
 fn staged_context_no_staged_changes_exits_2() {
     let repo = common::init_repo();
     let output = common::run_semantic_commit_output(repo.path(), &["staged-context"], &[], None);
@@ -73,7 +94,7 @@ fn staged_context_no_staged_changes_exits_2() {
 }
 
 #[test]
-fn staged_context_fallback_prints_diff() {
+fn staged_context_bundle_format_prints_json_and_patch() {
     let repo = common::init_repo();
     stage_file(repo.path(), "a.txt", "hello\n");
 
@@ -85,6 +106,63 @@ fn staged_context_fallback_prints_diff() {
     assert!(stdout.contains("===== commit-context.json ====="));
     assert!(stdout.contains("\"schemaVersion\":1"));
     assert!(stdout.contains("===== staged.patch ====="));
+    assert!(stdout.contains("diff --git a/a.txt b/a.txt"));
+}
+
+#[test]
+fn staged_context_json_format_outputs_single_json_document() {
+    let repo = common::init_repo();
+    stage_file(repo.path(), "a.txt", "hello\n");
+
+    let output = common::run_semantic_commit_output(
+        repo.path(),
+        &["staged-context", "--format", "json"],
+        &[],
+        None,
+    );
+
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = as_str(&output.stdout);
+    assert!(!stdout.contains("===== commit-context.json ====="));
+    assert!(!stdout.contains("===== staged.patch ====="));
+
+    let context = parse_json(&stdout);
+    assert_eq!(context["schemaVersion"].as_i64(), Some(1));
+    assert_eq!(
+        context["staged"]["patch"]["path"].as_str(),
+        Some("staged.patch")
+    );
+}
+
+#[test]
+fn staged_context_json_flag_alias_outputs_json() {
+    let repo = common::init_repo();
+    stage_file(repo.path(), "a.txt", "hello\n");
+
+    let output =
+        common::run_semantic_commit_output(repo.path(), &["staged-context", "--json"], &[], None);
+
+    assert_eq!(output.status.code(), Some(0));
+    let context = parse_json(&as_str(&output.stdout));
+    assert_eq!(context["schemaVersion"].as_i64(), Some(1));
+}
+
+#[test]
+fn staged_context_patch_format_outputs_patch_only() {
+    let repo = common::init_repo();
+    stage_file(repo.path(), "a.txt", "hello\n");
+
+    let output = common::run_semantic_commit_output(
+        repo.path(),
+        &["staged-context", "--format", "patch"],
+        &[],
+        None,
+    );
+
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = as_str(&output.stdout);
+    assert!(!stdout.contains("===== commit-context.json ====="));
+    assert!(!stdout.contains("===== staged.patch ====="));
     assert!(stdout.contains("diff --git a/a.txt b/a.txt"));
 }
 
@@ -185,4 +263,23 @@ fn staged_context_records_renames() {
     assert!(status_counts
         .iter()
         .any(|item| item["status"].as_str() == Some("R")));
+}
+
+#[test]
+fn staged_context_repo_flag_runs_from_external_cwd() {
+    let outer = tempfile::TempDir::new().expect("tempdir");
+    let repo = common::init_repo();
+    stage_file(repo.path(), "a.txt", "hello\n");
+
+    let repo_path = repo.path().to_str().expect("repo path");
+    let output = common::run_semantic_commit_output(
+        outer.path(),
+        &["staged-context", "--repo", repo_path, "--json"],
+        &[],
+        None,
+    );
+
+    assert_eq!(output.status.code(), Some(0));
+    let context = parse_json(&as_str(&output.stdout));
+    assert_eq!(context["schemaVersion"].as_i64(), Some(1));
 }
