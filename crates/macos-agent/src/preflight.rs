@@ -2,7 +2,10 @@ use std::env;
 use std::path::PathBuf;
 use std::process::Command;
 
+use screen_record::types::PermissionStatusSchema;
 use serde_json::{json, Value};
+
+pub use screen_record::types::PermissionState;
 
 pub const CLICLICK_INSTALL_HINT: &str = "Install cliclick with Homebrew: brew install cliclick";
 pub const ACCESSIBILITY_HINT: &str = "Open System Settings > Privacy & Security > Accessibility, then enable your terminal app (Terminal, iTerm, or other shell host).";
@@ -11,13 +14,6 @@ pub const SCREEN_RECORDING_HINT: &str = "Advisory: if screenshot commands fail, 
 
 const ACCESSIBILITY_SCRIPT: &str = r#"tell application "System Events" to get UI elements enabled"#;
 const AUTOMATION_SCRIPT: &str = r#"tell application "System Events" to get name of first application process whose frontmost is true"#;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PermissionState {
-    Ready,
-    Blocked,
-    Unknown,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PermissionSignal {
@@ -113,6 +109,7 @@ impl PreflightSummary {
 pub struct PreflightReport {
     pub strict: bool,
     pub checks: Vec<CheckReport>,
+    pub permissions: PermissionStatusSchema,
 }
 
 impl PreflightReport {
@@ -184,6 +181,8 @@ pub fn build_report_with_probes(
     strict: bool,
     mut probe_checks: Vec<CheckReport>,
 ) -> PreflightReport {
+    let permissions = permission_status_from_snapshot(&snapshot);
+
     let checks = vec![
         tool_check(
             "osascript",
@@ -225,7 +224,43 @@ pub fn build_report_with_probes(
     let mut checks = checks;
     checks.append(&mut probe_checks);
 
-    PreflightReport { strict, checks }
+    PreflightReport {
+        strict,
+        checks,
+        permissions,
+    }
+}
+
+fn permission_status_from_snapshot(snapshot: &ProbeSnapshot) -> PermissionStatusSchema {
+    let mut hints = Vec::new();
+    push_permission_hint_if_not_ready(
+        &mut hints,
+        snapshot.accessibility_signal.state,
+        ACCESSIBILITY_HINT,
+    );
+    push_permission_hint_if_not_ready(
+        &mut hints,
+        snapshot.automation_signal.state,
+        AUTOMATION_HINT,
+    );
+    push_permission_hint_if_not_ready(
+        &mut hints,
+        snapshot.screen_recording_signal.state,
+        SCREEN_RECORDING_HINT,
+    );
+
+    PermissionStatusSchema::from_components(
+        snapshot.screen_recording_signal.state,
+        snapshot.accessibility_signal.state,
+        snapshot.automation_signal.state,
+        hints,
+    )
+}
+
+fn push_permission_hint_if_not_ready(hints: &mut Vec<String>, state: PermissionState, hint: &str) {
+    if state != PermissionState::Ready {
+        hints.push(hint.to_string());
+    }
 }
 
 pub fn run_live_probes() -> Vec<CheckReport> {
@@ -276,6 +311,13 @@ pub fn render_json(report: &PreflightReport) -> Value {
             })
         })
         .collect::<Vec<_>>();
+    let permissions = json!({
+        "screen_recording": report.permissions.screen_recording.as_str(),
+        "accessibility": report.permissions.accessibility.as_str(),
+        "automation": report.permissions.automation.as_str(),
+        "ready": report.permissions.ready,
+        "hints": report.permissions.hints.clone(),
+    });
 
     json!({
         "schema_version": 1,
@@ -289,6 +331,7 @@ pub fn render_json(report: &PreflightReport) -> Value {
                 "warnings": summary.warnings,
             },
             "checks": checks,
+            "permissions": permissions,
         }
     })
 }

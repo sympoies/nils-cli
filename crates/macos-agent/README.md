@@ -43,11 +43,15 @@ macos-agent wait ax-unique --app Arc --role AXTextField --title-contains "Search
 # gate + postcondition for mutating AX actions
 macos-agent ax click --app Arc --role AXButton --title-contains "Submit" \
   --gate-app-active --gate-window-present --gate-ax-unique \
-  --postcondition-focused true --postcondition-timeout-ms 2000
+  --postcondition-focused true --wait-timeout-ms 2000 --wait-poll-ms 75
 
 # selector-frame screenshot
 macos-agent observe screenshot --active-window --role AXButton --title-contains "Play" \
   --selector-padding 12 --path ./tmp/macos-agent-selector.png
+
+# diff-aware screenshot publish
+macos-agent observe screenshot --active-window --path ./tmp/macos-agent.png \
+  --if-changed --if-changed-threshold 2
 
 # one-shot debug bundle
 macos-agent debug bundle --active-window --format json
@@ -57,6 +61,8 @@ macos-agent debug bundle --active-window --format json
 
 - `preflight`
   - `macos-agent preflight [--strict] [--include-probes]`
+  - JSON output includes `result.permissions` with unified fields:
+    `screen_recording`, `accessibility`, `automation`, `ready`, `hints`.
 - `windows`
   - `macos-agent windows list [--app <name>] [--window-title-contains <name>] [--on-screen-only]`
 - `apps`
@@ -72,8 +78,8 @@ macos-agent debug bundle --active-window --format json
   - `macos-agent input-source switch --id <source_id|abc|us>`
 - `ax`
   - `macos-agent ax list [--session-id <id> | --app <name> | --bundle-id <bundle_id>] [--window-title-contains <text>] [--role <AXRole>] [--title-contains <text>] [--identifier-contains <text>] [--value-contains <text>] [--subrole <AXSubrole>] [--focused <bool>] [--enabled <bool>] [--max-depth <n>] [--limit <n>]`
-  - `macos-agent ax click [selector flags...] [target flags...] [--match-strategy <contains|exact|prefix|suffix|regex>] [--selector-explain] [--reselect-before-click] [--allow-coordinate-fallback] [--fallback-order <ax-press,ax-confirm,frame-center,coordinate>] [--gate-app-active] [--gate-window-present] [--gate-ax-present] [--gate-ax-unique] [--gate-timeout-ms <ms>] [--gate-poll-ms <ms>] [--postcondition-focused <bool>] [--postcondition-attribute <AXAttr>] [--postcondition-attribute-value <value>] [--postcondition-timeout-ms <ms>] [--postcondition-poll-ms <ms>]`
-  - `macos-agent ax type [selector flags...] [target flags...] --text <text> [--match-strategy <contains|exact|prefix|suffix|regex>] [--selector-explain] [--clear-first] [--submit] [--paste] [--allow-keyboard-fallback] [--gate-app-active] [--gate-window-present] [--gate-ax-present] [--gate-ax-unique] [--gate-timeout-ms <ms>] [--gate-poll-ms <ms>] [--postcondition-focused <bool>] [--postcondition-attribute <AXAttr>] [--postcondition-attribute-value <value>] [--postcondition-timeout-ms <ms>] [--postcondition-poll-ms <ms>]`
+  - `macos-agent ax click [selector flags...] [target flags...] [--match-strategy <contains|exact|prefix|suffix|regex>] [--selector-explain] [--reselect-before-click] [--allow-coordinate-fallback] [--fallback-order <ax-press,ax-confirm,frame-center,coordinate>] [--gate-app-active] [--gate-window-present] [--gate-ax-present] [--gate-ax-unique] [--wait-timeout-ms <ms>] [--wait-poll-ms <ms>] [--gate-timeout-ms <ms>] [--gate-poll-ms <ms>] [--postcondition-focused <bool>] [--postcondition-attribute <AXAttr>] [--postcondition-attribute-value <value>] [--postcondition-timeout-ms <ms>] [--postcondition-poll-ms <ms>]`
+  - `macos-agent ax type [selector flags...] [target flags...] --text <text> [--match-strategy <contains|exact|prefix|suffix|regex>] [--selector-explain] [--clear-first] [--submit] [--paste] [--allow-keyboard-fallback] [--gate-app-active] [--gate-window-present] [--gate-ax-present] [--gate-ax-unique] [--wait-timeout-ms <ms>] [--wait-poll-ms <ms>] [--gate-timeout-ms <ms>] [--gate-poll-ms <ms>] [--postcondition-focused <bool>] [--postcondition-attribute <AXAttr>] [--postcondition-attribute-value <value>] [--postcondition-timeout-ms <ms>] [--postcondition-poll-ms <ms>]`
   - `macos-agent ax attr get [selector flags...] [target flags...] --name <AXAttribute>`
   - `macos-agent ax attr set [selector flags...] [target flags...] --name <AXAttribute> --value <value> [--value-type <string|number|bool|json|null>]`
   - `macos-agent ax action perform [selector flags...] [target flags...] --name <AXAction>`
@@ -84,7 +90,7 @@ macos-agent debug bundle --active-window --format json
   - `macos-agent ax watch poll --watch-id <id> [--limit <n>] [--drain|--no-drain]`
   - `macos-agent ax watch stop --watch-id <id>`
 - `observe`
-  - `macos-agent observe screenshot (--window-id <id> | --active-window | --app <name> [--window-title-contains <name>]) [--path <file>] [--image-format <png|jpg|webp>] [selector flags...] [--selector-padding <px>]`
+  - `macos-agent observe screenshot (--window-id <id> | --active-window | --app <name> [--window-title-contains <name>]) [--path <file>] [--image-format <png|jpg|webp>] [--if-changed] [--if-changed-baseline <path>] [--if-changed-threshold <bits>] [selector flags...] [--selector-padding <px>]`
 - `debug`
   - `macos-agent debug bundle [--window-id <id> | --active-window | --app <name> [--window-title-contains <name>]] [--output-dir <path>]`
 - `wait`
@@ -147,6 +153,22 @@ JSON envelope (`--format json`):
     "meta": {
       "action_id": "input.click-20260101-000000-7",
       "elapsed_ms": 12
+    }
+  }
+}
+```
+
+Preflight permission contract (`macos-agent --format json preflight`):
+
+```json
+{
+  "result": {
+    "permissions": {
+      "screen_recording": "unknown",
+      "accessibility": "ready",
+      "automation": "ready",
+      "ready": true,
+      "hints": []
     }
   }
 }

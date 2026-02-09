@@ -109,11 +109,46 @@ fn preflight_json_structure_is_deterministic() {
                     "message": "Advisory only. Screen Recording is validated when observe screenshot runs.",
                     "hint": SCREEN_RECORDING_HINT
                 }
-            ]
+            ],
+            "permissions": {
+                "screen_recording": "unknown",
+                "accessibility": "ready",
+                "automation": "blocked",
+                "ready": false,
+                "hints": [
+                    AUTOMATION_HINT,
+                    SCREEN_RECORDING_HINT
+                ]
+            }
         }
     });
 
     assert_eq!(payload, expected);
+}
+
+#[test]
+fn preflight_permissions_schema_ready_is_consistent_with_component_states() {
+    let snapshot = ProbeSnapshot {
+        osascript_path: Some("/usr/bin/osascript".to_string()),
+        cliclick_path: Some("/opt/homebrew/bin/cliclick".to_string()),
+        accessibility_signal: ready_signal("System Events reports UI scripting is enabled."),
+        automation_signal: ready_signal("Apple Events access to System Events is allowed."),
+        screen_recording_signal: PermissionSignal::unknown(
+            "Advisory only. Screen Recording is validated when observe screenshot runs.",
+        ),
+    };
+
+    let report = build_report(snapshot, false);
+    let payload = render_json(&report);
+
+    assert_eq!(
+        payload["result"]["permissions"]["ready"],
+        serde_json::json!(true)
+    );
+    assert_eq!(
+        payload["result"]["permissions"]["hints"],
+        serde_json::json!([SCREEN_RECORDING_HINT])
+    );
 }
 
 #[test]

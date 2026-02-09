@@ -1,4 +1,5 @@
 use clap::ValueEnum;
+use screen_record::types::{PermissionState, PermissionStatusSchema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -68,6 +69,46 @@ impl From<&CliError> for ErrorResult {
             operation: err.operation().map(str::to_string),
             message: err.message().to_string(),
             hints: err.hints().to_vec(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionStateResult {
+    Ready,
+    Blocked,
+    Unknown,
+}
+
+impl From<PermissionState> for PermissionStateResult {
+    fn from(value: PermissionState) -> Self {
+        match value {
+            PermissionState::Ready => Self::Ready,
+            PermissionState::Blocked => Self::Blocked,
+            PermissionState::Unknown => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct PermissionStatusResult {
+    pub screen_recording: PermissionStateResult,
+    pub accessibility: PermissionStateResult,
+    pub automation: PermissionStateResult,
+    pub ready: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hints: Vec<String>,
+}
+
+impl From<&PermissionStatusSchema> for PermissionStatusResult {
+    fn from(value: &PermissionStatusSchema) -> Self {
+        Self {
+            screen_recording: value.screen_recording.into(),
+            accessibility: value.accessibility.into(),
+            automation: value.automation.into(),
+            ready: value.ready,
+            hints: value.hints.clone(),
         }
     }
 }
@@ -183,6 +224,8 @@ pub struct ScreenshotResult {
     pub target: WindowRow,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selector: Option<ScreenshotSelectorResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub if_changed: Option<IfChangedResult>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -204,6 +247,17 @@ pub struct ScreenshotSelectorResult {
     pub padding: i32,
     pub frame: AxFrame,
     pub capture_region: AxFrame,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct IfChangedResult {
+    pub changed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub baseline_hash: Option<String>,
+    pub current_hash: String,
+    pub threshold: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub captured_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

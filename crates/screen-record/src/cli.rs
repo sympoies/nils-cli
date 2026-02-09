@@ -73,6 +73,14 @@ pub struct Cli {
     #[arg(long, value_name = "path")]
     pub path: Option<PathBuf>,
 
+    /// Write recording metadata JSON to this path.
+    #[arg(long, value_name = "path")]
+    pub metadata_out: Option<PathBuf>,
+
+    /// Write diagnostics manifest JSON and sidecar artifacts for recording mode.
+    #[arg(long, value_name = "path")]
+    pub diagnostics_out: Option<PathBuf>,
+
     /// Explicit container selection. Overrides extension.
     #[arg(long, value_enum)]
     pub format: Option<ContainerFormat>,
@@ -84,6 +92,23 @@ pub struct Cli {
     /// Output directory for screenshot mode when --path is omitted.
     #[arg(long, value_name = "path")]
     pub dir: Option<PathBuf>,
+
+    /// Skip publishing a new screenshot when the capture hash stays within threshold.
+    #[arg(long)]
+    pub if_changed: bool,
+
+    /// Optional baseline image path for --if-changed comparisons.
+    #[arg(long, value_name = "path", requires = "if_changed")]
+    pub if_changed_baseline: Option<PathBuf>,
+
+    /// Maximum allowed hash-distance bits before capture is considered changed.
+    #[arg(
+        long,
+        value_name = "bits",
+        value_parser = clap::value_parser!(u32).range(0..=64),
+        requires = "if_changed"
+    )]
+    pub if_changed_threshold: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

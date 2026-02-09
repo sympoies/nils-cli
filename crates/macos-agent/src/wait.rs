@@ -9,6 +9,21 @@ pub struct WaitOutcome {
     pub elapsed_ms: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WaitPolicy {
+    pub timeout_ms: u64,
+    pub poll_ms: u64,
+}
+
+impl WaitPolicy {
+    pub fn new(timeout_ms: u64, poll_ms: u64) -> Self {
+        Self {
+            timeout_ms: timeout_ms.max(1),
+            poll_ms: poll_ms.max(1),
+        }
+    }
+}
+
 pub fn sleep_ms(ms: u64) {
     if ms > 0 {
         thread::sleep(Duration::from_millis(ms));
@@ -24,8 +39,23 @@ pub fn wait_until<F>(
 where
     F: FnMut() -> Result<bool, CliError>,
 {
+    wait_until_with_policy(
+        condition_name,
+        WaitPolicy::new(timeout_ms, poll_ms),
+        &mut check,
+    )
+}
+
+pub fn wait_until_with_policy<F>(
+    condition_name: &str,
+    policy: WaitPolicy,
+    mut check: F,
+) -> Result<WaitOutcome, CliError>
+where
+    F: FnMut() -> Result<bool, CliError>,
+{
     let started = Instant::now();
-    let deadline = started + Duration::from_millis(timeout_ms.max(1));
+    let deadline = started + Duration::from_millis(policy.timeout_ms);
     let mut attempts = 0u32;
 
     loop {
@@ -39,11 +69,12 @@ where
 
         if Instant::now() >= deadline {
             return Err(CliError::runtime(format!(
-                "timed out waiting for {condition_name} after {timeout_ms}ms"
+                "timed out waiting for {condition_name} after {}ms",
+                policy.timeout_ms
             )));
         }
 
-        sleep_ms(poll_ms.max(1));
+        sleep_ms(policy.poll_ms);
     }
 }
 

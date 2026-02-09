@@ -97,9 +97,14 @@ screen-record [options]
 | `--duration` | `<seconds>` | (required for recording) | Record for N seconds. |
 | `--audio` | `off\|system\|mic\|both` | `off` | Control audio capture. `both` requires `.mov`. |
 | `--path` | `<path>` | (required for recording) | Output file path. Required for recording; optional for `--screenshot`. |
+| `--metadata-out` | `<path>` | (none) | Write recording metadata JSON (success and failure paths). |
+| `--diagnostics-out` | `<path>` | (none) | Write diagnostics manifest JSON and sidecar artifacts for recording mode. |
 | `--format` | `mov\|mp4` | (auto) | Explicit container selection. Overrides extension. |
 | `--image-format` | `png\|jpg\|webp` | (auto) | Screenshot output format. Overrides extension. |
 | `--dir` | `<path>` | `./screenshots` | Output directory for `--screenshot` when `--path` is omitted. |
+| `--if-changed` | (none) | (none) | In screenshot mode, skip publish when hash-distance is within threshold. |
+| `--if-changed-baseline` | `<path>` | (none) | Baseline screenshot path used by `--if-changed`; defaults to current output file when present. |
+| `--if-changed-threshold` | `<bits>` | `0` | Max hash-distance bits considered unchanged with `--if-changed`. |
 | `--preflight` | (none) | (none) | Check macOS Screen Recording permission or Linux prerequisites, then exit. |
 | `--request-permission` | (none) | (none) | Best-effort permission request + status check on macOS; on Linux runs `--preflight`. |
 | `-h, --help` | (none) | (none) | Show help. |
@@ -117,6 +122,9 @@ screen-record [options]
 - `--duration` is required for recording mode.
 - Press `Ctrl-C` to stop a recording early; `--duration` is still required and acts as an upper bound.
 - `--dir` and `--image-format` are only valid with `--screenshot`.
+- `--metadata-out` is only used in recording mode.
+- `--diagnostics-out` is only used in recording mode.
+- `--if-changed`, `--if-changed-baseline`, and `--if-changed-threshold` are only valid with `--screenshot`.
 - Recording-only flags (`--duration`, `--audio`, `--format`) are not valid with `--screenshot`.
   `--portal` currently supports `--audio off` only.
 
@@ -125,7 +133,25 @@ screen-record [options]
 - Success (list): stdout prints only TSV rows followed by `\n`.
 - Success (preflight/request): stdout is empty; any user messaging goes to stderr.
 - Recording writes to a staging file and publishes the target path only on success.
+- When `--metadata-out <path>` is provided, recording mode writes JSON with fixed keys:
+  `target`, `duration_ms`, `audio_mode`, `format`, `output_path`, `output_bytes`,
+  `started_at`, `ended_at`, `error`.
+- When `--diagnostics-out <path>` is provided, recording mode writes a versioned diagnostics
+  manifest with keys:
+  `schema_version`, `contract_version`, `source_output_path`, `source_output_bytes`,
+  `generated_at`, `artifacts.contact_sheet`, `artifacts.motion_intervals`, `error`.
+- Diagnostics sidecar naming convention:
+  - Artifacts directory: `<diagnostics-out>.diagnostics/`
+  - Contact sheet: `<recording-stem>-contact-sheet.svg`
+  - Motion intervals: `<recording-stem>-motion-intervals.json`
 - Errors: stdout is empty; stderr contains user-facing errors (no stack traces).
+
+## Permission schema (library adapter)
+- For automation integrations embedding `screen-record` as a Rust dependency, macOS permission state
+  can be mapped to shared schema fields:
+  `screen_recording`, `accessibility`, `automation`, `ready`, `hints`.
+- Shared types live in `screen_record::types::{PermissionState, PermissionStatusSchema}` and
+  macOS adapter helper is `screen_record::macos::permissions::permission_status()`.
 
 ## List output (TSV)
 All list output is UTF-8 TSV with no header and one record per line. Tabs or newlines in string
@@ -195,6 +221,19 @@ Candidate rows are identical to `--list-windows` TSV output and are printed to s
 - Note: WebP encoding is best-effort. `screen-record` tries macOS ImageIO first, then falls back to
   `cwebp` (install: `brew install webp`). If no encoder is available, `--image-format webp` fails
   with exit 1.
+
+## Diff-aware screenshot capture (`--if-changed`)
+- `--if-changed` is opt-in and affects screenshot mode only.
+- Baseline selection:
+  - If `--if-changed-baseline <path>` is set, that file is hashed as baseline.
+  - Otherwise, if target output path exists, the existing output file is baseline.
+  - If no baseline exists, capture is treated as changed and is published.
+- Threshold:
+  - `--if-changed-threshold <bits>` compares hash-distance bits (`0..=64`).
+  - `0` means exact hash match is required to skip publish.
+- Publish behavior:
+  - Changed: staged capture replaces target output path.
+  - Unchanged: staged capture is deleted and target output is preserved.
 
 ## Screenshot default naming
 When `--screenshot` is used without `--path`, output is written under `./screenshots/` and the
@@ -275,4 +314,16 @@ screen-record --screenshot --app Terminal --image-format webp
 Capture a screenshot to an explicit path:
 ```bash
 screen-record --screenshot --window-id 4811 --path "./screenshots/window-4811.jpg"
+```
+
+Skip screenshot publish when unchanged:
+```bash
+screen-record --screenshot --app Terminal --path "./screenshots/inbox.png" --if-changed --if-changed-threshold 2
+```
+
+Record with metadata + diagnostics manifests:
+```bash
+screen-record --app Terminal --duration 3 --audio off --path "./recordings/terminal.mov" \
+  --metadata-out "./recordings/terminal.metadata.json" \
+  --diagnostics-out "./recordings/terminal.diagnostics.json"
 ```

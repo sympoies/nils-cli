@@ -70,3 +70,73 @@ fn observe_screenshot_errors_keep_stdout_empty() {
     assert_eq!(out.stdout_text(), "");
     assert!(out.stderr_text().starts_with("error:"));
 }
+
+#[test]
+fn if_changed_payload_contract() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let output_path = cwd.path().join("if-changed.png");
+    let output_path_text = output_path.to_string_lossy().to_string();
+
+    let first = harness.run(
+        cwd.path(),
+        &[
+            "--format",
+            "json",
+            "observe",
+            "screenshot",
+            "--active-window",
+            "--path",
+            &output_path_text,
+            "--if-changed",
+            "--if-changed-threshold",
+            "0",
+        ],
+    );
+    assert_eq!(first.code, 0, "stderr: {}", first.stderr_text());
+    let first_payload: serde_json::Value =
+        serde_json::from_str(&first.stdout_text()).expect("first payload");
+    let first_if_changed = &first_payload["result"]["if_changed"];
+    assert_eq!(first_if_changed["changed"], serde_json::json!(true));
+    assert_eq!(first_if_changed["baseline_hash"], serde_json::Value::Null);
+    assert_eq!(first_if_changed["threshold"], serde_json::json!(0));
+    assert_eq!(
+        first_if_changed["captured_path"],
+        serde_json::json!(output_path.display().to_string())
+    );
+    let first_hash = first_if_changed["current_hash"]
+        .as_str()
+        .expect("current_hash should be string")
+        .to_string();
+
+    let second = harness.run(
+        cwd.path(),
+        &[
+            "--format",
+            "json",
+            "observe",
+            "screenshot",
+            "--active-window",
+            "--path",
+            &output_path_text,
+            "--if-changed",
+            "--if-changed-threshold",
+            "0",
+        ],
+    );
+    assert_eq!(second.code, 0, "stderr: {}", second.stderr_text());
+    let second_payload: serde_json::Value =
+        serde_json::from_str(&second.stdout_text()).expect("second payload");
+    let second_if_changed = &second_payload["result"]["if_changed"];
+    assert_eq!(second_if_changed["changed"], serde_json::json!(false));
+    assert_eq!(second_if_changed["threshold"], serde_json::json!(0));
+    assert_eq!(second_if_changed["captured_path"], serde_json::Value::Null);
+    assert_eq!(
+        second_if_changed["baseline_hash"],
+        serde_json::json!(first_hash.clone())
+    );
+    assert_eq!(
+        second_if_changed["current_hash"],
+        serde_json::json!(first_hash)
+    );
+}

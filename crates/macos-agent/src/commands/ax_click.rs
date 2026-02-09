@@ -43,7 +43,8 @@ pub fn run(
         postconditions: None,
     };
     let gate_options = build_gate_options(args);
-    let postcondition_options = build_postcondition_options(&args.postcondition)?;
+    let postcondition_options =
+        build_postcondition_options(&args.postcondition, args.wait_timeout_ms, args.wait_poll_ms)?;
 
     if !policy.dry_run {
         let backend = AutoAxBackend::default();
@@ -185,13 +186,15 @@ fn build_gate_options(args: &AxClickArgs) -> AxActionGateOptions {
         window_present: args.gate.gate_window_present,
         ax_present: args.gate.gate_ax_present,
         ax_unique: args.gate.gate_ax_unique,
-        timeout_ms: args.gate.gate_timeout_ms,
-        poll_ms: args.gate.gate_poll_ms,
+        timeout_ms: args.wait_timeout_ms.unwrap_or(args.gate.gate_timeout_ms),
+        poll_ms: args.wait_poll_ms.unwrap_or(args.gate.gate_poll_ms),
     }
 }
 
 fn build_postcondition_options(
     args: &AxPostconditionArgs,
+    wait_timeout_ms: Option<u64>,
+    wait_poll_ms: Option<u64>,
 ) -> Result<AxPostconditionOptions, CliError> {
     let mut checks = Vec::new();
     if let Some(expected) = args.postcondition_focused {
@@ -211,8 +214,8 @@ fn build_postcondition_options(
     }
     Ok(AxPostconditionOptions {
         checks,
-        timeout_ms: args.postcondition_timeout_ms,
-        poll_ms: args.postcondition_poll_ms,
+        timeout_ms: wait_timeout_ms.unwrap_or(args.postcondition_timeout_ms),
+        poll_ms: wait_poll_ms.unwrap_or(args.postcondition_poll_ms),
     })
 }
 
