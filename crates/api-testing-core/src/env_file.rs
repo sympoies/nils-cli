@@ -23,10 +23,10 @@ fn parse_assignment_line(line: &str) -> Option<(String, String)> {
         return None;
     }
 
-    if let Some(rest) = line.strip_prefix("export") {
-        if rest.starts_with(char::is_whitespace) {
-            line = rest.trim();
-        }
+    if let Some(rest) = line.strip_prefix("export")
+        && rest.starts_with(char::is_whitespace)
+    {
+        line = rest.trim();
     }
 
     let (lhs, rhs) = line.split_once('=')?;

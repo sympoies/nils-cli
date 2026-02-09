@@ -121,27 +121,27 @@ pub(super) fn rest_cleanup_step(
     cleanup_token = cleanup_token.trim().to_string();
 
     let mut access_token = ctx.access_token_for_case.trim().to_string();
-    if let Some(auth) = ctx.auth_manager.as_deref_mut() {
-        if !cleanup_token.is_empty() {
-            match auth.ensure_token(
-                &cleanup_token,
-                ctx.repo_root,
-                ctx.suite_defaults,
-                ctx.env_rest_url,
-                ctx.env_gql_url,
-            ) {
-                Ok(t) => access_token = t,
-                Err(err) => {
-                    if access_token.is_empty() {
-                        append_log(
-                            ctx.main_stderr_file,
-                            &format!(
-                                "cleanup(rest) auth failed: step[{step_index}] profile={cleanup_token}"
-                            ),
-                        )?;
-                        append_log(ctx.main_stderr_file, &err)?;
-                        return Ok(false);
-                    }
+    if let Some(auth) = ctx.auth_manager.as_deref_mut()
+        && !cleanup_token.is_empty()
+    {
+        match auth.ensure_token(
+            &cleanup_token,
+            ctx.repo_root,
+            ctx.suite_defaults,
+            ctx.env_rest_url,
+            ctx.env_gql_url,
+        ) {
+            Ok(t) => access_token = t,
+            Err(err) => {
+                if access_token.is_empty() {
+                    append_log(
+                        ctx.main_stderr_file,
+                        &format!(
+                            "cleanup(rest) auth failed: step[{step_index}] profile={cleanup_token}"
+                        ),
+                    )?;
+                    append_log(ctx.main_stderr_file, &err)?;
+                    return Ok(false);
                 }
             }
         }

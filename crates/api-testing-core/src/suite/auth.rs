@@ -408,15 +408,15 @@ fn canonical_provider(auth: &SuiteAuth) -> Result<AuthProvider> {
 }
 
 fn inherit_auth_defaults(mut auth: SuiteAuth, suite_defaults: &SuiteDefaults) -> SuiteAuth {
-    if let Some(rest) = auth.rest.as_mut() {
-        if rest.config_dir.trim().is_empty() {
-            rest.config_dir = suite_defaults.rest.config_dir.clone();
-        }
+    if let Some(rest) = auth.rest.as_mut()
+        && rest.config_dir.trim().is_empty()
+    {
+        rest.config_dir = suite_defaults.rest.config_dir.clone();
     }
-    if let Some(gql) = auth.graphql.as_mut() {
-        if gql.config_dir.trim().is_empty() {
-            gql.config_dir = suite_defaults.graphql.config_dir.clone();
-        }
+    if let Some(gql) = auth.graphql.as_mut()
+        && gql.config_dir.trim().is_empty()
+    {
+        gql.config_dir = suite_defaults.graphql.config_dir.clone();
     }
     auth
 }

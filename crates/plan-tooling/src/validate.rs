@@ -366,10 +366,10 @@ fn validate_task(plan_path: &str, task: &Task, all_task_ids: &HashSet<String>) -
         }
     }
 
-    if let Some(c) = task.complexity {
-        if !(1..=10).contains(&c) {
-            errs.push(format!("{prefix}: Complexity out of range (1-10): {c}"));
-        }
+    if let Some(c) = task.complexity
+        && !(1..=10).contains(&c)
+    {
+        errs.push(format!("{prefix}: Complexity out of range (1-10): {c}"));
     }
 
     if !is_non_empty_list(&task.acceptance_criteria) {
@@ -419,18 +419,18 @@ fn contains_angle_placeholder(value: &str) -> bool {
     while i < bytes.len() {
         if bytes[i] == b'<' {
             let start = i + 1;
-            if start < bytes.len() {
-                if let Some(end) = bytes[start..].iter().position(|b| *b == b'>') {
-                    if end >= 1 {
-                        let inner = &value[start..start + end];
-                        // Treat only tight `<...>` tokens as placeholders. This avoids
-                        // false positives on shell redirects like `cat < in > out`.
-                        if inner.trim() == inner {
-                            return true;
-                        }
+            if start < bytes.len()
+                && let Some(end) = bytes[start..].iter().position(|b| *b == b'>')
+            {
+                if end >= 1 {
+                    let inner = &value[start..start + end];
+                    // Treat only tight `<...>` tokens as placeholders. This avoids
+                    // false positives on shell redirects like `cat < in > out`.
+                    if inner.trim() == inner {
+                        return true;
                     }
-                    i = start + end;
                 }
+                i = start + end;
             }
         }
         i += 1;

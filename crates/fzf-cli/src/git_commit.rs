@@ -189,10 +189,9 @@ fn resolve_to_short_hash_or_query(input: &str) -> String {
     }
     if let Ok(Some(full)) =
         common_git::rev_parse(&["--verify", "--quiet", &format!("{input}^{{commit}}")])
+        && full.len() >= 7
     {
-        if full.len() >= 7 {
-            return full[..7].to_string();
-        }
+        return full[..7].to_string();
     }
     input.to_string()
 }

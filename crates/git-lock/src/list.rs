@@ -46,10 +46,10 @@ pub fn run(_args: &[String]) -> Result<i32> {
             println!("   📝 note:    {}", entry.lock.note);
         }
 
-        if let Some(timestamp) = entry.lock.timestamp {
-            if !timestamp.is_empty() {
-                println!("   📅 time:    {timestamp}");
-            }
+        if let Some(timestamp) = entry.lock.timestamp
+            && !timestamp.is_empty()
+        {
+            println!("   📅 time:    {timestamp}");
         }
     }
 

@@ -79,10 +79,10 @@ fn pulse_source_exists(name: &str) -> Result<bool, CliError> {
     let list = pactl_stdout_all(&["list", "sources"])?;
     for line in list.lines() {
         let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("Name:") {
-            if rest.trim() == name {
-                return Ok(true);
-            }
+        if let Some(rest) = trimmed.strip_prefix("Name:")
+            && rest.trim() == name
+        {
+            return Ok(true);
         }
     }
     Ok(false)

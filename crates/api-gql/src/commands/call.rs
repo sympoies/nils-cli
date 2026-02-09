@@ -146,11 +146,11 @@ pub(crate) fn cmd_call_internal(
         let _ = writeln!(stderr, "Operation file not found: {}", op_path.display());
         return 1;
     }
-    if let Some(vars_path) = vars_path.as_deref() {
-        if !vars_path.is_file() {
-            let _ = writeln!(stderr, "Variables file not found: {}", vars_path.display());
-            return 1;
-        }
+    if let Some(vars_path) = vars_path.as_deref()
+        && !vars_path.is_file()
+    {
+        let _ = writeln!(stderr, "Variables file not found: {}", vars_path.display());
+        return 1;
     }
 
     let mut exit_code = 1;
@@ -350,10 +350,9 @@ fn append_history_best_effort(ctx: &CallHistoryContext, exit_code: i32) {
 
     if let api_testing_core::graphql::auth::GraphqlAuthSourceUsed::JwtProfile { name } =
         &ctx.auth_source_used
+        && !name.is_empty()
     {
-        if !name.is_empty() {
-            record.push_str(&format!("  --jwt {} \\\n", shell_quote(name)));
-        }
+        record.push_str(&format!("  --jwt {} \\\n", shell_quote(name)));
     }
 
     if let Some(vars_arg) = ctx.vars_arg.as_deref() {

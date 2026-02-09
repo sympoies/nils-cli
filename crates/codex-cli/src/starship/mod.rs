@@ -59,25 +59,24 @@ pub fn run(options: &StarshipOptions) -> i32 {
     let prefix = resolve_name_prefix(&target_file);
 
     if options.refresh {
-        if let Some(entry) = refresh::refresh_blocking(&target_file) {
-            if let Some(line) = render::render_line(&entry, &prefix, show_5h, time_format) {
-                if !line.trim().is_empty() {
-                    println!("{line}");
-                }
-            }
+        if let Some(entry) = refresh::refresh_blocking(&target_file)
+            && let Some(line) = render::render_line(&entry, &prefix, show_5h, time_format)
+            && !line.trim().is_empty()
+        {
+            println!("{line}");
         }
         return 0;
     }
 
     let (cached, is_stale) = read_cached_entry(&target_file, ttl_seconds);
-    if let Some(entry) = cached.clone() {
-        if let Some(mut line) = render::render_line(&entry, &prefix, show_5h, time_format) {
-            if is_stale {
-                line.push_str(&stale_suffix);
-            }
-            if !line.trim().is_empty() {
-                println!("{line}");
-            }
+    if let Some(entry) = cached.clone()
+        && let Some(mut line) = render::render_line(&entry, &prefix, show_5h, time_format)
+    {
+        if is_stale {
+            line.push_str(&stale_suffix);
+        }
+        if !line.trim().is_empty() {
+            println!("{line}");
         }
     }
 
@@ -97,10 +96,10 @@ fn resolve_ttl_seconds(cli_ttl: Option<&str>) -> Result<u64, ()> {
         return parse_duration_seconds(raw).ok_or(());
     }
 
-    if let Ok(raw) = std::env::var("CODEX_STARSHIP_TTL") {
-        if let Some(value) = parse_duration_seconds(&raw) {
-            return Ok(value);
-        }
+    if let Ok(raw) = std::env::var("CODEX_STARSHIP_TTL")
+        && let Some(value) = parse_duration_seconds(&raw)
+    {
+        return Ok(value);
     }
 
     Ok(DEFAULT_TTL_SECONDS)
@@ -188,10 +187,8 @@ fn resolve_name(target_file: &Path) -> Option<String> {
         if let Ok(Some(email)) = auth::email_from_auth_file(target_file) {
             return Some(format_email_name(&email, show_full_email));
         }
-        if show_fallback {
-            if let Ok(Some(identity)) = auth::identity_from_auth_file(target_file) {
-                return Some(format_email_name(&identity, show_full_email));
-            }
+        if show_fallback && let Ok(Some(identity)) = auth::identity_from_auth_file(target_file) {
+            return Some(format_email_name(&identity, show_full_email));
         }
         return None;
     }
@@ -200,10 +197,8 @@ fn resolve_name(target_file: &Path) -> Option<String> {
         return Some(secret_name);
     }
 
-    if show_fallback {
-        if let Ok(Some(identity)) = auth::identity_from_auth_file(target_file) {
-            return Some(format_email_name(&identity, show_full_email));
-        }
+    if show_fallback && let Ok(Some(identity)) = auth::identity_from_auth_file(target_file) {
+        return Some(format_email_name(&identity, show_full_email));
     }
 
     None

@@ -29,13 +29,13 @@ pub fn preflight() -> Result<(), CliError> {
         ));
     }
 
-    if let Some(path) = x11_socket_path(display.as_deref().unwrap_or_default()) {
-        if let Err(err) = UnixStream::connect(&path) {
-            return Err(CliError::runtime(format!(
-                "failed to connect to X11 display (DISPLAY={}): {err}",
-                display.as_deref().unwrap_or_default()
-            )));
-        }
+    if let Some(path) = x11_socket_path(display.as_deref().unwrap_or_default())
+        && let Err(err) = UnixStream::connect(&path)
+    {
+        return Err(CliError::runtime(format!(
+            "failed to connect to X11 display (DISPLAY={}): {err}",
+            display.as_deref().unwrap_or_default()
+        )));
     }
 
     Ok(())

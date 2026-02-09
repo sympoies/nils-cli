@@ -39,12 +39,12 @@ pub fn render_report_md(
         if let Some(bytes) = out_size {
             lines.push(format!("  - output_bytes: {bytes}"));
         }
-        if let (Some(in_b), Some(out_b)) = (in_size, out_size) {
-            if in_b > 0 {
-                let delta = out_b as i64 - in_b as i64;
-                let pct = (delta as f64 / in_b as f64) * 100.0;
-                lines.push(format!("  - delta_bytes: {delta} ({pct:.2}%)"));
-            }
+        if let (Some(in_b), Some(out_b)) = (in_size, out_size)
+            && in_b > 0
+        {
+            let delta = out_b as i64 - in_b as i64;
+            let pct = (delta as f64 / in_b as f64) * 100.0;
+            lines.push(format!("  - delta_bytes: {delta} ({pct:.2}%)"));
         }
         if let Some(err) = item.error.as_deref() {
             lines.push(format!("  - error: {err}"));

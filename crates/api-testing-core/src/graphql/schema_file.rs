@@ -103,7 +103,8 @@ mod tests {
     fn schema_file_env_var_is_used_when_no_arg() {
         let _guard = env_lock().lock().expect("lock env");
         let old = std::env::var("GQL_SCHEMA_FILE").ok();
-        std::env::set_var("GQL_SCHEMA_FILE", "  schema.gql  ");
+        // SAFETY: tests mutate process env while guarded by env_lock.
+        unsafe { std::env::set_var("GQL_SCHEMA_FILE", "  schema.gql  ") };
 
         let tmp = TempDir::new().expect("tmp");
         let setup_dir = std::fs::canonicalize(tmp.path()).expect("setup abs");
@@ -114,8 +115,14 @@ mod tests {
         assert_eq!(got, expected);
 
         match old {
-            Some(v) => std::env::set_var("GQL_SCHEMA_FILE", v),
-            None => std::env::remove_var("GQL_SCHEMA_FILE"),
+            Some(v) => {
+                // SAFETY: tests restore process env while guarded by env_lock.
+                unsafe { std::env::set_var("GQL_SCHEMA_FILE", v) };
+            }
+            None => {
+                // SAFETY: tests restore process env while guarded by env_lock.
+                unsafe { std::env::remove_var("GQL_SCHEMA_FILE") };
+            }
         }
     }
 
@@ -123,7 +130,8 @@ mod tests {
     fn schema_file_schema_env_is_used_when_no_arg_or_env() {
         let _guard = env_lock().lock().expect("lock env");
         let old = std::env::var("GQL_SCHEMA_FILE").ok();
-        std::env::remove_var("GQL_SCHEMA_FILE");
+        // SAFETY: tests mutate process env while guarded by env_lock.
+        unsafe { std::env::remove_var("GQL_SCHEMA_FILE") };
 
         let tmp = TempDir::new().expect("tmp");
         let setup_dir = std::fs::canonicalize(tmp.path()).expect("setup abs");
@@ -143,8 +151,14 @@ mod tests {
         assert_eq!(got, expected);
 
         match old {
-            Some(v) => std::env::set_var("GQL_SCHEMA_FILE", v),
-            None => std::env::remove_var("GQL_SCHEMA_FILE"),
+            Some(v) => {
+                // SAFETY: tests restore process env while guarded by env_lock.
+                unsafe { std::env::set_var("GQL_SCHEMA_FILE", v) };
+            }
+            None => {
+                // SAFETY: tests restore process env while guarded by env_lock.
+                unsafe { std::env::remove_var("GQL_SCHEMA_FILE") };
+            }
         }
     }
 
@@ -152,7 +166,8 @@ mod tests {
     fn schema_file_falls_back_to_candidate_filenames() {
         let _guard = env_lock().lock().expect("lock env");
         let old = std::env::var("GQL_SCHEMA_FILE").ok();
-        std::env::remove_var("GQL_SCHEMA_FILE");
+        // SAFETY: tests mutate process env while guarded by env_lock.
+        unsafe { std::env::remove_var("GQL_SCHEMA_FILE") };
 
         let tmp = TempDir::new().expect("tmp");
         let setup_dir = std::fs::canonicalize(tmp.path()).expect("setup abs");
@@ -164,8 +179,14 @@ mod tests {
         assert_eq!(got, expected);
 
         match old {
-            Some(v) => std::env::set_var("GQL_SCHEMA_FILE", v),
-            None => std::env::remove_var("GQL_SCHEMA_FILE"),
+            Some(v) => {
+                // SAFETY: tests restore process env while guarded by env_lock.
+                unsafe { std::env::set_var("GQL_SCHEMA_FILE", v) };
+            }
+            None => {
+                // SAFETY: tests restore process env while guarded by env_lock.
+                unsafe { std::env::remove_var("GQL_SCHEMA_FILE") };
+            }
         }
     }
 
@@ -173,7 +194,8 @@ mod tests {
     fn schema_file_errors_when_not_configured() {
         let _guard = env_lock().lock().expect("lock env");
         let old = std::env::var("GQL_SCHEMA_FILE").ok();
-        std::env::remove_var("GQL_SCHEMA_FILE");
+        // SAFETY: tests mutate process env while guarded by env_lock.
+        unsafe { std::env::remove_var("GQL_SCHEMA_FILE") };
 
         let tmp = TempDir::new().expect("tmp");
         let setup_dir = std::fs::canonicalize(tmp.path()).expect("setup abs");
@@ -184,8 +206,14 @@ mod tests {
             .contains("Schema file not configured. Set GQL_SCHEMA_FILE"));
 
         match old {
-            Some(v) => std::env::set_var("GQL_SCHEMA_FILE", v),
-            None => std::env::remove_var("GQL_SCHEMA_FILE"),
+            Some(v) => {
+                // SAFETY: tests restore process env while guarded by env_lock.
+                unsafe { std::env::set_var("GQL_SCHEMA_FILE", v) };
+            }
+            None => {
+                // SAFETY: tests restore process env while guarded by env_lock.
+                unsafe { std::env::remove_var("GQL_SCHEMA_FILE") };
+            }
         }
     }
 }

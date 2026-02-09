@@ -94,13 +94,13 @@ pub(super) fn prepare_rest_case(
     }
 
     let mut access_token_for_case = String::new();
-    if let Some(mgr) = auth_manager {
-        if !token.trim().is_empty() {
-            match mgr.ensure_token(token.trim(), repo_root, defaults, env_rest_url, env_gql_url) {
-                Ok(t) => access_token_for_case = t,
-                Err(err) => {
-                    return Ok(PrepareOutcome::Failed { message: err });
-                }
+    if let Some(mgr) = auth_manager
+        && !token.trim().is_empty()
+    {
+        match mgr.ensure_token(token.trim(), repo_root, defaults, env_rest_url, env_gql_url) {
+            Ok(t) => access_token_for_case = t,
+            Err(err) => {
+                return Ok(PrepareOutcome::Failed { message: err });
             }
         }
     }

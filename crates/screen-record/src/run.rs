@@ -867,21 +867,21 @@ fn resolve_image_format(
     };
 
     if let Some(format) = format {
-        if let Some(ext) = ext.as_deref() {
-            if !matches!(ext, "png" | "jpg" | "jpeg" | "webp") {
-                return Err(CliError::usage(
-                    "unsupported --path extension for screenshot (supported: .png, .jpg, .jpeg, .webp)",
-                ));
-            }
+        if let Some(ext) = ext.as_deref()
+            && !matches!(ext, "png" | "jpg" | "jpeg" | "webp")
+        {
+            return Err(CliError::usage(
+                "unsupported --path extension for screenshot (supported: .png, .jpg, .jpeg, .webp)",
+            ));
         }
 
-        if let Some(ext_format) = ext_format {
-            if ext_format != format {
-                return Err(CliError::usage(format!(
-                    "--image-format {} conflicts with --path extension",
-                    image_label(format)
-                )));
-            }
+        if let Some(ext_format) = ext_format
+            && ext_format != format
+        {
+            return Err(CliError::usage(format!(
+                "--image-format {} conflicts with --path extension",
+                image_label(format)
+            )));
         }
         return Ok(format);
     }
@@ -1003,13 +1003,13 @@ fn resolve_container(
     };
 
     if let Some(format) = format {
-        if let Some(ext_format) = ext_format {
-            if ext_format != format {
-                return Err(CliError::usage(format!(
-                    "--format {} conflicts with --path extension",
-                    format_label(format)
-                )));
-            }
+        if let Some(ext_format) = ext_format
+            && ext_format != format
+        {
+            return Err(CliError::usage(format!(
+                "--format {} conflicts with --path extension",
+                format_label(format)
+            )));
         }
         return Ok(format);
     }

@@ -79,22 +79,22 @@ fn run_pick(args: &[String]) -> i32 {
     let mut target_branch_for_name = parsed.target.clone();
     let mut target_is_remote = false;
 
-    if let Some((maybe_remote, rest)) = parsed.target.split_once('/') {
-        if remotes.iter().any(|name| name == maybe_remote) {
-            let target_remote = maybe_remote.to_string();
-            target_branch = rest.to_string();
-            target_branch_for_name = target_branch.clone();
+    if let Some((maybe_remote, rest)) = parsed.target.split_once('/')
+        && remotes.iter().any(|name| name == maybe_remote)
+    {
+        let target_remote = maybe_remote.to_string();
+        target_branch = rest.to_string();
+        target_branch_for_name = target_branch.clone();
 
-            target_is_remote = true;
-            if parsed.remote_opt.is_none() {
-                remote = target_remote;
-            } else if remote != target_remote {
-                eprintln!(
-                    "❌ Target ref looks like '{}' (remote '{}') but --remote is '{}'.",
-                    parsed.target, target_remote, remote
-                );
-                return 2;
-            }
+        target_is_remote = true;
+        if parsed.remote_opt.is_none() {
+            remote = target_remote;
+        } else if remote != target_remote {
+            eprintln!(
+                "❌ Target ref looks like '{}' (remote '{}') but --remote is '{}'.",
+                parsed.target, target_remote, remote
+            );
+            return 2;
         }
     }
 
@@ -347,16 +347,16 @@ fn resolve_pick_commits(commit_spec: &str) -> Option<Vec<String>> {
     if commit_spec.contains("..") {
         let output = git_output(&["rev-list", "--reverse", commit_spec]);
         let mut commits: Vec<String> = Vec::new();
-        if let Some(output) = output {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                commits = stdout
-                    .lines()
-                    .map(|line| line.trim())
-                    .filter(|line| !line.is_empty())
-                    .map(|line| line.to_string())
-                    .collect();
-            }
+        if let Some(output) = output
+            && output.status.success()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            commits = stdout
+                .lines()
+                .map(|line| line.trim())
+                .filter(|line| !line.is_empty())
+                .map(|line| line.to_string())
+                .collect();
         }
         if commits.is_empty() {
             eprintln!("❌ No commits resolved from range: {commit_spec}");

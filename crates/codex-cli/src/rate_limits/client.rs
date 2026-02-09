@@ -105,19 +105,19 @@ fn send_request(
 }
 
 fn refresh_target(target_file: &Path) {
-    if let Some(auth_file) = paths::resolve_auth_file() {
-        if auth_file == target_file {
-            let _ = crate::auth::refresh::run(&[]);
-            return;
-        }
+    if let Some(auth_file) = paths::resolve_auth_file()
+        && auth_file == target_file
+    {
+        let _ = crate::auth::refresh::run(&[]);
+        return;
     }
 
-    if let Some(secret_dir) = paths::resolve_secret_dir() {
-        if let Some(file_name) = target_file.file_name().and_then(|n| n.to_str()) {
-            let path = secret_dir.join(file_name);
-            if path == target_file {
-                let _ = crate::auth::refresh::run(&[file_name.to_string()]);
-            }
+    if let Some(secret_dir) = paths::resolve_secret_dir()
+        && let Some(file_name) = target_file.file_name().and_then(|n| n.to_str())
+    {
+        let path = secret_dir.join(file_name);
+        if path == target_file {
+            let _ = crate::auth::refresh::run(&[file_name.to_string()]);
         }
     }
 }

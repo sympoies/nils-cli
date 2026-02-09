@@ -20,16 +20,14 @@ pub fn load_or_build() -> Result<DefIndex> {
     let ttl_seconds = ttl_minutes * 60;
 
     let now = util::now_epoch_seconds();
-    if let Ok(raw) = fs::read_to_string(&ts_file) {
-        if let Ok(last) = raw.trim().parse::<i64>() {
-            if last > 0 && (now - last) <= ttl_seconds {
-                if let Ok(data) = fs::read_to_string(&data_file) {
-                    if let Ok(index) = serde_json::from_str::<DefIndex>(&data) {
-                        return Ok(index);
-                    }
-                }
-            }
-        }
+    if let Ok(raw) = fs::read_to_string(&ts_file)
+        && let Ok(last) = raw.trim().parse::<i64>()
+        && last > 0
+        && (now - last) <= ttl_seconds
+        && let Ok(data) = fs::read_to_string(&data_file)
+        && let Ok(index) = serde_json::from_str::<DefIndex>(&data)
+    {
+        return Ok(index);
     }
 
     let index = super::index::build_index()?;
@@ -69,7 +67,8 @@ mod tests {
     impl EnvGuard {
         fn set(key: &'static str, value: &str) -> Self {
             let original = std::env::var(key).ok();
-            std::env::set_var(key, value);
+            // SAFETY: tests mutate process env only in scoped guard usage.
+            unsafe { std::env::set_var(key, value) };
             Self { key, original }
         }
     }
@@ -77,8 +76,14 @@ mod tests {
     impl Drop for EnvGuard {
         fn drop(&mut self) {
             match &self.original {
-                Some(value) => std::env::set_var(self.key, value),
-                None => std::env::remove_var(self.key),
+                Some(value) => {
+                    // SAFETY: tests restore process env only in scoped guard usage.
+                    unsafe { std::env::set_var(self.key, value) };
+                }
+                None => {
+                    // SAFETY: tests restore process env only in scoped guard usage.
+                    unsafe { std::env::remove_var(self.key) };
+                }
             }
         }
     }

@@ -451,10 +451,10 @@ fn resolve_main_display_bounds() -> Result<DisplayBounds, CliError> {
     }
     .filter(|output| *output != 0);
 
-    if let Some(output) = primary_output {
-        if let Some(bounds) = bounds_for_output(&conn, resources.config_timestamp, output) {
-            return Ok(bounds);
-        }
+    if let Some(output) = primary_output
+        && let Some(bounds) = bounds_for_output(&conn, resources.config_timestamp, output)
+    {
+        return Ok(bounds);
     }
 
     let mut candidates: Vec<Output> = resources.outputs;
@@ -533,10 +533,10 @@ fn run_ffmpeg(mut cmd: Command) -> Result<(), CliError> {
             stop_instant = Some(Instant::now());
         }
 
-        if let Some(start) = stop_instant {
-            if start.elapsed() >= KILL_GRACE {
-                let _ = child.kill();
-            }
+        if let Some(start) = stop_instant
+            && start.elapsed() >= KILL_GRACE
+        {
+            let _ = child.kill();
         }
 
         std::thread::sleep(Duration::from_millis(25));

@@ -796,10 +796,11 @@ where
         .map(|output| output.stdout)
         .map_err(|failure| map_ax_failure(operation, failure))?;
 
-    if stdout.trim().is_empty() && test_mode::enabled() {
-        if let Some(fallback_json) = test_mode_default_json(operation) {
-            return parse_jxa_output(operation, fallback_json);
-        }
+    if stdout.trim().is_empty()
+        && test_mode::enabled()
+        && let Some(fallback_json) = test_mode_default_json(operation)
+    {
+        return parse_jxa_output(operation, fallback_json);
     }
 
     parse_jxa_output(operation, &stdout)
@@ -997,16 +998,16 @@ fn ensure_optional_bool(
     object: &Map<String, Value>,
     field: &str,
 ) -> Result<(), CliError> {
-    if let Some(value) = object.get(field) {
-        if !value.is_boolean() {
-            return Err(ax_contract_error(
-                operation,
-                format!(
-                    "`{field}` must be a boolean when present (received {})",
-                    json_type_name(value)
-                ),
-            ));
-        }
+    if let Some(value) = object.get(field)
+        && !value.is_boolean()
+    {
+        return Err(ax_contract_error(
+            operation,
+            format!(
+                "`{field}` must be a boolean when present (received {})",
+                json_type_name(value)
+            ),
+        ));
     }
     Ok(())
 }
@@ -1016,16 +1017,17 @@ fn ensure_optional_string_or_null(
     object: &Map<String, Value>,
     field: &str,
 ) -> Result<(), CliError> {
-    if let Some(value) = object.get(field) {
-        if !value.is_null() && !value.is_string() {
-            return Err(ax_contract_error(
-                operation,
-                format!(
-                    "`{field}` must be a string or null when present (received {})",
-                    json_type_name(value)
-                ),
-            ));
-        }
+    if let Some(value) = object.get(field)
+        && !value.is_null()
+        && !value.is_string()
+    {
+        return Err(ax_contract_error(
+            operation,
+            format!(
+                "`{field}` must be a string or null when present (received {})",
+                json_type_name(value)
+            ),
+        ));
     }
     Ok(())
 }

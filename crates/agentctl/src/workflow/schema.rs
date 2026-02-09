@@ -60,13 +60,13 @@ impl WorkflowDocument {
                 )));
             }
 
-            if let WorkflowStep::Provider(provider) = step {
-                if provider.task.trim().is_empty() {
-                    return Err(WorkflowSchemaError::new(format!(
-                        "provider step '{}' task must not be empty",
-                        step_id
-                    )));
-                }
+            if let WorkflowStep::Provider(provider) = step
+                && provider.task.trim().is_empty()
+            {
+                return Err(WorkflowSchemaError::new(format!(
+                    "provider step '{}' task must not be empty",
+                    step_id
+                )));
             }
         }
 

@@ -62,10 +62,10 @@ pub(super) fn prepare_graphql_case(
         .as_deref()
         .and_then(cli_util::trim_non_empty)
         .map(|p| resolve_path_from_repo_root(repo_root, &p));
-    if let Some(vp) = vars_abs.as_deref() {
-        if !vp.is_file() {
-            anyhow::bail!("GraphQL case '{id}' vars not found: {}", vp.display());
-        }
+    if let Some(vp) = vars_abs.as_deref()
+        && !vp.is_file()
+    {
+        anyhow::bail!("GraphQL case '{id}' vars not found: {}", vp.display());
     }
 
     let config_dir = cli_util::trim_non_empty(&case.config_dir)
@@ -93,12 +93,12 @@ pub(super) fn prepare_graphql_case(
     }
 
     let mut access_token_for_case = String::new();
-    if let Some(mgr) = auth_manager {
-        if !jwt.trim().is_empty() {
-            match mgr.ensure_token(jwt.trim(), repo_root, defaults, env_rest_url, env_gql_url) {
-                Ok(t) => access_token_for_case = t,
-                Err(err) => return Ok(PrepareOutcome::Failed { message: err }),
-            }
+    if let Some(mgr) = auth_manager
+        && !jwt.trim().is_empty()
+    {
+        match mgr.ensure_token(jwt.trim(), repo_root, defaults, env_rest_url, env_gql_url) {
+            Ok(t) => access_token_for_case = t,
+            Err(err) => return Ok(PrepareOutcome::Failed { message: err }),
         }
     }
 

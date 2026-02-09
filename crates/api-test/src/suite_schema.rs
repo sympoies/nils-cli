@@ -366,17 +366,17 @@ impl SuiteManifestV1 {
                 );
             }
 
-            if let Some(required) = &auth.required {
-                if parse_bool_raw(required).is_none() {
-                    return Err(SuiteSchemaValidationError::InvalidSuiteAuthRequiredNotBoolean);
-                }
+            if let Some(required) = &auth.required
+                && parse_bool_raw(required).is_none()
+            {
+                return Err(SuiteSchemaValidationError::InvalidSuiteAuthRequiredNotBoolean);
             }
 
             let mut provider = auth_provider_effective(auth)?;
-            if let Some(p) = &provider {
-                if p == "gql" {
-                    provider = Some("graphql".to_string());
-                }
+            if let Some(p) = &provider
+                && p == "gql"
+            {
+                provider = Some("graphql".to_string());
             }
 
             match provider.as_deref() {

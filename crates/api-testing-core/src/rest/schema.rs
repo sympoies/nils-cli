@@ -161,74 +161,74 @@ pub fn parse_rest_request_json(raw: serde_json::Value) -> Result<RestRequest> {
     }
 
     let mut query: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    if let Some(query_value) = obj.get("query") {
-        if !query_value.is_null() {
-            let q = query_value.as_object().context("query must be an object")?;
-            for (k, v) in q {
-                let values = match v {
-                    serde_json::Value::Null => continue,
-                    serde_json::Value::Array(arr) => {
-                        let mut out: Vec<String> = Vec::new();
-                        for el in arr {
-                            if el.is_null() {
-                                continue;
-                            }
-                            match el {
-                                serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
-                                    anyhow::bail!("query array elements must be scalars");
-                                }
-                                _ => out.push(json_scalar_to_string(el)?),
-                            }
+    if let Some(query_value) = obj.get("query")
+        && !query_value.is_null()
+    {
+        let q = query_value.as_object().context("query must be an object")?;
+        for (k, v) in q {
+            let values = match v {
+                serde_json::Value::Null => continue,
+                serde_json::Value::Array(arr) => {
+                    let mut out: Vec<String> = Vec::new();
+                    for el in arr {
+                        if el.is_null() {
+                            continue;
                         }
-                        out
+                        match el {
+                            serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
+                                anyhow::bail!("query array elements must be scalars");
+                            }
+                            _ => out.push(json_scalar_to_string(el)?),
+                        }
                     }
-                    serde_json::Value::Object(_) => {
-                        anyhow::bail!(
-                            "query values must be scalars or arrays (objects are not allowed)"
-                        );
-                    }
-                    _ => vec![json_scalar_to_string(v)?],
-                };
-
-                if !values.is_empty() {
-                    query.insert(k.to_string(), values);
+                    out
                 }
+                serde_json::Value::Object(_) => {
+                    anyhow::bail!(
+                        "query values must be scalars or arrays (objects are not allowed)"
+                    );
+                }
+                _ => vec![json_scalar_to_string(v)?],
+            };
+
+            if !values.is_empty() {
+                query.insert(k.to_string(), values);
             }
         }
     }
 
     let mut accept_key_present = false;
     let mut user_headers: Vec<(String, String)> = Vec::new();
-    if let Some(headers_value) = obj.get("headers") {
-        if !headers_value.is_null() {
-            let h = headers_value
-                .as_object()
-                .context("headers must be an object")?;
-            accept_key_present = h.keys().any(|k| k.eq_ignore_ascii_case("accept"));
+    if let Some(headers_value) = obj.get("headers")
+        && !headers_value.is_null()
+    {
+        let h = headers_value
+            .as_object()
+            .context("headers must be an object")?;
+        accept_key_present = h.keys().any(|k| k.eq_ignore_ascii_case("accept"));
 
-            for (k, v) in h {
-                if v.is_null() {
-                    continue;
-                }
-
-                let key_lower = k.to_ascii_lowercase();
-                if key_lower == "authorization" || key_lower == "content-type" {
-                    continue;
-                }
-
-                if !is_valid_header_key(k) {
-                    anyhow::bail!("invalid header key: {k}");
-                }
-
-                if matches!(
-                    v,
-                    serde_json::Value::Object(_) | serde_json::Value::Array(_)
-                ) {
-                    anyhow::bail!("header values must be scalars: {k}");
-                }
-
-                user_headers.push((k.to_string(), json_value_to_string_loose(v)));
+        for (k, v) in h {
+            if v.is_null() {
+                continue;
             }
+
+            let key_lower = k.to_ascii_lowercase();
+            if key_lower == "authorization" || key_lower == "content-type" {
+                continue;
+            }
+
+            if !is_valid_header_key(k) {
+                anyhow::bail!("invalid header key: {k}");
+            }
+
+            if matches!(
+                v,
+                serde_json::Value::Object(_) | serde_json::Value::Array(_)
+            ) {
+                anyhow::bail!("header values must be scalars: {k}");
+            }
+
+            user_headers.push((k.to_string(), json_value_to_string_loose(v)));
         }
     }
 

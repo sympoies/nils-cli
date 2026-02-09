@@ -99,10 +99,10 @@ fn resolve_by_email(secret_dir: &Path, target: &str) -> ResolveResult {
                 if email_lower == query {
                     matches.push(file_name(&path));
                 }
-            } else if let Some(local_part) = email_lower.split('@').next() {
-                if local_part == query {
-                    matches.push(file_name(&path));
-                }
+            } else if let Some(local_part) = email_lower.split('@').next()
+                && local_part == query
+            {
+                matches.push(file_name(&path));
             }
         }
     }
@@ -172,7 +172,8 @@ mod tests {
     impl EnvGuard {
         fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
             let old = std::env::var_os(key);
-            std::env::set_var(key, value);
+            // SAFETY: tests mutate process env only in scoped guard usage.
+            unsafe { std::env::set_var(key, value) };
             Self { key, old }
         }
     }
@@ -180,9 +181,11 @@ mod tests {
     impl Drop for EnvGuard {
         fn drop(&mut self) {
             if let Some(value) = self.old.take() {
-                std::env::set_var(self.key, value);
+                // SAFETY: tests restore process env only in scoped guard usage.
+                unsafe { std::env::set_var(self.key, value) };
             } else {
-                std::env::remove_var(self.key);
+                // SAFETY: tests restore process env only in scoped guard usage.
+                unsafe { std::env::remove_var(self.key) };
             }
         }
     }

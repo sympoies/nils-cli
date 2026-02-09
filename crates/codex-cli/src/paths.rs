@@ -67,10 +67,10 @@ pub fn resolve_zdotdir() -> Option<PathBuf> {
         return Some(path);
     }
 
-    if let Some(preload) = env_path("_ZSH_BOOTSTRAP_PRELOAD_PATH") {
-        if let Some(parent) = parent_dir(&preload, 2) {
-            return Some(parent);
-        }
+    if let Some(preload) = env_path("_ZSH_BOOTSTRAP_PRELOAD_PATH")
+        && let Some(parent) = parent_dir(&preload, 2)
+    {
+        return Some(parent);
     }
 
     let home = home_dir()?;

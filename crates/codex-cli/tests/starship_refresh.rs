@@ -48,10 +48,10 @@ fn now_epoch() -> i64 {
 fn wait_for_file_contains(path: &Path, needle: &str, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if let Ok(content) = fs::read_to_string(path) {
-            if content.contains(needle) {
-                return true;
-            }
+        if let Ok(content) = fs::read_to_string(path)
+            && content.contains(needle)
+        {
+            return true;
         }
         thread::sleep(Duration::from_millis(25));
     }

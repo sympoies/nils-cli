@@ -142,11 +142,11 @@ fn handle_starship(args: &cli::StarshipArgs) -> i32 {
 
 fn print_subcommand_help(name: &str) -> i32 {
     let mut cmd = cli::Cli::command();
-    if let Some(subcommand) = cmd.find_subcommand_mut(name) {
-        if subcommand.print_help().is_ok() {
-            println!();
-            return 0;
-        }
+    if let Some(subcommand) = cmd.find_subcommand_mut(name)
+        && subcommand.print_help().is_ok()
+    {
+        println!();
+        return 0;
     }
     1
 }

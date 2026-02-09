@@ -37,12 +37,11 @@ pub fn run(args: &RateLimitsOptions) -> Result<i32> {
     let output_json = args.json;
 
     let mut debug_mode = args.debug;
-    if !debug_mode {
-        if let Ok(raw) = std::env::var("ZSH_DEBUG") {
-            if raw.parse::<i64>().unwrap_or(0) >= 2 {
-                debug_mode = true;
-            }
-        }
+    if !debug_mode
+        && let Ok(raw) = std::env::var("ZSH_DEBUG")
+        && raw.parse::<i64>().unwrap_or(0) >= 2
+    {
+        debug_mode = true;
     }
 
     if args.async_mode {
@@ -66,11 +65,11 @@ pub fn run(args: &RateLimitsOptions) -> Result<i32> {
         return Ok(64);
     }
 
-    if args.clear_cache {
-        if let Err(err) = cache::clear_starship_cache() {
-            eprintln!("{err}");
-            return Ok(1);
-        }
+    if args.clear_cache
+        && let Err(err) = cache::clear_starship_cache()
+    {
+        eprintln!("{err}");
+        return Ok(1);
     }
 
     if !all_mode
@@ -142,11 +141,11 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
         .map(|value| value as usize)
         .unwrap_or(5);
 
-    if args.clear_cache {
-        if let Err(err) = cache::clear_starship_cache() {
-            eprintln!("{err}");
-            return Ok(1);
-        }
+    if args.clear_cache
+        && let Err(err) = cache::clear_starship_cache()
+    {
+        eprintln!("{err}");
+        return Ok(1);
     }
 
     let secret_dir = crate::paths::resolve_secret_dir().unwrap_or_default();
@@ -282,47 +281,46 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
                 rc = 1;
             }
 
-            if let Some(line) = &event.line {
-                if let Some(parsed) = parse_one_line_output(line) {
-                    row.window_label = parsed.window_label.clone();
-                    row.non_weekly_remaining = parsed.non_weekly_remaining;
-                    row.weekly_remaining = parsed.weekly_remaining;
-                    row.weekly_reset_iso = parsed.weekly_reset_iso.clone();
+            if let Some(line) = &event.line
+                && let Some(parsed) = parse_one_line_output(line)
+            {
+                row.window_label = parsed.window_label.clone();
+                row.non_weekly_remaining = parsed.non_weekly_remaining;
+                row.weekly_remaining = parsed.weekly_remaining;
+                row.weekly_reset_iso = parsed.weekly_reset_iso.clone();
 
-                    if args.cached {
-                        if let Ok(cache_entry) = cache::read_cache_entry(secret_file) {
+                if args.cached {
+                    if let Ok(cache_entry) = cache::read_cache_entry(secret_file) {
+                        row.non_weekly_reset_epoch = cache_entry.non_weekly_reset_epoch;
+                        row.weekly_reset_epoch = Some(cache_entry.weekly_reset_epoch);
+                    }
+                } else {
+                    let values = crate::json::read_json(secret_file).ok();
+                    if let Some(values) = values {
+                        row.non_weekly_reset_epoch = crate::json::i64_at(
+                            &values,
+                            &["codex_rate_limits", "non_weekly_reset_at_epoch"],
+                        );
+                        row.weekly_reset_epoch = crate::json::i64_at(
+                            &values,
+                            &["codex_rate_limits", "weekly_reset_at_epoch"],
+                        );
+                    }
+                    if (row.non_weekly_reset_epoch.is_none() || row.weekly_reset_epoch.is_none())
+                        && let Ok(cache_entry) = cache::read_cache_entry(secret_file)
+                    {
+                        if row.non_weekly_reset_epoch.is_none() {
                             row.non_weekly_reset_epoch = cache_entry.non_weekly_reset_epoch;
+                        }
+                        if row.weekly_reset_epoch.is_none() {
                             row.weekly_reset_epoch = Some(cache_entry.weekly_reset_epoch);
                         }
-                    } else {
-                        let values = crate::json::read_json(secret_file).ok();
-                        if let Some(values) = values {
-                            row.non_weekly_reset_epoch = crate::json::i64_at(
-                                &values,
-                                &["codex_rate_limits", "non_weekly_reset_at_epoch"],
-                            );
-                            row.weekly_reset_epoch = crate::json::i64_at(
-                                &values,
-                                &["codex_rate_limits", "weekly_reset_at_epoch"],
-                            );
-                        }
-                        if row.non_weekly_reset_epoch.is_none() || row.weekly_reset_epoch.is_none()
-                        {
-                            if let Ok(cache_entry) = cache::read_cache_entry(secret_file) {
-                                if row.non_weekly_reset_epoch.is_none() {
-                                    row.non_weekly_reset_epoch = cache_entry.non_weekly_reset_epoch;
-                                }
-                                if row.weekly_reset_epoch.is_none() {
-                                    row.weekly_reset_epoch = Some(cache_entry.weekly_reset_epoch);
-                                }
-                            }
-                        }
                     }
-
-                    window_labels.insert(row.window_label.clone());
-                    rows.push(row);
-                    continue;
                 }
+
+                window_labels.insert(row.window_label.clone());
+                rows.push(row);
+                continue;
             }
         }
 
@@ -334,10 +332,8 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
 
     let mut non_weekly_header = "Non-weekly".to_string();
     let multiple_labels = window_labels.len() != 1;
-    if !multiple_labels {
-        if let Some(label) = window_labels.iter().next() {
-            non_weekly_header = label.clone();
-        }
+    if !multiple_labels && let Some(label) = window_labels.iter().next() {
+        non_weekly_header = label.clone();
     }
 
     let current_name = current_secret_basename(&secret_files);
@@ -686,37 +682,37 @@ fn sync_auth_silent() -> Result<(i32, Option<String>)> {
         }
     };
 
-    if let Some(secret_dir) = crate::paths::resolve_secret_dir() {
-        if let Ok(entries) = std::fs::read_dir(&secret_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) != Some("json") {
-                    continue;
-                }
-                let candidate_key = match auth::identity_key_from_auth_file(&path) {
-                    Ok(Some(key)) => key,
-                    _ => continue,
-                };
-                if candidate_key != auth_key {
-                    continue;
-                }
-
-                let secret_hash = match crate::fs::sha256_file(&path) {
-                    Ok(hash) => hash,
-                    Err(_) => {
-                        return Ok((1, Some(format!("codex: failed to hash {}", path.display()))))
-                    }
-                };
-                if secret_hash == auth_hash {
-                    continue;
-                }
-
-                let contents = std::fs::read(&auth_file)?;
-                crate::fs::write_atomic(&path, &contents, crate::fs::SECRET_FILE_MODE)?;
-
-                let timestamp_path = secret_timestamp_path(&path)?;
-                crate::fs::write_timestamp(&timestamp_path, auth_last_refresh.as_deref())?;
+    if let Some(secret_dir) = crate::paths::resolve_secret_dir()
+        && let Ok(entries) = std::fs::read_dir(&secret_dir)
+    {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
             }
+            let candidate_key = match auth::identity_key_from_auth_file(&path) {
+                Ok(Some(key)) => key,
+                _ => continue,
+            };
+            if candidate_key != auth_key {
+                continue;
+            }
+
+            let secret_hash = match crate::fs::sha256_file(&path) {
+                Ok(hash) => hash,
+                Err(_) => {
+                    return Ok((1, Some(format!("codex: failed to hash {}", path.display()))))
+                }
+            };
+            if secret_hash == auth_hash {
+                continue;
+            }
+
+            let contents = std::fs::read(&auth_file)?;
+            crate::fs::write_atomic(&path, &contents, crate::fs::SECRET_FILE_MODE)?;
+
+            let timestamp_path = secret_timestamp_path(&path)?;
+            crate::fs::write_timestamp(&timestamp_path, auth_last_refresh.as_deref())?;
         }
     }
 
@@ -853,10 +849,8 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
 
     let mut non_weekly_header = "Non-weekly".to_string();
     let multiple_labels = window_labels.len() != 1;
-    if !multiple_labels {
-        if let Some(label) = window_labels.iter().next() {
-            non_weekly_header = label.clone();
-        }
+    if !multiple_labels && let Some(label) = window_labels.iter().next() {
+        non_weekly_header = label.clone();
     }
 
     let now_epoch = Utc::now().timestamp();
@@ -930,24 +924,22 @@ fn current_secret_basename(secret_files: &[PathBuf]) -> Option<String> {
 
     if let Some(auth_hash) = auth_hash.as_deref() {
         for secret_file in secret_files {
-            if let Ok(secret_hash) = crate::fs::sha256_file(secret_file) {
-                if secret_hash == auth_hash {
-                    if let Some(name) = secret_file.file_name().and_then(|name| name.to_str()) {
-                        return Some(name.trim_end_matches(".json").to_string());
-                    }
-                }
+            if let Ok(secret_hash) = crate::fs::sha256_file(secret_file)
+                && secret_hash == auth_hash
+                && let Some(name) = secret_file.file_name().and_then(|name| name.to_str())
+            {
+                return Some(name.trim_end_matches(".json").to_string());
             }
         }
     }
 
     if let Some(auth_key) = auth_key.as_deref() {
         for secret_file in secret_files {
-            if let Ok(Some(candidate_key)) = auth::identity_key_from_auth_file(secret_file) {
-                if candidate_key == auth_key {
-                    if let Some(name) = secret_file.file_name().and_then(|name| name.to_str()) {
-                        return Some(name.trim_end_matches(".json").to_string());
-                    }
-                }
+            if let Ok(Some(candidate_key)) = auth::identity_key_from_auth_file(secret_file)
+                && candidate_key == auth_key
+                && let Some(name) = secret_file.file_name().and_then(|name| name.to_str())
+            {
+                return Some(name.trim_end_matches(".json").to_string());
             }
         }
     }

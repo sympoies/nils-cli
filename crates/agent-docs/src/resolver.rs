@@ -405,20 +405,20 @@ fn resolve_required_doc_with_project_fallback(
         };
     }
 
-    if scope == Scope::Project {
-        if let Some(fallback_root) = fallback_root {
-            let fallback_path = normalize_path(&fallback_root.join(file_name));
-            if fallback_path.exists() {
-                return ResolvedDocument {
-                    context,
-                    scope,
-                    path: fallback_path,
-                    required: true,
-                    status: DocumentStatus::Present,
-                    source,
-                    why: format!("{why} (fallback to primary worktree)"),
-                };
-            }
+    if scope == Scope::Project
+        && let Some(fallback_root) = fallback_root
+    {
+        let fallback_path = normalize_path(&fallback_root.join(file_name));
+        if fallback_path.exists() {
+            return ResolvedDocument {
+                context,
+                scope,
+                path: fallback_path,
+                required: true,
+                status: DocumentStatus::Present,
+                source,
+                why: format!("{why} (fallback to primary worktree)"),
+            };
         }
     }
 

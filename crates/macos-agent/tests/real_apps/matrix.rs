@@ -105,10 +105,10 @@ pub fn write_artifact_index(
     path: &Path,
     scenarios: &[ScenarioOutcome],
 ) -> io::Result<ArtifactIndex> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
     }
 
     let index = ArtifactIndex {

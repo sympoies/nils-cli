@@ -301,17 +301,17 @@ pub(crate) fn cmd_call_internal(
         }
     };
 
-    if let Some(token) = auth.bearer_token.as_deref() {
-        if let Err(err) = validate_bearer_token_if_jwt(
+    if let Some(token) = auth.bearer_token.as_deref()
+        && let Err(err) = validate_bearer_token_if_jwt(
             token,
             &history_ctx.auth_source_used,
             &auth.token_name,
             stderr,
-        ) {
-            let _ = writeln!(stderr, "{err}");
-            append_history_best_effort(&history_ctx, exit_code);
-            return 1;
-        }
+        )
+    {
+        let _ = writeln!(stderr, "{err}");
+        append_history_best_effort(&history_ctx, exit_code);
+        return 1;
     }
 
     let spinner = Progress::spinner(

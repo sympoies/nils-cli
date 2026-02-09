@@ -145,10 +145,10 @@ pub fn list_available_suffixes(file: &Path, prefix: &str) -> Vec<String> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        if let Some(rest) = line.strip_prefix("export") {
-            if rest.starts_with(char::is_whitespace) {
-                line = rest.trim();
-            }
+        if let Some(rest) = line.strip_prefix("export")
+            && rest.starts_with(char::is_whitespace)
+        {
+            line = rest.trim();
         }
 
         let Some((lhs, _rhs)) = line.split_once('=') else {

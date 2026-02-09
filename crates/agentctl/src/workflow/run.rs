@@ -475,12 +475,12 @@ fn run_command(
             break status;
         }
 
-        if let Some(timeout) = timeout {
-            if started.elapsed() >= timeout {
-                timed_out = true;
-                let _ = child.kill();
-                break child.wait()?;
-            }
+        if let Some(timeout) = timeout
+            && started.elapsed() >= timeout
+        {
+            timed_out = true;
+            let _ = child.kill();
+            break child.wait()?;
         }
 
         thread::sleep(Duration::from_millis(5));

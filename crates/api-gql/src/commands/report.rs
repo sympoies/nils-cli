@@ -33,11 +33,11 @@ pub(crate) fn cmd_report(
         .as_deref()
         .and_then(trim_non_empty)
         .map(PathBuf::from);
-    if let Some(vp) = vars_path.as_deref() {
-        if !vp.is_file() {
-            let _ = writeln!(stderr, "Variables file not found: {}", vp.display());
-            return 1;
-        }
+    if let Some(vp) = vars_path.as_deref()
+        && !vp.is_file()
+    {
+        let _ = writeln!(stderr, "Variables file not found: {}", vp.display());
+        return 1;
     }
 
     let ReportMetadata {
@@ -406,10 +406,10 @@ fn build_report_command_snippet(
         };
         out.push_str(&format!("  --url {} \\\n", shell_quote(&value)));
     }
-    if let Some(env) = args.env.as_deref().and_then(trim_non_empty) {
-        if args.url.as_deref().and_then(trim_non_empty).is_none() {
-            out.push_str(&format!("  --env {} \\\n", shell_quote(&env)));
-        }
+    if let Some(env) = args.env.as_deref().and_then(trim_non_empty)
+        && args.url.as_deref().and_then(trim_non_empty).is_none()
+    {
+        out.push_str(&format!("  --env {} \\\n", shell_quote(&env)));
     }
     if let Some(jwt) = args.jwt.as_deref().and_then(trim_non_empty) {
         out.push_str(&format!("  --jwt {} \\\n", shell_quote(&jwt)));

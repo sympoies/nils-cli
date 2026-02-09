@@ -126,11 +126,11 @@ pub fn run(args: &[String]) -> i32 {
         return 1;
     }
 
-    if let Some(parent) = out_path.parent() {
-        if let Err(err) = std::fs::create_dir_all(parent) {
-            eprintln!("scaffold_plan: error: failed to create parent dir: {err}");
-            return 1;
-        }
+    if let Some(parent) = out_path.parent()
+        && let Err(err) = std::fs::create_dir_all(parent)
+    {
+        eprintln!("scaffold_plan: error: failed to create parent dir: {err}");
+        return 1;
     }
 
     if let Err(err) = write_template(&out_path, title.as_deref()) {
