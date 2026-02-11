@@ -4,7 +4,7 @@
 This document extends `docs/specs/cli-service-json-contract-guideline-v1.md` for service-consumed
 JSON output from:
 - `codex-cli diag rate-limits` (single/all/async)
-- `codex-cli auth use|refresh|auto-refresh|current|sync`
+- `codex-cli auth login|use|save|refresh|auto-refresh|current|sync`
 
 Human-readable output remains the default UX. JSON mode must be explicit (`--format json` or
 `--json` where supported for compatibility).
@@ -15,11 +15,15 @@ Human-readable output remains the default UX. JSON mode must be explicit (`--for
 |---|---|---|---|
 | diag rate-limits (single) | `diag rate-limits` | `codex-cli.diag.rate-limits.v1` | `result` |
 | diag rate-limits (all/async) | `diag rate-limits` | `codex-cli.diag.rate-limits.v1` | `results` |
+| auth login | `auth login` | `codex-cli.auth.v1` | `result` |
 | auth use | `auth use` | `codex-cli.auth.v1` | `result` |
+| auth save | `auth save` | `codex-cli.auth.v1` | `result` |
 | auth refresh | `auth refresh` | `codex-cli.auth.v1` | `result` |
 | auth auto-refresh | `auth auto-refresh` | `codex-cli.auth.v1` | `result` |
 | auth current | `auth current` | `codex-cli.auth.v1` | `result` |
 | auth sync | `auth sync` | `codex-cli.auth.v1` | `result` |
+
+Auth surfaces use one shared schema contract: `codex-cli.auth.v1`.
 
 ## Required Envelope Rules
 
@@ -66,7 +70,11 @@ Stable (safe for strict parsing):
     `summary.weekly_remaining`, `summary.weekly_reset_at_epoch`,
     `summary.non_weekly_reset_at_epoch`
 - Auth:
+  - `auth login`: `method` (`chatgpt-browser|chatgpt-device-code|api-key`),
+    `provider` (`chatgpt|openai-api`), `completed`
   - `auth use`: `target`, `matched_secret`, `applied`, `auth_file`
+  - `auth save`: `auth_file`, `target_file`, `saved`, `overwritten`
+    (`true` when an existing target file is replaced)
   - `auth refresh`: `target_file`, `refreshed`, `synced`, `refreshed_at`
   - `auth auto-refresh`: `refreshed`, `skipped`, `failed`, `min_age_days`, `targets[*]`
   - `auth current`: `auth_file`, `matched`, `matched_secret`, `match_mode`
@@ -177,6 +185,62 @@ Informational (do not hard-depend for schema validation):
     "matched_secret": "alpha.json",
     "applied": true,
     "auth_file": "/home/user/.codex/auth.json"
+  }
+}
+```
+
+### auth login (success)
+```json
+{
+  "schema_version": "codex-cli.auth.v1",
+  "command": "auth login",
+  "ok": true,
+  "result": {
+    "method": "chatgpt-device-code",
+    "provider": "chatgpt",
+    "completed": true
+  }
+}
+```
+
+### auth login method mapping (stable)
+
+| CLI invocation | `result.method` | `result.provider` |
+|---|---|---|
+| `auth login` | `chatgpt-browser` | `chatgpt` |
+| `auth login --device-code` | `chatgpt-device-code` | `chatgpt` |
+| `auth login --api-key` | `api-key` | `openai-api` |
+
+### auth save (success)
+```json
+{
+  "schema_version": "codex-cli.auth.v1",
+  "command": "auth save",
+  "ok": true,
+  "result": {
+    "auth_file": "/home/user/.codex/auth.json",
+    "target_file": "/home/user/.codex/secrets/team-alpha.json",
+    "saved": true,
+    "overwritten": false
+  }
+}
+```
+
+`result.overwritten` is `true` when `auth save` replaces an existing target file.
+
+### auth save (overwrite confirmation required, failure)
+```json
+{
+  "schema_version": "codex-cli.auth.v1",
+  "command": "auth save",
+  "ok": false,
+  "error": {
+    "code": "overwrite-confirmation-required",
+    "message": "codex-save: /home/user/.codex/secrets/team-alpha.json exists; rerun with --yes to overwrite",
+    "details": {
+      "target_file": "/home/user/.codex/secrets/team-alpha.json",
+      "overwritten": false
+    }
   }
 }
 ```

@@ -544,6 +544,31 @@ grep -q "auth:Auth and secrets" "$COMP_CODEX_CLI_FILE" || {
   exit 1
 }
 
+grep -q "login:Login with ChatGPT" "$COMP_CODEX_CLI_FILE" || {
+  print -u2 -r -- "FAIL: codex-cli completion missing auth login command"
+  exit 1
+}
+
+grep -q "save:Save CODEX_AUTH_FILE" "$COMP_CODEX_CLI_FILE" || {
+  print -u2 -r -- "FAIL: codex-cli completion missing auth save command"
+  exit 1
+}
+
+grep -q -- "--api-key\\[" "$COMP_CODEX_CLI_FILE" || {
+  print -u2 -r -- "FAIL: codex-cli completion missing --api-key"
+  exit 1
+}
+
+grep -q -- "--device-code\\[" "$COMP_CODEX_CLI_FILE" || {
+  print -u2 -r -- "FAIL: codex-cli completion missing --device-code"
+  exit 1
+}
+
+grep -q -- "--yes\\[" "$COMP_CODEX_CLI_FILE" || {
+  print -u2 -r -- "FAIL: codex-cli completion missing --yes"
+  exit 1
+}
+
 grep -q "diag:Diagnostics" "$COMP_CODEX_CLI_FILE" || {
   print -u2 -r -- "FAIL: codex-cli completion missing diag command"
   exit 1
@@ -746,6 +771,21 @@ bash -c "set -euo pipefail; source \"$BASH_API_TEST_FILE\"; complete -p api-test
 
 bash -c "set -euo pipefail; source \"$BASH_CODEX_CLI_FILE\"; complete -p codex-cli | grep -q _nils_cli_codex_cli_complete; complete -p cx | grep -q _nils_cli_codex_cli_complete" || {
   print -u2 -r -- "FAIL: failed to source bash codex-cli completion file"
+  exit 1
+}
+
+grep -q "auth_cmds=(login use save refresh auto-refresh current sync)" "$BASH_CODEX_CLI_FILE" || {
+  print -u2 -r -- "FAIL: bash codex-cli completion missing auth login/save command set"
+  exit 1
+}
+
+grep -q -- "--api-key --device-code" "$BASH_CODEX_CLI_FILE" || {
+  print -u2 -r -- "FAIL: bash codex-cli completion missing login mode flags"
+  exit 1
+}
+
+grep -q -- "-y --yes" "$BASH_CODEX_CLI_FILE" || {
+  print -u2 -r -- "FAIL: bash codex-cli completion missing save overwrite flags"
   exit 1
 }
 

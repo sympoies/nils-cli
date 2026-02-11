@@ -192,7 +192,9 @@ _codex-cli() {
     auth)
       local -a auth_cmds=()
       auth_cmds=(
+        'login:Login with ChatGPT (browser/device-code) or API key'
         'use:Switch to a secret by name or email'
+        'save:Save CODEX_AUTH_FILE into CODEX_SECRET_DIR'
         'refresh:Refresh OAuth tokens'
         'auto-refresh:Refresh stale tokens across auth + secrets'
         'current:Show which secret matches CODEX_AUTH_FILE'
@@ -217,12 +219,33 @@ _codex-cli() {
       fi
 
       case "$subcmd2" in
+        login)
+          _arguments -C \
+            '(-h --help)'{-h,--help}'[Show help]' \
+            '--format=[Output format (text or json)]:format:(text json)' \
+            '--json[Output machine-readable JSON]' \
+            '--api-key[Use API key login flow]' \
+            '--device-code[Use ChatGPT device-code login flow]' \
+            && return 0
+          _message 'no additional arguments'
+          return 0
+          ;;
         use)
           _arguments -C \
             '(-h --help)'{-h,--help}'[Show help]' \
             '--format=[Output format (text or json)]:format:(text json)' \
             '--json[Output machine-readable JSON]' \
             '1:profile or email:' \
+            && return 0
+          ;;
+        save)
+          _arguments -C \
+            '(-h --help)'{-h,--help}'[Show help]' \
+            '--format=[Output format (text or json)]:format:(text json)' \
+            '--json[Output machine-readable JSON]' \
+            '(-y --yes)--yes[Overwrite target file without prompt]' \
+            '(--yes -y)-y[Overwrite target file without prompt]' \
+            '1:secret file name:' \
             && return 0
           ;;
         refresh)
@@ -243,7 +266,7 @@ _codex-cli() {
           return 0
           ;;
         '')
-          _message 'auth command (use|refresh|auto-refresh|current|sync)'
+          _message 'auth command (login|use|save|refresh|auto-refresh|current|sync)'
           return 0
           ;;
         *)
