@@ -126,6 +126,15 @@ In `--dry-run` mode, the script runs `cargo publish --dry-run` for every selecte
 In `--publish` mode, the script runs `dry-run -> publish` sequentially per crate (in your specified order).
 By default, `--publish` skips crates that are already published at the same version on crates.io.
 
+To query crates.io publish status (single/multi/all crates), use:
+
+- `scripts/crates-io-status.sh --all --format text`
+- `scripts/crates-io-status.sh --crates "nils-common nils-codex-cli" --version v0.3.1 --format json`
+- `scripts/crates-io-status.sh --crate nils-codex-cli --format both --json-out "$CODEX_HOME/out/codex-status.json"`
+
+`--version` checks that exact version; without `--version` the script checks each crate's current workspace version.
+Use `--fail-on-missing` for CI gates.
+
 GitHub Actions manual flow is also available at `.github/workflows/publish-crates.yml`:
 
 - Trigger via `workflow_dispatch`.
