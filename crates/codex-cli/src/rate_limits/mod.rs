@@ -1885,10 +1885,40 @@ fn parse_one_line_output(line: &str) -> Option<ParsedOneLine> {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_secret_files, redact_sensitive_json};
+    use super::{
+        async_fetch_one_line, cache, collect_json_from_cache, collect_secret_files, env_timeout,
+        fetch_one_line_cached, is_auth_file, normalize_one_line, parse_one_line_output,
+        redact_sensitive_json, resolve_target, secret_display_name, single_one_line,
+        sync_auth_silent, target_file_name,
+    };
     use nils_test_support::{EnvGuard, GlobalStateLock};
     use serde_json::json;
     use std::fs;
+    use std::path::Path;
+
+    const HEADER: &str = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0";
+    const PAYLOAD_ALPHA: &str = "eyJzdWIiOiJ1c2VyXzEyMyIsImVtYWlsIjoiYWxwaGFAZXhhbXBsZS5jb20iLCJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF91c2VyX2lkIjoidXNlcl8xMjMiLCJlbWFpbCI6ImFscGhhQGV4YW1wbGUuY29tIn19";
+    const PAYLOAD_BETA: &str = "eyJzdWIiOiJ1c2VyXzQ1NiIsImVtYWlsIjoiYmV0YUBleGFtcGxlLmNvbSIsImh0dHBzOi8vYXBpLm9wZW5haS5jb20vYXV0aCI6eyJjaGF0Z3B0X3VzZXJfaWQiOiJ1c2VyXzQ1NiIsImVtYWlsIjoiYmV0YUBleGFtcGxlLmNvbSJ9fQ";
+
+    fn token(payload: &str) -> String {
+        format!("{HEADER}.{payload}.sig")
+    }
+
+    fn auth_json(
+        payload: &str,
+        account_id: &str,
+        refresh_token: &str,
+        last_refresh: &str,
+    ) -> String {
+        format!(
+            r#"{{"tokens":{{"access_token":"{}","id_token":"{}","refresh_token":"{}","account_id":"{}"}},"last_refresh":"{}"}}"#,
+            token(payload),
+            token(payload),
+            refresh_token,
+            account_id,
+            last_refresh
+        )
+    }
 
     #[test]
     fn redact_sensitive_json_removes_tokens_recursively() {
@@ -1970,5 +2000,304 @@ mod tests {
             files[1].file_name().and_then(|name| name.to_str()),
             Some("beta.json")
         );
+    }
+
+    #[test]
+    fn rate_limits_helper_env_timeout_supports_default_and_parse() {
+        let lock = GlobalStateLock::new();
+        let key = "CODEX_RATE_LIMITS_CURL_MAX_TIME_SECONDS";
+
+        let _removed = EnvGuard::remove(&lock, key);
+        assert_eq!(env_timeout(key, 7), 7);
+
+        let _set = EnvGuard::set(&lock, key, "11");
+        assert_eq!(env_timeout(key, 7), 11);
+
+        let _invalid = EnvGuard::set(&lock, key, "oops");
+        assert_eq!(env_timeout(key, 7), 7);
+    }
+
+    #[test]
+    fn rate_limits_helper_resolve_target_and_is_auth_file() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        fs::create_dir_all(&secret_dir).expect("secret dir");
+        let auth_file = dir.path().join("auth.json");
+        fs::write(&auth_file, "{}").expect("auth");
+
+        let _secret = EnvGuard::set(
+            &lock,
+            "CODEX_SECRET_DIR",
+            secret_dir.to_str().expect("secret"),
+        );
+        let _auth = EnvGuard::set(&lock, "CODEX_AUTH_FILE", auth_file.to_str().expect("auth"));
+
+        assert_eq!(
+            resolve_target(Some("alpha.json")).expect("target"),
+            secret_dir.join("alpha.json")
+        );
+        assert_eq!(resolve_target(Some("../bad")).expect_err("usage"), 64);
+        assert_eq!(resolve_target(None).expect("auth default"), auth_file);
+        assert!(is_auth_file(&auth_file));
+        assert!(!is_auth_file(&secret_dir.join("alpha.json")));
+    }
+
+    #[test]
+    fn rate_limits_helper_resolve_target_without_auth_returns_err() {
+        let lock = GlobalStateLock::new();
+        let _auth = EnvGuard::remove(&lock, "CODEX_AUTH_FILE");
+        let _home = EnvGuard::set(&lock, "HOME", "");
+
+        assert_eq!(resolve_target(None).expect_err("missing auth"), 1);
+    }
+
+    #[test]
+    fn rate_limits_helper_collect_json_from_cache_covers_hit_and_miss() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        let cache_root = dir.path().join("cache-root");
+        fs::create_dir_all(&secret_dir).expect("secrets");
+        fs::create_dir_all(&cache_root).expect("cache");
+
+        let alpha = secret_dir.join("alpha.json");
+        fs::write(&alpha, "{}").expect("alpha");
+
+        let _secret = EnvGuard::set(
+            &lock,
+            "CODEX_SECRET_DIR",
+            secret_dir.to_str().expect("secret"),
+        );
+        let _cache = EnvGuard::set(&lock, "ZSH_CACHE_DIR", cache_root.to_str().expect("cache"));
+        cache::write_starship_cache(
+            &alpha,
+            1_700_000_000,
+            "3h",
+            92,
+            88,
+            1_700_003_600,
+            Some(1_700_001_200),
+        )
+        .expect("write cache");
+
+        let hit = collect_json_from_cache(&alpha, "cache");
+        assert!(hit.ok);
+        assert_eq!(hit.status, "ok");
+        let summary = hit.summary.expect("summary");
+        assert_eq!(summary.non_weekly_label, "3h");
+        assert_eq!(summary.non_weekly_remaining, 92);
+        assert_eq!(summary.weekly_remaining, 88);
+
+        let missing_target = secret_dir.join("missing.json");
+        let miss = collect_json_from_cache(&missing_target, "cache");
+        assert!(!miss.ok);
+        let error = miss.error.expect("error");
+        assert_eq!(error.code, "cache-read-failed");
+        assert!(error.message.contains("cache not found"));
+    }
+
+    #[test]
+    fn rate_limits_helper_fetch_one_line_cached_covers_success_and_error() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        let cache_root = dir.path().join("cache-root");
+        fs::create_dir_all(&secret_dir).expect("secrets");
+        fs::create_dir_all(&cache_root).expect("cache");
+
+        let alpha = secret_dir.join("alpha.json");
+        fs::write(&alpha, "{}").expect("alpha");
+
+        let _secret = EnvGuard::set(
+            &lock,
+            "CODEX_SECRET_DIR",
+            secret_dir.to_str().expect("secret"),
+        );
+        let _cache = EnvGuard::set(&lock, "ZSH_CACHE_DIR", cache_root.to_str().expect("cache"));
+        cache::write_starship_cache(
+            &alpha,
+            1_700_000_000,
+            "3h",
+            70,
+            55,
+            1_700_003_600,
+            Some(1_700_001_200),
+        )
+        .expect("write cache");
+
+        let cached = fetch_one_line_cached(&alpha);
+        assert_eq!(cached.rc, 0);
+        assert!(cached.err.is_empty());
+        assert!(cached.line.expect("line").contains("3h:70%"));
+
+        let miss = fetch_one_line_cached(&secret_dir.join("beta.json"));
+        assert_eq!(miss.rc, 1);
+        assert!(miss.line.is_none());
+        assert!(miss.err.contains("cache not found"));
+    }
+
+    #[test]
+    fn rate_limits_helper_async_fetch_one_line_uses_cache_fallback() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        let cache_root = dir.path().join("cache-root");
+        fs::create_dir_all(&secret_dir).expect("secrets");
+        fs::create_dir_all(&cache_root).expect("cache");
+
+        let missing = secret_dir.join("ghost.json");
+        let _secret = EnvGuard::set(
+            &lock,
+            "CODEX_SECRET_DIR",
+            secret_dir.to_str().expect("secret"),
+        );
+        let _cache = EnvGuard::set(&lock, "ZSH_CACHE_DIR", cache_root.to_str().expect("cache"));
+        cache::write_starship_cache(
+            &missing,
+            1_700_000_000,
+            "3h",
+            68,
+            42,
+            1_700_003_600,
+            Some(1_700_001_200),
+        )
+        .expect("write cache");
+
+        let result = async_fetch_one_line(&missing, false, true, "ghost");
+        assert_eq!(result.rc, 0);
+        let line = result.line.expect("line");
+        assert!(line.contains("3h:68%"));
+        assert!(result.err.contains("falling back to cache"));
+    }
+
+    #[test]
+    fn rate_limits_helper_single_one_line_cached_mode_handles_hit_and_miss() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        let cache_root = dir.path().join("cache-root");
+        fs::create_dir_all(&secret_dir).expect("secrets");
+        fs::create_dir_all(&cache_root).expect("cache");
+
+        let alpha = secret_dir.join("alpha.json");
+        let beta = secret_dir.join("beta.json");
+        fs::write(&alpha, "{}").expect("alpha");
+        fs::write(&beta, "{}").expect("beta");
+
+        let _secret = EnvGuard::set(
+            &lock,
+            "CODEX_SECRET_DIR",
+            secret_dir.to_str().expect("secret"),
+        );
+        let _cache = EnvGuard::set(&lock, "ZSH_CACHE_DIR", cache_root.to_str().expect("cache"));
+        cache::write_starship_cache(
+            &alpha,
+            1_700_000_000,
+            "3h",
+            61,
+            39,
+            1_700_003_600,
+            Some(1_700_001_200),
+        )
+        .expect("write cache");
+
+        let hit = single_one_line(&alpha, true, true, false).expect("single");
+        assert!(hit.expect("line").contains("3h:61%"));
+
+        let miss = single_one_line(&beta, true, true, true).expect("single");
+        assert!(miss.is_none());
+
+        let missing =
+            single_one_line(&secret_dir.join("missing.json"), true, true, true).expect("single");
+        assert!(missing.is_none());
+    }
+
+    #[test]
+    fn rate_limits_helper_sync_auth_silent_updates_matching_secret_and_timestamps() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        let cache_dir = dir.path().join("cache");
+        fs::create_dir_all(&secret_dir).expect("secrets");
+        fs::create_dir_all(&cache_dir).expect("cache");
+
+        let auth_file = dir.path().join("auth.json");
+        let alpha = secret_dir.join("alpha.json");
+        let beta = secret_dir.join("beta.json");
+        fs::write(
+            &auth_file,
+            auth_json(
+                PAYLOAD_ALPHA,
+                "acct_001",
+                "refresh_new",
+                "2025-01-20T12:34:56Z",
+            ),
+        )
+        .expect("auth");
+        fs::write(
+            &alpha,
+            auth_json(
+                PAYLOAD_ALPHA,
+                "acct_001",
+                "refresh_old",
+                "2025-01-19T12:34:56Z",
+            ),
+        )
+        .expect("alpha");
+        fs::write(
+            &beta,
+            auth_json(
+                PAYLOAD_BETA,
+                "acct_002",
+                "refresh_beta",
+                "2025-01-18T12:34:56Z",
+            ),
+        )
+        .expect("beta");
+        fs::write(secret_dir.join("invalid.json"), "{invalid").expect("invalid");
+        fs::write(secret_dir.join("note.txt"), "ignore").expect("note");
+
+        let _auth = EnvGuard::set(&lock, "CODEX_AUTH_FILE", auth_file.to_str().expect("auth"));
+        let _secret = EnvGuard::set(
+            &lock,
+            "CODEX_SECRET_DIR",
+            secret_dir.to_str().expect("secret"),
+        );
+        let _cache = EnvGuard::set(
+            &lock,
+            "CODEX_SECRET_CACHE_DIR",
+            cache_dir.to_str().expect("cache"),
+        );
+
+        let (rc, err) = sync_auth_silent().expect("sync");
+        assert_eq!(rc, 0);
+        assert!(err.is_none());
+        assert_eq!(
+            fs::read(&alpha).expect("alpha"),
+            fs::read(&auth_file).expect("auth")
+        );
+        assert_ne!(
+            fs::read(&beta).expect("beta"),
+            fs::read(&auth_file).expect("auth")
+        );
+        assert!(cache_dir.join("alpha.json.timestamp").is_file());
+        assert!(cache_dir.join("auth.json.timestamp").is_file());
+    }
+
+    #[test]
+    fn rate_limits_helper_parsers_and_name_helpers_cover_fallbacks() {
+        let parsed =
+            parse_one_line_output("alpha 3h:90% W:80% 2025-01-20 12:00:00+00:00").expect("parsed");
+        assert_eq!(parsed.window_label, "3h");
+        assert_eq!(parsed.non_weekly_remaining, 90);
+        assert_eq!(parsed.weekly_remaining, 80);
+        assert_eq!(parsed.weekly_reset_iso, "2025-01-20 12:00:00+00:00");
+        assert!(parse_one_line_output("bad").is_none());
+
+        assert_eq!(normalize_one_line("a\tb\nc\r".to_string()), "a b c ");
+        assert_eq!(target_file_name(Path::new("alpha.json")), "alpha.json");
+        assert_eq!(target_file_name(Path::new("")), "");
+        assert_eq!(secret_display_name(Path::new("alpha.json")), "alpha");
     }
 }
