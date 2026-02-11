@@ -100,7 +100,7 @@ _nils_cli_codex_cli_complete() {
       esac
       ;;
     auth)
-      local -a auth_cmds=(use refresh auto-refresh current sync)
+      local -a auth_cmds=(login use save refresh auto-refresh current sync)
       if (( cword == 2 )); then
         if [[ "$cur" == -* ]]; then
           COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
@@ -111,6 +111,18 @@ _nils_cli_codex_cli_complete() {
       fi
       local auth_cmd="${words[2]-}"
       case "$auth_cmd" in
+        login)
+          if [[ "$prev" == "--format" ]]; then
+            COMPREPLY=( $(compgen -W "text json" -- "$cur") )
+            return 0
+          fi
+          if [[ "$cur" == -* ]]; then
+            COMPREPLY=( $(compgen -W "-h --help --format --json --api-key --device-code" -- "$cur") )
+            return 0
+          fi
+          COMPREPLY=()
+          return 0
+          ;;
         refresh)
           if [[ "$prev" == "--format" ]]; then
             COMPREPLY=( $(compgen -W "text json" -- "$cur") )
@@ -118,6 +130,18 @@ _nils_cli_codex_cli_complete() {
           fi
           if [[ "$cur" == -* ]]; then
             COMPREPLY=( $(compgen -W "-h --help --format --json" -- "$cur") )
+            return 0
+          fi
+          COMPREPLY=( $(compgen -f -- "$cur") )
+          return 0
+          ;;
+        save)
+          if [[ "$prev" == "--format" ]]; then
+            COMPREPLY=( $(compgen -W "text json" -- "$cur") )
+            return 0
+          fi
+          if [[ "$cur" == -* ]]; then
+            COMPREPLY=( $(compgen -W "-h --help --format --json -y --yes" -- "$cur") )
             return 0
           fi
           COMPREPLY=( $(compgen -f -- "$cur") )

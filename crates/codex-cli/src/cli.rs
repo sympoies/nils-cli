@@ -92,11 +92,32 @@ impl OutputModeArgs {
 
 #[derive(Subcommand)]
 pub enum AuthCommand {
+    /// Login to Codex with ChatGPT (browser/device-code) or API key
+    Login {
+        #[command(flatten)]
+        output: OutputModeArgs,
+        /// Use API key login flow
+        #[arg(long = "api-key")]
+        api_key: bool,
+        /// Use ChatGPT device-code login flow
+        #[arg(long = "device-code")]
+        device_code: bool,
+    },
     /// Switch to a secret by name or email
     Use {
         #[command(flatten)]
         output: OutputModeArgs,
         #[arg(value_name = "target", num_args = 0..)]
+        args: Vec<String>,
+    },
+    /// Save active CODEX_AUTH_FILE into CODEX_SECRET_DIR as SECRET_JSON
+    Save {
+        #[command(flatten)]
+        output: OutputModeArgs,
+        /// Overwrite target file if it already exists (non-interactive)
+        #[arg(short = 'y', long = "yes")]
+        yes: bool,
+        #[arg(value_name = "secret", num_args = 0..)]
         args: Vec<String>,
     },
     /// Refresh OAuth tokens

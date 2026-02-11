@@ -7,11 +7,26 @@ use crate::diag_output;
 pub const AUTH_SCHEMA_VERSION: &str = "codex-cli.auth.v1";
 
 #[derive(Debug, Clone, Serialize)]
+pub struct AuthLoginResult {
+    pub method: String,
+    pub provider: String,
+    pub completed: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct AuthUseResult {
     pub target: String,
     pub matched_secret: Option<String>,
     pub applied: bool,
     pub auth_file: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AuthSaveResult {
+    pub auth_file: String,
+    pub target_file: String,
+    pub saved: bool,
+    pub overwritten: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -1,5 +1,6 @@
 use nils_test_support::bin;
 use nils_test_support::cmd::{self, CmdOptions, CmdOutput};
+use nils_test_support::write_exe;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use std::fs;
@@ -47,6 +48,13 @@ fn run_with(args: &[&str], envs: &[(&str, &Path)], vars: &[(&str, &str)]) -> Cmd
 
 fn stdout(output: &CmdOutput) -> String {
     output.stdout_text()
+}
+
+fn codex_stub_script() -> &'static str {
+    r#"#!/bin/bash
+set -euo pipefail
+exit "${CODEX_STUB_EXIT_CODE:-0}"
+"#
 }
 
 #[test]
@@ -336,6 +344,97 @@ fn auth_json_contract_use_invalid_name_is_structured() {
     assert_eq!(payload["command"], "auth use");
     assert_eq!(payload["ok"], false);
     assert_eq!(payload["error"]["code"], "invalid-secret-name");
+}
+
+#[test]
+fn auth_json_contract_login_success_includes_stable_fields() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let stubs = dir.path().join("stubs");
+    fs::create_dir_all(&stubs).expect("stubs");
+    write_exe(&stubs, "codex", codex_stub_script());
+
+    let current_path = std::env::var("PATH").unwrap_or_default();
+    let path = format!("{}:{current_path}", stubs.to_string_lossy());
+
+    let output = run_with(
+        &["auth", "login", "--json", "--api-key"],
+        &[],
+        &[("PATH", &path)],
+    );
+    assert_eq!(output.code, 0);
+
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["schema_version"], "codex-cli.auth.v1");
+    assert_eq!(payload["command"], "auth login");
+    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["result"]["method"], "api-key");
+    assert_eq!(payload["result"]["provider"], "openai-api");
+}
+
+#[test]
+fn auth_json_contract_login_exec_failure_is_structured() {
+    let output = run_with(&["auth", "login", "--json"], &[], &[("PATH", "")]);
+    assert_eq!(output.code, 1);
+
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["schema_version"], "codex-cli.auth.v1");
+    assert_eq!(payload["command"], "auth login");
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"]["code"], "login-exec-failed");
+}
+
+#[test]
+fn auth_json_contract_save_success_includes_stable_fields() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let secrets = dir.path().join("secrets");
+    fs::create_dir_all(&secrets).expect("secrets");
+    let auth_file = dir.path().join("auth.json");
+    fs::write(&auth_file, r#"{"tokens":{"access_token":"tok"}}"#).expect("write auth");
+
+    let output = run(
+        &["auth", "save", "--json", "alpha.json"],
+        &[
+            ("CODEX_AUTH_FILE", &auth_file),
+            ("CODEX_SECRET_DIR", &secrets),
+        ],
+    );
+    assert_eq!(output.code, 0);
+
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["schema_version"], "codex-cli.auth.v1");
+    assert_eq!(payload["command"], "auth save");
+    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["result"]["saved"], true);
+    assert_eq!(payload["result"]["overwritten"], false);
+}
+
+#[test]
+fn auth_json_contract_save_overwrite_requires_confirmation() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let secrets = dir.path().join("secrets");
+    fs::create_dir_all(&secrets).expect("secrets");
+    let auth_file = dir.path().join("auth.json");
+    fs::write(&auth_file, r#"{"tokens":{"access_token":"tok-new"}}"#).expect("write auth");
+    fs::write(
+        secrets.join("alpha.json"),
+        r#"{"tokens":{"access_token":"tok-old"}}"#,
+    )
+    .expect("write target");
+
+    let output = run(
+        &["auth", "save", "--json", "alpha.json"],
+        &[
+            ("CODEX_AUTH_FILE", &auth_file),
+            ("CODEX_SECRET_DIR", &secrets),
+        ],
+    );
+    assert_eq!(output.code, 1);
+
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["schema_version"], "codex-cli.auth.v1");
+    assert_eq!(payload["command"], "auth save");
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"]["code"], "overwrite-confirmation-required");
 }
 
 #[test]

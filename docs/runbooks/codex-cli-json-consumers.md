@@ -3,7 +3,7 @@
 ## Scope
 This runbook is for frontend/service callers that consume `codex-cli` machine output for:
 - `diag rate-limits` (single/all/async)
-- `auth use|refresh|auto-refresh|current|sync`
+- `auth login|use|save|refresh|auto-refresh|current|sync`
 
 Contract source of truth:
 - `docs/specs/codex-cli-diag-auth-json-contract-v1.md`
@@ -16,20 +16,35 @@ Contract source of truth:
 2. Parse JSON `stdout` only; do not parse prose `stderr`.
 3. Validate stable envelope keys first: `schema_version`, `command`, `ok`.
 4. Parse `result` for single-entity responses and `results` for collection responses.
-5. Route by `command` (`diag rate-limits`, `auth use`, `auth refresh`, etc.) and ignore unknown
-   additive fields.
+5. Route by `command` (`diag rate-limits`, `auth login`, `auth use`, `auth save`, `auth refresh`,
+   `auth auto-refresh`, `auth current`, `auth sync`) and ignore unknown additive fields.
+6. Enforce schema routing:
+   - `diag rate-limits` => `schema_version=codex-cli.diag.rate-limits.v1`
+   - `auth *` => `schema_version=codex-cli.auth.v1`
 
 ## Integration Notes
 - `ok=false` means command-level failure; read top-level `error.code`.
 - `ok=true` can still include partial failures in collection/per-target flows:
   - `diag rate-limits --all|--async`: inspect `results[*].status`
   - `auth auto-refresh`: inspect `result.targets[*].status`
+- `auth login` exposes three stable method values in `result.method`:
+  - `chatgpt-browser` (default `auth login`)
+  - `chatgpt-device-code` (`auth login --device-code`)
+  - `api-key` (`auth login --api-key`)
+- `auth save` overwrite handling:
+  - success path: check `result.overwritten` (`false` = new file, `true` = replaced existing file)
+  - confirmation-required path: `ok=false`, `error.code=overwrite-confirmation-required`
 - Treat `raw_usage` and other informational metadata as optional and unstable for strict parsing.
 
 Example commands:
 ```bash
 codex-cli diag rate-limits --format json alpha.json
 codex-cli diag rate-limits --all --format json
+codex-cli auth login --format json
+codex-cli auth login --format json --device-code
+codex-cli auth login --format json --api-key
+codex-cli auth save --format json team-alpha.json
+codex-cli auth save --format json --yes team-alpha.json
 codex-cli auth auto-refresh --format json
 codex-cli auth current --format json
 ```
@@ -53,6 +68,7 @@ Don't:
 | Scenario | Signal | Guidance |
 |---|---|---|
 | Invalid CLI usage | exit `64` and/or `error.code=invalid-arguments` | Do not retry; fix call arguments/flags. |
+| Save overwrite confirmation required | `ok=false` with `error.code=overwrite-confirmation-required` | Ask for explicit confirmation, then rerun with `auth save --format json --yes <secret.json>`. |
 | Command-level transient failure | `ok=false` with timeout/network/auth endpoint code | Retry with bounded exponential backoff. |
 | Partial failure in collection mode | `ok=true` with some `status=error` | Accept succeeded items; retry only failed targets. |
 | Diag partial failure | failed `results[*].target_file` entries | Retry each failed target with `diag rate-limits --format json <secret.json>`. |

@@ -78,12 +78,24 @@ fn handle_agent(args: &cli::AgentArgs) -> i32 {
 
 fn handle_auth(args: &cli::AuthArgs) -> i32 {
     match &args.command {
+        Some(cli::AuthCommand::Login {
+            output,
+            api_key,
+            device_code,
+        }) => auth::login::run_with_json(*api_key, *device_code, output.is_json()).unwrap_or(1),
         Some(cli::AuthCommand::Use { output, args }) => {
             if args.len() != 1 || args[0].is_empty() {
                 eprintln!("codex-use: usage: codex-use <name|name.json|email>");
                 return 64;
             }
             auth::use_secret::run_with_json(&args[0], output.is_json()).unwrap_or(1)
+        }
+        Some(cli::AuthCommand::Save { output, yes, args }) => {
+            if args.len() != 1 || args[0].is_empty() {
+                eprintln!("codex-save: usage: codex-save [--yes] <secret.json>");
+                return 64;
+            }
+            auth::save::run_with_json(&args[0], *yes, output.is_json()).unwrap_or(1)
         }
         Some(cli::AuthCommand::Refresh { output, args }) => {
             if args.len() > 1 {
