@@ -48,7 +48,17 @@ impl ProviderAdapterV1 for CodexProviderAdapter {
             capabilities.push(Capability {
                 name: "diag.rate-limits".to_string(),
                 available: codex_available,
-                description: Some("Expose codex-cli rate-limit diagnostics".to_string()),
+                description: Some(
+                    "Expose codex-cli rate-limit diagnostics (JSON: codex-cli.diag.rate-limits.v1 via --json/--format json)".to_string(),
+                ),
+            });
+            capabilities.push(Capability {
+                name: "auth.commands".to_string(),
+                available: true,
+                description: Some(
+                    "Expose codex-cli auth flows (JSON: codex-cli.auth.v1 via --json/--format json)"
+                        .to_string(),
+                ),
             });
         }
 

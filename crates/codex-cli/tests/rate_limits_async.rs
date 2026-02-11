@@ -1,6 +1,8 @@
 use nils_test_support::bin;
 use nils_test_support::cmd::{self, CmdOptions, CmdOutput};
+use nils_test_support::http::{HttpResponse, LoopbackServer};
 use pretty_assertions::assert_eq;
+use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -25,15 +27,64 @@ fn stderr(output: &CmdOutput) -> String {
     output.stderr_text()
 }
 
+fn stdout(output: &CmdOutput) -> String {
+    output.stdout_text()
+}
+
 fn assert_exit(output: &CmdOutput, code: i32) {
     assert_eq!(output.code, code);
 }
 
 #[test]
-fn rate_limits_async_json_conflict() {
-    let output = run(&["diag", "rate-limits", "--async", "--json"], &[], &[]);
-    assert_exit(&output, 64);
-    assert!(stderr(&output).contains("--async does not support --json"));
+fn rate_limits_async_json_outputs_results() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let secret_dir = dir.path().join("secrets");
+    fs::create_dir_all(&secret_dir).expect("secret dir");
+    fs::write(
+        secret_dir.join("alpha.json"),
+        r#"{"tokens":{"access_token":"tok-alpha","account_id":"acct_001"}}"#,
+    )
+    .expect("write alpha");
+    fs::write(
+        secret_dir.join("beta.json"),
+        r#"{"tokens":{"access_token":"tok-beta","account_id":"acct_002"}}"#,
+    )
+    .expect("write beta");
+
+    let server = LoopbackServer::new().expect("server");
+    server.add_route(
+        "GET",
+        "/wham/usage",
+        HttpResponse::new(
+            200,
+            r#"{
+  "rate_limit": {
+    "primary_window": { "limit_window_seconds": 18000, "used_percent": 6, "reset_at": 1700003600 },
+    "secondary_window": { "limit_window_seconds": 604800, "used_percent": 12, "reset_at": 1700600000 }
+  }
+}"#,
+        ),
+    );
+
+    let output = run(
+        &["diag", "rate-limits", "--async", "--json"],
+        &[("CODEX_SECRET_DIR", &secret_dir)],
+        &[
+            ("CODEX_CHATGPT_BASE_URL", &server.url()),
+            ("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false"),
+            ("CODEX_RATE_LIMITS_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
+            ("CODEX_RATE_LIMITS_CURL_MAX_TIME_SECONDS", "3"),
+        ],
+    );
+    assert_exit(&output, 0);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["schema_version"], "codex-cli.diag.rate-limits.v1");
+    assert_eq!(payload["command"], "diag rate-limits");
+    assert_eq!(payload["mode"], "async");
+    assert_eq!(payload["ok"], true);
+    let results = payload["results"].as_array().expect("results");
+    assert_eq!(results.len(), 2);
+    assert!(results.iter().all(|entry| entry["ok"] == true));
 }
 
 #[test]

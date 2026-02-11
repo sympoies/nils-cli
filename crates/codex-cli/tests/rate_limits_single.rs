@@ -1,6 +1,7 @@
 use nils_test_support::bin;
 use nils_test_support::cmd::{self, CmdOptions, CmdOutput};
 use pretty_assertions::assert_eq;
+use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -25,6 +26,10 @@ fn stderr(output: &CmdOutput) -> String {
     output.stderr_text()
 }
 
+fn stdout(output: &CmdOutput) -> String {
+    output.stdout_text()
+}
+
 fn assert_exit(output: &CmdOutput, code: i32) {
     assert_eq!(output.code, code);
 }
@@ -37,7 +42,15 @@ fn rate_limits_single_json_one_line_conflict() {
         &[("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false")],
     );
     assert_exit(&output, 64);
-    assert!(stderr(&output).contains("--one-line is not compatible with --json"));
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"]["code"], "invalid-flag-combination");
+    assert!(
+        payload["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("--one-line is not compatible with --json")
+    );
 }
 
 #[test]
@@ -69,7 +82,15 @@ fn rate_limits_single_cached_json_conflict() {
         &[("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false")],
     );
     assert_exit(&output, 64);
-    assert!(stderr(&output).contains("--json is not supported with --cached"));
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"]["code"], "invalid-flag-combination");
+    assert!(
+        payload["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("--json is not supported with --cached")
+    );
 }
 
 #[test]

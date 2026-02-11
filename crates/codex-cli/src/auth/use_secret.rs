@@ -1,25 +1,62 @@
 use anyhow::Result;
+use serde_json::json;
 use std::path::{Path, PathBuf};
 
 use crate::auth;
+use crate::auth::output::{self, AuthUseResult};
 use crate::fs;
 use crate::paths;
 
 pub fn run(target: &str) -> Result<i32> {
+    run_with_json(target, false)
+}
+
+pub fn run_with_json(target: &str, output_json: bool) -> Result<i32> {
     if target.is_empty() {
-        eprintln!("codex-use: usage: codex-use <name|name.json|email>");
+        if output_json {
+            output::emit_error(
+                "auth use",
+                "invalid-usage",
+                "codex-use: usage: codex-use <name|name.json|email>",
+                None,
+            )?;
+        } else {
+            eprintln!("codex-use: usage: codex-use <name|name.json|email>");
+        }
         return Ok(64);
     }
 
     if target.contains('/') || target.contains("..") {
-        eprintln!("codex-use: invalid secret name: {target}");
+        if output_json {
+            output::emit_error(
+                "auth use",
+                "invalid-secret-name",
+                format!("codex-use: invalid secret name: {target}"),
+                Some(json!({
+                    "target": target,
+                })),
+            )?;
+        } else {
+            eprintln!("codex-use: invalid secret name: {target}");
+        }
         return Ok(64);
     }
 
     let secret_dir = match paths::resolve_secret_dir() {
         Some(dir) => dir,
         None => {
-            eprintln!("codex-use: secret not found: {target}");
+            if output_json {
+                output::emit_error(
+                    "auth use",
+                    "secret-not-found",
+                    format!("codex-use: secret not found: {target}"),
+                    Some(json!({
+                        "target": target,
+                    })),
+                )?;
+            } else {
+                eprintln!("codex-use: secret not found: {target}");
+            }
             return Ok(1);
         }
     };
@@ -31,40 +68,97 @@ pub fn run(target: &str) -> Result<i32> {
     }
 
     if secret_dir.join(&secret_name).is_file() {
-        return apply_secret(&secret_dir, &secret_name);
+        let (code, auth_file) = apply_secret(&secret_dir, &secret_name, output_json)?;
+        if output_json && code == 0 {
+            output::emit_result(
+                "auth use",
+                AuthUseResult {
+                    target: target.to_string(),
+                    matched_secret: Some(secret_name),
+                    applied: true,
+                    auth_file: auth_file.unwrap_or_default(),
+                },
+            )?;
+        }
+        return Ok(code);
     }
 
     match resolve_by_email(&secret_dir, target) {
-        ResolveResult::Exact(name) => apply_secret(&secret_dir, &name),
+        ResolveResult::Exact(name) => {
+            let (code, auth_file) = apply_secret(&secret_dir, &name, output_json)?;
+            if output_json && code == 0 {
+                output::emit_result(
+                    "auth use",
+                    AuthUseResult {
+                        target: target.to_string(),
+                        matched_secret: Some(name),
+                        applied: true,
+                        auth_file: auth_file.unwrap_or_default(),
+                    },
+                )?;
+            }
+            Ok(code)
+        }
         ResolveResult::Ambiguous { candidates } => {
-            eprintln!("codex-use: identifier matches multiple secrets: {target}");
-            eprintln!("codex-use: candidates: {}", candidates.join(", "));
+            if output_json {
+                output::emit_error(
+                    "auth use",
+                    "ambiguous-secret",
+                    format!("codex-use: identifier matches multiple secrets: {target}"),
+                    Some(json!({
+                        "target": target,
+                        "candidates": candidates,
+                    })),
+                )?;
+            } else {
+                eprintln!("codex-use: identifier matches multiple secrets: {target}");
+                eprintln!("codex-use: candidates: {}", candidates.join(", "));
+            }
             Ok(2)
         }
         ResolveResult::NotFound => {
-            eprintln!("codex-use: secret not found: {target}");
+            if output_json {
+                output::emit_error(
+                    "auth use",
+                    "secret-not-found",
+                    format!("codex-use: secret not found: {target}"),
+                    Some(json!({
+                        "target": target,
+                    })),
+                )?;
+            } else {
+                eprintln!("codex-use: secret not found: {target}");
+            }
             Ok(1)
         }
     }
 }
 
-fn apply_secret(secret_dir: &Path, secret_name: &str) -> Result<i32> {
+fn apply_secret(
+    secret_dir: &Path,
+    secret_name: &str,
+    output_json: bool,
+) -> Result<(i32, Option<String>)> {
     let source_file = secret_dir.join(secret_name);
     if !source_file.is_file() {
-        eprintln!("codex: secret file {secret_name} not found");
-        return Ok(1);
+        if !output_json {
+            eprintln!("codex: secret file {secret_name} not found");
+        }
+        return Ok((1, None));
     }
 
     let auth_file = match paths::resolve_auth_file() {
         Some(path) => path,
-        None => return Ok(1),
+        None => return Ok((1, None)),
     };
 
     if auth_file.is_file() {
-        let sync_result = crate::auth::sync::run()?;
+        let sync_result = crate::auth::sync::run_with_json(false)?;
         if sync_result != 0 {
-            eprintln!("codex: failed to sync current auth before switching secrets");
-            return Ok(1);
+            if !output_json {
+                eprintln!("codex: failed to sync current auth before switching secrets");
+            }
+            return Ok((1, None));
         }
     }
 
@@ -75,8 +169,10 @@ fn apply_secret(secret_dir: &Path, secret_name: &str) -> Result<i32> {
     let timestamp_path = secret_timestamp_path(&auth_file)?;
     fs::write_timestamp(&timestamp_path, iso.as_deref())?;
 
-    println!("codex: applied {secret_name} to {}", auth_file.display());
-    Ok(0)
+    if !output_json {
+        println!("codex: applied {secret_name} to {}", auth_file.display());
+    }
+    Ok((0, Some(auth_file.display().to_string())))
 }
 
 fn resolve_by_email(secret_dir: &Path, target: &str) -> ResolveResult {

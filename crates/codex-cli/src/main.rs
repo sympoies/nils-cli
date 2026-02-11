@@ -78,23 +78,29 @@ fn handle_agent(args: &cli::AgentArgs) -> i32 {
 
 fn handle_auth(args: &cli::AuthArgs) -> i32 {
     match &args.command {
-        Some(cli::AuthCommand::Use { args }) => {
+        Some(cli::AuthCommand::Use { output, args }) => {
             if args.len() != 1 || args[0].is_empty() {
                 eprintln!("codex-use: usage: codex-use <name|name.json|email>");
                 return 64;
             }
-            auth::use_secret::run(&args[0]).unwrap_or(1)
+            auth::use_secret::run_with_json(&args[0], output.is_json()).unwrap_or(1)
         }
-        Some(cli::AuthCommand::Refresh { args }) => {
+        Some(cli::AuthCommand::Refresh { output, args }) => {
             if args.len() > 1 {
                 eprintln!("codex-refresh: usage: codex-refresh-auth [secret.json]");
                 return 64;
             }
-            auth::refresh::run(args).unwrap_or(1)
+            auth::refresh::run_with_json(args, output.is_json()).unwrap_or(1)
         }
-        Some(cli::AuthCommand::AutoRefresh) => auth::auto_refresh::run().unwrap_or(1),
-        Some(cli::AuthCommand::Current) => auth::current::run().unwrap_or(1),
-        Some(cli::AuthCommand::Sync) => auth::sync::run().unwrap_or(1),
+        Some(cli::AuthCommand::AutoRefresh { output }) => {
+            auth::auto_refresh::run_with_json(output.is_json()).unwrap_or(1)
+        }
+        Some(cli::AuthCommand::Current { output }) => {
+            auth::current::run_with_json(output.is_json()).unwrap_or(1)
+        }
+        Some(cli::AuthCommand::Sync { output }) => {
+            auth::sync::run_with_json(output.is_json()).unwrap_or(1)
+        }
         None => print_subcommand_help("auth"),
     }
 }
@@ -102,12 +108,14 @@ fn handle_auth(args: &cli::AuthArgs) -> i32 {
 fn handle_diag(args: &cli::DiagArgs) -> i32 {
     match &args.command {
         Some(cli::DiagCommand::RateLimits(rate_args)) => {
+            let output_json =
+                rate_args.json || matches!(rate_args.format, Some(cli::OutputFormat::Json));
             let options = codex_cli::rate_limits::RateLimitsOptions {
                 clear_cache: rate_args.clear_cache,
                 debug: rate_args.debug,
                 cached: rate_args.cached,
                 no_refresh_auth: rate_args.no_refresh_auth,
-                json: rate_args.json,
+                json: output_json,
                 one_line: rate_args.one_line,
                 all: rate_args.all,
                 async_mode: rate_args.async_mode,

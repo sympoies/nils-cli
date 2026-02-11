@@ -61,6 +61,15 @@ Help:
 ### starship
 - `starship [--no-5h] [--ttl <duration>] [--time-format <strftime>] [--show-timezone] [--refresh] [--is-enabled]`: Render or refresh the Starship line. Default reset time uses local time without timezone; `--show-timezone` adds the local offset.
 
+## JSON contract (service consumers)
+- Human-readable text is the default output mode.
+- Machine-readable JSON mode is explicit: use `--format json` (preferred) or `--json` where
+  supported for compatibility.
+- Contract spec: `../../docs/specs/codex-cli-diag-auth-json-contract-v1.md`
+- Consumer runbook: `../../docs/runbooks/codex-cli-json-consumers.md`
+- Covered surfaces: `diag rate-limits` (single/all/async) and
+  `auth use|refresh|auto-refresh|current|sync`.
+
 ## Environment
 - `CODEX_ALLOW_DANGEROUS_ENABLED=true` is required for `agent` commands.
 - `CODEX_CLI_MODEL` and `CODEX_CLI_REASONING` set `codex exec` defaults.

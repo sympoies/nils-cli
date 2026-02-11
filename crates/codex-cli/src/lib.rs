@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod auth;
 pub mod config;
+pub mod diag_output;
 pub mod fs;
 pub mod json;
 pub mod jwt;

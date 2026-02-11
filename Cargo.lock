@@ -1498,6 +1498,7 @@ dependencies = [
  "nils-test-support",
  "pretty_assertions",
  "reqwest",
+ "serde",
  "serde_json",
  "sha2",
  "tempfile",

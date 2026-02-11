@@ -5,28 +5,81 @@ use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::auth::output::{self, AuthRefreshResult};
 use crate::fs;
 use crate::json;
 use crate::paths;
 
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum RefreshOutputMode {
+    Text,
+    Json,
+    Silent,
+}
+
 pub fn run(args: &[String]) -> Result<i32> {
-    let target_file = match resolve_target(args)? {
+    run_with_mode(args, RefreshOutputMode::Text)
+}
+
+pub fn run_with_json(args: &[String], output_json: bool) -> Result<i32> {
+    let mode = if output_json {
+        RefreshOutputMode::Json
+    } else {
+        RefreshOutputMode::Text
+    };
+    run_with_mode(args, mode)
+}
+
+pub fn run_silent(args: &[String]) -> Result<i32> {
+    run_with_mode(args, RefreshOutputMode::Silent)
+}
+
+fn run_with_mode(args: &[String], output_mode: RefreshOutputMode) -> Result<i32> {
+    let output_json = output_mode == RefreshOutputMode::Json;
+    let output_text = output_mode == RefreshOutputMode::Text;
+
+    let target_file = match resolve_target(args, output_json)? {
         Some(path) => path,
         None => return Ok(64),
     };
 
     if !target_file.is_file() {
-        eprintln!("codex-refresh: {} not found", target_file.display());
+        if output_json {
+            output::emit_error(
+                "auth refresh",
+                "target-not-found",
+                format!("codex-refresh: {} not found", target_file.display()),
+                Some(serde_json::json!({
+                    "target_file": target_file.display().to_string(),
+                })),
+            )?;
+        } else if output_text {
+            eprintln!("codex-refresh: {} not found", target_file.display());
+        }
         return Ok(1);
     }
 
     let value = match json::read_json(&target_file) {
         Ok(value) => value,
         Err(_) => {
-            eprintln!(
-                "codex-refresh: failed to read refresh token from {}",
-                target_file.display()
-            );
+            if output_json {
+                output::emit_error(
+                    "auth refresh",
+                    "refresh-token-read-failed",
+                    format!(
+                        "codex-refresh: failed to read refresh token from {}",
+                        target_file.display()
+                    ),
+                    Some(serde_json::json!({
+                        "target_file": target_file.display().to_string(),
+                    })),
+                )?;
+            } else if output_text {
+                eprintln!(
+                    "codex-refresh: failed to read refresh token from {}",
+                    target_file.display()
+                );
+            }
             return Ok(2);
         }
     };
@@ -35,10 +88,24 @@ pub fn run(args: &[String]) -> Result<i32> {
     let refresh_token = match refresh_token {
         Some(token) => token,
         None => {
-            eprintln!(
-                "codex-refresh: failed to read refresh token from {}",
-                target_file.display()
-            );
+            if output_json {
+                output::emit_error(
+                    "auth refresh",
+                    "refresh-token-missing",
+                    format!(
+                        "codex-refresh: failed to read refresh token from {}",
+                        target_file.display()
+                    ),
+                    Some(serde_json::json!({
+                        "target_file": target_file.display().to_string(),
+                    })),
+                )?;
+            } else if output_text {
+                eprintln!(
+                    "codex-refresh: failed to read refresh token from {}",
+                    target_file.display()
+                );
+            }
             return Ok(2);
         }
     };
@@ -69,10 +136,24 @@ pub fn run(args: &[String]) -> Result<i32> {
     let response = match response {
         Ok(resp) => resp,
         Err(_) => {
-            eprintln!(
-                "codex-refresh: token endpoint request failed for {}",
-                target_file.display()
-            );
+            if output_json {
+                output::emit_error(
+                    "auth refresh",
+                    "token-endpoint-request-failed",
+                    format!(
+                        "codex-refresh: token endpoint request failed for {}",
+                        target_file.display()
+                    ),
+                    Some(serde_json::json!({
+                        "target_file": target_file.display().to_string(),
+                    })),
+                )?;
+            } else if output_text {
+                eprintln!(
+                    "codex-refresh: token endpoint request failed for {}",
+                    target_file.display()
+                );
+            }
             return Ok(3);
         }
     };
@@ -82,19 +163,36 @@ pub fn run(args: &[String]) -> Result<i32> {
 
     if status.as_u16() != 200 {
         let summary = error_summary(&body);
-        if let Some(summary) = summary {
-            eprintln!(
-                "codex-refresh: token endpoint failed (HTTP {}) for {}: {}",
-                status.as_u16(),
-                target_file.display(),
-                summary
-            );
-        } else {
-            eprintln!(
-                "codex-refresh: token endpoint failed (HTTP {}) for {}",
-                status.as_u16(),
-                target_file.display()
-            );
+        if output_json {
+            output::emit_error(
+                "auth refresh",
+                "token-endpoint-failed",
+                format!(
+                    "codex-refresh: token endpoint failed (HTTP {}) for {}",
+                    status.as_u16(),
+                    target_file.display()
+                ),
+                Some(serde_json::json!({
+                    "http_status": status.as_u16(),
+                    "target_file": target_file.display().to_string(),
+                    "summary": summary,
+                })),
+            )?;
+        } else if output_text {
+            if let Some(summary) = summary {
+                eprintln!(
+                    "codex-refresh: token endpoint failed (HTTP {}) for {}: {}",
+                    status.as_u16(),
+                    target_file.display(),
+                    summary
+                );
+            } else {
+                eprintln!(
+                    "codex-refresh: token endpoint failed (HTTP {}) for {}",
+                    status.as_u16(),
+                    target_file.display()
+                );
+            }
         }
         return Ok(3);
     }
@@ -102,7 +200,16 @@ pub fn run(args: &[String]) -> Result<i32> {
     let response_json: Value = match serde_json::from_str(&body) {
         Ok(value) => value,
         Err(_) => {
-            eprintln!("codex-refresh: token endpoint returned invalid JSON");
+            if output_json {
+                output::emit_error(
+                    "auth refresh",
+                    "token-endpoint-invalid-json",
+                    "codex-refresh: token endpoint returned invalid JSON",
+                    None,
+                )?;
+            } else if output_text {
+                eprintln!("codex-refresh: token endpoint returned invalid JSON");
+            }
             return Ok(4);
         }
     };
@@ -110,7 +217,16 @@ pub fn run(args: &[String]) -> Result<i32> {
     let merged = match merge_tokens(&value, &response_json, &now_iso) {
         Ok(value) => value,
         Err(_) => {
-            eprintln!("codex-refresh: failed to merge refreshed tokens");
+            if output_json {
+                output::emit_error(
+                    "auth refresh",
+                    "merge-failed",
+                    "codex-refresh: failed to merge refreshed tokens",
+                    None,
+                )?;
+            } else if output_text {
+                eprintln!("codex-refresh: failed to merge refreshed tokens");
+            }
             return Ok(5);
         }
     };
@@ -127,18 +243,42 @@ pub fn run(args: &[String]) -> Result<i32> {
         fs::write_timestamp(&timestamp_path, Some(&now_iso))?;
     }
 
+    let mut synced = false;
     if is_auth_file(&target_file) {
-        let sync_rc = crate::auth::sync::run()?;
+        let sync_rc = crate::auth::sync::run_with_json(false)?;
         if sync_rc != 0 {
+            if output_json {
+                output::emit_error(
+                    "auth refresh",
+                    "sync-failed",
+                    "codex-refresh: failed to sync refreshed auth into matching secrets",
+                    Some(serde_json::json!({
+                        "target_file": target_file.display().to_string(),
+                    })),
+                )?;
+            }
             return Ok(6);
         }
+        synced = true;
     }
 
-    println!("codex: refreshed {} at {}", target_file.display(), now_iso);
+    if output_json {
+        output::emit_result(
+            "auth refresh",
+            AuthRefreshResult {
+                target_file: target_file.display().to_string(),
+                refreshed: true,
+                synced,
+                refreshed_at: Some(now_iso),
+            },
+        )?;
+    } else if output_text {
+        println!("codex: refreshed {} at {}", target_file.display(), now_iso);
+    }
     Ok(0)
 }
 
-fn resolve_target(args: &[String]) -> Result<Option<PathBuf>> {
+fn resolve_target(args: &[String], output_json: bool) -> Result<Option<PathBuf>> {
     if args.is_empty() {
         return Ok(Some(
             paths::resolve_auth_file().unwrap_or_else(|| PathBuf::from("auth.json")),
@@ -147,7 +287,18 @@ fn resolve_target(args: &[String]) -> Result<Option<PathBuf>> {
 
     let secret_name = &args[0];
     if secret_name.is_empty() || secret_name.contains('/') || secret_name.contains("..") {
-        eprintln!("codex-refresh: invalid secret file name: {secret_name}");
+        if output_json {
+            output::emit_error(
+                "auth refresh",
+                "invalid-secret-file-name",
+                format!("codex-refresh: invalid secret file name: {secret_name}"),
+                Some(serde_json::json!({
+                    "secret": secret_name,
+                })),
+            )?;
+        } else {
+            eprintln!("codex-refresh: invalid secret file name: {secret_name}");
+        }
         return Ok(None);
     }
 
@@ -309,7 +460,7 @@ mod tests {
     #[test]
     fn auth_refresh_resolve_target_defaults_when_no_args() {
         let args: Vec<String> = Vec::new();
-        let target = resolve_target(&args).unwrap().expect("target");
+        let target = resolve_target(&args, false).unwrap().expect("target");
         assert!(!target.as_os_str().is_empty());
     }
 
@@ -317,7 +468,7 @@ mod tests {
     fn auth_refresh_resolve_target_rejects_invalid_secret_names() {
         for secret in ["", "a/b", "a..b", "../x"] {
             let args = vec![secret.to_string()];
-            let target = resolve_target(&args).unwrap();
+            let target = resolve_target(&args, false).unwrap();
             assert!(target.is_none(), "expected None for secret={secret:?}");
         }
     }
@@ -326,7 +477,7 @@ mod tests {
     fn auth_refresh_resolve_target_joins_secret_name() {
         let secret_name = "my-secret.json";
         let args = vec![secret_name.to_string()];
-        let target = resolve_target(&args).unwrap().expect("target");
+        let target = resolve_target(&args, false).unwrap().expect("target");
         assert!(target.ends_with(secret_name));
     }
 

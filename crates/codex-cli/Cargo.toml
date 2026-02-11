@@ -20,6 +20,7 @@ base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"
 nils-term = { version = "0.3.0", path = "../nils-term", package = "nils-term" }

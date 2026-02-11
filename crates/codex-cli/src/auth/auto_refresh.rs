@@ -3,11 +3,28 @@ use chrono::{DateTime, Utc};
 use std::path::{Path, PathBuf};
 
 use crate::auth;
+use crate::auth::output::{self, AuthAutoRefreshResult, AuthAutoRefreshTargetResult};
 use crate::fs;
 use crate::paths;
 
 pub fn run() -> Result<i32> {
+    run_with_json(false)
+}
+
+pub fn run_with_json(output_json: bool) -> Result<i32> {
     if !is_configured() {
+        if output_json {
+            output::emit_result(
+                "auth auto-refresh",
+                AuthAutoRefreshResult {
+                    refreshed: 0,
+                    skipped: 0,
+                    failed: 0,
+                    min_age_days: 0,
+                    targets: Vec::new(),
+                },
+            )?;
+        }
         return Ok(0);
     }
 
@@ -16,10 +33,24 @@ pub fn run() -> Result<i32> {
     let min_days = match min_days_raw.parse::<i64>() {
         Ok(value) => value,
         Err(_) => {
-            eprintln!(
-                "codex-auto-refresh: invalid CODEX_AUTO_REFRESH_MIN_DAYS: {}",
-                min_days_raw
-            );
+            if output_json {
+                output::emit_error(
+                    "auth auto-refresh",
+                    "invalid-min-days",
+                    format!(
+                        "codex-auto-refresh: invalid CODEX_AUTO_REFRESH_MIN_DAYS: {}",
+                        min_days_raw
+                    ),
+                    Some(serde_json::json!({
+                        "value": min_days_raw,
+                    })),
+                )?;
+            } else {
+                eprintln!(
+                    "codex-auto-refresh: invalid CODEX_AUTO_REFRESH_MIN_DAYS: {}",
+                    min_days_raw
+                );
+            }
             return Ok(64);
         }
     };
@@ -29,8 +60,16 @@ pub fn run() -> Result<i32> {
 
     let auth_file = paths::resolve_auth_file();
     if auth_file.is_some() {
-        let sync_rc = auth::sync::run()?;
+        let sync_rc = auth::sync::run_with_json(false)?;
         if sync_rc != 0 {
+            if output_json {
+                output::emit_error(
+                    "auth auto-refresh",
+                    "sync-failed",
+                    "codex-auto-refresh: failed to sync auth and secrets before refresh",
+                    None,
+                )?;
+            }
             return Ok(1);
         }
     }
@@ -50,18 +89,31 @@ pub fn run() -> Result<i32> {
         }
     }
 
-    let mut refreshed = 0;
-    let mut skipped = 0;
-    let mut failed = 0;
+    let mut refreshed: i64 = 0;
+    let mut skipped: i64 = 0;
+    let mut failed: i64 = 0;
+    let mut target_results: Vec<AuthAutoRefreshTargetResult> = Vec::new();
 
     for target in targets {
         if !target.is_file() {
             if auth_file.as_ref().map(|p| p == &target).unwrap_or(false) {
                 skipped += 1;
+                target_results.push(AuthAutoRefreshTargetResult {
+                    target_file: target.display().to_string(),
+                    status: "skipped".to_string(),
+                    reason: Some("auth-file-missing".to_string()),
+                });
                 continue;
             }
-            eprintln!("codex-auto-refresh: missing file: {}", target.display());
+            if !output_json {
+                eprintln!("codex-auto-refresh: missing file: {}", target.display());
+            }
             failed += 1;
+            target_results.push(AuthAutoRefreshTargetResult {
+                target_file: target.display().to_string(),
+                status: "failed".to_string(),
+                reason: Some("missing-file".to_string()),
+            });
             continue;
         }
 
@@ -69,34 +121,77 @@ pub fn run() -> Result<i32> {
         match should_refresh(&target, &timestamp_path, now_epoch, min_seconds) {
             RefreshDecision::Refresh => {
                 let rc = if auth_file.as_ref().map(|p| p == &target).unwrap_or(false) {
-                    auth::refresh::run(&[])?
+                    if output_json {
+                        auth::refresh::run_silent(&[])?
+                    } else {
+                        auth::refresh::run(&[])?
+                    }
                 } else {
                     let name = target.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    auth::refresh::run(&[name.to_string()])?
+                    if output_json {
+                        auth::refresh::run_silent(&[name.to_string()])?
+                    } else {
+                        auth::refresh::run(&[name.to_string()])?
+                    }
                 };
                 if rc == 0 {
                     refreshed += 1;
+                    target_results.push(AuthAutoRefreshTargetResult {
+                        target_file: target.display().to_string(),
+                        status: "refreshed".to_string(),
+                        reason: None,
+                    });
                 } else {
                     failed += 1;
+                    target_results.push(AuthAutoRefreshTargetResult {
+                        target_file: target.display().to_string(),
+                        status: "failed".to_string(),
+                        reason: Some(format!("refresh-exit-{rc}")),
+                    });
                 }
             }
             RefreshDecision::Skip => {
                 skipped += 1;
+                target_results.push(AuthAutoRefreshTargetResult {
+                    target_file: target.display().to_string(),
+                    status: "skipped".to_string(),
+                    reason: Some("not-due".to_string()),
+                });
             }
             RefreshDecision::WarnFuture => {
-                eprintln!(
-                    "codex-auto-refresh: warning: future timestamp for {}",
-                    target.display()
-                );
+                if !output_json {
+                    eprintln!(
+                        "codex-auto-refresh: warning: future timestamp for {}",
+                        target.display()
+                    );
+                }
                 skipped += 1;
+                target_results.push(AuthAutoRefreshTargetResult {
+                    target_file: target.display().to_string(),
+                    status: "skipped".to_string(),
+                    reason: Some("future-timestamp".to_string()),
+                });
             }
         }
     }
 
-    println!(
-        "codex-auto-refresh: refreshed={} skipped={} failed={} (min_age_days={})",
-        refreshed, skipped, failed, min_days
-    );
+    if output_json {
+        output::emit_result(
+            "auth auto-refresh",
+            AuthAutoRefreshResult {
+                refreshed,
+                skipped,
+                failed,
+                min_age_days: min_days,
+                targets: target_results,
+            },
+        )?;
+    } else {
+        println!(
+            "codex-auto-refresh: refreshed={} skipped={} failed={} (min_age_days={})",
+            refreshed, skipped, failed, min_days
+        );
+    }
 
     if failed > 0 {
         return Ok(1);

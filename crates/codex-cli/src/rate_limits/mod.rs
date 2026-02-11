@@ -1,11 +1,14 @@
 use anyhow::Result;
 use chrono::Utc;
+use serde::Serialize;
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
 use crate::auth;
+use crate::diag_output;
 use crate::rate_limits::client::{UsageRequest, fetch_usage};
 use nils_common::env as shared_env;
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
@@ -30,6 +33,54 @@ pub struct RateLimitsOptions {
     pub secret: Option<String>,
 }
 
+const DIAG_SCHEMA_VERSION: &str = "codex-cli.diag.rate-limits.v1";
+const DIAG_COMMAND: &str = "diag rate-limits";
+
+#[derive(Debug, Clone, Serialize)]
+struct RateLimitSummary {
+    non_weekly_label: String,
+    non_weekly_remaining: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    non_weekly_reset_epoch: Option<i64>,
+    weekly_remaining: i64,
+    weekly_reset_epoch: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    weekly_reset_local: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RateLimitJsonResult {
+    name: String,
+    target_file: String,
+    status: String,
+    ok: bool,
+    source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    summary: Option<RateLimitSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_usage: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<diag_output::ErrorEnvelope>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RateLimitSingleEnvelope {
+    schema_version: String,
+    command: String,
+    mode: String,
+    ok: bool,
+    result: RateLimitJsonResult,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RateLimitCollectionEnvelope {
+    schema_version: String,
+    command: String,
+    mode: String,
+    ok: bool,
+    results: Vec<RateLimitJsonResult>,
+}
+
 pub fn run(args: &RateLimitsOptions) -> Result<i32> {
     let cached_mode = args.cached;
     let mut one_line = args.one_line;
@@ -45,13 +96,24 @@ pub fn run(args: &RateLimitsOptions) -> Result<i32> {
     }
 
     if args.async_mode {
+        if args.json {
+            return run_async_json_mode(args, debug_mode);
+        }
         return run_async_mode(args, debug_mode);
     }
 
     if cached_mode {
         one_line = true;
         if output_json {
-            eprintln!("codex-rate-limits: --json is not supported with --cached");
+            diag_output::emit_error(
+                DIAG_SCHEMA_VERSION,
+                DIAG_COMMAND,
+                "invalid-flag-combination",
+                "codex-rate-limits: --json is not supported with --cached",
+                Some(serde_json::json!({
+                    "flags": ["--json", "--cached"],
+                })),
+            )?;
             return Ok(64);
         }
         if args.clear_cache {
@@ -61,14 +123,32 @@ pub fn run(args: &RateLimitsOptions) -> Result<i32> {
     }
 
     if output_json && one_line {
-        eprintln!("codex-rate-limits: --one-line is not compatible with --json");
+        diag_output::emit_error(
+            DIAG_SCHEMA_VERSION,
+            DIAG_COMMAND,
+            "invalid-flag-combination",
+            "codex-rate-limits: --one-line is not compatible with --json",
+            Some(serde_json::json!({
+                "flags": ["--one-line", "--json"],
+            })),
+        )?;
         return Ok(64);
     }
 
     if args.clear_cache
         && let Err(err) = cache::clear_starship_cache()
     {
-        eprintln!("{err}");
+        if output_json {
+            diag_output::emit_error(
+                DIAG_SCHEMA_VERSION,
+                DIAG_COMMAND,
+                "cache-clear-failed",
+                err.to_string(),
+                None,
+            )?;
+        } else {
+            eprintln!("{err}");
+        }
         return Ok(1);
     }
 
@@ -82,20 +162,413 @@ pub fn run(args: &RateLimitsOptions) -> Result<i32> {
     }
 
     if all_mode {
-        if output_json {
-            eprintln!("codex-rate-limits: --json is not supported with --all");
-            return Ok(64);
-        }
         if args.secret.is_some() {
             eprintln!(
                 "codex-rate-limits: usage: codex-rate-limits [-c] [-d] [--cached] [--no-refresh-auth] [--json] [--one-line] [--all] [secret.json]"
             );
             return Ok(64);
         }
+        if output_json {
+            return run_all_json_mode(args, cached_mode, debug_mode);
+        }
         return run_all_mode(args, cached_mode, debug_mode);
     }
 
     run_single_mode(args, cached_mode, one_line, output_json)
+}
+
+fn run_async_json_mode(args: &RateLimitsOptions, _debug_mode: bool) -> Result<i32> {
+    if args.one_line {
+        let message = "codex-rate-limits: --async does not support --one-line";
+        diag_output::emit_error(
+            DIAG_SCHEMA_VERSION,
+            DIAG_COMMAND,
+            "invalid-flag-combination",
+            message,
+            Some(serde_json::json!({
+                "flag": "--one-line",
+                "mode": "async",
+            })),
+        )?;
+        return Ok(64);
+    }
+    if let Some(secret) = args.secret.as_deref() {
+        let message = format!(
+            "codex-rate-limits: --async does not accept positional args: {}",
+            secret
+        );
+        diag_output::emit_error(
+            DIAG_SCHEMA_VERSION,
+            DIAG_COMMAND,
+            "invalid-positional-arg",
+            message,
+            Some(serde_json::json!({
+                "secret": secret,
+                "mode": "async",
+            })),
+        )?;
+        return Ok(64);
+    }
+    if args.clear_cache && args.cached {
+        let message = "codex-rate-limits: --async: -c is not compatible with --cached";
+        diag_output::emit_error(
+            DIAG_SCHEMA_VERSION,
+            DIAG_COMMAND,
+            "invalid-flag-combination",
+            message,
+            Some(serde_json::json!({
+                "flags": ["--async", "--cached", "-c"],
+            })),
+        )?;
+        return Ok(64);
+    }
+    if args.clear_cache
+        && let Err(err) = cache::clear_starship_cache()
+    {
+        diag_output::emit_error(
+            DIAG_SCHEMA_VERSION,
+            DIAG_COMMAND,
+            "cache-clear-failed",
+            err.to_string(),
+            None,
+        )?;
+        return Ok(1);
+    }
+
+    let secret_files = match collect_secret_files() {
+        Ok(value) => value,
+        Err((code, message, details)) => {
+            diag_output::emit_error(
+                DIAG_SCHEMA_VERSION,
+                DIAG_COMMAND,
+                "secret-discovery-failed",
+                message,
+                details,
+            )?;
+            return Ok(code);
+        }
+    };
+
+    let mut results = Vec::new();
+    let mut rc = 0;
+    for secret_file in &secret_files {
+        let result =
+            collect_json_result_for_secret(secret_file, args.cached, args.no_refresh_auth, true);
+        if !args.cached && !result.ok {
+            rc = 1;
+        }
+        results.push(result);
+    }
+    results.sort_by(|a, b| a.name.cmp(&b.name));
+    emit_collection_envelope("async", rc == 0, results)?;
+    Ok(rc)
+}
+
+fn run_all_json_mode(
+    args: &RateLimitsOptions,
+    cached_mode: bool,
+    _debug_mode: bool,
+) -> Result<i32> {
+    let secret_files = match collect_secret_files() {
+        Ok(value) => value,
+        Err((code, message, details)) => {
+            diag_output::emit_error(
+                DIAG_SCHEMA_VERSION,
+                DIAG_COMMAND,
+                "secret-discovery-failed",
+                message,
+                details,
+            )?;
+            return Ok(code);
+        }
+    };
+
+    let mut results = Vec::new();
+    let mut rc = 0;
+    for secret_file in &secret_files {
+        let result =
+            collect_json_result_for_secret(secret_file, cached_mode, args.no_refresh_auth, false);
+        if !cached_mode && !result.ok {
+            rc = 1;
+        }
+        results.push(result);
+    }
+    results.sort_by(|a, b| a.name.cmp(&b.name));
+    emit_collection_envelope("all", rc == 0, results)?;
+    Ok(rc)
+}
+
+fn emit_collection_envelope(mode: &str, ok: bool, results: Vec<RateLimitJsonResult>) -> Result<()> {
+    diag_output::emit_json(&RateLimitCollectionEnvelope {
+        schema_version: DIAG_SCHEMA_VERSION.to_string(),
+        command: DIAG_COMMAND.to_string(),
+        mode: mode.to_string(),
+        ok,
+        results,
+    })
+}
+
+fn collect_secret_files() -> std::result::Result<Vec<PathBuf>, (i32, String, Option<Value>)> {
+    let secret_dir = crate::paths::resolve_secret_dir().unwrap_or_default();
+    if !secret_dir.is_dir() {
+        return Err((
+            1,
+            format!(
+                "codex-rate-limits: CODEX_SECRET_DIR not found: {}",
+                secret_dir.display()
+            ),
+            Some(serde_json::json!({
+                "secret_dir": secret_dir.display().to_string(),
+            })),
+        ));
+    }
+
+    let mut secret_files: Vec<PathBuf> = std::fs::read_dir(&secret_dir)
+        .map_err(|err| {
+            (
+                1,
+                format!("codex-rate-limits: failed to read CODEX_SECRET_DIR: {err}"),
+                Some(serde_json::json!({
+                    "secret_dir": secret_dir.display().to_string(),
+                })),
+            )
+        })?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("json"))
+        .collect();
+
+    if secret_files.is_empty() {
+        return Err((
+            1,
+            format!(
+                "codex-rate-limits: no secrets found in {}",
+                secret_dir.display()
+            ),
+            Some(serde_json::json!({
+                "secret_dir": secret_dir.display().to_string(),
+            })),
+        ));
+    }
+
+    secret_files.sort();
+    Ok(secret_files)
+}
+
+fn collect_json_result_for_secret(
+    target_file: &Path,
+    cached_mode: bool,
+    no_refresh_auth: bool,
+    allow_cache_fallback: bool,
+) -> RateLimitJsonResult {
+    if cached_mode {
+        return collect_json_from_cache(target_file, "cache");
+    }
+
+    let base_url = std::env::var("CODEX_CHATGPT_BASE_URL")
+        .unwrap_or_else(|_| "https://chatgpt.com/backend-api/".to_string());
+    let connect_timeout = env_timeout("CODEX_RATE_LIMITS_CURL_CONNECT_TIMEOUT_SECONDS", 2);
+    let max_time = env_timeout("CODEX_RATE_LIMITS_CURL_MAX_TIME_SECONDS", 8);
+    let usage_request = UsageRequest {
+        target_file: target_file.to_path_buf(),
+        refresh_on_401: !no_refresh_auth,
+        base_url,
+        connect_timeout_seconds: connect_timeout,
+        max_time_seconds: max_time,
+    };
+
+    match fetch_usage(&usage_request) {
+        Ok(usage) => {
+            if let Err(err) = writeback::write_weekly(target_file, &usage.json) {
+                return json_result_error(
+                    target_file,
+                    "network",
+                    "writeback-failed",
+                    err.to_string(),
+                    None,
+                );
+            }
+            if is_auth_file(target_file)
+                && let Ok(sync_rc) = auth::sync::run_with_json(false)
+                && sync_rc != 0
+            {
+                return json_result_error(
+                    target_file,
+                    "network",
+                    "sync-failed",
+                    "codex-rate-limits: failed to sync auth after usage fetch".to_string(),
+                    None,
+                );
+            }
+            match summary_from_usage(&usage.json) {
+                Some(summary) => {
+                    let fetched_at_epoch = Utc::now().timestamp();
+                    if fetched_at_epoch > 0 {
+                        let _ = cache::write_starship_cache(
+                            target_file,
+                            fetched_at_epoch,
+                            &summary.non_weekly_label,
+                            summary.non_weekly_remaining,
+                            summary.weekly_remaining,
+                            summary.weekly_reset_epoch,
+                            summary.non_weekly_reset_epoch,
+                        );
+                    }
+                    RateLimitJsonResult {
+                        name: secret_display_name(target_file),
+                        target_file: target_file_name(target_file),
+                        status: "ok".to_string(),
+                        ok: true,
+                        source: "network".to_string(),
+                        summary: Some(summary),
+                        raw_usage: Some(redact_sensitive_json(&usage.json)),
+                        error: None,
+                    }
+                }
+                None => json_result_error(
+                    target_file,
+                    "network",
+                    "invalid-usage-payload",
+                    "codex-rate-limits: invalid usage payload".to_string(),
+                    Some(serde_json::json!({
+                        "raw_usage": redact_sensitive_json(&usage.json),
+                    })),
+                ),
+            }
+        }
+        Err(err) => {
+            if allow_cache_fallback {
+                let fallback = collect_json_from_cache(target_file, "cache-fallback");
+                if fallback.ok {
+                    return fallback;
+                }
+            }
+            let msg = err.to_string();
+            let code = if msg.contains("missing access_token") {
+                "missing-access-token"
+            } else {
+                "request-failed"
+            };
+            json_result_error(target_file, "network", code, msg, None)
+        }
+    }
+}
+
+fn collect_json_from_cache(target_file: &Path, source: &str) -> RateLimitJsonResult {
+    match cache::read_cache_entry(target_file) {
+        Ok(entry) => RateLimitJsonResult {
+            name: secret_display_name(target_file),
+            target_file: target_file_name(target_file),
+            status: "ok".to_string(),
+            ok: true,
+            source: source.to_string(),
+            summary: Some(summary_from_cache(&entry)),
+            raw_usage: None,
+            error: None,
+        },
+        Err(err) => json_result_error(
+            target_file,
+            source,
+            "cache-read-failed",
+            err.to_string(),
+            None,
+        ),
+    }
+}
+
+fn json_result_error(
+    target_file: &Path,
+    source: &str,
+    code: &str,
+    message: String,
+    details: Option<Value>,
+) -> RateLimitJsonResult {
+    RateLimitJsonResult {
+        name: secret_display_name(target_file),
+        target_file: target_file_name(target_file),
+        status: "error".to_string(),
+        ok: false,
+        source: source.to_string(),
+        summary: None,
+        raw_usage: None,
+        error: Some(diag_output::ErrorEnvelope {
+            code: code.to_string(),
+            message,
+            details,
+        }),
+    }
+}
+
+fn secret_display_name(target_file: &Path) -> String {
+    cache::secret_name_for_target(target_file).unwrap_or_else(|| {
+        target_file
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .trim_end_matches(".json")
+            .to_string()
+    })
+}
+
+fn target_file_name(target_file: &Path) -> String {
+    target_file
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn summary_from_usage(usage_json: &Value) -> Option<RateLimitSummary> {
+    let usage_data = render::parse_usage(usage_json)?;
+    let values = render::render_values(&usage_data);
+    let weekly = render::weekly_values(&values);
+    Some(RateLimitSummary {
+        non_weekly_label: weekly.non_weekly_label,
+        non_weekly_remaining: weekly.non_weekly_remaining,
+        non_weekly_reset_epoch: weekly.non_weekly_reset_epoch,
+        weekly_remaining: weekly.weekly_remaining,
+        weekly_reset_epoch: weekly.weekly_reset_epoch,
+        weekly_reset_local: render::format_epoch_local_datetime_with_offset(
+            weekly.weekly_reset_epoch,
+        ),
+    })
+}
+
+fn summary_from_cache(entry: &cache::CacheEntry) -> RateLimitSummary {
+    RateLimitSummary {
+        non_weekly_label: entry.non_weekly_label.clone(),
+        non_weekly_remaining: entry.non_weekly_remaining,
+        non_weekly_reset_epoch: entry.non_weekly_reset_epoch,
+        weekly_remaining: entry.weekly_remaining,
+        weekly_reset_epoch: entry.weekly_reset_epoch,
+        weekly_reset_local: render::format_epoch_local_datetime_with_offset(
+            entry.weekly_reset_epoch,
+        ),
+    }
+}
+
+fn redact_sensitive_json(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut next = serde_json::Map::new();
+            for (key, val) in map {
+                if is_sensitive_key(key) {
+                    continue;
+                }
+                next.insert(key.clone(), redact_sensitive_json(val));
+            }
+            Value::Object(next)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(redact_sensitive_json).collect()),
+        _ => value.clone(),
+    }
+}
+
+fn is_sensitive_key(key: &str) -> bool {
+    matches!(
+        key,
+        "access_token" | "refresh_token" | "id_token" | "authorization" | "Authorization"
+    )
 }
 
 struct AsyncEvent {
@@ -961,7 +1434,19 @@ fn run_single_mode(
     };
 
     if !target_file.is_file() {
-        eprintln!("codex-rate-limits: {} not found", target_file.display());
+        if output_json {
+            diag_output::emit_error(
+                DIAG_SCHEMA_VERSION,
+                DIAG_COMMAND,
+                "target-not-found",
+                format!("codex-rate-limits: {} not found", target_file.display()),
+                Some(serde_json::json!({
+                    "target_file": target_file.display().to_string(),
+                })),
+            )?;
+        } else {
+            eprintln!("codex-rate-limits: {} not found", target_file.display());
+        }
         return Ok(1);
     }
 
@@ -1009,38 +1494,96 @@ fn run_single_mode(
         Err(err) => {
             let msg = err.to_string();
             if msg.contains("missing access_token") {
-                eprintln!(
-                    "codex-rate-limits: missing access_token in {}",
-                    target_file.display()
-                );
+                if output_json {
+                    diag_output::emit_error(
+                        DIAG_SCHEMA_VERSION,
+                        DIAG_COMMAND,
+                        "missing-access-token",
+                        format!(
+                            "codex-rate-limits: missing access_token in {}",
+                            target_file.display()
+                        ),
+                        Some(serde_json::json!({
+                            "target_file": target_file.display().to_string(),
+                        })),
+                    )?;
+                } else {
+                    eprintln!(
+                        "codex-rate-limits: missing access_token in {}",
+                        target_file.display()
+                    );
+                }
                 return Ok(2);
             }
-            eprintln!("{msg}");
+            if output_json {
+                diag_output::emit_error(
+                    DIAG_SCHEMA_VERSION,
+                    DIAG_COMMAND,
+                    "request-failed",
+                    msg,
+                    Some(serde_json::json!({
+                        "target_file": target_file.display().to_string(),
+                    })),
+                )?;
+            } else {
+                eprintln!("{msg}");
+            }
             return Ok(3);
         }
     };
 
     if let Err(err) = writeback::write_weekly(&target_file, &usage.json) {
-        eprintln!("{err}");
+        if output_json {
+            diag_output::emit_error(
+                DIAG_SCHEMA_VERSION,
+                DIAG_COMMAND,
+                "writeback-failed",
+                err.to_string(),
+                Some(serde_json::json!({
+                    "target_file": target_file.display().to_string(),
+                })),
+            )?;
+        } else {
+            eprintln!("{err}");
+        }
         return Ok(4);
     }
 
     if is_auth_file(&target_file) {
-        let sync_rc = auth::sync::run()?;
+        let sync_rc = auth::sync::run_with_json(false)?;
         if sync_rc != 0 {
+            if output_json {
+                diag_output::emit_error(
+                    DIAG_SCHEMA_VERSION,
+                    DIAG_COMMAND,
+                    "sync-failed",
+                    "codex-rate-limits: failed to sync auth file",
+                    Some(serde_json::json!({
+                        "target_file": target_file.display().to_string(),
+                    })),
+                )?;
+            }
             return Ok(5);
         }
-    }
-
-    if output_json {
-        println!("{}", usage.body);
-        return Ok(0);
     }
 
     let usage_data = match render::parse_usage(&usage.json) {
         Some(value) => value,
         None => {
-            eprintln!("codex-rate-limits: invalid usage payload");
+            if output_json {
+                diag_output::emit_error(
+                    DIAG_SCHEMA_VERSION,
+                    DIAG_COMMAND,
+                    "invalid-usage-payload",
+                    "codex-rate-limits: invalid usage payload",
+                    Some(serde_json::json!({
+                        "target_file": target_file.display().to_string(),
+                        "raw_usage": redact_sensitive_json(&usage.json),
+                    })),
+                )?;
+            } else {
+                eprintln!("codex-rate-limits: invalid usage payload");
+            }
             return Ok(3);
         }
     };
@@ -1059,6 +1602,36 @@ fn run_single_mode(
             weekly.weekly_reset_epoch,
             weekly.non_weekly_reset_epoch,
         );
+    }
+
+    if output_json {
+        let result = RateLimitJsonResult {
+            name: secret_display_name(&target_file),
+            target_file: target_file_name(&target_file),
+            status: "ok".to_string(),
+            ok: true,
+            source: "network".to_string(),
+            summary: Some(RateLimitSummary {
+                non_weekly_label: weekly.non_weekly_label,
+                non_weekly_remaining: weekly.non_weekly_remaining,
+                non_weekly_reset_epoch: weekly.non_weekly_reset_epoch,
+                weekly_remaining: weekly.weekly_remaining,
+                weekly_reset_epoch: weekly.weekly_reset_epoch,
+                weekly_reset_local: render::format_epoch_local_datetime_with_offset(
+                    weekly.weekly_reset_epoch,
+                ),
+            }),
+            raw_usage: Some(redact_sensitive_json(&usage.json)),
+            error: None,
+        };
+        diag_output::emit_json(&RateLimitSingleEnvelope {
+            schema_version: DIAG_SCHEMA_VERSION.to_string(),
+            command: DIAG_COMMAND.to_string(),
+            mode: "single".to_string(),
+            ok: true,
+            result,
+        })?;
+        return Ok(0);
     }
 
     if one_line {
