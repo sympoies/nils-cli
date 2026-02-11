@@ -231,3 +231,18 @@ fn rate_limits_async_rejects_cached_clear_cache_combo() {
     assert_exit(&output, 64);
     assert!(stderr(&output).contains("--async: -c is not compatible with --cached"));
 }
+
+#[test]
+fn rate_limits_async_clear_cache_failure_reports_error() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let secret_dir = dir.path().join("secrets");
+    fs::create_dir_all(&secret_dir).expect("secret dir");
+
+    let output = run(
+        &["diag", "rate-limits", "--async", "-c"],
+        &[("CODEX_SECRET_DIR", &secret_dir)],
+        &[("ZSH_CACHE_DIR", "relative-cache")],
+    );
+    assert_exit(&output, 1);
+    assert!(stderr(&output).contains("refusing to clear cache"));
+}
