@@ -259,6 +259,47 @@ fn rate_limits_all_mode_renders_table() {
 }
 
 #[test]
+fn rate_limits_default_all_env_enables_all_mode_without_flag() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let secrets = dir.path().join("secrets");
+    fs::create_dir_all(&secrets).expect("secrets dir");
+    write_secret(&secrets, "alpha.json", Some("tok_alpha"));
+    write_secret(&secrets, "beta.json", Some("tok_beta"));
+
+    let cache_root = dir.path().join("cache_root");
+    fs::create_dir_all(&cache_root).expect("cache root");
+
+    let server = LoopbackServer::new().expect("server");
+    server.add_route(
+        "GET",
+        "/wham/usage",
+        HttpResponse::new(200, wham_usage_ok_body()),
+    );
+
+    let output = run(
+        &["diag", "rate-limits"],
+        &[
+            ("CODEX_SECRET_DIR", &secrets),
+            ("ZSH_CACHE_DIR", &cache_root),
+        ],
+        &[
+            ("CODEX_CHATGPT_BASE_URL", &server.url()),
+            ("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "true"),
+            ("CODEX_RATE_LIMITS_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
+            ("CODEX_RATE_LIMITS_CURL_MAX_TIME_SECONDS", "3"),
+            ("TZ", "UTC"),
+            ("NO_COLOR", "1"),
+        ],
+    );
+    assert_exit(&output, 0);
+    let out = stdout(&output);
+    assert!(out.contains("🚦 Codex rate limits for all accounts"));
+    assert!(out.contains("alpha"));
+    assert!(out.contains("beta"));
+    assert!(!out.contains("Rate limits remaining"));
+}
+
+#[test]
 fn rate_limits_async_falls_back_to_cache_in_debug_mode() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let secrets = dir.path().join("secrets");
