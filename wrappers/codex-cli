@@ -1,9 +1,84 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+args=("$@")
+
 self_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 self_path="$self_dir/$(basename -- "${BASH_SOURCE[0]}")"
-args=("$@")
+
+mode="${NILS_WRAPPER_MODE:-auto}"
+install_prefix="${NILS_WRAPPER_INSTALL_PREFIX:-$HOME/.local/nils-cli}"
+
+if [[ "$install_prefix" == "~" ]]; then
+  install_prefix="$HOME"
+elif [[ "$install_prefix" == "~/"* ]]; then
+  install_prefix="$HOME/${install_prefix#~/}"
+fi
+
+if [[ "$mode" != "auto" && "$mode" != "debug" && "$mode" != "installed" ]]; then
+  echo "codex-cli: invalid NILS_WRAPPER_MODE='${mode}' (expected: auto|debug|installed)" >&2
+  exit 64
+fi
+
+is_self_candidate() {
+  local candidate="$1"
+  [[ -n "$candidate" && -e "$candidate" && "$candidate" -ef "$self_path" ]]
+}
+
+resolve_installed_for() {
+  local target_bin="$1"
+  local candidate=""
+
+  candidate="${install_prefix}/${target_bin}"
+  if [[ -x "$candidate" ]] && ! is_self_candidate "$candidate"; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  candidate="$(command -v "$target_bin" 2>/dev/null || true)"
+  if [[ -n "$candidate" && -x "$candidate" ]] && ! is_self_candidate "$candidate"; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  return 1
+}
+
+run_debug_for() {
+  local target_crate="$1"
+
+  if command -v cargo >/dev/null 2>&1; then
+    exec cargo run -q -p "$target_crate" -- "${args[@]}"
+  fi
+
+  return 1
+}
+
+run_installed_for() {
+  local target_bin="$1"
+  local installed=""
+
+  if installed="$(resolve_installed_for "$target_bin")"; then
+    exec "$installed" "${args[@]}"
+  fi
+
+  return 1
+}
+
+run_auto_for() {
+  local target_bin="$1"
+  local target_crate="$2"
+
+  if run_installed_for "$target_bin"; then
+    return 0
+  fi
+
+  if run_debug_for "$target_crate"; then
+    return 0
+  fi
+
+  return 1
+}
 
 migrated_cmd=''
 if [[ ${#args[@]} -gt 0 ]]; then
@@ -14,23 +89,45 @@ if [[ ${#args[@]} -gt 0 ]]; then
   esac
 fi
 
-if [[ -n "${migrated_cmd}" ]] && command -v agentctl >/dev/null 2>&1; then
-  exec agentctl "${args[@]}"
-fi
+if [[ -n "$migrated_cmd" ]]; then
+  case "$mode" in
+    debug)
+      run_debug_for "nils-agentctl" || true
+      ;;
+    installed)
+      run_installed_for "agentctl" || true
+      ;;
+    auto)
+      run_auto_for "agentctl" "nils-agentctl" || true
+      ;;
+  esac
 
-if [[ -n "${migrated_cmd}" ]]; then
   echo "codex-cli: use \`agentctl ${migrated_cmd}\` for provider-neutral orchestration" >&2
   exit 64
 fi
 
-installed="$(command -v codex-cli || true)"
-if [[ -n "${installed}" && "${installed}" != "${self_path}" ]]; then
-  exec "${installed}" "${args[@]}"
-fi
-
-if command -v cargo >/dev/null 2>&1; then
-  exec cargo run -q -p codex-cli -- "${args[@]}"
-fi
+case "$mode" in
+  debug)
+    if run_debug_for "nils-codex-cli"; then
+      exit 0
+    fi
+    echo "codex-cli: cargo not found (required when NILS_WRAPPER_MODE=debug)" >&2
+    exit 1
+    ;;
+  installed)
+    if run_installed_for "codex-cli"; then
+      exit 0
+    fi
+    echo "codex-cli: installed binary not found (NILS_WRAPPER_MODE=installed)" >&2
+    echo "codex-cli: expected ${install_prefix}/codex-cli or a PATH entry" >&2
+    exit 1
+    ;;
+  auto)
+    if run_auto_for "codex-cli" "nils-codex-cli"; then
+      exit 0
+    fi
+    ;;
+esac
 
 echo "codex-cli: binary not found (install via cargo install or build the workspace)" >&2
 exit 1
