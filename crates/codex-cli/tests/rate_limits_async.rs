@@ -35,6 +35,13 @@ fn assert_exit(output: &CmdOutput, code: i32) {
     assert_eq!(output.code, code);
 }
 
+fn cache_kv_path(cache_root: &Path, key: &str) -> PathBuf {
+    cache_root
+        .join("codex")
+        .join("starship-rate-limits")
+        .join(format!("{key}.kv"))
+}
+
 #[test]
 fn rate_limits_async_json_one_line_conflict_is_structured() {
     let output = run(
@@ -245,4 +252,112 @@ fn rate_limits_async_clear_cache_failure_reports_error() {
     );
     assert_exit(&output, 1);
     assert!(stderr(&output).contains("refusing to clear cache"));
+}
+
+#[test]
+fn rate_limits_async_json_clear_cache_failure_is_structured() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let secret_dir = dir.path().join("secrets");
+    fs::create_dir_all(&secret_dir).expect("secret dir");
+
+    let output = run(
+        &["diag", "rate-limits", "--async", "--json", "-c"],
+        &[("CODEX_SECRET_DIR", &secret_dir)],
+        &[
+            ("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false"),
+            ("ZSH_CACHE_DIR", "relative-cache"),
+        ],
+    );
+    assert_exit(&output, 1);
+
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"]["code"], "cache-clear-failed");
+    assert!(
+        payload["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("refusing to clear cache")
+    );
+}
+
+#[test]
+fn rate_limits_async_json_falls_back_to_cache_for_missing_access_token() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let secret_dir = dir.path().join("secrets");
+    fs::create_dir_all(&secret_dir).expect("secret dir");
+    fs::write(
+        secret_dir.join("alpha.json"),
+        r#"{"tokens":{"access_token":"tok-alpha","account_id":"acct_001"}}"#,
+    )
+    .expect("write alpha");
+    fs::write(
+        secret_dir.join("beta.json"),
+        r#"{"tokens":{"account_id":"acct_002"}}"#,
+    )
+    .expect("write beta");
+
+    let cache_root = dir.path().join("cache_root");
+    let kv_path = cache_kv_path(&cache_root, "beta");
+    fs::create_dir_all(kv_path.parent().expect("cache parent")).expect("cache dir");
+    fs::write(
+        &kv_path,
+        "fetched_at=1700000000\nnon_weekly_label=5h\nnon_weekly_remaining=91\nweekly_remaining=70\nweekly_reset_epoch=1700600000\n",
+    )
+    .expect("write beta cache");
+
+    let server = LoopbackServer::new().expect("server");
+    server.add_route(
+        "GET",
+        "/wham/usage",
+        HttpResponse::new(
+            200,
+            r#"{
+  "rate_limit": {
+    "primary_window": { "limit_window_seconds": 18000, "used_percent": 6, "reset_at": 1700003600 },
+    "secondary_window": { "limit_window_seconds": 604800, "used_percent": 12, "reset_at": 1700600000 }
+  }
+}"#,
+        ),
+    );
+
+    let output = run(
+        &["diag", "rate-limits", "--async", "--json"],
+        &[
+            ("CODEX_SECRET_DIR", &secret_dir),
+            ("ZSH_CACHE_DIR", &cache_root),
+        ],
+        &[
+            ("CODEX_CHATGPT_BASE_URL", &server.url()),
+            ("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false"),
+            ("CODEX_RATE_LIMITS_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
+            ("CODEX_RATE_LIMITS_CURL_MAX_TIME_SECONDS", "3"),
+        ],
+    );
+    assert_exit(&output, 0);
+
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["mode"], "async");
+    assert_eq!(payload["ok"], true);
+
+    let results = payload["results"].as_array().expect("results");
+    assert_eq!(results.len(), 2);
+
+    let alpha = results
+        .iter()
+        .find(|entry| entry["target_file"] == "alpha.json")
+        .expect("alpha result");
+    assert_eq!(alpha["ok"], true);
+    assert_eq!(alpha["source"], "network");
+    assert!(alpha["raw_usage"]["rate_limit"].is_object());
+
+    let beta = results
+        .iter()
+        .find(|entry| entry["target_file"] == "beta.json")
+        .expect("beta result");
+    assert_eq!(beta["ok"], true);
+    assert_eq!(beta["source"], "cache-fallback");
+    assert_eq!(beta["summary"]["non_weekly_label"], "5h");
+    assert_eq!(beta["summary"]["non_weekly_remaining"], 91);
+    assert!(beta["raw_usage"].is_null());
 }
