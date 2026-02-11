@@ -7,30 +7,30 @@ Usage:
   <ENTRYPOINT> [options]
 
 Options:
-  --crate NAME               Add one crate (repeatable).
-  --crates "A B,C"           Add multiple crates (space/comma separated).
-  --all                      Publish all crates from the list file.
-  --list-file PATH           Crate order file for --all/default.
-  --publish                  Run dry-run + publish (default).
-  --dry-run-only             Only run cargo publish --dry-run.
-  --wait-retry               On rate-limit errors, wait and retry until completion.
-  --max-retries N            Max publish retries per crate in --wait-retry mode (0 = unlimited).
-  --default-retry-seconds N  Fallback wait seconds when retry time cannot be parsed (default: 300).
-  --registry NAME            Optional cargo registry name (blank = crates.io).
-  --skip-existing            Skip already-published versions on crates.io (default for publish mode).
-  --no-skip-existing         Do not skip existing crate versions.
-  --allow-dirty              Allow dirty worktree in publish mode.
-  --skip-status-check        Do not run post-run crates.io status snapshot.
-  --status-script PATH       Override status snapshot script path.
-  --status-json-file PATH    Override status snapshot JSON output path.
-  --status-text-file PATH    Override status snapshot text output path.
-  --report-file PATH         Markdown report output path.
-  -h, --help                 Show help.
+  --crate NAME                  Add one crate (repeatable).
+  --crates "A B,C"              Add multiple crates (space/comma separated).
+  --all                         Publish all crates from the list file.
+  --list-file PATH              Crate order file for --all/default.
+  --publish                     Trigger workflow in publish mode (default).
+  --dry-run-only                Trigger workflow in dry-run mode.
+  --ref REF                     Git ref for workflow dispatch (default: main).
+  --workflow NAME               Workflow file/name for dispatch (default: publish-crates.yml).
+  --registry NAME               Optional cargo registry input for workflow.
+  --wait                        Wait for workflow completion (default).
+  --no-wait                     Only dispatch workflow; do not wait.
+  --discover-timeout-seconds N  Max seconds to discover run id after dispatch (default: 120).
+  --poll-seconds N              Poll interval for run discovery (default: 3).
+  --skip-status-check           Skip post-run crates.io status snapshot.
+  --status-script PATH          Override status snapshot script path.
+  --status-json-file PATH       Override status snapshot JSON output path.
+  --status-text-file PATH       Override status snapshot text output path.
+  --report-file PATH            Markdown report output path.
+  -h, --help                    Show help.
 
 Examples:
   <ENTRYPOINT> --crate nils-codex-cli
-  <ENTRYPOINT> --crates "nils-common nils-term" --wait-retry
-  <ENTRYPOINT> --all --wait-retry --report-file "$CODEX_HOME/out/publish-report.md"
+  <ENTRYPOINT> --crate nils-codex-cli --dry-run-only
+  <ENTRYPOINT> --all --ref main
 USAGE
 }
 
@@ -80,25 +80,8 @@ append_crates_from_file() {
   done < "$path"
 }
 
-sanitize_field() {
-  printf '%s' "$1" | tr '\n\t' '  '
-}
-
 now_utc() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
-}
-
-add_seconds_utc() {
-  "$python_bin" - "$1" <<'PY'
-from __future__ import annotations
-
-from datetime import datetime, timedelta, timezone
-import sys
-
-seconds = int(sys.argv[1])
-base = datetime.now(timezone.utc) + timedelta(seconds=seconds)
-print(base.strftime("%Y-%m-%dT%H:%M:%SZ"))
-PY
 }
 
 selected_crate_version() {
@@ -121,206 +104,139 @@ raise SystemExit(1)
 PY
 }
 
-crate_version_exists_on_crates_io() {
-  local crate="$1"
-  local version="$2"
-  "$python_bin" - "$crate" "$version" <<'PY'
+discover_run_id() {
+  local since_epoch="$1"
+  local timeout_seconds="$2"
+  local poll_seconds="$3"
+  local elapsed=0
+
+  while (( elapsed <= timeout_seconds )); do
+    local run_list_json
+    if ! run_list_json="$("$gh_bin" run list --workflow "$workflow" --event workflow_dispatch --limit 30 --json databaseId,createdAt,headBranch,url,status,conclusion 2>/dev/null)"; then
+      run_list_json="[]"
+    fi
+
+    local run_id
+    run_id="$("$python_bin" - "$since_epoch" "$ref" "$run_list_json" <<'PY'
 from __future__ import annotations
 
+from datetime import datetime
+import json
 import sys
-import urllib.error
-import urllib.request
 
-crate, version = sys.argv[1], sys.argv[2]
-url = f"https://crates.io/api/v1/crates/{crate}/{version}"
+since_epoch = int(sys.argv[1])
+target_ref = sys.argv[2]
+raw = sys.argv[3] if len(sys.argv) > 3 else "[]"
+
 try:
-    urllib.request.urlopen(url, timeout=15)
-except urllib.error.HTTPError as exc:
-    if exc.code == 404:
-        raise SystemExit(1)
-    raise
-raise SystemExit(0)
-PY
-}
+    runs = json.loads(raw)
+except Exception:
+    runs = []
 
-is_rate_limited_log() {
-  local log_file="$1"
-  "$python_bin" - "$log_file" <<'PY'
-from __future__ import annotations
+def to_epoch(value: str) -> int:
+    if not value:
+        return 0
+    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return int(dt.timestamp())
 
-import re
-import sys
+threshold = max(0, since_epoch - 300)
 
-text = open(sys.argv[1], "r", encoding="utf-8", errors="replace").read().lower()
-patterns = [
-    r"\b429\b",
-    r"too many requests",
-    r"rate limit",
-    r"retry[- ]?after",
-    r"please wait",
+def select(candidates):
+    if not candidates:
+        return None
+    return max(candidates, key=lambda run: to_epoch(run.get("createdAt", "")))
+
+filtered = [
+    run
+    for run in runs
+    if to_epoch(run.get("createdAt", "")) >= threshold and run.get("headBranch") == target_ref
 ]
-if any(re.search(p, text) for p in patterns):
-    raise SystemExit(0)
-raise SystemExit(1)
+picked = select(filtered)
+if picked is None:
+    fallback = [run for run in runs if to_epoch(run.get("createdAt", "")) >= threshold]
+    picked = select(fallback)
+
+if picked is None:
+    raise SystemExit(1)
+
+run_id = picked.get("databaseId")
+if run_id is None:
+    raise SystemExit(1)
+print(run_id)
 PY
-}
+)" || run_id=""
 
-extract_retry_seconds() {
-  local log_file="$1"
-  local fallback="$2"
-  "$python_bin" - "$log_file" "$fallback" <<'PY'
-from __future__ import annotations
+    if [[ -n "$run_id" ]]; then
+      printf '%s\n' "$run_id"
+      return 0
+    fi
 
-import re
-import sys
+    "$sleep_bin" "$poll_seconds"
+    elapsed=$((elapsed + poll_seconds))
+  done
 
-text = open(sys.argv[1], "r", encoding="utf-8", errors="replace").read().lower()
-fallback = int(sys.argv[2])
-
-patterns = [
-    (r"retry[- ]?after[^0-9]*(\d+)", 1),
-    (r"(\d+)\s*seconds?", 1),
-    (r"(\d+)\s*secs?", 1),
-    (r"(\d+)\s*minutes?", 60),
-    (r"(\d+)\s*mins?", 60),
-    (r"(\d+)\s*hours?", 3600),
-    (r"(\d+)\s*hrs?", 3600),
-]
-for pattern, multiplier in patterns:
-    match = re.search(pattern, text)
-    if match:
-        value = int(match.group(1)) * multiplier
-        print(value)
-        raise SystemExit(0)
-
-print(max(0, fallback))
-PY
-}
-
-extract_error_line() {
-  local log_file="$1"
-  "$python_bin" - "$log_file" <<'PY'
-from __future__ import annotations
-
-import sys
-
-lines = [line.strip() for line in open(sys.argv[1], "r", encoding="utf-8", errors="replace").read().splitlines()]
-for line in lines:
-    if "error:" in line.lower():
-        print(line)
-        raise SystemExit(0)
-for line in reversed(lines):
-    if line:
-        print(line)
-        raise SystemExit(0)
-print("unknown error")
-PY
-}
-
-run_with_log() {
-  local log_file="$1"
-  shift
-  set +e
-  "$@" 2>&1 | tee "$log_file"
-  local rc=${PIPESTATUS[0]}
-  set -e
-  return "$rc"
-}
-
-record_row() {
-  local crate="$1"
-  local version="$2"
-  local status="$3"
-  local started_at="$4"
-  local ended_at="$5"
-  local attempts="$6"
-  local note_msg="$7"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$crate" \
-    "$version" \
-    "$status" \
-    "$started_at" \
-    "$ended_at" \
-    "$attempts" \
-    "$(sanitize_field "$note_msg")" >> "$rows_file"
+  return 1
 }
 
 write_report() {
   local path="$1"
   local mode_label="$2"
-  local wait_label="$3"
-  local started="$4"
-  local ended="$5"
-  local selected_total="$6"
-  local next_retry="$7"
-  local status_check_state="$8"
-  local status_check_rc="$9"
-  local status_json_file="${10}"
-  local status_text_file="${11}"
-  "$python_bin" - "$rows_file" "$path" "$mode_label" "$wait_label" "$started" "$ended" "$selected_total" "$next_retry" "$status_check_state" "$status_check_rc" "$status_json_file" "$status_text_file" <<'PY'
+  local started="$3"
+  local ended="$4"
+  local run_id="$5"
+  local run_url="$6"
+  local run_status="$7"
+  local run_conclusion="$8"
+  local status_check_state="$9"
+  local status_check_rc="${10}"
+  local status_json_file="${11}"
+  local status_text_file="${12}"
+  "$python_bin" - "$rows_file" "$path" "$mode_label" "$workflow" "$ref" "$started" "$ended" "$run_id" "$run_url" "$run_status" "$run_conclusion" "$status_check_state" "$status_check_rc" "$status_json_file" "$status_text_file" <<'PY'
 from __future__ import annotations
 
 import csv
 import pathlib
 import sys
 
-rows_file, out_path, mode_label, wait_label, started, ended, selected_total, next_retry, status_check_state, status_check_rc, status_json_file, status_text_file = sys.argv[1:13]
+(
+    rows_file,
+    out_path,
+    mode_label,
+    workflow_name,
+    git_ref,
+    started,
+    ended,
+    run_id,
+    run_url,
+    run_status,
+    run_conclusion,
+    status_check_state,
+    status_check_rc,
+    status_json_file,
+    status_text_file,
+) = sys.argv[1:16]
+
 rows = []
 with open(rows_file, "r", encoding="utf-8") as fp:
-    reader = csv.DictReader(
-        fp,
-        fieldnames=["crate", "version", "status", "started_at", "ended_at", "attempts", "note"],
-        delimiter="\t",
-    )
+    reader = csv.DictReader(fp, fieldnames=["crate", "version"], delimiter="\t")
     for row in reader:
         rows.append(row)
 
-counts = {
-    "published": 0,
-    "skipped": 0,
-    "dry-run-ok": 0,
-    "failed": 0,
-    "pending": 0,
-}
-for row in rows:
-    status = row["status"]
-    if status in counts:
-        counts[status] += 1
-
-def table(filter_fn):
-    selected = [r for r in rows if filter_fn(r)]
-    if not selected:
-        return "_None_\n"
-    out = ["| Crate | Version | Status | Start (UTC) | End (UTC) | Attempts | Note |", "|---|---:|---|---|---|---:|---|"]
-    for row in selected:
-        out.append(
-            "| {crate} | {version} | {status} | {started_at} | {ended_at} | {attempts} | {note} |".format(
-                crate=row["crate"] or "-",
-                version=row["version"] or "-",
-                status=row["status"] or "-",
-                started_at=row["started_at"] or "-",
-                ended_at=row["ended_at"] or "-",
-                attempts=row["attempts"] or "0",
-                note=row["note"] or "-",
-            )
-        )
-    return "\n".join(out) + "\n"
-
 content = []
-content.append("# crates.io Publish Report\n")
-content.append("## Summary\n")
+content.append("# crates.io Publish Report")
+content.append("")
+content.append("## Summary")
+content.append("")
 content.append(f"- Mode: `{mode_label}`")
-content.append(f"- Retry behavior: `{wait_label}`")
+content.append(f"- Workflow: `{workflow_name}`")
+content.append(f"- Ref: `{git_ref}`")
 content.append(f"- Started (UTC): `{started}`")
 content.append(f"- Ended (UTC): `{ended}`")
-content.append(f"- Selected crates: `{selected_total}`")
-content.append(f"- Published: `{counts['published']}`")
-content.append(f"- Skipped existing: `{counts['skipped']}`")
-content.append(f"- Dry-run only: `{counts['dry-run-ok']}`")
-content.append(f"- Failed: `{counts['failed']}`")
-content.append(f"- Not attempted: `{counts['pending']}`")
-if next_retry:
-    content.append(f"- Next eligible publish time (UTC): `{next_retry}`")
+content.append(f"- Selected crates: `{len(rows)}`")
+content.append(f"- Run ID: `{run_id}`")
+content.append(f"- Run URL: `{run_url or '-'}`")
+content.append(f"- Run status: `{run_status or '-'}`")
+content.append(f"- Run conclusion: `{run_conclusion or '-'}`")
 content.append(f"- Status snapshot: `{status_check_state}`")
 if status_check_rc:
     content.append(f"- Status snapshot exit code: `{status_check_rc}`")
@@ -329,31 +245,35 @@ if status_json_file:
 if status_text_file:
     content.append(f"- Status text: `{status_text_file}`")
 content.append("")
-content.append("## Successful Uploads\n")
-content.append(table(lambda r: r["status"] == "published"))
-content.append("## Failed Uploads\n")
-content.append(table(lambda r: r["status"] == "failed"))
-content.append("## Full Attempts\n")
-content.append(table(lambda _r: True))
+content.append("## Selected Crates")
+content.append("")
+if rows:
+    content.append("| Crate | Version |")
+    content.append("|---|---:|")
+    for row in rows:
+        content.append(f"| {row['crate']} | {row['version']} |")
+else:
+    content.append("_None_")
 
 path = pathlib.Path(out_path)
 path.parent.mkdir(parents=True, exist_ok=True)
-path.write_text("\n".join(content), encoding="utf-8")
+path.write_text("\n".join(content) + "\n", encoding="utf-8")
 PY
 }
 
+gh_bin="${PUBLISH_CRATES_IO_GH_BIN:-gh}"
 cargo_bin="${PUBLISH_CRATES_IO_CARGO_BIN:-cargo}"
 python_bin="${PUBLISH_CRATES_IO_PYTHON_BIN:-python3}"
 sleep_bin="${PUBLISH_CRATES_IO_SLEEP_BIN:-sleep}"
 
 mode="publish"
-wait_retry=0
-max_retries=0
-default_retry_seconds=300
-list_file="release/crates-io-publish-order.txt"
+ref="main"
+workflow="publish-crates.yml"
 registry=""
-skip_existing=1
-allow_dirty=0
+wait_for_completion=1
+discover_timeout_seconds=120
+poll_seconds=3
+list_file="release/crates-io-publish-order.txt"
 select_all=0
 report_file=""
 skip_status_check=0
@@ -391,18 +311,14 @@ while [[ $# -gt 0 ]]; do
       mode="dry-run-only"
       shift
       ;;
-    --wait-retry)
-      wait_retry=1
-      shift
-      ;;
-    --max-retries)
-      [[ $# -ge 2 ]] || die "--max-retries requires a value"
-      max_retries="${2:-}"
+    --ref)
+      [[ $# -ge 2 ]] || die "--ref requires a value"
+      ref="${2:-}"
       shift 2
       ;;
-    --default-retry-seconds)
-      [[ $# -ge 2 ]] || die "--default-retry-seconds requires a value"
-      default_retry_seconds="${2:-}"
+    --workflow)
+      [[ $# -ge 2 ]] || die "--workflow requires a value"
+      workflow="${2:-}"
       shift 2
       ;;
     --registry)
@@ -410,17 +326,23 @@ while [[ $# -gt 0 ]]; do
       registry="${2:-}"
       shift 2
       ;;
-    --skip-existing)
-      skip_existing=1
+    --wait)
+      wait_for_completion=1
       shift
       ;;
-    --no-skip-existing)
-      skip_existing=0
+    --no-wait)
+      wait_for_completion=0
       shift
       ;;
-    --allow-dirty)
-      allow_dirty=1
-      shift
+    --discover-timeout-seconds)
+      [[ $# -ge 2 ]] || die "--discover-timeout-seconds requires a value"
+      discover_timeout_seconds="${2:-}"
+      shift 2
+      ;;
+    --poll-seconds)
+      [[ $# -ge 2 ]] || die "--poll-seconds requires a value"
+      poll_seconds="${2:-}"
+      shift 2
       ;;
     --skip-status-check)
       skip_status_check=1
@@ -458,8 +380,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ "$max_retries" =~ ^[0-9]+$ ]] || die "--max-retries must be an integer >= 0"
-[[ "$default_retry_seconds" =~ ^[0-9]+$ ]] || die "--default-retry-seconds must be an integer >= 0"
+[[ "$discover_timeout_seconds" =~ ^[0-9]+$ ]] || die "--discover-timeout-seconds must be an integer >= 0"
+[[ "$poll_seconds" =~ ^[0-9]+$ ]] || die "--poll-seconds must be an integer >= 0"
+(( poll_seconds > 0 )) || die "--poll-seconds must be > 0"
+
+command -v "$gh_bin" >/dev/null 2>&1 || die "gh not found on PATH"
+command -v "$cargo_bin" >/dev/null 2>&1 || die "cargo not found on PATH"
+command -v "$python_bin" >/dev/null 2>&1 || die "python3 not found on PATH"
 
 if [[ "$select_all" -eq 1 && ${#selected_crates[@]} -gt 0 ]]; then
   die "--all cannot be combined with --crate/--crates"
@@ -533,12 +460,6 @@ if errors:
     raise SystemExit(1)
 PY
 
-if [[ "$mode" == "publish" && "$allow_dirty" -eq 0 ]]; then
-  if [[ -n "$(git status --porcelain)" ]]; then
-    die "working tree is not clean; commit/stash changes or use --allow-dirty"
-  fi
-fi
-
 if [[ -z "$report_file" ]]; then
   codex_home="${CODEX_HOME:-$HOME/.codex}"
   timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -557,146 +478,100 @@ if [[ -z "$status_text_file" ]]; then
 fi
 mkdir -p "$(dirname "$status_json_file")" "$(dirname "$status_text_file")"
 
-declare -a cargo_args=(--locked)
-if [[ -n "$registry" ]]; then
-  cargo_args+=(--registry "$registry")
-fi
-if [[ "$allow_dirty" -eq 1 ]]; then
-  cargo_args+=(--allow-dirty)
-fi
-
-if [[ "$mode" == "dry-run-only" ]]; then
-  skip_existing=0
-fi
-
-note "mode: $mode"
-note "crates: ${selected_crates[*]}"
-note "wait retry: $wait_retry"
-note "report: $report_file"
-if [[ "$skip_status_check" -eq 1 ]]; then
-  note "status snapshot: disabled"
-else
-  note "status snapshot script: $status_script"
-fi
-
-run_started_at="$(now_utc)"
-halted=0
-halt_reason=""
-next_retry_at=""
-published_count=0
-skipped_count=0
-dry_run_ok_count=0
-failed_count=0
-pending_count=0
-status_check_state="skipped"
-status_check_rc=""
-
-for ((idx=0; idx<${#selected_crates[@]}; idx++)); do
-  crate="${selected_crates[$idx]}"
+for crate in "${selected_crates[@]}"; do
   version="$(selected_crate_version "$metadata_file" "$crate" || true)"
   [[ -n "$version" ]] || version="unknown"
-  crate_started_at="$(now_utc)"
-
-  if [[ "$halted" -eq 1 ]]; then
-    record_row "$crate" "$version" "pending" "" "" "0" "not attempted due to earlier halt: $halt_reason"
-    pending_count=$((pending_count + 1))
-    continue
-  fi
-
-  if [[ "$mode" == "publish" && "$skip_existing" -eq 1 && -z "$registry" ]]; then
-    if crate_version_exists_on_crates_io "$crate" "$version"; then
-      crate_ended_at="$(now_utc)"
-      note "skip ${crate} v${version} (already published on crates.io)"
-      record_row "$crate" "$version" "skipped" "$crate_started_at" "$crate_ended_at" "0" "already exists on crates.io"
-      skipped_count=$((skipped_count + 1))
-      continue
-    fi
-  fi
-
-  dry_log="$(mktemp)"
-  note "[dry-run] cargo publish -p ${crate} --dry-run ${cargo_args[*]}"
-  if ! run_with_log "$dry_log" "$cargo_bin" publish -p "$crate" --dry-run "${cargo_args[@]}"; then
-    crate_ended_at="$(now_utc)"
-    err_line="$(extract_error_line "$dry_log")"
-    record_row "$crate" "$version" "failed" "$crate_started_at" "$crate_ended_at" "0" "dry-run failed: ${err_line}"
-    rm -f "$dry_log"
-    failed_count=$((failed_count + 1))
-    halted=1
-    halt_reason="dry-run failed on ${crate}"
-    continue
-  fi
-  rm -f "$dry_log"
-
-  if [[ "$mode" == "dry-run-only" ]]; then
-    crate_ended_at="$(now_utc)"
-    record_row "$crate" "$version" "dry-run-ok" "$crate_started_at" "$crate_ended_at" "0" "dry-run passed"
-    dry_run_ok_count=$((dry_run_ok_count + 1))
-    continue
-  fi
-
-  attempts=0
-  while true; do
-    attempts=$((attempts + 1))
-    publish_log="$(mktemp)"
-    note "[publish] cargo publish -p ${crate} ${cargo_args[*]} (attempt ${attempts})"
-    if run_with_log "$publish_log" "$cargo_bin" publish -p "$crate" "${cargo_args[@]}"; then
-      crate_ended_at="$(now_utc)"
-      record_row "$crate" "$version" "published" "$crate_started_at" "$crate_ended_at" "$attempts" "publish succeeded"
-      rm -f "$publish_log"
-      published_count=$((published_count + 1))
-      break
-    fi
-
-    if is_rate_limited_log "$publish_log"; then
-      retry_seconds="$(extract_retry_seconds "$publish_log" "$default_retry_seconds")"
-      retry_at="$(add_seconds_utc "$retry_seconds")"
-      if [[ "$wait_retry" -eq 1 ]]; then
-        if [[ "$max_retries" -gt 0 && "$attempts" -ge "$max_retries" ]]; then
-          crate_ended_at="$(now_utc)"
-          record_row "$crate" "$version" "failed" "$crate_started_at" "$crate_ended_at" "$attempts" "rate-limited and hit max retries (${max_retries}); next retry at ${retry_at}"
-          rm -f "$publish_log"
-          failed_count=$((failed_count + 1))
-          halted=1
-          halt_reason="max retries reached on ${crate}"
-          next_retry_at="$retry_at"
-          break
-        fi
-        warn "rate-limited on ${crate}; waiting ${retry_seconds}s (next retry at ${retry_at})"
-        rm -f "$publish_log"
-        "$sleep_bin" "$retry_seconds"
-        continue
-      fi
-
-      crate_ended_at="$(now_utc)"
-      record_row "$crate" "$version" "failed" "$crate_started_at" "$crate_ended_at" "$attempts" "rate-limited; next eligible publish time: ${retry_at}"
-      rm -f "$publish_log"
-      failed_count=$((failed_count + 1))
-      halted=1
-      halt_reason="rate limit on ${crate}"
-      next_retry_at="$retry_at"
-      break
-    fi
-
-    crate_ended_at="$(now_utc)"
-    err_line="$(extract_error_line "$publish_log")"
-    record_row "$crate" "$version" "failed" "$crate_started_at" "$crate_ended_at" "$attempts" "publish failed: ${err_line}"
-    rm -f "$publish_log"
-    failed_count=$((failed_count + 1))
-    halted=1
-    halt_reason="publish failed on ${crate}"
-    break
-  done
+  printf '%s\t%s\n' "$crate" "$version" >> "$rows_file"
 done
 
-if [[ "$skip_status_check" -eq 0 ]]; then
+mode_input="publish"
+mode_label="publish"
+if [[ "$mode" == "dry-run-only" ]]; then
+  mode_input="dry-run"
+  mode_label="dry-run"
+fi
+
+note "mode: $mode_label"
+note "workflow: $workflow"
+note "ref: $ref"
+note "crates: ${selected_crates[*]}"
+note "wait: $wait_for_completion"
+note "report: $report_file"
+
+run_started_at="$(now_utc)"
+dispatch_start_epoch="$(date +%s)"
+
+declare -a dispatch_cmd=(
+  "$gh_bin" workflow run "$workflow"
+  --ref "$ref"
+  -f "crates=${selected_crates[*]}"
+  -f "mode=${mode_input}"
+)
+if [[ -n "$registry" ]]; then
+  dispatch_cmd+=(-f "registry=${registry}")
+fi
+
+"${dispatch_cmd[@]}"
+note "workflow dispatched"
+
+run_id="$(discover_run_id "$dispatch_start_epoch" "$discover_timeout_seconds" "$poll_seconds" || true)"
+[[ -n "$run_id" ]] || die "failed to locate dispatched workflow run for '$workflow' within ${discover_timeout_seconds}s"
+
+run_url=""
+run_status="queued"
+run_conclusion=""
+watch_rc=0
+
+if [[ "$wait_for_completion" -eq 1 ]]; then
+  note "watching run: $run_id"
+  set +e
+  "$gh_bin" run watch "$run_id" --exit-status
+  watch_rc="$?"
+  set -e
+fi
+
+run_view_json="$("$gh_bin" run view "$run_id" --json url,status,conclusion,createdAt,updatedAt 2>/dev/null || true)"
+mapfile -t run_view_fields < <("$python_bin" - "$run_view_json" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+
+raw = sys.argv[1] if len(sys.argv) > 1 else "{}"
+try:
+    data = json.loads(raw)
+except Exception:
+    data = {}
+
+def out(key: str) -> str:
+    value = data.get(key)
+    if value is None:
+        return ""
+    return str(value)
+
+print(out("url"))
+print(out("status"))
+print(out("conclusion"))
+print(out("createdAt"))
+print(out("updatedAt"))
+PY
+)
+run_url="${run_view_fields[0]:-}"
+run_status="${run_view_fields[1]:-$run_status}"
+run_conclusion="${run_view_fields[2]:-$run_conclusion}"
+
+if [[ "$wait_for_completion" -eq 1 && "$watch_rc" -ne 0 ]]; then
+  warn "workflow run failed (run_id=${run_id})"
+fi
+
+status_check_state="skipped"
+status_check_rc=""
+if [[ "$skip_status_check" -eq 0 && "$mode" == "publish" && "$wait_for_completion" -eq 1 && "$run_conclusion" == "success" ]]; then
   if [[ -x "$status_script" ]]; then
-    declare -a status_cmd=("$status_script" --format both --json-out "$status_json_file" --text-out "$status_text_file")
+    declare -a status_cmd=("$status_script" --format both --json-out "$status_json_file" --text-out "$status_text_file" --fail-on-missing)
     for crate in "${selected_crates[@]}"; do
       status_cmd+=(--crate "$crate")
     done
-    if [[ "$mode" == "publish" && "$failed_count" -eq 0 && "$pending_count" -eq 0 ]]; then
-      status_cmd+=(--fail-on-missing)
-    fi
 
     note "running status snapshot"
     set +e
@@ -708,9 +583,6 @@ if [[ "$skip_status_check" -eq 0 ]]; then
     else
       status_check_state="failed"
       warn "status snapshot failed with exit code ${status_check_rc}"
-      if [[ "$failed_count" -eq 0 && "$pending_count" -eq 0 ]]; then
-        failed_count=$((failed_count + 1))
-      fi
     fi
   else
     warn "status snapshot script missing or not executable: $status_script"
@@ -719,21 +591,36 @@ if [[ "$skip_status_check" -eq 0 ]]; then
 fi
 
 run_ended_at="$(now_utc)"
-mode_label="$mode"
-wait_label="stop-on-rate-limit"
-if [[ "$wait_retry" -eq 1 ]]; then
-  wait_label="wait-and-retry"
-fi
-write_report "$report_file" "$mode_label" "$wait_label" "$run_started_at" "$run_ended_at" "${#selected_crates[@]}" "$next_retry_at" "$status_check_state" "$status_check_rc" "$status_json_file" "$status_text_file"
+write_report \
+  "$report_file" \
+  "$mode_label" \
+  "$run_started_at" \
+  "$run_ended_at" \
+  "$run_id" \
+  "$run_url" \
+  "$run_status" \
+  "$run_conclusion" \
+  "$status_check_state" \
+  "$status_check_rc" \
+  "$status_json_file" \
+  "$status_text_file"
 
 note "report written: $report_file"
-if [[ "$status_check_state" == "ok" ]]; then
-  note "status json: $status_json_file"
-  note "status text: $status_text_file"
+if [[ -n "$run_url" ]]; then
+  note "run url: $run_url"
 fi
-note "published=${published_count} skipped=${skipped_count} dry-run-ok=${dry_run_ok_count} failed=${failed_count} pending=${pending_count}"
 
-if [[ "$failed_count" -gt 0 || "$pending_count" -gt 0 ]]; then
+overall_failed=0
+if [[ "$wait_for_completion" -eq 1 ]]; then
+  if [[ "$watch_rc" -ne 0 || "$run_conclusion" != "success" ]]; then
+    overall_failed=1
+  fi
+fi
+if [[ "$status_check_state" == "failed" ]]; then
+  overall_failed=1
+fi
+
+if [[ "$overall_failed" -ne 0 ]]; then
   exit 1
 fi
 

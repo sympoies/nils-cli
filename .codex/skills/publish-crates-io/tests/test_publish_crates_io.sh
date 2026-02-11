@@ -20,14 +20,21 @@ assert_contains() {
   fi
 }
 
+create_temp_repo() {
+  local repo_dir="$1"
+  git init "$repo_dir" >/dev/null
+  git -C "$repo_dir" config user.email "test@example.com"
+  git -C "$repo_dir" config user.name "Test User"
+  echo "seed" > "${repo_dir}/README.md"
+  git -C "$repo_dir" add README.md
+  git -C "$repo_dir" commit -m "init" >/dev/null
+}
+
 create_mock_cargo() {
   local dir="$1"
   cat > "${dir}/cargo" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
-
-scenario="${MOCK_CARGO_SCENARIO:-success}"
-state_file="${MOCK_CARGO_STATE:-/tmp/mock-cargo-state}"
 
 if [[ "${1:-}" == "metadata" ]]; then
   cat <<'JSON'
@@ -43,7 +50,9 @@ if [[ "${1:-}" == "metadata" ]]; then
       "name": "nils-b",
       "version": "1.2.4",
       "publish": null,
-      "dependencies": []
+      "dependencies": [
+        {"name": "nils-a", "path": "../nils-a"}
+      ]
     }
   ]
 }
@@ -51,68 +60,79 @@ JSON
   exit 0
 fi
 
-if [[ "${1:-}" != "publish" ]]; then
-  echo "unexpected cargo command: $*" >&2
-  exit 1
-fi
+echo "unexpected cargo command: $*" >&2
+exit 1
+MOCK
+  chmod +x "${dir}/cargo"
+}
 
-crate=""
-dry_run=0
-args=("$@")
-for ((i=0; i<${#args[@]}; i++)); do
-  arg="${args[$i]}"
-  if [[ "$arg" == "-p" ]]; then
-    crate="${args[$((i+1))]}"
-  elif [[ "$arg" == "--dry-run" ]]; then
-    dry_run=1
-  fi
-done
+create_mock_gh() {
+  local dir="$1"
+  cat > "${dir}/gh" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
 
-if [[ -z "$crate" ]]; then
-  echo "missing crate name" >&2
-  exit 1
-fi
+scenario="${MOCK_GH_SCENARIO:-success}"
+calls_file="${MOCK_GH_CALLS:-/tmp/mock-gh-calls}"
+echo "$*" >> "$calls_file"
 
-if [[ "$dry_run" -eq 1 ]]; then
-  echo "dry-run ok for $crate"
+if [[ "${1:-}" == "workflow" && "${2:-}" == "run" ]]; then
   exit 0
 fi
 
-case "$scenario" in
-  success)
-    echo "published $crate"
-    exit 0
-    ;;
-  rate-limit-stop)
-    if [[ "$crate" == "nils-a" ]]; then
-      echo "error: too many requests; retry after 120 seconds" >&2
-      exit 1
-    fi
-    echo "published $crate"
-    exit 0
-    ;;
-  rate-limit-once)
-    key="${state_file}.${crate}"
-    attempts=0
-    if [[ -f "$key" ]]; then
-      attempts="$(cat "$key")"
-    fi
-    attempts=$((attempts + 1))
-    echo "$attempts" > "$key"
-    if [[ "$crate" == "nils-a" && "$attempts" -eq 1 ]]; then
-      echo "error: rate limit reached, retry after 0 seconds" >&2
-      exit 1
-    fi
-    echo "published $crate on attempt $attempts"
-    exit 0
-    ;;
-  *)
-    echo "unknown scenario: $scenario" >&2
+if [[ "${1:-}" == "run" && "${2:-}" == "list" ]]; then
+  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  conclusion="success"
+  if [[ "$scenario" == "watch-fail" ]]; then
+    conclusion="failure"
+  fi
+  cat <<JSON
+[
+  {
+    "databaseId": 123456,
+    "createdAt": "${now}",
+    "headBranch": "main",
+    "url": "https://github.com/graysurf/nils-cli/actions/runs/123456",
+    "status": "completed",
+    "conclusion": "${conclusion}"
+  }
+]
+JSON
+  exit 0
+fi
+
+if [[ "${1:-}" == "run" && "${2:-}" == "watch" ]]; then
+  if [[ "$scenario" == "watch-fail" ]]; then
     exit 1
-    ;;
-esac
+  fi
+  exit 0
+fi
+
+if [[ "${1:-}" == "run" && "${2:-}" == "view" ]]; then
+  conclusion="success"
+  if [[ "$scenario" == "watch-fail" ]]; then
+    conclusion="failure"
+  fi
+  cat <<JSON
+{
+  "url": "https://github.com/graysurf/nils-cli/actions/runs/123456",
+  "status": "completed",
+  "conclusion": "${conclusion}",
+  "createdAt": "2026-02-11T12:00:00Z",
+  "updatedAt": "2026-02-11T12:00:30Z"
+}
+JSON
+  exit 0
+fi
+
+if [[ "${1:-}" == "auth" && "${2:-}" == "status" ]]; then
+  exit 0
+fi
+
+echo "unexpected gh command: $*" >&2
+exit 1
 MOCK
-  chmod +x "${dir}/cargo"
+  chmod +x "${dir}/gh"
 }
 
 create_mock_status_script() {
@@ -147,9 +167,10 @@ done
 if [[ -n "$json_out" ]]; then
   mkdir -p "$(dirname "$json_out")"
   cat > "$json_out" <<'JSON'
-{"summary":{"published":2,"missing":0,"error":0}}
+{"summary":{"published":1,"missing":0,"error":0}}
 JSON
 fi
+
 if [[ -n "$text_out" ]]; then
   mkdir -p "$(dirname "$text_out")"
   cat > "$text_out" <<'TEXT'
@@ -165,17 +186,7 @@ MOCK
   chmod +x "${dir}/crates-io-status.sh"
 }
 
-create_temp_repo() {
-  local repo_dir="$1"
-  git init "$repo_dir" >/dev/null
-  git -C "$repo_dir" config user.email "test@example.com"
-  git -C "$repo_dir" config user.name "Test User"
-  echo "seed" > "${repo_dir}/README.md"
-  git -C "$repo_dir" add README.md
-  git -C "$repo_dir" commit -m "init" >/dev/null
-}
-
-test_rate_limit_stop_reports_next_time() {
+test_publish_wait_success() {
   local tmp
   tmp="$(mktemp -d)"
   local repo="${tmp}/repo"
@@ -183,22 +194,53 @@ test_rate_limit_stop_reports_next_time() {
   mkdir -p "$repo" "$bin_dir"
   create_temp_repo "$repo"
   create_mock_cargo "$bin_dir"
+  create_mock_gh "$bin_dir"
+  create_mock_status_script "$bin_dir"
 
-  local report="${tmp}/report-stop.md"
+  local report="${tmp}/report.md"
+  local gh_calls="${tmp}/gh-calls.log"
+  local status_calls="${tmp}/status-calls.log"
+
+  PATH="${bin_dir}:$PATH" \
+    MOCK_GH_CALLS="$gh_calls" \
+    MOCK_STATUS_CALLS="$status_calls" \
+    PUBLISH_CRATES_IO_STATUS_SCRIPT="${bin_dir}/crates-io-status.sh" \
+    "$entrypoint" --crate nils-a --report-file "$report" \
+    >"${tmp}/stdout.log" 2>"${tmp}/stderr.log"
+
+  assert_contains "$gh_calls" "workflow run publish-crates.yml --ref main -f crates=nils-a -f mode=publish"
+  assert_contains "$status_calls" "--fail-on-missing"
+  assert_contains "$status_calls" "--crate nils-a"
+  assert_contains "$report" 'Run conclusion: `success`'
+  assert_contains "$report" 'Status snapshot: `ok`'
+  assert_contains "$report" "\\| nils-a \\| 1.2.3 \\|"
+}
+
+test_publish_wait_failure() {
+  local tmp
+  tmp="$(mktemp -d)"
+  local repo="${tmp}/repo"
+  local bin_dir="${tmp}/bin"
+  mkdir -p "$repo" "$bin_dir"
+  create_temp_repo "$repo"
+  create_mock_cargo "$bin_dir"
+  create_mock_gh "$bin_dir"
+
+  local report="${tmp}/report-failed.md"
   set +e
-  PATH="${bin_dir}:$PATH" MOCK_CARGO_SCENARIO="rate-limit-stop" \
-    "$entrypoint" --crates "nils-a nils-b" --no-skip-existing --report-file "$report" --allow-dirty --skip-status-check \
+  PATH="${bin_dir}:$PATH" \
+    MOCK_GH_SCENARIO="watch-fail" \
+    "$entrypoint" --crate nils-a --skip-status-check --report-file "$report" \
     >"${tmp}/stdout.log" 2>"${tmp}/stderr.log"
   local rc=$?
   set -e
 
-  [[ "$rc" -eq 1 ]] || fail "expected exit code 1 for default rate-limit stop, got $rc"
-  assert_contains "$report" "Next eligible publish time"
-  assert_contains "$report" "\\| nils-a \\| 1.2.3 \\| failed \\|"
-  assert_contains "$report" "\\| nils-b \\| 1.2.4 \\| pending \\|"
+  [[ "$rc" -eq 1 ]] || fail "expected exit code 1 when workflow run fails, got $rc"
+  assert_contains "$report" 'Run conclusion: `failure`'
+  assert_contains "$report" 'Status snapshot: `skipped`'
 }
 
-test_wait_retry_finishes_all() {
+test_dry_run_no_wait_dispatches_workflow() {
   local tmp
   tmp="$(mktemp -d)"
   local repo="${tmp}/repo"
@@ -206,41 +248,19 @@ test_wait_retry_finishes_all() {
   mkdir -p "$repo" "$bin_dir"
   create_temp_repo "$repo"
   create_mock_cargo "$bin_dir"
+  create_mock_gh "$bin_dir"
 
-  local report="${tmp}/report-wait.md"
-  PATH="${bin_dir}:$PATH" MOCK_CARGO_SCENARIO="rate-limit-once" MOCK_CARGO_STATE="${tmp}/state" \
-    PUBLISH_CRATES_IO_SLEEP_BIN="true" \
-    "$entrypoint" --crates "nils-a nils-b" --wait-retry --no-skip-existing --report-file "$report" --allow-dirty --skip-status-check \
+  local report="${tmp}/report-dry-run.md"
+  local gh_calls="${tmp}/gh-calls.log"
+
+  PATH="${bin_dir}:$PATH" \
+    MOCK_GH_CALLS="$gh_calls" \
+    "$entrypoint" --crate nils-a --dry-run-only --no-wait --report-file "$report" \
     >"${tmp}/stdout.log" 2>"${tmp}/stderr.log"
 
-  assert_contains "$report" "\\| nils-a \\| 1.2.3 \\| published \\|"
-  assert_contains "$report" "\\| nils-b \\| 1.2.4 \\| published \\|"
-  assert_contains "$report" 'Failed: `0`'
-}
-
-test_status_snapshot_integration() {
-  local tmp
-  tmp="$(mktemp -d)"
-  local repo="${tmp}/repo"
-  local bin_dir="${tmp}/bin"
-  mkdir -p "$repo" "$bin_dir"
-  create_temp_repo "$repo"
-  create_mock_cargo "$bin_dir"
-  create_mock_status_script "$bin_dir"
-
-  local report="${tmp}/report-status.md"
-  local status_calls="${tmp}/status-calls.log"
-  PATH="${bin_dir}:$PATH" MOCK_CARGO_SCENARIO="success" MOCK_STATUS_CALLS="$status_calls" \
-    PUBLISH_CRATES_IO_STATUS_SCRIPT="${bin_dir}/crates-io-status.sh" \
-    "$entrypoint" --crates "nils-a nils-b" --no-skip-existing --report-file "$report" --allow-dirty \
-    >"${tmp}/stdout.log" 2>"${tmp}/stderr.log"
-
-  assert_contains "$status_calls" "--fail-on-missing"
-  assert_contains "$report" 'Status snapshot: `ok`'
-  assert_contains "$report" 'Status JSON:'
-  assert_contains "$report" 'Status text:'
-  [[ -f "${report%.md}.status.json" ]] || fail "missing status json output"
-  [[ -f "${report%.md}.status.md" ]] || fail "missing status text output"
+  assert_contains "$gh_calls" "workflow run publish-crates.yml --ref main -f crates=nils-a -f mode=dry-run"
+  assert_contains "$report" 'Mode: `dry-run`'
+  assert_contains "$report" 'Status snapshot: `skipped`'
 }
 
 if [[ ! -f "${skill_root}/SKILL.md" ]]; then
@@ -256,8 +276,8 @@ if [[ ! -f "${skill_root}/references/PUBLISH_REPORT_TEMPLATE.md" ]]; then
   exit 1
 fi
 
-test_rate_limit_stop_reports_next_time
-test_wait_retry_finishes_all
-test_status_snapshot_integration
+test_publish_wait_success
+test_publish_wait_failure
+test_dry_run_no_wait_dispatches_workflow
 
 echo "ok: project skill smoke checks passed"
