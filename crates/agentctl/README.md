@@ -52,13 +52,13 @@ Built-in providers:
 List providers:
 
 ```bash
-cargo run -p agentctl -- provider list --format json
+cargo run -p nils-agentctl -- provider list --format json
 ```
 
 Healthcheck one provider:
 
 ```bash
-cargo run -p agentctl -- provider healthcheck --provider codex --format json
+cargo run -p nils-agentctl -- provider healthcheck --provider codex --format json
 ```
 
 Override selection:

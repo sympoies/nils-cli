@@ -1,15 +1,25 @@
 [package]
-name = "screen-record"
+name = "nils-screen-record"
 version = "0.3.0"
 edition.workspace = true
 license.workspace = true
 build = "build.rs"
 
+description = "CLI crate for nils-screen-record in the nils-cli workspace."
+repository = "https://github.com/graysurf/nils-cli"
+
+[lib]
+name = "screen_record"
+path = "src/lib.rs"
+
+[[bin]]
+name = "screen-record"
+path = "src/main.rs"
 [dependencies]
 clap = { workspace = true }
 ctrlc = "3.5.1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-nils-common = { path = "../nils-common" }
+nils-common = { version = "0.3.0", path = "../nils-common", package = "nils-common" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = { version = "0.13", features = ["randr"] }

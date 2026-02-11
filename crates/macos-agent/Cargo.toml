@@ -1,16 +1,26 @@
 [package]
-name = "macos-agent"
+name = "nils-macos-agent"
 version = "0.3.0"
 edition.workspace = true
 license.workspace = true
 
+description = "CLI crate for nils-macos-agent in the nils-cli workspace."
+repository = "https://github.com/graysurf/nils-cli"
+
+[lib]
+name = "macos_agent"
+path = "src/lib.rs"
+
+[[bin]]
+name = "macos-agent"
+path = "src/main.rs"
 [dependencies]
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 regex = "1"
-nils-common = { path = "../nils-common" }
-screen-record = { path = "../screen-record" }
+nils-common = { version = "0.3.0", path = "../nils-common", package = "nils-common" }
+screen-record = { version = "0.3.0", path = "../screen-record", package = "nils-screen-record" }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 
 [dev-dependencies]

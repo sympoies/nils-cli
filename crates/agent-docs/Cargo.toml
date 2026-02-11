@@ -1,9 +1,19 @@
 [package]
-name = "agent-docs"
+name = "nils-agent-docs"
 version = "0.3.0"
 edition.workspace = true
 license.workspace = true
 
+description = "CLI crate for nils-agent-docs in the nils-cli workspace."
+repository = "https://github.com/graysurf/nils-cli"
+
+[lib]
+name = "agent_docs"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agent-docs"
+path = "src/main.rs"
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }

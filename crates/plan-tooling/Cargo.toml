@@ -1,13 +1,23 @@
 [package]
-name = "plan-tooling"
+name = "nils-plan-tooling"
 version = "0.3.0"
 edition.workspace = true
 license.workspace = true
 
+description = "CLI crate for nils-plan-tooling in the nils-cli workspace."
+repository = "https://github.com/graysurf/nils-cli"
+
+[lib]
+name = "plan_tooling"
+path = "src/lib.rs"
+
+[[bin]]
+name = "plan-tooling"
+path = "src/main.rs"
 [dependencies]
 anyhow = { workspace = true }
-nils-term = { path = "../nils-term" }
-nils-common = { path = "../nils-common" }
+nils-term = { version = "0.3.0", path = "../nils-term", package = "nils-term" }
+nils-common = { version = "0.3.0", path = "../nils-common", package = "nils-common" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

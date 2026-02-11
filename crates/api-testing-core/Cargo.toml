@@ -1,9 +1,15 @@
 [package]
-name = "api-testing-core"
+name = "nils-api-testing-core"
 version = "0.3.0"
 edition.workspace = true
 license.workspace = true
 
+description = "Library crate for nils-api-testing-core in the nils-cli workspace."
+repository = "https://github.com/graysurf/nils-cli"
+
+[lib]
+name = "api_testing_core"
+path = "src/lib.rs"
 [dependencies]
 anyhow = { workspace = true }
 base64 = "0.22"
@@ -16,7 +22,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 time = { version = "0.3", features = ["formatting", "local-offset"] }
-nils-term = { path = "../nils-term" }
+nils-term = { version = "0.3.0", path = "../nils-term", package = "nils-term" }
 
 [dev-dependencies]
 nils-test-support = { path = "../nils-test-support" }

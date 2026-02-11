@@ -110,6 +110,28 @@ For bash completions, copy `<extract_dir>/completions/bash/<command>` into your 
 (example: `~/.local/share/bash-completion/completions/`) or source it from your shell init.
 Optional: source `<extract_dir>/completions/bash/aliases.bash` to enable `gs*`/`cx*`/`fx*` aliases.
 
+## crates.io publishing (shared crates)
+
+Use `scripts/publish-crates.sh` for crate publishing flow.
+
+- Default list + order: `release/crates-io-publish-order.txt`
+- Dry-run (recommended first):
+  - `scripts/publish-crates.sh --dry-run`
+- Real publish:
+  - `scripts/publish-crates.sh --publish`
+- Override target crates:
+  - `scripts/publish-crates.sh --crates "nils-term nils-common" --dry-run`
+
+In `--dry-run` mode, the script runs `cargo publish --dry-run` for every selected crate.
+In `--publish` mode, the script runs `dry-run -> publish` sequentially per crate (in your specified order).
+By default, `--publish` skips crates that are already published at the same version on crates.io.
+
+GitHub Actions manual flow is also available at `.github/workflows/publish-crates.yml`:
+
+- Trigger via `workflow_dispatch`.
+- `mode=dry-run` runs checks only.
+- `mode=publish` requires repository secret `CARGO_REGISTRY_TOKEN`.
+
 ## Adding a new CLI crate
 
 1. Create a new binary crate under [crates/](crates/):

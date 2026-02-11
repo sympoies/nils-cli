@@ -15,8 +15,8 @@
 ## Build and run
 
 - Build workspace: `cargo build`
-- Run CLI template: `cargo run -p cli-template -- --help`
-- Run git-scope: `cargo run -p git-scope -- --help`
+- Run CLI template: `cargo run -p nils-cli-template -- --help`
+- Run git-scope: `cargo run -p nils-git-scope -- --help`
 
 ## Local install (release)
 

@@ -1,9 +1,15 @@
 [package]
-name = "image-processing"
+name = "nils-image-processing"
 version = "0.3.0"
 edition.workspace = true
 license.workspace = true
 
+description = "CLI crate for nils-image-processing in the nils-cli workspace."
+repository = "https://github.com/graysurf/nils-cli"
+
+[[bin]]
+name = "image-processing"
+path = "src/main.rs"
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
@@ -12,8 +18,8 @@ serde_json = { workspace = true }
 
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 globset = "0.4"
-nils-common = { path = "../nils-common" }
-nils-term = { path = "../nils-term" }
+nils-common = { version = "0.3.0", path = "../nils-common", package = "nils-common" }
+nils-term = { version = "0.3.0", path = "../nils-term", package = "nils-term" }
 uuid = { version = "1", features = ["v4"] }
 walkdir = "2"
 

@@ -297,14 +297,14 @@ This mode is used by CI-safe integration tests.
 These checks are disabled by default and require explicit opt-in:
 
 ```bash
-MACOS_AGENT_REAL_E2E=1 cargo test -p macos-agent --test e2e_real_macos
+MACOS_AGENT_REAL_E2E=1 cargo test -p nils-macos-agent --test e2e_real_macos
 MACOS_AGENT_REAL_E2E=1 MACOS_AGENT_REAL_E2E_MUTATING=1 MACOS_AGENT_REAL_E2E_APP=Finder \
-  cargo test -p macos-agent --test e2e_real_macos
+  cargo test -p nils-macos-agent --test e2e_real_macos
 MACOS_AGENT_REAL_E2E=1 MACOS_AGENT_REAL_E2E_MUTATING=1 MACOS_AGENT_REAL_E2E_APPS=finder \
-  cargo test -p macos-agent --test e2e_real_apps -- finder_navigation_and_state_checks --nocapture
+  cargo test -p nils-macos-agent --test e2e_real_apps -- finder_navigation_and_state_checks --nocapture
 MACOS_AGENT_REAL_E2E=1 MACOS_AGENT_REAL_E2E_MUTATING=1 MACOS_AGENT_REAL_E2E_APPS=arc,spotify,finder \
   MACOS_AGENT_REAL_E2E_PROFILE=default-1440p \
-  cargo test -p macos-agent --test e2e_real_apps -- matrix_runner_supports_app_subset_selection_real --nocapture
+  cargo test -p nils-macos-agent --test e2e_real_apps -- matrix_runner_supports_app_subset_selection_real --nocapture
 ```
 
 Real-app E2E environment variables:
