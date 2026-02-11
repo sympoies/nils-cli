@@ -136,9 +136,9 @@ impl LoginMethod {
 
     fn codex_args(self) -> Vec<&'static str> {
         match self {
-            Self::ChatgptBrowser => vec!["login", "--chatgpt"],
-            Self::ChatgptDeviceCode => vec!["login", "--chatgpt", "--device-code"],
-            Self::ApiKey => vec!["login", "--api-key"],
+            Self::ChatgptBrowser => vec!["login"],
+            Self::ChatgptDeviceCode => vec!["login", "--device-auth"],
+            Self::ApiKey => vec!["login", "--with-api-key"],
         }
     }
 }

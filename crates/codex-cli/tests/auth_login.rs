@@ -47,7 +47,7 @@ fn auth_login_default_uses_chatgpt_browser_flow() {
     assert!(stdout(&output).contains("chatgpt-browser"));
 
     let log_content = fs::read_to_string(log.path()).expect("read log");
-    assert!(log_content.contains("login --chatgpt"));
+    assert!(log_content.contains("login"));
 }
 
 #[test]
@@ -65,8 +65,8 @@ fn auth_login_device_code_and_api_key_map_to_expected_args() {
     assert_eq!(output.code, 0);
 
     let log_content = fs::read_to_string(log.path()).expect("read log");
-    assert!(log_content.contains("login --chatgpt --device-code"));
-    assert!(log_content.contains("login --api-key"));
+    assert!(log_content.contains("login --device-auth"));
+    assert!(log_content.contains("login --with-api-key"));
 }
 
 #[test]
