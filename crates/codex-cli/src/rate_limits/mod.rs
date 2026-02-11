@@ -1882,3 +1882,93 @@ fn parse_one_line_output(line: &str) -> Option<ParsedOneLine> {
         format!("{} {}", parts[len - 2], parts[len - 1]),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{collect_secret_files, redact_sensitive_json};
+    use nils_test_support::{EnvGuard, GlobalStateLock};
+    use serde_json::json;
+    use std::fs;
+
+    #[test]
+    fn redact_sensitive_json_removes_tokens_recursively() {
+        let input = json!({
+            "tokens": {
+                "access_token": "a",
+                "refresh_token": "b",
+                "nested": {
+                    "id_token": "c",
+                    "Authorization": "Bearer x",
+                    "ok": 1
+                }
+            },
+            "items": [
+                {"authorization": "Bearer y", "value": 2}
+            ],
+            "safe": true
+        });
+
+        let redacted = redact_sensitive_json(&input);
+        assert_eq!(redacted["tokens"]["nested"]["ok"], 1);
+        assert_eq!(redacted["safe"], true);
+        assert!(
+            redacted["tokens"].get("access_token").is_none(),
+            "access_token should be removed"
+        );
+        assert!(
+            redacted["tokens"]["nested"].get("id_token").is_none(),
+            "id_token should be removed"
+        );
+        assert!(
+            redacted["tokens"]["nested"].get("Authorization").is_none(),
+            "Authorization should be removed"
+        );
+        assert!(
+            redacted["items"][0].get("authorization").is_none(),
+            "authorization should be removed"
+        );
+    }
+
+    #[test]
+    fn collect_secret_files_reports_missing_secret_dir() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let missing = dir.path().join("missing");
+        let _secret = EnvGuard::set(
+            &lock,
+            "CODEX_SECRET_DIR",
+            missing.to_str().expect("missing path"),
+        );
+
+        let err = collect_secret_files().expect_err("expected missing dir error");
+        assert_eq!(err.0, 1);
+        assert!(err.1.contains("CODEX_SECRET_DIR not found"));
+    }
+
+    #[test]
+    fn collect_secret_files_returns_sorted_json_files_only() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secrets = dir.path().join("secrets");
+        fs::create_dir_all(&secrets).expect("secrets dir");
+        fs::write(secrets.join("beta.json"), "{}").expect("write beta");
+        fs::write(secrets.join("alpha.json"), "{}").expect("write alpha");
+        fs::write(secrets.join("note.txt"), "ignore").expect("write note");
+        let _secret = EnvGuard::set(
+            &lock,
+            "CODEX_SECRET_DIR",
+            secrets.to_str().expect("secrets path"),
+        );
+
+        let files = collect_secret_files().expect("secret files");
+        assert_eq!(files.len(), 2);
+        assert_eq!(
+            files[0].file_name().and_then(|name| name.to_str()),
+            Some("alpha.json")
+        );
+        assert_eq!(
+            files[1].file_name().and_then(|name| name.to_str()),
+            Some("beta.json")
+        );
+    }
+}

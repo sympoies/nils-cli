@@ -36,6 +36,93 @@ fn assert_exit(output: &CmdOutput, code: i32) {
 }
 
 #[test]
+fn rate_limits_async_json_one_line_conflict_is_structured() {
+    let output = run(
+        &["diag", "rate-limits", "--async", "--json", "--one-line"],
+        &[],
+        &[],
+    );
+    assert_exit(&output, 64);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["schema_version"], "codex-cli.diag.rate-limits.v1");
+    assert_eq!(payload["command"], "diag rate-limits");
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"]["code"], "invalid-flag-combination");
+    assert!(
+        payload["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("--async does not support --one-line")
+    );
+}
+
+#[test]
+fn rate_limits_async_json_positional_arg_is_structured() {
+    let output = run(
+        &["diag", "rate-limits", "--async", "--json", "alpha.json"],
+        &[],
+        &[],
+    );
+    assert_exit(&output, 64);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["schema_version"], "codex-cli.diag.rate-limits.v1");
+    assert_eq!(payload["command"], "diag rate-limits");
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"]["code"], "invalid-positional-arg");
+    assert!(
+        payload["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("--async does not accept positional args")
+    );
+}
+
+#[test]
+fn rate_limits_async_json_cached_clear_cache_conflict_is_structured() {
+    let output = run(
+        &["diag", "rate-limits", "--async", "--json", "--cached", "-c"],
+        &[],
+        &[],
+    );
+    assert_exit(&output, 64);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["schema_version"], "codex-cli.diag.rate-limits.v1");
+    assert_eq!(payload["command"], "diag rate-limits");
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"]["code"], "invalid-flag-combination");
+    assert!(
+        payload["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("-c is not compatible with --cached")
+    );
+}
+
+#[test]
+fn rate_limits_async_json_missing_secret_dir_is_structured() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let missing = dir.path().join("missing");
+
+    let output = run(
+        &["diag", "rate-limits", "--async", "--format", "json"],
+        &[("CODEX_SECRET_DIR", &missing)],
+        &[("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false")],
+    );
+    assert_exit(&output, 1);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["schema_version"], "codex-cli.diag.rate-limits.v1");
+    assert_eq!(payload["command"], "diag rate-limits");
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"]["code"], "secret-discovery-failed");
+    assert!(
+        payload["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("CODEX_SECRET_DIR not found")
+    );
+}
+
+#[test]
 fn rate_limits_async_json_outputs_results() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let secret_dir = dir.path().join("secrets");

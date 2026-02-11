@@ -50,6 +50,55 @@ fn rate_limits_all_missing_secret_dir() {
 }
 
 #[test]
+fn rate_limits_all_json_missing_secret_dir_is_structured() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let missing = dir.path().join("missing");
+
+    let output = run(
+        &["diag", "rate-limits", "--all", "--format", "json"],
+        &[("CODEX_SECRET_DIR", &missing)],
+        &[("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false")],
+    );
+    assert_exit(&output, 1);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["schema_version"], "codex-cli.diag.rate-limits.v1");
+    assert_eq!(payload["command"], "diag rate-limits");
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"]["code"], "secret-discovery-failed");
+    assert!(
+        payload["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("CODEX_SECRET_DIR not found")
+    );
+}
+
+#[test]
+fn rate_limits_all_json_empty_secret_dir_is_structured() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let secrets = dir.path().join("secrets");
+    fs::create_dir_all(&secrets).expect("secrets dir");
+
+    let output = run(
+        &["diag", "rate-limits", "--all", "--json"],
+        &[("CODEX_SECRET_DIR", &secrets)],
+        &[("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false")],
+    );
+    assert_exit(&output, 1);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["schema_version"], "codex-cli.diag.rate-limits.v1");
+    assert_eq!(payload["command"], "diag rate-limits");
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"]["code"], "secret-discovery-failed");
+    assert!(
+        payload["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("no secrets found")
+    );
+}
+
+#[test]
 fn rate_limits_all_json_outputs_results() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let secret_dir = dir.path().join("secrets");
