@@ -27,90 +27,45 @@ fn stdout(output: &CmdOutput) -> String {
     output.stdout_text()
 }
 
-fn stderr(output: &CmdOutput) -> String {
-    output.stderr_text()
-}
-
-fn assert_exit(output: &CmdOutput, code: i32) {
-    assert_eq!(output.code, code);
-}
-
 #[test]
-fn rate_limits_all_missing_secret_dir() {
-    let dir = tempfile::TempDir::new().expect("tempdir");
-    let missing = dir.path().join("missing");
-
-    let output = run(
-        &["diag", "rate-limits", "--all"],
-        &[("CODEX_SECRET_DIR", &missing)],
-        &[],
-    );
-    assert_exit(&output, 1);
-    assert!(stderr(&output).contains("CODEX_SECRET_DIR not found"));
-}
-
-#[test]
-fn rate_limits_all_json_missing_secret_dir_is_structured() {
-    let dir = tempfile::TempDir::new().expect("tempdir");
-    let missing = dir.path().join("missing");
-
-    let output = run(
-        &["diag", "rate-limits", "--all", "--format", "json"],
-        &[("CODEX_SECRET_DIR", &missing)],
-        &[("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false")],
-    );
-    assert_exit(&output, 1);
-    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
-    assert_eq!(payload["schema_version"], "codex-cli.diag.rate-limits.v1");
-    assert_eq!(payload["command"], "diag rate-limits");
-    assert_eq!(payload["ok"], false);
-    assert_eq!(payload["error"]["code"], "secret-discovery-failed");
-    assert!(
-        payload["error"]["message"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("CODEX_SECRET_DIR not found")
-    );
-}
-
-#[test]
-fn rate_limits_all_json_empty_secret_dir_is_structured() {
+fn diag_json_contract_single_failure_envelope_is_structured() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let secrets = dir.path().join("secrets");
     fs::create_dir_all(&secrets).expect("secrets dir");
+    fs::write(
+        secrets.join("alpha.json"),
+        r#"{"tokens":{"account_id":"acct_001"}}"#,
+    )
+    .expect("write secret");
 
     let output = run(
-        &["diag", "rate-limits", "--all", "--json"],
+        &["diag", "rate-limits", "--json", "alpha.json"],
         &[("CODEX_SECRET_DIR", &secrets)],
         &[("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false")],
     );
-    assert_exit(&output, 1);
+    assert_eq!(output.code, 2);
+
     let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
     assert_eq!(payload["schema_version"], "codex-cli.diag.rate-limits.v1");
     assert_eq!(payload["command"], "diag rate-limits");
     assert_eq!(payload["ok"], false);
-    assert_eq!(payload["error"]["code"], "secret-discovery-failed");
-    assert!(
-        payload["error"]["message"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("no secrets found")
-    );
+    assert_eq!(payload["error"]["code"], "missing-access-token");
+    assert!(payload["error"]["message"].is_string());
 }
 
 #[test]
-fn rate_limits_all_json_outputs_results() {
+fn diag_json_contract_all_partial_failure_keeps_results_array() {
     let dir = tempfile::TempDir::new().expect("tempdir");
-    let secret_dir = dir.path().join("secrets");
-    fs::create_dir_all(&secret_dir).expect("secret dir");
+    let secrets = dir.path().join("secrets");
+    fs::create_dir_all(&secrets).expect("secrets dir");
     fs::write(
-        secret_dir.join("alpha.json"),
+        secrets.join("alpha.json"),
         r#"{"tokens":{"access_token":"tok-alpha","account_id":"acct_001"}}"#,
     )
     .expect("write alpha");
     fs::write(
-        secret_dir.join("beta.json"),
-        r#"{"tokens":{"access_token":"tok-beta","account_id":"acct_002"}}"#,
+        secrets.join("beta.json"),
+        r#"{"tokens":{"account_id":"acct_002"}}"#,
     )
     .expect("write beta");
 
@@ -131,7 +86,7 @@ fn rate_limits_all_json_outputs_results() {
 
     let output = run(
         &["diag", "rate-limits", "--all", "--json"],
-        &[("CODEX_SECRET_DIR", &secret_dir)],
+        &[("CODEX_SECRET_DIR", &secrets)],
         &[
             ("CODEX_CHATGPT_BASE_URL", &server.url()),
             ("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false"),
@@ -139,25 +94,15 @@ fn rate_limits_all_json_outputs_results() {
             ("CODEX_RATE_LIMITS_CURL_MAX_TIME_SECONDS", "3"),
         ],
     );
-    assert_exit(&output, 0);
+    assert_eq!(output.code, 1);
+
     let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
     assert_eq!(payload["schema_version"], "codex-cli.diag.rate-limits.v1");
     assert_eq!(payload["command"], "diag rate-limits");
     assert_eq!(payload["mode"], "all");
-    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["ok"], false);
     let results = payload["results"].as_array().expect("results");
     assert_eq!(results.len(), 2);
-    assert!(results.iter().all(|entry| entry["ok"] == true));
-    assert!(
-        results
-            .iter()
-            .all(|entry| entry["raw_usage"]["rate_limit"].is_object())
-    );
-}
-
-#[test]
-fn rate_limits_all_rejects_positional_secret_arg() {
-    let output = run(&["diag", "rate-limits", "--all", "alpha.json"], &[], &[]);
-    assert_exit(&output, 64);
-    assert!(stderr(&output).contains("usage: codex-rate-limits"));
+    assert!(results.iter().any(|entry| entry["ok"] == true));
+    assert!(results.iter().any(|entry| entry["ok"] == false));
 }

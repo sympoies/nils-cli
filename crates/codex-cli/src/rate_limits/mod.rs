@@ -1,11 +1,14 @@
 use anyhow::Result;
 use chrono::Utc;
+use serde::Serialize;
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
 use crate::auth;
+use crate::diag_output;
 use crate::rate_limits::client::{UsageRequest, fetch_usage};
 use nils_common::env as shared_env;
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
@@ -30,6 +33,54 @@ pub struct RateLimitsOptions {
     pub secret: Option<String>,
 }
 
+const DIAG_SCHEMA_VERSION: &str = "codex-cli.diag.rate-limits.v1";
+const DIAG_COMMAND: &str = "diag rate-limits";
+
+#[derive(Debug, Clone, Serialize)]
+struct RateLimitSummary {
+    non_weekly_label: String,
+    non_weekly_remaining: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    non_weekly_reset_epoch: Option<i64>,
+    weekly_remaining: i64,
+    weekly_reset_epoch: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    weekly_reset_local: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RateLimitJsonResult {
+    name: String,
+    target_file: String,
+    status: String,
+    ok: bool,
+    source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    summary: Option<RateLimitSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_usage: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<diag_output::ErrorEnvelope>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RateLimitSingleEnvelope {
+    schema_version: String,
+    command: String,
+    mode: String,
+    ok: bool,
+    result: RateLimitJsonResult,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RateLimitCollectionEnvelope {
+    schema_version: String,
+    command: String,
+    mode: String,
+    ok: bool,
+    results: Vec<RateLimitJsonResult>,
+}
+
 pub fn run(args: &RateLimitsOptions) -> Result<i32> {
     let cached_mode = args.cached;
     let mut one_line = args.one_line;
@@ -45,13 +96,24 @@ pub fn run(args: &RateLimitsOptions) -> Result<i32> {
     }
 
     if args.async_mode {
+        if args.json {
+            return run_async_json_mode(args, debug_mode);
+        }
         return run_async_mode(args, debug_mode);
     }
 
     if cached_mode {
         one_line = true;
         if output_json {
-            eprintln!("codex-rate-limits: --json is not supported with --cached");
+            diag_output::emit_error(
+                DIAG_SCHEMA_VERSION,
+                DIAG_COMMAND,
+                "invalid-flag-combination",
+                "codex-rate-limits: --json is not supported with --cached",
+                Some(serde_json::json!({
+                    "flags": ["--json", "--cached"],
+                })),
+            )?;
             return Ok(64);
         }
         if args.clear_cache {
@@ -61,14 +123,32 @@ pub fn run(args: &RateLimitsOptions) -> Result<i32> {
     }
 
     if output_json && one_line {
-        eprintln!("codex-rate-limits: --one-line is not compatible with --json");
+        diag_output::emit_error(
+            DIAG_SCHEMA_VERSION,
+            DIAG_COMMAND,
+            "invalid-flag-combination",
+            "codex-rate-limits: --one-line is not compatible with --json",
+            Some(serde_json::json!({
+                "flags": ["--one-line", "--json"],
+            })),
+        )?;
         return Ok(64);
     }
 
     if args.clear_cache
         && let Err(err) = cache::clear_starship_cache()
     {
-        eprintln!("{err}");
+        if output_json {
+            diag_output::emit_error(
+                DIAG_SCHEMA_VERSION,
+                DIAG_COMMAND,
+                "cache-clear-failed",
+                err.to_string(),
+                None,
+            )?;
+        } else {
+            eprintln!("{err}");
+        }
         return Ok(1);
     }
 
@@ -82,20 +162,413 @@ pub fn run(args: &RateLimitsOptions) -> Result<i32> {
     }
 
     if all_mode {
-        if output_json {
-            eprintln!("codex-rate-limits: --json is not supported with --all");
-            return Ok(64);
-        }
         if args.secret.is_some() {
             eprintln!(
                 "codex-rate-limits: usage: codex-rate-limits [-c] [-d] [--cached] [--no-refresh-auth] [--json] [--one-line] [--all] [secret.json]"
             );
             return Ok(64);
         }
+        if output_json {
+            return run_all_json_mode(args, cached_mode, debug_mode);
+        }
         return run_all_mode(args, cached_mode, debug_mode);
     }
 
     run_single_mode(args, cached_mode, one_line, output_json)
+}
+
+fn run_async_json_mode(args: &RateLimitsOptions, _debug_mode: bool) -> Result<i32> {
+    if args.one_line {
+        let message = "codex-rate-limits: --async does not support --one-line";
+        diag_output::emit_error(
+            DIAG_SCHEMA_VERSION,
+            DIAG_COMMAND,
+            "invalid-flag-combination",
+            message,
+            Some(serde_json::json!({
+                "flag": "--one-line",
+                "mode": "async",
+            })),
+        )?;
+        return Ok(64);
+    }
+    if let Some(secret) = args.secret.as_deref() {
+        let message = format!(
+            "codex-rate-limits: --async does not accept positional args: {}",
+            secret
+        );
+        diag_output::emit_error(
+            DIAG_SCHEMA_VERSION,
+            DIAG_COMMAND,
+            "invalid-positional-arg",
+            message,
+            Some(serde_json::json!({
+                "secret": secret,
+                "mode": "async",
+            })),
+        )?;
+        return Ok(64);
+    }
+    if args.clear_cache && args.cached {
+        let message = "codex-rate-limits: --async: -c is not compatible with --cached";
+        diag_output::emit_error(
+            DIAG_SCHEMA_VERSION,
+            DIAG_COMMAND,
+            "invalid-flag-combination",
+            message,
+            Some(serde_json::json!({
+                "flags": ["--async", "--cached", "-c"],
+            })),
+        )?;
+        return Ok(64);
+    }
+    if args.clear_cache
+        && let Err(err) = cache::clear_starship_cache()
+    {
+        diag_output::emit_error(
+            DIAG_SCHEMA_VERSION,
+            DIAG_COMMAND,
+            "cache-clear-failed",
+            err.to_string(),
+            None,
+        )?;
+        return Ok(1);
+    }
+
+    let secret_files = match collect_secret_files() {
+        Ok(value) => value,
+        Err((code, message, details)) => {
+            diag_output::emit_error(
+                DIAG_SCHEMA_VERSION,
+                DIAG_COMMAND,
+                "secret-discovery-failed",
+                message,
+                details,
+            )?;
+            return Ok(code);
+        }
+    };
+
+    let mut results = Vec::new();
+    let mut rc = 0;
+    for secret_file in &secret_files {
+        let result =
+            collect_json_result_for_secret(secret_file, args.cached, args.no_refresh_auth, true);
+        if !args.cached && !result.ok {
+            rc = 1;
+        }
+        results.push(result);
+    }
+    results.sort_by(|a, b| a.name.cmp(&b.name));
+    emit_collection_envelope("async", rc == 0, results)?;
+    Ok(rc)
+}
+
+fn run_all_json_mode(
+    args: &RateLimitsOptions,
+    cached_mode: bool,
+    _debug_mode: bool,
+) -> Result<i32> {
+    let secret_files = match collect_secret_files() {
+        Ok(value) => value,
+        Err((code, message, details)) => {
+            diag_output::emit_error(
+                DIAG_SCHEMA_VERSION,
+                DIAG_COMMAND,
+                "secret-discovery-failed",
+                message,
+                details,
+            )?;
+            return Ok(code);
+        }
+    };
+
+    let mut results = Vec::new();
+    let mut rc = 0;
+    for secret_file in &secret_files {
+        let result =
+            collect_json_result_for_secret(secret_file, cached_mode, args.no_refresh_auth, false);
+        if !cached_mode && !result.ok {
+            rc = 1;
+        }
+        results.push(result);
+    }
+    results.sort_by(|a, b| a.name.cmp(&b.name));
+    emit_collection_envelope("all", rc == 0, results)?;
+    Ok(rc)
+}
+
+fn emit_collection_envelope(mode: &str, ok: bool, results: Vec<RateLimitJsonResult>) -> Result<()> {
+    diag_output::emit_json(&RateLimitCollectionEnvelope {
+        schema_version: DIAG_SCHEMA_VERSION.to_string(),
+        command: DIAG_COMMAND.to_string(),
+        mode: mode.to_string(),
+        ok,
+        results,
+    })
+}
+
+fn collect_secret_files() -> std::result::Result<Vec<PathBuf>, (i32, String, Option<Value>)> {
+    let secret_dir = crate::paths::resolve_secret_dir().unwrap_or_default();
+    if !secret_dir.is_dir() {
+        return Err((
+            1,
+            format!(
+                "codex-rate-limits: CODEX_SECRET_DIR not found: {}",
+                secret_dir.display()
+            ),
+            Some(serde_json::json!({
+                "secret_dir": secret_dir.display().to_string(),
+            })),
+        ));
+    }
+
+    let mut secret_files: Vec<PathBuf> = std::fs::read_dir(&secret_dir)
+        .map_err(|err| {
+            (
+                1,
+                format!("codex-rate-limits: failed to read CODEX_SECRET_DIR: {err}"),
+                Some(serde_json::json!({
+                    "secret_dir": secret_dir.display().to_string(),
+                })),
+            )
+        })?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("json"))
+        .collect();
+
+    if secret_files.is_empty() {
+        return Err((
+            1,
+            format!(
+                "codex-rate-limits: no secrets found in {}",
+                secret_dir.display()
+            ),
+            Some(serde_json::json!({
+                "secret_dir": secret_dir.display().to_string(),
+            })),
+        ));
+    }
+
+    secret_files.sort();
+    Ok(secret_files)
+}
+
+fn collect_json_result_for_secret(
+    target_file: &Path,
+    cached_mode: bool,
+    no_refresh_auth: bool,
+    allow_cache_fallback: bool,
+) -> RateLimitJsonResult {
+    if cached_mode {
+        return collect_json_from_cache(target_file, "cache");
+    }
+
+    let base_url = std::env::var("CODEX_CHATGPT_BASE_URL")
+        .unwrap_or_else(|_| "https://chatgpt.com/backend-api/".to_string());
+    let connect_timeout = env_timeout("CODEX_RATE_LIMITS_CURL_CONNECT_TIMEOUT_SECONDS", 2);
+    let max_time = env_timeout("CODEX_RATE_LIMITS_CURL_MAX_TIME_SECONDS", 8);
+    let usage_request = UsageRequest {
+        target_file: target_file.to_path_buf(),
+        refresh_on_401: !no_refresh_auth,
+        base_url,
+        connect_timeout_seconds: connect_timeout,
+        max_time_seconds: max_time,
+    };
+
+    match fetch_usage(&usage_request) {
+        Ok(usage) => {
+            if let Err(err) = writeback::write_weekly(target_file, &usage.json) {
+                return json_result_error(
+                    target_file,
+                    "network",
+                    "writeback-failed",
+                    err.to_string(),
+                    None,
+                );
+            }
+            if is_auth_file(target_file)
+                && let Ok(sync_rc) = auth::sync::run_with_json(false)
+                && sync_rc != 0
+            {
+                return json_result_error(
+                    target_file,
+                    "network",
+                    "sync-failed",
+                    "codex-rate-limits: failed to sync auth after usage fetch".to_string(),
+                    None,
+                );
+            }
+            match summary_from_usage(&usage.json) {
+                Some(summary) => {
+                    let fetched_at_epoch = Utc::now().timestamp();
+                    if fetched_at_epoch > 0 {
+                        let _ = cache::write_starship_cache(
+                            target_file,
+                            fetched_at_epoch,
+                            &summary.non_weekly_label,
+                            summary.non_weekly_remaining,
+                            summary.weekly_remaining,
+                            summary.weekly_reset_epoch,
+                            summary.non_weekly_reset_epoch,
+                        );
+                    }
+                    RateLimitJsonResult {
+                        name: secret_display_name(target_file),
+                        target_file: target_file_name(target_file),
+                        status: "ok".to_string(),
+                        ok: true,
+                        source: "network".to_string(),
+                        summary: Some(summary),
+                        raw_usage: Some(redact_sensitive_json(&usage.json)),
+                        error: None,
+                    }
+                }
+                None => json_result_error(
+                    target_file,
+                    "network",
+                    "invalid-usage-payload",
+                    "codex-rate-limits: invalid usage payload".to_string(),
+                    Some(serde_json::json!({
+                        "raw_usage": redact_sensitive_json(&usage.json),
+                    })),
+                ),
+            }
+        }
+        Err(err) => {
+            if allow_cache_fallback {
+                let fallback = collect_json_from_cache(target_file, "cache-fallback");
+                if fallback.ok {
+                    return fallback;
+                }
+            }
+            let msg = err.to_string();
+            let code = if msg.contains("missing access_token") {
+                "missing-access-token"
+            } else {
+                "request-failed"
+            };
+            json_result_error(target_file, "network", code, msg, None)
+        }
+    }
+}
+
+fn collect_json_from_cache(target_file: &Path, source: &str) -> RateLimitJsonResult {
+    match cache::read_cache_entry(target_file) {
+        Ok(entry) => RateLimitJsonResult {
+            name: secret_display_name(target_file),
+            target_file: target_file_name(target_file),
+            status: "ok".to_string(),
+            ok: true,
+            source: source.to_string(),
+            summary: Some(summary_from_cache(&entry)),
+            raw_usage: None,
+            error: None,
+        },
+        Err(err) => json_result_error(
+            target_file,
+            source,
+            "cache-read-failed",
+            err.to_string(),
+            None,
+        ),
+    }
+}
+
+fn json_result_error(
+    target_file: &Path,
+    source: &str,
+    code: &str,
+    message: String,
+    details: Option<Value>,
+) -> RateLimitJsonResult {
+    RateLimitJsonResult {
+        name: secret_display_name(target_file),
+        target_file: target_file_name(target_file),
+        status: "error".to_string(),
+        ok: false,
+        source: source.to_string(),
+        summary: None,
+        raw_usage: None,
+        error: Some(diag_output::ErrorEnvelope {
+            code: code.to_string(),
+            message,
+            details,
+        }),
+    }
+}
+
+fn secret_display_name(target_file: &Path) -> String {
+    cache::secret_name_for_target(target_file).unwrap_or_else(|| {
+        target_file
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .trim_end_matches(".json")
+            .to_string()
+    })
+}
+
+fn target_file_name(target_file: &Path) -> String {
+    target_file
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn summary_from_usage(usage_json: &Value) -> Option<RateLimitSummary> {
+    let usage_data = render::parse_usage(usage_json)?;
+    let values = render::render_values(&usage_data);
+    let weekly = render::weekly_values(&values);
+    Some(RateLimitSummary {
+        non_weekly_label: weekly.non_weekly_label,
+        non_weekly_remaining: weekly.non_weekly_remaining,
+        non_weekly_reset_epoch: weekly.non_weekly_reset_epoch,
+        weekly_remaining: weekly.weekly_remaining,
+        weekly_reset_epoch: weekly.weekly_reset_epoch,
+        weekly_reset_local: render::format_epoch_local_datetime_with_offset(
+            weekly.weekly_reset_epoch,
+        ),
+    })
+}
+
+fn summary_from_cache(entry: &cache::CacheEntry) -> RateLimitSummary {
+    RateLimitSummary {
+        non_weekly_label: entry.non_weekly_label.clone(),
+        non_weekly_remaining: entry.non_weekly_remaining,
+        non_weekly_reset_epoch: entry.non_weekly_reset_epoch,
+        weekly_remaining: entry.weekly_remaining,
+        weekly_reset_epoch: entry.weekly_reset_epoch,
+        weekly_reset_local: render::format_epoch_local_datetime_with_offset(
+            entry.weekly_reset_epoch,
+        ),
+    }
+}
+
+fn redact_sensitive_json(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut next = serde_json::Map::new();
+            for (key, val) in map {
+                if is_sensitive_key(key) {
+                    continue;
+                }
+                next.insert(key.clone(), redact_sensitive_json(val));
+            }
+            Value::Object(next)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(redact_sensitive_json).collect()),
+        _ => value.clone(),
+    }
+}
+
+fn is_sensitive_key(key: &str) -> bool {
+    matches!(
+        key,
+        "access_token" | "refresh_token" | "id_token" | "authorization" | "Authorization"
+    )
 }
 
 struct AsyncEvent {
@@ -961,7 +1434,19 @@ fn run_single_mode(
     };
 
     if !target_file.is_file() {
-        eprintln!("codex-rate-limits: {} not found", target_file.display());
+        if output_json {
+            diag_output::emit_error(
+                DIAG_SCHEMA_VERSION,
+                DIAG_COMMAND,
+                "target-not-found",
+                format!("codex-rate-limits: {} not found", target_file.display()),
+                Some(serde_json::json!({
+                    "target_file": target_file.display().to_string(),
+                })),
+            )?;
+        } else {
+            eprintln!("codex-rate-limits: {} not found", target_file.display());
+        }
         return Ok(1);
     }
 
@@ -1009,38 +1494,96 @@ fn run_single_mode(
         Err(err) => {
             let msg = err.to_string();
             if msg.contains("missing access_token") {
-                eprintln!(
-                    "codex-rate-limits: missing access_token in {}",
-                    target_file.display()
-                );
+                if output_json {
+                    diag_output::emit_error(
+                        DIAG_SCHEMA_VERSION,
+                        DIAG_COMMAND,
+                        "missing-access-token",
+                        format!(
+                            "codex-rate-limits: missing access_token in {}",
+                            target_file.display()
+                        ),
+                        Some(serde_json::json!({
+                            "target_file": target_file.display().to_string(),
+                        })),
+                    )?;
+                } else {
+                    eprintln!(
+                        "codex-rate-limits: missing access_token in {}",
+                        target_file.display()
+                    );
+                }
                 return Ok(2);
             }
-            eprintln!("{msg}");
+            if output_json {
+                diag_output::emit_error(
+                    DIAG_SCHEMA_VERSION,
+                    DIAG_COMMAND,
+                    "request-failed",
+                    msg,
+                    Some(serde_json::json!({
+                        "target_file": target_file.display().to_string(),
+                    })),
+                )?;
+            } else {
+                eprintln!("{msg}");
+            }
             return Ok(3);
         }
     };
 
     if let Err(err) = writeback::write_weekly(&target_file, &usage.json) {
-        eprintln!("{err}");
+        if output_json {
+            diag_output::emit_error(
+                DIAG_SCHEMA_VERSION,
+                DIAG_COMMAND,
+                "writeback-failed",
+                err.to_string(),
+                Some(serde_json::json!({
+                    "target_file": target_file.display().to_string(),
+                })),
+            )?;
+        } else {
+            eprintln!("{err}");
+        }
         return Ok(4);
     }
 
     if is_auth_file(&target_file) {
-        let sync_rc = auth::sync::run()?;
+        let sync_rc = auth::sync::run_with_json(false)?;
         if sync_rc != 0 {
+            if output_json {
+                diag_output::emit_error(
+                    DIAG_SCHEMA_VERSION,
+                    DIAG_COMMAND,
+                    "sync-failed",
+                    "codex-rate-limits: failed to sync auth file",
+                    Some(serde_json::json!({
+                        "target_file": target_file.display().to_string(),
+                    })),
+                )?;
+            }
             return Ok(5);
         }
-    }
-
-    if output_json {
-        println!("{}", usage.body);
-        return Ok(0);
     }
 
     let usage_data = match render::parse_usage(&usage.json) {
         Some(value) => value,
         None => {
-            eprintln!("codex-rate-limits: invalid usage payload");
+            if output_json {
+                diag_output::emit_error(
+                    DIAG_SCHEMA_VERSION,
+                    DIAG_COMMAND,
+                    "invalid-usage-payload",
+                    "codex-rate-limits: invalid usage payload",
+                    Some(serde_json::json!({
+                        "target_file": target_file.display().to_string(),
+                        "raw_usage": redact_sensitive_json(&usage.json),
+                    })),
+                )?;
+            } else {
+                eprintln!("codex-rate-limits: invalid usage payload");
+            }
             return Ok(3);
         }
     };
@@ -1059,6 +1602,36 @@ fn run_single_mode(
             weekly.weekly_reset_epoch,
             weekly.non_weekly_reset_epoch,
         );
+    }
+
+    if output_json {
+        let result = RateLimitJsonResult {
+            name: secret_display_name(&target_file),
+            target_file: target_file_name(&target_file),
+            status: "ok".to_string(),
+            ok: true,
+            source: "network".to_string(),
+            summary: Some(RateLimitSummary {
+                non_weekly_label: weekly.non_weekly_label,
+                non_weekly_remaining: weekly.non_weekly_remaining,
+                non_weekly_reset_epoch: weekly.non_weekly_reset_epoch,
+                weekly_remaining: weekly.weekly_remaining,
+                weekly_reset_epoch: weekly.weekly_reset_epoch,
+                weekly_reset_local: render::format_epoch_local_datetime_with_offset(
+                    weekly.weekly_reset_epoch,
+                ),
+            }),
+            raw_usage: Some(redact_sensitive_json(&usage.json)),
+            error: None,
+        };
+        diag_output::emit_json(&RateLimitSingleEnvelope {
+            schema_version: DIAG_SCHEMA_VERSION.to_string(),
+            command: DIAG_COMMAND.to_string(),
+            mode: "single".to_string(),
+            ok: true,
+            result,
+        })?;
+        return Ok(0);
     }
 
     if one_line {
@@ -1308,4 +1881,423 @@ fn parse_one_line_output(line: &str) -> Option<ParsedOneLine> {
         parts[len - 3],
         format!("{} {}", parts[len - 2], parts[len - 1]),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        async_fetch_one_line, cache, collect_json_from_cache, collect_secret_files, env_timeout,
+        fetch_one_line_cached, is_auth_file, normalize_one_line, parse_one_line_output,
+        redact_sensitive_json, resolve_target, secret_display_name, single_one_line,
+        sync_auth_silent, target_file_name,
+    };
+    use nils_test_support::{EnvGuard, GlobalStateLock};
+    use serde_json::json;
+    use std::fs;
+    use std::path::Path;
+
+    const HEADER: &str = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0";
+    const PAYLOAD_ALPHA: &str = "eyJzdWIiOiJ1c2VyXzEyMyIsImVtYWlsIjoiYWxwaGFAZXhhbXBsZS5jb20iLCJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF91c2VyX2lkIjoidXNlcl8xMjMiLCJlbWFpbCI6ImFscGhhQGV4YW1wbGUuY29tIn19";
+    const PAYLOAD_BETA: &str = "eyJzdWIiOiJ1c2VyXzQ1NiIsImVtYWlsIjoiYmV0YUBleGFtcGxlLmNvbSIsImh0dHBzOi8vYXBpLm9wZW5haS5jb20vYXV0aCI6eyJjaGF0Z3B0X3VzZXJfaWQiOiJ1c2VyXzQ1NiIsImVtYWlsIjoiYmV0YUBleGFtcGxlLmNvbSJ9fQ";
+
+    fn token(payload: &str) -> String {
+        format!("{HEADER}.{payload}.sig")
+    }
+
+    fn auth_json(
+        payload: &str,
+        account_id: &str,
+        refresh_token: &str,
+        last_refresh: &str,
+    ) -> String {
+        format!(
+            r#"{{"tokens":{{"access_token":"{}","id_token":"{}","refresh_token":"{}","account_id":"{}"}},"last_refresh":"{}"}}"#,
+            token(payload),
+            token(payload),
+            refresh_token,
+            account_id,
+            last_refresh
+        )
+    }
+
+    #[test]
+    fn redact_sensitive_json_removes_tokens_recursively() {
+        let input = json!({
+            "tokens": {
+                "access_token": "a",
+                "refresh_token": "b",
+                "nested": {
+                    "id_token": "c",
+                    "Authorization": "Bearer x",
+                    "ok": 1
+                }
+            },
+            "items": [
+                {"authorization": "Bearer y", "value": 2}
+            ],
+            "safe": true
+        });
+
+        let redacted = redact_sensitive_json(&input);
+        assert_eq!(redacted["tokens"]["nested"]["ok"], 1);
+        assert_eq!(redacted["safe"], true);
+        assert!(
+            redacted["tokens"].get("access_token").is_none(),
+            "access_token should be removed"
+        );
+        assert!(
+            redacted["tokens"]["nested"].get("id_token").is_none(),
+            "id_token should be removed"
+        );
+        assert!(
+            redacted["tokens"]["nested"].get("Authorization").is_none(),
+            "Authorization should be removed"
+        );
+        assert!(
+            redacted["items"][0].get("authorization").is_none(),
+            "authorization should be removed"
+        );
+    }
+
+    #[test]
+    fn collect_secret_files_reports_missing_secret_dir() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let missing = dir.path().join("missing");
+        let _secret = EnvGuard::set(
+            &lock,
+            "CODEX_SECRET_DIR",
+            missing.to_str().expect("missing path"),
+        );
+
+        let err = collect_secret_files().expect_err("expected missing dir error");
+        assert_eq!(err.0, 1);
+        assert!(err.1.contains("CODEX_SECRET_DIR not found"));
+    }
+
+    #[test]
+    fn collect_secret_files_returns_sorted_json_files_only() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secrets = dir.path().join("secrets");
+        fs::create_dir_all(&secrets).expect("secrets dir");
+        fs::write(secrets.join("beta.json"), "{}").expect("write beta");
+        fs::write(secrets.join("alpha.json"), "{}").expect("write alpha");
+        fs::write(secrets.join("note.txt"), "ignore").expect("write note");
+        let _secret = EnvGuard::set(
+            &lock,
+            "CODEX_SECRET_DIR",
+            secrets.to_str().expect("secrets path"),
+        );
+
+        let files = collect_secret_files().expect("secret files");
+        assert_eq!(files.len(), 2);
+        assert_eq!(
+            files[0].file_name().and_then(|name| name.to_str()),
+            Some("alpha.json")
+        );
+        assert_eq!(
+            files[1].file_name().and_then(|name| name.to_str()),
+            Some("beta.json")
+        );
+    }
+
+    #[test]
+    fn rate_limits_helper_env_timeout_supports_default_and_parse() {
+        let lock = GlobalStateLock::new();
+        let key = "CODEX_RATE_LIMITS_CURL_MAX_TIME_SECONDS";
+
+        let _removed = EnvGuard::remove(&lock, key);
+        assert_eq!(env_timeout(key, 7), 7);
+
+        let _set = EnvGuard::set(&lock, key, "11");
+        assert_eq!(env_timeout(key, 7), 11);
+
+        let _invalid = EnvGuard::set(&lock, key, "oops");
+        assert_eq!(env_timeout(key, 7), 7);
+    }
+
+    #[test]
+    fn rate_limits_helper_resolve_target_and_is_auth_file() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        fs::create_dir_all(&secret_dir).expect("secret dir");
+        let auth_file = dir.path().join("auth.json");
+        fs::write(&auth_file, "{}").expect("auth");
+
+        let _secret = EnvGuard::set(
+            &lock,
+            "CODEX_SECRET_DIR",
+            secret_dir.to_str().expect("secret"),
+        );
+        let _auth = EnvGuard::set(&lock, "CODEX_AUTH_FILE", auth_file.to_str().expect("auth"));
+
+        assert_eq!(
+            resolve_target(Some("alpha.json")).expect("target"),
+            secret_dir.join("alpha.json")
+        );
+        assert_eq!(resolve_target(Some("../bad")).expect_err("usage"), 64);
+        assert_eq!(resolve_target(None).expect("auth default"), auth_file);
+        assert!(is_auth_file(&auth_file));
+        assert!(!is_auth_file(&secret_dir.join("alpha.json")));
+    }
+
+    #[test]
+    fn rate_limits_helper_resolve_target_without_auth_returns_err() {
+        let lock = GlobalStateLock::new();
+        let _auth = EnvGuard::remove(&lock, "CODEX_AUTH_FILE");
+        let _home = EnvGuard::set(&lock, "HOME", "");
+
+        assert_eq!(resolve_target(None).expect_err("missing auth"), 1);
+    }
+
+    #[test]
+    fn rate_limits_helper_collect_json_from_cache_covers_hit_and_miss() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        let cache_root = dir.path().join("cache-root");
+        fs::create_dir_all(&secret_dir).expect("secrets");
+        fs::create_dir_all(&cache_root).expect("cache");
+
+        let alpha = secret_dir.join("alpha.json");
+        fs::write(&alpha, "{}").expect("alpha");
+
+        let _secret = EnvGuard::set(
+            &lock,
+            "CODEX_SECRET_DIR",
+            secret_dir.to_str().expect("secret"),
+        );
+        let _cache = EnvGuard::set(&lock, "ZSH_CACHE_DIR", cache_root.to_str().expect("cache"));
+        cache::write_starship_cache(
+            &alpha,
+            1_700_000_000,
+            "3h",
+            92,
+            88,
+            1_700_003_600,
+            Some(1_700_001_200),
+        )
+        .expect("write cache");
+
+        let hit = collect_json_from_cache(&alpha, "cache");
+        assert!(hit.ok);
+        assert_eq!(hit.status, "ok");
+        let summary = hit.summary.expect("summary");
+        assert_eq!(summary.non_weekly_label, "3h");
+        assert_eq!(summary.non_weekly_remaining, 92);
+        assert_eq!(summary.weekly_remaining, 88);
+
+        let missing_target = secret_dir.join("missing.json");
+        let miss = collect_json_from_cache(&missing_target, "cache");
+        assert!(!miss.ok);
+        let error = miss.error.expect("error");
+        assert_eq!(error.code, "cache-read-failed");
+        assert!(error.message.contains("cache not found"));
+    }
+
+    #[test]
+    fn rate_limits_helper_fetch_one_line_cached_covers_success_and_error() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        let cache_root = dir.path().join("cache-root");
+        fs::create_dir_all(&secret_dir).expect("secrets");
+        fs::create_dir_all(&cache_root).expect("cache");
+
+        let alpha = secret_dir.join("alpha.json");
+        fs::write(&alpha, "{}").expect("alpha");
+
+        let _secret = EnvGuard::set(
+            &lock,
+            "CODEX_SECRET_DIR",
+            secret_dir.to_str().expect("secret"),
+        );
+        let _cache = EnvGuard::set(&lock, "ZSH_CACHE_DIR", cache_root.to_str().expect("cache"));
+        cache::write_starship_cache(
+            &alpha,
+            1_700_000_000,
+            "3h",
+            70,
+            55,
+            1_700_003_600,
+            Some(1_700_001_200),
+        )
+        .expect("write cache");
+
+        let cached = fetch_one_line_cached(&alpha);
+        assert_eq!(cached.rc, 0);
+        assert!(cached.err.is_empty());
+        assert!(cached.line.expect("line").contains("3h:70%"));
+
+        let miss = fetch_one_line_cached(&secret_dir.join("beta.json"));
+        assert_eq!(miss.rc, 1);
+        assert!(miss.line.is_none());
+        assert!(miss.err.contains("cache not found"));
+    }
+
+    #[test]
+    fn rate_limits_helper_async_fetch_one_line_uses_cache_fallback() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        let cache_root = dir.path().join("cache-root");
+        fs::create_dir_all(&secret_dir).expect("secrets");
+        fs::create_dir_all(&cache_root).expect("cache");
+
+        let missing = secret_dir.join("ghost.json");
+        let _secret = EnvGuard::set(
+            &lock,
+            "CODEX_SECRET_DIR",
+            secret_dir.to_str().expect("secret"),
+        );
+        let _cache = EnvGuard::set(&lock, "ZSH_CACHE_DIR", cache_root.to_str().expect("cache"));
+        cache::write_starship_cache(
+            &missing,
+            1_700_000_000,
+            "3h",
+            68,
+            42,
+            1_700_003_600,
+            Some(1_700_001_200),
+        )
+        .expect("write cache");
+
+        let result = async_fetch_one_line(&missing, false, true, "ghost");
+        assert_eq!(result.rc, 0);
+        let line = result.line.expect("line");
+        assert!(line.contains("3h:68%"));
+        assert!(result.err.contains("falling back to cache"));
+    }
+
+    #[test]
+    fn rate_limits_helper_single_one_line_cached_mode_handles_hit_and_miss() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        let cache_root = dir.path().join("cache-root");
+        fs::create_dir_all(&secret_dir).expect("secrets");
+        fs::create_dir_all(&cache_root).expect("cache");
+
+        let alpha = secret_dir.join("alpha.json");
+        let beta = secret_dir.join("beta.json");
+        fs::write(&alpha, "{}").expect("alpha");
+        fs::write(&beta, "{}").expect("beta");
+
+        let _secret = EnvGuard::set(
+            &lock,
+            "CODEX_SECRET_DIR",
+            secret_dir.to_str().expect("secret"),
+        );
+        let _cache = EnvGuard::set(&lock, "ZSH_CACHE_DIR", cache_root.to_str().expect("cache"));
+        cache::write_starship_cache(
+            &alpha,
+            1_700_000_000,
+            "3h",
+            61,
+            39,
+            1_700_003_600,
+            Some(1_700_001_200),
+        )
+        .expect("write cache");
+
+        let hit = single_one_line(&alpha, true, true, false).expect("single");
+        assert!(hit.expect("line").contains("3h:61%"));
+
+        let miss = single_one_line(&beta, true, true, true).expect("single");
+        assert!(miss.is_none());
+
+        let missing =
+            single_one_line(&secret_dir.join("missing.json"), true, true, true).expect("single");
+        assert!(missing.is_none());
+    }
+
+    #[test]
+    fn rate_limits_helper_sync_auth_silent_updates_matching_secret_and_timestamps() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        let cache_dir = dir.path().join("cache");
+        fs::create_dir_all(&secret_dir).expect("secrets");
+        fs::create_dir_all(&cache_dir).expect("cache");
+
+        let auth_file = dir.path().join("auth.json");
+        let alpha = secret_dir.join("alpha.json");
+        let beta = secret_dir.join("beta.json");
+        fs::write(
+            &auth_file,
+            auth_json(
+                PAYLOAD_ALPHA,
+                "acct_001",
+                "refresh_new",
+                "2025-01-20T12:34:56Z",
+            ),
+        )
+        .expect("auth");
+        fs::write(
+            &alpha,
+            auth_json(
+                PAYLOAD_ALPHA,
+                "acct_001",
+                "refresh_old",
+                "2025-01-19T12:34:56Z",
+            ),
+        )
+        .expect("alpha");
+        fs::write(
+            &beta,
+            auth_json(
+                PAYLOAD_BETA,
+                "acct_002",
+                "refresh_beta",
+                "2025-01-18T12:34:56Z",
+            ),
+        )
+        .expect("beta");
+        fs::write(secret_dir.join("invalid.json"), "{invalid").expect("invalid");
+        fs::write(secret_dir.join("note.txt"), "ignore").expect("note");
+
+        let _auth = EnvGuard::set(&lock, "CODEX_AUTH_FILE", auth_file.to_str().expect("auth"));
+        let _secret = EnvGuard::set(
+            &lock,
+            "CODEX_SECRET_DIR",
+            secret_dir.to_str().expect("secret"),
+        );
+        let _cache = EnvGuard::set(
+            &lock,
+            "CODEX_SECRET_CACHE_DIR",
+            cache_dir.to_str().expect("cache"),
+        );
+
+        let (rc, err) = sync_auth_silent().expect("sync");
+        assert_eq!(rc, 0);
+        assert!(err.is_none());
+        assert_eq!(
+            fs::read(&alpha).expect("alpha"),
+            fs::read(&auth_file).expect("auth")
+        );
+        assert_ne!(
+            fs::read(&beta).expect("beta"),
+            fs::read(&auth_file).expect("auth")
+        );
+        assert!(cache_dir.join("alpha.json.timestamp").is_file());
+        assert!(cache_dir.join("auth.json.timestamp").is_file());
+    }
+
+    #[test]
+    fn rate_limits_helper_parsers_and_name_helpers_cover_fallbacks() {
+        let parsed =
+            parse_one_line_output("alpha 3h:90% W:80% 2025-01-20 12:00:00+00:00").expect("parsed");
+        assert_eq!(parsed.window_label, "3h");
+        assert_eq!(parsed.non_weekly_remaining, 90);
+        assert_eq!(parsed.weekly_remaining, 80);
+        assert_eq!(parsed.weekly_reset_iso, "2025-01-20 12:00:00+00:00");
+        assert!(parse_one_line_output("bad").is_none());
+
+        assert_eq!(normalize_one_line("a\tb\nc\r".to_string()), "a b c ");
+        assert_eq!(target_file_name(Path::new("alpha.json")), "alpha.json");
+        assert_eq!(target_file_name(Path::new("")), "");
+        assert_eq!(secret_display_name(Path::new("alpha.json")), "alpha");
+    }
 }

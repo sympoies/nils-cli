@@ -220,18 +220,24 @@ _codex-cli() {
         use)
           _arguments -C \
             '(-h --help)'{-h,--help}'[Show help]' \
+            '--format=[Output format (text or json)]:format:(text json)' \
+            '--json[Output machine-readable JSON]' \
             '1:profile or email:' \
             && return 0
           ;;
         refresh)
           _arguments -C \
             '(-h --help)'{-h,--help}'[Show help]' \
+            '--format=[Output format (text or json)]:format:(text json)' \
+            '--json[Output machine-readable JSON]' \
             '*:secret file:_files' \
             && return 0
           ;;
         auto-refresh|current|sync)
           _arguments -C \
             '(-h --help)'{-h,--help}'[Show help]' \
+            '--format=[Output format (text or json)]:format:(text json)' \
+            '--json[Output machine-readable JSON]' \
             && return 0
           _message 'no additional arguments'
           return 0
@@ -278,6 +284,7 @@ _codex-cli() {
             '--cached[Cached mode (no network)]' \
             '--async[Concurrent all-secrets mode]' \
             '--all[Query all secrets under CODEX_SECRET_DIR]' \
+            '--format=[Output format (text or json)]:format:(text json)' \
             '--json[Output raw JSON]' \
             '--one-line[Output a one-line summary]' \
             '--no-refresh-auth[Disable refresh-on-401 behavior]' \

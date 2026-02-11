@@ -79,6 +79,12 @@ fn diag_capabilities_json_reports_inventory_and_readiness() {
     assert!(capabilities.iter().any(
         |capability| capability.get("name").and_then(Value::as_str) == Some("diag.rate-limits")
     ));
+    assert!(
+        capabilities
+            .iter()
+            .any(|capability| capability.get("name").and_then(Value::as_str)
+                == Some("auth.commands"))
+    );
 
     let tools = parsed
         .get("automation_tools")

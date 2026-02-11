@@ -112,22 +112,38 @@ _nils_cli_codex_cli_complete() {
       local auth_cmd="${words[2]-}"
       case "$auth_cmd" in
         refresh)
+          if [[ "$prev" == "--format" ]]; then
+            COMPREPLY=( $(compgen -W "text json" -- "$cur") )
+            return 0
+          fi
           if [[ "$cur" == -* ]]; then
-            COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
+            COMPREPLY=( $(compgen -W "-h --help --format --json" -- "$cur") )
             return 0
           fi
           COMPREPLY=( $(compgen -f -- "$cur") )
           return 0
           ;;
         use)
+          if [[ "$prev" == "--format" ]]; then
+            COMPREPLY=( $(compgen -W "text json" -- "$cur") )
+            return 0
+          fi
           if [[ "$cur" == -* ]]; then
-            COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
+            COMPREPLY=( $(compgen -W "-h --help --format --json" -- "$cur") )
             return 0
           fi
           COMPREPLY=()
           return 0
           ;;
         auto-refresh|current|sync)
+          if [[ "$prev" == "--format" ]]; then
+            COMPREPLY=( $(compgen -W "text json" -- "$cur") )
+            return 0
+          fi
+          if [[ "$cur" == -* ]]; then
+            COMPREPLY=( $(compgen -W "-h --help --format --json" -- "$cur") )
+            return 0
+          fi
           COMPREPLY=()
           return 0
           ;;
@@ -150,8 +166,12 @@ _nils_cli_codex_cli_complete() {
             COMPREPLY=()
             return 0
           fi
+          if [[ "$prev" == "--format" ]]; then
+            COMPREPLY=( $(compgen -W "text json" -- "$cur") )
+            return 0
+          fi
           if [[ "$cur" == -* ]]; then
-            COMPREPLY=( $(compgen -W "-h --help -c -d --debug --cached --async --all --json --one-line --no-refresh-auth --jobs" -- "$cur") )
+            COMPREPLY=( $(compgen -W "-h --help -c -d --debug --cached --async --all --format --json --one-line --no-refresh-auth --jobs" -- "$cur") )
             return 0
           fi
           COMPREPLY=( $(compgen -f -- "$cur") )

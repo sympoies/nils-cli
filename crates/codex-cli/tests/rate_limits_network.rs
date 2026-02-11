@@ -207,7 +207,13 @@ fn rate_limits_single_json_outputs_body() {
         ],
     );
     assert_exit(&output, 0);
-    assert!(stdout(&output).contains("\"rate_limit\""));
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["schema_version"], "codex-cli.diag.rate-limits.v1");
+    assert_eq!(payload["command"], "diag rate-limits");
+    assert_eq!(payload["mode"], "single");
+    assert_eq!(payload["ok"], true);
+    assert!(payload["result"]["raw_usage"]["rate_limit"].is_object());
+    assert!(payload["result"]["summary"]["non_weekly_label"].is_string());
 }
 
 #[test]

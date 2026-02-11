@@ -1,5 +1,6 @@
 pub mod auto_refresh;
 pub mod current;
+pub mod output;
 pub mod refresh;
 pub mod sync;
 pub mod use_secret;

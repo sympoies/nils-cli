@@ -1,4 +1,4 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]
 #[command(
@@ -68,24 +68,59 @@ pub struct AuthArgs {
     pub command: Option<AuthCommand>,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum OutputFormat {
+    Text,
+    Json,
+}
+
+#[derive(Args, Clone, Debug, Default)]
+pub struct OutputModeArgs {
+    /// Output format (`text` or `json`)
+    #[arg(long = "format", value_enum, value_name = "format")]
+    pub format: Option<OutputFormat>,
+    /// Output machine-readable JSON
+    #[arg(long = "json", conflicts_with = "format")]
+    pub json: bool,
+}
+
+impl OutputModeArgs {
+    pub fn is_json(&self) -> bool {
+        self.json || matches!(self.format, Some(OutputFormat::Json))
+    }
+}
+
 #[derive(Subcommand)]
 pub enum AuthCommand {
     /// Switch to a secret by name or email
     Use {
+        #[command(flatten)]
+        output: OutputModeArgs,
         #[arg(value_name = "target", num_args = 0..)]
         args: Vec<String>,
     },
     /// Refresh OAuth tokens
     Refresh {
+        #[command(flatten)]
+        output: OutputModeArgs,
         #[arg(value_name = "secret", num_args = 0..)]
         args: Vec<String>,
     },
     /// Refresh stale tokens across auth + secrets
-    AutoRefresh,
+    AutoRefresh {
+        #[command(flatten)]
+        output: OutputModeArgs,
+    },
     /// Show which secret matches CODEX_AUTH_FILE
-    Current,
+    Current {
+        #[command(flatten)]
+        output: OutputModeArgs,
+    },
     /// Sync CODEX_AUTH_FILE back into matching secrets
-    Sync,
+    Sync {
+        #[command(flatten)]
+        output: OutputModeArgs,
+    },
 }
 
 #[derive(Args)]
@@ -114,8 +149,11 @@ pub struct RateLimitsArgs {
     /// Disable refresh-on-401 behavior
     #[arg(long = "no-refresh-auth")]
     pub no_refresh_auth: bool,
+    /// Output format (`text` or `json`)
+    #[arg(long = "format", value_enum, value_name = "format")]
+    pub format: Option<OutputFormat>,
     /// Output raw JSON
-    #[arg(long = "json")]
+    #[arg(long = "json", conflicts_with = "format")]
     pub json: bool,
     /// Output a one-line summary
     #[arg(long = "one-line")]

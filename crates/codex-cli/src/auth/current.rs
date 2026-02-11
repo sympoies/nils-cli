@@ -1,18 +1,45 @@
 use anyhow::Result;
+use serde_json::json;
 use std::path::Path;
 
 use crate::auth;
+use crate::auth::output::{self, AuthCurrentResult};
 use crate::fs;
 use crate::paths;
 
 pub fn run() -> Result<i32> {
+    run_with_json(false)
+}
+
+pub fn run_with_json(output_json: bool) -> Result<i32> {
     let auth_file = match paths::resolve_auth_file() {
         Some(path) => path,
-        None => return Ok(1),
+        None => {
+            if output_json {
+                output::emit_error(
+                    "auth current",
+                    "auth-file-not-configured",
+                    "CODEX_AUTH_FILE is not configured",
+                    None,
+                )?;
+            }
+            return Ok(1);
+        }
     };
 
     if !auth_file.is_file() {
-        eprintln!("codex: {} not found", auth_file.display());
+        if output_json {
+            output::emit_error(
+                "auth current",
+                "auth-file-not-found",
+                format!("{} not found", auth_file.display()),
+                Some(json!({
+                    "auth_file": auth_file.display().to_string(),
+                })),
+            )?;
+        } else {
+            eprintln!("codex: {} not found", auth_file.display());
+        }
         return Ok(1);
     }
 
@@ -44,7 +71,18 @@ pub fn run() -> Result<i32> {
                 let candidate_hash = match fs::sha256_file(&path) {
                     Ok(hash) => hash,
                     Err(_) => {
-                        eprintln!("codex: failed to hash {}", path.display());
+                        if output_json {
+                            output::emit_error(
+                                "auth current",
+                                "hash-failed",
+                                format!("failed to hash {}", path.display()),
+                                Some(json!({
+                                    "path": path.display().to_string(),
+                                })),
+                            )?;
+                        } else {
+                            eprintln!("codex: failed to hash {}", path.display());
+                        }
                         return Ok(1);
                     }
                 };
@@ -60,7 +98,18 @@ pub fn run() -> Result<i32> {
             let candidate_hash = match fs::sha256_file(&path) {
                 Ok(hash) => hash,
                 Err(_) => {
-                    eprintln!("codex: failed to hash {}", path.display());
+                    if output_json {
+                        output::emit_error(
+                            "auth current",
+                            "hash-failed",
+                            format!("failed to hash {}", path.display()),
+                            Some(json!({
+                                "path": path.display().to_string(),
+                            })),
+                        )?;
+                    } else {
+                        eprintln!("codex: failed to hash {}", path.display());
+                    }
                     return Ok(1);
                 }
             };
@@ -72,25 +121,53 @@ pub fn run() -> Result<i32> {
     }
 
     if let Some((secret_name, mode)) = matched {
-        match mode {
-            MatchMode::Exact => {
-                println!("codex: {} matches {}", auth_file.display(), secret_name);
-            }
-            MatchMode::Identity => {
-                println!(
-                    "codex: {} matches {} (identity; secret differs)",
-                    auth_file.display(),
-                    secret_name
-                );
+        if output_json {
+            let match_mode = match mode {
+                MatchMode::Exact => "exact",
+                MatchMode::Identity => "identity",
+            };
+            output::emit_result(
+                "auth current",
+                AuthCurrentResult {
+                    auth_file: auth_file.display().to_string(),
+                    matched: true,
+                    matched_secret: Some(secret_name),
+                    match_mode: Some(match_mode.to_string()),
+                },
+            )?;
+        } else {
+            match mode {
+                MatchMode::Exact => {
+                    println!("codex: {} matches {}", auth_file.display(), secret_name);
+                }
+                MatchMode::Identity => {
+                    println!(
+                        "codex: {} matches {} (identity; secret differs)",
+                        auth_file.display(),
+                        secret_name
+                    );
+                }
             }
         }
         return Ok(0);
     }
 
-    println!(
-        "codex: {} does not match any known secret",
-        auth_file.display()
-    );
+    if output_json {
+        output::emit_error(
+            "auth current",
+            "secret-not-matched",
+            format!("{} does not match any known secret", auth_file.display()),
+            Some(json!({
+                "auth_file": auth_file.display().to_string(),
+                "matched": false,
+            })),
+        )?;
+    } else {
+        println!(
+            "codex: {} does not match any known secret",
+            auth_file.display()
+        );
+    }
     Ok(2)
 }
 
