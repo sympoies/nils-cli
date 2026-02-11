@@ -113,3 +113,89 @@ fn test_server_uses_handler_and_records_request() {
             .any(|(k, v)| k == "x-client" && v == "tester")
     );
 }
+
+#[test]
+fn loopback_server_parses_expect_continue_and_chunked_body() {
+    let server = LoopbackServer::new().expect("server");
+    server.add_route("POST", "/chunk", HttpResponse::new(202, "accepted"));
+
+    let request = concat!(
+        "POST /chunk HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Expect: 100-continue\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "\r\n",
+        "5\r\nhello\r\n",
+        "6\r\n world\r\n",
+        "0\r\n",
+        "X-Trailer: done\r\n",
+        "\r\n"
+    );
+
+    let mut stream = connect_url(&server.url());
+    stream.write_all(request.as_bytes()).expect("write request");
+    let response = read_response(&mut stream);
+    let response_text = String::from_utf8_lossy(&response);
+    assert!(response_text.contains("HTTP/1.1 100 Continue"));
+    assert!(response_text.contains("HTTP/1.1 202 Accepted"));
+
+    let requests = server.take_requests();
+    assert_eq!(requests.len(), 1);
+    let req = &requests[0];
+    assert_eq!(req.method, "POST");
+    assert_eq!(req.path, "/chunk");
+    assert_eq!(req.body_text(), "hello world");
+    assert_eq!(req.header_value("expect").as_deref(), Some("100-continue"));
+    assert_eq!(
+        req.header_value("transfer-encoding").as_deref(),
+        Some("chunked")
+    );
+}
+
+#[test]
+fn loopback_server_returns_not_found_for_unregistered_route() {
+    let server = LoopbackServer::new().expect("server");
+
+    let mut stream = connect_url(&server.url());
+    let request = "GET /missing HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    stream.write_all(request.as_bytes()).expect("write request");
+    let response = read_response(&mut stream);
+    let response_text = String::from_utf8_lossy(&response);
+    assert!(response_text.starts_with("HTTP/1.1 404 Not Found"));
+
+    let requests = server.take_requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].path, "/missing");
+}
+
+#[test]
+fn test_server_status_text_mapping_covers_known_and_default_codes() {
+    let server = TestServer::new(|req| match req.path.as_str() {
+        "/created" => HttpResponse::new(201, "created"),
+        "/bad" => HttpResponse::new(400, "bad"),
+        "/forbidden" => HttpResponse::new(403, "forbidden"),
+        "/missing" => HttpResponse::new(404, "missing"),
+        _ => HttpResponse::new(418, "teapot"),
+    })
+    .expect("server");
+
+    let cases = [
+        ("/created", "HTTP/1.1 201 Created"),
+        ("/bad", "HTTP/1.1 400 Bad Request"),
+        ("/forbidden", "HTTP/1.1 403 Forbidden"),
+        ("/missing", "HTTP/1.1 404 Not Found"),
+        ("/teapot", "HTTP/1.1 418 OK"),
+    ];
+
+    for (path, status_line) in cases {
+        let mut stream = connect_url(&server.url());
+        let request = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        stream.write_all(request.as_bytes()).expect("write request");
+        let response = read_response(&mut stream);
+        let response_text = String::from_utf8_lossy(&response);
+        assert!(
+            response_text.starts_with(status_line),
+            "response: {response_text}"
+        );
+    }
+}
