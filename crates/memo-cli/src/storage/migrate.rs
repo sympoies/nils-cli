@@ -12,7 +12,7 @@ pub fn apply(conn: &Connection) -> Result<(), AppError> {
             applied_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
         );",
     )
-    .map_err(AppError::db)?;
+    .map_err(AppError::db_write)?;
 
     let already_applied: i64 = conn
         .query_row(
@@ -20,15 +20,16 @@ pub fn apply(conn: &Connection) -> Result<(), AppError> {
             params![SCHEMA_VERSION],
             |row| row.get(0),
         )
-        .map_err(AppError::db)?;
+        .map_err(AppError::db_query)?;
 
     if already_applied == 0 {
-        conn.execute_batch(SCHEMA_V1_SQL).map_err(AppError::db)?;
+        conn.execute_batch(SCHEMA_V1_SQL)
+            .map_err(AppError::db_write)?;
         conn.execute(
             "insert into schema_migrations(version) values(?1)",
             params![SCHEMA_VERSION],
         )
-        .map_err(AppError::db)?;
+        .map_err(AppError::db_write)?;
     }
 
     Ok(())

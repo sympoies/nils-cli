@@ -1,4 +1,5 @@
 use serde::Serialize;
+use serde_json::json;
 
 #[derive(Debug)]
 pub struct AppError {
@@ -46,6 +47,32 @@ impl AppError {
 
     pub fn db(err: rusqlite::Error) -> Self {
         Self::runtime(format!("database error: {err}"))
+    }
+
+    pub fn db_open(err: impl std::fmt::Display) -> Self {
+        Self::runtime(format!("database open failed: {err}")).with_code("db-open-failed")
+    }
+
+    pub fn db_query(err: rusqlite::Error) -> Self {
+        Self::runtime(format!("database query failed: {err}")).with_code("db-query-failed")
+    }
+
+    pub fn db_write(err: rusqlite::Error) -> Self {
+        Self::runtime(format!("database write failed: {err}")).with_code("db-write-failed")
+    }
+
+    pub fn invalid_cursor(cursor: &str) -> Self {
+        Self::usage("cursor is invalid for current database state")
+            .with_code("invalid-cursor")
+            .with_details(json!({ "cursor": cursor }))
+    }
+
+    pub fn invalid_apply_payload(message: impl Into<String>, path: Option<&str>) -> Self {
+        let mut err = Self::data(message).with_code("invalid-apply-payload");
+        if let Some(path) = path {
+            err = err.with_details(json!({ "path": path }));
+        }
+        err
     }
 
     pub fn with_code(mut self, code: impl Into<String>) -> Self {

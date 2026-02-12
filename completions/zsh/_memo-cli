@@ -1,0 +1,90 @@
+#compdef memo-cli
+
+_memo-cli() {
+  emulate -L zsh -o extendedglob
+
+  local curcontext="$curcontext" state line
+  typeset -A opt_args
+
+  local -a subcommands=(
+    'add:Capture one raw memo entry'
+    'list:List memo entries in deterministic order'
+    'search:Search memo entries with FTS-backed query'
+    'report:Show weekly or monthly summary report'
+    'fetch:Fetch pending items for agent enrichment'
+    'apply:Apply enrichment payloads'
+    'help:Show help'
+  )
+
+  local -a global_opts=(
+    '--db=[SQLite file path]:path:_files'
+    '--json[Output JSON]'
+    '--format=[Output format]:format:(text json)'
+    '(-h --help)'{-h,--help}'[Show help]'
+    '(-V --version)'{-V,--version}'[Show version]'
+  )
+
+  if (( CURRENT == 2 )); then
+    _describe -t commands 'memo-cli command' subcommands && return 0
+    _message 'command (add|list|search|report|fetch|apply)'
+    return 0
+  fi
+
+  local cmd="${words[2]-}"
+  case "$cmd" in
+    add)
+      _arguments -C \
+        $global_opts \
+        '--source=[Capture source label]:source:' \
+        '*:memo text:' \
+        && return 0
+      ;;
+    list)
+      _arguments -C \
+        $global_opts \
+        '--limit=[Max rows to return]:limit:' \
+        '--offset=[Row offset for paging]:offset:' \
+        '--state=[Row selection mode]:state:(all pending enriched)' \
+        && return 0
+      ;;
+    search)
+      _arguments -C \
+        $global_opts \
+        '--limit=[Max rows to return]:limit:' \
+        '--state=[Row selection mode]:state:(all pending enriched)' \
+        '*:query:' \
+        && return 0
+      ;;
+    report)
+      _arguments -C \
+        $global_opts \
+        '1:period:(week month)' \
+        && return 0
+      ;;
+    fetch)
+      _arguments -C \
+        $global_opts \
+        '--limit=[Max rows to return]:limit:' \
+        '--cursor=[Opaque cursor for pagination]:cursor:' \
+        '--state=[Fetch selection mode]:state:(pending)' \
+        && return 0
+      ;;
+    apply)
+      _arguments -C \
+        $global_opts \
+        '--input=[JSON file containing apply payload]:file:_files' \
+        '--stdin[Read payload JSON from stdin]' \
+        '--dry-run[Validate payload without write-back]' \
+        && return 0
+      ;;
+    help|-h|--help)
+      _message 'no additional arguments'
+      return 0
+      ;;
+    *)
+      _arguments -C $global_opts && return 0
+      ;;
+  esac
+}
+
+compdef _memo-cli memo-cli

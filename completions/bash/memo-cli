@@ -1,0 +1,92 @@
+# nils-cli bash completion: memo-cli
+
+if [[ -z ${BASH_VERSION-} ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+shopt -s progcomp 2>/dev/null || true
+
+_nils_cli_memo_cli_complete() {
+  local -a words=("${COMP_WORDS[@]}")
+  local cword="$COMP_CWORD"
+  local cur="${COMP_WORDS[COMP_CWORD]}"
+  local prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+  local -a subcmds=(add list search report fetch apply help)
+  local -a global_opts=(-h --help -V --version --db --json --format)
+
+  if (( cword == 1 )); then
+    if [[ "$cur" == -* ]]; then
+      COMPREPLY=( $(compgen -W "${global_opts[*]}" -- "$cur") )
+      return 0
+    fi
+    COMPREPLY=( $(compgen -W "${subcmds[*]}" -- "$cur") )
+    return 0
+  fi
+
+  local subcmd="${words[1]-}"
+  if [[ "$cur" == -* ]]; then
+    case "$subcmd" in
+      add)
+        COMPREPLY=( $(compgen -W "${global_opts[*]} --source" -- "$cur") )
+        return 0
+        ;;
+      list)
+        COMPREPLY=( $(compgen -W "${global_opts[*]} --limit --offset --state" -- "$cur") )
+        return 0
+        ;;
+      search)
+        COMPREPLY=( $(compgen -W "${global_opts[*]} --limit --state" -- "$cur") )
+        return 0
+        ;;
+      report)
+        COMPREPLY=( $(compgen -W "${global_opts[*]}" -- "$cur") )
+        return 0
+        ;;
+      fetch)
+        COMPREPLY=( $(compgen -W "${global_opts[*]} --limit --cursor --state" -- "$cur") )
+        return 0
+        ;;
+      apply)
+        COMPREPLY=( $(compgen -W "${global_opts[*]} --input --stdin --dry-run" -- "$cur") )
+        return 0
+        ;;
+      *)
+        COMPREPLY=( $(compgen -W "${global_opts[*]}" -- "$cur") )
+        return 0
+        ;;
+    esac
+  fi
+
+  case "$prev" in
+    --db|--input)
+      COMPREPLY=( $(compgen -f -- "$cur") )
+      return 0
+      ;;
+    --format)
+      COMPREPLY=( $(compgen -W "text json" -- "$cur") )
+      return 0
+      ;;
+    --state)
+      case "$subcmd" in
+        list|search)
+          COMPREPLY=( $(compgen -W "all pending enriched" -- "$cur") )
+          return 0
+          ;;
+        fetch)
+          COMPREPLY=( $(compgen -W "pending" -- "$cur") )
+          return 0
+          ;;
+      esac
+      ;;
+  esac
+
+  if [[ "$subcmd" == "report" && "$cword" -eq 2 ]]; then
+    COMPREPLY=( $(compgen -W "week month" -- "$cur") )
+    return 0
+  fi
+
+  COMPREPLY=()
+}
+
+complete -F _nils_cli_memo_cli_complete memo-cli

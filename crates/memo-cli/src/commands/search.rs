@@ -2,7 +2,7 @@ use serde_json::json;
 
 use crate::cli::OutputMode;
 use crate::errors::AppError;
-use crate::output::{emit_json_results, format_item_id};
+use crate::output::{emit_json_results, format_item_id, text};
 use crate::storage::Storage;
 use crate::storage::repository::QueryState;
 use crate::storage::search;
@@ -37,21 +37,7 @@ pub fn run(
         return emit_json_results("memo-cli.search.v1", "memo-cli search", results);
     }
 
-    if rows.is_empty() {
-        println!("(no matches)");
-        return Ok(());
-    }
-
-    println!("item_id\tcreated_at\tscore\tpreview");
-    for row in rows {
-        println!(
-            "{}\t{}\t{:.4}\t{}",
-            format_item_id(row.item_id),
-            row.created_at,
-            row.score,
-            row.preview
-        );
-    }
+    text::print_search(&rows);
 
     Ok(())
 }

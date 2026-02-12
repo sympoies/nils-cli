@@ -86,7 +86,7 @@ pub fn search_items(
         limit ?2"
     );
 
-    let mut stmt = conn.prepare(&sql).map_err(AppError::db)?;
+    let mut stmt = conn.prepare(&sql).map_err(AppError::db_query)?;
     let rows = stmt
         .query_map(params![query, limit as i64], |row| {
             Ok(SearchItem {
@@ -97,9 +97,10 @@ pub fn search_items(
                 preview: row.get(3)?,
             })
         })
-        .map_err(AppError::db)?;
+        .map_err(AppError::db_query)?;
 
-    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::db)
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(AppError::db_query)
 }
 
 pub fn report_summary(conn: &Connection, period: ReportPeriod) -> Result<ReportSummary, AppError> {
@@ -120,7 +121,7 @@ pub fn report_summary(conn: &Connection, period: ReportPeriod) -> Result<ReportS
         .query_row(&format!("select {from_sql}, {to_sql}"), [], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })
-        .map_err(AppError::db)?;
+        .map_err(AppError::db_query)?;
 
     let captured: i64 = conn
         .query_row(
@@ -131,7 +132,7 @@ pub fn report_summary(conn: &Connection, period: ReportPeriod) -> Result<ReportS
             params![from, to],
             |row| row.get(0),
         )
-        .map_err(AppError::db)?;
+        .map_err(AppError::db_query)?;
 
     let enriched: i64 = conn
         .query_row(
@@ -145,7 +146,7 @@ pub fn report_summary(conn: &Connection, period: ReportPeriod) -> Result<ReportS
             params![from, to],
             |row| row.get(0),
         )
-        .map_err(AppError::db)?;
+        .map_err(AppError::db_query)?;
 
     let pending = (captured - enriched).max(0);
     let top_categories = collect_top_categories(conn, &from, &to)?;
@@ -187,7 +188,7 @@ fn collect_top_categories(
              order by category_count desc, category_name asc
              limit 5",
         )
-        .map_err(AppError::db)?;
+        .map_err(AppError::db_query)?;
 
     let rows = stmt
         .query_map(params![from, to], |row| {
@@ -196,9 +197,10 @@ fn collect_top_categories(
                 count: row.get(1)?,
             })
         })
-        .map_err(AppError::db)?;
+        .map_err(AppError::db_query)?;
 
-    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::db)
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(AppError::db_query)
 }
 
 fn collect_top_tags(conn: &Connection, from: &str, to: &str) -> Result<Vec<NameCount>, AppError> {
@@ -217,7 +219,7 @@ fn collect_top_tags(conn: &Connection, from: &str, to: &str) -> Result<Vec<NameC
              order by tag_count desc, t.tag_name asc
              limit 5",
         )
-        .map_err(AppError::db)?;
+        .map_err(AppError::db_query)?;
 
     let rows = stmt
         .query_map(params![from, to], |row| {
@@ -226,7 +228,8 @@ fn collect_top_tags(conn: &Connection, from: &str, to: &str) -> Result<Vec<NameC
                 count: row.get(1)?,
             })
         })
-        .map_err(AppError::db)?;
+        .map_err(AppError::db_query)?;
 
-    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::db)
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(AppError::db_query)
 }

@@ -2,7 +2,7 @@ use serde_json::json;
 
 use crate::cli::{AddArgs, OutputMode};
 use crate::errors::AppError;
-use crate::output::{emit_json_result, format_item_id};
+use crate::output::{emit_json_result, format_item_id, text};
 use crate::storage::Storage;
 use crate::storage::repository;
 
@@ -32,10 +32,6 @@ pub fn run(storage: &Storage, args: &AddArgs, output_mode: OutputMode) -> Result
         );
     }
 
-    println!(
-        "added {} at {}",
-        format_item_id(added.item_id),
-        added.created_at
-    );
+    text::print_add(added.item_id, &added.created_at);
     Ok(())
 }

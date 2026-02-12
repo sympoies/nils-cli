@@ -2,7 +2,7 @@ use serde_json::json;
 
 use crate::cli::{OutputMode, ReportPeriod};
 use crate::errors::AppError;
-use crate::output::emit_json_result;
+use crate::output::{emit_json_result, text};
 use crate::storage::Storage;
 use crate::storage::search::{self, ReportPeriod as StorageReportPeriod};
 
@@ -32,28 +32,7 @@ pub fn run(
         );
     }
 
-    println!("report: {}", summary.period);
-    println!(
-        "range: {} .. {} ({})",
-        summary.range.from, summary.range.to, summary.range.timezone
-    );
-    println!("captured: {}", summary.totals.captured);
-    println!("enriched: {}", summary.totals.enriched);
-    println!("pending: {}", summary.totals.pending);
-
-    if !summary.top_categories.is_empty() {
-        println!("top categories:");
-        for item in summary.top_categories {
-            println!("  - {} ({})", item.name, item.count);
-        }
-    }
-
-    if !summary.top_tags.is_empty() {
-        println!("top tags:");
-        for item in summary.top_tags {
-            println!("  - {} ({})", item.name, item.count);
-        }
-    }
+    text::print_report(&summary);
 
     Ok(())
 }

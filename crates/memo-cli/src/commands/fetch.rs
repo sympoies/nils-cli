@@ -2,7 +2,7 @@ use serde_json::json;
 
 use crate::cli::OutputMode;
 use crate::errors::AppError;
-use crate::output::{emit_json_results, format_item_id};
+use crate::output::{emit_json_results_with_meta, format_item_id, parse_item_id, text};
 use crate::storage::Storage;
 use crate::storage::repository;
 
@@ -12,13 +12,38 @@ pub fn run(
     limit: usize,
     cursor: Option<&str>,
 ) -> Result<(), AppError> {
-    if let Some(raw_cursor) = cursor
-        && raw_cursor.trim().is_empty()
-    {
-        return Err(AppError::usage("--cursor must be non-empty when provided"));
+    if limit == 0 {
+        return Err(AppError::usage("--limit must be greater than 0"));
     }
 
-    let rows = storage.with_connection(|conn| repository::fetch_pending(conn, limit))?;
+    let cursor = if let Some(raw_cursor) = cursor {
+        if raw_cursor.trim().is_empty() {
+            return Err(AppError::usage("--cursor must be non-empty when provided"));
+        }
+
+        let cursor_item_id = parse_item_id(raw_cursor)
+            .ok_or_else(|| AppError::invalid_cursor(raw_cursor).with_code("invalid-cursor"))?;
+        Some(
+            storage
+                .with_connection(|conn| repository::lookup_fetch_cursor(conn, cursor_item_id))?
+                .ok_or_else(|| AppError::invalid_cursor(raw_cursor))?,
+        )
+    } else {
+        None
+    };
+
+    let mut rows = storage.with_connection(|conn| {
+        repository::fetch_pending_page(conn, limit.saturating_add(1), cursor.as_ref())
+    })?;
+    let has_more = rows.len() > limit;
+    if has_more {
+        rows.truncate(limit);
+    }
+    let next_cursor = has_more.then(|| {
+        rows.last()
+            .map(|row| format_item_id(row.item_id))
+            .unwrap_or_default()
+    });
 
     if output_mode.is_json() {
         let results = rows
@@ -34,18 +59,23 @@ pub fn run(
             })
             .collect::<Vec<_>>();
 
-        return emit_json_results("memo-cli.fetch.v1", "memo-cli fetch", results);
+        return emit_json_results_with_meta(
+            "memo-cli.fetch.v1",
+            "memo-cli fetch",
+            results,
+            Some(json!({
+                "limit": limit,
+                "returned": rows.len(),
+                "next_cursor": next_cursor,
+                "has_more": has_more
+            })),
+            None,
+        );
     }
 
-    println!("pending items: {}", rows.len());
-    for row in rows {
-        println!(
-            "{}\t{}\t{}\t{}",
-            format_item_id(row.item_id),
-            row.created_at,
-            row.source,
-            row.text
-        );
+    text::print_fetch(&rows);
+    if let Some(next_cursor) = next_cursor {
+        eprintln!("next cursor: {next_cursor}");
     }
 
     Ok(())

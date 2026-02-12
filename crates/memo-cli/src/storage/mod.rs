@@ -1,3 +1,4 @@
+pub mod derivations;
 pub mod migrate;
 pub mod repository;
 pub mod search;
@@ -42,9 +43,9 @@ impl Storage {
         F: FnOnce(&Transaction<'_>) -> Result<T, AppError>,
     {
         let mut conn = self.open_connection()?;
-        let tx = conn.transaction().map_err(AppError::db)?;
+        let tx = conn.transaction().map_err(AppError::db_write)?;
         let out = f(&tx)?;
-        tx.commit().map_err(AppError::db)?;
+        tx.commit().map_err(AppError::db_write)?;
         Ok(out)
     }
 
@@ -52,21 +53,16 @@ impl Storage {
         if let Some(parent) = self.db_path.parent()
             && !parent.as_os_str().is_empty()
         {
-            fs::create_dir_all(parent).map_err(|err| {
-                AppError::runtime(format!(
-                    "failed to create database directory {}: {err}",
-                    parent.display()
-                ))
-            })?;
+            fs::create_dir_all(parent).map_err(AppError::db_open)?;
         }
 
-        let conn = Connection::open(&self.db_path).map_err(AppError::db)?;
+        let conn = Connection::open(&self.db_path).map_err(AppError::db_open)?;
         conn.pragma_update(None, "foreign_keys", "ON")
-            .map_err(AppError::db)?;
+            .map_err(AppError::db_open)?;
         conn.pragma_update(None, "journal_mode", "WAL")
-            .map_err(AppError::db)?;
+            .map_err(AppError::db_open)?;
         conn.busy_timeout(Duration::from_secs(2))
-            .map_err(AppError::db)?;
+            .map_err(AppError::db_open)?;
 
         migrate::apply(&conn)?;
         Ok(conn)
@@ -99,7 +95,7 @@ pub(crate) mod tests {
                     [],
                     |row| row.get(0),
                 )
-                .map_err(crate::errors::AppError::db)
+                .map_err(crate::errors::AppError::db_query)
             })
             .expect("inbox_items table should exist");
 
@@ -120,7 +116,7 @@ pub(crate) mod tests {
                     [],
                     |row| row.get(0),
                 )
-                .map_err(crate::errors::AppError::db)
+                .map_err(crate::errors::AppError::db_query)
             })
             .expect("schema migration count query should succeed");
 

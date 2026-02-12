@@ -1711,6 +1711,7 @@ version = "0.3.2"
 dependencies = [
  "anyhow",
  "clap",
+ "nils-test-support",
  "pretty_assertions",
  "rusqlite",
  "serde",

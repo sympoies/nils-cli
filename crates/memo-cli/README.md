@@ -47,6 +47,35 @@ memo-cli fetch --json --limit 50 > inbox-batch.json
 memo-cli apply --format json --input enrichment-batch.json
 ```
 
+Example `enrichment-batch.json` payload:
+
+```json
+{
+  "agent_run_id": "agent-run-20260212",
+  "items": [
+    {
+      "item_id": "itm_00000001",
+      "derivation_hash": "hash-itm-00000001-v1",
+      "summary": "buy ssd for mom",
+      "category": "shopping",
+      "normalized_text": "buy 1tb ssd for mom",
+      "confidence": 0.93,
+      "tags": ["family", "shopping"],
+      "payload": {
+        "source": "memo-agent",
+        "notes": "priority this week"
+      }
+    }
+  ]
+}
+```
+
+Pagination note:
+
+```bash
+memo-cli fetch --json --limit 20 --cursor itm_00000042
+```
+
 ### Human and machine reports
 ```bash
 memo-cli report week

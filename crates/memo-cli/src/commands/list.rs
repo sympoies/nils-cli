@@ -2,7 +2,7 @@ use serde_json::json;
 
 use crate::cli::OutputMode;
 use crate::errors::AppError;
-use crate::output::{emit_json_results, format_item_id};
+use crate::output::{emit_json_results, format_item_id, text};
 use crate::storage::Storage;
 use crate::storage::repository::{self, QueryState};
 
@@ -31,21 +31,7 @@ pub fn run(
         return emit_json_results("memo-cli.list.v1", "memo-cli list", results);
     }
 
-    if rows.is_empty() {
-        println!("(no items)");
-        return Ok(());
-    }
-
-    println!("item_id\tcreated_at\tstate\tpreview");
-    for row in rows {
-        println!(
-            "{}\t{}\t{}\t{}",
-            format_item_id(row.item_id),
-            row.created_at,
-            row.state,
-            row.text_preview
-        );
-    }
+    text::print_list(&rows);
 
     Ok(())
 }
