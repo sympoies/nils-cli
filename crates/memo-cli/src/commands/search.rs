@@ -31,6 +31,8 @@ pub fn run(
                     "score": row.score,
                     "matched_fields": row.matched_fields,
                     "preview": row.preview,
+                    "content_type": row.content_type,
+                    "validation_status": row.validation_status,
                 })
             })
             .collect::<Vec<_>>();

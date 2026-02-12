@@ -17,8 +17,8 @@ fn search_and_report() {
 
     storage
         .with_transaction(|tx| {
-            let first = repository::add_item(tx, "3/24 in tokyo", "cli")?;
-            let second = repository::add_item(tx, "buy 1tb ssd for mom", "cli")?;
+            let first = repository::add_item(tx, "3/24 in tokyo", "cli", None)?;
+            let second = repository::add_item(tx, "buy 1tb ssd for mom", "cli", None)?;
 
             tx.execute(
                 "insert into item_derivations(

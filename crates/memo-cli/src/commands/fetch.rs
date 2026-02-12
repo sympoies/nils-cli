@@ -55,6 +55,8 @@ pub fn run(
                     "source": row.source,
                     "text": row.text,
                     "state": row.state,
+                    "content_type": row.content_type,
+                    "validation_status": row.validation_status,
                 })
             })
             .collect::<Vec<_>>();

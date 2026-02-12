@@ -79,6 +79,19 @@ Planned schema identifiers for v1:
 - `fetch`: `memo-cli.fetch.v1`
 - `apply`: `memo-cli.apply.v1`
 
+## Phase 1 metadata taxonomy (additive)
+For derivation-aware machine workflows (`apply` payload/result and any additive
+JSON fields that expose derivation metadata), the taxonomy is:
+
+- `content_type`: `url`, `json`, `yaml`, `xml`, `markdown`, `text`, `unknown`.
+- `validation_status`: `valid`, `invalid`, `unknown`, `skipped`.
+- `validation_errors[]`: structured objects with required `code`, required
+  `message`, and optional `path`.
+
+Rules:
+- Metadata is derivation-layer data (Approach A), not raw capture mutation.
+- In v1, these metadata fields are additive-only compatibility extensions.
+
 ## Command Semantics
 
 ### `add`
@@ -90,6 +103,8 @@ memo-cli add <text> [--source <label>] [--at <rfc3339>] [--json|--format json]
 
 Behavior:
 - Persists immutable raw text as a new inbox item.
+- By default, `created_at` is system-generated at write time.
+- `--at` allows explicit RFC3339 timestamp input and stores the normalized UTC instant.
 - Never mutates previously captured rows.
 
 Text output (`stdout`):
@@ -114,7 +129,10 @@ Text output (`stdout`):
 - table/list with id, timestamp, state, short preview.
 
 JSON output:
-- `results[]` with stable fields for pagination and state filtering.
+- `results[]` includes stable pagination/state fields plus additive metadata
+  fields when available:
+  - `content_type`
+  - `validation_status`
 
 ### `search`
 Search inbox and active derived fields.
@@ -131,7 +149,10 @@ Text output (`stdout`):
 - ranked matches with score, id, timestamp, and preview.
 
 JSON output:
-- `results[]` includes score and matched item metadata.
+- `results[]` includes score/match metadata and additive derivation metadata
+  fields when available:
+  - `content_type`
+  - `validation_status`
 
 ### `report`
 Generate period summaries from capture + enrichment data.
@@ -142,6 +163,9 @@ memo-cli report <week|month> [--tz <iana-tz>] [--from <rfc3339>] [--to <rfc3339>
 
 Behavior:
 - `week` and `month` are canonical report windows.
+- `--tz` shifts canonical `week|month` window calculations to the provided IANA timezone.
+- `--from` and `--to` must be provided together and use RFC3339 input.
+- Precedence: explicit `--from/--to` range overrides canonical period window boundaries.
 - Uses capture totals and enrichment-derived categories/tags when present.
 - Works even if enrichment is absent (falls back to capture-only aggregates).
 
@@ -150,6 +174,9 @@ Text output (`stdout`):
 
 JSON output:
 - `result` contains period metadata plus aggregate fields suitable for dashboards.
+- Additive aggregate sections may include:
+  - `top_content_types[]`
+  - `validation_status_totals[]`
 
 ### `fetch`
 Machine-facing read for agent enrichment jobs.
@@ -168,6 +195,8 @@ Text output (`stdout`):
 
 JSON output:
 - `results[]` includes immutable source fields required by enrichment workers.
+- `results[]` may include additive metadata fields (`content_type`,
+  `validation_status`) and are `null` when unavailable for pending rows.
 - `result.next_cursor` (or equivalent) for continuation.
 
 ### `apply`
@@ -182,12 +211,16 @@ Behavior:
 - Writes derivations as new versions; raw capture remains immutable.
 - Active derivation selection follows latest accepted version per item.
 - `--dry-run` validates payload and reports changes without committing writes.
+- When metadata is present, `content_type`, `validation_status`, and
+  `validation_errors` are attached to derivation metadata, not raw rows.
 
 Text output (`stdout`):
 - apply summary: accepted, skipped, failed counts.
 
 JSON output:
 - `result` includes counts and per-item status entries.
+- Per-item metadata may include additive `content_type`, `validation_status`,
+  and `validation_errors[]` fields.
 - invalid payload returns `ok=false` and exits with input/usage error code.
 
 ## End-to-end flow: capture -> agent enrichment -> report

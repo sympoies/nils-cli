@@ -30,7 +30,7 @@ pub fn run(cli: &Cli, output_mode: OutputMode) -> Result<(), AppError> {
             &args.query,
             args.limit,
         ),
-        MemoCommand::Report(args) => report::run(&storage, output_mode, args.period),
+        MemoCommand::Report(args) => report::run(&storage, output_mode, args),
         MemoCommand::Fetch(args) => {
             fetch::run(&storage, output_mode, args.limit, args.cursor.as_deref())
         }

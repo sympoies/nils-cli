@@ -44,6 +44,43 @@ Failure response:
   - optional `details` (structured diagnostics)
 - `result` and `results` must not appear when `ok=false`.
 
+## Phase 1 Format and Validation Metadata Taxonomy
+
+These metadata fields are optional additive fields in v1. They are intended for
+derivation-aware machine workflows (primarily `apply` payload/result handling)
+and must not alter existing required envelope or command fields.
+
+- `content_type` (string): detected payload type.
+- `validation_status` (string): deterministic validation outcome.
+- `validation_errors` (array): structured validation diagnostics.
+
+### `content_type` allowed values (v1)
+- `url`
+- `json`
+- `yaml`
+- `xml`
+- `markdown`
+- `text`
+- `unknown`
+
+### `validation_status` allowed values (v1)
+- `valid`
+- `invalid`
+- `unknown`
+- `skipped`
+
+### `validation_errors[]` item shape
+- `code` (string, required): stable machine-facing validation error code.
+- `message` (string, required): concise human-readable validation message.
+- `path` (string, optional): payload path associated with the failure.
+
+Semantics:
+- `validation_errors` should be omitted or empty unless
+  `validation_status='invalid'`.
+- `validation_status='skipped'` means validation was intentionally not run.
+- `validation_status='unknown'` means no deterministic validation outcome is
+  available.
+
 ## Stable Payload Contracts by Command
 
 ### `add` (`result`)
@@ -57,6 +94,8 @@ Failure response:
   - `item_id`, `created_at`
   - `state` (`pending` or `enriched`)
   - `text_preview` (truncated safe preview)
+  - optional `content_type`
+  - optional `validation_status`
 - optional `pagination`:
   - `limit`, `offset`, `returned`
 
@@ -66,6 +105,8 @@ Failure response:
   - `score` (number)
   - `matched_fields` (array of strings; example: `raw_text`, `category`)
   - `preview` (string)
+  - optional `content_type`
+  - optional `validation_status`
 - optional `meta`:
   - `query`, `limit`, `state`
 
@@ -76,11 +117,15 @@ Failure response:
 - optional aggregate sections:
   - `top_categories[]`
   - `top_tags[]`
+  - `top_content_types[]`
+  - `validation_status_totals[]`
 
 ### `fetch` (`results`, machine-facing)
 - `results[]` item fields:
   - `item_id`, `created_at`, `source`, `text`
   - `state` (expected `pending` in v1 fetch flows)
+  - optional `content_type` (nullable for pending rows)
+  - optional `validation_status` (nullable for pending rows)
 - optional `pagination`:
   - `limit`, `returned`, `next_cursor` (nullable string), `has_more` (boolean)
 
@@ -94,6 +139,10 @@ Failure response:
   - `status` (`accepted` | `skipped` | `failed`)
   - optional `derivation_version` when accepted
   - optional per-item `error` with `code`, `message`, optional `details`
+  - optional `content_type`
+    (`url` | `json` | `yaml` | `xml` | `markdown` | `text` | `unknown`)
+  - optional `validation_status` (`valid` | `invalid` | `unknown` | `skipped`)
+  - optional `validation_errors[]` with `code`, `message`, optional `path`
 
 ## Stable Error Contract
 
@@ -111,6 +160,9 @@ Recommended stable error codes in v1:
 | `db-query-failed` | read query failed | `list`, `search`, `report`, `fetch` |
 | `db-write-failed` | write transaction failed | `add`, `apply` |
 | `invalid-cursor` | `fetch` cursor is malformed/expired for current DB state | `fetch` |
+| `invalid-time` | timestamp option is malformed RFC3339 input | `add`, `report` |
+| `invalid-timezone` | timezone option is malformed or unsupported | `report` |
+| `invalid-time-range` | `--from` / `--to` range is logically invalid | `report` |
 | `invalid-apply-payload` | input JSON payload schema/semantics are invalid | `apply` |
 | `apply-item-conflict` | apply conflict for one or more item derivations | `apply` |
 | `io-read-failed` | failed to read `--input` file or `--stdin` payload | `apply` |
@@ -133,6 +185,8 @@ Redaction example (conceptual):
 ## Compatibility Rules
 
 - Additive fields are allowed within each v1 schema.
+- Phase 1 metadata (`content_type`, `validation_status`, `validation_errors`)
+  is additive-only in v1.
 - Renaming/removing stable required fields is breaking and requires a new `schema_version`.
 - Consumers should parse only documented stable fields and ignore unknown additive fields.
 
@@ -164,13 +218,17 @@ Redaction example (conceptual):
       "item_id": "itm_20260212_0002",
       "created_at": "2026-02-12T08:20:11Z",
       "state": "pending",
-      "text_preview": "book pediatric dentist appointment"
+      "text_preview": "book pediatric dentist appointment",
+      "content_type": null,
+      "validation_status": null
     },
     {
       "item_id": "itm_20260212_0001",
       "created_at": "2026-02-12T08:15:41Z",
       "state": "enriched",
-      "text_preview": "buy 1tb ssd for mom"
+      "text_preview": "buy 1tb ssd for mom",
+      "content_type": "text",
+      "validation_status": "valid"
     }
   ],
   "pagination": {
@@ -196,7 +254,9 @@ Redaction example (conceptual):
         "raw_text",
         "category"
       ],
-      "preview": "buy 1tb ssd for mom"
+      "preview": "buy 1tb ssd for mom",
+      "content_type": "text",
+      "validation_status": "valid"
     }
   ],
   "meta": {
@@ -234,6 +294,26 @@ Redaction example (conceptual):
         "name": "health",
         "count": 3
       }
+    ],
+    "top_content_types": [
+      {
+        "name": "text",
+        "count": 6
+      },
+      {
+        "name": "json",
+        "count": 3
+      }
+    ],
+    "validation_status_totals": [
+      {
+        "name": "valid",
+        "count": 8
+      },
+      {
+        "name": "invalid",
+        "count": 1
+      }
     ]
   }
 }
@@ -251,14 +331,18 @@ Redaction example (conceptual):
       "created_at": "2026-02-12T08:20:11Z",
       "source": "cli",
       "text": "book pediatric dentist appointment",
-      "state": "pending"
+      "state": "pending",
+      "content_type": null,
+      "validation_status": null
     },
     {
       "item_id": "itm_20260212_0003",
       "created_at": "2026-02-12T08:25:44Z",
       "source": "mobile",
       "text": "renew passport in april",
-      "state": "pending"
+      "state": "pending",
+      "content_type": null,
+      "validation_status": null
     }
   ],
   "pagination": {
@@ -333,6 +417,38 @@ Redaction example (conceptual):
     "details": {
       "path": "payload.items[0].item_id"
     }
+  }
+}
+```
+
+### `apply` success with metadata (`result`, machine-facing)
+```json
+{
+  "schema_version": "memo-cli.apply.v1",
+  "command": "memo-cli apply",
+  "ok": true,
+  "result": {
+    "dry_run": false,
+    "processed": 1,
+    "accepted": 1,
+    "skipped": 0,
+    "failed": 0,
+    "items": [
+      {
+        "item_id": "itm_20260212_0004",
+        "status": "accepted",
+        "derivation_version": 1,
+        "content_type": "json",
+        "validation_status": "invalid",
+        "validation_errors": [
+          {
+            "code": "json.syntax.trailing-comma",
+            "message": "trailing comma is not allowed",
+            "path": "$"
+          }
+        ]
+      }
+    ]
   }
 }
 ```
