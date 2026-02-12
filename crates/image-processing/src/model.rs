@@ -30,6 +30,12 @@ pub struct Collision {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub struct SourceContext {
+    pub mode: String,
+    pub from_svg: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub struct SummaryOptions {
     pub overwrite: bool,
     pub auto_orient: Option<bool>,
@@ -57,6 +63,7 @@ pub struct Summary {
     pub cwd: String,
     pub operation: String,
     pub backend: String,
+    pub source: SourceContext,
     pub report_path: Option<String>,
     pub dry_run: bool,
     pub options: SummaryOptions,

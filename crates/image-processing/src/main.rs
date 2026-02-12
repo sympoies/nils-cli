@@ -1,11 +1,13 @@
 use clap::{CommandFactory, Parser};
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
+use std::path::PathBuf;
 use std::process;
 
 mod cli;
 mod model;
 mod processing;
 mod report;
+mod svg_validate;
 mod toolchain;
 mod util;
 
@@ -29,19 +31,40 @@ fn run() -> i32 {
         usage_error(&e.message);
     }
 
-    let toolchain = match toolchain::detect_toolchain() {
-        Ok(t) => t,
-        Err(err) => {
-            eprintln!("image-processing: error: {err}");
-            return 1;
+    let operation_name = cli.subcommand.as_str();
+    let from_svg_path = cli.from_svg.as_deref().map(util::expand_user);
+    let from_svg_mode = from_svg_path.is_some();
+
+    let requires_imagemagick =
+        toolchain::operation_requires_imagemagick(operation_name, from_svg_mode);
+    let toolchain = if requires_imagemagick {
+        match toolchain::detect_toolchain() {
+            Ok(t) => Some(t),
+            Err(err) => {
+                eprintln!("image-processing: error: {err}");
+                return 1;
+            }
         }
+    } else {
+        None
     };
 
     let repo_root = util::find_repo_root();
 
-    let inputs = match processing::expand_inputs(&cli.inputs, cli.recursive, &cli.glob) {
-        Ok(v) => v,
-        Err(e) => usage_error(&e.message),
+    let inputs = if cli.subcommand == Operation::SvgValidate {
+        match processing::expand_inputs(&cli.inputs, false, &[]) {
+            Ok(v) => v,
+            Err(e) => usage_error(&e.message),
+        }
+    } else if from_svg_mode {
+        Vec::new()
+    } else if requires_imagemagick {
+        match processing::expand_inputs(&cli.inputs, cli.recursive, &cli.glob) {
+            Ok(v) => v,
+            Err(e) => usage_error(&e.message),
+        }
+    } else {
+        Vec::new()
     };
 
     let output_mode = match processing::validate_output_mode(
@@ -55,7 +78,6 @@ fn run() -> i32 {
         Err(e) => usage_error(&e.message),
     };
 
-    // Parse aspect/crop selectors (usage errors).
     let resize_aspect = if cli.subcommand == Operation::Resize {
         match processing::parse_aspect_opt(cli.aspect.as_deref()) {
             Ok(v) => v,
@@ -107,13 +129,16 @@ fn run() -> i32 {
         }
     }
 
-    // Preflight (usage) validations that depend on inputs.
     if cli.subcommand == Operation::Convert
+        && !from_svg_mode
         && cli.to.as_deref() == Some("jpg")
         && cli.background.is_none()
     {
+        let toolchain = toolchain
+            .as_ref()
+            .expect("convert path must have ImageMagick toolchain");
         for p in &inputs {
-            let info = toolchain::probe_image(&toolchain, p);
+            let info = toolchain::probe_image(toolchain, p);
             if info.alpha.unwrap_or(false) {
                 usage_error(
                     "alpha input cannot be converted to JPEG without a background (provide --background <color>)",
@@ -122,8 +147,7 @@ fn run() -> i32 {
         }
     }
 
-    // Run dir
-    let mut run_dir: Option<std::path::PathBuf> = None;
+    let mut run_dir: Option<PathBuf> = None;
     if cli.json || cli.report {
         let run_id = util::now_run_id();
         let p = repo_root
@@ -138,18 +162,29 @@ fn run() -> i32 {
         run_dir = Some(p);
     }
 
+    let progress_total = if cli.subcommand == Operation::SvgValidate || from_svg_mode {
+        1
+    } else {
+        inputs.len() as u64
+    };
     let progress = Progress::new(
-        inputs.len() as u64,
+        progress_total,
         ProgressOptions::default().with_finish(ProgressFinish::Leave),
     );
 
     let summary = match processing::process_items(processing::ProcessArgs {
-        toolchain: &toolchain,
+        toolchain: toolchain.as_ref(),
+        backend: toolchain::backend_for_operation(
+            operation_name,
+            toolchain.as_ref(),
+            from_svg_mode,
+        ),
         repo_root: &repo_root,
         run_dir: run_dir.as_deref(),
         progress,
         subcommand: cli.subcommand,
         inputs: &inputs,
+        from_svg_input: from_svg_path.as_deref(),
         output_mode: output_mode.as_ref(),
         overwrite: cli.overwrite,
         dry_run: cli.dry_run,
@@ -235,6 +270,85 @@ fn validate(cli: &Cli) -> Result<(), util::UsageError> {
         })
     };
 
+    let from_svg_mode = cli.from_svg.is_some();
+
+    if from_svg_mode {
+        if cli.subcommand != Operation::Convert {
+            return Err(util::UsageError {
+                message: "--from-svg is only supported for convert".to_string(),
+            });
+        }
+        if !cli.inputs.is_empty() {
+            return Err(util::UsageError {
+                message: "convert --from-svg does not support --in".to_string(),
+            });
+        }
+        if cli.recursive {
+            return Err(util::UsageError {
+                message: "convert --from-svg does not support --recursive".to_string(),
+            });
+        }
+        if !cli.glob.is_empty() {
+            return Err(util::UsageError {
+                message: "convert --from-svg does not support --glob".to_string(),
+            });
+        }
+        if cli.in_place {
+            return Err(util::UsageError {
+                message: "convert --from-svg does not support --in-place".to_string(),
+            });
+        }
+        if cli.out_dir.is_some() {
+            return Err(util::UsageError {
+                message: "convert --from-svg requires --out (does not support --out-dir)"
+                    .to_string(),
+            });
+        }
+        if cli.out.is_none() {
+            return Err(util::UsageError {
+                message: "convert --from-svg requires --out".to_string(),
+            });
+        }
+    }
+
+    if cli.subcommand == Operation::SvgValidate {
+        if cli.inputs.len() != 1 {
+            return Err(util::UsageError {
+                message: "svg-validate requires exactly one --in <path>".to_string(),
+            });
+        }
+        if cli.recursive {
+            return Err(util::UsageError {
+                message: "svg-validate does not support --recursive".to_string(),
+            });
+        }
+        if !cli.glob.is_empty() {
+            return Err(util::UsageError {
+                message: "svg-validate does not support --glob".to_string(),
+            });
+        }
+        if cli.from_svg.is_some() {
+            return Err(util::UsageError {
+                message: "svg-validate does not support --from-svg".to_string(),
+            });
+        }
+        if cli.out.is_none() {
+            return Err(util::UsageError {
+                message: "svg-validate requires --out".to_string(),
+            });
+        }
+        if cli.out_dir.is_some() {
+            return Err(util::UsageError {
+                message: "svg-validate does not support --out-dir".to_string(),
+            });
+        }
+        if cli.in_place {
+            return Err(util::UsageError {
+                message: "svg-validate does not support --in-place".to_string(),
+            });
+        }
+    }
+
     if cli.subcommand != Operation::Convert && cli.to.is_some() {
         forbid("--to")?;
     }
@@ -293,19 +407,30 @@ fn validate(cli: &Cli) -> Result<(), util::UsageError> {
         }
     }
 
-    // Subcommand-specific required args.
     if cli.subcommand == Operation::Convert {
         if cli.to.is_none() {
+            if from_svg_mode {
+                return Err(util::UsageError {
+                    message: "convert with --from-svg requires --to png|webp|svg".to_string(),
+                });
+            }
             return Err(util::UsageError {
                 message: "convert requires --to png|jpg|webp".to_string(),
             });
         }
-        if let Some(to) = cli.to.as_deref()
-            && !model::SUPPORTED_CONVERT_TARGETS.contains(&to)
-        {
-            return Err(util::UsageError {
-                message: "convert --to must be one of: png|jpg|webp".to_string(),
-            });
+
+        if let Some(to) = cli.to.as_deref() {
+            if from_svg_mode {
+                if !svg_validate::SUPPORTED_FROM_SVG_TARGETS.contains(&to) {
+                    return Err(util::UsageError {
+                        message: "convert --from-svg --to must be one of: png|webp|svg".to_string(),
+                    });
+                }
+            } else if !model::SUPPORTED_CONVERT_TARGETS.contains(&to) {
+                return Err(util::UsageError {
+                    message: "convert --to must be one of: png|jpg|webp".to_string(),
+                });
+            }
         }
     }
 
@@ -363,6 +488,7 @@ mod tests {
             inputs: vec!["in.png".to_string()],
             recursive: false,
             glob: Vec::new(),
+            from_svg: None,
             out: Some("out.png".to_string()),
             out_dir: None,
             in_place: false,
@@ -402,6 +528,56 @@ mod tests {
         assert!(err.to_string().contains("must be one of: png|jpg|webp"));
 
         cli.to = Some("webp".to_string());
+        assert!(validate(&cli).is_ok());
+    }
+
+    #[test]
+    fn validate_from_svg_rejects_legacy_input_flags() {
+        let mut cli = base_cli(Operation::Convert);
+        cli.from_svg = Some("icon.svg".to_string());
+        cli.to = Some("png".to_string());
+        cli.inputs = vec!["legacy.png".to_string()];
+        let err = validate(&cli).expect_err("convert --from-svg should reject --in");
+        assert!(err.to_string().contains("does not support --in"));
+
+        cli.inputs.clear();
+        cli.recursive = true;
+        let err = validate(&cli).expect_err("convert --from-svg should reject --recursive");
+        assert!(err.to_string().contains("does not support --recursive"));
+    }
+
+    #[test]
+    fn validate_from_svg_requires_out_and_supported_to() {
+        let mut cli = base_cli(Operation::Convert);
+        cli.from_svg = Some("icon.svg".to_string());
+        cli.inputs.clear();
+        cli.out = None;
+        cli.to = Some("png".to_string());
+        let err = validate(&cli).expect_err("convert --from-svg should require --out");
+        assert!(err.to_string().contains("requires --out"));
+
+        cli.out = Some("out/icon.jpg".to_string());
+        cli.to = Some("jpg".to_string());
+        let err = validate(&cli).expect_err("convert --from-svg should reject jpg");
+        assert!(err.to_string().contains("png|webp|svg"));
+
+        cli.to = Some("svg".to_string());
+        assert!(validate(&cli).is_ok());
+    }
+
+    #[test]
+    fn validate_svg_validate_contract() {
+        let mut cli = base_cli(Operation::SvgValidate);
+        cli.inputs = vec![];
+        let err = validate(&cli).expect_err("svg-validate should require one --in");
+        assert!(err.to_string().contains("exactly one --in"));
+
+        cli.inputs = vec!["in.svg".to_string()];
+        cli.out = None;
+        let err = validate(&cli).expect_err("svg-validate should require --out");
+        assert!(err.to_string().contains("requires --out"));
+
+        cli.out = Some("out/clean.svg".to_string());
         assert!(validate(&cli).is_ok());
     }
 

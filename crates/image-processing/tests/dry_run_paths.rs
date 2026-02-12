@@ -60,6 +60,41 @@ fn convert_alpha_jpg_dry_run_includes_background_quality_strip_auto_orient() {
 }
 
 #[test]
+fn rotate_in_place_dry_run_still_requires_yes() {
+    let dir = tempfile::TempDir::new().unwrap();
+    fs::write(dir.path().join("a.png"), "img").unwrap();
+
+    let stub = common::make_stub_dir();
+    common::write_exe(stub.path(), "identify", common::identify_stub_script());
+    common::write_exe(stub.path(), "convert", common::convert_stub_script());
+
+    let path_s = stub.path().to_string_lossy().to_string();
+    let envs = [("PATH", path_s.as_str())];
+
+    let out = common::run_image_processing(
+        dir.path(),
+        &[
+            "rotate",
+            "--in",
+            "a.png",
+            "--degrees",
+            "90",
+            "--in-place",
+            "--dry-run",
+            "--json",
+        ],
+        &envs,
+    );
+    assert_eq!(out.code, 2);
+    assert!(
+        out.stderr
+            .contains("--in-place is destructive and requires --yes"),
+        "stderr: {}",
+        out.stderr
+    );
+}
+
+#[test]
 fn resize_dry_run_cover_no_pre_upscale_omits_pre_upscale_step() {
     let dir = tempfile::TempDir::new().unwrap();
     fs::write(dir.path().join("a.png"), "img").unwrap();
@@ -393,4 +428,98 @@ fn optimize_webp_dry_run_falls_back_to_magick_lossless() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(joined.contains("webp:lossless=true"), "cmds: {joined}");
+}
+
+#[test]
+fn from_svg_dry_run_json_report_writes_artifacts_without_writing_output() {
+    let dir = tempfile::TempDir::new().unwrap();
+    fs::write(
+        dir.path().join("icon.svg"),
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+<rect x="2" y="2" width="28" height="28" rx="6" fill="#0f62fe"/>
+<path d="M9 16h14" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+</svg>"##,
+    )
+    .unwrap();
+
+    let stub = common::make_stub_dir();
+    let path_s = stub.path().to_string_lossy().to_string();
+    let envs = [("PATH", path_s.as_str())];
+
+    let out = common::run_image_processing(
+        dir.path(),
+        &[
+            "convert",
+            "--from-svg",
+            "icon.svg",
+            "--to",
+            "webp",
+            "--out",
+            "out/icon.webp",
+            "--dry-run",
+            "--report",
+            "--json",
+        ],
+        &envs,
+    );
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+
+    assert!(
+        !dir.path().join("out/icon.webp").exists(),
+        "dry-run should not write output"
+    );
+
+    let v: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(v["operation"], "convert");
+    assert_eq!(v["backend"], "rust:resvg");
+    assert_eq!(v["source"]["mode"], "from_svg");
+    assert_eq!(v["source"]["from_svg"], "icon.svg");
+    assert_eq!(v["dry_run"], true);
+    assert_eq!(v["options"]["report"], true);
+    assert_eq!(v["items"].as_array().unwrap().len(), 1);
+    assert_eq!(v["items"][0]["status"], "ok");
+    assert!(v["items"][0]["output_info"].is_null());
+    let command = v["commands"][0].as_str().unwrap_or("");
+    assert!(
+        command.contains("convert --from-svg icon.svg"),
+        "commands: {command}"
+    );
+    assert!(command.contains("--dry-run"), "commands: {command}");
+
+    let run_id = v["run_id"].as_str().unwrap();
+    let summary_json = dir
+        .path()
+        .join("out/image-processing/runs")
+        .join(run_id)
+        .join("summary.json");
+    let report_md = dir
+        .path()
+        .join("out/image-processing/runs")
+        .join(run_id)
+        .join("report.md");
+    assert!(summary_json.exists(), "missing {}", summary_json.display());
+    assert!(report_md.exists(), "missing {}", report_md.display());
+    assert_eq!(
+        v["report_path"],
+        format!("out/image-processing/runs/{run_id}/report.md")
+    );
+
+    let report = fs::read_to_string(report_md).unwrap();
+    assert!(
+        report.contains("- Operation: `convert`"),
+        "report: {report}"
+    );
+    assert!(
+        report.contains("- Source mode: `from_svg`"),
+        "report: {report}"
+    );
+    assert!(
+        report.contains("- Source SVG: `icon.svg`"),
+        "report: {report}"
+    );
+    assert!(report.contains("- Dry run: `true`"), "report: {report}");
+    assert!(
+        report.contains("convert --from-svg icon.svg"),
+        "report: {report}"
+    );
 }

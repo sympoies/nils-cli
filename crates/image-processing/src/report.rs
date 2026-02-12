@@ -1,8 +1,9 @@
-use crate::model::ItemResult;
+use crate::model::{ItemResult, SourceContext};
 
 pub fn render_report_md(
     run_id: &str,
     subcommand: &str,
+    source: &SourceContext,
     items: &[ItemResult],
     commands: &[String],
     dry_run: bool,
@@ -11,6 +12,10 @@ pub fn render_report_md(
     lines.push(format!("# Image Processing Report ({run_id})"));
     lines.push(String::new());
     lines.push(format!("- Operation: `{subcommand}`"));
+    lines.push(format!("- Source mode: `{}`", source.mode));
+    if let Some(from_svg) = source.from_svg.as_deref() {
+        lines.push(format!("- Source SVG: `{from_svg}`"));
+    }
     lines.push(format!(
         "- Dry run: `{}`",
         if dry_run { "true" } else { "false" }
@@ -85,6 +90,10 @@ mod tests {
         let out = render_report_md(
             "run123",
             "resize",
+            &SourceContext {
+                mode: "inputs".to_string(),
+                from_svg: None,
+            },
             &items,
             &["magick in.png out.png".to_string()],
             true,
@@ -92,6 +101,7 @@ mod tests {
 
         assert!(out.contains("# Image Processing Report (run123)"));
         assert!(out.contains("- Operation: `resize`"));
+        assert!(out.contains("- Source mode: `inputs`"));
         assert!(out.contains("- Dry run: `true`"));
         assert!(out.contains("## Commands"));
         assert!(out.contains("- `magick in.png out.png`"));
@@ -119,9 +129,20 @@ mod tests {
             error: Some("boom".to_string()),
         }];
 
-        let out = render_report_md("run456", "convert", &items, &[], false);
+        let out = render_report_md(
+            "run456",
+            "convert",
+            &SourceContext {
+                mode: "from_svg".to_string(),
+                from_svg: Some("fixtures/demo.svg".to_string()),
+            },
+            &items,
+            &[],
+            false,
+        );
 
         assert!(out.contains("- Dry run: `false`"));
+        assert!(out.contains("- Source SVG: `fixtures/demo.svg`"));
         assert!(out.contains("`error`: `a.jpg` -> `None`"));
         assert!(out.contains("error: boom"));
     }
