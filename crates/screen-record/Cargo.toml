@@ -23,7 +23,7 @@ nils-common = { version = "0.3.0", path = "../nils-common", package = "nils-comm
 
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = { version = "0.13", features = ["randr"] }
-zbus = { version = "4", features = ["blocking"] }
+zbus = { version = "5", features = ["blocking"] }
 libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
