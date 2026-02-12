@@ -74,7 +74,7 @@ Auth examples:
 - Human-readable text is the default output mode.
 - Machine-readable JSON mode is explicit: use `--format json` (preferred) or `--json` where
   supported for compatibility.
-- Contract spec: `../../docs/specs/codex-cli-diag-auth-json-contract-v1.md`
+- Contract spec: `docs/specs/codex-cli-diag-auth-json-contract-v1.md`
 - Consumer runbook: `../../docs/runbooks/codex-cli-json-consumers.md`
 - Covered surfaces: `diag rate-limits` (single/all/async) and
   `auth login|use|save|refresh|auto-refresh|current|sync`.

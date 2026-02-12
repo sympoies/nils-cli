@@ -39,7 +39,7 @@ rollout alignment, and finally publish-readiness verification for the publishabl
 - Follow `docs/specs/cli-service-json-contract-guideline-v1.md` as the JSON contract baseline:
   required envelope keys (`schema_version`, `command`, `ok`), `result` for single-entity payloads,
   `results` for collections, and structured `error` envelope (`code`, `message`, optional `details`).
-- Treat this plan’s crate-local contract doc (`docs/specs/codex-cli-diag-auth-json-contract-v1.md`)
+- Treat this plan’s crate-local contract doc (`crates/codex-cli/docs/specs/codex-cli-diag-auth-json-contract-v1.md`)
   as an extension of the generic guideline, not a divergent contract source.
 
 ## Contract direction (for review)
@@ -61,7 +61,7 @@ rollout alignment, and finally publish-readiness verification for the publishabl
 
 ### Task 1.1: Define versioned JSON contracts for diag/auth
 - **Location**:
-  - `docs/specs/codex-cli-diag-auth-json-contract-v1.md`
+  - `crates/codex-cli/docs/specs/codex-cli-diag-auth-json-contract-v1.md`
   - `crates/codex-cli/README.md`
 - **Description**: Define request/response envelopes and field-level semantics for `diag
   rate-limits` and `auth` commands, including success/failure payloads, exit-code mapping, and
@@ -79,9 +79,9 @@ rollout alignment, and finally publish-readiness verification for the publishabl
     require a new schema version).
   - README links to the contract and states text-mode compatibility expectations.
 - **Validation**:
-  - `rg -n "\"schema_version\"|\"command\"|\"ok\"|diag rate-limits|auth use|auth refresh" docs/specs/codex-cli-diag-auth-json-contract-v1.md`
-  - `rg -n "cli-service-json-contract-guideline-v1|result|results|additive|breaking" docs/specs/codex-cli-diag-auth-json-contract-v1.md`
-  - `rg -n "stable fields|informational fields" docs/specs/codex-cli-diag-auth-json-contract-v1.md`
+  - `rg -n "\"schema_version\"|\"command\"|\"ok\"|diag rate-limits|auth use|auth refresh" crates/codex-cli/docs/specs/codex-cli-diag-auth-json-contract-v1.md`
+  - `rg -n "cli-service-json-contract-guideline-v1|result|results|additive|breaking" crates/codex-cli/docs/specs/codex-cli-diag-auth-json-contract-v1.md`
+  - `rg -n "stable fields|informational fields" crates/codex-cli/docs/specs/codex-cli-diag-auth-json-contract-v1.md`
   - `rg -n "codex-cli-diag-auth-json-contract-v1" crates/codex-cli/README.md`
 
 ### Task 1.2: Add output format flags across diag/auth CLI surfaces
@@ -286,7 +286,7 @@ rollout alignment, and finally publish-readiness verification for the publishabl
   - Usage-level clap errors continue to exit with existing codes and help behavior.
   - Error envelope fields are documented in the v1 contract doc.
 - **Validation**:
-  - `rg -n "\"code\"|\"message\"|\"details\"" docs/specs/codex-cli-diag-auth-json-contract-v1.md`
+  - `rg -n "\"code\"|\"message\"|\"details\"" crates/codex-cli/docs/specs/codex-cli-diag-auth-json-contract-v1.md`
   - `cargo test -p nils-codex-cli main_entrypoint`
   - `cargo test -p nils-codex-cli auth_`
   - `cargo test -p nils-codex-cli rate_limits_`

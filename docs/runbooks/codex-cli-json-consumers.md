@@ -6,7 +6,7 @@ This runbook is for frontend/service callers that consume `codex-cli` machine ou
 - `auth login|use|save|refresh|auto-refresh|current|sync`
 
 Contract source of truth:
-- `docs/specs/codex-cli-diag-auth-json-contract-v1.md`
+- `crates/codex-cli/docs/specs/codex-cli-diag-auth-json-contract-v1.md`
 - `docs/specs/cli-service-json-contract-guideline-v1.md`
 
 ## Migration Checklist
