@@ -95,8 +95,8 @@ memo-cli report month --from 2026-02-01T00:00:00Z --to 2026-02-29T23:59:59Z --js
 ```
 
 ## Runbooks
-- Agent workflow: `docs/runbooks/memo-cli-agent-workflow.md`
-- Rollout/rollback: `docs/runbooks/memo-cli-rollout.md`
+- Agent workflow: `crates/memo-cli/docs/runbooks/memo-cli-agent-workflow.md`
+- Rollout/rollback: `crates/memo-cli/docs/runbooks/memo-cli-rollout.md`
 
 ## Specs
 - Command contract: `crates/memo-cli/docs/specs/memo-cli-command-contract-v1.md`

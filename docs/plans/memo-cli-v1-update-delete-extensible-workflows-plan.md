@@ -226,8 +226,8 @@ This plan rebases `memo-cli` contracts before first production rollout: archive 
 ### Task 3.3: Update operator docs, runbooks, and completion guidance
 - **Location**:
   - `crates/memo-cli/README.md`
-  - `docs/runbooks/memo-cli-agent-workflow.md`
-  - `docs/runbooks/memo-cli-rollout.md`
+  - `crates/memo-cli/docs/runbooks/memo-cli-agent-workflow.md`
+  - `crates/memo-cli/docs/runbooks/memo-cli-rollout.md`
   - `completions/zsh/_memo-cli`
   - `completions/bash/memo-cli`
 - **Description**: Update workflows and rollout docs for update/delete behavior, including caution text for hard delete, agent-loop expectations after update, and extension-authoring FK rules.
@@ -240,7 +240,7 @@ This plan rebases `memo-cli` contracts before first production rollout: archive 
   - Completion files expose new command options.
   - README clearly differentiates active v1 vs archived v0 documentation.
 - **Validation**:
-  - `rg -n "update|delete|hard|archive/v0|workflow" crates/memo-cli/README.md docs/runbooks/memo-cli-agent-workflow.md docs/runbooks/memo-cli-rollout.md completions/zsh/_memo-cli completions/bash/memo-cli -S`
+  - `rg -n "update|delete|hard|archive/v0|workflow" crates/memo-cli/README.md crates/memo-cli/docs/runbooks/memo-cli-agent-workflow.md crates/memo-cli/docs/runbooks/memo-cli-rollout.md completions/zsh/_memo-cli completions/bash/memo-cli -S`
 
 ### Task 3.4: Run mandatory gates and finalize delivery package
 - **Location**:

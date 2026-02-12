@@ -301,8 +301,8 @@ unless an explicit valid `--at` override is provided. Raw capture remains append
 ### Task 3.2: Update README and runbooks for operator and agent usage
 - **Location**:
   - `crates/memo-cli/README.md`
-  - `docs/runbooks/memo-cli-agent-workflow.md`
-  - `docs/runbooks/memo-cli-rollout.md`
+  - `crates/memo-cli/docs/runbooks/memo-cli-agent-workflow.md`
+  - `crates/memo-cli/docs/runbooks/memo-cli-rollout.md`
 - **Description**: Document metadata semantics, common-format support, validation behavior,
   fallback paths, and operational troubleshooting for invalid payload spikes.
 - **Dependencies**:
@@ -314,7 +314,7 @@ unless an explicit valid `--at` override is provided. Raw capture remains append
   - Agent workflow documents validation failure triage with dry-run guidance.
   - Rollout guide includes metadata regression checkpoints.
 - **Validation**:
-  - `rg -n "content_type|validation_status|validation_errors|dry-run|--at|--tz|--from|--to" crates/memo-cli/README.md docs/runbooks/memo-cli-agent-workflow.md docs/runbooks/memo-cli-rollout.md`
+  - `rg -n "content_type|validation_status|validation_errors|dry-run|--at|--tz|--from|--to" crates/memo-cli/README.md crates/memo-cli/docs/runbooks/memo-cli-agent-workflow.md crates/memo-cli/docs/runbooks/memo-cli-rollout.md`
 
 ### Task 3.3: Execute full pre-delivery gates and record release notes
 - **Location**:
