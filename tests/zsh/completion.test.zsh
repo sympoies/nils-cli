@@ -18,6 +18,7 @@ COMP_CODEX_CLI_FILE="$REPO_ROOT/completions/zsh/_codex-cli"
 COMP_AGENT_DOCS_FILE="$REPO_ROOT/completions/zsh/_agent-docs"
 COMP_MACOS_AGENT_FILE="$REPO_ROOT/completions/zsh/_macos-agent"
 COMP_AGENTCTL_FILE="$REPO_ROOT/completions/zsh/_agentctl"
+COMP_MEMO_CLI_FILE="$REPO_ROOT/completions/zsh/_memo-cli"
 ALIASES_FILE="$REPO_ROOT/completions/zsh/aliases.zsh"
 
 BASH_GIT_SCOPE_FILE="$REPO_ROOT/completions/bash/git-scope"
@@ -34,6 +35,7 @@ BASH_CODEX_CLI_FILE="$REPO_ROOT/completions/bash/codex-cli"
 BASH_AGENT_DOCS_FILE="$REPO_ROOT/completions/bash/agent-docs"
 BASH_MACOS_AGENT_FILE="$REPO_ROOT/completions/bash/macos-agent"
 BASH_AGENTCTL_FILE="$REPO_ROOT/completions/bash/agentctl"
+BASH_MEMO_CLI_FILE="$REPO_ROOT/completions/bash/memo-cli"
 BASH_ALIASES_FILE="$REPO_ROOT/completions/bash/aliases.bash"
 
 if [[ ! -f "$COMP_FILE" ]]; then
@@ -103,6 +105,11 @@ fi
 
 if [[ ! -f "$COMP_AGENTCTL_FILE" ]]; then
   print -u2 -r -- "FAIL: missing agentctl completion file"
+  exit 1
+fi
+
+if [[ ! -f "$COMP_MEMO_CLI_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing memo-cli completion file"
   exit 1
 fi
 
@@ -178,6 +185,11 @@ fi
 
 if [[ ! -f "$BASH_AGENTCTL_FILE" ]]; then
   print -u2 -r -- "FAIL: missing bash agentctl completion file"
+  exit 1
+fi
+
+if [[ ! -f "$BASH_MEMO_CLI_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing bash memo-cli completion file"
   exit 1
 fi
 
@@ -259,6 +271,11 @@ source "$COMP_AGENTCTL_FILE" || {
   exit 1
 }
 
+source "$COMP_MEMO_CLI_FILE" || {
+  print -u2 -r -- "FAIL: failed to source memo-cli completion file"
+  exit 1
+}
+
 source "$ALIASES_FILE" || {
   print -u2 -r -- "FAIL: failed to source nils-cli aliases file"
   exit 1
@@ -331,6 +348,11 @@ fi
 
 if (( ! $+functions[_agentctl] )); then
   print -u2 -r -- "FAIL: _agentctl function not defined"
+  exit 1
+fi
+
+if (( ! $+functions[_memo-cli] )); then
+  print -u2 -r -- "FAIL: _memo-cli function not defined"
   exit 1
 fi
 
@@ -684,6 +706,26 @@ grep -q -- "--probe-mode" "$COMP_AGENTCTL_FILE" || {
   exit 1
 }
 
+grep -q "fetch:Fetch pending items for agent enrichment" "$COMP_MEMO_CLI_FILE" || {
+  print -u2 -r -- "FAIL: memo-cli completion missing fetch command"
+  exit 1
+}
+
+grep -q "apply:Apply enrichment payloads" "$COMP_MEMO_CLI_FILE" || {
+  print -u2 -r -- "FAIL: memo-cli completion missing apply command"
+  exit 1
+}
+
+grep -q -- "--json\\[Output JSON\\]" "$COMP_MEMO_CLI_FILE" || {
+  print -u2 -r -- "FAIL: memo-cli completion missing --json"
+  exit 1
+}
+
+grep -q -- "--dry-run\\[Validate payload without write-back\\]" "$COMP_MEMO_CLI_FILE" || {
+  print -u2 -r -- "FAIL: memo-cli completion missing --dry-run"
+  exit 1
+}
+
 grep -q -- "--window-title-contains" "$BASH_MACOS_AGENT_FILE" || {
   print -u2 -r -- "FAIL: bash macos-agent completion missing canonical --window-title-contains"
   exit 1
@@ -801,6 +843,11 @@ bash -c "set -euo pipefail; source \"$BASH_MACOS_AGENT_FILE\"; complete -p macos
 
 bash -c "set -euo pipefail; source \"$BASH_AGENTCTL_FILE\"; complete -p agentctl | grep -q _nils_cli_agentctl_complete" || {
   print -u2 -r -- "FAIL: failed to source bash agentctl completion file"
+  exit 1
+}
+
+bash -c "set -euo pipefail; source \"$BASH_MEMO_CLI_FILE\"; complete -p memo-cli | grep -q _nils_cli_memo_cli_complete" || {
+  print -u2 -r -- "FAIL: failed to source bash memo-cli completion file"
   exit 1
 }
 

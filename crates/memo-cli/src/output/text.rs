@@ -1,0 +1,274 @@
+use crate::output::format_item_id;
+use crate::storage::derivations::ApplySummary;
+use crate::storage::repository::{FetchItem, ListItem};
+use crate::storage::search::{ReportSummary, SearchItem};
+
+pub fn print_add(item_id: i64, created_at: &str) {
+    println!("added {} at {}", format_item_id(item_id), created_at);
+}
+
+pub fn print_list(rows: &[ListItem]) {
+    if rows.is_empty() {
+        println!("(no items)");
+        return;
+    }
+
+    println!(
+        "{}\t{}\t{}\t{}",
+        style_heading("item_id"),
+        style_heading("created_at"),
+        style_heading("state"),
+        style_heading("preview")
+    );
+    for row in rows {
+        println!(
+            "{}\t{}\t{}\t{}",
+            format_item_id(row.item_id),
+            row.created_at,
+            style_state(&row.state),
+            row.text_preview
+        );
+    }
+}
+
+pub fn print_search(rows: &[SearchItem]) {
+    if rows.is_empty() {
+        println!("(no matches)");
+        return;
+    }
+
+    println!(
+        "{}\t{}\t{}\t{}",
+        style_heading("item_id"),
+        style_heading("created_at"),
+        style_heading("score"),
+        style_heading("preview")
+    );
+    for row in rows {
+        println!(
+            "{}\t{}\t{:.4}\t{}",
+            format_item_id(row.item_id),
+            row.created_at,
+            row.score,
+            row.preview
+        );
+    }
+}
+
+pub fn print_report(summary: &ReportSummary) {
+    println!("report: {}", summary.period);
+    println!(
+        "range: {} .. {} ({})",
+        summary.range.from, summary.range.to, summary.range.timezone
+    );
+    println!("captured: {}", summary.totals.captured);
+    println!("enriched: {}", summary.totals.enriched);
+    println!("pending: {}", summary.totals.pending);
+
+    if !summary.top_categories.is_empty() {
+        println!("top categories:");
+        for item in &summary.top_categories {
+            println!("  - {} ({})", item.name, item.count);
+        }
+    }
+
+    if !summary.top_tags.is_empty() {
+        println!("top tags:");
+        for item in &summary.top_tags {
+            println!("  - {} ({})", item.name, item.count);
+        }
+    }
+}
+
+pub fn print_fetch(rows: &[FetchItem]) {
+    println!("pending items: {}", rows.len());
+    for row in rows {
+        println!(
+            "{}\t{}\t{}\t{}",
+            format_item_id(row.item_id),
+            row.created_at,
+            row.source,
+            row.text
+        );
+    }
+}
+
+pub fn print_apply(summary: &ApplySummary) {
+    println!(
+        "apply payload processed={} accepted={} skipped={} failed={} dry_run={}",
+        summary.processed, summary.accepted, summary.skipped, summary.failed, summary.dry_run
+    );
+
+    for item in &summary.items {
+        if let Some(error) = &item.error {
+            eprintln!(
+                "warning: {} {}: {}",
+                format_item_id(item.item_id),
+                item.status,
+                error.message
+            );
+        }
+    }
+}
+
+fn style_heading(label: &str) -> String {
+    if color_enabled() {
+        format!("\u{1b}[1m{label}\u{1b}[0m")
+    } else {
+        label.to_string()
+    }
+}
+
+fn style_state(state: &str) -> String {
+    if !color_enabled() {
+        return state.to_string();
+    }
+
+    match state {
+        "pending" => format!("\u{1b}[33m{state}\u{1b}[0m"),
+        "enriched" => format!("\u{1b}[32m{state}\u{1b}[0m"),
+        _ => state.to_string(),
+    }
+}
+
+fn color_enabled() -> bool {
+    match std::env::var("NO_COLOR") {
+        Ok(value) => value.trim().is_empty(),
+        Err(_) => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::derivations::{ApplyItemError, ApplyItemOutcome};
+    use crate::storage::search::{NameCount, ReportRange, ReportTotals};
+
+    fn sample_list_rows() -> Vec<ListItem> {
+        vec![
+            ListItem {
+                item_id: 3,
+                created_at: "2026-02-12T10:00:00Z".to_string(),
+                state: "pending".to_string(),
+                text_preview: "plan sprint".to_string(),
+            },
+            ListItem {
+                item_id: 2,
+                created_at: "2026-02-12T09:00:00Z".to_string(),
+                state: "enriched".to_string(),
+                text_preview: "book dentist".to_string(),
+            },
+            ListItem {
+                item_id: 1,
+                created_at: "2026-02-12T08:00:00Z".to_string(),
+                state: "archived".to_string(),
+                text_preview: "legacy note".to_string(),
+            },
+        ]
+    }
+
+    fn sample_search_rows() -> Vec<SearchItem> {
+        vec![SearchItem {
+            item_id: 7,
+            created_at: "2026-02-11T10:00:00Z".to_string(),
+            score: -0.1203,
+            matched_fields: vec!["raw_text".to_string()],
+            preview: "tokyo travel event".to_string(),
+        }]
+    }
+
+    fn sample_report() -> ReportSummary {
+        ReportSummary {
+            period: "week".to_string(),
+            range: ReportRange {
+                from: "2026-02-05T00:00:00Z".to_string(),
+                to: "2026-02-12T00:00:00Z".to_string(),
+                timezone: "UTC".to_string(),
+            },
+            totals: ReportTotals {
+                captured: 5,
+                enriched: 4,
+                pending: 1,
+            },
+            top_categories: vec![NameCount {
+                name: "travel".to_string(),
+                count: 2,
+            }],
+            top_tags: vec![NameCount {
+                name: "family".to_string(),
+                count: 3,
+            }],
+        }
+    }
+
+    #[test]
+    fn print_text_output_paths_are_exercised() {
+        print_add(1, "2026-02-12T10:00:00Z");
+        print_list(&[]);
+        print_list(&sample_list_rows());
+
+        print_search(&[]);
+        print_search(&sample_search_rows());
+
+        print_report(&sample_report());
+        print_report(&ReportSummary {
+            top_categories: Vec::new(),
+            top_tags: Vec::new(),
+            ..sample_report()
+        });
+
+        print_fetch(&[]);
+        print_fetch(&[FetchItem {
+            item_id: 9,
+            created_at: "2026-02-12T11:00:00Z".to_string(),
+            source: "cli".to_string(),
+            text: "renew passport in april".to_string(),
+            state: "pending".to_string(),
+        }]);
+
+        print_apply(&ApplySummary {
+            dry_run: false,
+            processed: 2,
+            accepted: 1,
+            skipped: 0,
+            failed: 1,
+            items: vec![
+                ApplyItemOutcome {
+                    item_id: 9,
+                    status: "accepted".to_string(),
+                    derivation_version: Some(1),
+                    error: None,
+                },
+                ApplyItemOutcome {
+                    item_id: 8,
+                    status: "failed".to_string(),
+                    derivation_version: None,
+                    error: Some(ApplyItemError {
+                        code: "invalid-apply-payload".to_string(),
+                        message: "item_id does not exist".to_string(),
+                        details: None,
+                    }),
+                },
+            ],
+        });
+    }
+
+    #[test]
+    fn style_helpers_cover_color_and_no_color_modes() {
+        unsafe { std::env::set_var("NO_COLOR", "1") };
+        assert_eq!(style_heading("item_id"), "item_id");
+        assert_eq!(style_state("pending"), "pending");
+
+        unsafe { std::env::set_var("NO_COLOR", "") };
+        let heading = style_heading("item_id");
+        assert!(heading.contains("item_id"));
+        assert!(heading.contains('\u{1b}'));
+        let pending = style_state("pending");
+        assert!(pending.contains('\u{1b}'));
+        let enriched = style_state("enriched");
+        assert!(enriched.contains('\u{1b}'));
+        assert_eq!(style_state("unknown"), "unknown");
+
+        unsafe { std::env::remove_var("NO_COLOR") };
+    }
+}
