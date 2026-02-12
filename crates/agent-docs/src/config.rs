@@ -58,7 +58,8 @@ pub fn load_scope_config(
 }
 
 fn parse_toml(file_path: &Path, raw: &str) -> Result<Value, ConfigLoadError> {
-    raw.parse::<Value>()
+    raw.parse::<toml::Table>()
+        .map(Value::Table)
         .map_err(|err| parse_error(file_path, raw, &err))
 }
 
