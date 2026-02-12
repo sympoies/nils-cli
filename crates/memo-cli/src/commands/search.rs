@@ -2,7 +2,7 @@ use serde_json::json;
 
 use crate::cli::OutputMode;
 use crate::errors::AppError;
-use crate::output::{emit_json_results, format_item_id, text};
+use crate::output::{emit_json_results_with_meta, format_item_id, text};
 use crate::storage::Storage;
 use crate::storage::repository::QueryState;
 use crate::storage::search;
@@ -36,10 +36,28 @@ pub fn run(
                 })
             })
             .collect::<Vec<_>>();
-        return emit_json_results("memo-cli.search.v1", "memo-cli search", results);
+        return emit_json_results_with_meta(
+            "memo-cli.search.v1",
+            "memo-cli search",
+            results,
+            None,
+            Some(json!({
+                "query": query,
+                "limit": limit,
+                "state": query_state_label(state),
+            })),
+        );
     }
 
     text::print_search(&rows);
 
     Ok(())
+}
+
+fn query_state_label(state: QueryState) -> &'static str {
+    match state {
+        QueryState::All => "all",
+        QueryState::Pending => "pending",
+        QueryState::Enriched => "enriched",
+    }
 }

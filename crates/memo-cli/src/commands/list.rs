@@ -2,7 +2,7 @@ use serde_json::json;
 
 use crate::cli::OutputMode;
 use crate::errors::AppError;
-use crate::output::{emit_json_results, format_item_id, text};
+use crate::output::{emit_json_results_with_meta, format_item_id, text};
 use crate::storage::Storage;
 use crate::storage::repository::{self, QueryState};
 
@@ -30,7 +30,17 @@ pub fn run(
                 })
             })
             .collect::<Vec<_>>();
-        return emit_json_results("memo-cli.list.v1", "memo-cli list", results);
+        return emit_json_results_with_meta(
+            "memo-cli.list.v1",
+            "memo-cli list",
+            results,
+            Some(json!({
+                "limit": limit,
+                "offset": offset,
+                "returned": rows.len(),
+            })),
+            None,
+        );
     }
 
     text::print_list(&rows);

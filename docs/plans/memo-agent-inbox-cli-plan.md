@@ -48,7 +48,7 @@ contract-tested CLI output.
 
 ### Task 1.1: Write command contract and workflow spec
 - **Location**:
-  - `docs/specs/memo-cli-command-contract-v1.md`
+  - `crates/memo-cli/docs/specs/memo-cli-command-contract-v1.md`
   - `crates/memo-cli/README.md`
 - **Description**: Define command semantics for `add`, `list`, `search`, `report`, `fetch`, and
   `apply`, including argument flags, exit code policy, stdout vs stderr boundaries, and explicit
@@ -62,13 +62,13 @@ contract-tested CLI output.
   - README usage examples align with the command contract document.
   - Text-mode defaults and JSON opt-in behavior are explicitly documented.
 - **Validation**:
-  - `rg -n "add|list|search|report|fetch|apply|--json|--format json" docs/specs/memo-cli-command-contract-v1.md`
-  - `rg -n "capture|enrichment|fetch|apply|report|stdout|stderr|exit code" docs/specs/memo-cli-command-contract-v1.md`
+  - `rg -n "add|list|search|report|fetch|apply|--json|--format json" crates/memo-cli/docs/specs/memo-cli-command-contract-v1.md`
+  - `rg -n "capture|enrichment|fetch|apply|report|stdout|stderr|exit code" crates/memo-cli/docs/specs/memo-cli-command-contract-v1.md`
   - `rg -n "Usage|Commands|JSON" crates/memo-cli/README.md`
 
 ### Task 1.2: Define SQLite schema and lifecycle rules
 - **Location**:
-  - `docs/specs/memo-cli-storage-schema-v1.md`
+  - `crates/memo-cli/docs/specs/memo-cli-storage-schema-v1.md`
   - `crates/memo-cli/src/storage/sql/schema_v1.sql`
 - **Description**: Define schema and lifecycle rules for `inbox_items`, `item_derivations`,
   `tags`, `item_tags`, and FTS index tables, including immutability of raw records, active
@@ -82,12 +82,12 @@ contract-tested CLI output.
   - Derivation versioning and active selection logic are documented with conflict handling rules.
   - SQL schema file and spec stay aligned on table and column names.
 - **Validation**:
-  - `rg -n "inbox_items|item_derivations|tags|item_tags|fts5" docs/specs/memo-cli-storage-schema-v1.md`
+  - `rg -n "inbox_items|item_derivations|tags|item_tags|fts5" crates/memo-cli/docs/specs/memo-cli-storage-schema-v1.md`
   - `rg -n "create table|inbox_items|item_derivations|fts" crates/memo-cli/src/storage/sql/schema_v1.sql`
 
 ### Task 1.3: Define machine-consumable JSON contract v1
 - **Location**:
-  - `docs/specs/memo-cli-json-contract-v1.md`
+  - `crates/memo-cli/docs/specs/memo-cli-json-contract-v1.md`
   - `docs/specs/cli-service-json-contract-guideline-v1.md`
 - **Description**: Specify success and error envelopes for all JSON-capable commands, including
   stable error codes, required top-level keys, and representative examples for `fetch`, `apply`,
@@ -101,12 +101,12 @@ contract-tested CLI output.
   - Error payload examples include `code` and `message`, with optional structured `details`.
   - Contract explicitly states that sensitive fields are never emitted.
 - **Validation**:
-  - `rg -n "\"schema_version\"|\"command\"|\"ok\"|\"result\"|\"results\"|\"error\"" docs/specs/memo-cli-json-contract-v1.md`
-  - `rg -n "sensitive|redact|token|secret|code|message" docs/specs/memo-cli-json-contract-v1.md`
+  - `rg -n "\"schema_version\"|\"command\"|\"ok\"|\"result\"|\"results\"|\"error\"" crates/memo-cli/docs/specs/memo-cli-json-contract-v1.md`
+  - `rg -n "sensitive|redact|token|secret|code|message" crates/memo-cli/docs/specs/memo-cli-json-contract-v1.md`
 
 ### Task 1.4: Record crate publishability policy and release gates
 - **Location**:
-  - `docs/specs/memo-cli-release-policy.md`
+  - `crates/memo-cli/docs/specs/memo-cli-release-policy.md`
   - `crates/memo-cli/Cargo.toml`
   - `release/crates-io-publish-order.txt`
 - **Description**: Define and document publishable-first release policy for MVP, including required
@@ -121,7 +121,7 @@ contract-tested CLI output.
   - `release/crates-io-publish-order.txt` contains `nils-memo-cli` in dependency-safe position.
   - Policy includes required dry-run verification command for publish readiness.
 - **Validation**:
-  - `rg -n "publishable-first|crates.io|release order|dry-run" docs/specs/memo-cli-release-policy.md`
+  - `rg -n "publishable-first|crates.io|release order|dry-run" crates/memo-cli/docs/specs/memo-cli-release-policy.md`
   - `rg -n "^name = \"nils-memo-cli\"|^version = |^description = |^repository = " crates/memo-cli/Cargo.toml`
   - `bash -lc '! rg -n "^publish = false" crates/memo-cli/Cargo.toml'`
   - `rg -n "nils-memo-cli" release/crates-io-publish-order.txt`
@@ -382,7 +382,7 @@ contract-tested CLI output.
 
 ### Task 4.3: Verify publishable-first release policy execution
 - **Location**:
-  - `docs/specs/memo-cli-release-policy.md`
+  - `crates/memo-cli/docs/specs/memo-cli-release-policy.md`
   - `crates/memo-cli/Cargo.toml`
   - `scripts/publish-crates.sh`
   - `release/crates-io-publish-order.txt`
@@ -398,7 +398,7 @@ contract-tested CLI output.
   - Dry-run publish command is executable and succeeds for `nils-memo-cli`.
   - Validation outputs are recorded in PR summary notes.
 - **Validation**:
-  - `rg -n "publishable-first|crates.io|dry-run" docs/specs/memo-cli-release-policy.md`
+  - `rg -n "publishable-first|crates.io|dry-run" crates/memo-cli/docs/specs/memo-cli-release-policy.md`
   - `bash -lc '! rg -n "^publish = false" crates/memo-cli/Cargo.toml'`
   - `rg -n "nils-memo-cli" release/crates-io-publish-order.txt`
   - `scripts/publish-crates.sh --dry-run --crate nils-memo-cli`

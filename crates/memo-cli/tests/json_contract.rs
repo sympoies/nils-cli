@@ -45,6 +45,13 @@ fn json_contract() {
         list_json.get("results").is_some(),
         "results key should exist"
     );
+    assert!(
+        list_json.get("pagination").is_some(),
+        "pagination key should exist"
+    );
+    assert_eq!(list_json["pagination"]["limit"], 20);
+    assert_eq!(list_json["pagination"]["offset"], 0);
+    assert_eq!(list_json["pagination"]["returned"], 1);
     let first_list_item = &list_json["results"][0];
     assert!(
         first_list_item.get("content_type").is_some(),
@@ -54,6 +61,26 @@ fn json_contract() {
         first_list_item.get("validation_status").is_some(),
         "list item should include validation_status key"
     );
+
+    let search_output = run_memo_cli(&db_path, &["--json", "search", "ssd", "--limit", "5"], None);
+    assert_eq!(
+        search_output.code,
+        0,
+        "search failed: {}",
+        search_output.stderr_text()
+    );
+    let search_json = parse_json_stdout(&search_output);
+    assert_eq!(search_json["schema_version"], "memo-cli.search.v1");
+    assert_eq!(search_json["command"], "memo-cli search");
+    assert_eq!(search_json["ok"], true);
+    assert!(
+        search_json.get("results").is_some(),
+        "results key should exist"
+    );
+    assert!(search_json.get("meta").is_some(), "meta key should exist");
+    assert_eq!(search_json["meta"]["query"], "ssd");
+    assert_eq!(search_json["meta"]["limit"], 5);
+    assert_eq!(search_json["meta"]["state"], "all");
 
     let fetch_output = run_memo_cli(&db_path, &["--json", "fetch", "--limit", "1"], None);
     assert_eq!(

@@ -58,7 +58,7 @@ unless an explicit valid `--at` override is provided. Raw capture remains append
 
 ### Task 1.1: Align command contract with timestamp semantics and Approach A
 - **Location**:
-  - `docs/specs/memo-cli-command-contract-v1.md`
+  - `crates/memo-cli/docs/specs/memo-cli-command-contract-v1.md`
   - `crates/memo-cli/src/cli.rs`
   - `crates/memo-cli/src/commands/add.rs`
 - **Description**: Update the command contract to explicitly state that `add` accepts memo text and
@@ -73,14 +73,14 @@ unless an explicit valid `--at` override is provided. Raw capture remains append
   - Timestamp behavior is explicitly documented for default and `--at` override paths.
   - No requirement implies validation gating in `add`.
 - **Validation**:
-  - `rg -n "memo-cli add|created_at|system-generated|append-only" docs/specs/memo-cli-command-contract-v1.md`
+  - `rg -n "memo-cli add|created_at|system-generated|append-only" crates/memo-cli/docs/specs/memo-cli-command-contract-v1.md`
   - `cargo run -p nils-memo-cli -- add --help`
 
 ### Task 1.2: Define format and validation taxonomy for common payloads
 - **Location**:
-  - `docs/specs/memo-cli-command-contract-v1.md`
-  - `docs/specs/memo-cli-json-contract-v1.md`
-  - `docs/specs/memo-cli-storage-schema-v1.md`
+  - `crates/memo-cli/docs/specs/memo-cli-command-contract-v1.md`
+  - `crates/memo-cli/docs/specs/memo-cli-json-contract-v1.md`
+  - `crates/memo-cli/docs/specs/memo-cli-storage-schema-v1.md`
 - **Description**: Define stable enum-like values for `content_type` and `validation_status`, with
   common-format coverage and deterministic fallbacks.
 - **Dependencies**:
@@ -92,12 +92,12 @@ unless an explicit valid `--at` override is provided. Raw capture remains append
   - Structured validation error shape is documented (`code`, `message`, optional `path`).
   - Compatibility rule states additive-only changes for v1.
 - **Validation**:
-  - `rg -n "content_type|validation_status|validation_errors|additive" docs/specs/memo-cli-json-contract-v1.md`
-  - `rg -n "url|json|yaml|xml|markdown|text|unknown" docs/specs/memo-cli-command-contract-v1.md`
+  - `rg -n "content_type|validation_status|validation_errors|additive" crates/memo-cli/docs/specs/memo-cli-json-contract-v1.md`
+  - `rg -n "url|json|yaml|xml|markdown|text|unknown" crates/memo-cli/docs/specs/memo-cli-command-contract-v1.md`
 
 ### Task 1.3: Freeze persistence strategy in derivation layer (no raw mutation)
 - **Location**:
-  - `docs/specs/memo-cli-storage-schema-v1.md`
+  - `crates/memo-cli/docs/specs/memo-cli-storage-schema-v1.md`
   - `crates/memo-cli/src/storage/sql/schema_v1.sql`
   - `crates/memo-cli/src/storage/derivations.rs`
 - **Description**: Finalize where metadata lives for phase 1 using Approach A: persist canonical
@@ -112,13 +112,13 @@ unless an explicit valid `--at` override is provided. Raw capture remains append
   - Tag naming conventions are documented and deterministic.
   - No schema migration is required for phase 1.
 - **Validation**:
-  - `rg -n "payload_json|tags|append-only|version" docs/specs/memo-cli-storage-schema-v1.md`
+  - `rg -n "payload_json|tags|append-only|version" crates/memo-cli/docs/specs/memo-cli-storage-schema-v1.md`
   - `rg -n "payload_json|item_tags|tags_text|append-only" crates/memo-cli/src/storage/sql/schema_v1.sql`
 
 ### Task 1.4: Define parity contract for `add --at` and `report --tz/--from/--to`
 - **Location**:
-  - `docs/specs/memo-cli-command-contract-v1.md`
-  - `docs/specs/memo-cli-json-contract-v1.md`
+  - `crates/memo-cli/docs/specs/memo-cli-command-contract-v1.md`
+  - `crates/memo-cli/docs/specs/memo-cli-json-contract-v1.md`
   - `crates/memo-cli/src/cli.rs`
   - `crates/memo-cli/src/commands/report.rs`
 - **Description**: Freeze argument semantics and precedence rules for currently missing options:
@@ -133,8 +133,8 @@ unless an explicit valid `--at` override is provided. Raw capture remains append
   - Error codes for invalid temporal arguments are documented and stable.
   - JSON output documents period/range fields for custom windows.
 - **Validation**:
-  - `rg -n "add --at|report week|report month|--tz|--from|--to|precedence|invalid-arguments" docs/specs/memo-cli-command-contract-v1.md`
-  - `rg -n "range|timezone|result.period|error.code" docs/specs/memo-cli-json-contract-v1.md`
+  - `rg -n "add --at|report week|report month|--tz|--from|--to|precedence|invalid-arguments" crates/memo-cli/docs/specs/memo-cli-command-contract-v1.md`
+  - `rg -n "range|timezone|result.period|error.code" crates/memo-cli/docs/specs/memo-cli-json-contract-v1.md`
 
 ## Sprint 2: Implementation of detector and apply integration
 **Goal**: Implement common-format detection + validation, spec-parity temporal flags, and persist results through `apply`.
@@ -167,7 +167,7 @@ unless an explicit valid `--at` override is provided. Raw capture remains append
 - **Location**:
   - `crates/memo-cli/src/commands/apply.rs`
   - `crates/memo-cli/src/storage/derivations.rs`
-  - `docs/specs/memo-cli-json-contract-v1.md`
+  - `crates/memo-cli/docs/specs/memo-cli-json-contract-v1.md`
 - **Description**: Extend apply parsing and output to accept optional metadata fields
   (`content_type`, `validation_status`, `validation_errors`) while preserving backward compatibility
   for existing agent payloads.
@@ -211,7 +211,7 @@ unless an explicit valid `--at` override is provided. Raw capture remains append
   - `crates/memo-cli/src/commands/list.rs`
   - `crates/memo-cli/src/commands/search.rs`
   - `crates/memo-cli/src/commands/report.rs`
-  - `docs/specs/memo-cli-json-contract-v1.md`
+  - `crates/memo-cli/docs/specs/memo-cli-json-contract-v1.md`
 - **Description**: Add additive metadata fields to machine-facing outputs so downstream automation
   can route by `content_type` and validation status without parsing free-form text.
 - **Dependencies**:
@@ -319,7 +319,7 @@ unless an explicit valid `--at` override is provided. Raw capture remains append
 ### Task 3.3: Execute full pre-delivery gates and record release notes
 - **Location**:
   - `DEVELOPMENT.md`
-  - `docs/specs/memo-cli-release-policy.md`
+  - `crates/memo-cli/docs/specs/memo-cli-release-policy.md`
   - `crates/memo-cli/Cargo.toml`
 - **Description**: Run mandatory quality gates, verify no contract breakage for existing commands,
   and capture release-policy notes for additive JSON changes.
