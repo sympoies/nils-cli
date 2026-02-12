@@ -4,6 +4,7 @@ use clap::{ArgAction, Parser, ValueEnum};
 #[value(rename_all = "kebab-case")]
 pub enum Operation {
     Info,
+    Generate,
     AutoOrient,
     Convert,
     Resize,
@@ -19,6 +20,7 @@ impl Operation {
     pub fn as_str(&self) -> &'static str {
         match self {
             Operation::Info => "info",
+            Operation::Generate => "generate",
             Operation::AutoOrient => "auto-orient",
             Operation::Convert => "convert",
             Operation::Resize => "resize",
@@ -32,11 +34,77 @@ impl Operation {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum GeneratePreset {
+    Info,
+    Success,
+    Warning,
+    Error,
+    Help,
+}
+
+#[allow(dead_code)]
+pub const GENERATE_DEFAULT_TO: &str = "png";
+#[allow(dead_code)]
+pub const GENERATE_DEFAULT_SIZE: &str = "64";
+#[allow(dead_code)]
+pub const GENERATE_DEFAULT_FG: &str = "#ffffff";
+#[allow(dead_code)]
+pub const GENERATE_DEFAULT_BG: &str = "#0f62fe";
+#[allow(dead_code)]
+pub const GENERATE_DEFAULT_STROKE_WIDTH: &str = "0";
+#[allow(dead_code)]
+pub const GENERATE_DEFAULT_PADDING: &str = "0";
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GenerateValidationRule {
+    pub when: &'static str,
+    pub expect: &'static str,
+}
+
+#[allow(dead_code)]
+pub const GENERATE_VALIDATION_MATRIX: [GenerateValidationRule; 8] = [
+    GenerateValidationRule {
+        when: "subcommand=generate",
+        expect: "--preset is required and repeatable",
+    },
+    GenerateValidationRule {
+        when: "subcommand=generate",
+        expect: "--to defaults to png and only accepts png|webp|svg",
+    },
+    GenerateValidationRule {
+        when: "subcommand=generate && variants=1",
+        expect: "--out is required",
+    },
+    GenerateValidationRule {
+        when: "subcommand=generate && variants>1",
+        expect: "--out-dir is required",
+    },
+    GenerateValidationRule {
+        when: "subcommand=generate",
+        expect: "--in-place is forbidden",
+    },
+    GenerateValidationRule {
+        when: "subcommand=generate",
+        expect: "--in/--recursive/--glob are forbidden",
+    },
+    GenerateValidationRule {
+        when: "subcommand=generate",
+        expect: "--size accepts integer pixels (fallback default when omitted)",
+    },
+    GenerateValidationRule {
+        when: "subcommand=generate",
+        expect: "--fg/--bg/--stroke accept color strings",
+    },
+];
+
 #[derive(Debug, Parser)]
 #[command(
     name = "image-processing",
-    about = "Batch image transformations (convert/resize/rotate/crop/pad/optimize).",
-    after_help = "Notes:\n  - Output-producing subcommands require exactly one output mode: --out, --out-dir, or --in-place (with --yes).\n  - Use --json for machine-readable output (stdout JSON only; logs go to stderr).\n"
+    about = "Batch image transformations plus deterministic generate presets.",
+    after_help = "Notes:\n  - Output-producing subcommands require exactly one output mode: --out, --out-dir, or --in-place (with --yes).\n  - generate requires --preset and does not read --in or allow --in-place.\n  - Use --json for machine-readable output (stdout JSON only; logs go to stderr).\n"
 )]
 pub struct Cli {
     #[arg(value_enum)]
@@ -78,7 +146,26 @@ pub struct Cli {
     #[arg(long)]
     pub background: Option<String>,
 
-    // convert / optimize
+    // generate
+    #[arg(
+        long = "preset",
+        value_enum,
+        action = ArgAction::Append,
+        required_if_eq("subcommand", "generate")
+    )]
+    pub presets: Vec<GeneratePreset>,
+    #[arg(long = "fg")]
+    pub fg: Option<String>,
+    #[arg(long = "bg")]
+    pub bg: Option<String>,
+    #[arg(long)]
+    pub stroke: Option<String>,
+    #[arg(long = "stroke-width")]
+    pub stroke_width: Option<f64>,
+    #[arg(long)]
+    pub padding: Option<f64>,
+
+    // convert / optimize / generate
     #[arg(long = "to")]
     pub to: Option<String>,
     #[arg(long)]
@@ -105,6 +192,7 @@ pub struct Cli {
     // crop
     #[arg(long)]
     pub rect: Option<String>,
+    // crop: WxH, generate: integer pixels
     #[arg(long)]
     pub size: Option<String>,
     #[arg(long, default_value = "center")]
