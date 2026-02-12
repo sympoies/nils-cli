@@ -86,6 +86,7 @@ Every user-facing CLI command surface must have explicit output behavior.
 
 ## Command and UX Rules
 - Use clap-based parsing with stable help text.
+- Root CLI parser must include `#[command(version)]` so `-V, --version` is always available.
 - Usage errors return `64` unless command-specific legacy contract requires otherwise.
 - Keep warning/error prefix conventions consistent with neighboring crates.
 - If completion aliases are provided, keep `completions/zsh/` and `completions/bash/` synchronized.

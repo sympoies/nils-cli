@@ -17,6 +17,7 @@ mod unlock;
 #[derive(Parser)]
 #[command(
     name = "git-lock",
+    version,
     disable_help_flag = true,
     disable_help_subcommand = true
 )]
@@ -70,6 +71,11 @@ fn run() -> i32 {
         return 0;
     }
 
+    if args.len() > 1 && is_version(&args[1]) {
+        println!("git-lock {}", env!("CARGO_PKG_VERSION"));
+        return 0;
+    }
+
     if !nils_common::git::is_git_repo().unwrap_or(false) {
         println!("{}", messages::NOT_GIT_REPO);
         return 1;
@@ -115,6 +121,10 @@ fn is_help(arg: &str) -> bool {
     matches!(arg, "help" | "--help" | "-h")
 }
 
+fn is_version(arg: &str) -> bool {
+    matches!(arg, "--version" | "-V")
+}
+
 fn is_known_command(arg: &str) -> bool {
     matches!(
         arg,
@@ -124,7 +134,7 @@ fn is_known_command(arg: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_help, is_known_command};
+    use super::{is_help, is_known_command, is_version};
 
     #[test]
     fn is_help_matches_expected_flags() {
@@ -132,6 +142,13 @@ mod tests {
         assert!(is_help("--help"));
         assert!(is_help("-h"));
         assert!(!is_help("lock"));
+    }
+
+    #[test]
+    fn is_version_matches_expected_flags() {
+        assert!(is_version("--version"));
+        assert!(is_version("-V"));
+        assert!(!is_version("lock"));
     }
 
     #[test]

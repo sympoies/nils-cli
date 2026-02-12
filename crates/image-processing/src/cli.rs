@@ -72,6 +72,7 @@ pub const FROM_SVG_VALIDATION_MATRIX: [FromSvgValidationRule; 6] = [
 #[derive(Debug, Parser)]
 #[command(
     name = "image-processing",
+    version,
     about = "Batch image transformations with svg-source and svg-validation flows.",
     after_help = "Notes:\n  - Output-producing subcommands require exactly one output mode: --out, --out-dir, or --in-place (with --yes).\n  - convert --from-svg uses the Rust SVG backend and requires --out + --to png|webp|svg.\n  - svg-validate sanitizes a single svg input and requires --in + --out.\n  - Use --json for machine-readable output (stdout JSON only; logs go to stderr).\n"
 )]

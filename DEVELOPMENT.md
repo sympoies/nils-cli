@@ -18,6 +18,12 @@
 - Run CLI template: `cargo run -p nils-cli-template -- --help`
 - Run git-scope: `cargo run -p nils-git-scope -- --help`
 
+## CLI version policy
+
+- Every user-facing CLI must expose a root `-V, --version` flag.
+- For clap-based CLIs, set `#[command(version)]` on the root `Parser`.
+- `--help` output should include `-V, --version` in options/help text (auto-generated or custom).
+
 ## Local install (release)
 
 - Build + install all workspace binaries into `~/.local/nils-cli/`:

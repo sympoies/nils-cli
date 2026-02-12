@@ -71,3 +71,30 @@ fn help_subcommand_succeeds_outside_git_repo() {
         "unexpected repo warning: {stdout}"
     );
 }
+
+#[test]
+fn version_flag_succeeds_outside_git_repo() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let output = Command::new(git_scope_bin())
+        .args(["--version"])
+        .current_dir(temp.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run git-scope --version");
+
+    assert!(
+        output.status.success(),
+        "expected exit code 0, got: {output:?}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("git-scope"),
+        "missing binary name: {stdout}"
+    );
+    assert!(
+        !stdout.contains("Not a Git repository"),
+        "unexpected repo warning: {stdout}"
+    );
+}
