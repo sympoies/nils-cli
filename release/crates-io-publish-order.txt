@@ -5,6 +5,7 @@ nils-term
 nils-agent-provider-claude
 nils-agent-provider-gemini
 nils-git-cli
+nils-memo-cli
 nils-screen-record
 nils-api-testing-core
 nils-cli-template

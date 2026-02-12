@@ -1,0 +1,8 @@
+[package]
+name = "nils-memo-cli"
+version = "0.3.2"
+edition.workspace = true
+license.workspace = true
+
+description = "CLI crate for nils-memo-cli in the nils-cli workspace."
+repository = "https://github.com/graysurf/nils-cli"
