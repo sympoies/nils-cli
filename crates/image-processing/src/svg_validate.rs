@@ -254,8 +254,9 @@ pub fn render_svg_to_output(
         "png" | "webp" => {
             if !dry_run {
                 util::ensure_parent_dir(output_path, false)?;
-                let tree = usvg::Tree::from_str(&doc.content, &usvg::Options::default())
-                    .map_err(|err| anyhow::anyhow!("failed to parse sanitized svg: {err}"))?;
+                let tree =
+                    resvg::usvg::Tree::from_str(&doc.content, &resvg::usvg::Options::default())
+                        .map_err(|err| anyhow::anyhow!("failed to parse sanitized svg: {err}"))?;
                 let size = tree.size().to_int_size();
                 let width = size.width();
                 let height = size.height();

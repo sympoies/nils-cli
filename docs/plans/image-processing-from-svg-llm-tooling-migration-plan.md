@@ -105,8 +105,8 @@ This plan replaces the current preset-only `generate` command with a source-SVG-
 **Demo/Validation**:
 - Command(s):
   - `mkdir -p out/plan-from-svg`
-  - `cargo run -p nils-image-processing -- convert --from-svg fixtures/image-processing/sample-icon.svg --to png --out out/plan-from-svg/sample.png --json`
-  - `cargo run -p nils-image-processing -- convert --from-svg fixtures/image-processing/sample-icon.svg --to webp --out out/plan-from-svg/sample.webp --json`
+  - `cargo run -p nils-image-processing -- convert --from-svg crates/image-processing/tests/fixtures/sample-icon.svg --to png --out out/plan-from-svg/sample.png --json`
+  - `cargo run -p nils-image-processing -- convert --from-svg crates/image-processing/tests/fixtures/sample-icon.svg --to webp --out out/plan-from-svg/sample.webp --json`
 - Verify:
   - Rendering works without ImageMagick for `--from-svg` path.
   - Summary JSON records SVG source mode and output metadata.
@@ -148,8 +148,8 @@ This plan replaces the current preset-only `generate` command with a source-SVG-
   - Invalid/malformed SVG returns actionable usage/runtime errors.
   - Output metadata (format, size, alpha/channels when applicable) is filled consistently.
 - **Validation**:
-  - `cargo run -p nils-image-processing -- convert --from-svg fixtures/image-processing/sample-icon.svg --to png --out out/plan-from-svg/sample.png --json`
-  - `cargo run -p nils-image-processing -- convert --from-svg fixtures/image-processing/sample-icon.svg --to webp --out out/plan-from-svg/sample.webp --json`
+  - `cargo run -p nils-image-processing -- convert --from-svg crates/image-processing/tests/fixtures/sample-icon.svg --to png --out out/plan-from-svg/sample.png --json`
+  - `cargo run -p nils-image-processing -- convert --from-svg crates/image-processing/tests/fixtures/sample-icon.svg --to webp --out out/plan-from-svg/sample.webp --json`
   - `test -f out/plan-from-svg/sample.png && test -f out/plan-from-svg/sample.webp`
 
 ### Task 2.3: Integrate toolchain/output-mode gating for SVG source mode
@@ -167,8 +167,8 @@ This plan replaces the current preset-only `generate` command with a source-SVG-
   - `--from-svg` forbids incompatible flags (`--in`, `--recursive`, `--glob`, `--in-place`) with exit code 2.
 - **Validation**:
   - `cargo build -p nils-image-processing`
-  - `env PATH='' target/debug/image-processing convert --from-svg fixtures/image-processing/sample-icon.svg --to png --out out/plan-from-svg/path-empty.png --json`
-  - `sh -c "env PATH='' target/debug/image-processing info --in fixtures/image-processing/sample-raster.png --json >/dev/null 2>&1; test $? -eq 1"`
+  - `env PATH='' target/debug/image-processing convert --from-svg crates/image-processing/tests/fixtures/sample-icon.svg --to png --out out/plan-from-svg/path-empty.png --json`
+  - `sh -c "env PATH='' target/debug/image-processing info --in crates/image-processing/tests/fixtures/sample-raster.png --json >/dev/null 2>&1; test $? -eq 1"`
 
 ### Task 2.4: Update summary/report contract for SVG-source runs
 - **Location**:
@@ -192,7 +192,7 @@ This plan replaces the current preset-only `generate` command with a source-SVG-
 **Goal**: Provide practical, provider-agnostic tooling so an agent can turn user intent into valid SVG artifacts before raster export.
 **Demo/Validation**:
 - Command(s):
-  - `SVG_LLM_CMD='cat fixtures/image-processing/llm-svg-valid.svg' scripts/image-processing/llm_svg_pipeline.sh --intent "traffic car icon" --out-svg out/plan-llm/traffic-car.svg --dry-run`
+  - `SVG_LLM_CMD='cat crates/image-processing/tests/fixtures/llm-svg-valid.svg' scripts/image-processing/llm_svg_pipeline.sh --intent "traffic car icon" --out-svg out/plan-llm/traffic-car.svg --dry-run`
   - `cargo run -p nils-image-processing -- svg-validate --in out/plan-llm/traffic-car.svg --out out/plan-llm/traffic-car.cleaned.svg`
   - `cargo run -p nils-image-processing -- convert --from-svg out/plan-llm/traffic-car.cleaned.svg --to png --out out/plan-llm/traffic-car.png --json`
 - Verify:
@@ -235,8 +235,8 @@ This plan replaces the current preset-only `generate` command with a source-SVG-
   - Sanitized SVG output is deterministic for identical input.
   - Validation command has integration coverage for pass/fail cases.
 - **Validation**:
-  - `cargo run -p nils-image-processing -- svg-validate --in fixtures/image-processing/llm-svg-valid.svg --out out/plan-llm/valid.cleaned.svg`
-  - `sh -c "cargo run -p nils-image-processing -- svg-validate --in fixtures/image-processing/llm-svg-invalid.svg --out out/plan-llm/invalid.cleaned.svg >/dev/null 2>&1; test $? -ne 0"`
+  - `cargo run -p nils-image-processing -- svg-validate --in crates/image-processing/tests/fixtures/llm-svg-valid.svg --out out/plan-llm/valid.cleaned.svg`
+  - `sh -c "cargo run -p nils-image-processing -- svg-validate --in crates/image-processing/tests/fixtures/llm-svg-invalid.svg --out out/plan-llm/invalid.cleaned.svg >/dev/null 2>&1; test $? -ne 0"`
 
 ### Task 3.3: Add provider-agnostic LLM orchestration script with repair loop hooks
 - **Location**:
@@ -254,14 +254,14 @@ This plan replaces the current preset-only `generate` command with a source-SVG-
   - Repair prompt artifact is emitted when validation fails.
 - **Validation**:
   - `zsh -f tests/zsh/image-processing-llm-svg.test.zsh`
-  - `SVG_LLM_CMD='cat fixtures/image-processing/llm-svg-valid.svg' scripts/image-processing/llm_svg_pipeline.sh --intent "sun icon" --out-svg out/plan-llm/sun.svg --dry-run`
+  - `SVG_LLM_CMD='cat crates/image-processing/tests/fixtures/llm-svg-valid.svg' scripts/image-processing/llm_svg_pipeline.sh --intent "sun icon" --out-svg out/plan-llm/sun.svg --dry-run`
   - `test -f out/plan-llm/sun.svg`
   - `test -f out/plan-llm/sun.prompt.md`
 
 ### Task 3.4: Add end-to-end fixture path for intent -> SVG -> PNG workflow
 - **Location**:
   - `crates/image-processing/tests/core_flows.rs`
-  - `fixtures/image-processing/llm-svg-valid.svg`
+  - `crates/image-processing/tests/fixtures/llm-svg-valid.svg`
   - `docs/runbooks/image-processing-llm-svg.md`
 - **Description**: Add deterministic E2E fixture tests and runbook examples that prove generated/sanitized SVG can be rendered by `--from-svg` into expected PNG/WebP outputs.
 - **Dependencies**:
@@ -273,7 +273,7 @@ This plan replaces the current preset-only `generate` command with a source-SVG-
   - Artifact paths and contracts are consistent across docs/tests/scripts.
 - **Validation**:
   - `cargo test -p nils-image-processing --test core_flows`
-  - `cargo run -p nils-image-processing -- convert --from-svg fixtures/image-processing/llm-svg-valid.svg --to png --out out/plan-llm/fixture.png --json`
+  - `cargo run -p nils-image-processing -- convert --from-svg crates/image-processing/tests/fixtures/llm-svg-valid.svg --to png --out out/plan-llm/fixture.png --json`
 
 ## Sprint 4: Documentation/diagnostics cleanup and release-quality gates
 **Goal**: Ensure repository-facing contracts are internally consistent and fully validated after the breaking change.
@@ -344,7 +344,7 @@ This plan replaces the current preset-only `generate` command with a source-SVG-
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 85`
   - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
   - `sh -c "mkdir -p target/plan-contract-check && cargo run -p nils-image-processing -- generate >/dev/null 2>target/plan-contract-check/generate-removed.err; test $? -eq 2; rg -qi 'unknown subcommand|unrecognized subcommand' target/plan-contract-check/generate-removed.err"`
-  - `cargo run -p nils-image-processing -- convert --from-svg fixtures/image-processing/sample-icon.svg --to png --out out/plan-from-svg/final-smoke.png --json`
+  - `cargo run -p nils-image-processing -- convert --from-svg crates/image-processing/tests/fixtures/sample-icon.svg --to png --out out/plan-from-svg/final-smoke.png --json`
 
 ## Testing Strategy
 - Unit:
