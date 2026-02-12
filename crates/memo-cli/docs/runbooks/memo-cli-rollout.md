@@ -13,6 +13,8 @@ enrichment.
 3. Validate list/search/report basics:
    - `memo-cli list --limit 5`
    - `memo-cli search "rollout"`
+   - `memo-cli update itm_00000001 "rollout updated capture"`
+   - `memo-cli delete itm_00000002 --hard`
    - `memo-cli report week`
    - `memo-cli report week --tz Asia/Taipei`
    - `memo-cli report month --from 2026-02-01T00:00:00Z --to 2026-02-29T23:59:59Z --json`
@@ -21,7 +23,9 @@ enrichment.
    - `memo-cli apply --json --dry-run --stdin < enrichment-batch.json`
 
 ## Smoke test expectations
-- `add` returns a new `item_id` without mutating prior entries.
+- `add` returns a new `item_id`.
+- `update` clears downstream derivations/workflow rows and returns item to pending.
+- `delete --hard` removes the item from list/search/fetch/report surfaces.
 - `fetch --json` returns deterministic ordering and valid envelope keys.
 - `apply --dry-run` validates payloads without writing derivation rows.
 - `report` shows non-negative totals and stable period/range fields.
@@ -53,7 +57,7 @@ enrichment.
 1. Pause write-back automation immediately:
    - stop `memo-cli apply` jobs and keep capture-only mode (`add`, `list`, `search`, `report`).
 2. Continue capture durability:
-   - keep `memo-cli add` enabled; do not rewrite existing raw rows.
+   - keep `memo-cli add` enabled; pause `update`/`delete` until issue is triaged.
 3. Revert to last known-good implementation commit for `nils-memo-cli`.
 4. Re-run validation gates before re-enabling automation:
    - `cargo test -p nils-memo-cli memo_flow`

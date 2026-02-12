@@ -68,6 +68,10 @@ pub struct Cli {
 pub enum MemoCommand {
     /// Capture one raw memo entry
     Add(AddArgs),
+    /// Update one memo entry and reset derived workflow state
+    Update(UpdateArgs),
+    /// Hard-delete one memo entry and all dependent data
+    Delete(DeleteArgs),
     /// List memo entries in deterministic order
     List(ListArgs),
     /// Search memo entries with FTS-backed query
@@ -92,6 +96,25 @@ pub struct AddArgs {
     /// Capture timestamp (RFC3339)
     #[arg(long)]
     pub at: Option<String>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct UpdateArgs {
+    /// Item identifier (itm_XXXXXXXX or integer id)
+    pub item_id: String,
+
+    /// Updated memo text
+    pub text: String,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct DeleteArgs {
+    /// Item identifier (itm_XXXXXXXX or integer id)
+    pub item_id: String,
+
+    /// Confirm hard-delete behavior
+    #[arg(long)]
+    pub hard: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -189,6 +212,8 @@ impl Cli {
     pub fn command_id(&self) -> &'static str {
         match self.command {
             MemoCommand::Add(_) => "memo-cli add",
+            MemoCommand::Update(_) => "memo-cli update",
+            MemoCommand::Delete(_) => "memo-cli delete",
             MemoCommand::List(_) => "memo-cli list",
             MemoCommand::Search(_) => "memo-cli search",
             MemoCommand::Report(_) => "memo-cli report",
@@ -200,6 +225,8 @@ impl Cli {
     pub fn schema_version(&self) -> &'static str {
         match self.command {
             MemoCommand::Add(_) => "memo-cli.add.v1",
+            MemoCommand::Update(_) => "memo-cli.update.v1",
+            MemoCommand::Delete(_) => "memo-cli.delete.v1",
             MemoCommand::List(_) => "memo-cli.list.v1",
             MemoCommand::Search(_) => "memo-cli.search.v1",
             MemoCommand::Report(_) => "memo-cli.report.v1",
@@ -267,6 +294,8 @@ pub(crate) mod tests {
             .map(|sub| sub.get_name().to_string())
             .collect::<Vec<_>>();
         assert!(subcommands.contains(&"add".to_string()));
+        assert!(subcommands.contains(&"update".to_string()));
+        assert!(subcommands.contains(&"delete".to_string()));
         assert!(subcommands.contains(&"list".to_string()));
         assert!(subcommands.contains(&"search".to_string()));
         assert!(subcommands.contains(&"report".to_string()));

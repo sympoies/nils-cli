@@ -7,6 +7,36 @@ pub fn print_add(item_id: i64, created_at: &str) {
     println!("added {} at {}", format_item_id(item_id), created_at);
 }
 
+pub fn print_update(
+    item_id: i64,
+    updated_at: &str,
+    cleared_derivations: i64,
+    cleared_workflow_anchors: i64,
+) {
+    println!(
+        "updated {} at {} (state=pending, cleared_derivations={}, cleared_workflows={})",
+        format_item_id(item_id),
+        updated_at,
+        cleared_derivations,
+        cleared_workflow_anchors
+    );
+}
+
+pub fn print_delete(
+    item_id: i64,
+    deleted_at: &str,
+    removed_derivations: i64,
+    removed_workflow_anchors: i64,
+) {
+    println!(
+        "deleted {} at {} (removed_derivations={}, removed_workflows={})",
+        format_item_id(item_id),
+        deleted_at,
+        removed_derivations,
+        removed_workflow_anchors
+    );
+}
+
 pub fn print_list(rows: &[ListItem]) {
     if rows.is_empty() {
         println!("(no items)");
@@ -220,6 +250,8 @@ mod tests {
     #[test]
     fn print_text_output_paths_are_exercised() {
         print_add(1, "2026-02-12T10:00:00Z");
+        print_update(1, "2026-02-12T10:30:00Z", 2, 1);
+        print_delete(1, "2026-02-12T10:40:00Z", 2, 1);
         print_list(&[]);
         print_list(&sample_list_rows());
 

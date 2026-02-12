@@ -1,4 +1,6 @@
-# memo-cli Storage Schema v1
+# memo-cli Storage Schema v0
+
+> Archived snapshot: pre-launch v1 contract archived as v0 when active v1 was rebaselined for update/delete support.
 
 ## Purpose
 Define the SQLite v1 schema for durable inbox capture and agent derivation workflows used by:
@@ -11,13 +13,11 @@ This spec is aligned 1:1 with:
 - `crates/memo-cli/src/storage/sql/schema_v1.sql`
 
 ## Design Principles
-- Raw capture supports explicit maintenance operations (`update`, `delete --hard`).
+- Raw capture is append-only (`inbox_items` rows cannot be updated or deleted).
 - Derivations are versioned by item and remain queryable for audit.
 - Exactly one accepted active derivation is allowed per item.
 - Reprocessing is idempotent by `(item_id, derivation_hash)`.
 - Full-text search uses `fts5` over a denormalized per-item search document.
-- Workflow extension data must be anchored to raw items through
-  `workflow_item_anchors` with cascade cleanup.
 - Phase 1 format/validation metadata follows Approach A:
   canonical values live in derivation `payload_json`, with deterministic
   query tags (`fmt:*`, `val:*`).
@@ -26,7 +26,7 @@ This spec is aligned 1:1 with:
 ## Core Tables
 
 ### `inbox_items`
-Raw capture rows.
+Immutable raw capture rows.
 
 Columns:
 - `item_id integer primary key`
@@ -37,6 +37,9 @@ Columns:
 
 Constraints:
 - `source` and `raw_text` must be non-empty after trim.
+- append-only guard via triggers:
+  - `trg_inbox_items_append_only_update`
+  - `trg_inbox_items_append_only_delete`
 
 Indexes:
 - `idx_inbox_items_created_item_desc(created_at desc, item_id desc)`
@@ -92,6 +95,7 @@ Phase 1 metadata payload contract (Approach A):
   - `validation_status`: `valid|invalid|unknown|skipped`
   - `validation_errors[]`: objects with `code`, `message`, optional `path`
 - Metadata is derivation-scoped and versioned with each derivation row.
+- Raw rows in `inbox_items` remain immutable and are never rewritten.
 
 ### `tags`
 Canonical tag dictionary.
@@ -137,48 +141,6 @@ Why:
 - Keeps historical tag assignments per derivation version.
 - Supports top-tag report queries from active derivations.
 
-### `workflow_item_anchors`
-Extension ownership anchors for typed workflow records.
-
-Columns:
-- `anchor_id integer primary key`
-- `item_id integer not null references inbox_items(item_id) on delete cascade`
-- `workflow_type text not null`
-- `created_at text not null default current UTC timestamp`
-- `updated_at text not null default current UTC timestamp`
-
-Constraints:
-- `workflow_type` is non-empty
-- `unique(item_id, workflow_type)`
-
-Indexes:
-- `idx_workflow_item_anchors_type_item(workflow_type, item_id)`
-
-Why:
-- Standardized ownership root so future workflow tables can cleanly cascade from
-  one item.
-
-### `workflow_game_entries` (example typed workflow table)
-Example extension table for game-oriented enrichment data.
-
-Columns:
-- `game_entry_id integer primary key`
-- `anchor_id integer not null references workflow_item_anchors(anchor_id) on delete cascade`
-- `game_name text not null`
-- `source_url text`
-- `description text`
-- `created_at text not null default current UTC timestamp`
-
-Constraints:
-- `game_name` is non-empty
-
-Indexes:
-- `idx_workflow_game_entries_anchor(anchor_id)`
-
-Why:
-- Demonstrates approved extension pattern using anchor ownership and cascade
-  cleanup.
-
 ## FTS5 Strategy
 
 ### `item_search_documents`
@@ -207,10 +169,8 @@ Sync triggers:
   - `trg_item_search_documents_au`
 - Projection refresh from source tables:
   - `trg_inbox_items_ai_search_document`
-  - `trg_inbox_items_au_refresh_search_document`
   - `trg_item_derivations_ai_refresh_search_document`
   - `trg_item_derivations_au_refresh_search_document`
-  - `trg_item_derivations_ad_refresh_search_document`
   - `trg_item_tags_ai_refresh_search_document`
   - `trg_item_tags_ad_refresh_search_document`
 
@@ -220,17 +180,14 @@ Why:
 
 ## Lifecycle Rules
 
-### 1. Raw capture lifecycle (`add`, `update`, `delete`)
-- `add` inserts new raw rows into `inbox_items`.
-- `update` rewrites one `raw_text` value and clears dependent derivation/extension
-  rows for that item so it returns to pending state.
-- `delete --hard` removes one item plus dependent derivation/search/extension rows.
+### 1. Raw append-only (`add`, `list`, `fetch`)
+- `add` only inserts into `inbox_items` (never update/delete).
+- Any correction to user intent is modeled by adding a new item, not rewriting an old row.
 
 ### 2. Derivation versioning (`apply`)
 - `apply` inserts a new `item_derivations` row per accepted new payload.
 - `derivation_version` must be strictly sequential per item (guarded by trigger).
 - Prior derivations remain queryable and are never removed by normal flow.
-- `update` and `delete --hard` are explicit maintenance flows that may clear rows.
 
 ### 3. Active selection
 - Active row criteria: `is_active=1 and status='accepted'`.
@@ -258,18 +215,10 @@ Why:
 - Canonical metadata is persisted in `item_derivations.payload_json`.
 - Query-friendly metadata is mirrored through `tags` + `item_tags` using
   deterministic `fmt:*` and `val:*` tags.
-- `update` may replace `inbox_items.raw_text`; metadata for previous raw text is
-  dropped through derivation cleanup.
+- `inbox_items.raw_text` remains immutable; metadata updates are modeled as new
+  derivation versions, not raw-row mutation.
 - Existing `payload_json`, `tags`, and `item_tags` structures are reused, so no
   schema migration is required for phase 1.
-
-### 7. Workflow extension ownership and cleanup
-- Extension records must be rooted at `workflow_item_anchors`.
-- `workflow_item_anchors.item_id` must use `on delete cascade`.
-- Typed workflow tables (for example game/health/sport) must FK to
-  `workflow_item_anchors.anchor_id` with `on delete cascade`.
-- `on delete restrict` is disallowed on the cleanup path from extension rows to
-  raw items.
 
 ## Query Path Mapping
 - `list --state all`:
@@ -284,13 +233,10 @@ Why:
   - capture totals from `inbox_items.created_at`
   - category rollups from active `item_derivations.category`
   - tag rollups from active derivations + `item_tags` + `tags`.
-- Workflow-specific queries:
-  - join typed workflow tables through `workflow_item_anchors`.
 
 ## Alignment Contract
 The SQL file must keep these object names unchanged:
-- tables: `inbox_items`, `item_derivations`, `tags`, `item_tags`,
-  `workflow_item_anchors`, `workflow_game_entries`, `item_search_documents`
+- tables: `inbox_items`, `item_derivations`, `tags`, `item_tags`, `item_search_documents`
 - virtual table: `item_search_fts`
 - critical indexes:
   - `idx_inbox_items_created_item_desc`
@@ -298,4 +244,3 @@ The SQL file must keep these object names unchanged:
   - `idx_item_derivations_item_version_desc`
   - `idx_item_derivations_active_category`
   - `idx_item_tags_tag_id_derivation_id`
-  - `idx_workflow_item_anchors_type_item`

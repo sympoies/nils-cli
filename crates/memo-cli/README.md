@@ -11,6 +11,8 @@ Usage:
 
 Commands:
   add <text> [--at <rfc3339>]                Capture a raw memo entry
+  update <item_id> <text>                    Update a memo and reset downstream derived data
+  delete <item_id> --hard                    Hard-delete a memo and all dependent data
   list [--limit <n>] [--offset <n>]         List entries (default: newest first)
   search <query> [--limit <n>]              Search raw + active derived text
   report <week|month> [--tz <iana-tz>]      Build period summaries
@@ -20,7 +22,9 @@ Commands:
 ```
 
 ## Commands
-- `add`: append one immutable raw capture record.
+- `add`: append one raw capture record.
+- `update`: replace one raw memo text and clear derivations/workflow extension data for that item.
+- `delete --hard`: permanently delete one item and all dependent rows (derivations/search/workflow anchors).
 - `add --at`: optional explicit capture time (RFC3339). Without `--at`, system time is used.
 - `list`: show records with deterministic ordering and optional state filters.
 - `search`: run keyword/prefix search across capture and active enrichment.
@@ -47,6 +51,8 @@ Commands:
 memo-cli add "buy 1tb ssd for mom"
 memo-cli add "book pediatric dentist appointment"
 memo-cli add --at 2026-02-12T10:00:00+08:00 "backfilled note"
+memo-cli update itm_00000001 "buy 2tb ssd for mom"
+memo-cli delete itm_00000002 --hard
 ```
 
 ### Agent enrichment loop
@@ -102,4 +108,6 @@ memo-cli report month --from 2026-02-01T00:00:00Z --to 2026-02-29T23:59:59Z --js
 - Command contract: `crates/memo-cli/docs/specs/memo-cli-command-contract-v1.md`
 - JSON contract: `crates/memo-cli/docs/specs/memo-cli-json-contract-v1.md`
 - Storage schema: `crates/memo-cli/docs/specs/memo-cli-storage-schema-v1.md`
+- Workflow extension contract: `crates/memo-cli/docs/specs/memo-cli-workflow-extension-contract-v1.md`
 - Release policy: `crates/memo-cli/docs/specs/memo-cli-release-policy.md`
+- Archived pre-launch v0 specs: `crates/memo-cli/docs/specs/archive/v0/`

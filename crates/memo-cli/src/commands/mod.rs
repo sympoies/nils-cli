@@ -1,9 +1,11 @@
 mod add;
 mod apply;
+mod delete;
 mod fetch;
 mod list;
 mod report;
 mod search;
+mod update;
 
 use crate::cli::{Cli, ItemState, MemoCommand, OutputMode};
 use crate::errors::AppError;
@@ -16,6 +18,8 @@ pub fn run(cli: &Cli, output_mode: OutputMode) -> Result<(), AppError> {
 
     match &cli.command {
         MemoCommand::Add(args) => add::run(&storage, args, output_mode),
+        MemoCommand::Update(args) => update::run(&storage, args, output_mode),
+        MemoCommand::Delete(args) => delete::run(&storage, args, output_mode),
         MemoCommand::List(args) => list::run(
             &storage,
             output_mode,

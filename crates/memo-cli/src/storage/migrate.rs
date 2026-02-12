@@ -2,8 +2,14 @@ use rusqlite::{Connection, params};
 
 use crate::errors::AppError;
 
-const SCHEMA_VERSION: i64 = 1;
-const SCHEMA_V1_SQL: &str = include_str!("sql/schema_v1.sql");
+const MIGRATIONS: &[(i64, &str)] = &[
+    (1, include_str!("sql/schema_v1.sql")),
+    (
+        2,
+        include_str!("sql/migrations/0002_mutable_raw_and_hard_delete.sql"),
+    ),
+    (3, include_str!("sql/migrations/0003_extension_anchor.sql")),
+];
 
 pub fn apply(conn: &Connection) -> Result<(), AppError> {
     conn.execute_batch(
@@ -14,22 +20,23 @@ pub fn apply(conn: &Connection) -> Result<(), AppError> {
     )
     .map_err(AppError::db_write)?;
 
-    let already_applied: i64 = conn
-        .query_row(
-            "select count(*) from schema_migrations where version = ?1",
-            params![SCHEMA_VERSION],
-            |row| row.get(0),
-        )
-        .map_err(AppError::db_query)?;
+    for (version, sql) in MIGRATIONS {
+        let already_applied: i64 = conn
+            .query_row(
+                "select count(*) from schema_migrations where version = ?1",
+                params![version],
+                |row| row.get(0),
+            )
+            .map_err(AppError::db_query)?;
 
-    if already_applied == 0 {
-        conn.execute_batch(SCHEMA_V1_SQL)
+        if already_applied == 0 {
+            conn.execute_batch(sql).map_err(AppError::db_write)?;
+            conn.execute(
+                "insert into schema_migrations(version) values(?1)",
+                params![version],
+            )
             .map_err(AppError::db_write)?;
-        conn.execute(
-            "insert into schema_migrations(version) values(?1)",
-            params![SCHEMA_VERSION],
-        )
-        .map_err(AppError::db_write)?;
+        }
     }
 
     Ok(())

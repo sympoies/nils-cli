@@ -20,11 +20,31 @@ fn json_contract() {
     assert_eq!(add_json["schema_version"], "memo-cli.add.v1");
     assert_eq!(add_json["command"], "memo-cli add");
     assert_eq!(add_json["ok"], true);
+    let item_id = add_json["result"]["item_id"]
+        .as_str()
+        .expect("item_id should be a string");
     assert!(add_json.get("result").is_some(), "result key should exist");
     assert!(
         add_json.get("results").is_none(),
         "results key should not exist"
     );
+
+    let update_output = run_memo_cli(
+        &db_path,
+        &["--json", "update", item_id, "buy 2tb ssd for mom"],
+        None,
+    );
+    assert_eq!(
+        update_output.code,
+        0,
+        "update failed: {}",
+        update_output.stderr_text()
+    );
+    let update_json = parse_json_stdout(&update_output);
+    assert_eq!(update_json["schema_version"], "memo-cli.update.v1");
+    assert_eq!(update_json["command"], "memo-cli update");
+    assert_eq!(update_json["ok"], true);
+    assert_eq!(update_json["result"]["state"], "pending");
 
     let list_output = run_memo_cli(&db_path, &["--json", "list", "--limit", "20"], None);
     assert_eq!(
@@ -121,6 +141,27 @@ fn json_contract() {
         invalid_apply_json["error"]["code"],
         serde_json::Value::String("invalid-apply-payload".to_string())
     );
+
+    let delete_without_hard = run_memo_cli(&db_path, &["--json", "delete", item_id], None);
+    assert_eq!(
+        delete_without_hard.code, 64,
+        "delete without --hard should fail with usage error"
+    );
+    let delete_without_hard_json = parse_json_stdout(&delete_without_hard);
+    assert_eq!(delete_without_hard_json["ok"], false);
+
+    let delete_output = run_memo_cli(&db_path, &["--json", "delete", item_id, "--hard"], None);
+    assert_eq!(
+        delete_output.code,
+        0,
+        "delete failed: {}",
+        delete_output.stderr_text()
+    );
+    let delete_json = parse_json_stdout(&delete_output);
+    assert_eq!(delete_json["schema_version"], "memo-cli.delete.v1");
+    assert_eq!(delete_json["command"], "memo-cli delete");
+    assert_eq!(delete_json["ok"], true);
+    assert_eq!(delete_json["result"]["deleted"], true);
 }
 
 #[test]

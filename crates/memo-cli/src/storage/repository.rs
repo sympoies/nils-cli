@@ -19,6 +19,23 @@ pub struct AddedItem {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct UpdatedItem {
+    pub item_id: i64,
+    pub updated_at: String,
+    pub text: String,
+    pub cleared_derivations: i64,
+    pub cleared_workflow_anchors: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeletedItem {
+    pub item_id: i64,
+    pub deleted_at: String,
+    pub removed_derivations: i64,
+    pub removed_workflow_anchors: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ListItem {
     pub item_id: i64,
     pub created_at: String,
@@ -79,6 +96,131 @@ pub fn add_item(
         created_at,
         source: source.to_string(),
         text: text.to_string(),
+    })
+}
+
+pub fn update_item(conn: &Connection, item_id: i64, text: &str) -> Result<UpdatedItem, AppError> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err(AppError::usage("update requires a non-empty text argument"));
+    }
+
+    let exists: i64 = conn
+        .query_row(
+            "select count(*) from inbox_items where item_id = ?1",
+            params![item_id],
+            |row| row.get(0),
+        )
+        .map_err(AppError::db_query)?;
+    if exists == 0 {
+        return Err(AppError::usage("item_id does not exist")
+            .with_code("invalid-item-id")
+            .with_details(serde_json::json!({ "item_id": item_id })));
+    }
+
+    let removed_workflow_anchors = conn
+        .execute(
+            "delete from workflow_item_anchors where item_id = ?1",
+            params![item_id],
+        )
+        .map_err(AppError::db_write)? as i64;
+    let cleared_derivations = conn
+        .execute(
+            "delete from item_derivations where item_id = ?1",
+            params![item_id],
+        )
+        .map_err(AppError::db_write)? as i64;
+    conn.execute(
+        "update inbox_items set raw_text = ?1 where item_id = ?2",
+        params![text, item_id],
+    )
+    .map_err(AppError::db_write)?;
+    conn.execute(
+        "delete from tags
+         where not exists (
+           select 1
+           from item_tags it
+           where it.tag_id = tags.tag_id
+         )",
+        [],
+    )
+    .map_err(AppError::db_write)?;
+
+    let updated_at: String = conn
+        .query_row(
+            "select updated_at from item_search_documents where item_id = ?1",
+            params![item_id],
+            |row| row.get(0),
+        )
+        .map_err(AppError::db_query)?;
+
+    Ok(UpdatedItem {
+        item_id,
+        updated_at,
+        text: text.to_string(),
+        cleared_derivations,
+        cleared_workflow_anchors: removed_workflow_anchors,
+    })
+}
+
+pub fn delete_item_hard(conn: &Connection, item_id: i64) -> Result<DeletedItem, AppError> {
+    let exists: i64 = conn
+        .query_row(
+            "select count(*) from inbox_items where item_id = ?1",
+            params![item_id],
+            |row| row.get(0),
+        )
+        .map_err(AppError::db_query)?;
+    if exists == 0 {
+        return Err(AppError::usage("item_id does not exist")
+            .with_code("invalid-item-id")
+            .with_details(serde_json::json!({ "item_id": item_id })));
+    }
+
+    let removed_workflow_anchors = conn
+        .execute(
+            "delete from workflow_item_anchors where item_id = ?1",
+            params![item_id],
+        )
+        .map_err(AppError::db_write)? as i64;
+    let removed_derivations = conn
+        .execute(
+            "delete from item_derivations where item_id = ?1",
+            params![item_id],
+        )
+        .map_err(AppError::db_write)? as i64;
+    conn.execute(
+        "delete from item_search_documents where item_id = ?1",
+        params![item_id],
+    )
+    .map_err(AppError::db_write)?;
+    conn.execute(
+        "delete from inbox_items where item_id = ?1",
+        params![item_id],
+    )
+    .map_err(AppError::db_write)?;
+    conn.execute(
+        "delete from tags
+         where not exists (
+           select 1
+           from item_tags it
+           where it.tag_id = tags.tag_id
+         )",
+        [],
+    )
+    .map_err(AppError::db_write)?;
+
+    let deleted_at: String = conn
+        .query_row("select strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", [], |row| {
+            row.get(0)
+        })
+        .map_err(AppError::db_query)?;
+
+    Ok(DeletedItem {
+        item_id,
+        deleted_at,
+        removed_derivations,
+        removed_workflow_anchors,
     })
 }
 

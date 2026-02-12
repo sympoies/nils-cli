@@ -8,6 +8,8 @@ _memo-cli() {
 
   local -a subcommands=(
     'add:Capture one raw memo entry'
+    'update:Update one memo entry and reset derived workflow state'
+    'delete:Hard-delete one memo entry and dependent data'
     'list:List memo entries in deterministic order'
     'search:Search memo entries with FTS-backed query'
     'report:Show weekly or monthly summary report'
@@ -26,7 +28,7 @@ _memo-cli() {
 
   if (( CURRENT == 2 )); then
     _describe -t commands 'memo-cli command' subcommands && return 0
-    _message 'command (add|list|search|report|fetch|apply)'
+    _message 'command (add|update|delete|list|search|report|fetch|apply)'
     return 0
   fi
 
@@ -37,6 +39,20 @@ _memo-cli() {
         $global_opts \
         '--source=[Capture source label]:source:' \
         '*:memo text:' \
+        && return 0
+      ;;
+    update)
+      _arguments -C \
+        $global_opts \
+        '1:item id:' \
+        '*:updated memo text:' \
+        && return 0
+      ;;
+    delete)
+      _arguments -C \
+        $global_opts \
+        '--hard[Confirm hard delete behavior]' \
+        '1:item id:' \
         && return 0
       ;;
     list)

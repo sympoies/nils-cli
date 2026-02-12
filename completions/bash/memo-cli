@@ -12,7 +12,7 @@ _nils_cli_memo_cli_complete() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-  local -a subcmds=(add list search report fetch apply help)
+  local -a subcmds=(add update delete list search report fetch apply help)
   local -a global_opts=(-h --help -V --version --db --json --format)
 
   if (( cword == 1 )); then
@@ -29,6 +29,14 @@ _nils_cli_memo_cli_complete() {
     case "$subcmd" in
       add)
         COMPREPLY=( $(compgen -W "${global_opts[*]} --source" -- "$cur") )
+        return 0
+        ;;
+      update)
+        COMPREPLY=( $(compgen -W "${global_opts[*]}" -- "$cur") )
+        return 0
+        ;;
+      delete)
+        COMPREPLY=( $(compgen -W "${global_opts[*]} --hard" -- "$cur") )
         return 0
         ;;
       list)
