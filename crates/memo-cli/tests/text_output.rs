@@ -1,24 +1,9 @@
-use std::path::{Path, PathBuf};
-
-use nils_test_support::{bin, cmd};
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
-fn test_db_path(name: &str) -> PathBuf {
-    let dir = tempfile::tempdir().expect("tempdir should be created");
-    dir.keep().join(format!("{name}.db"))
-}
+mod support;
 
-fn memo_cli_bin() -> PathBuf {
-    bin::resolve("memo-cli")
-}
-
-fn run_memo_cli(db_path: &Path, args: &[&str], stdin: Option<&str>) -> cmd::CmdOutput {
-    let db = db_path.display().to_string();
-    let mut argv = vec!["--db", db.as_str()];
-    argv.extend_from_slice(args);
-    cmd::run(&memo_cli_bin(), &argv, &[], stdin.map(str::as_bytes))
-}
+use support::{run_memo_cli, run_memo_cli_with_env, test_db_path};
 
 #[test]
 fn text_output_respects_no_color() {
@@ -33,11 +18,12 @@ fn text_output_respects_no_color() {
     );
     assert_eq!(add_two.code, 0, "add two failed: {}", add_two.stderr_text());
 
-    let db = db_path.display().to_string();
-    let bin = memo_cli_bin();
-    let args = ["--db", db.as_str(), "list", "--limit", "5"];
-    let options = cmd::CmdOptions::default().with_env("NO_COLOR", "1");
-    let list_output = cmd::run_with(&bin, &args, &options);
+    let list_output = run_memo_cli_with_env(
+        &db_path,
+        &["list", "--limit", "5"],
+        None,
+        &[("NO_COLOR", "1")],
+    );
     assert_eq!(
         list_output.code,
         0,

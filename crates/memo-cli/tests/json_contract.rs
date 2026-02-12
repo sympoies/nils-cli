@@ -1,28 +1,9 @@
-use std::path::{Path, PathBuf};
-
-use nils_test_support::{bin, cmd};
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
-fn test_db_path(name: &str) -> PathBuf {
-    let dir = tempfile::tempdir().expect("tempdir should be created");
-    dir.keep().join(format!("{name}.db"))
-}
+mod support;
 
-fn memo_cli_bin() -> PathBuf {
-    bin::resolve("memo-cli")
-}
-
-fn run_memo_cli(db_path: &Path, args: &[&str], stdin: Option<&str>) -> cmd::CmdOutput {
-    let db = db_path.display().to_string();
-    let mut argv = vec!["--db", db.as_str()];
-    argv.extend_from_slice(args);
-    cmd::run(&memo_cli_bin(), &argv, &[], stdin.map(str::as_bytes))
-}
-
-fn parse_json_stdout(output: &cmd::CmdOutput) -> serde_json::Value {
-    serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON")
-}
+use support::{parse_json_stdout, run_memo_cli, test_db_path};
 
 #[test]
 fn json_contract() {

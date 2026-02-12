@@ -81,3 +81,7 @@ memo-cli fetch --json --limit 20 --cursor itm_00000042
 memo-cli report week
 memo-cli report month --json
 ```
+
+## Runbooks
+- Agent workflow: `docs/runbooks/memo-cli-agent-workflow.md`
+- Rollout/rollback: `docs/runbooks/memo-cli-rollout.md`

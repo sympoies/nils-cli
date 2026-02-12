@@ -67,3 +67,16 @@ memo-cli report month --json
 - Cursor mismatch returns `ok=false` with `error.code=invalid-cursor`.
 - Per-item conflicts are reported inside `result.items[].error` with `code=apply-item-conflict`.
 - In text mode, warnings are sent to `stderr`; `stdout` remains primary result output.
+
+## 6. Fallback behavior on apply validation failures
+When `apply` fails validation or conflict rates spike:
+1. Pause automation writes:
+   - stop all `memo-cli apply` jobs.
+2. Keep capture and read workflows active:
+   - continue `memo-cli add`, `memo-cli list`, `memo-cli search`, `memo-cli report`.
+3. Use dry-run diagnostics before re-enable:
+   - `memo-cli apply --json --dry-run --stdin < enrichment-batch.json`
+4. Re-enable writes only after:
+   - payloads pass validation,
+   - contract tests pass,
+   - and rollout checks in `memo-cli-rollout.md` are green.

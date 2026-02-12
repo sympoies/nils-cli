@@ -1,0 +1,49 @@
+{
+  "captures": [
+    {
+      "text": "3/24 in tokyo",
+      "source": "cli",
+      "enrichment": {
+        "summary": "tokyo travel event",
+        "category": "travel",
+        "normalized_text": "tokyo travel event",
+        "confidence": 0.93,
+        "tags": ["travel", "calendar"]
+      }
+    },
+    {
+      "text": "buy 1tb ssd for mom",
+      "source": "cli",
+      "enrichment": {
+        "summary": "buy ssd for mom",
+        "category": "shopping",
+        "normalized_text": "buy 1tb ssd for mom",
+        "confidence": 0.88,
+        "tags": ["shopping", "family"]
+      }
+    },
+    {
+      "text": "book pediatric dentist appointment",
+      "source": "mobile",
+      "enrichment": {
+        "summary": "book pediatric dentist appointment",
+        "category": "health",
+        "normalized_text": "book pediatric dentist appointment",
+        "confidence": 0.84,
+        "tags": ["health", "family"]
+      }
+    }
+  ],
+  "search_query": "tokyo",
+  "expected": {
+    "captured": 3,
+    "search_min_hits": 1
+  },
+  "malformed_apply_payload": {
+    "items": [
+      {
+        "summary": "missing item_id"
+      }
+    ]
+  }
+}
