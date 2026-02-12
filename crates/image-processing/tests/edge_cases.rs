@@ -319,9 +319,31 @@ fn pad_jpg_requires_background_is_item_error_exit_1() {
 }
 
 #[test]
-fn generate_rejects_invalid_input_flags() {
+fn removed_generate_entrypoint_is_usage_error() {
+    let dir = tempfile::TempDir::new().unwrap();
+
+    let out = common::run_image_processing(dir.path(), &["generate"], &[]);
+    assert_eq!(out.code, 2);
+    assert!(
+        out.stderr.contains("invalid value 'generate'")
+            || out.stderr.contains("unrecognized subcommand")
+            || out.stderr.contains("unknown subcommand"),
+        "stderr: {}",
+        out.stderr
+    );
+}
+
+#[test]
+fn from_svg_rejects_invalid_input_flags() {
     let dir = tempfile::TempDir::new().unwrap();
     fs::write(dir.path().join("a.png"), "img").unwrap();
+    fs::write(
+        dir.path().join("icon.svg"),
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+<rect x="2" y="2" width="28" height="28" fill="#0f62fe"/>
+</svg>"##,
+    )
+    .unwrap();
 
     let stub = common::make_stub_dir();
     let path_s = stub.path().to_string_lossy().to_string();
@@ -330,22 +352,24 @@ fn generate_rejects_invalid_input_flags() {
     let with_in = common::run_image_processing(
         dir.path(),
         &[
-            "generate",
-            "--preset",
-            "info",
+            "convert",
+            "--from-svg",
+            "icon.svg",
             "--in",
             "a.png",
             "--to",
             "png",
             "--out",
-            "out/info.png",
+            "out/icon.png",
             "--json",
         ],
         &envs,
     );
     assert_eq!(with_in.code, 2);
     assert!(
-        with_in.stderr.contains("generate does not support --in"),
+        with_in
+            .stderr
+            .contains("convert --from-svg does not support --in"),
         "stderr: {}",
         with_in.stderr
     );
@@ -353,15 +377,15 @@ fn generate_rejects_invalid_input_flags() {
     let with_in_place = common::run_image_processing(
         dir.path(),
         &[
-            "generate",
-            "--preset",
-            "info",
+            "convert",
+            "--from-svg",
+            "icon.svg",
             "--in-place",
             "--yes",
             "--to",
             "png",
             "--out",
-            "out/info.png",
+            "out/icon.png",
             "--json",
         ],
         &envs,
@@ -370,26 +394,33 @@ fn generate_rejects_invalid_input_flags() {
     assert!(
         with_in_place
             .stderr
-            .contains("generate does not support --in-place"),
+            .contains("convert --from-svg does not support --in-place"),
         "stderr: {}",
         with_in_place.stderr
     );
 }
 
 #[test]
-fn generate_rejects_output_mode_mismatches_for_variant_count() {
+fn from_svg_rejects_output_mode_mismatches() {
     let dir = tempfile::TempDir::new().unwrap();
+    fs::write(
+        dir.path().join("icon.svg"),
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+<rect x="2" y="2" width="28" height="28" fill="#0f62fe"/>
+</svg>"##,
+    )
+    .unwrap();
 
     let stub = common::make_stub_dir();
     let path_s = stub.path().to_string_lossy().to_string();
     let envs = [("PATH", path_s.as_str())];
 
-    let single_with_out_dir = common::run_image_processing(
+    let with_out_dir = common::run_image_processing(
         dir.path(),
         &[
-            "generate",
-            "--preset",
-            "info",
+            "convert",
+            "--from-svg",
+            "icon.svg",
             "--to",
             "png",
             "--out-dir",
@@ -398,44 +429,45 @@ fn generate_rejects_output_mode_mismatches_for_variant_count() {
         ],
         &envs,
     );
-    assert_eq!(single_with_out_dir.code, 2);
+    assert_eq!(with_out_dir.code, 2);
     assert!(
-        single_with_out_dir
+        with_out_dir
             .stderr
-            .contains("single preset does not support --out-dir"),
+            .contains("convert --from-svg requires --out"),
         "stderr: {}",
-        single_with_out_dir.stderr
+        with_out_dir.stderr
     );
 
-    let multi_with_out = common::run_image_processing(
+    let invalid_to = common::run_image_processing(
         dir.path(),
         &[
-            "generate",
-            "--preset",
-            "info",
-            "--preset",
-            "warning",
+            "convert",
+            "--from-svg",
+            "icon.svg",
             "--to",
-            "png",
+            "jpg",
             "--out",
-            "out/info.png",
+            "out/icon.jpg",
             "--json",
         ],
         &envs,
     );
-    assert_eq!(multi_with_out.code, 2);
+    assert_eq!(invalid_to.code, 2);
     assert!(
-        multi_with_out
-            .stderr
-            .contains("multiple presets does not support --out"),
+        invalid_to.stderr.contains("png|webp|svg"),
         "stderr: {}",
-        multi_with_out.stderr
+        invalid_to.stderr
     );
 }
 
 #[test]
-fn generate_duplicate_presets_in_out_dir_are_usage_collision_error() {
+fn svg_validate_invalid_svg_returns_actionable_error() {
     let dir = tempfile::TempDir::new().unwrap();
+    fs::write(
+        dir.path().join("invalid.svg"),
+        r##"<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>"##,
+    )
+    .unwrap();
 
     let stub = common::make_stub_dir();
     let path_s = stub.path().to_string_lossy().to_string();
@@ -444,34 +476,39 @@ fn generate_duplicate_presets_in_out_dir_are_usage_collision_error() {
     let out = common::run_image_processing(
         dir.path(),
         &[
-            "generate",
-            "--preset",
-            "info",
-            "--preset",
-            "info",
-            "--to",
-            "png",
-            "--size",
-            "32",
-            "--out-dir",
-            "out",
+            "svg-validate",
+            "--in",
+            "invalid.svg",
+            "--out",
+            "out/invalid.cleaned.svg",
             "--json",
         ],
         &envs,
     );
-    assert_eq!(out.code, 2);
+    assert_eq!(out.code, 1, "stderr: {}", out.stderr);
+    let v: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(v["items"][0]["status"], "error");
+    let error = v["items"][0]["error"].as_str().unwrap_or("");
     assert!(
-        out.stderr.contains("output collisions detected"),
-        "stderr: {}",
-        out.stderr
+        error.contains("missing_viewbox")
+            || error.contains("disallowed_tag")
+            || error.contains("unsafe_tag"),
+        "error: {error}"
     );
 }
 
 #[test]
-fn generate_overwrite_flag_controls_existing_output_replacement() {
+fn from_svg_overwrite_flag_controls_existing_output_replacement() {
     let dir = tempfile::TempDir::new().unwrap();
+    fs::write(
+        dir.path().join("icon.svg"),
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+<rect x="3" y="3" width="26" height="26" rx="3" fill="#0f62fe"/>
+</svg>"##,
+    )
+    .unwrap();
     fs::create_dir_all(dir.path().join("out")).unwrap();
-    fs::write(dir.path().join("out/info.png"), "existing").unwrap();
+    fs::write(dir.path().join("out/icon.png"), "existing").unwrap();
 
     let stub = common::make_stub_dir();
     let path_s = stub.path().to_string_lossy().to_string();
@@ -480,15 +517,13 @@ fn generate_overwrite_flag_controls_existing_output_replacement() {
     let blocked = common::run_image_processing(
         dir.path(),
         &[
-            "generate",
-            "--preset",
-            "info",
+            "convert",
+            "--from-svg",
+            "icon.svg",
             "--to",
             "png",
-            "--size",
-            "32",
             "--out",
-            "out/info.png",
+            "out/icon.png",
             "--json",
         ],
         &envs,
@@ -505,22 +540,20 @@ fn generate_overwrite_flag_controls_existing_output_replacement() {
     let replaced = common::run_image_processing(
         dir.path(),
         &[
-            "generate",
-            "--preset",
-            "info",
+            "convert",
+            "--from-svg",
+            "icon.svg",
             "--to",
             "png",
-            "--size",
-            "32",
             "--out",
-            "out/info.png",
+            "out/icon.png",
             "--overwrite",
             "--json",
         ],
         &envs,
     );
     assert_eq!(replaced.code, 0, "stderr: {}", replaced.stderr);
-    let rendered = fs::read(dir.path().join("out/info.png")).unwrap();
+    let rendered = fs::read(dir.path().join("out/icon.png")).unwrap();
     assert!(rendered != b"existing");
     let v: serde_json::Value = serde_json::from_str(&replaced.stdout).unwrap();
     assert_eq!(v["items"][0]["status"], "ok");

@@ -1,9 +1,10 @@
-use crate::cli::{GeneratePreset, Operation};
+use crate::cli::Operation;
 use crate::model::{
     Collision, ImageInfo, ItemResult, OutputMode, SCHEMA_VERSION, SUPPORTED_CONVERT_TARGETS,
-    Summary, SummaryOptions,
+    SourceContext, Summary, SummaryOptions,
 };
 use crate::report::render_report_md;
+use crate::svg_validate;
 use crate::toolchain::{Toolchain, probe_image};
 use crate::util;
 use nils_common::process as common_process;
@@ -177,6 +178,7 @@ pub struct ProcessArgs<'a> {
     pub progress: Progress,
     pub subcommand: Operation,
     pub inputs: &'a [PathBuf],
+    pub from_svg_input: Option<&'a Path>,
     pub output_mode: Option<&'a OutputMode>,
     pub overwrite: bool,
     pub dry_run: bool,
@@ -203,14 +205,6 @@ pub struct ProcessArgs<'a> {
     pub pad_gravity: &'a str,
     pub optimize_lossless: bool,
     pub optimize_progressive: bool,
-    pub generate_presets: &'a [GeneratePreset],
-    pub generate_to: Option<&'a str>,
-    pub generate_size: Option<&'a str>,
-    pub generate_fg: Option<&'a str>,
-    pub generate_bg: Option<&'a str>,
-    pub generate_stroke: Option<&'a str>,
-    pub generate_stroke_width: Option<f64>,
-    pub generate_padding: Option<f64>,
 }
 
 pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
@@ -222,6 +216,7 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
         progress,
         subcommand,
         inputs,
+        from_svg_input,
         output_mode,
         overwrite,
         dry_run,
@@ -248,54 +243,36 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
         pad_gravity,
         optimize_lossless,
         optimize_progressive,
-        generate_presets,
-        generate_to,
-        generate_size,
-        generate_fg,
-        generate_bg,
-        generate_stroke,
-        generate_stroke_width,
-        generate_padding,
     } = args;
 
-    let is_generate = subcommand.as_str() == crate::toolchain::GENERATE_OPERATION;
+    let from_svg_mode = from_svg_input.is_some();
+    let source = SourceContext {
+        mode: if from_svg_mode {
+            "from_svg".to_string()
+        } else if subcommand == Operation::SvgValidate {
+            "svg_validate".to_string()
+        } else {
+            "inputs".to_string()
+        },
+        from_svg: from_svg_input.map(|p| util::maybe_relpath(p, repo_root)),
+    };
 
-    // Keep legacy semantics for existing subcommands: they still require ImageMagick tooling.
-    let toolchain = if is_generate {
+    let toolchain = if from_svg_mode || subcommand == Operation::SvgValidate {
         None
     } else {
         Some(toolchain.ok_or_else(|| {
-            anyhow::anyhow!(
-                "internal error: ImageMagick toolchain missing for non-generate operation"
-            )
+            anyhow::anyhow!("internal error: ImageMagick toolchain missing for this operation")
         })?)
     };
 
-    let generate_plan = if is_generate {
-        Some(crate::generate::plan_generate(
-            crate::generate::GeneratePlanRequest {
-                output_mode,
-                presets: generate_presets,
-                to: generate_to,
-                size: generate_size,
-                fg: generate_fg,
-                bg: generate_bg,
-                stroke: generate_stroke,
-                stroke_width: generate_stroke_width,
-                padding: generate_padding,
-            },
-        )?)
-    } else {
-        None
-    };
-
-    let _ = json_enabled; // parity: carried through but not used (matches python script signature)
+    let _ = json_enabled;
 
     if report_enabled && subcommand == Operation::Info {
         return Err(util::usage_err("--report is not supported for info"));
     }
 
-    if !is_generate
+    if !from_svg_mode
+        && !matches!(subcommand, Operation::Info | Operation::SvgValidate)
         && let Some(mode) = output_mode
         && mode.mode == "out"
         && inputs.len() != 1
@@ -303,16 +280,20 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
         return Err(util::usage_err("--out requires exactly one input file"));
     }
 
+    let from_svg_doc = if let Some(path) = from_svg_input {
+        Some(svg_validate::sanitize_svg_file(path)?)
+    } else {
+        None
+    };
+
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
     #[derive(Clone)]
     struct PlannedItem {
         input_path: PathBuf,
         output_path: Option<PathBuf>,
-        generate_preset: Option<GeneratePreset>,
     }
 
-    // Resolve output paths for output-producing subcommands.
     let mut planned: Vec<PlannedItem> = Vec::new();
     let mut collisions: Vec<Collision> = Vec::new();
     let mut out_by_path: HashMap<PathBuf, PathBuf> = HashMap::new();
@@ -354,52 +335,29 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
 
     if subcommand != Operation::Info {
         let mode = output_mode.expect("output_mode required");
-        if is_generate {
-            let plan = generate_plan
-                .as_ref()
-                .expect("generate plan must exist for generate operation");
-            for preset in &plan.presets {
-                let out_path = if mode.mode == "out" {
-                    mode.out.clone().expect("out")
-                } else {
-                    let out_dir = mode.out_dir.clone().expect("out_dir");
-                    out_dir.join(crate::generate::variant_file_name(plan, *preset))
-                };
-                let out_abs = util::abs_path(&out_path, &cwd);
-                let ext = ext_normalize(&out_abs);
-                if ext != plan.output_format.as_str() {
-                    return Err(util::usage_err(format!(
-                        "generate --out extension must match --to {}: {}",
-                        plan.output_format.as_str(),
-                        out_abs.display()
-                    )));
-                }
 
-                if let Some(prev) = out_by_path.get(&out_abs) {
-                    let filename = out_abs
-                        .file_name()
-                        .map(|x| x.to_string_lossy().to_string())
-                        .unwrap_or_else(|| out_abs.to_string_lossy().to_string());
-                    collisions.push(Collision {
-                        path: out_abs.to_string_lossy().to_string(),
-                        reason: format!("multiple inputs map to the same output ({filename})"),
-                    });
-                    let _ = prev;
-                }
-                out_by_path.insert(
-                    out_abs.clone(),
-                    PathBuf::from(crate::generate::preset_label(*preset)),
-                );
-                planned.push(PlannedItem {
-                    input_path: PathBuf::from(crate::generate::preset_label(*preset)),
-                    output_path: Some(out_abs),
-                    generate_preset: Some(*preset),
-                });
+        if from_svg_mode {
+            let from_svg_path = from_svg_input.expect("from_svg_input").to_path_buf();
+            let out_path = mode
+                .out
+                .clone()
+                .ok_or_else(|| util::usage_err("convert --from-svg requires --out"))?;
+            let out_abs = util::abs_path(&out_path, &cwd);
+            let target = svg_validate::parse_from_svg_target(convert_to)?;
+            let ext = ext_normalize(&out_abs);
+            if ext != target {
+                return Err(util::usage_err(format!(
+                    "--out extension must match --to {target}: {}",
+                    out_abs.display()
+                )));
             }
+            planned.push(PlannedItem {
+                input_path: from_svg_path,
+                output_path: Some(out_abs),
+            });
         } else {
             for inp in inputs {
                 let out_path = derive_out_path(inp)?;
-
                 let out_abs = util::abs_path(&out_path, &cwd);
 
                 if subcommand == Operation::Convert
@@ -414,6 +372,13 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
                     }
                 }
 
+                if subcommand == Operation::SvgValidate {
+                    let ext = ext_normalize(&out_abs);
+                    if ext != "svg" {
+                        return Err(util::usage_err("svg-validate --out must end with .svg"));
+                    }
+                }
+
                 if subcommand == Operation::Optimize {
                     let in_ext = ext_normalize(inp);
                     let out_ext = ext_normalize(&out_abs);
@@ -422,7 +387,7 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
                             "optimize does not change formats; output extension must match input",
                         ));
                     }
-                } else if subcommand != Operation::Convert {
+                } else if !matches!(subcommand, Operation::Convert | Operation::SvgValidate) {
                     let in_ext = ext_normalize(inp);
                     let out_ext = ext_normalize(&out_abs);
                     if out_ext != in_ext {
@@ -450,7 +415,6 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
                 planned.push(PlannedItem {
                     input_path: inp.clone(),
                     output_path: Some(out_abs),
-                    generate_preset: None,
                 });
             }
         }
@@ -477,7 +441,6 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
             planned.push(PlannedItem {
                 input_path: p.clone(),
                 output_path: None,
-                generate_preset: None,
             });
         }
     }
@@ -487,7 +450,6 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
     let skipped: Vec<serde_json::Value> = Vec::new();
     let mut items: Vec<ItemResult> = Vec::new();
 
-    // Ensure output dirs exist (for non-dry-run and non-in-place).
     if subcommand != Operation::Info {
         let mode = output_mode.expect("output_mode required");
         if !dry_run && mode.mode == "out_dir" {
@@ -506,13 +468,31 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
         let PlannedItem {
             input_path: inp,
             output_path: out_abs,
-            generate_preset,
         } = planned_item;
         progress.set_message(util::maybe_relpath(&inp, repo_root));
 
-        let input_info = toolchain
-            .map(|tc| probe_image(tc, &inp))
-            .unwrap_or_default();
+        let mut input_info = if from_svg_mode {
+            let doc = from_svg_doc.as_ref().expect("from_svg_doc");
+            ImageInfo {
+                format: Some("SVG".to_string()),
+                width: Some(doc.width as i32),
+                height: Some(doc.height as i32),
+                channels: None,
+                alpha: Some(doc.uses_alpha),
+                exif_orientation: None,
+                size_bytes: std::fs::metadata(&inp).ok().map(|m| m.len()),
+            }
+        } else if subcommand == Operation::SvgValidate {
+            ImageInfo {
+                format: Some("SVG".to_string()),
+                size_bytes: std::fs::metadata(&inp).ok().map(|m| m.len()),
+                ..Default::default()
+            }
+        } else {
+            toolchain
+                .map(|tc| probe_image(tc, &inp))
+                .unwrap_or_default()
+        };
         let input_alpha = input_info.alpha.unwrap_or(false);
 
         let in_ext = ext_normalize(&inp);
@@ -527,22 +507,76 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
         let mut output_info: Option<ImageInfo> = None;
 
         let result: anyhow::Result<()> = (|| {
-            if is_generate {
-                let plan = generate_plan
-                    .as_ref()
-                    .expect("generate plan must exist for generate operation");
-                let preset =
-                    generate_preset.expect("generate preset must exist for generate operation");
+            if from_svg_mode {
                 let output_path = out_abs
                     .as_deref()
-                    .expect("generate output path must exist for generate operation");
-                let generate_result =
-                    crate::generate::dispatch_generate(plan, preset, output_path, dry_run)?;
-                item_cmds.extend(generate_result.commands);
-                output_info = generate_result.output_info;
+                    .ok_or_else(|| util::usage_err("internal error: missing output path"))?;
+                let target = svg_validate::parse_from_svg_target(convert_to)?;
+                let mut cmd = vec![
+                    "image-processing".to_string(),
+                    "convert".to_string(),
+                    "--from-svg".to_string(),
+                    inp.to_string_lossy().to_string(),
+                    "--to".to_string(),
+                    target.to_string(),
+                    "--out".to_string(),
+                    output_path.to_string_lossy().to_string(),
+                ];
+                if dry_run {
+                    cmd.push("--dry-run".to_string());
+                }
+                item_cmds.push(util::command_str(&cmd));
+
+                let doc = from_svg_doc.as_ref().expect("from_svg_doc");
+                let info = svg_validate::render_svg_to_output(doc, target, output_path, dry_run)?;
+                if !dry_run {
+                    output_info = Some(info);
+                }
                 return Ok(());
             }
-            let toolchain = toolchain.expect("non-generate path must have toolchain");
+
+            if subcommand == Operation::SvgValidate {
+                let output_path = out_abs
+                    .as_deref()
+                    .ok_or_else(|| util::usage_err("internal error: missing output path"))?;
+                let mut cmd = vec![
+                    "image-processing".to_string(),
+                    "svg-validate".to_string(),
+                    "--in".to_string(),
+                    inp.to_string_lossy().to_string(),
+                    "--out".to_string(),
+                    output_path.to_string_lossy().to_string(),
+                ];
+                if dry_run {
+                    cmd.push("--dry-run".to_string());
+                }
+                item_cmds.push(util::command_str(&cmd));
+
+                let validation =
+                    svg_validate::run_svg_validate_command(&inp, output_path, dry_run)?;
+                if !validation.sanitized {
+                    return Err(svg_validate::diagnostics_to_error(
+                        &inp,
+                        &validation.diagnostics,
+                    ));
+                }
+                input_info.width = validation.width.map(|w| w as i32);
+                input_info.height = validation.height.map(|h| h as i32);
+                if !dry_run {
+                    output_info = Some(ImageInfo {
+                        format: Some("SVG".to_string()),
+                        width: validation.width.map(|w| w as i32),
+                        height: validation.height.map(|h| h as i32),
+                        channels: None,
+                        alpha: Some(false),
+                        exif_orientation: None,
+                        size_bytes: std::fs::metadata(output_path).ok().map(|m| m.len()),
+                    });
+                }
+                return Ok(());
+            }
+
+            let toolchain = toolchain.expect("legacy path must have ImageMagick toolchain");
 
             #[allow(unreachable_patterns)]
             match subcommand {
@@ -1144,7 +1178,14 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
             .file_name()
             .map(|x| x.to_string_lossy().to_string())
             .unwrap_or_default();
-        let report_md = render_report_md(&run_id, subcommand.as_str(), &items, &commands, dry_run);
+        let report_md = render_report_md(
+            &run_id,
+            subcommand.as_str(),
+            &source,
+            &items,
+            &commands,
+            dry_run,
+        );
         let report_file = run_dir.join("report.md");
         std::fs::write(&report_file, report_md)?;
         report_path = Some(util::maybe_relpath(&report_file, repo_root));
@@ -1155,8 +1196,8 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
         run_id: run_dir.and_then(|p| p.file_name().map(|x| x.to_string_lossy().to_string())),
         cwd: cwd.to_string_lossy().to_string(),
         operation: subcommand.as_str().to_string(),
-        // Summary/report plumbing is shared; backend label comes from operation routing.
         backend: backend.to_string(),
+        source,
         report_path: report_path.clone(),
         dry_run,
         options: SummaryOptions {
@@ -1187,7 +1228,6 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
 
     Ok(summary)
 }
-
 fn parse_aspect(value: &str) -> anyhow::Result<(i32, i32)> {
     let s = value.trim();
     let (w, h) = s

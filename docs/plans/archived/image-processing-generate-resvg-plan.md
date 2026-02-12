@@ -1,5 +1,10 @@
 # Plan: image-processing generate subcommand with resvg/usvg/svg
 
+> Status: superseded (historical archive)
+>
+> Replaced by: `docs/plans/image-processing-from-svg-llm-tooling-migration-plan.md`
+> on 2026-02-12.
+
 ## Overview
 This plan extends `image-processing` with a new `generate` subcommand for deterministic icon/simple-shape generation using Rust libraries (`svg`, `usvg`, `resvg`) while keeping existing ImageMagick-backed transform commands unchanged. The delivery focus is a low-risk additive feature: no behavioral regressions for existing subcommands and no replacement of current toolchain requirements for non-generate workflows. The `generate` path should avoid new runtime binary dependencies and work through pure Rust rendering for `png`/`webp`/`svg` outputs.
 

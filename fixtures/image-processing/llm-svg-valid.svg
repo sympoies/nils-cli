@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Traffic car icon</title>
+  <rect x="8" y="28" width="48" height="18" rx="5" fill="#1246d6"/>
+  <rect x="18" y="22" width="28" height="10" rx="3" fill="#8cb8ff"/>
+  <circle cx="22" cy="48" r="6" fill="#1f1f1f"/>
+  <circle cx="42" cy="48" r="6" fill="#1f1f1f"/>
+</svg>

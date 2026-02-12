@@ -3,8 +3,8 @@ use nils_common::process::find_in_path;
 use std::path::Path;
 use std::process::Command;
 
-pub const GENERATE_OPERATION: &str = "generate";
-pub const RUST_GENERATE_BACKEND: &str = "rust:resvg";
+pub const RUST_FROM_SVG_BACKEND: &str = "rust:resvg";
+pub const RUST_SVG_VALIDATE_BACKEND: &str = "rust:svg-validate";
 
 #[derive(Clone, Debug)]
 pub struct Toolchain {
@@ -29,18 +29,31 @@ impl Toolchain {
     }
 }
 
-/// `generate` is Rust-native and intentionally bypasses ImageMagick probing.
-pub fn operation_requires_imagemagick(operation: &str) -> bool {
-    operation != GENERATE_OPERATION
+pub fn operation_requires_imagemagick(operation: &str, from_svg_mode: bool) -> bool {
+    if operation == "svg-validate" {
+        return false;
+    }
+    if operation == "convert" && from_svg_mode {
+        return false;
+    }
+    true
 }
 
-pub fn backend_for_operation(operation: &str, toolchain: Option<&Toolchain>) -> &'static str {
-    if operation_requires_imagemagick(operation) {
-        return toolchain
-            .map(Toolchain::primary_backend)
-            .unwrap_or("imagemagick:unknown");
+pub fn backend_for_operation(
+    operation: &str,
+    toolchain: Option<&Toolchain>,
+    from_svg_mode: bool,
+) -> &'static str {
+    if operation == "svg-validate" {
+        return RUST_SVG_VALIDATE_BACKEND;
     }
-    RUST_GENERATE_BACKEND
+    if operation == "convert" && from_svg_mode {
+        return RUST_FROM_SVG_BACKEND;
+    }
+
+    toolchain
+        .map(Toolchain::primary_backend)
+        .unwrap_or("imagemagick:unknown")
 }
 
 pub fn detect_toolchain() -> anyhow::Result<Toolchain> {

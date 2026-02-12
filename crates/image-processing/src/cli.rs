@@ -4,7 +4,7 @@ use clap::{ArgAction, Parser, ValueEnum};
 #[value(rename_all = "kebab-case")]
 pub enum Operation {
     Info,
-    Generate,
+    SvgValidate,
     AutoOrient,
     Convert,
     Resize,
@@ -20,7 +20,7 @@ impl Operation {
     pub fn as_str(&self) -> &'static str {
         match self {
             Operation::Info => "info",
-            Operation::Generate => "generate",
+            Operation::SvgValidate => "svg-validate",
             Operation::AutoOrient => "auto-orient",
             Operation::Convert => "convert",
             Operation::Resize => "resize",
@@ -34,77 +34,46 @@ impl Operation {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-#[value(rename_all = "kebab-case")]
-pub enum GeneratePreset {
-    Info,
-    Success,
-    Warning,
-    Error,
-    Help,
-}
-
-#[allow(dead_code)]
-pub const GENERATE_DEFAULT_TO: &str = "png";
-#[allow(dead_code)]
-pub const GENERATE_DEFAULT_SIZE: &str = "64";
-#[allow(dead_code)]
-pub const GENERATE_DEFAULT_FG: &str = "#ffffff";
-#[allow(dead_code)]
-pub const GENERATE_DEFAULT_BG: &str = "#0f62fe";
-#[allow(dead_code)]
-pub const GENERATE_DEFAULT_STROKE_WIDTH: &str = "0";
-#[allow(dead_code)]
-pub const GENERATE_DEFAULT_PADDING: &str = "0";
-
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct GenerateValidationRule {
+pub struct FromSvgValidationRule {
     pub when: &'static str,
     pub expect: &'static str,
 }
 
 #[allow(dead_code)]
-pub const GENERATE_VALIDATION_MATRIX: [GenerateValidationRule; 8] = [
-    GenerateValidationRule {
-        when: "subcommand=generate",
-        expect: "--preset is required and repeatable",
+pub const FROM_SVG_VALIDATION_MATRIX: [FromSvgValidationRule; 6] = [
+    FromSvgValidationRule {
+        when: "subcommand=convert && --from-svg",
+        expect: "requires --out and forbids --out-dir/--in-place",
     },
-    GenerateValidationRule {
-        when: "subcommand=generate",
-        expect: "--to defaults to png and only accepts png|webp|svg",
+    FromSvgValidationRule {
+        when: "subcommand=convert && --from-svg",
+        expect: "forbids --in/--recursive/--glob",
     },
-    GenerateValidationRule {
-        when: "subcommand=generate && variants=1",
-        expect: "--out is required",
+    FromSvgValidationRule {
+        when: "subcommand=convert && --from-svg",
+        expect: "requires --to and supports only png|webp|svg",
     },
-    GenerateValidationRule {
-        when: "subcommand=generate && variants>1",
-        expect: "--out-dir is required",
+    FromSvgValidationRule {
+        when: "subcommand=svg-validate",
+        expect: "requires exactly one --in and explicit --out",
     },
-    GenerateValidationRule {
-        when: "subcommand=generate",
-        expect: "--in-place is forbidden",
+    FromSvgValidationRule {
+        when: "subcommand=svg-validate",
+        expect: "forbids --from-svg/--recursive/--glob/--in-place",
     },
-    GenerateValidationRule {
-        when: "subcommand=generate",
-        expect: "--in/--recursive/--glob are forbidden",
-    },
-    GenerateValidationRule {
-        when: "subcommand=generate",
-        expect: "--size accepts integer pixels (fallback default when omitted)",
-    },
-    GenerateValidationRule {
-        when: "subcommand=generate",
-        expect: "--fg/--bg/--stroke accept color strings",
+    FromSvgValidationRule {
+        when: "subcommand=svg-validate",
+        expect: "emits deterministic sanitized svg for identical input",
     },
 ];
 
 #[derive(Debug, Parser)]
 #[command(
     name = "image-processing",
-    about = "Batch image transformations plus deterministic generate presets.",
-    after_help = "Notes:\n  - Output-producing subcommands require exactly one output mode: --out, --out-dir, or --in-place (with --yes).\n  - generate requires --preset and does not read --in or allow --in-place.\n  - Use --json for machine-readable output (stdout JSON only; logs go to stderr).\n"
+    about = "Batch image transformations with svg-source and svg-validation flows.",
+    after_help = "Notes:\n  - Output-producing subcommands require exactly one output mode: --out, --out-dir, or --in-place (with --yes).\n  - convert --from-svg uses the Rust SVG backend and requires --out + --to png|webp|svg.\n  - svg-validate sanitizes a single svg input and requires --in + --out.\n  - Use --json for machine-readable output (stdout JSON only; logs go to stderr).\n"
 )]
 pub struct Cli {
     #[arg(value_enum)]
@@ -116,6 +85,9 @@ pub struct Cli {
     pub recursive: bool,
     #[arg(long, action = ArgAction::Append, default_value = None)]
     pub glob: Vec<String>,
+
+    #[arg(long = "from-svg")]
+    pub from_svg: Option<String>,
 
     #[arg(long)]
     pub out: Option<String>,
@@ -146,26 +118,7 @@ pub struct Cli {
     #[arg(long)]
     pub background: Option<String>,
 
-    // generate
-    #[arg(
-        long = "preset",
-        value_enum,
-        action = ArgAction::Append,
-        required_if_eq("subcommand", "generate")
-    )]
-    pub presets: Vec<GeneratePreset>,
-    #[arg(long = "fg")]
-    pub fg: Option<String>,
-    #[arg(long = "bg")]
-    pub bg: Option<String>,
-    #[arg(long)]
-    pub stroke: Option<String>,
-    #[arg(long = "stroke-width")]
-    pub stroke_width: Option<f64>,
-    #[arg(long)]
-    pub padding: Option<f64>,
-
-    // convert / optimize / generate
+    // convert / optimize / convert --from-svg
     #[arg(long = "to")]
     pub to: Option<String>,
     #[arg(long)]
@@ -192,7 +145,6 @@ pub struct Cli {
     // crop
     #[arg(long)]
     pub rect: Option<String>,
-    // crop: WxH, generate: integer pixels
     #[arg(long)]
     pub size: Option<String>,
     #[arg(long, default_value = "center")]
