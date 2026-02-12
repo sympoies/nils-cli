@@ -6,6 +6,10 @@ pub fn resolve_secret_dir() -> Option<PathBuf> {
         return Some(dir);
     }
 
+    if let Some(home) = home_dir() {
+        return Some(home.join(".config").join("codex_secrets"));
+    }
+
     let feature_dir = resolve_feature_dir()?;
     if feature_dir.join("init.zsh").is_file() || feature_dir.join("codex-tools.zsh").is_file() {
         return Some(feature_dir.join("secrets"));

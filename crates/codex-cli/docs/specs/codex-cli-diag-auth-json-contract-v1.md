@@ -286,7 +286,7 @@ Informational (do not hard-depend for schema validation):
 }
 ```
 
-### auth current (failure)
+### auth current (failure: secret-not-matched)
 ```json
 {
   "schema_version": "codex-cli.auth.v1",
@@ -298,6 +298,22 @@ Informational (do not hard-depend for schema validation):
     "details": {
       "auth_file": "/home/user/.codex/auth.json",
       "matched": false
+    }
+  }
+}
+```
+
+### auth current (failure: secret-dir-not-found)
+```json
+{
+  "schema_version": "codex-cli.auth.v1",
+  "command": "auth current",
+  "ok": false,
+  "error": {
+    "code": "secret-dir-not-found",
+    "message": "/home/user/.config/codex_secrets not found",
+    "details": {
+      "secret_dir": "/home/user/.config/codex_secrets"
     }
   }
 }

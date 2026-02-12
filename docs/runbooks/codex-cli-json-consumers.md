@@ -34,6 +34,9 @@ Contract source of truth:
 - `auth save` overwrite handling:
   - success path: check `result.overwritten` (`false` = new file, `true` = replaced existing file)
   - confirmation-required path: `ok=false`, `error.code=overwrite-confirmation-required`
+- `auth current` secret directory resolution errors are command-level failures:
+  - `error.code=secret-dir-not-configured|secret-dir-not-found|secret-dir-read-failed`
+  - treat these as configuration/operational errors, not as `secret-not-matched`.
 - Treat `raw_usage` and other informational metadata as optional and unstable for strict parsing.
 
 Example commands:
