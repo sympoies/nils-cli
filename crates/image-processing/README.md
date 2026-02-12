@@ -62,7 +62,7 @@ mkdir -p out/plan-doc-examples
 
 ```bash
 cargo run -p nils-image-processing -- svg-validate \
-  --in fixtures/image-processing/llm-svg-valid.svg \
+  --in crates/image-processing/tests/fixtures/llm-svg-valid.svg \
   --out out/plan-doc-examples/llm.cleaned.svg
 ```
 
@@ -76,7 +76,7 @@ cargo run -p nils-image-processing -- convert \
 
 ```bash
 cargo run -p nils-image-processing -- convert \
-  --from-svg fixtures/image-processing/sample-icon.svg \
+  --from-svg crates/image-processing/tests/fixtures/sample-icon.svg \
   --to webp \
   --out out/plan-doc-examples/sample.webp \
   --json
