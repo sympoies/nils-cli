@@ -34,6 +34,10 @@ Commands:
 - `--json` is shorthand for `--format json`.
 - `fetch` and `apply` are machine-facing commands and support both `--json` and `--format json`.
 - `list`, `search`, and `report` also support JSON mode for automation and dashboards.
+- `list`/`search`/`fetch` may include additive metadata fields:
+  `content_type`, `validation_status`.
+- `report` may include additive metadata aggregates:
+  `top_content_types`, `validation_status_totals`.
 - In JSON mode, parse `stdout` only. `stderr` is diagnostic-only and not part of the data contract.
 - Exit code policy: `0` success, `64` usage error, `65` input data error, `1` runtime failure.
 
@@ -64,6 +68,8 @@ Example `enrichment-batch.json` payload:
       "category": "shopping",
       "normalized_text": "buy 1tb ssd for mom",
       "confidence": 0.93,
+      "content_type": "text",
+      "validation_status": "valid",
       "tags": ["family", "shopping"],
       "payload": {
         "source": "memo-agent",

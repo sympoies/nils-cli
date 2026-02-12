@@ -45,6 +45,15 @@ fn json_contract() {
         list_json.get("results").is_some(),
         "results key should exist"
     );
+    let first_list_item = &list_json["results"][0];
+    assert!(
+        first_list_item.get("content_type").is_some(),
+        "list item should include content_type key"
+    );
+    assert!(
+        first_list_item.get("validation_status").is_some(),
+        "list item should include validation_status key"
+    );
 
     let fetch_output = run_memo_cli(&db_path, &["--json", "fetch", "--limit", "1"], None);
     assert_eq!(
@@ -62,6 +71,15 @@ fn json_contract() {
     assert!(
         fetch_json.get("pagination").is_some(),
         "pagination key should exist"
+    );
+    let first_fetch_item = &fetch_json["results"][0];
+    assert!(
+        first_fetch_item.get("content_type").is_some(),
+        "fetch item should include content_type key"
+    );
+    assert!(
+        first_fetch_item.get("validation_status").is_some(),
+        "fetch item should include validation_status key"
     );
 
     let invalid_apply = run_memo_cli(&db_path, &["--json", "apply", "--stdin"], Some("{}"));

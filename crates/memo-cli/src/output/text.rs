@@ -151,18 +151,24 @@ mod tests {
                 created_at: "2026-02-12T10:00:00Z".to_string(),
                 state: "pending".to_string(),
                 text_preview: "plan sprint".to_string(),
+                content_type: None,
+                validation_status: None,
             },
             ListItem {
                 item_id: 2,
                 created_at: "2026-02-12T09:00:00Z".to_string(),
                 state: "enriched".to_string(),
                 text_preview: "book dentist".to_string(),
+                content_type: Some("text".to_string()),
+                validation_status: Some("valid".to_string()),
             },
             ListItem {
                 item_id: 1,
                 created_at: "2026-02-12T08:00:00Z".to_string(),
                 state: "archived".to_string(),
                 text_preview: "legacy note".to_string(),
+                content_type: None,
+                validation_status: None,
             },
         ]
     }
@@ -174,6 +180,8 @@ mod tests {
             score: -0.1203,
             matched_fields: vec!["raw_text".to_string()],
             preview: "tokyo travel event".to_string(),
+            content_type: Some("text".to_string()),
+            validation_status: Some("valid".to_string()),
         }]
     }
 
@@ -197,6 +205,14 @@ mod tests {
             top_tags: vec![NameCount {
                 name: "family".to_string(),
                 count: 3,
+            }],
+            top_content_types: vec![NameCount {
+                name: "text".to_string(),
+                count: 5,
+            }],
+            validation_status_totals: vec![NameCount {
+                name: "valid".to_string(),
+                count: 4,
             }],
         }
     }
@@ -224,6 +240,8 @@ mod tests {
             source: "cli".to_string(),
             text: "renew passport in april".to_string(),
             state: "pending".to_string(),
+            content_type: None,
+            validation_status: None,
         }]);
 
         print_apply(&ApplySummary {
@@ -237,12 +255,18 @@ mod tests {
                     item_id: 9,
                     status: "accepted".to_string(),
                     derivation_version: Some(1),
+                    content_type: Some("text".to_string()),
+                    validation_status: Some("valid".to_string()),
+                    validation_errors: None,
                     error: None,
                 },
                 ApplyItemOutcome {
                     item_id: 8,
                     status: "failed".to_string(),
                     derivation_version: None,
+                    content_type: None,
+                    validation_status: None,
+                    validation_errors: None,
                     error: Some(ApplyItemError {
                         code: "invalid-apply-payload".to_string(),
                         message: "item_id does not exist".to_string(),

@@ -23,6 +23,8 @@ pub fn run(storage: &Storage, output_mode: OutputMode, args: &ReportArgs) -> Res
                 "totals": summary.totals,
                 "top_categories": summary.top_categories,
                 "top_tags": summary.top_tags,
+                "top_content_types": summary.top_content_types,
+                "validation_status_totals": summary.validation_status_totals,
             }),
         );
     }

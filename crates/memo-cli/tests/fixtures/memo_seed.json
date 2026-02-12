@@ -39,6 +39,50 @@
     "captured": 3,
     "search_min_hits": 1
   },
+  "format_cases": [
+    {
+      "label": "url-valid",
+      "text": "https://example.com/inbox",
+      "expected_content_type": "url",
+      "expected_validation_status": "valid"
+    },
+    {
+      "label": "json-valid",
+      "text": "{\"task\":\"buy milk\"}",
+      "expected_content_type": "json",
+      "expected_validation_status": "valid"
+    },
+    {
+      "label": "json-invalid",
+      "text": "{\"task\":}",
+      "expected_content_type": "json",
+      "expected_validation_status": "invalid"
+    },
+    {
+      "label": "yaml-valid",
+      "text": "name: memo\\npriority: high",
+      "expected_content_type": "yaml",
+      "expected_validation_status": "valid"
+    },
+    {
+      "label": "xml-valid",
+      "text": "<root><item>memo</item></root>",
+      "expected_content_type": "xml",
+      "expected_validation_status": "valid"
+    },
+    {
+      "label": "markdown-valid",
+      "text": "# Inbox\\n\\n- [ ] buy milk",
+      "expected_content_type": "markdown",
+      "expected_validation_status": "valid"
+    },
+    {
+      "label": "text-fallback",
+      "text": "just a plain sentence",
+      "expected_content_type": "text",
+      "expected_validation_status": "skipped"
+    }
+  ],
   "malformed_apply_payload": {
     "items": [
       {

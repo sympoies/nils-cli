@@ -28,3 +28,12 @@ scripts/publish-crates.sh --dry-run --crate nils-memo-cli
 ```
 
 - Gate passes only when the command exits `0` and runs crate publish checks without metadata or ordering errors.
+
+## Contract-change release notes gate
+- Any release that adds command flags or JSON fields must include concise release
+  notes in the PR and changelog/release artifact.
+- For additive contract changes (for example metadata fields or temporal report
+  options), notes must explicitly state:
+  - compatibility impact: additive / non-breaking
+  - new error codes (if any)
+  - operator-facing rollout checks

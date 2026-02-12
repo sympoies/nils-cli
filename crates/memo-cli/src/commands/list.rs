@@ -25,6 +25,8 @@ pub fn run(
                     "created_at": row.created_at,
                     "state": row.state,
                     "text_preview": row.text_preview,
+                    "content_type": row.content_type,
+                    "validation_status": row.validation_status,
                 })
             })
             .collect::<Vec<_>>();

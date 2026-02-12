@@ -9,10 +9,13 @@ enrichment.
    - `cargo run -p nils-memo-cli -- --help`
 2. Initialize a local database and smoke capture:
    - `memo-cli add "rollout smoke capture"`
+   - `memo-cli add --at 2026-02-12T10:00:00Z "rollout explicit timestamp capture"`
 3. Validate list/search/report basics:
    - `memo-cli list --limit 5`
    - `memo-cli search "rollout"`
    - `memo-cli report week`
+   - `memo-cli report week --tz Asia/Taipei`
+   - `memo-cli report month --from 2026-02-01T00:00:00Z --to 2026-02-29T23:59:59Z --json`
 4. Validate machine flow with JSON:
    - `memo-cli fetch --json --limit 10`
    - `memo-cli apply --json --dry-run --stdin < enrichment-batch.json`
@@ -22,6 +25,10 @@ enrichment.
 - `fetch --json` returns deterministic ordering and valid envelope keys.
 - `apply --dry-run` validates payloads without writing derivation rows.
 - `report` shows non-negative totals and stable period/range fields.
+- `list`/`search`/`fetch` JSON may include additive metadata fields:
+  `content_type` and `validation_status`.
+- `report --json` may include additive aggregates:
+  `top_content_types` and `validation_status_totals`.
 
 ## Monitoring checkpoints
 - Command failure rate:
@@ -30,6 +37,8 @@ enrichment.
   - ensure `schema_version`, `command`, `ok`, and `result|results|error` are always present.
 - Apply quality:
   - monitor `accepted/skipped/failed` counts for anomalies in `apply` responses.
+  - monitor metadata distribution (`content_type`, `validation_status`) for
+    unexpected spikes.
 - Search/report consistency:
   - spot-check that accepted derivations appear in `search` and `report` outputs.
 
@@ -38,6 +47,7 @@ enrichment.
 - Trigger B: contract-breaking JSON output observed by automation consumers.
 - Trigger C: unexpected drop in `fetch`/`report` correctness (missing recent captures).
 - Trigger D: release-gate regressions (`nils-cli-checks.sh` or coverage gate repeatedly fail).
+- Trigger E: timezone/custom-range regressions around `--tz` or `--from/--to`.
 
 ## Rollback actions
 1. Pause write-back automation immediately:

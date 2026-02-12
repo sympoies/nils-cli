@@ -4,6 +4,7 @@ use rusqlite::{Transaction, params};
 use serde::Serialize;
 
 use crate::errors::AppError;
+use crate::preprocess::{self, ValidationStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IncomingStatus {
@@ -35,10 +36,21 @@ pub struct ApplyInputItem {
     pub due_at: Option<String>,
     pub normalized_text: Option<String>,
     pub confidence: Option<f64>,
+    pub content_type: Option<String>,
+    pub validation_status: Option<String>,
+    pub validation_errors: Option<Vec<ApplyValidationError>>,
     pub payload_json: serde_json::Value,
     pub conflict_reason: Option<String>,
     pub tags: Vec<String>,
     pub agent_run_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ApplyValidationError {
+    pub code: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -56,7 +68,27 @@ pub struct ApplyItemOutcome {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub derivation_version: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub validation_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub validation_errors: Option<Vec<ApplyValidationError>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ApplyItemError>,
+}
+
+impl ApplyItemOutcome {
+    pub fn content_type(&self) -> Option<&str> {
+        self.content_type.as_deref()
+    }
+
+    pub fn validation_status(&self) -> Option<&str> {
+        self.validation_status.as_deref()
+    }
+
+    pub fn validation_errors(&self) -> Option<&[ApplyValidationError]> {
+        self.validation_errors.as_deref()
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -67,6 +99,23 @@ pub struct ApplySummary {
     pub skipped: i64,
     pub failed: i64,
     pub items: Vec<ApplyItemOutcome>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ResolvedMetadata {
+    content_type: Option<String>,
+    validation_status: Option<String>,
+    validation_errors: Option<Vec<ApplyValidationError>>,
+}
+
+impl ResolvedMetadata {
+    fn from_item(item: &ApplyInputItem) -> Self {
+        Self {
+            content_type: item.content_type.clone(),
+            validation_status: item.validation_status.clone(),
+            validation_errors: item.validation_errors.clone(),
+        }
+    }
 }
 
 pub fn apply_items(
@@ -81,31 +130,37 @@ pub fn apply_items(
     let mut outcomes = Vec::with_capacity(items.len());
 
     for item in items {
+        let mut metadata = ResolvedMetadata::from_item(item);
+
         if !item_exists(tx, item.item_id)? {
             failed += 1;
-            outcomes.push(ApplyItemOutcome {
-                item_id: item.item_id,
-                status: "failed".to_string(),
-                derivation_version: None,
-                error: Some(ApplyItemError {
+            outcomes.push(build_outcome(
+                item.item_id,
+                "failed",
+                None,
+                &metadata,
+                Some(ApplyItemError {
                     code: "invalid-apply-payload".to_string(),
                     message: "item_id does not exist".to_string(),
                     details: None,
                 }),
-            });
+            ));
             continue;
         }
+
+        populate_missing_metadata(tx, item.item_id, &mut metadata)?;
 
         let active = current_active(tx, item.item_id)?;
         if let Some(base_derivation_id) = item.base_derivation_id
             && active.map(|row| row.0) != Some(base_derivation_id)
         {
             skipped += 1;
-            outcomes.push(ApplyItemOutcome {
-                item_id: item.item_id,
-                status: "skipped".to_string(),
-                derivation_version: None,
-                error: Some(ApplyItemError {
+            outcomes.push(build_outcome(
+                item.item_id,
+                "skipped",
+                None,
+                &metadata,
+                Some(ApplyItemError {
                     code: "apply-item-conflict".to_string(),
                     message: "incoming base derivation does not match active derivation"
                         .to_string(),
@@ -114,7 +169,7 @@ pub fn apply_items(
                         "active_derivation_id": active.map(|row| row.0),
                     })),
                 }),
-            });
+            ));
             continue;
         }
 
@@ -122,39 +177,42 @@ pub fn apply_items(
             derivation_version_by_hash(tx, item.item_id, &item.derivation_hash)?
         {
             skipped += 1;
-            outcomes.push(ApplyItemOutcome {
-                item_id: item.item_id,
-                status: "skipped".to_string(),
-                derivation_version: Some(existing_version),
-                error: None,
-            });
+            outcomes.push(build_outcome(
+                item.item_id,
+                "skipped",
+                Some(existing_version),
+                &metadata,
+                None,
+            ));
             continue;
         }
 
         if item.status == IncomingStatus::Conflict && item.conflict_reason.is_none() {
             failed += 1;
-            outcomes.push(ApplyItemOutcome {
-                item_id: item.item_id,
-                status: "failed".to_string(),
-                derivation_version: None,
-                error: Some(ApplyItemError {
+            outcomes.push(build_outcome(
+                item.item_id,
+                "failed",
+                None,
+                &metadata,
+                Some(ApplyItemError {
                     code: "invalid-apply-payload".to_string(),
                     message: "status=conflict requires conflict_reason".to_string(),
                     details: None,
                 }),
-            });
+            ));
             continue;
         }
 
         let next_version = next_derivation_version(tx, item.item_id)?;
         if dry_run {
             accepted += 1;
-            outcomes.push(ApplyItemOutcome {
-                item_id: item.item_id,
-                status: "accepted".to_string(),
-                derivation_version: Some(next_version),
-                error: None,
-            });
+            outcomes.push(build_outcome(
+                item.item_id,
+                "accepted",
+                Some(next_version),
+                &metadata,
+                None,
+            ));
             continue;
         }
 
@@ -168,7 +226,11 @@ pub fn apply_items(
             .map_err(AppError::db_write)?;
         }
 
-        let payload_json = serde_json::to_string(&item.payload_json).map_err(|err| {
+        let payload_json = serde_json::to_string(&merge_payload_with_metadata(
+            item.payload_json.clone(),
+            &metadata,
+        ))
+        .map_err(|err| {
             AppError::invalid_apply_payload(
                 format!(
                     "payload serialization failed for item {}: {err}",
@@ -241,16 +303,18 @@ pub fn apply_items(
         let derivation_id = tx.last_insert_rowid();
 
         if item.status == IncomingStatus::Accepted {
-            attach_tags(tx, derivation_id, &item.tags)?;
+            let tag_list = tags_with_metadata(&item.tags, &metadata);
+            attach_tags(tx, derivation_id, &tag_list)?;
         }
 
         accepted += 1;
-        outcomes.push(ApplyItemOutcome {
-            item_id: item.item_id,
-            status: "accepted".to_string(),
-            derivation_version: Some(next_version),
-            error: None,
-        });
+        outcomes.push(build_outcome(
+            item.item_id,
+            "accepted",
+            Some(next_version),
+            &metadata,
+            None,
+        ));
     }
 
     Ok(ApplySummary {
@@ -261,6 +325,116 @@ pub fn apply_items(
         failed,
         items: outcomes,
     })
+}
+
+fn build_outcome(
+    item_id: i64,
+    status: &str,
+    derivation_version: Option<i64>,
+    metadata: &ResolvedMetadata,
+    error: Option<ApplyItemError>,
+) -> ApplyItemOutcome {
+    ApplyItemOutcome {
+        item_id,
+        status: status.to_string(),
+        derivation_version,
+        content_type: metadata.content_type.clone(),
+        validation_status: metadata.validation_status.clone(),
+        validation_errors: metadata.validation_errors.clone(),
+        error,
+    }
+}
+
+fn populate_missing_metadata(
+    tx: &Transaction<'_>,
+    item_id: i64,
+    metadata: &mut ResolvedMetadata,
+) -> Result<(), AppError> {
+    let needs_content_type = metadata.content_type.is_none();
+    let needs_status = metadata.validation_status.is_none();
+    let needs_invalid_errors = matches!(metadata.validation_status.as_deref(), Some("invalid"))
+        && metadata.validation_errors.is_none();
+
+    if !needs_content_type && !needs_status && !needs_invalid_errors {
+        return Ok(());
+    }
+
+    let raw_text: String = tx
+        .query_row(
+            "select raw_text from inbox_items where item_id = ?1",
+            params![item_id],
+            |row| row.get(0),
+        )
+        .map_err(AppError::db_query)?;
+    let analyzed = preprocess::analyze(&raw_text);
+
+    if needs_content_type {
+        metadata.content_type = Some(analyzed.content_type.as_str().to_string());
+    }
+    if needs_status {
+        metadata.validation_status = Some(analyzed.validation.status.as_str().to_string());
+    }
+
+    let invalid_from_analysis = matches!(analyzed.validation.status, ValidationStatus::Invalid);
+    if (metadata.validation_errors.is_none() && invalid_from_analysis) || needs_invalid_errors {
+        metadata.validation_errors = analyzed.validation.errors.map(|errors| {
+            errors
+                .into_iter()
+                .map(|err| ApplyValidationError {
+                    code: err.code,
+                    message: err.message,
+                    path: err.path,
+                })
+                .collect::<Vec<_>>()
+        });
+    }
+
+    Ok(())
+}
+
+fn tags_with_metadata(base_tags: &[String], metadata: &ResolvedMetadata) -> Vec<String> {
+    let mut tags = base_tags.to_vec();
+    if let Some(content_type) = &metadata.content_type {
+        tags.push(format!("fmt:{content_type}"));
+    }
+    if let Some(validation_status) = &metadata.validation_status {
+        tags.push(format!("val:{validation_status}"));
+    }
+    tags
+}
+
+fn merge_payload_with_metadata(
+    payload_json: serde_json::Value,
+    metadata: &ResolvedMetadata,
+) -> serde_json::Value {
+    let mut map = match payload_json {
+        serde_json::Value::Object(object) => object,
+        other => {
+            let mut object = serde_json::Map::new();
+            object.insert("payload".to_string(), other);
+            object
+        }
+    };
+
+    if let Some(content_type) = &metadata.content_type {
+        map.insert(
+            "content_type".to_string(),
+            serde_json::Value::String(content_type.clone()),
+        );
+    }
+    if let Some(validation_status) = &metadata.validation_status {
+        map.insert(
+            "validation_status".to_string(),
+            serde_json::Value::String(validation_status.clone()),
+        );
+    }
+    if let Some(validation_errors) = &metadata.validation_errors
+        && let Ok(encoded) = serde_json::to_value(validation_errors)
+    {
+        map.insert("validation_errors".to_string(), encoded);
+    }
+
+    serde_json::Value::Object(map)
 }
 
 fn item_exists(tx: &Transaction<'_>, item_id: i64) -> Result<bool, AppError> {

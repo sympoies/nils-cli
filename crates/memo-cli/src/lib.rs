@@ -3,6 +3,7 @@ pub mod cli;
 pub mod commands;
 pub mod errors;
 pub mod output;
+pub mod preprocess;
 pub mod storage;
 pub mod timestamps;
 

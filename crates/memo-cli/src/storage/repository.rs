@@ -24,6 +24,8 @@ pub struct ListItem {
     pub created_at: String,
     pub state: String,
     pub text_preview: String,
+    pub content_type: Option<String>,
+    pub validation_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -33,6 +35,8 @@ pub struct FetchItem {
     pub source: String,
     pub text: String,
     pub state: String,
+    pub content_type: Option<String>,
+    pub validation_status: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -90,14 +94,23 @@ pub fn list_items(
             i.item_id,
             i.created_at,
             case
-                when exists (
-                    select 1 from item_derivations d
-                    where d.item_id = i.item_id and d.is_active = 1 and d.status = 'accepted'
-                ) then 'enriched'
+                when ad.derivation_id is not null then 'enriched'
                 else 'pending'
             end as state,
-            substr(i.raw_text, 1, 80) as text_preview
+            substr(i.raw_text, 1, 80) as text_preview,
+            json_extract(ad.payload_json, '$.content_type') as content_type,
+            json_extract(ad.payload_json, '$.validation_status') as validation_status
         from inbox_items i
+        left join item_derivations ad
+          on ad.derivation_id = (
+            select d.derivation_id
+            from item_derivations d
+            where d.item_id = i.item_id
+              and d.is_active = 1
+              and d.status = 'accepted'
+            order by d.derivation_version desc, d.derivation_id desc
+            limit 1
+          )
         where {state_filter}
         order by i.created_at desc, i.item_id desc
         limit ?1 offset ?2"
@@ -111,6 +124,8 @@ pub fn list_items(
                 created_at: row.get(1)?,
                 state: row.get(2)?,
                 text_preview: row.get(3)?,
+                content_type: row.get(4)?,
+                validation_status: row.get(5)?,
             })
         })
         .map_err(AppError::db_query)?;
@@ -148,6 +163,8 @@ pub fn fetch_pending_page(
     let mut stmt = conn
         .prepare(
             "select i.item_id, i.created_at, i.source, i.raw_text
+                    , null as content_type
+                    , null as validation_status
             from inbox_items i
             where not exists (
                 select 1 from item_derivations d
@@ -176,6 +193,8 @@ pub fn fetch_pending_page(
                     source: row.get(2)?,
                     text: row.get(3)?,
                     state: "pending".to_string(),
+                    content_type: row.get(4)?,
+                    validation_status: row.get(5)?,
                 })
             },
         )

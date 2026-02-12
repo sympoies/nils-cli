@@ -12,6 +12,8 @@ pub struct SearchItem {
     pub score: f64,
     pub matched_fields: Vec<String>,
     pub preview: String,
+    pub content_type: Option<String>,
+    pub validation_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -55,6 +57,8 @@ pub struct ReportSummary {
     pub totals: ReportTotals,
     pub top_categories: Vec<NameCount>,
     pub top_tags: Vec<NameCount>,
+    pub top_content_types: Vec<NameCount>,
+    pub validation_status_totals: Vec<NameCount>,
 }
 
 pub fn search_items(
@@ -84,10 +88,22 @@ pub fn search_items(
             i.item_id,
             i.created_at,
             bm25(item_search_fts) as score,
-            substr(coalesce(d.derived_text, i.raw_text), 1, 120) as preview
+            substr(coalesce(doc.derived_text, i.raw_text), 1, 120) as preview,
+            json_extract(ad.payload_json, '$.content_type') as content_type,
+            json_extract(ad.payload_json, '$.validation_status') as validation_status
         from item_search_fts
-        join item_search_documents d on d.item_id = item_search_fts.rowid
-        join inbox_items i on i.item_id = d.item_id
+        join item_search_documents doc on doc.item_id = item_search_fts.rowid
+        join inbox_items i on i.item_id = doc.item_id
+        left join item_derivations ad
+          on ad.derivation_id = (
+            select d.derivation_id
+            from item_derivations d
+            where d.item_id = i.item_id
+              and d.is_active = 1
+              and d.status = 'accepted'
+            order by d.derivation_version desc, d.derivation_id desc
+            limit 1
+          )
         where item_search_fts match ?1
           and {state_filter}
         order by score asc, i.created_at desc, i.item_id desc
@@ -103,6 +119,8 @@ pub fn search_items(
                 score: row.get(2)?,
                 matched_fields: vec!["raw_text".to_string()],
                 preview: row.get(3)?,
+                content_type: row.get(4)?,
+                validation_status: row.get(5)?,
             })
         })
         .map_err(AppError::db_query)?;
@@ -175,6 +193,8 @@ pub fn report_summary_with_range(
     let pending = (captured - enriched).max(0);
     let top_categories = collect_top_categories(conn, from, to)?;
     let top_tags = collect_top_tags(conn, from, to)?;
+    let top_content_types = collect_top_content_types(conn, from, to)?;
+    let validation_status_totals = collect_validation_status_totals(conn, from, to)?;
 
     Ok(ReportSummary {
         period: query.period.clone(),
@@ -190,6 +210,8 @@ pub fn report_summary_with_range(
         },
         top_categories,
         top_tags,
+        top_content_types,
+        validation_status_totals,
     })
 }
 
@@ -242,6 +264,73 @@ fn collect_top_tags(conn: &Connection, from: &str, to: &str) -> Result<Vec<NameC
              group by t.tag_name
              order by tag_count desc, t.tag_name asc
              limit 5",
+        )
+        .map_err(AppError::db_query)?;
+
+    let rows = stmt
+        .query_map(params![from, to], |row| {
+            Ok(NameCount {
+                name: row.get(0)?,
+                count: row.get(1)?,
+            })
+        })
+        .map_err(AppError::db_query)?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(AppError::db_query)
+}
+
+fn collect_top_content_types(
+    conn: &Connection,
+    from: &str,
+    to: &str,
+) -> Result<Vec<NameCount>, AppError> {
+    let mut stmt = conn
+        .prepare(
+            "select coalesce(nullif(trim(json_extract(d.payload_json, '$.content_type')), ''), 'unknown') as content_type,
+                    count(*) as content_type_count
+             from item_derivations d
+             join inbox_items i on i.item_id = d.item_id
+             where d.is_active = 1
+               and d.status = 'accepted'
+               and julianday(i.created_at) >= julianday(?1)
+               and julianday(i.created_at) <= julianday(?2)
+             group by content_type
+             order by content_type_count desc, content_type asc
+             limit 7",
+        )
+        .map_err(AppError::db_query)?;
+
+    let rows = stmt
+        .query_map(params![from, to], |row| {
+            Ok(NameCount {
+                name: row.get(0)?,
+                count: row.get(1)?,
+            })
+        })
+        .map_err(AppError::db_query)?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(AppError::db_query)
+}
+
+fn collect_validation_status_totals(
+    conn: &Connection,
+    from: &str,
+    to: &str,
+) -> Result<Vec<NameCount>, AppError> {
+    let mut stmt = conn
+        .prepare(
+            "select coalesce(nullif(trim(json_extract(d.payload_json, '$.validation_status')), ''), 'unknown') as validation_status,
+                    count(*) as validation_status_count
+             from item_derivations d
+             join inbox_items i on i.item_id = d.item_id
+             where d.is_active = 1
+               and d.status = 'accepted'
+               and julianday(i.created_at) >= julianday(?1)
+               and julianday(i.created_at) <= julianday(?2)
+             group by validation_status
+             order by validation_status_count desc, validation_status asc",
         )
         .map_err(AppError::db_query)?;
 

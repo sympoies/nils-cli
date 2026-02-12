@@ -7,6 +7,7 @@ This runbook defines a minimal capture -> fetch -> apply -> report loop for auto
 ```bash
 memo-cli add "buy 1tb ssd for mom"
 memo-cli add "book pediatric dentist appointment"
+memo-cli add --at 2026-02-12T10:00:00+08:00 "backfilled note"
 ```
 
 ## 2. Fetch pending items for agents
@@ -16,7 +17,8 @@ memo-cli fetch --json --limit 50 > inbox-batch.json
 
 Expected JSON shape:
 - top-level: `schema_version`, `command`, `ok`, `results`
-- `results[]`: `item_id`, `created_at`, `source`, `text`, `state`
+- `results[]`: `item_id`, `created_at`, `source`, `text`, `state`,
+  `content_type`, `validation_status`
 - optional `pagination`: `limit`, `returned`, `next_cursor`, `has_more`
 
 When `pagination.has_more=true`, continue with:
@@ -53,6 +55,9 @@ memo-cli apply --json --input enrichment-batch.json
 
 Notes:
 - `derivation_hash` drives idempotency; same hash on same `item_id` becomes `skipped`.
+- `content_type`, `validation_status`, and `validation_errors` are optional.
+- When metadata fields are omitted, apply infers them from raw capture text and
+  stores them in derivation metadata.
 - `--dry-run` validates and returns predicted versions without writing rows.
 
 ## 4. Validate with search and report
@@ -60,11 +65,15 @@ Notes:
 memo-cli search "ssd" --json
 memo-cli report week
 memo-cli report month --json
+memo-cli report week --tz Asia/Taipei
+memo-cli report month --from 2026-02-01T00:00:00Z --to 2026-02-29T23:59:59Z --json
 ```
 
 ## 5. Failure handling
 - Invalid payload returns `ok=false` with `error.code=invalid-apply-payload`.
 - Cursor mismatch returns `ok=false` with `error.code=invalid-cursor`.
+- Invalid temporal arguments return `invalid-time`, `invalid-timezone`, or
+  `invalid-time-range`.
 - Per-item conflicts are reported inside `result.items[].error` with `code=apply-item-conflict`.
 - In text mode, warnings are sent to `stderr`; `stdout` remains primary result output.
 

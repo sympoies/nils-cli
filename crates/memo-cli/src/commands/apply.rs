@@ -6,6 +6,7 @@ use serde::Serialize;
 use crate::cli::{ApplyArgs, OutputMode};
 use crate::errors::AppError;
 use crate::output::{emit_json_result, format_item_id, parse_item_id, text};
+use crate::preprocess::{ContentType, ValidationStatus};
 use crate::storage::Storage;
 use crate::storage::derivations::{self, ApplyInputItem, IncomingStatus};
 
@@ -27,6 +28,12 @@ struct JsonApplyItem<'a> {
     status: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     derivation_version: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content_type: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    validation_status: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    validation_errors: Option<&'a [derivations::ApplyValidationError]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<&'a derivations::ApplyItemError>,
 }
@@ -87,6 +94,9 @@ pub fn run(storage: &Storage, output_mode: OutputMode, args: &ApplyArgs) -> Resu
                     item_id: format_item_id(item.item_id),
                     status: &item.status,
                     derivation_version: item.derivation_version,
+                    content_type: item.content_type(),
+                    validation_status: item.validation_status(),
+                    validation_errors: item.validation_errors(),
                     error: item.error.as_ref(),
                 })
                 .collect(),
@@ -169,6 +179,16 @@ fn parse_apply_item_array(
             &format!("{path}.normalized_text"),
         )?;
         let confidence = optional_f64(object.get("confidence"), &format!("{path}.confidence"))?;
+        let content_type =
+            optional_content_type(object.get("content_type"), &format!("{path}.content_type"))?;
+        let validation_status = optional_validation_status(
+            object.get("validation_status"),
+            &format!("{path}.validation_status"),
+        )?;
+        let validation_errors = optional_validation_errors(
+            object.get("validation_errors"),
+            &format!("{path}.validation_errors"),
+        )?;
         let payload_json = object
             .get("payload")
             .cloned()
@@ -194,6 +214,9 @@ fn parse_apply_item_array(
             due_at,
             normalized_text,
             confidence,
+            content_type,
+            validation_status,
+            validation_errors,
             payload_json,
             conflict_reason,
             tags,
@@ -339,6 +362,133 @@ fn optional_f64(value: Option<&serde_json::Value>, path: &str) -> Result<Option<
     }
 }
 
+fn optional_content_type(
+    value: Option<&serde_json::Value>,
+    path: &str,
+) -> Result<Option<String>, AppError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    match value {
+        serde_json::Value::String(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            if let Some(content_type) = ContentType::parse(trimmed) {
+                return Ok(Some(content_type.as_str().to_string()));
+            }
+            Err(AppError::invalid_apply_payload(
+                "content_type must be url|json|yaml|xml|markdown|text|unknown",
+                Some(path),
+            ))
+        }
+        serde_json::Value::Null => Ok(None),
+        _ => Err(AppError::invalid_apply_payload(
+            "content_type must be a string",
+            Some(path),
+        )),
+    }
+}
+
+fn optional_validation_status(
+    value: Option<&serde_json::Value>,
+    path: &str,
+) -> Result<Option<String>, AppError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    match value {
+        serde_json::Value::String(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            if let Some(status) = ValidationStatus::parse(trimmed) {
+                return Ok(Some(status.as_str().to_string()));
+            }
+            Err(AppError::invalid_apply_payload(
+                "validation_status must be valid|invalid|unknown|skipped",
+                Some(path),
+            ))
+        }
+        serde_json::Value::Null => Ok(None),
+        _ => Err(AppError::invalid_apply_payload(
+            "validation_status must be a string",
+            Some(path),
+        )),
+    }
+}
+
+fn optional_validation_errors(
+    value: Option<&serde_json::Value>,
+    path: &str,
+) -> Result<Option<Vec<derivations::ApplyValidationError>>, AppError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    match value {
+        serde_json::Value::Array(values) => {
+            let mut errors = Vec::with_capacity(values.len());
+            for (index, entry) in values.iter().enumerate() {
+                let entry_path = format!("{path}[{index}]");
+                let object = entry.as_object().ok_or_else(|| {
+                    AppError::invalid_apply_payload(
+                        "validation_errors must be an array of objects",
+                        Some(&entry_path),
+                    )
+                })?;
+                let code = required_trimmed_string(
+                    object.get("code"),
+                    &format!("{entry_path}.code"),
+                    "validation_errors[].code",
+                )?;
+                let message = required_trimmed_string(
+                    object.get("message"),
+                    &format!("{entry_path}.message"),
+                    "validation_errors[].message",
+                )?;
+                let field_path = optional_trimmed_string(
+                    object.get("path").cloned(),
+                    &format!("{entry_path}.path"),
+                )?;
+                errors.push(derivations::ApplyValidationError {
+                    code,
+                    message,
+                    path: field_path,
+                });
+            }
+            Ok(Some(errors))
+        }
+        serde_json::Value::Null => Ok(None),
+        _ => Err(AppError::invalid_apply_payload(
+            "validation_errors must be an array of objects",
+            Some(path),
+        )),
+    }
+}
+
+fn required_trimmed_string(
+    value: Option<&serde_json::Value>,
+    path: &str,
+    field_name: &str,
+) -> Result<String, AppError> {
+    let value = value.ok_or_else(|| {
+        AppError::invalid_apply_payload(format!("{field_name} is required"), Some(path))
+    })?;
+    let raw = value.as_str().ok_or_else(|| {
+        AppError::invalid_apply_payload(format!("{field_name} must be a string"), Some(path))
+    })?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::invalid_apply_payload(
+            format!("{field_name} must be a non-empty string"),
+            Some(path),
+        ));
+    }
+    Ok(trimmed.to_string())
+}
+
 fn parse_tags(value: Option<&serde_json::Value>, path: &str) -> Result<Vec<String>, AppError> {
     let Some(value) = value else {
         return Ok(Vec::new());
@@ -405,6 +555,13 @@ mod tests {
                 "due_at": " 2026-03-10T09:00:00Z ",
                 "normalized_text": "  buy milk tomorrow ",
                 "confidence": 0.82,
+                "content_type": " json ",
+                "validation_status": " invalid ",
+                "validation_errors": [{
+                    "code": "parse-error",
+                    "message": " trailing comma",
+                    "path": " $.items[0] "
+                }],
                 "tags": [" home ", "", "urgent"],
                 "payload": { "model": "test" }
             }]
@@ -423,6 +580,16 @@ mod tests {
         assert_eq!(item.due_at.as_deref(), Some("2026-03-10T09:00:00Z"));
         assert_eq!(item.normalized_text.as_deref(), Some("buy milk tomorrow"));
         assert_eq!(item.confidence, Some(0.82));
+        assert_eq!(item.content_type.as_deref(), Some("json"));
+        assert_eq!(item.validation_status.as_deref(), Some("invalid"));
+        assert_eq!(
+            item.validation_errors,
+            Some(vec![derivations::ApplyValidationError {
+                code: "parse-error".to_string(),
+                message: "trailing comma".to_string(),
+                path: Some("$.items[0]".to_string()),
+            }])
+        );
         assert_eq!(item.tags, vec!["home", "urgent"]);
         assert_eq!(item.payload_json, json!({ "model": "test" }));
         assert_eq!(item.agent_run_id, None);
@@ -535,6 +702,39 @@ mod tests {
         }))
         .expect_err("must fail");
         assert_eq!(error_path(&invalid_tags), Some("payload.items[0].tags[0]"));
+
+        let invalid_content_type = parse_apply_items(json!({
+            "items": [{"item_id": 1, "content_type": "pdf"}]
+        }))
+        .expect_err("must fail");
+        assert_eq!(
+            error_path(&invalid_content_type),
+            Some("payload.items[0].content_type")
+        );
+
+        let invalid_validation_status = parse_apply_items(json!({
+            "items": [{"item_id": 1, "validation_status": "failed"}]
+        }))
+        .expect_err("must fail");
+        assert_eq!(
+            error_path(&invalid_validation_status),
+            Some("payload.items[0].validation_status")
+        );
+
+        let invalid_validation_errors = parse_apply_items(json!({
+            "items": [{
+                "item_id": 1,
+                "validation_errors": [{
+                    "code": "",
+                    "message": "broken"
+                }]
+            }]
+        }))
+        .expect_err("must fail");
+        assert_eq!(
+            error_path(&invalid_validation_errors),
+            Some("payload.items[0].validation_errors[0].code")
+        );
     }
 
     #[test]

@@ -16,6 +16,10 @@ This spec is aligned 1:1 with:
 - Exactly one accepted active derivation is allowed per item.
 - Reprocessing is idempotent by `(item_id, derivation_hash)`.
 - Full-text search uses `fts5` over a denormalized per-item search document.
+- Phase 1 format/validation metadata follows Approach A:
+  canonical values live in derivation `payload_json`, with deterministic
+  query tags (`fmt:*`, `val:*`).
+- Phase 1 metadata rollout is additive and requires no schema migration.
 
 ## Core Tables
 
@@ -83,6 +87,14 @@ Why:
 - Enables fast state checks for list/fetch and category rollups for report.
 - Preserves full derivation history for audit/rollback.
 
+Phase 1 metadata payload contract (Approach A):
+- `payload_json` may include additive metadata fields:
+  - `content_type`: `url|json|yaml|xml|markdown|text|unknown`
+  - `validation_status`: `valid|invalid|unknown|skipped`
+  - `validation_errors[]`: objects with `code`, `message`, optional `path`
+- Metadata is derivation-scoped and versioned with each derivation row.
+- Raw rows in `inbox_items` remain immutable and are never rewritten.
+
 ### `tags`
 Canonical tag dictionary.
 
@@ -99,6 +111,15 @@ Constraints:
 
 Why:
 - Stable dedupe and case-insensitive normalization for report/search labels.
+
+Reserved deterministic metadata tag namespace (phase 1):
+- `fmt:<content_type>` for detected payload format.
+- `val:<validation_status>` for validation outcome.
+
+Rules:
+- Prefix tokens are lowercase and must use the documented taxonomy values.
+- Per derivation version, write path should emit at most one `fmt:*` and one
+  `val:*` tag (plus optional domain tags).
 
 ### `item_tags`
 Many-to-many between a derivation version and canonical tags.
@@ -187,6 +208,15 @@ Why:
   - `is_active=0`
   - `conflict_reason` populated
 - Conflict rows are retained for audit and retry logic; they do not replace the active accepted row.
+
+### 6. Format and validation metadata persistence (Approach A, phase 1)
+- Canonical metadata is persisted in `item_derivations.payload_json`.
+- Query-friendly metadata is mirrored through `tags` + `item_tags` using
+  deterministic `fmt:*` and `val:*` tags.
+- `inbox_items.raw_text` remains immutable; metadata updates are modeled as new
+  derivation versions, not raw-row mutation.
+- Existing `payload_json`, `tags`, and `item_tags` structures are reused, so no
+  schema migration is required for phase 1.
 
 ## Query Path Mapping
 - `list --state all`:
