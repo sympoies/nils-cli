@@ -41,12 +41,25 @@ pub struct FetchCursor {
     pub created_at: String,
 }
 
-pub fn add_item(conn: &Connection, text: &str, source: &str) -> Result<AddedItem, AppError> {
-    conn.execute(
-        "insert into inbox_items(source, raw_text) values(?1, ?2)",
-        params![source, text],
-    )
-    .map_err(AppError::db_write)?;
+pub fn add_item(
+    conn: &Connection,
+    text: &str,
+    source: &str,
+    created_at: Option<&str>,
+) -> Result<AddedItem, AppError> {
+    if let Some(created_at) = created_at {
+        conn.execute(
+            "insert into inbox_items(source, raw_text, created_at) values(?1, ?2, ?3)",
+            params![source, text, created_at],
+        )
+        .map_err(AppError::db_write)?;
+    } else {
+        conn.execute(
+            "insert into inbox_items(source, raw_text) values(?1, ?2)",
+            params![source, text],
+        )
+        .map_err(AppError::db_write)?;
+    }
 
     let item_id = conn.last_insert_rowid();
     let created_at: String = conn

@@ -90,6 +90,8 @@ memo-cli add <text> [--source <label>] [--at <rfc3339>] [--json|--format json]
 
 Behavior:
 - Persists immutable raw text as a new inbox item.
+- By default, `created_at` is system-generated at write time.
+- `--at` allows explicit RFC3339 timestamp input and stores the normalized UTC instant.
 - Never mutates previously captured rows.
 
 Text output (`stdout`):
@@ -142,6 +144,9 @@ memo-cli report <week|month> [--tz <iana-tz>] [--from <rfc3339>] [--to <rfc3339>
 
 Behavior:
 - `week` and `month` are canonical report windows.
+- `--tz` shifts canonical `week|month` window calculations to the provided IANA timezone.
+- `--from` and `--to` must be provided together and use RFC3339 input.
+- Precedence: explicit `--from/--to` range overrides canonical period window boundaries.
 - Uses capture totals and enrichment-derived categories/tags when present.
 - Works even if enrichment is absent (falls back to capture-only aggregates).
 

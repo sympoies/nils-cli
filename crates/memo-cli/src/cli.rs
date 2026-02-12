@@ -88,6 +88,10 @@ pub struct AddArgs {
     /// Capture source label
     #[arg(long, default_value = "cli")]
     pub source: String,
+
+    /// Capture timestamp (RFC3339)
+    #[arg(long)]
+    pub at: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -123,6 +127,18 @@ pub struct SearchArgs {
 pub struct ReportArgs {
     /// Report period: week or month
     pub period: ReportPeriod,
+
+    /// IANA timezone for canonical period windows
+    #[arg(long)]
+    pub tz: Option<String>,
+
+    /// Custom report start timestamp (RFC3339)
+    #[arg(long)]
+    pub from: Option<String>,
+
+    /// Custom report end timestamp (RFC3339)
+    #[arg(long)]
+    pub to: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]

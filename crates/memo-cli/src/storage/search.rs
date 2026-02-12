@@ -20,6 +20,14 @@ pub enum ReportPeriod {
     Month,
 }
 
+#[derive(Debug, Clone)]
+pub struct ReportRangeQuery {
+    pub period: String,
+    pub from: String,
+    pub to: String,
+    pub timezone: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct NameCount {
     pub name: String,
@@ -123,6 +131,22 @@ pub fn report_summary(conn: &Connection, period: ReportPeriod) -> Result<ReportS
         })
         .map_err(AppError::db_query)?;
 
+    let query = ReportRangeQuery {
+        period: period_name.to_string(),
+        from,
+        to,
+        timezone: "UTC".to_string(),
+    };
+    report_summary_with_range(conn, &query)
+}
+
+pub fn report_summary_with_range(
+    conn: &Connection,
+    query: &ReportRangeQuery,
+) -> Result<ReportSummary, AppError> {
+    let from = &query.from;
+    let to = &query.to;
+
     let captured: i64 = conn
         .query_row(
             "select count(*)
@@ -149,15 +173,15 @@ pub fn report_summary(conn: &Connection, period: ReportPeriod) -> Result<ReportS
         .map_err(AppError::db_query)?;
 
     let pending = (captured - enriched).max(0);
-    let top_categories = collect_top_categories(conn, &from, &to)?;
-    let top_tags = collect_top_tags(conn, &from, &to)?;
+    let top_categories = collect_top_categories(conn, from, to)?;
+    let top_tags = collect_top_tags(conn, from, to)?;
 
     Ok(ReportSummary {
-        period: period_name.to_string(),
+        period: query.period.clone(),
         range: ReportRange {
-            from,
-            to,
-            timezone: "UTC".to_string(),
+            from: from.clone(),
+            to: to.clone(),
+            timezone: query.timezone.clone(),
         },
         totals: ReportTotals {
             captured,

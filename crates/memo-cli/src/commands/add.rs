@@ -5,6 +5,7 @@ use crate::errors::AppError;
 use crate::output::{emit_json_result, format_item_id, text};
 use crate::storage::Storage;
 use crate::storage::repository;
+use crate::timestamps::{format_utc, parse_rfc3339_utc};
 
 pub fn run(storage: &Storage, args: &AddArgs, output_mode: OutputMode) -> Result<(), AppError> {
     let text = args.text.trim();
@@ -17,7 +18,14 @@ pub fn run(storage: &Storage, args: &AddArgs, output_mode: OutputMode) -> Result
         return Err(AppError::usage("--source must be non-empty"));
     }
 
-    let added = storage.with_transaction(|tx| repository::add_item(tx, text, source))?;
+    let created_at = args
+        .at
+        .as_deref()
+        .map(|raw| parse_rfc3339_utc(raw, "--at").map(format_utc))
+        .transpose()?;
+
+    let added = storage
+        .with_transaction(|tx| repository::add_item(tx, text, source, created_at.as_deref()))?;
 
     if output_mode.is_json() {
         return emit_json_result(

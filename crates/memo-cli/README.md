@@ -10,19 +10,22 @@ Usage:
   memo-cli [--db <path>] [--format <text|json> | --json] <command> [options]
 
 Commands:
-  add <text>                                 Capture a raw memo entry
+  add <text> [--at <rfc3339>]                Capture a raw memo entry
   list [--limit <n>] [--offset <n>]         List entries (default: newest first)
   search <query> [--limit <n>]              Search raw + active derived text
   report <week|month> [--tz <iana-tz>]      Build period summaries
+         [--from <rfc3339>] [--to <rfc3339>]
   fetch [--limit <n>] [--cursor <opaque>]   Pull records for enrichment workers
   apply (--input <file> | --stdin)          Apply enrichment payloads
 ```
 
 ## Commands
 - `add`: append one immutable raw capture record.
+- `add --at`: optional explicit capture time (RFC3339). Without `--at`, system time is used.
 - `list`: show records with deterministic ordering and optional state filters.
 - `search`: run keyword/prefix search across capture and active enrichment.
 - `report`: render weekly/monthly summaries with capture fallback when enrichment is missing.
+- `report --from/--to`: optional explicit range (RFC3339). Use both together.
 - `fetch`: machine-facing pull for pending enrichment work.
 - `apply`: machine-facing write-back for normalized enrichment results.
 
@@ -39,6 +42,7 @@ Commands:
 ```bash
 memo-cli add "buy 1tb ssd for mom"
 memo-cli add "book pediatric dentist appointment"
+memo-cli add --at 2026-02-12T10:00:00+08:00 "backfilled note"
 ```
 
 ### Agent enrichment loop
@@ -80,6 +84,8 @@ memo-cli fetch --json --limit 20 --cursor itm_00000042
 ```bash
 memo-cli report week
 memo-cli report month --json
+memo-cli report week --tz Asia/Taipei
+memo-cli report month --from 2026-02-01T00:00:00Z --to 2026-02-29T23:59:59Z --json
 ```
 
 ## Runbooks
