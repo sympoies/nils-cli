@@ -378,3 +378,210 @@ fn derive_hash(value: &serde_json::Value) -> String {
     }
     format!("h{hash:016x}")
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    use super::*;
+
+    fn error_path(err: &AppError) -> Option<&str> {
+        err.json_error()
+            .details
+            .and_then(|details| details.get("path"))
+            .and_then(Value::as_str)
+    }
+
+    #[test]
+    fn parse_apply_items_accepts_object_payload_and_trims_optional_values() {
+        let payload = json!({
+            "agent_run_id": " agent-run-1 ",
+            "items": [{
+                "item_id": "itm_00000042",
+                "status": "accepted",
+                "summary": "  buy milk  ",
+                "category": "  errands ",
+                "priority": "high",
+                "due_at": " 2026-03-10T09:00:00Z ",
+                "normalized_text": "  buy milk tomorrow ",
+                "confidence": 0.82,
+                "tags": [" home ", "", "urgent"],
+                "payload": { "model": "test" }
+            }]
+        });
+
+        let parsed = parse_apply_items(payload).expect("payload should parse");
+        assert_eq!(parsed.agent_run_id.as_deref(), Some("agent-run-1"));
+        assert_eq!(parsed.items.len(), 1);
+
+        let item = &parsed.items[0];
+        assert_eq!(item.item_id, 42);
+        assert_eq!(item.status, IncomingStatus::Accepted);
+        assert_eq!(item.summary.as_deref(), Some("buy milk"));
+        assert_eq!(item.category.as_deref(), Some("errands"));
+        assert_eq!(item.priority.as_deref(), Some("high"));
+        assert_eq!(item.due_at.as_deref(), Some("2026-03-10T09:00:00Z"));
+        assert_eq!(item.normalized_text.as_deref(), Some("buy milk tomorrow"));
+        assert_eq!(item.confidence, Some(0.82));
+        assert_eq!(item.tags, vec!["home", "urgent"]);
+        assert_eq!(item.payload_json, json!({ "model": "test" }));
+        assert_eq!(item.agent_run_id, None);
+        assert!(item.derivation_hash.starts_with('h'));
+        assert_eq!(item.derivation_hash.len(), 17);
+    }
+
+    #[test]
+    fn parse_apply_items_accepts_top_level_array_with_null_optionals() {
+        let payload = json!([{
+            "item_id": 7,
+            "status": "accepted",
+            "tags": null,
+            "confidence": null,
+            "base_derivation_id": null
+        }]);
+
+        let parsed = parse_apply_items(payload).expect("array payload should parse");
+        assert_eq!(parsed.agent_run_id, None);
+        assert_eq!(parsed.items.len(), 1);
+
+        let item = &parsed.items[0];
+        assert_eq!(item.item_id, 7);
+        assert_eq!(item.tags, Vec::<String>::new());
+        assert_eq!(item.confidence, None);
+        assert_eq!(item.base_derivation_id, None);
+        assert!(item.derivation_hash.starts_with('h'));
+    }
+
+    #[test]
+    fn parse_apply_items_rejects_missing_or_invalid_items_container() {
+        let missing_items = parse_apply_items(json!({"agent_run_id":"x"})).expect_err("must fail");
+        assert_eq!(missing_items.code(), "invalid-apply-payload");
+        assert_eq!(error_path(&missing_items), Some("payload.items"));
+        assert!(
+            missing_items
+                .message()
+                .contains("payload.items is required"),
+            "unexpected message: {}",
+            missing_items.message()
+        );
+
+        let non_array_items = parse_apply_items(json!({"items": {}})).expect_err("must fail");
+        assert_eq!(non_array_items.code(), "invalid-apply-payload");
+        assert_eq!(error_path(&non_array_items), Some("payload.items"));
+        assert!(
+            non_array_items
+                .message()
+                .contains("payload.items must be an array"),
+            "unexpected message: {}",
+            non_array_items.message()
+        );
+    }
+
+    #[test]
+    fn parse_apply_items_rejects_invalid_item_shapes_and_types() {
+        let non_object_item = parse_apply_items(json!({"items": [1]})).expect_err("must fail");
+        assert_eq!(non_object_item.code(), "invalid-apply-payload");
+        assert_eq!(error_path(&non_object_item), Some("payload.items[0]"));
+        assert!(
+            non_object_item.message().contains("item must be an object"),
+            "unexpected message: {}",
+            non_object_item.message()
+        );
+
+        let invalid_item_id =
+            parse_apply_items(json!({"items": [{"item_id": true}]})).expect_err("must fail");
+        assert_eq!(invalid_item_id.code(), "invalid-apply-payload");
+        assert_eq!(
+            error_path(&invalid_item_id),
+            Some("payload.items[0].item_id")
+        );
+        assert!(
+            invalid_item_id
+                .message()
+                .contains("item_id must be a positive integer"),
+            "unexpected message: {}",
+            invalid_item_id.message()
+        );
+    }
+
+    #[test]
+    fn parse_apply_items_rejects_invalid_status_priority_confidence_and_tags() {
+        let invalid_status = parse_apply_items(json!({
+            "items": [{"item_id": 1, "status": "rejected"}]
+        }))
+        .expect_err("must fail");
+        assert_eq!(error_path(&invalid_status), Some("payload.items[0].status"));
+
+        let invalid_priority = parse_apply_items(json!({
+            "items": [{"item_id": 1, "priority": "p1"}]
+        }))
+        .expect_err("must fail");
+        assert_eq!(
+            error_path(&invalid_priority),
+            Some("payload.items[0].priority")
+        );
+
+        let invalid_confidence = parse_apply_items(json!({
+            "items": [{"item_id": 1, "confidence": 1.1}]
+        }))
+        .expect_err("must fail");
+        assert_eq!(
+            error_path(&invalid_confidence),
+            Some("payload.items[0].confidence")
+        );
+
+        let invalid_tags = parse_apply_items(json!({
+            "items": [{"item_id": 1, "tags": [123]}]
+        }))
+        .expect_err("must fail");
+        assert_eq!(error_path(&invalid_tags), Some("payload.items[0].tags[0]"));
+    }
+
+    #[test]
+    fn parse_apply_items_rejects_invalid_base_derivation_id_and_non_string_fields() {
+        let invalid_base = parse_apply_items(json!({
+            "items": [{"item_id": 1, "base_derivation_id": -3}]
+        }))
+        .expect_err("must fail");
+        assert_eq!(
+            error_path(&invalid_base),
+            Some("payload.items[0].base_derivation_id")
+        );
+        assert!(
+            invalid_base.message().contains("positive integer"),
+            "unexpected message: {}",
+            invalid_base.message()
+        );
+
+        let invalid_category = parse_apply_items(json!({
+            "items": [{"item_id": 1, "category": 123}]
+        }))
+        .expect_err("must fail");
+        assert_eq!(
+            error_path(&invalid_category),
+            Some("payload.items[0].category")
+        );
+        assert!(
+            invalid_category
+                .message()
+                .contains("value must be a string"),
+            "unexpected message: {}",
+            invalid_category.message()
+        );
+    }
+
+    #[test]
+    fn derive_hash_is_stable_for_same_payload() {
+        let value = json!({
+            "item_id": 11,
+            "summary": "same payload",
+            "tags": ["a", "b"]
+        });
+
+        let first = derive_hash(&value);
+        let second = derive_hash(&value);
+        assert_eq!(first, second);
+        assert!(first.starts_with('h'));
+        assert_eq!(first.len(), 17);
+    }
+}
