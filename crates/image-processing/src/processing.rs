@@ -1,4 +1,4 @@
-use crate::cli::Operation;
+use crate::cli::{GeneratePreset, Operation};
 use crate::model::{
     Collision, ImageInfo, ItemResult, OutputMode, SCHEMA_VERSION, SUPPORTED_CONVERT_TARGETS,
     Summary, SummaryOptions,
@@ -170,7 +170,8 @@ pub fn validate_output_mode(
 }
 
 pub struct ProcessArgs<'a> {
-    pub toolchain: &'a Toolchain,
+    pub toolchain: Option<&'a Toolchain>,
+    pub backend: &'a str,
     pub repo_root: &'a Path,
     pub run_dir: Option<&'a Path>,
     pub progress: Progress,
@@ -202,11 +203,20 @@ pub struct ProcessArgs<'a> {
     pub pad_gravity: &'a str,
     pub optimize_lossless: bool,
     pub optimize_progressive: bool,
+    pub generate_presets: &'a [GeneratePreset],
+    pub generate_to: Option<&'a str>,
+    pub generate_size: Option<&'a str>,
+    pub generate_fg: Option<&'a str>,
+    pub generate_bg: Option<&'a str>,
+    pub generate_stroke: Option<&'a str>,
+    pub generate_stroke_width: Option<f64>,
+    pub generate_padding: Option<f64>,
 }
 
 pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
     let ProcessArgs {
         toolchain,
+        backend,
         repo_root,
         run_dir,
         progress,
@@ -238,7 +248,46 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
         pad_gravity,
         optimize_lossless,
         optimize_progressive,
+        generate_presets,
+        generate_to,
+        generate_size,
+        generate_fg,
+        generate_bg,
+        generate_stroke,
+        generate_stroke_width,
+        generate_padding,
     } = args;
+
+    let is_generate = subcommand.as_str() == crate::toolchain::GENERATE_OPERATION;
+
+    // Keep legacy semantics for existing subcommands: they still require ImageMagick tooling.
+    let toolchain = if is_generate {
+        None
+    } else {
+        Some(toolchain.ok_or_else(|| {
+            anyhow::anyhow!(
+                "internal error: ImageMagick toolchain missing for non-generate operation"
+            )
+        })?)
+    };
+
+    let generate_plan = if is_generate {
+        Some(crate::generate::plan_generate(
+            crate::generate::GeneratePlanRequest {
+                output_mode,
+                presets: generate_presets,
+                to: generate_to,
+                size: generate_size,
+                fg: generate_fg,
+                bg: generate_bg,
+                stroke: generate_stroke,
+                stroke_width: generate_stroke_width,
+                padding: generate_padding,
+            },
+        )?)
+    } else {
+        None
+    };
 
     let _ = json_enabled; // parity: carried through but not used (matches python script signature)
 
@@ -246,7 +295,8 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
         return Err(util::usage_err("--report is not supported for info"));
     }
 
-    if let Some(mode) = output_mode
+    if !is_generate
+        && let Some(mode) = output_mode
         && mode.mode == "out"
         && inputs.len() != 1
     {
@@ -255,8 +305,15 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
+    #[derive(Clone)]
+    struct PlannedItem {
+        input_path: PathBuf,
+        output_path: Option<PathBuf>,
+        generate_preset: Option<GeneratePreset>,
+    }
+
     // Resolve output paths for output-producing subcommands.
-    let mut planned: Vec<(PathBuf, Option<PathBuf>)> = Vec::new();
+    let mut planned: Vec<PlannedItem> = Vec::new();
     let mut collisions: Vec<Collision> = Vec::new();
     let mut out_by_path: HashMap<PathBuf, PathBuf> = HashMap::new();
 
@@ -297,42 +354,27 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
 
     if subcommand != Operation::Info {
         let mode = output_mode.expect("output_mode required");
-        for inp in inputs {
-            let out_path = derive_out_path(inp)?;
-
-            let out_abs = util::abs_path(&out_path, &cwd);
-
-            if subcommand == Operation::Convert
-                && let Some(to) = convert_to
-            {
+        if is_generate {
+            let plan = generate_plan
+                .as_ref()
+                .expect("generate plan must exist for generate operation");
+            for preset in &plan.presets {
+                let out_path = if mode.mode == "out" {
+                    mode.out.clone().expect("out")
+                } else {
+                    let out_dir = mode.out_dir.clone().expect("out_dir");
+                    out_dir.join(crate::generate::variant_file_name(plan, *preset))
+                };
+                let out_abs = util::abs_path(&out_path, &cwd);
                 let ext = ext_normalize(&out_abs);
-                if ext != to {
+                if ext != plan.output_format.as_str() {
                     return Err(util::usage_err(format!(
-                        "--out extension must match --to {to}: {}",
+                        "generate --out extension must match --to {}: {}",
+                        plan.output_format.as_str(),
                         out_abs.display()
                     )));
                 }
-            }
 
-            if subcommand == Operation::Optimize {
-                let in_ext = ext_normalize(inp);
-                let out_ext = ext_normalize(&out_abs);
-                if out_ext != in_ext {
-                    return Err(util::usage_err(
-                        "optimize does not change formats; output extension must match input",
-                    ));
-                }
-            } else if subcommand != Operation::Convert {
-                let in_ext = ext_normalize(inp);
-                let out_ext = ext_normalize(&out_abs);
-                if out_ext != in_ext {
-                    return Err(util::usage_err(
-                        "only convert changes formats; output extension must match input",
-                    ));
-                }
-            }
-
-            if mode.mode != "in_place" {
                 if let Some(prev) = out_by_path.get(&out_abs) {
                     let filename = out_abs
                         .file_name()
@@ -344,10 +386,73 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
                     });
                     let _ = prev;
                 }
-                out_by_path.insert(out_abs.clone(), inp.clone());
+                out_by_path.insert(
+                    out_abs.clone(),
+                    PathBuf::from(crate::generate::preset_label(*preset)),
+                );
+                planned.push(PlannedItem {
+                    input_path: PathBuf::from(crate::generate::preset_label(*preset)),
+                    output_path: Some(out_abs),
+                    generate_preset: Some(*preset),
+                });
             }
+        } else {
+            for inp in inputs {
+                let out_path = derive_out_path(inp)?;
 
-            planned.push((inp.clone(), Some(out_abs)));
+                let out_abs = util::abs_path(&out_path, &cwd);
+
+                if subcommand == Operation::Convert
+                    && let Some(to) = convert_to
+                {
+                    let ext = ext_normalize(&out_abs);
+                    if ext != to {
+                        return Err(util::usage_err(format!(
+                            "--out extension must match --to {to}: {}",
+                            out_abs.display()
+                        )));
+                    }
+                }
+
+                if subcommand == Operation::Optimize {
+                    let in_ext = ext_normalize(inp);
+                    let out_ext = ext_normalize(&out_abs);
+                    if out_ext != in_ext {
+                        return Err(util::usage_err(
+                            "optimize does not change formats; output extension must match input",
+                        ));
+                    }
+                } else if subcommand != Operation::Convert {
+                    let in_ext = ext_normalize(inp);
+                    let out_ext = ext_normalize(&out_abs);
+                    if out_ext != in_ext {
+                        return Err(util::usage_err(
+                            "only convert changes formats; output extension must match input",
+                        ));
+                    }
+                }
+
+                if mode.mode != "in_place" {
+                    if let Some(prev) = out_by_path.get(&out_abs) {
+                        let filename = out_abs
+                            .file_name()
+                            .map(|x| x.to_string_lossy().to_string())
+                            .unwrap_or_else(|| out_abs.to_string_lossy().to_string());
+                        collisions.push(Collision {
+                            path: out_abs.to_string_lossy().to_string(),
+                            reason: format!("multiple inputs map to the same output ({filename})"),
+                        });
+                        let _ = prev;
+                    }
+                    out_by_path.insert(out_abs.clone(), inp.clone());
+                }
+
+                planned.push(PlannedItem {
+                    input_path: inp.clone(),
+                    output_path: Some(out_abs),
+                    generate_preset: None,
+                });
+            }
         }
 
         if !collisions.is_empty() {
@@ -357,8 +462,8 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
         }
 
         if mode.mode != "in_place" {
-            for (_, out_abs) in &planned {
-                let out_abs = out_abs.as_ref().expect("out_abs");
+            for item in &planned {
+                let out_abs = item.output_path.as_ref().expect("out_abs");
                 util::check_overwrite(out_abs, overwrite)?;
             }
 
@@ -369,7 +474,11 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
         }
     } else {
         for p in inputs {
-            planned.push((p.clone(), None));
+            planned.push(PlannedItem {
+                input_path: p.clone(),
+                output_path: None,
+                generate_preset: None,
+            });
         }
     }
 
@@ -393,10 +502,17 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
         }
     }
 
-    for (inp, out_abs) in planned {
+    for planned_item in planned {
+        let PlannedItem {
+            input_path: inp,
+            output_path: out_abs,
+            generate_preset,
+        } = planned_item;
         progress.set_message(util::maybe_relpath(&inp, repo_root));
 
-        let input_info = probe_image(toolchain, &inp);
+        let input_info = toolchain
+            .map(|tc| probe_image(tc, &inp))
+            .unwrap_or_default();
         let input_alpha = input_info.alpha.unwrap_or(false);
 
         let in_ext = ext_normalize(&inp);
@@ -410,557 +526,589 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
         let mut item_error: Option<String> = None;
         let mut output_info: Option<ImageInfo> = None;
 
-        let result: anyhow::Result<()> = (|| match subcommand {
-            Operation::Info => Ok(()),
-            Operation::AutoOrient => {
-                let out_abs = out_abs.as_ref().expect("out_abs");
-                let tmp = util::safe_write_path(out_abs, dry_run);
-                let mut cmd = build_magick_cmd(toolchain, &inp)?;
-                cmd.push("-auto-orient".to_string());
-                if strip_metadata {
-                    cmd.push("-strip".to_string());
-                }
-                cmd.push(tmp.to_string_lossy().to_string());
-                item_cmds.push(util::command_str(&cmd));
-                let (rc, _stdout, stderr) = run_one_magick(&cmd, dry_run)?;
-                if rc != 0 {
-                    return Err(anyhow::anyhow!(
-                        "{}",
-                        stderr.trim().to_string().if_empty("auto-orient failed")
-                    ));
-                }
-                if !dry_run {
-                    util::atomic_replace(&tmp, out_abs, dry_run)?;
-                    output_info = Some(probe_image(toolchain, out_abs));
-                }
-                Ok(())
+        let result: anyhow::Result<()> = (|| {
+            if is_generate {
+                let plan = generate_plan
+                    .as_ref()
+                    .expect("generate plan must exist for generate operation");
+                let preset =
+                    generate_preset.expect("generate preset must exist for generate operation");
+                let output_path = out_abs
+                    .as_deref()
+                    .expect("generate output path must exist for generate operation");
+                let generate_result =
+                    crate::generate::dispatch_generate(plan, preset, output_path, dry_run)?;
+                item_cmds.extend(generate_result.commands);
+                output_info = generate_result.output_info;
+                return Ok(());
             }
-            Operation::Convert => {
-                let out_abs = out_abs.as_ref().expect("out_abs");
-                let Some(convert_to) = convert_to else {
-                    return Err(util::usage_err("internal error: convert_to missing"));
-                };
-                if !SUPPORTED_CONVERT_TARGETS.contains(&convert_to) {
-                    return Err(anyhow::anyhow!(
-                        "unsupported --to: {convert_to} (supported: png|jpg|webp)"
-                    ));
-                }
+            let toolchain = toolchain.expect("non-generate path must have toolchain");
 
-                let tmp = util::safe_write_path(out_abs, dry_run);
-                let mut cmd = build_magick_cmd(toolchain, &inp)?;
-                if auto_orient_enabled {
+            #[allow(unreachable_patterns)]
+            match subcommand {
+                Operation::Info => Ok(()),
+                Operation::AutoOrient => {
+                    let out_abs = out_abs.as_ref().expect("out_abs");
+                    let tmp = util::safe_write_path(out_abs, dry_run);
+                    let mut cmd = build_magick_cmd(toolchain, &inp)?;
                     cmd.push("-auto-orient".to_string());
-                }
-
-                if convert_to == "jpg" {
-                    if input_alpha && background.is_none() {
+                    if strip_metadata {
+                        cmd.push("-strip".to_string());
+                    }
+                    cmd.push(tmp.to_string_lossy().to_string());
+                    item_cmds.push(util::command_str(&cmd));
+                    let (rc, _stdout, stderr) = run_one_magick(&cmd, dry_run)?;
+                    if rc != 0 {
                         return Err(anyhow::anyhow!(
                             "{}",
-                            require_background(
-                                "alpha input cannot be converted to JPEG without a background"
-                            )?
+                            stderr.trim().to_string().if_empty("auto-orient failed")
                         ));
                     }
-                    if let Some(bg) = background {
-                        cmd.extend([
-                            "-background".to_string(),
-                            bg.to_string(),
-                            "-alpha".to_string(),
-                            "remove".to_string(),
-                            "-alpha".to_string(),
-                            "off".to_string(),
-                        ]);
+                    if !dry_run {
+                        util::atomic_replace(&tmp, out_abs, dry_run)?;
+                        output_info = Some(probe_image(toolchain, out_abs));
                     }
+                    Ok(())
                 }
-
-                if let Some(q) = quality {
-                    if !(0..=100).contains(&q) {
-                        return Err(anyhow::anyhow!("--quality must be 0..100"));
-                    }
-                    cmd.extend(["-quality".to_string(), q.to_string()]);
-                }
-
-                if strip_metadata {
-                    cmd.push("-strip".to_string());
-                }
-
-                cmd.push(tmp.to_string_lossy().to_string());
-                item_cmds.push(util::command_str(&cmd));
-
-                let (rc, _stdout, stderr) = run_one_magick(&cmd, dry_run)?;
-                if rc != 0 {
-                    return Err(anyhow::anyhow!(
-                        "{}",
-                        stderr.trim().to_string().if_empty("convert failed")
-                    ));
-                }
-                if !dry_run {
-                    util::atomic_replace(&tmp, out_abs, dry_run)?;
-                    output_info = Some(probe_image(toolchain, out_abs));
-                }
-                Ok(())
-            }
-            Operation::Resize => {
-                let out_abs = out_abs.as_ref().expect("out_abs");
-                let (orig_w, orig_h) = match (input_info.width, input_info.height) {
-                    (Some(w), Some(h)) => (w, h),
-                    _ => {
+                Operation::Convert => {
+                    let out_abs = out_abs.as_ref().expect("out_abs");
+                    let Some(convert_to) = convert_to else {
+                        return Err(util::usage_err("internal error: convert_to missing"));
+                    };
+                    if !SUPPORTED_CONVERT_TARGETS.contains(&convert_to) {
                         return Err(anyhow::anyhow!(
-                            "unable to read input dimensions for resize"
+                            "unsupported --to: {convert_to} (supported: png|jpg|webp)"
                         ));
                     }
-                };
-                let (tw, th, fit_mode, uses_box) = compute_resize_box(
-                    orig_w,
-                    orig_h,
-                    resize_scale,
-                    resize_width,
-                    resize_height,
-                    resize_aspect,
-                    resize_fit,
-                )?;
 
-                let tmp = util::safe_write_path(out_abs, dry_run);
-                let mut cmd = build_magick_cmd(toolchain, &inp)?;
-                if auto_orient_enabled {
-                    cmd.push("-auto-orient".to_string());
-                }
+                    let tmp = util::safe_write_path(out_abs, dry_run);
+                    let mut cmd = build_magick_cmd(toolchain, &inp)?;
+                    if auto_orient_enabled {
+                        cmd.push("-auto-orient".to_string());
+                    }
 
-                let pre_upscale = !no_pre_upscale;
-                if pre_upscale {
-                    cmd.extend(["-resize".to_string(), "200%".to_string()]);
-                }
-
-                if uses_box {
-                    let fit_mode = fit_mode.expect("fit_mode");
-                    let box_s = format!("{tw}x{th}");
-                    let gravity = "center";
-                    match fit_mode.as_str() {
-                        "stretch" => cmd.extend(["-resize".to_string(), format!("{box_s}!")]),
-                        "cover" => cmd.extend([
-                            "-resize".to_string(),
-                            format!("{box_s}^"),
-                            "-gravity".to_string(),
-                            gravity.to_string(),
-                            "-extent".to_string(),
-                            box_s.clone(),
-                        ]),
-                        "contain" => {
-                            cmd.extend(["-resize".to_string(), box_s.clone()]);
-                            let mut bg = background.map(|s| s.to_string());
-                            if bg.is_none() && output_supports_alpha(&out_ext) {
-                                bg = Some("none".to_string());
-                            }
-                            if bg.is_none() && is_non_alpha_format(&out_ext) {
-                                return Err(anyhow::anyhow!(
-                                    "{}",
-                                    require_background(
-                                        "contain fit requires padding background for non-alpha outputs"
-                                    )?
-                                ));
-                            }
-                            if let Some(bg) = bg {
-                                cmd.extend(["-background".to_string(), bg]);
-                            }
+                    if convert_to == "jpg" {
+                        if input_alpha && background.is_none() {
+                            return Err(anyhow::anyhow!(
+                                "{}",
+                                require_background(
+                                    "alpha input cannot be converted to JPEG without a background"
+                                )?
+                            ));
+                        }
+                        if let Some(bg) = background {
                             cmd.extend([
+                                "-background".to_string(),
+                                bg.to_string(),
+                                "-alpha".to_string(),
+                                "remove".to_string(),
+                                "-alpha".to_string(),
+                                "off".to_string(),
+                            ]);
+                        }
+                    }
+
+                    if let Some(q) = quality {
+                        if !(0..=100).contains(&q) {
+                            return Err(anyhow::anyhow!("--quality must be 0..100"));
+                        }
+                        cmd.extend(["-quality".to_string(), q.to_string()]);
+                    }
+
+                    if strip_metadata {
+                        cmd.push("-strip".to_string());
+                    }
+
+                    cmd.push(tmp.to_string_lossy().to_string());
+                    item_cmds.push(util::command_str(&cmd));
+
+                    let (rc, _stdout, stderr) = run_one_magick(&cmd, dry_run)?;
+                    if rc != 0 {
+                        return Err(anyhow::anyhow!(
+                            "{}",
+                            stderr.trim().to_string().if_empty("convert failed")
+                        ));
+                    }
+                    if !dry_run {
+                        util::atomic_replace(&tmp, out_abs, dry_run)?;
+                        output_info = Some(probe_image(toolchain, out_abs));
+                    }
+                    Ok(())
+                }
+                Operation::Resize => {
+                    let out_abs = out_abs.as_ref().expect("out_abs");
+                    let (orig_w, orig_h) = match (input_info.width, input_info.height) {
+                        (Some(w), Some(h)) => (w, h),
+                        _ => {
+                            return Err(anyhow::anyhow!(
+                                "unable to read input dimensions for resize"
+                            ));
+                        }
+                    };
+                    let (tw, th, fit_mode, uses_box) = compute_resize_box(
+                        orig_w,
+                        orig_h,
+                        resize_scale,
+                        resize_width,
+                        resize_height,
+                        resize_aspect,
+                        resize_fit,
+                    )?;
+
+                    let tmp = util::safe_write_path(out_abs, dry_run);
+                    let mut cmd = build_magick_cmd(toolchain, &inp)?;
+                    if auto_orient_enabled {
+                        cmd.push("-auto-orient".to_string());
+                    }
+
+                    let pre_upscale = !no_pre_upscale;
+                    if pre_upscale {
+                        cmd.extend(["-resize".to_string(), "200%".to_string()]);
+                    }
+
+                    if uses_box {
+                        let fit_mode = fit_mode.expect("fit_mode");
+                        let box_s = format!("{tw}x{th}");
+                        let gravity = "center";
+                        match fit_mode.as_str() {
+                            "stretch" => cmd.extend(["-resize".to_string(), format!("{box_s}!")]),
+                            "cover" => cmd.extend([
+                                "-resize".to_string(),
+                                format!("{box_s}^"),
                                 "-gravity".to_string(),
                                 gravity.to_string(),
                                 "-extent".to_string(),
                                 box_s.clone(),
-                            ]);
+                            ]),
+                            "contain" => {
+                                cmd.extend(["-resize".to_string(), box_s.clone()]);
+                                let mut bg = background.map(|s| s.to_string());
+                                if bg.is_none() && output_supports_alpha(&out_ext) {
+                                    bg = Some("none".to_string());
+                                }
+                                if bg.is_none() && is_non_alpha_format(&out_ext) {
+                                    return Err(anyhow::anyhow!(
+                                        "{}",
+                                        require_background(
+                                            "contain fit requires padding background for non-alpha outputs"
+                                        )?
+                                    ));
+                                }
+                                if let Some(bg) = bg {
+                                    cmd.extend(["-background".to_string(), bg]);
+                                }
+                                cmd.extend([
+                                    "-gravity".to_string(),
+                                    gravity.to_string(),
+                                    "-extent".to_string(),
+                                    box_s.clone(),
+                                ]);
+                            }
+                            _ => {
+                                return Err(anyhow::anyhow!(
+                                    "internal error: unknown fit_mode {fit_mode}"
+                                ));
+                            }
                         }
-                        _ => {
+                    } else {
+                        cmd.extend(["-resize".to_string(), format!("{tw}x{th}!")]);
+                    }
+
+                    if strip_metadata {
+                        cmd.push("-strip".to_string());
+                    }
+                    cmd.push(tmp.to_string_lossy().to_string());
+                    item_cmds.push(util::command_str(&cmd));
+                    let (rc, _stdout, stderr) = run_one_magick(&cmd, dry_run)?;
+                    if rc != 0 {
+                        return Err(anyhow::anyhow!(
+                            "{}",
+                            stderr.trim().to_string().if_empty("resize failed")
+                        ));
+                    }
+                    if !dry_run {
+                        util::atomic_replace(&tmp, out_abs, dry_run)?;
+                        output_info = Some(probe_image(toolchain, out_abs));
+                    }
+                    Ok(())
+                }
+                Operation::Rotate => {
+                    let out_abs = out_abs.as_ref().expect("out_abs");
+                    let degrees = rotate_degrees
+                        .ok_or_else(|| anyhow::anyhow!("rotate requires --degrees"))?;
+                    let tmp = util::safe_write_path(out_abs, dry_run);
+                    let mut cmd = build_magick_cmd(toolchain, &inp)?;
+                    if auto_orient_enabled {
+                        cmd.push("-auto-orient".to_string());
+                    }
+
+                    let mut bg = background.map(|s| s.to_string());
+                    if degrees % 90 != 0 {
+                        if bg.is_none() && output_supports_alpha(&out_ext) {
+                            bg = Some("none".to_string());
+                        }
+                        if bg.is_none() && is_non_alpha_format(&out_ext) {
                             return Err(anyhow::anyhow!(
-                                "internal error: unknown fit_mode {fit_mode}"
+                                "{}",
+                                require_background(
+                                    "non-right-angle rotation requires a background for JPEG outputs"
+                                )?
                             ));
                         }
+                        if let Some(bg) = bg {
+                            cmd.extend(["-background".to_string(), bg]);
+                        }
                     }
-                } else {
-                    cmd.extend(["-resize".to_string(), format!("{tw}x{th}!")]);
-                }
 
-                if strip_metadata {
-                    cmd.push("-strip".to_string());
+                    cmd.extend(["-rotate".to_string(), degrees.to_string()]);
+                    if strip_metadata {
+                        cmd.push("-strip".to_string());
+                    }
+                    cmd.push(tmp.to_string_lossy().to_string());
+                    item_cmds.push(util::command_str(&cmd));
+                    let (rc, _stdout, stderr) = run_one_magick(&cmd, dry_run)?;
+                    if rc != 0 {
+                        return Err(anyhow::anyhow!(
+                            "{}",
+                            stderr.trim().to_string().if_empty("rotate failed")
+                        ));
+                    }
+                    if !dry_run {
+                        util::atomic_replace(&tmp, out_abs, dry_run)?;
+                        output_info = Some(probe_image(toolchain, out_abs));
+                    }
+                    Ok(())
                 }
-                cmd.push(tmp.to_string_lossy().to_string());
-                item_cmds.push(util::command_str(&cmd));
-                let (rc, _stdout, stderr) = run_one_magick(&cmd, dry_run)?;
-                if rc != 0 {
-                    return Err(anyhow::anyhow!(
-                        "{}",
-                        stderr.trim().to_string().if_empty("resize failed")
-                    ));
-                }
-                if !dry_run {
-                    util::atomic_replace(&tmp, out_abs, dry_run)?;
-                    output_info = Some(probe_image(toolchain, out_abs));
-                }
-                Ok(())
-            }
-            Operation::Rotate => {
-                let out_abs = out_abs.as_ref().expect("out_abs");
-                let degrees =
-                    rotate_degrees.ok_or_else(|| anyhow::anyhow!("rotate requires --degrees"))?;
-                let tmp = util::safe_write_path(out_abs, dry_run);
-                let mut cmd = build_magick_cmd(toolchain, &inp)?;
-                if auto_orient_enabled {
-                    cmd.push("-auto-orient".to_string());
-                }
+                Operation::Crop => {
+                    let out_abs = out_abs.as_ref().expect("out_abs");
+                    let (orig_w, orig_h) = match (input_info.width, input_info.height) {
+                        (Some(w), Some(h)) => (w, h),
+                        _ => {
+                            return Err(anyhow::anyhow!(
+                                "unable to read input dimensions for crop"
+                            ));
+                        }
+                    };
 
-                let mut bg = background.map(|s| s.to_string());
-                if degrees % 90 != 0 {
+                    if [
+                        crop_rect.is_some(),
+                        crop_size.is_some(),
+                        crop_aspect.is_some(),
+                    ]
+                    .into_iter()
+                    .filter(|x| *x)
+                    .count()
+                        != 1
+                    {
+                        return Err(anyhow::anyhow!(
+                            "crop requires exactly one of: --rect, --size, --aspect"
+                        ));
+                    }
+
+                    let (cw, ch, cx, cy) = if let Some((cw, ch, cx, cy)) = crop_rect {
+                        (cw, ch, cx, cy)
+                    } else if let Some((cw, ch)) = crop_size {
+                        (cw, ch, 0, 0)
+                    } else {
+                        let (aw, ah) = crop_aspect.expect("crop_aspect");
+                        let target_aspect = aw as f64 / ah as f64;
+                        let orig_aspect = orig_w as f64 / orig_h as f64;
+                        if orig_aspect > target_aspect {
+                            let ch = orig_h;
+                            let cw = ((ch as f64) * target_aspect).round() as i32;
+                            (cw.max(1), ch, 0, 0)
+                        } else {
+                            let cw = orig_w;
+                            let ch = ((cw as f64) / target_aspect).round() as i32;
+                            (cw, ch.max(1), 0, 0)
+                        }
+                    };
+
+                    if cw <= 0 || ch <= 0 {
+                        return Err(anyhow::anyhow!("invalid crop dimensions"));
+                    }
+                    if cw > orig_w || ch > orig_h {
+                        return Err(anyhow::anyhow!("crop size exceeds input dimensions"));
+                    }
+
+                    let tmp = util::safe_write_path(out_abs, dry_run);
+                    let mut cmd = build_magick_cmd(toolchain, &inp)?;
+                    if auto_orient_enabled {
+                        cmd.push("-auto-orient".to_string());
+                    }
+                    if crop_rect.is_some() {
+                        cmd.extend([
+                            "-crop".to_string(),
+                            format!("{cw}x{ch}+{cx}+{cy}"),
+                            "+repage".to_string(),
+                        ]);
+                    } else {
+                        cmd.extend([
+                            "-gravity".to_string(),
+                            crop_gravity.to_string(),
+                            "-crop".to_string(),
+                            format!("{cw}x{ch}+{cx}+{cy}"),
+                            "+repage".to_string(),
+                        ]);
+                    }
+                    if strip_metadata {
+                        cmd.push("-strip".to_string());
+                    }
+                    cmd.push(tmp.to_string_lossy().to_string());
+                    item_cmds.push(util::command_str(&cmd));
+                    let (rc, _stdout, stderr) = run_one_magick(&cmd, dry_run)?;
+                    if rc != 0 {
+                        return Err(anyhow::anyhow!(
+                            "{}",
+                            stderr.trim().to_string().if_empty("crop failed")
+                        ));
+                    }
+                    if !dry_run {
+                        util::atomic_replace(&tmp, out_abs, dry_run)?;
+                        output_info = Some(probe_image(toolchain, out_abs));
+                    }
+                    Ok(())
+                }
+                Operation::Pad => {
+                    let out_abs = out_abs.as_ref().expect("out_abs");
+                    let (orig_w, orig_h) = match (input_info.width, input_info.height) {
+                        (Some(w), Some(h)) => (w, h),
+                        _ => {
+                            return Err(anyhow::anyhow!("unable to read input dimensions for pad"));
+                        }
+                    };
+                    let (pw, ph) = match (pad_width, pad_height) {
+                        (Some(w), Some(h)) => (w, h),
+                        _ => return Err(anyhow::anyhow!("pad requires --width and --height")),
+                    };
+                    if pw < orig_w || ph < orig_h {
+                        return Err(anyhow::anyhow!(
+                            "pad target must be >= input dimensions (use crop or resize)"
+                        ));
+                    }
+                    let tmp = util::safe_write_path(out_abs, dry_run);
+                    let mut cmd = build_magick_cmd(toolchain, &inp)?;
+                    if auto_orient_enabled {
+                        cmd.push("-auto-orient".to_string());
+                    }
+
+                    let mut bg = background.map(|s| s.to_string());
                     if bg.is_none() && output_supports_alpha(&out_ext) {
                         bg = Some("none".to_string());
                     }
                     if bg.is_none() && is_non_alpha_format(&out_ext) {
                         return Err(anyhow::anyhow!(
                             "{}",
-                            require_background(
-                                "non-right-angle rotation requires a background for JPEG outputs"
-                            )?
+                            require_background("pad requires a background for non-alpha outputs")?
                         ));
                     }
                     if let Some(bg) = bg {
                         cmd.extend(["-background".to_string(), bg]);
                     }
-                }
 
-                cmd.extend(["-rotate".to_string(), degrees.to_string()]);
-                if strip_metadata {
-                    cmd.push("-strip".to_string());
-                }
-                cmd.push(tmp.to_string_lossy().to_string());
-                item_cmds.push(util::command_str(&cmd));
-                let (rc, _stdout, stderr) = run_one_magick(&cmd, dry_run)?;
-                if rc != 0 {
-                    return Err(anyhow::anyhow!(
-                        "{}",
-                        stderr.trim().to_string().if_empty("rotate failed")
-                    ));
-                }
-                if !dry_run {
-                    util::atomic_replace(&tmp, out_abs, dry_run)?;
-                    output_info = Some(probe_image(toolchain, out_abs));
-                }
-                Ok(())
-            }
-            Operation::Crop => {
-                let out_abs = out_abs.as_ref().expect("out_abs");
-                let (orig_w, orig_h) = match (input_info.width, input_info.height) {
-                    (Some(w), Some(h)) => (w, h),
-                    _ => return Err(anyhow::anyhow!("unable to read input dimensions for crop")),
-                };
-
-                if [
-                    crop_rect.is_some(),
-                    crop_size.is_some(),
-                    crop_aspect.is_some(),
-                ]
-                .into_iter()
-                .filter(|x| *x)
-                .count()
-                    != 1
-                {
-                    return Err(anyhow::anyhow!(
-                        "crop requires exactly one of: --rect, --size, --aspect"
-                    ));
-                }
-
-                let (cw, ch, cx, cy) = if let Some((cw, ch, cx, cy)) = crop_rect {
-                    (cw, ch, cx, cy)
-                } else if let Some((cw, ch)) = crop_size {
-                    (cw, ch, 0, 0)
-                } else {
-                    let (aw, ah) = crop_aspect.expect("crop_aspect");
-                    let target_aspect = aw as f64 / ah as f64;
-                    let orig_aspect = orig_w as f64 / orig_h as f64;
-                    if orig_aspect > target_aspect {
-                        let ch = orig_h;
-                        let cw = ((ch as f64) * target_aspect).round() as i32;
-                        (cw.max(1), ch, 0, 0)
-                    } else {
-                        let cw = orig_w;
-                        let ch = ((cw as f64) / target_aspect).round() as i32;
-                        (cw, ch.max(1), 0, 0)
-                    }
-                };
-
-                if cw <= 0 || ch <= 0 {
-                    return Err(anyhow::anyhow!("invalid crop dimensions"));
-                }
-                if cw > orig_w || ch > orig_h {
-                    return Err(anyhow::anyhow!("crop size exceeds input dimensions"));
-                }
-
-                let tmp = util::safe_write_path(out_abs, dry_run);
-                let mut cmd = build_magick_cmd(toolchain, &inp)?;
-                if auto_orient_enabled {
-                    cmd.push("-auto-orient".to_string());
-                }
-                if crop_rect.is_some() {
-                    cmd.extend([
-                        "-crop".to_string(),
-                        format!("{cw}x{ch}+{cx}+{cy}"),
-                        "+repage".to_string(),
-                    ]);
-                } else {
                     cmd.extend([
                         "-gravity".to_string(),
-                        crop_gravity.to_string(),
-                        "-crop".to_string(),
-                        format!("{cw}x{ch}+{cx}+{cy}"),
-                        "+repage".to_string(),
+                        pad_gravity.to_string(),
+                        "-extent".to_string(),
+                        format!("{pw}x{ph}"),
                     ]);
-                }
-                if strip_metadata {
-                    cmd.push("-strip".to_string());
-                }
-                cmd.push(tmp.to_string_lossy().to_string());
-                item_cmds.push(util::command_str(&cmd));
-                let (rc, _stdout, stderr) = run_one_magick(&cmd, dry_run)?;
-                if rc != 0 {
-                    return Err(anyhow::anyhow!(
-                        "{}",
-                        stderr.trim().to_string().if_empty("crop failed")
-                    ));
-                }
-                if !dry_run {
-                    util::atomic_replace(&tmp, out_abs, dry_run)?;
-                    output_info = Some(probe_image(toolchain, out_abs));
-                }
-                Ok(())
-            }
-            Operation::Pad => {
-                let out_abs = out_abs.as_ref().expect("out_abs");
-                let (orig_w, orig_h) = match (input_info.width, input_info.height) {
-                    (Some(w), Some(h)) => (w, h),
-                    _ => return Err(anyhow::anyhow!("unable to read input dimensions for pad")),
-                };
-                let (pw, ph) = match (pad_width, pad_height) {
-                    (Some(w), Some(h)) => (w, h),
-                    _ => return Err(anyhow::anyhow!("pad requires --width and --height")),
-                };
-                if pw < orig_w || ph < orig_h {
-                    return Err(anyhow::anyhow!(
-                        "pad target must be >= input dimensions (use crop or resize)"
-                    ));
-                }
-                let tmp = util::safe_write_path(out_abs, dry_run);
-                let mut cmd = build_magick_cmd(toolchain, &inp)?;
-                if auto_orient_enabled {
-                    cmd.push("-auto-orient".to_string());
-                }
-
-                let mut bg = background.map(|s| s.to_string());
-                if bg.is_none() && output_supports_alpha(&out_ext) {
-                    bg = Some("none".to_string());
-                }
-                if bg.is_none() && is_non_alpha_format(&out_ext) {
-                    return Err(anyhow::anyhow!(
-                        "{}",
-                        require_background("pad requires a background for non-alpha outputs")?
-                    ));
-                }
-                if let Some(bg) = bg {
-                    cmd.extend(["-background".to_string(), bg]);
-                }
-
-                cmd.extend([
-                    "-gravity".to_string(),
-                    pad_gravity.to_string(),
-                    "-extent".to_string(),
-                    format!("{pw}x{ph}"),
-                ]);
-                if strip_metadata {
-                    cmd.push("-strip".to_string());
-                }
-                cmd.push(tmp.to_string_lossy().to_string());
-                item_cmds.push(util::command_str(&cmd));
-                let (rc, _stdout, stderr) = run_one_magick(&cmd, dry_run)?;
-                if rc != 0 {
-                    return Err(anyhow::anyhow!(
-                        "{}",
-                        stderr.trim().to_string().if_empty("pad failed")
-                    ));
-                }
-                if !dry_run {
-                    util::atomic_replace(&tmp, out_abs, dry_run)?;
-                    output_info = Some(probe_image(toolchain, out_abs));
-                }
-                Ok(())
-            }
-            Operation::Flip | Operation::Flop => {
-                let out_abs = out_abs.as_ref().expect("out_abs");
-                let tmp = util::safe_write_path(out_abs, dry_run);
-                let mut cmd = build_magick_cmd(toolchain, &inp)?;
-                if auto_orient_enabled {
-                    cmd.push("-auto-orient".to_string());
-                }
-                cmd.push(format!("-{}", subcommand.as_str()));
-                if strip_metadata {
-                    cmd.push("-strip".to_string());
-                }
-                cmd.push(tmp.to_string_lossy().to_string());
-                item_cmds.push(util::command_str(&cmd));
-                let (rc, _stdout, stderr) = run_one_magick(&cmd, dry_run)?;
-                if rc != 0 {
-                    return Err(anyhow::anyhow!(
-                        "{}",
-                        stderr
-                            .trim()
-                            .to_string()
-                            .if_empty(&format!("{} failed", subcommand.as_str()))
-                    ));
-                }
-                if !dry_run {
-                    util::atomic_replace(&tmp, out_abs, dry_run)?;
-                    output_info = Some(probe_image(toolchain, out_abs));
-                }
-                Ok(())
-            }
-            Operation::Optimize => {
-                let out_abs = out_abs.as_ref().expect("out_abs");
-                let tmp = util::safe_write_path(out_abs, dry_run);
-                if let Some(q) = quality
-                    && !(0..=100).contains(&q)
-                {
-                    return Err(anyhow::anyhow!("--quality must be 0..100"));
-                }
-
-                if out_ext == "jpg" {
-                    if in_ext != "jpg" {
-                        return Err(anyhow::anyhow!("optimize for jpg expects jpg input"));
+                    if strip_metadata {
+                        cmd.push("-strip".to_string());
                     }
-                    let q = quality.unwrap_or(85);
-
-                    if let (Some(cjpeg), Some(djpeg)) =
-                        (toolchain.cjpeg.as_ref(), toolchain.djpeg.as_ref())
-                    {
-                        let djpeg_cmd = vec![djpeg.clone(), inp.to_string_lossy().to_string()];
-                        let mut cjpeg_cmd = vec![
-                            cjpeg.clone(),
-                            "-quality".to_string(),
-                            q.to_string(),
-                            "-optimize".to_string(),
-                        ];
-                        if optimize_progressive {
-                            cjpeg_cmd.push("-progressive".to_string());
-                        }
-                        cjpeg_cmd
-                            .extend(["-outfile".to_string(), tmp.to_string_lossy().to_string()]);
-
-                        item_cmds.push(format!(
-                            "{} | {}",
-                            util::command_str(&djpeg_cmd),
-                            util::command_str(&cjpeg_cmd)
+                    cmd.push(tmp.to_string_lossy().to_string());
+                    item_cmds.push(util::command_str(&cmd));
+                    let (rc, _stdout, stderr) = run_one_magick(&cmd, dry_run)?;
+                    if rc != 0 {
+                        return Err(anyhow::anyhow!(
+                            "{}",
+                            stderr.trim().to_string().if_empty("pad failed")
                         ));
-
-                        if !dry_run {
-                            run_djpeg_cjpeg_pipeline(&djpeg_cmd, &cjpeg_cmd)?;
-                        }
-                    } else {
-                        let mut cmd = build_magick_cmd(toolchain, &inp)?;
-                        if auto_orient_enabled {
-                            cmd.push("-auto-orient".to_string());
-                        }
-                        cmd.extend(["-quality".to_string(), q.to_string()]);
-                        if optimize_progressive {
-                            cmd.extend(["-interlace".to_string(), "Plane".to_string()]);
-                        }
-                        if strip_metadata {
-                            cmd.push("-strip".to_string());
-                        }
-                        cmd.push(tmp.to_string_lossy().to_string());
-                        item_cmds.push(util::command_str(&cmd));
-                        let (rc, _stdout, stderr) = run_one_magick(&cmd, dry_run)?;
-                        if rc != 0 {
-                            return Err(anyhow::anyhow!(
-                                "{}",
-                                stderr.trim().to_string().if_empty("optimize jpg failed")
-                            ));
-                        }
                     }
-                } else if out_ext == "webp" {
-                    if in_ext != "webp" {
-                        return Err(anyhow::anyhow!("optimize for webp expects webp input"));
+                    if !dry_run {
+                        util::atomic_replace(&tmp, out_abs, dry_run)?;
+                        output_info = Some(probe_image(toolchain, out_abs));
                     }
-                    let q = quality.unwrap_or(80);
-
-                    if let (Some(cwebp), Some(dwebp)) =
-                        (toolchain.cwebp.as_ref(), toolchain.dwebp.as_ref())
+                    Ok(())
+                }
+                Operation::Flip | Operation::Flop => {
+                    let out_abs = out_abs.as_ref().expect("out_abs");
+                    let tmp = util::safe_write_path(out_abs, dry_run);
+                    let mut cmd = build_magick_cmd(toolchain, &inp)?;
+                    if auto_orient_enabled {
+                        cmd.push("-auto-orient".to_string());
+                    }
+                    cmd.push(format!("-{}", subcommand.as_str()));
+                    if strip_metadata {
+                        cmd.push("-strip".to_string());
+                    }
+                    cmd.push(tmp.to_string_lossy().to_string());
+                    item_cmds.push(util::command_str(&cmd));
+                    let (rc, _stdout, stderr) = run_one_magick(&cmd, dry_run)?;
+                    if rc != 0 {
+                        return Err(anyhow::anyhow!(
+                            "{}",
+                            stderr
+                                .trim()
+                                .to_string()
+                                .if_empty(&format!("{} failed", subcommand.as_str()))
+                        ));
+                    }
+                    if !dry_run {
+                        util::atomic_replace(&tmp, out_abs, dry_run)?;
+                        output_info = Some(probe_image(toolchain, out_abs));
+                    }
+                    Ok(())
+                }
+                Operation::Optimize => {
+                    let out_abs = out_abs.as_ref().expect("out_abs");
+                    let tmp = util::safe_write_path(out_abs, dry_run);
+                    if let Some(q) = quality
+                        && !(0..=100).contains(&q)
                     {
-                        let uuid = uuid::Uuid::new_v4().simple().to_string();
-                        let short = &uuid[..8];
-                        let tmp_pam = tmp
-                            .parent()
-                            .unwrap_or_else(|| Path::new("."))
-                            .join(format!(".tmp-{short}.pam"));
+                        return Err(anyhow::anyhow!("--quality must be 0..100"));
+                    }
 
-                        let dwebp_cmd = vec![
-                            dwebp.clone(),
-                            inp.to_string_lossy().to_string(),
-                            "-pam".to_string(),
-                            "-o".to_string(),
-                            tmp_pam.to_string_lossy().to_string(),
-                        ];
+                    if out_ext == "jpg" {
+                        if in_ext != "jpg" {
+                            return Err(anyhow::anyhow!("optimize for jpg expects jpg input"));
+                        }
+                        let q = quality.unwrap_or(85);
 
-                        let mut cwebp_cmd: Vec<String> = vec![cwebp.clone()];
-                        if optimize_lossless {
-                            cwebp_cmd.push("-lossless".to_string());
+                        if let (Some(cjpeg), Some(djpeg)) =
+                            (toolchain.cjpeg.as_ref(), toolchain.djpeg.as_ref())
+                        {
+                            let djpeg_cmd = vec![djpeg.clone(), inp.to_string_lossy().to_string()];
+                            let mut cjpeg_cmd = vec![
+                                cjpeg.clone(),
+                                "-quality".to_string(),
+                                q.to_string(),
+                                "-optimize".to_string(),
+                            ];
+                            if optimize_progressive {
+                                cjpeg_cmd.push("-progressive".to_string());
+                            }
+                            cjpeg_cmd.extend([
+                                "-outfile".to_string(),
+                                tmp.to_string_lossy().to_string(),
+                            ]);
+
+                            item_cmds.push(format!(
+                                "{} | {}",
+                                util::command_str(&djpeg_cmd),
+                                util::command_str(&cjpeg_cmd)
+                            ));
+
+                            if !dry_run {
+                                run_djpeg_cjpeg_pipeline(&djpeg_cmd, &cjpeg_cmd)?;
+                            }
                         } else {
-                            cwebp_cmd.extend(["-q".to_string(), q.to_string()]);
+                            let mut cmd = build_magick_cmd(toolchain, &inp)?;
+                            if auto_orient_enabled {
+                                cmd.push("-auto-orient".to_string());
+                            }
+                            cmd.extend(["-quality".to_string(), q.to_string()]);
+                            if optimize_progressive {
+                                cmd.extend(["-interlace".to_string(), "Plane".to_string()]);
+                            }
+                            if strip_metadata {
+                                cmd.push("-strip".to_string());
+                            }
+                            cmd.push(tmp.to_string_lossy().to_string());
+                            item_cmds.push(util::command_str(&cmd));
+                            let (rc, _stdout, stderr) = run_one_magick(&cmd, dry_run)?;
+                            if rc != 0 {
+                                return Err(anyhow::anyhow!(
+                                    "{}",
+                                    stderr.trim().to_string().if_empty("optimize jpg failed")
+                                ));
+                            }
                         }
-                        if strip_metadata {
-                            cwebp_cmd.extend(["-metadata".to_string(), "none".to_string()]);
+                    } else if out_ext == "webp" {
+                        if in_ext != "webp" {
+                            return Err(anyhow::anyhow!("optimize for webp expects webp input"));
                         }
-                        cwebp_cmd.extend([
-                            tmp_pam.to_string_lossy().to_string(),
-                            "-o".to_string(),
-                            tmp.to_string_lossy().to_string(),
-                        ]);
+                        let q = quality.unwrap_or(80);
 
-                        item_cmds.push(util::command_str(&dwebp_cmd));
-                        item_cmds.push(util::command_str(&cwebp_cmd));
+                        if let (Some(cwebp), Some(dwebp)) =
+                            (toolchain.cwebp.as_ref(), toolchain.dwebp.as_ref())
+                        {
+                            let uuid = uuid::Uuid::new_v4().simple().to_string();
+                            let short = &uuid[..8];
+                            let tmp_pam = tmp
+                                .parent()
+                                .unwrap_or_else(|| Path::new("."))
+                                .join(format!(".tmp-{short}.pam"));
 
-                        if !dry_run {
-                            run_capture(&dwebp_cmd, "dwebp failed")?;
-                            run_capture(&cwebp_cmd, "cwebp failed")?;
-                            let _ = std::fs::remove_file(&tmp_pam);
+                            let dwebp_cmd = vec![
+                                dwebp.clone(),
+                                inp.to_string_lossy().to_string(),
+                                "-pam".to_string(),
+                                "-o".to_string(),
+                                tmp_pam.to_string_lossy().to_string(),
+                            ];
+
+                            let mut cwebp_cmd: Vec<String> = vec![cwebp.clone()];
+                            if optimize_lossless {
+                                cwebp_cmd.push("-lossless".to_string());
+                            } else {
+                                cwebp_cmd.extend(["-q".to_string(), q.to_string()]);
+                            }
+                            if strip_metadata {
+                                cwebp_cmd.extend(["-metadata".to_string(), "none".to_string()]);
+                            }
+                            cwebp_cmd.extend([
+                                tmp_pam.to_string_lossy().to_string(),
+                                "-o".to_string(),
+                                tmp.to_string_lossy().to_string(),
+                            ]);
+
+                            item_cmds.push(util::command_str(&dwebp_cmd));
+                            item_cmds.push(util::command_str(&cwebp_cmd));
+
+                            if !dry_run {
+                                run_capture(&dwebp_cmd, "dwebp failed")?;
+                                run_capture(&cwebp_cmd, "cwebp failed")?;
+                                let _ = std::fs::remove_file(&tmp_pam);
+                            }
+                        } else {
+                            let mut cmd = build_magick_cmd(toolchain, &inp)?;
+                            if auto_orient_enabled {
+                                cmd.push("-auto-orient".to_string());
+                            }
+                            if optimize_lossless {
+                                cmd.extend([
+                                    "-define".to_string(),
+                                    "webp:lossless=true".to_string(),
+                                ]);
+                            } else {
+                                cmd.extend(["-quality".to_string(), q.to_string()]);
+                            }
+                            if strip_metadata {
+                                cmd.push("-strip".to_string());
+                            }
+                            cmd.push(tmp.to_string_lossy().to_string());
+                            item_cmds.push(util::command_str(&cmd));
+                            let (rc, _stdout, stderr) = run_one_magick(&cmd, dry_run)?;
+                            if rc != 0 {
+                                return Err(anyhow::anyhow!(
+                                    "{}",
+                                    stderr.trim().to_string().if_empty("optimize webp failed")
+                                ));
+                            }
                         }
                     } else {
-                        let mut cmd = build_magick_cmd(toolchain, &inp)?;
-                        if auto_orient_enabled {
-                            cmd.push("-auto-orient".to_string());
-                        }
-                        if optimize_lossless {
-                            cmd.extend(["-define".to_string(), "webp:lossless=true".to_string()]);
-                        } else {
-                            cmd.extend(["-quality".to_string(), q.to_string()]);
-                        }
-                        if strip_metadata {
-                            cmd.push("-strip".to_string());
-                        }
-                        cmd.push(tmp.to_string_lossy().to_string());
-                        item_cmds.push(util::command_str(&cmd));
-                        let (rc, _stdout, stderr) = run_one_magick(&cmd, dry_run)?;
-                        if rc != 0 {
-                            return Err(anyhow::anyhow!(
-                                "{}",
-                                stderr.trim().to_string().if_empty("optimize webp failed")
-                            ));
-                        }
+                        return Err(anyhow::anyhow!(
+                            "optimize currently supports only jpg/webp outputs"
+                        ));
                     }
-                } else {
-                    return Err(anyhow::anyhow!(
-                        "optimize currently supports only jpg/webp outputs"
-                    ));
-                }
 
-                if !dry_run {
-                    util::atomic_replace(&tmp, out_abs, dry_run)?;
-                    output_info = Some(probe_image(toolchain, out_abs));
+                    if !dry_run {
+                        util::atomic_replace(&tmp, out_abs, dry_run)?;
+                        output_info = Some(probe_image(toolchain, out_abs));
+                    }
+                    Ok(())
                 }
-                Ok(())
+                _ => Ok(()),
             }
         })();
 
@@ -1007,7 +1155,8 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
         run_id: run_dir.and_then(|p| p.file_name().map(|x| x.to_string_lossy().to_string())),
         cwd: cwd.to_string_lossy().to_string(),
         operation: subcommand.as_str().to_string(),
-        backend: toolchain.primary_backend().to_string(),
+        // Summary/report plumbing is shared; backend label comes from operation routing.
+        backend: backend.to_string(),
         report_path: report_path.clone(),
         dry_run,
         options: SummaryOptions {

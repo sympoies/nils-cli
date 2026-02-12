@@ -36,6 +36,29 @@ fn info_json_emits_schema_and_writes_summary_json() {
 }
 
 #[test]
+fn info_plain_text_keeps_legacy_output_shape() {
+    let dir = tempfile::TempDir::new().unwrap();
+    fs::write(dir.path().join("a.png"), "img").unwrap();
+
+    let stub = common::make_stub_dir();
+    common::write_exe(stub.path(), "identify", common::identify_stub_script());
+    common::write_exe(stub.path(), "convert", common::convert_stub_script());
+
+    let path_s = stub.path().to_string_lossy().to_string();
+    let envs = [("PATH", path_s.as_str())];
+
+    let out = common::run_image_processing(dir.path(), &["info", "--in", "a.png"], &envs);
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("operation: info"),
+        "stdout: {}",
+        out.stdout
+    );
+    assert!(out.stdout.contains("- ok:"), "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("-> None"), "stdout: {}", out.stdout);
+}
+
+#[test]
 fn convert_dry_run_does_not_write_output_file() {
     let dir = tempfile::TempDir::new().unwrap();
     fs::write(dir.path().join("a.png"), "img").unwrap();
@@ -203,4 +226,120 @@ fn magick_backend_is_preferred_when_present() {
     assert_eq!(out.code, 0, "stderr: {}", out.stderr);
     let v: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
     assert_eq!(v["backend"], "imagemagick:magick");
+}
+
+#[test]
+fn generate_supports_png_webp_svg_outputs_without_imagemagick() {
+    let dir = tempfile::TempDir::new().unwrap();
+
+    let stub = common::make_stub_dir();
+    let path_s = stub.path().to_string_lossy().to_string();
+    let envs = [("PATH", path_s.as_str())];
+
+    for (to, expected_format) in [("png", "PNG"), ("webp", "WEBP"), ("svg", "SVG")] {
+        let out_rel = format!("out/info.{to}");
+        let args = vec![
+            "generate".to_string(),
+            "--preset".to_string(),
+            "info".to_string(),
+            "--size".to_string(),
+            "32".to_string(),
+            "--fg".to_string(),
+            "#ffffff".to_string(),
+            "--bg".to_string(),
+            "#0f62fe".to_string(),
+            "--to".to_string(),
+            to.to_string(),
+            "--out".to_string(),
+            out_rel.clone(),
+            "--json".to_string(),
+        ];
+        let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+        let out = common::run_image_processing(dir.path(), &arg_refs, &envs);
+        assert_eq!(out.code, 0, "to={to}, stderr: {}", out.stderr);
+
+        let v: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+        assert_eq!(v["operation"], "generate");
+        assert_eq!(v["backend"], "rust:resvg");
+        assert_eq!(v["items"].as_array().unwrap().len(), 1);
+        assert_eq!(v["items"][0]["status"], "ok");
+        assert_eq!(v["items"][0]["output_path"], out_rel);
+        assert_eq!(v["items"][0]["output_info"]["format"], expected_format);
+        assert_eq!(v["items"][0]["output_info"]["width"], 32);
+        assert_eq!(v["items"][0]["output_info"]["height"], 32);
+        assert!(
+            v["items"][0]["output_info"]["size_bytes"]
+                .as_u64()
+                .unwrap_or_default()
+                > 0
+        );
+        assert!(
+            v["items"][0]["output_info"]["alpha"].as_bool().is_some(),
+            "expected alpha metadata for {to}"
+        );
+
+        if to == "svg" {
+            assert!(v["items"][0]["output_info"]["channels"].is_null());
+            let svg = fs::read_to_string(dir.path().join(&out_rel)).unwrap();
+            assert!(svg.contains("<svg"), "svg output missing <svg: {svg}");
+        } else {
+            assert!(
+                v["items"][0]["output_info"]["channels"].as_str().is_some(),
+                "expected raster channels metadata for {to}"
+            );
+        }
+
+        assert!(
+            dir.path().join(&out_rel).exists(),
+            "missing output: {out_rel}"
+        );
+        let run_id = v["run_id"].as_str().unwrap();
+        let summary_json = dir
+            .path()
+            .join("out/image-processing/runs")
+            .join(run_id)
+            .join("summary.json");
+        assert!(summary_json.exists(), "missing {}", summary_json.display());
+    }
+}
+
+#[test]
+fn generate_still_runs_when_non_generate_operations_lack_imagemagick() {
+    let dir = tempfile::TempDir::new().unwrap();
+    fs::write(dir.path().join("a.png"), "img").unwrap();
+
+    let stub = common::make_stub_dir();
+    let path_s = stub.path().to_string_lossy().to_string();
+    let envs = [("PATH", path_s.as_str())];
+
+    let info_out =
+        common::run_image_processing(dir.path(), &["info", "--in", "a.png", "--json"], &envs);
+    assert_eq!(info_out.code, 1);
+    assert!(
+        info_out.stderr.contains("missing ImageMagick"),
+        "stderr: {}",
+        info_out.stderr
+    );
+
+    let generate_out = common::run_image_processing(
+        dir.path(),
+        &[
+            "generate",
+            "--preset",
+            "info",
+            "--size",
+            "32",
+            "--to",
+            "png",
+            "--out",
+            "out/info.png",
+            "--json",
+        ],
+        &envs,
+    );
+    assert_eq!(generate_out.code, 0, "stderr: {}", generate_out.stderr);
+    let v: serde_json::Value = serde_json::from_str(&generate_out.stdout).unwrap();
+    assert_eq!(v["operation"], "generate");
+    assert_eq!(v["backend"], "rust:resvg");
+    assert!(dir.path().join("out/info.png").exists());
 }

@@ -3,6 +3,7 @@ use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 use std::process;
 
 mod cli;
+mod generate;
 mod model;
 mod processing;
 mod report;
@@ -29,19 +30,31 @@ fn run() -> i32 {
         usage_error(&e.message);
     }
 
-    let toolchain = match toolchain::detect_toolchain() {
-        Ok(t) => t,
-        Err(err) => {
-            eprintln!("image-processing: error: {err}");
-            return 1;
+    let operation_name = cli.subcommand.as_str();
+
+    // Backend split: only non-generate operations require ImageMagick detection.
+    let toolchain = if toolchain::operation_requires_imagemagick(operation_name) {
+        match toolchain::detect_toolchain() {
+            Ok(t) => Some(t),
+            Err(err) => {
+                eprintln!("image-processing: error: {err}");
+                return 1;
+            }
         }
+    } else {
+        None
     };
 
     let repo_root = util::find_repo_root();
 
-    let inputs = match processing::expand_inputs(&cli.inputs, cli.recursive, &cli.glob) {
-        Ok(v) => v,
-        Err(e) => usage_error(&e.message),
+    // `generate` has no `--in` contract; keep legacy input expansion for all other operations.
+    let inputs = if toolchain::operation_requires_imagemagick(operation_name) {
+        match processing::expand_inputs(&cli.inputs, cli.recursive, &cli.glob) {
+            Ok(v) => v,
+            Err(e) => usage_error(&e.message),
+        }
+    } else {
+        Vec::new()
     };
 
     let output_mode = match processing::validate_output_mode(
@@ -112,8 +125,11 @@ fn run() -> i32 {
         && cli.to.as_deref() == Some("jpg")
         && cli.background.is_none()
     {
+        let toolchain = toolchain
+            .as_ref()
+            .expect("convert path must have ImageMagick toolchain");
         for p in &inputs {
-            let info = toolchain::probe_image(&toolchain, p);
+            let info = toolchain::probe_image(toolchain, p);
             if info.alpha.unwrap_or(false) {
                 usage_error(
                     "alpha input cannot be converted to JPEG without a background (provide --background <color>)",
@@ -138,13 +154,19 @@ fn run() -> i32 {
         run_dir = Some(p);
     }
 
+    let progress_total = if cli.subcommand == Operation::Generate {
+        cli.presets.len() as u64
+    } else {
+        inputs.len() as u64
+    };
     let progress = Progress::new(
-        inputs.len() as u64,
+        progress_total,
         ProgressOptions::default().with_finish(ProgressFinish::Leave),
     );
 
     let summary = match processing::process_items(processing::ProcessArgs {
-        toolchain: &toolchain,
+        toolchain: toolchain.as_ref(),
+        backend: toolchain::backend_for_operation(operation_name, toolchain.as_ref()),
         repo_root: &repo_root,
         run_dir: run_dir.as_deref(),
         progress,
@@ -192,6 +214,14 @@ fn run() -> i32 {
         pad_gravity: &cli.gravity,
         optimize_lossless: cli.lossless,
         optimize_progressive: cli.progressive,
+        generate_presets: &cli.presets,
+        generate_to: cli.to.as_deref(),
+        generate_size: cli.size.as_deref(),
+        generate_fg: cli.fg.as_deref(),
+        generate_bg: cli.bg.as_deref(),
+        generate_stroke: cli.stroke.as_deref(),
+        generate_stroke_width: cli.stroke_width,
+        generate_padding: cli.padding,
     }) {
         Ok(s) => s,
         Err(err) => {
@@ -234,6 +264,63 @@ fn validate(cli: &Cli) -> Result<(), util::UsageError> {
             message: format!("{} does not support {flag}", cli.subcommand.as_str()),
         })
     };
+
+    // `generate` follows its own contract; keep legacy input-centric gates for existing operations.
+    if cli.subcommand.as_str() == toolchain::GENERATE_OPERATION {
+        if cli.presets.is_empty() {
+            return Err(util::UsageError {
+                message: "generate requires at least one --preset value".to_string(),
+            });
+        }
+        if !cli.inputs.is_empty() {
+            return Err(util::UsageError {
+                message: "generate does not support --in".to_string(),
+            });
+        }
+        if cli.recursive {
+            return Err(util::UsageError {
+                message: "generate does not support --recursive".to_string(),
+            });
+        }
+        if !cli.glob.is_empty() {
+            return Err(util::UsageError {
+                message: "generate does not support --glob".to_string(),
+            });
+        }
+        if cli.in_place {
+            return Err(util::UsageError {
+                message: "generate does not support --in-place".to_string(),
+            });
+        }
+
+        if cli.presets.len() == 1 {
+            if cli.out_dir.is_some() {
+                return Err(util::UsageError {
+                    message: "generate with a single preset does not support --out-dir (use --out)"
+                        .to_string(),
+                });
+            }
+            if cli.out.is_none() {
+                return Err(util::UsageError {
+                    message: "generate with a single preset requires --out".to_string(),
+                });
+            }
+        } else {
+            if cli.out.is_some() {
+                return Err(util::UsageError {
+                    message:
+                        "generate with multiple presets does not support --out (use --out-dir)"
+                            .to_string(),
+                });
+            }
+            if cli.out_dir.is_none() {
+                return Err(util::UsageError {
+                    message: "generate with multiple presets requires --out-dir".to_string(),
+                });
+            }
+        }
+        return Ok(());
+    }
 
     if cli.subcommand != Operation::Convert && cli.to.is_some() {
         forbid("--to")?;
@@ -374,6 +461,12 @@ mod tests {
             auto_orient: true,
             strip_metadata: false,
             background: None,
+            presets: Vec::new(),
+            fg: None,
+            bg: None,
+            stroke: None,
+            stroke_width: None,
+            padding: None,
             to: None,
             quality: None,
             scale: None,
@@ -482,6 +575,65 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("resize does not support --no-progressive")
+        );
+    }
+
+    #[test]
+    fn validate_generate_rejects_input_flags_and_in_place() {
+        let mut cli = base_cli(Operation::Generate);
+        cli.inputs = vec!["a.png".to_string()];
+        cli.presets = vec![crate::cli::GeneratePreset::Info];
+        let err = validate(&cli).expect_err("generate should reject --in");
+        assert!(err.to_string().contains("generate does not support --in"));
+
+        cli.inputs.clear();
+        cli.in_place = true;
+        let err = validate(&cli).expect_err("generate should reject --in-place");
+        assert!(
+            err.to_string()
+                .contains("generate does not support --in-place")
+        );
+    }
+
+    #[test]
+    fn validate_generate_enforces_variant_output_mode_rules() {
+        let mut single = base_cli(Operation::Generate);
+        single.inputs.clear();
+        single.presets = vec![crate::cli::GeneratePreset::Info];
+        single.out = None;
+        let err = validate(&single).expect_err("single preset should require --out");
+        assert!(
+            err.to_string()
+                .contains("generate with a single preset requires --out")
+        );
+
+        single.out = Some("out/info.png".to_string());
+        single.out_dir = Some("out".to_string());
+        let err = validate(&single).expect_err("single preset should reject --out-dir");
+        assert!(
+            err.to_string()
+                .contains("single preset does not support --out-dir")
+        );
+
+        let mut multi = base_cli(Operation::Generate);
+        multi.inputs.clear();
+        multi.presets = vec![
+            crate::cli::GeneratePreset::Info,
+            crate::cli::GeneratePreset::Warning,
+        ];
+        multi.out = Some("out/multi.png".to_string());
+        let err = validate(&multi).expect_err("multiple presets should require --out-dir");
+        assert!(
+            err.to_string()
+                .contains("multiple presets does not support --out")
+        );
+
+        multi.out = None;
+        multi.out_dir = None;
+        let err = validate(&multi).expect_err("multiple presets should require --out-dir");
+        assert!(
+            err.to_string()
+                .contains("multiple presets requires --out-dir")
         );
     }
 }

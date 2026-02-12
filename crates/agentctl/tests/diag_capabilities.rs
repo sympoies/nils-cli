@@ -103,6 +103,20 @@ fn diag_capabilities_json_reports_inventory_and_readiness() {
             "missing automation tool {id}"
         );
     }
+
+    let image_processing = tools
+        .iter()
+        .find(|tool| tool.get("id").and_then(Value::as_str) == Some("image-processing"))
+        .expect("image-processing automation tool");
+    let image_processing_capabilities = image_processing
+        .get("capabilities")
+        .and_then(Value::as_array)
+        .expect("image-processing capabilities");
+    assert!(
+        image_processing_capabilities
+            .iter()
+            .any(|capability| capability.as_str() == Some("generate"))
+    );
 }
 
 #[test]

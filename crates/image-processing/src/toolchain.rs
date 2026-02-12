@@ -3,6 +3,9 @@ use nils_common::process::find_in_path;
 use std::path::Path;
 use std::process::Command;
 
+pub const GENERATE_OPERATION: &str = "generate";
+pub const RUST_GENERATE_BACKEND: &str = "rust:resvg";
+
 #[derive(Clone, Debug)]
 pub struct Toolchain {
     pub magick: Option<Vec<String>>,
@@ -24,6 +27,20 @@ impl Toolchain {
         }
         "imagemagick:unknown"
     }
+}
+
+/// `generate` is Rust-native and intentionally bypasses ImageMagick probing.
+pub fn operation_requires_imagemagick(operation: &str) -> bool {
+    operation != GENERATE_OPERATION
+}
+
+pub fn backend_for_operation(operation: &str, toolchain: Option<&Toolchain>) -> &'static str {
+    if operation_requires_imagemagick(operation) {
+        return toolchain
+            .map(Toolchain::primary_backend)
+            .unwrap_or("imagemagick:unknown");
+    }
+    RUST_GENERATE_BACKEND
 }
 
 pub fn detect_toolchain() -> anyhow::Result<Toolchain> {

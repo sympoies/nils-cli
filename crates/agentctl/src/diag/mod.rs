@@ -311,6 +311,7 @@ const SCREEN_RECORD_CAPABILITIES: &[&str] = &[
 ];
 const IMAGE_PROCESSING_CAPABILITIES: &[&str] = &[
     "info",
+    "generate",
     "auto-orient",
     "convert",
     "resize",
