@@ -109,7 +109,7 @@ pub(crate) mod tests {
         storage.init().expect("first init should succeed");
         storage.init().expect("second init should succeed");
 
-        let applied_count: i64 = storage
+        let applied_count_v1: i64 = storage
             .with_connection(|conn| {
                 conn.query_row(
                     "select count(*) from schema_migrations where version = 1",
@@ -119,7 +119,29 @@ pub(crate) mod tests {
                 .map_err(crate::errors::AppError::db_query)
             })
             .expect("schema migration count query should succeed");
+        let applied_count_v2: i64 = storage
+            .with_connection(|conn| {
+                conn.query_row(
+                    "select count(*) from schema_migrations where version = 2",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(crate::errors::AppError::db_query)
+            })
+            .expect("schema migration count query should succeed");
+        let applied_count_v3: i64 = storage
+            .with_connection(|conn| {
+                conn.query_row(
+                    "select count(*) from schema_migrations where version = 3",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(crate::errors::AppError::db_query)
+            })
+            .expect("schema migration count query should succeed");
 
-        assert_eq!(applied_count, 1);
+        assert_eq!(applied_count_v1, 1);
+        assert_eq!(applied_count_v2, 1);
+        assert_eq!(applied_count_v3, 1);
     }
 }

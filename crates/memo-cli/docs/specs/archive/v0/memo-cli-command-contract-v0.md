@@ -1,8 +1,10 @@
-# memo-cli Command Contract v1
+# memo-cli Command Contract v0
+
+> Archived snapshot: pre-launch v1 contract archived as v0 when active v1 was rebaselined for update/delete support.
 
 ## Purpose
 This document defines the command-level behavior contract for `memo-cli` MVP commands:
-`add`, `update`, `delete`, `list`, `search`, `report`, `fetch`, and `apply`.
+`add`, `list`, `search`, `report`, `fetch`, and `apply`.
 
 It aligns with:
 - `docs/runbooks/new-cli-crate-development-standard.md`
@@ -11,8 +13,7 @@ It aligns with:
 ## Scope
 - Human-readable output is the default mode.
 - JSON output is opt-in via `--json` or `--format json`.
-- Raw memo capture supports explicit mutation commands (`update`, `delete --hard`);
-  agent enrichment remains a derived layer.
+- Raw memo capture is append-only; agent enrichment is a derived layer.
 
 ## Command Surface
 
@@ -22,8 +23,6 @@ Usage:
 
 Commands:
   add <text>
-  update <item_id> <text>
-  delete <item_id> --hard
   list
   search <query>
   report <week|month>
@@ -45,7 +44,6 @@ Commands:
 - Machine-facing commands `fetch` and `apply` MUST support both `--json` and `--format json`.
 - `list`, `search`, and `report` also support `--json` and `--format json` for automation parity.
 - `add` supports JSON mode for script-driven capture acknowledgements.
-- `update` and `delete` support JSON mode for script-driven maintenance workflows.
 
 ## stdout/stderr boundary
 
@@ -77,8 +75,6 @@ For commands using JSON mode, response envelope follows
 
 Planned schema identifiers for v1:
 - `add`: `memo-cli.add.v1`
-- `update`: `memo-cli.update.v1`
-- `delete`: `memo-cli.delete.v1`
 - `list`: `memo-cli.list.v1`
 - `search`: `memo-cli.search.v1`
 - `report`: `memo-cli.report.v1`
@@ -108,62 +104,16 @@ memo-cli add <text> [--source <label>] [--at <rfc3339>] [--json|--format json]
 ```
 
 Behavior:
-- Persists raw text as a new inbox item.
+- Persists immutable raw text as a new inbox item.
 - By default, `created_at` is system-generated at write time.
 - `--at` allows explicit RFC3339 timestamp input and stores the normalized UTC instant.
+- Never mutates previously captured rows.
 
 Text output (`stdout`):
 - single-line acknowledgement including item id and created timestamp.
 
 JSON output:
 - `result` includes at least: `item_id`, `created_at`, `source`, `text`.
-
-### `update`
-Update one raw inbox record and reset downstream derived workflow state.
-
-```text
-memo-cli update <item_id> <text> [--json|--format json]
-```
-
-Behavior:
-- Replaces `raw_text` for one item.
-- Clears active derivations and extension workflow anchors for that item.
-- Item state returns to `pending` for future `fetch/apply` processing.
-
-Text output (`stdout`):
-- single-line acknowledgement including item id, update timestamp, and cleared counters.
-
-JSON output:
-- `result` includes at least:
-  - `item_id`
-  - `updated_at`
-  - `text`
-  - `state` (always `pending`)
-  - `cleared_derivations`
-  - `cleared_workflow_anchors`
-
-### `delete`
-Hard-delete one inbox record and all dependent data.
-
-```text
-memo-cli delete <item_id> --hard [--json|--format json]
-```
-
-Behavior:
-- Requires `--hard`; soft-delete is not supported in v1.
-- Permanently removes raw row plus dependent derivations/search/workflow rows.
-- Deleted item is no longer addressable in `list/search/fetch/report`.
-
-Text output (`stdout`):
-- single-line acknowledgement including item id, delete timestamp, and removed counters.
-
-JSON output:
-- `result` includes at least:
-  - `item_id`
-  - `deleted` (`true`)
-  - `deleted_at`
-  - `removed_derivations`
-  - `removed_workflow_anchors`
 
 ### `list`
 List captured items in deterministic order.
@@ -246,7 +196,7 @@ Text output (`stdout`):
 - human summary for manual inspection (batch size and ids).
 
 JSON output:
-- `results[]` includes source fields required by enrichment workers.
+- `results[]` includes immutable source fields required by enrichment workers.
 - `results[]` may include additive metadata fields (`content_type`,
   `validation_status`) and are `null` when unavailable for pending rows.
 - `result.next_cursor` (or equivalent) for continuation.
@@ -260,7 +210,7 @@ memo-cli apply (--input <file> | --stdin) [--dry-run] [--json|--format json]
 
 Behavior:
 - Accepts structured enrichment payload generated from `fetch`.
-- Writes derivations as new versions.
+- Writes derivations as new versions; raw capture remains immutable.
 - Active derivation selection follows latest accepted version per item.
 - `--dry-run` validates payload and reports changes without committing writes.
 - When metadata is present, `content_type`, `validation_status`, and
@@ -275,27 +225,24 @@ JSON output:
   and `validation_errors[]` fields.
 - invalid payload returns `ok=false` and exits with input/usage error code.
 
-## End-to-end flow: capture -> maintenance -> agent enrichment -> report
+## End-to-end flow: capture -> agent enrichment -> report
 1. Quick capture:
    - `memo-cli add "buy 1tb ssd for mom"`
    - `memo-cli add "book pediatric dentist appointment"`
-2. Optional maintenance:
-   - `memo-cli update itm_00000001 "buy 2tb ssd for mom"`
-   - `memo-cli delete itm_00000002 --hard`
-3. Agent pull (machine mode):
+2. Agent pull (machine mode):
    - `memo-cli fetch --json --limit 50 > inbox-batch.json`
-4. Agent enrichment writes payload for apply:
+3. Agent enrichment writes payload for apply:
    - Each record includes normalized fields (for example category, priority, due hints, confidence).
-5. Apply enrichment:
+4. Apply enrichment:
    - `memo-cli apply --format json --input enrichment-batch.json`
-6. Human summary report:
+5. Human summary report:
    - `memo-cli report week`
-7. Service/dashboard report:
+6. Service/dashboard report:
    - `memo-cli report month --json`
 
 Expected contract outcome:
-- capture supports explicit correction/removal commands with deterministic cleanup;
-- enrichment is versioned and replaceable;
+- capture is durable and append-only;
+- enrichment is versioned and replaceable without rewriting raw text;
 - report reflects latest active enrichment with capture fallback.
 
 ## Non-goals for this contract version

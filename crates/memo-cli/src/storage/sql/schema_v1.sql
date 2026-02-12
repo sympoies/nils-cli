@@ -13,18 +13,6 @@ create table if not exists inbox_items (
 create index if not exists idx_inbox_items_created_item_desc
   on inbox_items(created_at desc, item_id desc);
 
-create trigger if not exists trg_inbox_items_append_only_update
-before update on inbox_items
-begin
-  select raise(abort, 'inbox_items is append-only');
-end;
-
-create trigger if not exists trg_inbox_items_append_only_delete
-before delete on inbox_items
-begin
-  select raise(abort, 'inbox_items is append-only');
-end;
-
 create table if not exists item_derivations (
   derivation_id integer primary key,
   item_id integer not null references inbox_items(item_id) on delete restrict,
@@ -99,6 +87,32 @@ create table if not exists item_tags (
 create index if not exists idx_item_tags_tag_id_derivation_id
   on item_tags(tag_id, derivation_id);
 
+create table if not exists workflow_item_anchors (
+  anchor_id integer primary key,
+  item_id integer not null references inbox_items(item_id) on delete cascade,
+  workflow_type text not null,
+  created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  check(length(trim(workflow_type)) > 0),
+  unique(item_id, workflow_type)
+);
+
+create index if not exists idx_workflow_item_anchors_type_item
+  on workflow_item_anchors(workflow_type, item_id);
+
+create table if not exists workflow_game_entries (
+  game_entry_id integer primary key,
+  anchor_id integer not null references workflow_item_anchors(anchor_id) on delete cascade,
+  game_name text not null,
+  source_url text,
+  description text,
+  created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  check(length(trim(game_name)) > 0)
+);
+
+create index if not exists idx_workflow_game_entries_anchor
+  on workflow_game_entries(anchor_id);
+
 create table if not exists item_search_documents (
   item_id integer primary key references inbox_items(item_id) on delete restrict,
   raw_text text not null,
@@ -144,6 +158,15 @@ after insert on inbox_items
 begin
   insert into item_search_documents(item_id, raw_text, derived_text, tags_text, updated_at)
   values (new.item_id, new.raw_text, '', '', new.inserted_at);
+end;
+
+create trigger if not exists trg_inbox_items_au_refresh_search_document
+after update of raw_text on inbox_items
+begin
+  update item_search_documents
+  set raw_text = new.raw_text,
+      updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  where item_id = new.item_id;
 end;
 
 create trigger if not exists trg_item_derivations_ai_refresh_search_document
@@ -200,6 +223,34 @@ begin
   ), ''),
   updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   where item_id = new.item_id;
+end;
+
+create trigger if not exists trg_item_derivations_ad_refresh_search_document
+after delete on item_derivations
+begin
+  update item_search_documents
+  set derived_text = coalesce((
+    select trim(
+      coalesce(d.summary, '') || ' ' || coalesce(d.category, '') || ' ' || coalesce(d.normalized_text, '')
+    )
+    from item_derivations d
+    where d.item_id = old.item_id
+      and d.is_active = 1
+      and d.status = 'accepted'
+    order by d.derivation_version desc, d.derivation_id desc
+    limit 1
+  ), ''),
+  tags_text = coalesce((
+    select group_concat(t.tag_name, ' ')
+    from item_tags it
+    join tags t on t.tag_id = it.tag_id
+    join item_derivations d on d.derivation_id = it.derivation_id
+    where d.item_id = old.item_id
+      and d.is_active = 1
+      and d.status = 'accepted'
+  ), ''),
+  updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  where item_id = old.item_id;
 end;
 
 create trigger if not exists trg_item_tags_ai_refresh_search_document

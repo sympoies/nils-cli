@@ -1,8 +1,10 @@
-# memo-cli JSON Contract v1
+# memo-cli JSON Contract v0
+
+> Archived snapshot: pre-launch v1 contract archived as v0 when active v1 was rebaselined for update/delete support.
 
 ## Purpose
 This document defines machine-consumable JSON contracts for `memo-cli` commands:
-`add`, `update`, `delete`, `list`, `search`, `report`, `fetch`, and `apply`.
+`add`, `list`, `search`, `report`, `fetch`, and `apply`.
 
 It is a command-specific extension of:
 - `docs/specs/cli-service-json-contract-guideline-v1.md`
@@ -14,8 +16,6 @@ Human-readable mode remains the default UX. JSON mode is explicit (`--json` or `
 | Command surface | Canonical `command` | `schema_version` | Success payload key |
 | --- | --- | --- | --- |
 | `add` | `memo-cli add` | `memo-cli.add.v1` | `result` |
-| `update` | `memo-cli update` | `memo-cli.update.v1` | `result` |
-| `delete` | `memo-cli delete` | `memo-cli.delete.v1` | `result` |
 | `list` | `memo-cli list` | `memo-cli.list.v1` | `results` |
 | `search` | `memo-cli search` | `memo-cli.search.v1` | `results` |
 | `report` | `memo-cli report` | `memo-cli.report.v1` | `result` |
@@ -89,22 +89,7 @@ Semantics:
 - `item_id`: stable unique item identifier (string)
 - `created_at`: RFC3339 timestamp (UTC, string)
 - `source`: capture source label (string)
-- `text`: raw memo text (string)
-
-### `update` (`result`)
-- `item_id`: stable unique item identifier (string)
-- `updated_at`: RFC3339 timestamp (UTC, string)
-- `text`: updated raw memo text (string)
-- `state`: always `pending`
-- `cleared_derivations`: non-negative integer
-- `cleared_workflow_anchors`: non-negative integer
-
-### `delete` (`result`)
-- `item_id`: stable unique item identifier (string)
-- `deleted`: always `true`
-- `deleted_at`: RFC3339 timestamp (UTC, string)
-- `removed_derivations`: non-negative integer
-- `removed_workflow_anchors`: non-negative integer
+- `text`: immutable raw memo text (string)
 
 ### `list` (`results`)
 - `results[]` item fields:
@@ -175,12 +160,11 @@ Recommended stable error codes in v1:
 | `invalid-arguments` | CLI flags/arguments are invalid or incompatible | all |
 | `db-open-failed` | SQLite database open/bootstrap failed | all |
 | `db-query-failed` | read query failed | `list`, `search`, `report`, `fetch` |
-| `db-write-failed` | write transaction failed | `add`, `update`, `delete`, `apply` |
+| `db-write-failed` | write transaction failed | `add`, `apply` |
 | `invalid-cursor` | `fetch` cursor is malformed/expired for current DB state | `fetch` |
 | `invalid-time` | timestamp option is malformed RFC3339 input | `add`, `report` |
 | `invalid-timezone` | timezone option is malformed or unsupported | `report` |
 | `invalid-time-range` | `--from` / `--to` range is logically invalid | `report` |
-| `invalid-item-id` | item id is malformed or not found | `update`, `delete` |
 | `invalid-apply-payload` | input JSON payload schema/semantics are invalid | `apply` |
 | `apply-item-conflict` | apply conflict for one or more item derivations | `apply` |
 | `io-read-failed` | failed to read `--input` file or `--stdin` payload | `apply` |

@@ -15,6 +15,12 @@ memo-cli add --at 2026-02-12T10:00:00+08:00 "backfilled note"
 memo-cli fetch --json --limit 50 > inbox-batch.json
 ```
 
+Optional maintenance before fetch:
+```bash
+memo-cli update itm_00000001 "buy 2tb ssd for mom"
+memo-cli delete itm_00000002 --hard
+```
+
 Expected JSON shape:
 - top-level: `schema_version`, `command`, `ok`, `results`
 - `results[]`: `item_id`, `created_at`, `source`, `text`, `state`,

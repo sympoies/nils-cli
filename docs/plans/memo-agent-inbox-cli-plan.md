@@ -315,7 +315,7 @@ contract-tested CLI output.
   - `completions/zsh/_memo-cli`
   - `completions/bash/memo-cli`
   - `crates/memo-cli/README.md`
-  - `docs/runbooks/memo-cli-agent-workflow.md`
+  - `crates/memo-cli/docs/runbooks/memo-cli-agent-workflow.md`
 - **Description**: Add completion support and a minimal runbook for agent orchestration with
   command examples, expected JSON payloads, and failure handling guidance.
 - **Dependencies**:
@@ -330,7 +330,7 @@ contract-tested CLI output.
   - Completion regression tests pass without breaking existing completion suites.
 - **Validation**:
   - `zsh -f tests/zsh/completion.test.zsh`
-  - `rg -n "fetch|apply|search|report|--json" docs/runbooks/memo-cli-agent-workflow.md crates/memo-cli/README.md`
+  - `rg -n "fetch|apply|search|report|--json" crates/memo-cli/docs/runbooks/memo-cli-agent-workflow.md crates/memo-cli/README.md`
 
 ## Sprint 4: End-to-end validation and release readiness
 **Goal**: Prove reliability under repository delivery gates and document operational fallback.
@@ -405,8 +405,8 @@ contract-tested CLI output.
 
 ### Task 4.4: Document rollout and operational rollback guide
 - **Location**:
-  - `docs/runbooks/memo-cli-rollout.md`
-  - `docs/runbooks/memo-cli-agent-workflow.md`
+  - `crates/memo-cli/docs/runbooks/memo-cli-rollout.md`
+  - `crates/memo-cli/docs/runbooks/memo-cli-agent-workflow.md`
 - **Description**: Write rollout steps, operational checks, and rollback triggers so teams can
   safely adopt the CLI for capture-first workflows and revert behavior if regressions appear.
 - **Dependencies**:
@@ -420,7 +420,7 @@ contract-tested CLI output.
   - Agent workflow runbook includes fallback behavior when apply payload validation fails.
   - Documentation is linked from crate README for discoverability.
 - **Validation**:
-  - `rg -n "rollout|smoke|rollback|trigger|fetch|apply" docs/runbooks/memo-cli-rollout.md docs/runbooks/memo-cli-agent-workflow.md`
+  - `rg -n "rollout|smoke|rollback|trigger|fetch|apply" crates/memo-cli/docs/runbooks/memo-cli-rollout.md crates/memo-cli/docs/runbooks/memo-cli-agent-workflow.md`
   - `rg -n "memo-cli-rollout|memo-cli-agent-workflow" crates/memo-cli/README.md`
 
 ## Dependency and parallelization map
