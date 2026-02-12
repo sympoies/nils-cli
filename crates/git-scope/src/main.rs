@@ -15,6 +15,7 @@ mod tree;
 #[derive(Parser)]
 #[command(
     name = "git-scope",
+    version,
     disable_help_flag = true,
     disable_help_subcommand = true
 )]
@@ -107,6 +108,7 @@ fn print_help() {
         "  {:<16}  Disable ANSI colors (also via NO_COLOR)",
         "--no-color"
     );
+    println!("  {:<16}  Show version", "-V, --version");
 }
 
 fn main() {

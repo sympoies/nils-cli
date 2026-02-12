@@ -31,5 +31,6 @@ pub fn print_help() {
         "  {:<16}  Create git tag from a lock",
         "tag <label> <tag> [-m msg]"
     );
+    println!("  {:<16}  Show version", "-V, --version");
     println!();
 }
