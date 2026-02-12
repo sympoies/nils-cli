@@ -73,24 +73,38 @@ fn paths_resolve_secret_dir_from_feature_dir() {
     let feature_dir = script_dir.join("_features").join("codex");
     fs::create_dir_all(&feature_dir).expect("feature dir");
 
-    let _secret = EnvGuard::remove(&lock, "CODEX_SECRET_DIR");
-    let _script_dir = EnvGuard::set(
-        &lock,
-        "ZSH_SCRIPT_DIR",
-        script_dir.to_str().expect("script dir"),
-    );
+    {
+        let home = dir.path().join("home");
+        fs::create_dir_all(&home).expect("home");
+        let _secret = EnvGuard::remove(&lock, "CODEX_SECRET_DIR");
+        let _home = EnvGuard::set(&lock, "HOME", home.to_str().expect("home"));
+        assert_eq!(
+            paths::resolve_secret_dir().expect("secret dir"),
+            home.join(".config").join("codex_secrets")
+        );
+    }
 
-    fs::write(feature_dir.join("init.zsh"), "#").expect("init.zsh");
-    assert_eq!(
-        paths::resolve_secret_dir().expect("secret dir"),
-        feature_dir.join("secrets")
-    );
+    {
+        let _secret = EnvGuard::remove(&lock, "CODEX_SECRET_DIR");
+        let _home = EnvGuard::remove(&lock, "HOME");
+        let _script_dir = EnvGuard::set(
+            &lock,
+            "ZSH_SCRIPT_DIR",
+            script_dir.to_str().expect("script dir"),
+        );
 
-    fs::remove_file(feature_dir.join("init.zsh")).expect("remove init.zsh");
-    assert_eq!(
-        paths::resolve_secret_dir().expect("secret dir"),
-        feature_dir
-    );
+        fs::write(feature_dir.join("init.zsh"), "#").expect("init.zsh");
+        assert_eq!(
+            paths::resolve_secret_dir().expect("secret dir"),
+            feature_dir.join("secrets")
+        );
+
+        fs::remove_file(feature_dir.join("init.zsh")).expect("remove init.zsh");
+        assert_eq!(
+            paths::resolve_secret_dir().expect("secret dir"),
+            feature_dir
+        );
+    }
 }
 
 #[test]

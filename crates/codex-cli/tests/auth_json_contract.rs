@@ -180,6 +180,94 @@ fn auth_json_contract_current_missing_auth_file_is_structured() {
 }
 
 #[test]
+fn auth_json_contract_current_defaults_to_home_secret_dir_when_env_unset() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let home = dir.path().join("home");
+    let auth_dir = home.join(".codex");
+    let secret_dir = home.join(".config").join("codex_secrets");
+    fs::create_dir_all(&auth_dir).expect("auth dir");
+    fs::create_dir_all(&secret_dir).expect("secret dir");
+
+    let auth_file = auth_dir.join("auth.json");
+    let content = auth_json(
+        PAYLOAD_ALPHA,
+        "acct_001",
+        "refresh_a",
+        "2025-01-20T12:34:56Z",
+    );
+    fs::write(&auth_file, &content).expect("write auth");
+    fs::write(secret_dir.join("alpha.json"), &content).expect("write secret");
+
+    let home_str = home.to_string_lossy().to_string();
+    let output = run_with(
+        &["auth", "current", "--json"],
+        &[],
+        &[
+            ("HOME", home_str.as_str()),
+            ("CODEX_AUTH_FILE", ""),
+            ("CODEX_SECRET_DIR", ""),
+        ],
+    );
+    assert_eq!(output.code, 0);
+
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["schema_version"], "codex-cli.auth.v1");
+    assert_eq!(payload["command"], "auth current");
+    assert_eq!(payload["ok"], true);
+    assert_eq!(
+        payload["result"]["auth_file"],
+        auth_file.display().to_string()
+    );
+    assert_eq!(payload["result"]["matched"], true);
+    assert_eq!(payload["result"]["matched_secret"], "alpha.json");
+}
+
+#[test]
+fn auth_json_contract_current_missing_default_secret_dir_is_structured() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let home = dir.path().join("home");
+    let auth_dir = home.join(".codex");
+    fs::create_dir_all(&auth_dir).expect("auth dir");
+
+    let auth_file = auth_dir.join("auth.json");
+    fs::write(
+        &auth_file,
+        auth_json(
+            PAYLOAD_ALPHA,
+            "acct_001",
+            "refresh_a",
+            "2025-01-20T12:34:56Z",
+        ),
+    )
+    .expect("write auth");
+
+    let home_str = home.to_string_lossy().to_string();
+    let output = run_with(
+        &["auth", "current", "--json"],
+        &[],
+        &[
+            ("HOME", home_str.as_str()),
+            ("CODEX_AUTH_FILE", ""),
+            ("CODEX_SECRET_DIR", ""),
+        ],
+    );
+    assert_eq!(output.code, 1);
+
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["schema_version"], "codex-cli.auth.v1");
+    assert_eq!(payload["command"], "auth current");
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"]["code"], "secret-dir-not-found");
+    assert_eq!(
+        payload["error"]["details"]["secret_dir"],
+        home.join(".config")
+            .join("codex_secrets")
+            .display()
+            .to_string()
+    );
+}
+
+#[test]
 fn auth_json_contract_current_no_match_is_structured() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let secrets = dir.path().join("secrets");
