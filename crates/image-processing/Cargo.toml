@@ -21,7 +21,7 @@ globset = "0.4"
 image = { version = "0.25", default-features = false, features = ["png", "webp"] }
 nils-common = { version = "0.3.0", path = "../nils-common", package = "nils-common" }
 nils-term = { version = "0.3.0", path = "../nils-term", package = "nils-term" }
-resvg = "0.45"
+resvg = "0.47"
 roxmltree = "0.20"
 usvg = "0.45"
 uuid = { version = "1", features = ["v4"] }
