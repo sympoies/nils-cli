@@ -15,7 +15,7 @@ tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 valid_out="$tmp_dir/out/sun.svg"
-export SVG_LLM_CMD="cat '$REPO_ROOT/fixtures/image-processing/llm-svg-valid.svg'"
+export SVG_LLM_CMD="cat '$REPO_ROOT/crates/image-processing/tests/fixtures/llm-svg-valid.svg'"
 "$PIPELINE" --intent "sun icon" --out-svg "$valid_out" --dry-run || {
   print -u2 -r -- "FAIL: pipeline valid case failed"
   exit 1
@@ -35,7 +35,7 @@ if [[ -f "${valid_out%.svg}.repair.prompt.md" ]]; then
 fi
 
 invalid_out="$tmp_dir/out/broken.svg"
-export SVG_LLM_CMD="cat '$REPO_ROOT/fixtures/image-processing/llm-svg-invalid.svg'"
+export SVG_LLM_CMD="cat '$REPO_ROOT/crates/image-processing/tests/fixtures/llm-svg-invalid.svg'"
 if "$PIPELINE" --intent "broken icon" --out-svg "$invalid_out" --dry-run; then
   print -u2 -r -- "FAIL: invalid case should fail"
   exit 1

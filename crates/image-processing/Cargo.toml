@@ -23,7 +23,7 @@ nils-common = { version = "0.3.0", path = "../nils-common", package = "nils-comm
 nils-term = { version = "0.3.0", path = "../nils-term", package = "nils-term" }
 resvg = "0.47"
 roxmltree = "0.20"
-usvg = "0.45"
+usvg = "0.47"
 uuid = { version = "1", features = ["v4"] }
 walkdir = "2"
 
