@@ -115,7 +115,12 @@ fn diag_capabilities_json_reports_inventory_and_readiness() {
     assert!(
         image_processing_capabilities
             .iter()
-            .any(|capability| capability.as_str() == Some("generate"))
+            .any(|capability| capability.as_str() == Some("svg-validate"))
+    );
+    assert!(
+        image_processing_capabilities
+            .iter()
+            .any(|capability| capability.as_str() == Some("convert.from-svg"))
     );
 }
 

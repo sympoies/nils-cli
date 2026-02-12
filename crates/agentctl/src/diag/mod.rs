@@ -311,7 +311,8 @@ const SCREEN_RECORD_CAPABILITIES: &[&str] = &[
 ];
 const IMAGE_PROCESSING_CAPABILITIES: &[&str] = &[
     "info",
-    "generate",
+    "svg-validate",
+    "convert.from-svg",
     "auto-orient",
     "convert",
     "resize",

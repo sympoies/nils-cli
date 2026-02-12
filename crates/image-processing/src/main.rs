@@ -1,12 +1,13 @@
 use clap::{CommandFactory, Parser};
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
+use std::path::PathBuf;
 use std::process;
 
 mod cli;
-mod generate;
 mod model;
 mod processing;
 mod report;
+mod svg_validate;
 mod toolchain;
 mod util;
 
@@ -31,9 +32,12 @@ fn run() -> i32 {
     }
 
     let operation_name = cli.subcommand.as_str();
+    let from_svg_path = cli.from_svg.as_deref().map(util::expand_user);
+    let from_svg_mode = from_svg_path.is_some();
 
-    // Backend split: only non-generate operations require ImageMagick detection.
-    let toolchain = if toolchain::operation_requires_imagemagick(operation_name) {
+    let requires_imagemagick =
+        toolchain::operation_requires_imagemagick(operation_name, from_svg_mode);
+    let toolchain = if requires_imagemagick {
         match toolchain::detect_toolchain() {
             Ok(t) => Some(t),
             Err(err) => {
@@ -47,8 +51,14 @@ fn run() -> i32 {
 
     let repo_root = util::find_repo_root();
 
-    // `generate` has no `--in` contract; keep legacy input expansion for all other operations.
-    let inputs = if toolchain::operation_requires_imagemagick(operation_name) {
+    let inputs = if cli.subcommand == Operation::SvgValidate {
+        match processing::expand_inputs(&cli.inputs, false, &[]) {
+            Ok(v) => v,
+            Err(e) => usage_error(&e.message),
+        }
+    } else if from_svg_mode {
+        Vec::new()
+    } else if requires_imagemagick {
         match processing::expand_inputs(&cli.inputs, cli.recursive, &cli.glob) {
             Ok(v) => v,
             Err(e) => usage_error(&e.message),
@@ -68,7 +78,6 @@ fn run() -> i32 {
         Err(e) => usage_error(&e.message),
     };
 
-    // Parse aspect/crop selectors (usage errors).
     let resize_aspect = if cli.subcommand == Operation::Resize {
         match processing::parse_aspect_opt(cli.aspect.as_deref()) {
             Ok(v) => v,
@@ -120,8 +129,8 @@ fn run() -> i32 {
         }
     }
 
-    // Preflight (usage) validations that depend on inputs.
     if cli.subcommand == Operation::Convert
+        && !from_svg_mode
         && cli.to.as_deref() == Some("jpg")
         && cli.background.is_none()
     {
@@ -138,8 +147,7 @@ fn run() -> i32 {
         }
     }
 
-    // Run dir
-    let mut run_dir: Option<std::path::PathBuf> = None;
+    let mut run_dir: Option<PathBuf> = None;
     if cli.json || cli.report {
         let run_id = util::now_run_id();
         let p = repo_root
@@ -154,8 +162,8 @@ fn run() -> i32 {
         run_dir = Some(p);
     }
 
-    let progress_total = if cli.subcommand == Operation::Generate {
-        cli.presets.len() as u64
+    let progress_total = if cli.subcommand == Operation::SvgValidate || from_svg_mode {
+        1
     } else {
         inputs.len() as u64
     };
@@ -166,12 +174,17 @@ fn run() -> i32 {
 
     let summary = match processing::process_items(processing::ProcessArgs {
         toolchain: toolchain.as_ref(),
-        backend: toolchain::backend_for_operation(operation_name, toolchain.as_ref()),
+        backend: toolchain::backend_for_operation(
+            operation_name,
+            toolchain.as_ref(),
+            from_svg_mode,
+        ),
         repo_root: &repo_root,
         run_dir: run_dir.as_deref(),
         progress,
         subcommand: cli.subcommand,
         inputs: &inputs,
+        from_svg_input: from_svg_path.as_deref(),
         output_mode: output_mode.as_ref(),
         overwrite: cli.overwrite,
         dry_run: cli.dry_run,
@@ -214,14 +227,6 @@ fn run() -> i32 {
         pad_gravity: &cli.gravity,
         optimize_lossless: cli.lossless,
         optimize_progressive: cli.progressive,
-        generate_presets: &cli.presets,
-        generate_to: cli.to.as_deref(),
-        generate_size: cli.size.as_deref(),
-        generate_fg: cli.fg.as_deref(),
-        generate_bg: cli.bg.as_deref(),
-        generate_stroke: cli.stroke.as_deref(),
-        generate_stroke_width: cli.stroke_width,
-        generate_padding: cli.padding,
     }) {
         Ok(s) => s,
         Err(err) => {
@@ -265,61 +270,83 @@ fn validate(cli: &Cli) -> Result<(), util::UsageError> {
         })
     };
 
-    // `generate` follows its own contract; keep legacy input-centric gates for existing operations.
-    if cli.subcommand.as_str() == toolchain::GENERATE_OPERATION {
-        if cli.presets.is_empty() {
+    let from_svg_mode = cli.from_svg.is_some();
+
+    if from_svg_mode {
+        if cli.subcommand != Operation::Convert {
             return Err(util::UsageError {
-                message: "generate requires at least one --preset value".to_string(),
+                message: "--from-svg is only supported for convert".to_string(),
             });
         }
         if !cli.inputs.is_empty() {
             return Err(util::UsageError {
-                message: "generate does not support --in".to_string(),
+                message: "convert --from-svg does not support --in".to_string(),
             });
         }
         if cli.recursive {
             return Err(util::UsageError {
-                message: "generate does not support --recursive".to_string(),
+                message: "convert --from-svg does not support --recursive".to_string(),
             });
         }
         if !cli.glob.is_empty() {
             return Err(util::UsageError {
-                message: "generate does not support --glob".to_string(),
+                message: "convert --from-svg does not support --glob".to_string(),
             });
         }
         if cli.in_place {
             return Err(util::UsageError {
-                message: "generate does not support --in-place".to_string(),
+                message: "convert --from-svg does not support --in-place".to_string(),
             });
         }
-
-        if cli.presets.len() == 1 {
-            if cli.out_dir.is_some() {
-                return Err(util::UsageError {
-                    message: "generate with a single preset does not support --out-dir (use --out)"
-                        .to_string(),
-                });
-            }
-            if cli.out.is_none() {
-                return Err(util::UsageError {
-                    message: "generate with a single preset requires --out".to_string(),
-                });
-            }
-        } else {
-            if cli.out.is_some() {
-                return Err(util::UsageError {
-                    message:
-                        "generate with multiple presets does not support --out (use --out-dir)"
-                            .to_string(),
-                });
-            }
-            if cli.out_dir.is_none() {
-                return Err(util::UsageError {
-                    message: "generate with multiple presets requires --out-dir".to_string(),
-                });
-            }
+        if cli.out_dir.is_some() {
+            return Err(util::UsageError {
+                message: "convert --from-svg requires --out (does not support --out-dir)"
+                    .to_string(),
+            });
         }
-        return Ok(());
+        if cli.out.is_none() {
+            return Err(util::UsageError {
+                message: "convert --from-svg requires --out".to_string(),
+            });
+        }
+    }
+
+    if cli.subcommand == Operation::SvgValidate {
+        if cli.inputs.len() != 1 {
+            return Err(util::UsageError {
+                message: "svg-validate requires exactly one --in <path>".to_string(),
+            });
+        }
+        if cli.recursive {
+            return Err(util::UsageError {
+                message: "svg-validate does not support --recursive".to_string(),
+            });
+        }
+        if !cli.glob.is_empty() {
+            return Err(util::UsageError {
+                message: "svg-validate does not support --glob".to_string(),
+            });
+        }
+        if cli.from_svg.is_some() {
+            return Err(util::UsageError {
+                message: "svg-validate does not support --from-svg".to_string(),
+            });
+        }
+        if cli.out.is_none() {
+            return Err(util::UsageError {
+                message: "svg-validate requires --out".to_string(),
+            });
+        }
+        if cli.out_dir.is_some() {
+            return Err(util::UsageError {
+                message: "svg-validate does not support --out-dir".to_string(),
+            });
+        }
+        if cli.in_place {
+            return Err(util::UsageError {
+                message: "svg-validate does not support --in-place".to_string(),
+            });
+        }
     }
 
     if cli.subcommand != Operation::Convert && cli.to.is_some() {
@@ -380,19 +407,30 @@ fn validate(cli: &Cli) -> Result<(), util::UsageError> {
         }
     }
 
-    // Subcommand-specific required args.
     if cli.subcommand == Operation::Convert {
         if cli.to.is_none() {
+            if from_svg_mode {
+                return Err(util::UsageError {
+                    message: "convert with --from-svg requires --to png|webp|svg".to_string(),
+                });
+            }
             return Err(util::UsageError {
                 message: "convert requires --to png|jpg|webp".to_string(),
             });
         }
-        if let Some(to) = cli.to.as_deref()
-            && !model::SUPPORTED_CONVERT_TARGETS.contains(&to)
-        {
-            return Err(util::UsageError {
-                message: "convert --to must be one of: png|jpg|webp".to_string(),
-            });
+
+        if let Some(to) = cli.to.as_deref() {
+            if from_svg_mode {
+                if !svg_validate::SUPPORTED_FROM_SVG_TARGETS.contains(&to) {
+                    return Err(util::UsageError {
+                        message: "convert --from-svg --to must be one of: png|webp|svg".to_string(),
+                    });
+                }
+            } else if !model::SUPPORTED_CONVERT_TARGETS.contains(&to) {
+                return Err(util::UsageError {
+                    message: "convert --to must be one of: png|jpg|webp".to_string(),
+                });
+            }
         }
     }
 
@@ -450,6 +488,7 @@ mod tests {
             inputs: vec!["in.png".to_string()],
             recursive: false,
             glob: Vec::new(),
+            from_svg: None,
             out: Some("out.png".to_string()),
             out_dir: None,
             in_place: false,
@@ -461,12 +500,6 @@ mod tests {
             auto_orient: true,
             strip_metadata: false,
             background: None,
-            presets: Vec::new(),
-            fg: None,
-            bg: None,
-            stroke: None,
-            stroke_width: None,
-            padding: None,
             to: None,
             quality: None,
             scale: None,
@@ -495,6 +528,56 @@ mod tests {
         assert!(err.to_string().contains("must be one of: png|jpg|webp"));
 
         cli.to = Some("webp".to_string());
+        assert!(validate(&cli).is_ok());
+    }
+
+    #[test]
+    fn validate_from_svg_rejects_legacy_input_flags() {
+        let mut cli = base_cli(Operation::Convert);
+        cli.from_svg = Some("icon.svg".to_string());
+        cli.to = Some("png".to_string());
+        cli.inputs = vec!["legacy.png".to_string()];
+        let err = validate(&cli).expect_err("convert --from-svg should reject --in");
+        assert!(err.to_string().contains("does not support --in"));
+
+        cli.inputs.clear();
+        cli.recursive = true;
+        let err = validate(&cli).expect_err("convert --from-svg should reject --recursive");
+        assert!(err.to_string().contains("does not support --recursive"));
+    }
+
+    #[test]
+    fn validate_from_svg_requires_out_and_supported_to() {
+        let mut cli = base_cli(Operation::Convert);
+        cli.from_svg = Some("icon.svg".to_string());
+        cli.inputs.clear();
+        cli.out = None;
+        cli.to = Some("png".to_string());
+        let err = validate(&cli).expect_err("convert --from-svg should require --out");
+        assert!(err.to_string().contains("requires --out"));
+
+        cli.out = Some("out/icon.jpg".to_string());
+        cli.to = Some("jpg".to_string());
+        let err = validate(&cli).expect_err("convert --from-svg should reject jpg");
+        assert!(err.to_string().contains("png|webp|svg"));
+
+        cli.to = Some("svg".to_string());
+        assert!(validate(&cli).is_ok());
+    }
+
+    #[test]
+    fn validate_svg_validate_contract() {
+        let mut cli = base_cli(Operation::SvgValidate);
+        cli.inputs = vec![];
+        let err = validate(&cli).expect_err("svg-validate should require one --in");
+        assert!(err.to_string().contains("exactly one --in"));
+
+        cli.inputs = vec!["in.svg".to_string()];
+        cli.out = None;
+        let err = validate(&cli).expect_err("svg-validate should require --out");
+        assert!(err.to_string().contains("requires --out"));
+
+        cli.out = Some("out/clean.svg".to_string());
         assert!(validate(&cli).is_ok());
     }
 
@@ -575,65 +658,6 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("resize does not support --no-progressive")
-        );
-    }
-
-    #[test]
-    fn validate_generate_rejects_input_flags_and_in_place() {
-        let mut cli = base_cli(Operation::Generate);
-        cli.inputs = vec!["a.png".to_string()];
-        cli.presets = vec![crate::cli::GeneratePreset::Info];
-        let err = validate(&cli).expect_err("generate should reject --in");
-        assert!(err.to_string().contains("generate does not support --in"));
-
-        cli.inputs.clear();
-        cli.in_place = true;
-        let err = validate(&cli).expect_err("generate should reject --in-place");
-        assert!(
-            err.to_string()
-                .contains("generate does not support --in-place")
-        );
-    }
-
-    #[test]
-    fn validate_generate_enforces_variant_output_mode_rules() {
-        let mut single = base_cli(Operation::Generate);
-        single.inputs.clear();
-        single.presets = vec![crate::cli::GeneratePreset::Info];
-        single.out = None;
-        let err = validate(&single).expect_err("single preset should require --out");
-        assert!(
-            err.to_string()
-                .contains("generate with a single preset requires --out")
-        );
-
-        single.out = Some("out/info.png".to_string());
-        single.out_dir = Some("out".to_string());
-        let err = validate(&single).expect_err("single preset should reject --out-dir");
-        assert!(
-            err.to_string()
-                .contains("single preset does not support --out-dir")
-        );
-
-        let mut multi = base_cli(Operation::Generate);
-        multi.inputs.clear();
-        multi.presets = vec![
-            crate::cli::GeneratePreset::Info,
-            crate::cli::GeneratePreset::Warning,
-        ];
-        multi.out = Some("out/multi.png".to_string());
-        let err = validate(&multi).expect_err("multiple presets should require --out-dir");
-        assert!(
-            err.to_string()
-                .contains("multiple presets does not support --out")
-        );
-
-        multi.out = None;
-        multi.out_dir = None;
-        let err = validate(&multi).expect_err("multiple presets should require --out-dir");
-        assert!(
-            err.to_string()
-                .contains("multiple presets requires --out-dir")
         );
     }
 }

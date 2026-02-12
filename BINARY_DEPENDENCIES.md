@@ -17,17 +17,17 @@ These tools are required for common command paths.
 |---|---|---|---|
 | `git` | `git-scope`, `git-cli`, `git-summary`, `git-lock`, `semantic-commit`, `fzf-cli git-*` | Required | `brew install git` |
 | `fzf` | `fzf-cli` interactive commands | Required (for `fzf-cli`) | `brew install fzf` |
-| `magick` (or `convert` + `identify`) | `image-processing` legacy transform subcommands (`auto-orient`, `convert`, `resize`, `rotate`, `crop`, `pad`, `flip`, `flop`, `optimize`) | Required for legacy transforms; not required for `generate` | `brew install imagemagick` |
+| `magick` (or `convert` + `identify`) | `image-processing` legacy transform subcommands (`auto-orient`, `convert`, `resize`, `rotate`, `crop`, `pad`, `flip`, `flop`, `optimize`) | Required for legacy transforms; not required for `convert --from-svg` / `svg-validate` | `brew install imagemagick` |
 | `ffmpeg` | `screen-record` on Linux | Required on Linux | `brew install ffmpeg` |
 | `codex` | `codex-cli agent *` flows | Required for agent commands | Install from official Codex distribution |
 
 ### 1.1 `image-processing` backend split
 
-- `generate` subcommand:
-  - Rust-backed (`resvg` + Rust image encoding path).
-  - Does not require ImageMagick, `convert`, or `identify`.
+- `convert --from-svg` and `svg-validate`:
+  - Rust-backed (`usvg`/`resvg` + Rust image encoding path).
+  - Do not require ImageMagick, `convert`, or `identify`.
 - Legacy transform subcommands (`auto-orient`, `convert`, `resize`, `rotate`, `crop`, `pad`,
-  `flip`, `flop`, `optimize`):
+  `flip`, `flop`, `optimize`) when not using `--from-svg`:
   - Require ImageMagick runtime (`magick`, or `convert` + `identify`).
 
 ## 2. Runtime Dependencies (Optional / Degradation Paths)

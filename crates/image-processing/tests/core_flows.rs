@@ -229,25 +229,27 @@ fn magick_backend_is_preferred_when_present() {
 }
 
 #[test]
-fn generate_supports_png_webp_svg_outputs_without_imagemagick() {
+fn from_svg_supports_png_webp_svg_outputs_without_imagemagick() {
     let dir = tempfile::TempDir::new().unwrap();
+    fs::write(
+        dir.path().join("icon.svg"),
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+<rect x="2" y="2" width="28" height="28" rx="6" fill="#0f62fe"/>
+<path d="M9 16h14" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+</svg>"##,
+    )
+    .unwrap();
 
     let stub = common::make_stub_dir();
     let path_s = stub.path().to_string_lossy().to_string();
     let envs = [("PATH", path_s.as_str())];
 
     for (to, expected_format) in [("png", "PNG"), ("webp", "WEBP"), ("svg", "SVG")] {
-        let out_rel = format!("out/info.{to}");
-        let args = vec![
-            "generate".to_string(),
-            "--preset".to_string(),
-            "info".to_string(),
-            "--size".to_string(),
-            "32".to_string(),
-            "--fg".to_string(),
-            "#ffffff".to_string(),
-            "--bg".to_string(),
-            "#0f62fe".to_string(),
+        let out_rel = format!("out/icon.{to}");
+        let args = [
+            "convert".to_string(),
+            "--from-svg".to_string(),
+            "icon.svg".to_string(),
             "--to".to_string(),
             to.to_string(),
             "--out".to_string(),
@@ -259,8 +261,10 @@ fn generate_supports_png_webp_svg_outputs_without_imagemagick() {
         assert_eq!(out.code, 0, "to={to}, stderr: {}", out.stderr);
 
         let v: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
-        assert_eq!(v["operation"], "generate");
+        assert_eq!(v["operation"], "convert");
         assert_eq!(v["backend"], "rust:resvg");
+        assert_eq!(v["source"]["mode"], "from_svg");
+        assert_eq!(v["source"]["from_svg"], "icon.svg");
         assert_eq!(v["items"].as_array().unwrap().len(), 1);
         assert_eq!(v["items"][0]["status"], "ok");
         assert_eq!(v["items"][0]["output_path"], out_rel);
@@ -304,9 +308,16 @@ fn generate_supports_png_webp_svg_outputs_without_imagemagick() {
 }
 
 #[test]
-fn generate_still_runs_when_non_generate_operations_lack_imagemagick() {
+fn from_svg_still_runs_when_legacy_operations_lack_imagemagick() {
     let dir = tempfile::TempDir::new().unwrap();
     fs::write(dir.path().join("a.png"), "img").unwrap();
+    fs::write(
+        dir.path().join("icon.svg"),
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+<rect x="4" y="4" width="24" height="24" rx="4" fill="#0f62fe"/>
+</svg>"##,
+    )
+    .unwrap();
 
     let stub = common::make_stub_dir();
     let path_s = stub.path().to_string_lossy().to_string();
@@ -321,14 +332,12 @@ fn generate_still_runs_when_non_generate_operations_lack_imagemagick() {
         info_out.stderr
     );
 
-    let generate_out = common::run_image_processing(
+    let from_svg_out = common::run_image_processing(
         dir.path(),
         &[
-            "generate",
-            "--preset",
-            "info",
-            "--size",
-            "32",
+            "convert",
+            "--from-svg",
+            "icon.svg",
             "--to",
             "png",
             "--out",
@@ -337,9 +346,10 @@ fn generate_still_runs_when_non_generate_operations_lack_imagemagick() {
         ],
         &envs,
     );
-    assert_eq!(generate_out.code, 0, "stderr: {}", generate_out.stderr);
-    let v: serde_json::Value = serde_json::from_str(&generate_out.stdout).unwrap();
-    assert_eq!(v["operation"], "generate");
+    assert_eq!(from_svg_out.code, 0, "stderr: {}", from_svg_out.stderr);
+    let v: serde_json::Value = serde_json::from_str(&from_svg_out.stdout).unwrap();
+    assert_eq!(v["operation"], "convert");
     assert_eq!(v["backend"], "rust:resvg");
+    assert_eq!(v["source"]["mode"], "from_svg");
     assert!(dir.path().join("out/info.png").exists());
 }

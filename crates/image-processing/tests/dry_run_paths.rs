@@ -431,8 +431,16 @@ fn optimize_webp_dry_run_falls_back_to_magick_lossless() {
 }
 
 #[test]
-fn generate_dry_run_json_report_writes_artifacts_without_writing_output() {
+fn from_svg_dry_run_json_report_writes_artifacts_without_writing_output() {
     let dir = tempfile::TempDir::new().unwrap();
+    fs::write(
+        dir.path().join("icon.svg"),
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+<rect x="2" y="2" width="28" height="28" rx="6" fill="#0f62fe"/>
+<path d="M9 16h14" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+</svg>"##,
+    )
+    .unwrap();
 
     let stub = common::make_stub_dir();
     let path_s = stub.path().to_string_lossy().to_string();
@@ -441,15 +449,13 @@ fn generate_dry_run_json_report_writes_artifacts_without_writing_output() {
     let out = common::run_image_processing(
         dir.path(),
         &[
-            "generate",
-            "--preset",
-            "warning",
+            "convert",
+            "--from-svg",
+            "icon.svg",
             "--to",
             "webp",
-            "--size",
-            "32",
             "--out",
-            "out/warning.webp",
+            "out/icon.webp",
             "--dry-run",
             "--report",
             "--json",
@@ -459,13 +465,15 @@ fn generate_dry_run_json_report_writes_artifacts_without_writing_output() {
     assert_eq!(out.code, 0, "stderr: {}", out.stderr);
 
     assert!(
-        !dir.path().join("out/warning.webp").exists(),
+        !dir.path().join("out/icon.webp").exists(),
         "dry-run should not write output"
     );
 
     let v: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
-    assert_eq!(v["operation"], "generate");
+    assert_eq!(v["operation"], "convert");
     assert_eq!(v["backend"], "rust:resvg");
+    assert_eq!(v["source"]["mode"], "from_svg");
+    assert_eq!(v["source"]["from_svg"], "icon.svg");
     assert_eq!(v["dry_run"], true);
     assert_eq!(v["options"]["report"], true);
     assert_eq!(v["items"].as_array().unwrap().len(), 1);
@@ -473,7 +481,7 @@ fn generate_dry_run_json_report_writes_artifacts_without_writing_output() {
     assert!(v["items"][0]["output_info"].is_null());
     let command = v["commands"][0].as_str().unwrap_or("");
     assert!(
-        command.contains("generate --preset warning"),
+        command.contains("convert --from-svg icon.svg"),
         "commands: {command}"
     );
     assert!(command.contains("--dry-run"), "commands: {command}");
@@ -498,12 +506,20 @@ fn generate_dry_run_json_report_writes_artifacts_without_writing_output() {
 
     let report = fs::read_to_string(report_md).unwrap();
     assert!(
-        report.contains("- Operation: `generate`"),
+        report.contains("- Operation: `convert`"),
+        "report: {report}"
+    );
+    assert!(
+        report.contains("- Source mode: `from_svg`"),
+        "report: {report}"
+    );
+    assert!(
+        report.contains("- Source SVG: `icon.svg`"),
         "report: {report}"
     );
     assert!(report.contains("- Dry run: `true`"), "report: {report}");
     assert!(
-        report.contains("generate --preset warning"),
+        report.contains("convert --from-svg icon.svg"),
         "report: {report}"
     );
 }
