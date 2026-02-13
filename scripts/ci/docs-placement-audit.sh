@@ -88,7 +88,11 @@ runbook_is_approved_workspace_file() {
 
 file_is_stub() {
   local file="$1"
-  rg -q '^Moved to:' "$file"
+  if command -v rg >/dev/null 2>&1; then
+    rg -q '^Moved to:' "$file"
+  else
+    grep -Eq '^Moved to:' "$file"
+  fi
 }
 
 for file in docs/runbooks/*.md; do
