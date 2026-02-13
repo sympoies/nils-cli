@@ -461,6 +461,70 @@ fn from_svg_rejects_output_mode_mismatches() {
 }
 
 #[test]
+fn from_svg_rejects_invalid_dimension_contracts() {
+    let dir = tempfile::TempDir::new().unwrap();
+    fs::write(
+        dir.path().join("icon.svg"),
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+<rect x="2" y="2" width="28" height="28" fill="#0f62fe"/>
+</svg>"##,
+    )
+    .unwrap();
+
+    let stub = common::make_stub_dir();
+    let path_s = stub.path().to_string_lossy().to_string();
+    let envs = [("PATH", path_s.as_str())];
+
+    let with_svg_target = common::run_image_processing(
+        dir.path(),
+        &[
+            "convert",
+            "--from-svg",
+            "icon.svg",
+            "--to",
+            "svg",
+            "--out",
+            "out/icon.svg",
+            "--width",
+            "256",
+            "--json",
+        ],
+        &envs,
+    );
+    assert_eq!(with_svg_target.code, 2);
+    assert!(
+        with_svg_target
+            .stderr
+            .contains("does not support --width/--height"),
+        "stderr: {}",
+        with_svg_target.stderr
+    );
+
+    let with_zero_width = common::run_image_processing(
+        dir.path(),
+        &[
+            "convert",
+            "--from-svg",
+            "icon.svg",
+            "--to",
+            "png",
+            "--out",
+            "out/icon.png",
+            "--width",
+            "0",
+            "--json",
+        ],
+        &envs,
+    );
+    assert_eq!(with_zero_width.code, 2);
+    assert!(
+        with_zero_width.stderr.contains("--width must be > 0"),
+        "stderr: {}",
+        with_zero_width.stderr
+    );
+}
+
+#[test]
 fn svg_validate_invalid_svg_returns_actionable_error() {
     let dir = tempfile::TempDir::new().unwrap();
     fs::write(

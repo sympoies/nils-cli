@@ -27,7 +27,7 @@ Help:
 - `svg-validate`: Validate + sanitize one SVG input into one SVG output.
 - `convert`: Convert image formats.
   - Legacy mode: `--in ... --to png|jpg|webp`.
-  - SVG mode: `--from-svg <path> --to png|webp|svg --out <file>`.
+  - SVG mode: `--from-svg <path> --to png|webp|svg --out <file>` (optional `--width`/`--height` for raster outputs).
 - `resize`: Resize by `--scale`, `--width`/`--height`, or `--aspect` + `--fit` (`contain|cover|stretch`).
 - `rotate`: Rotate by degrees; requires `--degrees`.
 - `crop`: Crop by `--rect`, `--size`, or `--aspect` (exactly one).
@@ -48,6 +48,8 @@ Help:
 - Required: `--to png|webp|svg`, `--out <file>`.
 - Forbidden with `--from-svg`: `--in`, `--recursive`, `--glob`, `--out-dir`, `--in-place`.
 - `--out` extension must match `--to`.
+- Optional: `--width`/`--height` for raster output sizing (`png`/`webp`); a single side keeps aspect ratio.
+- `--to svg` does not support `--width`/`--height`.
 - This path is Rust-backed (`usvg`/`resvg`) and does not require ImageMagick.
 
 ## `svg-validate` contract
@@ -79,6 +81,7 @@ cargo run -p nils-image-processing -- convert \
   --from-svg crates/image-processing/tests/fixtures/sample-icon.svg \
   --to webp \
   --out out/plan-doc-examples/sample.webp \
+  --width 512 \
   --json
 ```
 

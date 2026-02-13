@@ -194,6 +194,8 @@ fn run() -> i32 {
         report_enabled: cli.report,
         json_enabled: cli.json,
         convert_to: cli.to.as_deref(),
+        from_svg_width: if from_svg_mode { cli.width } else { None },
+        from_svg_height: if from_svg_mode { cli.height } else { None },
         quality: cli.quality,
         resize_scale: cli.scale,
         resize_width: if cli.subcommand == Operation::Resize {
@@ -309,6 +311,20 @@ fn validate(cli: &Cli) -> Result<(), util::UsageError> {
                 message: "convert --from-svg requires --out".to_string(),
             });
         }
+        if let Some(width) = cli.width
+            && width <= 0
+        {
+            return Err(util::UsageError {
+                message: "convert --from-svg --width must be > 0".to_string(),
+            });
+        }
+        if let Some(height) = cli.height
+            && height <= 0
+        {
+            return Err(util::UsageError {
+                message: "convert --from-svg --height must be > 0".to_string(),
+            });
+        }
     }
 
     if cli.subcommand == Operation::SvgValidate {
@@ -369,7 +385,9 @@ fn validate(cli: &Cli) -> Result<(), util::UsageError> {
         }
     }
 
-    if !matches!(cli.subcommand, Operation::Resize | Operation::Pad) {
+    let allows_shared_width_height = matches!(cli.subcommand, Operation::Resize | Operation::Pad)
+        || (cli.subcommand == Operation::Convert && from_svg_mode);
+    if !allows_shared_width_height {
         if cli.width.is_some() {
             forbid("--width")?;
         }
@@ -424,6 +442,12 @@ fn validate(cli: &Cli) -> Result<(), util::UsageError> {
                 if !svg_validate::SUPPORTED_FROM_SVG_TARGETS.contains(&to) {
                     return Err(util::UsageError {
                         message: "convert --from-svg --to must be one of: png|webp|svg".to_string(),
+                    });
+                }
+                if to == "svg" && (cli.width.is_some() || cli.height.is_some()) {
+                    return Err(util::UsageError {
+                        message: "convert --from-svg --to svg does not support --width/--height"
+                            .to_string(),
                     });
                 }
             } else if !model::SUPPORTED_CONVERT_TARGETS.contains(&to) {
@@ -563,6 +587,31 @@ mod tests {
 
         cli.to = Some("svg".to_string());
         assert!(validate(&cli).is_ok());
+    }
+
+    #[test]
+    fn validate_from_svg_dimensions_contract() {
+        let mut cli = base_cli(Operation::Convert);
+        cli.to = Some("png".to_string());
+        cli.width = Some(128);
+        let err = validate(&cli).expect_err("legacy convert should reject --width");
+        assert!(err.to_string().contains("convert does not support --width"));
+
+        cli.from_svg = Some("icon.svg".to_string());
+        cli.inputs.clear();
+        assert!(validate(&cli).is_ok());
+
+        cli.width = Some(0);
+        let err = validate(&cli).expect_err("from-svg width must be positive");
+        assert!(err.to_string().contains("--width must be > 0"));
+
+        cli.width = Some(128);
+        cli.to = Some("svg".to_string());
+        let err = validate(&cli).expect_err("svg output should reject resize dimensions");
+        assert!(
+            err.to_string()
+                .contains("does not support --width/--height")
+        );
     }
 
     #[test]
