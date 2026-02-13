@@ -68,6 +68,7 @@ _memo-cli() {
         $global_opts \
         '--limit=[Max rows to return]:limit:' \
         '--state=[Row selection mode]:state:(all pending enriched)' \
+        '--field=[Search fields (comma-separated)]:field:(raw derived tags)' \
         '*:query:' \
         && return 0
       ;;

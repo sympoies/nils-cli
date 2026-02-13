@@ -726,6 +726,11 @@ grep -q -- "--dry-run\\[Validate payload without write-back\\]" "$COMP_MEMO_CLI_
   exit 1
 }
 
+grep -q -- "--field=\\[Search fields (comma-separated)\\]" "$COMP_MEMO_CLI_FILE" || {
+  print -u2 -r -- "FAIL: memo-cli completion missing --field"
+  exit 1
+}
+
 grep -q -- "--window-title-contains" "$BASH_MACOS_AGENT_FILE" || {
   print -u2 -r -- "FAIL: bash macos-agent completion missing canonical --window-title-contains"
   exit 1
@@ -758,6 +763,11 @@ grep -q -- "--include-experimental" "$BASH_AGENTCTL_FILE" || {
 
 grep -q -- "--probe-mode" "$BASH_AGENTCTL_FILE" || {
   print -u2 -r -- "FAIL: bash agentctl completion missing --probe-mode"
+  exit 1
+}
+
+grep -q -- "--field" "$BASH_MEMO_CLI_FILE" || {
+  print -u2 -r -- "FAIL: bash memo-cli completion missing --field"
   exit 1
 }
 

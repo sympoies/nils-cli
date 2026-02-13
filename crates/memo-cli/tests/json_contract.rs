@@ -101,6 +101,10 @@ fn json_contract() {
     assert_eq!(search_json["meta"]["query"], "ssd");
     assert_eq!(search_json["meta"]["limit"], 5);
     assert_eq!(search_json["meta"]["state"], "all");
+    assert_eq!(
+        search_json["meta"]["fields"],
+        json!(["raw_text", "derived_text", "tags_text"])
+    );
 
     let fetch_output = run_memo_cli(&db_path, &["--json", "fetch", "--limit", "1"], None);
     assert_eq!(

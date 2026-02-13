@@ -5,6 +5,27 @@ use crate::errors::AppError;
 
 use super::repository::QueryState;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchField {
+    Raw,
+    Derived,
+    Tags,
+}
+
+impl SearchField {
+    fn fts_column(self) -> &'static str {
+        match self {
+            Self::Raw => "raw_text",
+            Self::Derived => "derived_text",
+            Self::Tags => "tags_text",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        self.fts_column()
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SearchItem {
     pub item_id: i64,
@@ -65,8 +86,16 @@ pub fn search_items(
     conn: &Connection,
     query: &str,
     state: QueryState,
+    fields: &[SearchField],
     limit: usize,
 ) -> Result<Vec<SearchItem>, AppError> {
+    let fields = normalize_search_fields(fields);
+    let scoped_query = build_scoped_query(query, &fields);
+    let matched_fields = fields
+        .iter()
+        .map(|field| field.label().to_string())
+        .collect::<Vec<_>>();
+
     let state_filter = match state {
         QueryState::All => "1 = 1",
         QueryState::Pending => {
@@ -112,12 +141,12 @@ pub fn search_items(
 
     let mut stmt = conn.prepare(&sql).map_err(AppError::db_query)?;
     let rows = stmt
-        .query_map(params![query, limit as i64], |row| {
+        .query_map(params![scoped_query, limit as i64], |row| {
             Ok(SearchItem {
                 item_id: row.get(0)?,
                 created_at: row.get(1)?,
                 score: row.get(2)?,
-                matched_fields: vec!["raw_text".to_string()],
+                matched_fields: matched_fields.clone(),
                 preview: row.get(3)?,
                 content_type: row.get(4)?,
                 validation_status: row.get(5)?,
@@ -127,6 +156,32 @@ pub fn search_items(
 
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(AppError::db_query)
+}
+
+fn normalize_search_fields(fields: &[SearchField]) -> Vec<SearchField> {
+    let mut out = Vec::new();
+    let source = if fields.is_empty() {
+        &[SearchField::Raw, SearchField::Derived, SearchField::Tags][..]
+    } else {
+        fields
+    };
+
+    for field in source {
+        if !out.contains(field) {
+            out.push(*field);
+        }
+    }
+
+    out
+}
+
+fn build_scoped_query(query: &str, fields: &[SearchField]) -> String {
+    let columns = fields
+        .iter()
+        .map(|field| field.fts_column())
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("{{{columns}}}: ({query})")
 }
 
 pub fn report_summary(conn: &Connection, period: ReportPeriod) -> Result<ReportSummary, AppError> {

@@ -32,6 +32,7 @@ pub fn run(cli: &Cli, output_mode: OutputMode) -> Result<(), AppError> {
             output_mode,
             to_query_state(args.state),
             &args.query,
+            &args.fields,
             args.limit,
         ),
         MemoCommand::Report(args) => report::run(&storage, output_mode, args),

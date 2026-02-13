@@ -31,6 +31,13 @@ pub enum ItemState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum SearchField {
+    Raw,
+    Derived,
+    Tags,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ReportPeriod {
     Week,
     Month,
@@ -144,6 +151,15 @@ pub struct SearchArgs {
     /// Row selection mode
     #[arg(long, value_enum, default_value_t = ItemState::All)]
     pub state: ItemState,
+
+    /// Search fields (comma-separated): raw, derived, tags
+    #[arg(
+        long = "field",
+        value_enum,
+        value_delimiter = ',',
+        default_values_t = [SearchField::Raw, SearchField::Derived, SearchField::Tags]
+    )]
+    pub fields: Vec<SearchField>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -256,7 +272,7 @@ fn default_db_path() -> PathBuf {
 pub(crate) mod tests {
     use clap::{CommandFactory, Parser};
 
-    use super::{Cli, OutputMode};
+    use super::{Cli, MemoCommand, OutputMode, SearchField};
 
     #[test]
     fn output_mode_defaults_to_text() {
@@ -301,5 +317,28 @@ pub(crate) mod tests {
         assert!(subcommands.contains(&"report".to_string()));
         assert!(subcommands.contains(&"fetch".to_string()));
         assert!(subcommands.contains(&"apply".to_string()));
+    }
+
+    #[test]
+    fn search_fields_supports_comma_separated_values() {
+        let cli = Cli::parse_from(["memo-cli", "search", "ssd", "--field", "raw,tags"]);
+        let MemoCommand::Search(args) = cli.command else {
+            panic!("expected search command");
+        };
+
+        assert_eq!(args.fields, vec![SearchField::Raw, SearchField::Tags]);
+    }
+
+    #[test]
+    fn search_fields_default_to_all_fields() {
+        let cli = Cli::parse_from(["memo-cli", "search", "ssd"]);
+        let MemoCommand::Search(args) = cli.command else {
+            panic!("expected search command");
+        };
+
+        assert_eq!(
+            args.fields,
+            vec![SearchField::Raw, SearchField::Derived, SearchField::Tags]
+        );
     }
 }

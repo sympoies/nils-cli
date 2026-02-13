@@ -193,11 +193,14 @@ JSON output:
 Search inbox and active derived fields.
 
 ```text
-memo-cli search <query> [--limit <n>] [--state <all|pending|enriched>] [--json|--format json]
+memo-cli search <query> [--limit <n>] [--state <all|pending|enriched>]
+                [--field <raw|derived|tags>[,<raw|derived|tags>...]] [--json|--format json]
 ```
 
 Behavior:
 - Uses SQLite FTS-backed matching for raw capture and active enrichment text.
+- `--field` narrows the FTS search surface; default is all fields (`raw,derived,tags`).
+- `--field` accepts comma-separated multi-select (for example: `--field raw,tags`).
 - Ranking is deterministic for score ties (`created_at DESC`, `item_id DESC`).
 
 Text output (`stdout`):
@@ -208,6 +211,7 @@ JSON output:
   fields when available:
   - `content_type`
   - `validation_status`
+- JSON `meta` includes `fields[]` reflecting the effective field scope.
 
 ### `report`
 Generate period summaries from capture + enrichment data.

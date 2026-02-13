@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::cli::OutputMode;
+use crate::cli::{OutputMode, SearchField as CliSearchField};
 use crate::errors::AppError;
 use crate::output::{emit_json_results_with_meta, format_item_id, text};
 use crate::storage::Storage;
@@ -12,6 +12,7 @@ pub fn run(
     output_mode: OutputMode,
     state: QueryState,
     query: &str,
+    fields: &[CliSearchField],
     limit: usize,
 ) -> Result<(), AppError> {
     let query = query.trim();
@@ -19,7 +20,9 @@ pub fn run(
         return Err(AppError::usage("search requires a non-empty query"));
     }
 
-    let rows = storage.with_connection(|conn| search::search_items(conn, query, state, limit))?;
+    let search_fields = map_search_fields(fields);
+    let rows = storage
+        .with_connection(|conn| search::search_items(conn, query, state, &search_fields, limit))?;
 
     if output_mode.is_json() {
         let results = rows
@@ -45,6 +48,7 @@ pub fn run(
                 "query": query,
                 "limit": limit,
                 "state": query_state_label(state),
+                "fields": search_field_labels(&search_fields),
             })),
         );
     }
@@ -60,4 +64,34 @@ fn query_state_label(state: QueryState) -> &'static str {
         QueryState::Pending => "pending",
         QueryState::Enriched => "enriched",
     }
+}
+
+fn map_search_fields(fields: &[CliSearchField]) -> Vec<search::SearchField> {
+    let mut out = Vec::new();
+    let source = if fields.is_empty() {
+        &[
+            CliSearchField::Raw,
+            CliSearchField::Derived,
+            CliSearchField::Tags,
+        ][..]
+    } else {
+        fields
+    };
+
+    for field in source {
+        let mapped = match field {
+            CliSearchField::Raw => search::SearchField::Raw,
+            CliSearchField::Derived => search::SearchField::Derived,
+            CliSearchField::Tags => search::SearchField::Tags,
+        };
+        if !out.contains(&mapped) {
+            out.push(mapped);
+        }
+    }
+
+    out
+}
+
+fn search_field_labels(fields: &[search::SearchField]) -> Vec<&'static str> {
+    fields.iter().map(|field| field.label()).collect()
 }

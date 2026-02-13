@@ -120,12 +120,12 @@ Semantics:
 - `results[]` item fields:
   - `item_id`, `created_at`
   - `score` (number)
-  - `matched_fields` (array of strings; example: `raw_text`, `category`)
+  - `matched_fields` (array of strings; values: `raw_text`, `derived_text`, `tags_text`)
   - `preview` (string)
   - optional `content_type`
   - optional `validation_status`
 - optional `meta`:
-  - `query`, `limit`, `state`
+  - `query`, `limit`, `state`, `fields`
 
 ### `report` (`result`)
 - `result.period`: `week` or `month`

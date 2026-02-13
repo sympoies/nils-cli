@@ -17,6 +17,7 @@ from pre-consolidation builds are not guaranteed to auto-upgrade.
 4. Validate list/search/report basics:
    - `memo-cli list --limit 5`
    - `memo-cli search "rollout"`
+   - `memo-cli search "rollout" --field raw,tags`
    - `memo-cli update itm_00000001 "rollout updated capture"`
    - `memo-cli delete itm_00000002 --hard`
    - `memo-cli report week`
