@@ -18,6 +18,8 @@ This spec is aligned 1:1 with:
 - Full-text search uses `fts5` over a denormalized per-item search document.
 - Workflow extension data must be anchored to raw items through
   `workflow_item_anchors` with cascade cleanup.
+- Storage bootstrap uses one consolidated schema snapshot (`schema_v1.sql`) as
+  the source of truth; legacy incremental migration chains are retired.
 - Phase 1 format/validation metadata follows Approach A:
   canonical values live in derivation `payload_json`, with deterministic
   query tags (`fmt:*`, `val:*`).
@@ -43,6 +45,23 @@ Indexes:
 
 Why:
 - Supports deterministic list/fetch ordering (`created_at desc`, `item_id desc`).
+
+### `id_allocators`
+Monotonic id allocator state for raw inbox keys.
+
+Columns:
+- `name text primary key`
+- `last_id integer not null` (`>= 0`)
+
+Rows:
+- `('inbox_items', <last_allocated_item_id>)`
+
+Why:
+- Guarantees `item_id` is monotonic and non-reused per DB, including after
+  hard delete clears all rows from `inbox_items`.
+- Example: deleting `item_id=1` does not make `1` reusable; next insert
+  allocates `2` or higher.
+- Re-seeds missing allocator rows from `max(inbox_items.item_id)`.
 
 ### `item_derivations`
 Versioned enrichment payloads written by `apply`.
@@ -222,6 +241,7 @@ Why:
 
 ### 1. Raw capture lifecycle (`add`, `update`, `delete`)
 - `add` inserts new raw rows into `inbox_items`.
+- `add` increments `id_allocators('inbox_items').last_id` and uses it as the new `item_id`.
 - `update` rewrites one `raw_text` value and clears dependent derivation/extension
   rows for that item so it returns to pending state.
 - `delete --hard` removes one item plus dependent derivation/search/extension rows.
@@ -289,7 +309,7 @@ Why:
 
 ## Alignment Contract
 The SQL file must keep these object names unchanged:
-- tables: `inbox_items`, `item_derivations`, `tags`, `item_tags`,
+- tables: `inbox_items`, `id_allocators`, `item_derivations`, `tags`, `item_tags`,
   `workflow_item_anchors`, `workflow_game_entries`, `item_search_documents`
 - virtual table: `item_search_fts`
 - critical indexes:
@@ -299,3 +319,9 @@ The SQL file must keep these object names unchanged:
   - `idx_item_derivations_active_category`
   - `idx_item_tags_tag_id_derivation_id`
   - `idx_workflow_item_anchors_type_item`
+
+## Compatibility Policy
+- Post-consolidation builds initialize and maintain storage from
+  `schema_v1.sql` only.
+- Pre-consolidation DB files are outside compatibility scope; operators should
+  recreate DB files when upgrading across this boundary.

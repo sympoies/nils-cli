@@ -86,13 +86,13 @@ Semantics:
 ## Stable Payload Contracts by Command
 
 ### `add` (`result`)
-- `item_id`: stable unique item identifier (string)
+- `item_id`: stable unique item identifier (string, monotonic and non-reused per DB)
 - `created_at`: RFC3339 timestamp (UTC, string)
 - `source`: capture source label (string)
 - `text`: raw memo text (string)
 
 ### `update` (`result`)
-- `item_id`: stable unique item identifier (string)
+- `item_id`: stable unique item identifier (string, monotonic and non-reused per DB)
 - `updated_at`: RFC3339 timestamp (UTC, string)
 - `text`: updated raw memo text (string)
 - `state`: always `pending`
@@ -100,7 +100,7 @@ Semantics:
 - `cleared_workflow_anchors`: non-negative integer
 
 ### `delete` (`result`)
-- `item_id`: stable unique item identifier (string)
+- `item_id`: stable unique item identifier (string, monotonic and non-reused per DB)
 - `deleted`: always `true`
 - `deleted_at`: RFC3339 timestamp (UTC, string)
 - `removed_derivations`: non-negative integer

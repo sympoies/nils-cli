@@ -3,14 +3,18 @@
 ## Scope
 This runbook covers first-time rollout of `memo-cli` for capture-first workflows and agent-assisted
 enrichment.
+Storage initialization now uses one consolidated schema snapshot (`schema_v1.sql`). Older DB files
+from pre-consolidation builds are not guaranteed to auto-upgrade.
 
 ## Rollout checklist
 1. Install and verify binary:
    - `cargo run -p nils-memo-cli -- --help`
-2. Initialize a local database and smoke capture:
+2. For environments with old `memo-cli` DB files, recreate DB before rollout:
+   - remove or move the old DB file, then re-run `memo-cli add ...` to initialize a new schema.
+3. Initialize a local database and smoke capture:
    - `memo-cli add "rollout smoke capture"`
    - `memo-cli add --at 2026-02-12T10:00:00Z "rollout explicit timestamp capture"`
-3. Validate list/search/report basics:
+4. Validate list/search/report basics:
    - `memo-cli list --limit 5`
    - `memo-cli search "rollout"`
    - `memo-cli update itm_00000001 "rollout updated capture"`
@@ -18,12 +22,14 @@ enrichment.
    - `memo-cli report week`
    - `memo-cli report week --tz Asia/Taipei`
    - `memo-cli report month --from 2026-02-01T00:00:00Z --to 2026-02-29T23:59:59Z --json`
-4. Validate machine flow with JSON:
+5. Validate machine flow with JSON:
    - `memo-cli fetch --json --limit 10`
    - `memo-cli apply --json --dry-run --stdin < enrichment-batch.json`
 
 ## Smoke test expectations
 - `add` returns a new `item_id`.
+- hard delete + re-add yields a strictly newer `item_id` (no id reuse).
+- explicit sequence check: add `itm_00000001` -> `delete --hard itm_00000001` -> next add is `itm_00000002`+.
 - `update` clears downstream derivations/workflow rows and returns item to pending.
 - `delete --hard` removes the item from list/search/fetch/report surfaces.
 - `fetch --json` returns deterministic ordering and valid envelope keys.

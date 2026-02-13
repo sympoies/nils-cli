@@ -3,6 +3,8 @@
 ## Overview
 `memo-cli` is a capture-first memo CLI with an agent enrichment loop.
 Default output is human-readable text. JSON is explicit and intended for service/agent callers.
+Storage bootstrap is consolidated into one init schema (`schema_v1.sql`); legacy DB upgrade
+compatibility is not guaranteed after this consolidation.
 
 ## Usage
 ```text
@@ -25,6 +27,8 @@ Commands:
 - `add`: append one raw capture record.
 - `update`: replace one raw memo text and clear derivations/workflow extension data for that item.
 - `delete --hard`: permanently delete one item and all dependent rows (derivations/search/workflow anchors).
+- `item_id` allocation is monotonic per database and IDs are not reused after hard delete.
+- Example: if `itm_00000001` is hard-deleted, next `add` will allocate `itm_00000002` or newer.
 - `add --at`: optional explicit capture time (RFC3339). Without `--at`, system time is used.
 - `list`: show records with deterministic ordering and optional state filters.
 - `search`: run keyword/prefix search across capture and active enrichment.

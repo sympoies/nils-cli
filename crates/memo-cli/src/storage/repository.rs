@@ -3,6 +3,8 @@ use serde::Serialize;
 
 use crate::errors::AppError;
 
+const INBOX_ITEM_ALLOCATOR_NAME: &str = "inbox_items";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueryState {
     All,
@@ -62,27 +64,59 @@ pub struct FetchCursor {
     pub created_at: String,
 }
 
+fn ensure_item_allocator_seeded(conn: &Connection) -> Result<(), AppError> {
+    conn.execute(
+        "insert into id_allocators(name, last_id)
+         values (?1, coalesce((select max(item_id) from inbox_items), 0))
+         on conflict(name) do update
+         set last_id = max(id_allocators.last_id, excluded.last_id)",
+        params![INBOX_ITEM_ALLOCATOR_NAME],
+    )
+    .map_err(AppError::db_write)?;
+    Ok(())
+}
+
+fn allocate_next_item_id(conn: &Connection) -> Result<i64, AppError> {
+    ensure_item_allocator_seeded(conn)?;
+    conn.execute(
+        "update id_allocators
+         set last_id = last_id + 1
+         where name = ?1",
+        params![INBOX_ITEM_ALLOCATOR_NAME],
+    )
+    .map_err(AppError::db_write)?;
+
+    conn.query_row(
+        "select last_id from id_allocators where name = ?1",
+        params![INBOX_ITEM_ALLOCATOR_NAME],
+        |row| row.get(0),
+    )
+    .map_err(AppError::db_query)
+}
+
 pub fn add_item(
     conn: &Connection,
     text: &str,
     source: &str,
     created_at: Option<&str>,
 ) -> Result<AddedItem, AppError> {
+    let item_id = allocate_next_item_id(conn)?;
+
     if let Some(created_at) = created_at {
         conn.execute(
-            "insert into inbox_items(source, raw_text, created_at) values(?1, ?2, ?3)",
-            params![source, text, created_at],
+            "insert into inbox_items(item_id, source, raw_text, created_at)
+             values(?1, ?2, ?3, ?4)",
+            params![item_id, source, text, created_at],
         )
         .map_err(AppError::db_write)?;
     } else {
         conn.execute(
-            "insert into inbox_items(source, raw_text) values(?1, ?2)",
-            params![source, text],
+            "insert into inbox_items(item_id, source, raw_text) values(?1, ?2, ?3)",
+            params![item_id, source, text],
         )
         .map_err(AppError::db_write)?;
     }
 
-    let item_id = conn.last_insert_rowid();
     let created_at: String = conn
         .query_row(
             "select created_at from inbox_items where item_id = ?1",
