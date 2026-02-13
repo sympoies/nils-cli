@@ -79,7 +79,7 @@ This plan replaces the current preset-only `generate` command with a source-SVG-
   - Historical `generate` plan is moved under `docs/plans/archived/` with explicit superseded context.
   - New plan is the canonical implementation reference.
 - **Validation**:
-  - `rg -n "\bgenerate\b" BINARY_DEPENDENCIES.md crates/image-processing/README.md docs/runbooks/image-processing-llm-svg.md`
+  - `rg -n "\bgenerate\b" BINARY_DEPENDENCIES.md crates/image-processing/README.md crates/image-processing/docs/runbooks/llm-svg-workflow.md`
   - `test -f docs/plans/archived/image-processing-generate-resvg-plan.md && test ! -f docs/plans/image-processing-generate-resvg-plan.md`
   - `rg -n "superseded|historical|replaced by --from-svg" docs/plans/archived/image-processing-generate-resvg-plan.md`
 
@@ -208,7 +208,7 @@ This plan replaces the current preset-only `generate` command with a source-SVG-
 - **Location**:
   - `crates/image-processing/assets/llm-svg-system-prompt.md`
   - `crates/image-processing/assets/llm-svg-output-contract.md`
-  - `docs/runbooks/image-processing-llm-svg.md`
+  - `crates/image-processing/docs/runbooks/llm-svg-workflow.md`
 - **Description**: Define strict prompt/output contract (single SVG document, allowed tags/attrs, icon framing rules, deterministic size/viewBox constraints) for agent-driven generation.
 - **Dependencies**:
   - Task 1.1
@@ -262,7 +262,7 @@ This plan replaces the current preset-only `generate` command with a source-SVG-
 - **Location**:
   - `crates/image-processing/tests/core_flows.rs`
   - `crates/image-processing/tests/fixtures/llm-svg-valid.svg`
-  - `docs/runbooks/image-processing-llm-svg.md`
+  - `crates/image-processing/docs/runbooks/llm-svg-workflow.md`
 - **Description**: Add deterministic E2E fixture tests and runbook examples that prove generated/sanitized SVG can be rendered by `--from-svg` into expected PNG/WebP outputs.
 - **Dependencies**:
   - Task 3.3
@@ -294,7 +294,7 @@ This plan replaces the current preset-only `generate` command with a source-SVG-
 - **Location**:
   - `crates/image-processing/README.md`
   - `BINARY_DEPENDENCIES.md`
-  - `docs/runbooks/image-processing-llm-svg.md`
+  - `crates/image-processing/docs/runbooks/llm-svg-workflow.md`
 - **Description**: Replace all active `generate` guidance with `--from-svg` + LLM tooling workflow examples, including migration notes and safety requirements.
 - **Dependencies**:
   - Task 2.4
@@ -305,7 +305,7 @@ This plan replaces the current preset-only `generate` command with a source-SVG-
   - README includes runnable `--from-svg` + pipeline examples.
   - Dependency notes clearly describe ImageMagick vs Rust path behavior.
 - **Validation**:
-  - `rg -n "\bgenerate\b" crates/image-processing/README.md BINARY_DEPENDENCIES.md docs/runbooks/image-processing-llm-svg.md`
+  - `rg -n "\bgenerate\b" crates/image-processing/README.md BINARY_DEPENDENCIES.md crates/image-processing/docs/runbooks/llm-svg-workflow.md`
   - `cargo run -p nils-image-processing -- --help`
 
 ### Task 4.2: Update diagnostics capability inventory and tests

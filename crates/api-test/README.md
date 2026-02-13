@@ -26,3 +26,7 @@ Help:
 - `summary`: Render a Markdown summary from results JSON (stdin or `--in`).
   Options: `--in <path>`, `--out <path>`, `--slow <n>`, `--hide-skipped`, `--max-failed <n>`,
   `--max-skipped <n>`, `--no-github-summary`.
+
+## Docs
+
+- [Docs index](docs/README.md)

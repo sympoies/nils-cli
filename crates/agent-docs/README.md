@@ -550,3 +550,7 @@ The `add` command has golden/snapshot fixtures under `tests/fixtures/add`.
   ```bash
   scripts/ci/agent-docs-snapshots.sh --bless
   ```
+
+## Docs
+
+- [Docs index](docs/README.md)

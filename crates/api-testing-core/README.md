@@ -177,3 +177,7 @@ api-test summary --in out/api-test-runner/results.json --out out/api-test-runner
 - `API_TEST_GQL_URL`: override GraphQL endpoint URL for all GraphQL cases.
 - `API_TEST_AUTH_JSON`: credentials JSON used by suite auth (default key name).
 - `GITHUB_STEP_SUMMARY`: when set, `api-test summary` appends Markdown output (disable via `--no-github-summary`).
+
+## Docs
+
+- [Docs index](docs/README.md)

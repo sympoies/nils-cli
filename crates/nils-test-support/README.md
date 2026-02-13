@@ -36,3 +36,7 @@ let stub_dir = StubBinDir::new();
 let _path = prepend_path(&lock, stub_dir.path());
 let _env = EnvGuard::set(&lock, "EXAMPLE", "1");
 ```
+
+## Docs
+
+- [Docs index](docs/README.md)

@@ -341,7 +341,7 @@ rollout alignment, and finally publish-readiness verification for the publishabl
 
 ### Task 4.2: Publish migration guide for frontend/service consumers
 - **Location**:
-  - `docs/runbooks/codex-cli-json-consumers.md`
+  - `crates/codex-cli/docs/runbooks/json-consumers.md`
   - `crates/codex-cli/README.md`
 - **Description**: Document how services should call JSON mode, interpret exit codes, and handle
   partial failures. Include examples for multi-account rate limits and auth refresh pipelines.
@@ -354,7 +354,7 @@ rollout alignment, and finally publish-readiness verification for the publishabl
   - Guide defines do/don't practices for retrying and fallback handling.
   - README links to the new runbook.
 - **Validation**:
-  - `rg -n "json-consumers|diag rate-limits --all --json|auth auto-refresh" docs/runbooks/codex-cli-json-consumers.md crates/codex-cli/README.md`
+  - `rg -n "json-consumers|diag rate-limits --all --json|auth auto-refresh" crates/codex-cli/docs/runbooks/json-consumers.md crates/codex-cli/README.md`
 
 ### Task 4.3: Run full required gate and targeted contract checks
 - **Location**:

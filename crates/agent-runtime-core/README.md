@@ -26,3 +26,7 @@ provider adapter crates.
 
 - `../../docs/runbooks/provider-onboarding.md`
 - `../agentctl/README.md`
+
+## Docs
+
+- [Docs index](docs/README.md)

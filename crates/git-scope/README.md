@@ -48,3 +48,7 @@ Options:
 - `NO_COLOR`: Disable ANSI colors.
 - `GIT_SCOPE_PROGRESS`: Set to `1`, `true`, `yes`, or `on` to enable a progress bar while printing
   file contents.
+
+## Docs
+
+- [Docs index](docs/README.md)

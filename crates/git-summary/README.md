@@ -39,3 +39,7 @@ Commands:
 
 ## Dependencies
 - `git` is required for all commands.
+
+## Docs
+
+- [Docs index](docs/README.md)

@@ -119,3 +119,7 @@ memo-cli report month --from 2026-02-01T00:00:00Z --to 2026-02-29T23:59:59Z --js
 - Workflow extension contract: `crates/memo-cli/docs/specs/memo-cli-workflow-extension-contract-v1.md`
 - Release policy: `crates/memo-cli/docs/specs/memo-cli-release-policy.md`
 - Archived pre-launch v0 specs: `crates/memo-cli/docs/specs/archive/v0/`
+
+## Docs
+
+- [Docs index](docs/README.md)

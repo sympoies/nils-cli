@@ -23,3 +23,7 @@ Help:
 
 ## Flags
 - `--log-level <level>`: Log level (`trace|debug|info|warn|error`).
+
+## Docs
+
+- [Docs index](docs/README.md)

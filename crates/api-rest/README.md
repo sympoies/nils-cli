@@ -35,3 +35,7 @@ Help:
 - `report-from-cmd`: Generate a report from a saved `call` command snippet.
   Options: `--case <name>`, `--out <path>`, `--response <file|->`, `--allow-empty`, `--dry-run`,
   `--stdin`.
+
+## Docs
+
+- [Docs index](docs/README.md)

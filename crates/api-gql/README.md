@@ -45,3 +45,7 @@ Help:
 - `--jwt <name>` or `GQL_JWT_NAME` selects `GQL_JWT_<NAME>` from the setup `jwts.env`/`.local` files.
 - If no JWT profile is selected, fallback uses `ACCESS_TOKEN` then `SERVICE_TOKEN`.
 - History entries record the env source as `token=ACCESS_TOKEN` or `token=SERVICE_TOKEN`.
+
+## Docs
+
+- [Docs index](docs/README.md)

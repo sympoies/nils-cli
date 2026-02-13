@@ -43,3 +43,7 @@ Commands:
 - `ZSH_CACHE_DIR`: Base directory for lock storage. Locks are stored under
   `$ZSH_CACHE_DIR/git-locks`. If unset, defaults to `/git-locks`.
 - `NO_COLOR`: Disable color for `diff` output.
+
+## Docs
+
+- [Docs index](docs/README.md)

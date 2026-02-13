@@ -62,3 +62,7 @@ Help:
 ## Dependencies
 - `git` is required.
 - `git-scope` is optional; when unavailable, commit summary falls back to `git show -1`.
+
+## Docs
+
+- [Docs index](docs/README.md)

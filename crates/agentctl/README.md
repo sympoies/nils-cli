@@ -79,3 +79,7 @@ Required minimum:
 2. Implement `ProviderAdapterV1` skeleton.
 3. Register adapter in `ProviderRegistry::with_builtins()`.
 4. Add contract tests and run validation commands.
+
+## Docs
+
+- [Docs index](docs/README.md)

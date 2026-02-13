@@ -44,3 +44,7 @@ Prefer accepting a `Progress` (or `ProgressOptions`) from the caller instead of 
 inside library code. This keeps libraries deterministic and lets binaries decide whether to show
 progress (e.g. interactive vs CI).
 
+
+## Docs
+
+- [Docs index](docs/README.md)

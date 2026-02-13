@@ -13,3 +13,11 @@ path = "docs/runbooks/new-cli-crate-development-standard.md"
 required = true
 when = "always"
 notes = "New CLI crate standard (human output + JSON contract + publish-ready)"
+
+[[document]]
+context = "project-dev"
+scope = "project"
+path = "docs/specs/crate-docs-placement-policy.md"
+required = true
+when = "always"
+notes = "Crate docs placement policy for project development tasks"

@@ -370,3 +370,7 @@ Use the `Decision ID` from `Command Decision Matrix` to choose the row quickly.
 | `T7` | Trace enabled but command does not start | `macos-agent --trace --trace-dir <path> --error-format json preflight` | `trace.write` error and writable-path hint | `D3` |
 | `T8` | Real-app scenario failed mid-flow | run target `e2e_real_apps` command with `--nocapture` | `steps.jsonl`, `step-summary.json`, `artifact-index.json` | `D1`, `D2`, `D3` |
 | `T9` | Profile coordinate drift | `macos-agent profile validate --file <profile.json>` | key-path validation errors and bounds issues | `D3` |
+
+## Docs
+
+- [Docs index](docs/README.md)

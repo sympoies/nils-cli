@@ -46,3 +46,7 @@ Help:
 - `0`: success and help output.
 - `1`: validation or runtime errors.
 - `2`: usage errors.
+
+## Docs
+
+- [Docs index](docs/README.md)

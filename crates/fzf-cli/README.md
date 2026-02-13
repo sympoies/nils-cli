@@ -91,3 +91,7 @@ Help:
 - `git` is required for `git-*` commands.
 - `lsof` is optional for `port` (falls back to `netstat`).
 - `code` is required for `--vscode` (falls back to `vi`).
+
+## Docs
+
+- [Docs index](docs/README.md)
