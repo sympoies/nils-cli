@@ -18,6 +18,7 @@ Commands:
   list [--limit <n>] [--offset <n>]         List entries (default: newest first)
   search <query> [--limit <n>]              Search raw/derived/tags text
          [--field <raw|derived|tags>[,...]]
+         [--match <fts|prefix|contains>]
   report <week|month> [--tz <iana-tz>]      Build period summaries
          [--from <rfc3339>] [--to <rfc3339>]
   fetch [--limit <n>] [--cursor <opaque>]   Pull records for enrichment workers
@@ -34,6 +35,7 @@ Commands:
 - `list`: show records with deterministic ordering and optional state filters.
 - `search`: run keyword/prefix search across capture and active enrichment.
 - `search --field`: optional field scope, supports multi-select (example: `--field raw,tags`).
+- `search --match`: matching mode (`fts`, `prefix`, `contains`), default `fts`.
 - `report`: render weekly/monthly summaries with capture fallback when enrichment is missing.
 - `report --from/--to`: optional explicit range (RFC3339). Use both together.
 - `fetch`: machine-facing pull for pending enrichment work.

@@ -44,7 +44,7 @@ _nils_cli_memo_cli_complete() {
         return 0
         ;;
       search)
-        COMPREPLY=( $(compgen -W "${global_opts[*]} --limit --state --field" -- "$cur") )
+        COMPREPLY=( $(compgen -W "${global_opts[*]} --limit --state --field --match" -- "$cur") )
         return 0
         ;;
       report)
@@ -89,6 +89,10 @@ _nils_cli_memo_cli_complete() {
       ;;
     --field)
       COMPREPLY=( $(compgen -W "raw derived tags" -- "$cur") )
+      return 0
+      ;;
+    --match)
+      COMPREPLY=( $(compgen -W "fts prefix contains" -- "$cur") )
       return 0
       ;;
   esac

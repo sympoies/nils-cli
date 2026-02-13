@@ -12,6 +12,13 @@ pub enum SearchField {
     Tags,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchMatchMode {
+    Fts,
+    Prefix,
+    Contains,
+}
+
 impl SearchField {
     fn fts_column(self) -> &'static str {
         match self {
@@ -87,75 +94,35 @@ pub fn search_items(
     query: &str,
     state: QueryState,
     fields: &[SearchField],
+    match_mode: SearchMatchMode,
     limit: usize,
 ) -> Result<Vec<SearchItem>, AppError> {
     let fields = normalize_search_fields(fields);
-    let scoped_query = build_scoped_query(query, &fields);
+    let state_filter = state_filter_sql(state);
     let matched_fields = fields
         .iter()
         .map(|field| field.label().to_string())
         .collect::<Vec<_>>();
 
-    let state_filter = match state {
-        QueryState::All => "1 = 1",
-        QueryState::Pending => {
-            "not exists (
-                select 1 from item_derivations d
-                where d.item_id = i.item_id and d.is_active = 1 and d.status = 'accepted'
-            )"
+    match match_mode {
+        SearchMatchMode::Fts => {
+            search_items_fts(conn, query, &fields, state_filter, &matched_fields, limit)
         }
-        QueryState::Enriched => {
-            "exists (
-                select 1 from item_derivations d
-                where d.item_id = i.item_id and d.is_active = 1 and d.status = 'accepted'
-            )"
+        SearchMatchMode::Prefix => {
+            let prefix_query = build_prefix_query(query);
+            search_items_fts(
+                conn,
+                &prefix_query,
+                &fields,
+                state_filter,
+                &matched_fields,
+                limit,
+            )
         }
-    };
-
-    let sql = format!(
-        "select
-            i.item_id,
-            i.created_at,
-            bm25(item_search_fts) as score,
-            substr(coalesce(doc.derived_text, i.raw_text), 1, 120) as preview,
-            json_extract(ad.payload_json, '$.content_type') as content_type,
-            json_extract(ad.payload_json, '$.validation_status') as validation_status
-        from item_search_fts
-        join item_search_documents doc on doc.item_id = item_search_fts.rowid
-        join inbox_items i on i.item_id = doc.item_id
-        left join item_derivations ad
-          on ad.derivation_id = (
-            select d.derivation_id
-            from item_derivations d
-            where d.item_id = i.item_id
-              and d.is_active = 1
-              and d.status = 'accepted'
-            order by d.derivation_version desc, d.derivation_id desc
-            limit 1
-          )
-        where item_search_fts match ?1
-          and {state_filter}
-        order by score asc, i.created_at desc, i.item_id desc
-        limit ?2"
-    );
-
-    let mut stmt = conn.prepare(&sql).map_err(AppError::db_query)?;
-    let rows = stmt
-        .query_map(params![scoped_query, limit as i64], |row| {
-            Ok(SearchItem {
-                item_id: row.get(0)?,
-                created_at: row.get(1)?,
-                score: row.get(2)?,
-                matched_fields: matched_fields.clone(),
-                preview: row.get(3)?,
-                content_type: row.get(4)?,
-                validation_status: row.get(5)?,
-            })
-        })
-        .map_err(AppError::db_query)?;
-
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(AppError::db_query)
+        SearchMatchMode::Contains => {
+            search_items_contains(conn, query, &fields, state_filter, &matched_fields, limit)
+        }
+    }
 }
 
 fn normalize_search_fields(fields: &[SearchField]) -> Vec<SearchField> {
@@ -182,6 +149,165 @@ fn build_scoped_query(query: &str, fields: &[SearchField]) -> String {
         .collect::<Vec<_>>()
         .join(" ");
     format!("{{{columns}}}: ({query})")
+}
+
+fn state_filter_sql(state: QueryState) -> &'static str {
+    match state {
+        QueryState::All => "1 = 1",
+        QueryState::Pending => {
+            "not exists (
+                select 1 from item_derivations d
+                where d.item_id = i.item_id and d.is_active = 1 and d.status = 'accepted'
+            )"
+        }
+        QueryState::Enriched => {
+            "exists (
+                select 1 from item_derivations d
+                where d.item_id = i.item_id and d.is_active = 1 and d.status = 'accepted'
+            )"
+        }
+    }
+}
+
+fn search_items_fts(
+    conn: &Connection,
+    query: &str,
+    fields: &[SearchField],
+    state_filter: &str,
+    matched_fields: &[String],
+    limit: usize,
+) -> Result<Vec<SearchItem>, AppError> {
+    let scoped_query = build_scoped_query(query, fields);
+    let sql = format!(
+        "select
+            i.item_id,
+            i.created_at,
+            bm25(item_search_fts) as score,
+            substr(coalesce(doc.derived_text, i.raw_text), 1, 120) as preview,
+            json_extract(ad.payload_json, '$.content_type') as content_type,
+            json_extract(ad.payload_json, '$.validation_status') as validation_status
+        from item_search_fts
+        join item_search_documents doc on doc.item_id = item_search_fts.rowid
+        join inbox_items i on i.item_id = doc.item_id
+        left join item_derivations ad
+          on ad.derivation_id = (
+            select d.derivation_id
+            from item_derivations d
+            where d.item_id = i.item_id
+              and d.is_active = 1
+              and d.status = 'accepted'
+            order by d.derivation_version desc, d.derivation_id desc
+            limit 1
+          )
+        where item_search_fts match ?1
+          and {state_filter}
+        order by score asc, i.created_at desc, i.item_id desc
+        limit ?2"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(AppError::db_query)?;
+    let rows = stmt
+        .query_map(params![scoped_query, limit as i64], |row| {
+            Ok(SearchItem {
+                item_id: row.get(0)?,
+                created_at: row.get(1)?,
+                score: row.get(2)?,
+                matched_fields: matched_fields.to_vec(),
+                preview: row.get(3)?,
+                content_type: row.get(4)?,
+                validation_status: row.get(5)?,
+            })
+        })
+        .map_err(AppError::db_query)?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(AppError::db_query)
+}
+
+fn search_items_contains(
+    conn: &Connection,
+    query: &str,
+    fields: &[SearchField],
+    state_filter: &str,
+    matched_fields: &[String],
+    limit: usize,
+) -> Result<Vec<SearchItem>, AppError> {
+    let contains_filter = build_contains_filter(fields);
+    let sql = format!(
+        "select
+            i.item_id,
+            i.created_at,
+            0.0 as score,
+            substr(coalesce(doc.derived_text, i.raw_text), 1, 120) as preview,
+            json_extract(ad.payload_json, '$.content_type') as content_type,
+            json_extract(ad.payload_json, '$.validation_status') as validation_status
+        from item_search_documents doc
+        join inbox_items i on i.item_id = doc.item_id
+        left join item_derivations ad
+          on ad.derivation_id = (
+            select d.derivation_id
+            from item_derivations d
+            where d.item_id = i.item_id
+              and d.is_active = 1
+              and d.status = 'accepted'
+            order by d.derivation_version desc, d.derivation_id desc
+            limit 1
+          )
+        where ({contains_filter})
+          and {state_filter}
+        order by i.created_at desc, i.item_id desc
+        limit ?2"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(AppError::db_query)?;
+    let rows = stmt
+        .query_map(params![query, limit as i64], |row| {
+            Ok(SearchItem {
+                item_id: row.get(0)?,
+                created_at: row.get(1)?,
+                score: row.get(2)?,
+                matched_fields: matched_fields.to_vec(),
+                preview: row.get(3)?,
+                content_type: row.get(4)?,
+                validation_status: row.get(5)?,
+            })
+        })
+        .map_err(AppError::db_query)?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(AppError::db_query)
+}
+
+fn build_contains_filter(fields: &[SearchField]) -> String {
+    fields
+        .iter()
+        .map(|field| {
+            format!(
+                "instr(lower(coalesce(doc.{column}, '')), lower(?1)) > 0",
+                column = field.fts_column()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" or ")
+}
+
+fn build_prefix_query(query: &str) -> String {
+    let tokens = query
+        .split_whitespace()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(prefix_token)
+        .collect::<Vec<_>>();
+
+    if tokens.is_empty() {
+        query.to_string()
+    } else {
+        tokens.join(" ")
+    }
+}
+
+fn prefix_token(token: &str) -> String {
+    let token = token.trim_end_matches('*');
+    let escaped = token.replace('"', "\"\"");
+    format!("\"{escaped}\"*")
 }
 
 pub fn report_summary(conn: &Connection, period: ReportPeriod) -> Result<ReportSummary, AppError> {

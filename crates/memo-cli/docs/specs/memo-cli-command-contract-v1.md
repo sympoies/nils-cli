@@ -194,13 +194,18 @@ Search inbox and active derived fields.
 
 ```text
 memo-cli search <query> [--limit <n>] [--state <all|pending|enriched>]
-                [--field <raw|derived|tags>[,<raw|derived|tags>...]] [--json|--format json]
+                [--field <raw|derived|tags>[,<raw|derived|tags>...]]
+                [--match <fts|prefix|contains>] [--json|--format json]
 ```
 
 Behavior:
 - Uses SQLite FTS-backed matching for raw capture and active enrichment text.
 - `--field` narrows the FTS search surface; default is all fields (`raw,derived,tags`).
 - `--field` accepts comma-separated multi-select (for example: `--field raw,tags`).
+- `--match` controls query semantics:
+  - `fts` (default): pass query as FTS syntax.
+  - `prefix`: convert whitespace-separated terms to FTS prefix tokens (`term*`).
+  - `contains`: perform case-insensitive substring contains matching.
 - Ranking is deterministic for score ties (`created_at DESC`, `item_id DESC`).
 
 Text output (`stdout`):
@@ -212,6 +217,7 @@ JSON output:
   - `content_type`
   - `validation_status`
 - JSON `meta` includes `fields[]` reflecting the effective field scope.
+- JSON `meta` includes `match` reflecting the effective match mode.
 
 ### `report`
 Generate period summaries from capture + enrichment data.

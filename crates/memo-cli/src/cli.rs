@@ -38,6 +38,13 @@ pub enum SearchField {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum SearchMatch {
+    Fts,
+    Prefix,
+    Contains,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ReportPeriod {
     Week,
     Month,
@@ -81,7 +88,7 @@ pub enum MemoCommand {
     Delete(DeleteArgs),
     /// List memo entries in deterministic order
     List(ListArgs),
-    /// Search memo entries with FTS-backed query
+    /// Search memo entries with selectable match mode
     Search(SearchArgs),
     /// Show weekly or monthly summary report
     Report(ReportArgs),
@@ -141,7 +148,7 @@ pub struct ListArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct SearchArgs {
-    /// Search query text (FTS syntax)
+    /// Search query text
     pub query: String,
 
     /// Max rows to return
@@ -160,6 +167,10 @@ pub struct SearchArgs {
         default_values_t = [SearchField::Raw, SearchField::Derived, SearchField::Tags]
     )]
     pub fields: Vec<SearchField>,
+
+    /// Search match mode: fts, prefix, contains
+    #[arg(long = "match", value_enum, default_value_t = SearchMatch::Fts)]
+    pub match_mode: SearchMatch,
 }
 
 #[derive(Debug, clap::Args)]
@@ -272,7 +283,7 @@ fn default_db_path() -> PathBuf {
 pub(crate) mod tests {
     use clap::{CommandFactory, Parser};
 
-    use super::{Cli, MemoCommand, OutputMode, SearchField};
+    use super::{Cli, MemoCommand, OutputMode, SearchField, SearchMatch};
 
     #[test]
     fn output_mode_defaults_to_text() {
@@ -340,5 +351,25 @@ pub(crate) mod tests {
             args.fields,
             vec![SearchField::Raw, SearchField::Derived, SearchField::Tags]
         );
+    }
+
+    #[test]
+    fn search_match_mode_defaults_to_fts() {
+        let cli = Cli::parse_from(["memo-cli", "search", "ssd"]);
+        let MemoCommand::Search(args) = cli.command else {
+            panic!("expected search command");
+        };
+
+        assert_eq!(args.match_mode, SearchMatch::Fts);
+    }
+
+    #[test]
+    fn search_match_mode_accepts_explicit_value() {
+        let cli = Cli::parse_from(["memo-cli", "search", "ssd", "--match", "contains"]);
+        let MemoCommand::Search(args) = cli.command else {
+            panic!("expected search command");
+        };
+
+        assert_eq!(args.match_mode, SearchMatch::Contains);
     }
 }
