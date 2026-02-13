@@ -13,6 +13,7 @@ pub fn run(
     state: QueryState,
     query: &str,
     fields: &[CliSearchField],
+    match_mode: search::SearchMatchMode,
     limit: usize,
 ) -> Result<(), AppError> {
     let query = query.trim();
@@ -21,8 +22,9 @@ pub fn run(
     }
 
     let search_fields = map_search_fields(fields);
-    let rows = storage
-        .with_connection(|conn| search::search_items(conn, query, state, &search_fields, limit))?;
+    let rows = storage.with_connection(|conn| {
+        search::search_items(conn, query, state, &search_fields, match_mode, limit)
+    })?;
 
     if output_mode.is_json() {
         let results = rows
@@ -49,6 +51,7 @@ pub fn run(
                 "limit": limit,
                 "state": query_state_label(state),
                 "fields": search_field_labels(&search_fields),
+                "match": search_match_mode_label(match_mode),
             })),
         );
     }
@@ -94,4 +97,12 @@ fn map_search_fields(fields: &[CliSearchField]) -> Vec<search::SearchField> {
 
 fn search_field_labels(fields: &[search::SearchField]) -> Vec<&'static str> {
     fields.iter().map(|field| field.label()).collect()
+}
+
+fn search_match_mode_label(mode: search::SearchMatchMode) -> &'static str {
+    match mode {
+        search::SearchMatchMode::Fts => "fts",
+        search::SearchMatchMode::Prefix => "prefix",
+        search::SearchMatchMode::Contains => "contains",
+    }
 }

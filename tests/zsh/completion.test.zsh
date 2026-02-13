@@ -731,6 +731,11 @@ grep -q -- "--field=\\[Search fields (comma-separated)\\]" "$COMP_MEMO_CLI_FILE"
   exit 1
 }
 
+grep -q -- "--match=\\[Search match mode\\]" "$COMP_MEMO_CLI_FILE" || {
+  print -u2 -r -- "FAIL: memo-cli completion missing --match"
+  exit 1
+}
+
 grep -q -- "--window-title-contains" "$BASH_MACOS_AGENT_FILE" || {
   print -u2 -r -- "FAIL: bash macos-agent completion missing canonical --window-title-contains"
   exit 1
@@ -768,6 +773,11 @@ grep -q -- "--probe-mode" "$BASH_AGENTCTL_FILE" || {
 
 grep -q -- "--field" "$BASH_MEMO_CLI_FILE" || {
   print -u2 -r -- "FAIL: bash memo-cli completion missing --field"
+  exit 1
+}
+
+grep -q -- "--match" "$BASH_MEMO_CLI_FILE" || {
+  print -u2 -r -- "FAIL: bash memo-cli completion missing --match"
   exit 1
 }
 

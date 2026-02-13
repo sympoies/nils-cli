@@ -125,7 +125,7 @@ Semantics:
   - optional `content_type`
   - optional `validation_status`
 - optional `meta`:
-  - `query`, `limit`, `state`, `fields`
+  - `query`, `limit`, `state`, `fields`, `match`
 
 ### `report` (`result`)
 - `result.period`: `week` or `month`
@@ -280,7 +280,9 @@ Redaction example (conceptual):
   "meta": {
     "query": "ssd",
     "limit": 20,
-    "state": "all"
+    "state": "all",
+    "fields": ["raw_text", "derived_text", "tags_text"],
+    "match": "fts"
   }
 }
 ```

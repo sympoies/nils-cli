@@ -7,7 +7,7 @@ mod report;
 mod search;
 mod update;
 
-use crate::cli::{Cli, ItemState, MemoCommand, OutputMode};
+use crate::cli::{Cli, ItemState, MemoCommand, OutputMode, SearchMatch};
 use crate::errors::AppError;
 use crate::storage::Storage;
 use crate::storage::repository::QueryState;
@@ -33,6 +33,7 @@ pub fn run(cli: &Cli, output_mode: OutputMode) -> Result<(), AppError> {
             to_query_state(args.state),
             &args.query,
             &args.fields,
+            to_search_match_mode(args.match_mode),
             args.limit,
         ),
         MemoCommand::Report(args) => report::run(&storage, output_mode, args),
@@ -48,5 +49,13 @@ fn to_query_state(state: ItemState) -> QueryState {
         ItemState::All => QueryState::All,
         ItemState::Pending => QueryState::Pending,
         ItemState::Enriched => QueryState::Enriched,
+    }
+}
+
+fn to_search_match_mode(mode: SearchMatch) -> crate::storage::search::SearchMatchMode {
+    match mode {
+        SearchMatch::Fts => crate::storage::search::SearchMatchMode::Fts,
+        SearchMatch::Prefix => crate::storage::search::SearchMatchMode::Prefix,
+        SearchMatch::Contains => crate::storage::search::SearchMatchMode::Contains,
     }
 }

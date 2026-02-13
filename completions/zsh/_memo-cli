@@ -11,7 +11,7 @@ _memo-cli() {
     'update:Update one memo entry and reset derived workflow state'
     'delete:Hard-delete one memo entry and dependent data'
     'list:List memo entries in deterministic order'
-    'search:Search memo entries with FTS-backed query'
+    'search:Search memo entries with selectable match mode'
     'report:Show weekly or monthly summary report'
     'fetch:Fetch pending items for agent enrichment'
     'apply:Apply enrichment payloads'
@@ -69,6 +69,7 @@ _memo-cli() {
         '--limit=[Max rows to return]:limit:' \
         '--state=[Row selection mode]:state:(all pending enriched)' \
         '--field=[Search fields (comma-separated)]:field:(raw derived tags)' \
+        '--match=[Search match mode]:match:(fts prefix contains)' \
         '*:query:' \
         && return 0
       ;;

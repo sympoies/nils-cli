@@ -93,6 +93,7 @@ fn search_and_report() {
                     search::SearchField::Derived,
                     search::SearchField::Tags,
                 ],
+                search::SearchMatchMode::Fts,
                 20,
             )
         })
@@ -187,6 +188,7 @@ fn search_supports_field_filters() {
                 "sharedterm",
                 QueryState::All,
                 &[search::SearchField::Raw],
+                search::SearchMatchMode::Fts,
                 20,
             )
         })
@@ -201,6 +203,7 @@ fn search_supports_field_filters() {
                 "sharedterm",
                 QueryState::All,
                 &[search::SearchField::Tags],
+                search::SearchMatchMode::Fts,
                 20,
             )
         })
@@ -215,6 +218,7 @@ fn search_supports_field_filters() {
                 "sharedterm",
                 QueryState::All,
                 &[search::SearchField::Raw, search::SearchField::Tags],
+                search::SearchMatchMode::Fts,
                 20,
             )
         })
@@ -226,4 +230,61 @@ fn search_supports_field_filters() {
 
     assert!(matched_ids.contains(&raw_item_id));
     assert!(matched_ids.contains(&tagged_item_id));
+}
+
+#[test]
+fn search_match_modes_support_prefix_and_contains() {
+    let db_path = test_db_path("search_match_modes_support_prefix_and_contains");
+    let storage = Storage::new(db_path);
+
+    let item_id = storage
+        .with_transaction(|tx| {
+            let item = repository::add_item(tx, "123 target", "cli", None)?;
+            Ok(item.item_id)
+        })
+        .expect("seed should succeed");
+
+    let fts_rows = storage
+        .with_connection(|conn| {
+            search::search_items(
+                conn,
+                "12",
+                QueryState::All,
+                &[search::SearchField::Raw],
+                search::SearchMatchMode::Fts,
+                20,
+            )
+        })
+        .expect("fts search should succeed");
+    assert!(fts_rows.is_empty());
+
+    let prefix_rows = storage
+        .with_connection(|conn| {
+            search::search_items(
+                conn,
+                "12",
+                QueryState::All,
+                &[search::SearchField::Raw],
+                search::SearchMatchMode::Prefix,
+                20,
+            )
+        })
+        .expect("prefix search should succeed");
+    assert_eq!(prefix_rows.len(), 1);
+    assert_eq!(prefix_rows[0].item_id, item_id);
+
+    let contains_rows = storage
+        .with_connection(|conn| {
+            search::search_items(
+                conn,
+                "23",
+                QueryState::All,
+                &[search::SearchField::Raw],
+                search::SearchMatchMode::Contains,
+                20,
+            )
+        })
+        .expect("contains search should succeed");
+    assert_eq!(contains_rows.len(), 1);
+    assert_eq!(contains_rows[0].item_id, item_id);
 }
