@@ -2,14 +2,7 @@ use rusqlite::{Connection, params};
 
 use crate::errors::AppError;
 
-const MIGRATIONS: &[(i64, &str)] = &[
-    (1, include_str!("sql/schema_v1.sql")),
-    (
-        2,
-        include_str!("sql/migrations/0002_mutable_raw_and_hard_delete.sql"),
-    ),
-    (3, include_str!("sql/migrations/0003_extension_anchor.sql")),
-];
+const MIGRATIONS: &[(i64, &str)] = &[(1, include_str!("sql/schema_v1.sql"))];
 
 pub fn apply(conn: &Connection) -> Result<(), AppError> {
     conn.execute_batch(

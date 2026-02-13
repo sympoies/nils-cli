@@ -1,5 +1,8 @@
 pragma foreign_keys = on;
 
+drop trigger if exists trg_inbox_items_append_only_update;
+drop trigger if exists trg_inbox_items_append_only_delete;
+
 create table if not exists inbox_items (
   item_id integer primary key,
   source text not null default 'manual',
@@ -8,6 +11,11 @@ create table if not exists inbox_items (
   inserted_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   check(length(trim(source)) > 0),
   check(length(trim(raw_text)) > 0)
+);
+
+create table if not exists id_allocators (
+  name text primary key,
+  last_id integer not null check(last_id >= 0)
 );
 
 create index if not exists idx_inbox_items_created_item_desc

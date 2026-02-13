@@ -109,6 +109,9 @@ memo-cli add <text> [--source <label>] [--at <rfc3339>] [--json|--format json]
 
 Behavior:
 - Persists raw text as a new inbox item.
+- Allocates `item_id` from a monotonic per-database sequence; hard delete does not recycle IDs.
+- Sequence example: if `itm_00000001` is hard-deleted, the next `add` allocates
+  `itm_00000002` or newer.
 - By default, `created_at` is system-generated at write time.
 - `--at` allows explicit RFC3339 timestamp input and stores the normalized UTC instant.
 
