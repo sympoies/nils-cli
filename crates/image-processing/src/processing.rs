@@ -188,6 +188,8 @@ pub struct ProcessArgs<'a> {
     pub report_enabled: bool,
     pub json_enabled: bool,
     pub convert_to: Option<&'a str>,
+    pub from_svg_width: Option<i32>,
+    pub from_svg_height: Option<i32>,
     pub quality: Option<i32>,
     pub resize_scale: Option<f64>,
     pub resize_width: Option<i32>,
@@ -226,6 +228,8 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
         report_enabled,
         json_enabled,
         convert_to,
+        from_svg_width,
+        from_svg_height,
         quality,
         resize_scale,
         resize_width,
@@ -512,6 +516,14 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
                     .as_deref()
                     .ok_or_else(|| util::usage_err("internal error: missing output path"))?;
                 let target = svg_validate::parse_from_svg_target(convert_to)?;
+                let raster_size_hint = from_svg_raster_size_hint(from_svg_width, from_svg_height)?;
+                if target == "svg"
+                    && (raster_size_hint.width.is_some() || raster_size_hint.height.is_some())
+                {
+                    return Err(util::usage_err(
+                        "convert --from-svg --to svg does not support --width/--height",
+                    ));
+                }
                 let mut cmd = vec![
                     "image-processing".to_string(),
                     "convert".to_string(),
@@ -522,13 +534,25 @@ pub fn process_items(args: ProcessArgs<'_>) -> anyhow::Result<Summary> {
                     "--out".to_string(),
                     output_path.to_string_lossy().to_string(),
                 ];
+                if let Some(width) = raster_size_hint.width {
+                    cmd.extend(["--width".to_string(), width.to_string()]);
+                }
+                if let Some(height) = raster_size_hint.height {
+                    cmd.extend(["--height".to_string(), height.to_string()]);
+                }
                 if dry_run {
                     cmd.push("--dry-run".to_string());
                 }
                 item_cmds.push(util::command_str(&cmd));
 
                 let doc = from_svg_doc.as_ref().expect("from_svg_doc");
-                let info = svg_validate::render_svg_to_output(doc, target, output_path, dry_run)?;
+                let info = svg_validate::render_svg_to_output(
+                    doc,
+                    target,
+                    output_path,
+                    raster_size_hint,
+                    dry_run,
+                )?;
                 if !dry_run {
                     output_info = Some(info);
                 }
@@ -1316,6 +1340,26 @@ fn ext_normalize(path: &Path) -> String {
         return "jpg".to_string();
     }
     ext
+}
+
+fn from_svg_raster_size_hint(
+    width: Option<i32>,
+    height: Option<i32>,
+) -> anyhow::Result<svg_validate::RasterSizeHint> {
+    Ok(svg_validate::RasterSizeHint {
+        width: parse_positive_dimension(width, "--width")?,
+        height: parse_positive_dimension(height, "--height")?,
+    })
+}
+
+fn parse_positive_dimension(value: Option<i32>, flag: &str) -> anyhow::Result<Option<u32>> {
+    match value {
+        Some(v) if v > 0 => Ok(Some(v as u32)),
+        Some(_) => Err(util::usage_err(format!(
+            "convert --from-svg {flag} must be > 0"
+        ))),
+        None => Ok(None),
+    }
 }
 
 fn output_supports_alpha(ext: &str) -> bool {

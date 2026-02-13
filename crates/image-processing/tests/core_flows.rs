@@ -308,6 +308,66 @@ fn from_svg_supports_png_webp_svg_outputs_without_imagemagick() {
 }
 
 #[test]
+fn from_svg_supports_explicit_raster_dimensions() {
+    let dir = tempfile::TempDir::new().unwrap();
+    fs::write(
+        dir.path().join("icon.svg"),
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 60" width="80" height="60">
+<rect x="4" y="4" width="72" height="52" rx="8" fill="#0f62fe"/>
+</svg>"##,
+    )
+    .unwrap();
+
+    let stub = common::make_stub_dir();
+    let path_s = stub.path().to_string_lossy().to_string();
+    let envs = [("PATH", path_s.as_str())];
+
+    let width_only = common::run_image_processing(
+        dir.path(),
+        &[
+            "convert",
+            "--from-svg",
+            "icon.svg",
+            "--to",
+            "png",
+            "--out",
+            "out/icon-width.png",
+            "--width",
+            "512",
+            "--json",
+        ],
+        &envs,
+    );
+    assert_eq!(width_only.code, 0, "stderr: {}", width_only.stderr);
+    let width_only_json: serde_json::Value = serde_json::from_str(&width_only.stdout).unwrap();
+    assert_eq!(width_only_json["items"][0]["output_info"]["width"], 512);
+    assert_eq!(width_only_json["items"][0]["output_info"]["height"], 384);
+
+    let exact_box = common::run_image_processing(
+        dir.path(),
+        &[
+            "convert",
+            "--from-svg",
+            "icon.svg",
+            "--to",
+            "png",
+            "--out",
+            "out/icon-box.png",
+            "--width",
+            "512",
+            "--height",
+            "512",
+            "--json",
+        ],
+        &envs,
+    );
+    assert_eq!(exact_box.code, 0, "stderr: {}", exact_box.stderr);
+    let exact_box_json: serde_json::Value = serde_json::from_str(&exact_box.stdout).unwrap();
+    assert_eq!(exact_box_json["items"][0]["output_info"]["width"], 512);
+    assert_eq!(exact_box_json["items"][0]["output_info"]["height"], 512);
+}
+
+#[test]
 fn from_svg_still_runs_when_legacy_operations_lack_imagemagick() {
     let dir = tempfile::TempDir::new().unwrap();
     fs::write(dir.path().join("a.png"), "img").unwrap();

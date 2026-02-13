@@ -27,6 +27,12 @@ pub struct SanitizedSvgDocument {
     pub uses_alpha: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RasterSizeHint {
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct SvgValidateCommandResult {
     pub input_path: String,
@@ -234,10 +240,16 @@ pub fn render_svg_to_output(
     doc: &SanitizedSvgDocument,
     output_format: &str,
     output_path: &Path,
+    raster_size_hint: RasterSizeHint,
     dry_run: bool,
 ) -> anyhow::Result<ImageInfo> {
     match output_format {
         "svg" => {
+            if raster_size_hint.width.is_some() || raster_size_hint.height.is_some() {
+                return Err(util::usage_err(
+                    "convert --from-svg --to svg does not support --width/--height",
+                ));
+            }
             if !dry_run {
                 util::ensure_parent_dir(output_path, false)?;
                 std::fs::write(output_path, doc.content.as_bytes())?;
@@ -252,19 +264,24 @@ pub fn render_svg_to_output(
             )
         }
         "png" | "webp" => {
+            let tree = resvg::usvg::Tree::from_str(&doc.content, &resvg::usvg::Options::default())
+                .map_err(|err| anyhow::anyhow!("failed to parse sanitized svg: {err}"))?;
+            let size = tree.size().to_int_size();
+            let base_width = size.width();
+            let base_height = size.height();
+            let (width, height) =
+                resolve_raster_dimensions(base_width, base_height, raster_size_hint)?;
+
             if !dry_run {
                 util::ensure_parent_dir(output_path, false)?;
-                let tree =
-                    resvg::usvg::Tree::from_str(&doc.content, &resvg::usvg::Options::default())
-                        .map_err(|err| anyhow::anyhow!("failed to parse sanitized svg: {err}"))?;
-                let size = tree.size().to_int_size();
-                let width = size.width();
-                let height = size.height();
                 let mut pixmap = resvg::tiny_skia::Pixmap::new(width, height)
                     .ok_or_else(|| anyhow::anyhow!("failed to allocate raster surface"))?;
                 resvg::render(
                     &tree,
-                    resvg::tiny_skia::Transform::identity(),
+                    resvg::tiny_skia::Transform::from_scale(
+                        width as f32 / base_width as f32,
+                        height as f32 / base_height as f32,
+                    ),
                     &mut pixmap.as_mut(),
                 );
 
@@ -277,8 +294,8 @@ pub fn render_svg_to_output(
             }
             output_info(
                 output_format,
-                doc.width,
-                doc.height,
+                width,
+                height,
                 doc.uses_alpha,
                 output_path,
                 dry_run,
@@ -340,6 +357,33 @@ fn output_info(
         exif_orientation: None,
         size_bytes,
     })
+}
+
+fn resolve_raster_dimensions(
+    base_width: u32,
+    base_height: u32,
+    hint: RasterSizeHint,
+) -> anyhow::Result<(u32, u32)> {
+    if base_width == 0 || base_height == 0 {
+        return Err(anyhow::anyhow!("sanitized svg has invalid dimensions"));
+    }
+    let dims = match (hint.width, hint.height) {
+        (Some(width), Some(height)) => (width, height),
+        (Some(width), None) => {
+            let height = ((width as f64 * base_height as f64) / base_width as f64)
+                .round()
+                .max(1.0) as u32;
+            (width, height)
+        }
+        (None, Some(height)) => {
+            let width = ((height as f64 * base_width as f64) / base_height as f64)
+                .round()
+                .max(1.0) as u32;
+            (width, height)
+        }
+        (None, None) => (base_width, base_height),
+    };
+    Ok((dims.0.max(1), dims.1.max(1)))
 }
 
 fn parse_view_box(raw: &str) -> Result<(u32, u32), String> {
@@ -464,5 +508,30 @@ mod tests {
                 .iter()
                 .any(|d| d.code == "disallowed_tag" || d.code == "unsafe_tag")
         );
+    }
+
+    #[test]
+    fn resolve_raster_dimensions_preserves_aspect_when_single_dimension_is_set() {
+        let by_width = resolve_raster_dimensions(
+            80,
+            40,
+            RasterSizeHint {
+                width: Some(200),
+                height: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(by_width, (200, 100));
+
+        let by_height = resolve_raster_dimensions(
+            80,
+            40,
+            RasterSizeHint {
+                width: None,
+                height: Some(120),
+            },
+        )
+        .unwrap();
+        assert_eq!(by_height, (240, 120));
     }
 }

@@ -42,7 +42,7 @@ pub struct FromSvgValidationRule {
 }
 
 #[allow(dead_code)]
-pub const FROM_SVG_VALIDATION_MATRIX: [FromSvgValidationRule; 6] = [
+pub const FROM_SVG_VALIDATION_MATRIX: [FromSvgValidationRule; 7] = [
     FromSvgValidationRule {
         when: "subcommand=convert && --from-svg",
         expect: "requires --out and forbids --out-dir/--in-place",
@@ -54,6 +54,10 @@ pub const FROM_SVG_VALIDATION_MATRIX: [FromSvgValidationRule; 6] = [
     FromSvgValidationRule {
         when: "subcommand=convert && --from-svg",
         expect: "requires --to and supports only png|webp|svg",
+    },
+    FromSvgValidationRule {
+        when: "subcommand=convert && --from-svg",
+        expect: "accepts optional --width/--height for png|webp outputs",
     },
     FromSvgValidationRule {
         when: "subcommand=svg-validate",
@@ -74,7 +78,7 @@ pub const FROM_SVG_VALIDATION_MATRIX: [FromSvgValidationRule; 6] = [
     name = "image-processing",
     version,
     about = "Batch image transformations with svg-source and svg-validation flows.",
-    after_help = "Notes:\n  - Output-producing subcommands require exactly one output mode: --out, --out-dir, or --in-place (with --yes).\n  - convert --from-svg uses the Rust SVG backend and requires --out + --to png|webp|svg.\n  - svg-validate sanitizes a single svg input and requires --in + --out.\n  - Use --json for machine-readable output (stdout JSON only; logs go to stderr).\n"
+    after_help = "Notes:\n  - Output-producing subcommands require exactly one output mode: --out, --out-dir, or --in-place (with --yes).\n  - convert --from-svg uses the Rust SVG backend and requires --out + --to png|webp|svg.\n  - convert --from-svg optionally supports --width/--height for png|webp raster size.\n  - svg-validate sanitizes a single svg input and requires --in + --out.\n  - Use --json for machine-readable output (stdout JSON only; logs go to stderr).\n"
 )]
 pub struct Cli {
     #[arg(value_enum)]
@@ -125,7 +129,7 @@ pub struct Cli {
     #[arg(long)]
     pub quality: Option<i32>,
 
-    // resize / pad
+    // resize / pad / convert --from-svg
     #[arg(long)]
     pub scale: Option<f64>,
     #[arg(long)]
