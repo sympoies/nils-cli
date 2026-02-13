@@ -327,3 +327,7 @@ screen-record --app Terminal --duration 3 --audio off --path "./recordings/termi
   --metadata-out "./recordings/terminal.metadata.json" \
   --diagnostics-out "./recordings/terminal.diagnostics.json"
 ```
+
+## Docs
+
+- [Docs index](docs/README.md)

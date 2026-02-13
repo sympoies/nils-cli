@@ -124,3 +124,7 @@ When introducing a shared helper at a call site:
 - Owning command-level business logic for a single CLI.
 - Hiding meaningful behavior differences that should remain explicit in local adapters.
 - Replacing specialized shared crates such as `api-testing-core`, `nils-term`, or `nils-test-support`.
+
+## Docs
+
+- [Docs index](docs/README.md)

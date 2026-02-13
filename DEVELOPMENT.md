@@ -41,11 +41,22 @@
 
 - In Rust tests, prefer `pretty_assertions::{assert_eq, assert_ne}` (more readable diffs on failure).
 
+## Documentation placement
+
+- Documentation placement policy: `docs/specs/crate-docs-placement-policy.md`.
+- Contributors MUST classify docs as `workspace-level` or `crate-local` before adding/moving files.
+- `crate-local` docs MUST be placed under `crates/<crate>/docs/...` canonical paths.
+- Root `docs/` MUST be used only for `workspace-level` docs.
+- Legacy crate-owned root paths are redirect stubs (no deprecation sunset) and MUST NOT hold canonical content.
+
 ### Required before committing
 
 - All commands in **Formatting and linting** must pass.
 - `cargo test --workspace`
 - `zsh -f tests/zsh/completion.test.zsh`
+- Documentation placement for changed Markdown files MUST comply with
+  `docs/specs/crate-docs-placement-policy.md`.
+- `bash scripts/ci/docs-placement-audit.sh --strict`
 - Coverage must be **>= 85.00%** total line coverage:
   - `mkdir -p target/coverage`
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 85`

@@ -96,7 +96,7 @@ extends JSON contracts for service consumers, and adds completion/docs parity.
 ### Task 1.3: Extend auth JSON contract for `login` and `save`
 - **Location**:
   - `crates/codex-cli/docs/specs/codex-cli-diag-auth-json-contract-v1.md`
-  - `docs/runbooks/codex-cli-json-consumers.md`
+  - `crates/codex-cli/docs/runbooks/json-consumers.md`
   - `crates/codex-cli/src/auth/output.rs`
 - **Description**: Add stable result/error envelopes for `auth login` and `auth save`, including
   non-sensitive fields only (never raw tokens/api keys). Keep additive compatibility within
@@ -110,7 +110,7 @@ extends JSON contracts for service consumers, and adds completion/docs parity.
   - Runbook includes partial-failure/automation guidance for new commands.
   - Result structs exist in code and are used by command handlers.
 - **Validation**:
-  - `rg -n "auth login|auth save" crates/codex-cli/docs/specs/codex-cli-diag-auth-json-contract-v1.md docs/runbooks/codex-cli-json-consumers.md crates/codex-cli/src/auth/output.rs`
+  - `rg -n "auth login|auth save" crates/codex-cli/docs/specs/codex-cli-diag-auth-json-contract-v1.md crates/codex-cli/docs/runbooks/json-consumers.md crates/codex-cli/src/auth/output.rs`
 
 ## Sprint 2: Implement `auth login` (3 methods)
 **Goal**: Ship a robust `auth login` command that supports all three requested login methods with
@@ -314,7 +314,7 @@ and interactive overwrite guard.
 - **Location**:
   - `crates/codex-cli/README.md`
   - `crates/codex-cli/docs/specs/codex-cli-diag-auth-json-contract-v1.md`
-  - `docs/runbooks/codex-cli-json-consumers.md`
+  - `crates/codex-cli/docs/runbooks/json-consumers.md`
 - **Description**: Add command docs and examples for three login methods and `auth save` overwrite
   behavior; ensure wording matches implemented flags and exit semantics.
 - **Dependencies**:
@@ -327,7 +327,7 @@ and interactive overwrite guard.
   - JSON contract examples include both new commands.
   - Runbook migration checklist references new command routing.
 - **Validation**:
-  - `rg -n "auth login|auth save|device|api-key|overwrite" crates/codex-cli/README.md crates/codex-cli/docs/specs/codex-cli-diag-auth-json-contract-v1.md docs/runbooks/codex-cli-json-consumers.md`
+  - `rg -n "auth login|auth save|device|api-key|overwrite" crates/codex-cli/README.md crates/codex-cli/docs/specs/codex-cli-diag-auth-json-contract-v1.md crates/codex-cli/docs/runbooks/json-consumers.md`
 
 ### Task 4.3: Run required checks and finalize merge readiness
 - **Location**:

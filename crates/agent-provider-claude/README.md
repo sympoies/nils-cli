@@ -15,3 +15,7 @@
 
 - `../agent-runtime-core/README.md`
 - `../../docs/runbooks/provider-onboarding.md`
+
+## Docs
+
+- [Docs index](docs/README.md)

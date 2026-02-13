@@ -70,3 +70,7 @@ Help:
 - `git-scope` is required for `commit context`.
 - Clipboard tools are optional: `pbcopy`, `wl-copy`, `xclip`, or `xsel`. Missing clipboard tools
   emit a warning and continue.
+
+## Docs
+
+- [Docs index](docs/README.md)

@@ -60,6 +60,31 @@ For internal-only helper crates:
 - Add `publish = false` and explain the reason in README.
 - Do not add the crate to `release/crates-io-publish-order.txt`.
 
+## Documentation Placement Rules
+Documentation created for a new crate MUST follow `docs/specs/crate-docs-placement-policy.md`.
+
+- Contributors MUST classify each new or updated Markdown file as `workspace-level` or
+  `crate-local` before deciding the path.
+- `crate-local` docs MUST be placed under `crates/<crate>/docs/...`.
+- `crate-local` docs SHOULD use canonical paths:
+  - `crates/<crate>/docs/README.md`
+  - `crates/<crate>/docs/specs/<topic>.md`
+  - `crates/<crate>/docs/runbooks/<topic>.md`
+  - `crates/<crate>/docs/reports/<topic>.md`
+- Crate-owned docs MUST NOT be added under root `docs/`.
+
+### Workspace-Level Exceptions (Root `docs/` Allowed)
+Root `docs/` is an exception path and MUST be used only when the document is `workspace-level`.
+
+Allowed exception types:
+- Repository-wide governance or process standards used across the workspace.
+- Cross-crate contracts/specifications consumed by multiple crates or external services.
+- Shared workspace operations runbooks (release/CI/tooling) not owned by a single crate.
+
+Qualification criteria (both MUST pass):
+- Ownership MUST be workspace-owned (not a single crate team/module).
+- Scope MUST be cross-crate or repository-governance; otherwise treat the doc as `crate-local`.
+
 ## Output Contracts
 Every user-facing CLI command surface must have explicit output behavior.
 
@@ -106,6 +131,12 @@ Preferred single entrypoint:
 
 ```bash
 ./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh
+```
+
+Pre-commit docs placement audit (required):
+
+```bash
+bash scripts/ci/docs-placement-audit.sh --strict
 ```
 
 For exact command set and coverage threshold, follow `DEVELOPMENT.md`.

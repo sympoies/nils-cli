@@ -94,3 +94,8 @@ cargo run -p nils-image-processing -- convert \
 - `convert --from-svg` and `svg-validate`: no external binary dependency (Rust backend).
 - Legacy transform subcommands: ImageMagick (`magick`, or `convert` + `identify`).
 - Optional: `cjpeg`/`djpeg` for JPEG optimize, `cwebp`/`dwebp` for WebP optimize.
+
+## Docs
+
+- [Docs index](docs/README.md)
+- [LLM SVG workflow runbook](docs/runbooks/llm-svg-workflow.md)
