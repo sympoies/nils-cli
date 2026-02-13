@@ -83,7 +83,19 @@ fn search_and_report() {
         .expect("seed should succeed");
 
     let search_rows = storage
-        .with_connection(|conn| search::search_items(conn, "tokyo", QueryState::All, 20))
+        .with_connection(|conn| {
+            search::search_items(
+                conn,
+                "tokyo",
+                QueryState::All,
+                &[
+                    search::SearchField::Raw,
+                    search::SearchField::Derived,
+                    search::SearchField::Tags,
+                ],
+                20,
+            )
+        })
         .expect("search should succeed");
 
     assert!(!search_rows.is_empty());
@@ -99,4 +111,119 @@ fn search_and_report() {
 
     assert_eq!(report.period, "week");
     assert!(report.totals.captured >= 2);
+}
+
+#[test]
+fn search_supports_field_filters() {
+    let db_path = test_db_path("search_supports_field_filters");
+    let storage = Storage::new(db_path);
+
+    let (raw_item_id, tagged_item_id) = storage
+        .with_transaction(|tx| {
+            let raw_item = repository::add_item(tx, "sharedterm appears in raw text", "cli", None)?;
+            let tagged_item = repository::add_item(tx, "this row has no shared term in raw text", "cli", None)?;
+
+            tx.execute(
+                "insert into item_derivations(
+                    item_id,
+                    derivation_version,
+                    status,
+                    is_active,
+                    base_derivation_id,
+                    derivation_hash,
+                    agent_run_id,
+                    summary,
+                    category,
+                    priority,
+                    due_at,
+                    normalized_text,
+                    confidence,
+                    payload_json,
+                    conflict_reason
+                ) values (?1, 1, 'accepted', 1, null, ?2, 'agent-run-tag', 'nohit', 'misc', null, null, 'nohit', 0.7, ?3, null)",
+                rusqlite::params![
+                    tagged_item.item_id,
+                    format!("hash-{}", tagged_item.item_id),
+                    "{\"ok\":true}"
+                ],
+            )
+            .map_err(memo_cli::errors::AppError::db)?;
+
+            let derivation_id: i64 = tx
+                .query_row(
+                    "select derivation_id from item_derivations where item_id = ?1 and derivation_version = 1",
+                    rusqlite::params![tagged_item.item_id],
+                    |row| row.get(0),
+                )
+                .map_err(memo_cli::errors::AppError::db_query)?;
+
+            tx.execute(
+                "insert into tags(tag_name, tag_name_norm) values ('sharedterm', 'sharedterm')",
+                [],
+            )
+            .map_err(memo_cli::errors::AppError::db)?;
+            let tag_id: i64 = tx
+                .query_row(
+                    "select tag_id from tags where tag_name_norm = 'sharedterm'",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(memo_cli::errors::AppError::db_query)?;
+
+            tx.execute(
+                "insert into item_tags(derivation_id, tag_id) values (?1, ?2)",
+                rusqlite::params![derivation_id, tag_id],
+            )
+            .map_err(memo_cli::errors::AppError::db)?;
+
+            Ok((raw_item.item_id, tagged_item.item_id))
+        })
+        .expect("seed should succeed");
+
+    let raw_rows = storage
+        .with_connection(|conn| {
+            search::search_items(
+                conn,
+                "sharedterm",
+                QueryState::All,
+                &[search::SearchField::Raw],
+                20,
+            )
+        })
+        .expect("raw field search should succeed");
+    assert_eq!(raw_rows.len(), 1);
+    assert_eq!(raw_rows[0].item_id, raw_item_id);
+
+    let tag_rows = storage
+        .with_connection(|conn| {
+            search::search_items(
+                conn,
+                "sharedterm",
+                QueryState::All,
+                &[search::SearchField::Tags],
+                20,
+            )
+        })
+        .expect("tags field search should succeed");
+    assert_eq!(tag_rows.len(), 1);
+    assert_eq!(tag_rows[0].item_id, tagged_item_id);
+
+    let raw_and_tag_rows = storage
+        .with_connection(|conn| {
+            search::search_items(
+                conn,
+                "sharedterm",
+                QueryState::All,
+                &[search::SearchField::Raw, search::SearchField::Tags],
+                20,
+            )
+        })
+        .expect("raw+tags field search should succeed");
+    let matched_ids = raw_and_tag_rows
+        .iter()
+        .map(|row| row.item_id)
+        .collect::<Vec<_>>();
+
+    assert!(matched_ids.contains(&raw_item_id));
+    assert!(matched_ids.contains(&tagged_item_id));
 }

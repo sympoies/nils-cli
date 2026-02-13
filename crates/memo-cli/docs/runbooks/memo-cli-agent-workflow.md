@@ -69,6 +69,7 @@ Notes:
 ## 4. Validate with search and report
 ```bash
 memo-cli search "ssd" --json
+memo-cli search "sharedterm" --field raw,tags --json
 memo-cli report week
 memo-cli report month --json
 memo-cli report week --tz Asia/Taipei
