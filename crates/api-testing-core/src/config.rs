@@ -311,24 +311,32 @@ impl ResolvedSetup {
     }
 
     pub fn tokens_files(&self) -> Vec<&Path> {
-        let Some(tokens_env) = self.tokens_env.as_ref() else {
-            return Vec::new();
-        };
-        let tokens_local = self.tokens_local_env.as_ref().expect("tokens_local_env");
-        if tokens_env.is_file() || tokens_local.is_file() {
-            vec![tokens_env, tokens_local]
+        let mut files: Vec<&Path> = Vec::new();
+        if let Some(tokens_env) = self.tokens_env.as_deref() {
+            files.push(tokens_env);
+        }
+        if let Some(tokens_local) = self.tokens_local_env.as_deref() {
+            files.push(tokens_local);
+        }
+
+        if files.iter().any(|path| path.is_file()) {
+            files
         } else {
             Vec::new()
         }
     }
 
     pub fn jwts_files(&self) -> Vec<&Path> {
-        let Some(jwts_env) = self.jwts_env.as_ref() else {
-            return Vec::new();
-        };
-        let jwts_local = self.jwts_local_env.as_ref().expect("jwts_local_env");
-        if jwts_env.is_file() || jwts_local.is_file() {
-            vec![jwts_env, jwts_local]
+        let mut files: Vec<&Path> = Vec::new();
+        if let Some(jwts_env) = self.jwts_env.as_deref() {
+            files.push(jwts_env);
+        }
+        if let Some(jwts_local) = self.jwts_local_env.as_deref() {
+            files.push(jwts_local);
+        }
+
+        if files.iter().any(|path| path.is_file()) {
+            files
         } else {
             Vec::new()
         }
@@ -418,6 +426,46 @@ mod tests {
                 resolved.endpoints_local_env.as_path()
             ]
         );
+    }
+
+    #[test]
+    fn tokens_files_handles_missing_local_path_without_panicking() {
+        let tmp = TempDir::new().expect("tmp");
+        let root = std::fs::canonicalize(tmp.path()).expect("root abs");
+        let setup = root.join("setup/rest");
+
+        let mut resolved = ResolvedSetup::rest(setup, None);
+        let tokens_env = resolved.tokens_env.as_ref().expect("tokens env").clone();
+        write_file(&tokens_env, "REST_TOKEN_DEFAULT=abc\n");
+        resolved.tokens_local_env = None;
+
+        let files: Vec<PathBuf> = resolved
+            .tokens_files()
+            .into_iter()
+            .map(Path::to_path_buf)
+            .collect();
+
+        assert_eq!(files, vec![tokens_env]);
+    }
+
+    #[test]
+    fn jwts_files_handles_missing_local_path_without_panicking() {
+        let tmp = TempDir::new().expect("tmp");
+        let root = std::fs::canonicalize(tmp.path()).expect("root abs");
+        let setup = root.join("setup/graphql");
+
+        let mut resolved = ResolvedSetup::graphql(setup, None);
+        let jwts_env = resolved.jwts_env.as_ref().expect("jwts env").clone();
+        write_file(&jwts_env, "GQL_JWT_DEFAULT=abc\n");
+        resolved.jwts_local_env = None;
+
+        let files: Vec<PathBuf> = resolved
+            .jwts_files()
+            .into_iter()
+            .map(Path::to_path_buf)
+            .collect();
+
+        assert_eq!(files, vec![jwts_env]);
     }
 
     #[test]
