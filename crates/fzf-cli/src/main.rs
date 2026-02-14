@@ -26,6 +26,10 @@ fn run() -> i32 {
         print_help();
         return 0;
     }
+    if util::is_version(&args[0]) {
+        println!("fzf-cli {}", env!("CARGO_PKG_VERSION"));
+        return 0;
+    }
 
     let cmd = args[0].as_str();
     let rest = &args[1..];

@@ -14,6 +14,10 @@ pub fn run() -> i32 {
         print_help();
         return 0;
     }
+    if is_version(&args[0]) {
+        println!("git-summary {}", env!("CARGO_PKG_VERSION"));
+        return 0;
+    }
 
     let cmd = args[0].as_str();
     match cmd {
@@ -96,4 +100,28 @@ pub fn run() -> i32 {
 
 fn is_help(arg: &str) -> bool {
     matches!(arg, "help" | "--help" | "-h")
+}
+
+fn is_version(arg: &str) -> bool {
+    matches!(arg, "--version" | "-V")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_help, is_version};
+
+    #[test]
+    fn help_token_detection_matches_supported_aliases() {
+        assert!(is_help("help"));
+        assert!(is_help("--help"));
+        assert!(is_help("-h"));
+        assert!(!is_help("today"));
+    }
+
+    #[test]
+    fn version_token_detection_matches_supported_aliases() {
+        assert!(is_version("--version"));
+        assert!(is_version("-V"));
+        assert!(!is_version("today"));
+    }
 }

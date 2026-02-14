@@ -40,6 +40,10 @@ pub fn dispatch(args: Vec<OsString>) -> i32 {
     }
 
     let group_raw = &args[0];
+    if is_version_token(group_raw) {
+        print_version(&mut io::stdout());
+        return 0;
+    }
     if is_help_token(group_raw) {
         print_top_level_usage(&mut io::stdout());
         return 0;
@@ -119,6 +123,14 @@ pub fn dispatch(args: Vec<OsString>) -> i32 {
 
 fn is_help_token(raw: &str) -> bool {
     matches!(raw, "-h" | "--help" | "help")
+}
+
+fn is_version_token(raw: &str) -> bool {
+    matches!(raw, "-V" | "--version")
+}
+
+fn print_version(out: &mut dyn Write) {
+    writeln!(out, "git-cli {}", env!("CARGO_PKG_VERSION")).ok();
 }
 
 fn print_group_usage(group_raw: &str) -> i32 {
@@ -202,7 +214,9 @@ fn print_top_level_usage(out: &mut dyn Write) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Group, dispatch, is_help_token, print_group_usage, print_top_level_usage};
+    use super::{
+        Group, dispatch, is_help_token, is_version_token, print_group_usage, print_top_level_usage,
+    };
     use std::ffi::OsString;
 
     fn to_args(args: &[&str]) -> Vec<OsString> {
@@ -229,6 +243,13 @@ mod tests {
     }
 
     #[test]
+    fn version_token_detection_matches_cli_aliases() {
+        assert!(is_version_token("-V"));
+        assert!(is_version_token("--version"));
+        assert!(!is_version_token("-v"));
+    }
+
+    #[test]
     fn dispatch_returns_two_for_unknown_group_or_command() {
         assert_eq!(dispatch(to_args(&["unknown", "cmd"])), 2);
         assert_eq!(dispatch(to_args(&["reset", "unknown"])), 2);
@@ -240,6 +261,12 @@ mod tests {
     #[test]
     fn commit_group_unknown_command_is_rejected_before_runtime() {
         assert_eq!(dispatch(to_args(&["commit", "unknown"])), 2);
+    }
+
+    #[test]
+    fn dispatch_version_flag_returns_zero() {
+        assert_eq!(dispatch(to_args(&["-V"])), 0);
+        assert_eq!(dispatch(to_args(&["--version"])), 0);
     }
 
     #[test]

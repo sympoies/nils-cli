@@ -10,6 +10,10 @@ pub fn is_help(arg: &str) -> bool {
     matches!(arg, "help" | "--help" | "-h")
 }
 
+pub fn is_version(arg: &str) -> bool {
+    matches!(arg, "--version" | "-V")
+}
+
 pub fn join_args(args: &[String]) -> String {
     args.join(" ")
 }
@@ -83,6 +87,18 @@ mod tests {
     use super::*;
     use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir};
     use tempfile::TempDir;
+
+    #[test]
+    fn help_and_version_tokens_match_expected_aliases() {
+        assert!(is_help("help"));
+        assert!(is_help("--help"));
+        assert!(is_help("-h"));
+        assert!(!is_help("status"));
+
+        assert!(is_version("--version"));
+        assert!(is_version("-V"));
+        assert!(!is_version("status"));
+    }
 
     #[test]
     fn env_is_true_accepts_known_truthy_values() {

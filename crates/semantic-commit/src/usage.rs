@@ -11,6 +11,10 @@ pub fn dispatch(args: &[String]) -> i32 {
         print_help_stdout();
         return 0;
     }
+    if is_version(subcommand) {
+        print_version_stdout();
+        return 0;
+    }
 
     match subcommand {
         "staged-context" => staged_context::run(&args[2..]),
@@ -29,6 +33,14 @@ pub fn dispatch(args: &[String]) -> i32 {
 
 fn is_help(arg: &str) -> bool {
     matches!(arg, "-h" | "--help")
+}
+
+fn is_version(arg: &str) -> bool {
+    matches!(arg, "-V" | "--version")
+}
+
+pub fn print_version_stdout() {
+    println!("semantic-commit {}", env!("CARGO_PKG_VERSION"));
 }
 
 pub fn print_help_stdout() {
@@ -75,6 +87,12 @@ mod tests {
     #[test]
     fn dispatch_help_flag_is_zero() {
         let code = dispatch(&["semantic-commit".to_string(), "--help".to_string()]);
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn dispatch_version_flag_is_zero() {
+        let code = dispatch(&["semantic-commit".to_string(), "-V".to_string()]);
         assert_eq!(code, 0);
     }
 
