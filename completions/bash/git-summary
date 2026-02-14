@@ -19,7 +19,7 @@ _nils_cli_git_summary_complete() {
     all
     help
   )
-  local -a opts=(-h --help)
+  local -a opts=(-h --help -V --version)
 
   if (( COMP_CWORD == 1 )); then
     if [[ "$cur" == -* ]]; then
@@ -34,4 +34,3 @@ _nils_cli_git_summary_complete() {
 }
 
 complete -F _nils_cli_git_summary_complete git-summary
-

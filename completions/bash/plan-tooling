@@ -13,7 +13,7 @@ _nils_cli_plan_tooling_complete() {
   local prev="${COMP_WORDS[COMP_CWORD-1]}"
 
   local -a subcmds=(to-json validate batches scaffold help)
-  local -a opts=(-h --help)
+  local -a opts=(-h --help -V --version)
 
   if (( cword == 1 )); then
     if [[ "$cur" == -* ]]; then
@@ -26,7 +26,7 @@ _nils_cli_plan_tooling_complete() {
 
   local subcmd="${words[1]-}"
   case "$subcmd" in
-    -h|--help|help)
+    -h|--help|-V|--version|help)
       COMPREPLY=()
       return 0
       ;;

@@ -58,7 +58,7 @@ _nils_cli_fzf_cli_complete() {
 
   if (( cword == 1 )); then
     if [[ "$cur" == -* ]]; then
-      COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
+      COMPREPLY=( $(compgen -W "-h --help -V --version" -- "$cur") )
       return 0
     fi
     COMPREPLY=( $(compgen -W "${root_subcmds[*]}" -- "$cur") )
@@ -67,6 +67,10 @@ _nils_cli_fzf_cli_complete() {
 
   local subcmd="${words[1]-}"
   case "$subcmd" in
+    -V|--version)
+      COMPREPLY=()
+      return 0
+      ;;
     file|directory)
       if [[ "$cur" == -* ]]; then
         COMPREPLY=( $(compgen -W "--vi --vscode --" -- "$cur") )

@@ -24,6 +24,7 @@ _git-summary() {
 
   _arguments -C \
     '(-h --help)'{-h,--help}'[Display help message for git-summary]' \
+    '(-V --version)'{-V,--version}'[Display version for git-summary]' \
     '1:command:->subcmds' \
     '*::arg:->args'
 
@@ -36,7 +37,7 @@ _git-summary() {
       subcmd="${subcmd%%[[:space:]]#}"
 
       case "$subcmd" in
-        -h|--help)
+        -h|--help|-V|--version)
           _message 'no additional arguments'
           return 0
           ;;

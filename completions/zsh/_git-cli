@@ -133,6 +133,7 @@ _git-cli() {
   else
     _arguments -C \
       '(-h --help)'{-h,--help}'[Display help message for git-cli]' \
+      '(-V --version)'{-V,--version}'[Display version for git-cli]' \
       '1:group:->groups' \
       '*::arg:->args'
 
@@ -152,7 +153,7 @@ _git-cli() {
       _message 'group (utils|reset|commit|branch|ci|open)'
       return 0
       ;;
-    help|-h|--help)
+    help|-h|--help|-V|--version)
       _message 'no more arguments'
       return 0
       ;;

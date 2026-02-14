@@ -71,7 +71,7 @@ _nils_cli_git_cli_complete() {
   fi
 
   local -a root_cmds=(utils reset commit branch ci open help)
-  local -a root_opts=(-h --help)
+  local -a root_opts=(-h --help -V --version)
 
   if (( cword == 1 )); then
     if [[ "$cur" == -* ]]; then
@@ -84,7 +84,7 @@ _nils_cli_git_cli_complete() {
 
   local group="${words[1]-}"
   case "$group" in
-    help|-h|--help)
+    help|-h|--help|-V|--version)
       COMPREPLY=()
       return 0
       ;;

@@ -27,6 +27,8 @@ _plan-tooling() {
       typeset -a opts=(
         '-h:Show help'
         '--help:Show help'
+        '-V:Show version'
+        '--version:Show version'
       )
       _describe -t options 'option' opts && return 0
       return 0
@@ -41,7 +43,7 @@ _plan-tooling() {
   subcmd="${subcmd%%[[:space:]]#}"
 
   case "$subcmd" in
-    -h|--help|help)
+    -h|--help|-V|--version|help)
       _message 'no additional arguments'
       return 0
       ;;

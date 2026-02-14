@@ -56,10 +56,12 @@ _fzf-cli() {
   if [[ -n "$subcmd_override" ]]; then
     _arguments -C \
       '(-h --help)'{-h,--help}'[Display help message for fzf-cli]' \
+      '(-V --version)'{-V,--version}'[Display version for fzf-cli]' \
       '*::arg:->args'
   else
     _arguments -C \
       '(-h --help)'{-h,--help}'[Display help message for fzf-cli]' \
+      '(-V --version)'{-V,--version}'[Display version for fzf-cli]' \
       '1:command:->subcmds' \
       '*::arg:->args'
   fi
@@ -81,6 +83,10 @@ _fzf-cli() {
       fi
 
       case "$subcmd" in
+        -V|--version)
+          _message 'no additional arguments'
+          return 0
+          ;;
         file|directory)
           if [[ "$cur" == -* ]]; then
             local -a opts=(

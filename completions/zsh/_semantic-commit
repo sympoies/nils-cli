@@ -19,6 +19,7 @@ _semantic-commit() {
 
   _arguments -C \
     '(-h --help)'{-h,--help}'[Show help message]' \
+    '(-V --version)'{-V,--version}'[Show version]' \
     '1:command:->subcmds' \
     '*::arg:->args'
 
@@ -31,6 +32,10 @@ _semantic-commit() {
       subcmd="${subcmd%%[[:space:]]#}"
 
       case "$subcmd" in
+        -V|--version)
+          _message 'no additional arguments'
+          return 0
+          ;;
         staged-context)
           _arguments -C \
             '(-h --help)'{-h,--help}'[Show help message]' \
