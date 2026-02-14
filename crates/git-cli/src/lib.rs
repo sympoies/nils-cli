@@ -4,6 +4,7 @@ pub mod clipboard;
 pub mod commit;
 pub mod commit_json;
 pub mod commit_shared;
+pub mod open;
 pub mod prompt;
 pub mod reset;
 pub mod usage;

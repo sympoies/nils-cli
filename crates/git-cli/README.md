@@ -1,8 +1,8 @@
 # git-cli
 
 ## Overview
-git-cli is a Rust CLI that groups Git workflow helpers behind a dispatcher. It provides five command
-groups: utils, reset, commit, branch, and ci.
+git-cli is a Rust CLI that groups Git workflow helpers behind a dispatcher. It provides six command
+groups: utils, reset, commit, branch, ci, and open.
 
 ## Usage
 ```text
@@ -15,6 +15,7 @@ Groups:
   commit   context | context-json | to-stash
   branch   cleanup
   ci       pick
+  open     repo | branch | default-branch | commit | compare | pr | pulls | issues | actions | releases | tags | commits | file | blame
 
 Help:
   git-cli help
@@ -54,6 +55,23 @@ Help:
 ### ci
 - `pick`: Create and push a `ci/<target>/<name>` branch with cherry-picked commits.
   Options: `-r/--remote <name>`, `--no-fetch`, `-f/--force`, `--stay`.
+
+### open
+- `repo [remote]`: Open repository homepage.
+- `branch [ref]`: Open tree page for a ref (default: upstream branch).
+- `default-branch [remote]` (`default`): Open default branch tree page.
+- `commit [ref]`: Open commit page (default: `HEAD`).
+- `compare [base] [head]`: Open compare page.
+- `pr [number]`: Open PR/MR page or create/view current-branch PR.
+- `pulls [number]`: Open PR/MR list or specific PR/MR.
+- `issues [number]`: Open issue list or specific issue.
+- `actions [workflow]`: Open GitHub Actions page (GitHub only).
+- `releases [tag]`: Open releases list or specific release tag.
+- `tags [tag]`: Open tags list or specific release tag.
+- `commits [ref]`: Open commits history page.
+- `file <path> [ref]`: Open file blob page.
+- `blame <path> [ref]`: Open blame page.
+- `GIT_OPEN_COLLAB_REMOTE` can override the remote used for collaboration pages (`pr/pulls/issues/actions/releases/tags`).
 
 ## Shell aliases (optional)
 - Zsh aliases live in `completions/zsh/aliases.zsh`.

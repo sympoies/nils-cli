@@ -14,6 +14,7 @@ Groups:
   commit   context | context-json | to-stash
   branch   cleanup
   ci       pick
+  open     repo | branch | default-branch | commit | compare | pr | pulls | issues | actions | releases | tags | commits | file | blame
 
 Help:
   git-cli help
@@ -88,6 +89,21 @@ fn group_help_token_prints_group_usage() {
     assert_eq!(
         output.stdout_text(),
         "Usage: git-cli ci <command> [args]\n  pick\n"
+    );
+}
+
+#[test]
+fn open_group_usage_prints_help_for_group() {
+    let harness = GitCliHarness::new();
+    let dir = tempfile::TempDir::new().expect("tempdir");
+
+    let output = harness.run(dir.path(), &["open"]);
+
+    assert_eq!(output.code, 0);
+    assert_eq!(output.stderr_text(), "");
+    assert_eq!(
+        output.stdout_text(),
+        "Usage: git-cli open <command> [args]\n  repo | branch | default-branch | commit | compare | pr | pulls | issues | actions | releases | tags | commits | file | blame\n"
     );
 }
 

@@ -41,6 +41,7 @@ _nils_cli__has_alias gxr || alias gxr='git-cli reset'
 _nils_cli__has_alias gxc || alias gxc='git-cli commit'
 _nils_cli__has_alias gxb || alias gxb='git-cli branch'
 _nils_cli__has_alias gxi || alias gxi='git-cli ci'
+_nils_cli__has_alias gxo || alias gxo='git-cli open'
 
 _nils_cli__has_alias gxuz || alias gxuz='git-cli utils zip'
 _nils_cli__has_alias gxuc || alias gxuc='git-cli utils copy-staged'
@@ -62,6 +63,21 @@ _nils_cli__has_alias gxcs || alias gxcs='git-cli commit to-stash'
 _nils_cli__has_alias gxbc || alias gxbc='git-cli branch cleanup'
 
 _nils_cli__has_alias gxip || alias gxip='git-cli ci pick'
+
+_nils_cli__has_alias gxor || alias gxor='git-cli open repo'
+_nils_cli__has_alias gxob || alias gxob='git-cli open branch'
+_nils_cli__has_alias gxod || alias gxod='git-cli open default-branch'
+_nils_cli__has_alias gxoc || alias gxoc='git-cli open commit'
+_nils_cli__has_alias gxocp || alias gxocp='git-cli open compare'
+_nils_cli__has_alias gxop || alias gxop='git-cli open pr'
+_nils_cli__has_alias gxopl || alias gxopl='git-cli open pulls'
+_nils_cli__has_alias gxoi || alias gxoi='git-cli open issues'
+_nils_cli__has_alias gxoa || alias gxoa='git-cli open actions'
+_nils_cli__has_alias gxorl || alias gxorl='git-cli open releases'
+_nils_cli__has_alias gxot || alias gxot='git-cli open tags'
+_nils_cli__has_alias gxocs || alias gxocs='git-cli open commits'
+_nils_cli__has_alias gxof || alias gxof='git-cli open file'
+_nils_cli__has_alias gxobl || alias gxobl='git-cli open blame'
 
 # ---------------------------------------------------------------------------
 # codex-cli (cx*)

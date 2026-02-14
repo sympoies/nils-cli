@@ -25,7 +25,7 @@ Each crate is either a standalone CLI binary or a shared library used across the
 ### Git tooling
 
 - [crates/git-scope](crates/git-scope): Git change inspector (tracked/staged/unstaged/untracked/commit) with tree + optional file printing.
-- [crates/git-cli](crates/git-cli): Git tools dispatcher (utils/reset/commit/branch/ci).
+- [crates/git-cli](crates/git-cli): Git tools dispatcher (utils/reset/commit/branch/ci/open).
 - [crates/git-summary](crates/git-summary): Per-author contribution summaries over a date range (adds/dels/net/commits).
 - [crates/git-lock](crates/git-lock): Label-based commit locks per repo (lock/list/diff/unlock/tag).
 

@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::io::{self, Write};
 
 use crate::commit;
-use crate::{branch, ci, reset, utils};
+use crate::{branch, ci, open, reset, utils};
 
 #[derive(Debug, Clone, Copy)]
 enum Group {
@@ -11,6 +11,7 @@ enum Group {
     Commit,
     Branch,
     Ci,
+    Open,
 }
 
 impl Group {
@@ -21,6 +22,7 @@ impl Group {
             "commit" => Some(Self::Commit),
             "branch" => Some(Self::Branch),
             "ci" => Some(Self::Ci),
+            "open" => Some(Self::Open),
             _ => None,
         }
     }
@@ -99,6 +101,14 @@ pub fn dispatch(args: Vec<OsString>) -> i32 {
                 2
             }
         },
+        Some(Group::Open) => match open::dispatch(cmd_raw, &args[2..]) {
+            Some(code) => code,
+            None => {
+                eprintln!("Unknown {group_raw} command: {cmd_raw}");
+                let _ = print_group_usage(group_raw);
+                2
+            }
+        },
         None => {
             eprintln!("Unknown group: {group_raw}");
             print_top_level_usage(&mut io::stdout());
@@ -144,6 +154,15 @@ fn print_group_usage(group_raw: &str) -> i32 {
             writeln!(out, "  pick").ok();
             0
         }
+        Some(Group::Open) => {
+            writeln!(out, "Usage: git-cli open <command> [args]").ok();
+            writeln!(
+                out,
+                "  repo | branch | default-branch | commit | compare | pr | pulls | issues | actions | releases | tags | commits | file | blame"
+            )
+            .ok();
+            0
+        }
         None => {
             eprintln!("Unknown group: {group_raw}");
             print_top_level_usage(&mut out);
@@ -166,6 +185,11 @@ fn print_top_level_usage(out: &mut dyn Write) {
     writeln!(out, "  commit   context | context-json | to-stash").ok();
     writeln!(out, "  branch   cleanup").ok();
     writeln!(out, "  ci       pick").ok();
+    writeln!(
+        out,
+        "  open     repo | branch | default-branch | commit | compare | pr | pulls | issues | actions | releases | tags | commits | file | blame"
+    )
+    .ok();
     writeln!(out).ok();
     writeln!(out, "Help:").ok();
     writeln!(out, "  git-cli help").ok();
@@ -192,6 +216,7 @@ mod tests {
         assert!(matches!(Group::parse("commit"), Some(Group::Commit)));
         assert!(matches!(Group::parse("branch"), Some(Group::Branch)));
         assert!(matches!(Group::parse("ci"), Some(Group::Ci)));
+        assert!(matches!(Group::parse("open"), Some(Group::Open)));
         assert!(Group::parse("unknown").is_none());
     }
 
@@ -209,6 +234,7 @@ mod tests {
         assert_eq!(dispatch(to_args(&["reset", "unknown"])), 2);
         assert_eq!(dispatch(to_args(&["branch", "unknown"])), 2);
         assert_eq!(dispatch(to_args(&["ci", "unknown"])), 2);
+        assert_eq!(dispatch(to_args(&["open", "unknown"])), 2);
     }
 
     #[test]
@@ -223,6 +249,7 @@ mod tests {
         assert_eq!(print_group_usage("commit"), 0);
         assert_eq!(print_group_usage("branch"), 0);
         assert_eq!(print_group_usage("ci"), 0);
+        assert_eq!(print_group_usage("open"), 0);
         assert_eq!(print_group_usage("unknown"), 2);
     }
 

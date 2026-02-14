@@ -31,6 +31,7 @@ fi
 (( $+aliases[gxc] )) || alias gxc='git-cli commit'
 (( $+aliases[gxb] )) || alias gxb='git-cli branch'
 (( $+aliases[gxi] )) || alias gxi='git-cli ci'
+(( $+aliases[gxo] )) || alias gxo='git-cli open'
 
 (( $+aliases[gxuz] )) || alias gxuz='git-cli utils zip'
 (( $+aliases[gxuc] )) || alias gxuc='git-cli utils copy-staged'
@@ -54,6 +55,21 @@ fi
 (( $+aliases[gxbc] )) || alias gxbc='git-cli branch cleanup'
 
 (( $+aliases[gxip] )) || alias gxip='git-cli ci pick'
+
+(( $+aliases[gxor] )) || alias gxor='git-cli open repo'
+(( $+aliases[gxob] )) || alias gxob='git-cli open branch'
+(( $+aliases[gxod] )) || alias gxod='git-cli open default-branch'
+(( $+aliases[gxoc] )) || alias gxoc='git-cli open commit'
+(( $+aliases[gxocp] )) || alias gxocp='git-cli open compare'
+(( $+aliases[gxop] )) || alias gxop='git-cli open pr'
+(( $+aliases[gxopl] )) || alias gxopl='git-cli open pulls'
+(( $+aliases[gxoi] )) || alias gxoi='git-cli open issues'
+(( $+aliases[gxoa] )) || alias gxoa='git-cli open actions'
+(( $+aliases[gxorl] )) || alias gxorl='git-cli open releases'
+(( $+aliases[gxot] )) || alias gxot='git-cli open tags'
+(( $+aliases[gxocs] )) || alias gxocs='git-cli open commits'
+(( $+aliases[gxof] )) || alias gxof='git-cli open file'
+(( $+aliases[gxobl] )) || alias gxobl='git-cli open blame'
 
 # ---------------------------------------------------------------------------
 # codex-cli (cx*)

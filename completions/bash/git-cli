@@ -70,7 +70,7 @@ _nils_cli_git_cli_complete() {
     words[0]="git-cli"
   fi
 
-  local -a root_cmds=(utils reset commit branch ci help)
+  local -a root_cmds=(utils reset commit branch ci open help)
   local -a root_opts=(-h --help)
 
   if (( cword == 1 )); then
@@ -111,6 +111,9 @@ _nils_cli_git_cli_complete() {
         ;;
       ci)
         group_cmds=(pick help)
+        ;;
+      open)
+        group_cmds=(repo branch default-branch default commit compare pr pull-request mr merge-request pulls prs merge-requests mrs issue issues action actions release releases tag tags commits history file blob blame help)
         ;;
     esac
     COMPREPLY=( $(compgen -W "${group_cmds[*]}" -- "$cur") )
@@ -255,6 +258,72 @@ _nils_cli_git_cli_complete() {
           fi
           if [[ "$cur" == -* ]]; then
             COMPREPLY=( $(compgen -W "-r --remote --no-fetch -f --force --stay -h --help" -- "$cur") )
+            return 0
+          fi
+          COMPREPLY=()
+          return 0
+          ;;
+        help)
+          COMPREPLY=()
+          return 0
+          ;;
+      esac
+      ;;
+    open)
+      case "$cmd" in
+        repo|default-branch|default)
+          if (( cword == 3 )); then
+            local remotes
+            remotes="$(command git remote 2>/dev/null || true)"
+            COMPREPLY=( $(compgen -W "${remotes}" -- "$cur") )
+            return 0
+          fi
+          COMPREPLY=()
+          return 0
+          ;;
+        branch|compare|commits|history|commit)
+          if (( cword == 3 || cword == 4 )); then
+            local refs
+            refs="$(command git for-each-ref --format='%(refname:short)' refs/heads refs/remotes refs/tags 2>/dev/null || true)"
+            COMPREPLY=( $(compgen -W "${refs}" -- "$cur") )
+            return 0
+          fi
+          COMPREPLY=()
+          return 0
+          ;;
+        pr|pull-request|mr|merge-request|pulls|prs|merge-requests|mrs|issues|issue)
+          COMPREPLY=()
+          return 0
+          ;;
+        actions|action)
+          if (( cword == 3 )); then
+            local workflows
+            workflows="$(command git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml' 2>/dev/null || true)"
+            COMPREPLY=( $(compgen -W "${workflows}" -- "$cur") )
+            return 0
+          fi
+          COMPREPLY=()
+          return 0
+          ;;
+        releases|release|tags|tag)
+          if (( cword == 3 )); then
+            local tags
+            tags="$(command git tag --sort=-creatordate 2>/dev/null || true)"
+            COMPREPLY=( $(compgen -W "${tags}" -- "$cur") )
+            return 0
+          fi
+          COMPREPLY=()
+          return 0
+          ;;
+        file|blob|blame)
+          if (( cword == 3 )); then
+            COMPREPLY=( $(compgen -f -- "$cur") )
+            return 0
+          fi
+          if (( cword == 4 )); then
+            local refs
+            refs="$(command git for-each-ref --format='%(refname:short)' refs/heads refs/remotes refs/tags 2>/dev/null || true)"
+            COMPREPLY=( $(compgen -W "${refs}" -- "$cur") )
             return 0
           fi
           COMPREPLY=()

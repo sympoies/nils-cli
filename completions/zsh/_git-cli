@@ -120,6 +120,7 @@ _git-cli() {
     'commit:Commit helpers'
     'branch:Branch helpers'
     'ci:CI helpers'
+    'open:Open remote pages'
     'help:Display help message for git-cli'
   )
 
@@ -148,7 +149,7 @@ _git-cli() {
 
   case "$group" in
     '')
-      _message 'group (utils|reset|commit|branch|ci)'
+      _message 'group (utils|reset|commit|branch|ci|open)'
       return 0
       ;;
     help|-h|--help)
@@ -213,6 +214,38 @@ _git-cli() {
         cmds=(
           'pick:Cherry-pick into CI branch'
           'help:Display help message for ci'
+        )
+        ;;
+      open)
+        cmds=(
+          'repo:Open repository page'
+          'branch:Open branch tree page'
+          'default-branch:Open default branch tree page'
+          'default:Alias for default-branch'
+          'commit:Open commit page'
+          'compare:Open compare page'
+          'pr:Open pull or merge request page'
+          'pull-request:Alias for pr'
+          'mr:Alias for pr'
+          'merge-request:Alias for pr'
+          'pulls:Open pull or merge request list'
+          'prs:Alias for pulls'
+          'merge-requests:Alias for pulls'
+          'mrs:Alias for pulls'
+          'issue:Alias for issues'
+          'issues:Open issues list/page'
+          'action:Alias for actions'
+          'actions:Open actions page'
+          'release:Alias for releases'
+          'releases:Open releases list/page'
+          'tag:Alias for tags'
+          'tags:Open tags list/page'
+          'commits:Open commit history page'
+          'history:Alias for commits'
+          'file:Open file page'
+          'blob:Alias for file'
+          'blame:Open blame page'
+          'help:Display help message for open'
         )
         ;;
     esac
@@ -465,6 +498,80 @@ _git-cli() {
             _message 'name'
             return 0
           fi
+          return 0
+          ;;
+        help)
+          _message 'no more arguments'
+          return 0
+          ;;
+      esac
+      ;;
+    open)
+      case "$cmd" in
+        repo|default-branch|default)
+          if (( orig_current == arg_start )); then
+            local -a remotes=()
+            remotes=(${(f)"$(command git remote 2>/dev/null || true)"})
+            (( ${#remotes[@]} > 0 )) && _describe -t remotes 'remote' remotes
+            return 0
+          fi
+          _message 'no more arguments'
+          return 0
+          ;;
+        branch|compare|commits|history|commit)
+          if (( orig_current == arg_start || orig_current == arg_start + 1 )); then
+            local -a refs=()
+            refs=(${(f)"$(command git for-each-ref --format='%(refname:short)' refs/heads refs/remotes refs/tags 2>/dev/null || true)"})
+            (( ${#refs[@]} > 0 )) && _describe -t refs 'ref' refs
+            return 0
+          fi
+          _message 'no more arguments'
+          return 0
+          ;;
+        pr|pull-request|mr|merge-request|pulls|prs|merge-requests|mrs|issues|issue)
+          if (( orig_current == arg_start )); then
+            _message 'number'
+            return 0
+          fi
+          _message 'no more arguments'
+          return 0
+          ;;
+        actions|action)
+          if (( orig_current == arg_start )); then
+            local -a workflows=()
+            workflows=(${(f)"$(command git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml' 2>/dev/null || true)"})
+            (( ${#workflows[@]} > 0 )) && _describe -t workflows 'workflow' workflows
+            _message 'workflow'
+            return 0
+          fi
+          _message 'no more arguments'
+          return 0
+          ;;
+        releases|release|tags|tag)
+          if (( orig_current == arg_start )); then
+            local -a tags=()
+            tags=(${(f)"$(command git tag --sort=-creatordate 2>/dev/null || true)"})
+            (( ${#tags[@]} > 0 )) && _describe -t tags 'tag' tags
+            _message 'tag'
+            return 0
+          fi
+          _message 'no more arguments'
+          return 0
+          ;;
+        file|blob|blame)
+          if (( orig_current == arg_start )); then
+            _files && return 0
+            _message 'path'
+            return 0
+          fi
+          if (( orig_current == arg_start + 1 )); then
+            local -a refs=()
+            refs=(${(f)"$(command git for-each-ref --format='%(refname:short)' refs/heads refs/remotes refs/tags 2>/dev/null || true)"})
+            (( ${#refs[@]} > 0 )) && _describe -t refs 'ref' refs
+            _message 'ref'
+            return 0
+          fi
+          _message 'no more arguments'
           return 0
           ;;
         help)
