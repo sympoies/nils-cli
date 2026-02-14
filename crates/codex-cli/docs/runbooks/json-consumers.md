@@ -3,7 +3,7 @@
 ## Scope
 This runbook is for frontend/service callers that consume `codex-cli` machine output for:
 - `diag rate-limits` (single/all/async)
-- `auth login|use|save|refresh|auto-refresh|current|sync`
+- `auth login|use|save|remove|refresh|auto-refresh|current|sync`
 
 Contract source of truth:
 - `crates/codex-cli/docs/specs/codex-cli-diag-auth-json-contract-v1.md`
@@ -16,8 +16,9 @@ Contract source of truth:
 2. Parse JSON `stdout` only; do not parse prose `stderr`.
 3. Validate stable envelope keys first: `schema_version`, `command`, `ok`.
 4. Parse `result` for single-entity responses and `results` for collection responses.
-5. Route by `command` (`diag rate-limits`, `auth login`, `auth use`, `auth save`, `auth refresh`,
-   `auth auto-refresh`, `auth current`, `auth sync`) and ignore unknown additive fields.
+5. Route by `command` (`diag rate-limits`, `auth login`, `auth use`, `auth save`, `auth remove`,
+   `auth refresh`, `auth auto-refresh`, `auth current`, `auth sync`) and ignore unknown additive
+   fields.
 6. Enforce schema routing:
    - `diag rate-limits` => `schema_version=codex-cli.diag.rate-limits.v1`
    - `auth *` => `schema_version=codex-cli.auth.v1`
@@ -34,6 +35,9 @@ Contract source of truth:
 - `auth save` overwrite handling:
   - success path: check `result.overwritten` (`false` = new file, `true` = replaced existing file)
   - confirmation-required path: `ok=false`, `error.code=overwrite-confirmation-required`
+- `auth remove` confirmation handling:
+  - success path: check `result.removed=true`
+  - confirmation-required path: `ok=false`, `error.code=remove-confirmation-required`
 - `auth current` secret directory resolution errors are command-level failures:
   - `error.code=secret-dir-not-configured|secret-dir-not-found|secret-dir-read-failed`
   - treat these as configuration/operational errors, not as `secret-not-matched`.
@@ -48,6 +52,7 @@ codex-cli auth login --format json --device-code
 codex-cli auth login --format json --api-key
 codex-cli auth save --format json team-alpha.json
 codex-cli auth save --format json --yes team-alpha.json
+codex-cli auth remove --format json --yes team-alpha.json
 codex-cli auth auto-refresh --format json
 codex-cli auth current --format json
 ```

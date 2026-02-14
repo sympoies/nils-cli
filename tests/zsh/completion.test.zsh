@@ -576,6 +576,11 @@ grep -q "save:Save CODEX_AUTH_FILE" "$COMP_CODEX_CLI_FILE" || {
   exit 1
 }
 
+grep -q "remove:Remove SECRET_JSON" "$COMP_CODEX_CLI_FILE" || {
+  print -u2 -r -- "FAIL: codex-cli completion missing auth remove command"
+  exit 1
+}
+
 grep -q -- "--api-key\\[" "$COMP_CODEX_CLI_FILE" || {
   print -u2 -r -- "FAIL: codex-cli completion missing --api-key"
   exit 1

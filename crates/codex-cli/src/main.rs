@@ -97,6 +97,13 @@ fn handle_auth(args: &cli::AuthArgs) -> i32 {
             }
             auth::save::run_with_json(&args[0], *yes, output.is_json()).unwrap_or(1)
         }
+        Some(cli::AuthCommand::Remove { output, yes, args }) => {
+            if args.len() != 1 || args[0].is_empty() {
+                eprintln!("codex-remove: usage: codex-remove [--yes] <secret.json>");
+                return 64;
+            }
+            auth::remove::run_with_json(&args[0], *yes, output.is_json()).unwrap_or(1)
+        }
         Some(cli::AuthCommand::Refresh { output, args }) => {
             if args.len() > 1 {
                 eprintln!("codex-refresh: usage: codex-refresh-auth [secret.json]");

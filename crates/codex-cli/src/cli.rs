@@ -120,6 +120,16 @@ pub enum AuthCommand {
         #[arg(value_name = "secret", num_args = 0..)]
         args: Vec<String>,
     },
+    /// Remove SECRET_JSON from CODEX_SECRET_DIR
+    Remove {
+        #[command(flatten)]
+        output: OutputModeArgs,
+        /// Remove target file without prompt (non-interactive)
+        #[arg(short = 'y', long = "yes")]
+        yes: bool,
+        #[arg(value_name = "secret", num_args = 0..)]
+        args: Vec<String>,
+    },
     /// Refresh OAuth tokens
     Refresh {
         #[command(flatten)]

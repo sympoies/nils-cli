@@ -30,6 +30,12 @@ pub struct AuthSaveResult {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct AuthRemoveResult {
+    pub target_file: String,
+    pub removed: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct AuthRefreshResult {
     pub target_file: String,
     pub refreshed: bool,

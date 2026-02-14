@@ -12,7 +12,7 @@ Usage:
 
 Groups:
   agent    prompt | advice | knowledge | commit
-  auth     login | use | save | refresh | auto-refresh | current | sync
+  auth     login | use | save | remove | refresh | auto-refresh | current | sync
   diag     rate-limits
   config   show | set
   starship (options)
@@ -48,6 +48,7 @@ Help:
 - `login [--api-key|--device-code]`: Login via ChatGPT browser flow (`chatgpt-browser`, default), ChatGPT device-code flow (`chatgpt-device-code`), or API key flow (`api-key`). `--api-key` and `--device-code` are mutually exclusive (`64` on invalid usage).
 - `use <name|email>`: Switch to a secret by name or email.
 - `save [--yes] <secret.json>`: Save active `CODEX_AUTH_FILE` into `CODEX_SECRET_DIR` with an explicit file name. If target exists, interactive mode prompts for overwrite; non-interactive and JSON mode require `--yes` to overwrite.
+- `remove [--yes] <secret.json>`: Remove a secret file from `CODEX_SECRET_DIR`. Interactive mode prompts for confirmation; non-interactive and JSON mode require `--yes`.
 - `refresh [secret.json]`: Refresh OAuth tokens.
 - `auto-refresh`: Refresh stale tokens across auth + secrets.
 - `current`: Show which secret matches `CODEX_AUTH_FILE`.
@@ -59,6 +60,7 @@ Auth examples:
 - `codex-cli auth login --api-key`: OpenAI API key login.
 - `codex-cli auth save team-alpha.json`: Save and prompt before overwrite when applicable.
 - `codex-cli auth save --yes team-alpha.json`: Force overwrite without prompt.
+- `codex-cli auth remove --yes team-alpha.json`: Remove a saved secret file.
 
 ### diag
 - `rate-limits [options] [secret.json]`: Rate-limit diagnostics. Options: `-c`, `-d/--debug`, `--cached`, `--no-refresh-auth`, `--json`, `--one-line`, `--all`, `--async`, `--jobs <n>`.
@@ -77,7 +79,7 @@ Auth examples:
 - Contract spec: `docs/specs/codex-cli-diag-auth-json-contract-v1.md`
 - Consumer runbook: `docs/runbooks/json-consumers.md`
 - Covered surfaces: `diag rate-limits` (single/all/async) and
-  `auth login|use|save|refresh|auto-refresh|current|sync`.
+  `auth login|use|save|remove|refresh|auto-refresh|current|sync`.
 
 ## Environment
 - `CODEX_ALLOW_DANGEROUS_ENABLED=true` is required for `agent` commands.
