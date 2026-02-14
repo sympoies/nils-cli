@@ -195,6 +195,7 @@ _codex-cli() {
         'login:Login with ChatGPT (browser/device-code) or API key'
         'use:Switch to a secret by name or email'
         'save:Save CODEX_AUTH_FILE into CODEX_SECRET_DIR'
+        'remove:Remove SECRET_JSON from CODEX_SECRET_DIR'
         'refresh:Refresh OAuth tokens'
         'auto-refresh:Refresh stale tokens across auth + secrets'
         'current:Show which secret matches CODEX_AUTH_FILE'
@@ -248,6 +249,16 @@ _codex-cli() {
             '1:secret file name:' \
             && return 0
           ;;
+        remove)
+          _arguments -C \
+            '(-h --help)'{-h,--help}'[Show help]' \
+            '--format=[Output format (text or json)]:format:(text json)' \
+            '--json[Output machine-readable JSON]' \
+            '(-y --yes)--yes[Remove target file without prompt]' \
+            '(--yes -y)-y[Remove target file without prompt]' \
+            '1:secret file name:' \
+            && return 0
+          ;;
         refresh)
           _arguments -C \
             '(-h --help)'{-h,--help}'[Show help]' \
@@ -266,7 +277,7 @@ _codex-cli() {
           return 0
           ;;
         '')
-          _message 'auth command (login|use|save|refresh|auto-refresh|current|sync)'
+          _message 'auth command (login|use|save|remove|refresh|auto-refresh|current|sync)'
           return 0
           ;;
         *)

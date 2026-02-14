@@ -526,6 +526,58 @@ fn auth_json_contract_save_overwrite_requires_confirmation() {
 }
 
 #[test]
+fn auth_json_contract_remove_success_includes_stable_fields() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let secrets = dir.path().join("secrets");
+    fs::create_dir_all(&secrets).expect("secrets");
+    fs::write(
+        secrets.join("alpha.json"),
+        r#"{"tokens":{"access_token":"tok-old"}}"#,
+    )
+    .expect("write target");
+
+    let output = run(
+        &["auth", "remove", "--json", "--yes", "alpha.json"],
+        &[("CODEX_SECRET_DIR", &secrets)],
+    );
+    assert_eq!(output.code, 0);
+
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["schema_version"], "codex-cli.auth.v1");
+    assert_eq!(payload["command"], "auth remove");
+    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["result"]["removed"], true);
+    assert_eq!(
+        payload["result"]["target_file"],
+        secrets.join("alpha.json").display().to_string()
+    );
+}
+
+#[test]
+fn auth_json_contract_remove_requires_confirmation() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let secrets = dir.path().join("secrets");
+    fs::create_dir_all(&secrets).expect("secrets");
+    fs::write(
+        secrets.join("alpha.json"),
+        r#"{"tokens":{"access_token":"tok-old"}}"#,
+    )
+    .expect("write target");
+
+    let output = run(
+        &["auth", "remove", "--json", "alpha.json"],
+        &[("CODEX_SECRET_DIR", &secrets)],
+    );
+    assert_eq!(output.code, 1);
+
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["schema_version"], "codex-cli.auth.v1");
+    assert_eq!(payload["command"], "auth remove");
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"]["code"], "remove-confirmation-required");
+}
+
+#[test]
 fn auth_json_contract_auto_refresh_invalid_min_days_is_structured() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let auth_file = dir.path().join("auth.json");

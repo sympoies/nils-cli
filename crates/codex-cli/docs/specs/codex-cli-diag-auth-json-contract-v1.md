@@ -4,7 +4,7 @@
 This document extends `docs/specs/cli-service-json-contract-guideline-v1.md` for service-consumed
 JSON output from:
 - `codex-cli diag rate-limits` (single/all/async)
-- `codex-cli auth login|use|save|refresh|auto-refresh|current|sync`
+- `codex-cli auth login|use|save|remove|refresh|auto-refresh|current|sync`
 
 Human-readable output remains the default UX. JSON mode must be explicit (`--format json` or
 `--json` where supported for compatibility).
@@ -18,6 +18,7 @@ Human-readable output remains the default UX. JSON mode must be explicit (`--for
 | auth login | `auth login` | `codex-cli.auth.v1` | `result` |
 | auth use | `auth use` | `codex-cli.auth.v1` | `result` |
 | auth save | `auth save` | `codex-cli.auth.v1` | `result` |
+| auth remove | `auth remove` | `codex-cli.auth.v1` | `result` |
 | auth refresh | `auth refresh` | `codex-cli.auth.v1` | `result` |
 | auth auto-refresh | `auth auto-refresh` | `codex-cli.auth.v1` | `result` |
 | auth current | `auth current` | `codex-cli.auth.v1` | `result` |
@@ -75,6 +76,7 @@ Stable (safe for strict parsing):
   - `auth use`: `target`, `matched_secret`, `applied`, `auth_file`
   - `auth save`: `auth_file`, `target_file`, `saved`, `overwritten`
     (`true` when an existing target file is replaced)
+  - `auth remove`: `target_file`, `removed`
   - `auth refresh`: `target_file`, `refreshed`, `synced`, `refreshed_at`
   - `auth auto-refresh`: `refreshed`, `skipped`, `failed`, `min_age_days`, `targets[*]`
   - `auth current`: `auth_file`, `matched`, `matched_secret`, `match_mode`
@@ -240,6 +242,36 @@ Informational (do not hard-depend for schema validation):
     "details": {
       "target_file": "/home/user/.codex/secrets/team-alpha.json",
       "overwritten": false
+    }
+  }
+}
+```
+
+### auth remove (success)
+```json
+{
+  "schema_version": "codex-cli.auth.v1",
+  "command": "auth remove",
+  "ok": true,
+  "result": {
+    "target_file": "/home/user/.codex/secrets/team-alpha.json",
+    "removed": true
+  }
+}
+```
+
+### auth remove (confirmation required, failure)
+```json
+{
+  "schema_version": "codex-cli.auth.v1",
+  "command": "auth remove",
+  "ok": false,
+  "error": {
+    "code": "remove-confirmation-required",
+    "message": "codex-remove: /home/user/.codex/secrets/team-alpha.json exists; rerun with --yes to remove",
+    "details": {
+      "target_file": "/home/user/.codex/secrets/team-alpha.json",
+      "removed": false
     }
   }
 }
