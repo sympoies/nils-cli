@@ -431,10 +431,33 @@ if (( ! $+aliases[gxip] )); then
   exit 1
 fi
 
+if (( ! $+aliases[gxo] )); then
+  print -u2 -r -- "FAIL: gxo alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[gxop] )); then
+  print -u2 -r -- "FAIL: gxop alias not defined"
+  exit 1
+fi
+
+if (( ! $+aliases[gxobl] )); then
+  print -u2 -r -- "FAIL: gxobl alias not defined"
+  exit 1
+fi
+
 if (( ! $+functions[gxur] )); then
   print -u2 -r -- "FAIL: gxur function not defined"
   exit 1
 fi
+
+git_cli_compdef_tail="$(tail -n 6 "$COMP_GIT_CLI_FILE" | tr '\n' ' ')"
+for open_alias in gxo gxor gxob gxod gxoc gxocp gxop gxopl gxoi gxoa gxorl gxot gxocs gxof gxobl; do
+  if [[ " $git_cli_compdef_tail " != *" $open_alias "* ]]; then
+    print -u2 -r -- "FAIL: git-cli completion missing alias mapping for $open_alias"
+    exit 1
+  fi
+done
 
 if (( ! $+aliases[cx] )); then
   print -u2 -r -- "FAIL: cx alias not defined"
@@ -801,10 +824,40 @@ bash -c "set -euo pipefail; source \"$BASH_LOCK_FILE\"; complete -p git-lock | g
   exit 1
 }
 
-bash -c "set -euo pipefail; source \"$BASH_GIT_CLI_FILE\"; complete -p git-cli | grep -q _nils_cli_git_cli_complete; complete -p gx | grep -q _nils_cli_git_cli_complete" || {
+bash -c "set -euo pipefail; source \"$BASH_GIT_CLI_FILE\"; complete -p git-cli | grep -q _nils_cli_git_cli_complete; complete -p gx | grep -q _nils_cli_git_cli_complete; complete -p gxo | grep -q _nils_cli_git_cli_complete; complete -p gxop | grep -q _nils_cli_git_cli_complete; complete -p gxobl | grep -q _nils_cli_git_cli_complete" || {
   print -u2 -r -- "FAIL: failed to source bash git-cli completion file"
   exit 1
 }
+
+bash_git_cli_complete_tail="$(tail -n 6 "$BASH_GIT_CLI_FILE" | tr '\n' ' ')"
+for open_alias in gxo gxor gxob gxod gxoc gxocp gxop gxopl gxoi gxoa gxorl gxot gxocs gxof gxobl; do
+  if [[ " $bash_git_cli_complete_tail " != *" $open_alias "* ]]; then
+    print -u2 -r -- "FAIL: bash git-cli completion missing alias mapping for $open_alias"
+    exit 1
+  fi
+done
+
+for case_expect in \
+  "gxo) inject=(open)" \
+  "gxor) inject=(open repo)" \
+  "gxob) inject=(open branch)" \
+  "gxod) inject=(open default-branch)" \
+  "gxoc) inject=(open commit)" \
+  "gxocp) inject=(open compare)" \
+  "gxop) inject=(open pr)" \
+  "gxopl) inject=(open pulls)" \
+  "gxoi) inject=(open issues)" \
+  "gxoa) inject=(open actions)" \
+  "gxorl) inject=(open releases)" \
+  "gxot) inject=(open tags)" \
+  "gxocs) inject=(open commits)" \
+  "gxof) inject=(open file)" \
+  "gxobl) inject=(open blame)"; do
+  grep -q "$case_expect" "$BASH_GIT_CLI_FILE" || {
+    print -u2 -r -- "FAIL: bash git-cli completion missing invoked_as mapping: $case_expect"
+    exit 1
+  }
+done
 
 bash -c "set -euo pipefail; source \"$BASH_FZF_CLI_FILE\"; complete -p fzf-cli | grep -q _nils_cli_fzf_cli_complete; complete -p fx | grep -q _nils_cli_fzf_cli_complete" || {
   print -u2 -r -- "FAIL: failed to source bash fzf-cli completion file"

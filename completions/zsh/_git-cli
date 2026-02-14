@@ -1,6 +1,7 @@
-#compdef git-cli gx gxh gxu gxr gxc gxb gxi \
+#compdef git-cli gx gxh gxu gxr gxc gxb gxi gxo \
 #  gxuz gxuc gxur gxuh gxrs gxrm gxrh gxru gxrbh gxrbc gxrr \
-#  gxcc gxcj gxcs gxbc gxip
+#  gxcc gxcj gxcs gxbc gxip \
+#  gxor gxob gxod gxoc gxocp gxop gxopl gxoi gxoa gxorl gxot gxocs gxof gxobl
 
 __git_cli_commit_hashes() {
   emulate -L zsh -o extendedglob
@@ -46,6 +47,9 @@ _git-cli() {
       ;;
     gxi)
       group_override='ci'
+      ;;
+    gxo)
+      group_override='open'
       ;;
     gxuz)
       group_override='utils'
@@ -110,6 +114,62 @@ _git-cli() {
     gxip)
       group_override='ci'
       cmd_override='pick'
+      ;;
+    gxor)
+      group_override='open'
+      cmd_override='repo'
+      ;;
+    gxob)
+      group_override='open'
+      cmd_override='branch'
+      ;;
+    gxod)
+      group_override='open'
+      cmd_override='default-branch'
+      ;;
+    gxoc)
+      group_override='open'
+      cmd_override='commit'
+      ;;
+    gxocp)
+      group_override='open'
+      cmd_override='compare'
+      ;;
+    gxop)
+      group_override='open'
+      cmd_override='pr'
+      ;;
+    gxopl)
+      group_override='open'
+      cmd_override='pulls'
+      ;;
+    gxoi)
+      group_override='open'
+      cmd_override='issues'
+      ;;
+    gxoa)
+      group_override='open'
+      cmd_override='actions'
+      ;;
+    gxorl)
+      group_override='open'
+      cmd_override='releases'
+      ;;
+    gxot)
+      group_override='open'
+      cmd_override='tags'
+      ;;
+    gxocs)
+      group_override='open'
+      cmd_override='commits'
+      ;;
+    gxof)
+      group_override='open'
+      cmd_override='file'
+      ;;
+    gxobl)
+      group_override='open'
+      cmd_override='blame'
       ;;
   esac
 
@@ -586,6 +646,7 @@ _git-cli() {
   _message 'git-cli <group> <command> [args]'
 }
 
-compdef _git-cli git-cli gx gxh gxu gxr gxc gxb gxi \
+compdef _git-cli git-cli gx gxh gxu gxr gxc gxb gxi gxo \
   gxuz gxuc gxur gxuh gxrs gxrm gxrh gxru gxrbh gxrbc gxrr \
-  gxcc gxcj gxcs gxbc gxip
+  gxcc gxcj gxcs gxbc gxip \
+  gxor gxob gxod gxoc gxocp gxop gxopl gxoi gxoa gxorl gxot gxocs gxof gxobl

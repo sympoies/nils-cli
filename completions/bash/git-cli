@@ -43,6 +43,7 @@ _nils_cli_git_cli_complete() {
     gxc) inject=(commit) ;;
     gxb) inject=(branch) ;;
     gxi) inject=(ci) ;;
+    gxo) inject=(open) ;;
     gxuz) inject=(utils zip) ;;
     gxuc) inject=(utils copy-staged) ;;
     gxur) inject=(utils root) ;;
@@ -59,6 +60,20 @@ _nils_cli_git_cli_complete() {
     gxcs) inject=(commit to-stash) ;;
     gxbc) inject=(branch cleanup) ;;
     gxip) inject=(ci pick) ;;
+    gxor) inject=(open repo) ;;
+    gxob) inject=(open branch) ;;
+    gxod) inject=(open default-branch) ;;
+    gxoc) inject=(open commit) ;;
+    gxocp) inject=(open compare) ;;
+    gxop) inject=(open pr) ;;
+    gxopl) inject=(open pulls) ;;
+    gxoi) inject=(open issues) ;;
+    gxoa) inject=(open actions) ;;
+    gxorl) inject=(open releases) ;;
+    gxot) inject=(open tags) ;;
+    gxocs) inject=(open commits) ;;
+    gxof) inject=(open file) ;;
+    gxobl) inject=(open blame) ;;
   esac
 
   if (( ${#inject[@]} > 0 )); then
@@ -340,6 +355,7 @@ _nils_cli_git_cli_complete() {
   COMPREPLY=()
 }
 
-complete -F _nils_cli_git_cli_complete git-cli gx gxh gxu gxr gxc gxb gxi \
+complete -F _nils_cli_git_cli_complete git-cli gx gxh gxu gxr gxc gxb gxi gxo \
   gxuz gxuc gxur gxuh gxrs gxrm gxrh gxru gxrbh gxrbc gxrr \
-  gxcc gxcj gxcs gxbc gxip
+  gxcc gxcj gxcs gxbc gxip \
+  gxor gxob gxod gxoc gxocp gxop gxopl gxoi gxoa gxorl gxot gxocs gxof gxobl
