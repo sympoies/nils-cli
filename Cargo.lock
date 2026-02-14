@@ -245,9 +245,9 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "bitflags"
-version = "2.10.0"
+version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
+checksum = "843867be96c8daad0d758b57df9392b6d8d271134fce549de6ce169ff98a92af"
 
 [[package]]
 name = "block-buffer"
@@ -1522,7 +1522,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-docs"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "clap",
@@ -1536,7 +1536,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-provider-claude"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "nils-agent-runtime-core",
  "pretty_assertions",
@@ -1545,7 +1545,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-provider-codex"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "nils-agent-runtime-core",
  "nils-codex-cli",
@@ -1557,7 +1557,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-provider-gemini"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "nils-agent-runtime-core",
  "pretty_assertions",
@@ -1566,7 +1566,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-runtime-core"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "pretty_assertions",
  "serde",
@@ -1575,7 +1575,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agentctl"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "clap",
  "nils-agent-provider-claude",
@@ -1591,7 +1591,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-gql"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "clap",
@@ -1605,7 +1605,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-rest"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "base64",
@@ -1620,7 +1620,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-test"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "clap",
@@ -1635,7 +1635,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-testing-core"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "base64",
@@ -1656,7 +1656,7 @@ dependencies = [
 
 [[package]]
 name = "nils-cli-template"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "clap",
@@ -1670,7 +1670,7 @@ dependencies = [
 
 [[package]]
 name = "nils-codex-cli"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "base64",
@@ -1689,7 +1689,7 @@ dependencies = [
 
 [[package]]
 name = "nils-common"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "nils-test-support",
  "pretty_assertions",
@@ -1698,7 +1698,7 @@ dependencies = [
 
 [[package]]
 name = "nils-fzf-cli"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "nils-common",
@@ -1713,7 +1713,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-cli"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "nils-common",
@@ -1727,7 +1727,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-lock"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1741,7 +1741,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-scope"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "clap",
@@ -1753,7 +1753,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-summary"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1766,7 +1766,7 @@ dependencies = [
 
 [[package]]
 name = "nils-image-processing"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1789,7 +1789,7 @@ dependencies = [
 
 [[package]]
 name = "nils-macos-agent"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "clap",
  "image",
@@ -1805,7 +1805,7 @@ dependencies = [
 
 [[package]]
 name = "nils-memo-cli"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1820,7 +1820,7 @@ dependencies = [
 
 [[package]]
 name = "nils-plan-tooling"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "nils-common",
@@ -1834,7 +1834,7 @@ dependencies = [
 
 [[package]]
 name = "nils-screen-record"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "block2",
  "chrono",
@@ -1860,7 +1860,7 @@ dependencies = [
 
 [[package]]
 name = "nils-semantic-commit"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "nils-common",
@@ -1874,7 +1874,7 @@ dependencies = [
 
 [[package]]
 name = "nils-term"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "indicatif",
  "pretty_assertions",
@@ -1882,7 +1882,7 @@ dependencies = [
 
 [[package]]
 name = "nils-test-support"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "pretty_assertions",
  "serde",
@@ -2288,9 +2288,9 @@ checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 
 [[package]]
 name = "png"
-version = "0.18.0"
+version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97baced388464909d42d89643fe4361939af9b7ce7a31ee32a168f832a70f2a0"
+checksum = "60769b8b31b2a9f263dae2776c37b1b28ae246943cf719eb6946a1db05128a61"
 dependencies = [
  "bitflags",
  "crc32fast",
@@ -3513,11 +3513,11 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.20.0"
+version = "1.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee48d38b119b0cd71fe4141b30f5ba9c7c5d9f4e7a3a8b4a674e4b6ef789976f"
+checksum = "b672338555252d43fd2240c714dc444b8c6fb0a5c5335e65a07bba7742735ddb"
 dependencies = [
- "getrandom 0.3.4",
+ "getrandom 0.4.1",
  "js-sys",
  "serde_core",
  "wasm-bindgen",
