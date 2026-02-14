@@ -1019,6 +1019,10 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
     #[test]
     fn normalize_remote_url_supports_common_git_forms() {
         assert_eq!(
@@ -1112,5 +1116,133 @@ mod tests {
         assert_eq!(parse_positive_number("#123", "PR"), Ok("123".to_string()));
         assert_eq!(parse_positive_number("42", "issue"), Ok("42".to_string()));
         assert_eq!(parse_positive_number("abc", "PR"), Err(2));
+    }
+
+    #[test]
+    fn open_commands_reject_too_many_args_before_git_lookups() {
+        assert_eq!(open_repo(&args(&["origin", "extra"])), 2);
+        assert_eq!(open_branch(&args(&["main", "extra"])), 2);
+        assert_eq!(open_default_branch(&args(&["origin", "extra"])), 2);
+        assert_eq!(open_commit(&args(&["HEAD", "extra"])), 2);
+        assert_eq!(open_compare(&args(&["base", "head", "extra"])), 2);
+        assert_eq!(open_pr(&args(&["1", "extra"])), 2);
+        assert_eq!(open_pulls(&args(&["1", "extra"])), 2);
+        assert_eq!(open_issues(&args(&["1", "extra"])), 2);
+        assert_eq!(open_actions(&args(&["ci.yml", "extra"])), 2);
+        assert_eq!(open_releases(&args(&["v1.0.0", "extra"])), 2);
+        assert_eq!(open_tags(&args(&["v1.0.0", "extra"])), 2);
+        assert_eq!(open_commits(&args(&["main", "extra"])), 2);
+        assert_eq!(open_file(&args(&["src/lib.rs", "main", "extra"])), 2);
+        assert_eq!(open_blame(&args(&["src/lib.rs", "main", "extra"])), 2);
+    }
+
+    #[test]
+    fn open_commands_help_paths_return_zero_without_repo() {
+        assert_eq!(open_repo(&args(&["--help"])), 0);
+        assert_eq!(open_branch(&args(&["-h"])), 0);
+        assert_eq!(open_default_branch(&args(&["help"])), 0);
+        assert_eq!(open_commit(&args(&["--help"])), 0);
+        assert_eq!(open_pr(&args(&["help"])), 0);
+        assert_eq!(open_actions(&args(&["--help"])), 0);
+        assert_eq!(open_releases(&args(&["--help"])), 0);
+        assert_eq!(open_tags(&args(&["--help"])), 0);
+        assert_eq!(open_commits(&args(&["--help"])), 0);
+    }
+
+    #[test]
+    fn open_file_and_blame_require_path_argument() {
+        assert_eq!(open_file(&args(&[])), 2);
+        assert_eq!(open_blame(&args(&[])), 2);
+    }
+
+    #[test]
+    fn normalize_remote_url_handles_additional_variants() {
+        assert_eq!(
+            normalize_remote_url_from_raw("https://token@github.com/acme/repo.git"),
+            Some("https://github.com/acme/repo".to_string())
+        );
+        assert_eq!(
+            normalize_remote_url_from_raw("ssh://git@gitlab.com"),
+            Some("https://gitlab.com".to_string())
+        );
+        assert_eq!(
+            normalize_remote_url_from_raw("git://gitlab.com/group/repo.git"),
+            Some("https://gitlab.com/group/repo".to_string())
+        );
+        assert_eq!(
+            normalize_remote_url_from_raw("git@github.com:acme/repo"),
+            Some("https://github.com/acme/repo".to_string())
+        );
+        assert_eq!(
+            normalize_remote_url_from_raw("user@gitlab.com/acme/repo.git"),
+            Some("https://gitlab.com/acme/repo".to_string())
+        );
+        assert_eq!(normalize_remote_url_from_raw("ssh://git@/acme/repo"), None);
+        assert_eq!(normalize_remote_url_from_raw("file:///tmp/repo.git"), None);
+    }
+
+    #[test]
+    fn helper_functions_cover_url_and_path_variants() {
+        assert_eq!(normalize_repo_path("./docs/read me.md"), "docs/read me.md");
+        assert_eq!(normalize_repo_path("/src/lib.rs"), "src/lib.rs");
+        assert!(is_yaml_workflow("ci.yml"));
+        assert!(is_yaml_workflow("ci.yaml"));
+        assert!(!is_yaml_workflow("ci.json"));
+        assert_eq!(strip_userinfo("git@github.com"), "github.com");
+        assert_eq!(
+            host_from_url("HTTPS://User@Example.COM/repo"),
+            "user@example.com"
+        );
+        assert_eq!(trim_trailing_newlines("line\r\n"), "line");
+        assert!(is_help_token("help"));
+        assert!(!is_help_token("--version"));
+        assert_eq!(
+            github_repo_slug("github.com/acme/repo"),
+            Some("acme/repo".to_string())
+        );
+        assert_eq!(github_repo_slug("https://github.com"), None);
+    }
+
+    #[test]
+    fn remaining_url_builders_cover_gitlab_and_generic_paths() {
+        assert_eq!(
+            commit_url(
+                Provider::Generic,
+                "https://code.example.com/acme/repo",
+                "abc123"
+            ),
+            "https://code.example.com/acme/repo/commit/abc123"
+        );
+        assert_eq!(
+            compare_url(
+                Provider::Gitlab,
+                "https://gitlab.com/acme/repo",
+                "main",
+                "feature"
+            ),
+            "https://gitlab.com/acme/repo/-/compare/main...feature"
+        );
+        assert_eq!(
+            blob_url(
+                Provider::Gitlab,
+                "https://gitlab.com/acme/repo",
+                "main",
+                "dir/file name.rs"
+            ),
+            "https://gitlab.com/acme/repo/-/blob/main/dir/file%20name.rs"
+        );
+        assert_eq!(
+            blame_url(
+                Provider::Generic,
+                "https://code.example.com/acme/repo",
+                "main",
+                "dir/file name.rs"
+            ),
+            "https://code.example.com/acme/repo/blame/main/dir/file%20name.rs"
+        );
+        assert_eq!(
+            commits_url(Provider::Gitlab, "https://gitlab.com/acme/repo", "main"),
+            "https://gitlab.com/acme/repo/-/commits/main"
+        );
     }
 }
