@@ -1,6 +1,6 @@
 [package]
 name = "nils-semantic-commit"
-version = "0.3.7"
+version = "0.3.8"
 edition.workspace = true
 license.workspace = true
 
