@@ -1,4 +1,4 @@
-use agent_runtime_core::provider::ProviderAdapterV1;
+use agent_runtime_core::provider::{ProviderAdapter, ProviderAdapterV1};
 use agent_runtime_core::schema::{
     AuthStateRequest, AuthStateResponse, AuthStateStatus, CapabilitiesRequest,
     CapabilitiesResponse, Capability, ContractVersion, ExecuteRequest, ExecuteResponse,
@@ -138,4 +138,39 @@ fn error_envelope_and_category_retry_policy_are_stable() {
     assert!(!ProviderErrorCategory::Dependency.is_retryable());
     assert!(!ProviderErrorCategory::Internal.is_retryable());
     assert!(!ProviderErrorCategory::Unknown.is_retryable());
+}
+
+fn assert_provider_alias<T: ProviderAdapter>(_provider: &T) {}
+
+#[test]
+fn provider_adapter_alias_accepts_v1_implementor() {
+    let provider = MockProvider;
+    assert_provider_alias(&provider);
+}
+
+#[test]
+fn envelope_helpers_cover_all_operations() {
+    let provider = MockProvider;
+
+    let health = provider.healthcheck_envelope(HealthcheckRequest::default());
+    assert_eq!(health.provider.id, "mock");
+    assert_eq!(health.operation, ProviderOperation::Healthcheck);
+    assert_eq!(health.contract_version, ContractVersion::V1);
+    let health_json = serde_json::to_value(&health).expect("serialize health envelope");
+    assert_eq!(health_json["status"], "ok");
+    assert_eq!(health_json["result"]["status"], "healthy");
+
+    let execute = provider.execute_envelope(ExecuteRequest::new("run task"));
+    assert_eq!(execute.provider.id, "mock");
+    assert_eq!(execute.operation, ProviderOperation::Execute);
+    let execute_json = serde_json::to_value(&execute).expect("serialize execute envelope");
+    assert_eq!(execute_json["status"], "ok");
+    assert_eq!(execute_json["result"]["stdout"], "executed: run task");
+
+    let limits = provider.limits_envelope(LimitsRequest::default());
+    assert_eq!(limits.provider.id, "mock");
+    assert_eq!(limits.operation, ProviderOperation::Limits);
+    let limits_json = serde_json::to_value(&limits).expect("serialize limits envelope");
+    assert_eq!(limits_json["status"], "ok");
+    assert_eq!(limits_json["result"]["max_concurrency"], 2);
 }
