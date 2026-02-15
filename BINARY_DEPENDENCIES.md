@@ -17,6 +17,7 @@ These tools are required for common command paths.
 |---|---|---|---|
 | `git` | `git-scope`, `git-cli`, `git-summary`, `git-lock`, `semantic-commit`, `fzf-cli git-*` | Required | `brew install git` |
 | `fzf` | `fzf-cli` interactive commands | Required (for `fzf-cli`) | `brew install fzf` |
+| `grpcurl` | `api-grpc` unary request execution backend | Required (for `api-grpc call`/suite gRPC cases) | `brew install grpcurl` |
 | `magick` (or `convert` + `identify`) | `image-processing` legacy transform subcommands (`auto-orient`, `convert`, `resize`, `rotate`, `crop`, `pad`, `flip`, `flop`, `optimize`) | Required for legacy transforms; not required for `convert --from-svg` / `svg-validate` | `brew install imagemagick` |
 | `ffmpeg` | `screen-record` on Linux | Required on Linux | `brew install ffmpeg` |
 | `codex` | `codex-cli agent *` flows | Required for agent commands | Install from official Codex distribution |

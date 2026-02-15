@@ -37,6 +37,7 @@ fn base_options(root: &std::path::Path, server: &LoopbackServer) -> SuiteRunOpti
         output_dir_base: root.join("out"),
         env_rest_url: server.url(),
         env_gql_url: format!("{}/graphql", server.url()),
+        env_grpc_url: String::new(),
         progress: None,
     }
 }

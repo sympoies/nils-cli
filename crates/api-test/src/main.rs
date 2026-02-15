@@ -256,6 +256,7 @@ fn cmd_run(args: &RunArgs) -> i32 {
 
     let env_rest_url = std::env::var("API_TEST_REST_URL").ok().unwrap_or_default();
     let env_gql_url = std::env::var("API_TEST_GQL_URL").ok().unwrap_or_default();
+    let env_grpc_url = std::env::var("API_TEST_GRPC_URL").ok().unwrap_or_default();
 
     let only_ids: std::collections::HashSet<String> = args
         .only
@@ -281,6 +282,7 @@ fn cmd_run(args: &RunArgs) -> i32 {
         output_dir_base,
         env_rest_url,
         env_gql_url,
+        env_grpc_url,
         progress: Some(progress),
     };
 

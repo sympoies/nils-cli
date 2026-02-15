@@ -7,6 +7,7 @@ use crate::Result;
 const SETUP_DIR_ERROR: &str = "Failed to resolve setup dir (try --config-dir).";
 const INVOCATION_DIR_ERROR: &str = "Failed to resolve invocation dir for setup discovery";
 const SETUP_GRAPHQL_ERROR: &str = "failed to resolve setup/graphql";
+const SETUP_GRPC_ERROR: &str = "failed to resolve setup/grpc";
 
 #[derive(Debug, Clone, Copy)]
 enum FallbackMode {
@@ -251,6 +252,62 @@ pub fn resolve_gql_setup_dir_for_schema(
     .resolve()
 }
 
+pub fn resolve_grpc_setup_dir_for_call(
+    cwd: &Path,
+    invocation_dir: &Path,
+    request_file: &Path,
+    config_dir: Option<&Path>,
+) -> Result<PathBuf> {
+    let seed = match config_dir {
+        Some(dir) => dir.to_path_buf(),
+        None => request_file
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(".")),
+    };
+
+    SetupDiscovery {
+        cwd,
+        seed,
+        config_dir_explicit: config_dir.is_some(),
+        files: &[
+            "endpoints.env",
+            "tokens.env",
+            "endpoints.local.env",
+            "tokens.local.env",
+        ],
+        seed_fallback: FallbackMode::None,
+        invocation_dir: Some(invocation_dir),
+        invocation_fallback: FallbackMode::Direct("setup/grpc", SETUP_GRPC_ERROR),
+    }
+    .resolve()
+}
+
+pub fn resolve_grpc_setup_dir_for_history(
+    cwd: &Path,
+    invocation_dir: &Path,
+    config_dir: Option<&Path>,
+) -> Result<PathBuf> {
+    let seed = config_dir.unwrap_or_else(|| Path::new("."));
+
+    SetupDiscovery {
+        cwd,
+        seed: seed.to_path_buf(),
+        config_dir_explicit: config_dir.is_some(),
+        files: &[
+            ".grpc_history",
+            "endpoints.env",
+            "tokens.env",
+            "endpoints.local.env",
+            "tokens.local.env",
+        ],
+        seed_fallback: FallbackMode::None,
+        invocation_dir: Some(invocation_dir),
+        invocation_fallback: FallbackMode::Direct("setup/grpc", SETUP_GRPC_ERROR),
+    }
+    .resolve()
+}
+
 #[derive(Debug, Clone)]
 pub struct ResolvedSetup {
     pub setup_dir: PathBuf,
@@ -299,6 +356,25 @@ impl ResolvedSetup {
             tokens_local_env: None,
             jwts_env: Some(jwts_env),
             jwts_local_env: Some(jwts_local_env),
+        }
+    }
+
+    pub fn grpc(setup_dir: PathBuf, history_override: Option<&Path>) -> Self {
+        let history_file =
+            crate::history::resolve_history_file(&setup_dir, history_override, ".grpc_history");
+        let endpoints_env = setup_dir.join("endpoints.env");
+        let endpoints_local_env = setup_dir.join("endpoints.local.env");
+        let tokens_env = setup_dir.join("tokens.env");
+        let tokens_local_env = setup_dir.join("tokens.local.env");
+        Self {
+            setup_dir,
+            history_file,
+            endpoints_env,
+            endpoints_local_env,
+            tokens_env: Some(tokens_env),
+            tokens_local_env: Some(tokens_local_env),
+            jwts_env: None,
+            jwts_local_env: None,
         }
     }
 
@@ -534,5 +610,43 @@ mod tests {
                 .expect("resolve");
 
         assert_eq!(setup_dir, root.join("setup/graphql"));
+    }
+
+    #[test]
+    fn config_grpc_call_falls_back_to_setup_grpc_in_invocation_dir() {
+        let tmp = TempDir::new().expect("tmp");
+        let root = std::fs::canonicalize(tmp.path()).expect("root abs");
+
+        write_file(
+            &root.join("setup/grpc/endpoints.env"),
+            "export GRPC_URL_LOCAL=127.0.0.1:50051\n",
+        );
+        write_file(
+            &root.join("requests/health.grpc.json"),
+            r#"{"method":"health.HealthService/Check","body":{}}"#,
+        );
+
+        let setup_dir = resolve_grpc_setup_dir_for_call(
+            &root,
+            &root,
+            &root.join("requests/health.grpc.json"),
+            None,
+        )
+        .expect("resolve");
+
+        assert_eq!(setup_dir, root.join("setup/grpc"));
+    }
+
+    #[test]
+    fn resolved_setup_grpc_uses_grpc_history_default() {
+        let tmp = TempDir::new().expect("tmp");
+        let root = std::fs::canonicalize(tmp.path()).expect("root abs");
+        let setup = root.join("setup/grpc");
+        std::fs::create_dir_all(&setup).expect("mkdir");
+
+        let resolved = ResolvedSetup::grpc(setup.clone(), None);
+        assert_eq!(resolved.history_file, setup.join(".grpc_history"));
+        assert!(resolved.tokens_env.is_some());
+        assert!(resolved.tokens_local_env.is_some());
     }
 }

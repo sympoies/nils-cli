@@ -1,13 +1,14 @@
 # API testing CLIs overview
 
 ## Overview
-This workspace ships three Rust API testing CLIs (`api-rest`, `api-gql`, `api-test`) plus the shared library crate
+This workspace ships four Rust API testing CLIs (`api-rest`, `api-gql`, `api-grpc`, `api-test`) plus the shared library crate
 `api-testing-core`. Behavioral parity with the legacy scripts remains the top priority: flags, defaults, exit codes,
 and on-disk artifacts (history files, reports, results).
 
 Detailed parity specs live with each binary:
 - `crates/api-rest/README.md`
 - `crates/api-gql/README.md`
+- `crates/api-grpc/README.md`
 - `crates/api-test/README.md`
 
 This README focuses on the shared repository layout, cross-CLI concepts, and the `api-testing-core` surface area.
@@ -25,39 +26,60 @@ This README focuses on the shared repository layout, cross-CLI concepts, and the
 - `api-test` (suite runner)
   - `api-test run` : parity with `api-test.sh`
   - `api-test summary` : parity with `api-test-summary.sh`
+- `api-grpc` (gRPC unary)
+  - `api-grpc call` (default)
+  - `api-grpc history`
+  - `api-grpc report`
+  - `api-grpc report-from-cmd`
 
 Notes:
-- `api-test` executes REST/GraphQL cases through shared core runners (no shelling out to scripts or the binaries).
-- `api-rest`/`api-gql` also provide `report-from-cmd` as a Rust-only convenience for replaying saved `call` snippets.
+- `api-test` executes REST/GraphQL/gRPC cases through shared core runners (no shelling out to scripts or the binaries).
+- `api-rest`/`api-gql`/`api-grpc` also provide `report-from-cmd` as a Rust-only convenience for replaying saved `call` snippets.
 
 ## api-testing-core scope
-`api-testing-core` is a library crate used by all three CLIs. Key modules:
-- `config`: setup dir discovery for REST/GraphQL configs.
+`api-testing-core` is a library crate used by all four CLIs. Key modules:
+- `config`: setup dir discovery for REST/GraphQL/gRPC configs.
 - `env_file`: `.env` parsing + key normalization helpers.
 - `cli_*`: shared CLI helpers (endpoint resolution, history I/O, report args, CLI utilities).
 - `history`, `report`, `markdown`, `redact`, `cmd_snippet`: shared report/history rendering and snippet parsing.
 - `rest`: request schema, runner, expect/cleanup logic, report rendering.
 - `graphql`: schema/vars loading, auth/JWT resolution, runner, expect/allow-errors, report rendering, mutation detection.
+- `grpc`: unary request schema, transport runner, expect logic, report rendering.
 - `suite`: suite schema v1, path resolution, filters, safety gates, auth integration, runner, cleanup, results, summary, JUnit.
+
+## Transport decision and reuse matrix
+- Transport decision:
+  - Selected: `grpcurl` adapter for unary MVP (`api-testing-core::grpc::runner`).
+  - Rejected for MVP: native dynamic invocation path (higher complexity for the same unary delivery goal).
+  - Streaming remains out of scope for this phase.
+- Reuse matrix:
+  - unchanged: suite selection/filtering, run directory/artifact envelope, summary/JUnit/results rendering.
+  - additive grpc: suite schema defaults/case validation, `type: grpc` runner branch, gRPC endpoint/token resolution.
+- Evidence commands:
+  - `cargo test -p nils-api-testing-core --test suite_rest_graphql_matrix`
+  - `cargo test -p nils-api-testing-core --test suite_runner_loopback`
+  - `cargo test -p nils-api-testing-core --test suite_runner_grpc_matrix`
+  - `cargo test -p nils-api-test suite_schema`
 
 ## Shared terminology
 - Setup dir
   - Protocol-specific config directory.
-  - Canonical locations: REST `setup/rest`, GraphQL `setup/graphql`.
+  - Canonical locations: REST `setup/rest`, GraphQL `setup/graphql`, gRPC `setup/grpc`.
 - Config dir
   - CLI arg `--config-dir <dir>` that seeds setup-dir discovery.
   - Discovery searches upward for known config files; fallback uses the canonical `setup/<tool>` when applicable.
 - Env preset
   - `--env <name>` selects a base URL from `endpoints.env` (+ optional `.local` overrides).
-  - REST: `REST_URL_<ENV_KEY>`; GraphQL: `GQL_URL_<ENV_KEY>`.
+  - REST: `REST_URL_<ENV_KEY>`; GraphQL: `GQL_URL_<ENV_KEY>`; gRPC: `GRPC_URL_<ENV_KEY>`.
   - If the value looks like `http(s)://...`, it is treated as a direct URL (like `--url`).
 - Token/JWT profile
   - REST: `--token <name>` or `REST_TOKEN_NAME` selects `REST_TOKEN_<NAME>`.
   - GraphQL: `--jwt <name>` or `GQL_JWT_NAME` selects `GQL_JWT_<NAME>`.
+  - gRPC: `--token <name>` or `GRPC_TOKEN_NAME` selects `GRPC_TOKEN_<NAME>`.
   - REST fallback: `ACCESS_TOKEN`, then `SERVICE_TOKEN` if no profile is selected.
   - GraphQL fallback: `ACCESS_TOKEN`, then `SERVICE_TOKEN` if no profile is selected.
 - History
-  - REST: `<setup_dir>/.rest_history`, GraphQL: `<setup_dir>/.gql_history`.
+  - REST: `<setup_dir>/.rest_history`, GraphQL: `<setup_dir>/.gql_history`, gRPC: `<setup_dir>/.grpc_history`.
   - Enabled by default, can be disabled, and supports rotation/size limits.
 - Report
   - Markdown artifact (usually under `<repo>/docs/`) capturing request/operation, response, and optional assertions.
@@ -86,6 +108,12 @@ The CLIs support the same layouts the legacy scripts assume.
       schema.local.env           # optional (local override)
       schema.graphql             # or: schema.gql / schema.graphqls / api.graphql / api.gql
       operations/                # optional (login.graphql, shared ops, etc.)
+    grpc/
+      endpoints.env
+      endpoints.local.env        # optional (local override)
+      tokens.env
+      tokens.local.env           # optional (local tokens; do not commit)
+      requests/                  # *.grpc.json request definitions
   tests/
     api/
       suites/
@@ -136,6 +164,22 @@ Resolve and print schema:
 api-gql schema --cat
 ```
 
+### `api-grpc`
+Run a unary request:
+```bash
+api-grpc call --env staging setup/grpc/requests/health.grpc.json
+```
+
+Write a report:
+```bash
+api-grpc report --case health --request setup/grpc/requests/health.grpc.json --run
+```
+
+Generate a report from a saved snippet:
+```bash
+api-grpc history --command-only | api-grpc report-from-cmd --stdin
+```
+
 ### `api-test`
 Run a suite (always emits results JSON to stdout):
 ```bash
@@ -175,6 +219,7 @@ api-test summary --in out/api-test-runner/results.json --out out/api-test-runner
 - `API_TEST_ALLOW_WRITES_ENABLED`: enable write-capable cases.
 - `API_TEST_REST_URL`: override REST base URL for all REST/rest-flow cases.
 - `API_TEST_GQL_URL`: override GraphQL endpoint URL for all GraphQL cases.
+- `API_TEST_GRPC_URL`: override gRPC target for all gRPC cases.
 - `API_TEST_AUTH_JSON`: credentials JSON used by suite auth (default key name).
 - `GITHUB_STEP_SUMMARY`: when set, `api-test summary` appends Markdown output (disable via `--no-github-summary`).
 

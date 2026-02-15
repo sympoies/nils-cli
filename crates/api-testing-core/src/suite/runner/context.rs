@@ -16,6 +16,7 @@ pub struct SuiteRunOptions {
     pub output_dir_base: PathBuf,
     pub env_rest_url: String,
     pub env_gql_url: String,
+    pub env_grpc_url: String,
     pub progress: Option<Progress>,
 }
 

@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 
 use crate::Result;
 use crate::suite::resolve::{
-    resolve_gql_url_for_env, resolve_path_from_repo_root, resolve_rest_base_url_for_env,
+    resolve_gql_url_for_env, resolve_grpc_url_for_env, resolve_path_from_repo_root,
+    resolve_rest_base_url_for_env,
 };
 use crate::suite::schema::SuiteDefaults;
 
@@ -109,6 +110,34 @@ pub(crate) fn resolve_gql_url(
     Ok("http://localhost:6700/graphql".to_string())
 }
 
+pub(crate) fn resolve_grpc_url(
+    repo_root: &Path,
+    setup_dir_raw: &str,
+    url_override: &str,
+    env_value: &str,
+    suite_defaults: &SuiteDefaults,
+    env_grpc_url: &str,
+) -> Result<String> {
+    let url_override = url_override.trim();
+    if !url_override.is_empty() {
+        return Ok(url_override.to_string());
+    }
+    let default_url = suite_defaults.grpc.url.trim();
+    if !default_url.is_empty() {
+        return Ok(default_url.to_string());
+    }
+    let env_grpc_url = env_grpc_url.trim();
+    if !env_grpc_url.is_empty() {
+        return Ok(env_grpc_url.to_string());
+    }
+    let env_value = env_value.trim();
+    if !env_value.is_empty() {
+        let setup_dir = resolve_path_from_repo_root(repo_root, setup_dir_raw);
+        return resolve_grpc_url_for_env(&setup_dir, env_value);
+    }
+    Ok("127.0.0.1:50051".to_string())
+}
+
 pub(crate) fn resolve_rest_token_profile(setup_dir: &Path, profile: &str) -> Result<String> {
     let tokens_env = setup_dir.join("tokens.env");
     let tokens_local = setup_dir.join("tokens.local.env");
@@ -119,6 +148,19 @@ pub(crate) fn resolve_rest_token_profile(setup_dir: &Path, profile: &str) -> Res
     };
 
     let found = crate::env_file::read_prefixed_var("REST_TOKEN_", profile, &files)?;
+    found.ok_or_else(|| anyhow::anyhow!("Token profile '{profile}' is empty/missing."))
+}
+
+pub(crate) fn resolve_grpc_token_profile(setup_dir: &Path, profile: &str) -> Result<String> {
+    let tokens_env = setup_dir.join("tokens.env");
+    let tokens_local = setup_dir.join("tokens.local.env");
+    let files: Vec<&Path> = if tokens_env.is_file() || tokens_local.is_file() {
+        vec![&tokens_env, &tokens_local]
+    } else {
+        Vec::new()
+    };
+
+    let found = crate::env_file::read_prefixed_var("GRPC_TOKEN_", profile, &files)?;
     found.ok_or_else(|| anyhow::anyhow!("Token profile '{profile}' is empty/missing."))
 }
 

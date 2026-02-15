@@ -1604,6 +1604,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "nils-api-grpc"
+version = "0.3.9"
+dependencies = [
+ "anyhow",
+ "clap",
+ "nils-api-testing-core",
+ "nils-term",
+ "nils-test-support",
+ "pretty_assertions",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "nils-api-rest"
 version = "0.3.9"
 dependencies = [

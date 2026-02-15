@@ -10,6 +10,7 @@ pub mod cmd_snippet;
 pub mod config;
 pub mod env_file;
 pub mod graphql;
+pub mod grpc;
 pub mod history;
 pub mod http;
 pub mod jq;

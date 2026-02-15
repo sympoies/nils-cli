@@ -20,6 +20,7 @@ nils-semantic-commit
 nils-macos-agent
 nils-api-gql
 nils-api-rest
+nils-api-grpc
 nils-api-test
 nils-agent-provider-codex
 nils-agentctl

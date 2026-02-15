@@ -109,6 +109,47 @@ pub fn resolve_gql_url_for_env(setup_dir: &Path, env_value: &str) -> Result<Stri
     Ok(found)
 }
 
+pub fn resolve_grpc_url_for_env(setup_dir: &Path, env_value: &str) -> Result<String> {
+    let env_value = env_value.trim();
+    if env_value.starts_with("http://") || env_value.starts_with("https://") {
+        return Ok(env_value.to_string());
+    }
+
+    let endpoints_env = setup_dir.join("endpoints.env");
+    let endpoints_local = setup_dir.join("endpoints.local.env");
+    let endpoints_files: Vec<&Path> = if endpoints_env.is_file() {
+        vec![&endpoints_env, &endpoints_local]
+    } else {
+        Vec::new()
+    };
+    if endpoints_files.is_empty() {
+        anyhow::bail!("endpoints.env not found (expected under setup/grpc/)");
+    }
+
+    let env_key = crate::env_file::normalize_env_key(env_value);
+    let key = format!("GRPC_URL_{env_key}");
+    let found = crate::env_file::read_var_last_wins(&key, &endpoints_files)?;
+    let Some(found) = found else {
+        let mut available = cli_util::list_available_suffixes(&endpoints_env, "GRPC_URL_");
+        if endpoints_local.is_file() {
+            available.extend(cli_util::list_available_suffixes(
+                &endpoints_local,
+                "GRPC_URL_",
+            ));
+            available.sort();
+            available.dedup();
+        }
+        let available = if available.is_empty() {
+            "none".to_string()
+        } else {
+            available.join(" ")
+        };
+        anyhow::bail!("Unknown env '{env_value}' (available: {available})");
+    };
+
+    Ok(found)
+}
+
 #[derive(Debug, Clone)]
 pub struct SuiteSelection {
     pub suite_key: String,
@@ -318,6 +359,38 @@ mod tests {
         );
 
         let err = resolve_gql_url_for_env(&setup_dir, "nope").unwrap_err();
+        assert!(format!("{err:#}").contains("Unknown env 'nope'"));
+        assert!(format!("{err:#}").contains("available: local prod"));
+    }
+
+    #[test]
+    fn suite_resolve_grpc_url_from_url_and_env_files() {
+        let tmp = TempDir::new().unwrap();
+        let setup_dir = tmp.path().join("setup/grpc");
+
+        assert_eq!(
+            resolve_grpc_url_for_env(&setup_dir, "https://grpc.test:8443").unwrap(),
+            "https://grpc.test:8443"
+        );
+
+        let err = resolve_grpc_url_for_env(&setup_dir, "prod").unwrap_err();
+        assert!(format!("{err:#}").contains("endpoints.env not found"));
+        assert!(format!("{err:#}").contains("setup/grpc"));
+
+        let endpoints_env = setup_dir.join("endpoints.env");
+        let endpoints_local = setup_dir.join("endpoints.local.env");
+        write(&endpoints_env, "GRPC_URL_PROD=grpc.prod:443\n");
+        write(
+            &endpoints_local,
+            "GRPC_URL_PROD=grpc.local:443\nGRPC_URL_LOCAL=127.0.0.1:50051\n",
+        );
+
+        assert_eq!(
+            resolve_grpc_url_for_env(&setup_dir, "prod").unwrap(),
+            "grpc.local:443"
+        );
+
+        let err = resolve_grpc_url_for_env(&setup_dir, "nope").unwrap_err();
         assert!(format!("{err:#}").contains("Unknown env 'nope'"));
         assert!(format!("{err:#}").contains("available: local prod"));
     }

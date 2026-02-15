@@ -18,6 +18,7 @@ use crate::suite::schema::LoadedSuite;
 
 mod context;
 mod graphql;
+mod grpc;
 mod progress;
 mod rest;
 
@@ -560,6 +561,55 @@ pub fn run_suite(
                     }
                 }
             }
+            "grpc" => match grpc::prepare_grpc_case(repo_root, c, &id, defaults)? {
+                grpc::PrepareOutcome::Ready(plan) => {
+                    let grpc::GrpcCasePlan {
+                        request_abs,
+                        request_file,
+                        config_dir,
+                        url,
+                        token,
+                    } = plan;
+                    let grpc_config_dir = config_dir;
+                    let grpc_url = url;
+                    let grpc_token = token;
+
+                    let grpc::GrpcCaseRunOutput {
+                        status: grpc_status,
+                        message: grpc_message,
+                        assertions: grpc_assertions,
+                        command_snippet: grpc_command_snippet,
+                        stdout_path,
+                        stderr_path,
+                    } = grpc::run_grpc_case(
+                        repo_root,
+                        &run_dir_abs,
+                        &safe_id,
+                        effective_no_history,
+                        &effective_env,
+                        defaults,
+                        &options.env_grpc_url,
+                        &grpc_config_dir,
+                        &grpc_url,
+                        &grpc_token,
+                        &request_abs,
+                        &request_file,
+                    )?;
+
+                    status = grpc_status;
+                    message = grpc_message;
+                    assertions = grpc_assertions;
+                    command_snippet = grpc_command_snippet;
+                    stdout_file_abs = Some(stdout_path);
+                    stderr_file_abs = Some(stderr_path);
+
+                    match status.as_str() {
+                        "passed" => passed += 1,
+                        "failed" => failed += 1,
+                        _ => {}
+                    }
+                }
+            },
             other => {
                 anyhow::bail!("Unknown case type '{other}' for case '{id}'");
             }
@@ -721,6 +771,9 @@ mod tests {
             url: String::new(),
             token: String::new(),
             request: String::new(),
+            grpc_proto: None,
+            grpc_import_paths: None,
+            grpc_plaintext: None,
             login_request: String::new(),
             token_jq: String::new(),
             jwt: String::new(),
@@ -1040,6 +1093,7 @@ mod tests {
             output_dir_base: tmp.path().join("out"),
             env_rest_url: String::new(),
             env_gql_url: String::new(),
+            env_grpc_url: String::new(),
             progress: None,
         };
 
@@ -1081,6 +1135,7 @@ mod tests {
             output_dir_base: tmp.path().join("out"),
             env_rest_url: String::new(),
             env_gql_url: String::new(),
+            env_grpc_url: String::new(),
             progress: None,
         };
 
@@ -1133,6 +1188,7 @@ mod tests {
             output_dir_base: tmp.path().join("out"),
             env_rest_url: String::new(),
             env_gql_url: String::new(),
+            env_grpc_url: String::new(),
             progress: None,
         };
 
@@ -1174,6 +1230,7 @@ mod tests {
             output_dir_base: tmp.path().join("out"),
             env_rest_url: String::new(),
             env_gql_url: String::new(),
+            env_grpc_url: String::new(),
             progress: None,
         };
 
@@ -1226,6 +1283,7 @@ mod tests {
             output_dir_base: tmp.path().join("out"),
             env_rest_url: server.base_url.clone(),
             env_gql_url: String::new(),
+            env_grpc_url: String::new(),
             progress: None,
         };
 
@@ -1274,6 +1332,7 @@ mod tests {
             output_dir_base: tmp.path().join("out"),
             env_rest_url: String::new(),
             env_gql_url: String::new(),
+            env_grpc_url: String::new(),
             progress: Some(progress),
         };
 
@@ -1322,6 +1381,7 @@ mod tests {
             output_dir_base: tmp.path().join("out"),
             env_rest_url: String::new(),
             env_gql_url: String::new(),
+            env_grpc_url: String::new(),
             progress: Some(progress),
         };
 
