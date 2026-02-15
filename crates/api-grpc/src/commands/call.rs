@@ -467,3 +467,131 @@ fn maybe_print_failure_body_to_stderr(
     let _ = stderr.write_all(&body[..body.len().min(max_bytes)]);
     let _ = writeln!(stderr);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    fn test_history_writer(path: &Path) -> history::HistoryWriter {
+        history::HistoryWriter::new(
+            path.to_path_buf(),
+            history::RotationPolicy {
+                max_mb: 10,
+                keep: 5,
+            },
+        )
+    }
+
+    #[test]
+    fn append_history_writes_env_and_token_command() {
+        let tmp = tempdir().expect("tempdir");
+        let setup_dir = tmp.path().join("setup/grpc");
+        fs::create_dir_all(&setup_dir).expect("mkdir setup");
+        let history_file = tmp.path().join(".grpc_history");
+
+        let ctx = CallHistoryContext {
+            enabled: true,
+            setup_dir: setup_dir.clone(),
+            history_writer: test_history_writer(&history_file),
+            invocation_dir: tmp.path().to_path_buf(),
+            request_arg: "requests/health.grpc.json".to_string(),
+            endpoint_label_used: "env".to_string(),
+            endpoint_value_used: "local".to_string(),
+            log_url: true,
+            auth_source_used: AuthSourceUsed::TokenProfile,
+            token_name_for_log: "default".to_string(),
+        };
+
+        append_history_best_effort(&ctx, 0);
+
+        let text = fs::read_to_string(&history_file).expect("history text");
+        assert!(text.contains("api-grpc call \\\n"));
+        assert!(text.contains("--config-dir"));
+        assert!(text.contains("--env "));
+        assert!(text.contains("local"));
+        assert!(text.contains("--token "));
+        assert!(text.contains("default"));
+        assert!(text.contains("requests/health.grpc.json"));
+        assert!(text.contains("exit=0"));
+    }
+
+    #[test]
+    fn append_history_omits_url_value_when_log_url_disabled() {
+        let tmp = tempdir().expect("tempdir");
+        let setup_dir = tmp.path().join("setup/grpc");
+        fs::create_dir_all(&setup_dir).expect("mkdir setup");
+        let history_file = tmp.path().join(".grpc_history");
+
+        let ctx = CallHistoryContext {
+            enabled: true,
+            setup_dir: setup_dir.clone(),
+            history_writer: test_history_writer(&history_file),
+            invocation_dir: tmp.path().to_path_buf(),
+            request_arg: "/abs/requests/health.grpc.json".to_string(),
+            endpoint_label_used: "url".to_string(),
+            endpoint_value_used: "127.0.0.1:50051".to_string(),
+            log_url: false,
+            auth_source_used: AuthSourceUsed::EnvFallback {
+                env_name: "ACCESS_TOKEN".to_string(),
+            },
+            token_name_for_log: String::new(),
+        };
+
+        append_history_best_effort(&ctx, 7);
+
+        let text = fs::read_to_string(&history_file).expect("history text");
+        assert!(text.contains("url=<omitted>"));
+        assert!(!text.contains("--url "));
+        assert!(text.contains("auth=ACCESS_TOKEN"));
+        assert!(text.contains("exit=7"));
+    }
+
+    #[test]
+    fn append_history_disabled_does_not_create_history_file() {
+        let tmp = tempdir().expect("tempdir");
+        let setup_dir = tmp.path().join("setup/grpc");
+        fs::create_dir_all(&setup_dir).expect("mkdir setup");
+        let history_file = tmp.path().join(".grpc_history");
+
+        let ctx = CallHistoryContext {
+            enabled: false,
+            setup_dir,
+            history_writer: test_history_writer(&history_file),
+            invocation_dir: tmp.path().to_path_buf(),
+            request_arg: "req.grpc.json".to_string(),
+            endpoint_label_used: String::new(),
+            endpoint_value_used: String::new(),
+            log_url: true,
+            auth_source_used: AuthSourceUsed::None,
+            token_name_for_log: String::new(),
+        };
+
+        append_history_best_effort(&ctx, 0);
+        assert!(!history_file.exists());
+    }
+
+    #[test]
+    fn maybe_print_failure_body_skips_when_stdout_is_tty() {
+        let mut stderr = Vec::new();
+        maybe_print_failure_body_to_stderr(b"not-json", 16, true, &mut stderr);
+        assert!(stderr.is_empty());
+    }
+
+    #[test]
+    fn maybe_print_failure_body_skips_when_response_is_json() {
+        let mut stderr = Vec::new();
+        maybe_print_failure_body_to_stderr(br#"{"ok":true}"#, 16, false, &mut stderr);
+        assert!(stderr.is_empty());
+    }
+
+    #[test]
+    fn maybe_print_failure_body_prints_non_json_preview() {
+        let mut stderr = Vec::new();
+        maybe_print_failure_body_to_stderr(b"abcdef", 4, false, &mut stderr);
+        let text = String::from_utf8(stderr).expect("utf8");
+        assert!(text.contains("Response body (non-JSON; first 4 bytes):"));
+        assert!(text.contains("abcd"));
+    }
+}
