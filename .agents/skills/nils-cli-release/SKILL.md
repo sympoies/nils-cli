@@ -37,6 +37,7 @@ Default check selection (no `--skip-checks` and no `--ci-gate-main`):
 Outputs:
 
 - Updates workspace version in `Cargo.toml` and any crate `Cargo.toml` files with explicit `version = "..."`.
+- Pins workspace crate-to-crate `path` dependencies to the target version (and adds `version = "X.Y.Z"` when missing).
 - If manifests are already at target version, treats version bump as idempotent and continues.
 - Updates README release tag examples (unless `--skip-readme`).
 - Selects check mode in this order: strict CI gate (`--ci-gate-main`) or auto CI gate attempt, then full checks fallback.

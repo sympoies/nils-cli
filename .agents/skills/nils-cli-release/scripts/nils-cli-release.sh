@@ -245,6 +245,24 @@ version = sys.argv[1]
 paths = [Path("Cargo.toml")] + sorted(Path("crates").glob("*/Cargo.toml"))
 updated: list[str] = []
 version_fields_found = 0
+dep_fields_seen = 0
+
+
+def extract_package_name(path: Path) -> str | None:
+    section = None
+    for line in path.read_text("utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section = stripped.strip("[]")
+            continue
+        if section == "package":
+            match = re.match(r'\s*name\s*=\s*"([^"]+)"\s*$', line)
+            if match:
+                return match.group(1)
+    return None
+
+
+workspace_packages = {name for path in paths if (name := extract_package_name(path))}
 
 for path in paths:
     text = path.read_text("utf-8")
@@ -265,6 +283,35 @@ for path in paths:
                 if new_line != line:
                     line = new_line
                     changed = True
+
+        dep_match = re.match(r'(\s*([A-Za-z0-9_.-]+)\s*=\s*\{)(.*)(\}\s*(?:#.*)?)$', line)
+        if dep_match:
+            dep_fields_seen += 1
+            dep_key = dep_match.group(2).strip('"')
+            body = dep_match.group(3)
+            suffix = dep_match.group(4)
+            package_match = re.search(r'\bpackage\s*=\s*"([^"]+)"', body)
+            package_name = package_match.group(1) if package_match else dep_key
+
+            if package_name in workspace_packages and re.search(r"\bpath\s*=", body):
+                if re.search(r"\bversion\s*=", body):
+                    new_body = re.sub(
+                        r'(\bversion\s*=\s*)"[^"]+"',
+                        rf'\1"{version}"',
+                        body,
+                        count=1,
+                    )
+                else:
+                    path_match = re.search(r"\bpath\s*=", body)
+                    if path_match:
+                        idx = path_match.start()
+                        new_body = body[:idx] + f'version = "{version}", ' + body[idx:]
+                    else:
+                        new_body = body
+
+                if new_body != body:
+                    line = f"{dep_match.group(1)}{new_body}{suffix}"
+                    changed = True
         out.append(line)
 
     if changed:
@@ -275,8 +322,8 @@ for path in paths:
         updated.append(path.as_posix())
 
 if not updated:
-    if version_fields_found == 0:
-        print("error: no version fields found in Cargo manifests", file=sys.stderr)
+    if version_fields_found == 0 and dep_fields_seen == 0:
+        print("error: no version fields found in Cargo manifests or dependency tables", file=sys.stderr)
         raise SystemExit(2)
     print("info: all manifest versions already set to target; continuing")
 else:
