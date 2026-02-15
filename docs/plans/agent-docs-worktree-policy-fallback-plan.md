@@ -199,7 +199,7 @@ This plan adds first-class linked-worktree support to `agent-docs` so required p
 **Demo/Validation**:
 - Command(s):
   - `cargo test -p agent-docs`
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - Verify:
   - All existing checks pass.
   - No regressions in CLI output contracts consumed by automation.

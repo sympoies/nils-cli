@@ -281,7 +281,7 @@ and interactive overwrite guard.
 **Demo/Validation**:
 - Command(s):
   - `zsh -f tests/zsh/completion.test.zsh`
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - Verify:
   - Completions include new auth subcommands/flags.
   - README + runbook/spec remain consistent with implementation.
@@ -331,7 +331,7 @@ and interactive overwrite guard.
 
 ### Task 4.3: Run required checks and finalize merge readiness
 - **Location**:
-  - `.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
   - `DEVELOPMENT.md`
 - **Description**: Execute mandatory project checks and confirm no regressions in auth, completions,
   docs, or existing command behavior.
@@ -344,7 +344,7 @@ and interactive overwrite guard.
   - New auth tests and existing auth tests pass together.
   - No completion regressions in zsh suite.
 - **Validation**:
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Testing Strategy
 - Unit:
@@ -371,5 +371,5 @@ and interactive overwrite guard.
 - Revert `auth login` and `auth save` command wiring from `cli.rs` and `main.rs`.
 - Remove `auth/login.rs` and `auth/save.rs` modules plus output structs and tests tied to them.
 - Revert completion/docs/spec updates for the new commands.
-- Re-run `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh` to confirm repository returns
+- Re-run `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh` to confirm repository returns
   to pre-change baseline.

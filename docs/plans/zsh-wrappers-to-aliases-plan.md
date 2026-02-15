@@ -243,7 +243,7 @@ Initial scope: `git-scope` (`gs*` aliases for all subcommands), `codex-cli` (`cx
 **Goal**: Delete wrapper scripts that exist only to provide the alias entrypoints now covered by the Zsh snippet.
 **Demo/Validation**:
 - Command(s):
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - Verify:
   - The wrapper scripts listed for removal are gone.
   - Docs no longer instruct users to add `wrappers/` to `PATH` for these entrypoints.
@@ -324,7 +324,7 @@ Initial scope: `git-scope` (`gs*` aliases for all subcommands), `codex-cli` (`cx
 **Goal**: Ensure the aliases snippet is shipped and Homebrew users can enable it with one `source` line.
 **Demo/Validation**:
 - Command(s):
-  - (Repo) `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - (Repo) `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
   - (Release artifact spot-check) `tar -tf dist/*.tar.gz | rg \"completions/zsh/nils-cli-aliases\\.zsh\"`
 - Verify:
   - Release tarballs contain `completions/zsh/aliases.zsh`.

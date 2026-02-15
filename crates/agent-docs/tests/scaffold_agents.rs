@@ -9,7 +9,7 @@ use tempfile::TempDir;
 fn run_scaffold_agents_project(home: &TempDir, project: &TempDir, force: bool) -> i32 {
     let mut args = vec![
         OsString::from("agent-docs"),
-        OsString::from("--codex-home"),
+        OsString::from("--agents-home"),
         home.path().as_os_str().to_owned(),
         OsString::from("--project-path"),
         project.path().as_os_str().to_owned(),

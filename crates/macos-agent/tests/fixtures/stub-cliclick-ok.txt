@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-mode="${CODEX_MACOS_AGENT_STUB_CLICLICK_MODE:-ok}"
+mode="${AGENTS_MACOS_AGENT_STUB_CLICLICK_MODE:-ok}"
 if [[ "$mode" == "timeout" ]]; then
   sleep 2
 fi
 
-if [[ -n "${CODEX_MACOS_AGENT_STUB_COUNTER_FILE:-}" ]]; then
+if [[ -n "${AGENTS_MACOS_AGENT_STUB_COUNTER_FILE:-}" ]]; then
   count=0
-  if [[ -f "$CODEX_MACOS_AGENT_STUB_COUNTER_FILE" ]]; then
-    count="$(cat "$CODEX_MACOS_AGENT_STUB_COUNTER_FILE")"
+  if [[ -f "$AGENTS_MACOS_AGENT_STUB_COUNTER_FILE" ]]; then
+    count="$(cat "$AGENTS_MACOS_AGENT_STUB_COUNTER_FILE")"
   fi
   count=$((count + 1))
-  printf '%s' "$count" > "$CODEX_MACOS_AGENT_STUB_COUNTER_FILE"
-  fail_until="${CODEX_MACOS_AGENT_STUB_CLICLICK_FAIL_UNTIL:-0}"
+  printf '%s' "$count" > "$AGENTS_MACOS_AGENT_STUB_COUNTER_FILE"
+  fail_until="${AGENTS_MACOS_AGENT_STUB_CLICLICK_FAIL_UNTIL:-0}"
   if (( count <= fail_until )); then
     echo "cliclick transient failure #$count" >&2
     exit 2
@@ -25,8 +25,8 @@ if [[ "$mode" == "fail" ]]; then
   exit 2
 fi
 
-if [[ -n "${CODEX_MACOS_AGENT_STUB_LOG:-}" ]]; then
-  printf 'cliclick %s\n' "$*" >> "$CODEX_MACOS_AGENT_STUB_LOG"
+if [[ -n "${AGENTS_MACOS_AGENT_STUB_LOG:-}" ]]; then
+  printf 'cliclick %s\n' "$*" >> "$AGENTS_MACOS_AGENT_STUB_LOG"
 fi
 
 exit 0

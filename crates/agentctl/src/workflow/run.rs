@@ -531,7 +531,7 @@ fn persist_automation_artifacts(
 }
 
 fn workflow_artifact_dir(step_id: &str, attempt: u32) -> PathBuf {
-    codex_out_dir()
+    agents_out_dir()
         .join(WORKFLOW_ARTIFACT_NAMESPACE)
         .join(sanitize_component(step_id))
         .join(format!("attempt-{attempt}"))
@@ -559,14 +559,14 @@ fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
 
-fn codex_out_dir() -> PathBuf {
-    if let Ok(codex_home) = std::env::var("CODEX_HOME") {
-        return PathBuf::from(codex_home).join("out");
+fn agents_out_dir() -> PathBuf {
+    if let Ok(agents_home) = std::env::var("AGENTS_HOME") {
+        return PathBuf::from(agents_home).join("out");
     }
     if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home).join(".codex").join("out");
+        return PathBuf::from(home).join(".agents").join("out");
     }
-    PathBuf::from(".codex").join("out")
+    PathBuf::from(".agents").join("out")
 }
 
 fn spawn_pipe_reader<R>(mut reader: R) -> thread::JoinHandle<Vec<u8>>

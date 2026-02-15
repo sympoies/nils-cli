@@ -12,7 +12,7 @@ static CTRL_C_INSTALLED: OnceLock<Result<(), CliError>> = OnceLock::new();
 static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 pub fn enabled() -> bool {
-    env_truthy("CODEX_SCREEN_RECORD_TEST_MODE")
+    env_truthy("AGENTS_SCREEN_RECORD_TEST_MODE")
 }
 
 pub fn shareable_content() -> ShareableContent {
@@ -188,11 +188,11 @@ fn env_truthy(name: &str) -> bool {
 }
 
 fn realtime_recording_enabled() -> bool {
-    env_truthy("CODEX_SCREEN_RECORD_TEST_MODE_REALTIME")
+    env_truthy("AGENTS_SCREEN_RECORD_TEST_MODE_REALTIME")
 }
 
 fn fail_recording_after_partial_write() -> bool {
-    env_truthy("CODEX_SCREEN_RECORD_TEST_MODE_FAIL_APPEND")
+    env_truthy("AGENTS_SCREEN_RECORD_TEST_MODE_FAIL_APPEND")
 }
 
 fn install_ctrlc_handler() -> Result<(), CliError> {
@@ -248,7 +248,7 @@ mod tests {
     #[test]
     fn enabled_returns_false_when_env_missing() {
         let lock = GlobalStateLock::new();
-        let _guard = EnvGuard::remove(&lock, "CODEX_SCREEN_RECORD_TEST_MODE");
+        let _guard = EnvGuard::remove(&lock, "AGENTS_SCREEN_RECORD_TEST_MODE");
         assert!(!enabled());
     }
 
@@ -256,7 +256,7 @@ mod tests {
     fn enabled_accepts_expected_truthy_values() {
         let lock = GlobalStateLock::new();
         for value in ["1", "true", " yes ", "ON"] {
-            let _guard = EnvGuard::set(&lock, "CODEX_SCREEN_RECORD_TEST_MODE", value);
+            let _guard = EnvGuard::set(&lock, "AGENTS_SCREEN_RECORD_TEST_MODE", value);
             assert!(enabled(), "expected truthy value: {value}");
         }
     }
@@ -265,7 +265,7 @@ mod tests {
     fn enabled_rejects_falsey_and_unknown_values() {
         let lock = GlobalStateLock::new();
         for value in ["", "0", "false", "no", "off", "y", "enabled"] {
-            let _guard = EnvGuard::set(&lock, "CODEX_SCREEN_RECORD_TEST_MODE", value);
+            let _guard = EnvGuard::set(&lock, "AGENTS_SCREEN_RECORD_TEST_MODE", value);
             assert!(!enabled(), "expected falsey value: {value}");
         }
     }

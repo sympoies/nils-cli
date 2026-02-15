@@ -40,8 +40,8 @@ fn diag_capabilities_json_reports_inventory_and_readiness() {
     let _path = prepend_path(&lock, stub.path());
     let _dangerous = EnvGuard::set(&lock, "CODEX_ALLOW_DANGEROUS_ENABLED", "true");
     let _auth_file = EnvGuard::set(&lock, "CODEX_AUTH_FILE", &auth_file_str);
-    let _macos_test_mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
-    let _screen_record_test_mode = EnvGuard::set(&lock, "CODEX_SCREEN_RECORD_TEST_MODE", "1");
+    let _macos_test_mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
+    let _screen_record_test_mode = EnvGuard::set(&lock, "AGENTS_SCREEN_RECORD_TEST_MODE", "1");
 
     let output = run(&[
         "diag",
@@ -143,8 +143,8 @@ fn diag_capabilities_text_output_includes_provider_and_automation_sections() {
     let _path = prepend_path(&lock, stub.path());
     let _dangerous = EnvGuard::set(&lock, "CODEX_ALLOW_DANGEROUS_ENABLED", "true");
     let _auth_file = EnvGuard::set(&lock, "CODEX_AUTH_FILE", &auth_file_str);
-    let _macos_test_mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
-    let _screen_record_test_mode = EnvGuard::set(&lock, "CODEX_SCREEN_RECORD_TEST_MODE", "1");
+    let _macos_test_mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
+    let _screen_record_test_mode = EnvGuard::set(&lock, "AGENTS_SCREEN_RECORD_TEST_MODE", "1");
 
     let output = run(&["diag", "capabilities", "--format", "text"]);
     assert_eq!(output.code, 0, "stderr={}", output.stderr_text());

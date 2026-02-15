@@ -62,7 +62,7 @@ fn json_optional_path(value: &Value, key: &str) -> Option<PathBuf> {
 }
 
 #[test]
-fn resolve_uses_env_overrides_for_codex_home_and_project_path() {
+fn resolve_uses_env_overrides_for_agents_home_and_project_path() {
     let home = TempDir::new().expect("create home");
     let project = TempDir::new().expect("create project");
     let cwd = TempDir::new().expect("create cwd");
@@ -74,7 +74,7 @@ fn resolve_uses_env_overrides_for_codex_home_and_project_path() {
         cwd.path(),
         &["resolve", "--context", "project-dev", "--format", "json"],
         &[
-            ("CODEX_HOME", home.path()),
+            ("AGENTS_HOME", home.path()),
             ("PROJECT_PATH", project.path()),
         ],
         &[],
@@ -82,7 +82,7 @@ fn resolve_uses_env_overrides_for_codex_home_and_project_path() {
 
     let json = parse_json_stdout(&output);
     assert_eq!(
-        canonical_string(&json_path(&json, "codex_home")),
+        canonical_string(&json_path(&json, "agents_home")),
         canonical_string(home.path())
     );
     assert_eq!(
@@ -184,7 +184,7 @@ fn resolve_detects_linked_worktree_metadata_when_project_path_not_set() {
     let output = run_agent_docs(
         &nested,
         &["resolve", "--context", "project-dev", "--format", "json"],
-        &[("CODEX_HOME", home.path())],
+        &[("AGENTS_HOME", home.path())],
         &["PROJECT_PATH"],
     );
 
@@ -224,7 +224,7 @@ fn resolve_falls_back_to_cwd_when_not_git_repo_and_no_project_path() {
     let output = run_agent_docs(
         cwd.path(),
         &["resolve", "--context", "project-dev", "--format", "json"],
-        &[("CODEX_HOME", home.path())],
+        &[("AGENTS_HOME", home.path())],
         &["PROJECT_PATH"],
     );
 
@@ -375,7 +375,7 @@ fn resolve_strict_auto_uses_primary_worktree_fallback_but_local_only_keeps_local
             "checklist",
             "--strict",
         ],
-        &[("CODEX_HOME", home.path())],
+        &[("AGENTS_HOME", home.path())],
         &["PROJECT_PATH"],
     );
     assert_eq!(
@@ -410,7 +410,7 @@ fn resolve_strict_auto_uses_primary_worktree_fallback_but_local_only_keeps_local
             "checklist",
             "--strict",
         ],
-        &[("CODEX_HOME", home.path())],
+        &[("AGENTS_HOME", home.path())],
         &["PROJECT_PATH"],
     );
     assert_eq!(
@@ -438,7 +438,7 @@ fn resolve_strict_auto_uses_primary_worktree_fallback_but_local_only_keeps_local
         &[
             "baseline", "--check", "--target", "project", "--strict", "--format", "text",
         ],
-        &[("CODEX_HOME", home.path())],
+        &[("AGENTS_HOME", home.path())],
         &["PROJECT_PATH"],
     );
     assert_eq!(
@@ -460,7 +460,7 @@ fn resolve_strict_auto_uses_primary_worktree_fallback_but_local_only_keeps_local
             "--format",
             "text",
         ],
-        &[("CODEX_HOME", home.path())],
+        &[("AGENTS_HOME", home.path())],
         &["PROJECT_PATH"],
     );
     assert_eq!(

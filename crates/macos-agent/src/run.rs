@@ -344,7 +344,7 @@ mod tests {
     #[test]
     fn platform_gate_maps_non_macos_to_usage_error_unless_test_mode() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::remove(&lock, "CODEX_MACOS_AGENT_TEST_MODE");
+        let _mode = EnvGuard::remove(&lock, "AGENTS_MACOS_AGENT_TEST_MODE");
         let result = ensure_supported_platform();
         #[cfg(target_os = "macos")]
         assert!(result.is_ok());

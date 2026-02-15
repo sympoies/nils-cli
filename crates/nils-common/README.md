@@ -37,7 +37,7 @@ Primary constraint: shared helpers must preserve behavioral parity for each cons
 ```rust
 use nils_common::env;
 
-let starship_enabled = env::env_truthy_or("CODEX_CLI_STARSHIP", false);
+let starship_enabled = env::env_truthy_or("AGENTS_CLI_STARSHIP", false);
 let no_color = env::no_color_enabled();
 println!("starship={starship_enabled}, no_color={no_color}");
 ```

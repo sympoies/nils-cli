@@ -211,8 +211,8 @@ gates.
 
 ### Task 3.2: Wire policy check into required checks entrypoint
 - **Location**:
-  - `.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
-  - `.codex/skills/nils-cli-checks/SKILL.md`
+  - `.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `.agents/skills/nils-cli-checks/SKILL.md`
 - **Description**: Integrate the new policy script into the required checks flow so violations are
   caught before delivery and release.
 - **Dependencies**:
@@ -223,7 +223,7 @@ gates.
   - Skill documentation lists the new check explicitly.
   - Failure mode clearly reports which policy check failed.
 - **Validation**:
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ### Task 3.3: Align `cli-template` docs with the new standard
 - **Location**:
@@ -260,7 +260,7 @@ gates.
 ## Sprint 4: Adoption hardening and release safety
 **Goal**: Ensure the new standard is operationally usable and rollback-safe.
 **Demo/Validation**:
-- Command(s): `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- Command(s): `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - Verify: required checks pass and docs are discoverable via strict agent-docs resolve.
 
 ### Task 4.1: Add end-to-end policy adoption verification
@@ -284,7 +284,7 @@ gates.
 - **Location**:
   - `DEVELOPMENT.md`
   - `BINARY_DEPENDENCIES.md`
-  - `.codex/skills/nils-cli-release/SKILL.md`
+  - `.agents/skills/nils-cli-release/SKILL.md`
 - **Description**: Cross-check that development, dependency, and release docs do not conflict with
   the new CLI crate standard and JSON contract policy.
 - **Dependencies**:
@@ -296,12 +296,12 @@ gates.
   - Release skill docs still align with publishability checklist.
   - Any policy exceptions are documented explicitly.
 - **Validation**:
-  - `rg -n "publish|release|JSON|contract|project-dev" DEVELOPMENT.md BINARY_DEPENDENCIES.md .codex/skills/nils-cli-release/SKILL.md`
+  - `rg -n "publish|release|JSON|contract|project-dev" DEVELOPMENT.md BINARY_DEPENDENCIES.md .agents/skills/nils-cli-release/SKILL.md`
 
 ### Task 4.3: Execute full required checks and summarize residual risks
 - **Location**:
   - `DEVELOPMENT.md`
-  - `.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - **Description**: Run required checks and produce a short rollout summary covering residual risks,
   especially policy-check false positives and JSON contract drift risk.
 - **Dependencies**:
@@ -313,7 +313,7 @@ gates.
   - Rollout summary documents known limitations and owner follow-ups.
   - Policy is ready for default use in new CLI crate work.
 - **Validation**:
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Dependency and parallelization map
 - Critical path:

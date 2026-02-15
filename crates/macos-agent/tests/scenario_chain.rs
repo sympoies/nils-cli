@@ -206,15 +206,15 @@ fn scenario_steps_report_ax_path_and_fallback_state() {
     let options = harness
         .cmd_options(cwd.path())
         .with_env(
-            "CODEX_MACOS_AGENT_AX_LIST_JSON",
+            "AGENTS_MACOS_AGENT_AX_LIST_JSON",
             r#"{"nodes":[{"node_id":"1.1","role":"AXButton","enabled":true,"focused":false,"actions":["AXPress"],"path":["1","1"]}],"warnings":[]}"#,
         )
         .with_env(
-            "CODEX_MACOS_AGENT_AX_CLICK_JSON",
+            "AGENTS_MACOS_AGENT_AX_CLICK_JSON",
             r#"{"node_id":"1.1","matched_count":1,"action":"ax-press-fallback","used_coordinate_fallback":true,"fallback_x":120,"fallback_y":220}"#,
         )
         .with_env(
-            "CODEX_MACOS_AGENT_AX_TYPE_JSON",
+            "AGENTS_MACOS_AGENT_AX_TYPE_JSON",
             r#"{"node_id":"1.1","matched_count":1,"applied_via":"keyboard-keystroke-fallback","text_length":11,"submitted":false,"used_keyboard_fallback":true}"#,
         );
 
@@ -267,15 +267,15 @@ fn scenario_steps_report_ax_native_path_when_fallback_not_used() {
     let options = harness
         .cmd_options(cwd.path())
         .with_env(
-            "CODEX_MACOS_AGENT_AX_LIST_JSON",
+            "AGENTS_MACOS_AGENT_AX_LIST_JSON",
             r#"{"nodes":[{"node_id":"1.1","role":"AXButton","enabled":true,"focused":false,"actions":["AXPress"],"path":["1","1"]}],"warnings":[]}"#,
         )
         .with_env(
-            "CODEX_MACOS_AGENT_AX_CLICK_JSON",
+            "AGENTS_MACOS_AGENT_AX_CLICK_JSON",
             r#"{"node_id":"1.1","matched_count":1,"action":"ax-press","used_coordinate_fallback":false}"#,
         )
         .with_env(
-            "CODEX_MACOS_AGENT_AX_TYPE_JSON",
+            "AGENTS_MACOS_AGENT_AX_TYPE_JSON",
             r#"{"node_id":"1.1","matched_count":1,"applied_via":"ax-set-value","text_length":11,"submitted":false,"used_keyboard_fallback":false}"#,
         );
 
@@ -358,15 +358,15 @@ fn scenario_ax_step_supports_gate_and_postcondition_flags() {
     let options = harness
         .cmd_options(cwd.path())
         .with_env(
-            "CODEX_MACOS_AGENT_AX_LIST_JSON",
+            "AGENTS_MACOS_AGENT_AX_LIST_JSON",
             r#"{"nodes":[{"node_id":"1.1","role":"AXButton","title":"Run","identifier":"run-btn","enabled":true,"focused":false,"actions":["AXPress"],"path":["1","1"]}],"warnings":[]}"#,
         )
         .with_env(
-            "CODEX_MACOS_AGENT_AX_CLICK_JSON",
+            "AGENTS_MACOS_AGENT_AX_CLICK_JSON",
             r#"{"node_id":"1.1","matched_count":1,"action":"ax-press","used_coordinate_fallback":false}"#,
         )
         .with_env(
-            "CODEX_MACOS_AGENT_AX_ATTR_GET_JSON",
+            "AGENTS_MACOS_AGENT_AX_ATTR_GET_JSON",
             r#"{"node_id":"1.1","matched_count":1,"name":"AXRole","value":"AXButton"}"#,
         );
 

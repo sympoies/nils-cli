@@ -50,7 +50,7 @@ This plan adds an Accessibility-first command surface to `macos-agent` so automa
 **Demo/Validation**:
 - Command(s):
   - `cargo run -p macos-agent -- --help`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test cli_smoke`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test cli_smoke`
 - Verify:
   - `ax` command group appears in help and parses all MVP flags.
   - AX backend interface is isolated from command handlers and emits parseable domain results.
@@ -75,8 +75,8 @@ This plan adds an Accessibility-first command surface to `macos-agent` so automa
   - `command_label` and tracing logic include `ax.list`, `ax.click`, and `ax.type`.
 - **Validation**:
   - `cargo run -p macos-agent -- --help`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test cli_smoke -- help_lists_command_groups`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test contracts -- trace_command_labels_include_ax_commands`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test cli_smoke -- help_lists_command_groups`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test contracts -- trace_command_labels_include_ax_commands`
 
 ### Task 1.2: Define AX models and backend adapter contract
 - **Location**:
@@ -93,8 +93,8 @@ This plan adds an Accessibility-first command surface to `macos-agent` so automa
   - Backend surfaces operation-specific errors (`ax.list`, `ax.click`, `ax.type`).
   - Timeout and parse failures include actionable remediation hints.
 - **Validation**:
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test contracts -- error_format_json_emits_machine_parseable_payload`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test preflight -- preflight_json_structure_is_deterministic`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test contracts -- error_format_json_emits_machine_parseable_payload`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test preflight -- preflight_json_structure_is_deterministic`
 
 ### Task 1.3: Add command handlers for `ax list` with deterministic output
 - **Location**:
@@ -113,15 +113,15 @@ This plan adds an Accessibility-first command surface to `macos-agent` so automa
   - `--max-depth` and `--limit` are enforced predictably.
   - Stdout/stderr discipline matches existing command contract tests.
 - **Validation**:
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test list_commands`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test contracts -- success_commands_write_stdout_only`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test list_commands`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test contracts -- success_commands_write_stdout_only`
 
 ## Sprint 2: Mutating AX actions (`ax click`, `ax type`)
 **Goal**: Ship safe AX mutating commands with strict selector semantics and explicit fallback policy.
 **Demo/Validation**:
 - Command(s):
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test input_click -- --nocapture`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test input_keyboard -- --nocapture`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test input_click -- --nocapture`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test input_keyboard -- --nocapture`
 - Verify:
   - `ax click` and `ax type` enforce selector uniqueness and safe fallback behavior.
   - Retry/timeout metadata is preserved in command results and traces.
@@ -147,8 +147,8 @@ This plan adds an Accessibility-first command surface to `macos-agent` so automa
   - `--allow-coordinate-fallback` gates fallback click behavior explicitly.
   - JSON output includes action policy and attempts metadata.
 - **Validation**:
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test input_click -- --nocapture`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test contracts -- error_commands_write_stderr_only_with_error_prefix`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test input_click -- --nocapture`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test contracts -- error_commands_write_stderr_only_with_error_prefix`
 
 ### Task 2.2: Implement `ax type` command with focus/value strategy
 - **Location**:
@@ -166,8 +166,8 @@ This plan adds an Accessibility-first command surface to `macos-agent` so automa
   - `--clear-first`, `--submit`, and `--paste` behaviors are deterministic.
   - `--allow-keyboard-fallback` is opt-in and clearly surfaced in output.
 - **Validation**:
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test input_keyboard -- --nocapture`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test contracts -- error_format_json_emits_machine_parseable_payload`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test input_keyboard -- --nocapture`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test contracts -- error_format_json_emits_machine_parseable_payload`
 
 ### Task 2.3: Wire scenario compatibility and fallback diagnostics
 - **Location**:
@@ -185,16 +185,16 @@ This plan adds an Accessibility-first command surface to `macos-agent` so automa
   - Step results indicate whether AX-native path or fallback path executed.
   - Failure traces include command-level operation names for AX actions.
 - **Validation**:
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test scenario_chain -- --nocapture`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test contracts -- trace_writes_artifacts_for_success_and_failure`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test scenario_chain -- scenario_steps_report_ax_path_and_fallback_state --nocapture`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test scenario_chain -- --nocapture`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test contracts -- trace_writes_artifacts_for_success_and_failure`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test scenario_chain -- scenario_steps_report_ax_path_and_fallback_state --nocapture`
 
 ## Sprint 3: Completion parity, docs, and delivery hardening
 **Goal**: Make AX commands discoverable, documented, and release-ready with full required checks.
 **Demo/Validation**:
 - Command(s):
   - `zsh -f tests/zsh/completion.test.zsh`
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - Verify:
   - Shell completions expose AX commands and options.
   - Workspace-wide formatting/lint/tests continue passing.
@@ -256,7 +256,7 @@ This plan adds an Accessibility-first command surface to `macos-agent` so automa
   - PR notes include rollout cautions for AX permission and selector drift.
   - Any non-run checks are explicitly documented with reason.
 - **Validation**:
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Testing Strategy
 - Unit:

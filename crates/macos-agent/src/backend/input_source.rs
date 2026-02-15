@@ -2,7 +2,7 @@ use crate::backend::process::{ProcessRequest, ProcessRunner, map_failure};
 use crate::error::CliError;
 use crate::test_mode;
 
-const TEST_INPUT_SOURCE_CURRENT_ENV: &str = "CODEX_MACOS_AGENT_TEST_INPUT_SOURCE_CURRENT";
+const TEST_INPUT_SOURCE_CURRENT_ENV: &str = "AGENTS_MACOS_AGENT_TEST_INPUT_SOURCE_CURRENT";
 const DEFAULT_ABC_SOURCE: &str = "com.apple.keylayout.ABC";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,10 +128,10 @@ mod tests {
     #[test]
     fn current_uses_test_mode_env_when_enabled() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
         let _value = EnvGuard::set(
             &lock,
-            "CODEX_MACOS_AGENT_TEST_INPUT_SOURCE_CURRENT",
+            "AGENTS_MACOS_AGENT_TEST_INPUT_SOURCE_CURRENT",
             "com.apple.keylayout.US",
         );
         let out = current(&FixedRunner::new("ignored"), 100).expect("test mode current");
@@ -141,10 +141,10 @@ mod tests {
     #[test]
     fn switch_returns_simulated_state_in_test_mode() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
         let _value = EnvGuard::set(
             &lock,
-            "CODEX_MACOS_AGENT_TEST_INPUT_SOURCE_CURRENT",
+            "AGENTS_MACOS_AGENT_TEST_INPUT_SOURCE_CURRENT",
             "com.apple.keylayout.US",
         );
         let state = switch(&FixedRunner::new("ignored"), "abc", 100).expect("switch");

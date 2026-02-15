@@ -107,7 +107,7 @@ fn input_type_timeout_surfaces_as_runtime_error() {
 
     let options = harness
         .cmd_options(cwd.path())
-        .with_env("CODEX_MACOS_AGENT_STUB_OSASCRIPT_MODE", "timeout");
+        .with_env("AGENTS_MACOS_AGENT_STUB_OSASCRIPT_MODE", "timeout");
     let out = harness.run_with_options(
         cwd.path(),
         &["--timeout-ms", "10", "input", "type", "--text", "hello"],
@@ -207,11 +207,11 @@ fn ax_type_reports_keyboard_fallback_when_backend_uses_it() {
     let options = harness
         .cmd_options(cwd.path())
         .with_env(
-            "CODEX_MACOS_AGENT_AX_LIST_JSON",
+            "AGENTS_MACOS_AGENT_AX_LIST_JSON",
             r#"{"nodes":[{"node_id":"1.1","role":"AXTextField","title":"Input","identifier":"input-1","enabled":true,"focused":true,"actions":[],"path":["1","1"]}],"warnings":[]}"#,
         )
         .with_env(
-            "CODEX_MACOS_AGENT_AX_TYPE_JSON",
+            "AGENTS_MACOS_AGENT_AX_TYPE_JSON",
             r#"{"node_id":"1.1","matched_count":1,"applied_via":"keyboard-keystroke-fallback","text_length":5,"submitted":true,"used_keyboard_fallback":true}"#,
         );
     let out = harness.run_with_options(

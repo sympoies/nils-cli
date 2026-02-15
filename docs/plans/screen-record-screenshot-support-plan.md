@@ -14,7 +14,7 @@ identity (id/owner/title) unless the user supplies an explicit output path.
   - Output image formats: `png`, `jpg`, `webp` (format selected by `--image-format` or `--path` extension).
   - Default naming: timestamp + resolved window identity (id/owner/title) with safe sanitization and collision handling.
   - Reuse existing selection logic and permission gates.
-  - Deterministic `CODEX_SCREEN_RECORD_TEST_MODE=1` support for screenshots (fixture copy), including integration tests.
+  - Deterministic `AGENTS_SCREEN_RECORD_TEST_MODE=1` support for screenshots (fixture copy), including integration tests.
   - Update docs and shell completions (Zsh + Bash) for new flags.
 - Out of scope:
   - Full-screen / region selection capture.
@@ -142,7 +142,7 @@ identity (id/owner/title) unless the user supplies an explicit output path.
 **Demo/Validation**:
 - Command(s):
   - `cargo test -p screen-record -- screenshot` (new tests)
-  - `CODEX_SCREEN_RECORD_TEST_MODE=1 cargo test -p screen-record -- recording_test_mode`
+  - `AGENTS_SCREEN_RECORD_TEST_MODE=1 cargo test -p screen-record -- recording_test_mode`
 - Verify:
   - Screenshot mode writes image fixtures and prints the resolved path to stdout.
 
@@ -173,7 +173,7 @@ identity (id/owner/title) unless the user supplies an explicit output path.
   - Input: pre-formatted timestamp string + resolved window identity (window id + owner name + window title) + image extension.
   - Output: a filename string only (no filesystem access).
   - Production: timestamp string is derived from local time and is safe for filenames (no `:` characters).
-  - Test mode: allow overriding the timestamp string (e.g., fixed constant or `CODEX_SCREEN_RECORD_TEST_TIMESTAMP`) so integration tests can assert exact filenames.
+  - Test mode: allow overriding the timestamp string (e.g., fixed constant or `AGENTS_SCREEN_RECORD_TEST_TIMESTAMP`) so integration tests can assert exact filenames.
   Rules (example shape):
   - `screenshot-20260101-000000-win100-Terminal-Inbox.png`
   - Sanitize `owner` and `title`:
@@ -225,9 +225,9 @@ identity (id/owner/title) unless the user supplies an explicit output path.
   - `crates/screen-record/src/test_mode.rs`
   - `crates/screen-record/tests/recording_test_mode.rs`
   - `crates/screen-record/tests/fixtures/` (new fixtures)
-- **Description**: Extend `CODEX_SCREEN_RECORD_TEST_MODE=1` behavior:
+- **Description**: Extend `AGENTS_SCREEN_RECORD_TEST_MODE=1` behavior:
   - Screenshot mode writes a fixture image matching the resolved image format.
-  - When screenshot mode generates a default filename, use a deterministic timestamp string (constant or `CODEX_SCREEN_RECORD_TEST_TIMESTAMP`) so integration tests can assert exact paths.
+  - When screenshot mode generates a default filename, use a deterministic timestamp string (constant or `AGENTS_SCREEN_RECORD_TEST_TIMESTAMP`) so integration tests can assert exact paths.
   - Add minimal fixtures:
     - `crates/screen-record/tests/fixtures/sample.png`
     - `crates/screen-record/tests/fixtures/sample.jpg`
@@ -240,7 +240,7 @@ identity (id/owner/title) unless the user supplies an explicit output path.
   - Task 2.3
 - **Complexity**: 6
 - **Acceptance criteria**:
-  - Tests pass on non-macOS with `CODEX_SCREEN_RECORD_TEST_MODE=1`.
+  - Tests pass on non-macOS with `AGENTS_SCREEN_RECORD_TEST_MODE=1`.
 - **Validation**:
   - `cargo test -p screen-record -- recording_test_mode`
 
@@ -358,7 +358,7 @@ identity (id/owner/title) unless the user supplies an explicit output path.
 **Goal**: Make screenshot mode production-ready: full test coverage, updated documentation/completions, and all repo-required checks passing.
 **Demo/Validation**:
 - Command(s):
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - Verify:
   - fmt/clippy/test/zsh completion tests all pass.
 
@@ -373,7 +373,7 @@ identity (id/owner/title) unless the user supplies an explicit output path.
   - Recording-only flags are rejected in screenshot mode (exit 2).
   - Screenshot-only flags are rejected outside screenshot mode (exit 2), e.g. `--dir` or `--image-format` without `--screenshot`.
   - Screenshot mode flags are rejected when combined with list/preflight/request-permission modes (exit 2).
-  - Tests set a deterministic timestamp override (e.g., `CODEX_SCREEN_RECORD_TEST_TIMESTAMP`) so default output paths can be asserted exactly.
+  - Tests set a deterministic timestamp override (e.g., `AGENTS_SCREEN_RECORD_TEST_TIMESTAMP`) so default output paths can be asserted exactly.
 - **Dependencies**:
   - Task 2.4
 - **Complexity**: 5
@@ -419,7 +419,7 @@ identity (id/owner/title) unless the user supplies an explicit output path.
   - Image format inference + conflict checks.
   - Path resolution behavior (`--path` vs `--dir` vs default).
 - Integration:
-  - `CODEX_SCREEN_RECORD_TEST_MODE=1` end-to-end tests for screenshot creation, stdout contract, and validation errors.
+  - `AGENTS_SCREEN_RECORD_TEST_MODE=1` end-to-end tests for screenshot creation, stdout contract, and validation errors.
   - Ensure existing recording test-mode tests remain unchanged and continue to pass.
 - E2E/manual:
   - macOS: verify screenshot capture produces openable files for png/jpg/webp and exits quickly.

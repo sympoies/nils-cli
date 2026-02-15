@@ -13,7 +13,7 @@ Prereqs:
 - `git`, `python3`, `cargo`, `semantic-commit`, and `git-scope` available on `PATH`.
 - `gh` available on `PATH` to use the CI-gated fast path (required for strict `--ci-gate-main`).
 - `cargo-nextest` available on `PATH` when full release checks are required (`NILS_CLI_TEST_RUNNER=nextest`).
-- Release checks available at `.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh` (unless `--skip-checks`).
+- Release checks available at `.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh` (unless `--skip-checks`).
 
 Inputs:
 
@@ -65,7 +65,7 @@ Failure modes:
 
 ## Scripts (only entrypoints)
 
-- `.codex/skills/nils-cli-release/scripts/nils-cli-release.sh`
+- `.agents/skills/nils-cli-release/scripts/nils-cli-release.sh`
 
 ## Workflow
 

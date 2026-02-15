@@ -194,14 +194,14 @@ fn debug_bundle_artifact_layout_is_deterministic_under_output_dir() {
         );
     }
 
-    let codex_home = repo.path().join("codex-home");
-    std::fs::create_dir_all(&codex_home).expect("create codex home");
-    let codex_home_str = codex_home.to_string_lossy().to_string();
-    let _codex_home = EnvGuard::set(&lock, "CODEX_HOME", &codex_home_str);
+    let agents_home = repo.path().join("agents-home");
+    std::fs::create_dir_all(&agents_home).expect("create agents home");
+    let agents_home_str = agents_home.to_string_lossy().to_string();
+    let _agents_home = EnvGuard::set(&lock, "AGENTS_HOME", &agents_home_str);
 
     assert_eq!(
         debug::bundle::resolve_output_dir(None),
-        codex_home.join("out").join("agentctl-debug-bundle")
+        agents_home.join("out").join("agentctl-debug-bundle")
     );
     assert_eq!(
         debug::bundle::resolve_output_dir(Some(output_dir.as_path())),

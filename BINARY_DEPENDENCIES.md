@@ -79,9 +79,9 @@ These tools enable richer behavior. Missing tools typically trigger fallback beh
 These are repository scripts (not third-party packages):
 
 - Install workspace binaries:
-  - `./.codex/skills/nils-cli-install/scripts/nils-cli-install.sh`
+  - `./.agents/skills/nils-cli-install/scripts/nils-cli-install.sh`
 - Run required repository checks:
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - Supporting utilities:
   - `scripts/workspace-bins.py`
   - `scripts/ci/coverage-summary.sh`

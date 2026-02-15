@@ -14,7 +14,7 @@ Update all Zsh completion scripts under `completions/zsh/` to fully match the Ru
 ## Sprint 1: Full Completion Parity
 **Goal**: Every shipped CLI completion file matches the current command tree and flags, including multi-level subcommands and wrapper aliases.
 **Demo/Validation**:
-- Command(s): `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- Command(s): `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - Verify: completion test passes; manual spot-checks on key commands show full subcommand/flag coverage.
 
 ### Task 1.1: Inventory command surfaces

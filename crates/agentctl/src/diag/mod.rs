@@ -10,8 +10,8 @@ pub const EXIT_OK: i32 = 0;
 pub const EXIT_RUNTIME_ERROR: i32 = 1;
 pub const EXIT_USAGE: i32 = 64;
 
-pub const MACOS_AGENT_TEST_MODE_ENV: &str = "CODEX_MACOS_AGENT_TEST_MODE";
-pub const SCREEN_RECORD_TEST_MODE_ENV: &str = "CODEX_SCREEN_RECORD_TEST_MODE";
+pub const MACOS_AGENT_TEST_MODE_ENV: &str = "AGENTS_MACOS_AGENT_TEST_MODE";
+pub const SCREEN_RECORD_TEST_MODE_ENV: &str = "AGENTS_SCREEN_RECORD_TEST_MODE";
 
 #[derive(Debug, Args)]
 pub struct DiagArgs {

@@ -374,7 +374,7 @@ rollout alignment, and finally publish-readiness verification for the publishabl
   - JSON contract tests pass in CI-friendly environments.
   - No regressions in existing human-readable auth/diag tests.
 - **Validation**:
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
   - `cargo test -p nils-codex-cli auth_json_contract diag_json_contract`
 
 ### Task 4.4: Verify publish-readiness gates for `nils-codex-cli`

@@ -18,8 +18,8 @@ mod linux_x11_integration {
             r#"#!/usr/bin/env bash
 set -euo pipefail
 
-if [[ -n "${CODEX_FFMPEG_LOG:-}" ]]; then
-  printf '%s\n' "$@" > "${CODEX_FFMPEG_LOG}"
+if [[ -n "${AGENTS_FFMPEG_LOG:-}" ]]; then
+  printf '%s\n' "$@" > "${AGENTS_FFMPEG_LOG}"
 fi
 
 out="${@: -1}"
@@ -122,7 +122,7 @@ printf "stub" > "$out"
         write_ffmpeg_stub(&stubs);
 
         let options_base = CmdOptions::new()
-            .with_env_remove("CODEX_SCREEN_RECORD_TEST_MODE")
+            .with_env_remove("AGENTS_SCREEN_RECORD_TEST_MODE")
             .with_path_prepend(stubs.path());
 
         let list = run_with(&bin, &["--list-windows"], &options_base);
@@ -147,7 +147,7 @@ printf "stub" > "$out"
         let win_log_value = win_log.to_string_lossy().to_string();
         let options = options_base
             .clone()
-            .with_env("CODEX_FFMPEG_LOG", &win_log_value);
+            .with_env("AGENTS_FFMPEG_LOG", &win_log_value);
         let win_out_value = win_out.to_string_lossy().to_string();
         let out = run_with(
             &bin,
@@ -179,7 +179,7 @@ printf "stub" > "$out"
         let display_log_value = display_log.to_string_lossy().to_string();
         let options = options_base
             .clone()
-            .with_env("CODEX_FFMPEG_LOG", &display_log_value);
+            .with_env("AGENTS_FFMPEG_LOG", &display_log_value);
         let display_out_value = display_out.to_string_lossy().to_string();
         let out = run_with(
             &bin,
@@ -213,7 +213,7 @@ printf "stub" > "$out"
         let display_id_out = tmp.path().join("display-id.mov");
         let display_id_log = tmp.path().join("ffmpeg-display-id.txt");
         let display_id_log_value = display_id_log.to_string_lossy().to_string();
-        let options = options_base.with_env("CODEX_FFMPEG_LOG", &display_id_log_value);
+        let options = options_base.with_env("AGENTS_FFMPEG_LOG", &display_id_log_value);
         let display_id_out_value = display_id_out.to_string_lossy().to_string();
         let out = run_with(
             &bin,

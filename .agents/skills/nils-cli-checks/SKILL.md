@@ -40,7 +40,7 @@ Failure modes:
 
 ## Scripts (only entrypoints)
 
-- `.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- `.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Workflow
 

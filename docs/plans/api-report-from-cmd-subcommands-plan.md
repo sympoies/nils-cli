@@ -87,7 +87,7 @@ Compatibility with the legacy `api-report-from-cmd` shell script is best-effort;
 ### Task 1.5: Unit tests for tokenization + parsing + case derivation
 - **Location**:
   - `crates/api-testing-core/src/cmd_snippet.rs`
-- **Description**: Add focused unit tests covering quotes/escapes, `$CODEX_HOME`-style paths (basename matching), `\\\n` continuations, pipe truncation, and common flag/positional combinations for both GraphQL and REST.
+- **Description**: Add focused unit tests covering quotes/escapes, `$AGENTS_HOME`-style paths (basename matching), `\\\n` continuations, pipe truncation, and common flag/positional combinations for both GraphQL and REST.
 - **Dependencies**:
   - Task 1.3
   - Task 1.4
@@ -152,7 +152,7 @@ Compatibility with the legacy `api-report-from-cmd` shell script is best-effort;
 ## Sprint 3: Zsh completions + docs + required checks
 **Goal**: Make the feature discoverable (completions/docs) and keep repo checks green.
 **Demo/Validation**:
-- Command(s): `zsh -f tests/zsh/completion.test.zsh`, `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- Command(s): `zsh -f tests/zsh/completion.test.zsh`, `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - Verify: completions source cleanly and mandatory checks pass.
 
 ### Task 3.1: Update zsh completions for new subcommands
@@ -187,7 +187,7 @@ Compatibility with the legacy `api-report-from-cmd` shell script is best-effort;
 
 ### Task 3.3: Run mandatory checks (fmt, clippy, tests, zsh completion)
 - **Location**:
-  - `.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
   - `DEVELOPMENT.md`
 - **Description**: Run the repo’s mandatory checks and address any failures caused by this change.
 - **Dependencies**:
@@ -197,7 +197,7 @@ Compatibility with the legacy `api-report-from-cmd` shell script is best-effort;
 - **Acceptance criteria**:
   - All mandatory checks pass.
 - **Validation**:
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Testing Strategy
 - Unit: `api-testing-core` tests for normalization/tokenization/parsing and case derivation.

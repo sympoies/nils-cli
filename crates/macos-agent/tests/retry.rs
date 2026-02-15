@@ -11,10 +11,10 @@ fn click_retries_then_succeeds_when_policy_allows() {
     let options = harness
         .cmd_options(cwd.path())
         .with_env(
-            "CODEX_MACOS_AGENT_STUB_COUNTER_FILE",
+            "AGENTS_MACOS_AGENT_STUB_COUNTER_FILE",
             counter_file.to_str().unwrap(),
         )
-        .with_env("CODEX_MACOS_AGENT_STUB_CLICLICK_FAIL_UNTIL", "1");
+        .with_env("AGENTS_MACOS_AGENT_STUB_CLICLICK_FAIL_UNTIL", "1");
 
     let out = harness.run_with_options(
         cwd.path(),
@@ -59,10 +59,10 @@ fn click_without_retries_fails_on_first_transient_error() {
     let options = harness
         .cmd_options(cwd.path())
         .with_env(
-            "CODEX_MACOS_AGENT_STUB_COUNTER_FILE",
+            "AGENTS_MACOS_AGENT_STUB_COUNTER_FILE",
             counter_file.to_str().unwrap(),
         )
-        .with_env("CODEX_MACOS_AGENT_STUB_CLICLICK_FAIL_UNTIL", "1");
+        .with_env("AGENTS_MACOS_AGENT_STUB_CLICLICK_FAIL_UNTIL", "1");
 
     let out = harness.run_with_options(
         cwd.path(),

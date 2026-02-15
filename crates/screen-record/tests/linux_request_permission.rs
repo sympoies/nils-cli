@@ -25,9 +25,9 @@ mod linux_request_permission {
         let empty_path = TempDir::new().expect("tempdir");
 
         let options = CmdOptions::new()
-            .with_env_remove("CODEX_SCREEN_RECORD_TEST_MODE")
-            .with_env_remove("CODEX_SCREEN_RECORD_PORTAL_FORCE_AVAILABLE")
-            .with_env_remove("CODEX_SCREEN_RECORD_PORTAL_FORCE_MISSING")
+            .with_env_remove("AGENTS_SCREEN_RECORD_TEST_MODE")
+            .with_env_remove("AGENTS_SCREEN_RECORD_PORTAL_FORCE_AVAILABLE")
+            .with_env_remove("AGENTS_SCREEN_RECORD_PORTAL_FORCE_MISSING")
             .with_env_remove("DISPLAY")
             .with_env_remove("WAYLAND_DISPLAY")
             .with_env("PATH", &empty_path.path().to_string_lossy());
@@ -45,9 +45,9 @@ mod linux_request_permission {
         let temp_dir = ffmpeg_stub_dir();
 
         let options = CmdOptions::new()
-            .with_env_remove("CODEX_SCREEN_RECORD_TEST_MODE")
-            .with_env_remove("CODEX_SCREEN_RECORD_PORTAL_FORCE_AVAILABLE")
-            .with_env("CODEX_SCREEN_RECORD_PORTAL_FORCE_MISSING", "1")
+            .with_env_remove("AGENTS_SCREEN_RECORD_TEST_MODE")
+            .with_env_remove("AGENTS_SCREEN_RECORD_PORTAL_FORCE_AVAILABLE")
+            .with_env("AGENTS_SCREEN_RECORD_PORTAL_FORCE_MISSING", "1")
             .with_env_remove("DISPLAY")
             .with_env("WAYLAND_DISPLAY", "wayland-0")
             .with_env("PATH", &temp_dir.path().to_string_lossy());
@@ -65,9 +65,9 @@ mod linux_request_permission {
         let temp_dir = ffmpeg_stub_dir();
 
         let options = CmdOptions::new()
-            .with_env_remove("CODEX_SCREEN_RECORD_TEST_MODE")
-            .with_env("CODEX_SCREEN_RECORD_PORTAL_FORCE_AVAILABLE", "1")
-            .with_env_remove("CODEX_SCREEN_RECORD_PORTAL_FORCE_MISSING")
+            .with_env_remove("AGENTS_SCREEN_RECORD_TEST_MODE")
+            .with_env("AGENTS_SCREEN_RECORD_PORTAL_FORCE_AVAILABLE", "1")
+            .with_env_remove("AGENTS_SCREEN_RECORD_PORTAL_FORCE_MISSING")
             .with_env_remove("DISPLAY")
             .with_env("WAYLAND_DISPLAY", "wayland-0")
             .with_env("PATH", &temp_dir.path().to_string_lossy());
@@ -83,9 +83,9 @@ mod linux_request_permission {
         let temp_dir = ffmpeg_stub_dir();
 
         let options = CmdOptions::new()
-            .with_env_remove("CODEX_SCREEN_RECORD_TEST_MODE")
-            .with_env_remove("CODEX_SCREEN_RECORD_PORTAL_FORCE_AVAILABLE")
-            .with_env_remove("CODEX_SCREEN_RECORD_PORTAL_FORCE_MISSING")
+            .with_env_remove("AGENTS_SCREEN_RECORD_TEST_MODE")
+            .with_env_remove("AGENTS_SCREEN_RECORD_PORTAL_FORCE_AVAILABLE")
+            .with_env_remove("AGENTS_SCREEN_RECORD_PORTAL_FORCE_MISSING")
             .with_env_remove("DISPLAY")
             .with_env_remove("WAYLAND_DISPLAY")
             .with_env("PATH", &temp_dir.path().to_string_lossy());

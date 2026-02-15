@@ -252,7 +252,7 @@ Shape:
 - `2`: Usage error (invalid flags, ambiguous selection, invalid format).
 
 ## Environment
-- `CODEX_SCREEN_RECORD_TEST_MODE=1`: Use deterministic fixtures instead of macOS APIs. In test
+- `AGENTS_SCREEN_RECORD_TEST_MODE=1`: Use deterministic fixtures instead of macOS APIs. In test
   mode, recording copies a fixture file matching the selected container.
 
 ## Examples

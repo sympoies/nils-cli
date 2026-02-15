@@ -27,8 +27,8 @@ This plan hardens `macos-agent` for real-world agent development loops where com
 **Goal**: Make command outcomes immediately actionable for agents by improving parseable failures, retry visibility, and traceability.
 **Demo/Validation**:
 - Command(s):
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test contracts -- --nocapture`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test retry -- --nocapture`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test contracts -- --nocapture`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test retry -- --nocapture`
 - Verify:
   - JSON users can parse failure payloads with operation, category, and remediation hints.
   - Action results expose actual attempt usage and trace locations.
@@ -53,8 +53,8 @@ This plan hardens `macos-agent` for real-world agent development loops where com
   - Existing default text error behavior remains available and documented.
   - Error payloads include at least one actionable hint for common failures (permission, missing dependency, timeout).
 - **Validation**:
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test contracts -- error_commands_write_stderr_only_with_error_prefix --nocapture`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test cli_smoke -- --nocapture`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test contracts -- error_commands_write_stderr_only_with_error_prefix --nocapture`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test cli_smoke -- --nocapture`
 
 ### Task 1.2: Expose retry outcome telemetry in action results
 - **Location**:
@@ -74,8 +74,8 @@ This plan hardens `macos-agent` for real-world agent development loops where com
   - Runtime timeout/non-zero failures preserve concise failure summaries.
   - Deterministic tests assert retry telemetry on both success-after-retry and fail-without-retry paths.
 - **Validation**:
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test retry -- --nocapture`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test scenario_chain -- --nocapture`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test retry -- --nocapture`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test scenario_chain -- --nocapture`
 
 ### Task 1.3: Add per-action trace artifact emission for rapid debugging
 - **Location**:
@@ -85,7 +85,7 @@ This plan hardens `macos-agent` for real-world agent development loops where com
   - `crates/macos-agent/tests/common.rs`
   - `crates/macos-agent/tests/contracts.rs`
   - `crates/macos-agent/README.md`
-- **Description**: Add an optional trace sink (`--trace-dir` or equivalent) that writes per-action artifacts (request args, policy, elapsed time, status, stderr summary). Ensure artifact paths are deterministic in test mode and default safely to `CODEX_HOME/out` when requested by users.
+- **Description**: Add an optional trace sink (`--trace-dir` or equivalent) that writes per-action artifacts (request args, policy, elapsed time, status, stderr summary). Ensure artifact paths are deterministic in test mode and default safely to `AGENTS_HOME/out` when requested by users.
 - **Dependencies**:
   - Task 1.1
   - Task 1.2
@@ -95,8 +95,8 @@ This plan hardens `macos-agent` for real-world agent development loops where com
   - Trace files are written for both success and failure paths.
   - README documents trace usage for iterative debugging loops.
 - **Validation**:
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test contracts -- --nocapture`
-  - `rg -n "trace|CODEX_HOME/out|schema_version" crates/macos-agent/README.md`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test contracts -- --nocapture`
+  - `rg -n "trace|AGENTS_HOME/out|schema_version" crates/macos-agent/README.md`
 
 ## Sprint 2: Real-app harness realism and failure visibility
 **Goal**: Make real-app suites reflect non-ideal development reality by removing silent skips, reducing fixed sleeps, and improving per-step diagnostics.
@@ -152,7 +152,7 @@ This plan hardens `macos-agent` for real-world agent development loops where com
 - **Validation**:
   - `MACOS_AGENT_REAL_E2E=1 MACOS_AGENT_REAL_E2E_MUTATING=1 MACOS_AGENT_REAL_E2E_APPS=finder MACOS_AGENT_REAL_E2E_PROFILE=default-1440p cargo test -p macos-agent --test e2e_real_apps -- real_e2e_foundation_collects_artifacts --nocapture`
   - `cargo test -p macos-agent --test e2e_real_apps -- matrix_runner_emits_artifact_index_with_required_fields`
-  - `latest_dir="$(ls -td "${CODEX_HOME:-$HOME/.codex}/out/macos-agent-e2e"/* 2>/dev/null | head -n 1)"; test -n "$latest_dir" && test -f "$latest_dir/steps.jsonl"`
+  - `latest_dir="$(ls -td "${AGENTS_HOME:-$HOME/.agents}/out/macos-agent-e2e"/* 2>/dev/null | head -n 1)"; test -n "$latest_dir" && test -f "$latest_dir/steps.jsonl"`
 
 ### Task 2.3: Reduce fixed sleeps via condition-based waits
 - **Location**:
@@ -196,8 +196,8 @@ This plan hardens `macos-agent` for real-world agent development loops where com
 **Goal**: Give agents first-class UX for running small action chains, validating profiles quickly, and checking readiness before mutating desktop state.
 **Demo/Validation**:
 - Command(s):
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo run -p macos-agent -- --format json scenario run --file crates/macos-agent/tests/fixtures/scenario-basic.json`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo run -p macos-agent -- profile validate --file crates/macos-agent/tests/fixtures/real_e2e_profile_default_1440p.json`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo run -p macos-agent -- --format json scenario run --file crates/macos-agent/tests/fixtures/scenario-basic.json`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo run -p macos-agent -- profile validate --file crates/macos-agent/tests/fixtures/real_e2e_profile_default_1440p.json`
 - Verify:
   - Agents can run compact scenario files with immediate step-by-step feedback.
   - Profile/config mistakes are caught before real-desktop mutation runs.
@@ -225,8 +225,8 @@ This plan hardens `macos-agent` for real-world agent development loops where com
   - Summary output reports succeeded/failed/skipped step counts and first failing step id.
   - Scenario mode works in deterministic test mode without real desktop mutation.
 - **Validation**:
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test scenario_chain -- --nocapture`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo run -p macos-agent -- --format json scenario run --file crates/macos-agent/tests/fixtures/scenario-basic.json`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test scenario_chain -- --nocapture`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo run -p macos-agent -- --format json scenario run --file crates/macos-agent/tests/fixtures/scenario-basic.json`
 
 ### Task 3.2: Add profile validation and calibration bootstrap commands
 - **Location**:
@@ -235,7 +235,7 @@ This plan hardens `macos-agent` for real-world agent development loops where com
   - `crates/macos-agent/src/commands/profile.rs`
   - `crates/macos-agent/tests/fixtures/real_e2e_profile_default_1440p.json`
   - `crates/macos-agent/README.md`
-- **Description**: Add `profile validate` for schema/bounds checks and `profile init` (or equivalent) to generate a profile scaffold under `CODEX_HOME/out`. This reduces coordinate drift errors before live runs.
+- **Description**: Add `profile validate` for schema/bounds checks and `profile init` (or equivalent) to generate a profile scaffold under `AGENTS_HOME/out`. This reduces coordinate drift errors before live runs.
 - **Dependencies**:
   - none
 - **Complexity**: 7
@@ -244,7 +244,7 @@ This plan hardens `macos-agent` for real-world agent development loops where com
   - Validation checks include coordinate bounds sanity and required scenario points.
   - README documents profile bootstrap and update workflow.
 - **Validation**:
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo run -p macos-agent -- profile validate --file crates/macos-agent/tests/fixtures/real_e2e_profile_default_1440p.json`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo run -p macos-agent -- profile validate --file crates/macos-agent/tests/fixtures/real_e2e_profile_default_1440p.json`
   - `cargo test -p macos-agent --tests profile`
 
 ### Task 3.3: Extend preflight into live-loop readiness probes
@@ -263,7 +263,7 @@ This plan hardens `macos-agent` for real-world agent development loops where com
   - Deterministic tests cover probe success/failure permutations.
 - **Validation**:
   - `cargo test -p macos-agent --test preflight -- --nocapture`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo run -p macos-agent -- --format json preflight --strict`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo run -p macos-agent -- --format json preflight --strict`
 
 ### Task 3.4: Publish an immediate-feedback runbook and command recipes
 - **Location**:
@@ -287,8 +287,8 @@ This plan hardens `macos-agent` for real-world agent development loops where com
 **Goal**: Ensure usability improvements are stable under fault conditions and safe to roll out without breaking existing consumers.
 **Demo/Validation**:
 - Command(s):
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --workspace -- --nocapture`
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --workspace -- --nocapture`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - Verify:
   - New feedback/diagnostics features are covered by deterministic tests.
   - Existing command contracts stay stable (or explicitly versioned when changed).
@@ -317,7 +317,7 @@ This plan hardens `macos-agent` for real-world agent development loops where com
   - Fault tests remain CI-safe and deterministic.
   - New error payload contract is exercised for usage and runtime categories.
 - **Validation**:
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --tests -- --nocapture`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --tests -- --nocapture`
 
 ### Task 4.2: Add real-app short-loop soak harness and pass-rate summary
 - **Location**:

@@ -22,10 +22,10 @@ fn real_mutation_enabled() -> bool {
 fn base_options(cwd: &std::path::Path) -> CmdOptions {
     CmdOptions::new()
         .with_cwd(cwd)
-        .with_env_remove("CODEX_MACOS_AGENT_TEST_MODE")
-        .with_env_remove("CODEX_MACOS_AGENT_TEST_TIMESTAMP")
-        .with_env_remove("CODEX_MACOS_AGENT_STUB_CLICLICK_MODE")
-        .with_env_remove("CODEX_MACOS_AGENT_STUB_OSASCRIPT_MODE")
+        .with_env_remove("AGENTS_MACOS_AGENT_TEST_MODE")
+        .with_env_remove("AGENTS_MACOS_AGENT_TEST_TIMESTAMP")
+        .with_env_remove("AGENTS_MACOS_AGENT_STUB_CLICLICK_MODE")
+        .with_env_remove("AGENTS_MACOS_AGENT_STUB_OSASCRIPT_MODE")
 }
 
 #[test]

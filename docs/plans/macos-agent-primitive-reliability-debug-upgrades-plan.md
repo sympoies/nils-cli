@@ -20,7 +20,7 @@ This plan upgrades `macos-agent` primitives so Codex can automate unstable, dyna
 ## Assumptions (if any)
 1. Backward compatibility for existing command defaults remains required, with new behavior introduced by additive flags/subcommands.
 2. `macos-agent` keeps JSON/text dual-output contract stability for automation consumers.
-3. New diagnostics can write artifacts under `${CODEX_HOME:-$HOME/.codex}/out` without breaking existing flows.
+3. New diagnostics can write artifacts under `${AGENTS_HOME:-$HOME/.agents}/out` without breaking existing flows.
 4. Real desktop E2E checks remain opt-in and local-only; deterministic tests stay the default CI gate.
 
 ## Sprint 1: Deterministic element targeting and click resilience

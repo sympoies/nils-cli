@@ -32,7 +32,7 @@ This plan expands `macos-agent` real-desktop coverage from basic readiness check
   - `MACOS_AGENT_REAL_E2E=1 MACOS_AGENT_REAL_E2E_MUTATING=1 MACOS_AGENT_REAL_E2E_PROFILE=default-1440p cargo test -p macos-agent --test e2e_real_apps -- real_e2e_foundation_collects_artifacts --nocapture`
 - Verify:
   - Foundation test reports actionable skip reasons when prerequisites are missing.
-  - Mutating run captures timestamped screenshots and step logs under `CODEX_HOME/out/macos-agent-e2e/`.
+  - Mutating run captures timestamped screenshots and step logs under `AGENTS_HOME/out/macos-agent-e2e/`.
 
 **Parallelization notes**:
 - `Task 1.1` and `Task 1.2` can run in parallel.
@@ -59,7 +59,7 @@ This plan expands `macos-agent` real-desktop coverage from basic readiness check
   - `crates/macos-agent/tests/real_common.rs`
   - `crates/macos-agent/tests/e2e_real_apps.rs`
   - `crates/macos-agent/tests/fixtures/real_e2e_profile_default_1440p.json`
-- **Description**: Implement shared helpers for real-desktop runs: app-installed probing, profile-based coordinate loading, resilient command execution wrappers, and standardized artifact capture (`json` output snapshots + screenshots + step transcript). Ensure all artifacts default to `CODEX_HOME/out`.
+- **Description**: Implement shared helpers for real-desktop runs: app-installed probing, profile-based coordinate loading, resilient command execution wrappers, and standardized artifact capture (`json` output snapshots + screenshots + step transcript). Ensure all artifacts default to `AGENTS_HOME/out`.
 - **Dependencies**:
   - none
 - **Complexity**: 8
@@ -294,18 +294,18 @@ This plan expands `macos-agent` real-desktop coverage from basic readiness check
 - **Complexity**: 5
 - **Acceptance criteria**:
   - README clearly separates deterministic CI-safe tests from real-desktop opt-in tests.
-  - Existing `CODEX_MACOS_AGENT_TEST_MODE=1` suite remains stable.
+  - Existing `AGENTS_MACOS_AGENT_TEST_MODE=1` suite remains stable.
   - Required repo checks pass after test/doc updates.
 - **Validation**:
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent`
   - `rg -n "Deterministic Test Mode|Opt-in Real macOS E2E Checks|MACOS_AGENT_REAL_E2E|MACOS_AGENT_REAL_E2E_MUTATING" crates/macos-agent/README.md`
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Testing Strategy
 - Unit:
   - Keep scenario orchestration helpers, profile parsing, and artifact-index formatting unit-tested where possible.
 - Integration:
-  - Continue CI-safe integration tests under `CODEX_MACOS_AGENT_TEST_MODE=1` for command contract and error semantics.
+  - Continue CI-safe integration tests under `AGENTS_MACOS_AGENT_TEST_MODE=1` for command contract and error semantics.
 - E2E/manual:
   - Real-desktop suite runs opt-in on macOS with explicit app prerequisites and profile selection.
   - Required scenario minimum:
@@ -332,4 +332,4 @@ This plan expands `macos-agent` real-desktop coverage from basic readiness check
 - Keep all new scenarios behind `MACOS_AGENT_REAL_E2E=1` so default test runs remain unchanged.
 - If instability is high, temporarily disable per-app scenarios by app-selection gate while keeping foundation diagnostics.
 - Revert matrix orchestration to the previous `e2e_real_macos.rs` baseline and preserve only non-mutating readiness checks.
-- Preserve deterministic coverage by relying on `CODEX_MACOS_AGENT_TEST_MODE=1` tests until real-app stability is restored.
+- Preserve deterministic coverage by relying on `AGENTS_MACOS_AGENT_TEST_MODE=1` tests until real-app stability is restored.

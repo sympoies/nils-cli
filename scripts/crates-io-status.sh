@@ -193,9 +193,9 @@ selected_crates=("${deduped_crates[@]}")
 [[ ${#selected_crates[@]} -gt 0 ]] || die "no crates selected"
 
 if [[ "$format" == "both" && -z "$json_out" ]]; then
-  codex_home="${CODEX_HOME:-$HOME/.codex}"
+  agents_home="${AGENTS_HOME:-$HOME/.agents}"
   timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  json_out="${codex_home}/out/crates-io-status-${timestamp}.json"
+  json_out="${agents_home}/out/crates-io-status-${timestamp}.json"
 fi
 if [[ -n "$json_out" ]]; then
   mkdir -p "$(dirname "$json_out")"

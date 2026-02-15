@@ -6,7 +6,7 @@ mod non_macos {
     #[test]
     fn exits_with_usage_error_without_test_mode() {
         let bin = resolve("screen-record");
-        let options = CmdOptions::new().with_env_remove("CODEX_SCREEN_RECORD_TEST_MODE");
+        let options = CmdOptions::new().with_env_remove("AGENTS_SCREEN_RECORD_TEST_MODE");
         let out = run_with(&bin, &["--list-windows"], &options);
         assert_eq!(out.code, 2);
         assert!(
@@ -28,7 +28,7 @@ mod linux {
         let empty_path = TempDir::new().expect("tempdir");
 
         let options = CmdOptions::new()
-            .with_env_remove("CODEX_SCREEN_RECORD_TEST_MODE")
+            .with_env_remove("AGENTS_SCREEN_RECORD_TEST_MODE")
             .with_env_remove("WAYLAND_DISPLAY")
             .with_env_remove("DISPLAY")
             .with_env("PATH", &empty_path.path().to_string_lossy());

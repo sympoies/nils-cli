@@ -8,7 +8,7 @@ fn input_click_double_click_succeeds() {
     let cwd = TempDir::new().expect("tempdir");
     let options = harness
         .cmd_options(cwd.path())
-        .with_env("CODEX_MACOS_AGENT_STUB_CLICLICK_MODE", "ok");
+        .with_env("AGENTS_MACOS_AGENT_STUB_CLICLICK_MODE", "ok");
 
     let out = harness.run_with_options(
         cwd.path(),
@@ -58,7 +58,7 @@ fn input_click_runtime_error_from_cliclick_is_concise() {
 
     let options = harness
         .cmd_options(cwd.path())
-        .with_env("CODEX_MACOS_AGENT_STUB_CLICLICK_MODE", "fail");
+        .with_env("AGENTS_MACOS_AGENT_STUB_CLICLICK_MODE", "fail");
     let out = harness.run_with_options(
         cwd.path(),
         &["input", "click", "--x", "10", "--y", "10"],
@@ -80,7 +80,7 @@ fn input_click_dry_run_does_not_execute_backend() {
 
     let options = harness
         .cmd_options(cwd.path())
-        .with_env("CODEX_MACOS_AGENT_STUB_CLICLICK_MODE", "fail");
+        .with_env("AGENTS_MACOS_AGENT_STUB_CLICLICK_MODE", "fail");
     let out = harness.run_with_options(
         cwd.path(),
         &[
@@ -155,11 +155,11 @@ fn ax_click_coordinate_fallback_executes_with_backend_coordinates() {
     let options = harness
         .cmd_options(cwd.path())
         .with_env(
-            "CODEX_MACOS_AGENT_AX_LIST_JSON",
+            "AGENTS_MACOS_AGENT_AX_LIST_JSON",
             r#"{"nodes":[{"node_id":"1.1","role":"AXButton","title":"Run","identifier":"run-btn","enabled":true,"focused":false,"actions":["AXPress"],"path":["1","1"]}],"warnings":[]}"#,
         )
         .with_env(
-            "CODEX_MACOS_AGENT_AX_CLICK_JSON",
+            "AGENTS_MACOS_AGENT_AX_CLICK_JSON",
             r#"{"node_id":"1.1","matched_count":1,"action":"ax-press-fallback","used_coordinate_fallback":true,"fallback_x":320,"fallback_y":240}"#,
         );
     let out = harness.run_with_options(

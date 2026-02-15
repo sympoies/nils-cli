@@ -5,7 +5,7 @@ Extend the existing `screen-record` CLI to run on Linux under X11/Xorg sessions 
 when `DISPLAY` is set), with Ubuntu 24.04 used as the primary validation and CI baseline. The macOS
 backend remains unchanged (ScreenCaptureKit + AVFoundation), while Linux uses an X11 backend for
 deterministic window and display discovery and delegates capture/encoding to `ffmpeg`. The CLI
-surface, output contract, and deterministic `CODEX_SCREEN_RECORD_TEST_MODE=1` behavior stay
+surface, output contract, and deterministic `AGENTS_SCREEN_RECORD_TEST_MODE=1` behavior stay
 backwards compatible, including display recording parity (`--list-displays`, `--display`,
 `--display-id`).
 
@@ -58,7 +58,7 @@ Wayland behavior depends on whether XWayland is present and whether the target w
 **Demo/Validation**:
 - Command(s):
   - `cargo run -p screen-record -- --help | rg "Linux|macOS|X11|Wayland" || true`
-  - `CODEX_SCREEN_RECORD_TEST_MODE=1 cargo test -p screen-record`
+  - `AGENTS_SCREEN_RECORD_TEST_MODE=1 cargo test -p screen-record`
 - Verify:
   - Help/README describe Linux prerequisites and limitations.
   - Test mode remains stable and continues to work cross-platform.
@@ -106,7 +106,7 @@ Wayland behavior depends on whether XWayland is present and whether the target w
   - `crates/screen-record/src/lib.rs`
   - `crates/screen-record/src/error.rs`
 - **Description**: Refactor `run(cli)` so platform behavior is isolated behind a small internal interface:
-  - Keep `CODEX_SCREEN_RECORD_TEST_MODE=1` as the first/fast path (no OS checks).
+  - Keep `AGENTS_SCREEN_RECORD_TEST_MODE=1` as the first/fast path (no OS checks).
   - Replace the current “non-macOS always usage error” guard with backend dispatch:
     - macOS backend: existing modules (`crate::macos::*`).
     - Linux backend: new modules (`crate::linux::*`).
@@ -257,7 +257,7 @@ Wayland behavior depends on whether XWayland is present and whether the target w
   - Output is TSV-only with no header and no extra prose.
 - **Validation**:
   - Manual (Ubuntu X11): `./wrappers/screen-record --list-apps | head -n 20`
-  - `CODEX_SCREEN_RECORD_TEST_MODE=1 cargo test -p screen-record -- recording_test_mode`
+  - `AGENTS_SCREEN_RECORD_TEST_MODE=1 cargo test -p screen-record -- recording_test_mode`
 
 ### Task 2.4: Update non-macOS runtime behavior tests for Linux support
 - **Location**:
@@ -314,7 +314,7 @@ Wayland behavior depends on whether XWayland is present and whether the target w
 - **Validation**:
   - Manual (Ubuntu X11): `./wrappers/screen-record --active-window --duration 1 --audio off --path ./recordings/active.mp4`
   - Manual (Ubuntu X11): `./wrappers/screen-record --display --duration 1 --audio off --path ./recordings/display.mp4`
-  - `CODEX_SCREEN_RECORD_TEST_MODE=1 cargo test -p screen-record -- recording_test_mode`
+  - `AGENTS_SCREEN_RECORD_TEST_MODE=1 cargo test -p screen-record -- recording_test_mode`
 
 ### Task 3.2: Implement `ffmpeg` runner for screenshots (single frame)
 - **Location**:
@@ -336,7 +336,7 @@ Wayland behavior depends on whether XWayland is present and whether the target w
   - On success, stderr remains empty (no ffmpeg banner/progress noise).
 - **Validation**:
   - Manual (Ubuntu X11): `./wrappers/screen-record --screenshot --active-window --path ./screenshots/active.png`
-  - `CODEX_SCREEN_RECORD_TEST_MODE=1 cargo test -p screen-record -- recording_test_mode`
+  - `AGENTS_SCREEN_RECORD_TEST_MODE=1 cargo test -p screen-record -- recording_test_mode`
 
 ### Task 3.3: Implement Linux audio source resolution (`mic`, `system`, `both`)
 - **Location**:
@@ -385,7 +385,7 @@ Wayland behavior depends on whether XWayland is present and whether the target w
 **Demo/Validation**:
 - Command(s):
   - `plan-tooling validate --file docs/plans/screen-record-linux-ubuntu-2404-plan.md`
-  - `xvfb-run -a ./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `xvfb-run -a ./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - Verify:
   - Linux-specific logic is covered by unit/integration tests and runs in CI.
 
@@ -506,7 +506,7 @@ Wayland behavior depends on whether XWayland is present and whether the target w
   - Use `org.freedesktop.portal.ScreenCast` (xdg-desktop-portal) to create a session, prompt the user to select a source, and obtain a PipeWire node id for capture.
   - Extend Linux `--preflight` / `--request-permission` behavior: if Wayland-only is detected, validate portal availability (and return a clear runtime error when missing).
   - Keep stdout empty for preflight modes; write only user-facing guidance on stderr.
-  - Add deterministic test support: in `CODEX_SCREEN_RECORD_TEST_MODE=1`, bypass DBus and return a fixed PipeWire node id so unit tests can assert invocation wiring without requiring a real portal.
+  - Add deterministic test support: in `AGENTS_SCREEN_RECORD_TEST_MODE=1`, bypass DBus and return a fixed PipeWire node id so unit tests can assert invocation wiring without requiring a real portal.
 - **Dependencies**:
   - Task 5.1
 - **Complexity**: 9
@@ -515,7 +515,7 @@ Wayland behavior depends on whether XWayland is present and whether the target w
   - In test mode, portal acquisition does not attempt any DBus calls and returns a deterministic node id.
   - Unit tests cover: missing portal error text, and test-mode deterministic path.
 - **Validation**:
-  - `CODEX_SCREEN_RECORD_TEST_MODE=1 cargo test -p screen-record -- linux_portal_unit`
+  - `AGENTS_SCREEN_RECORD_TEST_MODE=1 cargo test -p screen-record -- linux_portal_unit`
   - Manual (Wayland): `./wrappers/screen-record --preflight; echo $?`
 
 ### Task 5.3: Capture Wayland portal stream via `ffmpeg` (PipeWire input)
@@ -546,7 +546,7 @@ Wayland behavior depends on whether XWayland is present and whether the target w
   - Add Linux unit tests for portal wiring and test-mode behavior (`Task 5.2`).
 - Integration:
   - Linux X11 integration under Xvfb with stubbed `ffmpeg` (`Task 4.2`).
-  - Preserve deterministic `CODEX_SCREEN_RECORD_TEST_MODE=1` integration tests as cross-platform baseline.
+  - Preserve deterministic `AGENTS_SCREEN_RECORD_TEST_MODE=1` integration tests as cross-platform baseline.
 - E2E/manual:
   - On Linux Xorg (Ubuntu 24.04 baseline): record `--active-window` for 2–3 seconds and verify output with `ffplay` or `mpv`.
   - Validate audio modes using `ffprobe` to confirm audio streams are present.

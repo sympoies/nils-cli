@@ -47,7 +47,7 @@ Outputs:
   - selected crate list and versions,
   - crates.io status snapshot metadata (json/text path + status).
 - Default report path:
-  - `$CODEX_HOME/out/crates-io-publish-report-<timestamp>.md`
+- `$AGENTS_HOME/out/crates-io-publish-report-<timestamp>.md`
 - Default status snapshot outputs:
   - `${report_file%.md}.status.json`
   - `${report_file%.md}.status.md`
@@ -70,7 +70,7 @@ Failure modes:
 
 ## Scripts (only entrypoints)
 
-- `<PROJECT_ROOT>/.codex/skills/publish-crates-io/scripts/publish-crates-io.sh`
+- `<PROJECT_ROOT>/.agents/skills/publish-crates-io/scripts/publish-crates-io.sh`
 
 ## Workflow
 
@@ -80,4 +80,4 @@ Failure modes:
 4. For successful publish runs, run post-run crates.io snapshot:
    - `scripts/crates-io-status.sh --fail-on-missing`.
 5. Write a structured report from template:
-   - `.codex/skills/publish-crates-io/references/PUBLISH_REPORT_TEMPLATE.md`
+   - `.agents/skills/publish-crates-io/references/PUBLISH_REPORT_TEMPLATE.md`

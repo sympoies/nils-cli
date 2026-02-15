@@ -22,7 +22,7 @@ Behavioral parity (errors, warnings, exit codes, and validation rules) is the to
 
 ## Assumptions (if any)
 1. `git` is available on `PATH` and can be invoked as a subprocess (mirrors the scripts).
-2. The binary will often be installed under `$CODEX_HOME/commands/`, enabling CODEX_HOME inference.
+2. The binary will often be installed under `$AGENTS_HOME/commands/`, enabling AGENTS_HOME inference.
 3. Optional helper commands are resolved via Codex commands dir only (not general PATH), matching the
    source scripts.
 
@@ -46,7 +46,7 @@ Behavioral parity (errors, warnings, exit codes, and validation rules) is the to
   - Spec documents Codex command resolution rules.
 - **Validation**:
   - `rg -n \"invalid header format\" crates/semantic-commit/README.md`
-  - `rg -n \"CODEX_COMMANDS_PATH\" crates/semantic-commit/README.md`
+  - `rg -n \"AGENTS_COMMANDS_PATH\" crates/semantic-commit/README.md`
 
 ### Task 1.2: Define canonical fixture scenarios
 - **Location**:
@@ -169,13 +169,13 @@ Behavioral parity (errors, warnings, exit codes, and validation rules) is the to
 - **Acceptance criteria**:
   - All mandatory checks pass.
 - **Validation**:
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Testing Strategy
 - Use integration tests that create temporary git repositories and perform real staging/commits.
 - Use deterministic inputs and assert on stable stderr/stdout markers (prefer NO_COLOR where needed).
 - Do not rely on external `git-scope` or `git-commit-context-json`; test fallbacks by default.
-- Add at least one test that stubs `CODEX_COMMANDS_PATH` to simulate presence/failure of an optional
+- Add at least one test that stubs `AGENTS_COMMANDS_PATH` to simulate presence/failure of an optional
   helper command.
 
 ## Risks & gotchas

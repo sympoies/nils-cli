@@ -461,9 +461,9 @@ if errors:
 PY
 
 if [[ -z "$report_file" ]]; then
-  codex_home="${CODEX_HOME:-$HOME/.codex}"
+  agents_home="${AGENTS_HOME:-$HOME/.agents}"
   timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  report_file="${codex_home}/out/crates-io-publish-report-${timestamp}.md"
+  report_file="${agents_home}/out/crates-io-publish-report-${timestamp}.md"
 fi
 mkdir -p "$(dirname "$report_file")"
 

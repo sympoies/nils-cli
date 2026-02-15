@@ -124,7 +124,7 @@ pub fn resolve_output_dir(explicit: Option<&Path>) -> PathBuf {
         return path.to_path_buf();
     }
 
-    codex_out_dir().join(DEFAULT_OUTPUT_NAMESPACE)
+    agents_out_dir().join(DEFAULT_OUTPUT_NAMESPACE)
 }
 
 pub(crate) fn collect_command_artifact(
@@ -275,12 +275,12 @@ fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
 
-fn codex_out_dir() -> PathBuf {
-    if let Ok(codex_home) = std::env::var("CODEX_HOME") {
-        return PathBuf::from(codex_home).join("out");
+fn agents_out_dir() -> PathBuf {
+    if let Ok(agents_home) = std::env::var("AGENTS_HOME") {
+        return PathBuf::from(agents_home).join("out");
     }
     if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home).join(".codex").join("out");
+        return PathBuf::from(home).join(".agents").join("out");
     }
-    PathBuf::from(".codex").join("out")
+    PathBuf::from(".agents").join("out")
 }

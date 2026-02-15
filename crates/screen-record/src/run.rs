@@ -819,7 +819,7 @@ fn write_motion_intervals_artifact(
 }
 
 fn diagnostics_failure_forced() -> bool {
-    let value = std::env::var_os("CODEX_SCREEN_RECORD_TEST_MODE_FAIL_DIAGNOSTICS")
+    let value = std::env::var_os("AGENTS_SCREEN_RECORD_TEST_MODE_FAIL_DIAGNOSTICS")
         .map(|raw| raw.to_string_lossy().trim().to_ascii_lowercase());
     matches!(value.as_deref(), Some("1" | "true" | "yes" | "on"))
 }
@@ -1466,7 +1466,7 @@ fn image_ext(format: ImageFormat) -> &'static str {
 
 fn screenshot_timestamp(test_mode_enabled: bool) -> String {
     if test_mode_enabled {
-        if let Some(value) = std::env::var_os("CODEX_SCREEN_RECORD_TEST_TIMESTAMP") {
+        if let Some(value) = std::env::var_os("AGENTS_SCREEN_RECORD_TEST_TIMESTAMP") {
             let value = value.to_string_lossy().trim().to_string();
             if !value.is_empty() {
                 return value;

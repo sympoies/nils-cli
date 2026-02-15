@@ -83,9 +83,9 @@ Integration steps:
 ## Local install (release)
 
 - Build + install all workspace binaries into `~/.local/nils-cli/`:
-  - `./.codex/skills/nils-cli-install/scripts/nils-cli-install.sh`
+  - `./.agents/skills/nils-cli-install/scripts/nils-cli-install.sh`
 - Install only a specific binary:
-  - `./.codex/skills/nils-cli-install/scripts/nils-cli-install.sh --bin git-scope`
+  - `./.agents/skills/nils-cli-install/scripts/nils-cli-install.sh --bin git-scope`
 - Add the install dir to `PATH` (example):
   - `export PATH="$HOME/.local/nils-cli:$PATH"`
 
@@ -131,7 +131,7 @@ To query crates.io publish status (single/multi/all crates), use:
 
 - `scripts/crates-io-status.sh --all --format text`
 - `scripts/crates-io-status.sh --crates "nils-common nils-codex-cli" --version v0.3.1 --format json`
-- `scripts/crates-io-status.sh --crate nils-codex-cli --format both --json-out "$CODEX_HOME/out/codex-status.json"`
+- `scripts/crates-io-status.sh --crate nils-codex-cli --format both --json-out "$AGENTS_HOME/out/codex-status.json"`
 
 `--version` checks that exact version; without `--version` the script checks each crate's current workspace version.
 Use `--fail-on-missing` for CI gates.

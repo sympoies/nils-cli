@@ -663,7 +663,7 @@ The outcome is a cohesive set of CLIs with shared core libraries, comprehensive 
 ## Sprint 7: Polish, docs, and pre-delivery checks
 **Goal**: Make the binaries easy to adopt and ensure workspace checks pass.
 **Demo/Validation**:
-- Command(s): `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- Command(s): `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - Verify: fmt, clippy, tests, and zsh completion tests are green.
 
 ### Task 7.1: Add user-facing usage docs and migration notes
@@ -694,7 +694,7 @@ The outcome is a cohesive set of CLIs with shared core libraries, comprehensive 
 - **Acceptance criteria**:
   - All mandatory checks pass locally.
 - **Validation**:
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Testing Strategy
 - Unit: validate parsing, env resolution, JWT validation, jq engine, templating, and redaction in `api-testing-core`.

@@ -17,7 +17,7 @@ const CLI_TOOLS_TEMPLATE: &str = include_str!("../templates/cli_tools_default.md
 const SETUP_PLACEHOLDER: &str = "{{SETUP_COMMANDS}}";
 const BUILD_PLACEHOLDER: &str = "{{BUILD_COMMANDS}}";
 const TEST_PLACEHOLDER: &str = "{{TEST_COMMANDS}}";
-const CHECKS_SCRIPT_PATH: &str = ".codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh";
+const CHECKS_SCRIPT_PATH: &str = ".agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScaffoldBaselineRequest {
@@ -72,7 +72,7 @@ pub struct ScaffoldBaselineReport {
     pub missing_only: bool,
     pub force: bool,
     pub dry_run: bool,
-    pub codex_home: PathBuf,
+    pub agents_home: PathBuf,
     pub project_path: PathBuf,
     pub items: Vec<ScaffoldBaselineItemReport>,
     pub created: usize,
@@ -119,7 +119,7 @@ impl ScaffoldBaselineReport {
             missing_only: request.missing_only,
             force: request.force,
             dry_run: request.dry_run,
-            codex_home: roots.codex_home.clone(),
+            agents_home: roots.agents_home.clone(),
             project_path: roots.project_path.clone(),
             items,
             created,
@@ -230,7 +230,7 @@ fn home_candidates(roots: &ResolvedRoots) -> Vec<BaselineCandidate> {
             Scope::Home,
             Context::Startup,
             "startup policy",
-            &roots.codex_home,
+            &roots.agents_home,
             AGENTS_FILE_NAME,
             BaselineTemplate::Agents,
         ),
@@ -238,7 +238,7 @@ fn home_candidates(roots: &ResolvedRoots) -> Vec<BaselineCandidate> {
             Scope::Home,
             Context::SkillDev,
             "skill-dev",
-            &roots.codex_home,
+            &roots.agents_home,
             DEVELOPMENT_FILE_NAME,
             BaselineTemplate::Development,
         ),
@@ -246,7 +246,7 @@ fn home_candidates(roots: &ResolvedRoots) -> Vec<BaselineCandidate> {
             Scope::Home,
             Context::TaskTools,
             "task-tools",
-            &roots.codex_home,
+            &roots.agents_home,
             CLI_TOOLS_FILE_NAME,
             BaselineTemplate::CliTools,
         ),
@@ -467,7 +467,7 @@ mod tests {
 
     fn roots(home: &TempDir, project: &TempDir) -> ResolvedRoots {
         ResolvedRoots {
-            codex_home: home.path().to_path_buf(),
+            agents_home: home.path().to_path_buf(),
             project_path: project.path().to_path_buf(),
             is_linked_worktree: false,
             git_common_dir: None,
@@ -685,7 +685,7 @@ mod tests {
             fs::read_to_string(project.path().join("DEVELOPMENT.md")).expect("read development");
         assert!(
             development_written
-                .contains("./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh")
+                .contains("./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh")
         );
         assert!(development_written.contains("cargo test --workspace"));
     }

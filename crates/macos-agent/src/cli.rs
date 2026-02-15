@@ -69,7 +69,7 @@ pub struct Cli {
     #[arg(long, default_value_t = 4000, global = true)]
     pub timeout_ms: u64,
 
-    /// Emit per-command trace artifacts under CODEX_HOME/out.
+    /// Emit per-command trace artifacts under AGENTS_HOME/out.
     #[arg(long, global = true)]
     pub trace: bool,
 

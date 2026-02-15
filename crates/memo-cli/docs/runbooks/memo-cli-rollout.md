@@ -69,7 +69,7 @@ from pre-consolidation builds are not guaranteed to auto-upgrade.
 4. Re-run validation gates before re-enabling automation:
    - `cargo test -p nils-memo-cli memo_flow`
    - `cargo test -p nils-memo-cli agent_roundtrip`
-   - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+   - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Roll-forward criteria
 - `memo_flow` and `agent_roundtrip` tests green.

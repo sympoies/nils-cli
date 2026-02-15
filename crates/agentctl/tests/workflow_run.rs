@@ -63,11 +63,11 @@ fn workflow_run_supports_fail_fast_and_continue_on_error_modes() {
         "#!/bin/sh\necho image-out\necho image-err 1>&2\nexit 0\n",
     );
     let path_guard = prepend_path(&lock, stub.path());
-    let codex_home = stub.path().join("codex-home");
-    std::fs::create_dir_all(&codex_home).expect("create codex home");
-    let codex_home_str = codex_home.to_string_lossy().to_string();
-    let codex_home_guard = EnvGuard::set(&lock, "CODEX_HOME", codex_home_str.as_str());
-    let env_guards = (path_guard, codex_home_guard);
+    let agents_home = stub.path().join("agents-home");
+    std::fs::create_dir_all(&agents_home).expect("create agents home");
+    let agents_home_str = agents_home.to_string_lossy().to_string();
+    let agents_home_guard = EnvGuard::set(&lock, "AGENTS_HOME", agents_home_str.as_str());
+    let env_guards = (path_guard, agents_home_guard);
 
     let fail_fast = execute_workflow_document(&build_mode_workflow(WorkflowOnError::FailFast));
     assert_eq!(fail_fast.summary.executed_steps, 1);
@@ -98,10 +98,10 @@ fn workflow_run_step_ledger_includes_stdout_stderr_exit_code_and_elapsed_ms() {
         "#!/bin/sh\necho workflow-automation-stdout\necho workflow-automation-stderr 1>&2\nexit 0\n",
     );
     let path_guard = prepend_path(&lock, stub.path());
-    let codex_home = stub.path().join("codex-home");
-    std::fs::create_dir_all(&codex_home).expect("create codex home");
-    let codex_home_str = codex_home.to_string_lossy().to_string();
-    let codex_home_guard = EnvGuard::set(&lock, "CODEX_HOME", codex_home_str.as_str());
+    let agents_home = stub.path().join("agents-home");
+    std::fs::create_dir_all(&agents_home).expect("create agents home");
+    let agents_home_str = agents_home.to_string_lossy().to_string();
+    let agents_home_guard = EnvGuard::set(&lock, "AGENTS_HOME", agents_home_str.as_str());
     let auth_file = stub.path().join("auth.json");
     std::fs::write(&auth_file, "{}").expect("write auth file");
     let auth_file_str = auth_file.to_string_lossy().to_string();
@@ -109,7 +109,7 @@ fn workflow_run_step_ledger_includes_stdout_stderr_exit_code_and_elapsed_ms() {
     let dangerous_guard = EnvGuard::set(&lock, "CODEX_ALLOW_DANGEROUS_ENABLED", "true");
     let env_guards = (
         path_guard,
-        codex_home_guard,
+        agents_home_guard,
         auth_file_guard,
         dangerous_guard,
     );
@@ -269,10 +269,10 @@ fn workflow_run_automation_step_times_out_with_exit_code_124() {
     stub.write_exe("fzf-cli", "#!/bin/sh\nwhile :; do\n  :\ndone\n");
     let path_only_stub = stub.path().to_string_lossy().to_string();
     let _path = EnvGuard::set(&lock, "PATH", &path_only_stub);
-    let codex_home = stub.path().join("codex-home");
-    std::fs::create_dir_all(&codex_home).expect("create codex home");
-    let codex_home_str = codex_home.to_string_lossy().to_string();
-    let _codex_home = EnvGuard::set(&lock, "CODEX_HOME", &codex_home_str);
+    let agents_home = stub.path().join("agents-home");
+    std::fs::create_dir_all(&agents_home).expect("create agents home");
+    let agents_home_str = agents_home.to_string_lossy().to_string();
+    let _agents_home = EnvGuard::set(&lock, "AGENTS_HOME", &agents_home_str);
 
     let workflow = WorkflowDocument {
         schema_version: WORKFLOW_SCHEMA_VERSION.to_string(),
@@ -303,10 +303,10 @@ fn workflow_run_appends_artifact_persist_errors_without_masking_success() {
     stub.write_exe("fzf-cli", "#!/bin/sh\necho ok\n");
     let path_only_stub = stub.path().to_string_lossy().to_string();
     let _path = EnvGuard::set(&lock, "PATH", &path_only_stub);
-    let bad_codex_home = stub.path().join("codex-home-file");
-    std::fs::write(&bad_codex_home, "not a dir").expect("write codex home file");
-    let bad_codex_home_str = bad_codex_home.to_string_lossy().to_string();
-    let _codex_home = EnvGuard::set(&lock, "CODEX_HOME", &bad_codex_home_str);
+    let bad_agents_home = stub.path().join("agents-home-file");
+    std::fs::write(&bad_agents_home, "not a dir").expect("write agents home file");
+    let bad_agents_home_str = bad_agents_home.to_string_lossy().to_string();
+    let _agents_home = EnvGuard::set(&lock, "AGENTS_HOME", &bad_agents_home_str);
 
     let workflow = WorkflowDocument {
         schema_version: WORKFLOW_SCHEMA_VERSION.to_string(),
@@ -340,10 +340,10 @@ fn workflow_run_entrypoint_returns_expected_exit_codes_for_failure_and_success()
     );
     let path_only_stub = stub.path().to_string_lossy().to_string();
     let _path = EnvGuard::set(&lock, "PATH", &path_only_stub);
-    let codex_home = stub.path().join("codex-home");
-    std::fs::create_dir_all(&codex_home).expect("create codex home");
-    let codex_home_str = codex_home.to_string_lossy().to_string();
-    let _codex_home = EnvGuard::set(&lock, "CODEX_HOME", &codex_home_str);
+    let agents_home = stub.path().join("agents-home");
+    std::fs::create_dir_all(&agents_home).expect("create agents home");
+    let agents_home_str = agents_home.to_string_lossy().to_string();
+    let _agents_home = EnvGuard::set(&lock, "AGENTS_HOME", &agents_home_str);
 
     let missing_exit = run(RunArgs {
         file: stub.path().join("missing.json"),

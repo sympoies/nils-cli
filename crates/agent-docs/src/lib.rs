@@ -46,7 +46,7 @@ where
 fn dispatch(cli: Cli) -> i32 {
     let fallback_mode = cli.worktree_fallback;
     let overrides = PathOverrides {
-        codex_home: cli.codex_home,
+        agents_home: cli.agents_home,
         project_path: cli.project_path,
     };
 

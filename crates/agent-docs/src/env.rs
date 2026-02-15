@@ -9,13 +9,13 @@ use crate::paths::normalize_root_path;
 
 #[derive(Debug, Clone, Default)]
 pub struct PathOverrides {
-    pub codex_home: Option<PathBuf>,
+    pub agents_home: Option<PathBuf>,
     pub project_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ResolvedRoots {
-    pub codex_home: PathBuf,
+    pub agents_home: PathBuf,
     pub project_path: PathBuf,
     pub is_linked_worktree: bool,
     pub git_common_dir: Option<PathBuf>,
@@ -24,12 +24,12 @@ pub struct ResolvedRoots {
 
 pub fn resolve_roots(overrides: &PathOverrides) -> Result<ResolvedRoots> {
     let cwd = env::current_dir().context("failed to read current directory")?;
-    let codex_home = resolve_codex_home(overrides.codex_home.as_deref(), &cwd);
+    let agents_home = resolve_agents_home(overrides.agents_home.as_deref(), &cwd);
     let project_path = resolve_project_path(overrides.project_path.as_deref(), &cwd);
     let metadata = resolve_linked_worktree_metadata(&project_path);
 
     Ok(ResolvedRoots {
-        codex_home,
+        agents_home,
         project_path,
         is_linked_worktree: metadata.is_linked_worktree,
         git_common_dir: metadata.git_common_dir,
@@ -37,21 +37,21 @@ pub fn resolve_roots(overrides: &PathOverrides) -> Result<ResolvedRoots> {
     })
 }
 
-fn resolve_codex_home(cli_value: Option<&Path>, cwd: &Path) -> PathBuf {
+fn resolve_agents_home(cli_value: Option<&Path>, cwd: &Path) -> PathBuf {
     if let Some(path) = cli_value {
         return normalize_root_path(path, cwd);
     }
 
-    if let Some(path) = read_env_path("CODEX_HOME") {
+    if let Some(path) = read_env_path("AGENTS_HOME") {
         return normalize_root_path(&path, cwd);
     }
 
     if let Some(base_dirs) = BaseDirs::new() {
-        let default = base_dirs.home_dir().join(".codex");
+        let default = base_dirs.home_dir().join(".agents");
         return normalize_root_path(&default, cwd);
     }
 
-    normalize_root_path(&cwd.join(".codex"), cwd)
+    normalize_root_path(&cwd.join(".agents"), cwd)
 }
 
 fn resolve_project_path(cli_value: Option<&Path>, cwd: &Path) -> PathBuf {

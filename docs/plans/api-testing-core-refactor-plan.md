@@ -241,7 +241,7 @@ validated steps and keeps CLI-facing output stable.
 - **Validation**:
   - `cargo llvm-cov nextest --profile ci -p api-testing-core --lcov --output-path target/coverage/api-testing-core.lcov.info --fail-under-lines 80`
   - `scripts/ci/coverage-summary.sh target/coverage/api-testing-core.lcov.info`
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Testing Strategy
 - Unit: Pure helpers (config discovery, env parsing, report markdown, suite planning) with fixture-based tests.

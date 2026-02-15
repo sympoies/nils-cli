@@ -126,21 +126,21 @@ pub fn run_init(format: OutputFormat, args: &ProfileInitArgs) -> Result<(), CliE
 
 fn resolve_profile_init_path(path: Option<PathBuf>) -> PathBuf {
     path.unwrap_or_else(|| {
-        codex_out_dir().join(format!(
+        agents_out_dir().join(format!(
             "macos-agent-profile-{}.json",
             test_mode::timestamp_token()
         ))
     })
 }
 
-fn codex_out_dir() -> PathBuf {
-    if let Ok(codex_home) = std::env::var("CODEX_HOME") {
-        return PathBuf::from(codex_home).join("out");
+fn agents_out_dir() -> PathBuf {
+    if let Ok(agents_home) = std::env::var("AGENTS_HOME") {
+        return PathBuf::from(agents_home).join("out");
     }
     if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home).join(".codex").join("out");
+        return PathBuf::from(home).join(".agents").join("out");
     }
-    PathBuf::from(".codex").join("out")
+    PathBuf::from(".agents").join("out")
 }
 
 fn collect_profile_issues(value: &serde_json::Value) -> Vec<String> {

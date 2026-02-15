@@ -273,20 +273,20 @@ fn resolve_debug_output_dir(args: &DebugBundleArgs) -> PathBuf {
     if let Some(path) = args.output_dir.clone() {
         return path;
     }
-    codex_out_dir().join(format!(
+    agents_out_dir().join(format!(
         "macos-agent-debug-bundle-{}",
         test_mode::timestamp_token()
     ))
 }
 
-fn codex_out_dir() -> PathBuf {
-    if let Ok(codex_home) = std::env::var("CODEX_HOME") {
-        return PathBuf::from(codex_home).join("out");
+fn agents_out_dir() -> PathBuf {
+    if let Ok(agents_home) = std::env::var("AGENTS_HOME") {
+        return PathBuf::from(agents_home).join("out");
     }
     if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home).join(".codex").join("out");
+        return PathBuf::from(home).join(".agents").join("out");
     }
-    PathBuf::from(".codex").join("out")
+    PathBuf::from(".agents").join("out")
 }
 
 fn write_json_file<T>(path: &Path, value: &T) -> Result<(), std::io::Error>

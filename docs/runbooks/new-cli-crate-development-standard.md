@@ -15,11 +15,11 @@ Use these as the source of truth to avoid policy drift:
   - `AGENTS.md`
 - Required checks and coverage policy:
   - `DEVELOPMENT.md`
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - Publishing workflow and order:
   - `scripts/publish-crates.sh`
   - `release/crates-io-publish-order.txt`
-  - `.codex/skills/nils-cli-release/SKILL.md`
+  - `.agents/skills/nils-cli-release/SKILL.md`
 - `agent-docs` command semantics and registration patterns:
   - `crates/agent-docs/README.md`
 - JSON contract details:
@@ -130,7 +130,7 @@ Minimum testing for new CLI crates:
 Preferred single entrypoint:
 
 ```bash
-./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh
+./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh
 ```
 
 Pre-commit docs placement audit (required):

@@ -23,8 +23,8 @@ pub fn resolve_auth_file() -> Option<PathBuf> {
     }
 
     let home = home_dir()?;
-    let primary = home.join(".codex").join("auth.json");
-    let fallback = home.join(".codex").join("auth.json");
+    let primary = home.join(".agents").join("auth.json");
+    let fallback = home.join(".agents").join("auth.json");
 
     let mut selected = primary.clone();
     if selected == primary && !primary.exists() && fallback.exists() {

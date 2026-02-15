@@ -34,4 +34,4 @@ Exit codes:
 
 ## Scripts (only entrypoints)
 
-- `.codex/skills/nils-cli-install/scripts/nils-cli-install.sh`
+- `.agents/skills/nils-cli-install/scripts/nils-cli-install.sh`

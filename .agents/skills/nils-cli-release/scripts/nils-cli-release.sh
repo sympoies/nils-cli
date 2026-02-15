@@ -330,7 +330,7 @@ PY
   fi
 fi
 
-checks_script="$repo_root/.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh"
+checks_script="$repo_root/.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh"
 if [[ "$skip_checks" -eq 0 ]]; then
   if [[ ! -f "$checks_script" ]]; then
     die "missing checks script: $checks_script"

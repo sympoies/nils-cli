@@ -20,9 +20,9 @@ Default binaries:
   - Use --bin NAME (repeatable) to install a subset
 
 Example:
-  ./.codex/skills/nils-cli-install/scripts/nils-cli-install.sh
-  ./.codex/skills/nils-cli-install/scripts/nils-cli-install.sh --bin git-scope
-  ./.codex/skills/nils-cli-install/scripts/nils-cli-install.sh --prefix ~/.local/nils-cli
+  ./.agents/skills/nils-cli-install/scripts/nils-cli-install.sh
+  ./.agents/skills/nils-cli-install/scripts/nils-cli-install.sh --bin git-scope
+  ./.agents/skills/nils-cli-install/scripts/nils-cli-install.sh --prefix ~/.local/nils-cli
 USAGE
 }
 

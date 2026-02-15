@@ -105,7 +105,7 @@ mod tests {
     #[test]
     fn run_perform_dry_run_supports_text_and_json() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
         let runner = RealProcessRunner;
 
         run_perform(OutputFormat::Text, &sample_args(), policy(true), &runner)
@@ -117,7 +117,7 @@ mod tests {
     #[test]
     fn run_perform_rejects_tsv() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
         let runner = RealProcessRunner;
 
         let err = run_perform(OutputFormat::Tsv, &sample_args(), policy(true), &runner)

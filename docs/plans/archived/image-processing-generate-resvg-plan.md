@@ -278,7 +278,7 @@ This plan extends `image-processing` with a new `generate` subcommand for determ
   - Mandatory pre-delivery checks from project standards are executed and outcomes documented.
 - **Validation**:
   - `cargo test -p agentctl --test diag_capabilities`
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Testing Strategy
 - Unit:
@@ -301,4 +301,4 @@ This plan extends `image-processing` with a new `generate` subcommand for determ
 1. Keep `generate` code isolated in dedicated module and dispatch branch so rollback is a targeted revert.
 2. If regressions occur, disable `generate` by removing `Operation::Generate` dispatch and CLI exposure while leaving existing commands intact.
 3. Revert dependency additions in `crates/image-processing/Cargo.toml` and capability/docs updates in the same rollback PR.
-4. Re-run `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh` plus `cargo test -p image-processing` to confirm legacy behavior restoration.
+4. Re-run `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh` plus `cargo test -p image-processing` to confirm legacy behavior restoration.

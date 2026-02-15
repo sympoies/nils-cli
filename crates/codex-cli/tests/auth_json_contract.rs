@@ -183,7 +183,7 @@ fn auth_json_contract_current_missing_auth_file_is_structured() {
 fn auth_json_contract_current_defaults_to_home_secret_dir_when_env_unset() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let home = dir.path().join("home");
-    let auth_dir = home.join(".codex");
+    let auth_dir = home.join(".agents");
     let secret_dir = home.join(".config").join("codex_secrets");
     fs::create_dir_all(&auth_dir).expect("auth dir");
     fs::create_dir_all(&secret_dir).expect("secret dir");
@@ -226,7 +226,7 @@ fn auth_json_contract_current_defaults_to_home_secret_dir_when_env_unset() {
 fn auth_json_contract_current_missing_default_secret_dir_is_structured() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let home = dir.path().join("home");
-    let auth_dir = home.join(".codex");
+    let auth_dir = home.join(".agents");
     fs::create_dir_all(&auth_dir).expect("auth dir");
 
     let auth_file = auth_dir.join("auth.json");

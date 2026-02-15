@@ -8,7 +8,7 @@ fn ax_attr_get_json_supports_override_payload() {
     let harness = common::MacosAgentHarness::new();
     let cwd = TempDir::new().expect("tempdir");
     let options = harness.cmd_options(cwd.path()).with_env(
-        "CODEX_MACOS_AGENT_AX_ATTR_GET_JSON",
+        "AGENTS_MACOS_AGENT_AX_ATTR_GET_JSON",
         r#"{"node_id":"2.1","matched_count":1,"name":"AXRole","value":{"role":"AXButton"}}"#,
     );
 
@@ -151,15 +151,15 @@ fn ax_session_start_list_stop_json_contracts() {
     let options = harness
         .cmd_options(cwd.path())
         .with_env(
-            "CODEX_MACOS_AGENT_AX_SESSION_START_JSON",
+            "AGENTS_MACOS_AGENT_AX_SESSION_START_JSON",
             r#"{"session_id":"axs-demo","app":"Arc","bundle_id":"company.thebrowser.Browser","pid":2001,"window_title_contains":"Inbox","created_at_ms":1700000001111,"created":true}"#,
         )
         .with_env(
-            "CODEX_MACOS_AGENT_AX_SESSION_LIST_JSON",
+            "AGENTS_MACOS_AGENT_AX_SESSION_LIST_JSON",
             r#"{"sessions":[{"session_id":"axs-demo","app":"Arc","bundle_id":"company.thebrowser.Browser","pid":2001,"window_title_contains":"Inbox","created_at_ms":1700000001111}]}"#,
         )
         .with_env(
-            "CODEX_MACOS_AGENT_AX_SESSION_STOP_JSON",
+            "AGENTS_MACOS_AGENT_AX_SESSION_STOP_JSON",
             r#"{"session_id":"axs-demo","removed":true}"#,
         );
 
@@ -228,15 +228,15 @@ fn ax_watch_start_poll_stop_json_contracts() {
     let options = harness
         .cmd_options(cwd.path())
         .with_env(
-            "CODEX_MACOS_AGENT_AX_WATCH_START_JSON",
+            "AGENTS_MACOS_AGENT_AX_WATCH_START_JSON",
             r#"{"watch_id":"axw-demo","session_id":"axs-demo","events":["AXTitleChanged","AXFocusedUIElementChanged"],"max_buffer":64,"started":true}"#,
         )
         .with_env(
-            "CODEX_MACOS_AGENT_AX_WATCH_POLL_JSON",
+            "AGENTS_MACOS_AGENT_AX_WATCH_POLL_JSON",
             r#"{"watch_id":"axw-demo","events":[{"watch_id":"axw-demo","event":"AXTitleChanged","at_ms":1700000002222,"role":"AXButton","title":"Save","identifier":"save-btn","pid":2001}],"dropped":0,"running":true}"#,
         )
         .with_env(
-            "CODEX_MACOS_AGENT_AX_WATCH_STOP_JSON",
+            "AGENTS_MACOS_AGENT_AX_WATCH_STOP_JSON",
             r#"{"watch_id":"axw-demo","stopped":true,"drained":1}"#,
         );
 
@@ -316,17 +316,17 @@ fn ax_commands_can_force_hammerspoon_backend_for_list_click_type() {
     let cwd = TempDir::new().expect("tempdir");
     let options = harness
         .cmd_options(cwd.path())
-        .with_env("CODEX_MACOS_AGENT_AX_BACKEND", "hammerspoon")
+        .with_env("AGENTS_MACOS_AGENT_AX_BACKEND", "hammerspoon")
         .with_env(
-            "CODEX_MACOS_AGENT_AX_LIST_JSON",
+            "AGENTS_MACOS_AGENT_AX_LIST_JSON",
             r#"{"nodes":[{"node_id":"1.1","role":"AXButton","title":"Run","identifier":"run-btn","enabled":true,"focused":false,"actions":["AXPress"],"path":["1","1"]},{"node_id":"1.2","role":"AXTextField","title":"Search","identifier":"search-field","enabled":true,"focused":true,"actions":["AXSetValue"],"path":["1","2"]}],"warnings":[]}"#,
         )
         .with_env(
-            "CODEX_MACOS_AGENT_AX_CLICK_JSON",
+            "AGENTS_MACOS_AGENT_AX_CLICK_JSON",
             r#"{"node_id":"1.1","matched_count":1,"action":"ax-press","used_coordinate_fallback":false}"#,
         )
         .with_env(
-            "CODEX_MACOS_AGENT_AX_TYPE_JSON",
+            "AGENTS_MACOS_AGENT_AX_TYPE_JSON",
             r#"{"node_id":"1.2","matched_count":1,"applied_via":"ax-set-value","text_length":4,"submitted":true,"used_keyboard_fallback":false}"#,
         );
 
@@ -392,15 +392,15 @@ fn ax_click_gate_and_postcondition_metadata_are_emitted_in_json() {
     let options = harness
         .cmd_options(cwd.path())
         .with_env(
-            "CODEX_MACOS_AGENT_AX_LIST_JSON",
+            "AGENTS_MACOS_AGENT_AX_LIST_JSON",
             r#"{"nodes":[{"node_id":"1.1","role":"AXButton","title":"Run","identifier":"run-btn","enabled":true,"focused":false,"actions":["AXPress"],"path":["1","1"]}],"warnings":[]}"#,
         )
         .with_env(
-            "CODEX_MACOS_AGENT_AX_CLICK_JSON",
+            "AGENTS_MACOS_AGENT_AX_CLICK_JSON",
             r#"{"node_id":"1.1","matched_count":1,"action":"ax-press","used_coordinate_fallback":false}"#,
         )
         .with_env(
-            "CODEX_MACOS_AGENT_AX_ATTR_GET_JSON",
+            "AGENTS_MACOS_AGENT_AX_ATTR_GET_JSON",
             r#"{"node_id":"1.1","matched_count":1,"name":"AXRole","value":"AXButton"}"#,
         );
 
@@ -464,11 +464,11 @@ fn ax_type_postcondition_mismatch_has_distinct_operation() {
     let options = harness
         .cmd_options(cwd.path())
         .with_env(
-            "CODEX_MACOS_AGENT_AX_LIST_JSON",
+            "AGENTS_MACOS_AGENT_AX_LIST_JSON",
             r#"{"nodes":[{"node_id":"1.2","role":"AXTextField","title":"Search","identifier":"search-field","enabled":true,"focused":false,"actions":["AXSetValue"],"path":["1","2"]}],"warnings":[]}"#,
         )
         .with_env(
-            "CODEX_MACOS_AGENT_AX_TYPE_JSON",
+            "AGENTS_MACOS_AGENT_AX_TYPE_JSON",
             r#"{"node_id":"1.2","matched_count":1,"applied_via":"ax-set-value","text_length":4,"submitted":false,"used_keyboard_fallback":false}"#,
         );
 

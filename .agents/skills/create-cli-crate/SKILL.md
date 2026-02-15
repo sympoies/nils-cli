@@ -47,7 +47,7 @@ Failure modes:
 
 ## Scripts (only entrypoints)
 
-- `<PROJECT_ROOT>/.codex/skills/create-cli-crate/scripts/create-cli-crate.sh`
+- `<PROJECT_ROOT>/.agents/skills/create-cli-crate/scripts/create-cli-crate.sh`
 
 ## Workflow
 
@@ -67,7 +67,7 @@ Failure modes:
    - publishable crates follow workspace metadata conventions and release order checks,
    - internal-only crates explicitly set/document `publish = false`.
 6. Validate before delivery:
-   - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+   - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
    - if publishable: `scripts/publish-crates.sh --dry-run --crate <crate-package-name>`
 7. In the final response, include:
    - what was changed,

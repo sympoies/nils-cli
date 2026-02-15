@@ -15,18 +15,18 @@ use crate::test_mode;
 
 use super::AxBackendAdapter;
 
-const AX_LIST_TEST_MODE_ENV: &str = "CODEX_MACOS_AGENT_AX_LIST_JSON";
-const AX_CLICK_TEST_MODE_ENV: &str = "CODEX_MACOS_AGENT_AX_CLICK_JSON";
-const AX_TYPE_TEST_MODE_ENV: &str = "CODEX_MACOS_AGENT_AX_TYPE_JSON";
-const AX_ATTR_GET_TEST_MODE_ENV: &str = "CODEX_MACOS_AGENT_AX_ATTR_GET_JSON";
-const AX_ATTR_SET_TEST_MODE_ENV: &str = "CODEX_MACOS_AGENT_AX_ATTR_SET_JSON";
-const AX_ACTION_PERFORM_TEST_MODE_ENV: &str = "CODEX_MACOS_AGENT_AX_ACTION_PERFORM_JSON";
-const AX_SESSION_START_TEST_MODE_ENV: &str = "CODEX_MACOS_AGENT_AX_SESSION_START_JSON";
-const AX_SESSION_LIST_TEST_MODE_ENV: &str = "CODEX_MACOS_AGENT_AX_SESSION_LIST_JSON";
-const AX_SESSION_STOP_TEST_MODE_ENV: &str = "CODEX_MACOS_AGENT_AX_SESSION_STOP_JSON";
-const AX_WATCH_START_TEST_MODE_ENV: &str = "CODEX_MACOS_AGENT_AX_WATCH_START_JSON";
-const AX_WATCH_POLL_TEST_MODE_ENV: &str = "CODEX_MACOS_AGENT_AX_WATCH_POLL_JSON";
-const AX_WATCH_STOP_TEST_MODE_ENV: &str = "CODEX_MACOS_AGENT_AX_WATCH_STOP_JSON";
+const AX_LIST_TEST_MODE_ENV: &str = "AGENTS_MACOS_AGENT_AX_LIST_JSON";
+const AX_CLICK_TEST_MODE_ENV: &str = "AGENTS_MACOS_AGENT_AX_CLICK_JSON";
+const AX_TYPE_TEST_MODE_ENV: &str = "AGENTS_MACOS_AGENT_AX_TYPE_JSON";
+const AX_ATTR_GET_TEST_MODE_ENV: &str = "AGENTS_MACOS_AGENT_AX_ATTR_GET_JSON";
+const AX_ATTR_SET_TEST_MODE_ENV: &str = "AGENTS_MACOS_AGENT_AX_ATTR_SET_JSON";
+const AX_ACTION_PERFORM_TEST_MODE_ENV: &str = "AGENTS_MACOS_AGENT_AX_ACTION_PERFORM_JSON";
+const AX_SESSION_START_TEST_MODE_ENV: &str = "AGENTS_MACOS_AGENT_AX_SESSION_START_JSON";
+const AX_SESSION_LIST_TEST_MODE_ENV: &str = "AGENTS_MACOS_AGENT_AX_SESSION_LIST_JSON";
+const AX_SESSION_STOP_TEST_MODE_ENV: &str = "AGENTS_MACOS_AGENT_AX_SESSION_STOP_JSON";
+const AX_WATCH_START_TEST_MODE_ENV: &str = "AGENTS_MACOS_AGENT_AX_WATCH_START_JSON";
+const AX_WATCH_POLL_TEST_MODE_ENV: &str = "AGENTS_MACOS_AGENT_AX_WATCH_POLL_JSON";
+const AX_WATCH_STOP_TEST_MODE_ENV: &str = "AGENTS_MACOS_AGENT_AX_WATCH_STOP_JSON";
 const BACKEND_UNAVAILABLE_HINT_PREFIX: &str = "Hammerspoon backend unavailable";
 
 macro_rules! hs_ax_script_with_targeting_prelude {
@@ -2118,10 +2118,10 @@ mod tests {
     #[test]
     fn test_mode_override_is_honored_for_click() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
         let _override = EnvGuard::set(
             &lock,
-            "CODEX_MACOS_AGENT_AX_CLICK_JSON",
+            "AGENTS_MACOS_AGENT_AX_CLICK_JSON",
             r#"{"node_id":"1.1","matched_count":1,"action":"ax-press","used_coordinate_fallback":false}"#,
         );
 
@@ -2147,7 +2147,7 @@ mod tests {
     #[test]
     fn default_test_mode_fixtures_cover_all_hammerspoon_ax_operations() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
         let backend = super::HammerspoonAxBackend;
         let runner = crate::backend::process::RealProcessRunner;
 
@@ -2441,8 +2441,8 @@ mod tests {
     #[test]
     fn invalid_override_json_reports_parse_hint() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
-        let _override = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_AX_ATTR_GET_JSON", "not-json");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
+        let _override = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_AX_ATTR_GET_JSON", "not-json");
 
         let backend = super::HammerspoonAxBackend;
         let runner = crate::backend::process::RealProcessRunner;
@@ -2464,8 +2464,8 @@ mod tests {
     #[test]
     fn empty_override_value_falls_back_to_default_fixture() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
-        let _override = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_AX_SESSION_LIST_JSON", "   ");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
+        let _override = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_AX_SESSION_LIST_JSON", "   ");
 
         let backend = super::HammerspoonAxBackend;
         let runner = crate::backend::process::RealProcessRunner;

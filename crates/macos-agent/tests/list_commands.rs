@@ -89,7 +89,7 @@ fn ax_list_json_emits_expected_node_fields() {
     let harness = common::MacosAgentHarness::new();
     let cwd = TempDir::new().expect("tempdir");
     let options = harness.cmd_options(cwd.path()).with_env(
-        "CODEX_MACOS_AGENT_AX_LIST_JSON",
+        "AGENTS_MACOS_AGENT_AX_LIST_JSON",
         r#"{
           "nodes":[
             {

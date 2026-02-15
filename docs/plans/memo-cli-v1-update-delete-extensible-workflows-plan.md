@@ -183,7 +183,7 @@ This plan rebases `memo-cli` contracts before first production rollout: archive 
 **Goal**: Prove behavior parity/coherence and publishable developer guidance.
 **Demo/Validation**:
 - Command(s):
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
   - `cargo test -p nils-memo-cli`
   - `zsh -f tests/zsh/completion.test.zsh`
 - Verify:
@@ -257,7 +257,7 @@ This plan rebases `memo-cli` contracts before first production rollout: archive 
   - `fmt`, `clippy`, `cargo test --workspace`, and zsh completion tests pass.
   - Any skipped tests are explicitly documented with blocker/reason.
 - **Validation**:
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Parallelization Plan
 - Parallel group A (after Task 1.3): Task 2.1 and design prototyping for Task 2.4 can start in parallel, but Task 2.4 merge waits for migration scaffolding from Task 2.1.
@@ -274,7 +274,7 @@ This plan rebases `memo-cli` contracts before first production rollout: archive 
 - Workflow extension contract:
   - Add fixture-backed tests for typed extension data cleanup via FK cascade chain.
 - Required repo gates:
-  - Run `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`.
+  - Run `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`.
 
 ## Risks & gotchas
 - SQLite table/FK alterations may require table rebuild migrations; careless migration order can break existing local DB files.

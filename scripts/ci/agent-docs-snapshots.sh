@@ -34,13 +34,13 @@ bless_add_snapshots() {
     expected="${input%.input.toml}.expected.toml"
 
     tmp="$(mktemp -d)"
-    codex_home="$tmp/codex-home"
+    agents_home="$tmp/agents-home"
     project_path="$tmp/project"
-    mkdir -p "$codex_home" "$project_path"
-    cp "$input" "$codex_home/AGENT_DOCS.toml"
+    mkdir -p "$agents_home" "$project_path"
+    cp "$input" "$agents_home/AGENT_DOCS.toml"
 
     cargo run --manifest-path "$manifest_path" --quiet -- \
-      --codex-home "$codex_home" \
+      --agents-home "$agents_home" \
       --project-path "$project_path" \
       add \
       --target home \
@@ -50,7 +50,7 @@ bless_add_snapshots() {
       --required \
       --notes after >/dev/null
 
-    cp "$codex_home/AGENT_DOCS.toml" "$expected"
+    cp "$agents_home/AGENT_DOCS.toml" "$expected"
     rm -rf "$tmp"
     echo "updated snapshot: $(basename "$expected")"
   done

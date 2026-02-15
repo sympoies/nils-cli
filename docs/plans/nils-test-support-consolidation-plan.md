@@ -274,7 +274,7 @@ Scan all crates for duplicated test helpers (CLI binary resolution, command runn
 ## Sprint 4: Full validation + docs polish
 **Goal**: Ensure full test suite coverage and document new helpers.
 **Demo/Validation**:
-- Command(s): `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- Command(s): `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - Verify: Format, clippy, and tests pass for the workspace.
 
 ### Task 4.1: Workspace verification

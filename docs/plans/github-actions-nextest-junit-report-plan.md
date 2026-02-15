@@ -11,7 +11,7 @@ This plan adds machine-readable test reporting to CI by running Rust tests with 
 - Out of scope:
   - Changing the test suite itself (adding/removing/renaming tests).
   - Converting the zsh completion test to JUnit (it remains a log-only step unless explicitly added later).
-  - Reworking the local required check entrypoint (`./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`) beyond documentation, unless Sprint 2 is executed.
+  - Reworking the local required check entrypoint (`./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`) beyond documentation, unless Sprint 2 is executed.
 
 ## Assumptions (if any)
 1. Adding a third-party GitHub Action for publishing JUnit results (e.g. `mikepenz/action-junit-report`) is acceptable for this repo.
@@ -49,7 +49,7 @@ This plan adds machine-readable test reporting to CI by running Rust tests with 
   - CI runs `cargo nextest run --profile ci --workspace` and produces `target/nextest/ci/junit.xml` in the workspace.
   - CI still runs `zsh -f tests/zsh/completion.test.zsh`.
 - **Validation**:
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
   - `cargo nextest run --profile ci --workspace`
   - `cargo test --workspace --doc`
 
@@ -102,18 +102,18 @@ This plan adds machine-readable test reporting to CI by running Rust tests with 
 
 ### Task 2.2: Optional: Reuse the existing nils-cli checks script in CI
 - **Location**:
-  - `.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
   - `.github/workflows/ci.yml`
 - **Description**: If you want CI to keep using the single entrypoint script, extend `nils-cli-checks.sh` with an opt-in mode (e.g. env `NILS_CLI_TEST_RUNNER=nextest`) that runs nextest + doctests instead of `cargo test --workspace`. Then update CI to call the script in that mode while keeping the JUnit publish/upload steps.
 - **Dependencies**:
   - Task 1.4
 - **Complexity**: 5
 - **Acceptance criteria**:
-  - Local default behavior remains unchanged: `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh` still runs `cargo test --workspace`.
+  - Local default behavior remains unchanged: `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh` still runs `cargo test --workspace`.
   - CI uses nextest through the script and continues to generate/publish `target/nextest/ci/junit.xml`.
 - **Validation**:
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
-  - `NILS_CLI_TEST_RUNNER=nextest ./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `NILS_CLI_TEST_RUNNER=nextest ./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Testing Strategy
 - Unit: no new unit tests required (CI wiring and config changes only).

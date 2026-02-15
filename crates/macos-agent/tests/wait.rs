@@ -202,7 +202,7 @@ fn wait_ax_present_reports_matched_count_in_json() {
     let harness = common::MacosAgentHarness::new();
     let cwd = TempDir::new().expect("tempdir");
     let options = harness.cmd_options(cwd.path()).with_env(
-        "CODEX_MACOS_AGENT_AX_LIST_JSON",
+        "AGENTS_MACOS_AGENT_AX_LIST_JSON",
         r#"{"nodes":[{"node_id":"1.1","role":"AXButton","enabled":true,"focused":false}],"warnings":[]}"#,
     );
 
@@ -237,7 +237,7 @@ fn wait_ax_unique_timeout_reports_last_match_count_hint() {
     let options = harness
         .cmd_options(cwd.path())
         .with_env(
-            "CODEX_MACOS_AGENT_AX_LIST_JSON",
+            "AGENTS_MACOS_AGENT_AX_LIST_JSON",
             r#"{"nodes":[{"node_id":"1.1","role":"AXButton","enabled":true,"focused":false},{"node_id":"1.2","role":"AXButton","enabled":true,"focused":false}],"warnings":[]}"#,
         );
 

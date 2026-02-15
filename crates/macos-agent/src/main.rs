@@ -204,17 +204,17 @@ fn trace_dir(cli: Option<&Cli>) -> PathBuf {
     {
         return path;
     }
-    codex_out_dir().join("macos-agent-trace")
+    agents_out_dir().join("macos-agent-trace")
 }
 
-fn codex_out_dir() -> PathBuf {
-    if let Ok(codex_home) = std::env::var("CODEX_HOME") {
-        return PathBuf::from(codex_home).join("out");
+fn agents_out_dir() -> PathBuf {
+    if let Ok(agents_home) = std::env::var("AGENTS_HOME") {
+        return PathBuf::from(agents_home).join("out");
     }
     if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home).join(".codex").join("out");
+        return PathBuf::from(home).join(".agents").join("out");
     }
-    PathBuf::from(".codex").join("out")
+    PathBuf::from(".agents").join("out")
 }
 
 #[cfg(test)]

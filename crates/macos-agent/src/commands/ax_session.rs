@@ -226,7 +226,7 @@ mod tests {
     #[test]
     fn run_start_and_stop_dry_run_support_text_and_json() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
         let runner = RealProcessRunner;
 
         run_start(
@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn run_start_and_stop_reject_tsv_in_dry_run() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
         let runner = RealProcessRunner;
 
         let start_err = run_start(
@@ -288,11 +288,11 @@ mod tests {
     #[test]
     fn run_list_covers_non_empty_text_and_tsv_rejection() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
-        let _backend = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_AX_BACKEND", "hammerspoon");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
+        let _backend = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_AX_BACKEND", "hammerspoon");
         let _list_override = EnvGuard::set(
             &lock,
-            "CODEX_MACOS_AGENT_AX_SESSION_LIST_JSON",
+            "AGENTS_MACOS_AGENT_AX_SESSION_LIST_JSON",
             r#"{"sessions":[{"session_id":"axs-unit","app":"Arc","bundle_id":"company.thebrowser.Browser","pid":4242,"window_title_contains":"Inbox","created_at_ms":1700000001000}]}"#,
         );
         let runner = RealProcessRunner;
@@ -318,11 +318,11 @@ mod tests {
     #[test]
     fn run_list_text_supports_empty_sessions_branch() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
-        let _backend = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_AX_BACKEND", "hammerspoon");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
+        let _backend = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_AX_BACKEND", "hammerspoon");
         let _list_override = EnvGuard::set(
             &lock,
-            "CODEX_MACOS_AGENT_AX_SESSION_LIST_JSON",
+            "AGENTS_MACOS_AGENT_AX_SESSION_LIST_JSON",
             r#"{"sessions":[]}"#,
         );
         let runner = RealProcessRunner;

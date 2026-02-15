@@ -96,7 +96,7 @@ This plan fixes repo-root detection across this workspace so that repo-relative 
 ## Sprint 3: Sweep all other CLIs and align where needed
 **Goal**: Confirm no other workspace CLI has the same repo-root failure mode; apply fixes only where necessary and add targeted regression tests.
 **Demo/Validation**:
-- Command(s): `cargo test --workspace`, `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- Command(s): `cargo test --workspace`, `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - Verify: CI-equivalent checks pass; inventory doc reflects final behavior.
 
 ### Task 3.1: Audit each CLI crate for repo-root + repo-relative path semantics
@@ -132,7 +132,7 @@ This plan fixes repo-root detection across this workspace so that repo-relative 
   - Any corrected CLI has at least one regression test covering invocation from a nested directory within a temp Git repo.
 - **Validation**:
   - `cargo test --workspace`
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Testing Strategy
 - Unit:

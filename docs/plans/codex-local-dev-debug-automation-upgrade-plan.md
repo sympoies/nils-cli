@@ -21,7 +21,7 @@ This plan redesigns the current direction so `codex-cli` remains strictly OpenAI
 2. `agentctl` can be added as a new workspace crate and primary control-plane entrypoint.
 3. Provider-specific CLIs can expose/consume shared runtime contracts without leaking provider internals.
 4. Desktop automation checks require environment-aware fallbacks (stub/test-mode in CI).
-5. Artifact outputs can be written under `${CODEX_HOME}/out` with deterministic structure.
+5. Artifact outputs can be written under `${AGENTS_HOME}/out` with deterministic structure.
 
 ## Inlined ADR: `codex-cli` / `agentctl` provider boundary
 - Status: Accepted
@@ -284,7 +284,7 @@ Deny list:
   - Probe mode supports deterministic test-mode execution in CI.
   - Failure hints distinguish missing dependency, permission, and platform limitation.
 - **Validation**:
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 CODEX_SCREEN_RECORD_TEST_MODE=1 cargo test -p agentctl -- diag_`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 AGENTS_SCREEN_RECORD_TEST_MODE=1 cargo test -p agentctl -- diag_`
   - `cargo run -p agentctl -- diag doctor --format json`
 
 ### Task 3.3: Implement `agentctl debug bundle` with automation adapters
@@ -304,10 +304,10 @@ Deny list:
 - **Acceptance criteria**:
   - Bundle manifest is versioned and always emitted.
   - Partial failures are visible without losing successful artifact references.
-  - Artifact paths are deterministic under `${CODEX_HOME}/out` or configured output dir.
+  - Artifact paths are deterministic under `${AGENTS_HOME}/out` or configured output dir.
 - **Validation**:
   - `cargo test -p agentctl -- debug_bundle_`
-  - `cargo run -p agentctl -- debug bundle --output-dir ${CODEX_HOME:-$HOME/.codex}/out/agentctl-debug-demo`
+  - `cargo run -p agentctl -- debug bundle --output-dir ${AGENTS_HOME:-$HOME/.agents}/out/agentctl-debug-demo`
 
 ### Task 3.4: Implement `agentctl workflow run` declarative orchestration
 - **Location**:
@@ -348,7 +348,7 @@ Deny list:
   - Step result envelopes include normalized command provenance and artifact pointers.
   - CI-friendly tests pass with deterministic test/stub modes for desktop-sensitive tools.
 - **Validation**:
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 CODEX_SCREEN_RECORD_TEST_MODE=1 cargo test -p agentctl -- workflow_automation_steps`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 AGENTS_SCREEN_RECORD_TEST_MODE=1 cargo test -p agentctl -- workflow_automation_steps`
   - `cargo run -p agentctl -- workflow run --file crates/agentctl/tests/fixtures/workflow/automation-mixed.json`
 
 ## Sprint 4: Future-provider extensibility (`claude` / `gemini`) and release hardening
@@ -357,7 +357,7 @@ Deny list:
 - Command(s):
   - `cargo test -p agentctl -p agent-runtime-core -p agent-provider-codex`
   - `cargo test -p codex-cli`
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - Verify:
   - Provider onboarding contract is executable for new providers.
   - Repo checks pass after architecture split.
@@ -430,7 +430,7 @@ Deny list:
 - **Validation**:
   - `plan-tooling validate --file docs/plans/codex-local-dev-debug-automation-upgrade-plan.md`
   - `cargo test -p agentctl -p agent-runtime-core -p agent-provider-codex -p codex-cli`
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Testing Strategy
 - Unit:
@@ -468,7 +468,7 @@ Deny list:
 - [x] Validation completed:
   - `plan-tooling validate --file docs/plans/codex-local-dev-debug-automation-upgrade-plan.md`
   - `cargo test -p agentctl -p agent-runtime-core -p agent-provider-codex -p codex-cli`
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - [x] Coverage target met:
   - `cargo llvm-cov --workspace --summary-only`
   - Workspace line coverage: `85.04%` (threshold `>=85%`).

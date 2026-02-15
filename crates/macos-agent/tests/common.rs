@@ -9,15 +9,15 @@ use tempfile::TempDir;
 
 pub struct MacosAgentHarness {
     home_dir: TempDir,
-    codex_home: PathBuf,
+    agents_home: PathBuf,
     stub_dir: StubBinDir,
 }
 
 impl MacosAgentHarness {
     pub fn new() -> Self {
         let home_dir = TempDir::new().expect("tempdir");
-        let codex_home = home_dir.path().join(".codex");
-        std::fs::create_dir_all(codex_home.join("out")).expect("create CODEX_HOME/out");
+        let agents_home = home_dir.path().join(".agents");
+        std::fs::create_dir_all(agents_home.join("out")).expect("create AGENTS_HOME/out");
 
         let stub_dir = StubBinDir::new();
         write_stub_from_fixture(&stub_dir, "osascript", "stub-osascript-ok.txt");
@@ -25,7 +25,7 @@ impl MacosAgentHarness {
 
         Self {
             home_dir,
-            codex_home,
+            agents_home,
             stub_dir,
         }
     }
@@ -36,13 +36,13 @@ impl MacosAgentHarness {
 
     pub fn cmd_options(&self, cwd: &Path) -> CmdOptions {
         let home = self.home_dir.path().to_string_lossy().to_string();
-        let codex_home = self.codex_home.to_string_lossy().to_string();
+        let agents_home = self.agents_home.to_string_lossy().to_string();
         CmdOptions::new()
             .with_cwd(cwd)
             .with_env("HOME", &home)
-            .with_env("CODEX_HOME", &codex_home)
-            .with_env("CODEX_MACOS_AGENT_TEST_MODE", "1")
-            .with_env("CODEX_MACOS_AGENT_TEST_TIMESTAMP", "20260101-000000")
+            .with_env("AGENTS_HOME", &agents_home)
+            .with_env("AGENTS_MACOS_AGENT_TEST_MODE", "1")
+            .with_env("AGENTS_MACOS_AGENT_TEST_TIMESTAMP", "20260101-000000")
             .with_path_prepend(self.stub_dir.path())
     }
 

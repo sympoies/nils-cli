@@ -70,7 +70,7 @@ This plan raises per-crate line coverage so every crate in the workspace is at o
 **Goal**: Prove all crates are >= 80% and publish changes as a feature PR.
 **Demo/Validation**:
 - Command(s):
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info`
   - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
 - Verify:
@@ -90,7 +90,7 @@ This plan raises per-crate line coverage so every crate in the workspace is at o
   - Required checks are green.
   - Coverage summary confirms all crates >= 80.00%.
 - **Validation**:
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info`
 
 ### Task 2.2: Commit and open feature PR

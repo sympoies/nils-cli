@@ -170,7 +170,7 @@ delivery checks.
 **Demo/Validation**:
 - Command(s):
   - `cargo test -p agent-docs resolve_checklist -- --nocapture`
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - Verify:
   - Checklist parsing contract is stable for preflight automation use.
   - Project-level guidance references checklist mode where verification speed matters.
@@ -215,7 +215,7 @@ delivery checks.
 
 ### Task 3.3: Run full required checks and finalize delivery readiness
 - **Location**:
-  - `.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
   - `crates/agent-docs/Cargo.toml`
 - **Description**: Run required repository checks and ensure all checklist-related tests, docs, and
   completions pass together before merge.
@@ -229,7 +229,7 @@ delivery checks.
   - No completion regressions in zsh test suite.
 - **Validation**:
   - `cargo test -p agent-docs --tests`
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Testing Strategy
 - Unit:

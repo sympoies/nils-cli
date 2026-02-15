@@ -104,7 +104,7 @@ else
 1) Ensure command contract covers human-readable mode and JSON mode.
 2) Add JSON contract tests (schema envelope, error envelope, no secret leakage).
 3) Align Cargo metadata and publishability rules.
-4) Run ./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh.
+4) Run ./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh.
 5) If publishable, run scripts/publish-crates.sh --dry-run --crate <crate-package-name>.
 IMPLEMENT
 fi

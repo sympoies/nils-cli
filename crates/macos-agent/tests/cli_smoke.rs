@@ -71,7 +71,7 @@ fn input_source_current_and_switch_emit_json_payloads() {
     let harness = common::MacosAgentHarness::new();
     let cwd = TempDir::new().expect("tempdir");
     let options = harness.cmd_options(cwd.path()).with_env(
-        "CODEX_MACOS_AGENT_TEST_INPUT_SOURCE_CURRENT",
+        "AGENTS_MACOS_AGENT_TEST_INPUT_SOURCE_CURRENT",
         "com.apple.keylayout.US",
     );
 

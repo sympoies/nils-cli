@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn list_windows_is_sorted_and_filtered_in_test_mode() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
 
         let rows = list_windows(&ListWindowsArgs {
             app: Some("Terminal".to_string()),
@@ -286,7 +286,7 @@ mod tests {
     #[test]
     fn resolve_window_by_window_id() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
 
         let target = resolve_window(&TargetSelector {
             window_id: Some(100),
@@ -300,7 +300,7 @@ mod tests {
     #[test]
     fn list_apps_is_deterministic() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
 
         let rows = list_apps().expect("list apps");
         let names = rows
@@ -313,7 +313,7 @@ mod tests {
     #[test]
     fn window_present_and_app_activity_cover_selector_variants() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
 
         assert!(
             window_present(&TargetSelector {
@@ -363,7 +363,7 @@ mod tests {
     #[test]
     fn capture_screenshot_uses_test_fixture_in_test_mode() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
 
         let target = resolve_window(&TargetSelector {
             window_id: Some(100),
@@ -381,7 +381,7 @@ mod tests {
     #[test]
     fn capture_screenshot_region_crops_fixture_in_test_mode() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
 
         let target = resolve_window(&TargetSelector {
             window_id: Some(100),

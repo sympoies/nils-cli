@@ -224,7 +224,7 @@ All current workspace crates are missing `docs/README.md` indexes and need crate
 ## Sprint 3: Governance automation and CI enforcement
 **Goal**: enforce docs placement rules automatically in local checks and CI.
 **Demo/Validation**:
-- Command(s): `bash scripts/ci/docs-placement-audit.sh --strict`, `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- Command(s): `bash scripts/ci/docs-placement-audit.sh --strict`, `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - Verify: docs placement policy is automatically checked before merge.
 
 ### Task 3.1: Implement docs placement audit for nils-cli
@@ -250,7 +250,7 @@ All current workspace crates are missing `docs/README.md` indexes and need crate
 
 ### Task 3.2: Wire docs placement audit into nils-cli checks and CI
 - **Location**:
-  - `.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
   - `.github/workflows/ci.yml`
   - `DEVELOPMENT.md`
 - **Description**: Ensure docs placement audit is part of required local checks and CI pipeline documentation.
@@ -262,8 +262,8 @@ All current workspace crates are missing `docs/README.md` indexes and need crate
   - CI job runs docs placement audit through checks pipeline.
   - Development guide includes docs audit in required checks.
 - **Validation**:
-  - `rg -n "docs-placement-audit" .codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh .github/workflows/ci.yml DEVELOPMENT.md`
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `rg -n "docs-placement-audit" .agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh .github/workflows/ci.yml DEVELOPMENT.md`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ### Task 3.3: Register docs placement policy in agent-docs required docs
 - **Location**:
@@ -282,7 +282,7 @@ All current workspace crates are missing `docs/README.md` indexes and need crate
 ## Sprint 4: Closure, lifecycle decision, and maintainer handoff
 **Goal**: finalize migration state, document stub lifecycle, and publish maintainer-facing summary.
 **Demo/Validation**:
-- Command(s): `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`, `cargo test --workspace`
+- Command(s): `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`, `cargo test --workspace`
 - Verify: migration and governance are complete with stable operational guidance.
 
 ### Task 4.1: Full regression and high-impact link hygiene pass
@@ -299,7 +299,7 @@ All current workspace crates are missing `docs/README.md` indexes and need crate
   - Inventory report status is updated for all migration items.
   - High-impact docs point to canonical crate-local paths.
 - **Validation**:
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
   - `cargo test --workspace`
   - `! rg -n "docs/runbooks/codex-cli-json-consumers.md|docs/runbooks/image-processing-llm-svg.md" README.md DEVELOPMENT.md crates/codex-cli/README.md`
 
@@ -335,7 +335,7 @@ All current workspace crates are missing `docs/README.md` indexes and need crate
 
 ## Testing Strategy
 - Policy/document checks: `bash scripts/ci/docs-placement-audit.sh --strict`.
-- Required local gate: `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`.
+- Required local gate: `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`.
 - Workspace regression: `cargo test --workspace` and `zsh -f tests/zsh/completion.test.zsh`.
 - Link hygiene checks: targeted `rg -n` checks for old root runbook paths in high-impact docs.
 

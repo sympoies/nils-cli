@@ -193,7 +193,7 @@ share step-by-step demos.
   - `crates/screen-record/tests/test_mode_cli.rs`
   - `crates/screen-record/tests/fixtures/sample.mov`
   - `crates/screen-record/tests/fixtures/sample.mp4`
-- **Description**: Add `CODEX_SCREEN_RECORD_TEST_MODE=1` to bypass macOS APIs and return deterministic,
+- **Description**: Add `AGENTS_SCREEN_RECORD_TEST_MODE=1` to bypass macOS APIs and return deterministic,
   in-memory shareable content and deterministic “recording” output (copy `tests/fixtures/sample.mov` to `--path`,
   selecting fixture by extension when `.mp4` paths are used).
   This enables CI tests on non-macOS without requiring Screen Recording permission.
@@ -206,7 +206,7 @@ share step-by-step demos.
   - With test mode enabled, `.mp4` output paths are supported for tests that exercise container selection.
   - Tests run on any OS and do not require external binaries.
 - **Validation**:
-  - `CODEX_SCREEN_RECORD_TEST_MODE=1 cargo test -p screen-record`
+  - `AGENTS_SCREEN_RECORD_TEST_MODE=1 cargo test -p screen-record`
 
 ## Sprint 3: Record video to file (ScreenCaptureKit + AVAssetWriter)
 **Goal**: Implement end-to-end video recording for a selected window, with duration control and clean finalization.
@@ -230,7 +230,7 @@ share step-by-step demos.
   - Writer creates a non-empty file when fed synthetic frames in test mode.
   - Writer surfaces meaningful errors (file permission, unsupported extension, encoder failure).
 - **Validation**:
-  - `CODEX_SCREEN_RECORD_TEST_MODE=1 cargo test -p screen-record -- writer`
+  - `AGENTS_SCREEN_RECORD_TEST_MODE=1 cargo test -p screen-record -- writer`
 
 ### Task 3.2: Implement ScreenCaptureKit stream output (video sample buffers)
 - **Location**:
@@ -269,7 +269,7 @@ share step-by-step demos.
   - Successful runs print exactly one line to stdout: the output path.
   - Missing `--path` exits 2 with a clear usage error.
 - **Validation**:
-  - `CODEX_SCREEN_RECORD_TEST_MODE=1 cargo run -p screen-record -- --app Terminal --duration 1 --audio off --path \"./recordings/test.mov\"`
+  - `AGENTS_SCREEN_RECORD_TEST_MODE=1 cargo run -p screen-record -- --app Terminal --duration 1 --audio off --path \"./recordings/test.mov\"`
 
 ## Sprint 4: Audio (system + microphone) + polish
 **Goal**: Add audio capture modes and ship a polished CLI with stable completions and tests.
@@ -340,7 +340,7 @@ share step-by-step demos.
   - `crates/screen-record/tests/non_macos.rs`
   - `crates/screen-record/tests/selection.rs`
   - `crates/screen-record/tests/recording_test_mode.rs`
-- **Description**: Add deterministic integration tests using `CODEX_SCREEN_RECORD_TEST_MODE=1` to cover:
+- **Description**: Add deterministic integration tests using `AGENTS_SCREEN_RECORD_TEST_MODE=1` to cover:
   - flag parsing and validation errors (exit 2)
   - selection logic edge cases and ambiguity reporting
   - file output creation + stdout contract
@@ -351,11 +351,11 @@ share step-by-step demos.
 - **Acceptance criteria**:
   - `cargo test -p screen-record` passes and does not require Screen Recording permission.
   - Non-macOS CI verifies default behavior is “macOS only” (exit 2) when test mode is not enabled.
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh` passes.
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh` passes.
   - Workspace line coverage remains >= 80.00% when running the documented coverage commands.
 - **Validation**:
-  - `CODEX_SCREEN_RECORD_TEST_MODE=1 cargo test -p screen-record`
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `AGENTS_SCREEN_RECORD_TEST_MODE=1 cargo test -p screen-record`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 80`
 
 ## Testing Strategy

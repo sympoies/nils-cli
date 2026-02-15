@@ -487,7 +487,7 @@ fn probe_input_hotkey() -> CheckReport {
 }
 
 fn probe_screenshot() -> CheckReport {
-    if shared_env::env_truthy("CODEX_MACOS_AGENT_TEST_MODE") {
+    if shared_env::env_truthy("AGENTS_MACOS_AGENT_TEST_MODE") {
         return CheckReport {
             id: "probe_screenshot",
             label: "Probe: observe screenshot",

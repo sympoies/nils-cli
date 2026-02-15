@@ -254,7 +254,7 @@ mod tests {
     #[test]
     fn run_get_and_set_return_usage_error_for_tsv_format() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
         let runner = RealProcessRunner;
 
         let get_err = run_get(

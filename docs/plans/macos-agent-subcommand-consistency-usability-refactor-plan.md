@@ -254,7 +254,7 @@ This plan refactors `macos-agent` subcommands to make the CLI more user friendly
 **Goal**: Lock in usability and maintainability gains with focused coverage and operational rollout controls.
 **Demo/Validation**:
 - Command(s):
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
   - `cargo test -p macos-agent --test scenario_chain`
 - Verify:
   - Refactor remains backward compatible and stable.
@@ -321,7 +321,7 @@ This plan refactors `macos-agent` subcommands to make the CLI more user friendly
   - Release handoff includes known-risk list and rollback trigger criteria.
   - No unresolved placeholder markers remain in command docs or plan artifacts.
 - **Validation**:
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Testing Strategy
 - Unit:

@@ -163,7 +163,7 @@ fn record_failure_removes_staged_and_target_output() {
         ],
         &harness
             .cmd_options(cwd.path())
-            .with_env("CODEX_SCREEN_RECORD_TEST_MODE_FAIL_APPEND", "1"),
+            .with_env("AGENTS_SCREEN_RECORD_TEST_MODE_FAIL_APPEND", "1"),
     );
 
     assert_eq!(output.code, 1);
@@ -256,7 +256,7 @@ fn metadata_out_failure_path() {
         ],
         &harness
             .cmd_options(cwd.path())
-            .with_env("CODEX_SCREEN_RECORD_TEST_MODE_FAIL_APPEND", "1"),
+            .with_env("AGENTS_SCREEN_RECORD_TEST_MODE_FAIL_APPEND", "1"),
     );
 
     assert_eq!(output.code, 1);
@@ -361,7 +361,7 @@ fn diagnostics_out_failure_keeps_primary_output() {
         ],
         harness
             .cmd_options(cwd.path())
-            .with_env("CODEX_SCREEN_RECORD_TEST_MODE_FAIL_DIAGNOSTICS", "1"),
+            .with_env("AGENTS_SCREEN_RECORD_TEST_MODE_FAIL_DIAGNOSTICS", "1"),
     );
 
     assert_eq!(output.code, 1);
@@ -447,7 +447,7 @@ fn record_realtime_mode_sigint_stops_early_and_keeps_valid_output() {
 
     let options = harness
         .cmd_options(cwd.path())
-        .with_env("CODEX_SCREEN_RECORD_TEST_MODE_REALTIME", "1");
+        .with_env("AGENTS_SCREEN_RECORD_TEST_MODE_REALTIME", "1");
     for key in options.env_remove {
         cmd.env_remove(key);
     }

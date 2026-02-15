@@ -259,7 +259,7 @@ Migration steps:
 - **Validation**:
   - `cargo run -p macos-agent -- windows list --format tsv`
   - `cargo run -p macos-agent -- apps list --format json | jq -e '.schema_version != null'`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent -- list_commands`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent -- list_commands`
 
 ### Task 2.3: Implement screenshot observation command via screen-record backend
 - **Location**:
@@ -279,7 +279,7 @@ Migration steps:
 - **Validation**:
   - `cargo run -p macos-agent -- observe screenshot --active-window --path ./tmp/macos-agent.png`
   - `cargo test -p macos-agent -- observe_screenshot`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent -- observe_screenshot`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent -- observe_screenshot`
 
 ### Task 2.4: Implement wait primitives for UI stabilization
 - **Location**:
@@ -298,7 +298,7 @@ Migration steps:
   - Command behavior is testable with stubbed target adapters.
 - **Validation**:
   - `cargo test -p macos-agent -- wait`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent -- wait`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent -- wait`
 
 ## Sprint 3: Action backend for click, type, shortcut, and window switching
 **Goal**: Deliver core manipulation actions through AppleScript and cliclick with safety rails.
@@ -336,7 +336,7 @@ Migration steps:
   - Sensitive inputs are not echoed unredacted in error paths.
 - **Validation**:
   - `cargo test -p macos-agent -- backend`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent -- backend`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent -- backend`
 
 ### Task 3.2: Implement app or window activation command
 - **Location**:
@@ -356,7 +356,7 @@ Migration steps:
 - **Validation**:
   - `cargo run -p macos-agent -- window activate --app Terminal --wait-ms 1500`
   - `cargo test -p macos-agent -- window_activate`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent -- window_activate`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent -- window_activate`
 
 ### Task 3.3: Implement pointer click action via cliclick
 - **Location**:
@@ -376,7 +376,7 @@ Migration steps:
 - **Validation**:
   - `cargo run -p macos-agent -- input click --x 200 --y 160`
   - `cargo test -p macos-agent -- input_click`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent -- input_click`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent -- input_click`
 
 ### Task 3.4: Implement keyboard typing and hotkey actions
 - **Location**:
@@ -399,7 +399,7 @@ Migration steps:
   - `cargo run -p macos-agent -- input type --text "hello world"`
   - `cargo run -p macos-agent -- input hotkey --mods cmd,shift --key 4`
   - `cargo test -p macos-agent -- input_keyboard`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent -- input_keyboard`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent -- input_keyboard`
 
 ### Task 3.5: Add safety rails (dry-run, retries, timeout, action IDs)
 - **Location**:
@@ -421,14 +421,14 @@ Migration steps:
 - **Validation**:
   - `cargo run -p macos-agent -- input click --x 10 --y 10 --dry-run`
   - `cargo test -p macos-agent -- retry`
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent -- retry`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent -- retry`
 
 ## Sprint 4: Test hardening, docs, completions, and release readiness
 **Goal**: Make the CLI CI-safe, well-documented, and ready for workspace-quality checks.
 **Demo/Validation**:
 - Command(s):
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent`
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - Verify:
   - Full crate test suite runs without controlling the real desktop.
   - Workspace checks and coverage gate continue to pass.
@@ -443,7 +443,7 @@ Migration steps:
   - `crates/macos-agent/tests/common.rs`
   - `crates/macos-agent/tests/fixtures/stub-osascript-ok.txt`
   - `crates/macos-agent/tests/fixtures/stub-cliclick-ok.txt`
-- **Description**: Implement `CODEX_MACOS_AGENT_TEST_MODE=1` so tests can exercise command flow
+- **Description**: Implement `AGENTS_MACOS_AGENT_TEST_MODE=1` so tests can exercise command flow
   using stubbed `osascript` and `cliclick` binaries instead of the real desktop. Reuse
   `nils-test-support` helpers for isolated PATH and environment mutation.
 - **Dependencies**:
@@ -454,7 +454,7 @@ Migration steps:
   - Stub outputs cover success, non-zero, and timeout scenarios.
   - Tests remain deterministic across repeated runs.
 - **Validation**:
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent`
 
 ### Task 4.2: Add integration tests for command contracts and error semantics
 - **Location**:
@@ -471,7 +471,7 @@ Migration steps:
   - Success-path tests assert stdout is non-empty JSON or TSV output and stderr is empty.
   - Error-path tests assert stdout is empty and stderr begins with `error:`.
 - **Validation**:
-  - `CODEX_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent -- --nocapture`
+  - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent -- --nocapture`
 
 ### Task 4.3: Add shell completions and finalize user docs
 - **Location**:
@@ -506,7 +506,7 @@ Migration steps:
   - Workspace coverage remains at or above 80.00 percent.
   - No command contract regressions in existing crates.
 - **Validation**:
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 80`
   - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
 

@@ -186,7 +186,7 @@ Informational (do not hard-depend for schema validation):
     "target": "alpha@example.com",
     "matched_secret": "alpha.json",
     "applied": true,
-    "auth_file": "/home/user/.codex/auth.json"
+    "auth_file": "/home/user/.agents/auth.json"
   }
 }
 ```
@@ -220,8 +220,8 @@ Informational (do not hard-depend for schema validation):
   "command": "auth save",
   "ok": true,
   "result": {
-    "auth_file": "/home/user/.codex/auth.json",
-    "target_file": "/home/user/.codex/secrets/team-alpha.json",
+    "auth_file": "/home/user/.agents/auth.json",
+    "target_file": "/home/user/.agents/secrets/team-alpha.json",
     "saved": true,
     "overwritten": false
   }
@@ -238,9 +238,9 @@ Informational (do not hard-depend for schema validation):
   "ok": false,
   "error": {
     "code": "overwrite-confirmation-required",
-    "message": "codex-save: /home/user/.codex/secrets/team-alpha.json exists; rerun with --yes to overwrite",
+    "message": "codex-save: /home/user/.agents/secrets/team-alpha.json exists; rerun with --yes to overwrite",
     "details": {
-      "target_file": "/home/user/.codex/secrets/team-alpha.json",
+      "target_file": "/home/user/.agents/secrets/team-alpha.json",
       "overwritten": false
     }
   }
@@ -254,7 +254,7 @@ Informational (do not hard-depend for schema validation):
   "command": "auth remove",
   "ok": true,
   "result": {
-    "target_file": "/home/user/.codex/secrets/team-alpha.json",
+    "target_file": "/home/user/.agents/secrets/team-alpha.json",
     "removed": true
   }
 }
@@ -268,9 +268,9 @@ Informational (do not hard-depend for schema validation):
   "ok": false,
   "error": {
     "code": "remove-confirmation-required",
-    "message": "codex-remove: /home/user/.codex/secrets/team-alpha.json exists; rerun with --yes to remove",
+    "message": "codex-remove: /home/user/.agents/secrets/team-alpha.json exists; rerun with --yes to remove",
     "details": {
-      "target_file": "/home/user/.codex/secrets/team-alpha.json",
+      "target_file": "/home/user/.agents/secrets/team-alpha.json",
       "removed": false
     }
   }
@@ -326,9 +326,9 @@ Informational (do not hard-depend for schema validation):
   "ok": false,
   "error": {
     "code": "secret-not-matched",
-    "message": "/home/user/.codex/auth.json does not match any known secret",
+    "message": "/home/user/.agents/auth.json does not match any known secret",
     "details": {
-      "auth_file": "/home/user/.codex/auth.json",
+      "auth_file": "/home/user/.agents/auth.json",
       "matched": false
     }
   }
@@ -358,12 +358,12 @@ Informational (do not hard-depend for schema validation):
   "command": "auth sync",
   "ok": true,
   "result": {
-    "auth_file": "/home/user/.codex/auth.json",
+    "auth_file": "/home/user/.agents/auth.json",
     "synced": 1,
     "skipped": 3,
     "failed": 0,
     "updated_files": [
-      "/home/user/.codex/secrets/alpha.json"
+      "/home/user/.agents/secrets/alpha.json"
     ]
   }
 }

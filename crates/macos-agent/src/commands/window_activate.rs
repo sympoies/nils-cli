@@ -286,7 +286,7 @@ mod tests {
     #[test]
     fn resolve_target_uses_target_lookup_for_active_window() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
 
         let args = WindowActivateArgs {
             window_id: None,
@@ -314,7 +314,7 @@ mod tests {
         .expect("zero wait should be a no-op");
 
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
         wait_for_active_confirmation(
             &PanicRunner,
             &ActivationTarget::App("Terminal".to_string()),

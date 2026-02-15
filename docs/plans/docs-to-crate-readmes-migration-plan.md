@@ -3,7 +3,7 @@
 ## Overview
 This plan migrates crate-specific documentation currently stored under `docs/CRATE/` into
 `crates/CRATE/README.md`, then removes the old `docs/` files (keeping `docs/plans/`). While doing
-so, it replaces machine-local references (for example `~/.config/zsh/...`, `~/.codex/...`,
+so, it replaces machine-local references (for example `~/.config/zsh/...`, `~/.agents/...`,
 `/Users/terry/...`) with stable GitHub permalinks to the upstream repos:
 `graysurf/zsh-kit` and `graysurf/codex-kit`.
 
@@ -59,7 +59,7 @@ so, it replaces machine-local references (for example `~/.config/zsh/...`, `~/.c
 ### codex-kit
 - `/Users/terry/.config/codex-kit/PATH` (or `~/.config/codex-kit/PATH`) →
   `https://github.com/graysurf/codex-kit/blob/main/PATH`
-- `$CODEX_HOME/skills/tools/devex/semantic-commit/scripts/FILE` →
+- `$AGENTS_HOME/skills/tools/devex/semantic-commit/scripts/FILE` →
   `https://github.com/graysurf/codex-kit/blob/main/skills/tools/devex/semantic-commit/scripts/FILE`
 
 ## Sprint 1: Create per-crate READMEs (migrate docs content)
@@ -268,19 +268,19 @@ that contains the relevant spec/fixtures content and uses upstream GitHub links 
 - **Location**:
   - `crates/semantic-commit/README.md`
 - **Description**: Merge `docs/semantic-commit/spec.md` and `docs/semantic-commit/fixtures.md` into a
-  crate-local README. Replace references to `~/.codex/skills/...` scripts with GitHub links into
+  crate-local README. Replace references to `~/.agents/skills/...` scripts with GitHub links into
   `graysurf/codex-kit` for the semantic-commit skill scripts.
 - **Dependencies**:
   - Task 1.1
 - **Complexity**: 4
 - **Acceptance criteria**:
   - `crates/semantic-commit/README.md` exists and includes spec + fixtures.
-  - The README contains no `~/.codex/` references.
+  - The README contains no `~/.agents/` references.
   - The README links to `graysurf/codex-kit` semantic-commit scripts.
 - **Validation**:
   - `test -f crates/semantic-commit/README.md`
   - `rg -n \"semantic-commit parity spec\" crates/semantic-commit/README.md`
-  - `! rg -n \"~/.codex\" crates/semantic-commit/README.md`
+  - `! rg -n \"~/.agents\" crates/semantic-commit/README.md`
   - `rg -n \"github.com/graysurf/codex-kit/blob/main/skills/tools/devex/semantic-commit/scripts\" crates/semantic-commit/README.md`
 
 ## Sprint 2: Update repo references and remove old `docs/` files
@@ -330,18 +330,18 @@ paths; old docs are deleted and all validation commands still run.
 - **Description**: Replace machine-local source references with GitHub links:
   - `~/.config/zsh/...` and `/Users/terry/.config/zsh/...` → `graysurf/zsh-kit` links.
   - `~/.config/codex-kit/...` and `/Users/terry/.config/codex-kit/...` → `graysurf/codex-kit` links.
-  - `~/.codex/...` → `graysurf/codex-kit` links when pointing at tracked skill sources.
+  - `~/.agents/...` → `graysurf/codex-kit` links when pointing at tracked skill sources.
 - **Dependencies**:
   - Task 1.1
 - **Complexity**: 6
 - **Acceptance criteria**:
-  - None of the listed plan files contain `~/.config/zsh`, `~/.config/codex-kit`, `~/.codex/`, or
+  - None of the listed plan files contain `~/.config/zsh`, `~/.config/codex-kit`, `~/.agents/`, or
     `/Users/terry/`.
   - Updated links resolve to the correct upstream repos (`zsh-kit` vs `codex-kit`).
 - **Validation**:
   - `! rg -n \"~/.config/zsh\" docs/plans/api-testing-clis-rust-port-plan.md docs/plans/codex-cli-rust-port-plan.md docs/plans/fzf-cli-rust-port-plan.md docs/plans/git-lock-rust-port-plan.md docs/plans/git-scope-rust-port-plan.md docs/plans/git-summary-rust-port-plan.md docs/plans/image-processing-rust-port-plan.md docs/plans/nils-term-progress-plan.md docs/plans/plan-tooling-cli-consolidation-plan.md docs/plans/rust-cli-repo-setup-plan.md docs/plans/semantic-commit-rust-port-plan.md docs/plans/test-coverage-70-plan.md`
   - `! rg -n \"~/.config/codex-kit\" docs/plans/api-testing-clis-rust-port-plan.md docs/plans/codex-cli-rust-port-plan.md docs/plans/fzf-cli-rust-port-plan.md docs/plans/git-lock-rust-port-plan.md docs/plans/git-scope-rust-port-plan.md docs/plans/git-summary-rust-port-plan.md docs/plans/image-processing-rust-port-plan.md docs/plans/nils-term-progress-plan.md docs/plans/plan-tooling-cli-consolidation-plan.md docs/plans/rust-cli-repo-setup-plan.md docs/plans/semantic-commit-rust-port-plan.md docs/plans/test-coverage-70-plan.md`
-  - `! rg -n \"~/.codex\" docs/plans/api-testing-clis-rust-port-plan.md docs/plans/codex-cli-rust-port-plan.md docs/plans/fzf-cli-rust-port-plan.md docs/plans/git-lock-rust-port-plan.md docs/plans/git-scope-rust-port-plan.md docs/plans/git-summary-rust-port-plan.md docs/plans/image-processing-rust-port-plan.md docs/plans/nils-term-progress-plan.md docs/plans/plan-tooling-cli-consolidation-plan.md docs/plans/rust-cli-repo-setup-plan.md docs/plans/semantic-commit-rust-port-plan.md docs/plans/test-coverage-70-plan.md`
+  - `! rg -n \"~/.agents\" docs/plans/api-testing-clis-rust-port-plan.md docs/plans/codex-cli-rust-port-plan.md docs/plans/fzf-cli-rust-port-plan.md docs/plans/git-lock-rust-port-plan.md docs/plans/git-scope-rust-port-plan.md docs/plans/git-summary-rust-port-plan.md docs/plans/image-processing-rust-port-plan.md docs/plans/nils-term-progress-plan.md docs/plans/plan-tooling-cli-consolidation-plan.md docs/plans/rust-cli-repo-setup-plan.md docs/plans/semantic-commit-rust-port-plan.md docs/plans/test-coverage-70-plan.md`
   - `! rg -n \"/Users/terry\" docs/plans/api-testing-clis-rust-port-plan.md docs/plans/codex-cli-rust-port-plan.md docs/plans/fzf-cli-rust-port-plan.md docs/plans/git-lock-rust-port-plan.md docs/plans/git-scope-rust-port-plan.md docs/plans/git-summary-rust-port-plan.md docs/plans/image-processing-rust-port-plan.md docs/plans/nils-term-progress-plan.md docs/plans/plan-tooling-cli-consolidation-plan.md docs/plans/rust-cli-repo-setup-plan.md docs/plans/semantic-commit-rust-port-plan.md docs/plans/test-coverage-70-plan.md`
   - `rg -n \"github.com/graysurf/(zsh-kit|codex-kit)\" docs/plans/api-testing-clis-rust-port-plan.md docs/plans/codex-cli-rust-port-plan.md docs/plans/fzf-cli-rust-port-plan.md docs/plans/git-lock-rust-port-plan.md docs/plans/git-scope-rust-port-plan.md docs/plans/git-summary-rust-port-plan.md docs/plans/image-processing-rust-port-plan.md docs/plans/nils-term-progress-plan.md docs/plans/plan-tooling-cli-consolidation-plan.md docs/plans/rust-cli-repo-setup-plan.md docs/plans/semantic-commit-rust-port-plan.md docs/plans/test-coverage-70-plan.md`
 
@@ -454,7 +454,7 @@ paths; old docs are deleted and all validation commands still run.
   - Standard lint/tests pass.
 - **Validation**:
   - `! rg -n \"docs/(api-|git-|fzf-|codex-cli|image-processing|semantic-commit)\" . --glob '!docs/plans/docs-to-crate-readmes-migration-plan.md'`
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Testing Strategy
 - Unit: unchanged (documentation-only changes should not affect unit tests).

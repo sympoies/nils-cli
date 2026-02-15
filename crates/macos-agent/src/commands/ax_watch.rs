@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn run_start_and_stop_dry_run_support_text_and_json() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
         let runner = RealProcessRunner;
 
         run_start(
@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn run_start_and_stop_reject_tsv_in_dry_run() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
         let runner = RealProcessRunner;
 
         let start_err = run_start(
@@ -301,11 +301,11 @@ mod tests {
     #[test]
     fn run_poll_covers_event_text_and_tsv_rejection() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
-        let _backend = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_AX_BACKEND", "hammerspoon");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
+        let _backend = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_AX_BACKEND", "hammerspoon");
         let _poll_override = EnvGuard::set(
             &lock,
-            "CODEX_MACOS_AGENT_AX_WATCH_POLL_JSON",
+            "AGENTS_MACOS_AGENT_AX_WATCH_POLL_JSON",
             r#"{"watch_id":"axw-unit","events":[{"watch_id":"axw-unit","event":"AXTitleChanged","at_ms":1700000002222,"role":"AXButton","title":"Save","identifier":"save-btn","pid":2001}],"dropped":0,"running":true}"#,
         );
         let runner = RealProcessRunner;

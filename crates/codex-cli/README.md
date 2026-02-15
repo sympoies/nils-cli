@@ -87,7 +87,7 @@ Auth examples:
 - `CODEX_SECRET_DIR` controls the secret directory path. When unset, it defaults to
   `~/.config/codex_secrets`.
 - `CODEX_AUTH_FILE` controls the active auth file path. When unset, it defaults to
-  `~/.codex/auth.json`.
+  `~/.agents/auth.json`.
 - `CODEX_SECRET_CACHE_DIR` controls secret cache timestamps.
 - `CODEX_STARSHIP_ENABLED=true` enables Starship output.
 - `CODEX_STARSHIP_TTL` overrides the cache TTL.

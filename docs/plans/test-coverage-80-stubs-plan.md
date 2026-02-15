@@ -33,12 +33,12 @@ This plan raises Rust workspace **total line coverage** from **75.01%** (13886/1
 ## Acceptance criteria
 - `scripts/ci/coverage-summary.sh target/coverage/lcov.info` reports **Total line coverage >= 80.00%** on CI.
 - Required repo checks pass:
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - Tests are deterministic and do not depend on external network or non-stubbed system binaries.
 - CI coverage gate is raised to 80% (and stays green on the PR).
 
 ## Validation
-- `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info`
 - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
 
@@ -312,7 +312,7 @@ This plan raises Rust workspace **total line coverage** from **75.01%** (13886/1
 **Goal**: Enforce the new coverage baseline via CI once a fresh coverage run confirms >= 80%, and keep the developer workflow clear and reproducible.
 **Demo/Validation**:
 - Command(s):
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info`
   - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 80`
@@ -384,7 +384,7 @@ This plan raises Rust workspace **total line coverage** from **75.01%** (13886/1
   - Coverage summary reaches >= 80.00% on a fresh run.
   - Tests are hermetic (no external network; stubbed binaries only).
 - **Validation**:
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info`
   - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
 

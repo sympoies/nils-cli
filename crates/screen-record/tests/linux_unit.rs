@@ -33,8 +33,8 @@ mod linux_unit {
             r#"#!/usr/bin/env bash
 set -euo pipefail
 
-if [[ -n "${CODEX_FFMPEG_LOG:-}" ]]; then
-  printf '%s\n' "$@" > "${CODEX_FFMPEG_LOG}"
+if [[ -n "${AGENTS_FFMPEG_LOG:-}" ]]; then
+  printf '%s\n' "$@" > "${AGENTS_FFMPEG_LOG}"
 fi
 
 out="${@: -1}"
@@ -50,10 +50,10 @@ printf "stub" > "$out"
             r#"#!/usr/bin/env bash
 set -euo pipefail
 
-if [[ -n "${CODEX_FFMPEG_LOG:-}" ]]; then
-  printf 'CALL\n' >> "${CODEX_FFMPEG_LOG}"
-  printf '%s\n' "$@" >> "${CODEX_FFMPEG_LOG}"
-  printf 'END\n' >> "${CODEX_FFMPEG_LOG}"
+if [[ -n "${AGENTS_FFMPEG_LOG:-}" ]]; then
+  printf 'CALL\n' >> "${AGENTS_FFMPEG_LOG}"
+  printf '%s\n' "$@" >> "${AGENTS_FFMPEG_LOG}"
+  printf 'END\n' >> "${AGENTS_FFMPEG_LOG}"
 fi
 
 for arg in "$@"; do
@@ -79,8 +79,8 @@ printf "stub" > "$out"
             r#"#!/usr/bin/env bash
 set -euo pipefail
 
-if [[ -n "${CODEX_PACTL_LOG:-}" ]]; then
-  printf '%s\n' "$*" >> "${CODEX_PACTL_LOG}"
+if [[ -n "${AGENTS_PACTL_LOG:-}" ]]; then
+  printf '%s\n' "$*" >> "${AGENTS_PACTL_LOG}"
 fi
 
 case "$*" in
@@ -154,7 +154,7 @@ esac
         let tmp = tempfile::TempDir::new().expect("tempdir");
         let out_path = tmp.path().join("out.mp4");
         let log_path = tmp.path().join("ffmpeg-args.txt");
-        let _ffmpeg_log = EnvGuard::set(&lock, "CODEX_FFMPEG_LOG", &log_path.to_string_lossy());
+        let _ffmpeg_log = EnvGuard::set(&lock, "AGENTS_FFMPEG_LOG", &log_path.to_string_lossy());
 
         ffmpeg::record_window(
             &window(123),
@@ -195,10 +195,11 @@ esac
         let pactl_log_path = tmp.path().join("pactl-args.txt");
         let _ffmpeg_log = EnvGuard::set(
             &lock,
-            "CODEX_FFMPEG_LOG",
+            "AGENTS_FFMPEG_LOG",
             &ffmpeg_log_path.to_string_lossy(),
         );
-        let _pactl_log = EnvGuard::set(&lock, "CODEX_PACTL_LOG", &pactl_log_path.to_string_lossy());
+        let _pactl_log =
+            EnvGuard::set(&lock, "AGENTS_PACTL_LOG", &pactl_log_path.to_string_lossy());
 
         ffmpeg::record_window(
             &window(42),
@@ -241,10 +242,11 @@ esac
         let pactl_log_path = tmp.path().join("pactl-args.txt");
         let _ffmpeg_log = EnvGuard::set(
             &lock,
-            "CODEX_FFMPEG_LOG",
+            "AGENTS_FFMPEG_LOG",
             &ffmpeg_log_path.to_string_lossy(),
         );
-        let _pactl_log = EnvGuard::set(&lock, "CODEX_PACTL_LOG", &pactl_log_path.to_string_lossy());
+        let _pactl_log =
+            EnvGuard::set(&lock, "AGENTS_PACTL_LOG", &pactl_log_path.to_string_lossy());
 
         ffmpeg::record_window(
             &window(77),
@@ -282,10 +284,11 @@ esac
         let pactl_log_path = tmp.path().join("pactl-args.txt");
         let _ffmpeg_log = EnvGuard::set(
             &lock,
-            "CODEX_FFMPEG_LOG",
+            "AGENTS_FFMPEG_LOG",
             &ffmpeg_log_path.to_string_lossy(),
         );
-        let _pactl_log = EnvGuard::set(&lock, "CODEX_PACTL_LOG", &pactl_log_path.to_string_lossy());
+        let _pactl_log =
+            EnvGuard::set(&lock, "AGENTS_PACTL_LOG", &pactl_log_path.to_string_lossy());
 
         ffmpeg::record_window(
             &window(88),
@@ -325,7 +328,7 @@ esac
         let tmp = tempfile::TempDir::new().expect("tempdir");
         let out_path = tmp.path().join("out.mp4");
         let log_path = tmp.path().join("ffmpeg-args.txt");
-        let _ffmpeg_log = EnvGuard::set(&lock, "CODEX_FFMPEG_LOG", &log_path.to_string_lossy());
+        let _ffmpeg_log = EnvGuard::set(&lock, "AGENTS_FFMPEG_LOG", &log_path.to_string_lossy());
 
         ffmpeg::record_portal_node(9001, 2, &out_path, ContainerFormat::Mp4).expect("record");
 

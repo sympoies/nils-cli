@@ -313,14 +313,14 @@ pub fn app_selected(app: &str) -> bool {
 pub fn base_options(cwd: &Path) -> CmdOptions {
     CmdOptions::new()
         .with_cwd(cwd)
-        .with_env_remove("CODEX_MACOS_AGENT_TEST_MODE")
-        .with_env_remove("CODEX_MACOS_AGENT_TEST_TIMESTAMP")
-        .with_env_remove("CODEX_MACOS_AGENT_STUB_CLICLICK_MODE")
-        .with_env_remove("CODEX_MACOS_AGENT_STUB_OSASCRIPT_MODE")
+        .with_env_remove("AGENTS_MACOS_AGENT_TEST_MODE")
+        .with_env_remove("AGENTS_MACOS_AGENT_TEST_TIMESTAMP")
+        .with_env_remove("AGENTS_MACOS_AGENT_STUB_CLICLICK_MODE")
+        .with_env_remove("AGENTS_MACOS_AGENT_STUB_OSASCRIPT_MODE")
 }
 
 pub fn create_artifact_dir(prefix: &str) -> PathBuf {
-    let base = codex_out_dir().join("macos-agent-e2e");
+    let base = agents_out_dir().join("macos-agent-e2e");
     let timestamp_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -1006,14 +1006,14 @@ fn write_json_to_path(path: &Path, value: &serde_json::Value) -> Result<(), Stri
     std::fs::write(path, raw).map_err(|err| format!("write {}: {err}", path.display()))
 }
 
-fn codex_out_dir() -> PathBuf {
-    if let Ok(codex_home) = env::var("CODEX_HOME") {
-        return PathBuf::from(codex_home).join("out");
+fn agents_out_dir() -> PathBuf {
+    if let Ok(agents_home) = env::var("AGENTS_HOME") {
+        return PathBuf::from(agents_home).join("out");
     }
     if let Some(home) = env::var_os("HOME") {
-        return PathBuf::from(home).join(".codex").join("out");
+        return PathBuf::from(home).join(".agents").join("out");
     }
-    PathBuf::from(".codex").join("out")
+    PathBuf::from(".agents").join("out")
 }
 
 fn escape_applescript(raw: &str) -> String {

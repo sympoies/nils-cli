@@ -32,12 +32,12 @@ This plan raises `crates/screen-record` coverage by targeting the highest-risk u
   - screenshot/record output path + format conflict rules,
   - Linux preflight/portal/ffmpeg actionable failure paths.
 - Required repository checks pass before delivery:
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Validation
 - `cargo llvm-cov nextest --profile ci -p screen-record --lcov --output-path target/coverage/screen-record.lcov.info`
 - `scripts/ci/coverage-summary.sh target/coverage/screen-record.lcov.info`
-- `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Sprint 1: Cover highest-impact CLI orchestration gaps (`run.rs` first)
 **Goal**: Close major uncovered branches in the core CLI dispatcher and argument validation logic before secondary modules.
@@ -106,7 +106,7 @@ This plan raises `crates/screen-record` coverage by targeting the highest-risk u
 - **Complexity**: 8
 - **Acceptance criteria**:
   - Tests cover both success and error branches with stable assertions.
-  - Path generation remains deterministic in test mode (`CODEX_SCREEN_RECORD_TEST_TIMESTAMP`).
+  - Path generation remains deterministic in test mode (`AGENTS_SCREEN_RECORD_TEST_TIMESTAMP`).
   - `run.rs` uncovered helper lines are reduced in the next coverage checkpoint.
 - **Validation**:
   - `cargo test -p screen-record --test recording_test_mode`
@@ -192,7 +192,7 @@ This plan raises `crates/screen-record` coverage by targeting the highest-risk u
   - `cargo test -p screen-record`
   - `cargo llvm-cov nextest --profile ci -p screen-record --lcov --output-path target/coverage/screen-record.lcov.info`
   - `scripts/ci/coverage-summary.sh target/coverage/screen-record.lcov.info`
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - Verify:
   - Coverage targets are met.
   - No regressions in required workspace checks.
@@ -242,7 +242,7 @@ This plan raises `crates/screen-record` coverage by targeting the highest-risk u
 
 ### Task 3.3: Run required repo checks and stabilize
 - **Location**:
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - **Description**: Execute mandatory repo checks, fix test/lint regressions caused by new tests, and ensure cross-crate checks still pass.
 - **Dependencies**:
   - Task 3.2
@@ -251,7 +251,7 @@ This plan raises `crates/screen-record` coverage by targeting the highest-risk u
   - Required checks pass with no skipped failing step.
   - No newly introduced flaky tests remain unresolved in this scope.
 - **Validation**:
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 
 ## Testing Strategy
 - Unit:
@@ -276,4 +276,4 @@ This plan raises `crates/screen-record` coverage by targeting the highest-risk u
 - If new tests introduce instability:
   - Revert only the new test files/sections first (`crates/screen-record/tests/*` and `run.rs` test module additions), keeping production code unchanged.
   - Keep a minimal stable subset: mode/flag validation tests and one test per major error path.
-  - Re-run `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh` to confirm baseline stability before re-introducing tests incrementally.
+  - Re-run `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh` to confirm baseline stability before re-introducing tests incrementally.

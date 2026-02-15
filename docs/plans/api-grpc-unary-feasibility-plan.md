@@ -465,7 +465,7 @@ This plan evaluates and delivers unary gRPC testing support in a way that mirror
 **Goal**: Ensure gRPC unary support meets repository quality gates and has an operational rollback path.
 **Demo/Validation**:
 - Command(s):
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 85`
   - `bash scripts/ci/docs-placement-audit.sh --strict`
 - Verify:
@@ -486,7 +486,7 @@ This plan evaluates and delivers unary gRPC testing support in a way that mirror
   - Coverage command meets threshold.
   - Failures (if any) are triaged with remediation notes.
 - **Validation**:
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 85`
 
 ### Task 5.2: Final docs and dependency declaration audit

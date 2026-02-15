@@ -24,11 +24,11 @@ This plan increases Rust workspace **total line coverage** from **56.89%** (9188
 ## Acceptance criteria
 - `scripts/ci/coverage-summary.sh target/coverage/lcov.info` reports **Total line coverage >= 70.00%**.
 - Required repo checks pass:
-  - `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - New tests are deterministic (no dependence on external network/services, and no reliance on developer machine binaries beyond explicitly stubbed tools).
 
 ## Validation
-- `./.codex/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
 - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info`
 - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
 

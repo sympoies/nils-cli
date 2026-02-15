@@ -13,7 +13,7 @@ Source scripts (current): `https://github.com/graysurf/codex-kit/tree/main/skill
 ## Assumptions (if any)
 1. The unified CLI is implemented in Python 3 (stdlib only) to match the repo’s existing bash + embedded-python style and avoid new toolchain dependencies.
 2. Existing entrypoints remain available and behave the same (exit codes, stdout/stderr structure) by delegating to the new CLI; no deprecation warnings are emitted by default to avoid breaking current consumers and tests.
-3. `CODEX_HOME` may be unset; the CLI derives repo root from its own location when running from a checked-out repo, matching the current scripts’ behavior.
+3. `AGENTS_HOME` may be unset; the CLI derives repo root from its own location when running from a checked-out repo, matching the current scripts’ behavior.
 
 ## Compatibility contract (parity targets)
 
@@ -219,7 +219,7 @@ The unified CLI and wrapper scripts must preserve the current contracts for thes
 
 ## Risks & gotchas
 - Output drift: wrapper scripts must remain silent on success (stdout/stderr) to avoid breaking existing smoke tests and higher-level workflows.
-- Repo root discovery: `CODEX_HOME` auto-detection must match current behavior to keep repo-relative paths stable in JSON output.
+- Repo root discovery: `AGENTS_HOME` auto-detection must match current behavior to keep repo-relative paths stable in JSON output.
 - Git dependency: `validate` relies on git for tracked-file discovery; behavior should remain stable when running with explicit `--file` values.
 
 ## Rollback plan

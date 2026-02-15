@@ -477,9 +477,9 @@ const AX_TYPE_JXA_SCRIPT: &str = r#"function run(argv) {
   });
 }"#;
 
-const AX_LIST_TEST_MODE_ENV: &str = "CODEX_MACOS_AGENT_AX_LIST_JSON";
-const AX_CLICK_TEST_MODE_ENV: &str = "CODEX_MACOS_AGENT_AX_CLICK_JSON";
-const AX_TYPE_TEST_MODE_ENV: &str = "CODEX_MACOS_AGENT_AX_TYPE_JSON";
+const AX_LIST_TEST_MODE_ENV: &str = "AGENTS_MACOS_AGENT_AX_LIST_JSON";
+const AX_CLICK_TEST_MODE_ENV: &str = "AGENTS_MACOS_AGENT_AX_CLICK_JSON";
+const AX_TYPE_TEST_MODE_ENV: &str = "AGENTS_MACOS_AGENT_AX_TYPE_JSON";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActivationTarget {
@@ -1239,8 +1239,8 @@ mod tests {
     #[test]
     fn ax_list_uses_test_mode_default_when_stdout_is_empty() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
-        let _override = EnvGuard::remove(&lock, "CODEX_MACOS_AGENT_AX_LIST_JSON");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
+        let _override = EnvGuard::remove(&lock, "AGENTS_MACOS_AGENT_AX_LIST_JSON");
         let runner = FixedOutputRunner::new("");
 
         let result =
@@ -1251,8 +1251,8 @@ mod tests {
     #[test]
     fn ax_click_parse_failure_includes_operation_context() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::remove(&lock, "CODEX_MACOS_AGENT_TEST_MODE");
-        let _override = EnvGuard::remove(&lock, "CODEX_MACOS_AGENT_AX_CLICK_JSON");
+        let _mode = EnvGuard::remove(&lock, "AGENTS_MACOS_AGENT_TEST_MODE");
+        let _override = EnvGuard::remove(&lock, "AGENTS_MACOS_AGENT_AX_CLICK_JSON");
         let runner = FixedOutputRunner::new("not-json");
         let request = AxClickRequest {
             selector: AxSelector {
@@ -1295,8 +1295,8 @@ mod tests {
     #[test]
     fn ax_list_contract_failure_reports_missing_nodes_array() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::remove(&lock, "CODEX_MACOS_AGENT_TEST_MODE");
-        let _override = EnvGuard::remove(&lock, "CODEX_MACOS_AGENT_AX_LIST_JSON");
+        let _mode = EnvGuard::remove(&lock, "AGENTS_MACOS_AGENT_TEST_MODE");
+        let _override = EnvGuard::remove(&lock, "AGENTS_MACOS_AGENT_AX_LIST_JSON");
         let runner = FixedOutputRunner::new(r#"{"warnings":[]}"#);
 
         let err = ax_list(&runner, &AxListRequest::default(), 250)
@@ -1310,8 +1310,8 @@ mod tests {
     #[test]
     fn ax_click_contract_failure_requires_fallback_coordinate_pair() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::remove(&lock, "CODEX_MACOS_AGENT_TEST_MODE");
-        let _override = EnvGuard::remove(&lock, "CODEX_MACOS_AGENT_AX_CLICK_JSON");
+        let _mode = EnvGuard::remove(&lock, "AGENTS_MACOS_AGENT_TEST_MODE");
+        let _override = EnvGuard::remove(&lock, "AGENTS_MACOS_AGENT_AX_CLICK_JSON");
         let runner = FixedOutputRunner::new(
             r#"{"node_id":"1.1","matched_count":1,"action":"ax-press-fallback","used_coordinate_fallback":true,"fallback_x":42}"#,
         );
@@ -1334,8 +1334,8 @@ mod tests {
     #[test]
     fn ax_type_contract_failure_requires_text_length() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::remove(&lock, "CODEX_MACOS_AGENT_TEST_MODE");
-        let _override = EnvGuard::remove(&lock, "CODEX_MACOS_AGENT_AX_TYPE_JSON");
+        let _mode = EnvGuard::remove(&lock, "AGENTS_MACOS_AGENT_TEST_MODE");
+        let _override = EnvGuard::remove(&lock, "AGENTS_MACOS_AGENT_AX_TYPE_JSON");
         let runner = FixedOutputRunner::new(
             r#"{"node_id":"1.2","matched_count":1,"applied_via":"ax-set-value"}"#,
         );
@@ -1357,10 +1357,10 @@ mod tests {
     #[test]
     fn ax_type_uses_test_mode_override_without_invoking_runner() {
         let lock = GlobalStateLock::new();
-        let _mode = EnvGuard::set(&lock, "CODEX_MACOS_AGENT_TEST_MODE", "1");
+        let _mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
         let _override = EnvGuard::set(
             &lock,
-            "CODEX_MACOS_AGENT_AX_TYPE_JSON",
+            "AGENTS_MACOS_AGENT_AX_TYPE_JSON",
             r#"{"node_id":"node-9","matched_count":1,"applied_via":"ax-set-value","text_length":5,"submitted":true,"used_keyboard_fallback":false}"#,
         );
         let request = AxTypeRequest {
