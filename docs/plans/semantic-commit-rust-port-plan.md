@@ -2,8 +2,8 @@
 
 ## Overview
 This plan ports the existing Codex Zsh entrypoints under:
-- `https://github.com/graysurf/codex-kit/blob/main/skills/tools/devex/semantic-commit/scripts/staged_context.sh`
-- `https://github.com/graysurf/codex-kit/blob/main/skills/tools/devex/semantic-commit/scripts/commit_with_message.sh`
+- `https://github.com/graysurf/agent-kit/blob/main/skills/tools/devex/semantic-commit/scripts/staged_context.sh`
+- `https://github.com/graysurf/agent-kit/blob/main/skills/tools/devex/semantic-commit/scripts/commit_with_message.sh`
 
 into a single Rust binary crate inside this workspace, named `semantic-commit`.
 Behavioral parity (errors, warnings, exit codes, and validation rules) is the top priority.
@@ -35,8 +35,8 @@ Behavioral parity (errors, warnings, exit codes, and validation rules) is the to
 ### Task 1.1: Document current behavior and output contract
 - **Location**:
   - `crates/semantic-commit/README.md`
-  - `https://github.com/graysurf/codex-kit/blob/main/skills/tools/devex/semantic-commit/scripts/staged_context.sh`
-  - `https://github.com/graysurf/codex-kit/blob/main/skills/tools/devex/semantic-commit/scripts/commit_with_message.sh`
+  - `https://github.com/graysurf/agent-kit/blob/main/skills/tools/devex/semantic-commit/scripts/staged_context.sh`
+  - `https://github.com/graysurf/agent-kit/blob/main/skills/tools/devex/semantic-commit/scripts/commit_with_message.sh`
 - **Description**: Capture CLI surface, preconditions, validation rules, error/warn text, and exit
   codes for both entrypoints.
 - **Dependencies**: none

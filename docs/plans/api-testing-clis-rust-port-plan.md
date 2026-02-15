@@ -26,7 +26,7 @@ The outcome is a cohesive set of CLIs with shared core libraries, comprehensive 
 ## Sprint 1: Parity specs, fixtures, and dependency decisions
 **Goal**: Make current behavior explicit and lock down a parity contract for each CLI (plus shared conventions).
 **Demo/Validation**:
-- Command(s): See https://github.com/graysurf/codex-kit/tree/main/skills/tools/testing
+- Command(s): See https://github.com/graysurf/agent-kit/tree/main/skills/tools/testing
 - Verify: Specs capture flags, env vars, exit codes, history/report semantics, and degradation paths.
 
 ### Task 1.1: Write shared overview and CLI mapping

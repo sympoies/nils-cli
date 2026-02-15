@@ -12,8 +12,8 @@ The Rust `image-processing` binary must be able to fully replace the current
 - external tool invocation and fallback behavior
 
 Source of truth (current behavior):
-- `https://github.com/graysurf/codex-kit/blob/main/skills/tools/media/image-processing/scripts/image_processing.py`
-- `https://github.com/graysurf/codex-kit/blob/main/skills/tools/media/image-processing/references/IMAGE_PROCESSING_GUIDE.md`
+- `https://github.com/graysurf/agent-kit/blob/main/skills/tools/media/image-processing/scripts/image_processing.py`
+- `https://github.com/graysurf/agent-kit/blob/main/skills/tools/media/image-processing/references/IMAGE_PROCESSING_GUIDE.md`
 
 ## Scope
 - In scope:
