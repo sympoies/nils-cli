@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "name": "grpc-smoke",
+  "defaults": {
+    "env": "local",
+    "grpc": {
+      "url": "127.0.0.1:50051"
+    }
+  },
+  "cases": [
+    {
+      "id": "grpc.health",
+      "type": "grpc",
+      "request": "setup/grpc/requests/health.grpc.json"
+    }
+  ]
+}

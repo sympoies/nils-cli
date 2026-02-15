@@ -26,6 +26,10 @@ fn default_graphql_config_dir() -> String {
     "setup/graphql".to_string()
 }
 
+fn default_grpc_config_dir() -> String {
+    "setup/grpc".to_string()
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SuiteManifest {
@@ -50,6 +54,8 @@ pub struct SuiteDefaults {
     pub rest: SuiteDefaultsRest,
     #[serde(default)]
     pub graphql: SuiteDefaultsGraphql,
+    #[serde(default)]
+    pub grpc: SuiteDefaultsGrpc,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -90,6 +96,27 @@ impl Default for SuiteDefaultsGraphql {
             config_dir: default_graphql_config_dir(),
             url: String::new(),
             jwt: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuiteDefaultsGrpc {
+    #[serde(default = "default_grpc_config_dir")]
+    pub config_dir: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub token: String,
+}
+
+impl Default for SuiteDefaultsGrpc {
+    fn default() -> Self {
+        Self {
+            config_dir: default_grpc_config_dir(),
+            url: String::new(),
+            token: String::new(),
         }
     }
 }
@@ -170,6 +197,14 @@ pub struct SuiteCase {
     pub token: String,
     #[serde(default)]
     pub request: String,
+
+    // gRPC case fields
+    #[serde(default)]
+    pub grpc_proto: Option<String>,
+    #[serde(default)]
+    pub grpc_import_paths: Option<Vec<String>>,
+    #[serde(default)]
+    pub grpc_plaintext: Option<bool>,
 
     // REST-flow case fields
     #[serde(default)]
@@ -480,6 +515,15 @@ pub fn validate_suite_manifest(manifest: &SuiteManifest, suite_path: &Path) -> R
                     }
                 }
             }
+            "grpc" => {
+                if c.request.trim().is_empty() {
+                    return Err(schema_error(
+                        &format!("cases[{i}].request"),
+                        Some(id),
+                        "is required for type=grpc",
+                    ));
+                }
+            }
             other => {
                 return Err(schema_error(
                     &format!("cases[{i}].type"),
@@ -766,6 +810,18 @@ mod tests {
         }));
         assert!(err.contains("cases[0].op"));
         assert!(err.contains("type=graphql"));
+    }
+
+    #[test]
+    fn suite_schema_rejects_grpc_case_missing_request() {
+        let err = validate_err(serde_json::json!({
+          "version": 1,
+          "cases": [
+            { "id": "grpc.missing", "type": "grpc" }
+          ]
+        }));
+        assert!(err.contains("cases[0].request"));
+        assert!(err.contains("type=grpc"));
     }
 
     #[test]

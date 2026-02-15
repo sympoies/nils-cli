@@ -91,6 +91,7 @@ fn suite_runner_loopback_runs_and_cleans_up() {
         output_dir_base: root.join("out-disabled"),
         env_rest_url: server.url(),
         env_gql_url: gql_url.clone(),
+        env_grpc_url: String::new(),
         progress: None,
     };
 
@@ -175,6 +176,7 @@ fn suite_runner_loopback_runs_and_cleans_up() {
         output_dir_base: root.join("out-enabled"),
         env_rest_url: server.url(),
         env_gql_url: gql_url,
+        env_grpc_url: String::new(),
         progress: None,
     };
 

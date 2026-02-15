@@ -14,6 +14,7 @@ members = [
   "crates/api-testing-core",
   "crates/api-rest",
   "crates/api-gql",
+  "crates/api-grpc",
   "crates/api-test",
   "crates/semantic-commit",
   "crates/plan-tooling",

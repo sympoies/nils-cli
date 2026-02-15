@@ -1,0 +1,23 @@
+[package]
+name = "nils-api-grpc"
+version = "0.3.9"
+edition.workspace = true
+license.workspace = true
+
+description = "CLI crate for nils-api-grpc in the nils-cli workspace."
+repository = "https://github.com/graysurf/nils-cli"
+
+[[bin]]
+name = "api-grpc"
+path = "src/main.rs"
+[dependencies]
+anyhow = { workspace = true }
+api-testing-core = { version = "0.3.0", path = "../api-testing-core", package = "nils-api-testing-core" }
+clap = { workspace = true }
+nils-term = { version = "0.3.0", path = "../nils-term", package = "nils-term" }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+nils-test-support = { path = "../nils-test-support" }
+pretty_assertions = { workspace = true }
+tempfile = "3"

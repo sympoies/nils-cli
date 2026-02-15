@@ -6,12 +6,14 @@ use thiserror::Error;
 pub enum CmdSnippetKind {
     Graphql,
     Rest,
+    Grpc,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CmdSnippet {
     Graphql(GraphqlCallSnippet),
     Rest(RestCallSnippet),
+    Grpc(GrpcCallSnippet),
 }
 
 impl CmdSnippet {
@@ -19,6 +21,7 @@ impl CmdSnippet {
         match self {
             CmdSnippet::Graphql(_) => CmdSnippetKind::Graphql,
             CmdSnippet::Rest(_) => CmdSnippetKind::Rest,
+            CmdSnippet::Grpc(_) => CmdSnippetKind::Grpc,
         }
     }
 
@@ -26,6 +29,7 @@ impl CmdSnippet {
         match self {
             CmdSnippet::Graphql(s) => &s.command_basename,
             CmdSnippet::Rest(s) => &s.command_basename,
+            CmdSnippet::Grpc(s) => &s.command_basename,
         }
     }
 }
@@ -52,9 +56,20 @@ pub struct RestCallSnippet {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrpcCallSnippet {
+    pub command_basename: String,
+    pub config_dir: Option<String>,
+    pub env: Option<String>,
+    pub url: Option<String>,
+    pub token: Option<String>,
+    pub request: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReportFromCmd {
     Graphql(GraphqlReportFromCmd),
     Rest(RestReportFromCmd),
+    Grpc(GrpcReportFromCmd),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +85,16 @@ pub struct GraphqlReportFromCmd {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RestReportFromCmd {
+    pub case: String,
+    pub config_dir: Option<String>,
+    pub env: Option<String>,
+    pub url: Option<String>,
+    pub token: Option<String>,
+    pub request: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrpcReportFromCmd {
     pub case: String,
     pub config_dir: Option<String>,
     pub env: Option<String>,
@@ -104,6 +129,9 @@ pub enum CmdSnippetError {
     #[error("missing REST request file path (*.request.json)")]
     MissingRestRequest,
 
+    #[error("missing gRPC request file path (*.grpc.json)")]
+    MissingGrpcRequest,
+
     #[error("unexpected extra argument: {arg}")]
     UnexpectedArg { arg: String },
 }
@@ -121,6 +149,7 @@ pub fn parse_call_snippet(snippet: &str) -> Result<CmdSnippet, CmdSnippetError> 
             cmd_base, rest,
         )?)),
         "api-rest" | "rest.sh" => Ok(CmdSnippet::Rest(parse_rest_call_args(cmd_base, rest)?)),
+        "api-grpc" | "grpc.sh" => Ok(CmdSnippet::Grpc(parse_grpc_call_args(cmd_base, rest)?)),
         _ => Err(CmdSnippetError::UnsupportedCommand { command: cmd_base }),
     }
 }
@@ -130,6 +159,7 @@ pub fn parse_report_from_cmd_snippet(snippet: &str) -> Result<ReportFromCmd, Cmd
     Ok(match parsed {
         CmdSnippet::Graphql(s) => ReportFromCmd::Graphql(graphql_to_report_from_cmd(&s)),
         CmdSnippet::Rest(s) => ReportFromCmd::Rest(rest_to_report_from_cmd(&s)),
+        CmdSnippet::Grpc(s) => ReportFromCmd::Grpc(grpc_to_report_from_cmd(&s)),
     })
 }
 
@@ -148,6 +178,17 @@ fn graphql_to_report_from_cmd(s: &GraphqlCallSnippet) -> GraphqlReportFromCmd {
 fn rest_to_report_from_cmd(s: &RestCallSnippet) -> RestReportFromCmd {
     RestReportFromCmd {
         case: derive_rest_case_name(s),
+        config_dir: s.config_dir.clone(),
+        env: s.env.clone(),
+        url: s.url.clone(),
+        token: s.token.clone(),
+        request: s.request.clone(),
+    }
+}
+
+fn grpc_to_report_from_cmd(s: &GrpcCallSnippet) -> GrpcReportFromCmd {
+    GrpcReportFromCmd {
+        case: derive_grpc_case_name(s),
         config_dir: s.config_dir.clone(),
         env: s.env.clone(),
         url: s.url.clone(),
@@ -372,6 +413,113 @@ fn parse_rest_call_args(
     })
 }
 
+fn parse_grpc_call_args(
+    command_basename: String,
+    raw_args: &[String],
+) -> Result<GrpcCallSnippet, CmdSnippetError> {
+    let mut config_dir: Option<String> = None;
+    let mut env: Option<String> = None;
+    let mut url: Option<String> = None;
+    let mut token: Option<String> = None;
+
+    let mut args: Vec<String> = raw_args.to_vec();
+    if let Some(first) = args.first().cloned()
+        && !first.starts_with('-')
+        && first != "--"
+    {
+        if first == "call" {
+            args.remove(0);
+        } else if matches!(first.as_str(), "history" | "report") {
+            return Err(CmdSnippetError::UnsupportedSubcommand { subcommand: first });
+        }
+    }
+
+    let mut positional: Vec<String> = Vec::new();
+    let mut i: usize = 0;
+    while i < args.len() {
+        let arg = args[i].as_str();
+        if arg == "--" {
+            positional.extend(args[i + 1..].iter().cloned());
+            break;
+        }
+
+        if arg == "--no-history" {
+            i += 1;
+            continue;
+        }
+
+        if let Some(v) = flag_value_eq(arg, "--config-dir") {
+            config_dir = Some(v?);
+            i += 1;
+            continue;
+        }
+        if arg == "--config-dir" {
+            config_dir = Some(take_value(&args, i, "--config-dir")?);
+            i += 2;
+            continue;
+        }
+
+        if let Some(v) = flag_value_eq(arg, "--env") {
+            env = Some(v?);
+            i += 1;
+            continue;
+        }
+        if arg == "--env" || arg == "-e" {
+            env = Some(take_value(&args, i, arg)?);
+            i += 2;
+            continue;
+        }
+
+        if let Some(v) = flag_value_eq(arg, "--url") {
+            url = Some(v?);
+            i += 1;
+            continue;
+        }
+        if arg == "--url" || arg == "-u" {
+            url = Some(take_value(&args, i, arg)?);
+            i += 2;
+            continue;
+        }
+
+        if let Some(v) = flag_value_eq(arg, "--token") {
+            token = Some(v?);
+            i += 1;
+            continue;
+        }
+        if arg == "--token" {
+            token = Some(take_value(&args, i, "--token")?);
+            i += 2;
+            continue;
+        }
+
+        if arg.starts_with('-') {
+            return Err(CmdSnippetError::UnknownFlag {
+                flag: arg.to_string(),
+            });
+        }
+
+        positional.push(arg.to_string());
+        i += 1;
+    }
+
+    let request = positional
+        .first()
+        .cloned()
+        .ok_or(CmdSnippetError::MissingGrpcRequest)?;
+    if let Some(extra) = positional.get(1) {
+        return Err(CmdSnippetError::UnexpectedArg { arg: extra.clone() });
+    }
+
+    Ok(GrpcCallSnippet {
+        command_basename,
+        config_dir,
+        env,
+        url,
+        token,
+        request,
+    })
+}
+
 fn tokenize_call_snippet(snippet: &str) -> Result<Vec<String>, CmdSnippetError> {
     let raw = snippet.trim();
     if raw.is_empty() {
@@ -540,6 +688,9 @@ fn stem_for_request(path: &str) -> String {
     if let Some(stem) = name.strip_suffix(".request.json") {
         return stem.to_string();
     }
+    if let Some(stem) = name.strip_suffix(".grpc.json") {
+        return stem.to_string();
+    }
     Path::new(&name)
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
@@ -564,6 +715,23 @@ fn derive_graphql_case_name(s: &GraphqlCallSnippet) -> String {
 }
 
 fn derive_rest_case_name(s: &RestCallSnippet) -> String {
+    let stem = stem_for_request(&s.request);
+    let stem = if stem.trim().is_empty() {
+        "case".to_string()
+    } else {
+        stem
+    };
+
+    let env_or_url = s.url.as_deref().or(s.env.as_deref()).unwrap_or("implicit");
+    let mut meta: Vec<String> = vec![env_or_url.to_string()];
+    if let Some(token) = s.token.as_deref() {
+        meta.push(format!("token:{token}"));
+    }
+
+    format!("{stem} ({})", meta.join(", "))
+}
+
+fn derive_grpc_case_name(s: &GrpcCallSnippet) -> String {
     let stem = stem_for_request(&s.request);
     let stem = if stem.trim().is_empty() {
         "case".to_string()
@@ -722,5 +890,21 @@ mod tests {
             let s = format!("api-rest call {flag} setup/rest/requests/health.request.json");
             assert_missing_flag_value(&s, expected);
         }
+    }
+
+    #[test]
+    fn grpc_missing_request_is_error() {
+        let s = "api-grpc call --env staging";
+        let err = parse_call_snippet(s).expect_err("expected err");
+        assert!(matches!(err, CmdSnippetError::MissingGrpcRequest));
+    }
+
+    #[test]
+    fn grpc_case_is_derived_from_request_and_meta() {
+        let s = "api-grpc call --env staging --token service setup/grpc/requests/health.grpc.json";
+        let ReportFromCmd::Grpc(report) = parse_report_from_cmd_snippet(s).expect("parse") else {
+            panic!("expected grpc");
+        };
+        assert_eq!(report.case, "health (staging, token:service)");
     }
 }
