@@ -1,5 +1,6 @@
 nils-agent-docs
 nils-agent-runtime-core
+nils-test-support
 nils-common
 nils-term
 nils-agent-provider-claude

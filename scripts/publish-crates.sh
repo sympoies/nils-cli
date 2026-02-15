@@ -219,6 +219,11 @@ for name in selected:
         continue
     for dep in pkg.get("dependencies", []):
         dep_name = dep.get("name")
+        if dep.get("path") and packages.get(dep_name, {}).get("publish") == []:
+            errors.append(
+                f"selected crate '{name}' depends on workspace crate '{dep_name}' "
+                "which has publish=false"
+            )
         if dep.get("path") and dep_name in order and order[dep_name] > order[name]:
             errors.append(
                 f"publish order invalid: '{name}' depends on '{dep_name}', "

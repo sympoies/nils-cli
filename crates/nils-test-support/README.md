@@ -1,7 +1,7 @@
 # nils-test-support
 
 ## Overview
-`nils-test-support` is a test-only helper crate for this workspace (it is `publish = false`).
+`nils-test-support` is a test-only helper crate shared across this workspace.
 
 It provides small utilities to keep tests deterministic when they need to manipulate global state
 or stub external commands.
