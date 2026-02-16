@@ -1,5 +1,5 @@
 ---
-name: create-cli-crate
+name: nils-cli-create-cli-crate
 description: Plan and implement new CLI crates by following repository standards for parity, JSON contracts, and publish readiness.
 ---
 
@@ -47,7 +47,7 @@ Failure modes:
 
 ## Scripts (only entrypoints)
 
-- `<PROJECT_ROOT>/.agents/skills/create-cli-crate/scripts/create-cli-crate.sh`
+- `<PROJECT_ROOT>/.agents/skills/nils-cli-create-cli-crate/scripts/create-cli-crate.sh`
 
 ## Workflow
 

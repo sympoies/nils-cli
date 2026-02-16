@@ -33,7 +33,7 @@ contract-tested CLI output.
    keys and structured errors.
 4. Required checks in `DEVELOPMENT.md` pass, and publishability policy is explicitly documented.
 
-## Standards alignment (create-cli-crate)
+## Standards alignment (nils-cli-create-cli-crate)
 - Follow `docs/runbooks/new-cli-crate-development-standard.md` for crate scaffold workflow, human
   output rules, JSON mode requirements, and publish-readiness decisions.
 - Follow `docs/specs/cli-service-json-contract-guideline-v1.md` for envelope fields
