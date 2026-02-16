@@ -313,3 +313,318 @@ fn report_from_cmd_with_response_file_generates_report() {
     assert!(markdown.contains("Result: (response provided; request not executed)"));
     assert!(markdown.contains("### WebSocket Request"));
 }
+
+#[test]
+fn call_accepts_literal_ws_url_via_env_passthrough() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("setup/websocket")).expect("mkdir setup");
+    std::fs::create_dir_all(root.join("requests")).expect("mkdir requests");
+
+    let (url, handle) = spawn_echo_server();
+    write_request(
+        &root.join("requests/passthrough.ws.json"),
+        "ping",
+        serde_json::json!({"jq": ".ok == true"}),
+    );
+
+    let out = run_api_websocket(
+        root,
+        &[
+            "call",
+            "--config-dir",
+            "setup/websocket",
+            "--env",
+            &url,
+            "requests/passthrough.ws.json",
+        ],
+        &[],
+    );
+
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+    assert_eq!(out.stdout_text(), "{\"ok\":true}");
+    handle.join().expect("join websocket server");
+}
+
+#[test]
+fn call_json_expectation_failure_returns_stable_error_code() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("setup/websocket")).expect("mkdir setup");
+    std::fs::create_dir_all(root.join("requests")).expect("mkdir requests");
+
+    let (url, handle) = spawn_echo_server();
+    write_json(
+        &root.join("requests/fail-json.ws.json"),
+        &serde_json::json!({
+            "steps": [
+                {"type": "send", "text": "ping"},
+                {"type": "receive"},
+                {"type": "close"}
+            ],
+            "expect": {"jq": ".ok == false"}
+        }),
+    );
+
+    let out = run_api_websocket(
+        root,
+        &[
+            "call",
+            "--format",
+            "json",
+            "--config-dir",
+            "setup/websocket",
+            "--url",
+            &url,
+            "requests/fail-json.ws.json",
+        ],
+        &[],
+    );
+
+    assert_eq!(out.code, 1, "stderr={}", out.stderr_text());
+    let value: serde_json::Value =
+        serde_json::from_str(&out.stdout_text()).expect("json failure envelope");
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["error"]["code"], "expectation_failed");
+    assert_eq!(value["command"], "api-websocket call");
+
+    handle.join().expect("join websocket server");
+}
+
+#[test]
+fn history_json_missing_file_returns_not_found_envelope() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    let setup = root.join("setup/websocket");
+    std::fs::create_dir_all(&setup).expect("mkdir setup");
+    std::fs::write(setup.join("endpoints.env"), "").expect("write endpoints");
+
+    let out = run_api_websocket(
+        root,
+        &["history", "--format", "json", "--config-dir", "setup/websocket"],
+        &[],
+    );
+
+    assert_eq!(out.code, 1, "stderr={}", out.stderr_text());
+    let value: serde_json::Value =
+        serde_json::from_str(&out.stdout_text()).expect("json history envelope");
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["error"]["code"], "history_not_found");
+}
+
+#[test]
+fn history_json_empty_file_returns_exit_three_and_error_envelope() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    let setup = root.join("setup/websocket");
+    std::fs::create_dir_all(&setup).expect("mkdir setup");
+    std::fs::write(setup.join(".ws_history"), "").expect("write empty history");
+
+    let out = run_api_websocket(
+        root,
+        &["history", "--format", "json", "--config-dir", "setup/websocket"],
+        &[],
+    );
+
+    assert_eq!(out.code, 3, "stderr={}", out.stderr_text());
+    let value: serde_json::Value =
+        serde_json::from_str(&out.stdout_text()).expect("json history envelope");
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["error"]["code"], "history_empty");
+}
+
+#[test]
+fn report_from_cmd_dry_run_prints_equivalent_report_command() {
+    let tmp = TempDir::new().expect("tmp");
+    let snippet =
+        "api-websocket call --config-dir setup/websocket --env local requests/health.ws.json";
+    let out = run_api_websocket(tmp.path(), &["report-from-cmd", "--dry-run", snippet], &[]);
+
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+    let stdout = out.stdout_text();
+    assert!(stdout.contains("api-websocket report"));
+    assert!(stdout.contains("--case"));
+    assert!(stdout.contains("health"));
+    assert!(stdout.contains("--request"));
+    assert!(stdout.contains("requests/health.ws.json"));
+    assert!(stdout.contains("--run"));
+}
+
+#[test]
+fn report_from_cmd_rejects_stdin_when_response_uses_dash() {
+    let tmp = TempDir::new().expect("tmp");
+    let out = run_api_websocket(
+        tmp.path(),
+        &["report-from-cmd", "--response", "-", "--stdin"],
+        &[],
+    );
+    assert_eq!(out.code, 1);
+    assert!(
+        out.stderr_text()
+            .contains("stdin is reserved for the response body")
+    );
+}
+
+#[test]
+fn report_from_cmd_rejects_non_websocket_snippet() {
+    let tmp = TempDir::new().expect("tmp");
+    let out = run_api_websocket(
+        tmp.path(),
+        &["report-from-cmd", "api-rest call requests/health.request.json"],
+        &[],
+    );
+    assert_eq!(out.code, 1);
+    assert!(
+        out.stderr_text()
+            .contains("expected a WebSocket call snippet")
+    );
+}
+
+#[test]
+fn report_response_plain_text_builds_transcript_and_marks_failed_assertion() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("setup/websocket")).expect("mkdir setup");
+    std::fs::create_dir_all(root.join("requests")).expect("mkdir requests");
+    std::fs::create_dir_all(root.join("responses")).expect("mkdir responses");
+    std::fs::create_dir_all(root.join("out")).expect("mkdir out");
+
+    write_json(
+        &root.join("requests/plain.ws.json"),
+        &serde_json::json!({
+            "steps": [
+                {"type": "send", "text": "ping"},
+                {"type": "receive"},
+                {"type": "close"}
+            ],
+            "expect": {"textContains": "ok"}
+        }),
+    );
+    std::fs::write(root.join("responses/plain.txt"), "not-json-body").expect("write response");
+
+    let out = run_api_websocket(
+        root,
+        &[
+            "report",
+            "--case",
+            "ws-plain",
+            "--request",
+            "requests/plain.ws.json",
+            "--response",
+            "responses/plain.txt",
+            "--config-dir",
+            "setup/websocket",
+            "--env",
+            "local",
+            "--out",
+            "out/ws-plain.md",
+        ],
+        &[],
+    );
+
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+    let markdown = std::fs::read_to_string(root.join("out/ws-plain.md")).expect("report file");
+    assert!(markdown.contains("Test Case: ws-plain"));
+    assert!(markdown.contains("Result: (response provided; request not executed)"));
+    assert!(markdown.contains("expect.textContains: ok"));
+    assert!(markdown.contains("(FAIL)"));
+    assert!(markdown.contains("### Transcript"));
+}
+
+#[test]
+fn report_no_command_url_hides_url_in_command_snippet() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("requests")).expect("mkdir requests");
+    std::fs::create_dir_all(root.join("responses")).expect("mkdir responses");
+    std::fs::create_dir_all(root.join("out")).expect("mkdir out");
+
+    write_json(
+        &root.join("requests/hide-url.ws.json"),
+        &serde_json::json!({
+            "steps": [{"type": "receive"}]
+        }),
+    );
+    std::fs::write(
+        root.join("responses/transcript.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "target": "ws://example/ws",
+            "transcript": [{"direction": "receive", "payload": "{\"ok\":true}"}],
+            "lastReceived": "{\"ok\":true}"
+        }))
+        .expect("serialize transcript"),
+    )
+    .expect("write response");
+
+    let out = run_api_websocket(
+        root,
+        &[
+            "report",
+            "--case",
+            "hide-url",
+            "--request",
+            "requests/hide-url.ws.json",
+            "--response",
+            "responses/transcript.json",
+            "--url",
+            "ws://secret/ws",
+            "--no-command-url",
+            "--out",
+            "out/hide-url.md",
+        ],
+        &[],
+    );
+
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+    let markdown = std::fs::read_to_string(root.join("out/hide-url.md")).expect("report file");
+    assert!(markdown.contains("## Command"));
+    assert!(!markdown.contains("--url 'ws://secret/ws'"));
+    assert!(markdown.contains("api-websocket call"));
+}
+
+#[test]
+fn report_no_command_omits_command_section() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("requests")).expect("mkdir requests");
+    std::fs::create_dir_all(root.join("responses")).expect("mkdir responses");
+    std::fs::create_dir_all(root.join("out")).expect("mkdir out");
+
+    write_json(
+        &root.join("requests/no-command.ws.json"),
+        &serde_json::json!({
+            "steps": [{"type": "receive"}]
+        }),
+    );
+    std::fs::write(
+        root.join("responses/transcript.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "target": "ws://example/ws",
+            "transcript": [{"direction": "receive", "payload": "{\"ok\":true}"}],
+            "lastReceived": "{\"ok\":true}"
+        }))
+        .expect("serialize transcript"),
+    )
+    .expect("write response");
+
+    let out = run_api_websocket(
+        root,
+        &[
+            "report",
+            "--case",
+            "no-command",
+            "--request",
+            "requests/no-command.ws.json",
+            "--response",
+            "responses/transcript.json",
+            "--no-command",
+            "--out",
+            "out/no-command.md",
+        ],
+        &[],
+    );
+
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+    let markdown = std::fs::read_to_string(root.join("out/no-command.md")).expect("report file");
+    assert!(!markdown.contains("## Command"));
+}
