@@ -22,6 +22,7 @@ nils-macos-agent
 nils-api-gql
 nils-api-rest
 nils-api-grpc
+nils-api-websocket
 nils-api-test
 nils-agent-provider-codex
 nils-agentctl

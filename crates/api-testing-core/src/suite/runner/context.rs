@@ -17,6 +17,7 @@ pub struct SuiteRunOptions {
     pub env_rest_url: String,
     pub env_gql_url: String,
     pub env_grpc_url: String,
+    pub env_ws_url: String,
     pub progress: Option<Progress>,
 }
 
@@ -40,7 +41,12 @@ pub(super) fn suite_display_name(loaded: &LoadedSuite) -> String {
 }
 
 pub(super) fn case_type_normalized(case_type_raw: &str) -> String {
-    case_type_raw.trim().to_ascii_lowercase()
+    let normalized = case_type_raw.trim().to_ascii_lowercase();
+    if normalized == "ws" {
+        "websocket".to_string()
+    } else {
+        normalized
+    }
 }
 
 pub(super) fn default_rest_flow_token_jq() -> String {

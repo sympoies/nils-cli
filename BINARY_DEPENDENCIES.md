@@ -22,6 +22,11 @@ These tools are required for common command paths.
 | `ffmpeg` | `screen-record` on Linux | Required on Linux | `brew install ffmpeg` |
 | `codex` | `codex-cli agent *` flows | Required for agent commands | Install from official Codex distribution |
 
+### 1.2 `api-websocket` transport runtime dependency policy
+
+- `api-websocket` uses an in-process Rust transport (`tungstenite`) via `api-testing-core`.
+- No external adapter binary (for example `websocat`) is required for `api-websocket call` or suite websocket cases.
+
 ### 1.1 `image-processing` backend split
 
 - `convert --from-svg` and `svg-validate`:

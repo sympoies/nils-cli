@@ -1,11 +1,14 @@
 use std::collections::HashSet;
+use std::net::TcpListener;
 use std::path::PathBuf;
+use std::thread;
 
 use api_testing_core::suite::runner::{SuiteRunOptions, run_suite};
 use api_testing_core::suite::schema::load_and_validate_suite;
 use nils_test_support::fixtures::write_text;
 use nils_test_support::http::{HttpResponse, LoopbackServer};
 use tempfile::TempDir;
+use tungstenite::Message;
 
 fn resolve_output_path(root: &std::path::Path, rel: &str) -> PathBuf {
     let path = PathBuf::from(rel);
@@ -38,8 +41,39 @@ fn base_options(root: &std::path::Path, server: &LoopbackServer) -> SuiteRunOpti
         env_rest_url: server.url(),
         env_gql_url: format!("{}/graphql", server.url()),
         env_grpc_url: String::new(),
+        env_ws_url: String::new(),
         progress: None,
     }
+}
+
+fn spawn_echo_server() -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind websocket listener");
+    let addr = listener.local_addr().expect("listener addr");
+
+    let handle = thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("accept websocket stream");
+        let mut ws = tungstenite::accept(stream).expect("accept websocket handshake");
+        loop {
+            match ws.read() {
+                Ok(Message::Text(text)) => {
+                    let response = if text.trim() == "ping" {
+                        "{\"ok\":true}".to_string()
+                    } else {
+                        text.to_string()
+                    };
+                    ws.send(Message::Text(response)).expect("send response");
+                }
+                Ok(Message::Close(_)) => {
+                    let _ = ws.close(None);
+                    break;
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+    });
+
+    (format!("ws://{addr}/ws"), handle)
 }
 
 fn assert_outputs(
@@ -71,6 +105,16 @@ fn suite_runner_handles_rest_graphql_matrix() {
         &root.join("requests/ping.request.json"),
         r#"{"method":"GET","path":"/ping","expect":{"status":200}}"#,
     );
+    write_text(
+        &root.join("requests/ws-health.ws.json"),
+        r#"{
+  "steps": [
+    {"type":"send","text":"ping"},
+    {"type":"receive","expect":{"jq":".ok == true"}},
+    {"type":"close"}
+  ]
+}"#,
+    );
     write_text(&root.join("ops/health.graphql"), "query Health { ok }\n");
 
     let server = LoopbackServer::new().expect("server");
@@ -81,6 +125,7 @@ fn suite_runner_handles_rest_graphql_matrix() {
         "/graphql",
         HttpResponse::new(200, r#"{"data":{"ok":true}}"#),
     );
+    let (ws_url, ws_handle) = spawn_echo_server();
 
     let rest_suite = write_suite(
         root,
@@ -102,7 +147,8 @@ fn suite_runner_handles_rest_graphql_matrix() {
         serde_json::json!([
             { "id": "rest.health", "type": "rest", "request": "requests/health.request.json" },
             { "id": "rest.ping", "type": "rest", "request": "requests/ping.request.json" },
-            { "id": "graphql.health", "type": "graphql", "op": "ops/health.graphql" }
+            { "id": "graphql.health", "type": "graphql", "op": "ops/health.graphql" },
+            { "id": "ws.health", "type": "websocket", "request": "requests/ws-health.ws.json", "url": ws_url }
         ]),
     );
 
@@ -144,9 +190,11 @@ fn suite_runner_handles_rest_graphql_matrix() {
         mixed_options,
     )
     .expect("run mixed suite");
-    assert_eq!(mixed_out.results.summary.total, 3);
-    assert_eq!(mixed_out.results.summary.passed, 3);
+    assert_eq!(mixed_out.results.summary.total, 4);
+    assert_eq!(mixed_out.results.summary.passed, 4);
     assert_eq!(mixed_out.results.summary.failed, 0);
     assert_eq!(mixed_out.results.summary.skipped, 0);
     assert_outputs(root, &mixed_out);
+
+    ws_handle.join().expect("join websocket server");
 }

@@ -1,0 +1,110 @@
+# nils-cli bash completion: api-websocket
+
+if [[ -z ${BASH_VERSION-} ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+shopt -s progcomp 2>/dev/null || true
+
+_nils_cli_api_websocket_complete() {
+  local -a words=("${COMP_WORDS[@]}")
+  local cword="$COMP_CWORD"
+  local cur="${COMP_WORDS[COMP_CWORD]}"
+  local prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+  local -a subcmds=(call history report report-from-cmd)
+  local -a root_opts=(-h --help -V --version)
+
+  if (( cword == 1 )); then
+    if [[ "$cur" == -* ]]; then
+      COMPREPLY=( $(compgen -W "${root_opts[*]}" -- "$cur") )
+      return 0
+    fi
+    local -a replies=()
+    replies+=( $(compgen -W "${subcmds[*]}" -- "$cur") )
+    replies+=( $(compgen -f -- "$cur") )
+    COMPREPLY=( "${replies[@]}" )
+    return 0
+  fi
+
+  local subcmd="${words[1]-}"
+  case "$subcmd" in
+    call|history|report|report-from-cmd) ;;
+    *) subcmd="call" ;;
+  esac
+
+  case "$subcmd" in
+    call)
+      if [[ "$prev" == "--config-dir" ]]; then
+        COMPREPLY=( $(compgen -d -- "$cur") )
+        return 0
+      fi
+      if [[ "$prev" == "--format" ]]; then
+        COMPREPLY=( $(compgen -W "text json" -- "$cur") )
+        return 0
+      fi
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help -e --env -u --url --token --config-dir --no-history --format" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=( $(compgen -f -- "$cur") )
+      return 0
+      ;;
+    history)
+      if [[ "$prev" == "--config-dir" ]]; then
+        COMPREPLY=( $(compgen -d -- "$cur") )
+        return 0
+      fi
+      if [[ "$prev" == "--file" ]]; then
+        COMPREPLY=( $(compgen -f -- "$cur") )
+        return 0
+      fi
+      if [[ "$prev" == "--format" ]]; then
+        COMPREPLY=( $(compgen -W "text json" -- "$cur") )
+        return 0
+      fi
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --config-dir --file --last --tail --command-only --format" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=()
+      return 0
+      ;;
+    report)
+      case "$prev" in
+        --request|--out|--response)
+          COMPREPLY=( $(compgen -f -- "$cur") )
+          return 0
+          ;;
+        --project-root|--config-dir)
+          COMPREPLY=( $(compgen -d -- "$cur") )
+          return 0
+          ;;
+      esac
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --case --request --out -e --env -u --url --token --run --response --no-redact --no-command --no-command-url --project-root --config-dir" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=()
+      return 0
+      ;;
+    report-from-cmd)
+      case "$prev" in
+        --out|--response)
+          COMPREPLY=( $(compgen -f -- "$cur") )
+          return 0
+          ;;
+      esac
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-h --help --case --out --response --allow-empty --expect-empty --dry-run --stdin" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=()
+      return 0
+      ;;
+  esac
+
+  COMPREPLY=()
+}
+
+complete -F _nils_cli_api_websocket_complete api-websocket

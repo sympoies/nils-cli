@@ -20,6 +20,7 @@ pub mod redact;
 pub mod report;
 pub mod rest;
 pub mod suite;
+pub mod websocket;
 
 pub type Result<T> = std::result::Result<T, anyhow::Error>;
 

@@ -6,7 +6,8 @@ use tempfile::TempDir;
 use super::runtime::{
     path_relative_to_repo_or_abs, plan_case_output_paths, resolve_effective_env,
     resolve_effective_no_history, resolve_gql_url, resolve_grpc_token_profile, resolve_grpc_url,
-    resolve_rest_base_url, resolve_rest_token_profile, sanitize_id,
+    resolve_rest_base_url, resolve_rest_token_profile, resolve_ws_token_profile, resolve_ws_url,
+    sanitize_id,
 };
 use crate::suite::schema::SuiteDefaults;
 
@@ -223,6 +224,75 @@ fn runtime_helpers_grpc_url_precedence_override_defaults_env_endpoints_fallback(
 }
 
 #[test]
+fn runtime_helpers_ws_url_precedence_override_defaults_env_endpoints_fallback() {
+    let tmp = TempDir::new().expect("tmp");
+    let repo_root = tmp.path();
+    let setup_dir = repo_root.join("setup/websocket");
+
+    write(
+        &setup_dir.join("endpoints.env"),
+        "WS_URL_DEV=ws://ws.example/dev\n",
+    );
+    write(
+        &setup_dir.join("endpoints.local.env"),
+        "WS_URL_DEV=ws://ws.example/dev-local\n",
+    );
+
+    let mut defaults = SuiteDefaults::default();
+    defaults.websocket.url = "ws://ws.example/defaults".to_string();
+
+    assert_eq!(
+        resolve_ws_url(
+            repo_root,
+            "setup/websocket",
+            "ws://ws.example/override",
+            "dev",
+            &defaults,
+            "ws://ws.example/env",
+        )
+        .unwrap(),
+        "ws://ws.example/override".to_string()
+    );
+
+    assert_eq!(
+        resolve_ws_url(
+            repo_root,
+            "setup/websocket",
+            "",
+            "dev",
+            &defaults,
+            "ws://ws.example/env",
+        )
+        .unwrap(),
+        "ws://ws.example/defaults".to_string()
+    );
+
+    defaults.websocket.url.clear();
+    assert_eq!(
+        resolve_ws_url(
+            repo_root,
+            "setup/websocket",
+            "",
+            "dev",
+            &defaults,
+            "ws://ws.example/env",
+        )
+        .unwrap(),
+        "ws://ws.example/env".to_string()
+    );
+
+    assert_eq!(
+        resolve_ws_url(repo_root, "setup/websocket", "", "dev", &defaults, "").unwrap(),
+        "ws://ws.example/dev-local".to_string()
+    );
+
+    assert_eq!(
+        resolve_ws_url(repo_root, "setup/websocket", "", "", &defaults, "").unwrap(),
+        "ws://127.0.0.1:9001/ws".to_string()
+    );
+}
+
+#[test]
 fn runtime_helpers_token_profile_resolution_reads_tokens_env_and_overrides_with_local() {
     let tmp = TempDir::new().expect("tmp");
     let setup_dir = tmp.path();
@@ -272,6 +342,26 @@ fn runtime_helpers_grpc_token_profile_resolution_reads_tokens_env_and_overrides_
 
     assert_eq!(
         resolve_grpc_token_profile(setup_dir, "my profile").unwrap(),
+        "from-local".to_string()
+    );
+}
+
+#[test]
+fn runtime_helpers_ws_token_profile_resolution_reads_tokens_env_and_overrides_with_local() {
+    let tmp = TempDir::new().expect("tmp");
+    let setup_dir = tmp.path();
+
+    write(
+        &setup_dir.join("tokens.env"),
+        "WS_TOKEN_MY_PROFILE=from-env\n",
+    );
+    write(
+        &setup_dir.join("tokens.local.env"),
+        "WS_TOKEN_MY_PROFILE=from-local\n",
+    );
+
+    assert_eq!(
+        resolve_ws_token_profile(setup_dir, "my profile").unwrap(),
         "from-local".to_string()
     );
 }

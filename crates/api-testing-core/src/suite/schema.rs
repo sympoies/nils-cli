@@ -30,6 +30,10 @@ fn default_grpc_config_dir() -> String {
     "setup/grpc".to_string()
 }
 
+fn default_websocket_config_dir() -> String {
+    "setup/websocket".to_string()
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SuiteManifest {
@@ -56,6 +60,8 @@ pub struct SuiteDefaults {
     pub graphql: SuiteDefaultsGraphql,
     #[serde(default)]
     pub grpc: SuiteDefaultsGrpc,
+    #[serde(default)]
+    pub websocket: SuiteDefaultsWebsocket,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -115,6 +121,27 @@ impl Default for SuiteDefaultsGrpc {
     fn default() -> Self {
         Self {
             config_dir: default_grpc_config_dir(),
+            url: String::new(),
+            token: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuiteDefaultsWebsocket {
+    #[serde(default = "default_websocket_config_dir")]
+    pub config_dir: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub token: String,
+}
+
+impl Default for SuiteDefaultsWebsocket {
+    fn default() -> Self {
+        Self {
+            config_dir: default_websocket_config_dir(),
             url: String::new(),
             token: String::new(),
         }
@@ -329,7 +356,12 @@ fn schema_error(
 }
 
 fn canonical_case_type(raw: &str) -> String {
-    raw.trim().to_ascii_lowercase()
+    let normalized = raw.trim().to_ascii_lowercase();
+    if normalized == "ws" {
+        "websocket".to_string()
+    } else {
+        normalized
+    }
 }
 
 pub fn load_suite_manifest(path: impl AsRef<Path>) -> Result<SuiteManifest> {
@@ -521,6 +553,15 @@ pub fn validate_suite_manifest(manifest: &SuiteManifest, suite_path: &Path) -> R
                         &format!("cases[{i}].request"),
                         Some(id),
                         "is required for type=grpc",
+                    ));
+                }
+            }
+            "websocket" => {
+                if c.request.trim().is_empty() {
+                    return Err(schema_error(
+                        &format!("cases[{i}].request"),
+                        Some(id),
+                        "is required for type=websocket",
                     ));
                 }
             }
@@ -822,6 +863,18 @@ mod tests {
         }));
         assert!(err.contains("cases[0].request"));
         assert!(err.contains("type=grpc"));
+    }
+
+    #[test]
+    fn suite_schema_rejects_websocket_case_missing_request() {
+        let err = validate_err(serde_json::json!({
+          "version": 1,
+          "cases": [
+            { "id": "ws.missing", "type": "websocket" }
+          ]
+        }));
+        assert!(err.contains("cases[0].request"));
+        assert!(err.contains("type=websocket"));
     }
 
     #[test]

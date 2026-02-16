@@ -150,6 +150,47 @@ pub fn resolve_grpc_url_for_env(setup_dir: &Path, env_value: &str) -> Result<Str
     Ok(found)
 }
 
+pub fn resolve_ws_url_for_env(setup_dir: &Path, env_value: &str) -> Result<String> {
+    let env_value = env_value.trim();
+    if env_value.starts_with("ws://") || env_value.starts_with("wss://") {
+        return Ok(env_value.to_string());
+    }
+
+    let endpoints_env = setup_dir.join("endpoints.env");
+    let endpoints_local = setup_dir.join("endpoints.local.env");
+    let endpoints_files: Vec<&Path> = if endpoints_env.is_file() {
+        vec![&endpoints_env, &endpoints_local]
+    } else {
+        Vec::new()
+    };
+    if endpoints_files.is_empty() {
+        anyhow::bail!("endpoints.env not found (expected under setup/websocket/)");
+    }
+
+    let env_key = crate::env_file::normalize_env_key(env_value);
+    let key = format!("WS_URL_{env_key}");
+    let found = crate::env_file::read_var_last_wins(&key, &endpoints_files)?;
+    let Some(found) = found else {
+        let mut available = cli_util::list_available_suffixes(&endpoints_env, "WS_URL_");
+        if endpoints_local.is_file() {
+            available.extend(cli_util::list_available_suffixes(
+                &endpoints_local,
+                "WS_URL_",
+            ));
+            available.sort();
+            available.dedup();
+        }
+        let available = if available.is_empty() {
+            "none".to_string()
+        } else {
+            available.join(" ")
+        };
+        anyhow::bail!("Unknown env '{env_value}' (available: {available})");
+    };
+
+    Ok(found)
+}
+
 #[derive(Debug, Clone)]
 pub struct SuiteSelection {
     pub suite_key: String,
@@ -391,6 +432,38 @@ mod tests {
         );
 
         let err = resolve_grpc_url_for_env(&setup_dir, "nope").unwrap_err();
+        assert!(format!("{err:#}").contains("Unknown env 'nope'"));
+        assert!(format!("{err:#}").contains("available: local prod"));
+    }
+
+    #[test]
+    fn suite_resolve_ws_url_from_url_and_env_files() {
+        let tmp = TempDir::new().unwrap();
+        let setup_dir = tmp.path().join("setup/websocket");
+
+        assert_eq!(
+            resolve_ws_url_for_env(&setup_dir, "wss://socket.test/ws").unwrap(),
+            "wss://socket.test/ws"
+        );
+
+        let err = resolve_ws_url_for_env(&setup_dir, "prod").unwrap_err();
+        assert!(format!("{err:#}").contains("endpoints.env not found"));
+        assert!(format!("{err:#}").contains("setup/websocket"));
+
+        let endpoints_env = setup_dir.join("endpoints.env");
+        let endpoints_local = setup_dir.join("endpoints.local.env");
+        write(&endpoints_env, "WS_URL_PROD=ws://socket.prod/ws\n");
+        write(
+            &endpoints_local,
+            "WS_URL_PROD=ws://socket.local/ws\nWS_URL_LOCAL=ws://127.0.0.1:9001/ws\n",
+        );
+
+        assert_eq!(
+            resolve_ws_url_for_env(&setup_dir, "prod").unwrap(),
+            "ws://socket.local/ws"
+        );
+
+        let err = resolve_ws_url_for_env(&setup_dir, "nope").unwrap_err();
         assert!(format!("{err:#}").contains("Unknown env 'nope'"));
         assert!(format!("{err:#}").contains("available: local prod"));
     }
