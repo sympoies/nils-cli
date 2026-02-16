@@ -1,7 +1,7 @@
 # API testing CLIs overview
 
 ## Overview
-This workspace ships four Rust API testing CLIs (`api-rest`, `api-gql`, `api-grpc`, `api-test`) plus the shared library crate
+This workspace ships five Rust API testing CLIs (`api-rest`, `api-gql`, `api-grpc`, `api-websocket`, `api-test`) plus the shared library crate
 `api-testing-core`. Behavioral parity with the legacy scripts remains the top priority: flags, defaults, exit codes,
 and on-disk artifacts (history files, reports, results).
 
@@ -9,6 +9,7 @@ Detailed parity specs live with each binary:
 - `crates/api-rest/README.md`
 - `crates/api-gql/README.md`
 - `crates/api-grpc/README.md`
+- `crates/api-websocket/README.md`
 - `crates/api-test/README.md`
 
 This README focuses on the shared repository layout, cross-CLI concepts, and the `api-testing-core` surface area.
@@ -31,55 +32,66 @@ This README focuses on the shared repository layout, cross-CLI concepts, and the
   - `api-grpc history`
   - `api-grpc report`
   - `api-grpc report-from-cmd`
+- `api-websocket` (WebSocket scripted sessions)
+  - `api-websocket call` (default)
+  - `api-websocket history`
+  - `api-websocket report`
+  - `api-websocket report-from-cmd`
 
 Notes:
-- `api-test` executes REST/GraphQL/gRPC cases through shared core runners (no shelling out to scripts or the binaries).
-- `api-rest`/`api-gql`/`api-grpc` also provide `report-from-cmd` as a Rust-only convenience for replaying saved `call` snippets.
+- `api-test` executes REST/GraphQL/gRPC/WebSocket cases through shared core runners (no shelling out to scripts or the binaries).
+- `api-rest`/`api-gql`/`api-grpc`/`api-websocket` also provide `report-from-cmd` as a Rust-only convenience for replaying saved `call` snippets.
 
 ## api-testing-core scope
-`api-testing-core` is a library crate used by all four CLIs. Key modules:
-- `config`: setup dir discovery for REST/GraphQL/gRPC configs.
+`api-testing-core` is a library crate used by all five CLIs. Key modules:
+- `config`: setup dir discovery for REST/GraphQL/gRPC/WebSocket configs.
 - `env_file`: `.env` parsing + key normalization helpers.
 - `cli_*`: shared CLI helpers (endpoint resolution, history I/O, report args, CLI utilities).
 - `history`, `report`, `markdown`, `redact`, `cmd_snippet`: shared report/history rendering and snippet parsing.
 - `rest`: request schema, runner, expect/cleanup logic, report rendering.
 - `graphql`: schema/vars loading, auth/JWT resolution, runner, expect/allow-errors, report rendering, mutation detection.
 - `grpc`: unary request schema, transport runner, expect logic, report rendering.
-- `suite`: suite schema v1, path resolution, filters, safety gates, auth integration, runner, cleanup, results, summary, JUnit.
+- `websocket`: request schema, scripted runner, expect logic, report rendering.
+- `suite`: suite schema v1, path resolution, filters, safety gates, auth integration, runner, cleanup, results, summary, JUnit (including `type: websocket`).
 
 ## Transport decision and reuse matrix
 - Transport decision:
-  - Selected: `grpcurl` adapter for unary MVP (`api-testing-core::grpc::runner`).
-  - Rejected for MVP: native dynamic invocation path (higher complexity for the same unary delivery goal).
-  - Streaming remains out of scope for this phase.
+  - gRPC selected: `grpcurl` adapter for unary MVP (`api-testing-core::grpc::runner`).
+  - gRPC rejected for MVP: native dynamic invocation path (higher complexity for the same unary delivery goal).
+  - WebSocket selected: native Rust `tungstenite` transport (`api-testing-core::websocket::runner`).
+  - WebSocket rejected for MVP: external adapter shell-out (`websocat`-style).
 - Reuse matrix:
   - unchanged: suite selection/filtering, run directory/artifact envelope, summary/JUnit/results rendering.
   - additive grpc: suite schema defaults/case validation, `type: grpc` runner branch, gRPC endpoint/token resolution.
+  - additive websocket: suite schema defaults/case validation, `type: websocket` runner branch, WS endpoint/token resolution.
 - Evidence commands:
   - `cargo test -p nils-api-testing-core --test suite_rest_graphql_matrix`
   - `cargo test -p nils-api-testing-core --test suite_runner_loopback`
   - `cargo test -p nils-api-testing-core --test suite_runner_grpc_matrix`
+  - `cargo test -p nils-api-testing-core --test suite_runner_websocket_matrix`
   - `cargo test -p nils-api-test suite_schema`
 
 ## Shared terminology
 - Setup dir
   - Protocol-specific config directory.
-  - Canonical locations: REST `setup/rest`, GraphQL `setup/graphql`, gRPC `setup/grpc`.
+  - Canonical locations: REST `setup/rest`, GraphQL `setup/graphql`, gRPC `setup/grpc`, WebSocket `setup/websocket`.
 - Config dir
   - CLI arg `--config-dir <dir>` that seeds setup-dir discovery.
   - Discovery searches upward for known config files; fallback uses the canonical `setup/<tool>` when applicable.
 - Env preset
   - `--env <name>` selects a base URL from `endpoints.env` (+ optional `.local` overrides).
   - REST: `REST_URL_<ENV_KEY>`; GraphQL: `GQL_URL_<ENV_KEY>`; gRPC: `GRPC_URL_<ENV_KEY>`.
-  - If the value looks like `http(s)://...`, it is treated as a direct URL (like `--url`).
+  - WebSocket: `WS_URL_<ENV_KEY>`.
+  - If the value looks like `http(s)://...` or `ws(s)://...`, it is treated as a direct URL (like `--url`).
 - Token/JWT profile
   - REST: `--token <name>` or `REST_TOKEN_NAME` selects `REST_TOKEN_<NAME>`.
   - GraphQL: `--jwt <name>` or `GQL_JWT_NAME` selects `GQL_JWT_<NAME>`.
   - gRPC: `--token <name>` or `GRPC_TOKEN_NAME` selects `GRPC_TOKEN_<NAME>`.
+  - WebSocket: `--token <name>` or `WS_TOKEN_NAME` selects `WS_TOKEN_<NAME>`.
   - REST fallback: `ACCESS_TOKEN`, then `SERVICE_TOKEN` if no profile is selected.
   - GraphQL fallback: `ACCESS_TOKEN`, then `SERVICE_TOKEN` if no profile is selected.
 - History
-  - REST: `<setup_dir>/.rest_history`, GraphQL: `<setup_dir>/.gql_history`, gRPC: `<setup_dir>/.grpc_history`.
+  - REST: `<setup_dir>/.rest_history`, GraphQL: `<setup_dir>/.gql_history`, gRPC: `<setup_dir>/.grpc_history`, WebSocket: `<setup_dir>/.ws_history`.
   - Enabled by default, can be disabled, and supports rotation/size limits.
 - Report
   - Markdown artifact (usually under `<repo>/docs/`) capturing request/operation, response, and optional assertions.
@@ -114,6 +126,12 @@ The CLIs support the same layouts the legacy scripts assume.
       tokens.env
       tokens.local.env           # optional (local tokens; do not commit)
       requests/                  # *.grpc.json request definitions
+    websocket/
+      endpoints.env
+      endpoints.local.env        # optional (local override)
+      tokens.env
+      tokens.local.env           # optional (local tokens; do not commit)
+      requests/                  # *.ws.json or *.websocket.json request definitions
   tests/
     api/
       suites/
@@ -201,6 +219,22 @@ Render a Markdown summary:
 api-test summary --in out/api-test-runner/results.json --out out/api-test-runner/summary.md
 ```
 
+### `api-websocket`
+Run a scripted request:
+```bash
+api-websocket call --env staging setup/websocket/requests/health.ws.json
+```
+
+Write a report:
+```bash
+api-websocket report --case health --request setup/websocket/requests/health.ws.json --run
+```
+
+Generate a report from a saved snippet:
+```bash
+api-websocket history --command-only | api-websocket report-from-cmd --stdin
+```
+
 ## Suite runner behavior (high-level)
 - Results JSON is always emitted to stdout. `--out` writes an additional copy.
 - Output directory base defaults to `<repo>/out/api-test-runner` (override via `API_TEST_OUTPUT_DIR`).
@@ -220,6 +254,7 @@ api-test summary --in out/api-test-runner/results.json --out out/api-test-runner
 - `API_TEST_REST_URL`: override REST base URL for all REST/rest-flow cases.
 - `API_TEST_GQL_URL`: override GraphQL endpoint URL for all GraphQL cases.
 - `API_TEST_GRPC_URL`: override gRPC target for all gRPC cases.
+- `API_TEST_WS_URL`: override WebSocket target URL for all websocket cases.
 - `API_TEST_AUTH_JSON`: credentials JSON used by suite auth (default key name).
 - `GITHUB_STEP_SUMMARY`: when set, `api-test summary` appends Markdown output (disable via `--no-github-summary`).
 

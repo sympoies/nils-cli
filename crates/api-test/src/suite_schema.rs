@@ -54,6 +54,8 @@ pub struct SuiteDefaultsV1 {
     pub graphql: Option<SuiteDefaultsGraphqlV1>,
     #[serde(default)]
     pub grpc: Option<SuiteDefaultsGrpcV1>,
+    #[serde(default)]
+    pub websocket: Option<SuiteDefaultsWebsocketV1>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -78,6 +80,16 @@ pub struct SuiteDefaultsGraphqlV1 {
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct SuiteDefaultsGrpcV1 {
+    #[serde(default, rename = "configDir")]
+    pub config_dir: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub token: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct SuiteDefaultsWebsocketV1 {
     #[serde(default, rename = "configDir")]
     pub config_dir: Option<String>,
     #[serde(default)]
@@ -210,6 +222,7 @@ pub enum SuiteSchemaValidationError {
 
     RestCaseMissingRequest { id: String },
     GrpcCaseMissingRequest { id: String },
+    WebsocketCaseMissingRequest { id: String },
     RestFlowCaseMissingLoginRequest { id: String },
     RestFlowCaseMissingRequest { id: String },
 
@@ -283,6 +296,9 @@ impl fmt::Display for SuiteSchemaValidationError {
             }
             SuiteSchemaValidationError::GrpcCaseMissingRequest { id } => {
                 write!(f, "gRPC case '{id}' is missing request")
+            }
+            SuiteSchemaValidationError::WebsocketCaseMissingRequest { id } => {
+                write!(f, "WebSocket case '{id}' is missing request")
             }
             SuiteSchemaValidationError::RestFlowCaseMissingLoginRequest { id } => {
                 write!(f, "rest-flow case '{id}' is missing loginRequest")
@@ -487,6 +503,12 @@ impl SuiteManifestV1 {
                     let request = case.request.as_deref().unwrap_or_default().trim();
                     if request.is_empty() {
                         return Err(SuiteSchemaValidationError::GrpcCaseMissingRequest { id });
+                    }
+                }
+                "websocket" | "ws" => {
+                    let request = case.request.as_deref().unwrap_or_default().trim();
+                    if request.is_empty() {
+                        return Err(SuiteSchemaValidationError::WebsocketCaseMissingRequest { id });
                     }
                 }
                 "rest-flow" | "rest_flow" => {
@@ -948,6 +970,30 @@ mod tests {
     }
 
     #[test]
+    fn suite_schema_rejects_websocket_case_missing_request() {
+        let suite = suite_from(serde_json::json!({
+            "version": 1,
+            "cases": [ { "id": "ws.missing", "type": "websocket" } ]
+        }));
+        let err = suite.validate().unwrap_err();
+        assert_eq!(
+            err,
+            SuiteSchemaValidationError::WebsocketCaseMissingRequest {
+                id: "ws.missing".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn suite_schema_accepts_ws_alias_case_type() {
+        let suite = suite_from(serde_json::json!({
+            "version": 1,
+            "cases": [ { "id": "ws.health", "type": "ws", "request": "setup/websocket/requests/health.ws.json" } ]
+        }));
+        suite.validate().unwrap();
+    }
+
+    #[test]
     fn suite_schema_rejects_graphql_case_missing_op() {
         let suite = suite_from(serde_json::json!({
             "version": 1,
@@ -989,6 +1035,9 @@ mod tests {
             },
             SuiteSchemaValidationError::GrpcCaseMissingRequest {
                 id: "grpc".to_string(),
+            },
+            SuiteSchemaValidationError::WebsocketCaseMissingRequest {
+                id: "ws".to_string(),
             },
             SuiteSchemaValidationError::RestFlowCaseMissingLoginRequest {
                 id: "flow".to_string(),

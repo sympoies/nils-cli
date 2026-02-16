@@ -92,6 +92,7 @@ fn suite_runner_loopback_runs_and_cleans_up() {
         env_rest_url: server.url(),
         env_gql_url: gql_url.clone(),
         env_grpc_url: String::new(),
+        env_ws_url: String::new(),
         progress: None,
     };
 
@@ -177,6 +178,7 @@ fn suite_runner_loopback_runs_and_cleans_up() {
         env_rest_url: server.url(),
         env_gql_url: gql_url,
         env_grpc_url: String::new(),
+        env_ws_url: String::new(),
         progress: None,
     };
 

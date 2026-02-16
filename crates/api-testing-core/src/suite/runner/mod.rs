@@ -21,6 +21,7 @@ mod graphql;
 mod grpc;
 mod progress;
 mod rest;
+mod websocket;
 
 pub use context::{SuiteRunOptions, SuiteRunOutput};
 
@@ -610,6 +611,55 @@ pub fn run_suite(
                     }
                 }
             },
+            "websocket" => match websocket::prepare_websocket_case(repo_root, c, &id, defaults)? {
+                websocket::PrepareOutcome::Ready(plan) => {
+                    let websocket::WebsocketCasePlan {
+                        request_abs,
+                        request_file,
+                        config_dir,
+                        url,
+                        token,
+                    } = plan;
+                    let ws_config_dir = config_dir;
+                    let ws_url = url;
+                    let ws_token = token;
+
+                    let websocket::WebsocketCaseRunOutput {
+                        status: ws_status,
+                        message: ws_message,
+                        assertions: ws_assertions,
+                        command_snippet: ws_command_snippet,
+                        stdout_path,
+                        stderr_path,
+                    } = websocket::run_websocket_case(
+                        repo_root,
+                        &run_dir_abs,
+                        &safe_id,
+                        effective_no_history,
+                        &effective_env,
+                        defaults,
+                        &options.env_ws_url,
+                        &ws_config_dir,
+                        &ws_url,
+                        &ws_token,
+                        &request_abs,
+                        &request_file,
+                    )?;
+
+                    status = ws_status;
+                    message = ws_message;
+                    assertions = ws_assertions;
+                    command_snippet = ws_command_snippet;
+                    stdout_file_abs = Some(stdout_path);
+                    stderr_file_abs = Some(stderr_path);
+
+                    match status.as_str() {
+                        "passed" => passed += 1,
+                        "failed" => failed += 1,
+                        _ => {}
+                    }
+                }
+            },
             other => {
                 anyhow::bail!("Unknown case type '{other}' for case '{id}'");
             }
@@ -1094,6 +1144,7 @@ mod tests {
             env_rest_url: String::new(),
             env_gql_url: String::new(),
             env_grpc_url: String::new(),
+            env_ws_url: String::new(),
             progress: None,
         };
 
@@ -1136,6 +1187,7 @@ mod tests {
             env_rest_url: String::new(),
             env_gql_url: String::new(),
             env_grpc_url: String::new(),
+            env_ws_url: String::new(),
             progress: None,
         };
 
@@ -1189,6 +1241,7 @@ mod tests {
             env_rest_url: String::new(),
             env_gql_url: String::new(),
             env_grpc_url: String::new(),
+            env_ws_url: String::new(),
             progress: None,
         };
 
@@ -1231,6 +1284,7 @@ mod tests {
             env_rest_url: String::new(),
             env_gql_url: String::new(),
             env_grpc_url: String::new(),
+            env_ws_url: String::new(),
             progress: None,
         };
 
@@ -1284,6 +1338,7 @@ mod tests {
             env_rest_url: server.base_url.clone(),
             env_gql_url: String::new(),
             env_grpc_url: String::new(),
+            env_ws_url: String::new(),
             progress: None,
         };
 
@@ -1333,6 +1388,7 @@ mod tests {
             env_rest_url: String::new(),
             env_gql_url: String::new(),
             env_grpc_url: String::new(),
+            env_ws_url: String::new(),
             progress: Some(progress),
         };
 
@@ -1382,6 +1438,7 @@ mod tests {
             env_rest_url: String::new(),
             env_gql_url: String::new(),
             env_grpc_url: String::new(),
+            env_ws_url: String::new(),
             progress: Some(progress),
         };
 

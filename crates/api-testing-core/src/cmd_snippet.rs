@@ -7,6 +7,7 @@ pub enum CmdSnippetKind {
     Graphql,
     Rest,
     Grpc,
+    Websocket,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,6 +15,7 @@ pub enum CmdSnippet {
     Graphql(GraphqlCallSnippet),
     Rest(RestCallSnippet),
     Grpc(GrpcCallSnippet),
+    Websocket(WebsocketCallSnippet),
 }
 
 impl CmdSnippet {
@@ -22,6 +24,7 @@ impl CmdSnippet {
             CmdSnippet::Graphql(_) => CmdSnippetKind::Graphql,
             CmdSnippet::Rest(_) => CmdSnippetKind::Rest,
             CmdSnippet::Grpc(_) => CmdSnippetKind::Grpc,
+            CmdSnippet::Websocket(_) => CmdSnippetKind::Websocket,
         }
     }
 
@@ -30,6 +33,7 @@ impl CmdSnippet {
             CmdSnippet::Graphql(s) => &s.command_basename,
             CmdSnippet::Rest(s) => &s.command_basename,
             CmdSnippet::Grpc(s) => &s.command_basename,
+            CmdSnippet::Websocket(s) => &s.command_basename,
         }
     }
 }
@@ -66,10 +70,21 @@ pub struct GrpcCallSnippet {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebsocketCallSnippet {
+    pub command_basename: String,
+    pub config_dir: Option<String>,
+    pub env: Option<String>,
+    pub url: Option<String>,
+    pub token: Option<String>,
+    pub request: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReportFromCmd {
     Graphql(GraphqlReportFromCmd),
     Rest(RestReportFromCmd),
     Grpc(GrpcReportFromCmd),
+    Websocket(WebsocketReportFromCmd),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,6 +110,16 @@ pub struct RestReportFromCmd {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GrpcReportFromCmd {
+    pub case: String,
+    pub config_dir: Option<String>,
+    pub env: Option<String>,
+    pub url: Option<String>,
+    pub token: Option<String>,
+    pub request: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebsocketReportFromCmd {
     pub case: String,
     pub config_dir: Option<String>,
     pub env: Option<String>,
@@ -132,6 +157,9 @@ pub enum CmdSnippetError {
     #[error("missing gRPC request file path (*.grpc.json)")]
     MissingGrpcRequest,
 
+    #[error("missing WebSocket request file path (*.ws.json or *.websocket.json)")]
+    MissingWebsocketRequest,
+
     #[error("unexpected extra argument: {arg}")]
     UnexpectedArg { arg: String },
 }
@@ -150,6 +178,9 @@ pub fn parse_call_snippet(snippet: &str) -> Result<CmdSnippet, CmdSnippetError> 
         )?)),
         "api-rest" | "rest.sh" => Ok(CmdSnippet::Rest(parse_rest_call_args(cmd_base, rest)?)),
         "api-grpc" | "grpc.sh" => Ok(CmdSnippet::Grpc(parse_grpc_call_args(cmd_base, rest)?)),
+        "api-websocket" | "websocket.sh" => Ok(CmdSnippet::Websocket(parse_websocket_call_args(
+            cmd_base, rest,
+        )?)),
         _ => Err(CmdSnippetError::UnsupportedCommand { command: cmd_base }),
     }
 }
@@ -160,6 +191,7 @@ pub fn parse_report_from_cmd_snippet(snippet: &str) -> Result<ReportFromCmd, Cmd
         CmdSnippet::Graphql(s) => ReportFromCmd::Graphql(graphql_to_report_from_cmd(&s)),
         CmdSnippet::Rest(s) => ReportFromCmd::Rest(rest_to_report_from_cmd(&s)),
         CmdSnippet::Grpc(s) => ReportFromCmd::Grpc(grpc_to_report_from_cmd(&s)),
+        CmdSnippet::Websocket(s) => ReportFromCmd::Websocket(websocket_to_report_from_cmd(&s)),
     })
 }
 
@@ -189,6 +221,17 @@ fn rest_to_report_from_cmd(s: &RestCallSnippet) -> RestReportFromCmd {
 fn grpc_to_report_from_cmd(s: &GrpcCallSnippet) -> GrpcReportFromCmd {
     GrpcReportFromCmd {
         case: derive_grpc_case_name(s),
+        config_dir: s.config_dir.clone(),
+        env: s.env.clone(),
+        url: s.url.clone(),
+        token: s.token.clone(),
+        request: s.request.clone(),
+    }
+}
+
+fn websocket_to_report_from_cmd(s: &WebsocketCallSnippet) -> WebsocketReportFromCmd {
+    WebsocketReportFromCmd {
+        case: derive_websocket_case_name(s),
         config_dir: s.config_dir.clone(),
         env: s.env.clone(),
         url: s.url.clone(),
@@ -520,6 +563,124 @@ fn parse_grpc_call_args(
     })
 }
 
+fn parse_websocket_call_args(
+    command_basename: String,
+    raw_args: &[String],
+) -> Result<WebsocketCallSnippet, CmdSnippetError> {
+    let mut config_dir: Option<String> = None;
+    let mut env: Option<String> = None;
+    let mut url: Option<String> = None;
+    let mut token: Option<String> = None;
+
+    let mut args: Vec<String> = raw_args.to_vec();
+    if let Some(first) = args.first().cloned()
+        && !first.starts_with('-')
+        && first != "--"
+    {
+        if first == "call" {
+            args.remove(0);
+        } else if matches!(first.as_str(), "history" | "report" | "report-from-cmd") {
+            return Err(CmdSnippetError::UnsupportedSubcommand { subcommand: first });
+        }
+    }
+
+    let mut positional: Vec<String> = Vec::new();
+    let mut i: usize = 0;
+    while i < args.len() {
+        let arg = args[i].as_str();
+        if arg == "--" {
+            positional.extend(args[i + 1..].iter().cloned());
+            break;
+        }
+
+        if arg == "--no-history" {
+            i += 1;
+            continue;
+        }
+
+        if let Some(v) = flag_value_eq(arg, "--config-dir") {
+            config_dir = Some(v?);
+            i += 1;
+            continue;
+        }
+        if arg == "--config-dir" {
+            config_dir = Some(take_value(&args, i, "--config-dir")?);
+            i += 2;
+            continue;
+        }
+
+        if let Some(v) = flag_value_eq(arg, "--env") {
+            env = Some(v?);
+            i += 1;
+            continue;
+        }
+        if arg == "--env" || arg == "-e" {
+            env = Some(take_value(&args, i, arg)?);
+            i += 2;
+            continue;
+        }
+
+        if let Some(v) = flag_value_eq(arg, "--url") {
+            url = Some(v?);
+            i += 1;
+            continue;
+        }
+        if arg == "--url" || arg == "-u" {
+            url = Some(take_value(&args, i, arg)?);
+            i += 2;
+            continue;
+        }
+
+        if let Some(v) = flag_value_eq(arg, "--token") {
+            token = Some(v?);
+            i += 1;
+            continue;
+        }
+        if arg == "--token" {
+            token = Some(take_value(&args, i, "--token")?);
+            i += 2;
+            continue;
+        }
+
+        if let Some(v) = flag_value_eq(arg, "--format") {
+            let _ = v?;
+            i += 1;
+            continue;
+        }
+        if arg == "--format" {
+            let _ = take_value(&args, i, "--format")?;
+            i += 2;
+            continue;
+        }
+
+        if arg.starts_with('-') {
+            return Err(CmdSnippetError::UnknownFlag {
+                flag: arg.to_string(),
+            });
+        }
+
+        positional.push(arg.to_string());
+        i += 1;
+    }
+
+    let request = positional
+        .first()
+        .cloned()
+        .ok_or(CmdSnippetError::MissingWebsocketRequest)?;
+    if let Some(extra) = positional.get(1) {
+        return Err(CmdSnippetError::UnexpectedArg { arg: extra.clone() });
+    }
+
+    Ok(WebsocketCallSnippet {
+        command_basename,
+        config_dir,
+        env,
+        url,
+        token,
+        request,
+    })
+}
+
 fn tokenize_call_snippet(snippet: &str) -> Result<Vec<String>, CmdSnippetError> {
     let raw = snippet.trim();
     if raw.is_empty() {
@@ -691,6 +852,12 @@ fn stem_for_request(path: &str) -> String {
     if let Some(stem) = name.strip_suffix(".grpc.json") {
         return stem.to_string();
     }
+    if let Some(stem) = name.strip_suffix(".ws.json") {
+        return stem.to_string();
+    }
+    if let Some(stem) = name.strip_suffix(".websocket.json") {
+        return stem.to_string();
+    }
     Path::new(&name)
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
@@ -732,6 +899,23 @@ fn derive_rest_case_name(s: &RestCallSnippet) -> String {
 }
 
 fn derive_grpc_case_name(s: &GrpcCallSnippet) -> String {
+    let stem = stem_for_request(&s.request);
+    let stem = if stem.trim().is_empty() {
+        "case".to_string()
+    } else {
+        stem
+    };
+
+    let env_or_url = s.url.as_deref().or(s.env.as_deref()).unwrap_or("implicit");
+    let mut meta: Vec<String> = vec![env_or_url.to_string()];
+    if let Some(token) = s.token.as_deref() {
+        meta.push(format!("token:{token}"));
+    }
+
+    format!("{stem} ({})", meta.join(", "))
+}
+
+fn derive_websocket_case_name(s: &WebsocketCallSnippet) -> String {
     let stem = stem_for_request(&s.request);
     let stem = if stem.trim().is_empty() {
         "case".to_string()
@@ -906,5 +1090,35 @@ mod tests {
             panic!("expected grpc");
         };
         assert_eq!(report.case, "health (staging, token:service)");
+    }
+
+    #[test]
+    fn websocket_missing_request_is_error() {
+        let s = "api-websocket call --env staging";
+        let err = parse_call_snippet(s).expect_err("expected err");
+        assert!(matches!(err, CmdSnippetError::MissingWebsocketRequest));
+    }
+
+    #[test]
+    fn websocket_case_is_derived_from_request_and_meta() {
+        let s = "api-websocket call --env staging --token service setup/websocket/requests/health.ws.json";
+        let ReportFromCmd::Websocket(report) = parse_report_from_cmd_snippet(s).expect("parse")
+        else {
+            panic!("expected websocket");
+        };
+        assert_eq!(report.case, "health (staging, token:service)");
+    }
+
+    #[test]
+    fn websocket_empty_flag_values_are_errors() {
+        let cases = [
+            ("--env=", "--env"),
+            ("--url=", "--url"),
+            ("--token=", "--token"),
+        ];
+        for (flag, expected) in cases {
+            let s = format!("api-websocket call {flag} setup/websocket/requests/health.ws.json");
+            assert_missing_flag_value(&s, expected);
+        }
     }
 }

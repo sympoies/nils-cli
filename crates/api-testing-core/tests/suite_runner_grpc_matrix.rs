@@ -65,6 +65,7 @@ fn suite_runner_executes_grpc_case_with_mock_transport() {
             env_rest_url: String::new(),
             env_gql_url: String::new(),
             env_grpc_url: String::new(),
+            env_ws_url: String::new(),
             progress: None,
         },
     )

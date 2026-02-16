@@ -12,6 +12,7 @@ COMP_FZF_CLI_FILE="$REPO_ROOT/completions/zsh/_fzf-cli"
 COMP_SEMANTIC_COMMIT_FILE="$REPO_ROOT/completions/zsh/_semantic-commit"
 COMP_API_REST_FILE="$REPO_ROOT/completions/zsh/_api-rest"
 COMP_API_GQL_FILE="$REPO_ROOT/completions/zsh/_api-gql"
+COMP_API_WEBSOCKET_FILE="$REPO_ROOT/completions/zsh/_api-websocket"
 COMP_API_TEST_FILE="$REPO_ROOT/completions/zsh/_api-test"
 COMP_PLAN_TOOLING_FILE="$REPO_ROOT/completions/zsh/_plan-tooling"
 COMP_CODEX_CLI_FILE="$REPO_ROOT/completions/zsh/_codex-cli"
@@ -29,6 +30,7 @@ BASH_FZF_CLI_FILE="$REPO_ROOT/completions/bash/fzf-cli"
 BASH_SEMANTIC_COMMIT_FILE="$REPO_ROOT/completions/bash/semantic-commit"
 BASH_API_REST_FILE="$REPO_ROOT/completions/bash/api-rest"
 BASH_API_GQL_FILE="$REPO_ROOT/completions/bash/api-gql"
+BASH_API_WEBSOCKET_FILE="$REPO_ROOT/completions/bash/api-websocket"
 BASH_API_TEST_FILE="$REPO_ROOT/completions/bash/api-test"
 BASH_PLAN_TOOLING_FILE="$REPO_ROOT/completions/bash/plan-tooling"
 BASH_CODEX_CLI_FILE="$REPO_ROOT/completions/bash/codex-cli"
@@ -75,6 +77,11 @@ fi
 
 if [[ ! -f "$COMP_API_GQL_FILE" ]]; then
   print -u2 -r -- "FAIL: missing api-gql completion file"
+  exit 1
+fi
+
+if [[ ! -f "$COMP_API_WEBSOCKET_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing api-websocket completion file"
   exit 1
 fi
 
@@ -155,6 +162,11 @@ fi
 
 if [[ ! -f "$BASH_API_GQL_FILE" ]]; then
   print -u2 -r -- "FAIL: missing bash api-gql completion file"
+  exit 1
+fi
+
+if [[ ! -f "$BASH_API_WEBSOCKET_FILE" ]]; then
+  print -u2 -r -- "FAIL: missing bash api-websocket completion file"
   exit 1
 fi
 
@@ -241,6 +253,11 @@ source "$COMP_API_GQL_FILE" || {
   exit 1
 }
 
+source "$COMP_API_WEBSOCKET_FILE" || {
+  print -u2 -r -- "FAIL: failed to source api-websocket completion file"
+  exit 1
+}
+
 source "$COMP_API_TEST_FILE" || {
   print -u2 -r -- "FAIL: failed to source api-test completion file"
   exit 1
@@ -318,6 +335,11 @@ fi
 
 if (( ! $+functions[_api-gql] )); then
   print -u2 -r -- "FAIL: _api-gql function not defined"
+  exit 1
+fi
+
+if (( ! $+functions[_api-websocket] )); then
+  print -u2 -r -- "FAIL: _api-websocket function not defined"
   exit 1
 fi
 
@@ -566,6 +588,11 @@ grep -q "call:Execute a request file" "$COMP_API_REST_FILE" || {
 
 grep -q "schema:Resolve a schema file path" "$COMP_API_GQL_FILE" || {
   print -u2 -r -- "FAIL: api-gql completion missing schema command"
+  exit 1
+}
+
+grep -q "call:Execute a request file" "$COMP_API_WEBSOCKET_FILE" || {
+  print -u2 -r -- "FAIL: api-websocket completion missing call command"
   exit 1
 }
 
@@ -881,6 +908,11 @@ bash -c "set -euo pipefail; source \"$BASH_API_REST_FILE\"; complete -p api-rest
 
 bash -c "set -euo pipefail; source \"$BASH_API_GQL_FILE\"; complete -p api-gql | grep -q _nils_cli_api_gql_complete" || {
   print -u2 -r -- "FAIL: failed to source bash api-gql completion file"
+  exit 1
+}
+
+bash -c "set -euo pipefail; source \"$BASH_API_WEBSOCKET_FILE\"; complete -p api-websocket | grep -q _nils_cli_api_websocket_complete" || {
+  print -u2 -r -- "FAIL: failed to source bash api-websocket completion file"
   exit 1
 }
 
