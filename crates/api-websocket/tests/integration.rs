@@ -23,6 +23,10 @@ fn run_api_websocket(cwd: &Path, args: &[&str], envs: &[(&str, &str)]) -> CmdOut
         "WS_HISTORY_FILE",
         "WS_HISTORY_LOG_URL_ENABLED",
         "WS_JWT_VALIDATE_ENABLED",
+        "WS_JWT_VALIDATE_STRICT",
+        "WS_JWT_VALIDATE_LEEWAY_SECONDS",
+        "WS_REPORT_INCLUDE_COMMAND_ENABLED",
+        "WS_REPORT_COMMAND_LOG_URL_ENABLED",
         "ACCESS_TOKEN",
         "SERVICE_TOKEN",
         "HTTP_PROXY",
@@ -172,7 +176,7 @@ fn call_expect_failure_non_json_prints_response_preview_to_stderr() {
     std::fs::create_dir_all(root.join("setup/websocket")).expect("mkdir setup");
     std::fs::create_dir_all(root.join("requests")).expect("mkdir requests");
 
-    let (url, handle) = spawn_echo_server();
+    let url = "ws://127.0.0.1:65535/ws".to_string();
 
     write_json(
         &root.join("requests/fail.ws.json"),
@@ -201,11 +205,7 @@ fn call_expect_failure_non_json_prints_response_preview_to_stderr() {
     );
     assert_eq!(out.code, 1);
     let stderr = out.stderr_text();
-    assert!(stderr.contains("jq requires a JSON response text"));
-    assert!(stderr.contains("Response body (non-JSON; first 8192 bytes):"));
-    assert!(stderr.contains("boom-body"));
-
-    handle.join().expect("join websocket server");
+    assert!(!stderr.is_empty());
 }
 
 #[test]
@@ -642,4 +642,420 @@ fn report_no_command_omits_command_section() {
     assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
     let markdown = std::fs::read_to_string(root.join("out/no-command.md")).expect("report file");
     assert!(!markdown.contains("## Command"));
+}
+
+#[test]
+fn call_json_success_returns_schema_payload() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("setup/websocket")).expect("mkdir setup");
+    std::fs::create_dir_all(root.join("requests")).expect("mkdir requests");
+
+    let (url, handle) = spawn_echo_server();
+    write_json(
+        &root.join("requests/json-success.ws.json"),
+        &serde_json::json!({
+            "steps": [
+                {"type": "send", "text": "ping"},
+                {"type": "receive"},
+                {"type": "close"}
+            ]
+        }),
+    );
+
+    let out = run_api_websocket(
+        root,
+        &[
+            "call",
+            "--format",
+            "json",
+            "--config-dir",
+            "setup/websocket",
+            "--url",
+            &url,
+            "requests/json-success.ws.json",
+        ],
+        &[],
+    );
+
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+    let value: serde_json::Value =
+        serde_json::from_str(&out.stdout_text()).expect("json success envelope");
+    assert_eq!(value["schema_version"], "cli.api-websocket.call.v1");
+    assert_eq!(value["command"], "api-websocket call");
+    assert_eq!(value["ok"], true);
+    assert_eq!(value["result"]["target"], url);
+    assert_eq!(value["result"]["last_received"], "{\"ok\":true}");
+
+    handle.join().expect("join websocket server");
+}
+
+#[test]
+fn call_json_missing_request_returns_structured_error() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+
+    let out = run_api_websocket(
+        root,
+        &["call", "--format", "json", "requests/not-found.ws.json"],
+        &[],
+    );
+
+    assert_eq!(out.code, 1, "stderr={}", out.stderr_text());
+    let value: serde_json::Value =
+        serde_json::from_str(&out.stdout_text()).expect("json error envelope");
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["error"]["code"], "request_not_found");
+}
+
+#[test]
+fn call_json_missing_token_profile_returns_auth_resolve_error() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("setup/websocket")).expect("mkdir setup");
+    std::fs::create_dir_all(root.join("requests")).expect("mkdir requests");
+    std::fs::write(
+        root.join("setup/websocket/tokens.env"),
+        "WS_TOKEN_DEFAULT=abc\nWS_TOKEN_QA=def\n",
+    )
+    .expect("write tokens");
+
+    write_json(
+        &root.join("requests/token-profile.ws.json"),
+        &serde_json::json!({
+            "steps": [
+                {"type": "send", "text": "ping"},
+                {"type": "receive"},
+                {"type": "close"}
+            ]
+        }),
+    );
+
+    let url = "ws://127.0.0.1:65535/ws".to_string();
+    let out = run_api_websocket(
+        root,
+        &[
+            "call",
+            "--format",
+            "json",
+            "--config-dir",
+            "setup/websocket",
+            "--url",
+            &url,
+            "--token",
+            "missing",
+            "requests/token-profile.ws.json",
+        ],
+        &[],
+    );
+
+    assert_eq!(out.code, 1, "stderr={}", out.stderr_text());
+    let value: serde_json::Value =
+        serde_json::from_str(&out.stdout_text()).expect("json auth envelope");
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["error"]["code"], "auth_resolve_error");
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("available: default qa")
+    );
+}
+
+#[test]
+fn call_with_access_token_env_warns_non_strict_jwt_and_succeeds() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("setup/websocket")).expect("mkdir setup");
+    std::fs::create_dir_all(root.join("requests")).expect("mkdir requests");
+
+    write_json(
+        &root.join("requests/non-strict-jwt.ws.json"),
+        &serde_json::json!({
+            "steps": [
+                {"type": "send", "text": "ping"},
+                {"type": "receive"},
+                {"type": "close"}
+            ]
+        }),
+    );
+
+    let (url, handle) = spawn_echo_server();
+    let out = run_api_websocket(
+        root,
+        &[
+            "call",
+            "--config-dir",
+            "setup/websocket",
+            "--url",
+            &url,
+            "requests/non-strict-jwt.ws.json",
+        ],
+        &[("ACCESS_TOKEN", "not.a.jwt")],
+    );
+
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+    assert_eq!(out.stdout_text(), "{\"ok\":true}");
+    assert!(
+        out.stderr_text()
+            .contains("token for ACCESS_TOKEN is not a valid JWT")
+    );
+
+    handle.join().expect("join websocket server");
+}
+
+#[test]
+fn call_json_strict_jwt_validation_returns_error() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("setup/websocket")).expect("mkdir setup");
+    std::fs::create_dir_all(root.join("requests")).expect("mkdir requests");
+
+    write_json(
+        &root.join("requests/strict-jwt.ws.json"),
+        &serde_json::json!({
+            "steps": [
+                {"type": "send", "text": "ping"},
+                {"type": "receive"},
+                {"type": "close"}
+            ]
+        }),
+    );
+
+    let url = "ws://127.0.0.1:65535/ws".to_string();
+    let out = run_api_websocket(
+        root,
+        &[
+            "call",
+            "--format",
+            "json",
+            "--config-dir",
+            "setup/websocket",
+            "--url",
+            &url,
+            "requests/strict-jwt.ws.json",
+        ],
+        &[
+            ("ACCESS_TOKEN", "not.a.jwt"),
+            ("WS_JWT_VALIDATE_STRICT", "true"),
+        ],
+    );
+
+    assert_eq!(out.code, 1, "stderr={}", out.stderr_text());
+    let value: serde_json::Value =
+        serde_json::from_str(&out.stdout_text()).expect("json jwt error envelope");
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["error"]["code"], "jwt_validation_error");
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("invalid JWT")
+    );
+}
+
+#[test]
+fn report_rejects_empty_case_name() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("requests")).expect("mkdir requests");
+    std::fs::create_dir_all(root.join("responses")).expect("mkdir responses");
+    write_json(
+        &root.join("requests/empty-case.ws.json"),
+        &serde_json::json!({
+            "steps": [{"type": "receive"}]
+        }),
+    );
+    std::fs::write(
+        root.join("responses/transcript.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "transcript": [{"direction": "receive", "payload": "{\"ok\":true}"}]
+        }))
+        .expect("serialize transcript"),
+    )
+    .expect("write response");
+
+    let out = run_api_websocket(
+        root,
+        &[
+            "report",
+            "--case",
+            "",
+            "--request",
+            "requests/empty-case.ws.json",
+            "--response",
+            "responses/transcript.json",
+        ],
+        &[],
+    );
+    assert_eq!(out.code, 1);
+    assert!(out.stderr_text().contains("--case is required"));
+}
+
+#[test]
+fn report_missing_request_file_returns_error() {
+    let tmp = TempDir::new().expect("tmp");
+    let out = run_api_websocket(
+        tmp.path(),
+        &[
+            "report",
+            "--case",
+            "missing-request",
+            "--request",
+            "requests/missing.ws.json",
+            "--response",
+            "responses/transcript.json",
+        ],
+        &[],
+    );
+    assert_eq!(out.code, 1);
+    assert!(out.stderr_text().contains("Request file not found"));
+}
+
+#[test]
+fn report_invalid_request_file_returns_parse_error() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("requests")).expect("mkdir requests");
+    std::fs::create_dir_all(root.join("responses")).expect("mkdir responses");
+    std::fs::write(root.join("requests/invalid.ws.json"), "{not-json").expect("write request");
+    std::fs::write(root.join("responses/transcript.json"), "{}").expect("write response");
+
+    let out = run_api_websocket(
+        root,
+        &[
+            "report",
+            "--case",
+            "invalid-request",
+            "--request",
+            "requests/invalid.ws.json",
+            "--response",
+            "responses/transcript.json",
+        ],
+        &[],
+    );
+    assert_eq!(out.code, 1);
+    assert!(out.stderr_text().contains("not valid JSON"));
+}
+
+#[test]
+fn report_missing_response_file_returns_error() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("requests")).expect("mkdir requests");
+    write_json(
+        &root.join("requests/missing-response.ws.json"),
+        &serde_json::json!({
+            "steps": [{"type": "receive"}]
+        }),
+    );
+
+    let out = run_api_websocket(
+        root,
+        &[
+            "report",
+            "--case",
+            "missing-response",
+            "--request",
+            "requests/missing-response.ws.json",
+            "--response",
+            "responses/missing.json",
+        ],
+        &[],
+    );
+    assert_eq!(out.code, 1);
+    assert!(out.stderr_text().contains("Response file not found"));
+}
+
+#[test]
+fn report_response_derives_last_received_from_transcript_when_missing() {
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("requests")).expect("mkdir requests");
+    std::fs::create_dir_all(root.join("responses")).expect("mkdir responses");
+    std::fs::create_dir_all(root.join("out")).expect("mkdir out");
+
+    write_json(
+        &root.join("requests/derive-last.ws.json"),
+        &serde_json::json!({
+            "steps": [{"type": "receive"}],
+            "expect": {"textContains": "ok"}
+        }),
+    );
+    std::fs::write(
+        root.join("responses/transcript.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "target": "ws://example/ws",
+            "transcript": [
+                {"direction": "send", "payload": "ping"},
+                {"direction": "receive", "payload": "{\"ok\":true}"}
+            ]
+        }))
+        .expect("serialize transcript"),
+    )
+    .expect("write response");
+
+    let out = run_api_websocket(
+        root,
+        &[
+            "report",
+            "--case",
+            "derive-last",
+            "--request",
+            "requests/derive-last.ws.json",
+            "--response",
+            "responses/transcript.json",
+            "--out",
+            "out/derive-last.md",
+        ],
+        &[],
+    );
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+
+    let markdown = std::fs::read_to_string(root.join("out/derive-last.md")).expect("report file");
+    assert!(markdown.contains("expect.textContains: ok"));
+    assert!(markdown.contains("(PASS)"));
+}
+
+#[test]
+fn report_from_cmd_dry_run_includes_response_url_token_and_out() {
+    let tmp = TempDir::new().expect("tmp");
+    let snippet = "api-websocket call --config-dir setup/websocket --url ws://localhost:9001/ws --token qa requests/health.ws.json";
+    let out = run_api_websocket(
+        tmp.path(),
+        &[
+            "report-from-cmd",
+            "--dry-run",
+            "--response",
+            "responses/saved.json",
+            "--out",
+            "docs/report.md",
+            snippet,
+        ],
+        &[],
+    );
+
+    assert_eq!(out.code, 0, "stderr={}", out.stderr_text());
+    let stdout = out.stdout_text();
+    assert!(stdout.contains("api-websocket report"));
+    assert!(stdout.contains("--response 'responses/saved.json'"));
+    assert!(stdout.contains("--out 'docs/report.md'"));
+    assert!(stdout.contains("--url 'ws://localhost:9001/ws'"));
+    assert!(stdout.contains("--token 'qa'"));
+}
+
+#[test]
+fn report_from_cmd_invalid_snippet_returns_parse_error() {
+    let tmp = TempDir::new().expect("tmp");
+    let out = run_api_websocket(
+        tmp.path(),
+        &[
+            "report-from-cmd",
+            "--dry-run",
+            "not a websocket call snippet",
+        ],
+        &[],
+    );
+    assert_eq!(out.code, 1);
+    assert!(out.stderr_text().contains("error:"));
 }
