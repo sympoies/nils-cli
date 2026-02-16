@@ -401,7 +401,13 @@ fn history_json_missing_file_returns_not_found_envelope() {
 
     let out = run_api_websocket(
         root,
-        &["history", "--format", "json", "--config-dir", "setup/websocket"],
+        &[
+            "history",
+            "--format",
+            "json",
+            "--config-dir",
+            "setup/websocket",
+        ],
         &[],
     );
 
@@ -422,7 +428,13 @@ fn history_json_empty_file_returns_exit_three_and_error_envelope() {
 
     let out = run_api_websocket(
         root,
-        &["history", "--format", "json", "--config-dir", "setup/websocket"],
+        &[
+            "history",
+            "--format",
+            "json",
+            "--config-dir",
+            "setup/websocket",
+        ],
         &[],
     );
 
@@ -470,7 +482,10 @@ fn report_from_cmd_rejects_non_websocket_snippet() {
     let tmp = TempDir::new().expect("tmp");
     let out = run_api_websocket(
         tmp.path(),
-        &["report-from-cmd", "api-rest call requests/health.request.json"],
+        &[
+            "report-from-cmd",
+            "api-rest call requests/health.request.json",
+        ],
         &[],
     );
     assert_eq!(out.code, 1);
