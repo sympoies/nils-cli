@@ -170,11 +170,11 @@ Optional (fallback behavior):
 
 ### Task 4.1: Update skill entrypoint to exec the binary
 - **Location**:
-  - `$AGENTS_HOME/skills/tools/media/image-processing/scripts/image-processing.sh`
+  - `$AGENT_HOME/skills/tools/media/image-processing/scripts/image-processing.sh`
 - **Description**: Replace the Python exec with `exec image-processing "$@"` (or an explicit install path).
 - **Dependencies**: Sprint 3
 - **Complexity**: 2
 - **Acceptance criteria**:
   - Skill runs without requiring `python3`.
 - **Validation**:
-  - `$AGENTS_HOME/skills/tools/media/image-processing/scripts/image-processing.sh --help`
+  - `$AGENT_HOME/skills/tools/media/image-processing/scripts/image-processing.sh --help`

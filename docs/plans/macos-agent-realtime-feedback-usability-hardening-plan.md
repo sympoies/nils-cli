@@ -85,7 +85,7 @@ This plan hardens `macos-agent` for real-world agent development loops where com
   - `crates/macos-agent/tests/common.rs`
   - `crates/macos-agent/tests/contracts.rs`
   - `crates/macos-agent/README.md`
-- **Description**: Add an optional trace sink (`--trace-dir` or equivalent) that writes per-action artifacts (request args, policy, elapsed time, status, stderr summary). Ensure artifact paths are deterministic in test mode and default safely to `AGENTS_HOME/out` when requested by users.
+- **Description**: Add an optional trace sink (`--trace-dir` or equivalent) that writes per-action artifacts (request args, policy, elapsed time, status, stderr summary). Ensure artifact paths are deterministic in test mode and default safely to `AGENT_HOME/out` when requested by users.
 - **Dependencies**:
   - Task 1.1
   - Task 1.2
@@ -96,7 +96,7 @@ This plan hardens `macos-agent` for real-world agent development loops where com
   - README documents trace usage for iterative debugging loops.
 - **Validation**:
   - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --test contracts -- --nocapture`
-  - `rg -n "trace|AGENTS_HOME/out|schema_version" crates/macos-agent/README.md`
+  - `rg -n "trace|AGENT_HOME/out|schema_version" crates/macos-agent/README.md`
 
 ## Sprint 2: Real-app harness realism and failure visibility
 **Goal**: Make real-app suites reflect non-ideal development reality by removing silent skips, reducing fixed sleeps, and improving per-step diagnostics.
@@ -152,7 +152,7 @@ This plan hardens `macos-agent` for real-world agent development loops where com
 - **Validation**:
   - `MACOS_AGENT_REAL_E2E=1 MACOS_AGENT_REAL_E2E_MUTATING=1 MACOS_AGENT_REAL_E2E_APPS=finder MACOS_AGENT_REAL_E2E_PROFILE=default-1440p cargo test -p macos-agent --test e2e_real_apps -- real_e2e_foundation_collects_artifacts --nocapture`
   - `cargo test -p macos-agent --test e2e_real_apps -- matrix_runner_emits_artifact_index_with_required_fields`
-  - `latest_dir="$(ls -td "${AGENTS_HOME:-$HOME/.agents}/out/macos-agent-e2e"/* 2>/dev/null | head -n 1)"; test -n "$latest_dir" && test -f "$latest_dir/steps.jsonl"`
+  - `latest_dir="$(ls -td "${AGENT_HOME:-$HOME/.agents}/out/macos-agent-e2e"/* 2>/dev/null | head -n 1)"; test -n "$latest_dir" && test -f "$latest_dir/steps.jsonl"`
 
 ### Task 2.3: Reduce fixed sleeps via condition-based waits
 - **Location**:
@@ -235,7 +235,7 @@ This plan hardens `macos-agent` for real-world agent development loops where com
   - `crates/macos-agent/src/commands/profile.rs`
   - `crates/macos-agent/tests/fixtures/real_e2e_profile_default_1440p.json`
   - `crates/macos-agent/README.md`
-- **Description**: Add `profile validate` for schema/bounds checks and `profile init` (or equivalent) to generate a profile scaffold under `AGENTS_HOME/out`. This reduces coordinate drift errors before live runs.
+- **Description**: Add `profile validate` for schema/bounds checks and `profile init` (or equivalent) to generate a profile scaffold under `AGENT_HOME/out`. This reduces coordinate drift errors before live runs.
 - **Dependencies**:
   - none
 - **Complexity**: 7

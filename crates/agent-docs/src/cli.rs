@@ -15,7 +15,7 @@ use crate::model::{
 )]
 pub struct Cli {
     #[arg(long, global = true, value_name = "PATH")]
-    pub agents_home: Option<PathBuf>,
+    pub agent_home: Option<PathBuf>,
 
     #[arg(long, global = true, value_name = "PATH")]
     pub project_path: Option<PathBuf>,

@@ -32,7 +32,7 @@ This plan expands `macos-agent` real-desktop coverage from basic readiness check
   - `MACOS_AGENT_REAL_E2E=1 MACOS_AGENT_REAL_E2E_MUTATING=1 MACOS_AGENT_REAL_E2E_PROFILE=default-1440p cargo test -p macos-agent --test e2e_real_apps -- real_e2e_foundation_collects_artifacts --nocapture`
 - Verify:
   - Foundation test reports actionable skip reasons when prerequisites are missing.
-  - Mutating run captures timestamped screenshots and step logs under `AGENTS_HOME/out/macos-agent-e2e/`.
+  - Mutating run captures timestamped screenshots and step logs under `AGENT_HOME/out/macos-agent-e2e/`.
 
 **Parallelization notes**:
 - `Task 1.1` and `Task 1.2` can run in parallel.
@@ -59,7 +59,7 @@ This plan expands `macos-agent` real-desktop coverage from basic readiness check
   - `crates/macos-agent/tests/real_common.rs`
   - `crates/macos-agent/tests/e2e_real_apps.rs`
   - `crates/macos-agent/tests/fixtures/real_e2e_profile_default_1440p.json`
-- **Description**: Implement shared helpers for real-desktop runs: app-installed probing, profile-based coordinate loading, resilient command execution wrappers, and standardized artifact capture (`json` output snapshots + screenshots + step transcript). Ensure all artifacts default to `AGENTS_HOME/out`.
+- **Description**: Implement shared helpers for real-desktop runs: app-installed probing, profile-based coordinate loading, resilient command execution wrappers, and standardized artifact capture (`json` output snapshots + screenshots + step transcript). Ensure all artifacts default to `AGENT_HOME/out`.
 - **Dependencies**:
   - none
 - **Complexity**: 8

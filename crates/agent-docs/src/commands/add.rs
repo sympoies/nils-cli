@@ -42,7 +42,7 @@ pub fn upsert_document(
     request: AddDocumentRequest,
 ) -> Result<AddDocumentReport, ConfigLoadError> {
     let target_root = match request.target {
-        Scope::Home => roots.agents_home.as_path(),
+        Scope::Home => roots.agent_home.as_path(),
         Scope::Project => roots.project_path.as_path(),
     };
     upsert_document_at_root(target_root, request)
@@ -283,7 +283,7 @@ mod tests {
 
     fn roots(home: &TempDir, project: &TempDir) -> ResolvedRoots {
         ResolvedRoots {
-            agents_home: home.path().to_path_buf(),
+            agent_home: home.path().to_path_buf(),
             project_path: project.path().to_path_buf(),
             is_linked_worktree: false,
             git_common_dir: None,

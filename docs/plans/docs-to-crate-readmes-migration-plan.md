@@ -59,7 +59,7 @@ so, it replaces machine-local references (for example `~/.config/zsh/...`, `~/.a
 ### agent-kit
 - `/Users/terry/.config/agent-kit/PATH` (or `~/.config/agent-kit/PATH`) →
   `https://github.com/graysurf/agent-kit/blob/main/PATH`
-- `$AGENTS_HOME/skills/tools/devex/semantic-commit/scripts/FILE` →
+- `$AGENT_HOME/skills/tools/devex/semantic-commit/scripts/FILE` →
   `https://github.com/graysurf/agent-kit/blob/main/skills/tools/devex/semantic-commit/scripts/FILE`
 
 ## Sprint 1: Create per-crate READMEs (migrate docs content)

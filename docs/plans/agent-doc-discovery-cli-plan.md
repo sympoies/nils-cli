@@ -1,7 +1,7 @@
 # Plan: Agent required-doc discovery CLI
 
 ## Overview
-Build a new workspace CLI (`agent-docs`) that helps Codex/agents resolve the mandatory markdown documents they must follow at startup and during task execution. The CLI does not replace `AGENTS.md`; it provides a deterministic lookup layer for both `AGENTS_HOME` and project-level policy files, including override precedence (`AGENTS.override.md` over `AGENTS.md`). The design includes a TOML extension mechanism so teams can register additional required docs (for example `BINARY_DEPENDENCIES.md` in `nils-cli`) without hard-coding new rules. The CLI also provides a default `AGENTS.md` template scaffold for new repos so agents are explicitly instructed to use `agent-docs` and `AGENT_DOCS.toml`, plus a baseline-audit/remediation flow for missing minimum docs.
+Build a new workspace CLI (`agent-docs`) that helps Codex/agents resolve the mandatory markdown documents they must follow at startup and during task execution. The CLI does not replace `AGENTS.md`; it provides a deterministic lookup layer for both `AGENT_HOME` and project-level policy files, including override precedence (`AGENTS.override.md` over `AGENTS.md`). The design includes a TOML extension mechanism so teams can register additional required docs (for example `BINARY_DEPENDENCIES.md` in `nils-cli`) without hard-coding new rules. The CLI also provides a default `AGENTS.md` template scaffold for new repos so agents are explicitly instructed to use `agent-docs` and `AGENT_DOCS.toml`, plus a baseline-audit/remediation flow for missing minimum docs.
 
 ## Scope
 - In scope: new Rust CLI crate, context-based document resolution, built-in rule set for home/project policies, TOML-based extension files, optional write commands to append/update TOML entries, default `AGENTS.md` template scaffold for bootstrap, baseline missing-doc detection, and scaffold commands to generate missing baseline docs, tests, docs, wrappers/completions.
@@ -9,15 +9,15 @@ Build a new workspace CLI (`agent-docs`) that helps Codex/agents resolve the man
 
 ## Assumptions (if any)
 1. Binary/crate name is `agent-docs` and it will be a new workspace member under `crates/agent-docs`.
-2. Default extension files are `AGENT_DOCS.toml` at both scopes: `$AGENTS_HOME/AGENT_DOCS.toml` and `$PROJECT_PATH/AGENT_DOCS.toml`.
+2. Default extension files are `AGENT_DOCS.toml` at both scopes: `$AGENT_HOME/AGENT_DOCS.toml` and `$PROJECT_PATH/AGENT_DOCS.toml`.
 3. Project root resolution order is: `PROJECT_PATH` env var -> `git rev-parse --show-toplevel` from cwd -> current working directory.
 4. The CLI remains read-only unless users run an explicit mutation command (`agent-docs add ...`) targeting `home` or `project` TOML.
 
 ## Compatibility contract (required behavior)
 - Contexts:
   - `startup`: always include global and project AGENTS policy (`AGENTS.override.md` preferred over `AGENTS.md` per scope).
-  - `skill-dev`: include `DEVELOPMENT.md` in `AGENTS_HOME` when skill development/management is in scope.
-  - `task-tools`: include `CLI_TOOLS.md` in `AGENTS_HOME` when task requires tool selection guidance.
+  - `skill-dev`: include `DEVELOPMENT.md` in `AGENT_HOME` when skill development/management is in scope.
+  - `task-tools`: include `CLI_TOOLS.md` in `AGENT_HOME` when task requires tool selection guidance.
   - `project-dev`: include project `DEVELOPMENT.md` for development/modification tasks.
 - Output:
   - `resolve` returns an ordered, de-duplicated list with reason metadata (`why`, `scope`, `required`, `source`).
@@ -36,7 +36,7 @@ Build a new workspace CLI (`agent-docs`) that helps Codex/agents resolve the man
   - If user approves and provides no extra writing instructions, `scaffold-baseline` generates baseline docs from repository signals (for example `README.md`, `Cargo.toml`, existing scripts, and current directory structure).
 
 ## Minimum Baseline 文件清單
-- `AGENTS_HOME`:
+- `AGENT_HOME`:
   - Required for startup: `AGENTS.override.md` or `AGENTS.md`
   - Required for skill development tasks: `DEVELOPMENT.md`
   - Required for tool-selection tasks: `CLI_TOOLS.md`
@@ -61,7 +61,7 @@ Build a new workspace CLI (`agent-docs`) that helps Codex/agents resolve the man
 - **Complexity**: 5
 - **Acceptance criteria**:
   - README defines all supported contexts and required built-in docs per context.
-  - README documents path resolution precedence for `AGENTS_HOME` and `PROJECT_PATH`.
+  - README documents path resolution precedence for `AGENT_HOME` and `PROJECT_PATH`.
   - README includes output examples for text and JSON mode.
 - **Validation**:
   - `test -f crates/agent-docs/README.md`
@@ -136,7 +136,7 @@ Build a new workspace CLI (`agent-docs`) that helps Codex/agents resolve the man
 - **Location**:
   - `crates/agent-docs/src/env.rs`
   - `crates/agent-docs/src/paths.rs`
-- **Description**: Implement `AGENTS_HOME` and `PROJECT_PATH` resolution contract with fallbacks, path normalization, and scope root discovery used by resolver and tests.
+- **Description**: Implement `AGENT_HOME` and `PROJECT_PATH` resolution contract with fallbacks, path normalization, and scope root discovery used by resolver and tests.
 - **Dependencies**:
   - Task 2.1
 - **Complexity**: 7
@@ -159,7 +159,7 @@ Build a new workspace CLI (`agent-docs`) that helps Codex/agents resolve the man
 - **Complexity**: 8
 - **Acceptance criteria**:
   - `startup` returns AGENTS documents from both scopes with override-first preference.
-  - `skill-dev` and `task-tools` include AGENTS_HOME docs when present.
+  - `skill-dev` and `task-tools` include AGENT_HOME docs when present.
   - `project-dev` includes project `DEVELOPMENT.md` rule.
   - `--strict` exits non-zero when required docs are missing.
 - **Validation**:
@@ -413,7 +413,7 @@ Build a new workspace CLI (`agent-docs`) that helps Codex/agents resolve the man
 - Integration:
   - Fixture-driven command tests for `resolve`, `contexts`, and `add` across home/project scope combinations.
 - E2E/manual:
-  - Use a temp `AGENTS_HOME` plus temp project repo, run `agent-docs resolve` in each context, and confirm emitted docs match expected policy files.
+  - Use a temp `AGENT_HOME` plus temp project repo, run `agent-docs resolve` in each context, and confirm emitted docs match expected policy files.
 
 ## Risks & gotchas
 - Ambiguous policy precedence can cause incorrect agent behavior; mitigation is explicit order metadata in output and strict fixture assertions.

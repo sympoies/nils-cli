@@ -47,7 +47,7 @@ Outputs:
   - selected crate list and versions,
   - crates.io status snapshot metadata (json/text path + status).
 - Default report path:
-- `$AGENTS_HOME/out/crates-io-publish-report-<timestamp>.md`
+- `$AGENT_HOME/out/crates-io-publish-report-<timestamp>.md`
 - Default status snapshot outputs:
   - `${report_file%.md}.status.json`
   - `${report_file%.md}.status.md`

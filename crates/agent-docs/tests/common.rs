@@ -15,7 +15,7 @@ static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 pub struct FixtureWorkspace {
     _temp: TestTempDir,
     pub root: PathBuf,
-    pub agents_home: PathBuf,
+    pub agent_home: PathBuf,
     pub project_path: PathBuf,
 }
 
@@ -23,24 +23,24 @@ impl FixtureWorkspace {
     pub fn from_fixtures() -> Self {
         let temp = TestTempDir::new("agent-docs-resolve-builtin");
         let root = temp.path().to_path_buf();
-        let agents_home = root.join("agents-home");
+        let agent_home = root.join("agent-home");
         let project_path = root.join("project");
 
-        copy_fixture_tree(&fixture_path("home"), &agents_home);
+        copy_fixture_tree(&fixture_path("home"), &agent_home);
         copy_fixture_tree(&fixture_path("project"), &project_path);
-        ensure_agents_fixture_docs(&agents_home, &project_path);
+        ensure_agents_fixture_docs(&agent_home, &project_path);
 
         Self {
             _temp: temp,
             root,
-            agents_home,
+            agent_home,
             project_path,
         }
     }
 
     pub fn roots(&self) -> ResolvedRoots {
         ResolvedRoots {
-            agents_home: self.agents_home.clone(),
+            agent_home: self.agent_home.clone(),
             project_path: self.project_path.clone(),
             is_linked_worktree: false,
             git_common_dir: None,
@@ -81,8 +81,8 @@ pub fn run_resolve_exit_code(
         OsString::from(context.as_str()),
         OsString::from("--format"),
         OsString::from(format.as_str()),
-        OsString::from("--agents-home"),
-        workspace.agents_home.as_os_str().to_owned(),
+        OsString::from("--agent-home"),
+        workspace.agent_home.as_os_str().to_owned(),
         OsString::from("--project-path"),
         workspace.project_path.as_os_str().to_owned(),
     ];
@@ -162,8 +162,8 @@ impl CliOutput {
 pub fn run_agent_docs_command(workspace: &FixtureWorkspace, args: &[&str]) -> CliOutput {
     let mut command = Command::new(agent_docs_bin_path());
     command
-        .arg("--agents-home")
-        .arg(&workspace.agents_home)
+        .arg("--agent-home")
+        .arg(&workspace.agent_home)
         .arg("--project-path")
         .arg(&workspace.project_path)
         .args(args);
@@ -269,13 +269,13 @@ fn copy_fixture_tree(source: &Path, destination: &Path) {
     }
 }
 
-fn ensure_agents_fixture_docs(agents_home: &Path, project_path: &Path) {
+fn ensure_agents_fixture_docs(agent_home: &Path, project_path: &Path) {
     ensure_text_file(
-        &agents_home.join("AGENTS.md"),
+        &agent_home.join("AGENTS.md"),
         "# Fixture: home AGENTS default\n\nid: fixture-home-agents-default\n",
     );
     ensure_text_file(
-        &agents_home.join("AGENTS.override.md"),
+        &agent_home.join("AGENTS.override.md"),
         "# Fixture: home AGENTS override\n\nid: fixture-home-agents-override\n",
     );
     ensure_text_file(

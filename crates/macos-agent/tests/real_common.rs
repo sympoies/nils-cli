@@ -1007,8 +1007,8 @@ fn write_json_to_path(path: &Path, value: &serde_json::Value) -> Result<(), Stri
 }
 
 fn agents_out_dir() -> PathBuf {
-    if let Ok(agents_home) = env::var("AGENTS_HOME") {
-        return PathBuf::from(agents_home).join("out");
+    if let Ok(agent_home) = env::var("AGENT_HOME") {
+        return PathBuf::from(agent_home).join("out");
     }
     if let Some(home) = env::var_os("HOME") {
         return PathBuf::from(home).join(".agents").join("out");

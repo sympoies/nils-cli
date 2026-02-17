@@ -10,7 +10,7 @@ use agent_docs::model::{Context, Scope};
 fn add_full_flow_for_home_and_project_scopes() {
     let workspace = common::FixtureWorkspace::from_fixtures();
     common::write_text(
-        &workspace.agents_home.join("TASK_TOOLS_EXTRA.md"),
+        &workspace.agent_home.join("TASK_TOOLS_EXTRA.md"),
         "# Fixture: home TASK_TOOLS_EXTRA\n",
     );
     common::write_text(
@@ -49,7 +49,7 @@ fn add_full_flow_for_home_and_project_scopes() {
     assert!(
         home_add.stdout.contains(&format!(
             "config={}",
-            workspace.agents_home.join(CONFIG_FILE_NAME).display()
+            workspace.agent_home.join(CONFIG_FILE_NAME).display()
         )),
         "add(home) output should include config path, got:\n{}",
         home_add.stdout
@@ -94,7 +94,7 @@ fn add_full_flow_for_home_and_project_scopes() {
         project_add.stdout
     );
 
-    let home_loaded = load_scope_config(Scope::Home, &workspace.agents_home)
+    let home_loaded = load_scope_config(Scope::Home, &workspace.agent_home)
         .expect("load home config")
         .expect("home config should exist");
     let home_entry = home_loaded
@@ -216,7 +216,7 @@ fn run_home_task_tools_add_update(workspace: &common::FixtureWorkspace) -> commo
 }
 
 fn assert_home_config_matches_golden(workspace: &common::FixtureWorkspace, fixture: &str) {
-    let actual = fs::read_to_string(workspace.agents_home.join(CONFIG_FILE_NAME))
+    let actual = fs::read_to_string(workspace.agent_home.join(CONFIG_FILE_NAME))
         .expect("read updated home config");
     let expected = fs::read_to_string(common::fixture_path(fixture)).expect("read golden fixture");
     assert_eq!(
@@ -228,7 +228,7 @@ fn assert_home_config_matches_golden(workspace: &common::FixtureWorkspace, fixtu
 #[test]
 fn add_update_preserves_existing_key_order_in_snapshot() {
     let workspace = common::FixtureWorkspace::from_fixtures();
-    let config_path = workspace.agents_home.join(CONFIG_FILE_NAME);
+    let config_path = workspace.agent_home.join(CONFIG_FILE_NAME);
     let input = fs::read_to_string(common::fixture_path("add/preserve-key-order.input.toml"))
         .expect("read key-order input fixture");
     common::write_text(&config_path, &input);
@@ -252,7 +252,7 @@ fn add_update_preserves_existing_key_order_in_snapshot() {
 #[test]
 fn add_update_preserves_multisection_comment_style_in_snapshot() {
     let workspace = common::FixtureWorkspace::from_fixtures();
-    let config_path = workspace.agents_home.join(CONFIG_FILE_NAME);
+    let config_path = workspace.agent_home.join(CONFIG_FILE_NAME);
     let input = fs::read_to_string(common::fixture_path(
         "add/preserve-multisection-comments.input.toml",
     ))

@@ -208,8 +208,8 @@ fn trace_dir(cli: Option<&Cli>) -> PathBuf {
 }
 
 fn agents_out_dir() -> PathBuf {
-    if let Ok(agents_home) = std::env::var("AGENTS_HOME") {
-        return PathBuf::from(agents_home).join("out");
+    if let Ok(agent_home) = std::env::var("AGENT_HOME") {
+        return PathBuf::from(agent_home).join("out");
     }
     if let Some(home) = std::env::var_os("HOME") {
         return PathBuf::from(home).join(".agents").join("out");

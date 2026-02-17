@@ -17,11 +17,11 @@ fn run_from_group_help_and_parse_errors_return_expected_exit_codes() {
 #[test]
 fn run_from_provider_and_diag_subcommands_dispatch_successfully() {
     let lock = GlobalStateLock::new();
-    let agents_home = StubBinDir::new();
-    let agents_home_dir = agents_home.path().join("agents-home");
+    let agent_home = StubBinDir::new();
+    let agents_home_dir = agent_home.path().join("agent-home");
     std::fs::create_dir_all(&agents_home_dir).expect("create agents home");
     let agents_home_value = agents_home_dir.to_string_lossy().to_string();
-    let _agents_home = EnvGuard::set(&lock, "AGENTS_HOME", agents_home_value.as_str());
+    let _agents_home = EnvGuard::set(&lock, "AGENT_HOME", agents_home_value.as_str());
 
     assert_eq!(
         agentctl::run_from(["agentctl", "provider", "list", "--format", "json"]),
@@ -63,10 +63,10 @@ fn run_from_debug_and_workflow_subcommands_dispatch_successfully() {
     );
     let _path = prepend_path(&lock, stub.path());
     let _cwd = CwdGuard::set(&lock, repo.path()).expect("set cwd");
-    let agents_home_dir = repo.path().join("agents-home");
+    let agents_home_dir = repo.path().join("agent-home");
     std::fs::create_dir_all(&agents_home_dir).expect("create agents home");
     let agents_home_value = agents_home_dir.to_string_lossy().to_string();
-    let _agents_home = EnvGuard::set(&lock, "AGENTS_HOME", agents_home_value.as_str());
+    let _agents_home = EnvGuard::set(&lock, "AGENT_HOME", agents_home_value.as_str());
 
     let bundle_output_dir = repo.path().join("bundle-output");
     let bundle_output_arg = bundle_output_dir.to_string_lossy().to_string();
