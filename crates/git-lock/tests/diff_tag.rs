@@ -1,6 +1,7 @@
 mod common;
 
 use common::{commit_file, git, init_repo, run_git_lock, run_git_lock_output};
+use nils_test_support::cmd::{CmdOptions, run_with};
 use std::path::Path;
 use tempfile::TempDir;
 
@@ -43,7 +44,17 @@ fn diff_no_color_env_overrides_forced_git_color() {
     commit_file(repo.path(), "file.txt", "change", "change");
     run_git_lock(repo.path(), &["lock", "next"], &env, None);
 
-    let colored_output = run_git_lock_output(repo.path(), &["diff", "base", "next"], &env, None);
+    let colored_options = CmdOptions::new()
+        .with_cwd(repo.path())
+        .with_env("ZSH_CACHE_DIR", cache_dir)
+        .with_env_remove("NO_COLOR")
+        .with_stdin_bytes(&[]);
+    let colored_output = run_with(
+        &common::git_lock_bin(),
+        &["diff", "base", "next"],
+        &colored_options,
+    )
+    .into_output();
     let colored_stdout = String::from_utf8_lossy(&colored_output.stdout);
     assert!(
         colored_stdout.contains("\u{1b}["),

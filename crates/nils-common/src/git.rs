@@ -1,3 +1,5 @@
+use std::error::Error;
+use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Output, Stdio};
@@ -6,6 +8,83 @@ use std::process::{Command, ExitStatus, Output, Stdio};
 pub enum GitContextError {
     GitNotFound,
     NotRepository,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NameStatusParseError {
+    MalformedOutput,
+}
+
+impl fmt::Display for NameStatusParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            NameStatusParseError::MalformedOutput => {
+                write!(f, "error: malformed name-status output")
+            }
+        }
+    }
+}
+
+impl Error for NameStatusParseError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NameStatusZEntry<'a> {
+    pub status_raw: &'a [u8],
+    pub path: &'a [u8],
+    pub old_path: Option<&'a [u8]>,
+}
+
+pub fn parse_name_status_z(buf: &[u8]) -> Result<Vec<NameStatusZEntry<'_>>, NameStatusParseError> {
+    let parts: Vec<&[u8]> = buf
+        .split(|b| *b == 0)
+        .filter(|part| !part.is_empty())
+        .collect();
+    let mut out: Vec<NameStatusZEntry<'_>> = Vec::new();
+    let mut i = 0;
+
+    while i < parts.len() {
+        let status_raw = parts[i];
+        i += 1;
+
+        if matches!(status_raw.first(), Some(b'R' | b'C')) {
+            let old = *parts.get(i).ok_or(NameStatusParseError::MalformedOutput)?;
+            let new = *parts
+                .get(i + 1)
+                .ok_or(NameStatusParseError::MalformedOutput)?;
+            i += 2;
+            out.push(NameStatusZEntry {
+                status_raw,
+                path: new,
+                old_path: Some(old),
+            });
+        } else {
+            let file = *parts.get(i).ok_or(NameStatusParseError::MalformedOutput)?;
+            i += 1;
+            out.push(NameStatusZEntry {
+                status_raw,
+                path: file,
+                old_path: None,
+            });
+        }
+    }
+
+    Ok(out)
+}
+
+pub fn is_lockfile_path(path: &str) -> bool {
+    let name = Path::new(path)
+        .file_name()
+        .and_then(|segment| segment.to_str())
+        .unwrap_or("");
+    matches!(
+        name,
+        "yarn.lock"
+            | "package-lock.json"
+            | "pnpm-lock.yaml"
+            | "bun.lockb"
+            | "bun.lock"
+            | "npm-shrinkwrap.json"
+    )
 }
 
 pub fn run_output(args: &[&str]) -> io::Result<Output> {
@@ -285,5 +364,46 @@ mod tests {
             require_work_tree_in(outside.path()),
             Err(GitContextError::NotRepository)
         );
+    }
+
+    #[test]
+    fn parse_name_status_z_handles_rename_copy_and_modify() {
+        let bytes = b"R100\0old.txt\0new.txt\0C90\0src.rs\0dst.rs\0M\0file.txt\0";
+        let entries = parse_name_status_z(bytes).expect("parse name-status");
+
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].status_raw, b"R100");
+        assert_eq!(entries[0].path, b"new.txt");
+        assert_eq!(entries[0].old_path, Some(&b"old.txt"[..]));
+        assert_eq!(entries[1].status_raw, b"C90");
+        assert_eq!(entries[1].path, b"dst.rs");
+        assert_eq!(entries[1].old_path, Some(&b"src.rs"[..]));
+        assert_eq!(entries[2].status_raw, b"M");
+        assert_eq!(entries[2].path, b"file.txt");
+        assert_eq!(entries[2].old_path, None);
+    }
+
+    #[test]
+    fn parse_name_status_z_errors_on_malformed_output() {
+        let err = parse_name_status_z(b"R100\0old.txt\0").expect_err("expected parse error");
+        assert_eq!(err, NameStatusParseError::MalformedOutput);
+        assert_eq!(err.to_string(), "error: malformed name-status output");
+    }
+
+    #[test]
+    fn is_lockfile_path_matches_known_package_manager_lockfiles() {
+        for path in [
+            "yarn.lock",
+            "frontend/package-lock.json",
+            "subdir/pnpm-lock.yaml",
+            "bun.lockb",
+            "bun.lock",
+            "npm-shrinkwrap.json",
+        ] {
+            assert!(is_lockfile_path(path), "expected {path} to be a lockfile");
+        }
+
+        assert!(!is_lockfile_path("Cargo.lock"));
+        assert!(!is_lockfile_path("package-lock.json.bak"));
     }
 }

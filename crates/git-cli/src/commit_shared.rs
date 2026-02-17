@@ -66,41 +66,17 @@ pub(crate) struct NameStatusEntry {
 }
 
 pub(crate) fn parse_name_status_z(bytes: &[u8]) -> Result<Vec<NameStatusEntry>> {
-    let parts: Vec<&[u8]> = bytes.split(|b| *b == 0).filter(|p| !p.is_empty()).collect();
-    let mut out: Vec<NameStatusEntry> = Vec::new();
-    let mut i = 0;
-
-    while i < parts.len() {
-        let status_raw = String::from_utf8_lossy(parts[i]).to_string();
-        i += 1;
-
-        if status_raw.starts_with('R') || status_raw.starts_with('C') {
-            let old = parts
-                .get(i)
-                .ok_or_else(|| anyhow!("error: malformed name-status output"))?;
-            let new = parts
-                .get(i + 1)
-                .ok_or_else(|| anyhow!("error: malformed name-status output"))?;
-            i += 2;
-            out.push(NameStatusEntry {
-                status_raw,
-                path: String::from_utf8_lossy(new).to_string(),
-                old_path: Some(String::from_utf8_lossy(old).to_string()),
-            });
-        } else {
-            let file = parts
-                .get(i)
-                .ok_or_else(|| anyhow!("error: malformed name-status output"))?;
-            i += 1;
-            out.push(NameStatusEntry {
-                status_raw,
-                path: String::from_utf8_lossy(file).to_string(),
-                old_path: None,
-            });
-        }
-    }
-
-    Ok(out)
+    let parsed = common_git::parse_name_status_z(bytes).map_err(|err| anyhow!("{err}"))?;
+    Ok(parsed
+        .into_iter()
+        .map(|entry| NameStatusEntry {
+            status_raw: String::from_utf8_lossy(entry.status_raw).to_string(),
+            path: String::from_utf8_lossy(entry.path).to_string(),
+            old_path: entry
+                .old_path
+                .map(|old_path| String::from_utf8_lossy(old_path).to_string()),
+        })
+        .collect())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -153,19 +129,7 @@ pub(crate) fn diff_numstat(path: &str) -> Result<DiffNumstat> {
 }
 
 pub(crate) fn is_lockfile(path: &str) -> bool {
-    let name = std::path::Path::new(path)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
-    matches!(
-        name,
-        "yarn.lock"
-            | "package-lock.json"
-            | "pnpm-lock.yaml"
-            | "bun.lockb"
-            | "bun.lock"
-            | "npm-shrinkwrap.json"
-    )
+    common_git::is_lockfile_path(path)
 }
 
 #[cfg(test)]
