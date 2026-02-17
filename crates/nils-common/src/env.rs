@@ -25,6 +25,10 @@ pub fn no_color_enabled() -> bool {
     std::env::var_os("NO_COLOR").is_some()
 }
 
+pub fn no_color_requested(explicit_no_color: bool) -> bool {
+    explicit_no_color || no_color_enabled()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,5 +89,20 @@ mod tests {
         let lock = GlobalStateLock::new();
         let _guard = EnvGuard::set(&lock, "NO_COLOR", "");
         assert!(no_color_enabled());
+    }
+
+    #[test]
+    fn no_color_requested_respects_explicit_flag() {
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::remove(&lock, "NO_COLOR");
+        assert!(no_color_requested(true));
+        assert!(!no_color_requested(false));
+    }
+
+    #[test]
+    fn no_color_requested_respects_env_presence() {
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::set(&lock, "NO_COLOR", "1");
+        assert!(no_color_requested(false));
     }
 }

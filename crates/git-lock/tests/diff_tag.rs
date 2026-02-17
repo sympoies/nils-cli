@@ -1,6 +1,6 @@
 mod common;
 
-use common::{commit_file, init_repo, run_git_lock, run_git_lock_output};
+use common::{commit_file, git, init_repo, run_git_lock, run_git_lock_output};
 use std::path::Path;
 use tempfile::TempDir;
 
@@ -24,6 +24,34 @@ fn diff_no_color() {
         &env,
         None,
     );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("🧮 Comparing commits"));
+    assert!(!stdout.contains("\u{1b}["));
+}
+
+#[test]
+fn diff_no_color_env_overrides_forced_git_color() {
+    let repo = init_repo();
+    let cache = cache_dir();
+    let cache_dir = cache.path().to_str().expect("cache path");
+    let env = [("ZSH_CACHE_DIR", cache_dir)];
+
+    git(repo.path(), &["config", "color.ui", "always"]);
+
+    run_git_lock(repo.path(), &["lock", "base"], &env, None);
+    commit_file(repo.path(), "file.txt", "change", "change");
+    run_git_lock(repo.path(), &["lock", "next"], &env, None);
+
+    let colored_output = run_git_lock_output(repo.path(), &["diff", "base", "next"], &env, None);
+    let colored_stdout = String::from_utf8_lossy(&colored_output.stdout);
+    assert!(
+        colored_stdout.contains("\u{1b}["),
+        "expected ANSI output when git config forces color"
+    );
+
+    let no_color_env = [("ZSH_CACHE_DIR", cache_dir), ("NO_COLOR", "1")];
+    let output = run_git_lock_output(repo.path(), &["diff", "base", "next"], &no_color_env, None);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("🧮 Comparing commits"));
