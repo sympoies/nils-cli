@@ -7,6 +7,7 @@ use crate::commit_shared::{
 use crate::prompt;
 use crate::util;
 use anyhow::{Result, anyhow};
+use nils_common::env as shared_env;
 use nils_common::git::{self as common_git, GitContextError};
 use nils_common::shell::{AnsiStripMode, strip_ansi as strip_ansi_impl};
 use std::env;
@@ -202,7 +203,7 @@ fn git_scope_available() -> bool {
 
 fn git_scope_output(no_color: bool) -> Result<String> {
     let mut args: Vec<&str> = vec!["staged"];
-    if no_color || env::var_os("NO_COLOR").is_some() {
+    if shared_env::no_color_requested(no_color) {
         args.push("--no-color");
     }
 

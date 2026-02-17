@@ -1,9 +1,10 @@
+use nils_common::env as shared_env;
 use std::io::{self, IsTerminal};
 
 const CURRENT_PROFILE_FG: &str = "\x1b[38;2;199;146;234m";
 
 pub fn should_color() -> bool {
-    if std::env::var_os("NO_COLOR").is_some() {
+    if shared_env::no_color_enabled() {
         return false;
     }
     io::stdout().is_terminal()

@@ -227,6 +227,11 @@ mod tests {
     use nils_test_support::{GlobalStateLock, StubBinDir, prepend_path};
     use std::fs;
 
+    #[cfg(unix)]
+    fn shell_program() -> &'static str {
+        "/bin/sh"
+    }
+
     #[test]
     fn find_in_path_with_explicit_missing_path_returns_none() {
         let dir = tempfile::TempDir::new().expect("tempdir");
@@ -325,8 +330,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn run_output_returns_output_for_nonzero_status() {
-        let output = run_output("sh", &["-c", "printf 'oops' 1>&2; printf 'out'; exit 2"])
-            .expect("run output");
+        let output = run_output(
+            shell_program(),
+            &["-c", "printf 'oops' 1>&2; printf 'out'; exit 2"],
+        )
+        .expect("run output");
 
         assert!(!output.status.success());
         assert_eq!(output.stdout_lossy(), "out");
@@ -336,8 +344,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn run_checked_returns_nonzero_error_with_captured_output() {
-        let err = run_checked("sh", &["-c", "printf 'e' 1>&2; printf 'o'; exit 7"])
-            .expect_err("expected nonzero error");
+        let err = run_checked(
+            shell_program(),
+            &["-c", "printf 'e' 1>&2; printf 'o'; exit 7"],
+        )
+        .expect_err("expected nonzero error");
 
         match err {
             ProcessError::Io(_) => panic!("expected nonzero error"),
@@ -352,7 +363,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn run_stdout_trimmed_trims_trailing_whitespace() {
-        let stdout = run_stdout_trimmed("sh", &["-c", "printf ' hello \\n\\n'"]).expect("stdout");
+        let stdout =
+            run_stdout_trimmed(shell_program(), &["-c", "printf ' hello \\n\\n'"]).expect("stdout");
 
         assert_eq!(stdout, "hello");
     }
@@ -360,10 +372,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn run_status_helpers_keep_stdio_contracts() {
-        let quiet = run_status_quiet("sh", &["-c", "exit 0"]).expect("quiet status");
+        let quiet = run_status_quiet(shell_program(), &["-c", "exit 0"]).expect("quiet status");
         assert!(quiet.success());
 
-        let inherit = run_status_inherit("sh", &["-c", "exit 3"]).expect("inherit status");
+        let inherit =
+            run_status_inherit(shell_program(), &["-c", "exit 3"]).expect("inherit status");
         assert_eq!(inherit.code(), Some(3));
     }
 }

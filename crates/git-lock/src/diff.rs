@@ -1,4 +1,5 @@
 use anyhow::Result;
+use nils_common::env as shared_env;
 use std::process::Command;
 
 use crate::messages;
@@ -71,7 +72,7 @@ pub fn run(args: &[String]) -> Result<i32> {
     println!();
 
     let mut log_args = vec!["log", "--oneline", "--graph", "--decorate"];
-    if no_color || std::env::var_os("NO_COLOR").is_some() {
+    if shared_env::no_color_requested(no_color) {
         log_args.push("--color=never");
     }
     let range = format!("{hash1}..{hash2}");
