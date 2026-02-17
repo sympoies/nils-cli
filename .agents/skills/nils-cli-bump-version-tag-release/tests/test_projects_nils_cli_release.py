@@ -12,4 +12,4 @@ def test_projects_nils_cli_release_contract() -> None:
 
 def test_projects_nils_cli_release_entrypoints_exist() -> None:
     skill_root = Path(__file__).resolve().parents[1]
-    assert_entrypoints_exist(skill_root, ["scripts/nils-cli-release.sh"])
+    assert_entrypoints_exist(skill_root, ["scripts/nils-cli-bump-version-tag-release.sh"])

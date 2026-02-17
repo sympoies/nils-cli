@@ -428,7 +428,7 @@ Migration steps:
 **Demo/Validation**:
 - Command(s):
   - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent`
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - Verify:
   - Full crate test suite runs without controlling the real desktop.
   - Workspace checks and coverage gate continue to pass.
@@ -506,7 +506,7 @@ Migration steps:
   - Workspace coverage remains at or above 80.00 percent.
   - No command contract regressions in existing crates.
 - **Validation**:
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 80`
   - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
 

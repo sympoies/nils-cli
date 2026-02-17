@@ -200,7 +200,7 @@ risk.
 ### Task 3.3: Coverage checkpoint and repo gates
 - **Location**:
   - `target/coverage/api-rest.lcov.info`
-  - `.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - **Description**: Re-run coverage and repo-required checks to confirm no regressions.
 - **Dependencies**:
   - Task 3.1
@@ -212,14 +212,14 @@ risk.
 - **Validation**:
   - `cargo llvm-cov nextest --profile ci -p api-rest --lcov --output-path target/coverage/api-rest.lcov.info`
   - `scripts/ci/coverage-summary.sh target/coverage/api-rest.lcov.info`
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 
 ## Testing Strategy
 - Unit: Expand helper/function tests in `crates/api-rest/src/main.rs` (or new modules) for env
   parsing, command building, and report snippet logic.
 - Integration: Use `nils-test-support` loopback HTTP server for call/report paths and history file
   assertions under temp `setup/rest` directories.
-- E2E/manual: Run the repo’s required checks (`nils-cli-checks`) once changes land.
+- E2E/manual: Run the repo’s required checks (`nils-cli-verify-required-checks`) once changes land.
 
 ## Risks & gotchas
 - Shared refactor overlap with `api-testing-core` plan can cause duplicated work or API churn.
@@ -314,11 +314,11 @@ risk.
   - Added call error-path coverage in `crates/api-rest/tests/integration.rs`.
 - Sprint 3.3: Coverage + required checks
   - Coverage: **83.59% (1131/1353 lines hit)** vs baseline 76.92%.
-  - Required checks: `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh` passed.
+  - Required checks: `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh` passed.
 - Follow-up: Deferred gaps closed
   - JWT strict/expiry validations covered (unit tests in `crates/api-rest/src/commands/call.rs`).
   - Schema/query/header/multipart edge cases covered (`crates/api-rest/tests/schema_edges.rs`).
   - Setup-dir discovery covered (`crates/api-rest/tests/setup_resolution.rs`).
   - Report jq assertions in `--response` mode covered (`crates/api-rest/tests/report.rs`).
   - Coverage: **88.01% (1241/1410 lines hit)** after follow-up tests.
-  - Required checks re-run: `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`.
+  - Required checks re-run: `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`.

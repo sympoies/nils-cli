@@ -37,7 +37,7 @@ jobs:
       - name: Nils CLI checks (includes docs-placement-audit)
         env:
           NILS_CLI_TEST_RUNNER: nextest
-        run: xvfb-run -a ./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh
+        run: xvfb-run -a ./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh
 
       - name: Publish JUnit report
         if: always() && hashFiles('target/nextest/ci/junit.xml') != ''

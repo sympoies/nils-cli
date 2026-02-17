@@ -1,9 +1,9 @@
 ---
-name: nils-cli-create-cli-crate
+name: nils-cli-deliver-new-cli-crate
 description: Plan and implement new CLI crates by following repository standards for parity, JSON contracts, and publish readiness.
 ---
 
-# Create CLI Crate
+# Nils CLI Deliver New CLI Crate
 
 ## Contract
 
@@ -47,7 +47,7 @@ Failure modes:
 
 ## Scripts (only entrypoints)
 
-- `<PROJECT_ROOT>/.agents/skills/nils-cli-create-cli-crate/scripts/create-cli-crate.sh`
+- `<PROJECT_ROOT>/.agents/skills/nils-cli-deliver-new-cli-crate/scripts/create-cli-crate.sh`
 
 ## Workflow
 
@@ -67,7 +67,7 @@ Failure modes:
    - publishable crates follow workspace metadata conventions and release order checks,
    - internal-only crates explicitly set/document `publish = false`.
 6. Validate before delivery:
-   - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+   - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
    - if publishable: `scripts/publish-crates.sh --dry-run --crate <crate-package-name>`
 7. In the final response, include:
    - what was changed,

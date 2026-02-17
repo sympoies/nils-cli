@@ -357,7 +357,7 @@ Deny list:
 - Command(s):
   - `cargo test -p agentctl -p agent-runtime-core -p agent-provider-codex`
   - `cargo test -p codex-cli`
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - Verify:
   - Provider onboarding contract is executable for new providers.
   - Repo checks pass after architecture split.
@@ -430,7 +430,7 @@ Deny list:
 - **Validation**:
   - `plan-tooling validate --file docs/plans/codex-local-dev-debug-automation-upgrade-plan.md`
   - `cargo test -p agentctl -p agent-runtime-core -p agent-provider-codex -p codex-cli`
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 
 ## Testing Strategy
 - Unit:
@@ -468,7 +468,7 @@ Deny list:
 - [x] Validation completed:
   - `plan-tooling validate --file docs/plans/codex-local-dev-debug-automation-upgrade-plan.md`
   - `cargo test -p agentctl -p agent-runtime-core -p agent-provider-codex -p codex-cli`
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - [x] Coverage target met:
   - `cargo llvm-cov --workspace --summary-only`
   - Workspace line coverage: `85.04%` (threshold `>=85%`).

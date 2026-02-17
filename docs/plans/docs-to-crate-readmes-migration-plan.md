@@ -454,7 +454,7 @@ paths; old docs are deleted and all validation commands still run.
   - Standard lint/tests pass.
 - **Validation**:
   - `! rg -n \"docs/(api-|git-|fzf-|codex-cli|image-processing|semantic-commit)\" . --glob '!docs/plans/docs-to-crate-readmes-migration-plan.md'`
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 
 ## Testing Strategy
 - Unit: unchanged (documentation-only changes should not affect unit tests).

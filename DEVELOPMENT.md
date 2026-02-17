@@ -27,7 +27,7 @@
 ## Local install (release)
 
 - Build + install all workspace binaries into `~/.local/nils-cli/`:
-  - `./.agents/skills/nils-cli-install/scripts/nils-cli-install.sh`
+  - `./.agents/skills/nils-cli-install-local-release-binaries/scripts/nils-cli-install-local-release-binaries.sh`
 
 ## Formatting and linting
 
@@ -61,7 +61,7 @@
   - `mkdir -p target/coverage`
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 85`
   - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
-- Or run the single entrypoint for fmt/clippy/tests: `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh` (it pre-creates `target/coverage`; still run coverage commands above)
+- Or run the single entrypoint for fmt/clippy/tests: `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh` (it pre-creates `target/coverage`; still run coverage commands above)
 
 ### CI-style test reporting (optional)
 

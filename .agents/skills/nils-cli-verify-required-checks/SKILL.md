@@ -1,9 +1,9 @@
 ---
-name: nils-cli-checks
+name: nils-cli-verify-required-checks
 description: Run the required lint + test commands from DEVELOPMENT.md (fmt, clippy, cargo test, zsh completion).
 ---
 
-# Nils CLI Checks
+# Nils CLI Verify Required Checks
 
 ## Contract
 
@@ -40,7 +40,7 @@ Failure modes:
 
 ## Scripts (only entrypoints)
 
-- `.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- `.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 
 ## Workflow
 

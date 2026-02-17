@@ -255,7 +255,7 @@ Estimate mapping (used below):
   - `cargo test -p macos-agent --test cli_smoke`
   - `cargo test -p macos-agent --test contracts`
   - `cargo test -p macos-agent --test scenario_chain`
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - Verify:
   - Alias compatibility and unified contract are enforced by tests.
   - Docs/completions/release notes align with final behavior.
@@ -317,7 +317,7 @@ Estimate mapping (used below):
   - Mandatory checks pass (or failures are explicitly documented with remediation).
   - Release handoff includes risk and rollback trigger list.
 - **Validation**:
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 
 ## Timeline and critical path
 - 2-engineer model (recommended): ~5 weeks calendar time.

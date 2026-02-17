@@ -33,7 +33,7 @@ contract-tested CLI output.
    keys and structured errors.
 4. Required checks in `DEVELOPMENT.md` pass, and publishability policy is explicitly documented.
 
-## Standards alignment (nils-cli-create-cli-crate)
+## Standards alignment (nils-cli-deliver-new-cli-crate)
 - Follow `docs/runbooks/new-cli-crate-development-standard.md` for crate scaffold workflow, human
   output rules, JSON mode requirements, and publish-readiness decisions.
 - Follow `docs/specs/cli-service-json-contract-guideline-v1.md` for envelope fields
@@ -335,7 +335,7 @@ contract-tested CLI output.
 ## Sprint 4: End-to-end validation and release readiness
 **Goal**: Prove reliability under repository delivery gates and document operational fallback.
 **Demo/Validation**:
-- Command(s): `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- Command(s): `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - Verify: full required checks pass and MVP flow is reproducible from docs.
 
 ### Task 4.1: Build fixture-driven integration and regression tests
@@ -363,7 +363,7 @@ contract-tested CLI output.
 ### Task 4.2: Execute required repository checks and coverage gate
 - **Location**:
   - `DEVELOPMENT.md`
-  - `.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
   - `scripts/ci/coverage-summary.sh`
 - **Description**: Run required format, lint, and test checks, then execute coverage commands to
   verify repository-wide line coverage policy remains satisfied after adding the new crate.
@@ -376,7 +376,7 @@ contract-tested CLI output.
   - Coverage output meets or exceeds repository threshold.
   - Any check timing or flakiness concerns are documented for follow-up.
 - **Validation**:
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
   - `mkdir -p target/coverage && cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 85`
   - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
 

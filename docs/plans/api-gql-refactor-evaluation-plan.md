@@ -59,7 +59,7 @@ Rationale:
   - Command: `cargo llvm-cov nextest --profile ci -p api-gql --lcov --output-path target/coverage/api-gql.lcov.info`
   - Summary: `scripts/ci/coverage-summary.sh target/coverage/api-gql.lcov.info`
 - Repo-required checks:
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
   - Result: all checks passed (fmt, clippy, tests, zsh completion).
 
 ## Current Status

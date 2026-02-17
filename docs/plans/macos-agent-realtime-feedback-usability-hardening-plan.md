@@ -288,7 +288,7 @@ This plan hardens `macos-agent` for real-world agent development loops where com
 **Demo/Validation**:
 - Command(s):
   - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent --workspace -- --nocapture`
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - Verify:
   - New feedback/diagnostics features are covered by deterministic tests.
   - Existing command contracts stay stable (or explicitly versioned when changed).

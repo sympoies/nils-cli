@@ -25,7 +25,7 @@ This section captures concrete before and after path mappings used by maintainer
 - Inventory/checklist: `docs/reports/crate-doc-migration-inventory.md`
 - Automation: `scripts/ci/docs-placement-audit.sh --strict`
 - Required docs context: `AGENT_DOCS.toml` (`project-dev` requires `crate-docs-placement-policy.md`)
-- Pipeline integration: `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh` and `.github/workflows/ci.yml`
+- Pipeline integration: `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh` and `.github/workflows/ci.yml`
 
 ## Contributor Required Steps (Pre-Commit)
 
@@ -33,7 +33,7 @@ Mandatory pre-commit checks for docs placement:
 
 ```bash
 bash scripts/ci/docs-placement-audit.sh --strict
-./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh
+./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh
 ```
 
 When adding or moving Markdown docs:

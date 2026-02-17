@@ -73,7 +73,7 @@ Add SERVICE_TOKEN as a GraphQL env fallback (after ACCESS_TOKEN) and ensure api-
 ## Sprint 2: Tests + Documentation
 **Goal**: Add coverage for SERVICE_TOKEN fallback and update docs for GraphQL auth behavior.
 **Demo/Validation**:
-- Command(s): `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- Command(s): `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - Verify: Full test suite and formatting/lint checks pass.
 
 ### Task 2.1: Add tests for GraphQL fallback + history labeling
@@ -119,7 +119,7 @@ Add SERVICE_TOKEN as a GraphQL env fallback (after ACCESS_TOKEN) and ensure api-
 - **Acceptance criteria**:
   - All commands pass without warnings or errors.
 - **Validation**:
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 
 ## Testing Strategy
 - Unit: `api-testing-core` auth resolver + GraphQL auth resolution paths.
@@ -135,4 +135,4 @@ Add SERVICE_TOKEN as a GraphQL env fallback (after ACCESS_TOKEN) and ensure api-
 ## Rollback plan
 - Revert commits affecting `auth_env`, `graphql/auth`, and `api-gql` history logging.
 - Restore prior `GraphqlAuthSourceUsed` enum and history labeling.
-- Re-run `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh` to confirm rollback integrity.
+- Re-run `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh` to confirm rollback integrity.

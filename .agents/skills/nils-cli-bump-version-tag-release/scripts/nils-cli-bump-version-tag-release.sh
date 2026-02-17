@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  nils-cli-release --version X.Y.Z [options]
+  nils-cli-bump-version-tag-release --version X.Y.Z [options]
 
 Options:
   --version X.Y.Z   Required. Accepts vX.Y.Z and normalizes to X.Y.Z.
@@ -377,7 +377,7 @@ PY
   fi
 fi
 
-checks_script="$repo_root/.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh"
+checks_script="$repo_root/.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh"
 if [[ "$skip_checks" -eq 0 ]]; then
   if [[ ! -f "$checks_script" ]]; then
     die "missing checks script: $checks_script"

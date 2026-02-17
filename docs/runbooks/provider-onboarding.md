@@ -58,7 +58,7 @@ cargo run -p agentctl -- provider healthcheck --provider <provider> --format jso
 For full repository gates, run:
 
 ```bash
-./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh
+./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh
 ```
 
 ## Release Readiness Notes

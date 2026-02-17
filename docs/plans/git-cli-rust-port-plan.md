@@ -657,7 +657,7 @@ entire `git-cli` surface:
 ### Task 6.5: Pre-delivery checks (repo gates)
 - **Location**:
   - `DEVELOPMENT.md`
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - **Description**: Run required formatting, lint, unit/integration tests, and Zsh completion tests
   via the repo’s single entrypoint. Fix any failures within scope before final delivery.
 - **Dependencies**:
@@ -666,7 +666,7 @@ entire `git-cli` surface:
 - **Acceptance criteria**:
   - All checks pass with exit code 0.
 - **Validation**:
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 
 ## Testing Strategy
 - Unit:

@@ -289,7 +289,7 @@ changes in one place without altering outputs or defaults.
 - **Acceptance criteria**:
   - All required checks pass with no new warnings.
 - **Validation**:
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 
 ## Testing Strategy
 - Unit: Add `cli_util`, `cli_history`, `cli_endpoint`, `cli_report`, and `cli_io` tests for helper

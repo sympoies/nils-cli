@@ -194,7 +194,7 @@ This plan adds an Accessibility-first command surface to `macos-agent` so automa
 **Demo/Validation**:
 - Command(s):
   - `zsh -f tests/zsh/completion.test.zsh`
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - Verify:
   - Shell completions expose AX commands and options.
   - Workspace-wide formatting/lint/tests continue passing.
@@ -256,7 +256,7 @@ This plan adds an Accessibility-first command surface to `macos-agent` so automa
   - PR notes include rollout cautions for AX permission and selector drift.
   - Any non-run checks are explicitly documented with reason.
 - **Validation**:
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 
 ## Testing Strategy
 - Unit:

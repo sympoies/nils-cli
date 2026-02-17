@@ -1,9 +1,9 @@
 ---
-name: nils-cli-release
+name: nils-cli-bump-version-tag-release
 description: Bump CLI versions and tag a release to trigger the CI flow.
 ---
 
-# Nils CLI Release
+# Nils CLI Bump Version Tag Release
 
 ## Contract
 
@@ -13,7 +13,7 @@ Prereqs:
 - `git`, `python3`, `cargo`, `semantic-commit`, and `git-scope` available on `PATH`.
 - `gh` available on `PATH` to use the CI-gated fast path (required for strict `--ci-gate-main`).
 - `cargo-nextest` available on `PATH` when full release checks are required (`NILS_CLI_TEST_RUNNER=nextest`).
-- Release checks available at `.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh` (unless `--skip-checks`).
+- Release checks available at `.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh` (unless `--skip-checks`).
 
 Inputs:
 
@@ -32,7 +32,7 @@ Default check selection (no `--skip-checks` and no `--ci-gate-main`):
 
 - First try CI gate conditions (`main`, `HEAD == origin/main`, green `ci.yml` run).
 - If CI gate passes, refresh `Cargo.lock` and run `cargo check --workspace --locked`.
-- If CI gate does not pass, run full release checks via `nils-cli-checks.sh`.
+- If CI gate does not pass, run full release checks via `nils-cli-verify-required-checks.sh`.
 
 Outputs:
 
@@ -42,7 +42,7 @@ Outputs:
 - Updates README release tag examples (unless `--skip-readme`).
 - Selects check mode in this order: strict CI gate (`--ci-gate-main`) or auto CI gate attempt, then full checks fallback.
 - Refreshes `Cargo.lock` via `cargo generate-lockfile` and then validates via `cargo check --workspace --locked` (CI-gated/skip-check path), or uses the full checks script.
-- Runs full release checks through `nils-cli-checks.sh` with `NILS_CLI_TEST_RUNNER=nextest` by default (unless overridden).
+- Runs full release checks through `nils-cli-verify-required-checks.sh` with `NILS_CLI_TEST_RUNNER=nextest` by default (unless overridden).
 - Creates a semantic commit for the version bump.
 - Creates an annotated tag `vX.Y.Z` and (unless `--skip-push`) pushes commit + tag to `origin`.
 - GitHub Release artifacts are built by `.github/workflows/release.yml` and include all workspace `bin` targets (auto-discovered via `scripts/workspace-bins.py`).
@@ -66,7 +66,7 @@ Failure modes:
 
 ## Scripts (only entrypoints)
 
-- `.agents/skills/nils-cli-release/scripts/nils-cli-release.sh`
+- `.agents/skills/nils-cli-bump-version-tag-release/scripts/nils-cli-bump-version-tag-release.sh`
 
 ## Workflow
 
@@ -75,5 +75,5 @@ Failure modes:
 - Run checks with CI-gate-first logic:
   - `--skip-checks`: refresh `Cargo.lock`; run `cargo check --workspace --locked`.
   - `--ci-gate-main`: require CI gate; then refresh `Cargo.lock`; run `cargo check --workspace --locked`.
-  - default: try CI gate first; if unavailable, run full checks (`nils-cli-checks.sh`).
+  - default: try CI gate first; if unavailable, run full checks (`nils-cli-verify-required-checks.sh`).
 - Commit with `semantic-commit`, tag `vX.Y.Z`, and push to trigger the release workflow.
