@@ -18,6 +18,7 @@ nils-term = { version = "0.4.0", path = "../nils-term", package = "nils-term" }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+base64 = "0.22"
 nils-test-support = { version = "0.4.0", path = "../nils-test-support" }
 pretty_assertions = { workspace = true }
 tempfile = "3"

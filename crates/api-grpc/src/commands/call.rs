@@ -471,8 +471,25 @@ fn maybe_print_failure_body_to_stderr(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use nils_test_support::{EnvGuard, GlobalStateLock};
     use std::fs;
     use tempfile::tempdir;
+
+    fn b64url_json(value: &serde_json::Value) -> String {
+        let bytes = serde_json::to_vec(value).expect("json");
+        URL_SAFE_NO_PAD.encode(bytes)
+    }
+
+    fn make_jwt(payload: serde_json::Value) -> String {
+        let header = serde_json::json!({"alg":"none","typ":"JWT"});
+        format!("{}.{}.sig", b64url_json(&header), b64url_json(&payload))
+    }
+
+    fn write_file(path: &Path, contents: &str) {
+        fs::write(path, contents).expect("write file");
+    }
 
     fn test_history_writer(path: &Path) -> history::HistoryWriter {
         history::HistoryWriter::new(
@@ -482,6 +499,171 @@ mod tests {
                 keep: 5,
             },
         )
+    }
+
+    #[test]
+    fn resolve_endpoint_for_call_honors_url_and_env() {
+        let tmp = tempdir().expect("tempdir");
+        let setup_dir = tmp.path().join("setup/grpc");
+        fs::create_dir_all(&setup_dir).expect("mkdir setup");
+        write_file(
+            &setup_dir.join("endpoints.env"),
+            "GRPC_ENV_DEFAULT=prod\nGRPC_URL_PROD=prod:50051\nGRPC_URL_STAGING=staging:50051\n",
+        );
+        let setup = api_testing_core::config::ResolvedSetup::grpc(setup_dir, None);
+
+        let args = CallArgs {
+            env: None,
+            url: Some("explicit:50051".to_string()),
+            token: None,
+            config_dir: None,
+            no_history: false,
+            request: "requests/health.grpc.json".to_string(),
+        };
+        let sel = resolve_endpoint_for_call(&args, &setup).expect("resolve explicit");
+        assert_eq!(sel.grpc_target, "explicit:50051");
+        assert_eq!(sel.endpoint_label_used, "url");
+
+        let args = CallArgs {
+            env: Some("staging".to_string()),
+            url: None,
+            token: None,
+            config_dir: None,
+            no_history: false,
+            request: "requests/health.grpc.json".to_string(),
+        };
+        let sel = resolve_endpoint_for_call(&args, &setup).expect("resolve env");
+        assert_eq!(sel.grpc_target, "staging:50051");
+        assert_eq!(sel.endpoint_label_used, "env");
+
+        let args = CallArgs {
+            env: Some("https://example.test".to_string()),
+            url: None,
+            token: None,
+            config_dir: None,
+            no_history: false,
+            request: "requests/health.grpc.json".to_string(),
+        };
+        let sel = resolve_endpoint_for_call(&args, &setup).expect("resolve env passthrough");
+        assert_eq!(sel.grpc_target, "https://example.test");
+        assert_eq!(sel.endpoint_label_used, "url");
+    }
+
+    #[test]
+    fn resolve_endpoint_for_call_unknown_env_lists_available() {
+        let tmp = tempdir().expect("tempdir");
+        let setup_dir = tmp.path().join("setup/grpc");
+        fs::create_dir_all(&setup_dir).expect("mkdir setup");
+        write_file(
+            &setup_dir.join("endpoints.env"),
+            "GRPC_URL_PROD=prod:50051\nGRPC_URL_DEV=dev:50051\n",
+        );
+        let setup = api_testing_core::config::ResolvedSetup::grpc(setup_dir, None);
+
+        let args = CallArgs {
+            env: Some("missing".to_string()),
+            url: None,
+            token: None,
+            config_dir: None,
+            no_history: false,
+            request: "requests/health.grpc.json".to_string(),
+        };
+
+        let err = resolve_endpoint_for_call(&args, &setup).expect_err("unknown env must fail");
+        assert!(err.to_string().contains("Unknown --env 'missing'"));
+        assert!(err.to_string().contains("prod"));
+    }
+
+    #[test]
+    fn resolve_auth_for_call_prefers_profile_then_env_fallback() {
+        let lock = GlobalStateLock::new();
+        let _access = EnvGuard::set(&lock, "ACCESS_TOKEN", "env-token");
+        let _name = EnvGuard::remove(&lock, "GRPC_TOKEN_NAME");
+
+        let tmp = tempdir().expect("tempdir");
+        let setup_dir = tmp.path().join("setup/grpc");
+        fs::create_dir_all(&setup_dir).expect("mkdir setup");
+        write_file(&setup_dir.join("tokens.env"), "GRPC_TOKEN_SVC=svc-token\n");
+        let setup = api_testing_core::config::ResolvedSetup::grpc(setup_dir, None);
+
+        let args = CallArgs {
+            env: None,
+            url: None,
+            token: Some("svc".to_string()),
+            config_dir: None,
+            no_history: false,
+            request: "requests/health.grpc.json".to_string(),
+        };
+        let auth = resolve_auth_for_call(&args, &setup).expect("token profile resolution");
+        assert_eq!(auth.bearer_token.as_deref(), Some("svc-token"));
+        assert!(matches!(
+            auth.auth_source_used,
+            AuthSourceUsed::TokenProfile
+        ));
+
+        let args = CallArgs {
+            env: None,
+            url: None,
+            token: None,
+            config_dir: None,
+            no_history: false,
+            request: "requests/health.grpc.json".to_string(),
+        };
+        let auth = resolve_auth_for_call(&args, &setup).expect("env fallback resolution");
+        assert_eq!(auth.bearer_token.as_deref(), Some("env-token"));
+        assert!(matches!(
+            auth.auth_source_used,
+            AuthSourceUsed::EnvFallback { .. }
+        ));
+    }
+
+    #[test]
+    fn validate_bearer_token_warns_when_non_strict() {
+        let lock = GlobalStateLock::new();
+        let _enabled = EnvGuard::set(&lock, "GRPC_JWT_VALIDATE_ENABLED", "true");
+        let _strict = EnvGuard::set(&lock, "GRPC_JWT_VALIDATE_STRICT", "false");
+
+        let mut stderr = Vec::new();
+        let res = validate_bearer_token_if_jwt(
+            "not.a.jwt",
+            &AuthSourceUsed::None,
+            "default",
+            &mut stderr,
+        );
+        assert!(res.is_ok());
+        let msg = String::from_utf8_lossy(&stderr);
+        assert!(msg.contains("not a valid JWT"));
+    }
+
+    #[test]
+    fn validate_bearer_token_errors_when_strict_invalid() {
+        let lock = GlobalStateLock::new();
+        let _enabled = EnvGuard::set(&lock, "GRPC_JWT_VALIDATE_ENABLED", "true");
+        let _strict = EnvGuard::set(&lock, "GRPC_JWT_VALIDATE_STRICT", "true");
+
+        let mut stderr = Vec::new();
+        let err = validate_bearer_token_if_jwt(
+            "not.a.jwt",
+            &AuthSourceUsed::None,
+            "default",
+            &mut stderr,
+        )
+        .expect_err("strict mode must fail invalid token");
+        assert!(err.to_string().contains("invalid JWT"));
+    }
+
+    #[test]
+    fn validate_bearer_token_errors_when_expired() {
+        let lock = GlobalStateLock::new();
+        let _enabled = EnvGuard::set(&lock, "GRPC_JWT_VALIDATE_ENABLED", "true");
+        let _strict = EnvGuard::set(&lock, "GRPC_JWT_VALIDATE_STRICT", "false");
+
+        let token = make_jwt(serde_json::json!({ "exp": 1 }));
+        let mut stderr = Vec::new();
+        let err =
+            validate_bearer_token_if_jwt(&token, &AuthSourceUsed::TokenProfile, "svc", &mut stderr)
+                .expect_err("expired token must fail");
+        assert!(err.to_string().contains("JWT expired"));
     }
 
     #[test]
