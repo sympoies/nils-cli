@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  nils-cli-checks.sh [--help]
+  nils-cli-verify-required-checks.sh [--help]
 
 Runs the required pre-delivery checks from DEVELOPMENT.md:
   - bash scripts/ci/docs-placement-audit.sh --strict

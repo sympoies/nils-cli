@@ -274,7 +274,7 @@ Scan all crates for duplicated test helpers (CLI binary resolution, command runn
 ## Sprint 4: Full validation + docs polish
 **Goal**: Ensure full test suite coverage and document new helpers.
 **Demo/Validation**:
-- Command(s): `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- Command(s): `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - Verify: Format, clippy, and tests pass for the workspace.
 
 ### Task 4.1: Workspace verification
@@ -310,7 +310,7 @@ Scan all crates for duplicated test helpers (CLI binary resolution, command runn
 ## Testing Strategy
 - Unit: `nils-test-support` tests for new modules (bin/cmd/git/fs/http).
 - Integration: Per-crate test suites for migrated crates (prefer `cargo test -p <crate>` to include `#[cfg(test)]` modules).
-- E2E/manual: Run `nils-cli-checks` and coverage gates before final merge.
+- E2E/manual: Run `nils-cli-verify-required-checks` and coverage gates before final merge.
 
 ## Risks & gotchas
 - Extending `http::RecordedRequest` or server behavior can break existing tests; preserve current API or add new types.

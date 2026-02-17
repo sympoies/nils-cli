@@ -28,7 +28,7 @@ This plan adds a new workspace crate, `nils-term`, that provides a small, RAII-f
 3. Workspace binaries should be able to opt out entirely (explicit disable) and rely on a safe default (auto-disable when not a TTY).
 
 ## Delivery gates (repo-wide)
-- `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - `cargo test -p nils-term --doc`
 
 ## Adoption inventory (indicatif candidates in this workspace)

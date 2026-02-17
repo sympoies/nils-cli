@@ -351,11 +351,11 @@ share step-by-step demos.
 - **Acceptance criteria**:
   - `cargo test -p screen-record` passes and does not require Screen Recording permission.
   - Non-macOS CI verifies default behavior is “macOS only” (exit 2) when test mode is not enabled.
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh` passes.
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh` passes.
   - Workspace line coverage remains >= 80.00% when running the documented coverage commands.
 - **Validation**:
   - `AGENTS_SCREEN_RECORD_TEST_MODE=1 cargo test -p screen-record`
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 80`
 
 ## Testing Strategy

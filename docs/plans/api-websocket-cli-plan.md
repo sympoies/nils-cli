@@ -443,7 +443,7 @@ This plan adds first-class WebSocket testing support to the existing API CLI fam
 **Goal**: Complete repository gates, publish-readiness metadata, and operational rollback/runbook coverage.
 **Demo/Validation**:
 - Command(s):
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
   - `bash scripts/ci/docs-placement-audit.sh --strict`
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 85`
 - Verify:
@@ -486,7 +486,7 @@ This plan adds first-class WebSocket testing support to the existing API CLI fam
   - Coverage command passes fail-under policy.
   - Any failures are documented with actionable remediation.
 - **Validation**:
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 85`
 
 ### Task 5.3: Publish-readiness wiring for the new crate

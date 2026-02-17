@@ -57,7 +57,7 @@ from pre-consolidation builds are not guaranteed to auto-upgrade.
 - Trigger A: repeated `invalid-apply-payload` or `apply-item-conflict` bursts after rollout.
 - Trigger B: contract-breaking JSON output observed by automation consumers.
 - Trigger C: unexpected drop in `fetch`/`report` correctness (missing recent captures).
-- Trigger D: release-gate regressions (`nils-cli-checks.sh` or coverage gate repeatedly fail).
+- Trigger D: release-gate regressions (`nils-cli-verify-required-checks.sh` or coverage gate repeatedly fail).
 - Trigger E: timezone/custom-range regressions around `--tz` or `--from/--to`.
 
 ## Rollback actions
@@ -69,7 +69,7 @@ from pre-consolidation builds are not guaranteed to auto-upgrade.
 4. Re-run validation gates before re-enabling automation:
    - `cargo test -p nils-memo-cli memo_flow`
    - `cargo test -p nils-memo-cli agent_roundtrip`
-   - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+   - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 
 ## Roll-forward criteria
 - `memo_flow` and `agent_roundtrip` tests green.

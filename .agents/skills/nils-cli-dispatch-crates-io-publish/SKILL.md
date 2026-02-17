@@ -1,9 +1,9 @@
 ---
-name: nils-cli-publish-crates-io
+name: nils-cli-dispatch-crates-io-publish
 description: Publish one, many, or all workspace crates to crates.io through GitHub workflow dispatch with run reporting.
 ---
 
-# Publish Crates IO
+# Nils CLI Dispatch Crates IO Publish
 
 ## Contract
 
@@ -70,7 +70,7 @@ Failure modes:
 
 ## Scripts (only entrypoints)
 
-- `<PROJECT_ROOT>/.agents/skills/nils-cli-publish-crates-io/scripts/publish-crates-io.sh`
+- `<PROJECT_ROOT>/.agents/skills/nils-cli-dispatch-crates-io-publish/scripts/publish-crates-io.sh`
 
 ## Workflow
 
@@ -80,4 +80,4 @@ Failure modes:
 4. For successful publish runs, run post-run crates.io snapshot:
    - `scripts/crates-io-status.sh --fail-on-missing`.
 5. Write a structured report from template:
-   - `.agents/skills/nils-cli-publish-crates-io/references/PUBLISH_REPORT_TEMPLATE.md`
+   - `.agents/skills/nils-cli-dispatch-crates-io-publish/references/PUBLISH_REPORT_TEMPLATE.md`

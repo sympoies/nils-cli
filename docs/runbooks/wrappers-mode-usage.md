@@ -137,7 +137,7 @@ NILS_WRAPPER_MODE=debug
 ### `... installed binary not found (NILS_WRAPPER_MODE=installed)`
 - Cause: installed mode cannot find target binary in prefix or `PATH`
 - Fix:
-  1. run install flow (`./.agents/skills/nils-cli-install/scripts/nils-cli-install.sh`)
+  1. run install flow (`./.agents/skills/nils-cli-install-local-release-binaries/scripts/nils-cli-install-local-release-binaries.sh`)
   2. confirm `NILS_WRAPPER_INSTALL_PREFIX` and `PATH`
 
 ### `... binary not found (install via cargo install or build the workspace)`

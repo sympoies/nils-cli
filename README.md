@@ -83,9 +83,9 @@ Integration steps:
 ## Local install (release)
 
 - Build + install all workspace binaries into `~/.local/nils-cli/`:
-  - `./.agents/skills/nils-cli-install/scripts/nils-cli-install.sh`
+  - `./.agents/skills/nils-cli-install-local-release-binaries/scripts/nils-cli-install-local-release-binaries.sh`
 - Install only a specific binary:
-  - `./.agents/skills/nils-cli-install/scripts/nils-cli-install.sh --bin git-scope`
+  - `./.agents/skills/nils-cli-install-local-release-binaries/scripts/nils-cli-install-local-release-binaries.sh --bin git-scope`
 - Add the install dir to `PATH` (example):
   - `export PATH="$HOME/.local/nils-cli:$PATH"`
 

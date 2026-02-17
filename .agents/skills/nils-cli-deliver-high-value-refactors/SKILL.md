@@ -1,9 +1,9 @@
 ---
-name: nils-cli-refactor-foundations
+name: nils-cli-deliver-high-value-refactors
 description: Find and implement high-value test/stability/shared-foundation refactors across crates, then deliver via deliver-feature-pr.
 ---
 
-# Nils CLI Refactor Foundations
+# Nils CLI Deliver High Value Refactors
 
 ## Contract
 
@@ -31,7 +31,7 @@ Outputs:
   - `No Action`: no high-value target found; return concrete recommendations and potential issue list.
 - Reporting split (strict):
   - `Implement`: use `$deliver-feature-pr` delivery contract end-to-end (open PR, wait CI green, close PR).
-  - `No Action`: use `.agents/skills/nils-cli-refactor-foundations/references/NO_ACTION_RESPONSE_TEMPLATE.md`.
+  - `No Action`: use `.agents/skills/nils-cli-deliver-high-value-refactors/references/NO_ACTION_RESPONSE_TEMPLATE.md`.
 
 Exit codes:
 
@@ -48,7 +48,7 @@ Failure modes:
 
 ## Scripts (only entrypoints)
 
-- `.agents/skills/nils-cli-refactor-foundations/scripts/render-refactor-response-template.sh` (`No Action` response only)
+- `.agents/skills/nils-cli-deliver-high-value-refactors/scripts/render-refactor-response-template.sh` (`No Action` response only)
 - `$AGENTS_HOME/skills/workflows/pr/feature/deliver-feature-pr/scripts/deliver-feature-pr.sh` (`Implement` delivery only)
 
 ## Workflow
@@ -93,7 +93,7 @@ Failure modes:
 
 - Run targeted tests for touched crates first.
 - If scope is broad or cross-crate, run:
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - Report exact commands and pass/fail status.
 
 6. Delivery (required for implemented changes)
@@ -117,4 +117,4 @@ Failure modes:
   - final branch state
 - `No Action` path: use the no-action template with concrete recommendation list and potential issues.
 - Render helpers:
-  - `./.agents/skills/nils-cli-refactor-foundations/scripts/render-refactor-response-template.sh --mode no-action`
+  - `./.agents/skills/nils-cli-deliver-high-value-refactors/scripts/render-refactor-response-template.sh --mode no-action`

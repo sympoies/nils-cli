@@ -299,7 +299,7 @@ This plan expands `macos-agent` real-desktop coverage from basic readiness check
 - **Validation**:
   - `AGENTS_MACOS_AGENT_TEST_MODE=1 cargo test -p macos-agent`
   - `rg -n "Deterministic Test Mode|Opt-in Real macOS E2E Checks|MACOS_AGENT_REAL_E2E|MACOS_AGENT_REAL_E2E_MUTATING" crates/macos-agent/README.md`
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 
 ## Testing Strategy
 - Unit:

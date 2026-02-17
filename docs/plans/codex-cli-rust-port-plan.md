@@ -363,7 +363,7 @@ Binary name: `codex-cli`
 ## Sprint 7: Zsh integration (wrappers + completion) and delivery checks
 **Goal**: Provide backwards-compatible entrypoints, Zsh completion, and ensure all required checks pass.
 **Demo/Validation**:
-- Command(s): `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- Command(s): `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - Verify: fmt, clippy, tests, and Zsh completion tests all pass.
 
 ### Task 7.1: Add compatibility wrappers for legacy commands and aliases
@@ -437,7 +437,7 @@ Binary name: `codex-cli`
 ### Task 7.4: Run required formatting, lint, and test gates
 - **Location**:
   - `DEVELOPMENT.md`
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - **Description**: Run the repo-required gates (fmt, clippy, workspace tests, Zsh completion tests, and coverage) and fix any failures until all checks pass. In addition to the repo coverage policy (>= 70% workspace), require `codex-cli` crate coverage >= 80%.
 - **Dependencies**:
   - Task 7.3
@@ -452,7 +452,7 @@ Binary name: `codex-cli`
 - **Validation**:
   - `cargo llvm-cov nextest --profile ci -p codex-cli --lcov --output-path target/coverage/codex-cli.lcov.info --fail-under-lines 80`
   - `scripts/ci/coverage-summary.sh target/coverage/codex-cli.lcov.info`
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 
 ## Testing Strategy
 - Unit: Parsing helpers (JWT decoding, TTL parsing, cache key normalization), render formatting (percent color mapping), and path resolution precedence.

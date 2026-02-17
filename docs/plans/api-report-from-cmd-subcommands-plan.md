@@ -152,7 +152,7 @@ Compatibility with the legacy `api-report-from-cmd` shell script is best-effort;
 ## Sprint 3: Zsh completions + docs + required checks
 **Goal**: Make the feature discoverable (completions/docs) and keep repo checks green.
 **Demo/Validation**:
-- Command(s): `zsh -f tests/zsh/completion.test.zsh`, `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- Command(s): `zsh -f tests/zsh/completion.test.zsh`, `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - Verify: completions source cleanly and mandatory checks pass.
 
 ### Task 3.1: Update zsh completions for new subcommands
@@ -187,7 +187,7 @@ Compatibility with the legacy `api-report-from-cmd` shell script is best-effort;
 
 ### Task 3.3: Run mandatory checks (fmt, clippy, tests, zsh completion)
 - **Location**:
-  - `.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
   - `DEVELOPMENT.md`
 - **Description**: Run the repo’s mandatory checks and address any failures caused by this change.
 - **Dependencies**:
@@ -197,7 +197,7 @@ Compatibility with the legacy `api-report-from-cmd` shell script is best-effort;
 - **Acceptance criteria**:
   - All mandatory checks pass.
 - **Validation**:
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 
 ## Testing Strategy
 - Unit: `api-testing-core` tests for normalization/tokenization/parsing and case derivation.

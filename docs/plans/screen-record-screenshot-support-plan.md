@@ -358,7 +358,7 @@ identity (id/owner/title) unless the user supplies an explicit output path.
 **Goal**: Make screenshot mode production-ready: full test coverage, updated documentation/completions, and all repo-required checks passing.
 **Demo/Validation**:
 - Command(s):
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - Verify:
   - fmt/clippy/test/zsh completion tests all pass.
 

@@ -276,7 +276,7 @@ unless an explicit valid `--at` override is provided. Raw capture remains append
 ## Sprint 3: Quality gates, rollout, and operational safety
 **Goal**: Make the change safe to roll out with explicit test coverage and rollback controls.
 **Demo/Validation**:
-- Command(s): `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- Command(s): `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - Verify: full required checks pass and runbook guidance is updated.
 
 ### Task 3.1: Add comprehensive fixtures and edge-case tests for common formats
@@ -332,7 +332,7 @@ unless an explicit valid `--at` override is provided. Raw capture remains append
   - JSON and command contract docs reflect additive changes, temporal option behavior, and compatibility stance.
   - Release notes clearly describe metadata additions and non-breaking nature.
 - **Validation**:
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
   - `cargo test -p nils-memo-cli json_contract`
 
 ## Testing Strategy
@@ -358,5 +358,5 @@ unless an explicit valid `--at` override is provided. Raw capture remains append
 4. Re-run:
    - `cargo test -p nils-memo-cli memo_flow`
    - `cargo test -p nils-memo-cli agent_roundtrip`
-   - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+   - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 5. Re-enable metadata flow only after contract and runbook checks are green.

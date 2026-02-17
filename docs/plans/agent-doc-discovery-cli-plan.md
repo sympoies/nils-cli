@@ -350,7 +350,7 @@ Build a new workspace CLI (`agent-docs`) that helps Codex/agents resolve the man
 ## Sprint 4: Workspace integration, completions, and delivery gates
 **Goal**: make the new CLI consumable by humans, skills, and wrappers with full repo checks passing.
 **Demo/Validation**:
-- Command(s): `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- Command(s): `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - Verify: workspace fmt/clippy/tests/zsh completion checks pass with new CLI integrated.
 
 ### Task 4.1: Add shell completion and wrapper integration
@@ -401,7 +401,7 @@ Build a new workspace CLI (`agent-docs`) that helps Codex/agents resolve the man
   - `cargo test --workspace` passes.
   - `zsh -f tests/zsh/completion.test.zsh` passes.
 - **Validation**:
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
   - Optional: `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 80` (when `cargo-llvm-cov` and `cargo-nextest` are installed)
 
 **Parallelization**:

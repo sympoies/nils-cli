@@ -280,7 +280,7 @@ This plan replaces the current preset-only `generate` command with a source-SVG-
 **Demo/Validation**:
 - Command(s):
   - `cargo test -p nils-agentctl --test diag_capabilities`
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 85`
 - Verify:
   - Diagnostics no longer claim removed `generate` capability.
@@ -326,7 +326,7 @@ This plan replaces the current preset-only `generate` command with a source-SVG-
 
 ### Task 4.3: Run mandatory quality gates and migration smoke checks
 - **Location**:
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
   - `scripts/ci/coverage-summary.sh`
   - `crates/image-processing/tests`
 - **Description**: Execute required repo checks, coverage gate, and explicit migration smoke commands for removed `generate` + new `--from-svg` path.
@@ -339,7 +339,7 @@ This plan replaces the current preset-only `generate` command with a source-SVG-
   - Coverage remains >= 85.00%.
   - Smoke checks confirm `generate` removal and `--from-svg` success path.
 - **Validation**:
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
   - `mkdir -p target/coverage`
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 85`
   - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
@@ -367,4 +367,4 @@ This plan replaces the current preset-only `generate` command with a source-SVG-
 1. Reintroduce prior `generate` command surface by reverting CLI/dispatch removal commits.
 2. Disable `--from-svg` and new svg-validation/LLM tooling entrypoints behind a targeted rollback commit if instability appears.
 3. Restore diagnostics capability list and docs to pre-migration state in the same rollback PR.
-4. Re-run `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh` and coverage gate to confirm legacy stability.
+4. Re-run `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh` and coverage gate to confirm legacy stability.

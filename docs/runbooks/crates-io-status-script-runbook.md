@@ -192,9 +192,9 @@ JSON output snapshot:
 }
 ```
 
-## Notes for nils-cli-publish-crates-io Skill Integration
+## Notes for nils-cli-dispatch-crates-io-publish Skill Integration
 
-`./.agents/skills/nils-cli-publish-crates-io/scripts/publish-crates-io.sh` already supports post-run snapshot by calling this script.
+`./.agents/skills/nils-cli-dispatch-crates-io-publish/scripts/publish-crates-io.sh` already supports post-run snapshot by calling this script.
 
 - Default: generate `${report_file%.md}.status.json` and `${report_file%.md}.status.md`
 - Disable snapshot: `--skip-status-check`

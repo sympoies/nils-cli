@@ -173,7 +173,7 @@ This plan refactors internal git-scope modules to reduce duplication and improve
 ## Sprint 3: Efficiency polish + validation
 **Goal**: Apply low-risk efficiency improvements and finalize validation coverage.
 **Demo/Validation**:
-- Command(s): `cargo test -p git-scope`, `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- Command(s): `cargo test -p git-scope`, `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - Verify: all required checks pass.
 
 ### Task 3.1: Cache file command availability and avoid repeated spawn errors
@@ -223,7 +223,7 @@ This plan refactors internal git-scope modules to reduce duplication and improve
 - **Acceptance criteria**:
   - cargo fmt, cargo clippy, cargo test --workspace, and zsh completion tests pass.
 - **Validation**:
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 
 ## Testing Strategy
 - Unit: change parsing tests and binary detection fallback tests.

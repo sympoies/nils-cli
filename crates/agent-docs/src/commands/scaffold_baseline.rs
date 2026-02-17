@@ -17,7 +17,8 @@ const CLI_TOOLS_TEMPLATE: &str = include_str!("../templates/cli_tools_default.md
 const SETUP_PLACEHOLDER: &str = "{{SETUP_COMMANDS}}";
 const BUILD_PLACEHOLDER: &str = "{{BUILD_COMMANDS}}";
 const TEST_PLACEHOLDER: &str = "{{TEST_COMMANDS}}";
-const CHECKS_SCRIPT_PATH: &str = ".agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh";
+const CHECKS_SCRIPT_PATH: &str =
+    ".agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScaffoldBaselineRequest {
@@ -685,7 +686,7 @@ mod tests {
             fs::read_to_string(project.path().join("DEVELOPMENT.md")).expect("read development");
         assert!(
             development_written
-                .contains("./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh")
+                .contains("./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh")
         );
         assert!(development_written.contains("cargo test --workspace"));
     }

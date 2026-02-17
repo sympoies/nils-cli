@@ -367,7 +367,7 @@ tests via stubbed PATH tools.
 ## Sprint 8: Comprehensive tests + delivery gates
 **Goal**: Add deterministic integration tests covering all commands and edge cases; ensure repo checks pass.
 **Demo/Validation**:
-- Command(s): `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- Command(s): `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - Verify: fmt, clippy, workspace tests, and zsh completion tests all pass.
 
 ### Task 8.1: Add fzf-cli test harness (PATH stubs and temp fixtures)
@@ -411,7 +411,7 @@ tests via stubbed PATH tools.
 
 ### Task 8.3: Run full repo delivery checks
 - **Location**:
-  - `.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - **Description**: Run the repo’s required pre-delivery checks and fix failures within the scope of
   the `fzf-cli` work until the full suite passes.
 - **Dependencies**:
@@ -423,7 +423,7 @@ tests via stubbed PATH tools.
   - `cargo test --workspace` passes.
   - `zsh -f tests/zsh/completion.test.zsh` passes.
 - **Validation**:
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 
 ## Testing Strategy
 - Unit: parsing helpers (history parsing, git-status path parsing), def indexer, and fzf output parsing.
@@ -438,4 +438,4 @@ tests via stubbed PATH tools.
 
 ## Rollback plan
 - Remove the workspace member `crates/fzf-cli` and associated docs/tests.
-- Delete any wrapper additions (if any) and re-run `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`.
+- Delete any wrapper additions (if any) and re-run `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`.

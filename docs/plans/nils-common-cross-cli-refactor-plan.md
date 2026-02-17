@@ -38,12 +38,12 @@ This plan identifies and extracts the highest-value cross-CLI utility logic into
   - no intentional output/warning/exit-code changes,
   - existing integration tests continue to pass.
 - Required repository checks pass:
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`.
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`.
 
 ## Validation
 - `cargo test -p nils-common`
 - `cargo test -p fzf-cli -p git-cli -p git-lock -p git-scope -p git-summary -p semantic-commit -p codex-cli -p screen-record -p image-processing`
-- `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+- `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 
 ## Sprint 1: Inventory + parity guardrails
 **Goal**: Freeze current behavior and define extraction boundaries before code movement.
@@ -333,7 +333,7 @@ This plan identifies and extracts the highest-value cross-CLI utility logic into
 **Goal**: Finish cleanup, document boundaries, and run full repo checks.
 **Demo/Validation**:
 - Command(s):
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - Verify:
   - Refactor is complete and stable under required checks.
   - `nils-common` boundaries are documented for future contributors.
@@ -407,7 +407,7 @@ This plan identifies and extracts the highest-value cross-CLI utility logic into
 ### Task 4.4: Run final mandatory checks and parity smoke tests
 - **Location**:
   - `DEVELOPMENT.md`
-  - `.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - **Description**: Execute required lint/test gates and targeted CLI smoke checks to confirm no behavior regressions after extraction.
 - **Dependencies**:
   - Task 4.1
@@ -418,7 +418,7 @@ This plan identifies and extracts the highest-value cross-CLI utility logic into
   - Mandatory checks complete successfully.
   - No known behavior regression is introduced by shared-helper migration.
 - **Validation**:
-  - `./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 
 ## Testing Strategy
 - Unit:

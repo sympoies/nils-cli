@@ -385,7 +385,7 @@ Wayland behavior depends on whether XWayland is present and whether the target w
 **Demo/Validation**:
 - Command(s):
   - `plan-tooling validate --file docs/plans/screen-record-linux-ubuntu-2404-plan.md`
-  - `xvfb-run -a ./.agents/skills/nils-cli-checks/scripts/nils-cli-checks.sh`
+  - `xvfb-run -a ./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - Verify:
   - Linux-specific logic is covered by unit/integration tests and runs in CI.
 
