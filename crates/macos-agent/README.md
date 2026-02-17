@@ -122,7 +122,7 @@ Notes:
 - Backward-compatible aliases are still accepted: `--window-name`, `input type --enter`.
 - `--dry-run` guarantees no OS automation command execution for mutating actions.
 - `--error-format json` emits machine-parseable error payloads on `stderr`.
-- `--trace` writes per-command trace artifacts to `AGENTS_HOME/out/macos-agent-trace/`.
+- `--trace` writes per-command trace artifacts to `AGENT_HOME/out/macos-agent-trace/`.
 - `--trace-dir` overrides trace artifact output directory.
 - When trace mode is enabled, `macos-agent` verifies trace directory writability before running actions.
 
@@ -257,7 +257,7 @@ This AX-first + fallback policy avoids brittle coordinate-only flows while keepi
 Copy-paste triage flow to collect deterministic artifacts after a flaky or failed run:
 
 ```bash
-OUT="${AGENTS_HOME:-$HOME/.agents}/out/macos-agent-debug-$(date +%Y%m%d-%H%M%S)"
+OUT="${AGENT_HOME:-$HOME/.agents}/out/macos-agent-debug-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$OUT"
 
 # 1) capture debug bundle + artifact index
@@ -344,7 +344,7 @@ macos-agent --format json wait app-active --app Terminal --timeout-ms 1500
 
 ```bash
 macos-agent --error-format json --trace input click --x 200 --y 160
-# Read latest trace in AGENTS_HOME/out/macos-agent-trace/
+# Read latest trace in AGENT_HOME/out/macos-agent-trace/
 ```
 
 ### Workflow 3: iterate with scenario file + profile checks
@@ -352,7 +352,7 @@ macos-agent --error-format json --trace input click --x 200 --y 160
 ```bash
 macos-agent profile validate --file crates/macos-agent/tests/fixtures/real_e2e_profile_default_1440p.json
 macos-agent --format json scenario run --file crates/macos-agent/tests/fixtures/scenario-basic.json
-macos-agent profile init --name local-1440p --path "$AGENTS_HOME/out/local-profile.json"
+macos-agent profile init --name local-1440p --path "$AGENT_HOME/out/local-profile.json"
 ```
 
 ## Troubleshooting matrix

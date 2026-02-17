@@ -14,7 +14,7 @@ _macos-agent() {
     '--retries=[Retry count for mutating actions]:count:'
     '--retry-delay-ms=[Delay between retries in milliseconds]:ms:'
     '--timeout-ms=[Per-action timeout in milliseconds]:ms:'
-    '--trace[Emit per-command trace artifacts under AGENTS_HOME/out]'
+    '--trace[Emit per-command trace artifacts under AGENT_HOME/out]'
     '--trace-dir=[Override trace output directory]:path:_files'
     '(-h --help)'{-h,--help}'[Show help]'
     '(-V --version)'{-V,--version}'[Show version]'

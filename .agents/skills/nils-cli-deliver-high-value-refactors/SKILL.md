@@ -49,7 +49,7 @@ Failure modes:
 ## Scripts (only entrypoints)
 
 - `.agents/skills/nils-cli-deliver-high-value-refactors/scripts/render-refactor-response-template.sh` (`No Action` response only)
-- `$AGENTS_HOME/skills/workflows/pr/feature/deliver-feature-pr/scripts/deliver-feature-pr.sh` (`Implement` delivery only)
+- `$AGENT_HOME/skills/workflows/pr/feature/deliver-feature-pr/scripts/deliver-feature-pr.sh` (`Implement` delivery only)
 
 ## Workflow
 

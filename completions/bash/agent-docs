@@ -13,7 +13,7 @@ _nils_cli_agent_docs_complete() {
   local prev="${COMP_WORDS[COMP_CWORD-1]}"
 
   local -a subcmds=(resolve contexts add scaffold-agents baseline scaffold-baseline)
-  local -a root_opts=(-h --help -V --version --agents-home --project-path)
+  local -a root_opts=(-h --help -V --version --agent-home --project-path)
   local -a contexts=(startup skill-dev task-tools project-dev)
   local -a scopes=(home project)
   local -a baseline_targets=(home project all)
@@ -25,7 +25,7 @@ _nils_cli_agent_docs_complete() {
   while (( i < ${#words[@]} )); do
     local token="${words[i]}"
     case "$token" in
-      --agents-home|--project-path)
+      --agent-home|--project-path)
         ((i+=2))
         continue
         ;;
@@ -45,7 +45,7 @@ _nils_cli_agent_docs_complete() {
   done
 
   case "$prev" in
-    --agents-home|--project-path|--path|--output)
+    --agent-home|--project-path|--path|--output)
       COMPREPLY=( $(compgen -f -- "$cur") )
       return 0
       ;;
@@ -97,7 +97,7 @@ _nils_cli_agent_docs_complete() {
   case "$subcmd" in
     resolve)
       if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "-h --help --agents-home --project-path --context --format --strict" -- "$cur") )
+        COMPREPLY=( $(compgen -W "-h --help --agent-home --project-path --context --format --strict" -- "$cur") )
         return 0
       fi
       COMPREPLY=()
@@ -105,7 +105,7 @@ _nils_cli_agent_docs_complete() {
       ;;
     contexts)
       if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "-h --help --agents-home --project-path --format" -- "$cur") )
+        COMPREPLY=( $(compgen -W "-h --help --agent-home --project-path --format" -- "$cur") )
         return 0
       fi
       COMPREPLY=()
@@ -113,7 +113,7 @@ _nils_cli_agent_docs_complete() {
       ;;
     add)
       if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "-h --help --agents-home --project-path --target --context --scope --path --required --when --notes" -- "$cur") )
+        COMPREPLY=( $(compgen -W "-h --help --agent-home --project-path --target --context --scope --path --required --when --notes" -- "$cur") )
         return 0
       fi
       COMPREPLY=()
@@ -121,7 +121,7 @@ _nils_cli_agent_docs_complete() {
       ;;
     scaffold-agents)
       if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "-h --help --agents-home --project-path --target --output --force" -- "$cur") )
+        COMPREPLY=( $(compgen -W "-h --help --agent-home --project-path --target --output --force" -- "$cur") )
         return 0
       fi
       COMPREPLY=()
@@ -129,7 +129,7 @@ _nils_cli_agent_docs_complete() {
       ;;
     baseline)
       if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "-h --help --agents-home --project-path --check --target --format --strict" -- "$cur") )
+        COMPREPLY=( $(compgen -W "-h --help --agent-home --project-path --check --target --format --strict" -- "$cur") )
         return 0
       fi
       COMPREPLY=()
@@ -137,7 +137,7 @@ _nils_cli_agent_docs_complete() {
       ;;
     scaffold-baseline)
       if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "-h --help --agents-home --project-path --target --missing-only --force --dry-run --format" -- "$cur") )
+        COMPREPLY=( $(compgen -W "-h --help --agent-home --project-path --target --missing-only --force --dry-run --format" -- "$cur") )
         return 0
       fi
       COMPREPLY=()

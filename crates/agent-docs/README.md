@@ -23,10 +23,10 @@ The CLI does not replace runtime `AGENTS.md` loading. It provides a testable res
 
 Path resolution is deterministic and applies to all commands.
 
-### `AGENTS_HOME`
+### `AGENT_HOME`
 
-1. `--agents-home <path>` (command flag)
-2. `AGENTS_HOME` environment variable
+1. `--agent-home <path>` (command flag)
+2. `AGENT_HOME` environment variable
 3. `$HOME/.agents`
 
 ### `PROJECT_PATH`
@@ -46,7 +46,7 @@ Path resolution is deterministic and applies to all commands.
 
 ### Scopes
 
-- `home`: rooted at effective `AGENTS_HOME`
+- `home`: rooted at effective `AGENT_HOME`
 - `project`: rooted at effective `PROJECT_PATH`
 
 ### Built-in contexts
@@ -94,7 +94,7 @@ Print supported context names.
 Flags:
 
 - `--format text|json` (default: `text`)
-- `--agents-home <path>`
+- `--agent-home <path>`
 - `--project-path <path>`
 
 ### `resolve`
@@ -106,7 +106,7 @@ Flags:
 - `--context startup|skill-dev|task-tools|project-dev` (required)
 - `--format text|json|checklist` (default: `text`)
 - `--strict` (missing required docs become exit code `1`)
-- `--agents-home <path>`
+- `--agent-home <path>`
 - `--project-path <path>`
 
 Format guidance:
@@ -128,7 +128,7 @@ Flags:
 - `--required` (set `required=true`; omitted means `required=false`)
 - `--when <condition>` (default: `always`)
 - `--notes <text>`
-- `--agents-home <path>`
+- `--agent-home <path>`
 - `--project-path <path>`
 
 ### Copy-pastable `resolve` + `add` flow
@@ -170,7 +170,7 @@ Flags:
 - `--target home|project` (required)
 - `--output <path>` (optional explicit output file path)
 - `--force` (overwrite when file exists)
-- `--agents-home <path>`
+- `--agent-home <path>`
 - `--project-path <path>`
 
 Semantics:
@@ -188,7 +188,7 @@ Flags:
 - `--target home|project|all` (default: `all`)
 - `--format text|json` (default: `text`)
 - `--strict` (missing required docs become exit code `1`)
-- `--agents-home <path>`
+- `--agent-home <path>`
 - `--project-path <path>`
 
 ### `scaffold-baseline`
@@ -202,7 +202,7 @@ Flags:
 - `--force` (overwrite existing files)
 - `--dry-run` (print planned writes only)
 - `--format text|json` (default: `text`)
-- `--agents-home <path>`
+- `--agent-home <path>`
 - `--project-path <path>`
 
 ## Exit Codes
@@ -274,7 +274,7 @@ agent-docs --worktree-fallback local-only baseline --check --target project --st
 ```text
 $ agent-docs resolve --context startup
 CONTEXT: startup
-AGENTS_HOME: /Users/example/.agents
+AGENT_HOME: /Users/example/.agents
 PROJECT_PATH: /Users/example/work/nils-cli
 
 [required] startup home /Users/example/.agents/AGENTS.override.md source=builtin status=present why="startup home policy (AGENTS.override.md preferred over AGENTS.md)"
@@ -289,7 +289,7 @@ summary: required_total=2 present_required=2 missing_required=0 strict=false
 {
   "context": "startup",
   "strict": false,
-  "agents_home": "/Users/example/.agents",
+  "agent_home": "/Users/example/.agents",
   "project_path": "/Users/example/work/nils-cli",
   "documents": [
     {
@@ -352,12 +352,12 @@ $ echo $?
 ```text
 $ agent-docs baseline --check --target all
 BASELINE CHECK: all
-AGENTS_HOME: /Users/example/.agents
+AGENT_HOME: /Users/example/.agents
 PROJECT_PATH: /Users/example/work/nils-cli
 
 [home] startup policy /Users/example/.agents/AGENTS.md required present source=builtin-fallback why="startup home policy (AGENTS.override.md missing, fallback AGENTS.md)"
-[home] skill-dev /Users/example/.agents/DEVELOPMENT.md required missing source=builtin why="skill development guidance from AGENTS_HOME/DEVELOPMENT.md"
-[home] task-tools /Users/example/.agents/CLI_TOOLS.md required present source=builtin why="tool-selection guidance from AGENTS_HOME/CLI_TOOLS.md"
+[home] skill-dev /Users/example/.agents/DEVELOPMENT.md required missing source=builtin why="skill development guidance from AGENT_HOME/DEVELOPMENT.md"
+[home] task-tools /Users/example/.agents/CLI_TOOLS.md required present source=builtin why="tool-selection guidance from AGENT_HOME/CLI_TOOLS.md"
 [project] startup policy /Users/example/work/nils-cli/AGENTS.md required present source=builtin-fallback why="startup project policy (AGENTS.override.md missing, fallback AGENTS.md)"
 [project] project-dev /Users/example/work/nils-cli/DEVELOPMENT.md required present source=builtin why="project development guidance from PROJECT_PATH/DEVELOPMENT.md"
 
@@ -373,7 +373,7 @@ suggested_actions:
 {
   "target": "all",
   "strict": false,
-  "agents_home": "/Users/example/.agents",
+  "agent_home": "/Users/example/.agents",
   "project_path": "/Users/example/work/nils-cli",
   "items": [
     {
@@ -384,7 +384,7 @@ suggested_actions:
       "required": true,
       "status": "missing",
       "source": "builtin",
-      "why": "skill development guidance from AGENTS_HOME/DEVELOPMENT.md"
+      "why": "skill development guidance from AGENT_HOME/DEVELOPMENT.md"
     }
   ],
   "missing_required": 1,
@@ -400,7 +400,7 @@ suggested_actions:
 `baseline --check` applies extension documents with explicit, deterministic merge rules:
 
 1. Start with built-in baseline items for selected `--target`.
-2. Load extension configs in fixed order: `$AGENTS_HOME/AGENT_DOCS.toml` then `$PROJECT_PATH/AGENT_DOCS.toml`.
+2. Load extension configs in fixed order: `$AGENT_HOME/AGENT_DOCS.toml` then `$PROJECT_PATH/AGENT_DOCS.toml`.
 3. Consider only extension entries with `required = true` and `scope` included by `--target`.
 4. Resolve each extension path, then de-dup by key: `(context, scope, normalized_path)`.
 5. Same-key override order:
@@ -416,7 +416,7 @@ This ensures baseline output is reproducible while still honoring later override
 
 Each scope may define `AGENT_DOCS.toml` at:
 
-- `$AGENTS_HOME/AGENT_DOCS.toml`
+- `$AGENT_HOME/AGENT_DOCS.toml`
 - `$PROJECT_PATH/AGENT_DOCS.toml`
 
 Schema uses repeated `[[document]]` tables.
@@ -447,7 +447,7 @@ notes = "Track required external CLIs for this project"
 For `resolve --context <ctx>`:
 
 1. Start with built-in entries for `<ctx>`.
-2. Load entries from `$AGENTS_HOME/AGENT_DOCS.toml` (if file exists).
+2. Load entries from `$AGENT_HOME/AGENT_DOCS.toml` (if file exists).
 3. Load entries from `$PROJECT_PATH/AGENT_DOCS.toml` (if file exists).
 4. Filter entries by exact `context == <ctx>`.
 5. Normalize each entry path:

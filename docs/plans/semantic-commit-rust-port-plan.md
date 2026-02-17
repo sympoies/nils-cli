@@ -22,7 +22,7 @@ Behavioral parity (errors, warnings, exit codes, and validation rules) is the to
 
 ## Assumptions (if any)
 1. `git` is available on `PATH` and can be invoked as a subprocess (mirrors the scripts).
-2. The binary will often be installed under `$AGENTS_HOME/commands/`, enabling AGENTS_HOME inference.
+2. The binary will often be installed under `$AGENT_HOME/commands/`, enabling AGENT_HOME inference.
 3. Optional helper commands are resolved via Codex commands dir only (not general PATH), matching the
    source scripts.
 

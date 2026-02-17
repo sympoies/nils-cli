@@ -76,7 +76,7 @@ pub fn render_scaffold_baseline(
 fn render_resolve_text(report: &ResolveReport) -> String {
     let mut lines = Vec::new();
     lines.push(format!("CONTEXT: {}", report.context));
-    lines.push(format!("AGENTS_HOME: {}", report.agents_home.display()));
+    lines.push(format!("AGENT_HOME: {}", report.agent_home.display()));
     lines.push(format!("PROJECT_PATH: {}", report.project_path.display()));
     lines.push(String::new());
 
@@ -147,7 +147,7 @@ fn render_resolve_checklist(report: &ResolveReport) -> String {
 fn render_baseline_text(report: &BaselineCheckReport) -> String {
     let mut lines = Vec::new();
     lines.push(format!("BASELINE CHECK: {}", report.target));
-    lines.push(format!("AGENTS_HOME: {}", report.agents_home.display()));
+    lines.push(format!("AGENT_HOME: {}", report.agent_home.display()));
     lines.push(format!("PROJECT_PATH: {}", report.project_path.display()));
     lines.push(String::new());
 
@@ -190,7 +190,7 @@ fn render_baseline_text(report: &BaselineCheckReport) -> String {
 fn render_scaffold_baseline_text(report: &ScaffoldBaselineReport) -> String {
     let mut lines = Vec::new();
     lines.push(format!("SCAFFOLD BASELINE: {}", report.target));
-    lines.push(format!("AGENTS_HOME: {}", report.agents_home.display()));
+    lines.push(format!("AGENT_HOME: {}", report.agent_home.display()));
     lines.push(format!("PROJECT_PATH: {}", report.project_path.display()));
     lines.push(String::new());
 

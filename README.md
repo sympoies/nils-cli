@@ -140,7 +140,7 @@ To query crates.io publish status (single/multi/all crates), use:
 
 - `scripts/crates-io-status.sh --all --format text`
 - `scripts/crates-io-status.sh --crates "nils-common nils-codex-cli" --version v0.3.1 --format json`
-- `scripts/crates-io-status.sh --crate nils-codex-cli --format both --json-out "$AGENTS_HOME/out/codex-status.json"`
+- `scripts/crates-io-status.sh --crate nils-codex-cli --format both --json-out "$AGENT_HOME/out/codex-status.json"`
 
 `--version` checks that exact version; without `--version` the script checks each crate's current workspace version.
 Use `--fail-on-missing` for CI gates.

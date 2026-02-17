@@ -22,7 +22,7 @@ _agent-docs() {
   _arguments -C \
     '(-h --help)'{-h,--help}'[Print help]' \
     '(-V --version)'{-V,--version}'[Print version]' \
-    '--agents-home=[Override AGENTS_HOME root]:path:_files -/' \
+    '--agent-home=[Override AGENT_HOME root]:path:_files -/' \
     '--project-path=[Override PROJECT_PATH root]:path:_files -/' \
     '1:command:->subcmds' \
     '*::arg:->args'
@@ -41,7 +41,7 @@ _agent-docs() {
     resolve)
       _arguments -C \
         '(-h --help)'{-h,--help}'[Print help]' \
-        '--agents-home=[Override AGENTS_HOME root]:path:_files -/' \
+        '--agent-home=[Override AGENT_HOME root]:path:_files -/' \
         '--project-path=[Override PROJECT_PATH root]:path:_files -/' \
         '--context=[Context to resolve]:context:(startup skill-dev task-tools project-dev)' \
         '--format=[Output format]:format:(text json checklist)' \
@@ -51,7 +51,7 @@ _agent-docs() {
     contexts)
       _arguments -C \
         '(-h --help)'{-h,--help}'[Print help]' \
-        '--agents-home=[Override AGENTS_HOME root]:path:_files -/' \
+        '--agent-home=[Override AGENT_HOME root]:path:_files -/' \
         '--project-path=[Override PROJECT_PATH root]:path:_files -/' \
         '--format=[Output format]:format:(text json)' \
         && return 0
@@ -59,7 +59,7 @@ _agent-docs() {
     add)
       _arguments -C \
         '(-h --help)'{-h,--help}'[Print help]' \
-        '--agents-home=[Override AGENTS_HOME root]:path:_files -/' \
+        '--agent-home=[Override AGENT_HOME root]:path:_files -/' \
         '--project-path=[Override PROJECT_PATH root]:path:_files -/' \
         '--target=[Config scope file to update]:target:(home project)' \
         '--context=[Context key]:context:(startup skill-dev task-tools project-dev)' \
@@ -73,7 +73,7 @@ _agent-docs() {
     scaffold-agents)
       _arguments -C \
         '(-h --help)'{-h,--help}'[Print help]' \
-        '--agents-home=[Override AGENTS_HOME root]:path:_files -/' \
+        '--agent-home=[Override AGENT_HOME root]:path:_files -/' \
         '--project-path=[Override PROJECT_PATH root]:path:_files -/' \
         '--target=[Scope root to scaffold]:target:(home project)' \
         '--output=[Write to explicit output file path]:path:_files -/' \
@@ -83,7 +83,7 @@ _agent-docs() {
     baseline)
       _arguments -C \
         '(-h --help)'{-h,--help}'[Print help]' \
-        '--agents-home=[Override AGENTS_HOME root]:path:_files -/' \
+        '--agent-home=[Override AGENT_HOME root]:path:_files -/' \
         '--project-path=[Override PROJECT_PATH root]:path:_files -/' \
         '--check[Run baseline coverage checks]' \
         '--target=[Scope selection]:target:(home project all)' \
@@ -94,7 +94,7 @@ _agent-docs() {
     scaffold-baseline)
       _arguments -C \
         '(-h --help)'{-h,--help}'[Print help]' \
-        '--agents-home=[Override AGENTS_HOME root]:path:_files -/' \
+        '--agent-home=[Override AGENT_HOME root]:path:_files -/' \
         '--project-path=[Override PROJECT_PATH root]:path:_files -/' \
         '--target=[Scope selection]:target:(home project all)' \
         '--missing-only[Create only missing baseline files]' \

@@ -19,14 +19,14 @@ pub fn config_path_for_root(root: &Path) -> PathBuf {
 }
 
 pub fn load_configs_from_roots(roots: &ResolvedRoots) -> Result<LoadedConfigs, ConfigLoadError> {
-    load_configs(&roots.agents_home, &roots.project_path)
+    load_configs(&roots.agent_home, &roots.project_path)
 }
 
 pub fn load_configs(
-    agents_home: &Path,
+    agent_home: &Path,
     project_path: &Path,
 ) -> Result<LoadedConfigs, ConfigLoadError> {
-    let home = load_scope_config(Scope::Home, agents_home)?;
+    let home = load_scope_config(Scope::Home, agent_home)?;
     let project = load_scope_config(Scope::Project, project_path)?;
     Ok(LoadedConfigs { home, project })
 }

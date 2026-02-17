@@ -39,10 +39,10 @@ fn configure_test_env(
     stub: &StubBinDir,
 ) -> (EnvGuard, EnvGuard, EnvGuard, EnvGuard) {
     let path_guard = prepend_path(lock, stub.path());
-    let agents_home = stub.path().join("agents-home");
-    std::fs::create_dir_all(&agents_home).expect("create agents home");
-    let agents_home_str = agents_home.to_string_lossy().to_string();
-    let agents_home_guard = EnvGuard::set(lock, "AGENTS_HOME", agents_home_str.as_str());
+    let agent_home = stub.path().join("agent-home");
+    std::fs::create_dir_all(&agent_home).expect("create agents home");
+    let agents_home_str = agent_home.to_string_lossy().to_string();
+    let agents_home_guard = EnvGuard::set(lock, "AGENT_HOME", agents_home_str.as_str());
     let macos_guard = EnvGuard::set(lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
     let screen_guard = EnvGuard::set(lock, "AGENTS_SCREEN_RECORD_TEST_MODE", "1");
     (path_guard, agents_home_guard, macos_guard, screen_guard)

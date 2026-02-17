@@ -21,7 +21,7 @@ This plan redesigns the current direction so `codex-cli` remains strictly OpenAI
 2. `agentctl` can be added as a new workspace crate and primary control-plane entrypoint.
 3. Provider-specific CLIs can expose/consume shared runtime contracts without leaking provider internals.
 4. Desktop automation checks require environment-aware fallbacks (stub/test-mode in CI).
-5. Artifact outputs can be written under `${AGENTS_HOME}/out` with deterministic structure.
+5. Artifact outputs can be written under `${AGENT_HOME}/out` with deterministic structure.
 
 ## Inlined ADR: `codex-cli` / `agentctl` provider boundary
 - Status: Accepted
@@ -304,10 +304,10 @@ Deny list:
 - **Acceptance criteria**:
   - Bundle manifest is versioned and always emitted.
   - Partial failures are visible without losing successful artifact references.
-  - Artifact paths are deterministic under `${AGENTS_HOME}/out` or configured output dir.
+  - Artifact paths are deterministic under `${AGENT_HOME}/out` or configured output dir.
 - **Validation**:
   - `cargo test -p agentctl -- debug_bundle_`
-  - `cargo run -p agentctl -- debug bundle --output-dir ${AGENTS_HOME:-$HOME/.agents}/out/agentctl-debug-demo`
+  - `cargo run -p agentctl -- debug bundle --output-dir ${AGENT_HOME:-$HOME/.agents}/out/agentctl-debug-demo`
 
 ### Task 3.4: Implement `agentctl workflow run` declarative orchestration
 - **Location**:

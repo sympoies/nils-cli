@@ -28,20 +28,20 @@ scripts/crates-io-status.sh \
   --crates "nils-common nils-codex-cli" \
   --version v0.3.1 \
   --format json \
-  --json-out "$AGENTS_HOME/out/crates-status-v0.3.1.json"
+  --json-out "$AGENT_HOME/out/crates-status-v0.3.1.json"
 
 # 3) all crates from publish-order file, both outputs
 scripts/crates-io-status.sh \
   --all \
   --format both \
-  --text-out "$AGENTS_HOME/out/crates-status-all.md" \
-  --json-out "$AGENTS_HOME/out/crates-status-all.json"
+  --text-out "$AGENT_HOME/out/crates-status-all.md" \
+  --json-out "$AGENT_HOME/out/crates-status-all.json"
 
 # 4) CI gate: fail when any crate is missing/error
 scripts/crates-io-status.sh \
   --all \
   --format json \
-  --json-out "$AGENTS_HOME/out/crates-status-ci.json" \
+  --json-out "$AGENT_HOME/out/crates-status-ci.json" \
   --fail-on-missing
 ```
 
@@ -67,8 +67,8 @@ scripts/crates-io-status.sh \
   --crate nils-codex-cli \
   --version v0.3.1 \
   --format both \
-  --text-out "$AGENTS_HOME/out/crates-io-status-nils-codex-cli-v0.3.1.md" \
-  --json-out "$AGENTS_HOME/out/crates-io-status-nils-codex-cli-v0.3.1.json"
+  --text-out "$AGENT_HOME/out/crates-io-status-nils-codex-cli-v0.3.1.md" \
+  --json-out "$AGENT_HOME/out/crates-io-status-nils-codex-cli-v0.3.1.json"
 ```
 
 Text output snapshot:
@@ -134,8 +134,8 @@ Command:
 scripts/crates-io-status.sh \
   --crate nils-codex-cli \
   --format both \
-  --text-out "$AGENTS_HOME/out/crates-io-status-nils-codex-cli-workspace.md" \
-  --json-out "$AGENTS_HOME/out/crates-io-status-nils-codex-cli-workspace.json"
+  --text-out "$AGENT_HOME/out/crates-io-status-nils-codex-cli-workspace.md" \
+  --json-out "$AGENT_HOME/out/crates-io-status-nils-codex-cli-workspace.json"
 ```
 
 Text output snapshot:

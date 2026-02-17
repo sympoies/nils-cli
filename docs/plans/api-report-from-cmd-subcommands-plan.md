@@ -87,7 +87,7 @@ Compatibility with the legacy `api-report-from-cmd` shell script is best-effort;
 ### Task 1.5: Unit tests for tokenization + parsing + case derivation
 - **Location**:
   - `crates/api-testing-core/src/cmd_snippet.rs`
-- **Description**: Add focused unit tests covering quotes/escapes, `$AGENTS_HOME`-style paths (basename matching), `\\\n` continuations, pipe truncation, and common flag/positional combinations for both GraphQL and REST.
+- **Description**: Add focused unit tests covering quotes/escapes, `$AGENT_HOME`-style paths (basename matching), `\\\n` continuations, pipe truncation, and common flag/positional combinations for both GraphQL and REST.
 - **Dependencies**:
   - Task 1.3
   - Task 1.4
