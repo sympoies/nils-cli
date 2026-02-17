@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  nils-cli-verify-required-checks.sh [--help]
+  nils-cli-verify-required-checks.sh [--docs-only] [--help]
 
 Runs the required pre-delivery checks from DEVELOPMENT.md:
   - bash scripts/ci/docs-placement-audit.sh --strict
@@ -12,6 +12,14 @@ Runs the required pre-delivery checks from DEVELOPMENT.md:
   - cargo clippy --all-targets --all-features -- -D warnings
   - cargo test --workspace
   - zsh -f tests/zsh/completion.test.zsh
+
+Modes:
+  (default)
+    Run full required checks.
+  --docs-only
+    Run documentation-only checks:
+      - bash scripts/ci/docs-placement-audit.sh --strict
+    Skip fmt/clippy/workspace tests/zsh completion tests.
 
 Environment:
   NILS_CLI_TEST_RUNNER=nextest
@@ -27,8 +35,13 @@ Exit codes:
 USAGE
 }
 
+docs_only=0
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
+    --docs-only)
+      docs_only=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -38,10 +51,15 @@ while [[ $# -gt 0 ]]; do
       usage >&2
       exit 2
       ;;
-  esac
+    esac
 done
 
-for cmd in git cargo zsh; do
+required_cmds=(git)
+if [[ "$docs_only" -eq 0 ]]; then
+  required_cmds+=(cargo zsh)
+fi
+
+for cmd in "${required_cmds[@]}"; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "error: missing required tool on PATH: $cmd" >&2
     exit 2
@@ -49,20 +67,22 @@ for cmd in git cargo zsh; do
 done
 
 test_runner="${NILS_CLI_TEST_RUNNER:-}"
-case "$test_runner" in
-  ""|cargo|cargo-test)
-    ;;
-  nextest)
-    if ! command -v cargo-nextest >/dev/null 2>&1; then
-      echo "error: NILS_CLI_TEST_RUNNER=nextest requires cargo-nextest on PATH" >&2
+if [[ "$docs_only" -eq 0 ]]; then
+  case "$test_runner" in
+    ""|cargo|cargo-test)
+      ;;
+    nextest)
+      if ! command -v cargo-nextest >/dev/null 2>&1; then
+        echo "error: NILS_CLI_TEST_RUNNER=nextest requires cargo-nextest on PATH" >&2
+        exit 2
+      fi
+      ;;
+    *)
+      echo "error: unsupported NILS_CLI_TEST_RUNNER value: $test_runner (expected 'cargo' or 'nextest')" >&2
       exit 2
-    fi
-    ;;
-  *)
-    echo "error: unsupported NILS_CLI_TEST_RUNNER value: $test_runner (expected 'cargo' or 'nextest')" >&2
-    exit 2
-    ;;
-esac
+      ;;
+  esac
+fi
 
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 if [[ -z "$repo_root" || ! -d "$repo_root" ]]; then
@@ -84,10 +104,14 @@ run() {
   fi
 }
 
+run bash scripts/ci/docs-placement-audit.sh --strict
+if [[ "$docs_only" -eq 1 ]]; then
+  echo "ok: docs-only nils-cli checks passed"
+  exit 0
+fi
+
 coverage_dir="${NILS_CLI_COVERAGE_DIR:-target/coverage}"
 run mkdir -p "$coverage_dir"
-
-run bash scripts/ci/docs-placement-audit.sh --strict
 run cargo fmt --all -- --check
 run cargo clippy --all-targets --all-features -- -D warnings
 if [[ "$test_runner" == "nextest" ]]; then

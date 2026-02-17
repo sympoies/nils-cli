@@ -62,6 +62,9 @@
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 85`
   - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
 - Or run the single entrypoint for fmt/clippy/tests: `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh` (it pre-creates `target/coverage`; still run coverage commands above)
+- Docs-only fast path: if every changed file is documentation-only (`*.md`, `docs/**`, `crates/*/docs/**`, plus root docs like `README.md`, `DEVELOPMENT.md`), run:
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh --docs-only`
+  - In this mode, full workspace lint/test/coverage checks may be skipped.
 
 ### CI-style test reporting (optional)
 

@@ -15,7 +15,7 @@ Prereqs:
 
 Inputs:
 
-- None.
+- Optional flag: `--docs-only` (documentation-only fast path).
 
 Outputs:
 
@@ -24,6 +24,8 @@ Outputs:
   - `cargo clippy --all-targets --all-features -- -D warnings`
   - `cargo test --workspace`
   - `zsh -f tests/zsh/completion.test.zsh`
+- In `--docs-only` mode, runs only:
+  - `bash scripts/ci/docs-placement-audit.sh --strict`
 - Prints the failing command (if any) and exits non-zero on failure.
 
 Exit codes:
@@ -45,4 +47,6 @@ Failure modes:
 ## Workflow
 
 - Run before you claim a task is done.
+- For docs-only changes (`README.md` / `docs/**` / `*.md` only), prefer:
+  - `.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh --docs-only`
 - If it fails, fix the reported issue and re-run until it exits `0`.

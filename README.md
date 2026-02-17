@@ -82,6 +82,13 @@ Integration steps:
 5. Dev-only: add [wrappers/](wrappers/) to your PATH (or symlink wrapper scripts into a bin directory).
 6. Regenerate completions when CLIs change, and commit updates alongside code.
 
+## Contributor checks
+
+- Full required checks:
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
+- Docs-only fast path (only docs changed, e.g. `*.md`, `docs/**`, `crates/*/docs/**`):
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh --docs-only`
+
 ## Local install (release)
 
 - Build + install all workspace binaries into `~/.local/nils-cli/`:
