@@ -20,7 +20,9 @@ Each crate is either a standalone CLI binary or a shared library used across the
 - [crates/api-testing-core](crates/api-testing-core): Shared library for the API testing CLIs (config/auth, history, reporting).
 - [crates/api-rest](crates/api-rest): REST request runner from JSON request specs, with history + Markdown reports.
 - [crates/api-gql](crates/api-gql): GraphQL operation runner for `.graphql` files (variables, history, reports, schema).
-- [crates/api-test](crates/api-test): Suite runner that orchestrates REST/GraphQL cases and outputs JSON (and optional JUnit).
+- [crates/api-grpc](crates/api-grpc): gRPC request runner from JSON specs, with history + Markdown reports.
+- [crates/api-websocket](crates/api-websocket): Deterministic WebSocket request runner with history + Markdown reports.
+- [crates/api-test](crates/api-test): Suite runner that orchestrates REST/GraphQL/gRPC/WebSocket cases and outputs JSON (and optional JUnit).
 
 ### Git tooling
 
