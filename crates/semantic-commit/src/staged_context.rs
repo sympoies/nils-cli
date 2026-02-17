@@ -1,4 +1,5 @@
 use crate::git;
+use nils_common::git as common_git;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -324,32 +325,15 @@ struct NameStatusEntry {
 }
 
 fn parse_name_status_z(buf: &[u8]) -> anyhow::Result<Vec<NameStatusEntry>> {
-    let parts: Vec<&[u8]> = buf.split(|b| *b == 0).filter(|p| !p.is_empty()).collect();
+    let parts = common_git::parse_name_status_z(buf).map_err(|err| anyhow::anyhow!("{err}"))?;
     let mut out: Vec<NameStatusEntry> = Vec::new();
 
-    let mut i = 0;
-    while i < parts.len() {
-        let raw_status = std::str::from_utf8(parts[i])?;
-        i += 1;
-
-        let (path, old_path) = if raw_status.starts_with('R') || raw_status.starts_with('C') {
-            let old = parts
-                .get(i)
-                .ok_or_else(|| anyhow::anyhow!("error: malformed name-status output"))?;
-            let new = parts
-                .get(i + 1)
-                .ok_or_else(|| anyhow::anyhow!("error: malformed name-status output"))?;
-            i += 2;
-            (
-                std::str::from_utf8(new)?.to_string(),
-                Some(std::str::from_utf8(old)?.to_string()),
-            )
-        } else {
-            let file = parts
-                .get(i)
-                .ok_or_else(|| anyhow::anyhow!("error: malformed name-status output"))?;
-            i += 1;
-            (std::str::from_utf8(file)?.to_string(), None)
+    for entry in parts {
+        let raw_status = std::str::from_utf8(entry.status_raw)?;
+        let path = std::str::from_utf8(entry.path)?.to_string();
+        let old_path = match entry.old_path {
+            Some(path) => Some(std::str::from_utf8(path)?.to_string()),
+            None => None,
         };
 
         let status_letter = raw_status
@@ -446,19 +430,7 @@ fn read_field(buf: &[u8], index: &mut usize, delimiter: u8) -> anyhow::Result<St
 }
 
 fn is_lockfile(path: &str) -> bool {
-    let name = Path::new(path)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
-    matches!(
-        name,
-        "yarn.lock"
-            | "package-lock.json"
-            | "pnpm-lock.yaml"
-            | "bun.lockb"
-            | "bun.lock"
-            | "npm-shrinkwrap.json"
-    )
+    common_git::is_lockfile_path(path)
 }
 
 fn git_string(repo: Option<&Path>, args: &[&str]) -> anyhow::Result<String> {
