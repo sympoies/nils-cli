@@ -121,6 +121,35 @@ pub fn cmd_exists(program: &str) -> bool {
     find_in_path(program).is_some()
 }
 
+pub fn browser_open_command() -> Option<&'static str> {
+    if cmd_exists("open") {
+        Some("open")
+    } else if cmd_exists("xdg-open") {
+        Some("xdg-open")
+    } else {
+        None
+    }
+}
+
+pub fn is_headless_browser_launch_failure(stdout: &[u8], stderr: &[u8]) -> bool {
+    let mut message = String::from_utf8_lossy(stderr).to_ascii_lowercase();
+    if !stdout.is_empty() {
+        message.push('\n');
+        message.push_str(&String::from_utf8_lossy(stdout).to_ascii_lowercase());
+    }
+
+    if message.contains("no method available for opening")
+        || message.contains("couldn't find a suitable web browser")
+    {
+        return true;
+    }
+
+    message.contains("not found")
+        && ["www-browser", "links2", "elinks", "links", "lynx", "w3m"]
+            .iter()
+            .any(|candidate| message.contains(candidate))
+}
+
 pub fn find_in_path(program: &str) -> Option<PathBuf> {
     if looks_like_path(program) {
         let p = PathBuf::from(program);
@@ -224,7 +253,7 @@ fn is_executable_file(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nils_test_support::{GlobalStateLock, StubBinDir, prepend_path};
+    use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
     use std::fs;
 
     #[cfg(unix)]
@@ -378,5 +407,43 @@ mod tests {
         let inherit =
             run_status_inherit(shell_program(), &["-c", "exit 3"]).expect("inherit status");
         assert_eq!(inherit.code(), Some(3));
+    }
+
+    #[test]
+    fn browser_open_command_prefers_open_then_xdg_open() {
+        let lock = GlobalStateLock::new();
+
+        let both = StubBinDir::new();
+        both.write_exe("open", "#!/bin/sh\nexit 0\n");
+        both.write_exe("xdg-open", "#!/bin/sh\nexit 0\n");
+        let _both_path_guard = EnvGuard::set(&lock, "PATH", &both.path_str());
+        assert_eq!(browser_open_command(), Some("open"));
+        drop(_both_path_guard);
+
+        let xdg_only = StubBinDir::new();
+        xdg_only.write_exe("xdg-open", "#!/bin/sh\nexit 0\n");
+        let _xdg_path_guard = EnvGuard::set(&lock, "PATH", &xdg_only.path_str());
+        assert_eq!(browser_open_command(), Some("xdg-open"));
+        drop(_xdg_path_guard);
+
+        let empty = tempfile::TempDir::new().expect("tempdir");
+        let empty_path = empty.path().to_string_lossy().to_string();
+        let _empty_path_guard = EnvGuard::set(&lock, "PATH", &empty_path);
+        assert_eq!(browser_open_command(), None);
+    }
+
+    #[test]
+    fn headless_browser_launch_failure_detection_matches_xdg_open_signals() {
+        let stderr =
+            b"/usr/bin/open: 882: www-browser: not found\nxdg-open: no method available for opening 'https://example.com'\n";
+        assert!(is_headless_browser_launch_failure(&[], stderr));
+    }
+
+    #[test]
+    fn headless_browser_launch_failure_detection_does_not_mask_other_errors() {
+        assert!(!is_headless_browser_launch_failure(
+            &[],
+            b"open: permission denied\n"
+        ));
     }
 }
