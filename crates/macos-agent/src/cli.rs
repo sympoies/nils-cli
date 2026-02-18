@@ -152,6 +152,16 @@ pub enum CommandGroup {
         #[command(subcommand)]
         command: ProfileCommand,
     },
+
+    /// Print shell completion script.
+    Completion(CompletionArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct CompletionArgs {
+    /// Shell to generate completion for.
+    #[arg(value_enum)]
+    pub shell: crate::completion::CompletionShell,
 }
 
 #[derive(Debug, Clone, Args)]

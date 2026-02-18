@@ -6,127 +6,58 @@ fi
 
 shopt -s progcomp 2>/dev/null || true
 
-_nils_cli_macos_agent_complete() {
-  local -a words=("${COMP_WORDS[@]}")
-  local cword="$COMP_CWORD"
-  local cur="${COMP_WORDS[COMP_CWORD]}"
-  local prev="${COMP_WORDS[COMP_CWORD-1]}"
+_nils_cli_macos_agent_source_common_bash() {
+  declare -F _nils_cli_completion_common_load_generated_bash >/dev/null 2>&1 && return 0
 
-  local -a root_opts=(-h --help -V --version --format --error-format --dry-run --retries --retry-delay-ms --timeout-ms --trace --trace-dir)
-  local -a groups=(preflight windows apps window input input-source ax observe debug wait scenario profile)
+  local source_file="${BASH_SOURCE[0]}"
+  local script_dir=''
+  script_dir="$(cd -- "$(dirname -- "$source_file")" && pwd -P)" || return 1
 
-  if (( cword == 1 )); then
-    if [[ "$cur" == -* ]]; then
-      COMPREPLY=( $(compgen -W "${root_opts[*]}" -- "$cur") )
-      return 0
-    fi
-    COMPREPLY=( $(compgen -W "${groups[*]}" -- "$cur") )
-    return 0
-  fi
+  local helper_path="${script_dir}/completion-adapter-common.bash"
+  [[ -r "$helper_path" ]] || return 1
 
-  local group="${words[1]-}"
-  case "$group" in
-    windows)
-      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "list" -- "$cur") ); return 0; fi
-      ;;
-    apps)
-      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "list" -- "$cur") ); return 0; fi
-      ;;
-    window)
-      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "activate" -- "$cur") ); return 0; fi
-      ;;
-    input)
-      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "click type hotkey" -- "$cur") ); return 0; fi
-      ;;
-    input-source)
-      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "current switch" -- "$cur") ); return 0; fi
-      ;;
-    ax)
-      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "list click type attr action session watch" -- "$cur") ); return 0; fi
-      ;;
-    observe)
-      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "screenshot" -- "$cur") ); return 0; fi
-      ;;
-    debug)
-      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "bundle" -- "$cur") ); return 0; fi
-      ;;
-    wait)
-      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "sleep app-active window-present ax-present ax-unique" -- "$cur") ); return 0; fi
-      ;;
-    scenario)
-      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "run" -- "$cur") ); return 0; fi
-      ;;
-    profile)
-      if (( cword == 2 )); then COMPREPLY=( $(compgen -W "validate init" -- "$cur") ); return 0; fi
-      ;;
-  esac
+  # shellcheck source=/dev/null
+  source "$helper_path" || return 1
 
-  case "$prev" in
-    --format)
-      COMPREPLY=( $(compgen -W "text json tsv" -- "$cur") )
-      return 0
-      ;;
-    --error-format)
-      COMPREPLY=( $(compgen -W "text json" -- "$cur") )
-      return 0
-      ;;
-    --button)
-      COMPREPLY=( $(compgen -W "left right middle" -- "$cur") )
-      return 0
-      ;;
-    --image-format)
-      COMPREPLY=( $(compgen -W "png jpg webp" -- "$cur") )
-      return 0
-      ;;
-    --match-strategy)
-      COMPREPLY=( $(compgen -W "contains exact prefix suffix regex" -- "$cur") )
-      return 0
-      ;;
-    --fallback-order)
-      COMPREPLY=( $(compgen -W "ax-press ax-confirm frame-center coordinate" -- "$cur") )
-      return 0
-      ;;
-    --postcondition-focused|--focused|--enabled)
-      COMPREPLY=( $(compgen -W "true false" -- "$cur") )
-      return 0
-      ;;
-    --path|--file|--trace-dir)
-      COMPREPLY=( $(compgen -f -- "$cur") )
-      return 0
-      ;;
-    --output-dir)
-      COMPREPLY=( $(compgen -d -- "$cur") )
-      return 0
-      ;;
-  esac
-
-  if [[ "$cur" == -* ]]; then
-    local -a opts=(
-      --format --error-format --dry-run --retries --retry-delay-ms --timeout-ms --trace --trace-dir
-      --strict --include-probes
-      --app --window-title-contains --window-name --on-screen-only
-      --window-id --active-window --bundle-id --wait-ms
-      --x --y --button --count --pre-wait-ms --post-wait-ms
-      --text --delay-ms --submit --enter --mods --key
-      --id
-      --role --title-contains --max-depth --limit --nth
-      --session-id --identifier-contains --value-contains --subrole --focused --enabled
-      --name --value --value-type --watch-id --events --max-buffer --drain
-      --allow-coordinate-fallback --clear-first --paste --allow-keyboard-fallback
-      --reselect-before-click --fallback-order
-      --match-strategy --selector-explain --selector-padding
-      --gate-app-active --gate-window-present --gate-ax-present --gate-ax-unique
-      --gate-timeout-ms --gate-poll-ms
-      --postcondition-focused --postcondition-attribute --postcondition-attribute-value
-      --postcondition-timeout-ms --postcondition-poll-ms
-      --path --output-dir --image-format --ms --timeout-ms --poll-ms
-      -h --help -V --version
-    )
-    COMPREPLY=( $(compgen -W "${opts[*]}" -- "$cur") )
-    return 0
-  fi
-
-  COMPREPLY=()
+  declare -F _nils_cli_completion_common_load_generated_bash >/dev/null 2>&1
 }
 
-complete -F _nils_cli_macos_agent_complete macos-agent
+_NILS_MACOS_AGENT_BASH_GENERATED_STATE=0
+
+_nils_cli_macos_agent_load_generated_bash() {
+  _nils_cli_macos_agent_source_common_bash || return 1
+
+  # command macos-agent completion bash
+  _nils_cli_completion_common_load_generated_bash \
+    "_NILS_MACOS_AGENT_BASH_GENERATED_STATE" \
+    "_nils_cli_macos_agent_generated" \
+    "macos-agent" \
+    "_macos_agent" \
+    '^if \[\[ "\${BASH_VERSINFO\[0\]}" -eq 4 ' \
+    '^fi$'
+}
+
+_nils_cli_macos_agent_complete() {
+  if ! _nils_cli_macos_agent_load_generated_bash; then
+    if declare -F _nils_cli_completion_common_fail_closed_no_legacy_bash >/dev/null 2>&1; then
+      _nils_cli_completion_common_fail_closed_no_legacy_bash
+    else
+      COMPREPLY=()
+    fi
+    return 0
+  fi
+
+  local cur="${COMP_WORDS[COMP_CWORD]}"
+  local prev=''
+  if (( COMP_CWORD > 0 )); then
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+  fi
+
+  _nils_cli_macos_agent_generated "macos-agent" "$cur" "$prev"
+}
+
+if _nils_cli_macos_agent_source_common_bash; then
+  _nils_cli_completion_common_register_bash _nils_cli_macos_agent_complete macos-agent
+else
+  complete -F _nils_cli_macos_agent_complete macos-agent
+fi

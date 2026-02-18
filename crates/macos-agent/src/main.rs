@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use clap::{Parser, error::ErrorKind};
-use macos_agent::cli::{Cli, ErrorFormat};
+use macos_agent::cli::{Cli, CommandGroup, ErrorFormat};
 use macos_agent::error::CliError;
 use macos_agent::model::ErrorEnvelope;
 use macos_agent::run::{command_label, run};
@@ -48,6 +48,11 @@ fn main() -> ExitCode {
             return ExitCode::from(code as u8);
         }
     };
+
+    if let CommandGroup::Completion(args) = &cli.command {
+        let code = macos_agent::completion::run(args.shell);
+        return ExitCode::from(code as u8);
+    }
 
     let trace_enabled = cli.trace || cli.trace_dir.is_some();
     if trace_enabled && let Err(error) = ensure_trace_dir_writable(&cli) {
@@ -287,5 +292,9 @@ mod tests {
         let switch = Cli::try_parse_from(["macos-agent", "input-source", "switch", "--id", "abc"])
             .expect("input-source switch parse");
         assert_eq!(command_label(&switch), "input-source.switch");
+
+        let completion =
+            Cli::try_parse_from(["macos-agent", "completion", "zsh"]).expect("completion parse");
+        assert_eq!(command_label(&completion), "completion");
     }
 }

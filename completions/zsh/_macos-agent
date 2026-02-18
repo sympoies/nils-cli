@@ -1,515 +1,60 @@
 #compdef macos-agent
 
+_nils_cli_macos_agent_source_common_zsh() {
+  (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+
+  local source_file="${functions_source[_macos-agent]-}"
+  local helper_path=''
+
+  if [[ -n "$source_file" && -r "$source_file" ]]; then
+    helper_path="${source_file:h}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
+  fi
+
+  local dir=''
+  for dir in "${fpath[@]}"; do
+    helper_path="${dir}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
+  done
+
+  return 1
+}
+
+typeset -gi _NILS_MACOS_AGENT_ZSH_GENERATED_STATE=0
+
+_nils_cli_macos_agent_load_generated_zsh() {
+  _nils_cli_macos_agent_source_common_zsh || return 1
+
+  _nils_cli_completion_common_load_generated_zsh \
+    "_NILS_MACOS_AGENT_ZSH_GENERATED_STATE" \
+    "_nils_cli_macos_agent_generated" \
+    "macos-agent" \
+    "_macos-agent" \
+    '^if \[ "\$funcstack\[1\]" = "_nils_cli_macos_agent_generated" \]; then$' \
+    '^fi$'
+}
+
 _macos-agent() {
   emulate -L zsh -o extendedglob
 
-  local context state state_descr
-  typeset -A opt_args
-
-  local -a global_opts
-  global_opts=(
-    '--format=[Output format]:format:(text json tsv)'
-    '--error-format=[Error output format]:format:(text json)'
-    '--dry-run[Print planned actions without mutating desktop state]'
-    '--retries=[Retry count for mutating actions]:count:'
-    '--retry-delay-ms=[Delay between retries in milliseconds]:ms:'
-    '--timeout-ms=[Per-action timeout in milliseconds]:ms:'
-    '--trace[Emit per-command trace artifacts under AGENT_HOME/out]'
-    '--trace-dir=[Override trace output directory]:path:_files'
-    '(-h --help)'{-h,--help}'[Show help]'
-    '(-V --version)'{-V,--version}'[Show version]'
-  )
-
-  if (( CURRENT == 2 )); then
-    _describe -t commands 'macos-agent command' \
-      'preflight:Check runtime dependencies and permissions' \
-      'windows:List windows' \
-      'apps:List apps' \
-      'window:Activate app/window target' \
-      'input:Pointer and keyboard actions' \
-      'input-source:Inspect and switch keyboard input sources' \
-      'ax:Accessibility node operations' \
-      'observe:Capture screenshot artifacts' \
-      'debug:Capture deterministic triage bundles' \
-      'wait:UI stabilization wait primitives' \
-      'scenario:Run declarative scenario files' \
-      'profile:Validate/init coordinate profiles'
-    return 0
+  if ! _nils_cli_macos_agent_load_generated_zsh; then
+    if (( $+functions[_nils_cli_completion_common_fail_closed_no_legacy_zsh] )); then
+      _nils_cli_completion_common_fail_closed_no_legacy_zsh
+    fi
+    return 1
   fi
 
-  local group="${words[2]}"
-  case "$group" in
-    preflight)
-      _arguments -C $global_opts \
-        '--strict[Treat advisory warnings as readiness failures]' \
-        '--include-probes[Run actionable probes in addition to static checks]' \
-        && return 0
-      ;;
-
-    windows)
-      if (( CURRENT == 3 )); then
-        _describe -t subcommands 'windows command' 'list:List windows'
-        return 0
-      fi
-      _arguments -C $global_opts \
-        '3:windows command:(list)' \
-        '--app=[Filter by app/owner name]:name:' \
-        '--window-title-contains=[Narrow app selection by window title]:name:' \
-        '--window-name=[Deprecated alias of --window-title-contains]:name:' \
-        '--on-screen-only[Include only on-screen windows]' \
-        && return 0
-      ;;
-
-    apps)
-      if (( CURRENT == 3 )); then
-        _describe -t subcommands 'apps command' 'list:List apps'
-        return 0
-      fi
-      _arguments -C $global_opts '3:apps command:(list)' && return 0
-      ;;
-
-    window)
-      if (( CURRENT == 3 )); then
-        _describe -t subcommands 'window command' 'activate:Activate app/window target'
-        return 0
-      fi
-      _arguments -C $global_opts \
-        '3:window command:(activate)' \
-        '--window-id=[Select by window id]:id:' \
-        '--active-window[Select frontmost active window]' \
-        '--app=[Select by app name]:name:' \
-        '--window-title-contains=[Narrow app selection by window title]:name:' \
-        '--window-name=[Deprecated alias of --window-title-contains]:name:' \
-        '--bundle-id=[Select by bundle id]:bundle:' \
-        '--wait-ms=[Wait up to this many milliseconds for active confirmation]:ms:' \
-        && return 0
-      ;;
-
-    input)
-      if (( CURRENT == 3 )); then
-        _describe -t subcommands 'input command' \
-          'click:Click at x/y coordinates' \
-          'type:Type text' \
-          'hotkey:Send hotkey chord'
-        return 0
-      fi
-
-      local input_cmd="${words[3]}"
-      case "$input_cmd" in
-        click)
-          _arguments -C $global_opts \
-            '--x=[X coordinate in pixels]:x:' \
-            '--y=[Y coordinate in pixels]:y:' \
-            '--button=[Mouse button]:button:(left right middle)' \
-            '--count=[Number of clicks]:count:' \
-            '--pre-wait-ms=[Wait before clicking]:ms:' \
-            '--post-wait-ms=[Wait after clicking]:ms:' \
-            && return 0
-          ;;
-        type)
-          _arguments -C $global_opts \
-            '--text=[Text to type]:text:' \
-            '--delay-ms=[Delay between key events]:ms:' \
-            '--submit[Press Enter after typing]' \
-            '--enter[Deprecated alias of --submit]' \
-            && return 0
-          ;;
-        hotkey)
-          _arguments -C $global_opts \
-            '--mods=[Modifier keys, comma-separated]:mods:' \
-            '--key=[Main key]:key:' \
-            && return 0
-          ;;
-      esac
-      ;;
-
-    input-source)
-      if (( CURRENT == 3 )); then
-        _describe -t subcommands 'input-source command' \
-          'current:Show current input source id' \
-          'switch:Switch input source id'
-        return 0
-      fi
-
-      local input_source_cmd="${words[3]}"
-      case "$input_source_cmd" in
-        current)
-          _arguments -C $global_opts && return 0
-          ;;
-        switch)
-          _arguments -C $global_opts \
-            '--id=[Input source id or alias (abc/us)]:id:' \
-            && return 0
-          ;;
-      esac
-      ;;
-
-    ax)
-      if (( CURRENT == 3 )); then
-        _describe -t subcommands 'ax command' \
-          'list:List AX nodes' \
-          'click:Click AX node' \
-          'type:Type into AX node' \
-          'attr:Read or set AX attributes' \
-          'action:Perform AX actions' \
-          'session:Manage AX sessions' \
-          'watch:Manage AX watchers'
-        return 0
-      fi
-
-      local ax_cmd="${words[3]}"
-      case "$ax_cmd" in
-        list)
-          _arguments -C $global_opts \
-            '--session-id=[Target session id]:id:' \
-            '--app=[Target app name]:name:' \
-            '--bundle-id=[Target bundle id]:bundle:' \
-            '--window-title-contains=[Narrow to windows by title]:text:' \
-            '--role=[Filter by AX role]:role:' \
-            '--title-contains=[Filter by title substring]:text:' \
-            '--identifier-contains=[Filter by identifier substring]:text:' \
-            '--value-contains=[Filter by value substring]:text:' \
-            '--subrole=[Filter by AX subrole]:subrole:' \
-            '--focused=[Filter by focused state]:bool:(true false)' \
-            '--enabled=[Filter by enabled state]:bool:(true false)' \
-            '--max-depth=[Limit traversal depth]:depth:' \
-            '--limit=[Limit number of returned nodes]:count:' \
-            && return 0
-          ;;
-        click)
-          _arguments -C $global_opts \
-            '--node-id=[Select by node id]:id:' \
-            '--role=[Select by AX role]:role:' \
-            '--title-contains=[Select by title substring]:text:' \
-            '--identifier-contains=[Select by identifier substring]:text:' \
-            '--value-contains=[Select by value substring]:text:' \
-            '--subrole=[Select by AX subrole]:subrole:' \
-            '--focused=[Select by focused state]:bool:(true false)' \
-            '--enabled=[Select by enabled state]:bool:(true false)' \
-            '--nth=[Select nth match from role/title selector]:n:' \
-            '--match-strategy=[Text match strategy]:strategy:(contains exact prefix suffix regex)' \
-            '--selector-explain[Emit selector explain diagnostics in JSON output]' \
-            '--session-id=[Target session id]:id:' \
-            '--app=[Target app name]:name:' \
-            '--bundle-id=[Target bundle id]:bundle:' \
-            '--window-title-contains=[Narrow to windows by title]:text:' \
-            '--reselect-before-click[Re-resolve selector immediately before click]' \
-            '--allow-coordinate-fallback[Allow coordinate fallback when AXPress is unavailable]' \
-            '--fallback-order=[Fallback stage order]:stages:' \
-            '--gate-app-active[Require app-active gate before mutation]' \
-            '--gate-window-present[Require window-present gate before mutation]' \
-            '--gate-ax-present[Require selector gate with >= 1 match]' \
-            '--gate-ax-unique[Require selector gate with exactly one match]' \
-            '--gate-timeout-ms=[Timeout for gate checks in milliseconds]:ms:' \
-            '--gate-poll-ms=[Poll interval for gate checks in milliseconds]:ms:' \
-            '--postcondition-focused=[Expected focused state after mutation]:bool:(true false)' \
-            '--postcondition-attribute=[Expected AX attribute name after mutation]:name:' \
-            '--postcondition-attribute-value=[Expected AX attribute value after mutation]:value:' \
-            '--postcondition-timeout-ms=[Timeout for postcondition checks in milliseconds]:ms:' \
-            '--postcondition-poll-ms=[Poll interval for postcondition checks in milliseconds]:ms:' \
-            && return 0
-          ;;
-        type)
-          _arguments -C $global_opts \
-            '--node-id=[Select by node id]:id:' \
-            '--role=[Select by AX role]:role:' \
-            '--title-contains=[Select by title substring]:text:' \
-            '--identifier-contains=[Select by identifier substring]:text:' \
-            '--value-contains=[Select by value substring]:text:' \
-            '--subrole=[Select by AX subrole]:subrole:' \
-            '--focused=[Select by focused state]:bool:(true false)' \
-            '--enabled=[Select by enabled state]:bool:(true false)' \
-            '--nth=[Select nth match from role/title selector]:n:' \
-            '--match-strategy=[Text match strategy]:strategy:(contains exact prefix suffix regex)' \
-            '--selector-explain[Emit selector explain diagnostics in JSON output]' \
-            '--session-id=[Target session id]:id:' \
-            '--app=[Target app name]:name:' \
-            '--bundle-id=[Target bundle id]:bundle:' \
-            '--window-title-contains=[Narrow to windows by title]:text:' \
-            '--text=[Text to type]:text:' \
-            '--clear-first[Clear field before typing]' \
-            '--submit[Press Enter after typing]' \
-            '--paste[Use clipboard paste strategy]' \
-            '--allow-keyboard-fallback[Allow keyboard fallback when AX value set is unavailable]' \
-            '--gate-app-active[Require app-active gate before mutation]' \
-            '--gate-window-present[Require window-present gate before mutation]' \
-            '--gate-ax-present[Require selector gate with >= 1 match]' \
-            '--gate-ax-unique[Require selector gate with exactly one match]' \
-            '--gate-timeout-ms=[Timeout for gate checks in milliseconds]:ms:' \
-            '--gate-poll-ms=[Poll interval for gate checks in milliseconds]:ms:' \
-            '--postcondition-focused=[Expected focused state after mutation]:bool:(true false)' \
-            '--postcondition-attribute=[Expected AX attribute name after mutation]:name:' \
-            '--postcondition-attribute-value=[Expected AX attribute value after mutation]:value:' \
-            '--postcondition-timeout-ms=[Timeout for postcondition checks in milliseconds]:ms:' \
-            '--postcondition-poll-ms=[Poll interval for postcondition checks in milliseconds]:ms:' \
-            && return 0
-          ;;
-        attr)
-          if (( CURRENT == 4 )); then
-            _describe -t subcommands 'ax attr command' \
-              'get:Read AX attribute value' \
-              'set:Set AX attribute value'
-            return 0
-          fi
-          local ax_attr_cmd="${words[4]}"
-          case "$ax_attr_cmd" in
-            get)
-              _arguments -C $global_opts \
-                '--node-id=[Select by node id]:id:' \
-                '--role=[Select by AX role]:role:' \
-                '--title-contains=[Select by title substring]:text:' \
-                '--identifier-contains=[Select by identifier substring]:text:' \
-                '--value-contains=[Select by value substring]:text:' \
-                '--subrole=[Select by AX subrole]:subrole:' \
-                '--focused=[Select by focused state]:bool:(true false)' \
-                '--enabled=[Select by enabled state]:bool:(true false)' \
-                '--nth=[Select nth match]:n:' \
-                '--session-id=[Target session id]:id:' \
-                '--app=[Target app name]:name:' \
-                '--bundle-id=[Target bundle id]:bundle:' \
-                '--window-title-contains=[Narrow to windows by title]:text:' \
-                '--name=[AX attribute name]:name:' \
-                && return 0
-              ;;
-            set)
-              _arguments -C $global_opts \
-                '--node-id=[Select by node id]:id:' \
-                '--role=[Select by AX role]:role:' \
-                '--title-contains=[Select by title substring]:text:' \
-                '--identifier-contains=[Select by identifier substring]:text:' \
-                '--value-contains=[Select by value substring]:text:' \
-                '--subrole=[Select by AX subrole]:subrole:' \
-                '--focused=[Select by focused state]:bool:(true false)' \
-                '--enabled=[Select by enabled state]:bool:(true false)' \
-                '--nth=[Select nth match]:n:' \
-                '--session-id=[Target session id]:id:' \
-                '--app=[Target app name]:name:' \
-                '--bundle-id=[Target bundle id]:bundle:' \
-                '--window-title-contains=[Narrow to windows by title]:text:' \
-                '--name=[AX attribute name]:name:' \
-                '--value=[AX attribute value]:value:' \
-                '--value-type=[Parse type for --value]:type:(string number bool json null)' \
-                && return 0
-              ;;
-          esac
-          ;;
-        action)
-          if (( CURRENT == 4 )); then
-            _describe -t subcommands 'ax action command' 'perform:Perform AX action'
-            return 0
-          fi
-          _arguments -C $global_opts \
-            '--node-id=[Select by node id]:id:' \
-            '--role=[Select by AX role]:role:' \
-            '--title-contains=[Select by title substring]:text:' \
-            '--identifier-contains=[Select by identifier substring]:text:' \
-            '--value-contains=[Select by value substring]:text:' \
-            '--subrole=[Select by AX subrole]:subrole:' \
-            '--focused=[Select by focused state]:bool:(true false)' \
-            '--enabled=[Select by enabled state]:bool:(true false)' \
-            '--nth=[Select nth match]:n:' \
-            '--session-id=[Target session id]:id:' \
-            '--app=[Target app name]:name:' \
-            '--bundle-id=[Target bundle id]:bundle:' \
-            '--window-title-contains=[Narrow to windows by title]:text:' \
-            '--name=[AX action name]:name:' \
-            && return 0
-          ;;
-        session)
-          if (( CURRENT == 4 )); then
-            _describe -t subcommands 'ax session command' \
-              'start:Create or update AX session' \
-              'list:List AX sessions' \
-              'stop:Stop AX session'
-            return 0
-          fi
-          local ax_session_cmd="${words[4]}"
-          case "$ax_session_cmd" in
-            start)
-              _arguments -C $global_opts \
-                '--app=[Target app name]:name:' \
-                '--bundle-id=[Target bundle id]:bundle:' \
-                '--session-id=[Session id]:id:' \
-                '--window-title-contains=[Persist window title filter]:text:' \
-                && return 0
-              ;;
-            list)
-              _arguments -C $global_opts && return 0
-              ;;
-            stop)
-              _arguments -C $global_opts '--session-id=[Session id to remove]:id:' && return 0
-              ;;
-          esac
-          ;;
-        watch)
-          if (( CURRENT == 4 )); then
-            _describe -t subcommands 'ax watch command' \
-              'start:Start AX watcher' \
-              'poll:Poll AX watcher events' \
-              'stop:Stop AX watcher'
-            return 0
-          fi
-          local ax_watch_cmd="${words[4]}"
-          case "$ax_watch_cmd" in
-            start)
-              _arguments -C $global_opts \
-                '--session-id=[Session id to bind watcher]:id:' \
-                '--watch-id=[Optional watcher id]:id:' \
-                '--events=[Comma-separated AX notifications]:events:' \
-                '--max-buffer=[Maximum in-memory event buffer size]:count:' \
-                && return 0
-              ;;
-            poll)
-              _arguments -C $global_opts \
-                '--watch-id=[Watch id to poll]:id:' \
-                '--limit=[Max events to return]:count:' \
-                '--drain=[Drain returned events]:bool:(true false)' \
-                && return 0
-              ;;
-            stop)
-              _arguments -C $global_opts '--watch-id=[Watch id to stop]:id:' && return 0
-              ;;
-          esac
-          ;;
-      esac
-      ;;
-
-    observe)
-      if (( CURRENT == 3 )); then
-        _describe -t subcommands 'observe command' 'screenshot:Capture screenshot'
-        return 0
-      fi
-      _arguments -C $global_opts \
-        '3:observe command:(screenshot)' \
-        '--window-id=[Select by window id]:id:' \
-        '--active-window[Select frontmost active window]' \
-        '--app=[Select by app name]:name:' \
-        '--window-title-contains=[Narrow app selection by window title]:name:' \
-        '--window-name=[Deprecated alias of --window-title-contains]:name:' \
-        '--path=[Output path]:path:_files' \
-        '--image-format=[Output image format]:format:(png jpg webp)' \
-        '--node-id=[Select AX node by node id]:id:' \
-        '--role=[Select AX node by role]:role:' \
-        '--title-contains=[Select AX node by title substring]:text:' \
-        '--identifier-contains=[Select AX node by identifier substring]:text:' \
-        '--value-contains=[Select AX node by value substring]:text:' \
-        '--subrole=[Select AX node by subrole]:subrole:' \
-        '--focused=[Select AX node by focused state]:bool:(true false)' \
-        '--enabled=[Select AX node by enabled state]:bool:(true false)' \
-        '--nth=[Select nth AX node match]:n:' \
-        '--match-strategy=[Text match strategy]:strategy:(contains exact prefix suffix regex)' \
-        '--selector-explain[Emit selector explain diagnostics in JSON output]' \
-        '--selector-padding=[Expand selector frame by N pixels]:px:' \
-        && return 0
-      ;;
-
-    debug)
-      if (( CURRENT == 3 )); then
-        _describe -t subcommands 'debug command' 'bundle:Capture deterministic triage artifact bundle'
-        return 0
-      fi
-      _arguments -C $global_opts \
-        '3:debug command:(bundle)' \
-        '--window-id=[Select by window id]:id:' \
-        '--active-window[Select frontmost active window]' \
-        '--app=[Select by app name]:name:' \
-        '--window-title-contains=[Narrow app selection by window title]:name:' \
-        '--window-name=[Deprecated alias of --window-title-contains]:name:' \
-        '--output-dir=[Output directory for debug artifacts]:path:_files -/' \
-        && return 0
-      ;;
-
-    wait)
-      if (( CURRENT == 3 )); then
-        _describe -t subcommands 'wait command' \
-          'sleep:Sleep for a fixed duration' \
-          'app-active:Wait for app to become active' \
-          'window-present:Wait for target window to appear' \
-          'ax-present:Wait until AX selector resolves to at least one node' \
-          'ax-unique:Wait until AX selector resolves to exactly one node'
-        return 0
-      fi
-
-      local wait_cmd="${words[3]}"
-      case "$wait_cmd" in
-        sleep)
-          _arguments -C $global_opts '--ms=[Sleep duration in milliseconds]:ms:' && return 0
-          ;;
-        app-active)
-          _arguments -C $global_opts \
-            '--app=[App name]:name:' \
-            '--bundle-id=[Bundle id]:bundle:' \
-            '--timeout-ms=[Timeout in milliseconds]:ms:' \
-            '--poll-ms=[Poll interval in milliseconds]:ms:' \
-            && return 0
-          ;;
-        window-present)
-          _arguments -C $global_opts \
-            '--window-id=[Select by window id]:id:' \
-            '--active-window[Select frontmost active window]' \
-            '--app=[Select by app name]:name:' \
-            '--window-title-contains=[Narrow app selection by window title]:name:' \
-            '--window-name=[Deprecated alias of --window-title-contains]:name:' \
-            '--timeout-ms=[Timeout in milliseconds]:ms:' \
-            '--poll-ms=[Poll interval in milliseconds]:ms:' \
-            && return 0
-          ;;
-        ax-present|ax-unique)
-          _arguments -C $global_opts \
-            '--node-id=[Select by node id]:id:' \
-            '--role=[Select by AX role]:role:' \
-            '--title-contains=[Select by title substring]:text:' \
-            '--identifier-contains=[Select by identifier substring]:text:' \
-            '--value-contains=[Select by value substring]:text:' \
-            '--subrole=[Select by AX subrole]:subrole:' \
-            '--focused=[Select by focused state]:bool:(true false)' \
-            '--enabled=[Select by enabled state]:bool:(true false)' \
-            '--nth=[Select nth match from selector]:n:' \
-            '--match-strategy=[Text match strategy]:strategy:(contains exact prefix suffix regex)' \
-            '--selector-explain[Emit selector explain diagnostics in JSON output]' \
-            '--session-id=[Target session id]:id:' \
-            '--app=[Target app name]:name:' \
-            '--bundle-id=[Target bundle id]:bundle:' \
-            '--window-title-contains=[Narrow to windows by title]:text:' \
-            '--timeout-ms=[Timeout in milliseconds]:ms:' \
-            '--poll-ms=[Poll interval in milliseconds]:ms:' \
-            && return 0
-          ;;
-      esac
-      ;;
-
-    scenario)
-      if (( CURRENT == 3 )); then
-        _describe -t subcommands 'scenario command' 'run:Run scenario JSON file'
-        return 0
-      fi
-      _arguments -C $global_opts \
-        '3:scenario command:(run)' \
-        '--file=[Scenario JSON file]:path:_files' \
-        && return 0
-      ;;
-
-    profile)
-      if (( CURRENT == 3 )); then
-        _describe -t subcommands 'profile command' \
-          'validate:Validate profile schema and coordinate bounds' \
-          'init:Write profile scaffold template'
-        return 0
-      fi
-      local profile_cmd="${words[3]}"
-      case "$profile_cmd" in
-        validate)
-          _arguments -C $global_opts '--file=[Profile JSON file]:path:_files' && return 0
-          ;;
-        init)
-          _arguments -C $global_opts \
-            '--name=[Profile name]:name:' \
-            '--path=[Output path]:path:_files' \
-            && return 0
-          ;;
-      esac
-      ;;
-  esac
+  _nils_cli_macos_agent_generated
 }
 
-compdef _macos-agent macos-agent
+if _nils_cli_macos_agent_source_common_zsh; then
+  _nils_cli_completion_common_register_zsh _macos-agent macos-agent
+else
+  compdef _macos-agent macos-agent
+fi
