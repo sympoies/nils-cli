@@ -1,13 +1,12 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use api_testing_core::{Result, auth_env, cli_endpoint, cli_util, config, env_file, history, jwt};
+use api_testing_core::{Result, auth_env, cli_endpoint, cli_util, config, history, jwt};
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 
 use crate::cli::{CallArgs, OutputFormat};
 use api_testing_core::cli_util::{
-    history_timestamp_now, list_available_suffixes, maybe_relpath, parse_u64_default, shell_quote,
-    to_env_key, trim_non_empty,
+    history_timestamp_now, maybe_relpath, parse_u64_default, shell_quote, trim_non_empty,
 };
 
 const CALL_SCHEMA_VERSION: &str = "cli.api-websocket.call.v1";
@@ -84,68 +83,32 @@ pub(crate) fn resolve_auth_for_call(
     let tokens_env = setup.tokens_env.as_ref().expect("tokens_env");
     let tokens_local = setup.tokens_local_env.as_ref().expect("tokens_local_env");
     let tokens_files = setup.tokens_files();
+    let token_resolution = auth_env::resolve_profile_or_env_fallback(
+        auth_env::ProfileTokenConfig {
+            token_name_arg: args.token.as_deref(),
+            token_name_env_var: "WS_TOKEN_NAME",
+            token_name_file_var: "WS_TOKEN_NAME",
+            token_var_prefix: "WS_TOKEN_",
+            tokens_env,
+            tokens_local,
+            tokens_files: &tokens_files,
+            missing_profile_hint: "Set it in setup/websocket/tokens.local.env or use ACCESS_TOKEN without selecting a token profile.",
+            env_fallback_keys: &["ACCESS_TOKEN", "SERVICE_TOKEN"],
+        },
+    )?;
 
-    let token_name_arg = args.token.as_deref().and_then(trim_non_empty);
-    let token_name_env = std::env::var("WS_TOKEN_NAME")
-        .ok()
-        .and_then(|s| trim_non_empty(&s));
-    let token_name_file = if !tokens_files.is_empty() {
-        env_file::read_var_last_wins("WS_TOKEN_NAME", &tokens_files)?
-    } else {
-        None
+    let auth_source_used = match token_resolution.source {
+        auth_env::ProfileTokenSource::None => AuthSourceUsed::None,
+        auth_env::ProfileTokenSource::Profile => AuthSourceUsed::TokenProfile,
+        auth_env::ProfileTokenSource::EnvFallback { env_name } => {
+            AuthSourceUsed::EnvFallback { env_name }
+        }
     };
 
-    let token_profile_selected =
-        token_name_arg.is_some() || token_name_env.is_some() || token_name_file.is_some();
-    let token_name = token_name_arg
-        .or(token_name_env)
-        .or(token_name_file)
-        .unwrap_or_else(|| "default".to_string())
-        .to_ascii_lowercase();
-
-    if token_profile_selected {
-        let token_key = to_env_key(&token_name);
-        let token_var = format!("WS_TOKEN_{token_key}");
-        let bearer_token = env_file::read_var_last_wins(&token_var, &tokens_files)?;
-        let Some(bearer_token) = bearer_token else {
-            let mut available = list_available_suffixes(tokens_env, "WS_TOKEN_");
-            if tokens_local.is_file() {
-                available.extend(list_available_suffixes(tokens_local, "WS_TOKEN_"));
-                available.sort();
-                available.dedup();
-            }
-            available.retain(|t| t != "name");
-            let available = if available.is_empty() {
-                "none".to_string()
-            } else {
-                available.join(" ")
-            };
-            anyhow::bail!(
-                "Token profile '{token_name}' is empty/missing (available: {available}). Set it in setup/websocket/tokens.local.env or use ACCESS_TOKEN without selecting a token profile."
-            );
-        };
-
-        return Ok(AuthSelection {
-            bearer_token: Some(bearer_token),
-            token_name: token_name.clone(),
-            auth_source_used: AuthSourceUsed::TokenProfile,
-        });
-    }
-
-    if let Some((token, env_name)) =
-        auth_env::resolve_env_fallback(&["ACCESS_TOKEN", "SERVICE_TOKEN"])
-    {
-        return Ok(AuthSelection {
-            bearer_token: Some(token),
-            token_name,
-            auth_source_used: AuthSourceUsed::EnvFallback { env_name },
-        });
-    }
-
     Ok(AuthSelection {
-        bearer_token: None,
-        token_name,
-        auth_source_used: AuthSourceUsed::None,
+        bearer_token: token_resolution.bearer_token,
+        token_name: token_resolution.token_name,
+        auth_source_used,
     })
 }
 
@@ -629,8 +592,14 @@ fn maybe_print_failure_body_to_stderr(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nils_test_support::{EnvGuard, GlobalStateLock};
     use std::fs;
     use tempfile::tempdir;
+
+    fn write_file(path: &Path, contents: &str) {
+        fs::create_dir_all(path.parent().expect("parent")).expect("mkdir parent");
+        fs::write(path, contents).expect("write");
+    }
 
     fn test_history_writer(path: &Path) -> history::HistoryWriter {
         history::HistoryWriter::new(
@@ -640,6 +609,51 @@ mod tests {
                 keep: 5,
             },
         )
+    }
+
+    #[test]
+    fn resolve_auth_for_call_prefers_profile_then_env_fallback() {
+        let lock = GlobalStateLock::new();
+        let _access = EnvGuard::set(&lock, "ACCESS_TOKEN", "env-token");
+        let _name = EnvGuard::remove(&lock, "WS_TOKEN_NAME");
+
+        let tmp = tempdir().expect("tempdir");
+        let setup_dir = tmp.path().join("setup/websocket");
+        fs::create_dir_all(&setup_dir).expect("mkdir setup");
+        write_file(&setup_dir.join("tokens.env"), "WS_TOKEN_SVC=svc-token\n");
+        let setup = api_testing_core::config::ResolvedSetup::websocket(setup_dir, None);
+
+        let args = CallArgs {
+            env: None,
+            url: None,
+            token: Some("svc".to_string()),
+            config_dir: None,
+            no_history: false,
+            format: OutputFormat::Text,
+            request: "requests/health.ws.json".to_string(),
+        };
+        let auth = resolve_auth_for_call(&args, &setup).expect("token profile resolution");
+        assert_eq!(auth.bearer_token.as_deref(), Some("svc-token"));
+        assert!(matches!(
+            auth.auth_source_used,
+            AuthSourceUsed::TokenProfile
+        ));
+
+        let args = CallArgs {
+            env: None,
+            url: None,
+            token: None,
+            config_dir: None,
+            no_history: false,
+            format: OutputFormat::Text,
+            request: "requests/health.ws.json".to_string(),
+        };
+        let auth = resolve_auth_for_call(&args, &setup).expect("env fallback resolution");
+        assert_eq!(auth.bearer_token.as_deref(), Some("env-token"));
+        assert!(matches!(
+            auth.auth_source_used,
+            AuthSourceUsed::EnvFallback { .. }
+        ));
     }
 
     #[test]
