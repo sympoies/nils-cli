@@ -19,6 +19,7 @@ pub fn dispatch(args: &[String]) -> i32 {
     match subcommand {
         "staged-context" => staged_context::run(&args[2..]),
         "commit" => commit::run(&args[2..]),
+        "completion" => crate::completion::run(&args[2..]),
         "help" => {
             print_help_stdout();
             0
@@ -70,6 +71,11 @@ fn print_help(stderr: bool) {
         out,
         "  {:<16}  Commit staged changes with a prepared commit message",
         "commit"
+    );
+    let _ = writeln!(
+        out,
+        "  {:<16}  Export shell completion script",
+        "completion"
     );
     let _ = writeln!(out, "  {:<16}  Display help message", "help");
 }

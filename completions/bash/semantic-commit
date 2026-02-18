@@ -6,73 +6,58 @@ fi
 
 shopt -s progcomp 2>/dev/null || true
 
+_nils_cli_semantic_commit_source_common_bash() {
+  declare -F _nils_cli_completion_common_load_generated_bash >/dev/null 2>&1 && return 0
+
+  local source_file="${BASH_SOURCE[0]}"
+  local script_dir=''
+  script_dir="$(cd -- "$(dirname -- "$source_file")" && pwd -P)" || return 1
+
+  local helper_path="${script_dir}/completion-adapter-common.bash"
+  [[ -r "$helper_path" ]] || return 1
+
+  # shellcheck source=/dev/null
+  source "$helper_path" || return 1
+
+  declare -F _nils_cli_completion_common_load_generated_bash >/dev/null 2>&1
+}
+
+_NILS_SEMANTIC_COMMIT_BASH_GENERATED_STATE=0
+
+_nils_cli_semantic_commit_load_generated_bash() {
+  _nils_cli_semantic_commit_source_common_bash || return 1
+
+  # command semantic-commit completion bash
+  _nils_cli_completion_common_load_generated_bash \
+    "_NILS_SEMANTIC_COMMIT_BASH_GENERATED_STATE" \
+    "_nils_cli_semantic_commit_generated" \
+    "semantic-commit" \
+    "_semantic_commit" \
+    '^if \[\[ "\${BASH_VERSINFO\[0\]}" -eq 4 ' \
+    '^fi$'
+}
+
 _nils_cli_semantic_commit_complete() {
-  local -a words=("${COMP_WORDS[@]}")
-  local cword="$COMP_CWORD"
-  local cur="${COMP_WORDS[COMP_CWORD]}"
-  local prev="${COMP_WORDS[COMP_CWORD-1]}"
-
-  local -a root_subcmds=(staged-context commit help)
-  local -a root_opts=(-h --help -V --version)
-
-  if (( cword == 1 )); then
-    if [[ "$cur" == -* ]]; then
-      COMPREPLY=( $(compgen -W "${root_opts[*]}" -- "$cur") )
-      return 0
+  if ! _nils_cli_semantic_commit_load_generated_bash; then
+    if declare -F _nils_cli_completion_common_fail_closed_no_legacy_bash >/dev/null 2>&1; then
+      _nils_cli_completion_common_fail_closed_no_legacy_bash
+    else
+      COMPREPLY=()
     fi
-    COMPREPLY=( $(compgen -W "${root_subcmds[*]}" -- "$cur") )
     return 0
   fi
 
-  local subcmd="${words[1]-}"
-  case "$subcmd" in
-    -V|--version)
-      COMPREPLY=()
-      return 0
-      ;;
-    staged-context)
-      if [[ "$prev" == "--format" ]]; then
-        COMPREPLY=( $(compgen -W "bundle json patch" -- "$cur") )
-        return 0
-      fi
-      if [[ "$prev" == "--repo" ]]; then
-        COMPREPLY=( $(compgen -d -- "$cur") )
-        return 0
-      fi
-      if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "-h --help --format --json --repo" -- "$cur") )
-        return 0
-      fi
-      COMPREPLY=()
-      return 0
-      ;;
-    help)
-      COMPREPLY=()
-      return 0
-      ;;
-    commit)
-      if [[ "$prev" == "--message-file" || "$prev" == "-F" || "$prev" == "--message-out" ]]; then
-        COMPREPLY=( $(compgen -f -- "$cur") )
-        return 0
-      fi
-      if [[ "$prev" == "--repo" ]]; then
-        COMPREPLY=( $(compgen -d -- "$cur") )
-        return 0
-      fi
-      if [[ "$prev" == "--summary" ]]; then
-        COMPREPLY=( $(compgen -W "git-scope git-show none" -- "$cur") )
-        return 0
-      fi
-      if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "-h --help -m --message -F --message-file --message-out --summary --no-summary --repo --automation --non-interactive --validate-only --dry-run --no-progress --quiet" -- "$cur") )
-        return 0
-      fi
-      COMPREPLY=()
-      return 0
-      ;;
-  esac
+  local cur="${COMP_WORDS[COMP_CWORD]}"
+  local prev=''
+  if (( COMP_CWORD > 0 )); then
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+  fi
 
-  COMPREPLY=()
+  _nils_cli_semantic_commit_generated "semantic-commit" "$cur" "$prev"
 }
 
-complete -F _nils_cli_semantic_commit_complete semantic-commit
+if _nils_cli_semantic_commit_source_common_bash; then
+  _nils_cli_completion_common_register_bash _nils_cli_semantic_commit_complete semantic-commit
+else
+  complete -F _nils_cli_semantic_commit_complete semantic-commit
+fi
