@@ -1,7 +1,7 @@
 use std::env;
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::errors::AppError;
 
@@ -96,6 +96,14 @@ pub enum MemoCommand {
     Fetch(FetchArgs),
     /// Apply enrichment payloads
     Apply(ApplyArgs),
+    /// Print shell completion script
+    Completion(CompletionArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct CompletionArgs {
+    #[arg(value_enum)]
+    pub shell: crate::completion::CompletionShell,
 }
 
 #[derive(Debug, clap::Args)]
@@ -246,6 +254,7 @@ impl Cli {
             MemoCommand::Report(_) => "memo-cli report",
             MemoCommand::Fetch(_) => "memo-cli fetch",
             MemoCommand::Apply(_) => "memo-cli apply",
+            MemoCommand::Completion(_) => "memo-cli completion",
         }
     }
 
@@ -259,6 +268,7 @@ impl Cli {
             MemoCommand::Report(_) => "memo-cli.report.v1",
             MemoCommand::Fetch(_) => "memo-cli.fetch.v1",
             MemoCommand::Apply(_) => "memo-cli.apply.v1",
+            MemoCommand::Completion(_) => "memo-cli.completion.v1",
         }
     }
 }
@@ -328,6 +338,7 @@ pub(crate) mod tests {
         assert!(subcommands.contains(&"report".to_string()));
         assert!(subcommands.contains(&"fetch".to_string()));
         assert!(subcommands.contains(&"apply".to_string()));
+        assert!(subcommands.contains(&"completion".to_string()));
     }
 
     #[test]
