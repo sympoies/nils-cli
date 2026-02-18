@@ -19,6 +19,7 @@ fn help_includes_key_flags() {
     let text = format!("{}{}", out.stdout_text(), out.stderr_text());
     assert!(text.contains("schema"));
     assert!(text.contains("report-from-cmd"));
+    assert!(text.contains("completion"));
     assert!(text.contains("--config-dir"));
     assert!(text.contains("--list-envs"));
 }

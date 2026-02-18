@@ -22,8 +22,17 @@ pub(crate) enum Command {
     Report(ReportArgs),
     /// Generate a report from a command snippet (arg or stdin)
     ReportFromCmd(ReportFromCmdArgs),
+    /// Print shell completion script
+    Completion(CompletionArgs),
     /// Resolve a schema file path (or print schema contents)
     Schema(SchemaArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct CompletionArgs {
+    /// Shell to generate completion for
+    #[arg(value_enum)]
+    pub(crate) shell: crate::completion::CompletionShell,
 }
 
 #[derive(Args, Clone)]
