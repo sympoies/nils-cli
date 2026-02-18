@@ -1768,6 +1768,8 @@ name = "nils-git-cli"
 version = "0.4.4"
 dependencies = [
  "anyhow",
+ "clap",
+ "clap_complete",
  "nils-common",
  "nils-test-support",
  "pretty_assertions",

@@ -335,6 +335,7 @@ fn scenario_ax_step_supports_gate_and_postcondition_flags() {
                 "id": "ax-click-gated",
                 "args": [
                     "--format", "json",
+                    "--timeout-ms", "15000",
                     "ax", "click",
                     "--app", "Terminal",
                     "--node-id", "1.1",

@@ -12,6 +12,8 @@ fn input_type_accepts_whitespace_and_punctuation() {
         &[
             "--format",
             "json",
+            "--timeout-ms",
+            "15000",
             "input",
             "type",
             "--text",
@@ -37,7 +39,7 @@ fn input_type_accepts_whitespace_and_punctuation() {
     );
     assert_eq!(
         payload["result"]["policy"]["timeout_ms"],
-        serde_json::json!(4000)
+        serde_json::json!(15000)
     );
 }
 
@@ -51,6 +53,8 @@ fn input_hotkey_json_reports_modifiers() {
         &[
             "--format",
             "json",
+            "--timeout-ms",
+            "15000",
             "input",
             "hotkey",
             "--mods",
@@ -81,7 +85,7 @@ fn input_hotkey_json_reports_modifiers() {
     );
     assert_eq!(
         payload["result"]["policy"]["timeout_ms"],
-        serde_json::json!(4000)
+        serde_json::json!(15000)
     );
 }
 

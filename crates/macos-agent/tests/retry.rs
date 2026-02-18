@@ -21,6 +21,8 @@ fn click_retries_then_succeeds_when_policy_allows() {
         &[
             "--format",
             "json",
+            "--timeout-ms",
+            "15000",
             "--retries",
             "1",
             "--retry-delay-ms",
@@ -69,6 +71,8 @@ fn click_without_retries_fails_on_first_transient_error() {
         &[
             "--error-format",
             "json",
+            "--timeout-ms",
+            "15000",
             "input",
             "click",
             "--x",

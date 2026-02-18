@@ -15,6 +15,7 @@ Groups:
   branch   cleanup
   ci       pick
   open     repo | branch | default-branch | commit | compare | pr | pulls | issues | actions | releases | tags | commits | file | blame
+  completion  bash | zsh
 
 Help:
   git-cli help

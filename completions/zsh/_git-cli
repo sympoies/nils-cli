@@ -3,650 +3,143 @@
 #  gxcc gxcj gxcs gxbc gxip \
 #  gxor gxob gxod gxoc gxocp gxop gxopl gxoi gxoa gxorl gxot gxocs gxof gxobl
 
-__git_cli_commit_hashes() {
-  emulate -L zsh -o extendedglob
+_nils_cli_git_cli_source_common_zsh() {
+  (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
 
-  local -a commit_hashes=()
+  local source_file="${functions_source[_git-cli]-}"
+  local helper_path=''
 
-  if command git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    commit_hashes=(${(f)"$(command git log --pretty=format:'%h:%s' -n 20 2>/dev/null || true)"})
+  if [[ -n "$source_file" && -r "$source_file" ]]; then
+    helper_path="${source_file:h}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
   fi
 
-  (( ${#commit_hashes[@]} > 0 )) && print -l -- "${commit_hashes[@]}"
+  local dir=''
+  for dir in "${fpath[@]}"; do
+    helper_path="${dir}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
+  done
+
+  return 1
+}
+
+typeset -gi _NILS_GIT_CLI_ZSH_GENERATED_STATE=0
+
+_nils_cli_git_cli_load_generated_zsh() {
+  _nils_cli_git_cli_source_common_zsh || return 1
+
+  _nils_cli_completion_common_load_generated_zsh \
+    "_NILS_GIT_CLI_ZSH_GENERATED_STATE" \
+    "_nils_cli_git_cli_generated" \
+    "git-cli" \
+    "_git-cli" \
+    '^if \[ "\$funcstack\[1\]" = "_nils_cli_git_cli_generated" \]; then$' \
+    '^fi$'
+}
+
+_nils_cli_git_cli_apply_alias_rewrite_zsh() {
+  local invoked_as="${words[1]-}"
+  local -a inject=()
+
+  case "$invoked_as" in
+    gxh) inject=(help) ;;
+    gxu) inject=(utils) ;;
+    gxr) inject=(reset) ;;
+    gxc) inject=(commit) ;;
+    gxb) inject=(branch) ;;
+    gxi) inject=(ci) ;;
+    gxo) inject=(open) ;;
+    gxuz) inject=(utils zip) ;;
+    gxuc) inject=(utils copy-staged) ;;
+    gxur) inject=(utils root) ;;
+    gxuh) inject=(utils commit-hash) ;;
+    gxrs) inject=(reset soft) ;;
+    gxrm) inject=(reset mixed) ;;
+    gxrh) inject=(reset hard) ;;
+    gxru) inject=(reset undo) ;;
+    gxrbh) inject=(reset back-head) ;;
+    gxrbc) inject=(reset back-checkout) ;;
+    gxrr) inject=(reset remote) ;;
+    gxcc) inject=(commit context) ;;
+    gxcj) inject=(commit context-json) ;;
+    gxcs) inject=(commit to-stash) ;;
+    gxbc) inject=(branch cleanup) ;;
+    gxip) inject=(ci pick) ;;
+    gxor) inject=(open repo) ;;
+    gxob) inject=(open branch) ;;
+    gxod) inject=(open default-branch) ;;
+    gxoc) inject=(open commit) ;;
+    gxocp) inject=(open compare) ;;
+    gxop) inject=(open pr) ;;
+    gxopl) inject=(open pulls) ;;
+    gxoi) inject=(open issues) ;;
+    gxoa) inject=(open actions) ;;
+    gxorl) inject=(open releases) ;;
+    gxot) inject=(open tags) ;;
+    gxocs) inject=(open commits) ;;
+    gxof) inject=(open file) ;;
+    gxobl) inject=(open blame) ;;
+  esac
+
+  if [[ "$invoked_as" != "git-cli" ]]; then
+    local -a rewritten_words=('git-cli')
+    local token=''
+    local -i idx=2
+
+    for token in "${inject[@]}"; do
+      rewritten_words+=("$token")
+    done
+
+    while (( idx <= ${#words[@]} )); do
+      rewritten_words+=("${words[idx]}")
+      (( idx++ ))
+    done
+
+    words=("${rewritten_words[@]}")
+    (( CURRENT += ${#inject[@]} ))
+  fi
 }
 
 _git-cli() {
   emulate -L zsh -o extendedglob
 
-  local context='' state='' state_descr=''
-  local -a line=()
-  typeset -A opt_args=()
+  local -i saved_current="$CURRENT"
+  local -a saved_words=("${words[@]}")
 
-  local -i orig_current="$CURRENT"
-  local -a orig_words=("${words[@]}")
-
-  local invoked_as="${orig_words[1]-}"
-  local group_override=''
-  local cmd_override=''
-
-  case "$invoked_as" in
-    gxh)
-      group_override='help'
-      ;;
-    gxu)
-      group_override='utils'
-      ;;
-    gxr)
-      group_override='reset'
-      ;;
-    gxc)
-      group_override='commit'
-      ;;
-    gxb)
-      group_override='branch'
-      ;;
-    gxi)
-      group_override='ci'
-      ;;
-    gxo)
-      group_override='open'
-      ;;
-    gxuz)
-      group_override='utils'
-      cmd_override='zip'
-      ;;
-    gxuc)
-      group_override='utils'
-      cmd_override='copy-staged'
-      ;;
-    gxur)
-      group_override='utils'
-      cmd_override='root'
-      ;;
-    gxuh)
-      group_override='utils'
-      cmd_override='commit-hash'
-      ;;
-    gxrs)
-      group_override='reset'
-      cmd_override='soft'
-      ;;
-    gxrm)
-      group_override='reset'
-      cmd_override='mixed'
-      ;;
-    gxrh)
-      group_override='reset'
-      cmd_override='hard'
-      ;;
-    gxru)
-      group_override='reset'
-      cmd_override='undo'
-      ;;
-    gxrbh)
-      group_override='reset'
-      cmd_override='back-head'
-      ;;
-    gxrbc)
-      group_override='reset'
-      cmd_override='back-checkout'
-      ;;
-    gxrr)
-      group_override='reset'
-      cmd_override='remote'
-      ;;
-    gxcc)
-      group_override='commit'
-      cmd_override='context'
-      ;;
-    gxcj)
-      group_override='commit'
-      cmd_override='context-json'
-      ;;
-    gxcs)
-      group_override='commit'
-      cmd_override='to-stash'
-      ;;
-    gxbc)
-      group_override='branch'
-      cmd_override='cleanup'
-      ;;
-    gxip)
-      group_override='ci'
-      cmd_override='pick'
-      ;;
-    gxor)
-      group_override='open'
-      cmd_override='repo'
-      ;;
-    gxob)
-      group_override='open'
-      cmd_override='branch'
-      ;;
-    gxod)
-      group_override='open'
-      cmd_override='default-branch'
-      ;;
-    gxoc)
-      group_override='open'
-      cmd_override='commit'
-      ;;
-    gxocp)
-      group_override='open'
-      cmd_override='compare'
-      ;;
-    gxop)
-      group_override='open'
-      cmd_override='pr'
-      ;;
-    gxopl)
-      group_override='open'
-      cmd_override='pulls'
-      ;;
-    gxoi)
-      group_override='open'
-      cmd_override='issues'
-      ;;
-    gxoa)
-      group_override='open'
-      cmd_override='actions'
-      ;;
-    gxorl)
-      group_override='open'
-      cmd_override='releases'
-      ;;
-    gxot)
-      group_override='open'
-      cmd_override='tags'
-      ;;
-    gxocs)
-      group_override='open'
-      cmd_override='commits'
-      ;;
-    gxof)
-      group_override='open'
-      cmd_override='file'
-      ;;
-    gxobl)
-      group_override='open'
-      cmd_override='blame'
-      ;;
-  esac
-
-  local -a groups=()
-  groups=(
-    'utils:Utility helpers'
-    'reset:Reset helpers'
-    'commit:Commit helpers'
-    'branch:Branch helpers'
-    'ci:CI helpers'
-    'open:Open remote pages'
-    'help:Display help message for git-cli'
-  )
-
-  local group=''
-  local cmd=''
-
-  if [[ -n "$group_override" ]]; then
-    group="$group_override"
-    cmd="$cmd_override"
-  else
-    _arguments -C \
-      '(-h --help)'{-h,--help}'[Display help message for git-cli]' \
-      '(-V --version)'{-V,--version}'[Display version for git-cli]' \
-      '1:group:->groups' \
-      '*::arg:->args'
-
-    case "${state-}" in
-      groups)
-        _describe -t groups 'git-cli group' groups && return 0
-        ;;
-      args)
-        group="${line[1]:-${orig_words[2]-}}"
-        group="${group%%[[:space:]]#}"
-        ;;
-    esac
+  if ! _nils_cli_git_cli_load_generated_zsh; then
+    words=("${saved_words[@]}")
+    CURRENT="$saved_current"
+    if (( $+functions[_nils_cli_completion_common_fail_closed_no_legacy_zsh] )); then
+      _nils_cli_completion_common_fail_closed_no_legacy_zsh
+    fi
+    return 1
   fi
 
-  case "$group" in
-    '')
-      _message 'group (utils|reset|commit|branch|ci|open)'
-      return 0
-      ;;
-    help|-h|--help|-V|--version)
-      _message 'no more arguments'
-      return 0
-      ;;
-  esac
+  _nils_cli_git_cli_apply_alias_rewrite_zsh
+  _nils_cli_git_cli_generated
+  local rc=$?
 
-  local cmd_fallback=''
-  if [[ -n "$group_override" ]]; then
-    cmd_fallback="${orig_words[2]-}"
-  else
-    cmd_fallback="${orig_words[3]-}"
-  fi
-
-  if [[ -z "$cmd" ]]; then
-    local -a cmds=()
-    case "$group" in
-      utils)
-        cmds=(
-          'zip:Create zip archive from HEAD'
-          'copy-staged:Copy staged diff to clipboard'
-          'copy:Alias for copy-staged'
-          'root:Jump to git root'
-          'commit-hash:Resolve commit hash'
-          'hash:Alias for commit-hash'
-          'help:Display help message for utils'
-        )
-        ;;
-      reset)
-        cmds=(
-          'soft:Reset to HEAD~N (soft)'
-          'mixed:Reset to HEAD~N (mixed)'
-          'hard:Reset to HEAD~N (hard)'
-          'undo:Undo last reset'
-          'back-head:Checkout HEAD@{1}'
-          'back-checkout:Return to previous branch'
-          'remote:Reset to remote branch'
-          'help:Display help message for reset'
-        )
-        ;;
-      commit)
-        cmds=(
-          'context:Print commit context'
-          'context-json:Print commit context as JSON'
-          'context_json:Alias for context-json'
-          'contextjson:Alias for context-json'
-          'json:Alias for context-json'
-          'to-stash:Create stash from commit'
-          'stash:Alias for to-stash'
-          'help:Display help message for commit'
-        )
-        ;;
-      branch)
-        cmds=(
-          'cleanup:Delete merged branches'
-          'delete-merged:Alias for cleanup'
-          'help:Display help message for branch'
-        )
-        ;;
-      ci)
-        cmds=(
-          'pick:Cherry-pick into CI branch'
-          'help:Display help message for ci'
-        )
-        ;;
-      open)
-        cmds=(
-          'repo:Open repository page'
-          'branch:Open branch tree page'
-          'default-branch:Open default branch tree page'
-          'default:Alias for default-branch'
-          'commit:Open commit page'
-          'compare:Open compare page'
-          'pr:Open pull or merge request page'
-          'pull-request:Alias for pr'
-          'mr:Alias for pr'
-          'merge-request:Alias for pr'
-          'pulls:Open pull or merge request list'
-          'prs:Alias for pulls'
-          'merge-requests:Alias for pulls'
-          'mrs:Alias for pulls'
-          'issue:Alias for issues'
-          'issues:Open issues list/page'
-          'action:Alias for actions'
-          'actions:Open actions page'
-          'release:Alias for releases'
-          'releases:Open releases list/page'
-          'tag:Alias for tags'
-          'tags:Open tags list/page'
-          'commits:Open commit history page'
-          'history:Alias for commits'
-          'file:Open file page'
-          'blob:Alias for file'
-          'blame:Open blame page'
-          'help:Display help message for open'
-        )
-        ;;
-    esac
-
-    _arguments -C \
-      '(-h --help)'{-h,--help}'[Display help message for git-cli]' \
-      '1:command:->cmds' \
-      '*::arg:->args'
-
-    case "${state-}" in
-      cmds)
-        _describe -t commands "git-cli $group command" cmds && return 0
-        ;;
-      args)
-        cmd="${line[1]:-$cmd_fallback}"
-        cmd="${cmd%%[[:space:]]#}"
-        ;;
-    esac
-  fi
-
-  local -i arg_start=4
-  if [[ -n "$group_override" ]]; then
-    arg_start=3
-  fi
-  if [[ -n "$cmd_override" ]]; then
-    (( arg_start-- ))
-  fi
-
-  local cur="${orig_words[orig_current]-}"
-  cur="${cur%%[[:space:]]#}"
-  local prev="${orig_words[orig_current-1]-}"
-
-  case "$group" in
-    utils)
-      case "$cmd" in
-        copy|copy-staged)
-          if [[ "$cur" == -* ]]; then
-            local -a opts=(
-              '--stdout:Print staged diff to stdout'
-              '-p:Print staged diff to stdout'
-              '--print:Print staged diff to stdout'
-              '--both:Print to stdout and copy to clipboard'
-              '-h:Show help'
-              '--help:Show help'
-            )
-            _describe -t options 'option' opts && return 0
-            return 0
-          fi
-          _message 'no more arguments'
-          return 0
-          ;;
-        root)
-          if [[ "$cur" == -* ]]; then
-            local -a opts=(
-              '--shell:Print cd command for eval'
-            )
-            _describe -t options 'option' opts && return 0
-            return 0
-          fi
-          _message 'no more arguments'
-          return 0
-          ;;
-        commit-hash|hash)
-          if (( orig_current == arg_start )); then
-            local -a commit_hashes=()
-            commit_hashes=(${(f)"$(__git_cli_commit_hashes)"})
-            if (( ${#commit_hashes[@]} > 0 )); then
-              _describe -t commits 'commit hash' commit_hashes && return 0
-            fi
-            _message 'git ref'
-            return 0
-          fi
-          return 0
-          ;;
-        zip|help)
-          _message 'no more arguments'
-          return 0
-          ;;
-      esac
-      ;;
-    reset)
-      case "$cmd" in
-        soft|mixed|hard)
-          if (( orig_current == arg_start )); then
-            _message 'commit count (default: 1)'
-            return 0
-          fi
-          _message 'no more arguments'
-          return 0
-          ;;
-        undo|back-head|back-checkout|help)
-          _message 'no more arguments'
-          return 0
-          ;;
-        remote)
-          if [[ "$prev" == "--ref" ]]; then
-            _message 'remote/branch'
-            return 0
-          fi
-          if [[ "$prev" == "-r" || "$prev" == "--remote" ]]; then
-            _message 'remote name'
-            return 0
-          fi
-          if [[ "$prev" == "-b" || "$prev" == "--branch" ]]; then
-            _message 'branch name'
-            return 0
-          fi
-          if [[ "$cur" == -* ]]; then
-            local -a opts=(
-              '--ref:Remote/branch ref'
-              '-r:Remote name'
-              '--remote:Remote name'
-              '-b:Branch name'
-              '--branch:Branch name'
-              '--no-fetch:Skip fetch'
-              '--prune:Prune remote refs'
-              '--clean:Run git clean -fd'
-              '--set-upstream:Set upstream'
-              '-y:Skip confirmations'
-              '--yes:Skip confirmations'
-              '-h:Show help'
-              '--help:Show help'
-            )
-            _describe -t options 'option' opts && return 0
-            return 0
-          fi
-          return 0
-          ;;
-      esac
-      ;;
-    commit)
-      case "$cmd" in
-        context)
-          if [[ "$prev" == "--include" ]]; then
-            _files -/ && return 0
-          fi
-          if [[ "$cur" == -* ]]; then
-            local -a opts=(
-              '--stdout:Print to stdout'
-              '--both:Print to stdout and copy to clipboard'
-              '--no-color:Disable ANSI colors'
-              '--include:Include path or glob'
-              '-h:Show help'
-              '--help:Show help'
-            )
-            _describe -t options 'option' opts && return 0
-            return 0
-          fi
-          _message 'no more arguments'
-          return 0
-          ;;
-        context-json|context_json|contextjson|json)
-          if [[ "$prev" == "--out-dir" ]]; then
-            _files -/ && return 0
-          fi
-          if [[ "$cur" == -* ]]; then
-            local -a opts=(
-              '--stdout:Print to stdout'
-              '--both:Print to stdout and copy to clipboard'
-              '--pretty:Pretty-print JSON'
-              '--bundle:Print bundle output'
-              '--out-dir:Output directory'
-              '-h:Show help'
-              '--help:Show help'
-            )
-            _describe -t options 'option' opts && return 0
-            return 0
-          fi
-          _message 'no more arguments'
-          return 0
-          ;;
-        to-stash|stash)
-          if (( orig_current == arg_start )); then
-            local -a commit_hashes=()
-            commit_hashes=(${(f)"$(__git_cli_commit_hashes)"})
-            if (( ${#commit_hashes[@]} > 0 )); then
-              _describe -t commits 'commit hash' commit_hashes && return 0
-            fi
-            _message 'commit (optional)'
-            return 0
-          fi
-          _message 'no more arguments'
-          return 0
-          ;;
-        help)
-          _message 'no more arguments'
-          return 0
-          ;;
-      esac
-      ;;
-    branch)
-      case "$cmd" in
-        cleanup|delete-merged)
-          if [[ "$prev" == "-b" || "$prev" == "--base" ]]; then
-            _message 'base ref'
-            return 0
-          fi
-          if [[ "$cur" == -* ]]; then
-            local -a opts=(
-              '-b:Base branch'
-              '--base:Base branch'
-              '-s:Squash mode'
-              '--squash:Squash mode'
-              '-h:Show help'
-              '--help:Show help'
-            )
-            _describe -t options 'option' opts && return 0
-            return 0
-          fi
-          _message 'no more arguments'
-          return 0
-          ;;
-        help)
-          _message 'no more arguments'
-          return 0
-          ;;
-      esac
-      ;;
-    ci)
-      case "$cmd" in
-        pick)
-          if [[ "$prev" == "-r" || "$prev" == "--remote" ]]; then
-            _message 'remote name'
-            return 0
-          fi
-          if [[ "$cur" == -* ]]; then
-            local -a opts=(
-              '-r:Remote name'
-              '--remote:Remote name'
-              '--no-fetch:Skip fetch'
-              '-f:Force push'
-              '--force:Force push'
-              '--stay:Stay on CI branch'
-              '-h:Show help'
-              '--help:Show help'
-            )
-            _describe -t options 'option' opts && return 0
-            return 0
-          fi
-
-          if (( orig_current == arg_start )); then
-            _message 'target'
-            return 0
-          fi
-          if (( orig_current == arg_start + 1 )); then
-            _message 'commit or range'
-            return 0
-          fi
-          if (( orig_current == arg_start + 2 )); then
-            _message 'name'
-            return 0
-          fi
-          return 0
-          ;;
-        help)
-          _message 'no more arguments'
-          return 0
-          ;;
-      esac
-      ;;
-    open)
-      case "$cmd" in
-        repo|default-branch|default)
-          if (( orig_current == arg_start )); then
-            local -a remotes=()
-            remotes=(${(f)"$(command git remote 2>/dev/null || true)"})
-            (( ${#remotes[@]} > 0 )) && _describe -t remotes 'remote' remotes
-            return 0
-          fi
-          _message 'no more arguments'
-          return 0
-          ;;
-        branch|compare|commits|history|commit)
-          if (( orig_current == arg_start || orig_current == arg_start + 1 )); then
-            local -a refs=()
-            refs=(${(f)"$(command git for-each-ref --format='%(refname:short)' refs/heads refs/remotes refs/tags 2>/dev/null || true)"})
-            (( ${#refs[@]} > 0 )) && _describe -t refs 'ref' refs
-            return 0
-          fi
-          _message 'no more arguments'
-          return 0
-          ;;
-        pr|pull-request|mr|merge-request|pulls|prs|merge-requests|mrs|issues|issue)
-          if (( orig_current == arg_start )); then
-            _message 'number'
-            return 0
-          fi
-          _message 'no more arguments'
-          return 0
-          ;;
-        actions|action)
-          if (( orig_current == arg_start )); then
-            local -a workflows=()
-            workflows=(${(f)"$(command git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml' 2>/dev/null || true)"})
-            (( ${#workflows[@]} > 0 )) && _describe -t workflows 'workflow' workflows
-            _message 'workflow'
-            return 0
-          fi
-          _message 'no more arguments'
-          return 0
-          ;;
-        releases|release|tags|tag)
-          if (( orig_current == arg_start )); then
-            local -a tags=()
-            tags=(${(f)"$(command git tag --sort=-creatordate 2>/dev/null || true)"})
-            (( ${#tags[@]} > 0 )) && _describe -t tags 'tag' tags
-            _message 'tag'
-            return 0
-          fi
-          _message 'no more arguments'
-          return 0
-          ;;
-        file|blob|blame)
-          if (( orig_current == arg_start )); then
-            _files && return 0
-            _message 'path'
-            return 0
-          fi
-          if (( orig_current == arg_start + 1 )); then
-            local -a refs=()
-            refs=(${(f)"$(command git for-each-ref --format='%(refname:short)' refs/heads refs/remotes refs/tags 2>/dev/null || true)"})
-            (( ${#refs[@]} > 0 )) && _describe -t refs 'ref' refs
-            _message 'ref'
-            return 0
-          fi
-          _message 'no more arguments'
-          return 0
-          ;;
-        help)
-          _message 'no more arguments'
-          return 0
-          ;;
-      esac
-      ;;
-  esac
-
-  _message 'git-cli <group> <command> [args]'
+  words=("${saved_words[@]}")
+  CURRENT="$saved_current"
+  return $rc
 }
 
-compdef _git-cli git-cli gx gxh gxu gxr gxc gxb gxi gxo \
-  gxuz gxuc gxur gxuh gxrs gxrm gxrh gxru gxrbh gxrbc gxrr \
-  gxcc gxcj gxcs gxbc gxip \
-  gxor gxob gxod gxoc gxocp gxop gxopl gxoi gxoa gxorl gxot gxocs gxof gxobl
+if _nils_cli_git_cli_source_common_zsh; then
+  _nils_cli_completion_common_register_zsh _git-cli \
+    git-cli gx gxh gxu gxr gxc gxb gxi gxo \
+    gxuz gxuc gxur gxuh gxrs gxrm gxrh gxru gxrbh gxrbc gxrr \
+    gxcc gxcj gxcs gxbc gxip \
+    gxor gxob gxod gxoc gxocp gxop gxopl gxoi gxoa gxorl gxot gxocs gxof gxobl
+else
+  compdef _git-cli \
+    git-cli gx gxh gxu gxr gxc gxb gxi gxo \
+    gxuz gxuc gxur gxuh gxrs gxrm gxrh gxru gxrbh gxrbc gxrr \
+    gxcc gxcj gxcs gxbc gxip \
+    gxor gxob gxod gxoc gxocp gxop gxopl gxoi gxoa gxorl gxot gxocs gxof gxobl
+fi

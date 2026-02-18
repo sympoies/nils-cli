@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::io::{self, Write};
 
 use crate::commit;
-use crate::{branch, ci, open, reset, utils};
+use crate::{branch, ci, completion, open, reset, utils};
 
 #[derive(Debug, Clone, Copy)]
 enum Group {
@@ -12,6 +12,7 @@ enum Group {
     Branch,
     Ci,
     Open,
+    Completion,
 }
 
 impl Group {
@@ -23,6 +24,7 @@ impl Group {
             "branch" => Some(Self::Branch),
             "ci" => Some(Self::Ci),
             "open" => Some(Self::Open),
+            "completion" => Some(Self::Completion),
             _ => None,
         }
     }
@@ -113,6 +115,7 @@ pub fn dispatch(args: Vec<OsString>) -> i32 {
                 2
             }
         },
+        Some(Group::Completion) => completion::dispatch(cmd_raw, &args[2..]),
         None => {
             eprintln!("Unknown group: {group_raw}");
             print_top_level_usage(&mut io::stdout());
@@ -175,6 +178,11 @@ fn print_group_usage(group_raw: &str) -> i32 {
             .ok();
             0
         }
+        Some(Group::Completion) => {
+            writeln!(out, "Usage: git-cli completion <shell>").ok();
+            writeln!(out, "  bash | zsh").ok();
+            0
+        }
         None => {
             eprintln!("Unknown group: {group_raw}");
             print_top_level_usage(&mut out);
@@ -202,6 +210,7 @@ fn print_top_level_usage(out: &mut dyn Write) {
         "  open     repo | branch | default-branch | commit | compare | pr | pulls | issues | actions | releases | tags | commits | file | blame"
     )
     .ok();
+    writeln!(out, "  completion  bash | zsh").ok();
     writeln!(out).ok();
     writeln!(out, "Help:").ok();
     writeln!(out, "  git-cli help").ok();
@@ -231,6 +240,10 @@ mod tests {
         assert!(matches!(Group::parse("branch"), Some(Group::Branch)));
         assert!(matches!(Group::parse("ci"), Some(Group::Ci)));
         assert!(matches!(Group::parse("open"), Some(Group::Open)));
+        assert!(matches!(
+            Group::parse("completion"),
+            Some(Group::Completion)
+        ));
         assert!(Group::parse("unknown").is_none());
     }
 
@@ -256,6 +269,7 @@ mod tests {
         assert_eq!(dispatch(to_args(&["branch", "unknown"])), 2);
         assert_eq!(dispatch(to_args(&["ci", "unknown"])), 2);
         assert_eq!(dispatch(to_args(&["open", "unknown"])), 2);
+        assert_eq!(dispatch(to_args(&["completion", "fish"])), 1);
     }
 
     #[test]
@@ -277,6 +291,7 @@ mod tests {
         assert_eq!(print_group_usage("branch"), 0);
         assert_eq!(print_group_usage("ci"), 0);
         assert_eq!(print_group_usage("open"), 0);
+        assert_eq!(print_group_usage("completion"), 0);
         assert_eq!(print_group_usage("unknown"), 2);
     }
 
@@ -290,5 +305,6 @@ mod tests {
         assert!(text.contains("Groups:"));
         assert!(text.contains("Examples:"));
         assert!(text.contains("git-cli reset hard 3"));
+        assert!(text.contains("completion  bash | zsh"));
     }
 }
