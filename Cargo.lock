@@ -1631,6 +1631,7 @@ dependencies = [
  "anyhow",
  "base64",
  "clap",
+ "clap_complete",
  "nils-api-testing-core",
  "nils-term",
  "nils-test-support",
