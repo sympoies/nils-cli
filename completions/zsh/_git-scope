@@ -1,123 +1,105 @@
 #compdef git-scope gs gst gss gsu gsa gsun gsc gsh
 
+_nils_cli_git_scope_source_common_zsh() {
+  (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+
+  local source_file="${functions_source[_git-scope]-}"
+  local helper_path=''
+
+  if [[ -n "$source_file" && -r "$source_file" ]]; then
+    helper_path="${source_file:h}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
+  fi
+
+  local dir=''
+  for dir in "${fpath[@]}"; do
+    helper_path="${dir}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
+  done
+
+  return 1
+}
+
+typeset -gi _NILS_GIT_SCOPE_ZSH_GENERATED_STATE=0
+
+_nils_cli_git_scope_load_generated_zsh() {
+  _nils_cli_git_scope_source_common_zsh || return 1
+
+  _nils_cli_completion_common_load_generated_zsh \
+    "_NILS_GIT_SCOPE_ZSH_GENERATED_STATE" \
+    "_nils_cli_git_scope_generated" \
+    "git-scope" \
+    "_git-scope" \
+    '^if \[ "\$funcstack\[1\]" = "_nils_cli_git_scope_generated" \]; then$' \
+    '^fi$'
+}
+
+_nils_cli_git_scope_apply_alias_rewrite_zsh() {
+  local invoked_as="${words[1]-}"
+  local -a inject=()
+
+  case "$invoked_as" in
+    gst) inject=(tracked) ;;
+    gss) inject=(staged) ;;
+    gsu) inject=(unstaged) ;;
+    gsa) inject=(all) ;;
+    gsun) inject=(untracked) ;;
+    gsc) inject=(commit) ;;
+    gsh) inject=(help) ;;
+  esac
+
+  if [[ "$invoked_as" != "git-scope" ]]; then
+    local -a rewritten_words=('git-scope')
+    local token=''
+    local -i idx=2
+
+    for token in "${inject[@]}"; do
+      rewritten_words+=("$token")
+    done
+
+    while (( idx <= ${#words[@]} )); do
+      rewritten_words+=("${words[idx]}")
+      (( idx++ ))
+    done
+
+    words=("${rewritten_words[@]}")
+    (( CURRENT += ${#inject[@]} ))
+  fi
+}
+
 _git-scope() {
   emulate -L zsh -o extendedglob
 
-  local context='' state='' state_descr=''
-  local -a line=()
-  typeset -A opt_args=()
+  local -i saved_current="$CURRENT"
+  local -a saved_words=("${words[@]}")
 
-  local -i orig_current="$CURRENT"
-  local -a orig_words=("${words[@]}")
-
-  local invoked_as="${orig_words[1]-}"
-  local subcmd_override=''
-
-  case "$invoked_as" in
-    gsc)
-      subcmd_override='commit'
-      ;;
-    gst)
-      subcmd_override='tracked'
-      ;;
-    gss)
-      subcmd_override='staged'
-      ;;
-    gsu)
-      subcmd_override='unstaged'
-      ;;
-    gsa)
-      subcmd_override='all'
-      ;;
-    gsun)
-      subcmd_override='untracked'
-      ;;
-    gsh)
-      subcmd_override='help'
-      ;;
-  esac
-
-  typeset -a subcommands=()
-  subcommands=(
-    'tracked:Show tracked files (optional path prefix filter)'
-    'staged:Show staged changes'
-    'unstaged:Show unstaged changes'
-    'all:Show staged + unstaged changes'
-    'untracked:Show untracked files'
-    'commit:Inspect a commit (supports --parent for merges)'
-    'help:Display help message for git-scope'
-  )
-
-  local subcmd=''
-
-  if [[ -n "$subcmd_override" ]]; then
-    subcmd="$subcmd_override"
-  else
-    _arguments -C \
-      '(-h --help)'{-h,--help}'[Display help message for git-scope]' \
-      '--no-color[Disable ANSI colors (also via NO_COLOR)]' \
-      '1:command:->subcmds' \
-      '*::arg:->args'
-
-    case "${state-}" in
-      subcmds)
-        _describe -t commands 'git-scope subcommand' subcommands && return 0
-        ;;
-      args)
-        subcmd="${line[1]:-${orig_words[2]-}}"
-        subcmd="${subcmd%%[[:space:]]#}"
-        ;;
-    esac
+  if ! _nils_cli_git_scope_load_generated_zsh; then
+    words=("${saved_words[@]}")
+    CURRENT="$saved_current"
+    if (( $+functions[_nils_cli_completion_common_fail_closed_no_legacy_zsh] )); then
+      _nils_cli_completion_common_fail_closed_no_legacy_zsh
+    fi
+    return 1
   fi
 
-  case "$subcmd" in
-    commit)
-      _arguments -C \
-        '(-h --help)'{-h,--help}'[Display help message for git-scope]' \
-        '--no-color[Disable ANSI colors (also via NO_COLOR)]' \
-        '(-p --print)'{-p,--print}'[Print contents of each file in the commit (from HEAD or working tree)]' \
-        '--parent=[For merge commits: show diff against parent <n>]:parent index:' \
-        '-P+[For merge commits: show diff against parent <n>]:parent index:' \
-        '1:commit-ish:->commit_hashes'
+  _nils_cli_git_scope_apply_alias_rewrite_zsh
+  _nils_cli_git_scope_generated
+  local rc=$?
 
-      case "${state-}" in
-        commit_hashes)
-          local -a commit_hashes=()
-
-          if command git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-            commit_hashes=(${(f)"$(command git log --pretty=format:'%h:%s' -n 20 2>/dev/null || true)"})
-          fi
-
-          if (( ${#commit_hashes[@]} > 0 )); then
-            _describe -t commits 'commit hash' commit_hashes && return 0
-          fi
-
-          _message 'commit hash'
-          return 0
-          ;;
-      esac
-
-      return 0
-      ;;
-    tracked)
-      _arguments -C \
-        '(-h --help)'{-h,--help}'[Display help message for git-scope]' \
-        '--no-color[Disable ANSI colors (also via NO_COLOR)]' \
-        '(-p --print)'{-p,--print}'[Print the contents of each file]' \
-        '*:prefix:_files -/' \
-        && return 0
-      _message 'prefix'
-      return 0
-      ;;
-    staged|unstaged|all|untracked)
-      _arguments -C \
-        '(-h --help)'{-h,--help}'[Display help message for git-scope]' \
-        '--no-color[Disable ANSI colors (also via NO_COLOR)]' \
-        '(-p --print)'{-p,--print}'[Print the contents of each file]' \
-        && return 0
-      return 0
-      ;;
-  esac
+  words=("${saved_words[@]}")
+  CURRENT="$saved_current"
+  return $rc
 }
 
-compdef _git-scope git-scope gs gst gss gsu gsa gsun gsc gsh
+if _nils_cli_git_scope_source_common_zsh; then
+  _nils_cli_completion_common_register_zsh _git-scope \
+    git-scope gs gst gss gsu gsa gsun gsc gsh
+else
+  compdef _git-scope git-scope gs gst gss gsu gsa gsun gsc gsh
+fi
