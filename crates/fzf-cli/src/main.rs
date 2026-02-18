@@ -1,3 +1,4 @@
+mod completion;
 mod confirm;
 mod defs;
 mod directory;
@@ -53,6 +54,7 @@ fn run() -> i32 {
         "alias" => defs::run_alias(rest),
         "function" => defs::run_function(rest),
         "def" => defs::run_def(rest),
+        "completion" => completion::run(rest),
         _ => {
             println!("❗ Unknown command: {cmd}");
             println!("Run 'fzf-cli help' for usage.");
@@ -103,5 +105,6 @@ fn print_help() {
         "  {:<16}  Browse all definitions (env, alias, functions)",
         "def"
     );
+    println!("  {:<16}  Export shell completion script", "completion");
     println!();
 }

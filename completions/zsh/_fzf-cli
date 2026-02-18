@@ -1,137 +1,113 @@
 #compdef fzf-cli fx fxf fxd fxgs fxgc fxgco fxgb fxgt fxp fxpo fxh fxenv fxal fxfn fxdef
 
-__fzf_cli_query() {
-  emulate -L zsh -o extendedglob
-  builtin compadd -x 'query'
+_nils_cli_fzf_cli_source_common_zsh() {
+  (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+
+  local source_file="${functions_source[_fzf-cli]-}"
+  local helper_path=''
+
+  if [[ -n "$source_file" && -r "$source_file" ]]; then
+    helper_path="${source_file:h}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
+  fi
+
+  local dir=''
+  for dir in "${fpath[@]}"; do
+    helper_path="${dir}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
+  done
+
+  return 1
+}
+
+typeset -gi _NILS_FZF_CLI_ZSH_GENERATED_STATE=0
+
+_nils_cli_fzf_cli_load_generated_zsh() {
+  _nils_cli_fzf_cli_source_common_zsh || return 1
+
+  _nils_cli_completion_common_load_generated_zsh \
+    "_NILS_FZF_CLI_ZSH_GENERATED_STATE" \
+    "_nils_cli_fzf_cli_generated" \
+    "fzf-cli" \
+    "_fzf-cli" \
+    '^if \[ "\$funcstack\[1\]" = "_nils_cli_fzf_cli_generated" \]; then$' \
+    '^fi$'
+}
+
+_nils_cli_fzf_cli_apply_alias_rewrite_zsh() {
+  local invoked_as="${words[1]-}"
+  local -a inject=()
+
+  case "$invoked_as" in
+    fxf) inject=(file) ;;
+    fxd) inject=(directory) ;;
+    fxgs) inject=(git-status) ;;
+    fxgc) inject=(git-commit) ;;
+    fxgco) inject=(git-checkout) ;;
+    fxgb) inject=(git-branch) ;;
+    fxgt) inject=(git-tag) ;;
+    fxp) inject=(process) ;;
+    fxpo) inject=(port) ;;
+    fxh) inject=(history) ;;
+    fxenv) inject=(env) ;;
+    fxal) inject=(alias) ;;
+    fxfn) inject=(function) ;;
+    fxdef) inject=(def) ;;
+  esac
+
+  if [[ "$invoked_as" != "fzf-cli" ]]; then
+    local -a rewritten_words=('fzf-cli')
+    local token=''
+    local -i idx=2
+
+    for token in "${inject[@]}"; do
+      rewritten_words+=("$token")
+    done
+
+    while (( idx <= ${#words[@]} )); do
+      rewritten_words+=("${words[idx]}")
+      (( idx++ ))
+    done
+
+    words=("${rewritten_words[@]}")
+    (( CURRENT += ${#inject[@]} ))
+  fi
 }
 
 _fzf-cli() {
   emulate -L zsh -o extendedglob
 
-  local context='' state='' state_descr=''
-  local -a line=()
-  typeset -A opt_args=()
+  local -i saved_current="$CURRENT"
+  local -a saved_words=("${words[@]}")
 
-  local -i orig_current="$CURRENT"
-  local -a orig_words=("${words[@]}")
-  local invoked_as="${orig_words[1]-}"
-  local subcmd_override=''
-
-  case "$invoked_as" in
-    fxf) subcmd_override='file' ;;
-    fxd) subcmd_override='directory' ;;
-    fxgs) subcmd_override='git-status' ;;
-    fxgc) subcmd_override='git-commit' ;;
-    fxgco) subcmd_override='git-checkout' ;;
-    fxgb) subcmd_override='git-branch' ;;
-    fxgt) subcmd_override='git-tag' ;;
-    fxp) subcmd_override='process' ;;
-    fxpo) subcmd_override='port' ;;
-    fxh) subcmd_override='history' ;;
-    fxenv) subcmd_override='env' ;;
-    fxal) subcmd_override='alias' ;;
-    fxfn) subcmd_override='function' ;;
-    fxdef) subcmd_override='def' ;;
-  esac
-
-  local -a subcommands=()
-  subcommands=(
-    'file:Search and preview text files'
-    'directory:Search directories and cd into selection'
-    'git-status:Interactive git status viewer'
-    'git-commit:Browse commits and open changed files in editor'
-    'git-checkout:Pick and checkout a previous commit'
-    'git-branch:Browse and checkout branches interactively'
-    'git-tag:Browse and checkout tags interactively'
-    'process:Browse and kill running processes'
-    'port:Browse listening ports and owners'
-    'history:Search and execute command history'
-    'env:Browse environment variables'
-    'alias:Browse shell aliases'
-    'function:Browse defined shell functions'
-    'def:Browse all definitions (env, alias, functions)'
-    'help:Display help message for fzf-cli'
-  )
-
-  if [[ -n "$subcmd_override" ]]; then
-    _arguments -C \
-      '(-h --help)'{-h,--help}'[Display help message for fzf-cli]' \
-      '(-V --version)'{-V,--version}'[Display version for fzf-cli]' \
-      '*::arg:->args'
-  else
-    _arguments -C \
-      '(-h --help)'{-h,--help}'[Display help message for fzf-cli]' \
-      '(-V --version)'{-V,--version}'[Display version for fzf-cli]' \
-      '1:command:->subcmds' \
-      '*::arg:->args'
+  if ! _nils_cli_fzf_cli_load_generated_zsh; then
+    words=("${saved_words[@]}")
+    CURRENT="$saved_current"
+    if (( $+functions[_nils_cli_completion_common_fail_closed_no_legacy_zsh] )); then
+      _nils_cli_completion_common_fail_closed_no_legacy_zsh
+    fi
+    return 1
   fi
 
-  case "${state-}" in
-    subcmds)
-      _describe -t commands 'fzf-cli command' subcommands && return 0
-      ;;
-    args)
-      local cur="${orig_words[orig_current]-}"
-      cur="${cur%%[[:space:]]#}"
+  _nils_cli_fzf_cli_apply_alias_rewrite_zsh
+  _nils_cli_fzf_cli_generated
+  local rc=$?
 
-      local subcmd=''
-      if [[ -n "$subcmd_override" ]]; then
-        subcmd="$subcmd_override"
-      else
-        subcmd="${line[1]:-${orig_words[2]-}}"
-        subcmd="${subcmd%%[[:space:]]#}"
-      fi
-
-      case "$subcmd" in
-        -V|--version)
-          _message 'no additional arguments'
-          return 0
-          ;;
-        file|directory)
-          if [[ "$cur" == -* ]]; then
-            local -a opts=(
-              '--vi:Open files with vi'
-              '--vscode:Open files with VSCode'
-              '--:End of options'
-            )
-            _describe -t options 'option' opts && return 0
-            return 0
-          fi
-          __fzf_cli_query
-          return 0
-          ;;
-        git-commit)
-          if [[ "$cur" == -* ]]; then
-            local -a opts=(
-              '--snapshot:Open snapshot from selected commit by default'
-            )
-            _describe -t options 'option' opts && return 0
-            return 0
-          fi
-          __fzf_cli_query
-          return 0
-          ;;
-        process|port)
-          if [[ "$cur" == -* ]]; then
-            local -a opts=(
-              '-k:Kill without interactive confirmation'
-              '--kill:Kill without interactive confirmation'
-              '-9:Force SIGKILL (-9)'
-              '--force:Force SIGKILL (-9)'
-            )
-            _describe -t options 'option' opts && return 0
-            return 0
-          fi
-          __fzf_cli_query
-          return 0
-          ;;
-        git-status|git-checkout|git-branch|git-tag|history|env|alias|function|def|help)
-          builtin compadd -x 'query (optional)'
-          return 0
-          ;;
-      esac
-      ;;
-  esac
+  words=("${saved_words[@]}")
+  CURRENT="$saved_current"
+  return $rc
 }
 
-compdef _fzf-cli fzf-cli fx fxf fxd fxgs fxgc fxgco fxgb fxgt fxp fxpo fxh fxenv fxal fxfn fxdef
+if _nils_cli_fzf_cli_source_common_zsh; then
+  _nils_cli_completion_common_register_zsh _fzf-cli \
+    fzf-cli fx fxf fxd fxgs fxgc fxgco fxgb fxgt fxp fxpo fxh fxenv fxal fxfn fxdef
+else
+  compdef _fzf-cli \
+    fzf-cli fx fxf fxd fxgs fxgc fxgco fxgb fxgt fxp fxpo fxh fxenv fxal fxfn fxdef
+fi
