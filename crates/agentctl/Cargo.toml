@@ -16,6 +16,7 @@ name = "agentctl"
 path = "src/main.rs"
 [dependencies]
 clap = { workspace = true }
+clap_complete = { workspace = true }
 agent-provider-codex = { version = "0.4.4", path = "../agent-provider-codex", package = "nils-agent-provider-codex" }
 agent-provider-claude = { version = "0.4.4", path = "../agent-provider-claude", package = "nils-agent-provider-claude" }
 agent-provider-gemini = { version = "0.4.4", path = "../agent-provider-gemini", package = "nils-agent-provider-gemini" }
@@ -27,3 +28,4 @@ serde_json = { workspace = true }
 [dev-dependencies]
 nils-test-support = { version = "0.4.4", path = "../nils-test-support" }
 pretty_assertions = { workspace = true }
+tempfile = "3"
