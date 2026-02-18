@@ -1823,6 +1823,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "clap_complete",
  "globset",
  "image",
  "nils-common",

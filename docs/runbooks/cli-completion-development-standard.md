@@ -13,6 +13,8 @@ This runbook defines the workspace standard for CLI completion architecture, imp
   - `completions/zsh/`
   - `completions/bash/`
   - `tests/zsh/completion.test.zsh`
+- Per-CLI migration contract template:
+  - `docs/specs/completion-contract-template.md`
 - New crate implementation standard:
   - `docs/runbooks/new-cli-crate-development-standard.md`
 
@@ -70,6 +72,32 @@ Dynamic/runtime value completion is optional and must extend (not replace) clap-
 - preferred dynamic path: `clap_complete::env::CompleteEnv`
 - alternative dynamic path (when needed): crate-local hidden completion command (e.g., `__complete`)
 
+### Shared adapter helper contract
+Workspace adapters may share common helper scripts for zsh/bash to reduce duplicated loader and registration logic while preserving thin adapter behavior.
+
+Canonical helper files:
+
+- `completions/zsh/_completion-adapter-common.zsh`
+- `completions/bash/completion-adapter-common.bash`
+
+Helper contract:
+
+- generated loading helper: fetches `<cli> completion <shell>`, renames generated function symbols per adapter, strips known self-registration blocks when needed, caches success/failure state, and validates that the generated function is callable
+- registration helper: registers one completion entrypoint for canonical command and alias names (`compdef`/`complete`) without mutating alias definitions
+- no-legacy helper: enforces fail-closed behavior on generated-load failure (empty/no candidates) and does not route to any legacy completion stack
+
+Adapter integration requirements:
+
+- adapters stay responsible for CLI-specific alias rewrite semantics (for example `cxgp -> agent prompt`)
+- adapters may source shared helpers from their own completion directory; on helper lookup failure, adapters must still fail closed and must not add legacy fallback code paths
+- helper usage must keep completion behavior contract-compatible with existing adapter expectations
+
+### Shell compatibility caveats
+- zsh helper loading should prefer the adapter source path (`functions_source[...]`) and then `fpath` lookup to support both direct `source` and autoloaded completion contexts
+- bash helper loading should resolve helper paths from `${BASH_SOURCE[0]}` so colocated helper files are found when completion scripts are sourced from arbitrary working directories
+- when generated scripts include shell/version-guard wrappers that conflict with renamed generated function names, helpers may strip those wrappers before `eval`, but only in deterministic, documented ways
+- `zsh -n` and `bash -n` checks verify syntax only; runtime behavior still requires completion tests (`tests/zsh/completion.test.zsh`) to protect alias wiring and no-legacy invariants
+
 ## Contract Boundaries: Rust vs Shell
 Rust responsibilities:
 
@@ -112,6 +140,24 @@ Rules:
 - if generated completion quality is wrong, fix clap metadata and/or thin adapter logic in-place
 - generated-load failure must fail closed (empty/no candidates) rather than routing to a legacy path
 
+### Required no-legacy enforcement metadata
+Every completion-required CLI migration must declare and validate this metadata contract in both:
+
+- the CLI row in `docs/reports/completion-coverage-matrix.md`
+- the crate-local migration contract copied from `docs/specs/completion-contract-template.md`
+
+Canonical metadata tuple:
+
+- `completion_mode=clap-first`
+- `legacy_completion_mode_toggles=forbidden` (legacy completion mode toggles are disallowed, including `<CLI_NAME_UPPER>_COMPLETION_MODE`)
+- `legacy_completion_dispatch=forbidden`
+- `generated_load_failure=fail-closed`
+
+Validation expectation:
+
+- migration contracts must include explicit evidence for no-legacy metadata checks
+- validation must include `COMPLETION_MODE` and legacy completion mode grep checks for touched completion paths
+
 ## Testing Requirements and Required Checks Linkage
 Completion work must satisfy completion-specific checks and repository gates.
 
@@ -134,14 +180,25 @@ Mandatory repository checks:
 Completion changes are not deliverable until required checks pass.
 
 ## Rollout Checklist: Migrating an Existing CLI
-Use this checklist for every existing CLI migration:
+Use this checklist for every existing CLI migration. The migration is only complete when the
+per-CLI contract is filled, validation evidence is captured, and acceptance criteria are checked.
 
-1. confirm the CLI is completion-required (or explicitly excluded) in coverage matrix
-2. ensure clap model fully expresses subcommands/flags/value candidates
-3. add completion export path (e.g., `completion <shell>`) powered by `clap_complete`
-4. generate/update `completions/zsh/_<cli>` and `completions/bash/<cli>`
-5. keep shell adapters thin (alias wiring and optional dynamic hooks only)
-6. if dynamic values are needed, add `CompleteEnv` (or crate-local `__complete` only where justified)
-7. enforce no-legacy completion policy (no `COMPLETION_MODE` gates or legacy completion functions)
-8. sync aliases in both alias files when alias-bearing CLIs are touched
-9. run completion checks + required repo checks; record rollout status in PR notes
+1. confirm the CLI is completion-required (or explicitly excluded) in
+   `docs/reports/completion-coverage-matrix.md`, and for `required` CLIs ensure the matrix row has
+   explicit no-legacy enforcement metadata
+2. create the per-CLI migration contract from `docs/specs/completion-contract-template.md`:
+   - `mkdir -p crates/<crate>/docs/reports`
+   - `cp docs/specs/completion-contract-template.md crates/<crate>/docs/reports/<cli>-completion-migration-contract.md`
+3. fill the contract `command graph`, `value providers`, `alias map`, `no-legacy enforcement metadata`,
+   and `no-legacy invariants` sections before changing code so scope and invariants are explicit
+4. ensure clap model fully expresses subcommands/flags/value candidates
+5. add completion export path (e.g., `completion <shell>`) powered by `clap_complete`
+6. generate/update `completions/zsh/_<cli>` and `completions/bash/<cli>`
+7. keep shell adapters thin (alias wiring and optional dynamic hooks only)
+8. if dynamic values are needed, add `CompleteEnv` (or crate-local `__complete` only where justified)
+9. enforce no-legacy completion policy and metadata values (no `COMPLETION_MODE` gates or legacy completion functions)
+10. sync aliases in both alias files when alias-bearing CLIs are touched and update the contract
+    `alias map` with any rewrite semantics
+11. run contract validation commands and required repository checks; record output in the contract,
+    including no-legacy metadata verification evidence
+12. mark contract acceptance criteria complete and link the contract path in PR notes

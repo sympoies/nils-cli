@@ -1,0 +1,126 @@
+# Completion Migration Contract Template
+
+## Purpose
+This template defines the per-CLI completion migration contract for clap-first rollout work.
+Fill every required section so implementation, no-legacy enforcement, and validation stay
+deterministic across CLI migrations.
+
+## Usage
+1. Copy this file to the crate-local report path:
+   - `crates/<crate>/docs/reports/<cli>-completion-migration-contract.md`
+2. Replace placeholders with CLI-specific values.
+3. Keep the contract updated through implementation and testing.
+4. Link the contract path in PR notes before requesting review.
+
+## Metadata
+- CLI binary: `<cli>`
+- Owning crate: `crates/<crate>`
+- Contract owner: `<name>`
+- Target PR: `<link-or-number>`
+- Status: `draft|in-review|done`
+- Last updated: `YYYY-MM-DD`
+- No-legacy enforcement metadata tuple from matrix row:
+  - `completion_mode=<clap-first>`
+  - `legacy_completion_mode_toggles=<forbidden>`
+  - `legacy_completion_dispatch=<forbidden>`
+  - `generated_load_failure=<fail-closed>`
+
+## command graph (required)
+Document the clap command tree used as the completion source of truth.
+
+| command path | clap source | completion obligations | notes |
+| --- | --- | --- | --- |
+| `<cli>` | `crates/<crate>/src/...` | root flags + top-level subcommands | `<notes>` |
+| `<cli> <subcommand>` | `crates/<crate>/src/...` | subcommand flags/args/candidates | `<notes>` |
+
+Checklist:
+- [ ] Every supported subcommand path is listed.
+- [ ] Long/short flags are represented by clap metadata.
+- [ ] Hidden/deprecated paths are explicitly called out.
+
+## value providers (required)
+Document static and dynamic completion candidate sources.
+
+| argument or flag | provider type (`ValueEnum`/`PossibleValue`/`ValueHint`/`CompleteEnv`/`__complete`) | source location | context-aware behavior | tests |
+| --- | --- | --- | --- | --- |
+| `<flag-or-arg>` | `<provider>` | `crates/<crate>/src/...` | `<cursor-position rules>` | `<test path>` |
+
+Rules:
+- Value providers stay clap-first; dynamic providers extend the generated baseline only.
+- Runtime data lookups must describe deterministic fallback behavior.
+
+Checklist:
+- [ ] No global candidate dump behavior remains.
+- [ ] Cursor-position filtering is documented for dynamic value paths.
+
+## alias map (required)
+Document alias coverage and canonical command rewrites.
+
+| alias | canonical command rewrite | zsh alias entry | bash alias entry | completion registration point |
+| --- | --- | --- | --- | --- |
+| `<alias>` | `<canonical command>` | `completions/zsh/aliases.zsh` | `completions/bash/aliases.bash` | `completions/<shell>/<cli adapter>` |
+
+Checklist:
+- [ ] Alias entries are synced in both alias files, or `not required` is explicit.
+- [ ] Adapter rewrite semantics are documented when aliases inject defaults.
+
+## no-legacy enforcement metadata (required)
+Declare and validate metadata that enforces clap-first behavior and forbids legacy completion mode
+fallbacks. Values must match the CLI row in `docs/reports/completion-coverage-matrix.md`.
+
+| metadata key | required value | declared value | enforcement location | verification method |
+| --- | --- | --- | --- | --- |
+| `completion_mode` | `clap-first` | `<value>` | `<path>` | `<proof>` |
+| `legacy_completion_mode_toggles` | `forbidden` | `<value>` | `<path>` | `rg -n "COMPLETION_MODE|legacy completion mode" <paths>` |
+| `legacy_completion_dispatch` | `forbidden` | `<value>` | `<path>` | `rg -n "legacy completion" <paths>` |
+| `generated_load_failure` | `fail-closed` | `<value>` | `<path>` | `<completion test case>` |
+
+Checklist:
+- [ ] Declared metadata values match required values in this template.
+- [ ] Declared metadata values match the matrix row for this CLI.
+- [ ] Verification evidence includes `COMPLETION_MODE` and legacy completion mode checks.
+
+## no-legacy invariants (required)
+List invariants that enforce the metadata above and keep completion clap-first and fail closed.
+
+| invariant | enforcement location | verification method |
+| --- | --- | --- |
+| No legacy completion mode toggles (`<CLI_NAME_UPPER>_COMPLETION_MODE`) | `<path>` | `rg -n "COMPLETION_MODE|legacy completion mode" <paths>` |
+| No legacy completion dispatch path | `<path>` | `rg -n "legacy|old completion" <paths>` |
+| Generated-load failure fails closed (empty/no candidates) | `<path>` | `<completion test case>` |
+
+Checklist:
+- [ ] Adapters are thin (registration + optional dynamic hooks only).
+- [ ] Generated-load failure does not route to legacy completion code.
+
+## tests and validation (required)
+Record command-level and repository-level checks for this migration.
+
+### validation commands
+1. `zsh -f tests/zsh/completion.test.zsh`
+2. `zsh -n completions/zsh/_<cli>`
+3. `bash -n completions/bash/<cli>`
+4. `<cli> completion zsh | rg -- "--help|--version|--"`
+5. `rg -n "no-legacy|COMPLETION_MODE|legacy completion mode|legacy_completion_mode_toggles|legacy_completion_dispatch" docs/reports/completion-coverage-matrix.md crates/<crate>/docs/reports/<cli>-completion-migration-contract.md`
+6. `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
+   - use `--docs-only` only when all changed files are docs.
+
+### test coverage mapping
+| requirement | test file or command | status (`pending|pass|fail`) | notes |
+| --- | --- | --- | --- |
+| command graph candidates | `<path-or-command>` | `<status>` | `<notes>` |
+| value providers | `<path-or-command>` | `<status>` | `<notes>` |
+| alias map registration | `<path-or-command>` | `<status>` | `<notes>` |
+| no-legacy enforcement metadata | `<path-or-command>` | `<status>` | `<notes>` |
+| no-legacy invariants | `<path-or-command>` | `<status>` | `<notes>` |
+
+## acceptance criteria (required)
+Mark all items before closing the migration.
+
+- [ ] command graph matches implemented clap command surface.
+- [ ] value providers cover required candidates and dynamic paths.
+- [ ] alias map reflects zsh/bash alias entries and completion registration.
+- [ ] no-legacy enforcement metadata is declared, matches matrix policy, and is validated.
+- [ ] no-legacy invariants are enforced and verified.
+- [ ] tests and validation commands pass, with evidence captured.
+- [ ] PR notes link this contract and summarize follow-up risk (if any).
