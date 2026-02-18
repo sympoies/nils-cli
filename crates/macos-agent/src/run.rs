@@ -97,6 +97,7 @@ pub fn command_group_label(command: &CommandGroup) -> &'static str {
             ProfileCommand::Validate(_) => "profile.validate",
             ProfileCommand::Init(_) => "profile.init",
         },
+        CommandGroup::Completion(_) => "completion",
     }
 }
 
@@ -150,6 +151,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         CommandGroup::Profile {
             command: ProfileCommand::Init(args),
         } => commands::profile::run_init(cli.format, &args),
+        CommandGroup::Completion(_) => Ok(()),
         CommandGroup::Window {
             command: WindowCommand::Activate(args),
         } => commands::window_activate::run(cli.format, &args, policy, &runner),

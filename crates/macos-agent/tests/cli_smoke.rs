@@ -23,6 +23,7 @@ fn help_lists_command_groups() {
         "wait",
         "scenario",
         "profile",
+        "completion",
     ] {
         assert!(text.contains(token), "missing token in help: {token}");
     }
