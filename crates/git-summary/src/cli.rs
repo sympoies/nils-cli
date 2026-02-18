@@ -9,6 +9,10 @@ pub fn print_help() {
     println!("  {:<16}  1st to end of last month", "last-month");
     println!("  {:<16}  This Mon–Sun", "this-week");
     println!("  {:<16}  Last Mon–Sun", "last-week");
+    println!(
+        "  {:<16}  Export shell completion script",
+        "completion <shell>"
+    );
     println!("  {:<16}  Custom date range (YYYY-MM-DD)", "<from> <to>");
     println!();
 }

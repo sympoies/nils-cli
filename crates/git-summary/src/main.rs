@@ -1,5 +1,6 @@
 mod app;
 mod cli;
+mod completion;
 mod dates;
 mod git;
 mod summary;

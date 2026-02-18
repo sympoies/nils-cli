@@ -10,6 +10,11 @@ use crate::summary::summary;
 
 pub fn run() -> i32 {
     let args: Vec<String> = env::args().skip(1).collect();
+
+    if let Some(code) = crate::completion::maybe_handle_completion_export(&args) {
+        return code;
+    }
+
     if args.is_empty() || is_help(&args[0]) {
         print_help();
         return 0;
