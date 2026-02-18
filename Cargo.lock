@@ -1761,6 +1761,8 @@ name = "nils-fzf-cli"
 version = "0.4.4"
 dependencies = [
  "anyhow",
+ "clap",
+ "clap_complete",
  "nils-common",
  "nils-term",
  "nils-test-support",
