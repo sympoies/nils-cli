@@ -1,92 +1,60 @@
 #compdef plan-tooling
 
+_nils_cli_plan_tooling_source_common_zsh() {
+  (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+
+  local source_file="${functions_source[_plan-tooling]-}"
+  local helper_path=''
+
+  if [[ -n "$source_file" && -r "$source_file" ]]; then
+    helper_path="${source_file:h}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
+  fi
+
+  local dir=''
+  for dir in "${fpath[@]}"; do
+    helper_path="${dir}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
+  done
+
+  return 1
+}
+
+typeset -gi _NILS_PLAN_TOOLING_ZSH_GENERATED_STATE=0
+
+_nils_cli_plan_tooling_load_generated_zsh() {
+  _nils_cli_plan_tooling_source_common_zsh || return 1
+
+  _nils_cli_completion_common_load_generated_zsh \
+    "_NILS_PLAN_TOOLING_ZSH_GENERATED_STATE" \
+    "_nils_cli_plan_tooling_generated" \
+    "plan-tooling" \
+    "_plan-tooling" \
+    '^if \[ "\$funcstack\[1\]" = "_nils_cli_plan_tooling_generated" \]; then$' \
+    '^fi$'
+}
+
 _plan-tooling() {
   emulate -L zsh -o extendedglob
 
-  local context='' state='' state_descr=''
-  local -a line=()
-  typeset -A opt_args=()
-
-  local -i orig_current="$CURRENT"
-  local -a orig_words=("${words[@]}")
-
-  local cur="${orig_words[orig_current]-}"
-  cur="${cur%%[[:space:]]#}"
-
-  typeset -a subcommands=()
-  subcommands=(
-    'to-json:Parse a plan markdown file into a stable JSON schema'
-    'validate:Lint plan markdown files'
-    'batches:Compute dependency layers (parallel batches) for a sprint'
-    'scaffold:Create a new plan from template'
-    'help:Show help'
-  )
-
-  if (( orig_current == 2 )); then
-    if [[ "$cur" == -* ]]; then
-      typeset -a opts=(
-        '-h:Show help'
-        '--help:Show help'
-        '-V:Show version'
-        '--version:Show version'
-      )
-      _describe -t options 'option' opts && return 0
-      return 0
+  if ! _nils_cli_plan_tooling_load_generated_zsh; then
+    if (( $+functions[_nils_cli_completion_common_fail_closed_no_legacy_zsh] )); then
+      _nils_cli_completion_common_fail_closed_no_legacy_zsh
     fi
-
-    _describe -t commands 'plan-tooling command' subcommands && return 0
-    _message 'command (to-json|validate|batches|scaffold)'
-    return 0
+    return 1
   fi
 
-  local subcmd="${orig_words[2]-}"
-  subcmd="${subcmd%%[[:space:]]#}"
-
-  case "$subcmd" in
-    -h|--help|-V|--version|help)
-      _message 'no additional arguments'
-      return 0
-      ;;
-  esac
-
-  case "$subcmd" in
-    to-json)
-      _arguments -C \
-        '(-h --help)'{-h,--help}'[Show help]' \
-        '--file=[Plan file to parse (required)]:file:_files' \
-        '--sprint=[Only include a single sprint number]:sprint number:' \
-        '--pretty[Pretty-print JSON (indent=2)]' \
-        && return 0
-      ;;
-    validate)
-      _arguments -C \
-        '(-h --help)'{-h,--help}'[Show help]' \
-        '--file=[Validate a specific plan file (repeatable)]:file:_files' \
-        '--format=[Output format]:format:(json text)' \
-        && return 0
-      ;;
-    batches)
-      _arguments -C \
-        '(-h --help)'{-h,--help}'[Show help]' \
-        '--file=[Plan file to parse (required)]:file:_files' \
-        '--sprint=[Sprint number to batch (required)]:sprint number:' \
-        '--format=[Output format]:format:(json text)' \
-        && return 0
-      ;;
-    scaffold)
-      _arguments -C \
-        '(-h --help)'{-h,--help}'[Show help]' \
-        '--slug=[Base slug (kebab-case); writes to docs/plans/<slug>-plan.md]:slug:' \
-        '--file=[Explicit output path (must end with -plan.md)]:file:_files' \
-        '--title=[Replace the plan title line]:title:' \
-        '--force[Overwrite if the output file already exists]' \
-        && return 0
-      ;;
-    *)
-      _message 'unknown command'
-      return 0
-      ;;
-  esac
+  _nils_cli_plan_tooling_generated
 }
 
-compdef _plan-tooling plan-tooling
+if _nils_cli_plan_tooling_source_common_zsh; then
+  _nils_cli_completion_common_register_zsh _plan-tooling plan-tooling
+else
+  compdef _plan-tooling plan-tooling
+fi
