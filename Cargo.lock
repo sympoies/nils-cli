@@ -1546,6 +1546,7 @@ version = "0.4.4"
 dependencies = [
  "anyhow",
  "clap",
+ "clap_complete",
  "directories",
  "serde",
  "serde_json",

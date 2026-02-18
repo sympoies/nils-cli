@@ -6,146 +6,58 @@ fi
 
 shopt -s progcomp 2>/dev/null || true
 
+_nils_cli_agent_docs_source_common_bash() {
+  declare -F _nils_cli_completion_common_load_generated_bash >/dev/null 2>&1 && return 0
+
+  local source_file="${BASH_SOURCE[0]}"
+  local script_dir=''
+  script_dir="$(cd -- "$(dirname -- "$source_file")" && pwd -P)" || return 1
+
+  local helper_path="${script_dir}/completion-adapter-common.bash"
+  [[ -r "$helper_path" ]] || return 1
+
+  # shellcheck source=/dev/null
+  source "$helper_path" || return 1
+
+  declare -F _nils_cli_completion_common_load_generated_bash >/dev/null 2>&1
+}
+
+_NILS_AGENT_DOCS_BASH_GENERATED_STATE=0
+
+_nils_cli_agent_docs_load_generated_bash() {
+  _nils_cli_agent_docs_source_common_bash || return 1
+
+  # command agent-docs completion bash
+  _nils_cli_completion_common_load_generated_bash \
+    "_NILS_AGENT_DOCS_BASH_GENERATED_STATE" \
+    "_nils_cli_agent_docs_generated" \
+    "agent-docs" \
+    "_agent_docs" \
+    '^if \[\[ "\${BASH_VERSINFO\[0\]}" -eq 4 ' \
+    '^fi$'
+}
+
 _nils_cli_agent_docs_complete() {
-  local -a words=("${COMP_WORDS[@]}")
-  local cword="$COMP_CWORD"
-  local cur="${COMP_WORDS[COMP_CWORD]}"
-  local prev="${COMP_WORDS[COMP_CWORD-1]}"
-
-  local -a subcmds=(resolve contexts add scaffold-agents baseline scaffold-baseline)
-  local -a root_opts=(-h --help -V --version --agent-home --project-path)
-  local -a contexts=(startup skill-dev task-tools project-dev)
-  local -a scopes=(home project)
-  local -a baseline_targets=(home project all)
-  local -a formats=(text json)
-  local -a resolve_formats=(text json checklist)
-
-  local subcmd=''
-  local i=1
-  while (( i < ${#words[@]} )); do
-    local token="${words[i]}"
-    case "$token" in
-      --agent-home|--project-path)
-        ((i+=2))
-        continue
-        ;;
-      -h|--help|-V|--version)
-        ((i++))
-        continue
-        ;;
-      -*)
-        ((i++))
-        continue
-        ;;
-      *)
-        subcmd="$token"
-        break
-        ;;
-    esac
-  done
-
-  case "$prev" in
-    --agent-home|--project-path|--path|--output)
-      COMPREPLY=( $(compgen -f -- "$cur") )
-      return 0
-      ;;
-    --context)
-      COMPREPLY=( $(compgen -W "${contexts[*]}" -- "$cur") )
-      return 0
-      ;;
-    --scope)
-      COMPREPLY=( $(compgen -W "${scopes[*]}" -- "$cur") )
-      return 0
-      ;;
-    --target)
-      case "$subcmd" in
-        baseline|scaffold-baseline)
-          COMPREPLY=( $(compgen -W "${baseline_targets[*]}" -- "$cur") )
-          return 0
-          ;;
-      esac
-      COMPREPLY=( $(compgen -W "${scopes[*]}" -- "$cur") )
-      return 0
-      ;;
-    --format)
-      if [[ "$subcmd" == "resolve" ]]; then
-        COMPREPLY=( $(compgen -W "${resolve_formats[*]}" -- "$cur") )
-        return 0
-      fi
-      COMPREPLY=( $(compgen -W "${formats[*]}" -- "$cur") )
-      return 0
-      ;;
-    --when)
-      COMPREPLY=( $(compgen -W "always" -- "$cur") )
-      return 0
-      ;;
-    --notes)
+  if ! _nils_cli_agent_docs_load_generated_bash; then
+    if declare -F _nils_cli_completion_common_fail_closed_no_legacy_bash >/dev/null 2>&1; then
+      _nils_cli_completion_common_fail_closed_no_legacy_bash
+    else
       COMPREPLY=()
-      return 0
-      ;;
-  esac
-
-  if [[ -z "$subcmd" || $cword -le $i ]]; then
-    if [[ "$cur" == -* ]]; then
-      COMPREPLY=( $(compgen -W "${root_opts[*]}" -- "$cur") )
-      return 0
     fi
-    COMPREPLY=( $(compgen -W "${subcmds[*]}" -- "$cur") )
     return 0
   fi
 
-  case "$subcmd" in
-    resolve)
-      if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "-h --help --agent-home --project-path --context --format --strict" -- "$cur") )
-        return 0
-      fi
-      COMPREPLY=()
-      return 0
-      ;;
-    contexts)
-      if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "-h --help --agent-home --project-path --format" -- "$cur") )
-        return 0
-      fi
-      COMPREPLY=()
-      return 0
-      ;;
-    add)
-      if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "-h --help --agent-home --project-path --target --context --scope --path --required --when --notes" -- "$cur") )
-        return 0
-      fi
-      COMPREPLY=()
-      return 0
-      ;;
-    scaffold-agents)
-      if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "-h --help --agent-home --project-path --target --output --force" -- "$cur") )
-        return 0
-      fi
-      COMPREPLY=()
-      return 0
-      ;;
-    baseline)
-      if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "-h --help --agent-home --project-path --check --target --format --strict" -- "$cur") )
-        return 0
-      fi
-      COMPREPLY=()
-      return 0
-      ;;
-    scaffold-baseline)
-      if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "-h --help --agent-home --project-path --target --missing-only --force --dry-run --format" -- "$cur") )
-        return 0
-      fi
-      COMPREPLY=()
-      return 0
-      ;;
-  esac
+  local cur="${COMP_WORDS[COMP_CWORD]}"
+  local prev=''
+  if (( COMP_CWORD > 0 )); then
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+  fi
 
-  COMPREPLY=()
+  _nils_cli_agent_docs_generated "agent-docs" "$cur" "$prev"
 }
 
-complete -F _nils_cli_agent_docs_complete agent-docs
+if _nils_cli_agent_docs_source_common_bash; then
+  _nils_cli_completion_common_register_bash _nils_cli_agent_docs_complete agent-docs
+else
+  complete -F _nils_cli_agent_docs_complete agent-docs
+fi
