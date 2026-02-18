@@ -28,12 +28,7 @@ pub fn now_run_id() -> String {
 }
 
 pub fn find_repo_root() -> PathBuf {
-    if let Ok(Some(root)) = common_git::repo_root() {
-        return normalize_path(&root);
-    }
-    std::env::current_dir()
-        .map(|p| normalize_path(&p))
-        .unwrap_or_else(|_| PathBuf::from("."))
+    normalize_path(&common_git::repo_root_or_cwd())
 }
 
 pub fn expand_user(raw: &str) -> PathBuf {
