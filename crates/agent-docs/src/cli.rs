@@ -43,6 +43,7 @@ pub enum Command {
     ScaffoldAgents(ScaffoldAgentsArgs),
     Baseline(BaselineArgs),
     ScaffoldBaseline(ScaffoldBaselineArgs),
+    Completion(CompletionArgs),
 }
 
 #[derive(Debug, Args)]
@@ -130,4 +131,10 @@ pub struct ScaffoldBaselineArgs {
 
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
+}
+
+#[derive(Debug, Args)]
+pub struct CompletionArgs {
+    #[arg(value_enum)]
+    pub shell: crate::completion::CompletionShell,
 }

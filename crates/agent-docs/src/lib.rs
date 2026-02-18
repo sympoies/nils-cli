@@ -1,5 +1,6 @@
 mod cli;
 pub mod commands;
+mod completion;
 pub mod config;
 pub mod env;
 pub mod model;
@@ -195,6 +196,7 @@ fn dispatch(cli: Cli) -> i32 {
                 }
             }
         }
+        Command::Completion(args) => completion::run(args.shell),
     }
 }
 
