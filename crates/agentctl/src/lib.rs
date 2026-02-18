@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod completion;
 pub mod debug;
 pub mod diag;
 pub mod provider;
@@ -46,6 +47,7 @@ where
             None => print_group_help("workflow"),
         },
         Some(cli::Command::Automation) => print_group_help("automation"),
+        Some(cli::Command::Completion(args)) => completion::run(args.shell),
         None => print_root_help(),
     }
 }

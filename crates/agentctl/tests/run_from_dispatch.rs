@@ -6,6 +6,7 @@ use nils_test_support::{CwdGuard, EnvGuard, GlobalStateLock, StubBinDir, prepend
 fn run_from_group_help_and_parse_errors_return_expected_exit_codes() {
     assert_eq!(agentctl::run_from(["agentctl"]), 0);
     assert_eq!(agentctl::run_from(["agentctl", "--help"]), 0);
+    assert_eq!(agentctl::run_from(["agentctl", "completion", "zsh"]), 0);
     assert_eq!(agentctl::run_from(["agentctl", "provider"]), 0);
     assert_eq!(agentctl::run_from(["agentctl", "diag"]), 0);
     assert_eq!(agentctl::run_from(["agentctl", "debug"]), 0);

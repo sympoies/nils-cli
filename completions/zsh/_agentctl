@@ -1,136 +1,60 @@
 #compdef agentctl
 
+_nils_cli_agentctl_source_common_zsh() {
+  (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+
+  local source_file="${functions_source[_agentctl]-}"
+  local helper_path=''
+
+  if [[ -n "$source_file" && -r "$source_file" ]]; then
+    helper_path="${source_file:h}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
+  fi
+
+  local dir=''
+  for dir in "${fpath[@]}"; do
+    helper_path="${dir}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
+  done
+
+  return 1
+}
+
+typeset -gi _NILS_AGENTCTL_ZSH_GENERATED_STATE=0
+
+_nils_cli_agentctl_load_generated_zsh() {
+  _nils_cli_agentctl_source_common_zsh || return 1
+
+  _nils_cli_completion_common_load_generated_zsh \
+    "_NILS_AGENTCTL_ZSH_GENERATED_STATE" \
+    "_nils_cli_agentctl_generated" \
+    "agentctl" \
+    "_agentctl" \
+    '^if \[ "\$funcstack\[1\]" = "_nils_cli_agentctl_generated" \]; then$' \
+    '^fi$'
+}
+
 _agentctl() {
   emulate -L zsh -o extendedglob
 
-  local context='' state='' state_descr=''
-  typeset -A opt_args
+  if ! _nils_cli_agentctl_load_generated_zsh; then
+    if (( $+functions[_nils_cli_completion_common_fail_closed_no_legacy_zsh] )); then
+      _nils_cli_completion_common_fail_closed_no_legacy_zsh
+    fi
+    return 1
+  fi
 
-  local -a commands=(
-    'provider:Provider registry and selection'
-    'diag:Provider-neutral diagnostics'
-    'debug:Debug bundle and troubleshooting tools'
-    'workflow:Declarative workflow orchestration'
-    'automation:Local automation integrations'
-    'help:Display help message'
-  )
-
-  _arguments -C \
-    '(-h --help)'{-h,--help}'[Show help]' \
-    '(-V --version)'{-V,--version}'[Show version]' \
-    '1:command:->command' \
-    '*::arg:->args'
-
-  case "$state" in
-    command)
-      _describe -t commands 'agentctl command' commands && return 0
-      ;;
-    args)
-      ;;
-    *)
-      return 0
-      ;;
-  esac
-
-  local cmd="${words[2]-}"
-  case "$cmd" in
-    provider)
-      local -a provider_cmds=(
-        'list:List registered providers and current health status'
-        'healthcheck:Execute healthcheck for one provider'
-      )
-      if (( CURRENT == 3 )); then
-        _describe -t commands 'agentctl provider' provider_cmds && return 0
-      fi
-      case "${words[3]-}" in
-        list|healthcheck)
-          _arguments -C \
-            '(-h --help)'{-h,--help}'[Show help]' \
-            '--provider=[Provider override]:provider id:' \
-            '--timeout-ms=[Healthcheck timeout in milliseconds]:milliseconds:' \
-            '--format=[Output format]:format:(text json)' \
-            && return 0
-          ;;
-        *)
-          _message 'provider command (list|healthcheck)'
-          return 0
-          ;;
-      esac
-      ;;
-    diag)
-      local -a diag_cmds=(
-        'doctor:Run provider and automation readiness diagnostics'
-        'capabilities:Report provider and automation capability inventory'
-      )
-      if (( CURRENT == 3 )); then
-        _describe -t commands 'agentctl diag' diag_cmds && return 0
-      fi
-      case "${words[3]-}" in
-        doctor)
-          _arguments -C \
-            '(-h --help)'{-h,--help}'[Show help]' \
-            '--provider=[Provider filter]:provider id:' \
-            '--timeout-ms=[Healthcheck timeout in milliseconds]:milliseconds:' \
-            '--format=[Output format]:format:(text json)' \
-            '--probe-mode=[Probe execution mode]:mode:(auto live test)' \
-            && return 0
-          ;;
-        capabilities)
-          _arguments -C \
-            '(-h --help)'{-h,--help}'[Show help]' \
-            '--provider=[Provider filter]:provider id:' \
-            '--include-experimental[Include experimental capability flags]' \
-            '--timeout-ms=[Healthcheck timeout in milliseconds]:milliseconds:' \
-            '--format=[Output format]:format:(text json)' \
-            '--probe-mode=[Probe execution mode]:mode:(auto live test)' \
-            && return 0
-          ;;
-        *)
-          _message 'diag command (doctor|capabilities)'
-          return 0
-          ;;
-      esac
-      ;;
-    debug)
-      if (( CURRENT == 3 )); then
-        _describe -t commands 'agentctl debug' \
-          'bundle:Collect one-shot debug artifacts with a versioned manifest' && return 0
-      fi
-      case "${words[3]-}" in
-        bundle)
-          _arguments -C \
-            '(-h --help)'{-h,--help}'[Show help]' \
-            '--output-dir=[Output directory]:directory:_files -/' \
-            '--format=[Output format]:format:(text json)' \
-            && return 0
-          ;;
-        *)
-          _message 'debug command (bundle)'
-          return 0
-          ;;
-      esac
-      ;;
-    workflow)
-      if (( CURRENT == 3 )); then
-        _describe -t commands 'agentctl workflow' \
-          'run:Execute workflow manifest' && return 0
-      fi
-      case "${words[3]-}" in
-        run)
-          _arguments -C \
-            '(-h --help)'{-h,--help}'[Show help]' \
-            '--file=[Path to workflow manifest JSON file]:file:_files' \
-            '--format=[Output format]:format:(text json)' \
-            && return 0
-          ;;
-        *)
-          _message 'workflow command (run)'
-          return 0
-          ;;
-      esac
-      ;;
-    automation|help)
-      _arguments -C '(-h --help)'{-h,--help}'[Show help]' && return 0
-      ;;
-  esac
+  _nils_cli_agentctl_generated
 }
+
+if _nils_cli_agentctl_source_common_zsh; then
+  _nils_cli_completion_common_register_zsh _agentctl agentctl
+else
+  compdef _agentctl agentctl
+fi

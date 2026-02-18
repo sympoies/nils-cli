@@ -1599,6 +1599,7 @@ name = "nils-agentctl"
 version = "0.4.4"
 dependencies = [
  "clap",
+ "clap_complete",
  "nils-agent-provider-claude",
  "nils-agent-provider-codex",
  "nils-agent-provider-gemini",
@@ -1608,6 +1609,7 @@ dependencies = [
  "pretty_assertions",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

@@ -2,7 +2,7 @@ use crate::debug::DebugArgs;
 use crate::diag::DiagArgs;
 use crate::provider::commands::ProviderArgs;
 use crate::workflow::WorkflowArgs;
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(
@@ -28,4 +28,12 @@ pub enum Command {
     Workflow(WorkflowArgs),
     /// Local automation integrations
     Automation,
+    /// Print shell completion script
+    Completion(CompletionArgs),
+}
+
+#[derive(Args)]
+pub struct CompletionArgs {
+    #[arg(value_enum)]
+    pub shell: crate::completion::CompletionShell,
 }
