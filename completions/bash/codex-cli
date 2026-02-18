@@ -6,55 +6,44 @@ fi
 
 shopt -s progcomp 2>/dev/null || true
 
-_nils_cli__has_word() {
-  local needle="$1"
-  shift
-  local w=''
-  for w in "$@"; do
-    [[ "$w" == "$needle" ]] && return 0
-  done
-  return 1
+_nils_cli_codex_cli_source_common_bash() {
+  declare -F _nils_cli_completion_common_load_generated_bash >/dev/null 2>&1 && return 0
+
+  local source_file="${BASH_SOURCE[0]}"
+  local script_dir=''
+  script_dir="$(cd -- "$(dirname -- "$source_file")" && pwd -P)" || return 1
+
+  local helper_path="${script_dir}/completion-adapter-common.bash"
+  [[ -r "$helper_path" ]] || return 1
+
+  # shellcheck source=/dev/null
+  source "$helper_path" || return 1
+
+  declare -F _nils_cli_completion_common_load_generated_bash >/dev/null 2>&1
 }
 
 _NILS_CODEX_CLI_BASH_GENERATED_STATE=0
 
 _nils_cli_codex_cli_load_generated_bash() {
-  if [[ "${_NILS_CODEX_CLI_BASH_GENERATED_STATE}" == "1" ]]; then
-    declare -F _nils_cli_codex_cli_generated >/dev/null 2>&1 && return 0
-    _NILS_CODEX_CLI_BASH_GENERATED_STATE=0
-  elif [[ "${_NILS_CODEX_CLI_BASH_GENERATED_STATE}" == "-1" ]]; then
-    return 1
-  fi
+  _nils_cli_codex_cli_source_common_bash || return 1
 
-  local script=''
-  script="$(command codex-cli completion bash 2>/dev/null)" || {
-    _NILS_CODEX_CLI_BASH_GENERATED_STATE=-1
-    return 1
-  }
-
-  script="${script//_codex-cli/_nils_cli_codex_cli_generated}"
-  script="$(printf '%s\n' "$script" | sed '/^if \[\[ "\${BASH_VERSINFO\[0\]}" -eq 4 /,/^fi$/d')" || {
-    _NILS_CODEX_CLI_BASH_GENERATED_STATE=-1
-    return 1
-  }
-
-  eval "$script" || {
-    _NILS_CODEX_CLI_BASH_GENERATED_STATE=-1
-    return 1
-  }
-
-  declare -F _nils_cli_codex_cli_generated >/dev/null 2>&1 || {
-    _NILS_CODEX_CLI_BASH_GENERATED_STATE=-1
-    return 1
-  }
-
-  _NILS_CODEX_CLI_BASH_GENERATED_STATE=1
-  return 0
+  # command codex-cli completion bash
+  _nils_cli_completion_common_load_generated_bash \
+    "_NILS_CODEX_CLI_BASH_GENERATED_STATE" \
+    "_nils_cli_codex_cli_generated" \
+    "codex-cli" \
+    "_codex-cli" \
+    '^if \[\[ "\${BASH_VERSINFO\[0\]}" -eq 4 ' \
+    '^fi$'
 }
 
 _nils_cli_codex_cli_complete() {
   if ! _nils_cli_codex_cli_load_generated_bash; then
-    COMPREPLY=()
+    if declare -F _nils_cli_completion_common_fail_closed_no_legacy_bash >/dev/null 2>&1; then
+      _nils_cli_completion_common_fail_closed_no_legacy_bash
+    else
+      COMPREPLY=()
+    fi
     return 0
   fi
 
@@ -90,7 +79,7 @@ _nils_cli_codex_cli_complete() {
     prev="${words[cword-1]}"
   fi
 
-  if [[ -n "$implied_async" ]] && ! _nils_cli__has_word --async "${words[@]}"; then
+  if [[ -n "$implied_async" ]] && ! _nils_cli_completion_common_has_word_bash --async "${words[@]}"; then
     local -a with_async=( "${words[@]:0:$cword}" "--async" "${words[@]:$cword}" )
     words=( "${with_async[@]}" )
     cword=$((cword + 1))
@@ -111,7 +100,14 @@ _nils_cli_codex_cli_complete() {
   return $rc
 }
 
-complete -F _nils_cli_codex_cli_complete \
-  codex-cli cx \
-  cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxst cxdr cxdra \
-  cxcs cxct
+if _nils_cli_codex_cli_source_common_bash; then
+  _nils_cli_completion_common_register_bash _nils_cli_codex_cli_complete \
+    codex-cli cx \
+    cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxst cxdr cxdra \
+    cxcs cxct
+else
+  complete -F _nils_cli_codex_cli_complete \
+    codex-cli cx \
+    cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxst cxdr cxdra \
+    cxcs cxct
+fi

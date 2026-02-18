@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::process;
 
 mod cli;
+mod completion;
 mod model;
 mod processing;
 mod report;
@@ -18,6 +19,11 @@ fn main() {
 }
 
 fn run() -> i32 {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(code) = handle_completion_export(&args) {
+        return code;
+    }
+
     let cli = match Cli::try_parse() {
         Ok(c) => c,
         Err(err) => {
@@ -263,6 +269,30 @@ fn run() -> i32 {
 
     let any_error = summary.items.iter().any(|i| i.status == "error");
     if any_error { 1 } else { 0 }
+}
+
+fn handle_completion_export(args: &[String]) -> Option<i32> {
+    if args.first().map(String::as_str) != Some("completion") {
+        return None;
+    }
+
+    match args.get(1).map(String::as_str) {
+        Some("-h") | Some("--help") => {
+            println!("usage: image-processing completion <bash|zsh>");
+            Some(0)
+        }
+        Some("bash") if args.len() == 2 => Some(completion::run(completion::CompletionShell::Bash)),
+        Some("zsh") if args.len() == 2 => Some(completion::run(completion::CompletionShell::Zsh)),
+        Some(shell) if args.len() == 2 => {
+            eprintln!("image-processing: error: unsupported completion shell '{shell}'");
+            eprintln!("usage: image-processing completion <bash|zsh>");
+            Some(64)
+        }
+        _ => {
+            eprintln!("image-processing: error: expected `image-processing completion <bash|zsh>`");
+            Some(64)
+        }
+    }
 }
 
 fn validate(cli: &Cli) -> Result<(), util::UsageError> {
