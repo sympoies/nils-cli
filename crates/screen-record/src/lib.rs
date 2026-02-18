@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod completion;
 pub mod error;
 pub mod run;
 pub mod select;

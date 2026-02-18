@@ -1,31 +1,60 @@
 #compdef screen-record
 
+_nils_cli_screen_record_source_common_zsh() {
+  (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+
+  local source_file="${functions_source[_screen-record]-}"
+  local helper_path=''
+
+  if [[ -n "$source_file" && -r "$source_file" ]]; then
+    helper_path="${source_file:h}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
+  fi
+
+  local dir=''
+  for dir in "${fpath[@]}"; do
+    helper_path="${dir}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
+  done
+
+  return 1
+}
+
+typeset -gi _NILS_SCREEN_RECORD_ZSH_GENERATED_STATE=0
+
+_nils_cli_screen_record_load_generated_zsh() {
+  _nils_cli_screen_record_source_common_zsh || return 1
+
+  _nils_cli_completion_common_load_generated_zsh \
+    "_NILS_SCREEN_RECORD_ZSH_GENERATED_STATE" \
+    "_nils_cli_screen_record_generated" \
+    "screen-record" \
+    "_screen-record" \
+    '^if \[ "\$funcstack\[1\]" = "_nils_cli_screen_record_generated" \]; then$' \
+    '^fi$'
+}
+
 _screen-record() {
   emulate -L zsh -o extendedglob
 
-  _arguments -C \
-    '--screenshot[Capture a single window screenshot and exit]' \
-    '--portal[Use the system portal picker (Linux Wayland) instead of X11 selectors]' \
-    '--list-windows[Print selectable windows as TSV and exit]' \
-    '--list-displays[Print selectable displays as TSV and exit]' \
-    '--list-apps[Print selectable apps as TSV and exit]' \
-    '--preflight[Check macOS permission or Linux prerequisites and exit]' \
-    '--request-permission[Best-effort permission request (macOS) or preflight (Linux), then exit]' \
-    '--window-id=[Record a specific window id]:id:' \
-    '--app=[Select a window by app/owner name]:name:' \
-    '--window-name=[Narrow app selection by window title]:name:' \
-    '--active-window[Record the frontmost window on the current Space]' \
-    '--display[Record the main display]' \
-    '--display-id=[Record a specific display id]:id:' \
-    '--duration=[Record for N seconds]:seconds:' \
-    '--audio=[Audio capture mode]:audio:(off system mic both)' \
-    '--path=[Output file path]:path:_files' \
-    '--format=[Container format]:format:(mov mp4)' \
-    '--image-format=[Screenshot output format]:format:(png jpg webp)' \
-    '--dir=[Output directory for screenshot mode]:path:_files -/' \
-    '(-h --help)'{-h,--help}'[Show help]' \
-    '(-V --version)'{-V,--version}'[Show version]' \
-    && return 0
+  if ! _nils_cli_screen_record_load_generated_zsh; then
+    if (( $+functions[_nils_cli_completion_common_fail_closed_no_legacy_zsh] )); then
+      _nils_cli_completion_common_fail_closed_no_legacy_zsh
+    fi
+    return 1
+  fi
+
+  _nils_cli_screen_record_generated
 }
 
-compdef _screen-record screen-record
+if _nils_cli_screen_record_source_common_zsh; then
+  _nils_cli_completion_common_register_zsh _screen-record screen-record
+else
+  compdef _screen-record screen-record
+fi
