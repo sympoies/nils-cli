@@ -1,9 +1,4 @@
 # nils-cli bash completion: git-cli (and gx* aliases)
-#
-# Install (example):
-#   mkdir -p ~/.local/share/bash-completion/completions
-#   cp completions/bash/git-cli ~/.local/share/bash-completion/completions/git-cli
-# Or source directly from your shell init.
 
 if [[ -z ${BASH_VERSION-} ]]; then
   return 0 2>/dev/null || exit 0
@@ -11,29 +6,52 @@ fi
 
 shopt -s progcomp 2>/dev/null || true
 
-_nils_cli__has_word() {
-  local needle="$1"
-  shift
-  local w=''
-  for w in "$@"; do
-    [[ "$w" == "$needle" ]] && return 0
-  done
-  return 1
+_nils_cli_git_cli_source_common_bash() {
+  declare -F _nils_cli_completion_common_load_generated_bash >/dev/null 2>&1 && return 0
+
+  local source_file="${BASH_SOURCE[0]}"
+  local script_dir=''
+  script_dir="$(cd -- "$(dirname -- "$source_file")" && pwd -P)" || return 1
+
+  local helper_path="${script_dir}/completion-adapter-common.bash"
+  [[ -r "$helper_path" ]] || return 1
+
+  # shellcheck source=/dev/null
+  source "$helper_path" || return 1
+
+  declare -F _nils_cli_completion_common_load_generated_bash >/dev/null 2>&1
 }
 
-_nils_cli_git_cli_hashes() {
-  if command git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    command git log --pretty=format:%h -n 20 2>/dev/null || true
-  fi
+_NILS_GIT_CLI_BASH_GENERATED_STATE=0
+
+_nils_cli_git_cli_load_generated_bash() {
+  _nils_cli_git_cli_source_common_bash || return 1
+
+  # command git-cli completion bash
+  _nils_cli_completion_common_load_generated_bash \
+    "_NILS_GIT_CLI_BASH_GENERATED_STATE" \
+    "_nils_cli_git_cli_generated" \
+    "git-cli" \
+    "_git-cli" \
+    '^if \[\[ "\${BASH_VERSINFO\[0\]}" -eq 4 ' \
+    '^fi$'
 }
 
 _nils_cli_git_cli_complete() {
+  if ! _nils_cli_git_cli_load_generated_bash; then
+    if declare -F _nils_cli_completion_common_fail_closed_no_legacy_bash >/dev/null 2>&1; then
+      _nils_cli_completion_common_fail_closed_no_legacy_bash
+    else
+      COMPREPLY=()
+    fi
+    return 0
+  fi
+
   local invoked_as="${COMP_WORDS[0]}"
   local -a words=("${COMP_WORDS[@]}")
   local cword="$COMP_CWORD"
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local prev="${COMP_WORDS[COMP_CWORD-1]}"
-
   local -a inject=()
 
   case "$invoked_as" in
@@ -76,7 +94,7 @@ _nils_cli_git_cli_complete() {
     gxobl) inject=(open blame) ;;
   esac
 
-  if (( ${#inject[@]} > 0 )); then
+  if [[ "$invoked_as" != "git-cli" ]]; then
     words=( "git-cli" "${inject[@]}" "${words[@]:1}" )
     cword=$((cword + ${#inject[@]}))
     cur="${words[cword]}"
@@ -85,277 +103,29 @@ _nils_cli_git_cli_complete() {
     words[0]="git-cli"
   fi
 
-  local -a root_cmds=(utils reset commit branch ci open help)
-  local -a root_opts=(-h --help -V --version)
+  local -a saved_words=("${COMP_WORDS[@]}")
+  local saved_cword="$COMP_CWORD"
 
-  if (( cword == 1 )); then
-    if [[ "$cur" == -* ]]; then
-      COMPREPLY=( $(compgen -W "${root_opts[*]}" -- "$cur") )
-      return 0
-    fi
-    COMPREPLY=( $(compgen -W "${root_cmds[*]}" -- "$cur") )
-    return 0
-  fi
+  COMP_WORDS=("${words[@]}")
+  COMP_CWORD="$cword"
+  _nils_cli_git_cli_generated "git-cli" "$cur" "$prev"
+  local rc=$?
 
-  local group="${words[1]-}"
-  case "$group" in
-    help|-h|--help|-V|--version)
-      COMPREPLY=()
-      return 0
-      ;;
-  esac
-
-  if (( cword == 2 )); then
-    if [[ "$cur" == -* ]]; then
-      COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
-      return 0
-    fi
-    local -a group_cmds=()
-    case "$group" in
-      utils)
-        group_cmds=(zip copy-staged copy root commit-hash hash help)
-        ;;
-      reset)
-        group_cmds=(soft mixed hard undo back-head back-checkout remote help)
-        ;;
-      commit)
-        group_cmds=(context context-json context_json contextjson json to-stash stash help)
-        ;;
-      branch)
-        group_cmds=(cleanup delete-merged help)
-        ;;
-      ci)
-        group_cmds=(pick help)
-        ;;
-      open)
-        group_cmds=(repo branch default-branch default commit compare pr pull-request mr merge-request pulls prs merge-requests mrs issue issues action actions release releases tag tags commits history file blob blame help)
-        ;;
-    esac
-    COMPREPLY=( $(compgen -W "${group_cmds[*]}" -- "$cur") )
-    return 0
-  fi
-
-  local cmd="${words[2]-}"
-
-  case "$group" in
-    utils)
-      case "$cmd" in
-        copy|copy-staged)
-          if [[ "$cur" == -* ]]; then
-            COMPREPLY=( $(compgen -W "--stdout -p --print --both -h --help" -- "$cur") )
-            return 0
-          fi
-          COMPREPLY=()
-          return 0
-          ;;
-        root)
-          if [[ "$cur" == -* ]]; then
-            COMPREPLY=( $(compgen -W "--shell" -- "$cur") )
-            return 0
-          fi
-          COMPREPLY=()
-          return 0
-          ;;
-        commit-hash|hash)
-          if (( cword == 3 )); then
-            local hashes="$( _nils_cli_git_cli_hashes )"
-            COMPREPLY=( $(compgen -W "HEAD ${hashes}" -- "$cur") )
-            return 0
-          fi
-          COMPREPLY=()
-          return 0
-          ;;
-        zip|help)
-          COMPREPLY=()
-          return 0
-          ;;
-      esac
-      ;;
-    reset)
-      case "$cmd" in
-        soft|mixed|hard)
-          COMPREPLY=()
-          return 0
-          ;;
-        undo|back-head|back-checkout|help)
-          COMPREPLY=()
-          return 0
-          ;;
-        remote)
-          if [[ "$prev" == "--ref" ]]; then
-            COMPREPLY=()
-            return 0
-          fi
-          if [[ "$prev" == "-r" || "$prev" == "--remote" ]]; then
-            COMPREPLY=()
-            return 0
-          fi
-          if [[ "$prev" == "-b" || "$prev" == "--branch" ]]; then
-            COMPREPLY=()
-            return 0
-          fi
-          if [[ "$cur" == -* ]]; then
-            COMPREPLY=( $(compgen -W "--ref -r --remote -b --branch --no-fetch --prune --clean --set-upstream -y --yes -h --help" -- "$cur") )
-            return 0
-          fi
-          COMPREPLY=()
-          return 0
-          ;;
-      esac
-      ;;
-    commit)
-      case "$cmd" in
-        context)
-          if [[ "$prev" == "--include" ]]; then
-            COMPREPLY=( $(compgen -f -- "$cur") )
-            return 0
-          fi
-          if [[ "$cur" == -* ]]; then
-            COMPREPLY=( $(compgen -W "--stdout --both --no-color --include -h --help" -- "$cur") )
-            return 0
-          fi
-          COMPREPLY=()
-          return 0
-          ;;
-        context-json|context_json|contextjson|json)
-          if [[ "$prev" == "--out-dir" ]]; then
-            COMPREPLY=( $(compgen -f -- "$cur") )
-            return 0
-          fi
-          if [[ "$cur" == -* ]]; then
-            COMPREPLY=( $(compgen -W "--stdout --both --pretty --bundle --out-dir -h --help" -- "$cur") )
-            return 0
-          fi
-          COMPREPLY=()
-          return 0
-          ;;
-        to-stash|stash)
-          if (( cword == 3 )); then
-            local hashes="$( _nils_cli_git_cli_hashes )"
-            COMPREPLY=( $(compgen -W "HEAD ${hashes}" -- "$cur") )
-            return 0
-          fi
-          COMPREPLY=()
-          return 0
-          ;;
-        help)
-          COMPREPLY=()
-          return 0
-          ;;
-      esac
-      ;;
-    branch)
-      case "$cmd" in
-        cleanup|delete-merged)
-          if [[ "$prev" == "-b" || "$prev" == "--base" ]]; then
-            COMPREPLY=()
-            return 0
-          fi
-          if [[ "$cur" == -* ]]; then
-            COMPREPLY=( $(compgen -W "-b --base -s --squash -h --help" -- "$cur") )
-            return 0
-          fi
-          COMPREPLY=()
-          return 0
-          ;;
-        help)
-          COMPREPLY=()
-          return 0
-          ;;
-      esac
-      ;;
-    ci)
-      case "$cmd" in
-        pick)
-          if [[ "$prev" == "-r" || "$prev" == "--remote" ]]; then
-            COMPREPLY=()
-            return 0
-          fi
-          if [[ "$cur" == -* ]]; then
-            COMPREPLY=( $(compgen -W "-r --remote --no-fetch -f --force --stay -h --help" -- "$cur") )
-            return 0
-          fi
-          COMPREPLY=()
-          return 0
-          ;;
-        help)
-          COMPREPLY=()
-          return 0
-          ;;
-      esac
-      ;;
-    open)
-      case "$cmd" in
-        repo|default-branch|default)
-          if (( cword == 3 )); then
-            local remotes
-            remotes="$(command git remote 2>/dev/null || true)"
-            COMPREPLY=( $(compgen -W "${remotes}" -- "$cur") )
-            return 0
-          fi
-          COMPREPLY=()
-          return 0
-          ;;
-        branch|compare|commits|history|commit)
-          if (( cword == 3 || cword == 4 )); then
-            local refs
-            refs="$(command git for-each-ref --format='%(refname:short)' refs/heads refs/remotes refs/tags 2>/dev/null || true)"
-            COMPREPLY=( $(compgen -W "${refs}" -- "$cur") )
-            return 0
-          fi
-          COMPREPLY=()
-          return 0
-          ;;
-        pr|pull-request|mr|merge-request|pulls|prs|merge-requests|mrs|issues|issue)
-          COMPREPLY=()
-          return 0
-          ;;
-        actions|action)
-          if (( cword == 3 )); then
-            local workflows
-            workflows="$(command git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml' 2>/dev/null || true)"
-            COMPREPLY=( $(compgen -W "${workflows}" -- "$cur") )
-            return 0
-          fi
-          COMPREPLY=()
-          return 0
-          ;;
-        releases|release|tags|tag)
-          if (( cword == 3 )); then
-            local tags
-            tags="$(command git tag --sort=-creatordate 2>/dev/null || true)"
-            COMPREPLY=( $(compgen -W "${tags}" -- "$cur") )
-            return 0
-          fi
-          COMPREPLY=()
-          return 0
-          ;;
-        file|blob|blame)
-          if (( cword == 3 )); then
-            COMPREPLY=( $(compgen -f -- "$cur") )
-            return 0
-          fi
-          if (( cword == 4 )); then
-            local refs
-            refs="$(command git for-each-ref --format='%(refname:short)' refs/heads refs/remotes refs/tags 2>/dev/null || true)"
-            COMPREPLY=( $(compgen -W "${refs}" -- "$cur") )
-            return 0
-          fi
-          COMPREPLY=()
-          return 0
-          ;;
-        help)
-          COMPREPLY=()
-          return 0
-          ;;
-      esac
-      ;;
-  esac
-
-  COMPREPLY=()
+  COMP_WORDS=("${saved_words[@]}")
+  COMP_CWORD="$saved_cword"
+  return $rc
 }
 
-complete -F _nils_cli_git_cli_complete git-cli gx gxh gxu gxr gxc gxb gxi gxo \
-  gxuz gxuc gxur gxuh gxrs gxrm gxrh gxru gxrbh gxrbc gxrr \
-  gxcc gxcj gxcs gxbc gxip \
-  gxor gxob gxod gxoc gxocp gxop gxopl gxoi gxoa gxorl gxot gxocs gxof gxobl
+if _nils_cli_git_cli_source_common_bash; then
+  _nils_cli_completion_common_register_bash _nils_cli_git_cli_complete \
+    git-cli gx gxh gxu gxr gxc gxb gxi gxo \
+    gxuz gxuc gxur gxuh gxrs gxrm gxrh gxru gxrbh gxrbc gxrr \
+    gxcc gxcj gxcs gxbc gxip \
+    gxor gxob gxod gxoc gxocp gxop gxopl gxoi gxoa gxorl gxot gxocs gxof gxobl
+else
+  complete -F _nils_cli_git_cli_complete \
+    git-cli gx gxh gxu gxr gxc gxb gxi gxo \
+    gxuz gxuc gxur gxuh gxrs gxrm gxrh gxru gxrbh gxrbc gxrr \
+    gxcc gxcj gxcs gxbc gxip \
+    gxor gxob gxod gxoc gxocp gxop gxopl gxoi gxoa gxorl gxot gxocs gxof gxobl
+fi
