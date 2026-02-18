@@ -5,17 +5,28 @@ use nils_test_support::StubBinDir;
 use nils_test_support::cmd::{CmdOutput, run_with};
 use std::path::Path;
 
-fn run_with_open_stub(harness: &GitCliHarness, cwd: &Path, args: &[&str]) -> CmdOutput {
+fn run_with_open_script(
+    harness: &GitCliHarness,
+    cwd: &Path,
+    args: &[&str],
+    open_script: &str,
+) -> CmdOutput {
     let stubs = StubBinDir::new();
-    stubs.write_exe(
-        "open",
+    stubs.write_exe("open", open_script);
+    let options = harness.cmd_options(cwd).with_path_prepend(stubs.path());
+    run_with(&harness.git_cli_bin(), args, &options)
+}
+
+fn run_with_open_stub(harness: &GitCliHarness, cwd: &Path, args: &[&str]) -> CmdOutput {
+    run_with_open_script(
+        harness,
+        cwd,
+        args,
         r#"#!/bin/bash
 set -euo pipefail
 exit 0
 "#,
-    );
-    let options = harness.cmd_options(cwd).with_path_prepend(stubs.path());
-    run_with(&harness.git_cli_bin(), args, &options)
+    )
 }
 
 #[test]
@@ -99,4 +110,61 @@ fn open_actions_rejects_non_github_provider() {
         output.stderr_text(),
         "❗ actions is only supported for GitHub remotes.\n"
     );
+}
+
+#[test]
+fn open_repo_headless_environment_prints_clear_manual_open_warning() {
+    let harness = GitCliHarness::new();
+    let dir = init_repo();
+    git(
+        dir.path(),
+        &["remote", "add", "origin", "git@github.com:acme/repo.git"],
+    );
+
+    let output = run_with_open_script(
+        &harness,
+        dir.path(),
+        &["open", "repo"],
+        r#"#!/bin/bash
+set -euo pipefail
+echo "/usr/bin/open: 882: www-browser: not found" >&2
+echo "xdg-open: no method available for opening '$1'" >&2
+exit 3
+"#,
+    );
+
+    assert_eq!(output.code, 0);
+    assert_eq!(
+        output.stdout_text(),
+        "🔗 URL: https://github.com/acme/repo\n"
+    );
+    assert_eq!(
+        output.stderr_text(),
+        "⚠️  Could not launch a browser in this environment; open the URL manually.\n"
+    );
+}
+
+#[test]
+fn open_repo_non_headless_open_error_still_fails() {
+    let harness = GitCliHarness::new();
+    let dir = init_repo();
+    git(
+        dir.path(),
+        &["remote", "add", "origin", "git@github.com:acme/repo.git"],
+    );
+
+    let output = run_with_open_script(
+        &harness,
+        dir.path(),
+        &["open", "repo"],
+        r#"#!/bin/bash
+set -euo pipefail
+echo "open: permission denied" >&2
+exit 126
+"#,
+    );
+
+    assert_eq!(output.code, 126);
+    assert_eq!(output.stdout_text(), "");
+    assert_eq!(output.stderr_text(), "open: permission denied\n");
 }
