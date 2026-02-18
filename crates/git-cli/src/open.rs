@@ -931,12 +931,36 @@ fn open_url(url: &str, label: &str) -> i32 {
         }
     };
     if !output.status.success() {
+        if is_headless_open_failure(&output) {
+            println!("🔗 URL: {url}");
+            eprintln!("⚠️  Could not launch a browser in this environment; open the URL manually.");
+            return 0;
+        }
         emit_output(&output);
         return exit_code(&output);
     }
 
     println!("{label}: {url}");
     0
+}
+
+fn is_headless_open_failure(output: &Output) -> bool {
+    let mut message = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
+    if !output.stdout.is_empty() {
+        message.push('\n');
+        message.push_str(&String::from_utf8_lossy(&output.stdout).to_ascii_lowercase());
+    }
+
+    if message.contains("no method available for opening")
+        || message.contains("couldn't find a suitable web browser")
+    {
+        return true;
+    }
+
+    message.contains("not found")
+        && ["www-browser", "links2", "elinks", "links", "lynx", "w3m"]
+            .iter()
+            .any(|candidate| message.contains(candidate))
 }
 
 fn is_help_token(raw: &str) -> bool {
@@ -1018,9 +1042,23 @@ fn emit_output(output: &Output) {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt as _;
+    #[cfg(windows)]
+    use std::os::windows::process::ExitStatusExt as _;
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[cfg(unix)]
+    fn test_exit_status(code: i32) -> std::process::ExitStatus {
+        std::process::ExitStatus::from_raw(code << 8)
+    }
+
+    #[cfg(windows)]
+    fn test_exit_status(code: i32) -> std::process::ExitStatus {
+        std::process::ExitStatus::from_raw(code as u32)
     }
 
     #[test]
@@ -1244,5 +1282,25 @@ mod tests {
             commits_url(Provider::Gitlab, "https://gitlab.com/acme/repo", "main"),
             "https://gitlab.com/acme/repo/-/commits/main"
         );
+    }
+
+    #[test]
+    fn headless_open_failure_detection_matches_xdg_open_signals() {
+        let output = Output {
+            status: test_exit_status(3),
+            stdout: Vec::new(),
+            stderr: b"/usr/bin/open: 882: www-browser: not found\nxdg-open: no method available for opening 'https://example.com'\n".to_vec(),
+        };
+        assert!(is_headless_open_failure(&output));
+    }
+
+    #[test]
+    fn headless_open_failure_detection_does_not_mask_other_errors() {
+        let output = Output {
+            status: test_exit_status(126),
+            stdout: Vec::new(),
+            stderr: b"open: permission denied\n".to_vec(),
+        };
+        assert!(!is_headless_open_failure(&output));
     }
 }
