@@ -1,4 +1,5 @@
 mod batches;
+mod completion;
 mod parse;
 mod repo_root;
 mod repr;

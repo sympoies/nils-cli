@@ -21,6 +21,7 @@ pub fn dispatch(args: &[String]) -> i32 {
         "validate" => validate::run(&args[2..]),
         "batches" => batches::run(&args[2..]),
         "scaffold" => scaffold::run(&args[2..]),
+        "completion" => crate::completion::run(&args[2..]),
         other => {
             eprintln!("error: unknown argument: {other}");
             print_help_stderr();
@@ -71,6 +72,11 @@ fn print_help(stderr: bool) {
         "batches"
     );
     let _ = writeln!(out, "  {:<10}  Create a new plan from template", "scaffold");
+    let _ = writeln!(
+        out,
+        "  {:<10}  Export shell completion script",
+        "completion"
+    );
     let _ = writeln!(out, "  {:<10}  Display help message", "help");
 }
 
