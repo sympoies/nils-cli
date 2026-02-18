@@ -2,450 +2,122 @@
 #  cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxst cxdr cxdra \
 #  cxcs cxct
 
-_codex-cli() {
-  emulate -L zsh -o extendedglob
+typeset -gi _NILS_CODEX_CLI_ZSH_GENERATED_STATE=0
 
-  local context='' state='' state_descr=''
-  local -a line=()
-  typeset -A opt_args=()
+_nils_cli_codex_cli_load_generated_zsh() {
+  if [[ "${_NILS_CODEX_CLI_ZSH_GENERATED_STATE}" == "1" ]]; then
+    (( $+functions[_nils_cli_codex_cli_generated] )) && return 0
+    _NILS_CODEX_CLI_ZSH_GENERATED_STATE=0
+  elif [[ "${_NILS_CODEX_CLI_ZSH_GENERATED_STATE}" == "-1" ]]; then
+    return 1
+  fi
 
-  local -i orig_current="$CURRENT"
-  local -a orig_words=("${words[@]}")
+  local script=''
+  script="$(command codex-cli completion zsh 2>/dev/null)" || {
+    _NILS_CODEX_CLI_ZSH_GENERATED_STATE=-1
+    return 1
+  }
 
-  local invoked_as="${orig_words[1]-}"
-  local subcmd_override=''
-  local subcmd2_override=''
+  script="${script//_codex-cli/_nils_cli_codex_cli_generated}"
+  script="$(printf '%s\n' "$script" | sed '/^if \[ "\$funcstack\[1\]" = "_nils_cli_codex_cli_generated" \]; then$/,/^fi$/d')" || {
+    _NILS_CODEX_CLI_ZSH_GENERATED_STATE=-1
+    return 1
+  }
+
+  eval "$script" || {
+    _NILS_CODEX_CLI_ZSH_GENERATED_STATE=-1
+    return 1
+  }
+
+  if (( ! $+functions[_nils_cli_codex_cli_generated] )); then
+    _NILS_CODEX_CLI_ZSH_GENERATED_STATE=-1
+    return 1
+  fi
+
+  _NILS_CODEX_CLI_ZSH_GENERATED_STATE=1
+  return 0
+}
+
+_nils_cli_codex_cli_apply_alias_rewrite_zsh() {
+  local invoked_as="${words[1]-}"
+  local -a inject=()
   local implied_async=''
 
   case "$invoked_as" in
-    cxau)
-      subcmd_override='auth'
-      subcmd2_override='use'
-      ;;
-    cxar)
-      subcmd_override='auth'
-      subcmd2_override='refresh'
-      ;;
-    cxaa)
-      subcmd_override='auth'
-      subcmd2_override='auto-refresh'
-      ;;
-    cxdr)
-      subcmd_override='diag'
-      subcmd2_override='rate-limits'
-      ;;
-    cxdra)
-      subcmd_override='diag'
-      subcmd2_override='rate-limits'
-      implied_async='1'
-      ;;
-    cxst)
-      subcmd_override='starship'
-      ;;
-    cxgp)
-      subcmd_override='agent'
-      subcmd2_override='prompt'
-      ;;
-    cxga)
-      subcmd_override='agent'
-      subcmd2_override='advice'
-      ;;
-    cxgk)
-      subcmd_override='agent'
-      subcmd2_override='knowledge'
-      ;;
-    cxgc)
-      subcmd_override='agent'
-      subcmd2_override='commit'
-      ;;
-    cxac)
-      subcmd_override='auth'
-      subcmd2_override='current'
-      ;;
-    cxas)
-      subcmd_override='auth'
-      subcmd2_override='sync'
-      ;;
-    cxcs)
-      subcmd_override='config'
-      subcmd2_override='show'
-      ;;
-    cxct)
-      subcmd_override='config'
-      subcmd2_override='set'
-      ;;
+    cxau) inject=(auth use) ;;
+    cxar) inject=(auth refresh) ;;
+    cxaa) inject=(auth auto-refresh) ;;
+    cxdr) inject=(diag rate-limits) ;;
+    cxdra) inject=(diag rate-limits); implied_async='1' ;;
+    cxst) inject=(starship) ;;
+    cxgp) inject=(agent prompt) ;;
+    cxga) inject=(agent advice) ;;
+    cxgk) inject=(agent knowledge) ;;
+    cxgc) inject=(agent commit) ;;
+    cxac) inject=(auth current) ;;
+    cxas) inject=(auth sync) ;;
+    cxcs) inject=(config show) ;;
+    cxct) inject=(config set) ;;
   esac
+
+  if [[ "$invoked_as" != "codex-cli" ]]; then
+    local -a rewritten_words=('codex-cli')
+    local token=''
+    local -i idx=2
+
+    for token in "${inject[@]}"; do
+      rewritten_words+=("$token")
+    done
+
+    while (( idx <= ${#words[@]} )); do
+      rewritten_words+=("${words[idx]}")
+      (( idx++ ))
+    done
+
+    words=("${rewritten_words[@]}")
+    (( CURRENT += ${#inject[@]} ))
+  fi
 
   if [[ -n "$implied_async" && " ${words[*]-} " != *" --async "* ]]; then
-    local -a injected_words=()
-    injected_words=(
-      "${words[@]:0:$((CURRENT-1))}"
-      "--async"
-      "${words[@]:$((CURRENT-1))}"
-    )
-    words=("${injected_words[@]}")
+    local -a async_words=()
+    local -i idx=1
+
+    while (( idx < CURRENT )); do
+      async_words+=("${words[idx]}")
+      (( idx++ ))
+    done
+
+    async_words+=("--async")
+
+    while (( idx <= ${#words[@]} )); do
+      async_words+=("${words[idx]}")
+      (( idx++ ))
+    done
+
+    words=("${async_words[@]}")
     (( CURRENT++ ))
   fi
+}
 
-  local -a subcommands=()
-  subcommands=(
-    'agent:Prompts and skill wrappers'
-    'auth:Auth and secrets'
-    'diag:Diagnostics'
-    'config:Configuration'
-    'starship:Starship integration'
-    'provider:Provider-neutral migration (use agentctl provider)'
-    'debug:Provider-neutral migration (use agentctl debug)'
-    'workflow:Provider-neutral migration (use agentctl workflow)'
-    'automation:Provider-neutral migration (use agentctl automation)'
-    'help:Display help message'
-  )
+_codex-cli() {
+  emulate -L zsh -o extendedglob
 
-  local subcmd=''
-  local subcmd2=''
+  local -i saved_current="$CURRENT"
+  local -a saved_words=("${words[@]}")
 
-  if [[ -n "$subcmd_override" ]]; then
-    subcmd="$subcmd_override"
-    subcmd2="$subcmd2_override"
-  else
-    _arguments -C \
-      '(-h --help)'{-h,--help}'[Show help]' \
-      '(-V --version)'{-V,--version}'[Show version]' \
-      '1:command:->subcmds' \
-      '*::arg:->args'
-
-    case "${state-}" in
-      subcmds)
-        _describe -t commands 'codex-cli subcommand' subcommands && return 0
-        ;;
-      args)
-        subcmd="${line[1]:-${orig_words[2]-}}"
-        subcmd="${subcmd%%[[:space:]]#}"
-        ;;
-    esac
+  if ! _nils_cli_codex_cli_load_generated_zsh; then
+    words=("${saved_words[@]}")
+    CURRENT="$saved_current"
+    return 1
   fi
 
-  case "$subcmd" in
-    agent)
-      local -a agent_cmds=()
-      agent_cmds=(
-        'prompt:Run a raw prompt'
-        'advice:Get actionable engineering advice'
-        'knowledge:Get an explanation for a concept'
-        'commit:Run the semantic-commit workflow'
-      )
+  _nils_cli_codex_cli_apply_alias_rewrite_zsh
+  _nils_cli_codex_cli_generated
+  local rc=$?
 
-      if [[ -z "$subcmd2" ]]; then
-        _arguments -C \
-          '(-h --help)'{-h,--help}'[Show help]' \
-          '1:agent command:->agent_subcmds' \
-          '*::arg:->agent_args'
-
-        case "${state-}" in
-          agent_subcmds)
-            _describe -t commands 'codex-cli agent' agent_cmds && return 0
-            ;;
-          agent_args)
-            subcmd2="${line[1]:-${orig_words[3]-}}"
-            subcmd2="${subcmd2%%[[:space:]]#}"
-            ;;
-        esac
-      fi
-
-      case "$subcmd2" in
-        prompt)
-          _arguments -C \
-            '(-h --help)'{-h,--help}'[Show help]' \
-            '*:prompt text:' \
-            && return 0
-          ;;
-        advice)
-          _arguments -C \
-            '(-h --help)'{-h,--help}'[Show help]' \
-            '*:question:' \
-            && return 0
-          ;;
-        knowledge)
-          _arguments -C \
-            '(-h --help)'{-h,--help}'[Show help]' \
-            '*:concept:' \
-            && return 0
-          ;;
-        commit)
-          _arguments -C \
-            '(-h --help)'{-h,--help}'[Show help]' \
-            '(-p --push)'{-p,--push}'[Push after committing]' \
-            '(-a --auto-stage)'{-a,--auto-stage}'[Autostage changes before committing]' \
-            '*:extra prompt:' \
-            && return 0
-          ;;
-        '')
-          _message 'agent command (prompt|advice|knowledge|commit)'
-          return 0
-          ;;
-        *)
-          _message 'unknown agent command'
-          return 0
-          ;;
-      esac
-      ;;
-    auth)
-      local -a auth_cmds=()
-      auth_cmds=(
-        'login:Login with ChatGPT (browser/device-code) or API key'
-        'use:Switch to a secret by name or email'
-        'save:Save CODEX_AUTH_FILE into CODEX_SECRET_DIR'
-        'remove:Remove SECRET_JSON from CODEX_SECRET_DIR'
-        'refresh:Refresh OAuth tokens'
-        'auto-refresh:Refresh stale tokens across auth + secrets'
-        'current:Show which secret matches CODEX_AUTH_FILE'
-        'sync:Sync CODEX_AUTH_FILE back into matching secrets'
-      )
-
-      if [[ -z "$subcmd2" ]]; then
-        _arguments -C \
-          '(-h --help)'{-h,--help}'[Show help]' \
-          '1:auth command:->auth_subcmds' \
-          '*::arg:->auth_args'
-
-        case "${state-}" in
-          auth_subcmds)
-            _describe -t commands 'codex-cli auth' auth_cmds && return 0
-            ;;
-          auth_args)
-            subcmd2="${line[1]:-${orig_words[3]-}}"
-            subcmd2="${subcmd2%%[[:space:]]#}"
-            ;;
-        esac
-      fi
-
-      case "$subcmd2" in
-        login)
-          _arguments -C \
-            '(-h --help)'{-h,--help}'[Show help]' \
-            '--format=[Output format (text or json)]:format:(text json)' \
-            '--json[Output machine-readable JSON]' \
-            '--api-key[Use API key login flow]' \
-            '--device-code[Use ChatGPT device-code login flow]' \
-            && return 0
-          _message 'no additional arguments'
-          return 0
-          ;;
-        use)
-          _arguments -C \
-            '(-h --help)'{-h,--help}'[Show help]' \
-            '--format=[Output format (text or json)]:format:(text json)' \
-            '--json[Output machine-readable JSON]' \
-            '1:profile or email:' \
-            && return 0
-          ;;
-        save)
-          _arguments -C \
-            '(-h --help)'{-h,--help}'[Show help]' \
-            '--format=[Output format (text or json)]:format:(text json)' \
-            '--json[Output machine-readable JSON]' \
-            '(-y --yes)--yes[Overwrite target file without prompt]' \
-            '(--yes -y)-y[Overwrite target file without prompt]' \
-            '1:secret file name:' \
-            && return 0
-          ;;
-        remove)
-          _arguments -C \
-            '(-h --help)'{-h,--help}'[Show help]' \
-            '--format=[Output format (text or json)]:format:(text json)' \
-            '--json[Output machine-readable JSON]' \
-            '(-y --yes)--yes[Remove target file without prompt]' \
-            '(--yes -y)-y[Remove target file without prompt]' \
-            '1:secret file name:' \
-            && return 0
-          ;;
-        refresh)
-          _arguments -C \
-            '(-h --help)'{-h,--help}'[Show help]' \
-            '--format=[Output format (text or json)]:format:(text json)' \
-            '--json[Output machine-readable JSON]' \
-            '*:secret file:_files' \
-            && return 0
-          ;;
-        auto-refresh|current|sync)
-          _arguments -C \
-            '(-h --help)'{-h,--help}'[Show help]' \
-            '--format=[Output format (text or json)]:format:(text json)' \
-            '--json[Output machine-readable JSON]' \
-            && return 0
-          _message 'no additional arguments'
-          return 0
-          ;;
-        '')
-          _message 'auth command (login|use|save|remove|refresh|auto-refresh|current|sync)'
-          return 0
-          ;;
-        *)
-          _message 'unknown auth command'
-          return 0
-          ;;
-      esac
-      ;;
-    diag)
-      local -a diag_cmds=()
-      diag_cmds=(
-        'rate-limits:Rate-limits diagnostics'
-      )
-
-      if [[ -z "$subcmd2" ]]; then
-        _arguments -C \
-          '(-h --help)'{-h,--help}'[Show help]' \
-          '1:diag command:->diag_subcmds' \
-          '*::arg:->diag_args'
-
-        case "${state-}" in
-          diag_subcmds)
-            _describe -t commands 'codex-cli diag' diag_cmds && return 0
-            ;;
-          diag_args)
-            subcmd2="${line[1]:-${orig_words[3]-}}"
-            subcmd2="${subcmd2%%[[:space:]]#}"
-            ;;
-        esac
-      fi
-
-      case "$subcmd2" in
-        rate-limits)
-          _arguments -C \
-            '(-h --help)'{-h,--help}'[Show help]' \
-            '(-c)-c[Clear starship cache before querying]' \
-            '(-d --debug)'{-d,--debug}'[Debug output]' \
-            '--cached[Cached mode (no network)]' \
-            '--async[Concurrent all-secrets mode]' \
-            '--all[Query all secrets under CODEX_SECRET_DIR]' \
-            '--format=[Output format (text or json)]:format:(text json)' \
-            '--json[Output raw JSON]' \
-            '--one-line[Output a one-line summary]' \
-            '--no-refresh-auth[Disable refresh-on-401 behavior]' \
-            '--jobs=[Max concurrent jobs (async mode)]:jobs:' \
-            '1::secret.json:' \
-            && return 0
-          ;;
-        '')
-          _message 'diag command (rate-limits)'
-          return 0
-          ;;
-        *)
-          _message 'unknown diag command'
-          return 0
-          ;;
-      esac
-      ;;
-    config)
-      local -a config_cmds=()
-      config_cmds=(
-        'show:Show current configuration'
-        'set:Set configuration value (current shell only)'
-      )
-
-      if [[ -z "$subcmd2" ]]; then
-        _arguments -C \
-          '(-h --help)'{-h,--help}'[Show help]' \
-          '1:config command:->config_subcmds' \
-          '*::arg:->config_args'
-
-        case "${state-}" in
-          config_subcmds)
-            _describe -t commands 'codex-cli config' config_cmds && return 0
-            ;;
-          config_args)
-            subcmd2="${line[1]:-${orig_words[3]-}}"
-            subcmd2="${subcmd2%%[[:space:]]#}"
-            ;;
-        esac
-      fi
-
-      case "$subcmd2" in
-        show)
-          _arguments -C \
-            '(-h --help)'{-h,--help}'[Show help]' \
-            && return 0
-          _message 'no additional arguments'
-          return 0
-          ;;
-        set)
-          local -a config_keys=()
-          config_keys=(
-            'model:Alias for CODEX_CLI_MODEL'
-            'reasoning:Alias for CODEX_CLI_REASONING'
-            'reason:Alias for CODEX_CLI_REASONING'
-            'dangerous:Alias for CODEX_ALLOW_DANGEROUS_ENABLED'
-            'allow-dangerous:Alias for CODEX_ALLOW_DANGEROUS_ENABLED'
-            'CODEX_CLI_MODEL:Model env var'
-            'CODEX_CLI_REASONING:Reasoning env var'
-            'CODEX_ALLOW_DANGEROUS_ENABLED:Dangerous-mode env var'
-          )
-
-          _arguments -C \
-            '(-h --help)'{-h,--help}'[Show help]' \
-            '1:key:->config_keys' \
-            '2:value:->config_values'
-
-          case "${state-}" in
-            config_keys)
-              _describe -t values 'config key' config_keys && return 0
-              ;;
-            config_values)
-              local key="${line[1]:-${orig_words[4]-}}"
-              if [[ -z "$key" ]]; then
-                key="${orig_words[2]-}"
-              fi
-              case "$key" in
-                dangerous|allow-dangerous|CODEX_ALLOW_DANGEROUS_ENABLED)
-                  _describe -t values 'value' \
-                    'true:Enable dangerous mode' \
-                    'false:Disable dangerous mode' \
-                    && return 0
-                  ;;
-              esac
-              _message 'value'
-              return 0
-              ;;
-          esac
-          ;;
-        '')
-          _message 'config command (show|set)'
-          return 0
-          ;;
-        *)
-          _message 'unknown config command'
-          return 0
-          ;;
-      esac
-      ;;
-    starship)
-      _arguments -C \
-        '(-h --help)'{-h,--help}'[Show help]' \
-        '--no-5h[Hide the 5h window output]' \
-        '--ttl=[Cache TTL]:duration:' \
-        '--time-format=[Reset time format (local time)]:strftime:' \
-        '--show-timezone[Show timezone offset in default reset time display]' \
-        '--refresh[Force a blocking refresh]' \
-        '--is-enabled[Exit 0 if starship is enabled]' \
-        && return 0
-      ;;
-    provider|debug|workflow|automation)
-      _message "codex-cli migration: use agentctl $subcmd for provider-neutral orchestration"
-      return 0
-      ;;
-    help)
-      _message 'no additional arguments'
-      return 0
-      ;;
-    '')
-      _message 'command (agent|auth|diag|config|starship|help; provider/debug/workflow/automation -> agentctl)'
-      return 0
-      ;;
-    *)
-      _message 'unknown command'
-      return 0
-      ;;
-  esac
+  words=("${saved_words[@]}")
+  CURRENT="$saved_current"
+  return $rc
 }
 
 compdef _codex-cli \

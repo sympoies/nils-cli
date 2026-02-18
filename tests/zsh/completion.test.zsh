@@ -486,25 +486,71 @@ if (( ! $+aliases[cx] )); then
   exit 1
 fi
 
-if (( ! $+aliases[cxau] )); then
-  print -u2 -r -- "FAIL: cxau alias not defined"
+for codex_alias in cxau cxar cxaa cxac cxas cxdr cxdra cxcs cxct cxgp cxga cxgk cxgc cxst; do
+  if (( ! $+aliases[$codex_alias] )); then
+    print -u2 -r -- "FAIL: $codex_alias alias not defined"
+    exit 1
+  fi
+done
+
+grep -q "_nils_cli_codex_cli_load_generated_zsh()" "$COMP_CODEX_CLI_FILE" || {
+  print -u2 -r -- "FAIL: codex-cli zsh adapter missing generated-loader wiring"
+  exit 1
+}
+
+grep -q "_nils_cli_codex_cli_apply_alias_rewrite_zsh()" "$COMP_CODEX_CLI_FILE" || {
+  print -u2 -r -- "FAIL: codex-cli zsh adapter missing alias rewrite hook"
+  exit 1
+}
+
+if grep -q "CODEX_CLI_COMPLETION_MODE" "$COMP_CODEX_CLI_FILE"; then
+  print -u2 -r -- "FAIL: codex-cli zsh adapter must not include legacy completion mode gate"
   exit 1
 fi
 
-if (( ! $+aliases[cxst] )); then
-  print -u2 -r -- "FAIL: cxst alias not defined"
+if grep -q "CODEX_CLI_COMPLETION_MODE" "$BASH_CODEX_CLI_FILE"; then
+  print -u2 -r -- "FAIL: codex-cli bash adapter must not include legacy completion mode gate"
   exit 1
 fi
 
-if (( ! $+aliases[cxdr] )); then
-  print -u2 -r -- "FAIL: cxdr alias not defined"
+if grep -q "_nils_cli_codex_cli_complete_legacy" "$COMP_CODEX_CLI_FILE"; then
+  print -u2 -r -- "FAIL: codex-cli zsh adapter still contains legacy completion function"
   exit 1
 fi
 
-if (( ! $+aliases[cxdra] )); then
-  print -u2 -r -- "FAIL: cxdra alias not defined"
+if grep -q "_nils_cli_codex_cli_complete_legacy" "$BASH_CODEX_CLI_FILE"; then
+  print -u2 -r -- "FAIL: codex-cli bash adapter still contains legacy completion function"
   exit 1
 fi
+
+codex_cli_compdef_tail="$(tail -n 4 "$COMP_CODEX_CLI_FILE" | tr '\n' ' ')"
+for codex_alias in cx cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxst cxdr cxdra cxcs cxct; do
+  if [[ " $codex_cli_compdef_tail " != *" $codex_alias "* ]]; then
+    print -u2 -r -- "FAIL: codex-cli zsh compdef missing alias mapping for $codex_alias"
+    exit 1
+  fi
+done
+
+for case_expect in \
+  "cxau) inject=(auth use)" \
+  "cxar) inject=(auth refresh)" \
+  "cxaa) inject=(auth auto-refresh)" \
+  "cxac) inject=(auth current)" \
+  "cxas) inject=(auth sync)" \
+  "cxdr) inject=(diag rate-limits)" \
+  "cxdra) inject=(diag rate-limits); implied_async='1'" \
+  "cxcs) inject=(config show)" \
+  "cxct) inject=(config set)" \
+  "cxgp) inject=(agent prompt)" \
+  "cxga) inject=(agent advice)" \
+  "cxgk) inject=(agent knowledge)" \
+  "cxgc) inject=(agent commit)" \
+  "cxst) inject=(starship)"; do
+  grep -q "$case_expect" "$COMP_CODEX_CLI_FILE" || {
+    print -u2 -r -- "FAIL: codex-cli zsh adapter missing alias rewrite case: $case_expect"
+    exit 1
+  }
+done
 
 if (( ! $+aliases[fx] )); then
   print -u2 -r -- "FAIL: fx alias not defined"
@@ -606,63 +652,68 @@ grep -q "to-json:Parse a plan markdown file" "$COMP_PLAN_TOOLING_FILE" || {
   exit 1
 }
 
-grep -q "agent:Prompts and skill wrappers" "$COMP_CODEX_CLI_FILE" || {
-  print -u2 -r -- "FAIL: codex-cli completion missing agent command"
+if ! CODEX_ZSH_GENERATED="$(cargo run -q -p nils-codex-cli --bin codex-cli -- completion zsh)"; then
+  print -u2 -r -- "FAIL: unable to export codex-cli zsh completion from clap"
+  exit 1
+fi
+
+print -r -- "$CODEX_ZSH_GENERATED" | grep -q "agent:Agent command group" || {
+  print -u2 -r -- "FAIL: codex-cli generated completion missing agent command"
   exit 1
 }
 
-grep -q "auth:Auth and secrets" "$COMP_CODEX_CLI_FILE" || {
-  print -u2 -r -- "FAIL: codex-cli completion missing auth command"
+print -r -- "$CODEX_ZSH_GENERATED" | grep -q "auth:Authentication command group" || {
+  print -u2 -r -- "FAIL: codex-cli generated completion missing auth command"
   exit 1
 }
 
-grep -q "login:Login with ChatGPT" "$COMP_CODEX_CLI_FILE" || {
-  print -u2 -r -- "FAIL: codex-cli completion missing auth login command"
+print -r -- "$CODEX_ZSH_GENERATED" | grep -q "login:Login to Codex" || {
+  print -u2 -r -- "FAIL: codex-cli generated completion missing auth login command"
   exit 1
 }
 
-grep -q "save:Save CODEX_AUTH_FILE" "$COMP_CODEX_CLI_FILE" || {
-  print -u2 -r -- "FAIL: codex-cli completion missing auth save command"
+print -r -- "$CODEX_ZSH_GENERATED" | grep -q "save:Save active CODEX_AUTH_FILE" || {
+  print -u2 -r -- "FAIL: codex-cli generated completion missing auth save command"
   exit 1
 }
 
-grep -q "remove:Remove SECRET_JSON" "$COMP_CODEX_CLI_FILE" || {
-  print -u2 -r -- "FAIL: codex-cli completion missing auth remove command"
+print -r -- "$CODEX_ZSH_GENERATED" | grep -q "remove:Remove SECRET_JSON" || {
+  print -u2 -r -- "FAIL: codex-cli generated completion missing auth remove command"
   exit 1
 }
 
-grep -q -- "--api-key\\[" "$COMP_CODEX_CLI_FILE" || {
-  print -u2 -r -- "FAIL: codex-cli completion missing --api-key"
+print -r -- "$CODEX_ZSH_GENERATED" | grep -q -- "--api-key\\[" || {
+  print -u2 -r -- "FAIL: codex-cli generated completion missing --api-key"
   exit 1
 }
 
-grep -q -- "--device-code\\[" "$COMP_CODEX_CLI_FILE" || {
-  print -u2 -r -- "FAIL: codex-cli completion missing --device-code"
+print -r -- "$CODEX_ZSH_GENERATED" | grep -q -- "--device-code\\[" || {
+  print -u2 -r -- "FAIL: codex-cli generated completion missing --device-code"
   exit 1
 }
 
-grep -q -- "--yes\\[" "$COMP_CODEX_CLI_FILE" || {
-  print -u2 -r -- "FAIL: codex-cli completion missing --yes"
+print -r -- "$CODEX_ZSH_GENERATED" | grep -q -- "--yes\\[" || {
+  print -u2 -r -- "FAIL: codex-cli generated completion missing --yes"
   exit 1
 }
 
-grep -q "diag:Diagnostics" "$COMP_CODEX_CLI_FILE" || {
-  print -u2 -r -- "FAIL: codex-cli completion missing diag command"
+print -r -- "$CODEX_ZSH_GENERATED" | grep -q "diag:Diagnostics command group" || {
+  print -u2 -r -- "FAIL: codex-cli generated completion missing diag command"
   exit 1
 }
 
-grep -q -- "--all\\[" "$COMP_CODEX_CLI_FILE" || {
-  print -u2 -r -- "FAIL: codex-cli completion missing --all"
+print -r -- "$CODEX_ZSH_GENERATED" | grep -q -- "--all\\[" || {
+  print -u2 -r -- "FAIL: codex-cli generated completion missing --all"
   exit 1
 }
 
-grep -q -- "--async\\[" "$COMP_CODEX_CLI_FILE" || {
-  print -u2 -r -- "FAIL: codex-cli completion missing --async"
+print -r -- "$CODEX_ZSH_GENERATED" | grep -q -- "--async\\[" || {
+  print -u2 -r -- "FAIL: codex-cli generated completion missing --async"
   exit 1
 }
 
-grep -q -- "--cached\\[" "$COMP_CODEX_CLI_FILE" || {
-  print -u2 -r -- "FAIL: codex-cli completion missing --cached"
+print -r -- "$CODEX_ZSH_GENERATED" | grep -q -- "--cached\\[" || {
+  print -u2 -r -- "FAIL: codex-cli generated completion missing --cached"
   exit 1
 }
 
@@ -921,23 +972,39 @@ bash -c "set -euo pipefail; source \"$BASH_API_TEST_FILE\"; complete -p api-test
   exit 1
 }
 
-bash -c "set -euo pipefail; source \"$BASH_CODEX_CLI_FILE\"; complete -p codex-cli | grep -q _nils_cli_codex_cli_complete; complete -p cx | grep -q _nils_cli_codex_cli_complete" || {
+bash -c "set -euo pipefail; source \"$BASH_CODEX_CLI_FILE\"; complete -p codex-cli | grep -q _nils_cli_codex_cli_complete; complete -p cx | grep -q _nils_cli_codex_cli_complete; complete -p cxgp | grep -q _nils_cli_codex_cli_complete; complete -p cxga | grep -q _nils_cli_codex_cli_complete; complete -p cxgk | grep -q _nils_cli_codex_cli_complete; complete -p cxgc | grep -q _nils_cli_codex_cli_complete; complete -p cxau | grep -q _nils_cli_codex_cli_complete; complete -p cxar | grep -q _nils_cli_codex_cli_complete; complete -p cxaa | grep -q _nils_cli_codex_cli_complete; complete -p cxac | grep -q _nils_cli_codex_cli_complete; complete -p cxas | grep -q _nils_cli_codex_cli_complete; complete -p cxst | grep -q _nils_cli_codex_cli_complete; complete -p cxdr | grep -q _nils_cli_codex_cli_complete; complete -p cxdra | grep -q _nils_cli_codex_cli_complete; complete -p cxcs | grep -q _nils_cli_codex_cli_complete; complete -p cxct | grep -q _nils_cli_codex_cli_complete" || {
   print -u2 -r -- "FAIL: failed to source bash codex-cli completion file"
   exit 1
 }
 
-grep -q "auth_cmds=(login use save refresh auto-refresh current sync)" "$BASH_CODEX_CLI_FILE" || {
-  print -u2 -r -- "FAIL: bash codex-cli completion missing auth login/save command set"
+for case_expect in \
+  "cxau) inject=(auth use)" \
+  "cxar) inject=(auth refresh)" \
+  "cxaa) inject=(auth auto-refresh)" \
+  "cxac) inject=(auth current)" \
+  "cxas) inject=(auth sync)" \
+  "cxdr) inject=(diag rate-limits)" \
+  "cxdra) inject=(diag rate-limits); implied_async='1'" \
+  "cxcs) inject=(config show)" \
+  "cxct) inject=(config set)" \
+  "cxgp) inject=(agent prompt)" \
+  "cxga) inject=(agent advice)" \
+  "cxgk) inject=(agent knowledge)" \
+  "cxgc) inject=(agent commit)" \
+  "cxst) inject=(starship)"; do
+  grep -q "$case_expect" "$BASH_CODEX_CLI_FILE" || {
+    print -u2 -r -- "FAIL: bash codex-cli completion missing invoked_as mapping: $case_expect"
+    exit 1
+  }
+done
+
+grep -q "command codex-cli completion bash" "$BASH_CODEX_CLI_FILE" || {
+  print -u2 -r -- "FAIL: bash codex-cli adapter missing clap completion export hook"
   exit 1
 }
 
-grep -q -- "--api-key --device-code" "$BASH_CODEX_CLI_FILE" || {
-  print -u2 -r -- "FAIL: bash codex-cli completion missing login mode flags"
-  exit 1
-}
-
-grep -q -- "-y --yes" "$BASH_CODEX_CLI_FILE" || {
-  print -u2 -r -- "FAIL: bash codex-cli completion missing save overwrite flags"
+bash -c "set -euo pipefail; PATH=\"$REPO_ROOT/wrappers:\$PATH\"; export NILS_WRAPPER_MODE=debug; source \"$BASH_CODEX_CLI_FILE\"; _NILS_CODEX_CLI_BASH_GENERATED_STATE=0; COMP_WORDS=(codex-cli auth login --); COMP_CWORD=3; COMPREPLY=(); _nils_cli_codex_cli_complete; [[ \" \${COMPREPLY[*]} \" == *\" --api-key \"* ]]; [[ \" \${COMPREPLY[*]} \" == *\" --device-code \"* ]]; [[ \" \${COMPREPLY[*]} \" != *\" --cached \"* ]]; [[ \" \${COMPREPLY[*]} \" != *\" --jobs \"* ]]" || {
+  print -u2 -r -- "FAIL: bash codex-cli generated completion is not context-aware for auth login"
   exit 1
 }
 

@@ -23,6 +23,8 @@ pub enum Command {
     Config(ConfigArgs),
     /// Starship integration command group
     Starship(StarshipArgs),
+    /// Export shell completion script
+    Completion(CompletionArgs),
 }
 
 #[derive(Args)]
@@ -70,7 +72,9 @@ pub struct AuthArgs {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum OutputFormat {
+    #[value(name = "text")]
     Text,
+    #[value(name = "json")]
     Json,
 }
 
@@ -107,7 +111,7 @@ pub enum AuthCommand {
     Use {
         #[command(flatten)]
         output: OutputModeArgs,
-        #[arg(value_name = "target", num_args = 0..)]
+        #[arg(id = "target", value_name = "target", num_args = 0..)]
         args: Vec<String>,
     },
     /// Save active CODEX_AUTH_FILE into CODEX_SECRET_DIR as SECRET_JSON
@@ -117,7 +121,7 @@ pub enum AuthCommand {
         /// Overwrite target file if it already exists (non-interactive)
         #[arg(short = 'y', long = "yes")]
         yes: bool,
-        #[arg(value_name = "secret", num_args = 0..)]
+        #[arg(id = "secret", value_name = "secret", num_args = 0..)]
         args: Vec<String>,
     },
     /// Remove SECRET_JSON from CODEX_SECRET_DIR
@@ -127,14 +131,14 @@ pub enum AuthCommand {
         /// Remove target file without prompt (non-interactive)
         #[arg(short = 'y', long = "yes")]
         yes: bool,
-        #[arg(value_name = "secret", num_args = 0..)]
+        #[arg(id = "secret", value_name = "secret", num_args = 0..)]
         args: Vec<String>,
     },
     /// Refresh OAuth tokens
     Refresh {
         #[command(flatten)]
         output: OutputModeArgs,
-        #[arg(value_name = "secret", num_args = 0..)]
+        #[arg(id = "secret", value_name = "secret", num_args = 0..)]
         args: Vec<String>,
     },
     /// Refresh stale tokens across auth + secrets
@@ -236,4 +240,17 @@ pub struct StarshipArgs {
     /// Exit 0 if starship is enabled
     #[arg(long = "is-enabled")]
     pub is_enabled: bool,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum CompletionShell {
+    Bash,
+    Zsh,
+}
+
+#[derive(Args)]
+pub struct CompletionArgs {
+    /// Shell to generate completion script for
+    #[arg(value_enum, value_name = "shell")]
+    pub shell: CompletionShell,
 }
