@@ -41,6 +41,7 @@ pub fn run(cli: &Cli, output_mode: OutputMode) -> Result<(), AppError> {
             fetch::run(&storage, output_mode, args.limit, args.cursor.as_deref())
         }
         MemoCommand::Apply(args) => apply::run(&storage, output_mode, args),
+        MemoCommand::Completion(_) => Ok(()),
     }
 }
 

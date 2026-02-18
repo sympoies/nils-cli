@@ -2,7 +2,7 @@ use std::ffi::OsString;
 
 use clap::{Parser, error::ErrorKind};
 
-use crate::cli::{Cli, OutputMode};
+use crate::cli::{Cli, MemoCommand, OutputMode};
 use crate::errors::AppError;
 
 pub fn run() -> i32 {
@@ -30,6 +30,10 @@ where
             }
         }
     };
+
+    if let MemoCommand::Completion(args) = cli.command {
+        return crate::completion::run(args.shell);
+    }
 
     let output_mode = match cli.resolve_output_mode() {
         Ok(mode) => mode,

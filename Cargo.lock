@@ -1878,6 +1878,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "clap",
+ "clap_complete",
  "pretty_assertions",
  "rusqlite",
  "serde",

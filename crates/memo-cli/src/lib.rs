@@ -1,6 +1,7 @@
 pub mod app;
 pub mod cli;
 pub mod commands;
+pub mod completion;
 pub mod errors;
 pub mod output;
 pub mod preprocess;
