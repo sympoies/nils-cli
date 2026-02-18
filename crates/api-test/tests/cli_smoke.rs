@@ -18,6 +18,7 @@ fn help_includes_key_flags() {
     assert_eq!(out.code, 0);
     let text = format!("{}{}", out.stdout_text(), out.stderr_text());
     assert!(text.contains("summary"));
+    assert!(text.contains("completion"));
     assert!(text.contains("--suite"));
     assert!(text.contains("--suite-file"));
 }
