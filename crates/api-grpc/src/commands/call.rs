@@ -1,13 +1,12 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use api_testing_core::{Result, auth_env, cli_endpoint, cli_util, config, env_file, history, jwt};
+use api_testing_core::{Result, auth_env, cli_endpoint, cli_util, config, history, jwt};
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 
 use crate::cli::CallArgs;
 use api_testing_core::cli_util::{
-    history_timestamp_now, list_available_suffixes, maybe_relpath, parse_u64_default, shell_quote,
-    to_env_key, trim_non_empty,
+    history_timestamp_now, maybe_relpath, parse_u64_default, shell_quote, trim_non_empty,
 };
 
 #[derive(Debug, Clone)]
@@ -66,68 +65,32 @@ pub(crate) fn resolve_auth_for_call(
     let tokens_env = setup.tokens_env.as_ref().expect("tokens_env");
     let tokens_local = setup.tokens_local_env.as_ref().expect("tokens_local_env");
     let tokens_files = setup.tokens_files();
+    let token_resolution = auth_env::resolve_profile_or_env_fallback(
+        auth_env::ProfileTokenConfig {
+            token_name_arg: args.token.as_deref(),
+            token_name_env_var: "GRPC_TOKEN_NAME",
+            token_name_file_var: "GRPC_TOKEN_NAME",
+            token_var_prefix: "GRPC_TOKEN_",
+            tokens_env,
+            tokens_local,
+            tokens_files: &tokens_files,
+            missing_profile_hint: "Set it in setup/grpc/tokens.local.env or use ACCESS_TOKEN without selecting a token profile.",
+            env_fallback_keys: &["ACCESS_TOKEN", "SERVICE_TOKEN"],
+        },
+    )?;
 
-    let token_name_arg = args.token.as_deref().and_then(trim_non_empty);
-    let token_name_env = std::env::var("GRPC_TOKEN_NAME")
-        .ok()
-        .and_then(|s| trim_non_empty(&s));
-    let token_name_file = if !tokens_files.is_empty() {
-        env_file::read_var_last_wins("GRPC_TOKEN_NAME", &tokens_files)?
-    } else {
-        None
+    let auth_source_used = match token_resolution.source {
+        auth_env::ProfileTokenSource::None => AuthSourceUsed::None,
+        auth_env::ProfileTokenSource::Profile => AuthSourceUsed::TokenProfile,
+        auth_env::ProfileTokenSource::EnvFallback { env_name } => {
+            AuthSourceUsed::EnvFallback { env_name }
+        }
     };
 
-    let token_profile_selected =
-        token_name_arg.is_some() || token_name_env.is_some() || token_name_file.is_some();
-    let token_name = token_name_arg
-        .or(token_name_env)
-        .or(token_name_file)
-        .unwrap_or_else(|| "default".to_string())
-        .to_ascii_lowercase();
-
-    if token_profile_selected {
-        let token_key = to_env_key(&token_name);
-        let token_var = format!("GRPC_TOKEN_{token_key}");
-        let bearer_token = env_file::read_var_last_wins(&token_var, &tokens_files)?;
-        let Some(bearer_token) = bearer_token else {
-            let mut available = list_available_suffixes(tokens_env, "GRPC_TOKEN_");
-            if tokens_local.is_file() {
-                available.extend(list_available_suffixes(tokens_local, "GRPC_TOKEN_"));
-                available.sort();
-                available.dedup();
-            }
-            available.retain(|t| t != "name");
-            let available = if available.is_empty() {
-                "none".to_string()
-            } else {
-                available.join(" ")
-            };
-            anyhow::bail!(
-                "Token profile '{token_name}' is empty/missing (available: {available}). Set it in setup/grpc/tokens.local.env or use ACCESS_TOKEN without selecting a token profile."
-            );
-        };
-
-        return Ok(AuthSelection {
-            bearer_token: Some(bearer_token),
-            token_name: token_name.clone(),
-            auth_source_used: AuthSourceUsed::TokenProfile,
-        });
-    }
-
-    if let Some((token, env_name)) =
-        auth_env::resolve_env_fallback(&["ACCESS_TOKEN", "SERVICE_TOKEN"])
-    {
-        return Ok(AuthSelection {
-            bearer_token: Some(token),
-            token_name,
-            auth_source_used: AuthSourceUsed::EnvFallback { env_name },
-        });
-    }
-
     Ok(AuthSelection {
-        bearer_token: None,
-        token_name,
-        auth_source_used: AuthSourceUsed::None,
+        bearer_token: token_resolution.bearer_token,
+        token_name: token_resolution.token_name,
+        auth_source_used,
     })
 }
 
