@@ -1,6 +1,6 @@
 mod cli;
-mod completion;
 mod commands;
+mod completion;
 #[cfg(test)]
 mod test_support;
 
@@ -11,8 +11,8 @@ use clap::Parser;
 use clap::error::ErrorKind;
 
 use crate::cli::{Cli, Command};
-use crate::completion::run as run_completion;
 use crate::commands::{cmd_call, cmd_history, cmd_report, cmd_report_from_cmd};
+use crate::completion::run as run_completion;
 
 fn argv_with_default_command(raw_args: &[String]) -> Vec<String> {
     let mut argv = vec!["api-rest".to_string()];
