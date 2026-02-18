@@ -66,6 +66,8 @@ Detailed scope, API examples, migration conventions, and non-goals are documente
 ## Shell wrappers and completions
 
 This repo keeps optional wrapper scripts and completion assets in-repo.
+Contributor completion governance (architecture, fallback, alias sync, and completion-focused checks) is defined in
+[docs/runbooks/cli-completion-development-standard.md](docs/runbooks/cli-completion-development-standard.md).
 
 Location:
 
@@ -88,6 +90,11 @@ Integration steps:
   - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - Docs-only fast path (only docs changed, e.g. `*.md`, `docs/**`, `crates/*/docs/**`):
   - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh --docs-only`
+- If completion/alias files changed, also run completion-focused checks from
+  [docs/runbooks/cli-completion-development-standard.md](docs/runbooks/cli-completion-development-standard.md):
+  - `zsh -f tests/zsh/completion.test.zsh`
+  - `zsh -n completions/zsh/_<cli>`
+  - `bash -n completions/bash/<cli>`
 
 ## Local install (release)
 

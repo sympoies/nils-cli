@@ -9,6 +9,14 @@ notes = "Project-level dependency and toolchain policy for implementation tasks"
 [[document]]
 context = "project-dev"
 scope = "project"
+path = "docs/runbooks/cli-completion-development-standard.md"
+required = true
+when = "always"
+notes = "CLI completion and alias development standard for project tasks"
+
+[[document]]
+context = "project-dev"
+scope = "project"
 path = "docs/runbooks/new-cli-crate-development-standard.md"
 required = true
 when = "always"

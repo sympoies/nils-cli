@@ -49,11 +49,19 @@
 - Root `docs/` MUST be used only for `workspace-level` docs.
 - Legacy crate-owned root paths are redirect stubs (no deprecation sunset) and MUST NOT hold canonical content.
 
+## Completion governance
+
+- Canonical completion governance runbook: `docs/runbooks/cli-completion-development-standard.md`.
+- When completion/alias code changes, follow that runbook for architecture/fallback policy and completion-focused validation.
+
 ### Required before committing
 
 - All commands in **Formatting and linting** must pass.
 - `cargo test --workspace`
 - `zsh -f tests/zsh/completion.test.zsh`
+- If completion/alias files changed, also run:
+  - `zsh -n completions/zsh/_<cli>`
+  - `bash -n completions/bash/<cli>`
 - Documentation placement for changed Markdown files MUST comply with
   `docs/specs/crate-docs-placement-policy.md`.
 - `bash scripts/ci/docs-placement-audit.sh --strict`
@@ -96,6 +104,9 @@
 - Note: doctests are **not included** in coverage initially; still run doctests for correctness: `cargo test --workspace --doc`
 
 ## Shell completions
+
+For completion implementation workflow and contributor validation requirements, use
+`docs/runbooks/cli-completion-development-standard.md`. The setup notes below focus on local shell integration.
 
 ### Zsh
 

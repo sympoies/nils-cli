@@ -77,7 +77,7 @@ done
 runbook_is_approved_workspace_file() {
   local base="$1"
   case "$base" in
-    crates-io-status-script-runbook.md|new-cli-crate-development-standard.md|provider-onboarding.md|wrappers-mode-usage.md)
+    cli-completion-development-standard.md|crates-io-status-script-runbook.md|new-cli-crate-development-standard.md|provider-onboarding.md|wrappers-mode-usage.md)
       return 0
       ;;
     *)

@@ -16,6 +16,8 @@ Use these as the source of truth to avoid policy drift:
 - Required checks and coverage policy:
   - `DEVELOPMENT.md`
   - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
+- Workspace completion architecture and migration/rollback rules:
+  - `docs/runbooks/cli-completion-development-standard.md`
 - Publishing workflow and order:
   - `scripts/publish-crates.sh`
   - `release/crates-io-publish-order.txt`
@@ -114,7 +116,9 @@ Every user-facing CLI command surface must have explicit output behavior.
 - Root CLI parser must include `#[command(version)]` so `-V, --version` is always available.
 - Usage errors return `64` unless command-specific legacy contract requires otherwise.
 - Keep warning/error prefix conventions consistent with neighboring crates.
-- If completion aliases are provided, keep `completions/zsh/` and `completions/bash/` synchronized.
+- For completion-required CLIs, implement clap-first completion generation via `clap_complete` so baseline completion covers subcommands, long/short flags, declared value candidates, and context-aware filtering (not global candidate dumps).
+- If completions or completion aliases are provided, implement them per
+  `docs/runbooks/cli-completion-development-standard.md` (clap-first generation, thin shell adapters, alias sync, and per-CLI fallback mode).
 
 ## Testing and Validation Rules
 Minimum testing for new CLI crates:
@@ -126,6 +130,8 @@ Minimum testing for new CLI crates:
    - stable error envelope fields.
    - no secret leakage.
 4. Completion tests if completions/aliases were changed.
+5. Completion architecture conformance to
+   `docs/runbooks/cli-completion-development-standard.md` when completion assets are introduced or modified.
 
 Preferred single entrypoint:
 
