@@ -17,6 +17,7 @@ name = "screen-record"
 path = "src/main.rs"
 [dependencies]
 clap = { workspace = true }
+clap_complete = { workspace = true }
 ctrlc = "3.5.1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 nils-common = { version = "0.4.4", path = "../nils-common", package = "nils-common" }
