@@ -1662,6 +1662,7 @@ version = "0.4.4"
 dependencies = [
  "anyhow",
  "clap",
+ "clap_complete",
  "nils-api-testing-core",
  "nils-term",
  "nils-test-support",

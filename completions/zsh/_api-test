@@ -1,108 +1,60 @@
 #compdef api-test
 
+_nils_cli_api_test_source_common_zsh() {
+  (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+
+  local source_file="${functions_source[_api-test]-}"
+  local helper_path=''
+
+  if [[ -n "$source_file" && -r "$source_file" ]]; then
+    helper_path="${source_file:h}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
+  fi
+
+  local dir=''
+  for dir in "${fpath[@]}"; do
+    helper_path="${dir}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
+  done
+
+  return 1
+}
+
+typeset -gi _NILS_API_TEST_ZSH_GENERATED_STATE=0
+
+_nils_cli_api_test_load_generated_zsh() {
+  _nils_cli_api_test_source_common_zsh || return 1
+
+  _nils_cli_completion_common_load_generated_zsh \
+    "_NILS_API_TEST_ZSH_GENERATED_STATE" \
+    "_nils_cli_api_test_generated" \
+    "api-test" \
+    "_api-test" \
+    '^if \[ "\$funcstack\[1\]" = "_nils_cli_api_test_generated" \]; then$' \
+    '^fi$'
+}
+
 _api-test() {
   emulate -L zsh -o extendedglob
 
-  local context='' state='' state_descr=''
-  local -a line=()
-  typeset -A opt_args=()
-
-  local -i orig_current="$CURRENT"
-  local -a orig_words=("${words[@]}")
-
-  local cur="${orig_words[orig_current]-}"
-  cur="${cur%%[[:space:]]#}"
-
-  local -a subcommands=()
-  subcommands=(
-    'run:Run a suite (default)'
-    'summary:Render a Markdown summary from results JSON'
-  )
-
-  if (( orig_current == 2 )); then
-    if [[ "$cur" == -* ]]; then
-      local -a root_opts=(
-        '-h:Show help'
-        '--help:Show help'
-        '-V:Show version'
-        '--version:Show version'
-      )
-      _describe -t options 'option' root_opts && return 0
-      return 0
+  if ! _nils_cli_api_test_load_generated_zsh; then
+    if (( $+functions[_nils_cli_completion_common_fail_closed_no_legacy_zsh] )); then
+      _nils_cli_completion_common_fail_closed_no_legacy_zsh
     fi
-
-    _describe -t commands 'api-test command' subcommands && return 0
-    return 0
+    return 1
   fi
 
-  local subcmd="${orig_words[2]-}"
-  subcmd="${subcmd%%[[:space:]]#}"
-
-  case "$subcmd" in
-    run|summary) ;;
-    *) subcmd="run" ;;
-  esac
-
-  case "$subcmd" in
-    run)
-      if [[ "$cur" == -* ]]; then
-        local -a run_opts=(
-          '--suite:Suite name (tests/api/suites/<name>.suite.json)'
-          '--suite-file:Explicit suite file path'
-          '--out:Write results JSON to a file'
-          '--junit:Write JUnit XML to a file'
-          '--allow-writes:Allow write-capable cases'
-          '--tag:Run only cases that include this tag'
-          '--only:Run only listed case IDs (comma-separated)'
-          '--skip:Skip listed case IDs (comma-separated)'
-          '--fail-fast:Stop after the first failed case'
-          '--continue:Continue after failures (default)'
-          '--help:Show help'
-          '-h:Show help'
-        )
-        _describe -t options 'option' run_opts && return 0
-      fi
-      _arguments -C \
-        '(-h --help)'{-h,--help}'[Show help]' \
-        '--suite=[Suite name (tests/api/suites/<name>.suite.json)]:suite:' \
-        '--suite-file=[Explicit suite file path]:suite file:_files' \
-        '--out=[Write results JSON to a file]:file:_files' \
-        '--junit=[Write JUnit XML to a file]:file:_files' \
-        '--allow-writes[Allow write-capable cases (still requires allowWrite: true)]' \
-        '--tag=[Run only cases that include this tag (repeatable; AND semantics)]:tag:' \
-        '--only=[Run only listed case IDs (comma-separated)]:ids:' \
-        '--skip=[Skip listed case IDs (comma-separated)]:ids:' \
-        '--fail-fast[Stop after the first failed case]' \
-        '--continue[Continue after failures (default)]' \
-        && return 0
-      ;;
-    summary)
-      if [[ "$cur" == -* ]]; then
-        local -a summary_opts=(
-          '--in:Input results JSON file path (default: stdin)'
-          '--out:Write Markdown summary to a file'
-          '--slow:Show slowest N executed cases'
-          '--hide-skipped:Do not show skipped cases list'
-          '--max-failed:Max failed cases to print'
-          '--max-skipped:Max skipped cases to print'
-          '--no-github-summary:Do not write to $GITHUB_STEP_SUMMARY'
-          '--help:Show help'
-          '-h:Show help'
-        )
-        _describe -t options 'option' summary_opts && return 0
-      fi
-      _arguments -C \
-        '(-h --help)'{-h,--help}'[Show help]' \
-        '--in=[Input results JSON file path (default: stdin)]:file:_files' \
-        '--out=[Write Markdown summary to a file]:file:_files' \
-        '--slow=[Show slowest N executed cases]:n:' \
-        '--hide-skipped[Do not show skipped cases list]' \
-        '--max-failed=[Max failed cases to print]:n:' \
-        '--max-skipped=[Max skipped cases to print]:n:' \
-        '--no-github-summary[Do not write to $GITHUB_STEP_SUMMARY]' \
-        && return 0
-      ;;
-  esac
+  _nils_cli_api_test_generated
 }
 
-compdef _api-test api-test
+if _nils_cli_api_test_source_common_zsh; then
+  _nils_cli_completion_common_register_zsh _api-test api-test
+else
+  compdef _api-test api-test
+fi

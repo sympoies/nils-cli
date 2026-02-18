@@ -13,6 +13,8 @@ use api_testing_core::suite::schema::load_and_validate_suite;
 use api_testing_core::suite::summary::{SummaryOptions, render_summary_from_json_str};
 use nils_term::progress::{Progress, ProgressOptions};
 
+mod completion;
+
 #[derive(Parser)]
 #[command(
     name = "api-test",
@@ -31,6 +33,15 @@ enum Command {
     Run(RunArgs),
     /// Render a Markdown summary from results JSON
     Summary(SummaryArgs),
+    /// Print shell completion script
+    Completion(CompletionArgs),
+}
+
+#[derive(Args)]
+struct CompletionArgs {
+    /// Shell to generate completion for
+    #[arg(value_enum)]
+    shell: completion::CompletionShell,
 }
 
 #[derive(Args)]
@@ -125,7 +136,7 @@ fn argv_with_default_command(raw_args: &[String]) -> Vec<String> {
     let is_root_help = first == "-h" || first == "--help";
     let is_root_version = first == "-V" || first == "--version";
 
-    let is_explicit_command = matches!(first, "run" | "summary");
+    let is_explicit_command = matches!(first, "run" | "summary" | "completion");
     if !is_explicit_command && !is_root_help && !is_root_version {
         argv.push("run".to_string());
     }
@@ -140,6 +151,7 @@ fn print_root_help() {
     println!("Commands:");
     println!("  run      Run a suite (default)");
     println!("  summary  Render a Markdown summary from results JSON");
+    println!("  completion  Print shell completion script");
     println!();
     println!("Common options (run; see `api-test run --help` for full details):");
     println!("  --suite <name>        Resolve suite under tests/api/suites/<name>.suite.json");
@@ -156,6 +168,7 @@ fn print_root_help() {
     println!("  api-test --help");
     println!("  api-test --suite smoke --help");
     println!("  api-test run --suite smoke --out results.json");
+    println!("  api-test completion zsh");
 }
 
 fn main() {
@@ -195,6 +208,7 @@ fn run() -> i32 {
         }
         Some(Command::Run(args)) => cmd_run(&args),
         Some(Command::Summary(args)) => cmd_summary(&args),
+        Some(Command::Completion(args)) => completion::run(args.shell),
     }
 }
 
@@ -383,4 +397,43 @@ fn cmd_summary(args: &SummaryArgs) -> i32 {
 
     print!("{md}");
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::argv_with_default_command;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn argv_with_default_command_inserts_run_except_for_explicit_commands() {
+        let argv = argv_with_default_command(&[]);
+        assert_eq!(argv, vec!["api-test".to_string()]);
+
+        let argv = argv_with_default_command(&["--help".to_string()]);
+        assert_eq!(argv, vec!["api-test".to_string(), "--help".to_string()]);
+
+        let argv = argv_with_default_command(&["summary".to_string()]);
+        assert_eq!(argv, vec!["api-test".to_string(), "summary".to_string()]);
+
+        let argv = argv_with_default_command(&["completion".to_string(), "zsh".to_string()]);
+        assert_eq!(
+            argv,
+            vec![
+                "api-test".to_string(),
+                "completion".to_string(),
+                "zsh".to_string()
+            ]
+        );
+
+        let argv = argv_with_default_command(&["--suite".to_string(), "smoke".to_string()]);
+        assert_eq!(
+            argv,
+            vec![
+                "api-test".to_string(),
+                "run".to_string(),
+                "--suite".to_string(),
+                "smoke".to_string()
+            ]
+        );
+    }
 }
