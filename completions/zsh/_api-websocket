@@ -1,126 +1,60 @@
 #compdef api-websocket
 
+_nils_cli_api_websocket_source_common_zsh() {
+  (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+
+  local source_file="${functions_source[_api-websocket]-}"
+  local helper_path=''
+
+  if [[ -n "$source_file" && -r "$source_file" ]]; then
+    helper_path="${source_file:h}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
+  fi
+
+  local dir=''
+  for dir in "${fpath[@]}"; do
+    helper_path="${dir}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
+  done
+
+  return 1
+}
+
+typeset -gi _NILS_API_WEBSOCKET_ZSH_GENERATED_STATE=0
+
+_nils_cli_api_websocket_load_generated_zsh() {
+  _nils_cli_api_websocket_source_common_zsh || return 1
+
+  _nils_cli_completion_common_load_generated_zsh \
+    "_NILS_API_WEBSOCKET_ZSH_GENERATED_STATE" \
+    "_nils_cli_api_websocket_generated" \
+    "api-websocket" \
+    "_api-websocket" \
+    '^if \[ "\$funcstack\[1\]" = "_nils_cli_api_websocket_generated" \]; then$' \
+    '^fi$'
+}
+
 _api-websocket() {
   emulate -L zsh -o extendedglob
 
-  local context='' state='' state_descr=''
-  local -a line=()
-  typeset -A opt_args=()
-
-  local -i orig_current="$CURRENT"
-  local -a orig_words=("${words[@]}")
-
-  local cur="${orig_words[orig_current]-}"
-  cur="${cur%%[[:space:]]#}"
-
-  local -a subcommands=()
-  subcommands=(
-    'call:Execute a request file and print the response body to stdout (default)'
-    'history:Print the last (or last N) history entries'
-    'report:Generate a Markdown API test report'
-    'report-from-cmd:Generate a report from a saved `call` snippet'
-  )
-
-  if (( orig_current == 2 )); then
-    if [[ "$cur" == -* ]]; then
-      local -a root_opts=(
-        '-h:Show help'
-        '--help:Show help'
-        '-V:Show version'
-        '--version:Show version'
-      )
-      _describe -t options 'option' root_opts && return 0
-      return 0
+  if ! _nils_cli_api_websocket_load_generated_zsh; then
+    if (( $+functions[_nils_cli_completion_common_fail_closed_no_legacy_zsh] )); then
+      _nils_cli_completion_common_fail_closed_no_legacy_zsh
     fi
-
-    _describe -t commands 'api-websocket command' subcommands
-    _files
-    return 0
+    return 1
   fi
 
-  local subcmd="${orig_words[2]-}"
-  subcmd="${subcmd%%[[:space:]]#}"
-
-  case "$subcmd" in
-    call|history|report|report-from-cmd) ;;
-    *) subcmd="call" ;;
-  esac
-
-  case "$subcmd" in
-    call)
-      _arguments -C \
-        '(-h --help)'{-h,--help}'[Show help]' \
-        '(-e --env)'{-e,--env}'[Endpoint preset name]:env:' \
-        '(-u --url)'{-u,--url}'[Explicit WebSocket URL]:url:' \
-        '--token=[Token profile name]:token:' \
-        '--config-dir=[WebSocket setup dir (discovery seed)]:dir:_files -/' \
-        '--no-history[Disable history writing]' \
-        '--format=[Output format]:format:(text json)' \
-        '1:request file:_files' \
-        && return 0
-      ;;
-    history)
-      _arguments -C \
-        '(-h --help)'{-h,--help}'[Show help]' \
-        '--config-dir=[WebSocket setup dir (discovery seed)]:dir:_files -/' \
-        '--file=[Explicit history file path]:file:_files' \
-        '--last[Print the last entry (default)]' \
-        '--tail=[Print the last N entries]:n:' \
-        '--command-only[Omit metadata lines (starting with "#")]' \
-        '--format=[Output format]:format:(text json)' \
-        && return 0
-      ;;
-    report)
-      if [[ "$cur" == -* ]]; then
-        local -a report_opts=(
-          '--case:Report case name'
-          '--request:Request file path (*.ws.json or *.websocket.json)'
-          '--out:Output report path'
-          '--env:Endpoint preset name (passed through)'
-          '--url:Explicit WebSocket URL (passed through)'
-          '--token:Token profile name (passed through)'
-          '--run:Execute the request and embed the response'
-          '--response:Use an existing response file (or "-" for stdin)'
-          '--no-redact:Do not redact secrets in request/response JSON blocks'
-          '--no-command:Omit the command snippet section'
-          '--no-command-url:Omit URL value in command snippet'
-          '--project-root:Override project root (default: git root or CWD)'
-          '--config-dir:WebSocket setup dir (passed through)'
-          '--help:Show help'
-        )
-        _describe -t options 'option' report_opts && return 0
-      fi
-      _arguments -C \
-        '(-h --help)'{-h,--help}'[Show help]' \
-        '--case=[Report case name]:case:' \
-        '--request=[Request file path (*.ws.json or *.websocket.json)]:request file:_files' \
-        '--out=[Output report path]:file:_files' \
-        '(-e --env)'{-e,--env}'[Endpoint preset name (passed through)]:env:' \
-        '(-u --url)'{-u,--url}'[Explicit WebSocket URL (passed through)]:url:' \
-        '--token=[Token profile name (passed through)]:token:' \
-        '--run[Execute the request and embed the response]' \
-        '--response=[Use an existing response file (or "-" for stdin)]:response file:_files' \
-        '--no-redact[Do not redact secrets in request/response JSON blocks]' \
-        '--no-command[Omit the command snippet section]' \
-        '--no-command-url[When using --url, omit the URL value in the command snippet]' \
-        '--project-root=[Override project root (default: git root or CWD)]:dir:_files -/' \
-        '--config-dir=[WebSocket setup dir (passed through)]:dir:_files -/' \
-        && return 0
-      ;;
-    report-from-cmd)
-      _arguments -C \
-        '(-h --help)'{-h,--help}'[Show help]' \
-        '--case=[Override report case name (default: derived from snippet)]:case:' \
-        '--out=[Output report path]:file:_files' \
-        '--response=[Use an existing response file (or "-" for stdin)]:response file:_files' \
-        '(--allow-empty --expect-empty)--allow-empty[Allow generating a report with empty/no-data response]' \
-        '(--allow-empty --expect-empty)--expect-empty[Alias of --allow-empty]' \
-        '--dry-run[Print equivalent `api-websocket report ...` command and exit 0]' \
-        '--stdin[Read the command snippet from stdin]' \
-        '1::snippet:' \
-        && return 0
-      ;;
-  esac
+  _nils_cli_api_websocket_generated
 }
 
-compdef _api-websocket api-websocket
+if _nils_cli_api_websocket_source_common_zsh; then
+  _nils_cli_completion_common_register_zsh _api-websocket api-websocket
+else
+  compdef _api-websocket api-websocket
+fi

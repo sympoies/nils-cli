@@ -1,5 +1,6 @@
 mod cli;
 mod commands;
+mod completion;
 
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -9,6 +10,7 @@ use clap::error::ErrorKind;
 
 use crate::cli::{Cli, Command};
 use crate::commands::{cmd_call, cmd_history, cmd_report, cmd_report_from_cmd};
+use crate::completion::run as run_completion;
 
 fn argv_with_default_command(raw_args: &[String]) -> Vec<String> {
     let mut argv = vec!["api-websocket".to_string()];
@@ -20,7 +22,10 @@ fn argv_with_default_command(raw_args: &[String]) -> Vec<String> {
     let is_root_help = first == "-h" || first == "--help";
     let is_root_version = first == "-V" || first == "--version";
 
-    let is_explicit_command = matches!(first, "call" | "history" | "report" | "report-from-cmd");
+    let is_explicit_command = matches!(
+        first,
+        "call" | "history" | "report" | "report-from-cmd" | "completion"
+    );
     if !is_explicit_command && !is_root_help && !is_root_version {
         argv.push("call".to_string());
     }
@@ -39,6 +44,7 @@ fn print_root_help() {
     println!("  history   Print the last (or last N) history entries");
     println!("  report    Generate a Markdown API test report");
     println!("  report-from-cmd  Generate a report from a saved `call` snippet");
+    println!("  completion      Print shell completion script");
     println!();
     println!("Common options (see subcommand help for full details):");
     println!("  --config-dir <dir>   Seed setup/websocket discovery (call/history/report)");
@@ -50,6 +56,7 @@ fn print_root_help() {
     println!("  api-websocket call --help");
     println!("  api-websocket report --help");
     println!("  api-websocket report-from-cmd --help");
+    println!("  api-websocket completion zsh");
 }
 
 fn main() {
@@ -108,6 +115,7 @@ fn run() -> i32 {
         Some(Command::ReportFromCmd(args)) => {
             cmd_report_from_cmd(&args, &invocation_dir, &mut stdout, &mut stderr)
         }
+        Some(Command::Completion(args)) => run_completion(args.shell),
     }
 }
 
@@ -131,6 +139,16 @@ mod tests {
         assert_eq!(
             argv,
             vec!["api-websocket".to_string(), "history".to_string()]
+        );
+
+        let argv = argv_with_default_command(&["completion".to_string(), "zsh".to_string()]);
+        assert_eq!(
+            argv,
+            vec![
+                "api-websocket".to_string(),
+                "completion".to_string(),
+                "zsh".to_string()
+            ]
         );
 
         let argv = argv_with_default_command(&["requests/health.ws.json".to_string()]);
