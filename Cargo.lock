@@ -1784,6 +1784,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "clap_complete",
  "nils-common",
  "nils-term",
  "nils-test-support",

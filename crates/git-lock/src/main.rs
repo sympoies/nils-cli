@@ -1,5 +1,6 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
+mod completion;
 mod copy;
 mod delete;
 mod diff;
@@ -56,7 +57,18 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    Completion {
+        /// Shell to generate completion script for
+        #[arg(value_enum, value_name = "shell")]
+        shell: CompletionShell,
+    },
     Help,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+enum CompletionShell {
+    Bash,
+    Zsh,
 }
 
 fn main() {
@@ -74,6 +86,18 @@ fn run() -> i32 {
     if args.len() > 1 && is_version(&args[1]) {
         println!("git-lock {}", env!("CARGO_PKG_VERSION"));
         return 0;
+    }
+
+    if args.len() > 1 && args[1] == "completion" {
+        let cli = Cli::parse_from(&args);
+        let command = cli.command.unwrap_or(Command::Help);
+        return match command {
+            Command::Completion { shell } => completion::run(shell),
+            _ => {
+                messages::print_help();
+                1
+            }
+        };
     }
 
     if !nils_common::git::is_git_repo().unwrap_or(false) {
@@ -102,6 +126,7 @@ fn run() -> i32 {
         Command::Delete { args } => delete::run(&args),
         Command::Diff { args } => diff::run(&args),
         Command::Tag { args } => tag::run(&args),
+        Command::Completion { shell } => Ok(completion::run(shell)),
         Command::Help => {
             messages::print_help();
             Ok(0)
@@ -128,7 +153,7 @@ fn is_version(arg: &str) -> bool {
 fn is_known_command(arg: &str) -> bool {
     matches!(
         arg,
-        "lock" | "unlock" | "list" | "copy" | "delete" | "diff" | "tag" | "help"
+        "lock" | "unlock" | "list" | "copy" | "delete" | "diff" | "tag" | "completion" | "help"
     )
 }
 
@@ -160,6 +185,7 @@ mod tests {
         assert!(is_known_command("delete"));
         assert!(is_known_command("diff"));
         assert!(is_known_command("tag"));
+        assert!(is_known_command("completion"));
         assert!(is_known_command("help"));
         assert!(!is_known_command("nope"));
     }
