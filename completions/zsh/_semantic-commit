@@ -1,75 +1,60 @@
 #compdef semantic-commit
 
+_nils_cli_semantic_commit_source_common_zsh() {
+  (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+
+  local source_file="${functions_source[_semantic-commit]-}"
+  local helper_path=''
+
+  if [[ -n "$source_file" && -r "$source_file" ]]; then
+    helper_path="${source_file:h}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
+  fi
+
+  local dir=''
+  for dir in "${fpath[@]}"; do
+    helper_path="${dir}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
+  done
+
+  return 1
+}
+
+typeset -gi _NILS_SEMANTIC_COMMIT_ZSH_GENERATED_STATE=0
+
+_nils_cli_semantic_commit_load_generated_zsh() {
+  _nils_cli_semantic_commit_source_common_zsh || return 1
+
+  _nils_cli_completion_common_load_generated_zsh \
+    "_NILS_SEMANTIC_COMMIT_ZSH_GENERATED_STATE" \
+    "_nils_cli_semantic_commit_generated" \
+    "semantic-commit" \
+    "_semantic-commit" \
+    '^if \[ "\$funcstack\[1\]" = "_nils_cli_semantic_commit_generated" \]; then$' \
+    '^fi$'
+}
+
 _semantic-commit() {
   emulate -L zsh -o extendedglob
 
-  local context='' state='' state_descr=''
-  local -a line=()
-  typeset -A opt_args=()
+  if ! _nils_cli_semantic_commit_load_generated_zsh; then
+    if (( $+functions[_nils_cli_completion_common_fail_closed_no_legacy_zsh] )); then
+      _nils_cli_completion_common_fail_closed_no_legacy_zsh
+    fi
+    return 1
+  fi
 
-  local -i orig_current="$CURRENT"
-  local -a orig_words=("${words[@]}")
-
-  local -a subcommands=()
-  subcommands=(
-    'staged-context:Print staged change context for commit message generation'
-    'commit:Commit staged changes with a prepared commit message'
-    'help:Display help message for semantic-commit'
-  )
-
-  _arguments -C \
-    '(-h --help)'{-h,--help}'[Show help message]' \
-    '(-V --version)'{-V,--version}'[Show version]' \
-    '1:command:->subcmds' \
-    '*::arg:->args'
-
-  case "${state-}" in
-    subcmds)
-      _describe -t commands 'semantic-commit command' subcommands && return 0
-      ;;
-    args)
-      local subcmd="${line[1]:-${orig_words[2]-}}"
-      subcmd="${subcmd%%[[:space:]]#}"
-
-      case "$subcmd" in
-        -V|--version)
-          _message 'no additional arguments'
-          return 0
-          ;;
-        staged-context)
-          _arguments -C \
-            '(-h --help)'{-h,--help}'[Show help message]' \
-            '--format=[Output format]:format:(bundle json patch)' \
-            '--json[Equivalent to --format json]' \
-            '--repo=[Path to git repository]:repository:_files -/' \
-            && return 0
-          ;;
-        commit)
-          _arguments -C \
-            '(-h --help)'{-h,--help}'[Show help message]' \
-            '-m+[Commit message text]:message:' \
-            '--message=[Commit message text]:message:' \
-            '-F+[Path to commit message file]:file:_files' \
-            '--message-file=[Path to commit message file]:file:_files' \
-            '--message-out=[Write prepared message to path]:file:_files' \
-            '--summary=[Summary output mode]:mode:(git-scope git-show none)' \
-            '--no-summary[Do not print summary after commit]' \
-            '--repo=[Path to git repository]:repository:_files -/' \
-            '--automation[Disable stdin fallback and require --message/--message-file]' \
-            '--non-interactive[Alias of --automation]' \
-            '--validate-only[Validate message format and exit]' \
-            '--dry-run[Validate and staged-check without creating a commit]' \
-            '--no-progress[Disable progress spinner]' \
-            '--quiet[Suppress progress and summary output]' \
-            && return 0
-          ;;
-        help)
-          _message 'no additional arguments'
-          return 0
-          ;;
-      esac
-      ;;
-  esac
+  _nils_cli_semantic_commit_generated
 }
 
-compdef _semantic-commit semantic-commit
+if _nils_cli_semantic_commit_source_common_zsh; then
+  _nils_cli_completion_common_register_zsh _semantic-commit semantic-commit
+else
+  compdef _semantic-commit semantic-commit
+fi

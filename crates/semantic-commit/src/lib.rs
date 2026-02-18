@@ -1,4 +1,5 @@
 mod commit;
+mod completion;
 mod git;
 mod staged_context;
 mod usage;
