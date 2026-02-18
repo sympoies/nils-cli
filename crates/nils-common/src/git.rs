@@ -159,6 +159,14 @@ pub fn repo_root_in(cwd: &Path) -> io::Result<Option<PathBuf>> {
     Ok(trimmed_stdout_if_success(&output).map(PathBuf::from))
 }
 
+pub fn repo_root_or_cwd() -> PathBuf {
+    repo_root()
+        .ok()
+        .flatten()
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
 pub fn rev_parse(args: &[&str]) -> io::Result<Option<String>> {
     let output = run_output(&rev_parse_args(args))?;
     Ok(trimmed_stdout_if_success(&output))
@@ -334,6 +342,35 @@ mod tests {
         assert_eq!(require_work_tree(), Ok(()));
         assert_eq!(repo_root().expect("repo_root"), Some(root.into()));
         assert_eq!(rev_parse(&["HEAD"]).expect("rev_parse"), Some(head));
+    }
+
+    #[test]
+    fn repo_root_or_cwd_prefers_repo_root_when_available() {
+        let lock = GlobalStateLock::new();
+        let repo = init_repo_with(InitRepoOptions::new().with_initial_commit());
+        let _cwd = CwdGuard::set(&lock, repo.path()).expect("set cwd");
+        let expected_root = run_git(repo.path(), &["rev-parse", "--show-toplevel"])
+            .trim()
+            .to_string();
+
+        assert_eq!(repo_root_or_cwd(), PathBuf::from(expected_root));
+    }
+
+    #[test]
+    fn repo_root_or_cwd_falls_back_to_current_dir_outside_repo() {
+        let lock = GlobalStateLock::new();
+        let outside = TempDir::new().expect("tempdir");
+        let _cwd = CwdGuard::set(&lock, outside.path()).expect("set cwd");
+
+        let resolved = repo_root_or_cwd()
+            .canonicalize()
+            .expect("canonicalize resolved path");
+        let expected = outside
+            .path()
+            .canonicalize()
+            .expect("canonicalize expected path");
+
+        assert_eq!(resolved, expected);
     }
 
     #[test]
