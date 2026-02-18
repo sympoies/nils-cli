@@ -2,8 +2,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{Context, Result};
-use directories::BaseDirs;
+use anyhow::{Context, Result, bail};
 
 use crate::paths::normalize_root_path;
 
@@ -24,7 +23,7 @@ pub struct ResolvedRoots {
 
 pub fn resolve_roots(overrides: &PathOverrides) -> Result<ResolvedRoots> {
     let cwd = env::current_dir().context("failed to read current directory")?;
-    let agent_home = resolve_agents_home(overrides.agent_home.as_deref(), &cwd);
+    let agent_home = resolve_agent_home(overrides.agent_home.as_deref(), &cwd)?;
     let project_path = resolve_project_path(overrides.project_path.as_deref(), &cwd);
     let metadata = resolve_linked_worktree_metadata(&project_path);
 
@@ -37,21 +36,16 @@ pub fn resolve_roots(overrides: &PathOverrides) -> Result<ResolvedRoots> {
     })
 }
 
-fn resolve_agents_home(cli_value: Option<&Path>, cwd: &Path) -> PathBuf {
+fn resolve_agent_home(cli_value: Option<&Path>, cwd: &Path) -> Result<PathBuf> {
     if let Some(path) = cli_value {
-        return normalize_root_path(path, cwd);
+        return Ok(normalize_root_path(path, cwd));
     }
 
     if let Some(path) = read_env_path("AGENT_HOME") {
-        return normalize_root_path(&path, cwd);
+        return Ok(normalize_root_path(&path, cwd));
     }
 
-    if let Some(base_dirs) = BaseDirs::new() {
-        let default = base_dirs.home_dir().join(".agents");
-        return normalize_root_path(&default, cwd);
-    }
-
-    normalize_root_path(&cwd.join(".agents"), cwd)
+    bail!("AGENT_HOME is required; set AGENT_HOME or pass --agent-home")
 }
 
 fn resolve_project_path(cli_value: Option<&Path>, cwd: &Path) -> PathBuf {

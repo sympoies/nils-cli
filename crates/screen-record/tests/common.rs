@@ -8,18 +8,18 @@ use tempfile::TempDir;
 
 pub struct ScreenRecordHarness {
     home_dir: TempDir,
-    agents_home: PathBuf,
+    agent_home: PathBuf,
 }
 
 impl ScreenRecordHarness {
     pub fn new() -> Self {
         let home_dir = TempDir::new().expect("tempdir");
-        let agents_home = home_dir.path().join(".agents");
-        std::fs::create_dir_all(agents_home.join("out")).expect("create AGENTS_HOME/out");
+        let agent_home = home_dir.path().join(".agents");
+        std::fs::create_dir_all(agent_home.join("out")).expect("create AGENT_HOME/out");
 
         Self {
             home_dir,
-            agents_home,
+            agent_home,
         }
     }
 
@@ -29,11 +29,11 @@ impl ScreenRecordHarness {
 
     pub fn cmd_options(&self, cwd: &Path) -> CmdOptions {
         let home = self.home_dir.path().to_string_lossy().to_string();
-        let agents_home = self.agents_home.to_string_lossy().to_string();
+        let agent_home = self.agent_home.to_string_lossy().to_string();
         CmdOptions::new()
             .with_cwd(cwd)
             .with_env("HOME", &home)
-            .with_env("AGENTS_HOME", &agents_home)
+            .with_env("AGENT_HOME", &agent_home)
             .with_env("AGENTS_SCREEN_RECORD_TEST_MODE", "1")
             .with_env("AGENTS_SCREEN_RECORD_TEST_TIMESTAMP", "20260101-000000")
     }

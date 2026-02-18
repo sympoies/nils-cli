@@ -195,9 +195,9 @@ fn debug_bundle_artifact_layout_is_deterministic_under_output_dir() {
     }
 
     let agent_home = repo.path().join("agent-home");
-    std::fs::create_dir_all(&agent_home).expect("create agents home");
-    let agents_home_str = agent_home.to_string_lossy().to_string();
-    let _agents_home = EnvGuard::set(&lock, "AGENT_HOME", &agents_home_str);
+    std::fs::create_dir_all(&agent_home).expect("create agent home");
+    let agent_home_str = agent_home.to_string_lossy().to_string();
+    let _agent_home = EnvGuard::set(&lock, "AGENT_HOME", &agent_home_str);
 
     assert_eq!(
         debug::bundle::resolve_output_dir(None),
