@@ -1,10 +1,11 @@
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use nils_common::env as shared_env;
 use std::process;
 
 mod change;
 mod commit;
+mod completion;
 mod git;
 mod git_cmd;
 mod print;
@@ -80,6 +81,18 @@ enum Command {
     },
     /// Display help message for git-scope
     Help,
+    /// Export shell completion script
+    Completion {
+        /// Shell to generate completion script for
+        #[arg(value_enum, value_name = "shell")]
+        shell: CompletionShell,
+    },
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+enum CompletionShell {
+    Bash,
+    Zsh,
 }
 
 fn print_help() {
@@ -97,6 +110,10 @@ fn print_help() {
     println!(
         "  {:<16}  Show commit details (use -p to print content)",
         "commit <id>"
+    );
+    println!(
+        "  {:<16}  Export shell completion script",
+        "completion <shell>"
     );
     println!();
     println!("Options:");
@@ -121,10 +138,21 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
 
-    let help_requested = cli.help || matches!(cli.command, Some(Command::Help));
-    if help_requested {
+    if cli.help {
         print_help();
         return Ok(());
+    }
+
+    let command = cli.command.unwrap_or(Command::Help);
+    match command {
+        Command::Help => {
+            print_help();
+            return Ok(());
+        }
+        Command::Completion { shell } => {
+            process::exit(completion::run(shell));
+        }
+        _ => {}
     }
 
     if !git::is_git_repo() {
@@ -135,7 +163,7 @@ fn run() -> Result<()> {
     let no_color = cli.no_color || shared_env::no_color_enabled();
     let progress_opt_in = git_scope_progress_opt_in();
 
-    match cli.command.unwrap_or(Command::Help) {
+    match command {
         Command::Tracked { print, prefixes } => {
             let lines = git::collect_tracked(&prefixes)?;
             render::render_with_type(
@@ -197,9 +225,7 @@ fn run() -> Result<()> {
             commit::render_commit(&commit, parent.as_deref(), no_color, print, progress_opt_in)
                 .with_context(|| format!("git-scope commit {commit}"))?;
         }
-        Command::Help => {
-            print_help();
-        }
+        Command::Help | Command::Completion { .. } => unreachable!(),
     }
 
     Ok(())
