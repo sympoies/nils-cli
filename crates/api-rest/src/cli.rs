@@ -22,6 +22,15 @@ pub(crate) enum Command {
     Report(ReportArgs),
     /// Generate a Markdown API test report from a saved `call` command snippet
     ReportFromCmd(ReportFromCmdArgs),
+    /// Print shell completion script
+    Completion(CompletionArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct CompletionArgs {
+    /// Shell to generate completion for
+    #[arg(value_enum)]
+    pub(crate) shell: crate::completion::CompletionShell,
 }
 
 #[derive(Args)]
