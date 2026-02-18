@@ -1,63 +1,60 @@
 #compdef git-summary
 
+_nils_cli_git_summary_source_common_zsh() {
+  (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+
+  local source_file="${functions_source[_git-summary]-}"
+  local helper_path=''
+
+  if [[ -n "$source_file" && -r "$source_file" ]]; then
+    helper_path="${source_file:h}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
+  fi
+
+  local dir=''
+  for dir in "${fpath[@]}"; do
+    helper_path="${dir}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
+  done
+
+  return 1
+}
+
+typeset -gi _NILS_GIT_SUMMARY_ZSH_GENERATED_STATE=0
+
+_nils_cli_git_summary_load_generated_zsh() {
+  _nils_cli_git_summary_source_common_zsh || return 1
+
+  _nils_cli_completion_common_load_generated_zsh \
+    "_NILS_GIT_SUMMARY_ZSH_GENERATED_STATE" \
+    "_nils_cli_git_summary_generated" \
+    "git-summary" \
+    "_git-summary" \
+    '^if \[ "\$funcstack\[1\]" = "_nils_cli_git_summary_generated" \]; then$' \
+    '^fi$'
+}
+
 _git-summary() {
   emulate -L zsh -o extendedglob
 
-  local context='' state='' state_descr=''
-  local -a line=()
-  typeset -A opt_args=()
+  if ! _nils_cli_git_summary_load_generated_zsh; then
+    if (( $+functions[_nils_cli_completion_common_fail_closed_no_legacy_zsh] )); then
+      _nils_cli_completion_common_fail_closed_no_legacy_zsh
+    fi
+    return 1
+  fi
 
-  local -i orig_current="$CURRENT"
-  local -a orig_words=("${words[@]}")
-
-  local -a subcommands=()
-  subcommands=(
-    'today:Show today git summary'
-    'yesterday:Show yesterday git summary'
-    'this-month:Show this month summary'
-    'last-month:Show summary for last month'
-    'this-week:Show summary for this week (Mon–Sun)'
-    'last-week:Show summary for last week (Mon–Sun)'
-    'all:Show summary for entire git history'
-    'help:Display help message for git-summary'
-  )
-
-  _arguments -C \
-    '(-h --help)'{-h,--help}'[Display help message for git-summary]' \
-    '(-V --version)'{-V,--version}'[Display version for git-summary]' \
-    '1:command:->subcmds' \
-    '*::arg:->args'
-
-  case "${state-}" in
-    subcmds)
-      _describe -t commands 'git-summary command' subcommands && return 0
-      ;;
-    args)
-      local subcmd="${line[1]:-${orig_words[2]-}}"
-      subcmd="${subcmd%%[[:space:]]#}"
-
-      case "$subcmd" in
-        -h|--help|-V|--version)
-          _message 'no additional arguments'
-          return 0
-          ;;
-        today|yesterday|this-month|last-month|this-week|last-week|all|help)
-          _message 'no additional arguments'
-          return 0
-          ;;
-        *)
-          if (( orig_current == 2 )); then
-            _message 'start date (YYYY-MM-DD)'
-          elif (( orig_current == 3 )); then
-            _message 'end date (YYYY-MM-DD)'
-          else
-            _message 'git-summary <start> <end>'
-          fi
-          return 0
-          ;;
-      esac
-      ;;
-  esac
+  _nils_cli_git_summary_generated
 }
 
-compdef _git-summary git-summary
+if _nils_cli_git_summary_source_common_zsh; then
+  _nils_cli_completion_common_register_zsh _git-summary git-summary
+else
+  compdef _git-summary git-summary
+fi
