@@ -8,7 +8,7 @@ This plan establishes a workspace-wide completion development standard, register
 - In scope: Implement `codex-cli` clap-first completion export flow and migrate its zsh/bash completion adapters.
 - In scope: Complete the same completion architecture for all remaining user-facing CLIs that require shipped completions.
 - In scope: Add missing `image-processing` completion assets and tests if classified as completion-required.
-- In scope: Expand completion validation, rollout runbooks, and rollback controls.
+- In scope: Expand completion validation, rollout runbooks, and no-legacy enforcement controls.
 - Out of scope: Fish/PowerShell completion support.
 - Out of scope: Behavioral changes to command execution semantics, output schemas, or exit-code contracts.
 - Out of scope: Migrating `cli-template` into a user-facing release contract.
@@ -16,7 +16,7 @@ This plan establishes a workspace-wide completion development standard, register
 ## Assumptions (if any)
 1. Completion-required binaries are all workspace binaries except explicitly internal/example binaries (initially `cli-template`).
 2. Each completion-required CLI can expose a user-facing completion export command (for example `completion <shell>`).
-3. Per-CLI legacy fallback gates (for emergency rollback) are acceptable during staged migration.
+3. Completion adapters remain thin and completion behavior is clap-generated (no legacy completion-mode switch).
 4. Completion files remain distributed under `completions/zsh/` and `completions/bash/`, with aliases synchronized in both shells.
 
 ## Sprint 1: Governance and Coverage Baseline
@@ -49,15 +49,15 @@ This plan establishes a workspace-wide completion development standard, register
 - **Location**:
   - `docs/runbooks/cli-completion-development-standard.md` (new)
   - `docs/runbooks/new-cli-crate-development-standard.md`
-- **Description**: Define canonical completion architecture and rules: clap-first completion contract, shell adapter responsibilities, alias sync policy, fallback controls, context-aware candidate requirements, test gates, and release expectations.
+- **Description**: Define canonical completion architecture and rules: clap-first completion contract, shell adapter responsibilities, alias sync policy, no-legacy enforcement controls, context-aware candidate requirements, test gates, and release expectations.
 - **Dependencies**:
   - Task 1.1
 - **Complexity**: 6
 - **Acceptance criteria**:
-  - Runbook includes required sections: architecture, contract boundaries, fallback policy, testing requirements, and rollout checklist.
+  - Runbook includes required sections: architecture, contract boundaries, no-legacy policy, testing requirements, and rollout checklist.
   - New-CLI runbook references the completion standard as required guidance for future crates.
 - **Validation**:
-  - `rg -n "clap|clap_complete|adapter|fallback|aliases|context|testing|rollback" docs/runbooks/cli-completion-development-standard.md`
+  - `rg -n "clap|clap_complete|adapter|no-legacy|aliases|context|testing" docs/runbooks/cli-completion-development-standard.md`
   - `rg -n "cli-completion-development-standard" docs/runbooks/new-cli-crate-development-standard.md`
 
 ### Task 1.3: Register completion standard in project agent-docs policy
@@ -95,7 +95,7 @@ This plan establishes a workspace-wide completion development standard, register
 **Demo/Validation**:
 - Command(s): `cargo test -p nils-codex-cli`
 - Command(s): `zsh -f tests/zsh/completion.test.zsh`
-- Verify: `codex-cli` completion is clap-first, context-aware (not global candidate dumps), aliases preserve behavior, and fallback mode is testable.
+- Verify: `codex-cli` completion is clap-first, context-aware (not global candidate dumps), aliases preserve behavior, and no legacy-mode gate remains.
 
 ### Task 2.1: Add `completion <shell>` export path for codex-cli
 - **Location**:
@@ -133,33 +133,33 @@ This plan establishes a workspace-wide completion development standard, register
   - `cargo test -p nils-codex-cli completion_contract`
   - `cargo run -p nils-codex-cli --bin codex-cli -- completion zsh | rg -q -- "--format"`
 
-### Task 2.3: Convert codex-cli zsh/bash files to thin adapters with rollback gate
+### Task 2.3: Convert codex-cli zsh/bash files to thin adapters (no legacy gate)
 - **Location**:
   - `completions/zsh/_codex-cli`
   - `completions/bash/codex-cli`
   - `completions/zsh/aliases.zsh`
   - `completions/bash/aliases.bash`
-- **Description**: Replace hardcoded completion matrices with clap-generated assets, preserve alias injection semantics (`cx*`, `cxdra`), and keep `CODEX_CLI_COMPLETION_MODE=legacy` rollback path available.
+- **Description**: Replace hardcoded completion matrices with clap-generated assets, preserve alias injection semantics (`cx*`, `cxdra`), and remove `CODEX_CLI_COMPLETION_MODE=legacy` rollback path.
 - **Dependencies**:
   - Task 2.2
 - **Complexity**: 8
 - **Acceptance criteria**:
   - Shell completions are generated from `codex-cli completion zsh|bash`, not manually curated flag lists.
   - Alias/wrapper invocation behavior remains compatible with current `cx*` UX.
-  - Legacy mode bypass is available and documented.
+  - No `CODEX_CLI_COMPLETION_MODE` gate or legacy completion function remains in codex adapters.
   - Shell files keep only adapter-specific logic and alias wiring.
 - **Validation**:
   - `zsh -n completions/zsh/_codex-cli`
   - `bash -n completions/bash/codex-cli`
   - `zsh -f tests/zsh/completion.test.zsh`
-  - `bash -lc 'CODEX_CLI_COMPLETION_MODE=legacy source completions/bash/codex-cli; complete -p codex-cli >/dev/null'`
+  - `rg -n "CODEX_CLI_COMPLETION_MODE|_nils_cli_codex_cli_complete_legacy" completions/zsh/_codex-cli completions/bash/codex-cli`
 
 ### Task 2.4: Add pilot-specific completion regression tests
 - **Location**:
   - `tests/zsh/completion.test.zsh`
   - `crates/codex-cli/tests/main_entrypoint.rs`
   - `crates/codex-cli/tests/completion_smoke.rs` (new)
-- **Description**: Add regression checks for export-command stability, adapter wiring, alias mapping, fallback mode, and context-aware candidate filtering.
+- **Description**: Add regression checks for export-command stability, adapter wiring, alias mapping, no-legacy enforcement, and context-aware candidate filtering.
 - **Dependencies**:
   - Task 2.3
 - **Complexity**: 6
@@ -182,7 +182,7 @@ This plan establishes a workspace-wide completion development standard, register
   - `completions/zsh/_completion-adapter-common.zsh` (new)
   - `completions/bash/completion-adapter-common.bash` (new)
   - `docs/runbooks/cli-completion-development-standard.md`
-- **Description**: Create shared helper functions for loading clap-generated completion assets, handling shell quoting/registration, applying fallback mode, and reducing per-file duplication across CLI completion adapters.
+- **Description**: Create shared helper functions for loading clap-generated completion assets, handling shell quoting/registration, enforcing no-legacy adapter behavior, and reducing per-file duplication across CLI completion adapters.
 - **Dependencies**:
   - Task 2.4
 - **Complexity**: 7
@@ -197,7 +197,7 @@ This plan establishes a workspace-wide completion development standard, register
 - **Location**:
   - `docs/runbooks/cli-completion-development-standard.md`
   - `docs/specs/completion-contract-template.md` (new)
-- **Description**: Define a repeatable per-CLI contract template (command graph, value providers, alias map, fallback env var, tests) to keep all migrations consistent.
+- **Description**: Define a repeatable per-CLI contract template (command graph, value providers, alias map, no-legacy invariants, tests) to keep all migrations consistent.
 - **Dependencies**:
   - Task 1.2
   - Task 3.1
@@ -206,7 +206,7 @@ This plan establishes a workspace-wide completion development standard, register
   - Template includes required fields for implementation and test coverage.
   - Migration checklist is actionable without undocumented steps.
 - **Validation**:
-  - `rg -n "alias map|fallback|validation|acceptance" docs/specs/completion-contract-template.md docs/runbooks/cli-completion-development-standard.md`
+  - `rg -n "alias map|no-legacy|validation|acceptance" docs/specs/completion-contract-template.md docs/runbooks/cli-completion-development-standard.md`
 
 ### Task 3.3: Expand completion test harness to be coverage-driven
 - **Location**:
@@ -225,21 +225,21 @@ This plan establishes a workspace-wide completion development standard, register
   - `zsh -f tests/zsh/completion.test.zsh`
   - `bash tests/completion/coverage_matrix.sh`
 
-### Task 3.4: Standardize and test per-CLI rollback toggle contract
+### Task 3.4: Standardize and test no-legacy completion enforcement contract
 - **Location**:
   - `docs/reports/completion-coverage-matrix.md`
   - `docs/runbooks/cli-completion-development-standard.md`
   - `tests/completion/coverage_matrix.sh`
-- **Description**: Define per-CLI fallback env var naming and require each completion-required CLI to declare its rollback toggle and legacy behavior test expectation in the matrix.
+- **Description**: Define no-legacy completion enforcement metadata and require each completion-required CLI migration to declare how adapters stay clap-first without completion mode toggles.
 - **Dependencies**:
   - Task 1.1
   - Task 3.2
 - **Complexity**: 4
 - **Acceptance criteria**:
-  - Every completion-required CLI has an explicit fallback env var entry in the matrix.
-  - Matrix-driven checks fail if fallback metadata is missing.
+  - Every completion-required CLI has explicit no-legacy completion enforcement metadata in the matrix/template.
+  - Matrix-driven checks fail if no-legacy metadata is missing.
 - **Validation**:
-  - `rg -n "COMPLETION_MODE|fallback|legacy" docs/reports/completion-coverage-matrix.md`
+  - `rg -n "no-legacy|COMPLETION_MODE|legacy completion mode" docs/reports/completion-coverage-matrix.md docs/specs/completion-contract-template.md`
   - `bash tests/completion/coverage_matrix.sh`
 
 ## Sprint 4: Full Migration for Remaining Completion-Required CLIs
@@ -553,18 +553,18 @@ This plan establishes a workspace-wide completion development standard, register
   - `rg -n "image-processing" docs/reports/completion-coverage-matrix.md tests/completion/coverage_matrix.sh`
 
 ## Sprint 5: Hardening, CI Gates, and Release Readiness
-**Goal**: Lock in migration with reproducible checks, contributor guidance, and operational rollback readiness.
+**Goal**: Lock in migration with reproducible checks, contributor guidance, and no-legacy completion governance.
 **Demo/Validation**:
 - Command(s): `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - Command(s): `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 85`
-- Verify: required checks, completion coverage, and rollback controls are release-ready.
+- Verify: required checks, completion coverage, and no-legacy controls are release-ready.
 
 ### Task 5.1: Update release/integration runbooks for new completion architecture
 - **Location**:
   - `DEVELOPMENT.md`
   - `docs/runbooks/INTEGRATION_TEST.md`
   - `README.md`
-- **Description**: Document completion verification commands, per-CLI fallback env toggles, and release packaging expectations for completion assets.
+- **Description**: Document completion verification commands, no-legacy completion policy, and release packaging expectations for completion assets.
 - **Dependencies**:
   - Task 4.1
   - Task 4.2
@@ -572,10 +572,10 @@ This plan establishes a workspace-wide completion development standard, register
   - Task 4.4
 - **Complexity**: 5
 - **Acceptance criteria**:
-  - Contributor docs include explicit completion verification and rollback instructions.
+  - Contributor docs include explicit completion verification and no-legacy instructions.
   - Release documentation reflects final completion asset layout.
 - **Validation**:
-  - `rg -n "completion|clap_complete|fallback|legacy" DEVELOPMENT.md docs/runbooks/INTEGRATION_TEST.md README.md`
+  - `rg -n "completion|clap_complete|no-legacy|legacy completion mode" DEVELOPMENT.md docs/runbooks/INTEGRATION_TEST.md README.md`
 
 ### Task 5.2: Execute required checks and workspace coverage gate
 - **Location**:
@@ -637,13 +637,13 @@ This plan establishes a workspace-wide completion development standard, register
 ## Testing Strategy
 - Unit:
   - Per-crate completion contract tests (clap command model, exported script smoke, candidate/value routing).
-  - Alias injection and fallback-mode tests where alias semantics are non-trivial.
+  - Alias injection and no-legacy enforcement tests where alias semantics are non-trivial.
 - Integration:
   - `tests/zsh/completion.test.zsh` matrix-driven completion asset and registration checks.
   - Crate integration tests for completion export-command stability and context-aware candidate behavior.
 - E2E/manual:
   - Spot-check tab completion for nested commands and value flags across representative CLI families.
-  - Rollback drill: enable per-CLI legacy mode env var and verify adapter fallback behavior.
+  - No-legacy drill: verify adapters contain no completion-mode switches and generated path remains context-aware.
 
 ## Risks & gotchas
 - Per-CLI migration scope is large; drift between matrix policy and implemented adapters can regress silently without strict audit.
@@ -652,9 +652,8 @@ This plan establishes a workspace-wide completion development standard, register
 - Completion latency may regress if optional runtime value providers do expensive checks on every tab press.
 - Alias-heavy CLIs (`git-cli`, `codex-cli`, `fzf-cli`) are prone to behavioral regressions if injection semantics diverge from current contracts.
 
-## Rollback plan
-- Keep per-CLI legacy completion mode toggles during rollout (for example `CODEX_CLI_COMPLETION_MODE=legacy`) and enforce toggle inventory in `docs/reports/completion-coverage-matrix.md`.
-- If a migrated CLI regresses, switch that CLI to legacy adapter mode and ship a focused hotfix while retaining clap-based completion generation internals for debugging.
+## Regression response plan
+- Do not reintroduce legacy completion mode toggles (`*_COMPLETION_MODE`) during rollout.
+- If a migrated CLI regresses, patch clap metadata and/or thin adapter wiring directly, then ship a focused hotfix.
 - If a family-wide regression appears, revert only the affected completion family files plus related crate completion module changes, then rerun required checks.
-- Require fallback-mode regression tests for each migrated CLI so rollback controls are continuously validated.
-- Preserve `docs/reports/completion-coverage-matrix.md` as rollback source-of-truth so temporary exclusions are explicit and auditable.
+- Keep matrix/test metadata as the enforcement source-of-truth so no-legacy invariants remain auditable.

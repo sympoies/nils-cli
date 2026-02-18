@@ -1,4 +1,5 @@
 mod cli;
+mod completion;
 
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
@@ -43,6 +44,7 @@ fn run() -> i32 {
             cli::Command::Diag(args) => handle_diag(&args),
             cli::Command::Config(args) => handle_config(&args),
             cli::Command::Starship(args) => handle_starship(&args),
+            cli::Command::Completion(args) => handle_completion(&args),
         },
         None => {
             let mut cmd = cli::Cli::command();
@@ -165,6 +167,10 @@ fn handle_starship(args: &cli::StarshipArgs) -> i32 {
         is_enabled: args.is_enabled,
     };
     codex_cli::starship::run(&options)
+}
+
+fn handle_completion(args: &cli::CompletionArgs) -> i32 {
+    completion::run(args.shell)
 }
 
 fn print_subcommand_help(name: &str) -> i32 {

@@ -16,13 +16,53 @@ _nils_cli__has_word() {
   return 1
 }
 
+_NILS_CODEX_CLI_BASH_GENERATED_STATE=0
+
+_nils_cli_codex_cli_load_generated_bash() {
+  if [[ "${_NILS_CODEX_CLI_BASH_GENERATED_STATE}" == "1" ]]; then
+    declare -F _nils_cli_codex_cli_generated >/dev/null 2>&1 && return 0
+    _NILS_CODEX_CLI_BASH_GENERATED_STATE=0
+  elif [[ "${_NILS_CODEX_CLI_BASH_GENERATED_STATE}" == "-1" ]]; then
+    return 1
+  fi
+
+  local script=''
+  script="$(command codex-cli completion bash 2>/dev/null)" || {
+    _NILS_CODEX_CLI_BASH_GENERATED_STATE=-1
+    return 1
+  }
+
+  script="${script//_codex-cli/_nils_cli_codex_cli_generated}"
+  script="$(printf '%s\n' "$script" | sed '/^if \[\[ "\${BASH_VERSINFO\[0\]}" -eq 4 /,/^fi$/d')" || {
+    _NILS_CODEX_CLI_BASH_GENERATED_STATE=-1
+    return 1
+  }
+
+  eval "$script" || {
+    _NILS_CODEX_CLI_BASH_GENERATED_STATE=-1
+    return 1
+  }
+
+  declare -F _nils_cli_codex_cli_generated >/dev/null 2>&1 || {
+    _NILS_CODEX_CLI_BASH_GENERATED_STATE=-1
+    return 1
+  }
+
+  _NILS_CODEX_CLI_BASH_GENERATED_STATE=1
+  return 0
+}
+
 _nils_cli_codex_cli_complete() {
+  if ! _nils_cli_codex_cli_load_generated_bash; then
+    COMPREPLY=()
+    return 0
+  fi
+
   local invoked_as="${COMP_WORDS[0]}"
   local -a words=("${COMP_WORDS[@]}")
   local cword="$COMP_CWORD"
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local prev="${COMP_WORDS[COMP_CWORD-1]}"
-
   local -a inject=()
   local implied_async=''
 
@@ -43,240 +83,32 @@ _nils_cli_codex_cli_complete() {
     cxct) inject=(config set) ;;
   esac
 
-  if [[ -n "$implied_async" ]] && ! _nils_cli__has_word --async "${words[@]}"; then
-    inject+=(--async)
-  fi
-
-  if (( ${#inject[@]} > 0 )); then
+  if [[ "$invoked_as" != "codex-cli" ]]; then
     words=( "codex-cli" "${inject[@]}" "${words[@]:1}" )
     cword=$((cword + ${#inject[@]}))
     cur="${words[cword]}"
     prev="${words[cword-1]}"
-  else
-    words[0]="codex-cli"
   fi
 
-  local -a root_cmds=(agent auth diag config starship help)
-  # Compatibility shim: provider-neutral groups move to agentctl.
-  local -a migrated_cmds=(provider debug workflow automation)
-  local -a root_opts=(-h --help -V --version)
-
-  if (( cword == 1 )); then
-    if [[ "$cur" == -* ]]; then
-      COMPREPLY=( $(compgen -W "${root_opts[*]}" -- "$cur") )
-      return 0
-    fi
-    COMPREPLY=( $(compgen -W "${root_cmds[*]} ${migrated_cmds[*]}" -- "$cur") )
-    return 0
+  if [[ -n "$implied_async" ]] && ! _nils_cli__has_word --async "${words[@]}"; then
+    local -a with_async=( "${words[@]:0:$cword}" "--async" "${words[@]:$cword}" )
+    words=( "${with_async[@]}" )
+    cword=$((cword + 1))
+    cur="${words[cword]}"
+    prev="${words[cword-1]}"
   fi
 
-  local cmd="${words[1]-}"
+  local -a saved_words=("${COMP_WORDS[@]}")
+  local saved_cword="$COMP_CWORD"
 
-  case "$cmd" in
-    agent)
-      local -a agent_cmds=(prompt advice knowledge commit)
-      if (( cword == 2 )); then
-        if [[ "$cur" == -* ]]; then
-          COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
-          return 0
-        fi
-        COMPREPLY=( $(compgen -W "${agent_cmds[*]}" -- "$cur") )
-        return 0
-      fi
-      local agent_cmd="${words[2]-}"
-      case "$agent_cmd" in
-        commit)
-          if [[ "$cur" == -* ]]; then
-            COMPREPLY=( $(compgen -W "-h --help -p --push -a --auto-stage" -- "$cur") )
-            return 0
-          fi
-          COMPREPLY=()
-          return 0
-          ;;
-        prompt|advice|knowledge)
-          COMPREPLY=()
-          return 0
-          ;;
-      esac
-      ;;
-    auth)
-      local -a auth_cmds=(login use save refresh auto-refresh current sync)
-      if (( cword == 2 )); then
-        if [[ "$cur" == -* ]]; then
-          COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
-          return 0
-        fi
-        COMPREPLY=( $(compgen -W "${auth_cmds[*]}" -- "$cur") )
-        return 0
-      fi
-      local auth_cmd="${words[2]-}"
-      case "$auth_cmd" in
-        login)
-          if [[ "$prev" == "--format" ]]; then
-            COMPREPLY=( $(compgen -W "text json" -- "$cur") )
-            return 0
-          fi
-          if [[ "$cur" == -* ]]; then
-            COMPREPLY=( $(compgen -W "-h --help --format --json --api-key --device-code" -- "$cur") )
-            return 0
-          fi
-          COMPREPLY=()
-          return 0
-          ;;
-        refresh)
-          if [[ "$prev" == "--format" ]]; then
-            COMPREPLY=( $(compgen -W "text json" -- "$cur") )
-            return 0
-          fi
-          if [[ "$cur" == -* ]]; then
-            COMPREPLY=( $(compgen -W "-h --help --format --json" -- "$cur") )
-            return 0
-          fi
-          COMPREPLY=( $(compgen -f -- "$cur") )
-          return 0
-          ;;
-        save)
-          if [[ "$prev" == "--format" ]]; then
-            COMPREPLY=( $(compgen -W "text json" -- "$cur") )
-            return 0
-          fi
-          if [[ "$cur" == -* ]]; then
-            COMPREPLY=( $(compgen -W "-h --help --format --json -y --yes" -- "$cur") )
-            return 0
-          fi
-          COMPREPLY=( $(compgen -f -- "$cur") )
-          return 0
-          ;;
-        use)
-          if [[ "$prev" == "--format" ]]; then
-            COMPREPLY=( $(compgen -W "text json" -- "$cur") )
-            return 0
-          fi
-          if [[ "$cur" == -* ]]; then
-            COMPREPLY=( $(compgen -W "-h --help --format --json" -- "$cur") )
-            return 0
-          fi
-          COMPREPLY=()
-          return 0
-          ;;
-        auto-refresh|current|sync)
-          if [[ "$prev" == "--format" ]]; then
-            COMPREPLY=( $(compgen -W "text json" -- "$cur") )
-            return 0
-          fi
-          if [[ "$cur" == -* ]]; then
-            COMPREPLY=( $(compgen -W "-h --help --format --json" -- "$cur") )
-            return 0
-          fi
-          COMPREPLY=()
-          return 0
-          ;;
-      esac
-      ;;
-    diag)
-      local -a diag_cmds=(rate-limits)
-      if (( cword == 2 )); then
-        if [[ "$cur" == -* ]]; then
-          COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
-          return 0
-        fi
-        COMPREPLY=( $(compgen -W "${diag_cmds[*]}" -- "$cur") )
-        return 0
-      fi
-      local diag_cmd="${words[2]-}"
-      case "$diag_cmd" in
-        rate-limits)
-          if [[ "$prev" == "--jobs" ]]; then
-            COMPREPLY=()
-            return 0
-          fi
-          if [[ "$prev" == "--format" ]]; then
-            COMPREPLY=( $(compgen -W "text json" -- "$cur") )
-            return 0
-          fi
-          if [[ "$cur" == -* ]]; then
-            COMPREPLY=( $(compgen -W "-h --help -c -d --debug --cached --async --all --format --json --one-line --no-refresh-auth --jobs" -- "$cur") )
-            return 0
-          fi
-          COMPREPLY=( $(compgen -f -- "$cur") )
-          return 0
-          ;;
-      esac
-      ;;
-    config)
-      local -a config_cmds=(show set)
-      if (( cword == 2 )); then
-        if [[ "$cur" == -* ]]; then
-          COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
-          return 0
-        fi
-        COMPREPLY=( $(compgen -W "${config_cmds[*]}" -- "$cur") )
-        return 0
-      fi
-      local config_cmd="${words[2]-}"
-      case "$config_cmd" in
-        show)
-          COMPREPLY=()
-          return 0
-          ;;
-        set)
-          local -a config_keys=(
-            model
-            reasoning
-            reason
-            dangerous
-            allow-dangerous
-            CODEX_CLI_MODEL
-            CODEX_CLI_REASONING
-            CODEX_ALLOW_DANGEROUS_ENABLED
-          )
-          if (( cword == 3 )); then
-            COMPREPLY=( $(compgen -W "${config_keys[*]}" -- "$cur") )
-            return 0
-          fi
-          if (( cword == 4 )); then
-            local key="${words[3]-}"
-            case "$key" in
-              dangerous|allow-dangerous|CODEX_ALLOW_DANGEROUS_ENABLED)
-                COMPREPLY=( $(compgen -W "true false" -- "$cur") )
-                return 0
-                ;;
-            esac
-            COMPREPLY=()
-            return 0
-          fi
-          COMPREPLY=()
-          return 0
-          ;;
-      esac
-      ;;
-    starship)
-      if [[ "$prev" == "--ttl" || "$prev" == "--time-format" ]]; then
-        COMPREPLY=()
-        return 0
-      fi
-      if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "-h --help --no-5h --ttl --time-format --show-timezone --refresh --is-enabled" -- "$cur") )
-        return 0
-      fi
-      COMPREPLY=()
-      return 0
-      ;;
-    provider|debug|workflow|automation)
-      if (( cword == 2 )); then
-        COMPREPLY=( $(compgen -W "agentctl" -- "$cur") )
-        return 0
-      fi
-      COMPREPLY=()
-      return 0
-      ;;
-    help)
-      COMPREPLY=()
-      return 0
-      ;;
-  esac
+  COMP_WORDS=("${words[@]}")
+  COMP_CWORD="$cword"
+  _nils_cli_codex_cli_generated "codex-cli" "$cur" "$prev"
+  local rc=$?
 
-  COMPREPLY=()
+  COMP_WORDS=("${saved_words[@]}")
+  COMP_CWORD="$saved_cword"
+  return $rc
 }
 
 complete -F _nils_cli_codex_cli_complete \

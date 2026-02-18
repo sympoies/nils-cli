@@ -63,12 +63,12 @@ Shell adapters may only:
 
 - register completion for canonical command names and required aliases
 - apply minor shell-specific formatting/wiring
-- apply per-CLI fallback mode dispatch
+- apply deterministic fail-closed behavior when generated completion cannot be loaded
 
 Dynamic/runtime value completion is optional and must extend (not replace) clap-generated baseline:
 
 - preferred dynamic path: `clap_complete::env::CompleteEnv`
-- fallback dynamic path (when needed): crate-local hidden completion command (e.g., `__complete`)
+- alternative dynamic path (when needed): crate-local hidden completion command (e.g., `__complete`)
 
 ## Contract Boundaries: Rust vs Shell
 Rust responsibilities:
@@ -82,7 +82,7 @@ Shell responsibilities:
 
 - completion hook registration (`compdef` / `complete`)
 - alias registration and alias-to-command mapping
-- fallback mode dispatch
+- generated-script loading and thin adapter wiring only
 
 Any logic that can drift from clap parsing belongs in Rust, not shell adapters.
 
@@ -102,19 +102,15 @@ Rules:
   - `fx*` for `fzf-cli`
 - ensure completion registration covers aliases that require command completion behavior
 
-## Fallback and Rollback Policy
-Each completion-required CLI must support a per-CLI fallback switch:
+## No Legacy Completion Mode Policy
+Completion implementations must not maintain dual completion stacks (`clap` + legacy shell tree).
 
-- env var: `<CLI_NAME_UPPER>_COMPLETION_MODE`
-- values:
-  - `clap` (default): clap-generated baseline (+ optional dynamic extensions)
-  - `legacy`: legacy shell path for emergency rollback
+Rules:
 
-Rollback requirements:
-
-- fallback must be per-CLI, never global
-- rollback must not alter command execution semantics
-- runbook/README for affected CLI must document enable/disable steps
+- do not add `<CLI_NAME_UPPER>_COMPLETION_MODE` toggles for completion behavior
+- do not keep legacy completion dispatch functions alongside clap-generated completion paths
+- if generated completion quality is wrong, fix clap metadata and/or thin adapter logic in-place
+- generated-load failure must fail closed (empty/no candidates) rather than routing to a legacy path
 
 ## Testing Requirements and Required Checks Linkage
 Completion work must satisfy completion-specific checks and repository gates.
@@ -146,6 +142,6 @@ Use this checklist for every existing CLI migration:
 4. generate/update `completions/zsh/_<cli>` and `completions/bash/<cli>`
 5. keep shell adapters thin (alias wiring and optional dynamic hooks only)
 6. if dynamic values are needed, add `CompleteEnv` (or crate-local `__complete` only where justified)
-7. define and document `<CLI_NAME_UPPER>_COMPLETION_MODE`
+7. enforce no-legacy completion policy (no `COMPLETION_MODE` gates or legacy completion functions)
 8. sync aliases in both alias files when alias-bearing CLIs are touched
-9. run completion checks + required repo checks; record rollout/fallback status in PR notes
+9. run completion checks + required repo checks; record rollout status in PR notes

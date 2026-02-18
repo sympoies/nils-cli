@@ -52,7 +52,7 @@
 ## Completion governance
 
 - Canonical completion governance runbook: `docs/runbooks/cli-completion-development-standard.md`.
-- When completion/alias code changes, follow that runbook for architecture/fallback policy and completion-focused validation.
+- When completion/alias code changes, follow that runbook for clap-first/no-legacy policy and completion-focused validation.
 
 ### Required before committing
 

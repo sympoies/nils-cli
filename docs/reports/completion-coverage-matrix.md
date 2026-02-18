@@ -10,6 +10,7 @@
 - Completion quality baseline for every `required` binary: subcommands + long/short flags + declared value candidates.
 - Completion quality baseline for every `required` binary also requires context-aware filtering by cursor position (not global candidate dumps).
 - Preferred implementation mode for every `required` binary: clap-first (`clap` + `clap_complete`) generated baseline completions, with thin shell adapters and optional dynamic value extensions only when needed.
+- Legacy completion-mode toggles (`*_COMPLETION_MODE`) are not supported; adapters must stay clap-first and fail closed when generated completion cannot be loaded.
 - This matrix currently tracks asset coverage and obligation decisions; deeper quality/export-command conformance is validated in rollout sprints and completion tests.
 
 ## Matrix

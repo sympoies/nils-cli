@@ -108,3 +108,39 @@ fn main_help_includes_json_output_modes_for_diag_and_auth() {
     assert!(auth_text.contains("--json"));
     assert!(auth_text.contains("--format"));
 }
+
+#[test]
+fn main_help_includes_completion_export_entrypoint() {
+    let output = run(&["--help"]);
+    assert_exit(&output, 0);
+    let help = stdout(&output);
+    assert!(help.contains("completion"));
+    assert!(help.contains("Export shell completion script"));
+}
+
+#[test]
+fn main_completion_exports_bash_and_zsh_scripts() {
+    let zsh = run(&["completion", "zsh"]);
+    assert_exit(&zsh, 0);
+    let zsh_text = stdout(&zsh);
+    assert!(zsh_text.contains("#compdef codex-cli"));
+    assert!(zsh_text.contains("completion:Export shell completion script"));
+    assert!(zsh_text.contains(":shell -- Shell to generate completion script for:(bash zsh)"));
+
+    let bash = run(&["completion", "bash"]);
+    assert_exit(&bash, 0);
+    let bash_text = stdout(&bash);
+    assert!(bash_text.contains("_codex-cli()"));
+    assert!(bash_text.contains("complete -F _codex-cli"));
+    assert!(bash_text.contains("opts=\"-h --help bash zsh\""));
+}
+
+#[test]
+fn main_completion_rejects_unknown_shell_with_usage_error() {
+    let output = run(&["completion", "fish"]);
+    assert_exit(&output, 64);
+    let err = stderr(&output);
+    assert!(err.contains("invalid value"));
+    assert!(err.contains("bash"));
+    assert!(err.contains("zsh"));
+}

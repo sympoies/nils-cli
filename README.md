@@ -66,7 +66,7 @@ Detailed scope, API examples, migration conventions, and non-goals are documente
 ## Shell wrappers and completions
 
 This repo keeps optional wrapper scripts and completion assets in-repo.
-Contributor completion governance (architecture, fallback, alias sync, and completion-focused checks) is defined in
+Contributor completion governance (architecture, no-legacy policy, alias sync, and completion-focused checks) is defined in
 [docs/runbooks/cli-completion-development-standard.md](docs/runbooks/cli-completion-development-standard.md).
 
 Location:

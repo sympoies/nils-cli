@@ -16,7 +16,7 @@ Use these as the source of truth to avoid policy drift:
 - Required checks and coverage policy:
   - `DEVELOPMENT.md`
   - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
-- Workspace completion architecture and migration/rollback rules:
+- Workspace completion architecture and migration rules:
   - `docs/runbooks/cli-completion-development-standard.md`
 - Publishing workflow and order:
   - `scripts/publish-crates.sh`
@@ -118,7 +118,7 @@ Every user-facing CLI command surface must have explicit output behavior.
 - Keep warning/error prefix conventions consistent with neighboring crates.
 - For completion-required CLIs, implement clap-first completion generation via `clap_complete` so baseline completion covers subcommands, long/short flags, declared value candidates, and context-aware filtering (not global candidate dumps).
 - If completions or completion aliases are provided, implement them per
-  `docs/runbooks/cli-completion-development-standard.md` (clap-first generation, thin shell adapters, alias sync, and per-CLI fallback mode).
+  `docs/runbooks/cli-completion-development-standard.md` (clap-first generation, thin shell adapters, alias sync, and no-legacy completion mode).
 
 ## Testing and Validation Rules
 Minimum testing for new CLI crates:
