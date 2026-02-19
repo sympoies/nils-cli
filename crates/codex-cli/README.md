@@ -118,5 +118,5 @@ Auth examples:
 
 - [Docs index](docs/README.md)
 - [JSON consumers runbook](docs/runbooks/json-consumers.md)
-- [codex-core runtime migration runbook](../../docs/runbooks/codex-core-migration.md)
+- [codex-core runtime migration runbook](../codex-core/docs/runbooks/codex-core-migration.md)
 - [codex/claude unified architecture contract](../../docs/specs/codex-claude-unified-architecture-v1.md)

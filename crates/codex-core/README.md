@@ -21,4 +21,4 @@ See [`docs/specs/codex-core-boundary-v1.md`](docs/specs/codex-core-boundary-v1.m
 ## Docs
 
 - [Docs index](docs/README.md)
-- [Migration runbook](../../docs/runbooks/codex-core-migration.md)
+- [Migration runbook](docs/runbooks/codex-core-migration.md)

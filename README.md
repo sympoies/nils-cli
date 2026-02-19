@@ -65,37 +65,30 @@ Detailed scope, API examples, migration conventions, and non-goals are documente
 
 ## Shell wrappers and completions
 
-This repo keeps optional wrapper scripts and completion assets in-repo.
-Contributor completion governance (architecture, clap-first policy, alias sync, and completion-focused checks) is defined in
+Canonical completion architecture and contributor validation live in
 [docs/runbooks/cli-completion-development-standard.md](docs/runbooks/cli-completion-development-standard.md).
-Completion mode policy is a single clap-first generated path with thin adapters; completion behavior is not runtime-switchable.
+Use [DEVELOPMENT.md](DEVELOPMENT.md) for required delivery checks.
 
-Location:
+Assets:
 
 - [completions/zsh/](completions/zsh/): zsh completions (plus `aliases.zsh`)
 - [completions/bash/](completions/bash/): bash completions (plus `aliases.bash`)
 - [wrappers/](wrappers/): dev-only wrapper scripts
 
-Integration steps:
+Local shell setup:
 
 1. Zsh: add [completions/zsh/](completions/zsh/) to your `fpath`, then run `compinit` in your shell init.
 2. Zsh (optional): `source completions/zsh/aliases.zsh` (see [completions/zsh/aliases.zsh](completions/zsh/aliases.zsh))
 3. Bash: copy `completions/bash/<command>` into your bash-completion directory, or source them from your shell init.
 4. Bash (optional): `source completions/bash/aliases.bash` (see [completions/bash/aliases.bash](completions/bash/aliases.bash))
 5. Dev-only: add [wrappers/](wrappers/) to your PATH (or symlink wrapper scripts into a bin directory).
-6. Regenerate completions when CLIs change, and commit updates alongside code.
 
 ## Contributor checks
 
-- Full required checks:
-  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
-- Docs-only fast path (only docs changed, e.g. `*.md`, `docs/**`, `crates/*/docs/**`):
-  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh --docs-only`
-- If completion/alias files changed, also run completion-focused checks from
-  [docs/runbooks/cli-completion-development-standard.md](docs/runbooks/cli-completion-development-standard.md):
-  - `zsh -f tests/zsh/completion.test.zsh`
-  - `zsh -n completions/zsh/_<cli>`
-  - `bash -n completions/bash/<cli>`
+Use [DEVELOPMENT.md](DEVELOPMENT.md) as the canonical checklist.
+
+- Full required checks: `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
+- Docs-only fast path: `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh --docs-only`
 
 ## Local install (release)
 
@@ -123,13 +116,8 @@ Then download the matching `nils-cli-<tag>-<target>.tar.gz` asset, extract it, a
 
 Release packaging contract: shipped artifacts must include `completions/zsh/`, `completions/bash/`,
 `completions/zsh/aliases.zsh`, and `completions/bash/aliases.bash`.
-
-For zsh completions, add `<extract_dir>/completions/zsh` to your `fpath` and run `compinit`.
-Optional: source `<extract_dir>/completions/zsh/aliases.zsh` to enable `gs*`/`cx*`/`fx*` aliases.
-
-For bash completions, copy `<extract_dir>/completions/bash/<command>` into your bash-completion directory
-(example: `~/.local/share/bash-completion/completions/`) or source it from your shell init.
-Optional: source `<extract_dir>/completions/bash/aliases.bash` to enable `gs*`/`cx*`/`fx*` aliases.
+After extracting release assets, follow the same setup flow from
+["Shell wrappers and completions"](#shell-wrappers-and-completions).
 
 ## crates.io publishing (shared crates)
 
@@ -164,10 +152,6 @@ GitHub Actions manual flow is also available at `.github/workflows/publish-crate
 
 ## Adding a new CLI crate
 
-1. Create a new binary crate under [crates/](crates/):
-   - `cargo new crates/<cli-name> --bin`
-2. Add the crate path to the workspace `members` list in [Cargo.toml](Cargo.toml).
-3. Use shared dependencies via `workspace = true` in the new crate's [Cargo.toml](Cargo.toml).
-4. Build or run the new CLI with `cargo build -p <cli-name>` or `cargo run -p <cli-name> -- ...`.
-5. Verify packaging picks it up (both local install + GitHub Releases use the same discovery):
-   - `python3 scripts/workspace-bins.py | rg "^<cli-name>$"` (see [scripts/workspace-bins.py](scripts/workspace-bins.py))
+Use the canonical onboarding runbook:
+
+- [docs/runbooks/new-cli-crate-development-standard.md](docs/runbooks/new-cli-crate-development-standard.md)

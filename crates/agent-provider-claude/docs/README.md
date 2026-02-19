@@ -2,12 +2,6 @@
 
 > Ownership: Maintained by the `agent-provider-claude` crate maintainers. Keep this index updated when docs are added, moved, or removed.
 
-## Canonical Sections
-
-- `specs/`: Behavioral contracts and technical specifications (`docs/specs/*.md`).
-- `runbooks/`: Operational or development procedures (`docs/runbooks/*.md`).
-- `reports/`: Analysis reports, audits, and postmortems (`docs/reports/*.md`).
-
 ## Specs
 
 - [claude-provider-contract-v1.md](specs/claude-provider-contract-v1.md)

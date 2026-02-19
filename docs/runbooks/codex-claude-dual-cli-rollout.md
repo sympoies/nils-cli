@@ -6,12 +6,11 @@ Define deterministic rollout, gating, fallback, and rollback steps for dual-CLI 
 
 ## Routing Contract
 
-| Need | Command surface | Notes |
-| --- | --- | --- |
-| Codex provider-specific workflows | `codex-cli` | Keep existing codex behavior and JSON contracts stable. |
-| Claude provider-specific workflows | `claude-cli` | Use when `claude-cli` is included in the shipped release set. |
-| Provider-neutral orchestration and diagnostics | `agentctl` | Canonical for `provider`, `workflow`, `debug`, and provider-neutral `diag`. |
-| Migrated `codex-cli` wrapper commands (`provider`, `debug`, `workflow`, `automation`) | `agentctl` | `wrappers/codex-cli` forwards and preserves guidance on failure. |
+Canonical routing ownership is defined in:
+
+- `docs/specs/codex-claude-unified-architecture-v1.md`
+
+This runbook only covers rollout execution, cutover, fallback, and rollback.
 
 ## Rollout Gating Checklist
 

@@ -2,12 +2,6 @@
 
 > Ownership: Maintained by the `git-summary` crate maintainers. Keep this index updated when docs are added, moved, or removed.
 
-## Canonical Sections
-
-- `specs/`: Behavioral contracts and technical specifications (`docs/specs/*.md`).
-- `runbooks/`: Operational or development procedures (`docs/runbooks/*.md`).
-- `reports/`: Analysis reports, audits, and postmortems (`docs/reports/*.md`).
-
 ## Specs
 
 - None yet. Add documents under `docs/specs/` and register them here.

@@ -43,29 +43,22 @@
 
 ## Documentation placement
 
-- Documentation placement policy: `docs/specs/crate-docs-placement-policy.md`.
-- Contributors MUST classify docs as `workspace-level` or `crate-local` before adding/moving files.
-- `crate-local` docs MUST be placed under `crates/<crate>/docs/...` canonical paths.
-- Root `docs/` MUST be used only for `workspace-level` docs.
-- Legacy crate-owned root paths are redirect stubs (no deprecation sunset) and MUST NOT hold canonical content.
+- Canonical policy: `docs/specs/crate-docs-placement-policy.md`.
+- When Markdown files change, run: `bash scripts/ci/docs-placement-audit.sh --strict`.
 
 ## Completion governance
 
-- Canonical completion governance runbook: `docs/runbooks/cli-completion-development-standard.md`.
-- When completion/alias code changes, follow that runbook for single-path clap-first policy and completion-focused validation.
-- Completion mode policy is `clap-first` with a single generated completion path.
-- Release packaging must ship both `completions/zsh/` and `completions/bash/`, including alias files `completions/zsh/aliases.zsh` and `completions/bash/aliases.bash`.
+- Canonical policy and validation workflow: `docs/runbooks/cli-completion-development-standard.md`.
+- Local shell setup examples are documented in `README.md`.
 
 ### Required before committing
 
 - All commands in **Formatting and linting** must pass.
 - `cargo test --workspace`
-- Completion verification commands from `docs/runbooks/cli-completion-development-standard.md`:
+- If completion/alias assets changed, run:
   - `zsh -f tests/zsh/completion.test.zsh`
   - `zsh -n completions/zsh/_<cli>`
   - `bash -n completions/bash/<cli>`
-- Documentation placement for changed Markdown files MUST comply with
-  `docs/specs/crate-docs-placement-policy.md`.
 - `bash scripts/ci/docs-placement-audit.sh --strict`
 - Coverage must be **>= 85.00%** total line coverage:
   - `mkdir -p target/coverage`
@@ -107,24 +100,5 @@
 
 ## Shell completions
 
-For completion implementation workflow and contributor validation requirements, use
-`docs/runbooks/cli-completion-development-standard.md`. The setup notes below focus on local shell integration.
-
-### Zsh
-
-- Completion files: `completions/zsh/`
-- Optional aliases (Zsh): `completions/zsh/aliases.zsh`
-- Wrapper scripts (dev-only): `wrappers/`
-- Setup:
-  - Add `wrappers/` to `PATH`.
-  - Add `completions/zsh/` to `fpath` and run `compinit`.
-  - Optional: `source completions/zsh/aliases.zsh`
-
-### Bash
-
-- Completion files: `completions/bash/`
-- Optional aliases (Bash): `completions/bash/aliases.bash`
-- Setup:
-  - Install `bash-completion` (recommended), then copy `completions/bash/<command>` into your completions directory (example: `~/.local/share/bash-completion/completions/`).
-  - Or: source the desired files from your `~/.bashrc`.
-  - Optional: `source completions/bash/aliases.bash`
+- Contributor rules and checks: `docs/runbooks/cli-completion-development-standard.md`.
+- Local setup steps: `README.md` ("Shell wrappers and completions").
