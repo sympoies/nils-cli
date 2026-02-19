@@ -8,6 +8,7 @@ Usage:
 
 Runs the required pre-delivery checks from DEVELOPMENT.md:
   - bash scripts/ci/docs-placement-audit.sh --strict
+  - bash scripts/ci/completion-asset-audit.sh --strict
   - cargo fmt --all -- --check
   - cargo clippy --all-targets --all-features -- -D warnings
   - cargo test --workspace
@@ -112,6 +113,7 @@ fi
 
 coverage_dir="${NILS_CLI_COVERAGE_DIR:-target/coverage}"
 run mkdir -p "$coverage_dir"
+run bash scripts/ci/completion-asset-audit.sh --strict
 run cargo fmt --all -- --check
 run cargo clippy --all-targets --all-features -- -D warnings
 if [[ "$test_runner" == "nextest" ]]; then

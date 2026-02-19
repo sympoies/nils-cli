@@ -34,6 +34,9 @@ jobs:
         with:
           tool: cargo-nextest
 
+      - name: Completion asset audit
+        run: bash scripts/ci/completion-asset-audit.sh --strict
+
       - name: Nils CLI checks (includes docs-placement-audit)
         env:
           NILS_CLI_TEST_RUNNER: nextest
