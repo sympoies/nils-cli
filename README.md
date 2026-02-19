@@ -44,7 +44,7 @@ Each crate is either a standalone CLI binary or a shared library used across the
 - [crates/agent-docs](crates/agent-docs): Deterministic policy-document resolver for Codex/agent workflows (`resolve`, `contexts`, `add`, `baseline`).
 - [crates/agent-runtime-core](crates/agent-runtime-core): Provider-neutral runtime contract (`provider-adapter.v1`) shared by `agentctl` and provider adapters.
 - [crates/agent-provider-codex](crates/agent-provider-codex): Stable OpenAI/Codex adapter implementation for the provider-neutral contract.
-- [crates/agent-provider-claude](crates/agent-provider-claude): Compile-only `claude` onboarding stub adapter (`maturity=stub`).
+- [crates/agent-provider-claude](crates/agent-provider-claude): Stable `claude` adapter implementation (`maturity=stable`).
 - [crates/agent-provider-gemini](crates/agent-provider-gemini): Compile-only `gemini` onboarding stub adapter (`maturity=stub`).
 - [crates/agentctl](crates/agentctl): Provider-neutral control plane (`provider`, `diag`, `debug`, `workflow`, `automation`).
 - [crates/codex-cli](crates/codex-cli): Provider-specific CLI for OpenAI/Codex workflows (auth, Codex diagnostics, Codex execution wrappers, Starship snippets).
