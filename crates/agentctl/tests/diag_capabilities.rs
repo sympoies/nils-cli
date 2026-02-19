@@ -86,6 +86,25 @@ fn diag_capabilities_json_reports_inventory_and_readiness() {
                 == Some("auth.commands"))
     );
 
+    let claude_provider = providers
+        .iter()
+        .find(|provider| provider.get("id").and_then(Value::as_str) == Some("claude"))
+        .expect("claude provider");
+    let claude_capabilities = claude_provider
+        .get("capabilities")
+        .and_then(Value::as_array)
+        .expect("claude capabilities");
+    assert!(
+        claude_capabilities
+            .iter()
+            .any(|capability| capability.get("name").and_then(Value::as_str) == Some("execute"))
+    );
+    assert!(
+        claude_capabilities
+            .iter()
+            .any(|capability| capability.get("name").and_then(Value::as_str) == Some("auth-state"))
+    );
+
     let tools = parsed
         .get("automation_tools")
         .and_then(Value::as_array)

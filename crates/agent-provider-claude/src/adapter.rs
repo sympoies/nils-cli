@@ -1,15 +1,13 @@
-use crate::client::ClaudeApiClient;
-use crate::config;
-use crate::prompts;
 use agent_runtime_core::provider::ProviderAdapterV1;
 use agent_runtime_core::schema::{
     AuthStateRequest, AuthStateResponse, AuthStateStatus, CapabilitiesRequest,
     CapabilitiesResponse, Capability, ExecuteRequest, ExecuteResponse, HealthStatus,
-    HealthcheckRequest, HealthcheckResponse, LimitsRequest, LimitsResponse, ProviderError,
-    ProviderErrorCategory, ProviderMaturity, ProviderMetadata, ProviderResult,
+    HealthcheckRequest, HealthcheckResponse, LimitsRequest, LimitsResponse, ProviderMaturity,
+    ProviderMetadata, ProviderResult,
 };
+use claude_core::config;
+use claude_core::exec;
 use serde_json::json;
-use std::time::Instant;
 
 const PROVIDER_ID: &str = "claude";
 
@@ -111,35 +109,17 @@ impl ProviderAdapterV1 for ClaudeProviderAdapter {
     }
 
     fn execute(&self, request: ExecuteRequest) -> ProviderResult<ExecuteResponse> {
-        let prompt =
-            prompts::render_execute_prompt(request.task.as_str(), request.input.as_deref());
-        if prompt.trim().is_empty() {
-            return Err(Box::new(ProviderError::new(
-                ProviderErrorCategory::Validation,
-                "missing-task",
-                "execute task/input is required",
-            )));
-        }
-
-        let config = config::ClaudeConfig::from_env()
-            .map_err(|error| Box::new(config_error_to_provider_error(error)))?;
-        let client =
-            ClaudeApiClient::new(config).map_err(|error| Box::new(error.into_provider_error()))?;
-        let started_at = Instant::now();
-        let response = client
-            .execute_prompt(prompt.as_str(), request.timeout_ms)
-            .map_err(|error| Box::new((*error).into_provider_error()))?;
-
-        let mut stderr = String::new();
-        if let Some(request_id) = response.request_id.as_deref() {
-            stderr = format!("request_id={request_id}");
-        }
+        let response = exec::execute_task(
+            request.task.as_str(),
+            request.input.as_deref(),
+            request.timeout_ms,
+        )?;
 
         Ok(ExecuteResponse {
             exit_code: 0,
-            stdout: response.text,
-            stderr,
-            duration_ms: as_millis(started_at.elapsed()),
+            stdout: response.stdout,
+            stderr: response.stderr,
+            duration_ms: response.duration_ms,
         })
     }
 
@@ -172,17 +152,4 @@ impl ProviderAdapterV1 for ClaudeProviderAdapter {
             expires_at: None,
         })
     }
-}
-
-fn config_error_to_provider_error(error: config::ConfigError) -> ProviderError {
-    let category = if error.code == "missing-api-key" {
-        ProviderErrorCategory::Auth
-    } else {
-        ProviderErrorCategory::Validation
-    };
-    ProviderError::new(category, error.code, error.message).with_retryable(false)
-}
-
-fn as_millis(duration: std::time::Duration) -> Option<u64> {
-    u64::try_from(duration.as_millis()).ok()
 }
