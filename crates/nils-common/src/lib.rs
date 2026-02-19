@@ -11,6 +11,7 @@
 //! pub fn is_truthy(input: &str) -> bool;
 //! pub fn env_truthy(name: &str) -> bool;
 //! pub fn env_truthy_or(name: &str, default: bool) -> bool;
+//! pub fn env_or_default(name: &str, default: &str) -> String;
 //! pub fn no_color_enabled() -> bool;
 //!
 //! // shell

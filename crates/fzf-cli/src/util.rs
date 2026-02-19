@@ -19,7 +19,7 @@ pub fn join_args(args: &[String]) -> String {
 }
 
 pub fn env_or_default(name: &str, default: &str) -> String {
-    env::var(name).unwrap_or_else(|_| default.to_string())
+    common_env::env_or_default(name, default)
 }
 
 pub fn env_is_true(name: &str) -> bool {

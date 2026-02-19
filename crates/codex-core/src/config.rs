@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use nils_common::env as shared_env;
+
 use crate::paths;
 
 pub const DEFAULT_MODEL: &str = "gpt-5.1-codex-mini";
@@ -21,24 +23,20 @@ pub struct RuntimeConfig {
 
 pub fn snapshot() -> RuntimeConfig {
     RuntimeConfig {
-        model: env_or_default("CODEX_CLI_MODEL", DEFAULT_MODEL),
-        reasoning: env_or_default("CODEX_CLI_REASONING", DEFAULT_REASONING),
+        model: shared_env::env_or_default("CODEX_CLI_MODEL", DEFAULT_MODEL),
+        reasoning: shared_env::env_or_default("CODEX_CLI_REASONING", DEFAULT_REASONING),
         allow_dangerous_enabled_raw: std::env::var("CODEX_ALLOW_DANGEROUS_ENABLED")
             .unwrap_or_default(),
         secret_dir: paths::resolve_secret_dir(),
         auth_file: paths::resolve_auth_file(),
         secret_cache_dir: paths::resolve_secret_cache_dir(),
-        auto_refresh_enabled: env_or_default(
+        auto_refresh_enabled: shared_env::env_or_default(
             "CODEX_AUTO_REFRESH_ENABLED",
             DEFAULT_AUTO_REFRESH_ENABLED,
         ),
-        auto_refresh_min_days: env_or_default(
+        auto_refresh_min_days: shared_env::env_or_default(
             "CODEX_AUTO_REFRESH_MIN_DAYS",
             DEFAULT_AUTO_REFRESH_MIN_DAYS,
         ),
     }
-}
-
-pub fn env_or_default(key: &str, default: &str) -> String {
-    std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
