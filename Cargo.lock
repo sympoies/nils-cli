@@ -1554,10 +1554,9 @@ name = "nils-agent-provider-claude"
 version = "0.4.5"
 dependencies = [
  "nils-agent-runtime-core",
- "nils-common",
+ "nils-claude-core",
  "nils-test-support",
  "pretty_assertions",
- "reqwest",
  "serde",
  "serde_json",
 ]
@@ -1709,6 +1708,34 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tungstenite",
+]
+
+[[package]]
+name = "nils-claude-cli"
+version = "0.4.5"
+dependencies = [
+ "clap",
+ "clap_complete",
+ "nils-agent-provider-claude",
+ "nils-agent-runtime-core",
+ "nils-claude-core",
+ "nils-common",
+ "nils-test-support",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "nils-claude-core"
+version = "0.4.5"
+dependencies = [
+ "nils-agent-runtime-core",
+ "nils-common",
+ "nils-test-support",
+ "pretty_assertions",
+ "reqwest",
+ "serde_json",
 ]
 
 [[package]]

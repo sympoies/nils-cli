@@ -17,15 +17,25 @@ It owns:
 | Job | Primary owner |
 |---|---|
 | OpenAI/Codex auth, Codex prompt wrappers, Codex rate-limit diagnostics, Starship | `codex-cli` |
+| Claude provider-specific command UX (`agent`, `auth-state`, `diag`, `config`) | `claude-cli` |
 | Multi-provider registry/selection (`provider`), provider-neutral doctor/debug/workflow | `agentctl` |
 | Local automation tool orchestration (`macos-agent`, `screen-record`, `image-processing`, `fzf-cli`) | `agentctl` |
 | Provider adapter implementation against `provider-adapter.v1` | `agent-provider-*` crates + `agent-runtime-core` |
 
 - `agentctl` owns provider-neutral orchestration (`provider`, `diag`, `debug`, `workflow`, `automation`) and local automation integration.
 - `codex-cli` remains responsible for provider-specific OpenAI/Codex operations.
+- `claude-cli` owns Claude provider-specific command UX in dual-CLI releases.
 - Migration note: keep existing `codex-cli` workflows stable while provider-neutral ownership lives in `agentctl`.
 - Compatibility shim: `wrappers/codex-cli` forwards `provider|debug|workflow|automation` to `agentctl` when `agentctl` is available.
 - Migration hint text (wrapper/help/docs): `use agentctl <command> for provider-neutral orchestration`.
+
+## Which CLI to use
+
+| Task | Preferred CLI |
+|---|---|
+| Codex-only workflows (`agent`, `auth`, `diag rate-limits`, `starship`) | `codex-cli` |
+| Claude-only workflows (`agent`, `auth-state`, provider-specific `diag`, `config`) | `claude-cli` |
+| Provider-neutral operations (`provider`, `diag doctor/capabilities`, `workflow`, `debug`, `automation`) | `agentctl` |
 
 ## Usage
 
@@ -84,3 +94,4 @@ Required minimum:
 
 - [Docs index](docs/README.md)
 - [codex to Claude mapping](docs/runbooks/codex-to-claude-mapping.md)
+- [dual-CLI rollout runbook](../../docs/runbooks/codex-claude-dual-cli-rollout.md)

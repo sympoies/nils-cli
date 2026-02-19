@@ -1,22 +1,29 @@
 # codex-cli to Claude mapping
 
 ## Purpose
+Map codex-oriented intents to the canonical Claude surface in dual-CLI operation.
 
-Help operators migrate codex-oriented workflows to Claude-backed provider workflows in `agentctl`.
+## When to use which surface
 
-## Mapping
-
-| codex-cli intent | Claude path in this repo | Notes |
+| Intent class | Preferred surface | Fallback surface |
 | --- | --- | --- |
-| `codex-cli agent prompt ...` | `agentctl workflow run` provider step (`provider=claude`) | Prompt text forwarded to Claude messages API. |
-| `codex-cli agent advice ...` | same + `advice:` prefixed prompt intent | Uses advice template expansion. |
-| `codex-cli agent knowledge ...` | same + `knowledge:` prefixed prompt intent | Uses explanatory template expansion. |
-| `codex-cli diag rate-limits` | provider execute error category `rate-limit` + `diag doctor` readiness | No Codex rate-limit table equivalent. |
-| `codex-cli auth *` | provider `auth-state` + environment config | Claude adapter uses `ANTHROPIC_API_KEY`; no Codex secret-file management. |
-| `codex-cli config show/set` | environment variables (`ANTHROPIC_*`, `CLAUDE_*`) | Configuration is env-driven, not shell-snippet driven. |
-| `codex-cli starship` | no mapping | Codex-specific UX surface; unsupported in Claude adapter. |
+| Codex provider-specific workflows | `codex-cli` | none |
+| Claude provider-specific workflows | `claude-cli` | `agentctl workflow run --provider claude` |
+| Provider-neutral orchestration/diagnostics | `agentctl` | none |
 
-## Unsupported surfaces
+## Intent mapping
+
+| codex-cli intent | Claude-first path | Provider-neutral path (`agentctl`) | Notes |
+| --- | --- | --- | --- |
+| `codex-cli agent prompt ...` | `claude-cli agent prompt ...` | `agentctl workflow run --provider claude ...` | Prompt intent remains explicit in both paths. |
+| `codex-cli agent advice ...` | `claude-cli agent advice ...` | `agentctl workflow run --provider claude ...` | Advice intent remains provider-specific UX. |
+| `codex-cli agent knowledge ...` | `claude-cli agent knowledge ...` | `agentctl workflow run --provider claude ...` | Knowledge intent remains provider-specific UX. |
+| `codex-cli auth *` | `claude-cli auth-state ...` | `agentctl provider healthcheck --provider claude` | Claude auth is env/config driven, not Codex secret-file lifecycle. |
+| `codex-cli diag rate-limits` | `claude-cli diag ...` | `agentctl diag doctor --provider claude` | Codex rate-limit table has no direct Claude equivalent. |
+| `codex-cli config show/set` | `claude-cli config ...` | workflow/provider env validation in `agentctl` | Use provider-specific config commands for user workflows. |
+| `codex-cli starship` | unsupported | unsupported | Codex-specific UX surface. |
+
+## Unsupported codex-only surfaces for Claude
 
 - `agent commit`
 - `starship`
@@ -24,11 +31,12 @@ Help operators migrate codex-oriented workflows to Claude-backed provider workfl
 
 ## Recommended migration steps
 
-1. Set `ANTHROPIC_API_KEY`.
-2. Validate readiness:
+1. Set required Claude environment variables.
+2. Verify provider readiness:
    - `cargo run -p nils-agentctl -- provider healthcheck --provider claude --format json`
    - `cargo run -p nils-agentctl -- diag doctor --provider claude --format json`
-3. Run workflow with Claude provider steps.
+3. Use `claude-cli` for provider-specific user workflows when available.
+4. Use `agentctl` for provider-neutral orchestration and diagnostics.
 
 ## Validation
 

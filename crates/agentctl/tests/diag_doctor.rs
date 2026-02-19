@@ -71,6 +71,7 @@ fn diag_doctor_json_includes_provider_and_automation_readiness() {
         .and_then(Value::as_array)
         .expect("checks array");
     assert!(has_check(checks, "provider", "codex"));
+    assert!(has_check(checks, "provider", "claude"));
     for tool in [
         "macos-agent",
         "screen-record",

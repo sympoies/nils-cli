@@ -29,6 +29,8 @@ This applies to all current wrappers under `wrappers/`:
 - `screen-record`
 - `semantic-commit`
 
+`claude-cli` currently has no wrapper in `wrappers/`; invoke the binary directly when needed.
+
 ## Environment Contract
 
 ### `NILS_WRAPPER_MODE`
@@ -86,6 +88,18 @@ These commands are executed via `agentctl` using the selected wrapper mode.
 If routing cannot execute, wrapper prints:
 - `codex-cli: use \`agentctl <cmd>\` for provider-neutral orchestration`
 - exits `64`
+
+`codex-cli` does not proxy Claude provider-specific commands; use `claude-cli` for Claude-specific
+command UX and `agentctl` for provider-neutral orchestration.
+
+## Dual-CLI Routing Quick Reference
+
+| User intent | Canonical command surface |
+|---|---|
+| Codex provider-specific operations | `codex-cli` |
+| Claude provider-specific operations | `claude-cli` |
+| Provider-neutral `provider|diag|debug|workflow|automation` flows | `agentctl` |
+| Migrated `codex-cli provider|debug|workflow|automation` calls | Forwarded to `agentctl` by `wrappers/codex-cli` |
 
 ## `git-cli` Compatibility Behavior
 
