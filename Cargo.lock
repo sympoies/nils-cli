@@ -1560,7 +1560,11 @@ name = "nils-agent-provider-claude"
 version = "0.4.5"
 dependencies = [
  "nils-agent-runtime-core",
+ "nils-common",
+ "nils-test-support",
  "pretty_assertions",
+ "reqwest",
+ "serde",
  "serde_json",
 ]
 

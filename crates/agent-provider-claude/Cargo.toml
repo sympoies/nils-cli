@@ -12,7 +12,11 @@ name = "agent_provider_claude"
 path = "src/lib.rs"
 [dependencies]
 agent-runtime-core = { version = "0.4.5", path = "../agent-runtime-core", package = "nils-agent-runtime-core" }
+nils-common = { version = "0.4.5", path = "../nils-common", package = "nils-common" }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+nils-test-support = { version = "0.4.5", path = "../nils-test-support" }
 pretty_assertions = { workspace = true }

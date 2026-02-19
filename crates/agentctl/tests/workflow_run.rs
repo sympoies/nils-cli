@@ -5,8 +5,10 @@ use agentctl::workflow::schema::{
     AutomationStep, AutomationTool, ProviderStep, RetryPolicy, WORKFLOW_SCHEMA_VERSION,
     WorkflowDocument, WorkflowOnError, WorkflowStep,
 };
+use nils_test_support::http::{HttpResponse, LoopbackServer};
 use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
 use pretty_assertions::assert_eq;
+use serde_json::json;
 use std::path::PathBuf;
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -258,6 +260,62 @@ fn workflow_run_provider_step_surfaces_missing_codex_binary_error() {
         step.stderr
             .contains("codex binary is not available on PATH")
     );
+}
+
+#[test]
+fn workflow_run_supports_claude_provider_step_success() {
+    let lock = GlobalStateLock::new();
+    let server = LoopbackServer::new().expect("loopback");
+    server.add_route(
+        "POST",
+        "/v1/messages",
+        HttpResponse::new(
+            200,
+            json!({
+                "id": "msg_123",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    { "type": "text", "text": "workflow claude success" }
+                ],
+                "model": "claude-sonnet-4-5-20250929"
+            })
+            .to_string(),
+        ),
+    );
+    let _api_key = EnvGuard::set(&lock, "ANTHROPIC_API_KEY", "test-key");
+    let _base_url = EnvGuard::set(&lock, "ANTHROPIC_BASE_URL", server.url().as_str());
+    let _retry_max = EnvGuard::set(&lock, "CLAUDE_RETRY_MAX", "0");
+
+    let workflow = load_workflow_file(fixture_path("claude-minimal.json").as_path())
+        .expect("claude workflow fixture");
+    let report = execute_workflow_document(&workflow);
+
+    assert_eq!(report.summary.failed_steps, 0);
+    assert_eq!(report.summary.succeeded_steps, 1);
+    assert_eq!(report.ledger.len(), 1);
+    let step = &report.ledger[0];
+    assert_eq!(step.step_id, "claude-provider-step");
+    assert_eq!(step.status, StepStatus::Succeeded);
+    assert_eq!(step.provider.as_deref(), Some("claude"));
+    assert!(step.stdout.contains("workflow claude success"));
+}
+
+#[test]
+fn workflow_run_claude_provider_step_reports_missing_api_key() {
+    let lock = GlobalStateLock::new();
+    let _api_key = EnvGuard::remove(&lock, "ANTHROPIC_API_KEY");
+    let _base_url = EnvGuard::remove(&lock, "ANTHROPIC_BASE_URL");
+
+    let workflow = load_workflow_file(fixture_path("claude-minimal.json").as_path())
+        .expect("claude workflow fixture");
+    let report = execute_workflow_document(&workflow);
+
+    assert_eq!(report.summary.failed_steps, 1);
+    assert_eq!(report.ledger.len(), 1);
+    let step = &report.ledger[0];
+    assert_eq!(step.status, StepStatus::Failed);
+    assert!(step.stderr.contains("ANTHROPIC_API_KEY"));
 }
 
 #[test]

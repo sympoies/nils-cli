@@ -14,7 +14,7 @@
 
 ## Runbooks
 
-- None yet. Add documents under `docs/runbooks/` and register them here.
+- [codex-to-claude-mapping.md](runbooks/codex-to-claude-mapping.md)
 
 ## Reports
 

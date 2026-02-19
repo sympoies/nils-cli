@@ -79,7 +79,7 @@ fn selection_rejects_unknown_override_and_exposes_source() {
 }
 
 #[test]
-fn with_builtins_registers_codex_and_stub_providers_with_expected_maturity() {
+fn with_builtins_registers_codex_and_builtin_providers_with_expected_maturity() {
     let registry = ProviderRegistry::with_builtins();
     assert_eq!(registry.default_provider_id(), Some("codex"));
 
@@ -94,7 +94,7 @@ fn with_builtins_registers_codex_and_stub_providers_with_expected_maturity() {
         .map(|(provider_id, adapter)| (provider_id.to_string(), adapter.metadata().maturity))
         .collect::<BTreeMap<_, _>>();
     assert_eq!(maturity_map.get("codex"), Some(&ProviderMaturity::Stable));
-    assert_eq!(maturity_map.get("claude"), Some(&ProviderMaturity::Stub));
+    assert_eq!(maturity_map.get("claude"), Some(&ProviderMaturity::Stable));
     assert_eq!(maturity_map.get("gemini"), Some(&ProviderMaturity::Stub));
 }
 
