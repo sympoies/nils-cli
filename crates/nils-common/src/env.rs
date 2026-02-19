@@ -21,6 +21,10 @@ pub fn env_truthy_or(name: &str, default: bool) -> bool {
     truthy_from_env(name).unwrap_or(default)
 }
 
+pub fn env_or_default(name: &str, default: &str) -> String {
+    std::env::var(name).unwrap_or_else(|_| default.to_string())
+}
+
 pub fn no_color_enabled() -> bool {
     std::env::var_os("NO_COLOR").is_some()
 }
@@ -82,6 +86,26 @@ mod tests {
         let lock = GlobalStateLock::new();
         let _guard = EnvGuard::set(&lock, "NILS_COMMON_ENV_TRUTHY_OR_VALUE_TEST", " off ");
         assert!(!env_truthy_or("NILS_COMMON_ENV_TRUTHY_OR_VALUE_TEST", true));
+    }
+
+    #[test]
+    fn env_or_default_prefers_present_value() {
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::set(&lock, "NILS_COMMON_ENV_OR_DEFAULT_PRESENT_TEST", "custom");
+        assert_eq!(
+            env_or_default("NILS_COMMON_ENV_OR_DEFAULT_PRESENT_TEST", "fallback"),
+            "custom"
+        );
+    }
+
+    #[test]
+    fn env_or_default_uses_default_when_missing() {
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::remove(&lock, "NILS_COMMON_ENV_OR_DEFAULT_MISSING_TEST");
+        assert_eq!(
+            env_or_default("NILS_COMMON_ENV_OR_DEFAULT_MISSING_TEST", "fallback"),
+            "fallback"
+        );
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use nils_common::env as shared_env;
 use nils_common::process as shared_process;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -54,8 +55,8 @@ pub fn exec_dangerous(prompt: &str, caller: &str, stderr: &mut impl Write) -> i3
         return 1;
     }
 
-    let model = env_or_default("CODEX_CLI_MODEL", DEFAULT_MODEL);
-    let reasoning = env_or_default("CODEX_CLI_REASONING", DEFAULT_REASONING);
+    let model = shared_env::env_or_default("CODEX_CLI_MODEL", DEFAULT_MODEL);
+    let reasoning = shared_env::env_or_default("CODEX_CLI_REASONING", DEFAULT_REASONING);
     let reasoning_arg = format!("model_reasoning_effort=\"{}\"", reasoning);
     let args = [
         "exec",
@@ -77,10 +78,6 @@ pub fn exec_dangerous(prompt: &str, caller: &str, stderr: &mut impl Write) -> i3
             1
         }
     }
-}
-
-fn env_or_default(key: &str, default: &str) -> String {
-    std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
 fn is_true_env(key: &str, stderr: &mut impl Write) -> bool {
