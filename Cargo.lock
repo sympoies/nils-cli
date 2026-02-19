@@ -1864,7 +1864,7 @@ dependencies = [
  "nils-test-support",
  "pretty_assertions",
  "resvg",
- "roxmltree 0.20.0",
+ "roxmltree 0.21.1",
  "serde",
  "serde_json",
  "tempfile",

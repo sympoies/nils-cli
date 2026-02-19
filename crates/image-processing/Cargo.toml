@@ -23,7 +23,7 @@ image = { version = "0.25", default-features = false, features = ["png", "webp"]
 nils-common = { version = "0.4.5", path = "../nils-common", package = "nils-common" }
 nils-term = { version = "0.4.5", path = "../nils-term", package = "nils-term" }
 resvg = "0.47"
-roxmltree = "0.20"
+roxmltree = "0.21"
 usvg = "0.47"
 uuid = { version = "1", features = ["v4"] }
 walkdir = "2"
