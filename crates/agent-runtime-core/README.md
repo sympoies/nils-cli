@@ -19,7 +19,7 @@ provider adapter crates.
 
 - `agentctl`: provider registry, diagnostics, and workflow execution against adapter contracts
 - `agent-provider-codex`: stable Codex adapter implementation
-- `agent-provider-claude`: compile-only onboarding stub (`maturity=stub`)
+- `agent-provider-claude`: stable Claude adapter implementation
 - `agent-provider-gemini`: compile-only onboarding stub (`maturity=stub`)
 
 ## Onboarding references

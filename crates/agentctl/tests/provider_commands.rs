@@ -34,7 +34,7 @@ fn provider_list_json_reports_builtin_providers_and_maturity() {
 
     let expected = [
         ("codex", "stable", true),
-        ("claude", "stub", false),
+        ("claude", "stable", false),
         ("gemini", "stub", false),
     ];
 
@@ -55,7 +55,7 @@ fn provider_list_json_reports_builtin_providers_and_maturity() {
 }
 
 #[test]
-fn provider_healthcheck_json_supports_stub_provider_selection() {
+fn provider_healthcheck_json_supports_claude_provider_selection() {
     let output = run_with(
         &[
             "provider",
@@ -78,7 +78,7 @@ fn provider_healthcheck_json_supports_stub_provider_selection() {
         parsed["summary"]
             .as_str()
             .unwrap_or_default()
-            .contains("stub")
+            .contains("partially ready")
     );
 }
 
@@ -102,7 +102,7 @@ fn provider_list_text_respects_environment_override_and_prints_maturity() {
     assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
     let stdout = output.stdout_text();
     assert!(stdout.contains("selected_provider: claude (environment)"));
-    assert!(stdout.contains("maturity: stub"));
+    assert!(stdout.contains("maturity: stable"));
 }
 
 #[test]

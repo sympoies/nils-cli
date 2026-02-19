@@ -46,7 +46,7 @@ Groups:
 Built-in providers:
 
 - `codex` (`maturity=stable`)
-- `claude` (`maturity=stub`)
+- `claude` (`maturity=stable`)
 - `gemini` (`maturity=stub`)
 
 List providers:
@@ -83,3 +83,4 @@ Required minimum:
 ## Docs
 
 - [Docs index](docs/README.md)
+- [codex to Claude mapping](docs/runbooks/codex-to-claude-mapping.md)

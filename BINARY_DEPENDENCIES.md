@@ -63,7 +63,7 @@ These tools enable richer behavior. Missing tools typically trigger fallback beh
 | Provider crate | Provider ID | Maturity | Runtime requirement |
 |---|---|---|---|
 | `agent-provider-codex` | `codex` | `stable` | Requires `codex` binary for execute flows |
-| `agent-provider-claude` | `claude` | `stub` | Compile-only stub (no external binary required yet) |
+| `agent-provider-claude` | `claude` | `stable` | Requires `ANTHROPIC_API_KEY` and outbound HTTPS access to Anthropic API (optional local `claude` CLI for characterization only) |
 | `agent-provider-gemini` | `gemini` | `stub` | Compile-only stub (no external binary required yet) |
 
 ## 3. Development and Validation Toolchain
