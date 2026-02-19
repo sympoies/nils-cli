@@ -96,7 +96,7 @@ pub fn execute_websocket_request(
         match step {
             WebsocketStep::Send { text } => {
                 socket
-                    .send(Message::Text(text.clone()))
+                    .send(Message::Text(text.clone().into()))
                     .with_context(|| format!("websocket send failed at step {idx}"))?;
                 transcript.push(WebsocketTranscriptEntry {
                     direction: "send".to_string(),
@@ -167,7 +167,8 @@ mod tests {
                         } else {
                             text.to_string()
                         };
-                        ws.send(Message::Text(response)).expect("send response");
+                        ws.send(Message::Text(response.into()))
+                            .expect("send response");
                     }
                     Ok(Message::Close(_)) => {
                         let _ = ws.close(None);
