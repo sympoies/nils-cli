@@ -47,7 +47,8 @@ fn spawn_echo_server() -> (String, thread::JoinHandle<()>) {
                     } else {
                         text.to_string()
                     };
-                    ws.send(Message::Text(response)).expect("send response");
+                    ws.send(Message::Text(response.into()))
+                        .expect("send response");
                 }
                 Ok(Message::Close(_)) => {
                     let _ = ws.close(None);

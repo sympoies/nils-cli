@@ -22,7 +22,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 time = { version = "0.3", features = ["formatting", "local-offset"] }
-tungstenite = { version = "0.23", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
+tungstenite = { version = "0.28", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
 nils-term = { version = "0.4.5", path = "../nils-term", package = "nils-term" }
 
 [dev-dependencies]
