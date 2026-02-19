@@ -10,6 +10,8 @@
 - Adapter implementation lives in `agent-provider-*` crates.
 - Adapter contract and shared schema live in `../agent-runtime-core`.
 - Provider-neutral orchestration and dispatch live in `../agentctl`.
+- Codex runtime primitives are consumed from `../codex-core` (not from `codex-cli`).
+- This crate maps runtime outcomes into `provider-adapter.v1` categories/codes.
 
 ## References
 

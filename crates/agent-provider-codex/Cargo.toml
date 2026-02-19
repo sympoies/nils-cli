@@ -12,7 +12,7 @@ name = "agent_provider_codex"
 path = "src/lib.rs"
 [dependencies]
 agent-runtime-core = { version = "0.4.5", path = "../agent-runtime-core", package = "nils-agent-runtime-core" }
-codex-cli = { version = "0.4.5", path = "../codex-cli", package = "nils-codex-cli" }
+codex-core = { version = "0.4.5", path = "../codex-core", package = "nils-codex-core" }
 nils-common = { version = "0.4.5", path = "../nils-common", package = "nils-common" }
 serde_json = { workspace = true }
 

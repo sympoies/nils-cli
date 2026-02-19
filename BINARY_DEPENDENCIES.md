@@ -59,6 +59,8 @@ These tools enable richer behavior. Missing tools typically trigger fallback beh
 ## 2.1 Agent provider adapter maturity and runtime expectations
 
 `agentctl` now ships with three built-in provider adapters. Runtime requirements differ by maturity.
+The Codex adapter runtime stack is layered as `agent-provider-codex -> codex-core` (shared runtime
+primitives) rather than importing `codex-cli` internals.
 
 | Provider crate | Provider ID | Maturity | Runtime requirement |
 |---|---|---|---|

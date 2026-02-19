@@ -1,33 +1,28 @@
-use crate::paths;
 use nils_common::shell::{SingleQuoteEscapeStyle, quote_posix_single_with_style};
 
 pub fn show() -> i32 {
-    println!(
-        "CODEX_CLI_MODEL={}",
-        env_or_default("CODEX_CLI_MODEL", "gpt-5.1-codex-mini")
-    );
-    println!(
-        "CODEX_CLI_REASONING={}",
-        env_or_default("CODEX_CLI_REASONING", "medium")
-    );
+    let snapshot = codex_core::config::snapshot();
+
+    println!("CODEX_CLI_MODEL={}", snapshot.model);
+    println!("CODEX_CLI_REASONING={}", snapshot.reasoning);
     println!(
         "CODEX_ALLOW_DANGEROUS_ENABLED={}",
-        std::env::var("CODEX_ALLOW_DANGEROUS_ENABLED").unwrap_or_default()
+        snapshot.allow_dangerous_enabled_raw
     );
 
-    if let Some(path) = paths::resolve_secret_dir() {
+    if let Some(path) = snapshot.secret_dir {
         println!("CODEX_SECRET_DIR={}", path.to_string_lossy());
     } else {
         println!("CODEX_SECRET_DIR=");
     }
 
-    if let Some(path) = paths::resolve_auth_file() {
+    if let Some(path) = snapshot.auth_file {
         println!("CODEX_AUTH_FILE={}", path.to_string_lossy());
     } else {
         println!("CODEX_AUTH_FILE=");
     }
 
-    if let Some(path) = paths::resolve_secret_cache_dir() {
+    if let Some(path) = snapshot.secret_cache_dir {
         println!("CODEX_SECRET_CACHE_DIR={}", path.to_string_lossy());
     } else {
         println!("CODEX_SECRET_CACHE_DIR=");
@@ -35,11 +30,11 @@ pub fn show() -> i32 {
 
     println!(
         "CODEX_AUTO_REFRESH_ENABLED={}",
-        env_or_default("CODEX_AUTO_REFRESH_ENABLED", "false")
+        snapshot.auto_refresh_enabled
     );
     println!(
         "CODEX_AUTO_REFRESH_MIN_DAYS={}",
-        env_or_default("CODEX_AUTO_REFRESH_MIN_DAYS", "5")
+        snapshot.auto_refresh_min_days
     );
 
     0
@@ -79,8 +74,4 @@ pub fn set(key: &str, value: &str) -> i32 {
             64
         }
     }
-}
-
-fn env_or_default(key: &str, default: &str) -> String {
-    std::env::var(key).unwrap_or_else(|_| default.to_string())
 }

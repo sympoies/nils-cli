@@ -3,6 +3,8 @@
 ## Overview
 codex-cli is a provider-specific Rust CLI for OpenAI/Codex workflows: Codex execution wrappers,
 auth/secret management, Codex diagnostics, config output, and Starship rendering.
+Core runtime primitives are sourced from `codex-core`; this crate owns only command UX and
+provider-specific user-facing behavior.
 
 ## Usage
 ```text
@@ -25,6 +27,7 @@ Help:
 ## Scope boundary
 | Job | Primary owner |
 |---|---|
+| Shared Codex runtime layer (`auth/path/config/exec/error`) | `codex-core` |
 | OpenAI/Codex auth, Codex prompt wrappers, Codex rate-limit diagnostics, Starship | `codex-cli` |
 | Multi-provider registry/selection (`provider`), provider-neutral doctor/debug/workflow | `agentctl` |
 | Local automation tool orchestration (`macos-agent`, `screen-record`, `image-processing`, `fzf-cli`) | `agentctl` |
@@ -106,3 +109,4 @@ Auth examples:
 
 - [Docs index](docs/README.md)
 - [JSON consumers runbook](docs/runbooks/json-consumers.md)
+- [codex-core runtime migration runbook](../../docs/runbooks/codex-core-migration.md)
