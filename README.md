@@ -45,11 +45,19 @@ Each crate is either a standalone CLI binary or a shared library used across the
 - [crates/agent-runtime-core](crates/agent-runtime-core): Provider-neutral runtime contract (`provider-adapter.v1`) shared by `agentctl` and provider adapters.
 - [crates/agent-provider-codex](crates/agent-provider-codex): Stable OpenAI/Codex adapter implementation for the provider-neutral contract.
 - [crates/agent-provider-claude](crates/agent-provider-claude): Stable `claude` adapter implementation (`maturity=stable`).
-- [crates/agent-provider-gemini](crates/agent-provider-gemini): Compile-only `gemini` onboarding stub adapter (`maturity=stub`).
+- [crates/agent-provider-gemini](crates/agent-provider-gemini): Stub `gemini` onboarding adapter (`maturity=stub`, no runtime requirement yet).
 - [crates/agentctl](crates/agentctl): Provider-neutral control plane (`provider`, `diag`, `debug`, `workflow`, `automation`).
 - [crates/codex-cli](crates/codex-cli): Provider-specific CLI for OpenAI/Codex workflows (auth, Codex diagnostics, Codex execution wrappers, Starship snippets).
 - [crates/semantic-commit](crates/semantic-commit): Helper CLI for generating staged context and creating semantic commits.
 - [crates/plan-tooling](crates/plan-tooling): Plan Format v1 tooling CLI (to-json/validate/batches/scaffold).
+
+### Provider maturity and runtime requirements
+
+| Provider ID | Maturity | Required runtime requirement | Optional dependency |
+|---|---|---|---|
+| `codex` | `stable` | `codex` binary for execute flows | None |
+| `claude` | `stable` | `ANTHROPIC_API_KEY` plus outbound HTTPS access to Anthropic API | Local `claude` CLI for characterization workflows only |
+| `gemini` | `stub` | No runtime requirement yet (stub placeholder adapter) | None |
 
 ## Shared helper policy (`nils-common`)
 

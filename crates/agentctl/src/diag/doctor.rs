@@ -41,6 +41,14 @@ struct DoctorReport {
     readiness: ReadinessSection,
 }
 
+const CLAUDE_PROVIDER_ID: &str = "claude";
+
+#[derive(Debug, Clone)]
+struct ProviderReadinessReason {
+    code: String,
+    message: String,
+}
+
 pub fn run(args: DoctorArgs) -> i32 {
     let probe_mode = resolve_probe_mode(args.probe_mode);
     let readiness = match collect_readiness(args.provider.as_deref(), args.timeout_ms, probe_mode) {
@@ -131,6 +139,21 @@ fn collect_provider_checks(
                     response.summary.as_deref(),
                     response.details.as_ref(),
                 );
+                let readiness_reason = provider_readiness_reason_from_health(
+                    provider_id.as_str(),
+                    status,
+                    response.summary.as_deref(),
+                    response.details.as_ref(),
+                );
+                let mut details = json!({
+                    "contract_version": metadata.contract_version.as_str(),
+                    "requested_timeout_ms": timeout_ms,
+                    "provider_details": response.details,
+                });
+                if let Some(reason) = readiness_reason.as_ref() {
+                    details["readiness_reason_code"] = json!(reason.code);
+                    details["readiness_reason"] = json!(reason.message);
+                }
                 checks.push(ReadinessCheck {
                     id: format!("provider.{provider_id}.healthcheck"),
                     component: Component::Provider,
@@ -139,16 +162,23 @@ fn collect_provider_checks(
                     status,
                     summary: response.summary,
                     hint,
-                    details: Some(json!({
-                        "contract_version": metadata.contract_version.as_str(),
-                        "requested_timeout_ms": timeout_ms,
-                        "provider_details": response.details,
-                    })),
+                    details: Some(details),
                     probe_mode,
                 });
             }
             Err(error) => {
                 let hint = provider_error_hint(error.as_ref());
+                let readiness_reason =
+                    provider_readiness_reason_from_error(provider_id.as_str(), error.as_ref());
+                let mut details = json!({
+                    "category": provider_error_category(error.as_ref()),
+                    "code": error.code,
+                    "details": error.details,
+                });
+                if let Some(reason) = readiness_reason.as_ref() {
+                    details["readiness_reason_code"] = json!(reason.code);
+                    details["readiness_reason"] = json!(reason.message);
+                }
                 checks.push(ReadinessCheck {
                     id: format!("provider.{provider_id}.healthcheck"),
                     component: Component::Provider,
@@ -157,11 +187,7 @@ fn collect_provider_checks(
                     status: CheckStatus::NotReady,
                     summary: Some(error.message.clone()),
                     hint,
-                    details: Some(json!({
-                        "category": provider_error_category(error.as_ref()),
-                        "code": error.code,
-                        "details": error.details,
-                    })),
+                    details: Some(details),
                     probe_mode,
                 });
             }
@@ -235,6 +261,78 @@ fn provider_error_category(error: &ProviderError) -> String {
         .ok()
         .and_then(|value| value.as_str().map(ToOwned::to_owned))
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn provider_readiness_reason_from_health(
+    provider_id: &str,
+    status: CheckStatus,
+    summary: Option<&str>,
+    details: Option<&Value>,
+) -> Option<ProviderReadinessReason> {
+    if provider_id != CLAUDE_PROVIDER_ID {
+        return None;
+    }
+
+    readiness_reason_fields(details)
+        .map(|(code, message)| ProviderReadinessReason { code, message })
+        .or_else(|| Some(claude_fallback_readiness_reason(status, summary)))
+}
+
+fn provider_readiness_reason_from_error(
+    provider_id: &str,
+    error: &ProviderError,
+) -> Option<ProviderReadinessReason> {
+    if provider_id != CLAUDE_PROVIDER_ID {
+        return None;
+    }
+
+    Some(ProviderReadinessReason {
+        code: error.code.clone(),
+        message: error.message.clone(),
+    })
+}
+
+fn claude_fallback_readiness_reason(
+    status: CheckStatus,
+    summary: Option<&str>,
+) -> ProviderReadinessReason {
+    let code = match status {
+        CheckStatus::Ready => "ready",
+        CheckStatus::Degraded => "degraded",
+        CheckStatus::NotReady => "not-ready",
+        CheckStatus::Unknown => "unknown",
+    };
+    let message = summary
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| match status {
+            CheckStatus::Ready => "claude adapter is ready".to_string(),
+            CheckStatus::Degraded => "claude adapter is partially ready".to_string(),
+            CheckStatus::NotReady => "claude adapter is unavailable".to_string(),
+            CheckStatus::Unknown => "claude adapter readiness is unknown".to_string(),
+        });
+
+    ProviderReadinessReason {
+        code: code.to_string(),
+        message,
+    }
+}
+
+pub(crate) fn readiness_reason_fields(details: Option<&Value>) -> Option<(String, String)> {
+    let details = details?;
+    let code = details
+        .get("readiness_reason_code")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let message = details
+        .get("readiness_reason")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+
+    Some((code.to_string(), message.to_string()))
 }
 
 fn collect_automation_checks(probe_mode: ProbeMode) -> Vec<ReadinessCheck> {
@@ -612,6 +710,9 @@ fn emit_text(report: &DoctorReport) -> i32 {
         }
         if let Some(hint) = check.hint.as_ref() {
             println!("  hint: {} ({})", hint.message, hint.category.as_str());
+        }
+        if let Some((code, message)) = readiness_reason_fields(check.details.as_ref()) {
+            println!("  readiness_reason: {code} ({message})");
         }
     }
 

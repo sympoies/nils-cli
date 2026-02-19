@@ -11,6 +11,7 @@ It owns:
 - debug bundles (`debug`)
 - declarative orchestration (`workflow`)
 - local automation integrations (`automation`)
+- shell completion export (`completion`)
 
 ## Command ownership boundary
 
@@ -21,9 +22,11 @@ It owns:
 | Local automation tool orchestration (`macos-agent`, `screen-record`, `image-processing`, `fzf-cli`) | `agentctl` |
 | Provider adapter implementation against `provider-adapter.v1` | `agent-provider-*` crates + `agent-runtime-core` |
 
-- `agentctl` owns provider-neutral orchestration (`provider`, `diag`, `debug`, `workflow`, `automation`) and local automation integration.
+- `agentctl` owns provider-neutral orchestration (`provider`, `diag`, `debug`, `workflow`, `automation`) plus shell completion export (`completion`).
 - `codex-cli` remains responsible for provider-specific OpenAI/Codex operations.
 - Migration note: keep existing `codex-cli` workflows stable while provider-neutral ownership lives in `agentctl`.
+- Migration classification source (`exact`/`semantic`/`unsupported`): [codex to Claude mapping](docs/runbooks/codex-to-claude-mapping.md).
+- Unsupported codex surfaces require explicit alternatives (no silent fallback); see the mapping runbook.
 - Compatibility shim: `wrappers/codex-cli` forwards `provider|debug|workflow|automation` to `agentctl` when `agentctl` is available.
 - Migration hint text (wrapper/help/docs): `use agentctl <command> for provider-neutral orchestration`.
 
@@ -31,15 +34,26 @@ It owns:
 
 ```text
 Usage:
-  agentctl <group> <command> [args]
+  agentctl [COMMAND]
 
-Groups:
-  provider   list | healthcheck
-  diag       capabilities | doctor
-  debug      bundle
-  workflow   run
-  automation (reserved)
+Commands:
+  provider    list | healthcheck
+  diag        capabilities | doctor
+  debug       bundle
+  workflow    run
+  automation
+  completion  bash | zsh
 ```
+
+## Help and shell completion
+
+```bash
+cargo run -p nils-agentctl -- --help
+cargo run -p nils-agentctl -- completion zsh
+cargo run -p nils-agentctl -- completion bash
+```
+
+- `completion` is provider-neutral CLI plumbing; codex-to-Claude workflow mapping remains in the runbook below.
 
 ## Provider registry
 
@@ -48,6 +62,14 @@ Built-in providers:
 - `codex` (`maturity=stable`)
 - `claude` (`maturity=stable`)
 - `gemini` (`maturity=stub`)
+
+Provider runtime requirements:
+
+| Provider ID | Maturity | Required runtime requirement | Optional dependency |
+|---|---|---|---|
+| `codex` | `stable` | `codex` binary for execute flows | None |
+| `claude` | `stable` | `ANTHROPIC_API_KEY` plus outbound HTTPS access to Anthropic API | Local `claude` CLI for characterization workflows only |
+| `gemini` | `stub` | No runtime requirement yet (stub placeholder adapter) | None |
 
 List providers:
 

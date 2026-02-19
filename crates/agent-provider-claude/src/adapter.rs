@@ -28,12 +28,9 @@ impl ProviderAdapterV1 for ClaudeProviderAdapter {
     }
 
     fn capabilities(&self, request: CapabilitiesRequest) -> ProviderResult<CapabilitiesResponse> {
-        let execute_enabled = config::ClaudeConfig::from_env().is_ok();
-        let execute_description = if execute_enabled {
-            "claude execution is enabled".to_string()
-        } else {
-            format!("set {} to enable execute capability", config::API_KEY_ENV)
-        };
+        let readiness = AdapterReadiness::resolve();
+        let execute_enabled = readiness.execute_available();
+        let execute_description = readiness.execute_description();
 
         let mut capabilities = vec![
             Capability::available("capabilities"),
@@ -65,61 +62,40 @@ impl ProviderAdapterV1 for ClaudeProviderAdapter {
 
     fn healthcheck(&self, request: HealthcheckRequest) -> ProviderResult<HealthcheckResponse> {
         let claude_cli_available = config::claude_cli_available();
-        match config::ClaudeConfig::from_env() {
-            Ok(cfg) => Ok(HealthcheckResponse {
-                status: HealthStatus::Healthy,
-                summary: Some("claude adapter is ready".to_string()),
-                details: Some(json!({
-                    "maturity": "stable",
-                    "execute_available": true,
-                    "api_key_configured": true,
-                    "base_url": cfg.base_url,
-                    "model": cfg.model,
-                    "api_version": cfg.api_version,
-                    "timeout_ms": cfg.timeout_ms,
-                    "claude_cli_available": claude_cli_available,
-                    "requested_timeout_ms": request.timeout_ms,
-                })),
-            }),
-            Err(error) if error.code == "missing-api-key" => Ok(HealthcheckResponse {
-                status: HealthStatus::Degraded,
-                summary: Some("claude adapter is partially ready".to_string()),
-                details: Some(json!({
-                    "maturity": "stable",
-                    "execute_available": false,
-                    "api_key_configured": false,
-                    "config_error_code": error.code,
-                    "config_error_message": error.message,
-                    "claude_cli_available": claude_cli_available,
-                    "requested_timeout_ms": request.timeout_ms,
-                })),
-            }),
-            Err(error) => Ok(HealthcheckResponse {
-                status: HealthStatus::Unhealthy,
-                summary: Some("claude adapter is unavailable".to_string()),
-                details: Some(json!({
-                    "maturity": "stable",
-                    "execute_available": false,
-                    "api_key_configured": config::api_key_configured(),
-                    "config_error_code": error.code,
-                    "config_error_message": error.message,
-                    "claude_cli_available": claude_cli_available,
-                    "requested_timeout_ms": request.timeout_ms,
-                })),
-            }),
+        let readiness = AdapterReadiness::resolve();
+        let mut details = json!({
+            "maturity": "stable",
+            "execute_available": readiness.execute_available(),
+            "api_key_configured": readiness.api_key_configured(),
+            "claude_cli_available": claude_cli_available,
+            "requested_timeout_ms": request.timeout_ms,
+            "readiness_reason_code": readiness.readiness_reason_code(),
+            "readiness_reason": readiness.readiness_reason_message(),
+        });
+
+        if let Some(cfg) = readiness.config() {
+            details["base_url"] = json!(cfg.base_url);
+            details["model"] = json!(cfg.model);
+            details["api_version"] = json!(cfg.api_version);
+            details["timeout_ms"] = json!(cfg.timeout_ms);
         }
+
+        if let Some(error) = readiness.config_error() {
+            details["config_error_code"] = json!(error.code);
+            details["config_error_message"] = json!(error.message);
+        }
+
+        Ok(HealthcheckResponse {
+            status: readiness.health_status(),
+            summary: Some(readiness.summary().to_string()),
+            details: Some(details),
+        })
     }
 
     fn execute(&self, request: ExecuteRequest) -> ProviderResult<ExecuteResponse> {
         let prompt =
-            prompts::render_execute_prompt(request.task.as_str(), request.input.as_deref());
-        if prompt.trim().is_empty() {
-            return Err(Box::new(ProviderError::new(
-                ProviderErrorCategory::Validation,
-                "missing-task",
-                "execute task/input is required",
-            )));
-        }
+            prompts::render_execute_prompt(request.task.as_str(), request.input.as_deref())
+                .map_err(|error| Box::new(prompt_render_error_to_provider_error(error)))?;
 
         let config = config::ClaudeConfig::from_env()
             .map_err(|error| Box::new(config_error_to_provider_error(error)))?;
@@ -147,7 +123,9 @@ impl ProviderAdapterV1 for ClaudeProviderAdapter {
         let max_timeout_ms = config::ClaudeConfig::from_env()
             .ok()
             .map(|cfg| cfg.timeout_ms);
-        let max_concurrency = config::max_concurrency().ok().or(Some(2));
+        let max_concurrency = config::max_concurrency()
+            .ok()
+            .or(Some(config::DEFAULT_MAX_CONCURRENCY));
         Ok(LimitsResponse {
             max_concurrency,
             max_timeout_ms,
@@ -156,7 +134,8 @@ impl ProviderAdapterV1 for ClaudeProviderAdapter {
     }
 
     fn auth_state(&self, _request: AuthStateRequest) -> ProviderResult<AuthStateResponse> {
-        if !config::api_key_configured() {
+        let auth_state = config::auth_state();
+        if !auth_state.api_key_configured {
             return Ok(AuthStateResponse {
                 state: AuthStateStatus::Unauthenticated,
                 subject: None,
@@ -167,10 +146,104 @@ impl ProviderAdapterV1 for ClaudeProviderAdapter {
 
         Ok(AuthStateResponse {
             state: AuthStateStatus::Authenticated,
-            subject: config::auth_subject(),
-            scopes: config::auth_scopes(),
+            subject: auth_state.subject,
+            scopes: auth_state.scopes,
             expires_at: None,
         })
+    }
+}
+
+#[derive(Debug, Clone)]
+enum AdapterReadiness {
+    Ready(config::ClaudeConfig),
+    Degraded(config::ConfigError),
+    Unhealthy {
+        error: config::ConfigError,
+        api_key_configured: bool,
+    },
+}
+
+impl AdapterReadiness {
+    fn resolve() -> Self {
+        match config::ClaudeConfig::from_env() {
+            Ok(cfg) => Self::Ready(cfg),
+            Err(error) if error.code == "missing-api-key" => Self::Degraded(error),
+            Err(error) => Self::Unhealthy {
+                error,
+                api_key_configured: config::api_key_configured(),
+            },
+        }
+    }
+
+    fn execute_available(&self) -> bool {
+        matches!(self, Self::Ready(_))
+    }
+
+    fn execute_description(&self) -> String {
+        match self {
+            Self::Ready(_) => "claude execution is enabled".to_string(),
+            Self::Degraded(_) => {
+                format!("set {} to enable execute capability", config::API_KEY_ENV)
+            }
+            Self::Unhealthy { error, .. } => format!(
+                "resolve claude configuration error ({}) to enable execute capability: {}",
+                error.code, error.message
+            ),
+        }
+    }
+
+    fn health_status(&self) -> HealthStatus {
+        match self {
+            Self::Ready(_) => HealthStatus::Healthy,
+            Self::Degraded(_) => HealthStatus::Degraded,
+            Self::Unhealthy { .. } => HealthStatus::Unhealthy,
+        }
+    }
+
+    fn summary(&self) -> &'static str {
+        match self {
+            Self::Ready(_) => "claude adapter is ready",
+            Self::Degraded(_) => "claude adapter is partially ready",
+            Self::Unhealthy { .. } => "claude adapter is unavailable",
+        }
+    }
+
+    fn readiness_reason_code(&self) -> &str {
+        match self {
+            Self::Ready(_) => "ready",
+            Self::Degraded(error) | Self::Unhealthy { error, .. } => error.code.as_str(),
+        }
+    }
+
+    fn readiness_reason_message(&self) -> String {
+        match self {
+            Self::Ready(_) => "claude adapter is ready for execute".to_string(),
+            Self::Degraded(error) | Self::Unhealthy { error, .. } => error.message.clone(),
+        }
+    }
+
+    fn api_key_configured(&self) -> bool {
+        match self {
+            Self::Ready(_) => true,
+            Self::Degraded(_) => false,
+            Self::Unhealthy {
+                api_key_configured, ..
+            } => *api_key_configured,
+        }
+    }
+
+    fn config(&self) -> Option<&config::ClaudeConfig> {
+        match self {
+            Self::Ready(cfg) => Some(cfg),
+            Self::Degraded(_) | Self::Unhealthy { .. } => None,
+        }
+    }
+
+    fn config_error(&self) -> Option<&config::ConfigError> {
+        match self {
+            Self::Ready(_) => None,
+            Self::Degraded(error) | Self::Unhealthy { error, .. } => Some(error),
+        }
     }
 }
 
@@ -181,6 +254,16 @@ fn config_error_to_provider_error(error: config::ConfigError) -> ProviderError {
         ProviderErrorCategory::Validation
     };
     ProviderError::new(category, error.code, error.message).with_retryable(false)
+}
+
+fn prompt_render_error_to_provider_error(error: prompts::PromptRenderError) -> ProviderError {
+    match error {
+        prompts::PromptRenderError::MissingTask => ProviderError::new(
+            ProviderErrorCategory::Validation,
+            "missing-task",
+            "execute task/input is required",
+        ),
+    }
 }
 
 fn as_millis(duration: std::time::Duration) -> Option<u64> {

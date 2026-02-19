@@ -1,7 +1,7 @@
 use crate::diag::{
-    AutomationToolSpec, DIAG_SCHEMA_VERSION, EXIT_OK, EXIT_USAGE, OutputFormat, ProbeMode,
-    ProbeModeArg, ReadinessSection, automation_tools, current_platform, doctor, emit_json,
-    resolve_probe_mode,
+    AutomationToolSpec, Component, DIAG_SCHEMA_VERSION, EXIT_OK, EXIT_USAGE, OutputFormat,
+    ProbeMode, ProbeModeArg, ReadinessSection, automation_tools, current_platform, doctor,
+    emit_json, resolve_probe_mode,
 };
 use crate::provider::registry::ProviderRegistry;
 use agent_runtime_core::schema::CapabilitiesRequest;
@@ -197,6 +197,18 @@ fn supports_current_platform(spec: &AutomationToolSpec) -> bool {
     spec.supported_platforms.contains(&current_platform())
 }
 
+fn provider_readiness_reason(
+    report: &CapabilitiesReport,
+    provider_id: &str,
+) -> Option<(String, String)> {
+    report
+        .readiness
+        .checks
+        .iter()
+        .find(|check| check.component == Component::Provider && check.subject == provider_id)
+        .and_then(|check| doctor::readiness_reason_fields(check.details.as_ref()))
+}
+
 fn emit_text(report: &CapabilitiesReport) -> i32 {
     println!("schema_version: {}", report.schema_version);
     println!("command: {}", report.command);
@@ -222,6 +234,9 @@ fn emit_text(report: &CapabilitiesReport) -> i32 {
                 error.message, error.category, error.code
             );
             continue;
+        }
+        if let Some((code, message)) = provider_readiness_reason(report, provider.id.as_str()) {
+            println!("  readiness_reason: {code} ({message})");
         }
         for capability in &provider.capabilities {
             if let Some(description) = capability.description.as_deref() {

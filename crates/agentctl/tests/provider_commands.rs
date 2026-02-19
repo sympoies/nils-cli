@@ -52,6 +52,18 @@ fn provider_list_json_reports_builtin_providers_and_maturity() {
             "provider status should exist"
         );
     }
+
+    let claude = providers
+        .iter()
+        .find(|provider| provider.get("id").and_then(Value::as_str) == Some("claude"))
+        .expect("claude should exist");
+    assert_eq!(claude["status"], "degraded");
+    assert!(
+        claude["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("partially ready")
+    );
 }
 
 #[test]
@@ -91,6 +103,38 @@ fn provider_list_unknown_override_exits_usage() {
 
     assert_eq!(output.code, 64);
     assert!(output.stderr_text().contains("unknown provider"));
+}
+
+#[test]
+fn provider_list_unknown_environment_override_exits_usage() {
+    let output = run_with(
+        &["provider", "list"],
+        CmdOptions::default().with_env("AGENTCTL_PROVIDER", "missing"),
+    );
+
+    assert_eq!(output.code, 64);
+    assert!(output.stderr_text().contains("unknown provider"));
+    assert!(output.stderr_text().contains("from environment override"));
+}
+
+#[test]
+fn provider_list_cli_override_wins_over_environment_override() {
+    let output = run_with(
+        &[
+            "provider",
+            "list",
+            "--provider",
+            "gemini",
+            "--format",
+            "json",
+        ],
+        CmdOptions::default().with_env("AGENTCTL_PROVIDER", "claude"),
+    );
+    assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
+
+    let parsed: Value = serde_json::from_str(&output.stdout_text()).expect("provider list json");
+    assert_eq!(parsed["selected_provider"], "gemini");
+    assert_eq!(parsed["selected_source"], "cli-argument");
 }
 
 #[test]

@@ -28,6 +28,13 @@ fn install_stub_tools(stub: &StubBinDir) {
     stub.write_exe("fzf-cli", "#!/bin/sh\necho 'fzf-cli help'\n");
 }
 
+fn check_by_subject<'a>(checks: &'a [Value], subject: &str) -> &'a Value {
+    checks
+        .iter()
+        .find(|check| check.get("subject").and_then(Value::as_str) == Some(subject))
+        .expect("check for subject should exist")
+}
+
 #[test]
 fn diag_capabilities_json_reports_inventory_and_readiness() {
     let lock = GlobalStateLock::new();
@@ -40,6 +47,7 @@ fn diag_capabilities_json_reports_inventory_and_readiness() {
     let _path = prepend_path(&lock, stub.path());
     let _dangerous = EnvGuard::set(&lock, "CODEX_ALLOW_DANGEROUS_ENABLED", "true");
     let _auth_file = EnvGuard::set(&lock, "CODEX_AUTH_FILE", &auth_file_str);
+    let _claude_key = EnvGuard::remove(&lock, "ANTHROPIC_API_KEY");
     let _macos_test_mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
     let _screen_record_test_mode = EnvGuard::set(&lock, "AGENTS_SCREEN_RECORD_TEST_MODE", "1");
 
@@ -56,7 +64,24 @@ fn diag_capabilities_json_reports_inventory_and_readiness() {
     assert_eq!(parsed["schema_version"], "agentctl.diag.v1");
     assert_eq!(parsed["command"], "capabilities");
     assert_eq!(parsed["probe_mode"], "test");
-    assert!(parsed.pointer("/readiness/checks").is_some());
+    let checks = parsed
+        .pointer("/readiness/checks")
+        .and_then(Value::as_array)
+        .expect("readiness checks");
+    let claude = check_by_subject(checks, "claude");
+    assert_eq!(
+        claude
+            .pointer("/details/readiness_reason_code")
+            .and_then(Value::as_str),
+        Some("missing-api-key")
+    );
+    assert!(
+        claude
+            .pointer("/details/readiness_reason")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("ANTHROPIC_API_KEY")
+    );
 
     let providers = parsed
         .get("providers")
@@ -143,6 +168,7 @@ fn diag_capabilities_text_output_includes_provider_and_automation_sections() {
     let _path = prepend_path(&lock, stub.path());
     let _dangerous = EnvGuard::set(&lock, "CODEX_ALLOW_DANGEROUS_ENABLED", "true");
     let _auth_file = EnvGuard::set(&lock, "CODEX_AUTH_FILE", &auth_file_str);
+    let _claude_key = EnvGuard::remove(&lock, "ANTHROPIC_API_KEY");
     let _macos_test_mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
     let _screen_record_test_mode = EnvGuard::set(&lock, "AGENTS_SCREEN_RECORD_TEST_MODE", "1");
 
@@ -152,4 +178,6 @@ fn diag_capabilities_text_output_includes_provider_and_automation_sections() {
     assert!(stdout.contains("probe_mode: test"));
     assert!(stdout.contains("providers:"));
     assert!(stdout.contains("automation_tools:"));
+    assert!(stdout.contains("readiness_reason: missing-api-key"));
+    assert!(stdout.contains("ANTHROPIC_API_KEY is required for claude execute"));
 }

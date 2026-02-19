@@ -79,6 +79,54 @@ fn selection_rejects_unknown_override_and_exposes_source() {
 }
 
 #[test]
+fn selection_rejects_unknown_environment_override_and_exposes_source() {
+    let mut registry = ProviderRegistry::new("codex");
+    registry.register(FakeProvider::new("codex", HealthStatus::Healthy));
+
+    let error = registry
+        .resolve_selection_with_env(None, Some("missing"))
+        .expect_err("should fail");
+    assert_eq!(
+        error,
+        ResolveProviderError::UnknownProvider {
+            provider_id: "missing".to_string(),
+            source: ProviderSelectionSource::Environment,
+        }
+    );
+}
+
+#[test]
+fn selection_rejects_unknown_cli_override_even_when_environment_override_is_valid() {
+    let mut registry = ProviderRegistry::new("codex");
+    registry.register(FakeProvider::new("codex", HealthStatus::Healthy));
+    registry.register(FakeProvider::new("claude", HealthStatus::Healthy));
+
+    let error = registry
+        .resolve_selection_with_env(Some("missing"), Some("claude"))
+        .expect_err("should fail");
+    assert_eq!(
+        error,
+        ResolveProviderError::UnknownProvider {
+            provider_id: "missing".to_string(),
+            source: ProviderSelectionSource::CliArgument,
+        }
+    );
+}
+
+#[test]
+fn selection_ignores_empty_overrides_and_falls_back_to_default() {
+    let mut registry = ProviderRegistry::new("codex");
+    registry.register(FakeProvider::new("codex", HealthStatus::Healthy));
+    registry.register(FakeProvider::new("claude", HealthStatus::Healthy));
+
+    let selection = registry
+        .resolve_selection_with_env(Some("   "), Some(""))
+        .expect("selection");
+    assert_eq!(selection.provider_id, "codex");
+    assert_eq!(selection.source, ProviderSelectionSource::Default);
+}
+
+#[test]
 fn with_builtins_registers_codex_and_builtin_providers_with_expected_maturity() {
     let registry = ProviderRegistry::with_builtins();
     assert_eq!(registry.default_provider_id(), Some("codex"));

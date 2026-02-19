@@ -2,18 +2,23 @@ use agent_provider_claude::ClaudeProviderAdapter;
 use agent_runtime_core::provider::ProviderAdapterV1;
 use agent_runtime_core::schema::ExecuteRequest;
 
+fn live_profile_enabled() -> bool {
+    std::env::var("CLAUDE_LIVE_TEST").ok().as_deref() == Some("1")
+}
+
 #[test]
 #[ignore]
 fn live_smoke_executes_against_real_claude_api() {
-    if std::env::var("CLAUDE_LIVE_TEST").ok().as_deref() != Some("1") {
+    if !live_profile_enabled() {
+        eprintln!("skipping live smoke test: set CLAUDE_LIVE_TEST=1 to enable");
         return;
     }
 
     let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
-    assert!(
-        !api_key.trim().is_empty(),
-        "ANTHROPIC_API_KEY is required for live smoke test"
-    );
+    if api_key.trim().is_empty() {
+        eprintln!("skipping live smoke test: ANTHROPIC_API_KEY is not set");
+        return;
+    }
 
     let adapter = ClaudeProviderAdapter::new();
     let response = adapter

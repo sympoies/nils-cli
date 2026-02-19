@@ -56,6 +56,7 @@ fn diag_doctor_json_includes_provider_and_automation_readiness() {
     let _path = EnvGuard::set(&lock, "PATH", &path_only_stub);
     let _dangerous = EnvGuard::set(&lock, "CODEX_ALLOW_DANGEROUS_ENABLED", "true");
     let _auth_file = EnvGuard::set(&lock, "CODEX_AUTH_FILE", &auth_file_str);
+    let _claude_key = EnvGuard::remove(&lock, "ANTHROPIC_API_KEY");
     let _macos_test_mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
     let _screen_record_test_mode = EnvGuard::set(&lock, "AGENTS_SCREEN_RECORD_TEST_MODE", "1");
 
@@ -82,6 +83,21 @@ fn diag_doctor_json_includes_provider_and_automation_readiness() {
             "missing check for {tool}"
         );
     }
+
+    let claude = check_by_subject(checks, "claude");
+    assert_eq!(
+        claude
+            .pointer("/details/readiness_reason_code")
+            .and_then(Value::as_str),
+        Some("missing-api-key")
+    );
+    assert!(
+        claude
+            .pointer("/details/readiness_reason")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("ANTHROPIC_API_KEY")
+    );
 }
 
 #[test]
@@ -261,6 +277,7 @@ fn diag_doctor_text_mode_prints_summary_and_checks() {
     let _path = prepend_path(&lock, stub.path());
     let _dangerous = EnvGuard::set(&lock, "CODEX_ALLOW_DANGEROUS_ENABLED", "true");
     let _auth_file = EnvGuard::set(&lock, "CODEX_AUTH_FILE", &auth_file_str);
+    let _claude_key = EnvGuard::remove(&lock, "ANTHROPIC_API_KEY");
     let _macos_test_mode = EnvGuard::set(&lock, "AGENTS_MACOS_AGENT_TEST_MODE", "1");
     let _screen_record_test_mode = EnvGuard::set(&lock, "AGENTS_SCREEN_RECORD_TEST_MODE", "1");
 
@@ -270,4 +287,6 @@ fn diag_doctor_text_mode_prints_summary_and_checks() {
     assert!(stdout.contains("overall_status:"));
     assert!(stdout.contains("summary: total="));
     assert!(stdout.contains("checks:"));
+    assert!(stdout.contains("readiness_reason: missing-api-key"));
+    assert!(stdout.contains("ANTHROPIC_API_KEY is required for claude execute"));
 }

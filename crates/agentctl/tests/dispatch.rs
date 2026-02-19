@@ -23,6 +23,23 @@ fn dispatch_help_lists_provider_neutral_groups() {
     assert!(stdout.contains("debug"), "stdout={stdout}");
     assert!(stdout.contains("workflow"), "stdout={stdout}");
     assert!(stdout.contains("automation"), "stdout={stdout}");
+    assert!(stdout.contains("completion"), "stdout={stdout}");
+}
+
+#[test]
+fn dispatch_completion_help_lists_supported_shells() {
+    let output = run(&["completion", "--help"]);
+    assert_eq!(output.code, 0);
+
+    let stdout = output.stdout_text();
+    assert!(
+        stdout.contains("Print shell completion script"),
+        "stdout={stdout}"
+    );
+    assert!(
+        stdout.contains("possible values: bash, zsh"),
+        "stdout={stdout}"
+    );
 }
 
 #[test]

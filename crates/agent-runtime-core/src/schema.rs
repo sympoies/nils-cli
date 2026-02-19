@@ -92,6 +92,9 @@ impl ProviderMetadata {
 }
 
 /// Standardized adapter operations.
+///
+/// Wire values are kebab-case:
+/// `capabilities`, `healthcheck`, `execute`, `limits`, `auth-state`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProviderOperation {
@@ -197,11 +200,18 @@ impl ProviderErrorCategory {
 /// Normalized provider error payload.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProviderError {
+    /// Stable category used for policy and retry defaults.
     pub category: ProviderErrorCategory,
+    /// Stable provider-specific code within a category.
     pub code: String,
+    /// Human-readable diagnostic summary.
     pub message: String,
+    /// Optional explicit retryability override.
+    ///
+    /// When absent, retryability falls back to category defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retryable: Option<bool>,
+    /// Optional structured details; additive fields are schema-compatible.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<serde_json::Value>,
 }

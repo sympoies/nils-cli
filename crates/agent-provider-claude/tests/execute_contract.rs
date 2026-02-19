@@ -85,6 +85,60 @@ fn execute_expands_advice_prompt_template() {
 }
 
 #[test]
+fn execute_expands_knowledge_prompt_template() {
+    let lock = GlobalStateLock::new();
+    let server = LoopbackServer::new().expect("loopback server");
+    server.add_route(
+        "POST",
+        "/v1/messages",
+        HttpResponse::new(
+            200,
+            json!({
+                "id": "msg_123",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    { "type": "text", "text": "knowledge response" }
+                ],
+                "model": "claude-sonnet-4-5-20250929"
+            })
+            .to_string(),
+        ),
+    );
+
+    let _api_key = EnvGuard::set(&lock, "ANTHROPIC_API_KEY", "test-key");
+    let _base_url = EnvGuard::set(&lock, "ANTHROPIC_BASE_URL", server.url().as_str());
+    let _retry_max = EnvGuard::set(&lock, "CLAUDE_RETRY_MAX", "0");
+    let adapter = ClaudeProviderAdapter::new();
+
+    let _ = adapter
+        .execute(ExecuteRequest::new("knowledge: eventual consistency"))
+        .expect("execute");
+    let requests = server.take_requests();
+    assert_eq!(requests.len(), 1);
+    let body = requests[0].body_text();
+    assert!(body.contains("Explain the following concept clearly"));
+    assert!(body.contains("eventual consistency"));
+}
+
+#[test]
+fn execute_returns_validation_error_for_empty_prefixed_input() {
+    let adapter = ClaudeProviderAdapter::new();
+    let error = adapter
+        .execute(ExecuteRequest {
+            task: "prompt: fallback task".to_string(),
+            input: Some("advice:   ".to_string()),
+            timeout_ms: None,
+        })
+        .expect_err("validation error expected");
+
+    assert_eq!(error.category, ProviderErrorCategory::Validation);
+    assert_eq!(error.code, "missing-task");
+    assert_eq!(error.message, "execute task/input is required");
+    assert!(!error.is_retryable());
+}
+
+#[test]
 fn execute_maps_auth_http_error() {
     let lock = GlobalStateLock::new();
     let server = LoopbackServer::new().expect("loopback server");

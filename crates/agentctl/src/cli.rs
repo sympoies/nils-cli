@@ -26,9 +26,9 @@ pub enum Command {
     Debug(DebugArgs),
     /// Declarative workflow orchestration
     Workflow(WorkflowArgs),
-    /// Local automation integrations
+    /// Local automation integrations (workflow-driven tooling)
     Automation,
-    /// Print shell completion script
+    /// Print shell completion script (bash or zsh)
     Completion(CompletionArgs),
 }
 

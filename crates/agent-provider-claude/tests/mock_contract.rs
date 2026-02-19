@@ -1,6 +1,9 @@
 use agent_provider_claude::ClaudeProviderAdapter;
 use agent_runtime_core::provider::ProviderAdapterV1;
-use agent_runtime_core::schema::{ExecuteRequest, ProviderErrorCategory};
+use agent_runtime_core::schema::{
+    AuthStateRequest, AuthStateStatus, CapabilitiesRequest, ExecuteRequest, HealthStatus,
+    HealthcheckRequest, LimitsRequest, ProviderErrorCategory,
+};
 use nils_test_support::http::{HttpResponse, LoopbackServer};
 use nils_test_support::{EnvGuard, GlobalStateLock};
 use pretty_assertions::assert_eq;
@@ -83,4 +86,80 @@ fn fixture_backed_auth_error_maps_to_non_retryable_auth_category() {
     assert_eq!(error.category, ProviderErrorCategory::Auth);
     assert_eq!(error.code, "auth-failed");
     assert_eq!(error.retryable, Some(false));
+}
+
+#[test]
+fn missing_auth_reports_stable_non_execute_readiness_reasons() {
+    let lock = GlobalStateLock::new();
+    let _api_key = EnvGuard::remove(&lock, "ANTHROPIC_API_KEY");
+
+    let adapter = ClaudeProviderAdapter::new();
+    let capabilities = adapter
+        .capabilities(CapabilitiesRequest::default())
+        .expect("capabilities");
+    let execute = capabilities
+        .capabilities
+        .iter()
+        .find(|capability| capability.name == "execute")
+        .expect("execute capability");
+    assert_eq!(execute.available, false);
+    assert_eq!(
+        execute.description.as_deref(),
+        Some("set ANTHROPIC_API_KEY to enable execute capability")
+    );
+
+    let health = adapter
+        .healthcheck(HealthcheckRequest::default())
+        .expect("healthcheck");
+    assert_eq!(health.status, HealthStatus::Degraded);
+    let details = health.details.expect("health details");
+    assert_eq!(details["readiness_reason_code"], "missing-api-key");
+    assert_eq!(details["config_error_code"], "missing-api-key");
+
+    let auth = adapter
+        .auth_state(AuthStateRequest::default())
+        .expect("auth-state");
+    assert_eq!(auth.state, AuthStateStatus::Unauthenticated);
+}
+
+#[test]
+fn invalid_config_injection_reports_stable_non_execute_readiness_reasons() {
+    let lock = GlobalStateLock::new();
+    let _api_key = EnvGuard::set(&lock, "ANTHROPIC_API_KEY", "test-key");
+    let _base_url = EnvGuard::set(&lock, "ANTHROPIC_BASE_URL", "not-a-url");
+    let adapter = ClaudeProviderAdapter::new();
+
+    let capabilities = adapter
+        .capabilities(CapabilitiesRequest::default())
+        .expect("capabilities");
+    let execute = capabilities
+        .capabilities
+        .iter()
+        .find(|capability| capability.name == "execute")
+        .expect("execute capability");
+    assert_eq!(execute.available, false);
+    assert!(
+        execute
+            .description
+            .as_deref()
+            .unwrap_or_default()
+            .contains("invalid-config")
+    );
+
+    let health = adapter
+        .healthcheck(HealthcheckRequest::default())
+        .expect("healthcheck");
+    assert_eq!(health.status, HealthStatus::Unhealthy);
+    let details = health.details.expect("health details");
+    assert_eq!(details["readiness_reason_code"], "invalid-config");
+    assert_eq!(details["config_error_code"], "invalid-config");
+    assert_eq!(details["api_key_configured"], true);
+
+    let limits = adapter.limits(LimitsRequest::default()).expect("limits");
+    assert_eq!(limits.max_timeout_ms, None);
+
+    let auth = adapter
+        .auth_state(AuthStateRequest::default())
+        .expect("auth-state");
+    assert_eq!(auth.state, AuthStateStatus::Authenticated);
 }

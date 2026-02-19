@@ -62,11 +62,11 @@ These tools enable richer behavior. Missing tools typically trigger fallback beh
 The Codex adapter runtime stack is layered as `agent-provider-codex -> codex-core` (shared runtime
 primitives) rather than importing `codex-cli` internals.
 
-| Provider crate | Provider ID | Maturity | Runtime requirement |
-|---|---|---|---|
-| `agent-provider-codex` | `codex` | `stable` | Requires `codex` binary for execute flows |
-| `agent-provider-claude` | `claude` | `stable` | Requires `ANTHROPIC_API_KEY` and outbound HTTPS access to Anthropic API (optional local `claude` CLI for characterization only) |
-| `agent-provider-gemini` | `gemini` | `stub` | Compile-only stub (no external binary required yet) |
+| Provider crate | Provider ID | Maturity | Required runtime requirement | Optional dependency |
+|---|---|---|---|---|
+| `agent-provider-codex` | `codex` | `stable` | `codex` binary for execute flows | None |
+| `agent-provider-claude` | `claude` | `stable` | `ANTHROPIC_API_KEY` plus outbound HTTPS access to Anthropic API | Local `claude` CLI for characterization workflows only |
+| `agent-provider-gemini` | `gemini` | `stub` | No runtime requirement yet (stub placeholder adapter) | None |
 
 ## 3. Development and Validation Toolchain
 

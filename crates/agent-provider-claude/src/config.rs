@@ -1,4 +1,5 @@
 use nils_common::process;
+use reqwest::Url;
 
 pub const API_KEY_ENV: &str = "ANTHROPIC_API_KEY";
 pub const BASE_URL_ENV: &str = "ANTHROPIC_BASE_URL";
@@ -29,6 +30,13 @@ pub struct ClaudeConfig {
     pub timeout_ms: u64,
     pub max_tokens: u32,
     pub retry_max: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaudeAuthState {
+    pub api_key_configured: bool,
+    pub subject: Option<String>,
+    pub scopes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,13 +71,8 @@ impl ClaudeConfig {
             )
         })?;
 
-        let base_url = trim_env(BASE_URL_ENV)
-            .unwrap_or_else(|| DEFAULT_BASE_URL.to_string())
-            .trim_end_matches('/')
-            .to_string();
-        let model = trim_env(MODEL_ENV)
-            .or_else(|| trim_env(FALLBACK_MODEL_ENV))
-            .unwrap_or_else(|| DEFAULT_MODEL.to_string());
+        let base_url = parse_base_url_env()?;
+        let model = resolve_model();
         let api_version =
             trim_env(API_VERSION_ENV).unwrap_or_else(|| DEFAULT_API_VERSION.to_string());
         let timeout_ms = parse_u64_env(TIMEOUT_MS_ENV, DEFAULT_TIMEOUT_MS)?;
@@ -88,28 +91,28 @@ impl ClaudeConfig {
     }
 }
 
+pub fn auth_state() -> ClaudeAuthState {
+    let api_key = trim_env(API_KEY_ENV);
+    let subject = trim_env(AUTH_SUBJECT_ENV).or_else(|| api_key.as_deref().map(mask_api_key));
+    let scopes = parse_scopes(trim_env(AUTH_SCOPES_ENV));
+
+    ClaudeAuthState {
+        api_key_configured: api_key.is_some(),
+        subject,
+        scopes,
+    }
+}
+
 pub fn api_key_configured() -> bool {
-    trim_env(API_KEY_ENV).is_some()
+    auth_state().api_key_configured
 }
 
 pub fn auth_subject() -> Option<String> {
-    if let Some(subject) = trim_env(AUTH_SUBJECT_ENV) {
-        return Some(subject);
-    }
-
-    trim_env(API_KEY_ENV).map(mask_api_key)
+    auth_state().subject
 }
 
 pub fn auth_scopes() -> Vec<String> {
-    trim_env(AUTH_SCOPES_ENV)
-        .map(|raw| {
-            raw.split(',')
-                .map(str::trim)
-                .filter(|part| !part.is_empty())
-                .map(ToOwned::to_owned)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default()
+    auth_state().scopes
 }
 
 pub fn max_concurrency() -> Result<u32, ConfigError> {
@@ -133,6 +136,51 @@ fn parse_u64_env(key: &str, default: u64) -> Result<u64, ConfigError> {
     })
 }
 
+fn parse_base_url_env() -> Result<String, ConfigError> {
+    let raw = trim_env(BASE_URL_ENV).unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
+    normalize_base_url(raw.as_str()).map_err(|_| {
+        ConfigError::new(
+            "invalid-config",
+            format!(
+                "{BASE_URL_ENV} must be an absolute http(s) URL without query or fragment components"
+            ),
+        )
+    })
+}
+
+fn normalize_base_url(raw: &str) -> Result<String, ()> {
+    let parsed = Url::parse(raw).map_err(|_| ())?;
+    if parsed.host_str().is_none() {
+        return Err(());
+    }
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(());
+    }
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err(());
+    }
+
+    Ok(parsed.to_string().trim_end_matches('/').to_string())
+}
+
+fn resolve_model() -> String {
+    trim_env(MODEL_ENV)
+        .or_else(|| trim_env(FALLBACK_MODEL_ENV))
+        .unwrap_or_else(|| DEFAULT_MODEL.to_string())
+}
+
+fn parse_scopes(raw: Option<String>) -> Vec<String> {
+    raw.map(|value| {
+        value
+            .split(',')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>()
+    })
+    .unwrap_or_default()
+}
+
 fn parse_u32_env(key: &str, default: u32) -> Result<u32, ConfigError> {
     let Some(raw) = trim_env(key) else {
         return Ok(default);
@@ -149,11 +197,18 @@ fn trim_env(key: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn mask_api_key(key: String) -> String {
-    if key.len() <= 4 {
+fn mask_api_key(key: &str) -> String {
+    if key.chars().count() <= 4 {
         return "key:***".to_string();
     }
 
-    let suffix = &key[key.len().saturating_sub(4)..];
+    let suffix = key
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>();
     format!("key:***{suffix}")
 }

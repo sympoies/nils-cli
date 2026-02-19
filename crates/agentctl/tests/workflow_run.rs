@@ -298,7 +298,10 @@ fn workflow_run_supports_claude_provider_step_success() {
     assert_eq!(step.step_id, "claude-provider-step");
     assert_eq!(step.status, StepStatus::Succeeded);
     assert_eq!(step.provider.as_deref(), Some("claude"));
+    assert_eq!(step.exit_code, 0);
+    assert_eq!(step.attempts, 1);
     assert!(step.stdout.contains("workflow claude success"));
+    assert!(step.stderr.is_empty());
 }
 
 #[test]
@@ -314,8 +317,63 @@ fn workflow_run_claude_provider_step_reports_missing_api_key() {
     assert_eq!(report.summary.failed_steps, 1);
     assert_eq!(report.ledger.len(), 1);
     let step = &report.ledger[0];
+    assert_eq!(step.step_id, "claude-provider-step");
     assert_eq!(step.status, StepStatus::Failed);
+    assert_eq!(step.provider.as_deref(), Some("claude"));
+    assert_eq!(step.exit_code, 1);
+    assert_eq!(step.attempts, 1);
+    assert!(step.stdout.is_empty());
     assert!(step.stderr.contains("ANTHROPIC_API_KEY"));
+}
+
+#[test]
+fn workflow_run_claude_provider_step_reports_provider_error_with_stable_exit_code_and_ledger() {
+    let lock = GlobalStateLock::new();
+    let server = LoopbackServer::new().expect("loopback");
+    server.add_route(
+        "POST",
+        "/v1/messages",
+        HttpResponse::new(
+            503,
+            json!({
+                "type": "error",
+                "error": {
+                    "type": "overloaded_error",
+                    "message": "service unavailable"
+                }
+            })
+            .to_string(),
+        ),
+    );
+    let _api_key = EnvGuard::set(&lock, "ANTHROPIC_API_KEY", "test-key");
+    let _base_url = EnvGuard::set(&lock, "ANTHROPIC_BASE_URL", server.url().as_str());
+    let _retry_max = EnvGuard::set(&lock, "CLAUDE_RETRY_MAX", "0");
+
+    let workflow = load_workflow_file(fixture_path("claude-minimal.json").as_path())
+        .expect("claude workflow fixture");
+    let report = execute_workflow_document(&workflow);
+
+    assert_eq!(report.summary.total_steps, 1);
+    assert_eq!(report.summary.executed_steps, 1);
+    assert_eq!(report.summary.succeeded_steps, 0);
+    assert_eq!(report.summary.failed_steps, 1);
+    assert_eq!(report.summary.skipped_steps, 0);
+    assert_eq!(report.summary.success, false);
+    assert_eq!(report.ledger.len(), 1);
+
+    let step = &report.ledger[0];
+    assert_eq!(step.step_id, "claude-provider-step");
+    assert_eq!(step.status, StepStatus::Failed);
+    assert_eq!(step.provider.as_deref(), Some("claude"));
+    assert_eq!(step.exit_code, 1);
+    assert_eq!(step.attempts, 1);
+    assert!(step.stdout.is_empty());
+    assert!(
+        step.stderr
+            .contains("claude api error (503): service unavailable"),
+        "stderr={}",
+        step.stderr
+    );
 }
 
 #[test]
