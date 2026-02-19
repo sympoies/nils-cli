@@ -1,5 +1,11 @@
 # Plan: Claude Code version for codex-cli capabilities
 
+> Status: Superseded by `docs/plans/codex-claude-unified-cli-core-agentctl-plan.md` (2026-02-19).
+>
+> This document is retained for historical traceability only. Any scope constraints in this file
+> that conflict with the unified dual-CLI direction are historical and must not be used for new
+> implementation decisions.
+
 ## Overview
 This plan delivers a Claude-backed equivalent for codex-oriented agent workflows without relying on
 Claude internals being open source. The implementation target is the existing provider architecture:
@@ -18,7 +24,8 @@ black-box characterization second, and deterministic fixture tests as the releas
 - Out of scope:
   - Reverse-engineering or cloning proprietary Claude internal behavior.
   - Forcing 1:1 parity for Codex-only surfaces that have no Claude API equivalent.
-  - Changing `codex-cli` ownership boundaries or removing existing Codex paths.
+  - (Historical under superseded scope) Changing `codex-cli` ownership boundaries or removing
+    existing Codex paths.
 
 ## Assumptions (if any)
 1. The authoritative runtime contract remains `provider-adapter.v1` in

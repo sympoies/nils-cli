@@ -1,5 +1,11 @@
 # Plan: Extract codex-core and decouple codex runtime from codex-cli
 
+> Status: Superseded by `docs/plans/codex-claude-unified-cli-core-agentctl-plan.md` (2026-02-19).
+>
+> This document is retained for historical traceability only. Any scope constraints in this file
+> that conflict with the unified dual-CLI direction are historical and must not be used for new
+> implementation decisions.
+
 ## Overview
 This plan introduces a new `codex-core` crate as the reusable runtime layer for Codex-specific
 non-UI logic, then rewires both `codex-cli` and `agent-provider-codex` to depend on that shared
@@ -18,7 +24,7 @@ CLI UX, and `agent-provider-codex` only performs provider contract mapping.
   - New user-facing command families in `codex-cli`.
   - Any behavior change to `codex-cli` JSON schemas (`codex-cli.auth.v1`, `codex-cli.diag.rate-limits.v1`).
   - Refactoring `rate_limits` and `starship` into core during this iteration.
-  - Introducing `claude-cli` in the same change set.
+  - (Historical under superseded scope) Introducing `claude-cli` in the same change set.
 
 ## Assumptions (if any)
 1. `provider-adapter.v1` behavior in `agent-provider-codex` must remain functionally stable.
