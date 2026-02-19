@@ -204,32 +204,29 @@ $1 == "alias" {
   done
 }
 
-assert_required_no_legacy_contract() {
+assert_required_completion_contract() {
   local binary="$1"
   local metadata_cell="$2"
   local zsh_file="$3"
   local bash_file="$4"
 
   [[ "$metadata_cell" == *"completion_mode=clap-first"* ]] || {
-    fail "matrix no-legacy metadata missing completion_mode=clap-first for '$binary'"
+    fail "matrix completion metadata missing completion_mode=clap-first for '$binary'"
   }
-  [[ "$metadata_cell" == *"legacy_completion_mode_toggles=forbidden"* ]] || {
-    fail "matrix no-legacy metadata missing legacy_completion_mode_toggles=forbidden for '$binary'"
+  [[ "$metadata_cell" == *"completion_mode_toggles=forbidden"* ]] || {
+    fail "matrix completion metadata missing completion_mode_toggles=forbidden for '$binary'"
   }
-  [[ "$metadata_cell" == *"legacy_completion_dispatch=forbidden"* ]] || {
-    fail "matrix no-legacy metadata missing legacy_completion_dispatch=forbidden for '$binary'"
+  [[ "$metadata_cell" == *"alternate_completion_dispatch=forbidden"* ]] || {
+    fail "matrix completion metadata missing alternate_completion_dispatch=forbidden for '$binary'"
   }
   [[ "$metadata_cell" == *"generated_load_failure=fail-closed"* ]] || {
-    fail "matrix no-legacy metadata missing generated_load_failure=fail-closed for '$binary'"
+    fail "matrix completion metadata missing generated_load_failure=fail-closed for '$binary'"
   }
 
   if rg -n --fixed-strings "COMPLETION_MODE" "$zsh_file" "$bash_file" >/dev/null; then
-    fail "legacy completion mode toggle detected for '$binary' in completion assets"
+    fail "runtime completion-mode toggle marker detected for '$binary' in completion assets"
   fi
 
-  if rg -n "legacy completion mode" "$zsh_file" "$bash_file" >/dev/null; then
-    fail "legacy completion mode wording detected for '$binary' in completion assets"
-  fi
 }
 
 [[ -f "$MATRIX_FILE" ]] || fail "missing completion coverage matrix: $MATRIX_FILE"
@@ -310,7 +307,7 @@ for row in "${matrix_rows[@]}"; do
 
       run_zsh_registration_check "$binary" "$zsh_file"
       run_bash_registration_check "$binary" "$bash_file"
-      assert_required_no_legacy_contract "$binary" "$metadata_cell" "$zsh_file" "$bash_file"
+      assert_required_completion_contract "$binary" "$metadata_cell" "$zsh_file" "$bash_file"
 
       if [[ "$alias_required" == "1" ]]; then
         [[ "$alias_prefix" != "__none__" ]] || fail "matrix alias requirement for '$binary' is missing prefix metadata"

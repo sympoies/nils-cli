@@ -39,8 +39,8 @@ _nils_cli_agent-docs_load_generated_bash() {
 
 _nils_cli_agent-docs_complete() {
   if ! _nils_cli_agent-docs_load_generated_bash; then
-    if declare -F _nils_cli_completion_common_fail_closed_no_legacy_bash >/dev/null 2>&1; then
-      _nils_cli_completion_common_fail_closed_no_legacy_bash
+    if declare -F _nils_cli_completion_common_fail_closed_bash >/dev/null 2>&1; then
+      _nils_cli_completion_common_fail_closed_bash
     else
       COMPREPLY=()
     fi

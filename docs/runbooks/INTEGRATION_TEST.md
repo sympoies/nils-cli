@@ -7,9 +7,8 @@
 
 ## Completion mode policy
 
-- Completion mode is clap-first (`clap_complete`) and no-legacy.
-- Legacy completion mode is forbidden.
-- `*_COMPLETION_MODE` toggles are forbidden, including `<CLI_NAME_UPPER>_COMPLETION_MODE`.
+- Completion mode is clap-first (`clap_complete`) with a single generated path.
+- Adapters must fail closed when generated completion cannot be loaded.
 
 ## Completion verification commands
 

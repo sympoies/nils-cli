@@ -118,7 +118,7 @@ Every user-facing CLI command surface must have explicit output behavior.
 - Keep warning/error prefix conventions consistent with neighboring crates.
 - For completion-required CLIs, implement clap-first completion generation via `clap_complete` so baseline completion covers subcommands, long/short flags, declared value candidates, and context-aware filtering (not global candidate dumps).
 - If completions or completion aliases are provided, implement them per
-  `docs/runbooks/cli-completion-development-standard.md` (clap-first generation, thin shell adapters, alias sync, and no-legacy completion mode).
+  `docs/runbooks/cli-completion-development-standard.md` (clap-first generation, thin shell adapters, alias sync, and single completion path policy).
 
 ## Testing and Validation Rules
 Minimum testing for new CLI crates:

@@ -2,7 +2,7 @@
 
 ## Purpose
 This template defines the per-CLI completion migration contract for clap-first rollout work.
-Fill every required section so implementation, no-legacy enforcement, and validation stay
+Fill every required section so implementation, completion enforcement, and validation stay
 deterministic across CLI migrations.
 
 ## Usage
@@ -19,10 +19,10 @@ deterministic across CLI migrations.
 - Target PR: `<link-or-number>`
 - Status: `draft|in-review|done`
 - Last updated: `YYYY-MM-DD`
-- No-legacy enforcement metadata tuple from matrix row:
+- Completion enforcement metadata tuple from matrix row:
   - `completion_mode=<clap-first>`
-  - `legacy_completion_mode_toggles=<forbidden>`
-  - `legacy_completion_dispatch=<forbidden>`
+  - `completion_mode_toggles=<forbidden>`
+  - `alternate_completion_dispatch=<forbidden>`
   - `generated_load_failure=<fail-closed>`
 
 ## command graph (required)
@@ -64,34 +64,35 @@ Checklist:
 - [ ] Alias entries are synced in both alias files, or `not required` is explicit.
 - [ ] Adapter rewrite semantics are documented when aliases inject defaults.
 
-## no-legacy enforcement metadata (required)
-Declare and validate metadata that enforces clap-first behavior and forbids legacy completion mode
-fallbacks. Values must match the CLI row in `docs/reports/completion-coverage-matrix.md`.
+## completion enforcement metadata (required)
+Declare and validate metadata that enforces clap-first behavior and forbids runtime mode switches
+or alternate completion dispatch paths. Values must match the CLI row in
+`docs/reports/completion-coverage-matrix.md`.
 
 | metadata key | required value | declared value | enforcement location | verification method |
 | --- | --- | --- | --- | --- |
 | `completion_mode` | `clap-first` | `<value>` | `<path>` | `<proof>` |
-| `legacy_completion_mode_toggles` | `forbidden` | `<value>` | `<path>` | `rg -n "COMPLETION_MODE|legacy completion mode" <paths>` |
-| `legacy_completion_dispatch` | `forbidden` | `<value>` | `<path>` | `rg -n "legacy completion" <paths>` |
+| `completion_mode_toggles` | `forbidden` | `<value>` | `<path>` | `rg -n "COMPLETION_MODE" <paths>` |
+| `alternate_completion_dispatch` | `forbidden` | `<value>` | `<path>` | `rg -n "alternate completion|fallback completer|old completion" <paths>` |
 | `generated_load_failure` | `fail-closed` | `<value>` | `<path>` | `<completion test case>` |
 
 Checklist:
 - [ ] Declared metadata values match required values in this template.
 - [ ] Declared metadata values match the matrix row for this CLI.
-- [ ] Verification evidence includes `COMPLETION_MODE` and legacy completion mode checks.
+- [ ] Verification evidence includes completion-mode toggle and alternate dispatch checks.
 
-## no-legacy invariants (required)
+## single-path invariants (required)
 List invariants that enforce the metadata above and keep completion clap-first and fail closed.
 
 | invariant | enforcement location | verification method |
 | --- | --- | --- |
-| No legacy completion mode toggles (`<CLI_NAME_UPPER>_COMPLETION_MODE`) | `<path>` | `rg -n "COMPLETION_MODE|legacy completion mode" <paths>` |
-| No legacy completion dispatch path | `<path>` | `rg -n "legacy|old completion" <paths>` |
+| No runtime completion-mode toggles | `<path>` | `rg -n "COMPLETION_MODE" <paths>` |
+| No alternate completion dispatch path | `<path>` | `rg -n "alternate completion|fallback completer|old completion" <paths>` |
 | Generated-load failure fails closed (empty/no candidates) | `<path>` | `<completion test case>` |
 
 Checklist:
 - [ ] Adapters are thin (registration + optional dynamic hooks only).
-- [ ] Generated-load failure does not route to legacy completion code.
+- [ ] Generated-load failure does not route to alternate completion code.
 
 ## tests and validation (required)
 Record command-level and repository-level checks for this migration.
@@ -101,7 +102,7 @@ Record command-level and repository-level checks for this migration.
 2. `zsh -n completions/zsh/_<cli>`
 3. `bash -n completions/bash/<cli>`
 4. `<cli> completion zsh | rg -- "--help|--version|--"`
-5. `rg -n "no-legacy|COMPLETION_MODE|legacy completion mode|legacy_completion_mode_toggles|legacy_completion_dispatch" docs/reports/completion-coverage-matrix.md crates/<crate>/docs/reports/<cli>-completion-migration-contract.md`
+5. `rg -n "COMPLETION_MODE|completion_mode_toggles|alternate_completion_dispatch|generated_load_failure" docs/reports/completion-coverage-matrix.md crates/<crate>/docs/reports/<cli>-completion-migration-contract.md`
 6. `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
    - use `--docs-only` only when all changed files are docs.
 
@@ -111,8 +112,8 @@ Record command-level and repository-level checks for this migration.
 | command graph candidates | `<path-or-command>` | `<status>` | `<notes>` |
 | value providers | `<path-or-command>` | `<status>` | `<notes>` |
 | alias map registration | `<path-or-command>` | `<status>` | `<notes>` |
-| no-legacy enforcement metadata | `<path-or-command>` | `<status>` | `<notes>` |
-| no-legacy invariants | `<path-or-command>` | `<status>` | `<notes>` |
+| completion enforcement metadata | `<path-or-command>` | `<status>` | `<notes>` |
+| single-path invariants | `<path-or-command>` | `<status>` | `<notes>` |
 
 ## acceptance criteria (required)
 Mark all items before closing the migration.
@@ -120,7 +121,7 @@ Mark all items before closing the migration.
 - [ ] command graph matches implemented clap command surface.
 - [ ] value providers cover required candidates and dynamic paths.
 - [ ] alias map reflects zsh/bash alias entries and completion registration.
-- [ ] no-legacy enforcement metadata is declared, matches matrix policy, and is validated.
-- [ ] no-legacy invariants are enforced and verified.
+- [ ] completion enforcement metadata is declared, matches matrix policy, and is validated.
+- [ ] single-path invariants are enforced and verified.
 - [ ] tests and validation commands pass, with evidence captured.
 - [ ] PR notes link this contract and summarize follow-up risk (if any).

@@ -44,8 +44,8 @@ _api-test() {
   emulate -L zsh -o extendedglob
 
   if ! _nils_cli_api_test_load_generated_zsh; then
-    if (( $+functions[_nils_cli_completion_common_fail_closed_no_legacy_zsh] )); then
-      _nils_cli_completion_common_fail_closed_no_legacy_zsh
+    if (( $+functions[_nils_cli_completion_common_fail_closed_zsh] )); then
+      _nils_cli_completion_common_fail_closed_zsh
     fi
     return 1
   fi
