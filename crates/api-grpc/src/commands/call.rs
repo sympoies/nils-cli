@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use api_testing_core::{Result, auth_env, cli_endpoint, cli_util, config, history, jwt};
+use api_testing_core::{Result, auth_env, cli_endpoint, cli_io, cli_util, config, history, jwt};
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 
 use crate::cli::CallArgs;
@@ -308,7 +308,12 @@ pub(crate) fn cmd_call_internal(
     {
         spinner.finish_and_clear();
         let _ = writeln!(stderr, "{err}");
-        maybe_print_failure_body_to_stderr(&executed.response_body, 8192, stdout_is_tty, stderr);
+        cli_io::maybe_print_failure_body_to_stderr(
+            &executed.response_body,
+            8192,
+            stdout_is_tty,
+            stderr,
+        );
         append_history_best_effort(&history_ctx, exit_code);
         return 1;
     }
@@ -410,25 +415,6 @@ fn append_history_best_effort(ctx: &CallHistoryContext, exit_code: i32) {
     record.push_str("| jq .\n\n");
 
     let _ = history_writer.append(&record);
-}
-
-fn maybe_print_failure_body_to_stderr(
-    body: &[u8],
-    max_bytes: usize,
-    stdout_is_tty: bool,
-    stderr: &mut dyn Write,
-) {
-    if stdout_is_tty || body.is_empty() {
-        return;
-    }
-
-    if serde_json::from_slice::<serde_json::Value>(body).is_ok() {
-        return;
-    }
-
-    let _ = writeln!(stderr, "Response body (non-JSON; first {max_bytes} bytes):");
-    let _ = stderr.write_all(&body[..body.len().min(max_bytes)]);
-    let _ = writeln!(stderr);
 }
 
 #[cfg(test)]
@@ -720,21 +706,36 @@ mod tests {
     #[test]
     fn maybe_print_failure_body_skips_when_stdout_is_tty() {
         let mut stderr = Vec::new();
-        maybe_print_failure_body_to_stderr(b"not-json", 16, true, &mut stderr);
+        api_testing_core::cli_io::maybe_print_failure_body_to_stderr(
+            b"not-json",
+            16,
+            true,
+            &mut stderr,
+        );
         assert!(stderr.is_empty());
     }
 
     #[test]
     fn maybe_print_failure_body_skips_when_response_is_json() {
         let mut stderr = Vec::new();
-        maybe_print_failure_body_to_stderr(br#"{"ok":true}"#, 16, false, &mut stderr);
+        api_testing_core::cli_io::maybe_print_failure_body_to_stderr(
+            br#"{"ok":true}"#,
+            16,
+            false,
+            &mut stderr,
+        );
         assert!(stderr.is_empty());
     }
 
     #[test]
     fn maybe_print_failure_body_prints_non_json_preview() {
         let mut stderr = Vec::new();
-        maybe_print_failure_body_to_stderr(b"abcdef", 4, false, &mut stderr);
+        api_testing_core::cli_io::maybe_print_failure_body_to_stderr(
+            b"abcdef",
+            4,
+            false,
+            &mut stderr,
+        );
         let text = String::from_utf8(stderr).expect("utf8");
         assert!(text.contains("Response body (non-JSON; first 4 bytes):"));
         assert!(text.contains("abcd"));

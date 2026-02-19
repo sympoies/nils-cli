@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use api_testing_core::{Result, auth_env, cli_endpoint, cli_util, config, history, jwt};
+use api_testing_core::{Result, auth_env, cli_endpoint, cli_io, cli_util, config, history, jwt};
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 
 use crate::cli::CallArgs;
@@ -308,7 +308,12 @@ pub(crate) fn cmd_call_internal(
     {
         spinner.finish_and_clear();
         let _ = writeln!(stderr, "{err}");
-        maybe_print_failure_body_to_stderr(&executed.response.body, 8192, stdout_is_tty, stderr);
+        cli_io::maybe_print_failure_body_to_stderr(
+            &executed.response.body,
+            8192,
+            stdout_is_tty,
+            stderr,
+        );
         append_history_best_effort(&history_ctx, exit_code);
         return 1;
     }
@@ -426,25 +431,6 @@ fn append_history_best_effort(ctx: &CallHistoryContext, exit_code: i32) {
     record.push_str("| jq .\n\n");
 
     let _ = history_writer.append(&record);
-}
-
-fn maybe_print_failure_body_to_stderr(
-    body: &[u8],
-    max_bytes: usize,
-    stdout_is_tty: bool,
-    stderr: &mut dyn Write,
-) {
-    if stdout_is_tty || body.is_empty() {
-        return;
-    }
-
-    if serde_json::from_slice::<serde_json::Value>(body).is_ok() {
-        return;
-    }
-
-    let _ = writeln!(stderr, "Response body (non-JSON; first {max_bytes} bytes):");
-    let _ = stderr.write_all(&body[..body.len().min(max_bytes)]);
-    let _ = writeln!(stderr);
 }
 
 #[cfg(test)]
