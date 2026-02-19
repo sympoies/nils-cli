@@ -5,7 +5,7 @@ use agent_runtime_core::schema::{
     HealthcheckRequest, HealthcheckResponse, LimitsRequest, LimitsResponse, ProviderError,
     ProviderErrorCategory, ProviderMaturity, ProviderMetadata, ProviderResult,
 };
-use codex_cli::{agent, auth, paths};
+use codex_core::{auth, exec, paths};
 use nils_common::process;
 use serde_json::json;
 use std::path::Path;
@@ -148,7 +148,7 @@ impl ProviderAdapterV1 for CodexProviderAdapter {
 
         let mut stderr = Vec::new();
         let started_at = Instant::now();
-        let exit_code = agent::exec::exec_dangerous(&prompt, EXECUTE_CALLER, &mut stderr);
+        let exit_code = exec::exec_dangerous(&prompt, EXECUTE_CALLER, &mut stderr);
         let duration_ms = as_millis(started_at.elapsed());
         let stderr_text = stderr_to_string(&stderr);
 
@@ -226,9 +226,7 @@ impl ProviderAdapterV1 for CodexProviderAdapter {
 }
 
 fn allow_dangerous_status(caller: &str) -> (bool, Option<String>) {
-    let mut stderr = Vec::new();
-    let enabled = agent::exec::require_allow_dangerous(Some(caller), &mut stderr);
-    (enabled, non_empty(stderr_to_string(&stderr)))
+    exec::allow_dangerous_status(Some(caller))
 }
 
 fn execute_description(codex_available: bool, policy_enabled: bool) -> String {
@@ -260,13 +258,6 @@ fn invalid_auth_file_error(path: &Path, error: String) -> Box<ProviderError> {
 
 fn stderr_to_string(stderr: &[u8]) -> String {
     String::from_utf8_lossy(stderr).trim_end().to_string()
-}
-
-fn non_empty(value: String) -> Option<String> {
-    if value.is_empty() {
-        return None;
-    }
-    Some(value)
 }
 
 fn as_millis(duration: std::time::Duration) -> Option<u64> {

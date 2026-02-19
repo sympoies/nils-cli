@@ -370,6 +370,21 @@ CLI UX, and `agent-provider-codex` only performs provider contract mapping.
 - **Validation**:
   - `plan-tooling to-json --file docs/plans/codex-core-runtime-decoupling-plan.md --pretty >/dev/null`
 
+#### Delivery checklist (`deliver-feature-pr`)
+- [ ] `deliver-feature-pr.sh preflight --base main`
+- [ ] Create branch + PR via `create-feature-pr` flow (`feat/*` -> `main`) with this plan linked.
+- [ ] Run required checks and coverage evidence before CI wait:
+  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
+  - `mkdir -p target/coverage && cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 85`
+  - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
+- [ ] `deliver-feature-pr.sh wait-ci --pr <number>` until all checks are green (fix + push on failure).
+- [ ] `deliver-feature-pr.sh close --pr <number>` to mark ready (if draft), merge, and cleanup.
+- [ ] Post-merge verification artifacts captured in PR notes:
+  - PR URL
+  - CI green summary
+  - merge commit SHA
+  - coverage summary path (`target/coverage/lcov.info`)
+
 ## Testing Strategy
 - Unit:
   - `codex-core` tests for config/path/auth/exec/error contracts.

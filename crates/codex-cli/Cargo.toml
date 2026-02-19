@@ -16,10 +16,10 @@ name = "codex-cli"
 path = "src/main.rs"
 [dependencies]
 anyhow = { workspace = true }
-base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { workspace = true }
 clap_complete = { workspace = true }
+codex-core = { version = "0.4.5", path = "../codex-core", package = "nils-codex-core" }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -1573,7 +1573,7 @@ name = "nils-agent-provider-codex"
 version = "0.4.5"
 dependencies = [
  "nils-agent-runtime-core",
- "nils-codex-cli",
+ "nils-codex-core",
  "nils-common",
  "nils-test-support",
  "pretty_assertions",
@@ -1736,10 +1736,10 @@ name = "nils-codex-cli"
 version = "0.4.5"
 dependencies = [
  "anyhow",
- "base64",
  "chrono",
  "clap",
  "clap_complete",
+ "nils-codex-core",
  "nils-common",
  "nils-term",
  "nils-test-support",
@@ -1749,6 +1749,19 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+]
+
+[[package]]
+name = "nils-codex-core"
+version = "0.4.5"
+dependencies = [
+ "base64",
+ "nils-common",
+ "nils-test-support",
+ "pretty_assertions",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

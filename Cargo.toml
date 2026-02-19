@@ -20,6 +20,7 @@ members = [
   "crates/semantic-commit",
   "crates/plan-tooling",
   "crates/agent-docs",
+  "crates/codex-core",
   "crates/agent-runtime-core",
   "crates/agent-provider-codex",
   "crates/agent-provider-claude",

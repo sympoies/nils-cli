@@ -77,7 +77,7 @@ done
 runbook_is_approved_workspace_file() {
   local base="$1"
   case "$base" in
-    INTEGRATION_TEST.md|cli-completion-development-standard.md|crates-io-status-script-runbook.md|new-cli-crate-development-standard.md|provider-onboarding.md|wrappers-mode-usage.md)
+    INTEGRATION_TEST.md|cli-completion-development-standard.md|codex-core-migration.md|crates-io-status-script-runbook.md|new-cli-crate-development-standard.md|provider-onboarding.md|wrappers-mode-usage.md)
       return 0
       ;;
     *)
@@ -119,6 +119,9 @@ for section in docs/specs docs/runbooks docs/reports; do
   [[ -d "$section" ]] || continue
   while IFS= read -r file; do
     base="$(basename "$file")"
+    if [[ "$section" == "docs/runbooks" ]] && runbook_is_approved_workspace_file "$base"; then
+      continue
+    fi
     for crate in "${crate_names[@]}"; do
       if [[ "$base" == "$crate"-* ]]; then
         if file_is_stub "$file"; then
