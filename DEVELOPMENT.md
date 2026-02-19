@@ -53,13 +53,16 @@
 
 - Canonical completion governance runbook: `docs/runbooks/cli-completion-development-standard.md`.
 - When completion/alias code changes, follow that runbook for clap-first/no-legacy policy and completion-focused validation.
+- Completion mode policy is `clap-first` with no legacy completion mode.
+- `*_COMPLETION_MODE` toggles are forbidden (including `<CLI_NAME_UPPER>_COMPLETION_MODE`).
+- Release packaging must ship both `completions/zsh/` and `completions/bash/`, including alias files `completions/zsh/aliases.zsh` and `completions/bash/aliases.bash`.
 
 ### Required before committing
 
 - All commands in **Formatting and linting** must pass.
 - `cargo test --workspace`
-- `zsh -f tests/zsh/completion.test.zsh`
-- If completion/alias files changed, also run:
+- Completion verification commands from `docs/runbooks/cli-completion-development-standard.md`:
+  - `zsh -f tests/zsh/completion.test.zsh`
   - `zsh -n completions/zsh/_<cli>`
   - `bash -n completions/bash/<cli>`
 - Documentation placement for changed Markdown files MUST comply with

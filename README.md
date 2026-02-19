@@ -68,6 +68,7 @@ Detailed scope, API examples, migration conventions, and non-goals are documente
 This repo keeps optional wrapper scripts and completion assets in-repo.
 Contributor completion governance (architecture, no-legacy policy, alias sync, and completion-focused checks) is defined in
 [docs/runbooks/cli-completion-development-standard.md](docs/runbooks/cli-completion-development-standard.md).
+Completion mode policy is clap-first/no-legacy; legacy completion mode toggles (including `*_COMPLETION_MODE`) are forbidden.
 
 Location:
 
@@ -119,6 +120,9 @@ To trigger a release build, push a tag like `v0.4.4`:
 
 Then download the matching `nils-cli-<tag>-<target>.tar.gz` asset, extract it, and add
 `<extract_dir>/bin` to your `PATH`.
+
+Release packaging contract: shipped artifacts must include `completions/zsh/`, `completions/bash/`,
+`completions/zsh/aliases.zsh`, and `completions/bash/aliases.bash`.
 
 For zsh completions, add `<extract_dir>/completions/zsh` to your `fpath` and run `compinit`.
 Optional: source `<extract_dir>/completions/zsh/aliases.zsh` to enable `gs*`/`cx*`/`fx*` aliases.
