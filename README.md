@@ -66,9 +66,9 @@ Detailed scope, API examples, migration conventions, and non-goals are documente
 ## Shell wrappers and completions
 
 This repo keeps optional wrapper scripts and completion assets in-repo.
-Contributor completion governance (architecture, no-legacy policy, alias sync, and completion-focused checks) is defined in
+Contributor completion governance (architecture, clap-first policy, alias sync, and completion-focused checks) is defined in
 [docs/runbooks/cli-completion-development-standard.md](docs/runbooks/cli-completion-development-standard.md).
-Completion mode policy is clap-first/no-legacy; legacy completion mode toggles (including `*_COMPLETION_MODE`) are forbidden.
+Completion mode policy is a single clap-first generated path with thin adapters; completion behavior is not runtime-switchable.
 
 Location:
 

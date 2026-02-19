@@ -52,9 +52,8 @@
 ## Completion governance
 
 - Canonical completion governance runbook: `docs/runbooks/cli-completion-development-standard.md`.
-- When completion/alias code changes, follow that runbook for clap-first/no-legacy policy and completion-focused validation.
-- Completion mode policy is `clap-first` with no legacy completion mode.
-- `*_COMPLETION_MODE` toggles are forbidden (including `<CLI_NAME_UPPER>_COMPLETION_MODE`).
+- When completion/alias code changes, follow that runbook for single-path clap-first policy and completion-focused validation.
+- Completion mode policy is `clap-first` with a single generated completion path.
 - Release packaging must ship both `completions/zsh/` and `completions/bash/`, including alias files `completions/zsh/aliases.zsh` and `completions/bash/aliases.bash`.
 
 ### Required before committing

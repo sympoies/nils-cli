@@ -112,8 +112,8 @@ _codex-cli() {
   if ! _nils_cli_codex_cli_load_generated_zsh; then
     words=("${saved_words[@]}")
     CURRENT="$saved_current"
-    if (( $+functions[_nils_cli_completion_common_fail_closed_no_legacy_zsh] )); then
-      _nils_cli_completion_common_fail_closed_no_legacy_zsh
+    if (( $+functions[_nils_cli_completion_common_fail_closed_zsh] )); then
+      _nils_cli_completion_common_fail_closed_zsh
     fi
     return 1
   fi

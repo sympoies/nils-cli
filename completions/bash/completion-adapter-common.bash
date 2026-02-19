@@ -12,8 +12,8 @@ fi
 
 _NILS_CLI_COMPLETION_ADAPTER_COMMON_BASH_LOADED=1
 
-_nils_cli_completion_common_fail_closed_no_legacy_bash() {
-  # Explicit no-legacy policy: fail closed and do not route to legacy completers.
+_nils_cli_completion_common_fail_closed_bash() {
+  # Single-path policy: fail closed and do not route to alternate completers.
   COMPREPLY=()
   return 0
 }
@@ -38,7 +38,7 @@ _nils_cli_completion_common_load_generated_bash() {
   local strip_end_regex="${6-}"
 
   if [[ -z "$state_var" || -z "$generated_fn" || -z "$cli_bin" || -z "$generated_symbol" ]]; then
-    _nils_cli_completion_common_fail_closed_no_legacy_bash
+    _nils_cli_completion_common_fail_closed_bash
     return 1
   fi
 
@@ -47,14 +47,14 @@ _nils_cli_completion_common_load_generated_bash() {
     declare -F "$generated_fn" >/dev/null 2>&1 && return 0
     printf -v "$state_var" '%s' '0'
   elif [[ "$state" == "-1" ]]; then
-    _nils_cli_completion_common_fail_closed_no_legacy_bash
+    _nils_cli_completion_common_fail_closed_bash
     return 1
   fi
 
   local script=''
   script="$(command "$cli_bin" completion bash 2>/dev/null)" || {
     printf -v "$state_var" '%s' '-1'
-    _nils_cli_completion_common_fail_closed_no_legacy_bash
+    _nils_cli_completion_common_fail_closed_bash
     return 1
   }
 
@@ -63,20 +63,20 @@ _nils_cli_completion_common_load_generated_bash() {
   if [[ -n "$strip_begin_regex" && -n "$strip_end_regex" ]]; then
     script="$(printf '%s\n' "$script" | sed "/${strip_begin_regex}/,/${strip_end_regex}/d")" || {
       printf -v "$state_var" '%s' '-1'
-      _nils_cli_completion_common_fail_closed_no_legacy_bash
+      _nils_cli_completion_common_fail_closed_bash
       return 1
     }
   fi
 
   eval "$script" || {
     printf -v "$state_var" '%s' '-1'
-    _nils_cli_completion_common_fail_closed_no_legacy_bash
+    _nils_cli_completion_common_fail_closed_bash
     return 1
   }
 
   declare -F "$generated_fn" >/dev/null 2>&1 || {
     printf -v "$state_var" '%s' '-1'
-    _nils_cli_completion_common_fail_closed_no_legacy_bash
+    _nils_cli_completion_common_fail_closed_bash
     return 1
   }
 

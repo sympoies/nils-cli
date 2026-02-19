@@ -12,8 +12,8 @@ fi
 
 typeset -g _NILS_CLI_COMPLETION_ADAPTER_COMMON_ZSH_LOADED=1
 
-_nils_cli_completion_common_fail_closed_no_legacy_zsh() {
-  # Explicit no-legacy policy: fail closed and do not route to legacy completers.
+_nils_cli_completion_common_fail_closed_zsh() {
+  # Single-path policy: fail closed and do not route to alternate completers.
   return 1
 }
 
@@ -28,7 +28,7 @@ _nils_cli_completion_common_load_generated_zsh() {
   local strip_end_regex="${6-}"
 
   if [[ -z "$state_var" || -z "$generated_fn" || -z "$cli_bin" || -z "$generated_symbol" ]]; then
-    _nils_cli_completion_common_fail_closed_no_legacy_zsh
+    _nils_cli_completion_common_fail_closed_zsh
     return 1
   fi
 
@@ -37,14 +37,14 @@ _nils_cli_completion_common_load_generated_zsh() {
     (( $+functions[$generated_fn] )) && return 0
     typeset -g "${state_var}=0"
   elif [[ "$state" == "-1" ]]; then
-    _nils_cli_completion_common_fail_closed_no_legacy_zsh
+    _nils_cli_completion_common_fail_closed_zsh
     return 1
   fi
 
   local script=''
   script="$(command "$cli_bin" completion zsh 2>/dev/null)" || {
     typeset -g "${state_var}=-1"
-    _nils_cli_completion_common_fail_closed_no_legacy_zsh
+    _nils_cli_completion_common_fail_closed_zsh
     return 1
   }
 
@@ -53,20 +53,20 @@ _nils_cli_completion_common_load_generated_zsh() {
   if [[ -n "$strip_begin_regex" && -n "$strip_end_regex" ]]; then
     script="$(printf '%s\n' "$script" | sed "/${strip_begin_regex}/,/${strip_end_regex}/d")" || {
       typeset -g "${state_var}=-1"
-      _nils_cli_completion_common_fail_closed_no_legacy_zsh
+      _nils_cli_completion_common_fail_closed_zsh
       return 1
     }
   fi
 
   eval "$script" || {
     typeset -g "${state_var}=-1"
-    _nils_cli_completion_common_fail_closed_no_legacy_zsh
+    _nils_cli_completion_common_fail_closed_zsh
     return 1
   }
 
   if (( ! $+functions[$generated_fn] )); then
     typeset -g "${state_var}=-1"
-    _nils_cli_completion_common_fail_closed_no_legacy_zsh
+    _nils_cli_completion_common_fail_closed_zsh
     return 1
   fi
 
