@@ -1,16 +1,4 @@
-#![allow(dead_code, unused_imports)]
-#[path = "../src/auth/mod.rs"]
-mod auth;
-#[path = "../src/fs.rs"]
-mod fs;
-#[path = "../src/json.rs"]
-mod json;
-#[path = "../src/paths.rs"]
-mod paths;
-#[path = "../src/rate_limits/mod.rs"]
-mod rate_limits;
-#[path = "../src/starship/mod.rs"]
-mod starship;
+use gemini_cli::{rate_limits, starship};
 
 use std::ffi::{OsStr, OsString};
 use std::fs as stdfs;
@@ -23,9 +11,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn env_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .expect("env lock")
+    match LOCK.get_or_init(|| Mutex::new(())).lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
 }
 
 struct EnvGuard {
@@ -95,6 +84,7 @@ fn now_epoch() -> i64 {
 fn write_auth_secret(dir: &TestDir) -> (PathBuf, PathBuf, PathBuf) {
     let secrets = dir.join("secrets");
     stdfs::create_dir_all(&secrets).expect("secrets");
+    let secrets = stdfs::canonicalize(&secrets).expect("canonical secrets");
     let auth_file = secrets.join("alpha.json");
     stdfs::write(
         &auth_file,
@@ -104,6 +94,7 @@ fn write_auth_secret(dir: &TestDir) -> (PathBuf, PathBuf, PathBuf) {
 
     let cache_root = dir.join("cache-root");
     stdfs::create_dir_all(&cache_root).expect("cache root");
+    let cache_root = stdfs::canonicalize(&cache_root).expect("canonical cache root");
     (auth_file, secrets, cache_root)
 }
 

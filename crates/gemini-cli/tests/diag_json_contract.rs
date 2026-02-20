@@ -1,14 +1,4 @@
-#![allow(dead_code, unused_imports)]
-#[path = "../src/auth/mod.rs"]
-mod auth;
-#[path = "../src/fs.rs"]
-mod fs;
-#[path = "../src/json.rs"]
-mod json;
-#[path = "../src/paths.rs"]
-mod paths;
-#[path = "../src/rate_limits/mod.rs"]
-mod rate_limits;
+use gemini_cli::rate_limits;
 
 use std::ffi::{OsStr, OsString};
 use std::fs as stdfs;
@@ -18,9 +8,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 fn env_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .expect("env lock")
+    match LOCK.get_or_init(|| Mutex::new(())).lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
 }
 
 struct EnvGuard {
@@ -100,6 +91,7 @@ fn diag_json_contract_single_missing_access_token_returns_2() {
         r#"{"tokens":{"account_id":"acct_001"}}"#,
     )
     .expect("write secret");
+    let secrets = stdfs::canonicalize(&secrets).expect("canonical secrets");
 
     let _secret_dir = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
     let _default_all = EnvGuard::set("GEMINI_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false");
@@ -118,6 +110,7 @@ fn diag_json_contract_all_empty_secret_dir_returns_1() {
     let dir = TestDir::new("diag-json-contract-all-empty");
     let secrets = dir.join("secrets");
     stdfs::create_dir_all(&secrets).expect("secrets");
+    let secrets = stdfs::canonicalize(&secrets).expect("canonical secrets");
 
     let _secret_dir = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
 

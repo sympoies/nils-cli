@@ -1,14 +1,4 @@
-#![allow(dead_code, unused_imports)]
-#[path = "../src/auth/mod.rs"]
-mod auth;
-#[path = "../src/fs.rs"]
-mod fs;
-#[path = "../src/json.rs"]
-mod json;
-#[path = "../src/paths.rs"]
-mod paths;
-#[path = "../src/rate_limits/mod.rs"]
-mod rate_limits;
+use gemini_cli::rate_limits;
 
 use std::ffi::{OsStr, OsString};
 use std::fs as stdfs;
@@ -18,9 +8,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 fn env_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .expect("env lock")
+    match LOCK.get_or_init(|| Mutex::new(())).lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
 }
 
 struct EnvGuard {
@@ -142,6 +133,7 @@ fn rate_limits_async_clear_cache_non_absolute_root_returns_1() {
     let dir = TestDir::new("rate-limits-async-clear-cache-invalid-root");
     let secrets = dir.join("secrets");
     stdfs::create_dir_all(&secrets).expect("secrets");
+    let secrets = stdfs::canonicalize(&secrets).expect("canonical secrets");
 
     let _secret_dir = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
     let _cache_root = EnvGuard::set("ZSH_CACHE_DIR", "relative-cache");
@@ -179,6 +171,9 @@ fn rate_limits_async_cached_success_returns_0() {
     let beta = secrets.join("beta.json");
     write_secret(alpha.clone(), true);
     write_secret(beta.clone(), true);
+    let secrets = stdfs::canonicalize(&secrets).expect("canonical secrets");
+    let alpha = secrets.join("alpha.json");
+    let beta = secrets.join("beta.json");
 
     let cache_root = dir.join("cache-root");
     stdfs::create_dir_all(&cache_root).expect("cache root");
@@ -206,6 +201,8 @@ fn rate_limits_async_json_missing_access_token_uses_cache_fallback() {
     stdfs::create_dir_all(&secrets).expect("secrets");
     let alpha = secrets.join("alpha.json");
     write_secret(alpha.clone(), false);
+    let secrets = stdfs::canonicalize(&secrets).expect("canonical secrets");
+    let alpha = secrets.join("alpha.json");
 
     let cache_root = dir.join("cache-root");
     stdfs::create_dir_all(&cache_root).expect("cache root");
@@ -231,6 +228,7 @@ fn rate_limits_async_json_missing_access_token_without_cache_returns_1() {
     let secrets = dir.join("secrets");
     stdfs::create_dir_all(&secrets).expect("secrets");
     write_secret(secrets.join("alpha.json"), false);
+    let secrets = stdfs::canonicalize(&secrets).expect("canonical secrets");
 
     let _secret_dir = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
 
