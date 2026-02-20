@@ -20,7 +20,6 @@ Commands:
   help                  Show help
 
 Options:
-  -p, --print            Print file contents where applicable
   --no-color             Disable ANSI colors (also via NO_COLOR)
 ```
 

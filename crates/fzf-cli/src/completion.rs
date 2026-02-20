@@ -29,6 +29,18 @@ fn generate_script<G: Generator>(generator: G) -> i32 {
     0
 }
 
+pub(crate) fn print_subcommand_help(subcommand: &str) -> bool {
+    let mut command = build_completion_command();
+    let Some(subcommand) = command.find_subcommand_mut(subcommand) else {
+        return false;
+    };
+    if subcommand.print_help().is_err() {
+        return false;
+    }
+    println!();
+    true
+}
+
 fn query_arg() -> Arg {
     Arg::new("query")
         .value_name("query")
@@ -36,7 +48,7 @@ fn query_arg() -> Arg {
         .allow_hyphen_values(true)
 }
 
-fn build_completion_command() -> Command {
+pub(crate) fn build_completion_command() -> Command {
     Command::new("fzf-cli")
         .version(env!("CARGO_PKG_VERSION"))
         .about("Fuzzy workflow helper CLI")

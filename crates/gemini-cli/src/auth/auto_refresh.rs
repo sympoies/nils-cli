@@ -347,9 +347,9 @@ mod tests {
     #[test]
     fn run_with_json_returns_zero_when_not_configured() {
         let _lock = env_lock();
-        let _home = EnvGuard::set("HOME", "");
-        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", "");
-        let _secret = EnvGuard::set("GEMINI_SECRET_DIR", "");
+        let dir = TestDir::new("not-configured");
+        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", dir.join("missing-auth.json"));
+        let _secret = EnvGuard::set("GEMINI_SECRET_DIR", dir.join("missing-secrets"));
         assert_eq!(run_with_json(true), 0);
         assert_eq!(run_with_json(false), 0);
     }
@@ -362,8 +362,7 @@ mod tests {
         fs::create_dir_all(&secrets).expect("secrets");
         write_auth(&secrets.join("alpha.json"), "2026-01-01T00:00:00Z");
 
-        let _home = EnvGuard::set("HOME", "");
-        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", "");
+        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", dir.join("missing-auth.json"));
         let _secret = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
         let _min_days = EnvGuard::set("GEMINI_AUTO_REFRESH_MIN_DAYS", "bogus");
 
@@ -427,8 +426,8 @@ mod tests {
         let secrets = dir.join("secrets");
         fs::create_dir_all(&secrets).expect("secrets");
 
-        let _home = EnvGuard::set("HOME", "");
-        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", "");
+        let missing_auth = dir.join("missing-auth.json");
+        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", &missing_auth);
         let _secret = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
         assert!(!is_configured());
 
@@ -436,7 +435,7 @@ mod tests {
         let _auth = EnvGuard::set("GEMINI_AUTH_FILE", &auth_file);
         assert!(is_configured());
 
-        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", "");
+        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", &missing_auth);
         write_auth(&secrets.join("alpha.json"), "2026-01-01T00:00:00Z");
         assert!(is_configured());
     }
@@ -462,8 +461,7 @@ mod tests {
         write_auth(&secrets.join("good.json"), "2100-01-01T00:00:00Z");
         fs::create_dir_all(secrets.join("broken.json")).expect("broken json dir");
 
-        let _home = EnvGuard::set("HOME", "");
-        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", "");
+        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", dir.join("missing-auth.json"));
         let _secret = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
         let _min_days = EnvGuard::set("GEMINI_AUTO_REFRESH_MIN_DAYS", "5");
         assert_eq!(run_with_json(false), 1);
@@ -477,8 +475,7 @@ mod tests {
         fs::create_dir_all(&secrets).expect("secrets");
         write_auth(&secrets.join("alpha.json"), "2026-01-01T00:00:00Z");
 
-        let _home = EnvGuard::set("HOME", "");
-        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", "");
+        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", dir.join("missing-auth.json"));
         let _secret = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
         let _min_days = EnvGuard::set("GEMINI_AUTO_REFRESH_MIN_DAYS", "99999");
         assert_eq!(run_with_json(true), 0);

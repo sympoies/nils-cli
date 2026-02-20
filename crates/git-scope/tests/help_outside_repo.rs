@@ -100,6 +100,56 @@ fn version_flag_succeeds_outside_git_repo() {
 }
 
 #[test]
+fn root_help_does_not_advertise_subcommand_print_flag() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let output = Command::new(git_scope_bin())
+        .args(["--help"])
+        .current_dir(temp.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run git-scope --help");
+
+    assert!(
+        output.status.success(),
+        "expected exit code 0, got: {output:?}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("-p, --print"),
+        "root help should not show subcommand-only flags: {stdout}"
+    );
+}
+
+#[test]
+fn subcommand_help_uses_subcommand_scope() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let output = Command::new(git_scope_bin())
+        .args(["all", "--help"])
+        .current_dir(temp.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run git-scope all --help");
+
+    assert!(
+        output.status.success(),
+        "expected exit code 0, got: {output:?}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Usage: all [OPTIONS]"),
+        "expected subcommand usage in help output: {stdout}"
+    );
+    assert!(
+        stdout.contains("-p, --print"),
+        "expected subcommand print option in help output: {stdout}"
+    );
+}
+
+#[test]
 fn completion_export_succeeds_outside_git_repo() {
     let temp = tempfile::TempDir::new().unwrap();
     let output = Command::new(git_scope_bin())

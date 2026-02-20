@@ -35,6 +35,11 @@ fn run() -> i32 {
     let cmd = args[0].as_str();
     let rest = &args[1..];
 
+    if rest.first().is_some_and(|arg| util::is_help(arg)) && completion::print_subcommand_help(cmd)
+    {
+        return 0;
+    }
+
     match cmd {
         "help" => {
             print_help();

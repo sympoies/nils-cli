@@ -9,6 +9,7 @@ Usage:
 Runs the required pre-delivery checks from DEVELOPMENT.md:
   - bash scripts/ci/docs-placement-audit.sh --strict
   - bash scripts/ci/completion-asset-audit.sh --strict
+  - python3 scripts/ci/completion-flag-parity-audit.py --strict
   - cargo fmt --all -- --check
   - cargo clippy --all-targets --all-features -- -D warnings
   - cargo test --workspace
@@ -57,7 +58,7 @@ done
 
 required_cmds=(git)
 if [[ "$docs_only" -eq 0 ]]; then
-  required_cmds+=(cargo zsh)
+  required_cmds+=(cargo zsh python3)
 fi
 
 for cmd in "${required_cmds[@]}"; do
@@ -122,6 +123,7 @@ if [[ "$test_runner" == "nextest" ]]; then
 else
   run cargo test --workspace
 fi
+run python3 scripts/ci/completion-flag-parity-audit.py --strict
 run zsh -f tests/zsh/completion.test.zsh
 
 echo "ok: all nils-cli checks passed"

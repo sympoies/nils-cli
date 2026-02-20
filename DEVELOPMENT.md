@@ -59,6 +59,7 @@
   - `zsh -f tests/zsh/completion.test.zsh`
   - `zsh -n completions/zsh/_<cli>`
   - `bash -n completions/bash/<cli>`
+- `python3 scripts/ci/completion-flag-parity-audit.py --strict`
 - `bash scripts/ci/docs-placement-audit.sh --strict`
 - Coverage must be **>= 85.00%** total line coverage:
   - `mkdir -p target/coverage`

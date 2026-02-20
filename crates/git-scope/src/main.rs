@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use nils_common::env as shared_env;
 use std::process;
 
@@ -118,14 +118,33 @@ fn print_help() {
     println!();
     println!("Options:");
     println!(
-        "  {:<16}  Print file contents where applicable (e.g., commit)",
-        "-p, --print"
-    );
-    println!(
         "  {:<16}  Disable ANSI colors (also via NO_COLOR)",
         "--no-color"
     );
     println!("  {:<16}  Show version", "-V, --version");
+}
+
+fn print_subcommand_help(command: &Command) -> bool {
+    let subcommand = match command {
+        Command::Tracked { .. } => "tracked",
+        Command::Staged { .. } => "staged",
+        Command::Unstaged { .. } => "unstaged",
+        Command::All { .. } => "all",
+        Command::Untracked { .. } => "untracked",
+        Command::Commit { .. } => "commit",
+        Command::Completion { .. } => "completion",
+        Command::Help => return false,
+    };
+
+    let mut root = Cli::command();
+    let Some(subcommand) = root.find_subcommand_mut(subcommand) else {
+        return false;
+    };
+    if subcommand.print_help().is_err() {
+        return false;
+    }
+    println!();
+    true
 }
 
 fn main() {
@@ -139,6 +158,11 @@ fn run() -> Result<()> {
     let cli = Cli::parse();
 
     if cli.help {
+        if let Some(command) = cli.command.as_ref()
+            && print_subcommand_help(command)
+        {
+            return Ok(());
+        }
         print_help();
         return Ok(());
     }

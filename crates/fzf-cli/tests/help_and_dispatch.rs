@@ -40,3 +40,29 @@ fn unknown_command_prints_message_and_exits_1() {
         out.stdout
     );
 }
+
+#[test]
+fn subcommand_help_prints_declared_flags() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let cases = [
+        ("file", "--vi"),
+        ("file", "--vscode"),
+        ("directory", "--vi"),
+        ("directory", "--vscode"),
+        ("git-commit", "--snapshot"),
+        ("process", "--kill"),
+        ("process", "--force"),
+        ("port", "--kill"),
+        ("port", "--force"),
+    ];
+
+    for (command, flag) in cases {
+        let out = common::run_fzf_cli(temp.path(), &[command, "--help"], &[], None);
+        assert_eq!(out.code, 0, "{command} --help failed: {}", out.stderr);
+        assert!(
+            out.stdout.contains(flag),
+            "missing `{flag}` in {command} --help:\n{}",
+            out.stdout
+        );
+    }
+}
