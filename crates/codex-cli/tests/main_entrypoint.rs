@@ -101,6 +101,7 @@ fn main_help_includes_json_output_modes_for_diag_and_auth() {
     let diag_text = stdout(&diag_help);
     assert!(diag_text.contains("--json"));
     assert!(diag_text.contains("--format"));
+    assert!(diag_text.contains("--clear-cache"));
 
     let auth_help = run(&["auth", "current", "--help"]);
     assert_exit(&auth_help, 0);

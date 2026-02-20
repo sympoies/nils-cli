@@ -132,7 +132,14 @@ fn completion_bash_candidates_remain_context_aware() {
     }
 
     let diag_rate_limits_opts = bash_case_opts(&script, "codex__cli__diag__rate__limits");
-    for token in ["--cached", "--async", "--jobs", "--format", "--json"] {
+    for token in [
+        "--clear-cache",
+        "--cached",
+        "--async",
+        "--jobs",
+        "--format",
+        "--json",
+    ] {
         assert!(
             contains_token(&diag_rate_limits_opts, token),
             "missing diag token: {token}"

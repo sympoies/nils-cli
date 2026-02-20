@@ -173,7 +173,7 @@ pub enum DiagCommand {
 #[derive(Args)]
 pub struct RateLimitsArgs {
     /// Clear starship cache before querying
-    #[arg(short = 'c')]
+    #[arg(short = 'c', long = "clear-cache")]
     pub clear_cache: bool,
     /// Debug output
     #[arg(short = 'd', long = "debug")]

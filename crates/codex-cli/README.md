@@ -68,7 +68,7 @@ Auth examples:
 - `codex-cli auth remove --yes team-alpha.json`: Remove a saved secret file.
 
 ### diag
-- `rate-limits [options] [secret.json]`: Rate-limit diagnostics. Options: `-c`, `-d/--debug`, `--cached`, `--no-refresh-auth`, `--json`, `--one-line`, `--all`, `--async`, `--jobs <n>`.
+- `rate-limits [options] [secret.json]`: Rate-limit diagnostics. Options: `-c/--clear-cache`, `-d/--debug`, `--cached`, `--no-refresh-auth`, `--json`, `--one-line`, `--all`, `--async`, `--jobs <n>`.
 
 ### config
 - `show`: Print effective configuration values.
