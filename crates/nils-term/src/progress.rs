@@ -298,7 +298,10 @@ impl WriterTerm {
     }
 
     fn write_all(&self, bytes: &[u8]) -> io::Result<()> {
-        let mut guard = self.buffer.lock().expect("writer buffer lock");
+        let mut guard = match self.buffer.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         guard.extend_from_slice(bytes);
         Ok(())
     }
