@@ -2,8 +2,15 @@ use std::sync::{Arc, Mutex};
 
 use nils_term::progress::{Progress, ProgressDrawTarget, ProgressEnabled, ProgressOptions};
 
+fn lock_buffer(buffer: &Arc<Mutex<Vec<u8>>>) -> std::sync::MutexGuard<'_, Vec<u8>> {
+    match buffer.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
 fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
-    String::from_utf8_lossy(&buffer.lock().expect("buffer lock")).to_string()
+    String::from_utf8_lossy(&lock_buffer(buffer)).to_string()
 }
 
 fn normalize(s: &str) -> String {
@@ -132,4 +139,32 @@ fn suspend_does_not_panic() {
     p.tick();
     p.suspend(|| {});
     p.finish();
+}
+
+#[test]
+fn writer_target_recovers_after_buffer_poisoning() {
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let poison_target = buffer.clone();
+
+    let _ = std::thread::spawn(move || {
+        let _guard = poison_target.lock().expect("buffer lock");
+        panic!("poison writer buffer");
+    })
+    .join();
+
+    assert!(buffer.lock().is_err(), "expected poisoned mutex");
+
+    let opts = ProgressOptions::default()
+        .with_enabled(ProgressEnabled::On)
+        .with_draw_target(ProgressDrawTarget::to_writer(buffer.clone()))
+        .with_width(Some(60))
+        .with_prefix("poison ");
+
+    let p = Progress::new(2, opts);
+    p.inc(1);
+    p.finish();
+
+    let out = normalize(&read_output(&buffer));
+    assert!(out.contains("1/2"), "output was: {out:?}");
+    assert!(out.contains("poison"), "output was: {out:?}");
 }
