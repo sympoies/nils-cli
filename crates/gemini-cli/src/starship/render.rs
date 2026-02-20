@@ -1,4 +1,7 @@
 use std::path::Path;
+use std::{io, io::IsTerminal};
+
+use crate::rate_limits::ansi;
 
 #[derive(Clone, Debug)]
 pub struct CacheEntry {
@@ -70,15 +73,84 @@ pub fn render_line(
     )
     .unwrap_or_else(|| "?".to_string());
 
-    let weekly_token = format!("W:{}%", entry.weekly_remaining);
+    let color_enabled = should_color();
+    let weekly_token = ansi::format_percent_token(
+        &format!("W:{}%", entry.weekly_remaining),
+        Some(color_enabled),
+    );
 
     if show_5h {
-        let non_weekly_token =
-            format!("{}:{}%", entry.non_weekly_label, entry.non_weekly_remaining);
+        let non_weekly_token = ansi::format_percent_token(
+            &format!("{}:{}%", entry.non_weekly_label, entry.non_weekly_remaining),
+            Some(color_enabled),
+        );
         return Some(format!(
             "{prefix}{non_weekly_token} {weekly_token} {weekly_reset_time}"
         ));
     }
 
     Some(format!("{prefix}{weekly_token} {weekly_reset_time}"))
+}
+
+fn should_color() -> bool {
+    if std::env::var_os("NO_COLOR").is_some() {
+        return false;
+    }
+
+    if let Ok(raw) = std::env::var("GEMINI_STARSHIP_COLOR_ENABLED") {
+        return matches!(
+            raw.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        );
+    }
+
+    if std::env::var_os("STARSHIP_SESSION_KEY").is_some()
+        || std::env::var_os("STARSHIP_SHELL").is_some()
+    {
+        return true;
+    }
+
+    io::stdout().is_terminal()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_color;
+    use nils_test_support::{EnvGuard, GlobalStateLock};
+
+    #[test]
+    fn should_color_no_color_has_highest_priority() {
+        let lock = GlobalStateLock::new();
+        let _no_color = EnvGuard::set(&lock, "NO_COLOR", "1");
+        let _explicit = EnvGuard::set(&lock, "GEMINI_STARSHIP_COLOR_ENABLED", "true");
+        let _session = EnvGuard::set(&lock, "STARSHIP_SESSION_KEY", "session");
+        assert!(!should_color());
+    }
+
+    #[test]
+    fn should_color_explicit_truthy_and_falsey_values_are_stable() {
+        let lock = GlobalStateLock::new();
+        let _no_color = EnvGuard::remove(&lock, "NO_COLOR");
+        let _session = EnvGuard::remove(&lock, "STARSHIP_SESSION_KEY");
+        let _shell = EnvGuard::remove(&lock, "STARSHIP_SHELL");
+
+        for value in ["1", " true ", "YES", "on"] {
+            let _explicit = EnvGuard::set(&lock, "GEMINI_STARSHIP_COLOR_ENABLED", value);
+            assert!(should_color(), "expected truthy value: {value}");
+        }
+
+        for value in ["", " ", "0", "false", "no", "off", "y", "enabled"] {
+            let _explicit = EnvGuard::set(&lock, "GEMINI_STARSHIP_COLOR_ENABLED", value);
+            assert!(!should_color(), "expected falsey value: {value}");
+        }
+    }
+
+    #[test]
+    fn should_color_falls_back_to_starship_markers_when_not_overridden() {
+        let lock = GlobalStateLock::new();
+        let _no_color = EnvGuard::remove(&lock, "NO_COLOR");
+        let _explicit = EnvGuard::remove(&lock, "GEMINI_STARSHIP_COLOR_ENABLED");
+        let _session = EnvGuard::set(&lock, "STARSHIP_SESSION_KEY", "session");
+        assert!(should_color());
+    }
 }

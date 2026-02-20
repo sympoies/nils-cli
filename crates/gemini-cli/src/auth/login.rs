@@ -1,5 +1,7 @@
+use std::io::IsTerminal;
 use std::path::Path;
 use std::process::Command;
+use std::{fs, io};
 
 use crate::auth::output;
 
@@ -85,6 +87,20 @@ fn run_api_key_login(output_json: bool) -> i32 {
 }
 
 fn run_oauth_login(method: LoginMethod, output_json: bool) -> i32 {
+    if output_json {
+        return run_oauth_session_check(method, true);
+    }
+
+    let interactive_terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    if !interactive_terminal {
+        // Keep non-interactive automation stable.
+        return run_oauth_session_check(method, false);
+    }
+
+    run_oauth_interactive_login(method)
+}
+
+fn run_oauth_session_check(method: LoginMethod, output_json: bool) -> i32 {
     let auth_file = match gemini_core::paths::resolve_auth_file() {
         Some(path) => path,
         None => {
@@ -195,6 +211,203 @@ fn run_oauth_login(method: LoginMethod, output_json: bool) -> i32 {
     }
 
     0
+}
+
+fn run_oauth_interactive_login(method: LoginMethod) -> i32 {
+    let auth_file = match gemini_core::paths::resolve_auth_file() {
+        Some(path) => path,
+        None => {
+            emit_login_error(
+                false,
+                "auth-file-not-configured",
+                "gemini-login: GEMINI_AUTH_FILE is not configured".to_string(),
+                None,
+            );
+            return 1;
+        }
+    };
+
+    let backup = match backup_auth_file(&auth_file) {
+        Ok(backup) => backup,
+        Err(err) => {
+            emit_login_error(false, "auth-read-failed", err.to_string(), None);
+            return 1;
+        }
+    };
+
+    if let Some(parent) = auth_file.parent()
+        && let Err(err) = fs::create_dir_all(parent)
+    {
+        emit_login_error(
+            false,
+            "auth-dir-create-failed",
+            format!(
+                "gemini-login: failed to prepare auth directory {}: {err}",
+                parent.display()
+            ),
+            Some(output::obj(vec![(
+                "auth_file",
+                output::s(auth_file.display().to_string()),
+            )])),
+        );
+        return 1;
+    }
+
+    if auth_file.is_file()
+        && let Err(err) = fs::remove_file(&auth_file)
+    {
+        emit_login_error(
+            false,
+            "auth-file-remove-failed",
+            format!(
+                "gemini-login: failed to remove auth file {}: {err}",
+                auth_file.display()
+            ),
+            Some(output::obj(vec![(
+                "auth_file",
+                output::s(auth_file.display().to_string()),
+            )])),
+        );
+        return 1;
+    }
+
+    let status = match run_gemini_interactive_login(method, &auth_file) {
+        Ok(status) => status,
+        Err(err) => {
+            let _ = restore_auth_backup(&auth_file, backup.as_deref());
+            emit_login_error(false, err.code, err.message, err.details);
+            return err.exit_code;
+        }
+    };
+
+    if !status.success() {
+        let _ = restore_auth_backup(&auth_file, backup.as_deref());
+        let exit_code = status.code().unwrap_or(1).max(1);
+        emit_login_error(
+            false,
+            "login-failed",
+            format!("gemini-login: login failed for method {}", method.as_str()),
+            Some(output::obj(vec![
+                ("method", output::s(method.as_str())),
+                ("exit_code", output::n(i64::from(exit_code))),
+            ])),
+        );
+        return exit_code;
+    }
+
+    let auth_json = match gemini_core::json::read_json(&auth_file) {
+        Ok(value) => value,
+        Err(err) => {
+            let _ = restore_auth_backup(&auth_file, backup.as_deref());
+            emit_login_error(
+                false,
+                "auth-read-failed",
+                format!(
+                    "gemini-login: login completed but failed to read auth file {}: {err}",
+                    auth_file.display()
+                ),
+                Some(output::obj(vec![(
+                    "auth_file",
+                    output::s(auth_file.display().to_string()),
+                )])),
+            );
+            return 1;
+        }
+    };
+
+    let access_token = match access_token_from_json(&auth_json) {
+        Some(token) => token,
+        None => {
+            let _ = restore_auth_backup(&auth_file, backup.as_deref());
+            emit_login_error(
+                false,
+                "missing-access-token",
+                format!(
+                    "gemini-login: login completed but auth file is missing access token: {}",
+                    auth_file.display()
+                ),
+                Some(output::obj(vec![(
+                    "auth_file",
+                    output::s(auth_file.display().to_string()),
+                )])),
+            );
+            return 2;
+        }
+    };
+
+    if let Err(err) = fetch_google_userinfo(&access_token) {
+        let _ = restore_auth_backup(&auth_file, backup.as_deref());
+        emit_login_error(false, err.code, err.message, err.details);
+        return err.exit_code;
+    }
+
+    println!("gemini: login complete (method: {})", method.as_str());
+    0
+}
+
+fn backup_auth_file(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    fs::read(path).map(Some)
+}
+
+fn restore_auth_backup(path: &Path, backup: Option<&[u8]>) -> io::Result<()> {
+    match backup {
+        Some(contents) => crate::auth::write_atomic(path, contents, crate::auth::SECRET_FILE_MODE),
+        None => {
+            if path.is_file() {
+                fs::remove_file(path)
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
+fn run_gemini_interactive_login(
+    method: LoginMethod,
+    auth_file: &Path,
+) -> Result<std::process::ExitStatus, LoginError> {
+    let mut command = Command::new("gemini");
+    command
+        .arg("--prompt-interactive")
+        .arg("/quit")
+        .env("GEMINI_AUTH_FILE", auth_file.to_string_lossy().to_string());
+
+    if method == LoginMethod::GeminiDeviceCode {
+        command.env("NO_BROWSER", "true");
+    } else {
+        command.env_remove("NO_BROWSER");
+    }
+
+    let status = command.status().map_err(|_| LoginError {
+        code: "login-exec-failed",
+        message: format!(
+            "gemini-login: failed to run `gemini` for method {}",
+            method.as_str()
+        ),
+        details: Some(output::obj(vec![("method", output::s(method.as_str()))])),
+        exit_code: 1,
+    })?;
+
+    if !auth_file.is_file() {
+        return Err(LoginError {
+            code: "auth-file-not-found",
+            message: format!(
+                "gemini-login: interactive login did not produce auth file: {}",
+                auth_file.display()
+            ),
+            details: Some(output::obj(vec![
+                ("method", output::s(method.as_str())),
+                ("auth_file", output::s(auth_file.display().to_string())),
+                ("exit_code", output::n(status.code().unwrap_or(0) as i64)),
+            ])),
+            exit_code: 1,
+        });
+    }
+
+    Ok(status)
 }
 
 struct LoginError {

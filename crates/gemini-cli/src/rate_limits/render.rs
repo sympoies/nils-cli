@@ -131,6 +131,14 @@ fn parse_code_assist_usage(value: &serde_json::Value) -> Option<UsageData> {
 
 fn normalize_window_seconds(seconds: i64) -> i64 {
     let clamped = seconds.max(1);
+    // Code-assist resets are wall-clock aligned and can drift around exact
+    // day/week boundaries. Keep labels stable for near-day/week horizons.
+    if (16 * 3_600..=32 * 3_600).contains(&clamped) {
+        return 86_400;
+    }
+    if (5 * 86_400..=9 * 86_400).contains(&clamped) {
+        return 604_800;
+    }
     if clamped >= 3_600 {
         return (clamped / 3_600).max(1) * 3_600;
     }
@@ -443,4 +451,37 @@ fn parse_u32(raw: &str) -> Option<u32> {
 
 fn parse_i64(raw: &str) -> Option<i64> {
     raw.parse::<i64>().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_window_seconds, normalize_window_seconds};
+
+    #[test]
+    fn normalize_window_seconds_stabilizes_daily_horizon_to_one_day() {
+        assert_eq!(
+            format_window_seconds(normalize_window_seconds(21 * 3_600)).as_deref(),
+            Some("1d")
+        );
+        assert_eq!(
+            format_window_seconds(normalize_window_seconds(22 * 3_600 + 45 * 60)).as_deref(),
+            Some("1d")
+        );
+    }
+
+    #[test]
+    fn normalize_window_seconds_stabilizes_weekly_horizon_to_weekly() {
+        assert_eq!(
+            format_window_seconds(normalize_window_seconds(6 * 86_400 + 3 * 3_600)).as_deref(),
+            Some("Weekly")
+        );
+    }
+
+    #[test]
+    fn normalize_window_seconds_keeps_short_windows_hourly() {
+        assert_eq!(
+            format_window_seconds(normalize_window_seconds(5 * 3_600 + 20 * 60)).as_deref(),
+            Some("5h")
+        );
+    }
 }
