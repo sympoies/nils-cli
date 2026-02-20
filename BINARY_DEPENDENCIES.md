@@ -60,13 +60,25 @@ These tools enable richer behavior. Missing tools typically trigger fallback beh
 
 `agentctl` now ships with three built-in provider adapters. Runtime requirements differ by maturity.
 The Codex adapter runtime stack is layered as `agent-provider-codex -> codex-core` (shared runtime
-primitives) rather than importing `codex-cli` internals.
+primitives) rather than importing `codex-cli` internals. The Gemini lane follows the same direction
+(`agent-provider-gemini -> gemini-core`) and is documented as stable, not a compile-only stub.
 
 | Provider crate | Provider ID | Maturity | Runtime requirement |
 |---|---|---|---|
 | `agent-provider-codex` | `codex` | `stable` | Requires `codex` binary for execute flows |
 | `agent-provider-claude` | `claude` | `stable` | Requires `ANTHROPIC_API_KEY` and outbound HTTPS access to Anthropic API (optional local `claude` CLI for characterization only) |
-| `agent-provider-gemini` | `gemini` | `stub` | Compile-only stub (no external binary required yet) |
+| `agent-provider-gemini` | `gemini` | `stable` | Runtime requirement is `gemini-core`-owned execution/auth-state with deterministic fixture-backed CI; local live verification requires a configured Gemini runtime surface, and missing/unsupported capabilities must return stable fallback errors |
+
+### 2.2 Gemini lane runtime viability gate
+
+- Runtime requirement: `agent-provider-gemini` must consume runtime execution/auth-state behavior
+  from `gemini-core` only (no provider-to-CLI coupling).
+- Deterministic profile (required in default CI): fixture-backed contract tests with redacted,
+  synthetic payloads and fixed scenario identifiers.
+- Live profile (optional, non-blocking): may run against a locally configured Gemini runtime
+  surface for drift detection.
+- Fallback policy: when runtime capabilities are unavailable or unsupported, adapter responses must
+  use explicit stable error categories/codes (never silent degradation).
 
 ## 3. Development and Validation Toolchain
 

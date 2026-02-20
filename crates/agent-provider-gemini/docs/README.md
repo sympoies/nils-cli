@@ -4,11 +4,12 @@
 
 ## Specs
 
-- None yet. Add documents under `docs/specs/` and register them here.
+- [`specs/codex-cli-gemini-parity-matrix-v1.md`](specs/codex-cli-gemini-parity-matrix-v1.md)
+- [`specs/gemini-provider-contract-v1.md`](specs/gemini-provider-contract-v1.md)
 
 ## Runbooks
 
-- None yet. Add documents under `docs/runbooks/` and register them here.
+- [`runbooks/verification-oracles.md`](runbooks/verification-oracles.md)
 
 ## Reports
 

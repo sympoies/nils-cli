@@ -35,7 +35,7 @@ fn provider_list_json_reports_builtin_providers_and_maturity() {
     let expected = [
         ("codex", "stable", true),
         ("claude", "stable", false),
-        ("gemini", "stub", false),
+        ("gemini", "stable", false),
     ];
 
     for (provider_id, maturity, is_default) in expected {
@@ -109,13 +109,16 @@ fn provider_list_text_respects_environment_override_and_prints_maturity() {
 fn provider_healthcheck_text_reports_selected_source_and_status() {
     let output = run_with(
         &["provider", "healthcheck", "--provider", "gemini"],
-        CmdOptions::default().with_env_remove("AGENTCTL_PROVIDER"),
+        CmdOptions::default()
+            .with_env_remove("AGENTCTL_PROVIDER")
+            .with_env("PATH", ""),
     );
     assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
     let stdout = output.stdout_text();
     assert!(stdout.contains("provider: gemini"));
     assert!(stdout.contains("selected_source: cli-argument"));
-    assert!(stdout.contains("status: degraded"));
+    assert!(stdout.contains("status: unhealthy"));
+    assert!(stdout.contains("summary: gemini adapter is unavailable"));
 }
 
 #[test]

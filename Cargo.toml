@@ -23,6 +23,8 @@ members = [
   "crates/agent-docs",
   "crates/codex-core",
   "crates/claude-core",
+  "crates/gemini-core",
+  "crates/gemini-cli",
   "crates/agent-runtime-core",
   "crates/agent-provider-codex",
   "crates/agent-provider-claude",

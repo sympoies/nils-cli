@@ -4,6 +4,7 @@ nils-test-support
 nils-common
 nils-term
 nils-claude-core
+nils-gemini-core
 nils-agent-provider-claude
 nils-agent-provider-gemini
 nils-git-cli
@@ -13,6 +14,7 @@ nils-api-testing-core
 nils-cli-template
 nils-codex-cli
 nils-claude-cli
+nils-gemini-cli
 nils-fzf-cli
 nils-git-lock
 nils-git-scope

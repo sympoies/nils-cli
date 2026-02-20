@@ -1,0 +1,13 @@
+#![cfg_attr(not(test), forbid(unsafe_code))]
+
+pub mod agent;
+pub mod auth;
+pub mod config;
+pub mod diag_output;
+pub mod fs;
+pub mod json;
+pub mod jwt;
+pub mod paths;
+pub mod prompts;
+pub mod rate_limits;
+pub mod starship;
