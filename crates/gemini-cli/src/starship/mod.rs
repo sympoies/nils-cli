@@ -23,6 +23,9 @@ pub struct StarshipOptions {
 const DEFAULT_TTL_SECONDS: u64 = 300;
 const DEFAULT_TIME_FORMAT: &str = "%m-%d %H:%M";
 const DEFAULT_TIME_FORMAT_WITH_TIMEZONE: &str = "%m-%d %H:%M %:z";
+const DEFAULT_CODE_ASSIST_ENDPOINT: &str = "https://cloudcode-pa.googleapis.com";
+const DEFAULT_CODE_ASSIST_API_VERSION: &str = "v1internal";
+const DEFAULT_CODE_ASSIST_PROJECT: &str = "projects/default";
 
 pub fn run(options: &StarshipOptions) -> i32 {
     if options.is_enabled {
@@ -90,15 +93,15 @@ pub fn run(options: &StarshipOptions) -> i32 {
 }
 
 fn refresh_blocking(target_file: &Path) -> Option<render::CacheEntry> {
-    let base_url = std::env::var("GEMINI_CHATGPT_BASE_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9/".to_string());
     let connect_timeout = env_u64("GEMINI_STARSHIP_CURL_CONNECT_TIMEOUT_SECONDS", 2);
     let max_time = env_u64("GEMINI_STARSHIP_CURL_MAX_TIME_SECONDS", 8);
 
     let usage_request = UsageRequest {
         target_file: target_file.to_path_buf(),
         refresh_on_401: false,
-        base_url,
+        endpoint: code_assist_endpoint(),
+        api_version: code_assist_api_version(),
+        project: code_assist_project(),
         connect_timeout_seconds: connect_timeout,
         max_time_seconds: max_time,
     };
@@ -277,6 +280,38 @@ fn env_u64(key: &str, default: u64) -> u64 {
         .ok()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .unwrap_or(default)
+}
+
+fn code_assist_endpoint() -> String {
+    env_non_empty("CODE_ASSIST_ENDPOINT")
+        .or_else(|| env_non_empty("GEMINI_CODE_ASSIST_ENDPOINT"))
+        .unwrap_or_else(|| DEFAULT_CODE_ASSIST_ENDPOINT.to_string())
+}
+
+fn code_assist_api_version() -> String {
+    env_non_empty("CODE_ASSIST_API_VERSION")
+        .or_else(|| env_non_empty("GEMINI_CODE_ASSIST_API_VERSION"))
+        .unwrap_or_else(|| DEFAULT_CODE_ASSIST_API_VERSION.to_string())
+}
+
+fn code_assist_project() -> String {
+    let raw = env_non_empty("GEMINI_CODE_ASSIST_PROJECT")
+        .or_else(|| env_non_empty("GOOGLE_CLOUD_PROJECT"))
+        .or_else(|| env_non_empty("GOOGLE_CLOUD_PROJECT_ID"))
+        .unwrap_or_else(|| DEFAULT_CODE_ASSIST_PROJECT.to_string());
+
+    if raw.starts_with("projects/") {
+        raw
+    } else {
+        format!("projects/{raw}")
+    }
+}
+
+fn env_non_empty(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|raw| raw.trim().to_string())
+        .filter(|raw| !raw.is_empty())
 }
 
 fn now_epoch() -> i64 {

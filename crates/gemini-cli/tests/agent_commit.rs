@@ -211,16 +211,14 @@ fn agent_commit_semantic_mode_executes_gemini_with_template_and_push_note() {
     let code = agent::commit::run(&options);
     assert_eq!(code, 0);
 
-    let prompt = fs::read_to_string(out_dir.join("arg-9")).expect("prompt");
+    let prompt = fs::read_to_string(out_dir.join("arg-0")).expect("prompt");
     assert!(prompt.contains("SEMANTIC_AUTOSTAGE"));
     assert!(prompt.contains("Furthermore, please push the committed changes"));
     assert!(prompt.contains("Additional instructions from user:"));
     assert!(prompt.contains("extra words"));
 
-    let arg5 = fs::read_to_string(out_dir.join("arg-5")).expect("model");
-    assert_eq!(arg5, "m-test");
-    let arg7 = fs::read_to_string(out_dir.join("arg-7")).expect("reasoning");
-    assert_eq!(arg7, "model_reasoning_effort=\"low\"");
+    let arg2 = fs::read_to_string(out_dir.join("arg-2")).expect("model");
+    assert_eq!(arg2, "m-test");
 
     let _ = fs::remove_dir_all(&dir);
 }

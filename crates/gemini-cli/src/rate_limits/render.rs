@@ -1,12 +1,11 @@
-use std::fs;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::collections::BTreeMap;
 
 pub struct UsageData {
     pub primary: Window,
     pub secondary: Window,
 }
 
+#[derive(Clone)]
 pub struct Window {
     pub limit_window_seconds: i64,
     pub used_percent: f64,
@@ -35,24 +34,11 @@ pub fn parse_usage(body: &str) -> Option<UsageData> {
 }
 
 pub fn parse_usage_body(body: &str) -> Option<UsageData> {
-    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    parse_wham_usage(&value).or_else(|| parse_code_assist_usage(&value))
+}
 
-    let mut path = std::env::temp_dir();
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    path.push(format!(
-        "gemini-rate-limits-usage-{}-{nanos}-{seq}.json",
-        std::process::id(),
-    ));
-
-    fs::write(&path, body).ok()?;
-    let value = crate::json::read_json(&path).ok();
-    let _ = fs::remove_file(&path);
-    let value = value?;
-
+fn parse_wham_usage(value: &serde_json::Value) -> Option<UsageData> {
     let rate_limit = value.get("rate_limit")?;
     let primary_raw = rate_limit.get("primary_window")?;
     let secondary_raw = rate_limit.get("secondary_window")?;
@@ -75,6 +61,164 @@ pub fn parse_usage_body(body: &str) -> Option<UsageData> {
     };
 
     Some(UsageData { primary, secondary })
+}
+
+fn parse_code_assist_usage(value: &serde_json::Value) -> Option<UsageData> {
+    let buckets = value.get("buckets")?.as_array()?;
+    let now_epoch = now_epoch_seconds();
+    let mut grouped: BTreeMap<i64, f64> = BTreeMap::new();
+
+    for bucket in buckets {
+        if let Some(token_type) = bucket.get("tokenType").and_then(|value| value.as_str())
+            && !token_type.eq_ignore_ascii_case("REQUESTS")
+        {
+            continue;
+        }
+
+        let remaining_fraction = match bucket
+            .get("remainingFraction")
+            .and_then(|value| value.as_f64())
+        {
+            Some(value) => value.clamp(0.0, 1.0),
+            None => continue,
+        };
+        let used_percent = (100.0 - (remaining_fraction * 100.0)).clamp(0.0, 100.0);
+
+        let reset_at = match bucket
+            .get("resetTime")
+            .and_then(|value| value.as_str())
+            .and_then(parse_rfc3339_epoch)
+        {
+            Some(epoch) if epoch > 0 => epoch,
+            _ => continue,
+        };
+
+        grouped
+            .entry(reset_at)
+            // Keep the worst remaining bucket for each reset horizon.
+            .and_modify(|existing_used| {
+                if used_percent > *existing_used {
+                    *existing_used = used_percent;
+                }
+            })
+            .or_insert(used_percent);
+    }
+
+    let mut windows: Vec<Window> = grouped
+        .iter()
+        .map(|(reset_at, used_percent)| {
+            let limit_window_seconds = if now_epoch > 0 {
+                normalize_window_seconds(reset_at.saturating_sub(now_epoch))
+            } else {
+                1
+            };
+            Window {
+                limit_window_seconds,
+                used_percent: *used_percent,
+                reset_at: *reset_at,
+            }
+        })
+        .collect();
+    if windows.is_empty() {
+        return None;
+    }
+    windows.sort_by_key(|window| window.reset_at);
+    let primary = windows.first()?.clone();
+    let secondary = windows.last().cloned().unwrap_or_else(|| primary.clone());
+
+    Some(UsageData { primary, secondary })
+}
+
+fn normalize_window_seconds(seconds: i64) -> i64 {
+    let clamped = seconds.max(1);
+    if clamped >= 3_600 {
+        return (clamped / 3_600).max(1) * 3_600;
+    }
+    if clamped >= 60 {
+        return (clamped / 60).max(1) * 60;
+    }
+    clamped
+}
+
+fn now_epoch_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_secs()).ok())
+        .unwrap_or(0)
+}
+
+fn parse_rfc3339_epoch(raw: &str) -> Option<i64> {
+    let normalized = normalize_iso(raw);
+    let (datetime, offset_seconds) = if normalized.ends_with('Z') {
+        (&normalized[..normalized.len().saturating_sub(1)], 0i64)
+    } else {
+        if normalized.len() < 6 {
+            return None;
+        }
+        let tail_index = normalized.len() - 6;
+        let sign = normalized.as_bytes().get(tail_index).copied()? as char;
+        if sign != '+' && sign != '-' {
+            return None;
+        }
+        if normalized.as_bytes().get(tail_index + 3).copied()? as char != ':' {
+            return None;
+        }
+        let hours = parse_u32(&normalized[tail_index + 1..tail_index + 3])? as i64;
+        let minutes = parse_u32(&normalized[tail_index + 4..])? as i64;
+        let mut offset = hours * 3_600 + minutes * 60;
+        if sign == '-' {
+            offset = -offset;
+        }
+        (&normalized[..tail_index], offset)
+    };
+
+    if datetime.len() != 19 {
+        return None;
+    }
+    if datetime.as_bytes().get(4).copied()? as char != '-'
+        || datetime.as_bytes().get(7).copied()? as char != '-'
+        || datetime.as_bytes().get(10).copied()? as char != 'T'
+        || datetime.as_bytes().get(13).copied()? as char != ':'
+        || datetime.as_bytes().get(16).copied()? as char != ':'
+    {
+        return None;
+    }
+
+    let year = parse_i64(&datetime[0..4])?;
+    let month = parse_u32(&datetime[5..7])? as i64;
+    let day = parse_u32(&datetime[8..10])? as i64;
+    let hour = parse_u32(&datetime[11..13])? as i64;
+    let minute = parse_u32(&datetime[14..16])? as i64;
+    let second = parse_u32(&datetime[17..19])? as i64;
+
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
+        return None;
+    }
+
+    let days = days_from_civil(year, month, day);
+    let local_epoch = days * 86_400 + hour * 3_600 + minute * 60 + second;
+    Some(local_epoch - offset_seconds)
+}
+
+fn normalize_iso(raw: &str) -> String {
+    let mut trimmed = raw
+        .split(&['\n', '\r'][..])
+        .next()
+        .unwrap_or("")
+        .to_string();
+    if let Some(dot) = trimmed.find('.')
+        && trimmed.ends_with('Z')
+    {
+        trimmed.truncate(dot);
+        trimmed.push('Z');
+    }
+    trimmed
 }
 
 pub fn render_values(data: &UsageData) -> RenderValues {
@@ -277,4 +421,26 @@ fn civil_from_days(days_since_epoch: i64) -> (i64, i64, i64) {
         year += 1;
     }
     (year, month, day)
+}
+
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let adjusted_year = year - i64::from(month <= 2);
+    let era = if adjusted_year >= 0 {
+        adjusted_year / 400
+    } else {
+        (adjusted_year - 399) / 400
+    };
+    let year_of_era = adjusted_year - era * 400;
+    let month_prime = month + if month > 2 { -3 } else { 9 };
+    let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
+}
+
+fn parse_u32(raw: &str) -> Option<u32> {
+    raw.parse::<u32>().ok()
+}
+
+fn parse_i64(raw: &str) -> Option<i64> {
+    raw.parse::<i64>().ok()
 }

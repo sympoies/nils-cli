@@ -29,18 +29,18 @@ pub fn run_with_json(target: &str, yes: bool, output_json: bool) -> i32 {
         return 64;
     }
 
-    let secret_dir = match resolve_secret_dir_from_env() {
+    let secret_dir = match resolve_secret_dir() {
         Some(path) => path,
         None => {
             if output_json {
                 let _ = output::emit_error(
                     "auth remove",
                     "secret-dir-not-configured",
-                    "gemini-remove: GEMINI_SECRET_DIR is not configured",
+                    "gemini-remove: secret directory is not configured",
                     None,
                 );
             } else {
-                eprintln!("gemini-remove: GEMINI_SECRET_DIR is not configured");
+                eprintln!("gemini-remove: secret directory is not configured");
             }
             return 1;
         }
@@ -52,7 +52,7 @@ pub fn run_with_json(target: &str, yes: bool, output_json: bool) -> i32 {
                 "auth remove",
                 "secret-dir-not-found",
                 format!(
-                    "gemini-remove: GEMINI_SECRET_DIR not found: {}",
+                    "gemini-remove: secret directory not found: {}",
                     secret_dir.display()
                 ),
                 Some(output::obj(vec![(
@@ -62,7 +62,7 @@ pub fn run_with_json(target: &str, yes: bool, output_json: bool) -> i32 {
             );
         } else {
             eprintln!(
-                "gemini-remove: GEMINI_SECRET_DIR not found: {}",
+                "gemini-remove: secret directory not found: {}",
                 secret_dir.display()
             );
         }
@@ -173,12 +173,8 @@ fn usage_error(output_json: bool, message: &str) -> i32 {
     64
 }
 
-fn resolve_secret_dir_from_env() -> Option<PathBuf> {
-    let raw = std::env::var_os("GEMINI_SECRET_DIR")?;
-    if raw.is_empty() {
-        return None;
-    }
-    Some(PathBuf::from(raw))
+fn resolve_secret_dir() -> Option<PathBuf> {
+    gemini_core::paths::resolve_secret_dir()
 }
 
 fn is_invalid_target(target: &str) -> bool {
@@ -213,7 +209,7 @@ fn remove_target_timestamp(target_file: &Path) {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_invalid_target, resolve_secret_dir_from_env};
+    use super::{is_invalid_target, resolve_secret_dir};
 
     #[test]
     fn invalid_target_rejects_paths_and_traversal() {
@@ -224,14 +220,24 @@ mod tests {
     }
 
     #[test]
-    fn resolve_secret_dir_uses_gemini_secret_dir_only() {
+    fn resolve_secret_dir_uses_gemini_secret_dir_env_override() {
+        let old_home = std::env::var_os("HOME");
         let old = std::env::var_os("GEMINI_SECRET_DIR");
+        // SAFETY: test-scoped env mutation.
+        unsafe { std::env::set_var("HOME", "") };
         // SAFETY: test-scoped env mutation.
         unsafe { std::env::set_var("GEMINI_SECRET_DIR", "/tmp/secrets") };
         assert_eq!(
-            resolve_secret_dir_from_env().expect("secret dir"),
+            resolve_secret_dir().expect("secret dir"),
             std::path::PathBuf::from("/tmp/secrets")
         );
+        if let Some(value) = old_home {
+            // SAFETY: test-scoped env restore.
+            unsafe { std::env::set_var("HOME", value) };
+        } else {
+            // SAFETY: test-scoped env restore.
+            unsafe { std::env::remove_var("HOME") };
+        }
         if let Some(value) = old {
             // SAFETY: test-scoped env restore.
             unsafe { std::env::set_var("GEMINI_SECRET_DIR", value) };

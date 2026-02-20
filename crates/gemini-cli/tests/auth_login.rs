@@ -1,6 +1,4 @@
-#![allow(dead_code, unused_imports)]
-#[path = "../src/auth/mod.rs"]
-mod auth;
+use gemini_cli::auth;
 
 use std::fs;
 use std::path::PathBuf;
@@ -8,9 +6,10 @@ use std::sync::{Mutex, OnceLock};
 
 fn env_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .expect("env lock")
+    match LOCK.get_or_init(|| Mutex::new(())).lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
 }
 
 struct TempDir {
@@ -23,7 +22,10 @@ impl TempDir {
         let unique = format!(
             "{prefix}-{}-{}",
             std::process::id(),
-            auth::now_epoch_seconds()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_secs())
+                .unwrap_or(0)
         );
         path.push(unique);
         let _ = fs::remove_dir_all(&path);
@@ -86,13 +88,23 @@ fn write_exe(path: &std::path::Path, content: &str) {
     fs::write(path, content).expect("write exe");
 }
 
-fn gemini_stub_script() -> &'static str {
+fn curl_stub_script() -> &'static str {
     r#"#!/bin/sh
 set -eu
-if [ -n "${NILS_TEST_STUB_LOG:-}" ]; then
-  echo "$*" >> "$NILS_TEST_STUB_LOG"
-fi
-exit "${GEMINI_STUB_EXIT_CODE:-0}"
+case "$*" in
+  *openidconnect.googleapis.com/v1/userinfo*)
+    cat <<'EOF'
+{"email":"alpha@example.com"}
+__HTTP_STATUS__:200
+EOF
+    exit 0
+    ;;
+esac
+cat <<'EOF'
+{"error":"unexpected"}
+__HTTP_STATUS__:400
+EOF
+exit 0
 "#
 }
 
@@ -104,42 +116,46 @@ fn auth_login_rejects_conflicting_flags() {
 }
 
 #[test]
-fn auth_login_default_uses_browser_flow() {
+fn auth_login_api_key_requires_env() {
     let _lock = env_lock();
-
-    let dir = TempDir::new("gemini-auth-login-default");
-    let stub_path = dir.path().join("gemini");
-    let log_path = dir.path().join("log.txt");
-    write_exe(&stub_path, gemini_stub_script());
-
-    let path = dir.path().display().to_string();
-    let _path = EnvGuard::set("PATH", &path);
-    let _log = EnvGuard::set("NILS_TEST_STUB_LOG", &log_path.display().to_string());
-
-    let code = auth::login::run_with_json(false, false, false);
-    assert_eq!(code, 0);
-
-    let log_content = fs::read_to_string(log_path).expect("read log");
-    assert!(log_content.contains("login"));
+    let _api = EnvGuard::set("GEMINI_API_KEY", "");
+    let _google = EnvGuard::set("GOOGLE_API_KEY", "");
+    let code = auth::login::run_with_json(true, false, false);
+    assert_eq!(code, 64);
 }
 
 #[test]
-fn auth_login_device_code_and_api_key_map_to_expected_args() {
+fn auth_login_api_key_succeeds_with_env() {
     let _lock = env_lock();
+    let _api = EnvGuard::set("GEMINI_API_KEY", "dummy-key");
+    let code = auth::login::run_with_json(true, false, false);
+    assert_eq!(code, 0);
+}
 
-    let dir = TempDir::new("gemini-auth-login-flags");
-    let stub_path = dir.path().join("gemini");
-    let log_path = dir.path().join("log.txt");
-    write_exe(&stub_path, gemini_stub_script());
+#[test]
+fn auth_login_browser_and_device_code_use_userinfo_flow() {
+    let _lock = env_lock();
+    let dir = TempDir::new("gemini-auth-login-browser");
+    let bin_dir = dir.path().join("bin");
+    fs::create_dir_all(&bin_dir).expect("bin dir");
+    let curl_path = bin_dir.join("curl");
+    write_exe(&curl_path, curl_stub_script());
 
-    let path = dir.path().display().to_string();
+    let auth_file = dir.path().join("oauth_creds.json");
+    fs::write(
+        &auth_file,
+        r#"{"access_token":"tok","id_token":"header.payload.sig"}"#,
+    )
+    .expect("write auth");
+
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
     let _path = EnvGuard::set("PATH", &path);
-    let _log = EnvGuard::set("NILS_TEST_STUB_LOG", &log_path.display().to_string());
+    let _auth = EnvGuard::set("GEMINI_AUTH_FILE", &auth_file.display().to_string());
 
+    assert_eq!(auth::login::run_with_json(false, false, false), 0);
     assert_eq!(auth::login::run_with_json(false, true, false), 0);
-    assert_eq!(auth::login::run_with_json(true, false, false), 0);
-
-    let log_content = fs::read_to_string(log_path).expect("read log");
-    assert!(log_content.contains("login --device-auth"));
-    assert!(log_content.contains("login --with-api-key"));
 }

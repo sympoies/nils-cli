@@ -1,6 +1,5 @@
 use nils_test_support::bin;
 use nils_test_support::cmd::{self, CmdOptions, CmdOutput};
-use nils_test_support::write_exe;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use std::fs;
@@ -48,13 +47,6 @@ fn run_with(args: &[&str], envs: &[(&str, &Path)], vars: &[(&str, &str)]) -> Cmd
 
 fn stdout(output: &CmdOutput) -> String {
     output.stdout_text()
-}
-
-fn codex_stub_script() -> &'static str {
-    r#"#!/bin/bash
-set -euo pipefail
-exit "${GEMINI_STUB_EXIT_CODE:-0}"
-"#
 }
 
 #[test]
@@ -183,12 +175,12 @@ fn auth_json_contract_current_missing_auth_file_is_structured() {
 fn auth_json_contract_current_defaults_to_home_secret_dir_when_env_unset() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let home = dir.path().join("home");
-    let auth_dir = home.join(".agents");
-    let secret_dir = home.join(".config").join("gemini_secrets");
-    fs::create_dir_all(&auth_dir).expect("auth dir");
+    let gemini_dir = home.join(".gemini");
+    let secret_dir = gemini_dir.join("secrets");
+    fs::create_dir_all(&gemini_dir).expect("gemini dir");
     fs::create_dir_all(&secret_dir).expect("secret dir");
 
-    let auth_file = auth_dir.join("auth.json");
+    let auth_file = gemini_dir.join("oauth_creds.json");
     let content = auth_json(
         PAYLOAD_ALPHA,
         "acct_001",
@@ -226,10 +218,10 @@ fn auth_json_contract_current_defaults_to_home_secret_dir_when_env_unset() {
 fn auth_json_contract_current_missing_default_secret_dir_is_structured() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let home = dir.path().join("home");
-    let auth_dir = home.join(".agents");
-    fs::create_dir_all(&auth_dir).expect("auth dir");
+    let gemini_dir = home.join(".gemini");
+    fs::create_dir_all(&gemini_dir).expect("gemini dir");
 
-    let auth_file = auth_dir.join("auth.json");
+    let auth_file = gemini_dir.join("oauth_creds.json");
     fs::write(
         &auth_file,
         auth_json(
@@ -260,10 +252,7 @@ fn auth_json_contract_current_missing_default_secret_dir_is_structured() {
     assert_eq!(payload["error"]["code"], "secret-dir-not-found");
     assert_eq!(
         payload["error"]["details"]["secret_dir"],
-        home.join(".config")
-            .join("gemini_secrets")
-            .display()
-            .to_string()
+        home.join(".gemini").join("secrets").display().to_string()
     );
 }
 
@@ -436,18 +425,10 @@ fn auth_json_contract_use_invalid_name_is_structured() {
 
 #[test]
 fn auth_json_contract_login_success_includes_stable_fields() {
-    let dir = tempfile::TempDir::new().expect("tempdir");
-    let stubs = dir.path().join("stubs");
-    fs::create_dir_all(&stubs).expect("stubs");
-    write_exe(&stubs, "gemini", codex_stub_script());
-
-    let current_path = std::env::var("PATH").unwrap_or_default();
-    let path = format!("{}:{current_path}", stubs.to_string_lossy());
-
     let output = run_with(
         &["auth", "login", "--json", "--api-key"],
         &[],
-        &[("PATH", &path)],
+        &[("GEMINI_API_KEY", "dummy-key")],
     );
     assert_eq!(output.code, 0);
 
@@ -461,14 +442,18 @@ fn auth_json_contract_login_success_includes_stable_fields() {
 
 #[test]
 fn auth_json_contract_login_exec_failure_is_structured() {
-    let output = run_with(&["auth", "login", "--json"], &[], &[("PATH", "")]);
+    let output = run_with(
+        &["auth", "login", "--json"],
+        &[],
+        &[("GEMINI_AUTH_FILE", ""), ("HOME", "")],
+    );
     assert_eq!(output.code, 1);
 
     let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
     assert_eq!(payload["schema_version"], "gemini-cli.auth.v1");
     assert_eq!(payload["command"], "auth login");
     assert_eq!(payload["ok"], false);
-    assert_eq!(payload["error"]["code"], "login-exec-failed");
+    assert_eq!(payload["error"]["code"], "auth-file-not-configured");
 }
 
 #[test]

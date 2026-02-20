@@ -92,8 +92,8 @@ fn agent_advice_substitutes_arguments() {
     );
     assert_exit(&output, 0);
 
-    let prompt_arg = fs::read_to_string(out_dir.join("arg-9")).expect("prompt arg");
-    assert_eq!(prompt_arg, "Advice: hello world\n");
+    let prompt_arg = fs::read_to_string(out_dir.join("arg-0")).expect("prompt arg");
+    assert_eq!(prompt_arg, "--prompt=Advice: hello world\n");
 }
 
 #[test]

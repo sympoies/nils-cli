@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use serde_json::{Value, json};
+
 use crate::auth;
 use crate::auth::output;
 
@@ -22,6 +24,18 @@ enum RefreshOutputMode {
     Json,
     Silent,
 }
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum AuthProvider {
+    Google,
+    OpenAi,
+}
+
+const OPENAI_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
+const OPENAI_DEFAULT_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
+const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+const GOOGLE_DEFAULT_CLIENT_ID: &str =
+    "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
 
 pub fn run(args: &[String]) -> i32 {
     run_with_mode(args, RefreshOutputMode::Text)
@@ -122,14 +136,21 @@ fn run_with_mode(args: &[String], output_mode: RefreshOutputMode) -> i32 {
     };
 
     let now_iso = auth::now_utc_iso();
-
-    let client_id = std::env::var("GEMINI_OAUTH_CLIENT_ID")
-        .unwrap_or_else(|_| "app_EMoamEEZ73f0CkXaXp7hrann".to_string());
+    let provider = detect_provider(&value);
+    let token_endpoint = match provider {
+        AuthProvider::Google => GOOGLE_TOKEN_URL,
+        AuthProvider::OpenAi => OPENAI_TOKEN_URL,
+    };
+    let client_id = resolve_client_id(provider, &value);
+    let client_secret = std::env::var("GEMINI_OAUTH_CLIENT_SECRET")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
 
     let connect_timeout = env_timeout("GEMINI_REFRESH_AUTH_CURL_CONNECT_TIMEOUT_SECONDS", 2);
     let max_time = env_timeout("GEMINI_REFRESH_AUTH_CURL_MAX_TIME_SECONDS", 8);
 
-    let response = Command::new("curl")
+    let mut command = Command::new("curl");
+    command
         .arg("-sS")
         .arg("--connect-timeout")
         .arg(connect_timeout.to_string())
@@ -137,7 +158,7 @@ fn run_with_mode(args: &[String], output_mode: RefreshOutputMode) -> i32 {
         .arg(max_time.to_string())
         .arg("-X")
         .arg("POST")
-        .arg("https://auth.openai.com/oauth/token")
+        .arg(token_endpoint)
         .arg("-H")
         .arg("Content-Type: application/x-www-form-urlencoded")
         .arg("--data-urlencode")
@@ -145,7 +166,15 @@ fn run_with_mode(args: &[String], output_mode: RefreshOutputMode) -> i32 {
         .arg("--data-urlencode")
         .arg(format!("client_id={client_id}"))
         .arg("--data-urlencode")
-        .arg(format!("refresh_token={refresh_token}"))
+        .arg(format!("refresh_token={refresh_token}"));
+
+    if let Some(client_secret) = client_secret.as_deref() {
+        command
+            .arg("--data-urlencode")
+            .arg(format!("client_secret={client_secret}"));
+    }
+
+    let response = command
         .arg("-w")
         .arg("\n__HTTP_STATUS__:%{http_code}")
         .output();
@@ -185,10 +214,10 @@ fn run_with_mode(args: &[String], output_mode: RefreshOutputMode) -> i32 {
                     "gemini-refresh: token endpoint request failed for {}",
                     target_file.display()
                 ),
-                Some(output::obj(vec![(
-                    "target_file",
-                    output::s(target_file.display().to_string()),
-                )])),
+                Some(output::obj(vec![
+                    ("target_file", output::s(target_file.display().to_string())),
+                    ("endpoint", output::s(token_endpoint)),
+                ])),
             );
         } else if output_text {
             eprintln!(
@@ -208,6 +237,7 @@ fn run_with_mode(args: &[String], output_mode: RefreshOutputMode) -> i32 {
             let mut details = vec![
                 ("http_status", output::n(http_status as i64)),
                 ("target_file", output::s(target_file.display().to_string())),
+                ("endpoint", output::s(token_endpoint)),
             ];
             if let Some(summary) = summary.clone() {
                 details.push(("summary", output::s(summary)));
@@ -263,42 +293,13 @@ fn run_with_mode(args: &[String], output_mode: RefreshOutputMode) -> i32 {
         }
     };
 
-    let merge_ok = if let Some(root_obj) = value.as_object_mut() {
-        if root_obj
-            .get("tokens")
-            .and_then(|token_value| token_value.as_object())
-            .is_none()
-            && let Some(empty_obj) = parse_json_text!("{}")
-        {
-            root_obj.insert("tokens".to_string(), empty_obj);
-        }
-
-        let Some(tokens_obj) = root_obj
-            .get_mut("tokens")
-            .and_then(|token_value| token_value.as_object_mut())
-        else {
-            return merge_failed(output_json, output_text);
-        };
-
-        let Some(refresh_obj) = response_json.as_object() else {
-            return merge_failed(output_json, output_text);
-        };
-
-        for (key, value) in refresh_obj {
-            tokens_obj.insert(key.clone(), value.clone());
-        }
-
-        let marker = format!(r#"{{"last_refresh":"{now_iso}"}}"#);
-        if let Some(wrapper) = parse_json_text!(marker.as_str())
-            && let Some(last_refresh) = wrapper.get("last_refresh")
-        {
-            root_obj.insert("last_refresh".to_string(), last_refresh.clone());
-        }
-
-        true
-    } else {
-        false
-    };
+    let merge_ok = merge_refreshed_tokens(
+        &mut value,
+        &response_json,
+        &now_iso,
+        &refresh_token,
+        provider,
+    );
 
     if !merge_ok {
         return merge_failed(output_json, output_text);
@@ -384,6 +385,86 @@ fn merge_failed(output_json: bool, output_text: bool) -> i32 {
     5
 }
 
+fn merge_refreshed_tokens(
+    base: &mut Value,
+    refresh: &Value,
+    now_iso: &str,
+    current_refresh_token: &str,
+    provider: AuthProvider,
+) -> bool {
+    let google_subject = if provider == AuthProvider::Google {
+        subject_from_json(base)
+    } else {
+        None
+    };
+
+    let Some(root_obj) = base.as_object_mut() else {
+        return false;
+    };
+
+    if root_obj
+        .get("tokens")
+        .and_then(|token_value| token_value.as_object())
+        .is_none()
+    {
+        root_obj.insert("tokens".to_string(), json!({}));
+    }
+
+    let Some(refresh_obj) = refresh.as_object() else {
+        return false;
+    };
+
+    for (key, value) in refresh_obj {
+        if let Some(tokens_obj) = root_obj
+            .get_mut("tokens")
+            .and_then(|token_value| token_value.as_object_mut())
+        {
+            tokens_obj.insert(key.clone(), value.clone());
+        } else {
+            return false;
+        }
+        root_obj.insert(key.clone(), value.clone());
+    }
+
+    if !refresh_obj.contains_key("refresh_token") {
+        if let Some(tokens_obj) = root_obj
+            .get_mut("tokens")
+            .and_then(|token_value| token_value.as_object_mut())
+        {
+            tokens_obj.insert("refresh_token".to_string(), json!(current_refresh_token));
+        } else {
+            return false;
+        }
+        root_obj
+            .entry("refresh_token".to_string())
+            .or_insert_with(|| json!(current_refresh_token));
+    }
+
+    if let Some(expires_in) = refresh_obj
+        .get("expires_in")
+        .and_then(|value| value.as_i64())
+    {
+        let expiry_date = auth::now_epoch_seconds().saturating_add(expires_in) * 1000;
+        root_obj.insert("expiry_date".to_string(), json!(expiry_date));
+    }
+
+    root_obj.insert("last_refresh".to_string(), json!(now_iso));
+
+    if let Some(subject) = google_subject {
+        if let Some(tokens_obj) = root_obj
+            .get_mut("tokens")
+            .and_then(|token_value| token_value.as_object_mut())
+        {
+            tokens_obj.insert("account_id".to_string(), json!(subject.clone()));
+        } else {
+            return false;
+        }
+        root_obj.insert("account_id".to_string(), json!(subject));
+    }
+
+    true
+}
+
 fn resolve_target(args: &[String], output_json: bool) -> Option<PathBuf> {
     if args.is_empty() {
         return Some(
@@ -461,6 +542,83 @@ fn error_summary(body: &str) -> Option<String> {
     }
 }
 
+fn detect_provider(value: &Value) -> AuthProvider {
+    if let Ok(raw) = std::env::var("GEMINI_OAUTH_PROVIDER") {
+        let normalized = raw.trim().to_ascii_lowercase();
+        if normalized == "google" || normalized == "gemini" {
+            return AuthProvider::Google;
+        }
+        if normalized == "openai" {
+            return AuthProvider::OpenAi;
+        }
+    }
+
+    let payload = id_payload_from_json(value);
+    let iss = payload
+        .as_ref()
+        .and_then(|payload| payload.get("iss"))
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if iss.contains("accounts.google.com") {
+        return AuthProvider::Google;
+    }
+
+    let aud = payload
+        .as_ref()
+        .and_then(|payload| payload.get("aud"))
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if aud.ends_with(".apps.googleusercontent.com") {
+        return AuthProvider::Google;
+    }
+
+    AuthProvider::OpenAi
+}
+
+fn resolve_client_id(provider: AuthProvider, value: &Value) -> String {
+    if let Ok(raw) = std::env::var("GEMINI_OAUTH_CLIENT_ID")
+        && !raw.trim().is_empty()
+    {
+        return raw;
+    }
+
+    if provider == AuthProvider::Google
+        && let Some(aud) = id_payload_from_json(value).and_then(|payload| {
+            payload
+                .get("aud")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        })
+        && !aud.trim().is_empty()
+    {
+        return aud;
+    }
+
+    match provider {
+        AuthProvider::Google => GOOGLE_DEFAULT_CLIENT_ID.to_string(),
+        AuthProvider::OpenAi => OPENAI_DEFAULT_CLIENT_ID.to_string(),
+    }
+}
+
+fn subject_from_json(value: &Value) -> Option<String> {
+    id_payload_from_json(value)
+        .and_then(|payload| {
+            payload
+                .get("sub")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        })
+        .map(|subject| gemini_core::json::strip_newlines(&subject))
+}
+
+fn id_payload_from_json(value: &Value) -> Option<Value> {
+    let token = gemini_core::json::string_at(value, &["tokens", "id_token"])
+        .or_else(|| gemini_core::json::string_at(value, &["id_token"]))?;
+    gemini_core::jwt::decode_payload_json(&token)
+}
+
 fn env_timeout(key: &str, default: u64) -> u64 {
     std::env::var(key)
         .ok()
@@ -487,8 +645,8 @@ fn is_auth_file(target: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        env_timeout, error_summary, file_name, is_auth_file, merge_failed, resolve_target,
-        split_http_status_marker,
+        AuthProvider, detect_provider, env_timeout, error_summary, file_name, is_auth_file,
+        merge_failed, resolve_client_id, resolve_target, split_http_status_marker,
     };
     use std::path::Path;
 
@@ -535,15 +693,36 @@ mod tests {
     #[test]
     fn resolve_target_uses_default_auth_path_when_env_missing() {
         let key = "GEMINI_AUTH_FILE";
+        let home_key = "HOME";
         let old = std::env::var_os(key);
+        let old_home = std::env::var_os(home_key);
+        let temp_home = std::env::temp_dir().join(format!(
+            "nils-gemini-refresh-home-{}-{}",
+            std::process::id(),
+            super::auth::now_epoch_seconds()
+        ));
+        let _ = std::fs::create_dir_all(&temp_home);
         // SAFETY: test-scoped env mutation.
         unsafe { std::env::remove_var(key) };
+        // SAFETY: test-scoped env mutation.
+        unsafe { std::env::set_var(home_key, &temp_home) };
         let resolved = resolve_target(&[], false).expect("resolved path");
-        assert!(resolved.ends_with("auth.json"));
+        assert!(resolved.ends_with("oauth_creds.json"));
         if let Some(value) = old {
             // SAFETY: test-scoped env restore.
             unsafe { std::env::set_var(key, value) };
+        } else {
+            // SAFETY: test-scoped env restore.
+            unsafe { std::env::remove_var(key) };
         }
+        if let Some(value) = old_home {
+            // SAFETY: test-scoped env restore.
+            unsafe { std::env::set_var(home_key, value) };
+        } else {
+            // SAFETY: test-scoped env restore.
+            unsafe { std::env::remove_var(home_key) };
+        }
+        let _ = std::fs::remove_dir_all(temp_home);
     }
 
     #[test]
@@ -581,5 +760,27 @@ mod tests {
     fn merge_failed_always_returns_exit_code_five() {
         assert_eq!(merge_failed(false, true), 5);
         assert_eq!(merge_failed(true, false), 5);
+    }
+
+    #[test]
+    fn detect_provider_prefers_google_issuer_and_audience() {
+        let google: serde_json::Value = serde_json::json!({
+            "id_token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20iLCJhdWQiOiJhYmMuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20ifQ.sig"
+        });
+        assert!(matches!(detect_provider(&google), AuthProvider::Google));
+
+        let openai: serde_json::Value = serde_json::json!({
+            "id_token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2F1dGgub3BlbmFpLmNvbSJ9.sig"
+        });
+        assert!(matches!(detect_provider(&openai), AuthProvider::OpenAi));
+    }
+
+    #[test]
+    fn resolve_client_id_uses_google_audience_when_available() {
+        let value: serde_json::Value = serde_json::json!({
+            "id_token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJhdWQiOiJhYmMta2V5LmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29tIn0.sig"
+        });
+        let client_id = resolve_client_id(AuthProvider::Google, &value);
+        assert_eq!(client_id, "abc-key.apps.googleusercontent.com");
     }
 }

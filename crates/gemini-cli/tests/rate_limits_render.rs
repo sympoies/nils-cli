@@ -27,6 +27,33 @@ fn rate_limits_render_parses_usage_and_formats_windows() {
 }
 
 #[test]
+fn rate_limits_render_parses_code_assist_buckets() {
+    let usage = r#"{
+  "buckets": [
+    {
+      "tokenType": "REQUESTS",
+      "remainingFraction": 0.94,
+      "resetTime": "2099-01-01T00:00:00Z"
+    },
+    {
+      "tokenType": "REQUESTS",
+      "remainingFraction": 0.88,
+      "resetTime": "2099-01-08T00:00:00Z"
+    }
+  ]
+}"#;
+
+    let parsed = render::parse_usage(usage).expect("usage");
+    let values = render::render_values(&parsed);
+    assert_eq!(values.primary_remaining, 94);
+    assert_eq!(values.secondary_remaining, 88);
+
+    let weekly = render::weekly_values(&values);
+    assert_eq!(weekly.weekly_remaining, 88);
+    assert_eq!(weekly.non_weekly_remaining, 94);
+}
+
+#[test]
 fn rate_limits_render_format_window_seconds_variants() {
     assert_eq!(
         render::format_window_seconds(604800).as_deref(),

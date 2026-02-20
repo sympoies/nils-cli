@@ -11,36 +11,34 @@ fn write_target(dir: &tempfile::TempDir, contents: &str) -> std::path::PathBuf {
 }
 
 #[test]
-fn rate_limits_client_read_tokens_supports_root_account_id() {
+fn rate_limits_client_read_tokens_supports_nested_and_root_tokens() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let target = write_target(
         &dir,
-        r#"{"tokens":{"access_token":"tok"},"account_id":"acct"}"#,
+        r#"{"tokens":{"access_token":"tok_nested"},"access_token":"tok_root"}"#,
     );
-    let (token, account) = read_tokens(&target).expect("tokens");
-    assert_eq!(token, "tok");
-    assert_eq!(account.as_deref(), Some("acct"));
+    let token = read_tokens(&target).expect("tokens");
+    assert_eq!(token, "tok_nested");
 }
 
 #[test]
 fn rate_limits_client_fetch_usage_errors_include_body_preview() {
     let server = LoopbackServer::new().expect("server");
     server.add_route(
-        "GET",
-        "/wham/usage",
+        "POST",
+        "/v1internal:retrieveUserQuota",
         HttpResponse::new(500, "hello\nworld\n"),
     );
 
     let dir = tempfile::TempDir::new().expect("tempdir");
-    let target = write_target(
-        &dir,
-        r#"{"tokens":{"access_token":"tok","account_id":"acct"}}"#,
-    );
+    let target = write_target(&dir, r#"{"tokens":{"access_token":"tok"}}"#);
 
     let request = UsageRequest {
         target_file: target,
         refresh_on_401: false,
-        base_url: server.url(),
+        endpoint: server.url(),
+        api_version: "v1internal".to_string(),
+        project: "projects/test".to_string(),
         connect_timeout_seconds: 1,
         max_time_seconds: 3,
     };
@@ -57,7 +55,11 @@ fn rate_limits_client_fetch_usage_errors_include_body_preview() {
 #[test]
 fn rate_limits_client_fetch_usage_errors_without_body_when_empty() {
     let server = LoopbackServer::new().expect("server");
-    server.add_route("GET", "/wham/usage", HttpResponse::new(500, ""));
+    server.add_route(
+        "POST",
+        "/v1internal:retrieveUserQuota",
+        HttpResponse::new(500, ""),
+    );
 
     let dir = tempfile::TempDir::new().expect("tempdir");
     let target = write_target(&dir, r#"{"tokens":{"access_token":"tok"}}"#);
@@ -65,7 +67,9 @@ fn rate_limits_client_fetch_usage_errors_without_body_when_empty() {
     let request = UsageRequest {
         target_file: target,
         refresh_on_401: false,
-        base_url: server.url(),
+        endpoint: server.url(),
+        api_version: "v1internal".to_string(),
+        project: "projects/test".to_string(),
         connect_timeout_seconds: 1,
         max_time_seconds: 3,
     };
@@ -81,7 +85,11 @@ fn rate_limits_client_fetch_usage_errors_without_body_when_empty() {
 #[test]
 fn rate_limits_client_fetch_usage_returns_raw_body_without_json_validation() {
     let server = LoopbackServer::new().expect("server");
-    server.add_route("GET", "/wham/usage", HttpResponse::new(200, "not-json"));
+    server.add_route(
+        "POST",
+        "/v1internal:retrieveUserQuota",
+        HttpResponse::new(200, "not-json"),
+    );
 
     let dir = tempfile::TempDir::new().expect("tempdir");
     let target = write_target(&dir, r#"{"tokens":{"access_token":"tok"}}"#);
@@ -89,7 +97,9 @@ fn rate_limits_client_fetch_usage_returns_raw_body_without_json_validation() {
     let request = UsageRequest {
         target_file: target,
         refresh_on_401: false,
-        base_url: server.url(),
+        endpoint: server.url(),
+        api_version: "v1internal".to_string(),
+        project: "projects/test".to_string(),
         connect_timeout_seconds: 1,
         max_time_seconds: 3,
     };
@@ -105,7 +115,11 @@ fn rate_limits_client_fetch_usage_refreshes_on_401_when_enabled() {
     let _secrets = EnvGuard::remove(&lock, "GEMINI_SECRET_DIR");
 
     let server = LoopbackServer::new().expect("server");
-    server.add_route("GET", "/wham/usage", HttpResponse::new(401, ""));
+    server.add_route(
+        "POST",
+        "/v1internal:retrieveUserQuota",
+        HttpResponse::new(401, ""),
+    );
 
     let dir = tempfile::TempDir::new().expect("tempdir");
     let target = write_target(&dir, r#"{"tokens":{"access_token":"tok"}}"#);
@@ -113,7 +127,9 @@ fn rate_limits_client_fetch_usage_refreshes_on_401_when_enabled() {
     let request = UsageRequest {
         target_file: target,
         refresh_on_401: true,
-        base_url: server.url(),
+        endpoint: server.url(),
+        api_version: "v1internal".to_string(),
+        project: "projects/test".to_string(),
         connect_timeout_seconds: 1,
         max_time_seconds: 3,
     };
@@ -128,7 +144,7 @@ fn rate_limits_client_fetch_usage_refreshes_on_401_when_enabled() {
     assert_eq!(
         requests
             .iter()
-            .filter(|r| r.method == "GET" && r.path == "/wham/usage")
+            .filter(|r| r.method == "POST" && r.path == "/v1internal:retrieveUserQuota")
             .count(),
         2
     );

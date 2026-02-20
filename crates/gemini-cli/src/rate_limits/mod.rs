@@ -662,8 +662,33 @@ pub fn write_starship_cache(
         .map_err(|err| err.to_string())
 }
 
-fn run_base_url() -> String {
-    std::env::var("GEMINI_CHATGPT_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:9/".to_string())
+const DEFAULT_CODE_ASSIST_ENDPOINT: &str = "https://cloudcode-pa.googleapis.com";
+const DEFAULT_CODE_ASSIST_API_VERSION: &str = "v1internal";
+const DEFAULT_CODE_ASSIST_PROJECT: &str = "projects/default";
+
+fn run_code_assist_endpoint() -> String {
+    env_non_empty("CODE_ASSIST_ENDPOINT")
+        .or_else(|| env_non_empty("GEMINI_CODE_ASSIST_ENDPOINT"))
+        .unwrap_or_else(|| DEFAULT_CODE_ASSIST_ENDPOINT.to_string())
+}
+
+fn run_code_assist_api_version() -> String {
+    env_non_empty("CODE_ASSIST_API_VERSION")
+        .or_else(|| env_non_empty("GEMINI_CODE_ASSIST_API_VERSION"))
+        .unwrap_or_else(|| DEFAULT_CODE_ASSIST_API_VERSION.to_string())
+}
+
+fn run_code_assist_project() -> String {
+    let raw = env_non_empty("GEMINI_CODE_ASSIST_PROJECT")
+        .or_else(|| env_non_empty("GOOGLE_CLOUD_PROJECT"))
+        .or_else(|| env_non_empty("GOOGLE_CLOUD_PROJECT_ID"))
+        .unwrap_or_else(|| DEFAULT_CODE_ASSIST_PROJECT.to_string());
+
+    if raw.starts_with("projects/") {
+        raw
+    } else {
+        format!("projects/{raw}")
+    }
 }
 
 fn run_connect_timeout() -> u64 {
@@ -687,7 +712,9 @@ fn collect_summary_from_network(
     let request = UsageRequest {
         target_file: target_file.to_path_buf(),
         refresh_on_401,
-        base_url: run_base_url(),
+        endpoint: run_code_assist_endpoint(),
+        api_version: run_code_assist_api_version(),
+        project: run_code_assist_project(),
         connect_timeout_seconds: run_connect_timeout(),
         max_time_seconds: run_max_time(),
     };
@@ -917,6 +944,13 @@ fn now_epoch_seconds() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_secs() as i64)
         .unwrap_or(0)
+}
+
+fn env_non_empty(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|raw| raw.trim().to_string())
+        .filter(|raw| !raw.is_empty())
 }
 
 fn env_truthy(key: &str) -> bool {

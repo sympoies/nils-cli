@@ -7,7 +7,12 @@ pub fn resolve_secret_dir() -> Option<PathBuf> {
     }
 
     if let Some(home) = home_dir() {
-        return Some(home.join(".config").join("gemini_secrets"));
+        let modern = home.join(".gemini").join("secrets");
+        let legacy = home.join(".config").join("gemini_secrets");
+        if modern.exists() || !legacy.exists() {
+            return Some(modern);
+        }
+        return Some(legacy);
     }
 
     let feature_dir = resolve_feature_dir()?;
@@ -23,16 +28,13 @@ pub fn resolve_auth_file() -> Option<PathBuf> {
     }
 
     let home = home_dir()?;
-    let primary = home.join(".agents").join("auth.json");
-    let fallback = home.join(".agents").join("auth.json");
-
-    let mut selected = primary.clone();
-    if selected == primary && !primary.exists() && fallback.exists() {
-        selected = fallback.clone();
-    } else if selected == fallback && !fallback.exists() && primary.exists() {
-        selected = primary.clone();
+    let modern = home.join(".gemini").join("oauth_creds.json");
+    let legacy = home.join(".agents").join("auth.json");
+    if modern.exists() || !legacy.exists() {
+        Some(modern)
+    } else {
+        Some(legacy)
     }
-    Some(selected)
 }
 
 pub fn resolve_secret_cache_dir() -> Option<PathBuf> {
@@ -40,13 +42,20 @@ pub fn resolve_secret_cache_dir() -> Option<PathBuf> {
         return Some(path);
     }
 
-    let cache_root = if let Some(path) = env_path("ZSH_CACHE_DIR") {
-        path
-    } else {
-        resolve_zdotdir()?.join("cache")
-    };
+    if let Some(path) = env_path("ZSH_CACHE_DIR") {
+        return Some(path.join("gemini").join("secrets"));
+    }
 
-    Some(cache_root.join("gemini").join("secrets"))
+    if let Some(home) = home_dir() {
+        return Some(home.join(".gemini").join("cache").join("secrets"));
+    }
+
+    Some(
+        resolve_zdotdir()?
+            .join("cache")
+            .join("gemini")
+            .join("secrets"),
+    )
 }
 
 pub fn resolve_feature_dir() -> Option<PathBuf> {

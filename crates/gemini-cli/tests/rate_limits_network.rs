@@ -96,8 +96,8 @@ fn rate_limits_single_default_output_from_network() {
 
     let server = LoopbackServer::new().expect("server");
     server.add_route(
-        "GET",
-        "/wham/usage",
+        "POST",
+        "/v1internal:retrieveUserQuota",
         HttpResponse::new(200, wham_usage_ok_body()),
     );
 
@@ -108,7 +108,7 @@ fn rate_limits_single_default_output_from_network() {
             ("ZSH_CACHE_DIR", &cache_root),
         ],
         &[
-            ("GEMINI_CHATGPT_BASE_URL", &server.url()),
+            ("CODE_ASSIST_ENDPOINT", &server.url()),
             ("GEMINI_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false"),
             ("GEMINI_RATE_LIMITS_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
             ("GEMINI_RATE_LIMITS_CURL_MAX_TIME_SECONDS", "3"),
@@ -132,8 +132,8 @@ fn rate_limits_single_one_line_writes_cache() {
 
     let server = LoopbackServer::new().expect("server");
     server.add_route(
-        "GET",
-        "/wham/usage",
+        "POST",
+        "/v1internal:retrieveUserQuota",
         HttpResponse::new(200, wham_usage_ok_body()),
     );
 
@@ -144,7 +144,7 @@ fn rate_limits_single_one_line_writes_cache() {
             ("ZSH_CACHE_DIR", &cache_root),
         ],
         &[
-            ("GEMINI_CHATGPT_BASE_URL", &server.url()),
+            ("CODE_ASSIST_ENDPOINT", &server.url()),
             ("GEMINI_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false"),
             ("GEMINI_RATE_LIMITS_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
             ("GEMINI_RATE_LIMITS_CURL_MAX_TIME_SECONDS", "3"),
@@ -174,8 +174,8 @@ fn rate_limits_single_json_outputs_body() {
 
     let server = LoopbackServer::new().expect("server");
     server.add_route(
-        "GET",
-        "/wham/usage",
+        "POST",
+        "/v1internal:retrieveUserQuota",
         HttpResponse::new(200, wham_usage_ok_body()),
     );
 
@@ -186,7 +186,7 @@ fn rate_limits_single_json_outputs_body() {
             ("ZSH_CACHE_DIR", &cache_root),
         ],
         &[
-            ("GEMINI_CHATGPT_BASE_URL", &server.url()),
+            ("CODE_ASSIST_ENDPOINT", &server.url()),
             ("GEMINI_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false"),
             ("GEMINI_RATE_LIMITS_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
             ("GEMINI_RATE_LIMITS_CURL_MAX_TIME_SECONDS", "3"),
@@ -215,8 +215,8 @@ fn rate_limits_all_mode_renders_lines() {
 
     let server = LoopbackServer::new().expect("server");
     server.add_route(
-        "GET",
-        "/wham/usage",
+        "POST",
+        "/v1internal:retrieveUserQuota",
         HttpResponse::new(200, wham_usage_ok_body()),
     );
 
@@ -227,7 +227,7 @@ fn rate_limits_all_mode_renders_lines() {
             ("ZSH_CACHE_DIR", &cache_root),
         ],
         &[
-            ("GEMINI_CHATGPT_BASE_URL", &server.url()),
+            ("CODE_ASSIST_ENDPOINT", &server.url()),
             ("GEMINI_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false"),
             ("GEMINI_RATE_LIMITS_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
             ("GEMINI_RATE_LIMITS_CURL_MAX_TIME_SECONDS", "3"),
@@ -254,8 +254,8 @@ fn rate_limits_default_all_env_enables_all_mode_without_flag() {
 
     let server = LoopbackServer::new().expect("server");
     server.add_route(
-        "GET",
-        "/wham/usage",
+        "POST",
+        "/v1internal:retrieveUserQuota",
         HttpResponse::new(200, wham_usage_ok_body()),
     );
 
@@ -266,7 +266,7 @@ fn rate_limits_default_all_env_enables_all_mode_without_flag() {
             ("ZSH_CACHE_DIR", &cache_root),
         ],
         &[
-            ("GEMINI_CHATGPT_BASE_URL", &server.url()),
+            ("CODE_ASSIST_ENDPOINT", &server.url()),
             ("GEMINI_RATE_LIMITS_DEFAULT_ALL_ENABLED", "true"),
             ("GEMINI_RATE_LIMITS_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
             ("GEMINI_RATE_LIMITS_CURL_MAX_TIME_SECONDS", "3"),
@@ -306,8 +306,8 @@ fn rate_limits_async_json_falls_back_to_cache_for_missing_token() {
 
     let server = LoopbackServer::new().expect("server");
     server.add_route(
-        "GET",
-        "/wham/usage",
+        "POST",
+        "/v1internal:retrieveUserQuota",
         HttpResponse::new(200, wham_usage_ok_body()),
     );
 
@@ -318,7 +318,7 @@ fn rate_limits_async_json_falls_back_to_cache_for_missing_token() {
             ("ZSH_CACHE_DIR", &cache_root),
         ],
         &[
-            ("GEMINI_CHATGPT_BASE_URL", &server.url()),
+            ("CODE_ASSIST_ENDPOINT", &server.url()),
             ("GEMINI_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false"),
             ("GEMINI_RATE_LIMITS_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
             ("GEMINI_RATE_LIMITS_CURL_MAX_TIME_SECONDS", "3"),
@@ -357,8 +357,8 @@ fn rate_limits_clear_cache_removes_old_starship_cache_dir() {
 
     let server = LoopbackServer::new().expect("server");
     server.add_route(
-        "GET",
-        "/wham/usage",
+        "POST",
+        "/v1internal:retrieveUserQuota",
         HttpResponse::new(200, wham_usage_ok_body()),
     );
 
@@ -369,7 +369,7 @@ fn rate_limits_clear_cache_removes_old_starship_cache_dir() {
             ("ZSH_CACHE_DIR", &cache_root),
         ],
         &[
-            ("GEMINI_CHATGPT_BASE_URL", &server.url()),
+            ("CODE_ASSIST_ENDPOINT", &server.url()),
             ("GEMINI_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false"),
             ("GEMINI_RATE_LIMITS_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
             ("GEMINI_RATE_LIMITS_CURL_MAX_TIME_SECONDS", "3"),

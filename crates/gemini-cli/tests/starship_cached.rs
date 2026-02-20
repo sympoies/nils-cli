@@ -105,7 +105,7 @@ fn write_auth_with_id_token(path: &Path, id_token: &str) {
 
 fn set_fast_fail_refresh_env() -> (EnvGuard, EnvGuard, EnvGuard) {
     (
-        EnvGuard::set("GEMINI_CHATGPT_BASE_URL", "http://127.0.0.1:9/"),
+        EnvGuard::set("CODE_ASSIST_ENDPOINT", "http://127.0.0.1:9/"),
         EnvGuard::set("GEMINI_STARSHIP_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
         EnvGuard::set("GEMINI_STARSHIP_CURL_MAX_TIME_SECONDS", "1"),
     )
@@ -156,7 +156,7 @@ fn starship_non_stale_cache_skips_failed_refresh() {
     let _secret_dir = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
     let _cache_root = EnvGuard::set("ZSH_CACHE_DIR", &cache_root);
     let _enabled = EnvGuard::set("GEMINI_STARSHIP_ENABLED", "true");
-    let _base = EnvGuard::set("GEMINI_CHATGPT_BASE_URL", "http://127.0.0.1:9/");
+    let _base = EnvGuard::set("CODE_ASSIST_ENDPOINT", "http://127.0.0.1:9/");
     let _connect = EnvGuard::set("GEMINI_STARSHIP_CURL_CONNECT_TIMEOUT_SECONDS", "1");
     let _max_time = EnvGuard::set("GEMINI_STARSHIP_CURL_MAX_TIME_SECONDS", "1");
 
@@ -193,7 +193,7 @@ fn starship_stale_cache_with_failed_refresh_returns_0() {
     let _secret_dir = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
     let _cache_root = EnvGuard::set("ZSH_CACHE_DIR", &cache_root);
     let _enabled = EnvGuard::set("GEMINI_STARSHIP_ENABLED", "true");
-    let _base = EnvGuard::set("GEMINI_CHATGPT_BASE_URL", "http://127.0.0.1:9/");
+    let _base = EnvGuard::set("CODE_ASSIST_ENDPOINT", "http://127.0.0.1:9/");
     let _connect = EnvGuard::set("GEMINI_STARSHIP_CURL_CONNECT_TIMEOUT_SECONDS", "1");
     let _max_time = EnvGuard::set("GEMINI_STARSHIP_CURL_MAX_TIME_SECONDS", "1");
 

@@ -229,8 +229,11 @@ fn rate_limits_async_json_missing_access_token_without_cache_returns_1() {
     stdfs::create_dir_all(&secrets).expect("secrets");
     write_secret(secrets.join("alpha.json"), false);
     let secrets = stdfs::canonicalize(&secrets).expect("canonical secrets");
+    let cache_root = dir.join("cache-root");
+    stdfs::create_dir_all(&cache_root).expect("cache root");
 
     let _secret_dir = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
+    let _cache_root = EnvGuard::set("ZSH_CACHE_DIR", &cache_root);
 
     let options = rate_limits::RateLimitsOptions {
         async_mode: true,

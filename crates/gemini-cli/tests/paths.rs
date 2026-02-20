@@ -154,7 +154,7 @@ fn paths_resolve_secret_dir_from_feature_dir() {
         let _home = EnvVarGuard::set("HOME", home.as_os_str());
         assert_eq!(
             paths::resolve_secret_dir().expect("secret dir"),
-            home.join(".config").join("gemini_secrets")
+            home.join(".gemini").join("secrets")
         );
     }
 
@@ -205,10 +205,22 @@ fn paths_resolve_secret_cache_dir_variants() {
     {
         let _override = EnvVarGuard::remove("GEMINI_SECRET_CACHE_DIR");
         let _cache_root = EnvVarGuard::remove("ZSH_CACHE_DIR");
+        let home = dir.path().join("home");
+        fs::create_dir_all(&home).expect("home");
+        let _home = EnvVarGuard::set("HOME", home.as_os_str());
 
+        assert_eq!(
+            paths::resolve_secret_cache_dir().expect("secret cache dir"),
+            home.join(".gemini").join("cache").join("secrets")
+        );
+    }
+
+    {
+        let _override = EnvVarGuard::remove("GEMINI_SECRET_CACHE_DIR");
+        let _cache_root = EnvVarGuard::remove("ZSH_CACHE_DIR");
+        let _home = EnvVarGuard::remove("HOME");
         let zdotdir = dir.path().join("zdotdir");
         let _zdotdir = EnvVarGuard::set("ZDOTDIR", zdotdir.as_os_str());
-
         assert_eq!(
             paths::resolve_secret_cache_dir().expect("secret cache dir"),
             zdotdir.join("cache").join("gemini").join("secrets")

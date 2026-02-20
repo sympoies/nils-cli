@@ -48,10 +48,16 @@ fn auth_remove_errors_when_secret_dir_missing() {
     let output = run_with(
         &["auth", "remove", "alpha.json"],
         &[],
-        &[("GEMINI_SECRET_DIR", "")],
+        &[
+            ("GEMINI_SECRET_DIR", ""),
+            ("HOME", ""),
+            ("ZDOTDIR", ""),
+            ("ZSH_SCRIPT_DIR", ""),
+            ("_ZSH_BOOTSTRAP_PRELOAD_PATH", ""),
+        ],
     );
     assert_eq!(output.code, 1);
-    assert!(stderr(&output).contains("GEMINI_SECRET_DIR is not configured"));
+    assert!(stderr(&output).contains("secret directory is not configured"));
 }
 
 #[test]

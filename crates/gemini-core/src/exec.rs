@@ -3,7 +3,7 @@ use nils_common::process as shared_process;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::config::{DEFAULT_MODEL, DEFAULT_REASONING};
+use crate::config::DEFAULT_MODEL;
 use crate::error::CoreError;
 
 static WARNED_INVALID_ALLOW_DANGEROUS: AtomicBool = AtomicBool::new(false);
@@ -56,19 +56,13 @@ pub fn exec_dangerous(prompt: &str, caller: &str, stderr: &mut impl Write) -> i3
     }
 
     let model = shared_env::env_or_default("GEMINI_CLI_MODEL", DEFAULT_MODEL);
-    let reasoning = shared_env::env_or_default("GEMINI_CLI_REASONING", DEFAULT_REASONING);
-    let reasoning_arg = format!("model_reasoning_effort=\"{}\"", reasoning);
+    let prompt_arg = format!("--prompt={prompt}");
     let args = [
-        "exec",
-        "--dangerously-bypass-approvals-and-sandbox",
-        "-s",
-        "workspace-write",
-        "-m",
+        prompt_arg.as_str(),
+        "--model",
         model.as_str(),
-        "-c",
-        reasoning_arg.as_str(),
-        "--",
-        prompt,
+        "--approval-mode",
+        "yolo",
     ];
 
     match shared_process::run_status_inherit("gemini", &args) {

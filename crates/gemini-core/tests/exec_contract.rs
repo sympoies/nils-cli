@@ -64,7 +64,6 @@ done
     let _path = prepend_path(&lock, stub.path());
     let _danger = EnvGuard::set(&lock, "GEMINI_ALLOW_DANGEROUS_ENABLED", "true");
     let _model = EnvGuard::set(&lock, "GEMINI_CLI_MODEL", "gemini-test");
-    let _reason = EnvGuard::set(&lock, "GEMINI_CLI_REASONING", "high");
     let _argv_log = EnvGuard::set(&lock, "GEMINI_TEST_ARGV_LOG", &args_log_path);
 
     let mut stderr = Vec::new();
@@ -82,16 +81,11 @@ done
     assert_eq!(
         args,
         vec![
-            "exec",
-            "--dangerously-bypass-approvals-and-sandbox",
-            "-s",
-            "workspace-write",
-            "-m",
+            "--prompt=hello world",
+            "--model",
             "gemini-test",
-            "-c",
-            "model_reasoning_effort=\"high\"",
-            "--",
-            "hello world",
+            "--approval-mode",
+            "yolo",
         ]
         .into_iter()
         .map(|value| value.to_string())

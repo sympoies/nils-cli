@@ -146,16 +146,11 @@ fn agent_prompt_execs_gemini_with_expected_args() {
     assert_eq!(
         args,
         vec![
-            "exec",
-            "--dangerously-bypass-approvals-and-sandbox",
-            "-s",
-            "workspace-write",
-            "-m",
+            "--prompt=hello world",
+            "--model",
             "m-test",
-            "-c",
-            "model_reasoning_effort=\"high\"",
-            "--",
-            "hello world",
+            "--approval-mode",
+            "yolo",
         ]
         .into_iter()
         .map(|value| value.to_string())
@@ -188,7 +183,8 @@ fn agent_prompt_reads_stdin_when_no_args() {
     assert!(stderr.is_empty());
 
     let args = read_args(&args_log);
-    assert_eq!(args.last().map(String::as_str), Some("from stdin"));
+    let prompt_flag = args.first().map(String::as_str).unwrap_or_default();
+    assert_eq!(prompt_flag, "--prompt=from stdin");
 
     let _ = fs::remove_dir_all(&dir);
 }
