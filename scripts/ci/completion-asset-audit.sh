@@ -44,7 +44,7 @@ fi
 cd "$repo_root"
 
 matrix_path="docs/reports/completion-coverage-matrix.md"
-workspace_bins_script="scripts/workspace-bins.py"
+workspace_bins_script="scripts/workspace-bins.sh"
 
 if [[ ! -f "$matrix_path" ]]; then
   echo "error: missing matrix file: $matrix_path" >&2
@@ -53,11 +53,6 @@ fi
 
 if [[ ! -f "$workspace_bins_script" ]]; then
   echo "error: missing workspace inventory script: $workspace_bins_script" >&2
-  exit 2
-fi
-
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "error: python3 is required to run $workspace_bins_script" >&2
   exit 2
 fi
 
@@ -112,7 +107,7 @@ if [[ $matrix_rows -eq 0 ]]; then
   exit 2
 fi
 
-mapfile -t workspace_bins < <(python3 "$workspace_bins_script")
+mapfile -t workspace_bins < <(bash "$workspace_bins_script")
 if [[ ${#workspace_bins[@]} -eq 0 ]]; then
   echo "error: no workspace binaries found via $workspace_bins_script" >&2
   exit 2

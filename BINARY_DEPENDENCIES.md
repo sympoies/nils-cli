@@ -88,7 +88,7 @@ primitives) rather than importing `codex-cli` internals. The Gemini lane follows
 | `cargo-nextest` | CI-style test execution | `cargo install cargo-nextest --locked` |
 | `cargo-llvm-cov` | Coverage workflows | `cargo install cargo-llvm-cov --locked` |
 | `zsh` | Required for `tests/zsh/completion.test.zsh` | `brew install zsh` |
-| `python3` | `scripts/workspace-bins.py` | `brew install python` |
+| `python3` | `scripts/crates-io-status.sh`, `scripts/publish-crates.sh` | `brew install python` |
 | `bash`, `awk`, `sed` | CI helper scripts in `scripts/ci/` | Typically preinstalled |
 | `bash-completion` | Bash completion loading (optional) | `brew install bash-completion` |
 | `gh` | PR/release operations in GitHub-driven workflows | `brew install gh` |
@@ -102,7 +102,7 @@ These are repository scripts (not third-party packages):
 - Run required repository checks:
   - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - Supporting utilities:
-  - `scripts/workspace-bins.py`
+  - `scripts/workspace-bins.sh`
   - `scripts/ci/coverage-summary.sh`
   - `scripts/ci/coverage-badge.sh`
 

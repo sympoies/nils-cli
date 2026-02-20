@@ -2,7 +2,7 @@
 
 ## Policy notes
 
-- Inventory source of truth: `python3 scripts/workspace-bins.py`.
+- Inventory source of truth: `bash scripts/workspace-bins.sh`.
 - Obligation rule for this matrix: all workspace binaries are `required` unless explicitly `excluded` as internal/example binaries.
 - Explicit exclusion: `cli-template` is `excluded` because it is an example/template CLI and is out of scope for user-facing release contract migration (`docs/plans/repo-completion-standard-rollout-plan.md`).
 - Explicit treatment: `image-processing` is `required` (user-facing CLI in `README.md`) and must ship clap-first thin completion adapters in both shells.
