@@ -12,7 +12,10 @@ name = "agent_provider_gemini"
 path = "src/lib.rs"
 [dependencies]
 agent-runtime-core = { version = "0.4.5", path = "../agent-runtime-core", package = "nils-agent-runtime-core" }
+gemini-core = { version = "0.4.5", path = "../gemini-core", package = "nils-gemini-core" }
+nils-common = { version = "0.4.5", path = "../nils-common", package = "nils-common" }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+nils-test-support = { version = "0.4.5", path = "../nils-test-support" }
 pretty_assertions = { workspace = true }

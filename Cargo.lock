@@ -1578,6 +1578,9 @@ name = "nils-agent-provider-gemini"
 version = "0.4.5"
 dependencies = [
  "nils-agent-runtime-core",
+ "nils-common",
+ "nils-gemini-core",
+ "nils-test-support",
  "pretty_assertions",
  "serde_json",
 ]
@@ -1809,6 +1812,34 @@ dependencies = [
  "serde_json",
  "tempfile",
  "walkdir",
+]
+
+[[package]]
+name = "nils-gemini-cli"
+version = "0.4.5"
+dependencies = [
+ "anyhow",
+ "clap",
+ "clap_complete",
+ "nils-gemini-core",
+ "nils-test-support",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "nils-gemini-core"
+version = "0.4.5"
+dependencies = [
+ "base64",
+ "nils-common",
+ "nils-test-support",
+ "pretty_assertions",
+ "serde_json",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]

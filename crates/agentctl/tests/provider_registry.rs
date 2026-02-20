@@ -95,7 +95,7 @@ fn with_builtins_registers_codex_and_builtin_providers_with_expected_maturity() 
         .collect::<BTreeMap<_, _>>();
     assert_eq!(maturity_map.get("codex"), Some(&ProviderMaturity::Stable));
     assert_eq!(maturity_map.get("claude"), Some(&ProviderMaturity::Stable));
-    assert_eq!(maturity_map.get("gemini"), Some(&ProviderMaturity::Stub));
+    assert_eq!(maturity_map.get("gemini"), Some(&ProviderMaturity::Stable));
 }
 
 struct FakeProvider {

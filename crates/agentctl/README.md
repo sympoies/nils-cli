@@ -57,7 +57,7 @@ Built-in providers:
 
 - `codex` (`maturity=stable`)
 - `claude` (`maturity=stable`)
-- `gemini` (`maturity=stub`)
+- `gemini` (`maturity=stable`)
 
 List providers:
 

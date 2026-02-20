@@ -5,8 +5,14 @@ use agent_runtime_core::schema::{
     HealthcheckRequest, HealthcheckResponse, LimitsRequest, LimitsResponse, ProviderError,
     ProviderErrorCategory, ProviderMaturity, ProviderMetadata, ProviderResult,
 };
+use gemini_core::{auth, exec, paths};
+use nils_common::process;
+use serde_json::json;
+use std::path::Path;
+use std::time::Instant;
 
 const PROVIDER_ID: &str = "gemini";
+const EXECUTE_CALLER: &str = "agent-provider-gemini:execute";
 
 #[derive(Debug, Clone, Default)]
 pub struct GeminiProviderAdapter;
@@ -19,52 +25,153 @@ impl GeminiProviderAdapter {
 
 impl ProviderAdapterV1 for GeminiProviderAdapter {
     fn metadata(&self) -> ProviderMetadata {
-        ProviderMetadata::new(PROVIDER_ID).with_maturity(ProviderMaturity::Stub)
+        ProviderMetadata::new(PROVIDER_ID).with_maturity(ProviderMaturity::Stable)
     }
 
-    fn capabilities(&self, _request: CapabilitiesRequest) -> ProviderResult<CapabilitiesResponse> {
-        Ok(CapabilitiesResponse {
-            capabilities: vec![
-                Capability::available("capabilities"),
-                Capability::available("healthcheck"),
-                Capability {
-                    name: "execute".to_string(),
-                    available: false,
-                    description: Some(
-                        "stub provider adapter; execute is not implemented".to_string(),
-                    ),
-                },
-                Capability::available("limits"),
-                Capability {
-                    name: "auth-state".to_string(),
-                    available: false,
-                    description: Some(
-                        "stub provider adapter; auth-state is not implemented".to_string(),
-                    ),
-                },
-            ],
-        })
+    fn capabilities(&self, request: CapabilitiesRequest) -> ProviderResult<CapabilitiesResponse> {
+        let gemini_available = process::cmd_exists("gemini");
+        let (policy_enabled, _) = allow_dangerous_status("agent-provider-gemini:capabilities");
+        let execute_available = gemini_available && policy_enabled;
+
+        let mut capabilities = vec![
+            Capability {
+                name: "execute".to_string(),
+                available: execute_available,
+                description: Some(execute_description(gemini_available, policy_enabled)),
+            },
+            Capability::available("healthcheck"),
+            Capability::available("limits"),
+            Capability::available("auth-state"),
+        ];
+
+        if request.include_experimental {
+            capabilities.push(Capability {
+                name: "diag.rate-limits".to_string(),
+                available: gemini_available,
+                description: Some(
+                    "Expose gemini-cli rate-limit diagnostics (JSON: gemini-cli.diag.rate-limits.v1 via --json/--format json)".to_string(),
+                ),
+            });
+            capabilities.push(Capability {
+                name: "auth.commands".to_string(),
+                available: true,
+                description: Some(
+                    "Expose gemini-cli auth flows (JSON: gemini-cli.auth.v1 via --json/--format json)"
+                        .to_string(),
+                ),
+            });
+        }
+
+        Ok(CapabilitiesResponse { capabilities })
     }
 
-    fn healthcheck(&self, _request: HealthcheckRequest) -> ProviderResult<HealthcheckResponse> {
+    fn healthcheck(&self, request: HealthcheckRequest) -> ProviderResult<HealthcheckResponse> {
+        let gemini_available = process::cmd_exists("gemini");
+        let (policy_enabled, policy_message) =
+            allow_dangerous_status("agent-provider-gemini:healthcheck");
+        let auth_file = paths::resolve_auth_file();
+        let auth_file_exists = auth_file.as_ref().is_some_and(|path| path.is_file());
+
+        let status = if !gemini_available {
+            HealthStatus::Unhealthy
+        } else if !policy_enabled || !auth_file_exists {
+            HealthStatus::Degraded
+        } else {
+            HealthStatus::Healthy
+        };
+
+        let summary = match status {
+            HealthStatus::Healthy => "gemini adapter is ready",
+            HealthStatus::Degraded => "gemini adapter is partially ready",
+            HealthStatus::Unhealthy => "gemini adapter is unavailable",
+            HealthStatus::Unknown => "gemini adapter health unknown",
+        }
+        .to_string();
+
+        let details = json!({
+            "gemini_binary_available": gemini_available,
+            "dangerous_policy_enabled": policy_enabled,
+            "dangerous_policy_message": policy_message,
+            "auth_file": auth_file.as_ref().map(|path| path.to_string_lossy().to_string()),
+            "auth_file_exists": auth_file_exists,
+            "requested_timeout_ms": request.timeout_ms,
+        });
+
         Ok(HealthcheckResponse {
-            status: HealthStatus::Degraded,
-            summary: Some("gemini provider adapter is a stub".to_string()),
-            details: Some(serde_json::json!({
-                "maturity": "stub",
-                "execute_available": false,
-            })),
+            status,
+            summary: Some(summary),
+            details: Some(details),
         })
     }
 
-    fn execute(&self, _request: ExecuteRequest) -> ProviderResult<ExecuteResponse> {
+    fn execute(&self, request: ExecuteRequest) -> ProviderResult<ExecuteResponse> {
+        let prompt = request
+            .input
+            .as_deref()
+            .filter(|input| !input.trim().is_empty())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| request.task.trim().to_string());
+
+        if prompt.is_empty() {
+            return Err(Box::new(ProviderError::new(
+                ProviderErrorCategory::Validation,
+                "missing-task",
+                "execute task/input is required",
+            )));
+        }
+
+        if !process::cmd_exists("gemini") {
+            return Err(Box::new(
+                ProviderError::new(
+                    ProviderErrorCategory::Dependency,
+                    "missing-binary",
+                    "gemini binary is not available on PATH",
+                )
+                .with_details(json!({ "binary": "gemini" })),
+            ));
+        }
+
+        let (policy_enabled, policy_message) =
+            allow_dangerous_status("agent-provider-gemini:policy-check");
+        if !policy_enabled {
+            return Err(Box::new(
+                ProviderError::new(
+                    ProviderErrorCategory::Validation,
+                    "disabled-policy",
+                    policy_message.unwrap_or_else(|| {
+                        "execution disabled (set GEMINI_ALLOW_DANGEROUS_ENABLED=true)".to_string()
+                    }),
+                )
+                .with_retryable(false),
+            ));
+        }
+
+        let mut stderr = Vec::new();
+        let started_at = Instant::now();
+        let exit_code = exec::exec_dangerous(&prompt, EXECUTE_CALLER, &mut stderr);
+        let duration_ms = as_millis(started_at.elapsed());
+        let stderr_text = stderr_to_string(&stderr);
+
+        if exit_code == 0 {
+            return Ok(ExecuteResponse {
+                exit_code,
+                stdout: String::new(),
+                stderr: stderr_text,
+                duration_ms,
+            });
+        }
+
         Err(Box::new(
             ProviderError::new(
-                ProviderErrorCategory::Unavailable,
-                "not-implemented",
-                "gemini provider adapter is a stub and does not implement execute",
+                ProviderErrorCategory::Internal,
+                "execute-failed",
+                "gemini execution returned non-zero exit code",
             )
-            .with_retryable(false),
+            .with_details(json!({
+                "exit_code": exit_code,
+                "stderr": stderr_text,
+                "task": request.task,
+            })),
         ))
     }
 
@@ -77,11 +184,82 @@ impl ProviderAdapterV1 for GeminiProviderAdapter {
     }
 
     fn auth_state(&self, _request: AuthStateRequest) -> ProviderResult<AuthStateResponse> {
+        let Some(auth_file) = paths::resolve_auth_file() else {
+            return Ok(AuthStateResponse {
+                state: AuthStateStatus::Unknown,
+                subject: None,
+                scopes: Vec::new(),
+                expires_at: None,
+            });
+        };
+
+        if !auth_file.is_file() {
+            return Ok(AuthStateResponse {
+                state: AuthStateStatus::Unauthenticated,
+                subject: None,
+                scopes: Vec::new(),
+                expires_at: None,
+            });
+        }
+
+        let email = auth::email_from_auth_file(&auth_file)
+            .map_err(|err| invalid_auth_file_error(&auth_file, err.to_string()))?;
+        let identity = auth::identity_from_auth_file(&auth_file)
+            .map_err(|err| invalid_auth_file_error(&auth_file, err.to_string()))?;
+        let account_id = auth::account_id_from_auth_file(&auth_file)
+            .map_err(|err| invalid_auth_file_error(&auth_file, err.to_string()))?;
+
+        let subject = email.or(identity).or(account_id);
+        let state = if subject.is_some() {
+            AuthStateStatus::Authenticated
+        } else {
+            AuthStateStatus::Unauthenticated
+        };
+
         Ok(AuthStateResponse {
-            state: AuthStateStatus::Unknown,
-            subject: None,
+            state,
+            subject,
             scopes: Vec::new(),
             expires_at: None,
         })
     }
+}
+
+fn allow_dangerous_status(caller: &str) -> (bool, Option<String>) {
+    exec::allow_dangerous_status(Some(caller))
+}
+
+fn execute_description(gemini_available: bool, policy_enabled: bool) -> String {
+    if !gemini_available {
+        return "gemini binary is not available on PATH".to_string();
+    }
+
+    if !policy_enabled {
+        return "execution requires GEMINI_ALLOW_DANGEROUS_ENABLED=true".to_string();
+    }
+
+    "gemini execution is enabled".to_string()
+}
+
+fn invalid_auth_file_error(path: &Path, error: String) -> Box<ProviderError> {
+    Box::new(
+        ProviderError::new(
+            ProviderErrorCategory::Auth,
+            "invalid-auth-file",
+            format!("failed to parse auth file: {}", path.display()),
+        )
+        .with_retryable(false)
+        .with_details(json!({
+            "path": path.to_string_lossy(),
+            "error": error,
+        })),
+    )
+}
+
+fn stderr_to_string(stderr: &[u8]) -> String {
+    String::from_utf8_lossy(stderr).trim_end().to_string()
+}
+
+fn as_millis(duration: std::time::Duration) -> Option<u64> {
+    u64::try_from(duration.as_millis()).ok()
 }

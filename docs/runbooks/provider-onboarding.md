@@ -69,3 +69,13 @@ Promote a provider from `stub` to `stable` only after:
 - Execute pathway is deterministic and covered by integration tests.
 - Docs and dependency/runtime notes are updated.
 - CI passes on Linux and macOS targets.
+
+## Stable Promotion Checklist (Gemini reference)
+
+`agent-provider-gemini` is the reference stable lane for this checklist:
+
+1. Runtime dependency edge is `agent-provider-gemini -> gemini-core` only (no `gemini-cli` import).
+2. `metadata().maturity` is `stable` and surfaced as stable in `agentctl provider list`.
+3. `capabilities`, `healthcheck`, `execute`, `limits`, and `auth-state` are contract-tested.
+4. Execute/auth failures map to stable category/code taxonomy.
+5. Provider docs include contract spec + verification oracle runbook.
