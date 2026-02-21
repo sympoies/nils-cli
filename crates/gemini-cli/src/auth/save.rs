@@ -282,6 +282,7 @@ mod tests {
 
     #[test]
     fn resolve_secret_dir_uses_gemini_secret_dir_env_override() {
+        let _lock = crate::auth::test_env_lock();
         let old_home = std::env::var_os("HOME");
         let old = std::env::var_os("GEMINI_SECRET_DIR");
         // SAFETY: test-scoped env mutation.

@@ -96,6 +96,9 @@ pub fn run(args: &RateLimitsOptions) -> Result<i32> {
     }
 
     if args.async_mode {
+        if !args.cached {
+            maybe_sync_all_mode_auth_silent(debug_mode);
+        }
         if args.json {
             return run_async_json_mode(args, debug_mode);
         }
@@ -162,6 +165,9 @@ pub fn run(args: &RateLimitsOptions) -> Result<i32> {
     }
 
     if all_mode {
+        if !cached_mode {
+            maybe_sync_all_mode_auth_silent(debug_mode);
+        }
         if args.secret.is_some() {
             eprintln!(
                 "codex-rate-limits: usage: codex-rate-limits [-c] [-d] [--cached] [--no-refresh-auth] [--json] [--one-line] [--all] [secret.json]"
@@ -1195,6 +1201,25 @@ fn sync_auth_silent() -> Result<(i32, Option<String>)> {
     crate::fs::write_timestamp(&auth_timestamp, auth_last_refresh.as_deref())?;
 
     Ok((0, None))
+}
+
+fn maybe_sync_all_mode_auth_silent(debug_mode: bool) {
+    match sync_auth_silent() {
+        Ok((0, _)) => {}
+        Ok((_, sync_err)) => {
+            if debug_mode
+                && let Some(message) = sync_err
+                && !message.trim().is_empty()
+            {
+                eprintln!("{message}");
+            }
+        }
+        Err(err) => {
+            if debug_mode {
+                eprintln!("codex-rate-limits: failed to sync auth and secrets: {err}");
+            }
+        }
+    }
 }
 
 fn secret_timestamp_path(target_file: &Path) -> Result<PathBuf> {

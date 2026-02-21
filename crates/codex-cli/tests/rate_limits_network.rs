@@ -50,6 +50,13 @@ fn now_epoch() -> i64 {
         .unwrap_or(0)
 }
 
+const JWT_HEADER: &str = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0";
+const JWT_PAYLOAD_ALPHA: &str = "eyJzdWIiOiJ1c2VyXzEyMyIsImVtYWlsIjoiYWxwaGFAZXhhbXBsZS5jb20ifQ";
+
+fn token(payload: &str) -> String {
+    format!("{JWT_HEADER}.{payload}.sig")
+}
+
 fn write_secret(dir: &Path, name: &str, access_token: Option<&str>) -> PathBuf {
     let path = dir.join(name);
     let json = match access_token {
@@ -65,6 +72,46 @@ fn write_secret(dir: &Path, name: &str, access_token: Option<&str>) -> PathBuf {
     };
     fs::write(&path, json).expect("write secret");
     path
+}
+
+fn write_secret_with_identity(dir: &Path, name: &str, access_token: Option<&str>) -> PathBuf {
+    let path = dir.join(name);
+    let id_token = token(JWT_PAYLOAD_ALPHA);
+    let json = match access_token {
+        Some(token_value) => format!(
+            r#"{{
+  "tokens": {{
+    "id_token": "{id_token}",
+    "access_token": "{token_value}",
+    "account_id": "acct_001"
+  }}
+}}"#
+        ),
+        None => format!(
+            r#"{{
+  "tokens": {{
+    "id_token": "{id_token}",
+    "account_id": "acct_001"
+  }}
+}}"#
+        ),
+    };
+    fs::write(&path, json).expect("write secret with identity");
+    path
+}
+
+fn write_auth_with_identity(path: &Path, access_token: &str) {
+    let id_token = token(JWT_PAYLOAD_ALPHA);
+    let json = format!(
+        r#"{{
+  "tokens": {{
+    "id_token": "{id_token}",
+    "access_token": "{access_token}",
+    "account_id": "acct_001"
+  }}
+}}"#
+    );
+    fs::write(path, json).expect("write auth");
 }
 
 fn wham_usage_ok_body() -> String {
@@ -256,6 +303,51 @@ fn rate_limits_all_mode_renders_table() {
     assert!(out.contains("alpha"));
     assert!(out.contains("beta"));
     assert!(out.contains("+00:00"));
+}
+
+#[test]
+fn rate_limits_all_mode_syncs_matching_secret_before_fetch() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let secrets = dir.path().join("secrets");
+    fs::create_dir_all(&secrets).expect("secrets dir");
+    write_secret_with_identity(&secrets, "alpha.json", None);
+
+    let auth_file = dir.path().join("auth.json");
+    write_auth_with_identity(&auth_file, "tok_fresh");
+
+    let cache_root = dir.path().join("cache_root");
+    fs::create_dir_all(&cache_root).expect("cache root");
+
+    let server = LoopbackServer::new().expect("server");
+    server.add_route(
+        "GET",
+        "/wham/usage",
+        HttpResponse::new(200, wham_usage_ok_body()),
+    );
+
+    let output = run(
+        &["diag", "rate-limits", "--all"],
+        &[
+            ("CODEX_SECRET_DIR", &secrets),
+            ("CODEX_AUTH_FILE", &auth_file),
+            ("ZSH_CACHE_DIR", &cache_root),
+        ],
+        &[
+            ("CODEX_CHATGPT_BASE_URL", &server.url()),
+            ("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false"),
+            ("CODEX_RATE_LIMITS_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
+            ("CODEX_RATE_LIMITS_CURL_MAX_TIME_SECONDS", "3"),
+            ("TZ", "UTC"),
+            ("NO_COLOR", "1"),
+        ],
+    );
+    assert_exit(&output, 0);
+
+    let synced: Value =
+        serde_json::from_str(&fs::read_to_string(secrets.join("alpha.json")).expect("read synced"))
+            .expect("synced json");
+    assert_eq!(synced["tokens"]["access_token"], "tok_fresh");
+    assert!(!stderr(&output).contains("missing access_token"));
 }
 
 #[test]

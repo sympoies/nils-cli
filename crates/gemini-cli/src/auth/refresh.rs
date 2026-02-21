@@ -666,6 +666,7 @@ mod tests {
 
     #[test]
     fn env_timeout_uses_default_when_missing_or_invalid() {
+        let _lock = crate::auth::test_env_lock();
         let key = "GEMINI_TEST_ENV_TIMEOUT_SECONDS_DEFAULT";
         // SAFETY: test-scoped env mutation.
         unsafe { std::env::remove_var(key) };
@@ -692,6 +693,7 @@ mod tests {
 
     #[test]
     fn resolve_target_uses_default_auth_path_when_env_missing() {
+        let _lock = crate::auth::test_env_lock();
         let key = "GEMINI_AUTH_FILE";
         let home_key = "HOME";
         let old = std::env::var_os(key);
@@ -742,6 +744,7 @@ mod tests {
 
     #[test]
     fn is_auth_file_matches_env_path() {
+        let _lock = crate::auth::test_env_lock();
         let key = "GEMINI_AUTH_FILE";
         let old = std::env::var_os(key);
         // SAFETY: test-scoped env mutation.

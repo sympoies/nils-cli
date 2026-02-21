@@ -6,6 +6,7 @@ use crate::paths;
 
 pub const DEFAULT_MODEL: &str = "gemini-2.5-flash";
 pub const DEFAULT_REASONING: &str = "medium";
+pub const DEFAULT_STARSHIP_ENABLED: &str = "false";
 pub const DEFAULT_AUTO_REFRESH_ENABLED: &str = "false";
 pub const DEFAULT_AUTO_REFRESH_MIN_DAYS: &str = "5";
 
@@ -17,6 +18,7 @@ pub struct RuntimeConfig {
     pub secret_dir: Option<PathBuf>,
     pub auth_file: Option<PathBuf>,
     pub secret_cache_dir: Option<PathBuf>,
+    pub starship_enabled: String,
     pub auto_refresh_enabled: String,
     pub auto_refresh_min_days: String,
 }
@@ -30,6 +32,10 @@ pub fn snapshot() -> RuntimeConfig {
         secret_dir: paths::resolve_secret_dir(),
         auth_file: paths::resolve_auth_file(),
         secret_cache_dir: paths::resolve_secret_cache_dir(),
+        starship_enabled: shared_env::env_or_default(
+            "GEMINI_STARSHIP_ENABLED",
+            DEFAULT_STARSHIP_ENABLED,
+        ),
         auto_refresh_enabled: shared_env::env_or_default(
             "GEMINI_AUTO_REFRESH_ENABLED",
             DEFAULT_AUTO_REFRESH_ENABLED,

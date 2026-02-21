@@ -37,6 +37,11 @@ pub fn show_with_io(stdout: &mut impl Write) -> i32 {
 
     let _ = writeln!(
         stdout,
+        "GEMINI_STARSHIP_ENABLED={}",
+        snapshot.starship_enabled
+    );
+    let _ = writeln!(
+        stdout,
         "GEMINI_AUTO_REFRESH_ENABLED={}",
         snapshot.auto_refresh_enabled
     );

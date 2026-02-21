@@ -88,7 +88,7 @@ fn write_executable(path: &Path, content: &str) {
 }
 
 fn real_git_path() -> String {
-    let output = Command::new("sh")
+    let output = Command::new("/bin/sh")
         .arg("-c")
         .arg("command -v git")
         .output()

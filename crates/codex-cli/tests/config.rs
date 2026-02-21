@@ -45,6 +45,7 @@ fn config_show_prints_effective_values() {
             ("CODEX_SECRET_DIR", "/tmp/secrets"),
             ("CODEX_AUTH_FILE", "/tmp/auth.json"),
             ("CODEX_SECRET_CACHE_DIR", "/tmp/cache/secrets"),
+            ("CODEX_STARSHIP_ENABLED", "true"),
             ("CODEX_AUTO_REFRESH_ENABLED", "true"),
             ("CODEX_AUTO_REFRESH_MIN_DAYS", "9"),
         ],
@@ -57,6 +58,7 @@ fn config_show_prints_effective_values() {
     assert!(out.contains("CODEX_SECRET_DIR=/tmp/secrets\n"));
     assert!(out.contains("CODEX_AUTH_FILE=/tmp/auth.json\n"));
     assert!(out.contains("CODEX_SECRET_CACHE_DIR=/tmp/cache/secrets\n"));
+    assert!(out.contains("CODEX_STARSHIP_ENABLED=true\n"));
     assert!(out.contains("CODEX_AUTO_REFRESH_ENABLED=true\n"));
     assert!(out.contains("CODEX_AUTO_REFRESH_MIN_DAYS=9\n"));
 }

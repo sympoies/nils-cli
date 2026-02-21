@@ -58,11 +58,44 @@ struct JsonResultItem {
     error_message: Option<String>,
 }
 
+struct Row {
+    name: String,
+    window_label: String,
+    non_weekly_remaining: i64,
+    non_weekly_reset_epoch: Option<i64>,
+    weekly_remaining: i64,
+    weekly_reset_epoch: Option<i64>,
+}
+
+impl Row {
+    fn empty(name: String) -> Self {
+        Self {
+            name,
+            window_label: String::new(),
+            non_weekly_remaining: -1,
+            non_weekly_reset_epoch: None,
+            weekly_remaining: -1,
+            weekly_reset_epoch: None,
+        }
+    }
+
+    fn sort_key(&self) -> (i32, i64, String) {
+        if let Some(epoch) = self.weekly_reset_epoch {
+            (0, epoch, self.name.clone())
+        } else {
+            (1, i64::MAX, self.name.clone())
+        }
+    }
+}
+
 pub fn run(args: &RateLimitsOptions) -> i32 {
     let cached_mode = args.cached;
     let output_json = args.json;
 
     if args.async_mode {
+        if !cached_mode {
+            maybe_sync_all_mode_auth_silent(args.debug);
+        }
         if output_json {
             return run_async_json_mode(args);
         }
@@ -119,6 +152,9 @@ pub fn run(args: &RateLimitsOptions) -> i32 {
             && !args.async_mode);
 
     if all_mode {
+        if !cached_mode {
+            maybe_sync_all_mode_auth_silent(args.debug);
+        }
         if args.secret.is_some() {
             eprintln!(
                 "gemini-rate-limits: usage: gemini-rate-limits [-c] [--cached] [--no-refresh-auth] [--json] [--one-line] [--all] [secret.json]"
@@ -132,6 +168,81 @@ pub fn run(args: &RateLimitsOptions) -> i32 {
     }
 
     run_single_mode(args, cached_mode, output_json)
+}
+
+fn maybe_sync_all_mode_auth_silent(debug_mode: bool) {
+    if let Err(err) = sync_auth_silent()
+        && debug_mode
+    {
+        eprintln!("{err}");
+    }
+}
+
+fn sync_auth_silent() -> Result<(), String> {
+    let auth_file = match paths::resolve_auth_file() {
+        Some(path) => path,
+        None => return Ok(()),
+    };
+
+    if !auth_file.is_file() {
+        return Ok(());
+    }
+
+    let auth_key = match auth::identity_key_from_auth_file(&auth_file) {
+        Ok(Some(key)) => key,
+        _ => return Ok(()),
+    };
+
+    let auth_last_refresh = auth::last_refresh_from_auth_file(&auth_file).ok().flatten();
+    let auth_contents = fs::read(&auth_file)
+        .map_err(|_| format!("gemini-rate-limits: failed to read {}", auth_file.display()))?;
+
+    if let Some(secret_dir) = paths::resolve_secret_dir()
+        && let Ok(entries) = fs::read_dir(&secret_dir)
+    {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("json") {
+                continue;
+            }
+
+            let candidate_key = match auth::identity_key_from_auth_file(&path) {
+                Ok(Some(key)) => key,
+                _ => continue,
+            };
+            if candidate_key != auth_key {
+                continue;
+            }
+
+            let secret_contents = fs::read(&path)
+                .map_err(|_| format!("gemini-rate-limits: failed to read {}", path.display()))?;
+            if secret_contents == auth_contents {
+                continue;
+            }
+
+            auth::write_atomic(&path, &auth_contents, auth::SECRET_FILE_MODE)
+                .map_err(|_| format!("gemini-rate-limits: failed to write {}", path.display()))?;
+
+            if let Some(timestamp_path) = sync_timestamp_path(&path) {
+                let _ = auth::write_timestamp(&timestamp_path, auth_last_refresh.as_deref());
+            }
+        }
+    }
+
+    if let Some(auth_timestamp) = sync_timestamp_path(&auth_file) {
+        let _ = auth::write_timestamp(&auth_timestamp, auth_last_refresh.as_deref());
+    }
+
+    Ok(())
+}
+
+fn sync_timestamp_path(target_file: &Path) -> Option<PathBuf> {
+    let cache_dir = paths::resolve_secret_cache_dir()?;
+    let name = target_file
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("auth.json");
+    Some(cache_dir.join(format!("{name}.timestamp")))
 }
 
 fn run_single_mode(args: &RateLimitsOptions, cached_mode: bool, output_json: bool) -> i32 {
@@ -162,19 +273,19 @@ fn run_single_mode(args: &RateLimitsOptions, cached_mode: bool, output_json: boo
                 .unwrap_or("auth")
                 .to_string()
         });
-        let line = render_line_for_summary(
-            &name,
-            &RateLimitSummary {
-                non_weekly_label: cache_entry.non_weekly_label,
-                non_weekly_remaining: cache_entry.non_weekly_remaining,
-                non_weekly_reset_epoch: cache_entry.non_weekly_reset_epoch,
-                weekly_remaining: cache_entry.weekly_remaining,
-                weekly_reset_epoch: cache_entry.weekly_reset_epoch,
-            },
-            args.one_line,
-            "%m-%d %H:%M",
-        );
-        println!("{line}");
+        let summary = RateLimitSummary {
+            non_weekly_label: cache_entry.non_weekly_label,
+            non_weekly_remaining: cache_entry.non_weekly_remaining,
+            non_weekly_reset_epoch: cache_entry.non_weekly_reset_epoch,
+            weekly_remaining: cache_entry.weekly_remaining,
+            weekly_reset_epoch: cache_entry.weekly_reset_epoch,
+        };
+        if args.one_line {
+            let line = render_line_for_summary(&name, &summary, true, "%m-%d %H:%M");
+            println!("{line}");
+        } else {
+            print_rate_limits_remaining(&summary, "%m-%d %H:%M");
+        }
         return 0;
     }
 
@@ -202,8 +313,13 @@ fn run_single_mode(args: &RateLimitsOptions, cached_mode: bool, output_json: boo
                         .unwrap_or("auth")
                         .to_string()
                 });
-                let line = render_line_for_summary(&name, &summary, args.one_line, "%m-%d %H:%M");
-                println!("{line}");
+                if args.one_line {
+                    let line =
+                        render_line_for_summary(&name, &summary, args.one_line, "%m-%d %H:%M");
+                    println!("{line}");
+                } else {
+                    print_rate_limits_remaining(&summary, "%m-%d %H:%M");
+                }
             }
             0
         }
@@ -227,46 +343,115 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool) -> i32 {
         }
     };
 
+    let current_name = current_secret_basename(&secret_files);
+
     let mut rc = 0;
+    let mut rows: Vec<Row> = Vec::new();
+    let mut window_labels = std::collections::HashSet::new();
+
     for target in secret_files {
         let name = secret_name_for_target(&target).unwrap_or_else(|| target_file_name(&target));
+        let mut row = Row::empty(name.clone());
+
         if cached_mode {
             match read_cache_entry(&target) {
-                Ok(entry) => {
-                    let line = render_line_for_summary(
-                        &name,
-                        &RateLimitSummary {
-                            non_weekly_label: entry.non_weekly_label,
-                            non_weekly_remaining: entry.non_weekly_remaining,
-                            non_weekly_reset_epoch: entry.non_weekly_reset_epoch,
-                            weekly_remaining: entry.weekly_remaining,
-                            weekly_reset_epoch: entry.weekly_reset_epoch,
-                        },
-                        false,
-                        "%m-%d %H:%M",
-                    );
-                    println!("{line}");
+                Ok(summary) => {
+                    row.window_label = summary.non_weekly_label.clone();
+                    row.non_weekly_remaining = summary.non_weekly_remaining;
+                    row.non_weekly_reset_epoch = summary.non_weekly_reset_epoch;
+                    row.weekly_remaining = summary.weekly_remaining;
+                    row.weekly_reset_epoch = Some(summary.weekly_reset_epoch);
+                    window_labels.insert(row.window_label.clone());
                 }
                 Err(err) => {
                     eprintln!("{name}: {err}");
                     rc = 1;
                 }
             }
+            rows.push(row);
             continue;
         }
 
         match collect_summary_from_network(&target, !args.no_refresh_auth) {
             Ok((summary, _raw)) => {
-                println!(
-                    "{}",
-                    render_line_for_summary(&name, &summary, false, "%m-%d %H:%M")
-                );
+                row.window_label = summary.non_weekly_label.clone();
+                row.non_weekly_remaining = summary.non_weekly_remaining;
+                row.non_weekly_reset_epoch = summary.non_weekly_reset_epoch;
+                row.weekly_remaining = summary.weekly_remaining;
+                row.weekly_reset_epoch = Some(summary.weekly_reset_epoch);
+                window_labels.insert(row.window_label.clone());
             }
             Err(err) => {
                 eprintln!("{name}: {}", err.message);
                 rc = 1;
             }
         }
+        rows.push(row);
+    }
+
+    println!("\n🚦 Gemini rate limits for all accounts\n");
+
+    let mut non_weekly_header = "Non-weekly".to_string();
+    let multiple_labels = window_labels.len() != 1;
+    if !multiple_labels && let Some(label) = window_labels.iter().next() {
+        non_weekly_header = label.clone();
+    }
+
+    let now_epoch = now_epoch_seconds();
+
+    println!(
+        "{:<15}  {:>8}  {:>7}  {:>8}  {:>7}  {:<18}",
+        "Name", non_weekly_header, "Left", "Weekly", "Left", "Reset"
+    );
+    println!("----------------------------------------------------------------------------");
+
+    rows.sort_by_key(|row| row.sort_key());
+
+    for row in rows {
+        let display_non_weekly = if multiple_labels && !row.window_label.is_empty() {
+            if row.non_weekly_remaining >= 0 {
+                format!("{}:{}%", row.window_label, row.non_weekly_remaining)
+            } else {
+                "-".to_string()
+            }
+        } else if row.non_weekly_remaining >= 0 {
+            format!("{}%", row.non_weekly_remaining)
+        } else {
+            "-".to_string()
+        };
+
+        let non_weekly_left = row
+            .non_weekly_reset_epoch
+            .and_then(|epoch| render::format_until_epoch_compact(epoch, now_epoch))
+            .unwrap_or_else(|| "-".to_string());
+        let weekly_left = row
+            .weekly_reset_epoch
+            .and_then(|epoch| render::format_until_epoch_compact(epoch, now_epoch))
+            .unwrap_or_else(|| "-".to_string());
+        let reset_display = row
+            .weekly_reset_epoch
+            .and_then(render::format_epoch_local_datetime_with_offset)
+            .unwrap_or_else(|| "-".to_string());
+
+        let non_weekly_display = ansi::format_percent_cell(&display_non_weekly, 8, None);
+        let weekly_display = if row.weekly_remaining >= 0 {
+            ansi::format_percent_cell(&format!("{}%", row.weekly_remaining), 8, None)
+        } else {
+            ansi::format_percent_cell("-", 8, None)
+        };
+
+        let is_current = current_name.as_deref() == Some(row.name.as_str());
+        let name_display = ansi::format_name_cell(&row.name, 15, is_current, None);
+
+        println!(
+            "{}  {}  {:>7}  {}  {:>7}  {:<18}",
+            name_display,
+            non_weekly_display,
+            non_weekly_left,
+            weekly_display,
+            weekly_left,
+            reset_display
+        );
     }
 
     rc
@@ -897,6 +1082,39 @@ fn secret_name_for_auth(auth_file: &Path, secret_dir: &Path) -> Option<String> {
     None
 }
 
+fn current_secret_basename(secret_files: &[PathBuf]) -> Option<String> {
+    let auth_file = paths::resolve_auth_file()?;
+    if !auth_file.is_file() {
+        return None;
+    }
+
+    let auth_hash = gemini_fs::sha256_file(&auth_file).ok();
+    if let Some(auth_hash) = auth_hash.as_deref() {
+        for secret_file in secret_files {
+            if let Ok(secret_hash) = gemini_fs::sha256_file(secret_file)
+                && secret_hash == auth_hash
+                && let Ok(name) = secret_file_basename(secret_file)
+            {
+                return Some(name);
+            }
+        }
+    }
+
+    let auth_key = auth::identity_key_from_auth_file(&auth_file).ok().flatten();
+    if let Some(auth_key) = auth_key.as_deref() {
+        for secret_file in secret_files {
+            if let Ok(Some(candidate_key)) = auth::identity_key_from_auth_file(secret_file)
+                && candidate_key == auth_key
+                && let Ok(name) = secret_file_basename(secret_file)
+            {
+                return Some(name);
+            }
+        }
+    }
+
+    None
+}
+
 fn starship_cache_dir() -> Option<PathBuf> {
     let root = cache_root()?;
     Some(root.join("gemini").join("starship-rate-limits"))
@@ -927,9 +1145,24 @@ fn render_line_for_summary(
     let token_weekly = format!("W:{}%", summary.weekly_remaining);
 
     if one_line {
-        return format!("{token_5h} {token_weekly} {reset}");
+        return format!("{name} {token_5h} {token_weekly} {reset}");
     }
-    format!("{name} {token_5h} {token_weekly} {reset}")
+    format!("{token_5h} {token_weekly} {reset}")
+}
+
+fn print_rate_limits_remaining(summary: &RateLimitSummary, time_format: &str) {
+    println!("Rate limits remaining");
+    let non_weekly_reset = summary
+        .non_weekly_reset_epoch
+        .and_then(|epoch| render::format_epoch_local(epoch, time_format))
+        .unwrap_or_else(|| "?".to_string());
+    let weekly_reset = render::format_epoch_local(summary.weekly_reset_epoch, time_format)
+        .unwrap_or_else(|| "?".to_string());
+    println!(
+        "{} {}% • {}",
+        summary.non_weekly_label, summary.non_weekly_remaining, non_weekly_reset
+    );
+    println!("Weekly {}% • {}", summary.weekly_remaining, weekly_reset);
 }
 
 fn target_file_name(path: &Path) -> String {
@@ -1226,11 +1459,11 @@ mod tests {
         };
         assert_eq!(
             render_line_for_summary("alpha", &summary, false, "%m-%d %H:%M"),
-            "alpha 5h:94% W:88% 11-21 20:53"
+            "5h:94% W:88% 11-21 20:53"
         );
         assert_eq!(
             render_line_for_summary("alpha", &summary, true, "%m-%d %H:%M"),
-            "5h:94% W:88% 11-21 20:53"
+            "alpha 5h:94% W:88% 11-21 20:53"
         );
     }
 

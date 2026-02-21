@@ -50,6 +50,13 @@ fn now_epoch() -> i64 {
         .unwrap_or(0)
 }
 
+const JWT_HEADER: &str = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0";
+const JWT_PAYLOAD_ALPHA: &str = "eyJzdWIiOiJ1c2VyXzEyMyIsImVtYWlsIjoiYWxwaGFAZXhhbXBsZS5jb20ifQ";
+
+fn token(payload: &str) -> String {
+    format!("{JWT_HEADER}.{payload}.sig")
+}
+
 fn write_secret(dir: &Path, name: &str, access_token: Option<&str>) -> PathBuf {
     let path = dir.join(name);
     let json = match access_token {
@@ -65,6 +72,46 @@ fn write_secret(dir: &Path, name: &str, access_token: Option<&str>) -> PathBuf {
     };
     fs::write(&path, json).expect("write secret");
     path
+}
+
+fn write_secret_with_identity(dir: &Path, name: &str, access_token: Option<&str>) -> PathBuf {
+    let path = dir.join(name);
+    let id_token = token(JWT_PAYLOAD_ALPHA);
+    let json = match access_token {
+        Some(token_value) => format!(
+            r#"{{
+  "tokens": {{
+    "id_token": "{id_token}",
+    "access_token": "{token_value}",
+    "account_id": "acct_001"
+  }}
+}}"#
+        ),
+        None => format!(
+            r#"{{
+  "tokens": {{
+    "id_token": "{id_token}",
+    "account_id": "acct_001"
+  }}
+}}"#
+        ),
+    };
+    fs::write(&path, json).expect("write secret with identity");
+    path
+}
+
+fn write_auth_with_identity(path: &Path, access_token: &str) {
+    let id_token = token(JWT_PAYLOAD_ALPHA);
+    let json = format!(
+        r#"{{
+  "tokens": {{
+    "id_token": "{id_token}",
+    "access_token": "{access_token}",
+    "account_id": "acct_001"
+  }}
+}}"#
+    );
+    fs::write(path, json).expect("write auth");
 }
 
 fn wham_usage_ok_body() -> String {
@@ -117,7 +164,10 @@ fn rate_limits_single_default_output_from_network() {
         ],
     );
     assert_exit(&output, 0);
-    assert_eq!(stdout(&output), "alpha 5h:94% W:88% 11-21 20:53\n");
+    assert_eq!(
+        stdout(&output),
+        "Rate limits remaining\n5h 94% • 11-14 23:13\nWeekly 88% • 11-21 20:53\n"
+    );
 }
 
 #[test]
@@ -153,7 +203,7 @@ fn rate_limits_single_one_line_writes_cache() {
         ],
     );
     assert_exit(&output, 0);
-    assert_eq!(stdout(&output), "5h:94% W:88% 11-21 20:53\n");
+    assert_eq!(stdout(&output), "alpha 5h:94% W:88% 11-21 20:53\n");
 
     let kv_path = cache_kv_path(&cache_root, "alpha");
     let kv = fs::read_to_string(&kv_path).expect("read kv");
@@ -203,7 +253,7 @@ fn rate_limits_single_json_outputs_body() {
 }
 
 #[test]
-fn rate_limits_all_mode_renders_lines() {
+fn rate_limits_all_mode_renders_table() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let secrets = dir.path().join("secrets");
     fs::create_dir_all(&secrets).expect("secrets dir");
@@ -237,8 +287,56 @@ fn rate_limits_all_mode_renders_lines() {
     );
     assert_exit(&output, 0);
     let out = stdout(&output);
-    assert!(out.contains("alpha 5h:94% W:88% 11-21 20:53"));
-    assert!(out.contains("beta 5h:94% W:88% 11-21 20:53"));
+    assert!(out.contains("🚦 Gemini rate limits for all accounts"));
+    assert!(out.contains("Name"));
+    assert!(out.contains("alpha"));
+    assert!(out.contains("beta"));
+    assert!(out.contains("+00:00"));
+}
+
+#[test]
+fn rate_limits_all_mode_syncs_matching_secret_before_fetch() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let secrets = dir.path().join("secrets");
+    fs::create_dir_all(&secrets).expect("secrets dir");
+    write_secret_with_identity(&secrets, "alpha.json", None);
+
+    let auth_file = dir.path().join("auth.json");
+    write_auth_with_identity(&auth_file, "tok_fresh");
+
+    let cache_root = dir.path().join("cache_root");
+    fs::create_dir_all(&cache_root).expect("cache root");
+
+    let server = LoopbackServer::new().expect("server");
+    server.add_route(
+        "POST",
+        "/v1internal:retrieveUserQuota",
+        HttpResponse::new(200, wham_usage_ok_body()),
+    );
+
+    let output = run(
+        &["diag", "rate-limits", "--all"],
+        &[
+            ("GEMINI_SECRET_DIR", &secrets),
+            ("GEMINI_AUTH_FILE", &auth_file),
+            ("ZSH_CACHE_DIR", &cache_root),
+        ],
+        &[
+            ("CODE_ASSIST_ENDPOINT", &server.url()),
+            ("GEMINI_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false"),
+            ("GEMINI_RATE_LIMITS_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
+            ("GEMINI_RATE_LIMITS_CURL_MAX_TIME_SECONDS", "3"),
+            ("TZ", "UTC"),
+            ("NO_COLOR", "1"),
+        ],
+    );
+    assert_exit(&output, 0);
+
+    let synced: Value =
+        serde_json::from_str(&fs::read_to_string(secrets.join("alpha.json")).expect("read synced"))
+            .expect("synced json");
+    assert_eq!(synced["tokens"]["access_token"], "tok_fresh");
+    assert!(!stderr(&output).contains("missing access_token"));
 }
 
 #[test]
@@ -276,8 +374,10 @@ fn rate_limits_default_all_env_enables_all_mode_without_flag() {
     );
     assert_exit(&output, 0);
     let out = stdout(&output);
-    assert!(out.contains("alpha 5h:94% W:88% 11-21 20:53"));
-    assert!(out.contains("beta 5h:94% W:88% 11-21 20:53"));
+    assert!(out.contains("🚦 Gemini rate limits for all accounts"));
+    assert!(out.contains("alpha"));
+    assert!(out.contains("beta"));
+    assert!(!out.contains("Rate limits remaining"));
 }
 
 #[test]

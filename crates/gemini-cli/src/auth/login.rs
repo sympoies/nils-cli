@@ -271,6 +271,10 @@ fn run_oauth_interactive_login(method: LoginMethod) -> i32 {
         return 1;
     }
 
+    if method == LoginMethod::GeminiBrowser {
+        println!("Code Assist login required. Opening authentication page in your browser.");
+    }
+
     let status = match run_gemini_interactive_login(method, &auth_file) {
         Ok(status) => status,
         Err(err) => {
@@ -370,10 +374,12 @@ fn run_gemini_interactive_login(
     auth_file: &Path,
 ) -> Result<std::process::ExitStatus, LoginError> {
     let mut command = Command::new("gemini");
-    command
-        .arg("--prompt-interactive")
-        .arg("/quit")
-        .env("GEMINI_AUTH_FILE", auth_file.to_string_lossy().to_string());
+    command.arg("--prompt-interactive").arg("/quit");
+    if method == LoginMethod::GeminiBrowser {
+        // Auto-accept the browser launch prompt without shell-side input hacks.
+        command.arg("--yolo");
+    }
+    command.env("GEMINI_AUTH_FILE", auth_file.to_string_lossy().to_string());
 
     if method == LoginMethod::GeminiDeviceCode {
         command.env("NO_BROWSER", "true");

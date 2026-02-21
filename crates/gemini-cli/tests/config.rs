@@ -54,6 +54,7 @@ fn config_show_with_io_prints_effective_values() {
     let _secret = EnvGuard::set("GEMINI_SECRET_DIR", "/tmp/secrets");
     let _auth = EnvGuard::set("GEMINI_AUTH_FILE", "/tmp/auth.json");
     let _cache = EnvGuard::set("GEMINI_SECRET_CACHE_DIR", "/tmp/cache/secrets");
+    let _starship = EnvGuard::set("GEMINI_STARSHIP_ENABLED", "true");
     let _auto_refresh = EnvGuard::set("GEMINI_AUTO_REFRESH_ENABLED", "true");
     let _min_days = EnvGuard::set("GEMINI_AUTO_REFRESH_MIN_DAYS", "9");
 
@@ -66,6 +67,7 @@ fn config_show_with_io_prints_effective_values() {
     assert!(output.contains("GEMINI_SECRET_DIR=/tmp/secrets\n"));
     assert!(output.contains("GEMINI_AUTH_FILE=/tmp/auth.json\n"));
     assert!(output.contains("GEMINI_SECRET_CACHE_DIR=/tmp/cache/secrets\n"));
+    assert!(output.contains("GEMINI_STARSHIP_ENABLED=true\n"));
     assert!(output.contains("GEMINI_AUTO_REFRESH_ENABLED=true\n"));
     assert!(output.contains("GEMINI_AUTO_REFRESH_MIN_DAYS=9\n"));
 }
