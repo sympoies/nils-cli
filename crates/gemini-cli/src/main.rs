@@ -183,7 +183,7 @@ fn handle_legacy_redirect(args: &[String]) -> Option<i32> {
     let cmd = args.first()?.as_str();
     match cmd {
         "provider" | "debug" | "workflow" | "automation" => {
-            eprintln!("gemini-cli: use `agentctl {cmd}` for provider-neutral orchestration");
+            eprintln!("gemini-cli: '{}' command is no longer supported", cmd);
             Some(64)
         }
         "help" => Some(print_root_help()),

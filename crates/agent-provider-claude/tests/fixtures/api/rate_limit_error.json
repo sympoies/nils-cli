@@ -1,7 +1,0 @@
-{
-  "type": "error",
-  "error": {
-    "type": "rate_limit_error",
-    "message": "Too many requests in a short time window"
-  }
-}

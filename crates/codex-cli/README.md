@@ -29,17 +29,11 @@ Help:
 |---|---|
 | Shared Codex runtime layer (`auth/path/config/exec/error`) | `codex-core` |
 | OpenAI/Codex auth, Codex prompt wrappers, Codex rate-limit diagnostics, Starship | `codex-cli` |
-| Claude provider-specific command UX | `claude-cli` |
-| Multi-provider registry/selection (`provider`), provider-neutral doctor/debug/workflow | `agentctl` |
-| Local automation tool orchestration (`macos-agent`, `screen-record`, `image-processing`, `fzf-cli`) | `agentctl` |
+| Legacy top-level groups (`provider|debug|workflow|automation`) | unsupported (`64`) |
 
 - `codex-cli` owns only provider-specific OpenAI/Codex operations (`agent`, `auth`, `diag rate-limits`, `config`, `starship`).
-- Use `claude-cli` for Claude provider-specific operations in dual-CLI releases.
-- Provider-neutral orchestration (`provider`, `diag`, `debug`, `workflow`, `automation`) belongs to `agentctl`.
 - Compatibility behavior: existing `codex-cli` commands stay stable for provider-specific workflows.
-- Compatibility shim: `wrappers/codex-cli` forwards `provider|debug|workflow|automation` to `agentctl` when available.
-- Canonical hint text (wrapper/help/docs): `use agentctl <command> for provider-neutral orchestration`.
-- Provider adapter implementation guidance: `../agent-runtime-core/README.md` and `../../docs/runbooks/provider-onboarding.md`.
+- Legacy top-level groups `provider|debug|workflow|automation` are retained only as deterministic usage errors (`64`).
 
 ## Commands
 
@@ -107,16 +101,13 @@ Auth examples:
 - `64`: usage or argument errors.
 - `1`: operational errors.
 
-## Sprint 1.3 compatibility sign-off checklist
+## Compatibility sign-off checklist
 
 - [ ] `cargo test -p nils-codex-cli --test main_entrypoint --test dispatch`
 - [ ] `rg -n "codex-cli\\.diag\\.rate-limits\\.v1|codex-cli\\.auth\\.v1" crates/codex-cli/docs/specs/codex-cli-diag-auth-json-contract-v1.md`
-- [ ] `NILS_WRAPPER_MODE=debug ./wrappers/codex-cli provider list` exits `64` with the `agentctl` routing hint.
-- [ ] Ownership guidance remains consistent: `codex-cli` (Codex-specific), `claude-cli` (Claude-specific), `agentctl` (provider-neutral orchestration).
+- [ ] `NILS_WRAPPER_MODE=debug ./wrappers/codex-cli provider list` exits `64` with a stable unsupported-command hint.
 
 ## Docs
 
 - [Docs index](docs/README.md)
 - [JSON consumers runbook](docs/runbooks/json-consumers.md)
-- [codex-core runtime migration runbook](../codex-core/docs/runbooks/codex-core-migration.md)
-- [codex/claude unified architecture contract](../../docs/specs/codex-claude-unified-architecture-v1.md)

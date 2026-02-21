@@ -1,9 +1,0 @@
-{
-  "fixture_schema_version": "claude-characterization.v1",
-  "fixture_id": "claude-cli-smoke",
-  "api_doc_date": "2026-02-19",
-  "model_id": "claude-sonnet-4-5-20250929",
-  "expected_cli_checks": [
-    "claude --version"
-  ]
-}
