@@ -20,12 +20,14 @@ This applies to all current wrappers under `wrappers/`:
 - `cli-template`
 - `codex-cli`
 - `fzf-cli`
+- `gemini-cli`
 - `git-cli`
 - `git-lock`
 - `git-scope`
 - `git-summary`
 - `image-processing`
 - `macos-agent`
+- `memo-cli`
 - `plan-tooling`
 - `screen-record`
 - `semantic-commit`
