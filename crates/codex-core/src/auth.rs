@@ -25,7 +25,15 @@ pub fn email_from_auth_file(path: &Path) -> Result<Option<String>, CoreError> {
 pub fn account_id_from_auth_file(path: &Path) -> Result<Option<String>, CoreError> {
     let value = json::read_json(path)?;
     let account = json::string_at(&value, &["tokens", "account_id"])
-        .or_else(|| json::string_at(&value, &["account_id"]));
+        .or_else(|| json::string_at(&value, &["account_id"]))
+        .or_else(|| {
+            let token = token_from_auth_json(&value)?;
+            let payload = jwt::decode_payload_json(&token)?;
+            payload
+                .get("sub")
+                .and_then(|value| value.as_str())
+                .map(json::strip_newlines)
+        });
     Ok(account)
 }
 
@@ -50,5 +58,7 @@ pub fn identity_key_from_auth_file(path: &Path) -> Result<Option<String>, CoreEr
 
 fn token_from_auth_json(value: &serde_json::Value) -> Option<String> {
     json::string_at(value, &["tokens", "id_token"])
+        .or_else(|| json::string_at(value, &["id_token"]))
         .or_else(|| json::string_at(value, &["tokens", "access_token"]))
+        .or_else(|| json::string_at(value, &["access_token"]))
 }
