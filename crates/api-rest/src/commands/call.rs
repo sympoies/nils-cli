@@ -16,12 +16,7 @@ pub(crate) struct EndpointSelection {
     pub(crate) endpoint_value_used: String,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) enum AuthSourceUsed {
-    None,
-    TokenProfile,
-    EnvFallback { env_name: String },
-}
+pub(crate) type AuthSourceUsed = auth_env::CliAuthSource;
 
 #[derive(Debug, Clone)]
 pub(crate) struct AuthSelection {
@@ -79,18 +74,10 @@ pub(crate) fn resolve_auth_for_call(
         },
     )?;
 
-    let auth_source_used = match token_resolution.source {
-        auth_env::ProfileTokenSource::None => AuthSourceUsed::None,
-        auth_env::ProfileTokenSource::Profile => AuthSourceUsed::TokenProfile,
-        auth_env::ProfileTokenSource::EnvFallback { env_name } => {
-            AuthSourceUsed::EnvFallback { env_name }
-        }
-    };
-
     Ok(AuthSelection {
         bearer_token: token_resolution.bearer_token,
         token_name: token_resolution.token_name,
-        auth_source_used,
+        auth_source_used: token_resolution.source.into(),
     })
 }
 
