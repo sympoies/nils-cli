@@ -108,6 +108,16 @@ exit 0
 "#
 }
 
+fn gemini_stub_script() -> &'static str {
+    r#"#!/bin/sh
+set -eu
+cat > "$GEMINI_AUTH_FILE" <<'EOF'
+{"access_token":"tok","id_token":"header.payload.sig"}
+EOF
+exit 0
+"#
+}
+
 #[test]
 fn auth_login_rejects_conflicting_flags() {
     let _lock = env_lock();
@@ -139,7 +149,9 @@ fn auth_login_browser_and_device_code_use_userinfo_flow() {
     let bin_dir = dir.path().join("bin");
     fs::create_dir_all(&bin_dir).expect("bin dir");
     let curl_path = bin_dir.join("curl");
+    let gemini_path = bin_dir.join("gemini");
     write_exe(&curl_path, curl_stub_script());
+    write_exe(&gemini_path, gemini_stub_script());
 
     let auth_file = dir.path().join("oauth_creds.json");
     fs::write(
