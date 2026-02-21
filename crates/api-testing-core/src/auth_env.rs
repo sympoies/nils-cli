@@ -10,6 +10,23 @@ pub enum ProfileTokenSource {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CliAuthSource {
+    None,
+    TokenProfile,
+    EnvFallback { env_name: String },
+}
+
+impl From<ProfileTokenSource> for CliAuthSource {
+    fn from(value: ProfileTokenSource) -> Self {
+        match value {
+            ProfileTokenSource::None => Self::None,
+            ProfileTokenSource::Profile => Self::TokenProfile,
+            ProfileTokenSource::EnvFallback { env_name } => Self::EnvFallback { env_name },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileTokenResolution {
     pub bearer_token: Option<String>,
     pub token_name: String,
@@ -142,6 +159,26 @@ mod tests {
         assert_eq!(
             resolve_env_fallback(&["ACCESS_TOKEN", "SERVICE_TOKEN"]),
             Some(("access".to_string(), "ACCESS_TOKEN".to_string()))
+        );
+    }
+
+    #[test]
+    fn cli_auth_source_maps_profile_source_variants() {
+        assert_eq!(
+            CliAuthSource::from(ProfileTokenSource::None),
+            CliAuthSource::None
+        );
+        assert_eq!(
+            CliAuthSource::from(ProfileTokenSource::Profile),
+            CliAuthSource::TokenProfile
+        );
+        assert_eq!(
+            CliAuthSource::from(ProfileTokenSource::EnvFallback {
+                env_name: "ACCESS_TOKEN".to_string()
+            }),
+            CliAuthSource::EnvFallback {
+                env_name: "ACCESS_TOKEN".to_string()
+            }
         );
     }
 
