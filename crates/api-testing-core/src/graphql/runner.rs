@@ -80,6 +80,7 @@ pub fn execute_graphql_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nils_test_support::http::{HttpResponse, LoopbackServer};
 
     #[test]
     fn graphql_runner_build_payload_includes_vars_only_when_present() {
@@ -88,5 +89,87 @@ mod tests {
         assert!(with_vars.get("variables").is_some());
         let without_vars = build_payload(op, None);
         assert!(without_vars.get("variables").is_none());
+    }
+
+    #[test]
+    fn graphql_runner_execute_request_sends_headers_and_body() {
+        let server = LoopbackServer::new().expect("server");
+        server.add_route(
+            "POST",
+            "/graphql",
+            HttpResponse::new(200, r#"{"data":{"ok":true}}"#)
+                .with_header("Content-Type", "application/json"),
+        );
+
+        let endpoint = format!("{}/graphql", server.url());
+        let operation = "query Widget($id: Int!) { widget(id: $id) { id } }";
+        let variables = serde_json::json!({ "id": 7 });
+
+        let executed =
+            execute_graphql_request(&endpoint, Some("token"), operation, Some(&variables))
+                .expect("execute");
+        assert_eq!(executed.url, endpoint);
+        assert_eq!(executed.response.status, 200);
+        assert_eq!(
+            executed.response.content_type.as_deref(),
+            Some("application/json")
+        );
+
+        let requests = server.take_requests();
+        assert_eq!(requests.len(), 1);
+        let req = &requests[0];
+        assert_eq!(req.method, "POST");
+        assert_eq!(req.path, "/graphql");
+        assert_eq!(
+            req.header_value("authorization").as_deref(),
+            Some("Bearer token")
+        );
+        assert_eq!(
+            req.header_value("accept").as_deref(),
+            Some("application/json")
+        );
+        assert_eq!(
+            req.header_value("content-type").as_deref(),
+            Some("application/json")
+        );
+
+        let payload: serde_json::Value =
+            serde_json::from_str(&req.body_text()).expect("request payload");
+        assert_eq!(payload["query"], operation);
+        assert_eq!(payload["variables"], variables);
+    }
+
+    #[test]
+    fn graphql_runner_execute_request_omits_auth_header_when_token_missing() {
+        let server = LoopbackServer::new().expect("server");
+        server.add_route(
+            "POST",
+            "/graphql",
+            HttpResponse::new(200, r#"{"data":{"ok":true}}"#)
+                .with_header("Content-Type", "application/json"),
+        );
+
+        let endpoint = format!("{}/graphql", server.url());
+        execute_graphql_request(&endpoint, None, "query { ok }", None).expect("execute");
+
+        let requests = server.take_requests();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].header_value("authorization").is_none());
+    }
+
+    #[test]
+    fn graphql_runner_execute_request_fails_on_non_success_status() {
+        let server = LoopbackServer::new().expect("server");
+        server.add_route(
+            "POST",
+            "/graphql",
+            HttpResponse::new(500, r#"{"error":"boom"}"#)
+                .with_header("Content-Type", "application/json"),
+        );
+
+        let endpoint = format!("{}/graphql", server.url());
+        let err = execute_graphql_request(&endpoint, None, "query { ok }", None).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("HTTP request failed with status 500."));
     }
 }
