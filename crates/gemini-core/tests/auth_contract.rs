@@ -57,6 +57,34 @@ fn auth_contract_identity_precedence_and_account_fallback_are_stable() {
 }
 
 #[test]
+fn auth_contract_top_level_tokens_are_supported_for_identity_and_email() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let path = dir.path().join("auth.json");
+    let content = format!(
+        r#"{{"id_token":"{}","access_token":"{}"}}"#,
+        token(PAYLOAD_ALPHA),
+        token(PAYLOAD_ALPHA)
+    );
+    fs::write(&path, content).expect("write auth json");
+
+    let identity = auth::identity_from_auth_file(&path).expect("identity");
+    let email = auth::email_from_auth_file(&path).expect("email");
+    assert_eq!(identity, Some("user_123".to_string()));
+    assert_eq!(email, Some("alpha@example.com".to_string()));
+}
+
+#[test]
+fn auth_contract_account_id_falls_back_to_sub_claim() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let path = dir.path().join("auth.json");
+    let content = format!(r#"{{"access_token":"{}"}}"#, token(PAYLOAD_ALPHA));
+    fs::write(&path, content).expect("write auth json");
+
+    let account_id = auth::account_id_from_auth_file(&path).expect("account");
+    assert_eq!(account_id, Some("user_123".to_string()));
+}
+
+#[test]
 fn auth_contract_invalid_auth_file_is_deterministic_and_non_secret_leaking() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let path = dir.path().join("broken.json");
