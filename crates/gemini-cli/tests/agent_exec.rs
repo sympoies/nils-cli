@@ -1,7 +1,4 @@
-#![allow(dead_code, unused_imports)]
-#[path = "../src/agent/exec.rs"]
-mod exec;
-
+use gemini_cli::agent::exec;
 use std::sync::{Mutex, OnceLock};
 
 fn env_lock() -> std::sync::MutexGuard<'static, ()> {

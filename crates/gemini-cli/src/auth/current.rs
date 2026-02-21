@@ -9,7 +9,7 @@ pub fn run() -> i32 {
 }
 
 pub fn run_with_json(output_json: bool) -> i32 {
-    let auth_file = match gemini_core::paths::resolve_auth_file() {
+    let auth_file = match crate::paths::resolve_auth_file() {
         Some(path) => path,
         None => {
             if output_json {
@@ -50,7 +50,7 @@ pub fn run_with_json(output_json: bool) -> i32 {
         }
     };
 
-    let secret_dir = match gemini_core::paths::resolve_secret_dir() {
+    let secret_dir = match crate::paths::resolve_secret_dir() {
         Some(path) => path,
         None => {
             emit_secret_dir_error(

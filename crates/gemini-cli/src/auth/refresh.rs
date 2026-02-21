@@ -11,7 +11,7 @@ macro_rules! parse_json_text {
         let tmp_path = crate::auth::temp_file_path("gemini-refresh-json");
         let parsed = (|| {
             std::fs::write(&tmp_path, $raw).ok()?;
-            gemini_core::json::read_json(&tmp_path).ok()
+            crate::json::read_json(&tmp_path).ok()
         })();
         let _ = std::fs::remove_file(&tmp_path);
         parsed
@@ -80,7 +80,7 @@ fn run_with_mode(args: &[String], output_mode: RefreshOutputMode) -> i32 {
         return 1;
     }
 
-    let mut value = match gemini_core::json::read_json(&target_file) {
+    let mut value = match crate::json::read_json(&target_file) {
         Ok(value) => value,
         Err(_) => {
             if output_json {
@@ -106,8 +106,8 @@ fn run_with_mode(args: &[String], output_mode: RefreshOutputMode) -> i32 {
         }
     };
 
-    let refresh_token = gemini_core::json::string_at(&value, &["tokens", "refresh_token"])
-        .or_else(|| gemini_core::json::string_at(&value, &["refresh_token"]));
+    let refresh_token = crate::json::string_at(&value, &["tokens", "refresh_token"])
+        .or_else(|| crate::json::string_at(&value, &["refresh_token"]));
 
     let refresh_token = match refresh_token {
         Some(token) => token,
@@ -329,7 +329,7 @@ fn run_with_mode(args: &[String], output_mode: RefreshOutputMode) -> i32 {
         return 1;
     }
 
-    if let Some(cache_dir) = gemini_core::paths::resolve_secret_cache_dir() {
+    if let Some(cache_dir) = crate::paths::resolve_secret_cache_dir() {
         let timestamp_path = cache_dir.join(format!("{}.timestamp", file_name(&target_file)));
         let _ = auth::write_timestamp(&timestamp_path, Some(&now_iso));
     }
@@ -468,7 +468,7 @@ fn merge_refreshed_tokens(
 fn resolve_target(args: &[String], output_json: bool) -> Option<PathBuf> {
     if args.is_empty() {
         return Some(
-            gemini_core::paths::resolve_auth_file().unwrap_or_else(|| PathBuf::from("auth.json")),
+            crate::paths::resolve_auth_file().unwrap_or_else(|| PathBuf::from("auth.json")),
         );
     }
 
@@ -487,7 +487,7 @@ fn resolve_target(args: &[String], output_json: bool) -> Option<PathBuf> {
         return None;
     }
 
-    let secret_dir = gemini_core::paths::resolve_secret_dir().unwrap_or_default();
+    let secret_dir = crate::paths::resolve_secret_dir().unwrap_or_default();
     Some(secret_dir.join(secret_name))
 }
 
@@ -610,13 +610,13 @@ fn subject_from_json(value: &Value) -> Option<String> {
                 .and_then(|value| value.as_str())
                 .map(str::to_string)
         })
-        .map(|subject| gemini_core::json::strip_newlines(&subject))
+        .map(|subject| crate::json::strip_newlines(&subject))
 }
 
 fn id_payload_from_json(value: &Value) -> Option<Value> {
-    let token = gemini_core::json::string_at(value, &["tokens", "id_token"])
-        .or_else(|| gemini_core::json::string_at(value, &["id_token"]))?;
-    gemini_core::jwt::decode_payload_json(&token)
+    let token = crate::json::string_at(value, &["tokens", "id_token"])
+        .or_else(|| crate::json::string_at(value, &["id_token"]))?;
+    crate::jwt::decode_payload_json(&token)
 }
 
 fn env_timeout(key: &str, default: u64) -> u64 {
@@ -634,7 +634,7 @@ fn file_name(path: &Path) -> String {
 }
 
 fn is_auth_file(target: &Path) -> bool {
-    if let Some(auth_file) = gemini_core::paths::resolve_auth_file()
+    if let Some(auth_file) = crate::paths::resolve_auth_file()
         && auth_file == target
     {
         return true;

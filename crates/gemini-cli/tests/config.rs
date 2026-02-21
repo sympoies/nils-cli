@@ -1,7 +1,4 @@
-#![allow(dead_code, unused_imports)]
-#[path = "../src/config.rs"]
-mod config;
-
+use gemini_cli::config;
 use std::ffi::{OsStr, OsString};
 use std::sync::{Mutex, OnceLock};
 

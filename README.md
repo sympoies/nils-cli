@@ -42,10 +42,8 @@ Each crate is either a standalone CLI binary or a shared library used across the
 ### Agent and workflow tooling
 
 - [crates/agent-docs](crates/agent-docs): Deterministic policy-document resolver for Codex/agent workflows (`resolve`, `contexts`, `add`, `baseline`).
-- [crates/codex-core](crates/codex-core): Shared Codex runtime primitives consumed by `codex-cli`.
-- [crates/codex-cli](crates/codex-cli): Provider-specific CLI for OpenAI/Codex workflows (auth, Codex diagnostics, Codex execution wrappers, Starship snippets).
-- [crates/gemini-core](crates/gemini-core): Shared Gemini runtime primitives consumed by `gemini-cli`.
-- [crates/gemini-cli](crates/gemini-cli): Provider-specific CLI lane for Gemini workflows.
+- [crates/codex-cli](crates/codex-cli): Provider-specific CLI for OpenAI/Codex workflows (auth, diagnostics, execution wrappers, Starship), with adapters over `nils-common::provider_runtime`.
+- [crates/gemini-cli](crates/gemini-cli): Provider-specific CLI lane for Gemini workflows, with adapters over `nils-common::provider_runtime`.
 - [crates/semantic-commit](crates/semantic-commit): Helper CLI for generating staged context and creating semantic commits.
 - [crates/plan-tooling](crates/plan-tooling): Plan Format v1 tooling CLI (to-json/validate/batches/scaffold).
 
@@ -60,6 +58,9 @@ Contributors should treat `nils-common` as the shared helper boundary for cross-
 
 Detailed scope, API examples, migration conventions, and non-goals are documented in
 [crates/nils-common/README.md](crates/nils-common/README.md).
+
+Cross-lane parity contract:
+- [docs/specs/codex-gemini-cli-parity-contract-v1.md](docs/specs/codex-gemini-cli-parity-contract-v1.md)
 
 ## Shell wrappers and completions
 

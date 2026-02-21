@@ -36,7 +36,7 @@ pub fn run_with_json(target: &str, output_json: bool) -> i32 {
         return 64;
     }
 
-    let secret_dir = match gemini_core::paths::resolve_secret_dir() {
+    let secret_dir = match crate::paths::resolve_secret_dir() {
         Some(dir) => dir,
         None => {
             if output_json {
@@ -136,7 +136,7 @@ fn apply_secret(secret_dir: &Path, secret_name: &str, output_json: bool) -> (i32
         return (1, None);
     }
 
-    let auth_file = match gemini_core::paths::resolve_auth_file() {
+    let auth_file = match crate::paths::resolve_auth_file() {
         Some(path) => path,
         None => return (1, None),
     };
@@ -211,7 +211,7 @@ fn resolve_by_email(secret_dir: &Path, target: &str) -> ResolveResult {
 }
 
 fn secret_timestamp_path(target_file: &Path) -> Option<PathBuf> {
-    let cache_dir = gemini_core::paths::resolve_secret_cache_dir()?;
+    let cache_dir = crate::paths::resolve_secret_cache_dir()?;
     let name = target_file
         .file_name()
         .and_then(|name| name.to_str())

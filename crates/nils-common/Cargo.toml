@@ -7,6 +7,9 @@ description = "Library crate for nils-common in the nils-cli workspace."
 repository = "https://github.com/graysurf/nils-cli"
 
 [dependencies]
+base64 = "0.22"
+serde_json = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 nils-test-support = { version = "0.4.5", path = "../nils-test-support" }

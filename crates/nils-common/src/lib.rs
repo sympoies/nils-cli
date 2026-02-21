@@ -58,6 +58,7 @@ pub mod env;
 pub mod fs;
 pub mod git;
 pub mod process;
+pub mod provider_runtime;
 pub mod shell;
 
 pub fn greeting(name: &str) -> String {

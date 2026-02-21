@@ -2,7 +2,6 @@ nils-agent-docs
 nils-test-support
 nils-common
 nils-term
-nils-gemini-core
 nils-git-cli
 nils-memo-cli
 nils-screen-record

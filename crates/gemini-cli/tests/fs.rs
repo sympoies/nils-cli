@@ -1,7 +1,4 @@
-#![allow(dead_code, unused_imports)]
-#[path = "../src/fs.rs"]
-mod gemini_fs;
-
+use gemini_cli::fs as gemini_fs;
 use gemini_fs::{SECRET_FILE_MODE, sha256_file, write_atomic, write_timestamp};
 use std::fs;
 use std::path::{Path, PathBuf};

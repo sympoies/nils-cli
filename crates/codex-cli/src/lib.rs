@@ -7,5 +7,7 @@ pub mod json;
 pub mod jwt;
 pub mod paths;
 pub mod prompts;
+pub mod provider_profile;
 pub mod rate_limits;
+pub mod runtime;
 pub mod starship;

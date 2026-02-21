@@ -1,7 +1,7 @@
 use nils_common::shell::{SingleQuoteEscapeStyle, quote_posix_single_with_style};
 
 pub fn show() -> i32 {
-    let snapshot = codex_core::config::snapshot();
+    let snapshot = crate::runtime::config_snapshot();
 
     println!("CODEX_CLI_MODEL={}", snapshot.model);
     println!("CODEX_CLI_REASONING={}", snapshot.reasoning);

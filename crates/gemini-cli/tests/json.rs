@@ -1,7 +1,4 @@
-#![allow(dead_code, unused_imports)]
-#[path = "../src/json.rs"]
-mod json;
-
+use gemini_cli::json;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};

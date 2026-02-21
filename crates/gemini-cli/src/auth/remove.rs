@@ -174,7 +174,7 @@ fn usage_error(output_json: bool, message: &str) -> i32 {
 }
 
 fn resolve_secret_dir() -> Option<PathBuf> {
-    gemini_core::paths::resolve_secret_dir()
+    crate::paths::resolve_secret_dir()
 }
 
 fn is_invalid_target(target: &str) -> bool {
@@ -196,7 +196,7 @@ fn confirm_remove(target: &Path) -> io::Result<bool> {
 }
 
 fn remove_target_timestamp(target_file: &Path) {
-    let Some(cache_dir) = gemini_core::paths::resolve_secret_cache_dir() else {
+    let Some(cache_dir) = crate::paths::resolve_secret_cache_dir() else {
         return;
     };
     let file_name = target_file
