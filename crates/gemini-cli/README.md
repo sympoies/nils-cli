@@ -3,7 +3,8 @@
 ## Overview
 `gemini-cli` is the Gemini-specific CLI shell in the `nils-cli` workspace.
 It currently provides the publish-ready parser topology and shell completion export surface.
-Runtime logic will be layered in subsequent tasks using `gemini-core`.
+Runtime ownership is implemented through `gemini-cli` adapters and shared
+`nils-common::provider_runtime` helpers.
 
 ## Usage
 ```text
@@ -20,7 +21,8 @@ Groups:
 ```
 
 ## Scope boundary
-- Shared Gemini runtime primitives belong to `gemini-core`.
+- Runtime ownership is split between `gemini-cli` adapters and shared
+  `nils-common::provider_runtime` helpers.
 - This crate owns Gemini command parsing shape and completion export.
 - Legacy top-level groups `provider|debug|workflow|automation` are retained only as deterministic usage errors (`64`).
 
@@ -31,3 +33,4 @@ Groups:
 
 ## Docs
 - [Docs index](docs/README.md)
+- [Cross-lane parity contract](../../docs/specs/codex-gemini-cli-parity-contract-v1.md)

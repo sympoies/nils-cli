@@ -1,12 +1,13 @@
-#![allow(dead_code, unused_imports)]
-#[path = "../src/auth/mod.rs"]
-mod auth;
-
+use gemini_cli::auth;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 
 fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    auth::test_env_lock()
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("env lock")
 }
 
 struct TempDir {

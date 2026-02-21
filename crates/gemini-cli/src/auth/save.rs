@@ -70,7 +70,7 @@ pub fn run_with_json(target: &str, yes: bool, output_json: bool) -> i32 {
         return 1;
     }
 
-    let auth_file = match gemini_core::paths::resolve_auth_file() {
+    let auth_file = match crate::paths::resolve_auth_file() {
         Some(path) => path,
         None => {
             if output_json {
@@ -229,7 +229,7 @@ fn usage_error(output_json: bool, message: &str) -> i32 {
 }
 
 fn resolve_secret_dir() -> Option<PathBuf> {
-    gemini_core::paths::resolve_secret_dir()
+    crate::paths::resolve_secret_dir()
 }
 
 fn is_invalid_target(target: &str) -> bool {
@@ -254,7 +254,7 @@ fn confirm_overwrite(target: &Path) -> io::Result<bool> {
 }
 
 fn write_target_timestamp(target_file: &Path, auth_file: &Path) -> io::Result<()> {
-    let cache_dir = match gemini_core::paths::resolve_secret_cache_dir() {
+    let cache_dir = match crate::paths::resolve_secret_cache_dir() {
         Some(dir) => dir,
         None => return Ok(()),
     };

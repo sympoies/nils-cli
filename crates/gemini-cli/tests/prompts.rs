@@ -1,9 +1,4 @@
-#![allow(dead_code, unused_imports)]
-#[path = "../src/paths.rs"]
-mod paths;
-#[path = "../src/prompts.rs"]
-mod prompts;
-
+use gemini_cli::prompts;
 use prompts::PromptTemplateError;
 use std::ffi::{OsStr, OsString};
 use std::fs;

@@ -1,11 +1,4 @@
-#![allow(dead_code, unused_imports)]
-#[path = "../src/agent/mod.rs"]
-mod agent;
-#[path = "../src/paths.rs"]
-mod paths;
-#[path = "../src/prompts.rs"]
-mod prompts;
-
+use gemini_cli::agent;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;

@@ -5,6 +5,7 @@
 ## Specs
 
 - [codex-cli-diag-auth-json-contract-v1.md](specs/codex-cli-diag-auth-json-contract-v1.md)
+- [../../../docs/specs/codex-gemini-cli-parity-contract-v1.md](../../../docs/specs/codex-gemini-cli-parity-contract-v1.md) (workspace canonical parity contract)
 
 ## Runbooks
 

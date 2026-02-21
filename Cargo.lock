@@ -1672,7 +1672,6 @@ dependencies = [
  "chrono",
  "clap",
  "clap_complete",
- "nils-codex-core",
  "nils-common",
  "nils-term",
  "nils-test-support",
@@ -1685,25 +1684,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "nils-codex-core"
+name = "nils-common"
 version = "0.4.5"
 dependencies = [
  "base64",
- "nils-common",
  "nils-test-support",
  "pretty_assertions",
  "serde_json",
  "tempfile",
  "thiserror",
-]
-
-[[package]]
-name = "nils-common"
-version = "0.4.5"
-dependencies = [
- "nils-test-support",
- "pretty_assertions",
- "tempfile",
 ]
 
 [[package]]
@@ -1730,25 +1719,12 @@ dependencies = [
  "anyhow",
  "clap",
  "clap_complete",
- "nils-gemini-core",
+ "nils-common",
  "nils-test-support",
  "pretty_assertions",
  "serde",
  "serde_json",
  "tempfile",
-]
-
-[[package]]
-name = "nils-gemini-core"
-version = "0.4.5"
-dependencies = [
- "base64",
- "nils-common",
- "nils-test-support",
- "pretty_assertions",
- "serde_json",
- "tempfile",
- "thiserror",
 ]
 
 [[package]]

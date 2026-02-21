@@ -3,8 +3,8 @@
 ## Overview
 codex-cli is a provider-specific Rust CLI for OpenAI/Codex workflows: Codex execution wrappers,
 auth/secret management, Codex diagnostics, config output, and Starship rendering.
-Core runtime primitives are sourced from `codex-core`; this crate owns only command UX and
-provider-specific user-facing behavior.
+Runtime wiring is owned by `codex-cli` adapters with shared
+`nils-common::provider_runtime` helpers for common primitives.
 
 ## Usage
 ```text
@@ -27,7 +27,7 @@ Help:
 ## Scope boundary
 | Job | Primary owner |
 |---|---|
-| Shared Codex runtime layer (`auth/path/config/exec/error`) | `codex-core` |
+| Shared provider runtime helpers (`auth/path/config/exec/error`) | `nils-common::provider_runtime` + `codex-cli` adapters |
 | OpenAI/Codex auth, Codex prompt wrappers, Codex rate-limit diagnostics, Starship | `codex-cli` |
 | Legacy top-level groups (`provider|debug|workflow|automation`) | unsupported (`64`) |
 
@@ -110,4 +110,5 @@ Auth examples:
 ## Docs
 
 - [Docs index](docs/README.md)
+- [Cross-lane parity contract](../../docs/specs/codex-gemini-cli-parity-contract-v1.md)
 - [JSON consumers runbook](docs/runbooks/json-consumers.md)

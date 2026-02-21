@@ -1,8 +1,4 @@
-#![allow(dead_code, unused_imports)]
-#[path = "../src/json.rs"]
-mod json;
-#[path = "../src/rate_limits/render.rs"]
-mod render;
+use gemini_cli::rate_limits::render;
 
 #[test]
 fn rate_limits_render_parses_usage_and_formats_windows() {

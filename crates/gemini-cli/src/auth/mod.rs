@@ -30,23 +30,23 @@ pub(crate) fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 pub fn identity_from_auth_file(path: &Path) -> io::Result<Option<String>> {
-    gemini_core::auth::identity_from_auth_file(path).map_err(core_error_to_io)
+    crate::runtime::auth::identity_from_auth_file(path).map_err(core_error_to_io)
 }
 
 pub fn email_from_auth_file(path: &Path) -> io::Result<Option<String>> {
-    gemini_core::auth::email_from_auth_file(path).map_err(core_error_to_io)
+    crate::runtime::auth::email_from_auth_file(path).map_err(core_error_to_io)
 }
 
 pub fn account_id_from_auth_file(path: &Path) -> io::Result<Option<String>> {
-    gemini_core::auth::account_id_from_auth_file(path).map_err(core_error_to_io)
+    crate::runtime::auth::account_id_from_auth_file(path).map_err(core_error_to_io)
 }
 
 pub fn last_refresh_from_auth_file(path: &Path) -> io::Result<Option<String>> {
-    gemini_core::auth::last_refresh_from_auth_file(path).map_err(core_error_to_io)
+    crate::runtime::auth::last_refresh_from_auth_file(path).map_err(core_error_to_io)
 }
 
 pub fn identity_key_from_auth_file(path: &Path) -> io::Result<Option<String>> {
-    gemini_core::auth::identity_key_from_auth_file(path).map_err(core_error_to_io)
+    crate::runtime::auth::identity_key_from_auth_file(path).map_err(core_error_to_io)
 }
 
 pub(crate) fn write_atomic(path: &Path, contents: &[u8], mode: u32) -> io::Result<()> {
@@ -199,7 +199,7 @@ pub(crate) fn temp_file_path(prefix: &str) -> PathBuf {
     path
 }
 
-fn core_error_to_io(err: gemini_core::CoreError) -> io::Error {
+fn core_error_to_io(err: crate::runtime::CoreError) -> io::Error {
     io::Error::other(err.to_string())
 }
 

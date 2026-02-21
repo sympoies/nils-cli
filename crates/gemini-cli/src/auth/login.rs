@@ -101,7 +101,7 @@ fn run_oauth_login(method: LoginMethod, output_json: bool) -> i32 {
 }
 
 fn run_oauth_session_check(method: LoginMethod, output_json: bool) -> i32 {
-    let auth_file = match gemini_core::paths::resolve_auth_file() {
+    let auth_file = match crate::paths::resolve_auth_file() {
         Some(path) => path,
         None => {
             emit_login_error(
@@ -134,7 +134,7 @@ fn run_oauth_session_check(method: LoginMethod, output_json: bool) -> i32 {
         let _ = crate::auth::refresh::run_silent(&[]);
     }
 
-    let auth_json = match gemini_core::json::read_json(&auth_file) {
+    let auth_json = match crate::json::read_json(&auth_file) {
         Ok(value) => value,
         Err(err) => {
             emit_login_error(
@@ -214,7 +214,7 @@ fn run_oauth_session_check(method: LoginMethod, output_json: bool) -> i32 {
 }
 
 fn run_oauth_interactive_login(method: LoginMethod) -> i32 {
-    let auth_file = match gemini_core::paths::resolve_auth_file() {
+    let auth_file = match crate::paths::resolve_auth_file() {
         Some(path) => path,
         None => {
             emit_login_error(
@@ -299,7 +299,7 @@ fn run_oauth_interactive_login(method: LoginMethod) -> i32 {
         return exit_code;
     }
 
-    let auth_json = match gemini_core::json::read_json(&auth_file) {
+    let auth_json = match crate::json::read_json(&auth_file) {
         Ok(value) => value,
         Err(err) => {
             let _ = restore_auth_backup(&auth_file, backup.as_deref());
@@ -497,7 +497,7 @@ fn fetch_google_userinfo(access_token: &str) -> Result<serde_json::Value, LoginE
 }
 
 fn has_refresh_token(auth_file: &Path) -> bool {
-    let value = match gemini_core::json::read_json(auth_file) {
+    let value = match crate::json::read_json(auth_file) {
         Ok(value) => value,
         Err(_) => return false,
     };
@@ -505,13 +505,13 @@ fn has_refresh_token(auth_file: &Path) -> bool {
 }
 
 fn access_token_from_json(value: &serde_json::Value) -> Option<String> {
-    gemini_core::json::string_at(value, &["tokens", "access_token"])
-        .or_else(|| gemini_core::json::string_at(value, &["access_token"]))
+    crate::json::string_at(value, &["tokens", "access_token"])
+        .or_else(|| crate::json::string_at(value, &["access_token"]))
 }
 
 fn refresh_token_from_json(value: &serde_json::Value) -> Option<String> {
-    gemini_core::json::string_at(value, &["tokens", "refresh_token"])
-        .or_else(|| gemini_core::json::string_at(value, &["refresh_token"]))
+    crate::json::string_at(value, &["tokens", "refresh_token"])
+        .or_else(|| crate::json::string_at(value, &["refresh_token"]))
 }
 
 fn split_http_status_marker(raw: &str) -> (String, u16) {

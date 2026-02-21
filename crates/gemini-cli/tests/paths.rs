@@ -1,7 +1,4 @@
-#![allow(dead_code, unused_imports)]
-#[path = "../src/paths.rs"]
-mod paths;
-
+use gemini_cli::paths;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};

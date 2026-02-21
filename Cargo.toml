@@ -20,8 +20,6 @@ members = [
   "crates/semantic-commit",
   "crates/plan-tooling",
   "crates/agent-docs",
-  "crates/codex-core",
-  "crates/gemini-core",
   "crates/gemini-cli",
 ]
 resolver = "2"

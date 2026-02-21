@@ -52,7 +52,7 @@ pub fn run_with_json(output_json: bool) -> i32 {
     let min_seconds = min_days.saturating_mul(86_400);
     let now_epoch = auth::now_epoch_seconds();
 
-    let auth_file = gemini_core::paths::resolve_auth_file();
+    let auth_file = crate::paths::resolve_auth_file();
     if auth_file.is_some() {
         let sync_rc = auth::sync::run_with_json(false);
         if sync_rc != 0 {
@@ -72,7 +72,7 @@ pub fn run_with_json(output_json: bool) -> i32 {
     if let Some(auth_file) = auth_file.as_ref() {
         targets.push(auth_file.clone());
     }
-    if let Some(secret_dir) = gemini_core::paths::resolve_secret_dir()
+    if let Some(secret_dir) = crate::paths::resolve_secret_dir()
         && let Ok(entries) = std::fs::read_dir(&secret_dir)
     {
         for entry in entries.flatten() {
@@ -191,10 +191,10 @@ fn target_result(target: &Path, status: &str, reason: Option<&str>) -> output::J
 
 fn is_configured() -> bool {
     let mut candidates = Vec::new();
-    if let Some(auth_file) = gemini_core::paths::resolve_auth_file() {
+    if let Some(auth_file) = crate::paths::resolve_auth_file() {
         candidates.push(auth_file);
     }
-    if let Some(secret_dir) = gemini_core::paths::resolve_secret_dir()
+    if let Some(secret_dir) = crate::paths::resolve_secret_dir()
         && let Ok(entries) = std::fs::read_dir(&secret_dir)
     {
         for entry in entries.flatten() {
@@ -255,7 +255,7 @@ fn last_refresh_epoch(target: &Path, timestamp_path: Option<&Path>) -> Option<i6
 }
 
 fn timestamp_path(target: &Path) -> Option<PathBuf> {
-    let cache_dir = gemini_core::paths::resolve_secret_cache_dir()?;
+    let cache_dir = crate::paths::resolve_secret_cache_dir()?;
     let name = target
         .file_name()
         .and_then(|name| name.to_str())

@@ -7,7 +7,7 @@ pub fn show() -> i32 {
 }
 
 pub fn show_with_io(stdout: &mut impl Write) -> i32 {
-    let snapshot = gemini_core::config::snapshot();
+    let snapshot = crate::runtime::config_snapshot();
 
     let _ = writeln!(stdout, "GEMINI_CLI_MODEL={}", snapshot.model);
     let _ = writeln!(stdout, "GEMINI_CLI_REASONING={}", snapshot.reasoning);

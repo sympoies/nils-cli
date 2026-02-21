@@ -1,8 +1,5 @@
-#![allow(dead_code, unused_imports)]
-#[path = "../src/jwt.rs"]
-mod jwt;
-
-use gemini_core::auth;
+use gemini_cli::auth;
+use gemini_cli::jwt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
