@@ -16,6 +16,7 @@ fn run(args: &[&str]) -> CmdOutput {
 
 fn install_stub_tools(stub: &StubBinDir) {
     stub.write_exe("codex", "#!/bin/sh\nexit 0\n");
+    stub.write_exe("gemini", "#!/bin/sh\nexit 0\n");
     stub.write_exe(
         "macos-agent",
         "#!/bin/sh\necho '{\"ok\":true,\"result\":{\"checks\":[{\"id\":\"accessibility\",\"status\":\"ok\",\"blocking\":true}]}}'\n",
@@ -81,6 +82,29 @@ fn diag_capabilities_json_reports_inventory_and_readiness() {
     ));
     assert!(
         capabilities
+            .iter()
+            .any(|capability| capability.get("name").and_then(Value::as_str)
+                == Some("auth.commands"))
+    );
+
+    let gemini_provider = providers
+        .iter()
+        .find(|provider| provider.get("id").and_then(Value::as_str) == Some("gemini"))
+        .expect("gemini provider");
+    let gemini_capabilities = gemini_provider
+        .get("capabilities")
+        .and_then(Value::as_array)
+        .expect("gemini capabilities");
+    assert!(
+        gemini_capabilities
+            .iter()
+            .any(|capability| capability.get("name").and_then(Value::as_str) == Some("execute"))
+    );
+    assert!(gemini_capabilities.iter().any(|capability| {
+        capability.get("name").and_then(Value::as_str) == Some("diag.rate-limits")
+    }));
+    assert!(
+        gemini_capabilities
             .iter()
             .any(|capability| capability.get("name").and_then(Value::as_str)
                 == Some("auth.commands"))
