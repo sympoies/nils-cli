@@ -21,8 +21,8 @@ Groups:
 
 ## Scope boundary
 - Shared Gemini runtime primitives belong to `gemini-core`.
-- Provider-neutral orchestration belongs to `agentctl`.
-- This crate currently owns command parsing shape and completion export only.
+- This crate owns Gemini command parsing shape and completion export.
+- Legacy top-level groups `provider|debug|workflow|automation` are retained only as deterministic usage errors (`64`).
 
 ## Exit codes
 - `0`: success and help output.

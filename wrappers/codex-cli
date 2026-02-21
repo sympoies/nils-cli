@@ -90,19 +90,7 @@ if [[ ${#args[@]} -gt 0 ]]; then
 fi
 
 if [[ -n "$migrated_cmd" ]]; then
-  case "$mode" in
-    debug)
-      run_debug_for "nils-agentctl" || true
-      ;;
-    installed)
-      run_installed_for "agentctl" || true
-      ;;
-    auto)
-      run_auto_for "agentctl" "nils-agentctl" || true
-      ;;
-  esac
-
-  echo "codex-cli: use \`agentctl ${migrated_cmd}\` for provider-neutral orchestration" >&2
+  echo "codex-cli: '${migrated_cmd}' command is no longer supported" >&2
   exit 64
 fi
 

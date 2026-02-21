@@ -69,13 +69,13 @@ fn main_unknown_command_exits_64() {
 }
 
 #[test]
-fn main_provider_neutral_groups_redirect_to_agentctl() {
+fn main_removed_legacy_groups_return_usage_error() {
     for group in ["provider", "debug", "workflow", "automation"] {
         let output = run(&[group]);
         assert_exit(&output, 64);
         assert!(
-            stderr(&output).contains("use `agentctl"),
-            "stderr should contain migration hint: {}",
+            stderr(&output).contains("no longer supported"),
+            "stderr should explain unsupported command: {}",
             stderr(&output)
         );
     }

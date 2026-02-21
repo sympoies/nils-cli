@@ -42,12 +42,10 @@ Each crate is either a standalone CLI binary or a shared library used across the
 ### Agent and workflow tooling
 
 - [crates/agent-docs](crates/agent-docs): Deterministic policy-document resolver for Codex/agent workflows (`resolve`, `contexts`, `add`, `baseline`).
-- [crates/agent-runtime-core](crates/agent-runtime-core): Provider-neutral runtime contract (`provider-adapter.v1`) shared by `agentctl` and provider adapters.
-- [crates/agent-provider-codex](crates/agent-provider-codex): Stable OpenAI/Codex adapter implementation for the provider-neutral contract.
-- [crates/agent-provider-claude](crates/agent-provider-claude): Stable `claude` adapter implementation (`maturity=stable`).
-- [crates/agent-provider-gemini](crates/agent-provider-gemini): Stable `gemini` adapter implementation (`maturity=stable`).
-- [crates/agentctl](crates/agentctl): Provider-neutral control plane (`provider`, `diag`, `debug`, `workflow`, `automation`).
+- [crates/codex-core](crates/codex-core): Shared Codex runtime primitives consumed by `codex-cli`.
 - [crates/codex-cli](crates/codex-cli): Provider-specific CLI for OpenAI/Codex workflows (auth, Codex diagnostics, Codex execution wrappers, Starship snippets).
+- [crates/gemini-core](crates/gemini-core): Shared Gemini runtime primitives consumed by `gemini-cli`.
+- [crates/gemini-cli](crates/gemini-cli): Provider-specific CLI lane for Gemini workflows.
 - [crates/semantic-commit](crates/semantic-commit): Helper CLI for generating staged context and creating semantic commits.
 - [crates/plan-tooling](crates/plan-tooling): Plan Format v1 tooling CLI (to-json/validate/batches/scaffold).
 

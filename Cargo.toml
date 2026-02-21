@@ -6,7 +6,6 @@ members = [
   "crates/cli-template",
   "crates/memo-cli",
   "crates/codex-cli",
-  "crates/claude-cli",
   "crates/fzf-cli",
   "crates/git-scope", "crates/git-summary", "crates/git-lock", "crates/git-cli",
   "crates/image-processing",
@@ -22,14 +21,8 @@ members = [
   "crates/plan-tooling",
   "crates/agent-docs",
   "crates/codex-core",
-  "crates/claude-core",
   "crates/gemini-core",
   "crates/gemini-cli",
-  "crates/agent-runtime-core",
-  "crates/agent-provider-codex",
-  "crates/agent-provider-claude",
-  "crates/agent-provider-gemini",
-  "crates/agentctl",
 ]
 resolver = "2"
 

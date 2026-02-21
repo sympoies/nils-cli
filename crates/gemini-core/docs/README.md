@@ -1,4 +1,3 @@
 # gemini-core docs
 
-- `specs/`: canonical ownership boundary and anti-goals for runtime primitives.
-- `runbooks/`: migration and verification guidance for consumers.
+This directory contains crate-local documentation for `gemini-core` runtime primitives.

@@ -6,16 +6,17 @@ This runbook defines how `wrappers/*` choose between:
 - a locally installed binary, and
 - workspace debug execution (`cargo run -q -p ...`).
 
-It also documents the safety rules added to prevent wrapper self-recursion and ambiguous fallback behavior.
+It also documents the safety rules that prevent wrapper self-recursion and ambiguous fallback behavior.
 
 ## Scope
 
 This applies to all current wrappers under `wrappers/`:
 - `agent-docs`
-- `agentctl`
 - `api-gql`
+- `api-grpc`
 - `api-rest`
 - `api-test`
+- `api-websocket`
 - `cli-template`
 - `codex-cli`
 - `fzf-cli`
@@ -28,8 +29,6 @@ This applies to all current wrappers under `wrappers/`:
 - `plan-tooling`
 - `screen-record`
 - `semantic-commit`
-
-`claude-cli` currently has no wrapper in `wrappers/`; invoke the binary directly when needed.
 
 ## Environment Contract
 
@@ -75,31 +74,15 @@ All wrappers enforce:
 
 This prevents infinite recursion when `wrappers/` appears before real binaries in `PATH`.
 
-## `codex-cli` Special Behavior
+## `codex-cli` Legacy Groups
 
-`codex-cli` preserves migrated command routing:
+`codex-cli` keeps compatibility messaging for legacy top-level groups:
 - `provider`
 - `debug`
 - `workflow`
 - `automation`
 
-These commands are executed via `agentctl` using the selected wrapper mode.
-
-If routing cannot execute, wrapper prints:
-- `codex-cli: use \`agentctl <cmd>\` for provider-neutral orchestration`
-- exits `64`
-
-`codex-cli` does not proxy Claude provider-specific commands; use `claude-cli` for Claude-specific
-command UX and `agentctl` for provider-neutral orchestration.
-
-## Dual-CLI Routing Quick Reference
-
-| User intent | Canonical command surface |
-|---|---|
-| Codex provider-specific operations | `codex-cli` |
-| Claude provider-specific operations | `claude-cli` |
-| Provider-neutral `provider|diag|debug|workflow|automation` flows | `agentctl` |
-| Migrated `codex-cli provider|debug|workflow|automation` calls | Forwarded to `agentctl` by `wrappers/codex-cli` |
+These groups are no longer available and return exit `64` with a clear migration/error hint.
 
 ## `git-cli` Compatibility Behavior
 
