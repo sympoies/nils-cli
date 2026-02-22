@@ -64,7 +64,7 @@ jobs:
           while IFS= read -r bin; do
             [[ -n "${bin}" ]] || continue
             bins+=( "${bin}" )
-          done < <(python3 scripts/workspace-bins.py)
+          done < <(bash scripts/workspace-bins.sh)
 
           if [[ ${#bins[@]} -eq 0 ]]; then
             echo "error: no workspace binaries found" >&2
