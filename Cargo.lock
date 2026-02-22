@@ -1536,7 +1536,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-docs"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -1551,7 +1551,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-gql"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -1566,7 +1566,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-grpc"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "base64",
@@ -1582,7 +1582,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-rest"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "base64",
@@ -1598,7 +1598,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-test"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -1614,7 +1614,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-testing-core"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "base64",
@@ -1636,7 +1636,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-websocket"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -1652,7 +1652,7 @@ dependencies = [
 
 [[package]]
 name = "nils-cli-template"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -1666,7 +1666,7 @@ dependencies = [
 
 [[package]]
 name = "nils-codex-cli"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1685,7 +1685,7 @@ dependencies = [
 
 [[package]]
 name = "nils-common"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "base64",
  "nils-test-support",
@@ -1697,7 +1697,7 @@ dependencies = [
 
 [[package]]
 name = "nils-fzf-cli"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -1714,7 +1714,7 @@ dependencies = [
 
 [[package]]
 name = "nils-gemini-cli"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -1729,7 +1729,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-cli"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -1745,7 +1745,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-lock"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1760,7 +1760,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-scope"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -1773,7 +1773,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-summary"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1788,7 +1788,7 @@ dependencies = [
 
 [[package]]
 name = "nils-image-processing"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1812,7 +1812,7 @@ dependencies = [
 
 [[package]]
 name = "nils-macos-agent"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "clap",
  "clap_complete",
@@ -1829,7 +1829,7 @@ dependencies = [
 
 [[package]]
 name = "nils-memo-cli"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1845,7 +1845,7 @@ dependencies = [
 
 [[package]]
 name = "nils-plan-tooling"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -1861,7 +1861,7 @@ dependencies = [
 
 [[package]]
 name = "nils-screen-record"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "block2",
  "chrono",
@@ -1888,7 +1888,7 @@ dependencies = [
 
 [[package]]
 name = "nils-semantic-commit"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -1904,7 +1904,7 @@ dependencies = [
 
 [[package]]
 name = "nils-term"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "indicatif",
  "pretty_assertions",
@@ -1912,7 +1912,7 @@ dependencies = [
 
 [[package]]
 name = "nils-test-support"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "pretty_assertions",
  "serde",
@@ -4203,9 +4203,9 @@ dependencies = [
 
 [[package]]
 name = "zbus"
-version = "5.13.2"
+version = "5.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1bfeff997a0aaa3eb20c4652baf788d2dfa6d2839a0ead0b3ff69ce2f9c4bdd1"
+checksum = "ca82f95dbd3943a40a53cfded6c2d0a2ca26192011846a1810c4256ef92c60bc"
 dependencies = [
  "async-broadcast",
  "async-executor",
@@ -4238,9 +4238,9 @@ dependencies = [
 
 [[package]]
 name = "zbus_macros"
-version = "5.13.2"
+version = "5.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0bbd5a90dbe8feee5b13def448427ae314ccd26a49cac47905cafefb9ff846f1"
+checksum = "897e79616e84aac4b2c46e9132a4f63b93105d54fe8c0e8f6bffc21fa8d49222"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -4365,9 +4365,9 @@ dependencies = [
 
 [[package]]
 name = "zvariant"
-version = "5.9.2"
+version = "5.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68b64ef4f40c7951337ddc7023dd03528a57a3ce3408ee9da5e948bd29b232c4"
+checksum = "5708299b21903bbe348e94729f22c49c55d04720a004aa350f1f9c122fd2540b"
 dependencies = [
  "endi",
  "enumflags2",
@@ -4379,9 +4379,9 @@ dependencies = [
 
 [[package]]
 name = "zvariant_derive"
-version = "5.9.2"
+version = "5.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "484d5d975eb7afb52cc6b929c13d3719a20ad650fea4120e6310de3fc55e415c"
+checksum = "5b59b012ebe9c46656f9cc08d8da8b4c726510aef12559da3e5f1bf72780752c"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
