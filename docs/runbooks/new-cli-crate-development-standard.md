@@ -114,7 +114,7 @@ Every user-facing CLI command surface must have explicit output behavior.
 ## Command and UX Rules
 - Use clap-based parsing with stable help text.
 - Root CLI parser must include `#[command(version)]` so `-V, --version` is always available.
-- Usage errors return `64` unless command-specific legacy contract requires otherwise.
+- Usage errors return `64` unless a documented command contract specifies otherwise.
 - Keep warning/error prefix conventions consistent with neighboring crates.
 - For completion-required CLIs, implement clap-first completion generation via `clap_complete` so baseline completion covers subcommands, long/short flags, declared value candidates, and context-aware filtering (not global candidate dumps).
 - If completions or completion aliases are provided, implement them per

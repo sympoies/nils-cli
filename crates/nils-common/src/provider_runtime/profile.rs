@@ -43,10 +43,6 @@ pub struct PathsProfile {
 #[derive(Debug, Clone, Copy)]
 pub enum HomePathSelection {
     ModernOnly(&'static [&'static str]),
-    PreferModernWhenPresentOrLegacyMissing {
-        modern: &'static [&'static str],
-        legacy: &'static [&'static str],
-    },
 }
 
 #[derive(Debug, Clone, Copy)]

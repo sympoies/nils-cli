@@ -19,7 +19,7 @@ This spec is aligned 1:1 with:
 - Workflow extension data must be anchored to raw items through
   `workflow_item_anchors` with cascade cleanup.
 - Storage bootstrap uses one consolidated schema snapshot (`schema_v1.sql`) as
-  the source of truth; legacy incremental migration chains are retired.
+  the source of truth; historical incremental migration chains are retired.
 - Phase 1 format/validation metadata follows Approach A:
   canonical values live in derivation `payload_json`, with deterministic
   query tags (`fmt:*`, `val:*`).

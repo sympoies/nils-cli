@@ -92,15 +92,6 @@ pub fn resolve_zdotdir() -> Option<PathBuf> {
 fn resolve_home_path(home: &Path, selection: HomePathSelection) -> PathBuf {
     match selection {
         HomePathSelection::ModernOnly(segments) => join_segments(home.to_path_buf(), segments),
-        HomePathSelection::PreferModernWhenPresentOrLegacyMissing { modern, legacy } => {
-            let modern = join_segments(home.to_path_buf(), modern);
-            let legacy = join_segments(home.to_path_buf(), legacy);
-            if modern.exists() || !legacy.exists() {
-                modern
-            } else {
-                legacy
-            }
-        }
     }
 }
 

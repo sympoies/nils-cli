@@ -17,22 +17,16 @@ Both binaries must expose the same top-level command topology:
 Shared help behavior:
 
 - `--help`/`help` exit code remains `0`.
-- Unsupported legacy groups (`provider|debug|workflow|automation`) remain deterministic usage errors (`64`) with lane-specific binary prefixes.
+- Unknown groups/subcommands return deterministic usage errors (`64`) with lane-specific binary prefixes.
 
-## Legacy redirect parity
+## Invalid-command parity
 
-Legacy alias/redirect commands must preserve equal exit semantics between lanes:
+Non-canonical command invocations must preserve equal exit semantics between lanes:
 
-- `list`
-- `prompt`
-- `advice`
-- `knowledge`
-- `commit`
-- `auto-refresh`
-- `rate-limits`
-- `provider`
+- Unknown top-level groups
+- Unknown subcommands under canonical groups
 
-Parity requirement: for each command above, `codex-cli` and `gemini-cli` must return identical exit code classes for equivalent invocation shapes.
+Parity requirement: for equivalent invocation shapes above, `codex-cli` and `gemini-cli` must return identical exit code classes.
 
 ## JSON contract parity
 

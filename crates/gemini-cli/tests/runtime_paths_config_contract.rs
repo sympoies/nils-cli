@@ -34,6 +34,29 @@ fn runtime_paths_config_contract_resolve_secret_and_cache_dirs_with_existing_pre
 }
 
 #[test]
+fn runtime_paths_config_contract_resolve_secret_and_auth_paths_use_modern_home_only() {
+    let lock = GlobalStateLock::new();
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let home = dir.path().join("home");
+    fs::create_dir_all(home.join(".config").join("gemini_secrets")).expect("prior secret dir");
+    fs::create_dir_all(home.join(".agents")).expect("prior auth dir");
+    fs::write(home.join(".agents").join("auth.json"), "{}").expect("prior auth file");
+
+    let _home = EnvGuard::set(&lock, "HOME", home.to_str().expect("utf-8"));
+    let _secret = EnvGuard::remove(&lock, "GEMINI_SECRET_DIR");
+    let _auth = EnvGuard::remove(&lock, "GEMINI_AUTH_FILE");
+
+    assert_eq!(
+        paths::resolve_secret_dir().expect("secret dir"),
+        home.join(".gemini").join("secrets")
+    );
+    assert_eq!(
+        paths::resolve_auth_file().expect("auth file"),
+        home.join(".gemini").join("oauth_creds.json")
+    );
+}
+
+#[test]
 fn runtime_paths_config_contract_resolve_feature_dir_and_zdotdir_fallbacks() {
     let lock = GlobalStateLock::new();
     let dir = tempfile::TempDir::new().expect("tempdir");

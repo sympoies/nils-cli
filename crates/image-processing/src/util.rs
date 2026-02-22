@@ -142,33 +142,6 @@ pub fn check_overwrite(path: &Path, overwrite: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn safe_write_path(path: &Path, dry_run: bool) -> PathBuf {
-    if dry_run {
-        return path.to_path_buf();
-    }
-
-    let suffix = path
-        .extension()
-        .map(|x| format!(".{}", x.to_string_lossy()))
-        .unwrap_or_default();
-    let stem = path
-        .file_stem()
-        .map(|x| x.to_string_lossy().to_string())
-        .unwrap_or_else(|| "out".to_string());
-    let uuid = uuid::Uuid::new_v4().simple().to_string();
-    let short = &uuid[..8];
-    let tmp_name = format!(".{stem}.tmp-{short}{suffix}");
-    path.with_file_name(tmp_name)
-}
-
-pub fn atomic_replace(tmp: &Path, final_path: &Path, dry_run: bool) -> anyhow::Result<()> {
-    if dry_run {
-        return Ok(());
-    }
-    nils_common::fs::replace_file(tmp, final_path)?;
-    Ok(())
-}
-
 pub fn command_str(argv: &[String]) -> String {
     argv.iter()
         .map(|a| shell_escape(a))
@@ -266,33 +239,6 @@ mod tests {
         std::fs::write(&output, "x").expect("write output");
         assert!(check_overwrite(&output, false).is_err());
         assert!(check_overwrite(&output, true).is_ok());
-    }
-
-    #[test]
-    fn safe_write_path_preserves_extension_and_atomic_replace_updates_target() {
-        let temp = tempfile::TempDir::new().expect("tempdir");
-        let final_path = temp.path().join("result.png");
-
-        let dry = safe_write_path(&final_path, true);
-        assert_eq!(dry, final_path);
-
-        let staged = safe_write_path(&final_path, false);
-        assert_ne!(staged, final_path);
-        assert_eq!(staged.extension().and_then(|x| x.to_str()), Some("png"));
-        assert!(
-            staged
-                .file_name()
-                .and_then(|x| x.to_str())
-                .unwrap_or_default()
-                .starts_with(".result.tmp-")
-        );
-
-        std::fs::write(&staged, "hello").expect("write staged");
-        atomic_replace(&staged, &final_path, false).expect("replace");
-        assert_eq!(
-            std::fs::read_to_string(&final_path).expect("read final"),
-            "hello"
-        );
     }
 
     #[test]

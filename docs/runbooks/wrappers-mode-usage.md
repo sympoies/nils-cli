@@ -76,15 +76,17 @@ All wrappers enforce:
 
 This prevents infinite recursion when `wrappers/` appears before real binaries in `PATH`.
 
-## `codex-cli` Legacy Groups
+## `codex-cli` and `gemini-cli` parser behavior
 
-`codex-cli` keeps compatibility messaging for legacy top-level groups:
-- `provider`
-- `debug`
-- `workflow`
-- `automation`
+Both CLIs expose only the canonical groups:
+- `agent`
+- `auth`
+- `diag`
+- `config`
+- `starship`
+- `completion`
 
-These groups are no longer available and return exit `64` with a clear migration/error hint.
+Unsupported groups/subcommands return exit `64` from clap parser validation.
 
 ## `git-cli` Compatibility Behavior
 

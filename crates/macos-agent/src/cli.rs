@@ -188,11 +188,7 @@ pub struct ListWindowsArgs {
     pub app: Option<String>,
 
     /// Narrow app selection by window title substring.
-    #[arg(
-        long = "window-title-contains",
-        visible_alias = "window-name",
-        requires = "app"
-    )]
+    #[arg(long = "window-title-contains", requires = "app")]
     pub window_name: Option<String>,
 
     /// Include only on-screen windows.
@@ -238,11 +234,7 @@ pub struct WindowActivateArgs {
     pub app: Option<String>,
 
     /// Narrow app selection by window title substring.
-    #[arg(
-        long = "window-title-contains",
-        visible_alias = "window-name",
-        requires = "app"
-    )]
+    #[arg(long = "window-title-contains", requires = "app")]
     pub window_name: Option<String>,
 
     /// Select by bundle id.
@@ -892,7 +884,7 @@ pub struct InputTypeArgs {
     pub delay_ms: Option<u64>,
 
     /// Press Enter after typing.
-    #[arg(long = "submit", visible_alias = "enter")]
+    #[arg(long = "submit")]
     pub enter: bool,
 }
 
@@ -942,11 +934,7 @@ pub struct DebugBundleArgs {
     pub app: Option<String>,
 
     /// Narrow app selection by window title substring.
-    #[arg(
-        long = "window-title-contains",
-        visible_alias = "window-name",
-        requires = "app"
-    )]
+    #[arg(long = "window-title-contains", requires = "app")]
     pub window_name: Option<String>,
 
     /// Output directory for debug artifacts.
@@ -977,11 +965,7 @@ pub struct ObserveScreenshotArgs {
     pub app: Option<String>,
 
     /// Narrow app selection by window title substring.
-    #[arg(
-        long = "window-title-contains",
-        visible_alias = "window-name",
-        requires = "app"
-    )]
+    #[arg(long = "window-title-contains", requires = "app")]
     pub window_name: Option<String>,
 
     /// Output path.
@@ -1131,11 +1115,7 @@ pub struct WaitWindowPresentArgs {
     pub app: Option<String>,
 
     /// Narrow app selection by window title substring.
-    #[arg(
-        long = "window-title-contains",
-        visible_alias = "window-name",
-        requires = "app"
-    )]
+    #[arg(long = "window-title-contains", requires = "app")]
     pub window_name: Option<String>,
 
     /// Timeout in milliseconds.
@@ -1552,17 +1532,17 @@ mod tests {
     }
 
     #[test]
-    fn supports_window_name_alias_for_backward_compatibility() {
+    fn parses_wait_window_present_with_window_title_contains() {
         let cli = Cli::try_parse_from([
             "macos-agent",
             "wait",
             "window-present",
             "--app",
             "Terminal",
-            "--window-name",
+            "--window-title-contains",
             "Inbox",
         ])
-        .expect("legacy --window-name alias should parse");
+        .expect("wait window-present with window-title-contains should parse");
 
         match cli.command {
             CommandGroup::Wait {
@@ -1590,8 +1570,8 @@ mod tests {
     }
 
     #[test]
-    fn parses_input_type_submit_and_enter_alias() {
-        let canonical = Cli::try_parse_from([
+    fn parses_input_type_submit() {
+        let cli = Cli::try_parse_from([
             "macos-agent",
             "input",
             "type",
@@ -1600,17 +1580,7 @@ mod tests {
             "--submit",
         ])
         .expect("input type --submit should parse");
-        match canonical.command {
-            CommandGroup::Input {
-                command: super::InputCommand::Type(args),
-            } => assert!(args.enter),
-            other => panic!("unexpected command variant: {other:?}"),
-        }
-
-        let alias =
-            Cli::try_parse_from(["macos-agent", "input", "type", "--text", "hello", "--enter"])
-                .expect("input type --enter alias should parse");
-        match alias.command {
+        match cli.command {
             CommandGroup::Input {
                 command: super::InputCommand::Type(args),
             } => assert!(args.enter),

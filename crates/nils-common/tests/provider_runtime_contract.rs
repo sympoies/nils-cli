@@ -14,9 +14,7 @@ use std::sync::atomic::AtomicBool;
 const CODEX_SECRET_HOME: &[&str] = &[".config", "codex_secrets"];
 const CODEX_AUTH_HOME: &[&str] = &[".agents", "auth.json"];
 const GEMINI_SECRET_HOME_MODERN: &[&str] = &[".gemini", "secrets"];
-const GEMINI_SECRET_HOME_LEGACY: &[&str] = &[".config", "gemini_secrets"];
 const GEMINI_AUTH_HOME_MODERN: &[&str] = &[".gemini", "oauth_creds.json"];
-const GEMINI_AUTH_HOME_LEGACY: &[&str] = &[".agents", "auth.json"];
 const GEMINI_CACHE_HOME: &[&str] = &[".gemini", "cache", "secrets"];
 
 static WARNED_CODEX: AtomicBool = AtomicBool::new(false);
@@ -82,14 +80,8 @@ static GEMINI_PROFILE: ProviderProfile = ProviderProfile {
     paths: PathsProfile {
         feature_name: "gemini",
         feature_tool_script: "gemini-tools.zsh",
-        secret_dir_home: HomePathSelection::PreferModernWhenPresentOrLegacyMissing {
-            modern: GEMINI_SECRET_HOME_MODERN,
-            legacy: GEMINI_SECRET_HOME_LEGACY,
-        },
-        auth_file_home: HomePathSelection::PreferModernWhenPresentOrLegacyMissing {
-            modern: GEMINI_AUTH_HOME_MODERN,
-            legacy: GEMINI_AUTH_HOME_LEGACY,
-        },
+        secret_dir_home: HomePathSelection::ModernOnly(GEMINI_SECRET_HOME_MODERN),
+        auth_file_home: HomePathSelection::ModernOnly(GEMINI_AUTH_HOME_MODERN),
         secret_cache_home: Some(GEMINI_CACHE_HOME),
     },
     exec: ExecProfile {
@@ -160,13 +152,13 @@ fn provider_runtime_config_snapshot_reads_provider_specific_keys() {
 }
 
 #[test]
-fn provider_runtime_paths_keep_provider_precedence_rules() {
+fn provider_runtime_paths_use_modern_home_locations_only() {
     let lock = GlobalStateLock::new();
     let dir = tempfile::TempDir::new().expect("tempdir");
     let home = dir.path().join("home");
-    fs::create_dir_all(home.join(".config").join("gemini_secrets")).expect("legacy secret dir");
-    fs::create_dir_all(home.join(".agents")).expect("legacy auth dir");
-    fs::write(home.join(".agents").join("auth.json"), "{}").expect("legacy auth file");
+    fs::create_dir_all(home.join(".config").join("gemini_secrets")).expect("prior secret dir");
+    fs::create_dir_all(home.join(".agents")).expect("prior auth dir");
+    fs::write(home.join(".agents").join("auth.json"), "{}").expect("prior auth file");
 
     let _home = EnvGuard::set(&lock, "HOME", home.to_str().expect("utf-8"));
     let _secret = EnvGuard::remove(&lock, "GEMINI_SECRET_DIR");
@@ -177,12 +169,12 @@ fn provider_runtime_paths_keep_provider_precedence_rules() {
     assert_eq!(
         nils_common::provider_runtime::paths::resolve_secret_dir(&GEMINI_PROFILE)
             .expect("secret dir"),
-        home.join(".config").join("gemini_secrets")
+        home.join(".gemini").join("secrets")
     );
     assert_eq!(
         nils_common::provider_runtime::paths::resolve_auth_file(&GEMINI_PROFILE)
             .expect("auth file"),
-        home.join(".agents").join("auth.json")
+        home.join(".gemini").join("oauth_creds.json")
     );
     assert_eq!(
         nils_common::provider_runtime::paths::resolve_secret_cache_dir(&GEMINI_PROFILE)

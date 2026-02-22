@@ -6,9 +6,7 @@ use nils_common::provider_runtime::{
 };
 
 const SECRET_HOME_MODERN: &[&str] = &[".gemini", "secrets"];
-const SECRET_HOME_LEGACY: &[&str] = &[".config", "gemini_secrets"];
 const AUTH_HOME_MODERN: &[&str] = &[".gemini", "oauth_creds.json"];
-const AUTH_HOME_LEGACY: &[&str] = &[".agents", "auth.json"];
 const CACHE_HOME: &[&str] = &[".gemini", "cache", "secrets"];
 
 static WARNED_INVALID_ALLOW_DANGEROUS: AtomicBool = AtomicBool::new(false);
@@ -36,14 +34,8 @@ pub static GEMINI_PROVIDER_PROFILE: ProviderProfile = ProviderProfile {
     paths: PathsProfile {
         feature_name: "gemini",
         feature_tool_script: "gemini-tools.zsh",
-        secret_dir_home: HomePathSelection::PreferModernWhenPresentOrLegacyMissing {
-            modern: SECRET_HOME_MODERN,
-            legacy: SECRET_HOME_LEGACY,
-        },
-        auth_file_home: HomePathSelection::PreferModernWhenPresentOrLegacyMissing {
-            modern: AUTH_HOME_MODERN,
-            legacy: AUTH_HOME_LEGACY,
-        },
+        secret_dir_home: HomePathSelection::ModernOnly(SECRET_HOME_MODERN),
+        auth_file_home: HomePathSelection::ModernOnly(AUTH_HOME_MODERN),
         secret_cache_home: Some(CACHE_HOME),
     },
     exec: ExecProfile {

@@ -17,7 +17,7 @@ fn resolve_relative_under_setup(setup_dir: &Path, rel: &Path) -> PathBuf {
 
     let parent = rel.parent().unwrap_or_else(|| Path::new("."));
     let parent_abs = std::fs::canonicalize(setup_dir.join(parent)).unwrap_or_else(|_| {
-        // best-effort: mirror legacy script behavior which canonicalizes the directory when possible.
+        // best-effort: mirror prior script behavior which canonicalizes the directory when possible.
         setup_dir.join(parent)
     });
     let filename = rel.file_name().unwrap_or(rel.as_os_str());

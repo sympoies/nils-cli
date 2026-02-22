@@ -21,50 +21,30 @@ fn assert_exit_code(output: &CmdOutput, expected: i32) {
 }
 
 #[test]
-fn dispatch_list_guidance() {
-    let output = run(&["list"]);
-    assert_exit_code(&output, 64);
-    assert!(stderr_string(&output).contains("gemini-cli: use `gemini-cli help`"));
-}
-
-#[test]
-fn dispatch_prompt_guidance() {
-    let output = run(&["prompt"]);
-    assert_exit_code(&output, 64);
-    assert!(stderr_string(&output).contains("gemini-cli agent prompt"));
-}
-
-#[test]
-fn dispatch_advice_guidance() {
-    let output = run(&["advice"]);
-    assert_exit_code(&output, 64);
-    assert!(stderr_string(&output).contains("gemini-cli agent advice"));
-}
-
-#[test]
-fn dispatch_knowledge_guidance() {
-    let output = run(&["knowledge"]);
-    assert_exit_code(&output, 64);
-    assert!(stderr_string(&output).contains("gemini-cli agent knowledge"));
-}
-
-#[test]
-fn dispatch_commit_guidance() {
-    let output = run(&["commit"]);
-    assert_exit_code(&output, 64);
-    assert!(stderr_string(&output).contains("gemini-cli agent commit"));
-}
-
-#[test]
-fn dispatch_auto_refresh_guidance() {
-    let output = run(&["auto-refresh"]);
-    assert_exit_code(&output, 64);
-    assert!(stderr_string(&output).contains("gemini-cli auth auto-refresh"));
-}
-
-#[test]
-fn dispatch_rate_limits_guidance() {
-    let output = run(&["rate-limits"]);
-    assert_exit_code(&output, 64);
-    assert!(stderr_string(&output).contains("gemini-cli diag rate-limits"));
+fn dispatch_removed_redirect_commands_use_clap_parse_errors() {
+    for command in [
+        "list",
+        "prompt",
+        "advice",
+        "knowledge",
+        "commit",
+        "auto-refresh",
+        "rate-limits",
+        "provider",
+        "debug",
+        "workflow",
+        "automation",
+    ] {
+        let output = run(&[command]);
+        assert_exit_code(&output, 64);
+        let stderr = stderr_string(&output);
+        assert!(
+            stderr.contains("unrecognized subcommand"),
+            "missing clap parse error for {command}: {stderr}"
+        );
+        assert!(
+            stderr.contains(command),
+            "stderr should include command token {command}: {stderr}"
+        );
+    }
 }

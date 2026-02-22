@@ -24,7 +24,7 @@ Groups:
 - Runtime ownership is split between `gemini-cli` adapters and shared
   `nils-common::provider_runtime` helpers.
 - This crate owns Gemini command parsing shape and completion export.
-- Legacy top-level groups `provider|debug|workflow|automation` are retained only as deterministic usage errors (`64`).
+- Unknown groups/subcommands are deterministic usage errors (`64`).
 
 ## Exit codes
 - `0`: success and help output.
