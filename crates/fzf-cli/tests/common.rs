@@ -1,5 +1,5 @@
 use nils_test_support::bin;
-use nils_test_support::cmd::{self, CmdOptions};
+use nils_test_support::cmd;
 use std::path::{Path, PathBuf};
 
 use nils_test_support::StubBinDir;
@@ -14,6 +14,7 @@ pub struct CmdOutput {
     pub stderr: String,
 }
 
+#[allow(dead_code)]
 pub fn fzf_cli_bin() -> PathBuf {
     bin::resolve("fzf-cli")
 }
@@ -24,15 +25,7 @@ pub fn run_fzf_cli(
     envs: &[(&str, &str)],
     stdin: Option<&str>,
 ) -> CmdOutput {
-    let mut options = CmdOptions::default().with_cwd(dir);
-    for (k, v) in envs {
-        options = options.with_env(k, v);
-    }
-    if let Some(input) = stdin {
-        options = options.with_stdin_str(input);
-    }
-    let bin = fzf_cli_bin();
-    let output = cmd::run_with(&bin, args, &options);
+    let output = cmd::run_resolved_in_dir("fzf-cli", dir, args, envs, stdin.map(str::as_bytes));
     CmdOutput {
         code: output.code,
         stdout: output.stdout_text(),

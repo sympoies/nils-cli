@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use nils_test_support::bin;
-use nils_test_support::cmd::{self, CmdOptions};
+use nils_test_support::cmd;
 use std::path::{Path, PathBuf};
 
 use nils_test_support::StubBinDir;
@@ -17,12 +17,7 @@ pub fn image_processing_bin() -> PathBuf {
 }
 
 pub fn run_image_processing(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> CmdOutput {
-    let mut options = CmdOptions::default().with_cwd(dir);
-    for (k, v) in envs {
-        options = options.with_env(k, v);
-    }
-    let bin = image_processing_bin();
-    let output = cmd::run_with(&bin, args, &options);
+    let output = cmd::run_resolved_in_dir("image-processing", dir, args, envs, None);
     CmdOutput {
         code: output.code,
         stdout: output.stdout_text(),

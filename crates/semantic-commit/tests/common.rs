@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::Output;
 
 use nils_test_support::bin::resolve;
-use nils_test_support::cmd::{CmdOptions, run_with};
+use nils_test_support::cmd::{options_in_dir_with_envs, run_resolved};
 use nils_test_support::fs::{write_executable as write_executable_file, write_text};
 use nils_test_support::git::{InitRepoOptions, init_repo_with};
 #[allow(unused_imports)]
@@ -29,15 +29,12 @@ pub fn run_semantic_commit_output(
     envs: &[(&str, &str)],
     input: Option<&str>,
 ) -> Output {
-    let mut options = CmdOptions::new().with_cwd(dir);
-    for (key, value) in envs {
-        options = options.with_env(key, value);
-    }
+    let mut options = options_in_dir_with_envs(dir, envs);
     options = match input {
         Some(data) => options.with_stdin_str(data),
         None => options.with_stdin_bytes(&[]),
     };
-    let output = run_with(&semantic_commit_bin(), args, &options);
+    let output = run_resolved("semantic-commit", args, &options);
     output.into_output()
 }
 
