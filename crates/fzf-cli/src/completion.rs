@@ -56,15 +56,35 @@ pub(crate) fn build_completion_command() -> Command {
         .subcommand(
             Command::new("file")
                 .about("Search and preview text files")
-                .arg(Arg::new("vi").long("vi").action(ArgAction::SetTrue))
-                .arg(Arg::new("vscode").long("vscode").action(ArgAction::SetTrue))
+                .arg(
+                    Arg::new("vi")
+                        .long("vi")
+                        .help("Open selection with vi")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("vscode")
+                        .long("vscode")
+                        .help("Open selection with VS Code")
+                        .action(ArgAction::SetTrue),
+                )
                 .arg(query_arg()),
         )
         .subcommand(
             Command::new("directory")
                 .about("Search directories and cd into selection")
-                .arg(Arg::new("vi").long("vi").action(ArgAction::SetTrue))
-                .arg(Arg::new("vscode").long("vscode").action(ArgAction::SetTrue))
+                .arg(
+                    Arg::new("vi")
+                        .long("vi")
+                        .help("Open selection with vi")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("vscode")
+                        .long("vscode")
+                        .help("Open selection with VS Code")
+                        .action(ArgAction::SetTrue),
+                )
                 .arg(query_arg()),
         )
         .subcommand(
@@ -78,6 +98,7 @@ pub(crate) fn build_completion_command() -> Command {
                 .arg(
                     Arg::new("snapshot")
                         .long("snapshot")
+                        .help("Preview file snapshots from selected commit")
                         .action(ArgAction::SetTrue),
                 )
                 .arg(query_arg()),
@@ -104,12 +125,14 @@ pub(crate) fn build_completion_command() -> Command {
                     Arg::new("kill")
                         .short('k')
                         .long("kill")
+                        .help("Kill selected process")
                         .action(ArgAction::SetTrue),
                 )
                 .arg(
                     Arg::new("force")
                         .short('9')
                         .long("force")
+                        .help("Use SIGKILL when killing")
                         .action(ArgAction::SetTrue),
                 )
                 .arg(query_arg()),
@@ -121,12 +144,14 @@ pub(crate) fn build_completion_command() -> Command {
                     Arg::new("kill")
                         .short('k')
                         .long("kill")
+                        .help("Kill owner process for selected port")
                         .action(ArgAction::SetTrue),
                 )
                 .arg(
                     Arg::new("force")
                         .short('9')
                         .long("force")
+                        .help("Use SIGKILL when killing")
                         .action(ArgAction::SetTrue),
                 )
                 .arg(query_arg()),

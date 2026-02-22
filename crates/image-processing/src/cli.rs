@@ -61,26 +61,26 @@ pub struct Cli {
     #[arg(long = "in", action = ArgAction::Append, default_value = None)]
     pub inputs: Vec<String>,
 
-    #[arg(long = "from-svg")]
+    #[arg(long = "from-svg", help = "Trusted SVG input path for convert mode")]
     pub from_svg: Option<String>,
 
-    #[arg(long)]
+    #[arg(long, help = "Output file path")]
     pub out: Option<String>,
 
-    #[arg(long)]
+    #[arg(long, help = "Overwrite existing output file")]
     pub overwrite: bool,
-    #[arg(long = "dry-run")]
+    #[arg(long = "dry-run", help = "Validate and plan without writing output")]
     pub dry_run: bool,
-    #[arg(long)]
+    #[arg(long, help = "Emit machine-readable JSON to stdout")]
     pub json: bool,
-    #[arg(long)]
+    #[arg(long, help = "Print per-item processing report")]
     pub report: bool,
 
-    #[arg(long = "to")]
+    #[arg(long = "to", help = "Output format: png, webp, or svg")]
     pub to: Option<String>,
 
-    #[arg(long)]
+    #[arg(long, help = "Raster output width in pixels")]
     pub width: Option<i32>,
-    #[arg(long)]
+    #[arg(long, help = "Raster output height in pixels")]
     pub height: Option<i32>,
 }

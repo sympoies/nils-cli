@@ -199,6 +199,11 @@ parse_completion_flag_tokens() {
     | LC_ALL=C sort
 }
 
+parse_zsh_option_descriptions() {
+  local zsh_block="$1"
+  perl -ne 'while(/'\''([^'\'']+)'\''/g){$spec=$1; next unless $spec =~ /^-{1,2}/; if($spec =~ /^([^[]+)\[(.*?)\]/){$opt=$1; $desc=$2; $opt =~ s/[+=]+$//; print "$opt\t$desc\n";}}' <<< "$zsh_block"
+}
+
 decode_path() {
   local path_key="$1"
   PATH_PARTS=()
@@ -568,6 +573,15 @@ audit_binary() {
       continue
     fi
 
+    local -A zsh_help_by_flag=()
+    local opt desc
+    while IFS=$'\t' read -r opt desc; do
+      [[ -n "$opt" ]] || continue
+      if [[ ! -v "zsh_help_by_flag[$opt]" ]] || [[ -z "${zsh_help_by_flag[$opt]}" && -n "$desc" ]]; then
+        zsh_help_by_flag["$opt"]="$desc"
+      fi
+    done < <(parse_zsh_option_descriptions "$zsh_block")
+
     local flag
     for flag in "${flags[@]}"; do
       if ! contains_token "$bash_opts" "$flag"; then
@@ -575,6 +589,10 @@ audit_binary() {
       fi
       if ! contains_token "$zsh_block" "$flag"; then
         FAILURES+=( "${binary}: zsh completion missing flag \`${flag}\` for command \`$(path_to_display "$path_key")\`" )
+        continue
+      fi
+      if [[ -v "zsh_help_by_flag[$flag]" ]] && [[ -z "${zsh_help_by_flag[$flag]}" ]]; then
+        FAILURES+=( "${binary}: zsh completion empty description for flag \`${flag}\` on command \`$(path_to_display "$path_key")\`" )
       fi
     done
   done
