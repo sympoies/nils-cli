@@ -1,110 +1,50 @@
 # gemini-cli JSON Consumers Runbook
 
 ## Scope
-This runbook is for frontend/service callers that consume `gemini-cli` machine output for:
+This runbook covers service consumption of `gemini-cli` JSON output for:
 - `diag rate-limits` (single/all/async)
 - `auth login|use|save|remove|refresh|auto-refresh|current|sync`
 
-Contract source of truth:
-- `crates/gemini-cli/docs/specs/gemini-cli-diag-auth-json-contract-v1.md`
+Shared baseline guidance:
 - `docs/specs/cli-service-json-contract-guideline-v1.md`
 
-## Migration Checklist
-1. Keep default text mode for humans; for automation always pass explicit JSON mode:
-   - preferred: `--format json`
-   - compatibility: `--json` on supported surfaces
-2. Parse JSON `stdout` only; do not parse prose `stderr`.
-3. Validate stable envelope keys first: `schema_version`, `command`, `ok`.
-4. Parse `result` for single-entity responses and `results` for collection responses.
-5. Route by `command` (`diag rate-limits`, `auth login`, `auth use`, `auth save`, `auth remove`,
-   `auth refresh`, `auth auto-refresh`, `auth current`, `auth sync`) and ignore unknown additive
-   fields.
-6. Enforce schema routing:
-   - `diag rate-limits` => `schema_version=gemini-cli.diag.rate-limits.v1`
-   - `auth *` => `schema_version=gemini-cli.auth.v1`
+Gemini-specific contract source:
+- `crates/gemini-cli/docs/specs/gemini-cli-diag-auth-json-contract-v1.md`
 
-## Parsing Guidance
-- Parse envelope first, then branch:
-  - if `ok=false`: treat as command-level failure and read `error.code`, `error.message`, and
-    optional `error.details`
-  - if `ok=true` with `result`: parse single-target payload
-  - if `ok=true` with `results`: parse collection payload and per-item statuses
-- Reject payloads that do not contain all stable envelope keys (`schema_version`, `command`, `ok`).
-- Ignore unknown additive fields to remain forward compatible within v1 schema versions.
+## Provider-specific schema routing
+- `diag rate-limits` => `schema_version=gemini-cli.diag.rate-limits.v1`
+- `auth *` => `schema_version=gemini-cli.auth.v1`
 
-Minimal parser flow:
-```text
-read stdout JSON
-assert keys: schema_version, command, ok
-if ok == false: handle error.code
-else if result exists: parse single payload
-else if results exists: parse collection payload
-else: invalid envelope
-```
+## Gemini-specific integration notes
+- `auth login` stable method values:
+  - `chatgpt-browser`
+  - `chatgpt-device-code`
+  - `api-key`
+- `auth save` overwrite confirmation failure code:
+  - `overwrite-confirmation-required`
+- `auth remove` confirmation failure code:
+  - `remove-confirmation-required`
+- `auth current` secret-dir resolution failure codes:
+  - `secret-dir-not-configured`
+  - `secret-dir-not-found`
+  - `secret-dir-read-failed`
 
-## Integration Notes
-- `ok=false` means command-level failure; read top-level `error.code`.
-- `ok=true` can still include partial failures in collection/per-target flows:
-  - `diag rate-limits --all|--async`: inspect `results[*].status`
-  - `auth auto-refresh`: inspect `result.targets[*].status`
-- `auth login` exposes three stable method values in `result.method`:
-  - `chatgpt-browser` (default `auth login`)
-  - `chatgpt-device-code` (`auth login --device-code`)
-  - `api-key` (`auth login --api-key`)
-- `auth save` overwrite handling:
-  - success path: check `result.overwritten` (`false` = new file, `true` = replaced existing file)
-  - confirmation-required path: `ok=false`, `error.code=overwrite-confirmation-required`
-- `auth remove` confirmation handling:
-  - success path: check `result.removed=true`
-  - confirmation-required path: `ok=false`, `error.code=remove-confirmation-required`
-- `auth current` secret directory resolution errors are command-level failures:
-  - `error.code=secret-dir-not-configured|secret-dir-not-found|secret-dir-read-failed`
-  - treat these as configuration/operational errors, not as `secret-not-matched`.
-- Redaction is contractual: never expect raw token material in success/failure payloads.
-- Treat `raw_usage` and other informational metadata as optional and unstable for strict parsing.
+## Consumer checklist
+1. Follow the shared parsing/retry baseline from `docs/specs/cli-service-json-contract-guideline-v1.md`.
+2. Route logic by both `command` and gemini schema ids above.
+3. Treat informational metadata (for example `raw_usage`) as optional.
+4. Keep provider-specific behavior handling in gemini caller code paths only.
 
 Example commands:
+
 ```bash
 gemini-cli diag rate-limits --format json alpha.json
 gemini-cli diag rate-limits --all --format json
 gemini-cli auth login --format json
 gemini-cli auth login --format json --device-code
 gemini-cli auth login --format json --api-key
-gemini-cli auth save --format json team-alpha.json
 gemini-cli auth save --format json --yes team-alpha.json
 gemini-cli auth remove --format json --yes team-alpha.json
 gemini-cli auth auto-refresh --format json
 gemini-cli auth current --format json
 ```
-
-## Do / Don't
-
-Do:
-- Pin logic to stable fields documented in the v1 contract.
-- Handle both exit code and JSON envelope together.
-- Keep idempotent retry behavior for transient failures.
-- Store the last successful normalized summary for UI fallback.
-
-Don't:
-- Do not scrape human text output or `stderr` for machine logic.
-- Do not assume informational fields (`raw_usage`, optional metadata) always exist.
-- Do not treat partial failure as total success without checking per-item/per-target status.
-- Do not rely on field ordering.
-
-## Retry and Fallback Guidance
-
-| Scenario | Signal | Guidance |
-|---|---|---|
-| Invalid CLI usage | exit `64` and/or `error.code=invalid-arguments` | Do not retry; fix call arguments/flags. |
-| Save overwrite confirmation required | `ok=false` with `error.code=overwrite-confirmation-required` | Ask for explicit confirmation, then rerun with `auth save --format json --yes <secret.json>`. |
-| Command-level transient failure | `ok=false` with timeout/network/auth endpoint code | Retry with bounded exponential backoff. |
-| Partial failure in collection mode | `ok=true` with some `status=error` | Accept succeeded items; retry only failed targets. |
-| Diag partial failure | failed `results[*].target_file` entries | Retry each failed target with `diag rate-limits --format json <secret.json>`. |
-| Auth auto-refresh partial failure | `result.targets[*].status=failed` | Retry failed targets with `auth refresh --format json <secret.json>`. |
-| No fresh remote data available | repeated transient failures | Fallback to your service-side cached last-success snapshot; do not fallback to parsing text mode. |
-
-## Partial Failure Playbook
-1. Parse successful items first and publish partial data to callers/UI.
-2. Collect failed target list from `results[*].error` or `result.targets[*].reason`.
-3. Retry failed targets only (single-target commands), capped by retry budget.
-4. Return an aggregate status that keeps successful items and surfaces unresolved failures.

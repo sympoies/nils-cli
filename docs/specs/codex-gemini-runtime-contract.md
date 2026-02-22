@@ -41,6 +41,5 @@ This document is the single runtime contract source for migrating `codex-core` a
 
 ## Migration references
 
-- Sprint 1 task anchor: `docs/plans/codex-gemini-core-merge-plan.md`
 - Shared runtime target: `crates/nils-common/src/provider_runtime/`
 - Lane adapters: `crates/codex-cli/src/provider_profile.rs`, `crates/gemini-cli/src/provider_profile.rs`

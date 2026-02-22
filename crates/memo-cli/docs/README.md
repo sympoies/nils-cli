@@ -13,7 +13,6 @@
 ## Runbooks
 
 - [memo-cli-agent-workflow.md](runbooks/memo-cli-agent-workflow.md)
-- [memo-cli-rollout.md](runbooks/memo-cli-rollout.md)
 
 ## Reports
 

@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  docs-hygiene-audit.sh [--strict]
+
+Checks documentation hygiene policy:
+  - known transient development records are removed and not referenced from active docs
+  - crate docs indexes avoid unexpected deep links to root docs
+  - duplicate markdown payloads are not present across active docs trees
+
+Options:
+  --strict   Treat warnings as hard failures
+  -h, --help Show this help
+USAGE
+}
+
+strict=0
+while [[ $# -gt 0 ]]; do
+  case "${1:-}" in
+    --strict)
+      strict=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "error: unknown argument: ${1:-}" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -z "$repo_root" || ! -d "$repo_root" ]]; then
+  echo "error: must run inside a git work tree" >&2
+  exit 2
+fi
+cd "$repo_root"
+
+declare -a errors=()
+declare -a warnings=()
+
+record_issue() {
+  local level="$1"
+  local message="$2"
+  if [[ "$level" == "error" || "$strict" -eq 1 ]]; then
+    errors+=("$message")
+  else
+    warnings+=("$message")
+  fi
+}
+
+declare -a removed_transient_docs=(
+  "docs/reports/codex-gemini-doc-audit.md"
+  "docs/plans/codex-gemini-core-merge-plan.md"
+  "docs/runbooks/image-processing-llm-svg.md"
+  "crates/api-test/docs/runbooks/api-test-websocket-adoption.md"
+  "crates/api-websocket/docs/runbooks/api-websocket-rollout.md"
+  "crates/memo-cli/docs/runbooks/memo-cli-rollout.md"
+)
+
+for path in "${removed_transient_docs[@]}"; do
+  if [[ -e "$path" ]]; then
+    record_issue error "transient doc must remain removed: $path"
+  fi
+done
+
+declare -a reference_roots=(
+  "README.md"
+  "DEVELOPMENT.md"
+  "AGENTS.md"
+  "docs/runbooks"
+  "docs/specs"
+  "docs/reports"
+  "crates"
+)
+
+for path in "${removed_transient_docs[@]}"; do
+  refs="$(rg -n --fixed-strings "$path" "${reference_roots[@]}" \
+    -g '!**/docs/plans/**' \
+    -g '!**/tests/**' \
+    -g '!**/target/**' || true)"
+  if [[ -n "$refs" ]]; then
+    record_issue error "stale reference to removed doc: $path"
+    while IFS= read -r line; do
+      [[ -n "$line" ]] || continue
+      record_issue error "  ref: $line"
+    done <<<"$refs"
+  fi
+done
+
+deep_links="$(rg -n '\.\./\.\./\.\./docs/' crates/*/docs/README.md || true)"
+if [[ -n "$deep_links" ]]; then
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    if [[ "$line" == *"codex-gemini-cli-parity-contract-v1.md"* ]]; then
+      continue
+    fi
+    record_issue error "unexpected deep crate-docs cross-link: $line"
+  done <<<"$deep_links"
+fi
+
+dup_hashes="$(find docs crates/*/docs -type f -name '*.md' -print0 \
+  | xargs -0 shasum \
+  | awk '{print $1}' \
+  | sort \
+  | uniq -d || true)"
+if [[ -n "$dup_hashes" ]]; then
+  while IFS= read -r hash; do
+    [[ -n "$hash" ]] || continue
+    record_issue error "duplicate markdown payload hash detected: $hash"
+  done <<<"$dup_hashes"
+fi
+
+for warn in "${warnings[@]}"; do
+  echo "WARN: $warn"
+done
+
+if [[ ${#errors[@]} -gt 0 ]]; then
+  for err in "${errors[@]}"; do
+    echo "FAIL: $err"
+  done
+  echo "FAIL: docs hygiene audit (strict=$strict, errors=${#errors[@]}, warnings=${#warnings[@]})"
+  exit 1
+fi
+
+echo "PASS: docs hygiene audit (strict=$strict, warnings=${#warnings[@]})"

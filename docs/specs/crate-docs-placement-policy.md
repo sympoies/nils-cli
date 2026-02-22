@@ -15,6 +15,8 @@ add docs without ownership drift.
   defining shared governance/process.
 - `crate-local`: documentation owned by exactly one crate and primarily describing that crate's
   behavior, contracts, or operations.
+- `transient-dev-record`: temporary planning/reporting/adoption notes used to complete a development
+  cycle and removed after completion unless explicitly required by CI/governance contracts.
 
 Contributors MUST classify each new/updated documentation file into one of these two ownership
 types before choosing a path.
@@ -49,6 +51,27 @@ Compatibility stubs under root `docs/` are permanent redirects (no deprecation s
 - Stubs MUST remain redirect-only shims and MUST NOT carry canonical runbook/spec/report content.
 - If governance changes later, the policy update MUST explicitly document a new sunset decision first.
 
+Root stub retention criteria:
+
+- Keep a stub only when a stable historical path is still referenced by scripts, tests, or external
+  documentation.
+- If there are no remaining inbound references and no compatibility requirement, remove the old root
+  path instead of keeping a dead redirect.
+
+## Documentation Lifecycle and Retention
+Contributors MUST classify lifecycle status before adding/removing docs:
+
+- `canonical`: current source-of-truth documentation.
+- `compat-stub`: redirect shim containing only `Moved to` metadata.
+- `transient-dev-record`: temporary development-phase record.
+
+`transient-dev-record` handling:
+
+1. Keep only while active work requires it (for example migration in progress, staged rollout).
+2. Remove when implementation is complete and no CI/workflow dependency remains.
+3. If historical context must remain, summarize it in canonical docs rather than keeping full
+   duplicate records.
+
 ## Canonical Crate-Local Paths
 `crate-local` documentation MUST live under `crates/<crate>/docs/`.
 
@@ -64,7 +87,7 @@ crates/<crate>/docs/reports/<topic>.md
 Current repository examples:
 
 - `crates/memo-cli/docs/specs/memo-cli-json-contract-v1.md`
-- `crates/memo-cli/docs/runbooks/memo-cli-rollout.md`
+- `crates/memo-cli/docs/runbooks/memo-cli-agent-workflow.md`
 - `crates/codex-cli/docs/specs/codex-cli-diag-auth-json-contract-v1.md`
 
 ## New Documentation Contributor Requirements
@@ -84,3 +107,8 @@ Contributors SHOULD:
 ## Enforcement Reference
 `DEVELOPMENT.md` required checks reference this policy. Future automation and CI checks MUST enforce
 the same placement rules.
+
+Recommended CI companions:
+
+- `bash scripts/ci/docs-placement-audit.sh --strict`
+- `bash scripts/ci/docs-hygiene-audit.sh --strict`
