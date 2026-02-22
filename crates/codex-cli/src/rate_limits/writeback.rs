@@ -185,7 +185,7 @@ mod tests {
             &json!({
                 "tokens": { "access_token": "tok" },
                 "codex_rate_limits": {
-                    "source": "legacy-metadata",
+                    "source": "existing-metadata",
                     "weekly_reset_at_epoch": 111
                 }
             }),
@@ -210,7 +210,7 @@ mod tests {
         let written = read_json(&target);
         let limits = &written["codex_rate_limits"];
 
-        assert_eq!(limits["source"].as_str(), Some("legacy-metadata"));
+        assert_eq!(limits["source"].as_str(), Some("existing-metadata"));
         assert_eq!(limits["weekly_reset_at_epoch"].as_i64(), Some(1700600000));
         assert_eq!(
             limits["non_weekly_reset_at_epoch"].as_i64(),
@@ -228,7 +228,7 @@ mod tests {
                 "tokens": { "access_token": "tok" },
                 "codex_rate_limits": {
                     "weekly_reset_at_epoch": 111,
-                    "weekly_reset_at": "legacy"
+                    "weekly_reset_at": "existing"
                 }
             }),
         );
@@ -263,7 +263,7 @@ mod tests {
             &json!({
                 "tokens": { "access_token": "tok" },
                 "codex_rate_limits": {
-                    "source": "legacy-metadata",
+                    "source": "existing-metadata",
                     "non_weekly_reset_at_epoch": 1700003600,
                     "non_weekly_reset_at": "2023-11-14T23:13:20Z"
                 }
@@ -293,7 +293,7 @@ mod tests {
 
         assert_eq!(
             limits.get("source").and_then(Value::as_str),
-            Some("legacy-metadata")
+            Some("existing-metadata")
         );
         assert_eq!(
             limits.get("weekly_reset_at_epoch").and_then(Value::as_i64),
@@ -348,7 +348,7 @@ mod tests {
                 "tokens": { "access_token": "tok" },
                 "codex_rate_limits": {
                     "weekly_reset_at_epoch": 111,
-                    "weekly_reset_at": "legacy"
+                    "weekly_reset_at": "existing"
                 }
             }),
         );
@@ -410,7 +410,7 @@ mod tests {
             &target,
             &json!({
                 "tokens": { "access_token": "tok" },
-                "codex_rate_limits": "legacy-string"
+                "codex_rate_limits": "existing-string"
             }),
         );
 

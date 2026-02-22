@@ -10,6 +10,7 @@ Checks documentation hygiene policy:
   - known transient development records are removed and not referenced from active docs
   - crate docs indexes avoid unexpected deep links to root docs
   - duplicate markdown payloads are not present across active docs trees
+  - legacy-removal guardrails stay enforced for docs and runtime surfaces
 
 Options:
   --strict   Treat warnings as hard failures
@@ -116,6 +117,66 @@ if [[ -n "$dup_hashes" ]]; then
     [[ -n "$hash" ]] || continue
     record_issue error "duplicate markdown payload hash detected: $hash"
   done <<<"$dup_hashes"
+fi
+
+# Legacy-removal guardrails (reintroduction detection)
+legacy_docs_hits="$(rg -n --hidden --glob '!.git' -S '\blegacy\b' \
+  docs/specs docs/runbooks BINARY_DEPENDENCIES.md crates/*/README.md crates/*/docs 2>/dev/null || true)"
+if [[ -n "$legacy_docs_hits" ]]; then
+  record_issue error "legacy keyword reintroduced in active docs"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    record_issue error "  doc-hit: $line"
+  done <<<"$legacy_docs_hits"
+fi
+
+legacy_rs_hits="$(rg -n --hidden --glob '!.git' --glob '*.rs' -S '\blegacy\b' crates || true)"
+if [[ -n "$legacy_rs_hits" ]]; then
+  record_issue error "legacy keyword reintroduced in Rust sources"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    record_issue error "  rs-hit: $line"
+  done <<<"$legacy_rs_hits"
+fi
+
+removed_redirect_hits="$(rg -n -S 'handle_legacy_redirect|"provider" \| "debug" \| "workflow" \| "automation"' \
+  crates/codex-cli/src/main.rs crates/gemini-cli/src/main.rs 2>/dev/null || true)"
+if [[ -n "$removed_redirect_hits" ]]; then
+  record_issue error "removed codex/gemini redirect surfaces were reintroduced"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    record_issue error "  redirect-hit: $line"
+  done <<<"$removed_redirect_hits"
+fi
+
+removed_alias_hits="$(rg -n -S 'window-name|visible_alias = "enter"|Backward-compatible aliases are still accepted' \
+  crates/macos-agent/src/cli.rs crates/macos-agent/README.md 2>/dev/null || true)"
+if [[ -n "$removed_alias_hits" ]]; then
+  record_issue error "removed macos-agent alias surfaces were reintroduced"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    record_issue error "  alias-hit: $line"
+  done <<<"$removed_alias_hits"
+fi
+
+removed_websocket_hits="$(rg -n -S 'top-level send|receiveTimeoutSeconds|or top-level send' \
+  crates/api-testing-core/src/websocket/schema.rs crates/api-websocket/docs/specs/websocket-request-schema-v1.md 2>/dev/null || true)"
+if [[ -n "$removed_websocket_hits" ]]; then
+  record_issue error "removed websocket fallback surfaces were reintroduced"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    record_issue error "  websocket-hit: $line"
+  done <<<"$removed_websocket_hits"
+fi
+
+removed_image_ops_hits="$(rg -n -S 'Operation::(AutoOrient|Resize|Rotate|Crop|Pad|Flip|Flop|Optimize)|legacy transform|Legacy transform' \
+  crates/image-processing/src crates/image-processing/README.md BINARY_DEPENDENCIES.md 2>/dev/null || true)"
+if [[ -n "$removed_image_ops_hits" ]]; then
+  record_issue error "removed image-processing transform surfaces were reintroduced"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    record_issue error "  image-hit: $line"
+  done <<<"$removed_image_ops_hits"
 fi
 
 for warn in "${warnings[@]}"; do

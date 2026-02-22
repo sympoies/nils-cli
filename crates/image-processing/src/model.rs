@@ -1,7 +1,6 @@
 use serde::Serialize;
 
 pub const SCHEMA_VERSION: i32 = 1;
-pub const SUPPORTED_CONVERT_TARGETS: [&str; 3] = ["png", "jpg", "webp"];
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct ImageInfo {
@@ -12,15 +11,6 @@ pub struct ImageInfo {
     pub alpha: Option<bool>,
     pub exif_orientation: Option<String>,
     pub size_bytes: Option<u64>,
-}
-
-pub type OutputModeName = &'static str;
-
-#[derive(Clone, Debug)]
-pub struct OutputMode {
-    pub mode: OutputModeName,
-    pub out: Option<std::path::PathBuf>,
-    pub out_dir: Option<std::path::PathBuf>,
 }
 
 #[derive(Clone, Debug, Serialize)]

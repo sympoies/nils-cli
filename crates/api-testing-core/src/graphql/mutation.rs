@@ -180,7 +180,7 @@ fn strip_line_comments(input: &str) -> String {
 
 pub fn operation_text_is_mutation(text: &str) -> bool {
     // Keep newlines, replace stripped ranges with spaces to prevent creating accidental tokens
-    // (parity with legacy `re.sub(..., " ", ...)` behavior).
+    // (parity with prior `re.sub(..., " ", ...)` behavior).
     let cleaned = strip_line_comments(&strip_strings(&strip_block_comments(text)));
 
     for raw_line in cleaned.lines() {

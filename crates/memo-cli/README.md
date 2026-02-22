@@ -3,8 +3,8 @@
 ## Overview
 `memo-cli` is a capture-first memo CLI with an agent enrichment loop.
 Default output is human-readable text. JSON is explicit and intended for service/agent callers.
-Storage bootstrap is consolidated into one init schema (`schema_v1.sql`); legacy DB upgrade
-compatibility is not guaranteed after this consolidation.
+Storage bootstrap is consolidated into one init schema (`schema_v1.sql`); upgrade
+compatibility for pre-consolidation databases is not guaranteed after this consolidation.
 
 ## Usage
 ```text
@@ -117,7 +117,6 @@ memo-cli report month --from 2026-02-01T00:00:00Z --to 2026-02-29T23:59:59Z --js
 - Storage schema: `crates/memo-cli/docs/specs/memo-cli-storage-schema-v1.md`
 - Workflow extension contract: `crates/memo-cli/docs/specs/memo-cli-workflow-extension-contract-v1.md`
 - Release policy: `crates/memo-cli/docs/specs/memo-cli-release-policy.md`
-- Archived pre-launch v0 specs: `crates/memo-cli/docs/specs/archive/v0/`
 
 ## Docs
 

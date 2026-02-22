@@ -29,11 +29,11 @@ Help:
 |---|---|
 | Shared provider runtime helpers (`auth/path/config/exec/error`) | `nils-common::provider_runtime` + `codex-cli` adapters |
 | OpenAI/Codex auth, Codex prompt wrappers, Codex rate-limit diagnostics, Starship | `codex-cli` |
-| Legacy top-level groups (`provider|debug|workflow|automation`) | unsupported (`64`) |
+| Unsupported commands/groups | clap usage error (`64`) |
 
 - `codex-cli` owns only provider-specific OpenAI/Codex operations (`agent`, `auth`, `diag rate-limits`, `config`, `starship`).
-- Compatibility behavior: existing `codex-cli` commands stay stable for provider-specific workflows.
-- Legacy top-level groups `provider|debug|workflow|automation` are retained only as deterministic usage errors (`64`).
+- Existing `codex-cli` commands stay stable for provider-specific workflows.
+- Unknown groups/subcommands are deterministic usage errors (`64`).
 
 ## Commands
 
@@ -101,11 +101,11 @@ Auth examples:
 - `64`: usage or argument errors.
 - `1`: operational errors.
 
-## Compatibility sign-off checklist
+## Contract sign-off checklist
 
 - [ ] `cargo test -p nils-codex-cli --test main_entrypoint --test dispatch`
 - [ ] `rg -n "codex-cli\\.diag\\.rate-limits\\.v1|codex-cli\\.auth\\.v1" crates/codex-cli/docs/specs/codex-cli-diag-auth-json-contract-v1.md`
-- [ ] `NILS_WRAPPER_MODE=debug ./wrappers/codex-cli provider list` exits `64` with a stable unsupported-command hint.
+- [ ] `NILS_WRAPPER_MODE=debug ./wrappers/codex-cli unknown-group` exits `64` with clap usage error output.
 
 ## Docs
 

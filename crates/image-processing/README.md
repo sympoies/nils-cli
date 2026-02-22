@@ -1,14 +1,11 @@
 # image-processing
 
 ## Overview
-`image-processing` is a batch image CLI with two execution paths:
-- Rust SVG path:
-  - `convert --from-svg <path> --to png|webp|svg --out <file>`
-  - `svg-validate --in <svg> --out <svg>`
-- Legacy transform path (ImageMagick):
-  - `auto-orient|convert|resize|rotate|crop|pad|flip|flop|optimize`
+`image-processing` provides a modern SVG-first flow:
+- `svg-validate --in <svg> --out <svg>`
+- `convert --from-svg <path> --to png|webp|svg --out <file>`
 
-`generate` has been removed. Use intent -> SVG -> `svg-validate` -> `convert --from-svg` instead.
+`generate` is removed.
 
 ## Usage
 ```text
@@ -16,45 +13,34 @@ Usage:
   image-processing <subcommand> [flags]
 
 Subcommands:
-  info | svg-validate | auto-orient | convert | resize | rotate | crop | pad | flip | flop | optimize
+  convert | svg-validate
 
 Help:
   image-processing --help
 ```
 
 ## Commands
-- `info`: Probe inputs and emit metadata summary (no output mode).
-- `svg-validate`: Validate + sanitize one SVG input into one SVG output.
-- `convert`: Convert image formats.
-  - Legacy mode: `--in ... --to png|jpg|webp`.
-  - SVG mode: `--from-svg <path> --to png|webp|svg --out <file>` (optional `--width`/`--height` for raster outputs).
-- `resize`: Resize by `--scale`, `--width`/`--height`, or `--aspect` + `--fit` (`contain|cover|stretch`).
-- `rotate`: Rotate by degrees; requires `--degrees`.
-- `crop`: Crop by `--rect`, `--size`, or `--aspect` (exactly one).
-- `pad`: Pad to a target size; requires `--width` and `--height`.
-- `flip`: Apply ImageMagick `-flip`.
-- `flop`: Apply ImageMagick `-flop`.
-- `optimize`: Optimize `jpg` or `webp` outputs; supports `--quality`, `--lossless`, `--no-progressive`.
+- `svg-validate`: Validate and sanitize one SVG input into one SVG output.
+- `convert`: Render trusted SVG source into `png`, `webp`, or `svg` output.
 
 ## Common flags
-- Inputs (legacy transform commands only): `--in <path>` (repeatable, required), `--recursive`, `--glob <pattern>` (repeatable)
-- Source SVG mode: `--from-svg <path>` (convert only)
-- Output mode: `--out <file>`, `--out-dir <dir>`, or `--in-place` (requires `--yes`)
+- Input:
+  - `svg-validate`: `--in <path>` (exactly one)
+  - `convert`: `--from-svg <path>`
+- Output: `--out <file>`
 - Output controls: `--overwrite`, `--dry-run`, `--json`, `--report`
-- Transform options: `--no-auto-orient`, `--strip-metadata`, `--background <color>`
+- Render sizing for raster output: `--width`, `--height`
 
-## `--from-svg` contract (v1)
-- Allowed only on `convert`.
-- Required: `--to png|webp|svg`, `--out <file>`.
-- Forbidden with `--from-svg`: `--in`, `--recursive`, `--glob`, `--out-dir`, `--in-place`.
+## `convert --from-svg` contract (v1)
+- Required: `--from-svg`, `--to png|webp|svg`, `--out <file>`.
+- Forbidden: `--in`.
 - `--out` extension must match `--to`.
-- Optional: `--width`/`--height` for raster output sizing (`png`/`webp`); a single side keeps aspect ratio.
+- Optional: `--width` and `--height` for `png`/`webp` sizing.
 - `--to svg` does not support `--width`/`--height`.
-- This path is Rust-backed (`usvg`/`resvg`) and does not require ImageMagick.
 
 ## `svg-validate` contract
 - Required: exactly one `--in <svg>` and `--out <svg>`.
-- Forbidden: `--from-svg`, `--recursive`, `--glob`, `--out-dir`, `--in-place`.
+- Forbidden: `--from-svg`, `--to`, `--width`, `--height`.
 - Output is deterministic for identical input.
 
 ## Examples
@@ -92,8 +78,6 @@ cargo run -p nils-image-processing -- convert \
 
 ## Dependencies
 - `convert --from-svg` and `svg-validate`: no external binary dependency (Rust backend).
-- Legacy transform subcommands: ImageMagick (`magick`, or `convert` + `identify`).
-- Optional: `cjpeg`/`djpeg` for JPEG optimize, `cwebp`/`dwebp` for WebP optimize.
 
 ## Docs
 

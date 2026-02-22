@@ -13,13 +13,8 @@ Supported top-level fields:
 - `url` (string, optional): explicit WebSocket target.
 - `headers` (object, optional): handshake headers.
 - `connectTimeoutSeconds` (integer/string, optional): reserved timeout input (accepted for contract parity).
-- `steps` (array, required unless legacy `send` is used): ordered scripted session steps.
+- `steps` (array, required): ordered scripted session steps.
 - `expect` (object, optional): assertion against the last received message.
-
-Legacy compatibility:
-- if `steps` is omitted and top-level `send` exists, runner builds implicit steps:
-  1. `send`
-  2. `receive` (with optional `receiveTimeoutSeconds` + top-level `expect`)
 
 ## Step schema
 Each `steps[i]` must include `type`.
@@ -50,7 +45,7 @@ Validation behavior:
 Deterministic schema errors include:
 - request file is not valid JSON
 - request root is not a JSON object
-- `steps` is missing/empty without legacy `send`
+- `steps` is missing/empty
 - unsupported `steps[i].type`
 - missing send payload fields
 
@@ -60,7 +55,7 @@ Deterministic schema errors include:
 | `health.ws.json` | send/receive success (`jq` true) | pass |
 | `expect-fail.ws.json` | receive message fails `textContains`/`jq` | failure with assertion message |
 | `invalid-json.ws.json` | malformed JSON file | schema load failure |
-| `missing-steps.ws.json` | no `steps` and no legacy `send` | schema validation failure |
+| `missing-steps.ws.json` | no `steps` field | schema validation failure |
 | `connect-fail.ws.json` | unreachable target URL | connection failure |
 
 ## Reusable fixture pattern

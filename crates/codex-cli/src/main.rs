@@ -11,18 +11,13 @@ fn main() {
 }
 
 fn run() -> i32 {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.is_empty() {
+    if std::env::args_os().nth(1).is_none() {
         let mut cmd = cli::Cli::command();
         if cmd.print_help().is_ok() {
             println!();
             return 0;
         }
         return 1;
-    }
-
-    if let Some(redirect_code) = handle_legacy_redirect(&args) {
-        return redirect_code;
     }
 
     let cli = match cli::Cli::try_parse_from(std::env::args()) {
@@ -182,51 +177,4 @@ fn print_subcommand_help(name: &str) -> i32 {
         return 0;
     }
     1
-}
-
-fn handle_legacy_redirect(args: &[String]) -> Option<i32> {
-    let cmd = args.first()?.as_str();
-    match cmd {
-        "provider" | "debug" | "workflow" | "automation" => {
-            eprintln!("codex-cli: '{}' command is no longer supported", cmd);
-            Some(64)
-        }
-        "help" => {
-            let mut command = cli::Cli::command();
-            if command.print_help().is_ok() {
-                println!();
-                return Some(0);
-            }
-            Some(1)
-        }
-        "list" => {
-            eprintln!("codex-cli: use `codex-cli help`");
-            Some(64)
-        }
-        "prompt" => {
-            eprintln!("codex-cli: use `codex-cli agent prompt`");
-            Some(64)
-        }
-        "advice" => {
-            eprintln!("codex-cli: use `codex-cli agent advice`");
-            Some(64)
-        }
-        "knowledge" => {
-            eprintln!("codex-cli: use `codex-cli agent knowledge`");
-            Some(64)
-        }
-        "commit" => {
-            eprintln!("codex-cli: use `codex-cli agent commit`");
-            Some(64)
-        }
-        "auto-refresh" => {
-            eprintln!("codex-cli: use `codex-cli auth auto-refresh`");
-            Some(64)
-        }
-        "rate-limits" => {
-            eprintln!("codex-cli: use `codex-cli diag rate-limits`");
-            Some(64)
-        }
-        _ => None,
-    }
 }

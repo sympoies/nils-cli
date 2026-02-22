@@ -141,12 +141,13 @@ fn parse_send_text(raw: &serde_json::Value) -> Result<String> {
 }
 
 fn parse_steps(raw_steps: Option<&serde_json::Value>) -> Result<Vec<WebsocketStep>> {
-    let Some(raw_steps) = raw_steps else {
-        return Ok(Vec::new());
-    };
+    let raw_steps = raw_steps.context("websocket request .steps is required")?;
     let arr = raw_steps
         .as_array()
         .context("websocket request .steps must be an array")?;
+    if arr.is_empty() {
+        anyhow::bail!("websocket request .steps must include at least one step");
+    }
 
     let mut out = Vec::new();
     for (idx, raw_step) in arr.iter().enumerate() {
@@ -241,27 +242,7 @@ pub fn parse_websocket_request_json(raw: serde_json::Value) -> Result<WebsocketR
         obj.get("connectTimeoutSeconds"),
     )?;
 
-    let mut steps = parse_steps(obj.get("steps"))?;
-    if steps.is_empty()
-        && let Some(send_raw) = obj.get("send")
-    {
-        steps.push(WebsocketStep::Send {
-            text: parse_send_text(send_raw)?,
-        });
-        let timeout_seconds = parse_optional_u64(
-            "websocket request .receiveTimeoutSeconds",
-            obj.get("receiveTimeoutSeconds"),
-        )?;
-        let expect = parse_expect(obj.get("expect"), "websocket request .expect")?;
-        steps.push(WebsocketStep::Receive {
-            timeout_seconds,
-            expect,
-        });
-    }
-
-    if steps.is_empty() {
-        anyhow::bail!("websocket request requires at least one step (or top-level send)");
-    }
+    let steps = parse_steps(obj.get("steps"))?;
 
     let expect = parse_expect(obj.get("expect"), "websocket request .expect")?;
 
@@ -298,19 +279,15 @@ mod tests {
     }
 
     #[test]
-    fn websocket_schema_legacy_send_builds_receive_step() {
-        let req = parse_websocket_request_json(serde_json::json!({
-            "send": {"ping": true},
-            "expect": {"jq": ".ok == true"}
-        }))
-        .unwrap();
-        assert_eq!(req.steps.len(), 2);
+    fn websocket_schema_rejects_missing_steps() {
+        let err = parse_websocket_request_json(serde_json::json!({})).unwrap_err();
+        assert!(format!("{err:#}").contains(".steps is required"));
     }
 
     #[test]
     fn websocket_schema_rejects_empty_steps() {
-        let err = parse_websocket_request_json(serde_json::json!({})).unwrap_err();
-        assert!(format!("{err:#}").contains("requires at least one step"));
+        let err = parse_websocket_request_json(serde_json::json!({"steps": []})).unwrap_err();
+        assert!(format!("{err:#}").contains("must include at least one step"));
     }
 
     #[test]

@@ -2,10 +2,10 @@
 
 ## Overview
 This workspace ships five Rust API testing CLIs (`api-rest`, `api-gql`, `api-grpc`, `api-websocket`, `api-test`) plus the shared library crate
-`api-testing-core`. Behavioral parity with the legacy scripts remains the top priority: flags, defaults, exit codes,
-and on-disk artifacts (history files, reports, results).
+`api-testing-core`. The canonical Rust CLI contracts are the source of truth: flags, defaults, exit codes, and on-disk
+artifacts (history files, reports, results).
 
-Detailed parity specs live with each binary:
+Detailed command specs live with each binary:
 - `crates/api-rest/README.md`
 - `crates/api-gql/README.md`
 - `crates/api-grpc/README.md`
@@ -14,19 +14,19 @@ Detailed parity specs live with each binary:
 
 This README focuses on the shared repository layout, cross-CLI concepts, and the `api-testing-core` surface area.
 
-## Binaries and legacy script mapping
+## Binaries and command surface mapping
 - `api-rest` (REST)
-  - `api-rest call` (default) : parity with `rest.sh`
-  - `api-rest history` : parity with `rest-history.sh`
-  - `api-rest report` : parity with `rest-report.sh`
+  - `api-rest call` (default)
+  - `api-rest history`
+  - `api-rest report`
 - `api-gql` (GraphQL)
-  - `api-gql call` (default) : parity with `gql.sh`
-  - `api-gql history` : parity with `gql-history.sh`
-  - `api-gql report` : parity with `gql-report.sh`
-  - `api-gql schema` : parity with `gql-schema.sh`
+  - `api-gql call` (default)
+  - `api-gql history`
+  - `api-gql report`
+  - `api-gql schema`
 - `api-test` (suite runner)
-  - `api-test run` : parity with `api-test.sh`
-  - `api-test summary` : parity with `api-test-summary.sh`
+  - `api-test run`
+  - `api-test summary`
 - `api-grpc` (gRPC unary)
   - `api-grpc call` (default)
   - `api-grpc history`
@@ -100,7 +100,7 @@ Notes:
   - JSON manifest (`version: 1`) that drives `api-test run` and defines cases, defaults, auth, and cleanup.
 
 ## Canonical repo layouts
-The CLIs support the same layouts the legacy scripts assume.
+The CLIs support the following repository layouts.
 
 ### Layout A: App repo with `setup/` + `tests/` (recommended)
 ```text

@@ -11,13 +11,8 @@ fn main() {
 }
 
 fn run() -> i32 {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.is_empty() {
+    if std::env::args_os().nth(1).is_none() {
         return print_root_help();
-    }
-
-    if let Some(redirect_code) = handle_legacy_redirect(&args) {
-        return redirect_code;
     }
 
     let cli = match cli::Cli::try_parse_from(std::env::args()) {
@@ -177,44 +172,4 @@ fn print_subcommand_help(name: &str) -> i32 {
         return 0;
     }
     1
-}
-
-fn handle_legacy_redirect(args: &[String]) -> Option<i32> {
-    let cmd = args.first()?.as_str();
-    match cmd {
-        "provider" | "debug" | "workflow" | "automation" => {
-            eprintln!("gemini-cli: '{}' command is no longer supported", cmd);
-            Some(64)
-        }
-        "help" => Some(print_root_help()),
-        "list" => {
-            eprintln!("gemini-cli: use `gemini-cli help`");
-            Some(64)
-        }
-        "prompt" => {
-            eprintln!("gemini-cli: use `gemini-cli agent prompt`");
-            Some(64)
-        }
-        "advice" => {
-            eprintln!("gemini-cli: use `gemini-cli agent advice`");
-            Some(64)
-        }
-        "knowledge" => {
-            eprintln!("gemini-cli: use `gemini-cli agent knowledge`");
-            Some(64)
-        }
-        "commit" => {
-            eprintln!("gemini-cli: use `gemini-cli agent commit`");
-            Some(64)
-        }
-        "auto-refresh" => {
-            eprintln!("gemini-cli: use `gemini-cli auth auto-refresh`");
-            Some(64)
-        }
-        "rate-limits" => {
-            eprintln!("gemini-cli: use `gemini-cli diag rate-limits`");
-            Some(64)
-        }
-        _ => None,
-    }
 }

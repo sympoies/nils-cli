@@ -119,7 +119,6 @@ macos-agent debug bundle --active-window --format json
 Notes:
 - `--format tsv` is only supported by `windows list` and `apps list`.
 - Canonical flags: use `--window-title-contains` and `input type --submit`.
-- Backward-compatible aliases are still accepted: `--window-name`, `input type --enter`.
 - `--dry-run` guarantees no OS automation command execution for mutating actions.
 - `--error-format json` emits machine-parseable error payloads on `stderr`.
 - `--trace` writes per-command trace artifacts to `AGENT_HOME/out/macos-agent-trace/`.

@@ -18,8 +18,8 @@ This document is the single runtime contract source for migrating `codex-core` a
 | Paths | Secret dir env key | `CODEX_SECRET_DIR` | `GEMINI_SECRET_DIR` | Env override always takes precedence. |
 | Paths | Auth file env key | `CODEX_AUTH_FILE` | `GEMINI_AUTH_FILE` | Env override always takes precedence. |
 | Paths | Secret cache env key | `CODEX_SECRET_CACHE_DIR` | `GEMINI_SECRET_CACHE_DIR` | Env override always takes precedence. |
-| Paths | Home secret dir default | `$HOME/.config/codex_secrets` | Prefer `$HOME/.gemini/secrets`, fallback `$HOME/.config/gemini_secrets` when modern missing and legacy exists | Existing precedence must remain deterministic. |
-| Paths | Home auth file default | `$HOME/.agents/auth.json` | Prefer `$HOME/.gemini/oauth_creds.json`, fallback `$HOME/.agents/auth.json` when modern missing and legacy exists | Existing credential fallback behavior is preserved. |
+| Paths | Home secret dir default | `$HOME/.config/codex_secrets` | `$HOME/.gemini/secrets` | Home default is modern-path only. |
+| Paths | Home auth file default | `$HOME/.agents/auth.json` | `$HOME/.gemini/oauth_creds.json` | Home default is modern-path only. |
 | Paths | Secret cache fallback | `ZSH_CACHE_DIR/codex/secrets` else `ZDOTDIR/cache/codex/secrets` | `ZSH_CACHE_DIR/gemini/secrets` else `$HOME/.gemini/cache/secrets` else `ZDOTDIR/cache/gemini/secrets` | Keep provider-specific cache layout. |
 | Paths | Feature dir name | `_features/codex` | `_features/gemini` | Feature-lane isolation required. |
 | Paths | Feature bootstrap marker | `codex-tools.zsh` (or `init.zsh`) | `gemini-tools.zsh` (or `init.zsh`) | Marker determines `secrets/` fallback behavior. |

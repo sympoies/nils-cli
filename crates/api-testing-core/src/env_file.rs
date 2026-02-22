@@ -97,7 +97,7 @@ pub fn read_prefixed_var(prefix: &str, profile: &str, files: &[&Path]) -> Result
     read_var_last_wins(&var, files)
 }
 
-/// Read an env var from a list of `.env`-like files using the legacy "last assignment wins" semantics.
+/// Read an env var from a list of `.env`-like files using "last assignment wins" semantics.
 ///
 /// Parity notes:
 /// - Lines are trimmed.

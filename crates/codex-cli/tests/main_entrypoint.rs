@@ -32,7 +32,7 @@ fn main_no_args_prints_help_and_exits_zero() {
 }
 
 #[test]
-fn main_help_legacy_redirect_exits_zero() {
+fn main_help_subcommand_exits_zero() {
     let output = run(&["help"]);
     assert_exit(&output, 0);
     assert!(stdout(&output).contains("codex-cli"));
@@ -69,14 +69,18 @@ fn main_unknown_command_exits_64() {
 }
 
 #[test]
-fn main_removed_legacy_groups_return_usage_error() {
+fn main_removed_provider_neutral_groups_use_clap_parse_errors() {
     for group in ["provider", "debug", "workflow", "automation"] {
         let output = run(&[group]);
         assert_exit(&output, 64);
+        let err = stderr(&output);
         assert!(
-            stderr(&output).contains("no longer supported"),
-            "stderr should explain unsupported command: {}",
-            stderr(&output)
+            err.contains("unrecognized subcommand"),
+            "stderr should include clap parse error: {err}"
+        );
+        assert!(
+            err.contains(group),
+            "stderr should include rejected command token: {err}"
         );
     }
 }

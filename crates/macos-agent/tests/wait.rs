@@ -135,7 +135,7 @@ fn wait_window_present_succeeds_for_terminal() {
 }
 
 #[test]
-fn wait_window_present_supports_window_name_alias() {
+fn wait_window_present_rejects_window_title_contains_without_app() {
     let harness = common::MacosAgentHarness::new();
     let cwd = TempDir::new().expect("tempdir");
 
@@ -144,9 +144,7 @@ fn wait_window_present_supports_window_name_alias() {
         &[
             "wait",
             "window-present",
-            "--app",
-            "Terminal",
-            "--window-name",
+            "--window-title-contains",
             "Docs",
             "--timeout-ms",
             "50",
@@ -155,8 +153,14 @@ fn wait_window_present_supports_window_name_alias() {
         ],
     );
 
-    assert_eq!(out.code, 0, "stderr: {}", out.stderr_text());
-    assert_eq!(out.stderr_text(), "");
+    assert_eq!(out.code, 2);
+    assert_eq!(out.stdout_text(), "");
+    assert!(
+        out.stderr_text().contains("requires")
+            || out
+                .stderr_text()
+                .contains("required arguments were not provided")
+    );
 }
 
 #[test]

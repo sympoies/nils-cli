@@ -196,7 +196,7 @@ mod tests {
                 item_id: 1,
                 created_at: "2026-02-12T08:00:00Z".to_string(),
                 state: "archived".to_string(),
-                text_preview: "legacy note".to_string(),
+                text_preview: "archived note".to_string(),
                 content_type: None,
                 validation_status: None,
             },
