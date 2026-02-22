@@ -58,19 +58,33 @@ fn build_utils_group() -> Command {
             Command::new("copy-staged")
                 .visible_alias("copy")
                 .about("Copy staged diff to clipboard")
-                .arg(Arg::new("stdout").long("stdout").action(ArgAction::SetTrue))
+                .arg(
+                    Arg::new("stdout")
+                        .long("stdout")
+                        .help("Print staged diff to stdout")
+                        .action(ArgAction::SetTrue),
+                )
                 .arg(
                     Arg::new("print")
                         .short('p')
                         .long("print")
+                        .help("Alias for --stdout")
                         .action(ArgAction::SetTrue),
                 )
-                .arg(Arg::new("both").long("both").action(ArgAction::SetTrue)),
+                .arg(
+                    Arg::new("both")
+                        .long("both")
+                        .help("Print diff and copy it to clipboard")
+                        .action(ArgAction::SetTrue),
+                ),
         )
         .subcommand(
-            Command::new("root")
-                .about("Jump to git root")
-                .arg(Arg::new("shell").long("shell").action(ArgAction::SetTrue)),
+            Command::new("root").about("Jump to git root").arg(
+                Arg::new("shell")
+                    .long("shell")
+                    .help("Print shell command instead of plain output")
+                    .action(ArgAction::SetTrue),
+            ),
         )
         .subcommand(
             Command::new("commit-hash")
@@ -107,35 +121,55 @@ fn build_reset_group() -> Command {
         .subcommand(
             Command::new("remote")
                 .about("Reset to remote branch")
-                .arg(Arg::new("ref").long("ref").value_name("ref"))
+                .arg(
+                    Arg::new("ref")
+                        .long("ref")
+                        .help("Remote ref in <remote>/<branch> form")
+                        .value_name("ref"),
+                )
                 .arg(
                     Arg::new("remote")
                         .short('r')
                         .long("remote")
+                        .help("Remote name")
                         .value_name("remote"),
                 )
                 .arg(
                     Arg::new("branch")
                         .short('b')
                         .long("branch")
+                        .help("Remote branch name")
                         .value_name("branch"),
                 )
                 .arg(
                     Arg::new("no-fetch")
                         .long("no-fetch")
+                        .help("Skip fetching remote refs")
                         .action(ArgAction::SetTrue),
                 )
-                .arg(Arg::new("prune").long("prune").action(ArgAction::SetTrue))
-                .arg(Arg::new("clean").long("clean").action(ArgAction::SetTrue))
+                .arg(
+                    Arg::new("prune")
+                        .long("prune")
+                        .help("Run fetch with --prune")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("clean")
+                        .long("clean")
+                        .help("Run git clean -fd after reset")
+                        .action(ArgAction::SetTrue),
+                )
                 .arg(
                     Arg::new("set-upstream")
                         .long("set-upstream")
+                        .help("Set upstream to the target remote branch")
                         .action(ArgAction::SetTrue),
                 )
                 .arg(
                     Arg::new("yes")
                         .short('y')
                         .long("yes")
+                        .help("Skip confirmation prompts")
                         .action(ArgAction::SetTrue),
                 ),
         )
@@ -148,16 +182,28 @@ fn build_commit_group() -> Command {
         .subcommand(
             Command::new("context")
                 .about("Print commit context")
-                .arg(Arg::new("stdout").long("stdout").action(ArgAction::SetTrue))
-                .arg(Arg::new("both").long("both").action(ArgAction::SetTrue))
+                .arg(
+                    Arg::new("stdout")
+                        .long("stdout")
+                        .help("Print report to stdout")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("both")
+                        .long("both")
+                        .help("Print report and write output file")
+                        .action(ArgAction::SetTrue),
+                )
                 .arg(
                     Arg::new("no-color")
                         .long("no-color")
+                        .help("Disable ANSI colors")
                         .action(ArgAction::SetTrue),
                 )
                 .arg(
                     Arg::new("include")
                         .long("include")
+                        .help("Additional glob(s) to include")
                         .value_name("glob")
                         .num_args(1..),
                 ),
@@ -166,11 +212,36 @@ fn build_commit_group() -> Command {
             Command::new("context-json")
                 .visible_aliases(["context_json", "contextjson", "json"])
                 .about("Print commit context as JSON")
-                .arg(Arg::new("stdout").long("stdout").action(ArgAction::SetTrue))
-                .arg(Arg::new("both").long("both").action(ArgAction::SetTrue))
-                .arg(Arg::new("pretty").long("pretty").action(ArgAction::SetTrue))
-                .arg(Arg::new("bundle").long("bundle").action(ArgAction::SetTrue))
-                .arg(Arg::new("out-dir").long("out-dir").value_name("path")),
+                .arg(
+                    Arg::new("stdout")
+                        .long("stdout")
+                        .help("Print JSON to stdout")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("both")
+                        .long("both")
+                        .help("Print JSON and write files")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("pretty")
+                        .long("pretty")
+                        .help("Pretty-print JSON output")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("bundle")
+                        .long("bundle")
+                        .help("Write bundle files to output directory")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("out-dir")
+                        .long("out-dir")
+                        .help("Output directory for generated files")
+                        .value_name("path"),
+                ),
         )
         .subcommand(
             Command::new("to-stash")
@@ -188,11 +259,18 @@ fn build_branch_group() -> Command {
             Command::new("cleanup")
                 .visible_alias("delete-merged")
                 .about("Delete merged branches")
-                .arg(Arg::new("base").short('b').long("base").value_name("base"))
+                .arg(
+                    Arg::new("base")
+                        .short('b')
+                        .long("base")
+                        .help("Base ref used to determine merged branches")
+                        .value_name("base"),
+                )
                 .arg(
                     Arg::new("squash")
                         .short('s')
                         .long("squash")
+                        .help("Include branches already applied via squash")
                         .action(ArgAction::SetTrue),
                 ),
         )
@@ -209,20 +287,28 @@ fn build_ci_group() -> Command {
                     Arg::new("remote")
                         .short('r')
                         .long("remote")
+                        .help("Remote used for fetch/push")
                         .value_name("name"),
                 )
                 .arg(
                     Arg::new("no-fetch")
                         .long("no-fetch")
+                        .help("Skip remote fetch before branch creation")
                         .action(ArgAction::SetTrue),
                 )
                 .arg(
                     Arg::new("force")
                         .short('f')
                         .long("force")
+                        .help("Reset existing CI branch and force push")
                         .action(ArgAction::SetTrue),
                 )
-                .arg(Arg::new("stay").long("stay").action(ArgAction::SetTrue)),
+                .arg(
+                    Arg::new("stay")
+                        .long("stay")
+                        .help("Stay on CI branch after push")
+                        .action(ArgAction::SetTrue),
+                ),
         )
         .subcommand(Command::new("help").about("Display help message for ci"))
 }
