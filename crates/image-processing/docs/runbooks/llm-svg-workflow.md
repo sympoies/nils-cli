@@ -16,7 +16,7 @@ mkdir -p out/plan-llm
 
 ```bash
 SVG_LLM_CMD='cat crates/image-processing/tests/fixtures/llm-svg-valid.svg' \
-  scripts/image-processing/llm_svg_pipeline.sh \
+  crates/image-processing/scripts/llm_svg_pipeline.sh \
   --intent "traffic car icon" \
   --out-svg out/plan-llm/traffic-car.svg \
   --dry-run

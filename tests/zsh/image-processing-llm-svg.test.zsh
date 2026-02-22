@@ -4,7 +4,7 @@ setopt pipe_fail nounset
 
 SCRIPT_PATH="${0:A}"
 REPO_ROOT="${SCRIPT_PATH:h:h:h}"
-PIPELINE="$REPO_ROOT/scripts/image-processing/llm_svg_pipeline.sh"
+PIPELINE="$REPO_ROOT/crates/image-processing/scripts/llm_svg_pipeline.sh"
 
 if [[ ! -x "$PIPELINE" ]]; then
   print -u2 -r -- "FAIL: missing pipeline script: $PIPELINE"
