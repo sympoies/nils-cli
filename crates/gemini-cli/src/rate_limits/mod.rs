@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use nils_common::env as shared_env;
+
 use crate::auth;
 use crate::fs as gemini_fs;
 use crate::paths;
@@ -143,7 +145,7 @@ pub fn run(args: &RateLimitsOptions) -> i32 {
         return 1;
     }
 
-    let default_all_enabled = env_truthy("GEMINI_RATE_LIMITS_DEFAULT_ALL_ENABLED");
+    let default_all_enabled = shared_env::env_truthy("GEMINI_RATE_LIMITS_DEFAULT_ALL_ENABLED");
     let all_mode = args.all
         || (!args.cached
             && !output_json
@@ -1187,18 +1189,6 @@ fn env_non_empty(key: &str) -> Option<String> {
         .filter(|raw| !raw.is_empty())
 }
 
-fn env_truthy(key: &str) -> bool {
-    match std::env::var(key) {
-        Ok(raw) => {
-            matches!(
-                raw.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        }
-        Err(_) => false,
-    }
-}
-
 struct RunError {
     code: String,
     message: String,
@@ -1441,11 +1431,11 @@ mod tests {
     #[test]
     fn env_truthy_accepts_expected_variants() {
         let _v1 = EnvGuard::set("GEMINI_TEST_TRUTHY", "true");
-        assert!(env_truthy("GEMINI_TEST_TRUTHY"));
+        assert!(shared_env::env_truthy("GEMINI_TEST_TRUTHY"));
         let _v2 = EnvGuard::set("GEMINI_TEST_TRUTHY", "ON");
-        assert!(env_truthy("GEMINI_TEST_TRUTHY"));
+        assert!(shared_env::env_truthy("GEMINI_TEST_TRUTHY"));
         let _v3 = EnvGuard::set("GEMINI_TEST_TRUTHY", "0");
-        assert!(!env_truthy("GEMINI_TEST_TRUTHY"));
+        assert!(!shared_env::env_truthy("GEMINI_TEST_TRUTHY"));
     }
 
     #[test]

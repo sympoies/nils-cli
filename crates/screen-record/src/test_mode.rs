@@ -12,7 +12,7 @@ static CTRL_C_INSTALLED: OnceLock<Result<(), CliError>> = OnceLock::new();
 static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 pub fn enabled() -> bool {
-    env_truthy("AGENTS_SCREEN_RECORD_TEST_MODE")
+    shared_env::env_truthy("AGENTS_SCREEN_RECORD_TEST_MODE")
 }
 
 pub fn shareable_content() -> ShareableContent {
@@ -182,17 +182,12 @@ impl TestWriter {
     }
 }
 
-fn env_truthy(name: &str) -> bool {
-    let value = std::env::var_os(name).map(|raw| raw.to_string_lossy().into_owned());
-    shared_env::is_truthy_or(value.as_deref().map(str::trim), false)
-}
-
 fn realtime_recording_enabled() -> bool {
-    env_truthy("AGENTS_SCREEN_RECORD_TEST_MODE_REALTIME")
+    shared_env::env_truthy("AGENTS_SCREEN_RECORD_TEST_MODE_REALTIME")
 }
 
 fn fail_recording_after_partial_write() -> bool {
-    env_truthy("AGENTS_SCREEN_RECORD_TEST_MODE_FAIL_APPEND")
+    shared_env::env_truthy("AGENTS_SCREEN_RECORD_TEST_MODE_FAIL_APPEND")
 }
 
 fn install_ctrlc_handler() -> Result<(), CliError> {

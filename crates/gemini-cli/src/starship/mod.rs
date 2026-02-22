@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use nils_common::env as shared_env;
+
 use crate::auth;
 use crate::paths;
 use crate::rate_limits;
@@ -52,7 +54,8 @@ pub fn run(options: &StarshipOptions) -> i32 {
         return 0;
     }
 
-    let show_5h = env_truthy_or("GEMINI_STARSHIP_SHOW_5H_ENABLED", true) && !options.no_5h;
+    let show_5h =
+        shared_env::env_truthy_or("GEMINI_STARSHIP_SHOW_5H_ENABLED", true) && !options.no_5h;
     let time_format = match options.time_format.as_deref() {
         Some(value) => value,
         None if options.show_timezone => DEFAULT_TIME_FORMAT_WITH_TIMEZONE,
@@ -206,7 +209,7 @@ fn parse_duration_seconds(raw: &str) -> Option<u64> {
 }
 
 fn starship_enabled() -> bool {
-    env_truthy("GEMINI_STARSHIP_ENABLED")
+    shared_env::env_truthy("GEMINI_STARSHIP_ENABLED")
 }
 
 fn print_ttl_usage() {
@@ -229,8 +232,8 @@ fn resolve_name(target_file: &Path) -> Option<String> {
         .ok()
         .map(|value| value.to_ascii_lowercase())
         .unwrap_or_else(|| "secret".to_string());
-    let show_fallback = env_truthy("GEMINI_STARSHIP_SHOW_FALLBACK_NAME_ENABLED");
-    let show_full_email = env_truthy("GEMINI_STARSHIP_SHOW_FULL_EMAIL_ENABLED");
+    let show_fallback = shared_env::env_truthy("GEMINI_STARSHIP_SHOW_FALLBACK_NAME_ENABLED");
+    let show_full_email = shared_env::env_truthy("GEMINI_STARSHIP_SHOW_FULL_EMAIL_ENABLED");
 
     if source == "email" {
         if let Ok(Some(email)) = auth::email_from_auth_file(target_file) {
@@ -259,20 +262,6 @@ fn format_email_name(raw: &str, show_full_email: bool) -> String {
         return trimmed.to_string();
     }
     trimmed.split('@').next().unwrap_or(trimmed).to_string()
-}
-
-fn env_truthy_or(key: &str, default: bool) -> bool {
-    if let Ok(raw) = std::env::var(key) {
-        return matches!(
-            raw.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        );
-    }
-    default
-}
-
-fn env_truthy(key: &str) -> bool {
-    env_truthy_or(key, false)
 }
 
 fn env_u64(key: &str, default: u64) -> u64 {
