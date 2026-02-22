@@ -29,10 +29,10 @@ fn ov_str(value: &str) -> zbus::zvariant::OwnedValue {
 }
 
 pub fn ensure_portal_available() -> Result<(), CliError> {
-    if env_flag_enabled(ENV_FORCE_AVAILABLE) {
+    if shared_env::env_truthy(ENV_FORCE_AVAILABLE) {
         return Ok(());
     }
-    if env_flag_enabled(ENV_FORCE_MISSING) {
+    if shared_env::env_truthy(ENV_FORCE_MISSING) {
         return Err(portal_missing_error());
     }
 
@@ -268,9 +268,4 @@ fn portal_missing_error() -> CliError {
 Install xdg-desktop-portal and a desktop backend (e.g. xdg-desktop-portal-gnome or xdg-desktop-portal-kde), then log out/in.\n\
 Expected DBus service: org.freedesktop.portal.Desktop",
     )
-}
-
-fn env_flag_enabled(key: &str) -> bool {
-    let value = std::env::var_os(key).map(|raw| raw.to_string_lossy().into_owned());
-    shared_env::is_truthy_or(value.as_deref().map(str::trim), false)
 }

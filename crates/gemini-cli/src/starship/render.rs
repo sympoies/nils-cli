@@ -1,3 +1,4 @@
+use nils_common::env as shared_env;
 use std::path::Path;
 use std::{io, io::IsTerminal};
 
@@ -93,15 +94,12 @@ pub fn render_line(
 }
 
 fn should_color() -> bool {
-    if std::env::var_os("NO_COLOR").is_some() {
+    if shared_env::no_color_enabled() {
         return false;
     }
 
-    if let Ok(raw) = std::env::var("GEMINI_STARSHIP_COLOR_ENABLED") {
-        return matches!(
-            raw.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        );
+    if std::env::var("GEMINI_STARSHIP_COLOR_ENABLED").is_ok() {
+        return shared_env::env_truthy("GEMINI_STARSHIP_COLOR_ENABLED");
     }
 
     if std::env::var_os("STARSHIP_SESSION_KEY").is_some()

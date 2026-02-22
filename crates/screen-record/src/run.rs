@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use chrono::{Local, SecondsFormat, Utc};
+use nils_common::env as shared_env;
 
 use crate::cli::{AudioMode, Cli, ContainerFormat, ImageFormat};
 use crate::error::CliError;
@@ -819,9 +820,7 @@ fn write_motion_intervals_artifact(
 }
 
 fn diagnostics_failure_forced() -> bool {
-    let value = std::env::var_os("AGENTS_SCREEN_RECORD_TEST_MODE_FAIL_DIAGNOSTICS")
-        .map(|raw| raw.to_string_lossy().trim().to_ascii_lowercase());
-    matches!(value.as_deref(), Some("1" | "true" | "yes" | "on"))
+    shared_env::env_truthy("AGENTS_SCREEN_RECORD_TEST_MODE_FAIL_DIAGNOSTICS")
 }
 
 fn write_recording_metadata(path: &Path, metadata: &RecordingMetadata) -> Result<(), CliError> {

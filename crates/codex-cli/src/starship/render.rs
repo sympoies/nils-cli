@@ -101,8 +101,8 @@ fn should_color() -> bool {
         return false;
     }
 
-    if let Ok(raw) = std::env::var("CODEX_STARSHIP_COLOR_ENABLED") {
-        return shared_env::is_truthy(raw.trim());
+    if std::env::var("CODEX_STARSHIP_COLOR_ENABLED").is_ok() {
+        return shared_env::env_truthy("CODEX_STARSHIP_COLOR_ENABLED");
     }
 
     if std::env::var_os("STARSHIP_SESSION_KEY").is_some()
