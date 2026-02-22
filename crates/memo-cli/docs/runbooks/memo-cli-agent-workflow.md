@@ -95,4 +95,4 @@ When `apply` fails validation or conflict rates spike:
 4. Re-enable writes only after:
    - payloads pass validation,
    - contract tests pass,
-   - and rollout checks in `memo-cli-rollout.md` are green.
+   - and repository required checks are green.

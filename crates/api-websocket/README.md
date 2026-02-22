@@ -110,4 +110,3 @@ api-websocket history --command-only | api-websocket report-from-cmd --stdin --d
 - [Docs index](docs/README.md)
 - [Request schema v1](docs/specs/websocket-request-schema-v1.md)
 - [CLI contract v1](docs/specs/websocket-cli-contract-v1.md)
-- [Rollout runbook](docs/runbooks/api-websocket-rollout.md)

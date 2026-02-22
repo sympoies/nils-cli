@@ -83,4 +83,3 @@ Runtime override:
 
 ## Docs
 - [Docs index](docs/README.md)
-- [WebSocket adoption runbook](docs/runbooks/api-test-websocket-adoption.md)

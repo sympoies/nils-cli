@@ -5,7 +5,7 @@
 - [`specs/websocket-cli-contract-v1.md`](specs/websocket-cli-contract-v1.md)
 
 ## Runbooks
-- [`runbooks/api-websocket-rollout.md`](runbooks/api-websocket-rollout.md)
+- None yet. Add documents under `docs/runbooks/` and register them here.
 
 ## Links
 - Back to crate README: [`../README.md`](../README.md)
