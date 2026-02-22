@@ -114,4 +114,3 @@ Auth examples:
 - [Docs index](docs/README.md)
 - [Cross-lane parity contract](../../docs/specs/codex-gemini-cli-parity-contract-v1.md)
 - [JSON consumers runbook](docs/runbooks/json-consumers.md)
-- [Gemini path migration runbook](docs/runbooks/gemini-path-migration.md)

@@ -23,6 +23,24 @@ fn run(args: &[&str], envs: &[(&str, &Path)], vars: &[(&str, &str)]) -> CmdOutpu
     cmd::run_with(&bin, args, &options)
 }
 
+fn run_in_dir(
+    dir: &Path,
+    args: &[&str],
+    envs: &[(&str, &Path)],
+    vars: &[(&str, &str)],
+) -> CmdOutput {
+    let mut options = CmdOptions::default();
+    for (key, path) in envs {
+        let value = path.to_string_lossy();
+        options = options.with_env(key, value.as_ref());
+    }
+    for (key, value) in vars {
+        options = options.with_env(key, value);
+    }
+    let bin = codex_cli_bin();
+    cmd::run_in_dir_with(dir, &bin, args, &options)
+}
+
 fn stderr(output: &CmdOutput) -> String {
     output.stderr_text()
 }
@@ -244,8 +262,10 @@ fn rate_limits_async_clear_cache_failure_reports_error() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let secret_dir = dir.path().join("secrets");
     fs::create_dir_all(&secret_dir).expect("secret dir");
+    let working_dir = tempfile::TempDir::new().expect("working dir");
 
-    let output = run(
+    let output = run_in_dir(
+        working_dir.path(),
         &["diag", "rate-limits", "--async", "-c"],
         &[("CODEX_SECRET_DIR", &secret_dir)],
         &[("ZSH_CACHE_DIR", "relative-cache")],
@@ -259,8 +279,10 @@ fn rate_limits_async_json_clear_cache_failure_is_structured() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let secret_dir = dir.path().join("secrets");
     fs::create_dir_all(&secret_dir).expect("secret dir");
+    let working_dir = tempfile::TempDir::new().expect("working dir");
 
-    let output = run(
+    let output = run_in_dir(
+        working_dir.path(),
         &["diag", "rate-limits", "--async", "--json", "-c"],
         &[("CODEX_SECRET_DIR", &secret_dir)],
         &[

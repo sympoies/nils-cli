@@ -48,7 +48,7 @@ if [[ -z "$intent" || -z "$out_svg" ]]; then
 fi
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
-repo_root="$(cd "$script_dir/../.." && pwd)"
+repo_root="$(cd "$script_dir/../../.." && pwd)"
 
 system_prompt="$repo_root/crates/image-processing/assets/llm-svg-system-prompt.md"
 contract_prompt="$repo_root/crates/image-processing/assets/llm-svg-output-contract.md"
