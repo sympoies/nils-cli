@@ -13,7 +13,7 @@ or stub external commands.
 - FS helpers
   - `fs`: write text/bytes/json/executables while ensuring parent dirs exist
 - Command runners
-  - `cmd`: run binaries with captured output (`CmdOutput`) and flexible options (`CmdOptions`)
+  - `cmd`: run binaries with captured output (`CmdOutput`) and flexible options (`CmdOptions`), including resolved workspace-binary helpers (`run_resolved*`)
 - Workspace binaries
   - `bin`: `resolve` finds `CARGO_BIN_EXE_*` or falls back to `target/<profile>/<name>`
 - Git helpers

@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use nils_test_support::bin::resolve;
-use nils_test_support::cmd::{CmdOptions, run_with};
+use nils_test_support::cmd::run_resolved_in_dir;
 use nils_test_support::fs::write_text;
 #[allow(unused_imports)]
 pub use nils_test_support::git::git;
@@ -20,8 +20,7 @@ pub fn plan_tooling_bin() -> std::path::PathBuf {
 }
 
 pub fn run_plan_tooling(dir: &Path, args: &[&str]) -> CmdOut {
-    let options = CmdOptions::new().with_cwd(dir);
-    let output = run_with(&plan_tooling_bin(), args, &options);
+    let output = run_resolved_in_dir("plan-tooling", dir, args, &[], None);
     CmdOut {
         code: output.code,
         stdout: output.stdout_text(),

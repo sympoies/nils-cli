@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::Output;
 
 use nils_test_support::bin::resolve;
-use nils_test_support::cmd::{CmdOptions, run_with};
+use nils_test_support::cmd::{options_in_dir_with_envs, run_resolved};
 use nils_test_support::git::{InitRepoOptions, init_repo_with};
 #[allow(unused_imports)]
 pub use nils_test_support::git::{commit_file, git, repo_id};
@@ -27,16 +27,13 @@ pub fn run_git_lock_output(
     envs: &[(&str, &str)],
     input: Option<&str>,
 ) -> Output {
-    let mut options = CmdOptions::new().with_cwd(dir);
-    for (key, value) in envs {
-        options = options.with_env(key, value);
-    }
+    let mut options = options_in_dir_with_envs(dir, envs);
     options = match input {
         Some(data) => options.with_stdin_str(data),
         None => options.with_stdin_bytes(&[]),
     };
 
-    let output = run_with(&git_lock_bin(), args, &options);
+    let output = run_resolved("git-lock", args, &options);
     output.into_output()
 }
 

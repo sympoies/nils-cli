@@ -165,6 +165,36 @@ pub fn run_in_dir(
     run_with(bin, args, &options)
 }
 
+/// Build command options with cwd + env pairs for common integration test usage.
+pub fn options_in_dir_with_envs(dir: &Path, envs: &[(&str, &str)]) -> CmdOptions {
+    let mut options = CmdOptions::default().with_cwd(dir);
+    for (key, value) in envs {
+        options = options.with_env(key, value);
+    }
+    options
+}
+
+/// Resolve a workspace binary by name and run it with explicit options.
+pub fn run_resolved(bin_name: &str, args: &[&str], options: &CmdOptions) -> CmdOutput {
+    let bin = crate::bin::resolve(bin_name);
+    run_with(&bin, args, options)
+}
+
+/// Resolve and run a workspace binary in a specific directory.
+pub fn run_resolved_in_dir(
+    bin_name: &str,
+    dir: &Path,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    stdin: Option<&[u8]>,
+) -> CmdOutput {
+    let mut options = options_in_dir_with_envs(dir, envs);
+    if let Some(input) = stdin {
+        options = options.with_stdin_bytes(input);
+    }
+    run_resolved(bin_name, args, &options)
+}
+
 pub fn run_with(bin: &Path, args: &[&str], options: &CmdOptions) -> CmdOutput {
     run_impl(bin, args, options, None)
 }
