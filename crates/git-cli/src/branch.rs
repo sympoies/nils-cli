@@ -1,6 +1,6 @@
 use crate::commit_shared::{git_output, git_status_success, git_stdout_trimmed};
 use crate::prompt;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::process::Output;
 
 pub fn dispatch(cmd: &str, args: &[String]) -> Option<i32> {
@@ -13,6 +13,7 @@ pub fn dispatch(cmd: &str, args: &[String]) -> Option<i32> {
 struct CleanupArgs {
     base_ref: String,
     squash_mode: bool,
+    remove_worktrees: bool,
     help: bool,
 }
 
@@ -34,6 +35,7 @@ fn run_cleanup(args: &[String]) -> i32 {
 
     let base_ref = parsed.base_ref;
     let squash_mode = parsed.squash_mode;
+    let remove_worktrees = parsed.remove_worktrees;
 
     if !git_status_success(&["rev-parse", "--verify", "--quiet", &base_ref]) {
         eprintln!("❌ Invalid base ref: {base_ref}");
@@ -102,6 +104,14 @@ fn run_cleanup(args: &[String]) -> i32 {
     for branch in &merged_branches {
         merged_set.insert(branch.clone());
     }
+
+    let linked_worktrees = match linked_worktrees_by_branch() {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("{err:#}");
+            return 1;
+        }
+    };
 
     if !squash_mode && merged_branches.is_empty() {
         println!("✅ No merged local branches found.");
@@ -178,25 +188,93 @@ fn run_cleanup(args: &[String]) -> i32 {
         println!("  - {branch}");
     }
 
+    if remove_worktrees {
+        let removable_worktrees: Vec<_> = candidates
+            .iter()
+            .filter_map(|branch| {
+                linked_worktrees
+                    .get(branch)
+                    .map(|worktree_path| (branch, worktree_path))
+            })
+            .collect();
+
+        if !removable_worktrees.is_empty() {
+            println!("⚠️  Linked worktrees to remove (--remove-worktrees):");
+            for (branch, worktree_path) in removable_worktrees {
+                println!("  - {branch}: {worktree_path}");
+            }
+        }
+    }
+
     if prompt::confirm_or_abort("❓ Proceed with deleting these branches? [y/N] ").is_err() {
         return 1;
     }
+
+    let mut deleted_count = 0usize;
+    let mut removed_worktrees_count = 0usize;
+    let mut failed_deletions: Vec<(String, String)> = Vec::new();
 
     for branch in &candidates {
         let mut branch_delete_flag = delete_flag;
         if delete_flag == "-d" && squash_mode && !merged_set.contains(branch) {
             branch_delete_flag = "-D";
         }
-        let _ = git_status_success(&["branch", branch_delete_flag, "--", branch]);
+
+        if remove_worktrees && let Some(worktree_path) = linked_worktrees.get(branch) {
+            match git_output(&["worktree", "remove", "--force", worktree_path]) {
+                Ok(_) => {
+                    removed_worktrees_count += 1;
+                }
+                Err(err) => {
+                    failed_deletions.push((
+                        branch.clone(),
+                        format!(
+                            "failed to remove linked worktree {worktree_path}: {}",
+                            summarize_git_error(&err.to_string())
+                        ),
+                    ));
+                    continue;
+                }
+            }
+        }
+
+        match git_output(&["branch", branch_delete_flag, "--", branch]) {
+            Ok(_) => {
+                deleted_count += 1;
+            }
+            Err(err) => {
+                failed_deletions.push((branch.clone(), summarize_git_error(&err.to_string())));
+            }
+        }
     }
 
-    println!("✅ Deleted merged branches.");
+    if removed_worktrees_count > 0 {
+        println!("✅ Removed {removed_worktrees_count} linked worktree(s).");
+    }
+
+    if !failed_deletions.is_empty() {
+        if deleted_count > 0 {
+            println!("✅ Deleted {deleted_count} branch(es).");
+        }
+
+        eprintln!(
+            "⚠️  Failed to delete {} branch(es):",
+            failed_deletions.len()
+        );
+        for (branch, reason) in &failed_deletions {
+            eprintln!("  - {branch}: {reason}");
+        }
+        return 1;
+    }
+
+    println!("✅ Deleted {deleted_count} branch(es).");
     0
 }
 
 fn parse_args(args: &[String]) -> Result<CleanupArgs, i32> {
     let mut base_ref = "HEAD".to_string();
     let mut squash_mode = false;
+    let mut remove_worktrees = false;
     let mut help = false;
 
     let mut i = 0usize;
@@ -207,6 +285,9 @@ fn parse_args(args: &[String]) -> Result<CleanupArgs, i32> {
             }
             "-s" | "--squash" => {
                 squash_mode = true;
+            }
+            "-w" | "--remove-worktrees" => {
+                remove_worktrees = true;
             }
             "-b" | "--base" => {
                 let Some(value) = args.get(i + 1) else {
@@ -223,14 +304,18 @@ fn parse_args(args: &[String]) -> Result<CleanupArgs, i32> {
     Ok(CleanupArgs {
         base_ref,
         squash_mode,
+        remove_worktrees,
         help,
     })
 }
 
 fn print_help() {
-    println!("Usage: git-delete-merged-branches [-b|--base <ref>] [-s|--squash]");
+    println!(
+        "Usage: git-delete-merged-branches [-b|--base <ref>] [-s|--squash] [-w|--remove-worktrees]"
+    );
     println!("  -b, --base <ref>  Base ref used to determine merged branches (default: HEAD)");
     println!("  -s, --squash      Include branches already applied to base (git cherry)");
+    println!("  -w, --remove-worktrees  Force-remove linked worktrees for candidate branches");
 }
 
 fn parse_lines(output: &Output) -> Vec<String> {
@@ -239,6 +324,41 @@ fn parse_lines(output: &Output) -> Vec<String> {
         .filter(|line| !line.trim().is_empty())
         .map(|line| line.to_string())
         .collect()
+}
+
+fn summarize_git_error(message: &str) -> String {
+    let trimmed = message.trim();
+    let summary = trimmed
+        .rsplit_once(" failed: ")
+        .map(|(_, suffix)| suffix.trim())
+        .unwrap_or(trimmed);
+    summary.replace('\n', " ")
+}
+
+fn linked_worktrees_by_branch() -> anyhow::Result<HashMap<String, String>> {
+    let output = git_output(&["worktree", "list", "--porcelain"])?;
+    let mut branch_worktrees: HashMap<String, String> = HashMap::new();
+    let mut current_worktree_path: Option<String> = None;
+
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if line.trim().is_empty() {
+            current_worktree_path = None;
+            continue;
+        }
+
+        if let Some(path) = line.strip_prefix("worktree ") {
+            current_worktree_path = Some(path.to_string());
+            continue;
+        }
+
+        if let Some(branch_ref) = line.strip_prefix("branch refs/heads/")
+            && let Some(worktree_path) = &current_worktree_path
+        {
+            branch_worktrees.insert(branch_ref.to_string(), worktree_path.clone());
+        }
+    }
+
+    Ok(branch_worktrees)
 }
 
 fn resolve_base_local(base_ref: &str) -> Option<String> {
@@ -262,7 +382,10 @@ fn resolve_base_local(base_ref: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{dispatch, parse_args, parse_lines, resolve_base_local};
+    use super::{
+        dispatch, linked_worktrees_by_branch, parse_args, parse_lines, resolve_base_local,
+        summarize_git_error,
+    };
     use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir};
     use pretty_assertions::assert_eq;
     use std::process::Command;
@@ -285,11 +408,13 @@ mod tests {
             "--base".to_string(),
             "origin/main".to_string(),
             "--squash".to_string(),
+            "--remove-worktrees".to_string(),
             "--unknown".to_string(),
         ];
         let parsed = parse_args(&args).expect("parsed");
         assert_eq!(parsed.base_ref, "origin/main");
         assert!(parsed.squash_mode);
+        assert!(parsed.remove_worktrees);
         assert!(!parsed.help);
     }
 
@@ -312,6 +437,45 @@ mod tests {
             .expect("output");
         let lines = parse_lines(&output);
         assert_eq!(lines, vec!["main".to_string(), "feature/a".to_string()]);
+    }
+
+    #[test]
+    fn summarize_git_error_strips_prefix_and_normalizes_lines() {
+        let message =
+            "git [\"branch\", \"-d\"] failed: error: cannot delete branch\nhint: checked out";
+        let summary = summarize_git_error(message);
+        assert_eq!(summary, "error: cannot delete branch hint: checked out");
+    }
+
+    #[test]
+    fn linked_worktrees_by_branch_parses_porcelain_output() {
+        let lock = GlobalStateLock::new();
+        let stubs = StubBinDir::new();
+        stubs.write_exe(
+            "git",
+            r#"#!/bin/bash
+set -euo pipefail
+if [[ "${1:-}" == "worktree" && "${2:-}" == "list" && "${3:-}" == "--porcelain" ]]; then
+  printf 'worktree /repo\n'
+  printf 'HEAD 1111111111111111111111111111111111111111\n'
+  printf 'branch refs/heads/main\n'
+  printf '\n'
+  printf 'worktree /repo/wt/topic\n'
+  printf 'HEAD 2222222222222222222222222222222222222222\n'
+  printf 'branch refs/heads/feature/topic\n'
+  exit 0
+fi
+exit 1
+"#,
+        );
+
+        let _guard = EnvGuard::set(&lock, "PATH", &stubs.path_str());
+        let mapping = linked_worktrees_by_branch().expect("parse linked worktrees");
+        assert_eq!(
+            mapping.get("feature/topic"),
+            Some(&"/repo/wt/topic".to_string())
+        );
+        assert_eq!(mapping.get("main"), Some(&"/repo".to_string()));
     }
 
     #[test]

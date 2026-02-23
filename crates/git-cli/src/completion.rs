@@ -272,6 +272,13 @@ fn build_branch_group() -> Command {
                         .long("squash")
                         .help("Include branches already applied via squash")
                         .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("remove-worktrees")
+                        .short('w')
+                        .long("remove-worktrees")
+                        .help("Force-remove linked worktrees for candidate branches")
+                        .action(ArgAction::SetTrue),
                 ),
         )
         .subcommand(Command::new("help").about("Display help message for branch"))
