@@ -27,7 +27,8 @@ Primary constraint: shared helpers must preserve behavioral parity for each cons
 - `process`: command execution wrappers plus PATH lookup helpers.
 - `git`: `git` command wrappers for repo probes and `rev-parse` helpers.
 - `clipboard`: best-effort clipboard copy with explicit tool priority.
-- `fs`: cross-platform replace/rename-overwrite helper.
+- `fs`: atomic write, timestamp write/remove, SHA-256 hashing, and cross-platform replace helpers
+  with structured errors.
 - `greeting`: tiny sample helper used by `cli-template`.
 
 ## API examples
@@ -102,10 +103,24 @@ if matches!(
 `fs`:
 
 ```rust
+use nils_common::fs::{self, AtomicWriteError, SECRET_FILE_MODE};
 use std::path::Path;
 
-nils_common::fs::replace_file(Path::new("tmp.out"), Path::new("final.out"))?;
-# Ok::<(), std::io::Error>(())
+fs::write_atomic(Path::new("cache/auth.json"), br#"{"ok":true}"#, SECRET_FILE_MODE)?;
+fs::write_timestamp(
+    Path::new("cache/auth.json.timestamp"),
+    Some("2026-02-01T00:00:00Z\n"),
+)?;
+let digest = fs::sha256_file(Path::new("cache/auth.json"))?;
+
+if let Err(AtomicWriteError::CreateParentDir { path, .. }) =
+    fs::write_atomic(Path::new("/tmp/demo.json"), b"{}", SECRET_FILE_MODE)
+{
+    eprintln!("parent directory error: {path:?}");
+}
+
+println!("sha256={digest}");
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 ## Migration conventions for parity
@@ -114,6 +129,8 @@ When introducing a shared helper at a call site:
 
 1. Add or keep characterization tests in the caller crate first.
 2. Move only primitive logic; keep a crate-local adapter for message formatting and exit-code mapping.
+   For `write_atomic` / `write_timestamp` / `sha256_file` migrations, map structured errors back to
+   existing crate-local UX text.
 3. Preserve existing quote/ANSI mode choices and `NO_COLOR` behavior.
 4. Keep tool/command fallback order identical (for example clipboard tool order, git probe fallback behavior).
 5. Re-run crate tests that cover the touched command paths before merging.
