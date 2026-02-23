@@ -1,25 +1,8 @@
 #![allow(dead_code)]
 
+use nils_test_support::cmd::{CmdOptions, CmdOutput, run_resolved};
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-
-pub struct CmdOutput {
-    pub code: i32,
-    pub stdout: Vec<u8>,
-    pub stderr: Vec<u8>,
-}
-
-impl CmdOutput {
-    pub fn stdout_text(&self) -> String {
-        String::from_utf8_lossy(&self.stdout).to_string()
-    }
-
-    pub fn stderr_text(&self) -> String {
-        String::from_utf8_lossy(&self.stderr).to_string()
-    }
-}
 
 pub fn test_db_path(name: &str) -> PathBuf {
     let dir = tempfile::tempdir().expect("tempdir should be created");
@@ -54,57 +37,17 @@ pub fn run_memo_cli_with_env(
     envs: &[(&str, &str)],
 ) -> CmdOutput {
     let db = db_path.display().to_string();
-    let mut argv = vec!["--db", db.as_str()];
-    argv.extend_from_slice(args);
+    let mut argv = vec!["--db".to_string(), db];
+    argv.extend(args.iter().map(|arg| (*arg).to_string()));
+    let argv_ref: Vec<&str> = argv.iter().map(|arg| arg.as_str()).collect();
 
-    let mut cmd = Command::new(memo_cli_bin());
-    cmd.args(&argv)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    let mut options = CmdOptions::new();
     for (key, value) in envs {
-        cmd.env(key, value);
+        options = options.with_env(key, value);
+    }
+    if let Some(input) = stdin {
+        options = options.with_stdin_str(input);
     }
 
-    let output = match stdin {
-        Some(input) => {
-            cmd.stdin(Stdio::piped());
-            let mut child = cmd.spawn().expect("spawn memo-cli");
-            if let Some(mut writer) = child.stdin.take() {
-                writer
-                    .write_all(input.as_bytes())
-                    .expect("write stdin to memo-cli");
-            }
-            child.wait_with_output().expect("wait memo-cli output")
-        }
-        None => {
-            cmd.stdin(Stdio::null());
-            cmd.output().expect("run memo-cli")
-        }
-    };
-
-    CmdOutput {
-        code: output.status.code().unwrap_or(-1),
-        stdout: output.stdout,
-        stderr: output.stderr,
-    }
-}
-
-fn memo_cli_bin() -> PathBuf {
-    for env_name in ["CARGO_BIN_EXE_memo-cli", "CARGO_BIN_EXE_memo_cli"] {
-        if let Ok(path) = std::env::var(env_name) {
-            return PathBuf::from(path);
-        }
-    }
-
-    let exe = std::env::current_exe().expect("current exe");
-    let target_dir = exe
-        .parent()
-        .and_then(|path| path.parent())
-        .expect("target dir");
-    let fallback = target_dir.join(format!("memo-cli{}", std::env::consts::EXE_SUFFIX));
-    if fallback.exists() {
-        return fallback;
-    }
-
-    panic!("memo-cli binary path not found via CARGO_BIN_EXE_* or target fallback");
+    run_resolved("memo-cli", &argv_ref, &options)
 }

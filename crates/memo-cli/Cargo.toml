@@ -26,5 +26,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+nils-test-support = { version = "0.4.7", path = "../nils-test-support" }
 pretty_assertions = { workspace = true }
 tempfile = "3"
