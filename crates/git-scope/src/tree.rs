@@ -1,4 +1,4 @@
-use std::process::Command;
+use nils_common::process as shared_process;
 use std::sync::OnceLock;
 
 pub const TREE_MISSING_WARNING: &str =
@@ -19,7 +19,7 @@ pub fn tree_support() -> &'static TreeSupport {
 }
 
 fn detect_tree_support() -> TreeSupport {
-    if Command::new("tree").arg("--version").output().is_err() {
+    if !shared_process::cmd_exists("tree") {
         return TreeSupport {
             is_installed: false,
             supports_fromfile: false,
@@ -27,12 +27,7 @@ fn detect_tree_support() -> TreeSupport {
         };
     }
 
-    let support = Command::new("tree")
-        .arg("--fromfile")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+    let support = shared_process::run_status_quiet("tree", &["--fromfile"]);
 
     if support.map(|s| !s.success()).unwrap_or(true) {
         return TreeSupport {

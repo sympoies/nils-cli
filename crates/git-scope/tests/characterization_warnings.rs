@@ -53,7 +53,7 @@ fn tree_missing_warning_is_stable() {
     common::git(root, &["add", "file.txt"]);
 
     let stub = tempfile::TempDir::new().unwrap();
-    let git_path = which_cmd("git");
+    let git_path = common::resolve_path_command("git");
     symlink(&git_path, stub.path().join("git")).unwrap();
 
     let path_env = stub.path().to_string_lossy().to_string();
@@ -126,14 +126,4 @@ fn missing_index_file_falls_back_to_head() {
         output.contains("📄 index.txt (deleted in index; from HEAD)"),
         "missing index fallback not found: {output}"
     );
-}
-
-fn which_cmd(cmd: &str) -> String {
-    let output = std::process::Command::new("which")
-        .arg(cmd)
-        .output()
-        .unwrap_or_else(|_| panic!("which {cmd}"));
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    assert!(!path.is_empty(), "{cmd} not found in PATH for tests");
-    path
 }

@@ -13,7 +13,7 @@ fn tracked_warns_when_tree_missing() {
     common::git(root, &["commit", "-m", "tracked"]);
 
     let stub = tempfile::TempDir::new().unwrap();
-    let git_path = which_git();
+    let git_path = common::resolve_path_command("git");
     let link_path = stub.path().join("git");
     symlink(&git_path, &link_path).unwrap();
 
@@ -39,7 +39,7 @@ fn tracked_print_works_when_file_missing() {
     common::git(root, &["commit", "-m", "add files"]);
 
     let stub = tempfile::TempDir::new().unwrap();
-    let git_path = which_cmd("git");
+    let git_path = common::resolve_path_command("git");
     symlink(&git_path, stub.path().join("git")).unwrap();
 
     let path_env = stub.path().to_string_lossy().to_string();
@@ -80,7 +80,7 @@ fn staged_print_works_without_mktemp_or_file() {
     common::git(root, &["add", "tracked.txt"]);
 
     let stub = tempfile::TempDir::new().unwrap();
-    let git_path = which_cmd("git");
+    let git_path = common::resolve_path_command("git");
     symlink(&git_path, stub.path().join("git")).unwrap();
 
     let path_env = stub.path().to_string_lossy().to_string();
@@ -98,18 +98,4 @@ fn staged_print_works_without_mktemp_or_file() {
         output.contains("STAGED_LINE"),
         "staged content missing: {output}"
     );
-}
-
-fn which_git() -> String {
-    which_cmd("git")
-}
-
-fn which_cmd(cmd: &str) -> String {
-    let output = std::process::Command::new("which")
-        .arg(cmd)
-        .output()
-        .unwrap_or_else(|_| panic!("which {cmd}"));
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    assert!(!path.is_empty(), "{cmd} not found in PATH for tests");
-    path
 }

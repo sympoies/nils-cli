@@ -190,40 +190,13 @@ fn docblock_with_separators(doc: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nils_test_support::{EnvGuard, GlobalStateLock};
     use pretty_assertions::assert_eq;
-
-    struct EnvGuard {
-        key: &'static str,
-        original: Option<String>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let original = std::env::var(key).ok();
-            // SAFETY: tests mutate process env only in scoped guard usage.
-            unsafe { std::env::set_var(key, value) };
-            Self { key, original }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.original {
-                Some(value) => {
-                    // SAFETY: tests restore process env only in scoped guard usage.
-                    unsafe { std::env::set_var(self.key, value) };
-                }
-                None => {
-                    // SAFETY: tests restore process env only in scoped guard usage.
-                    unsafe { std::env::remove_var(self.key) };
-                }
-            }
-        }
-    }
 
     #[test]
     fn docblock_with_separators_respects_indent_and_pad() {
-        let _guard = EnvGuard::set("FZF_DEF_DOC_SEPARATOR_PAD", "2");
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::set(&lock, "FZF_DEF_DOC_SEPARATOR_PAD", "2");
         let doc = "  # Alpha\n  # Beta";
         let out = docblock_with_separators(doc);
         let lines: Vec<&str> = out.lines().collect();
@@ -242,7 +215,8 @@ mod tests {
 
     #[test]
     fn build_alias_body_includes_doc_value_and_footer() {
-        let _guard = EnvGuard::set("FZF_DEF_DOC_SEPARATOR_PAD", "2");
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::set(&lock, "FZF_DEF_DOC_SEPARATOR_PAD", "2");
         let def = AliasDef {
             name: "ll".to_string(),
             value: "ls -la".to_string(),

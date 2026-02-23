@@ -53,40 +53,9 @@ fn write_cache(
 mod tests {
     use super::*;
     use crate::defs::index::{AliasDef, DefIndex};
+    use nils_test_support::{EnvGuard, GlobalStateLock};
     use pretty_assertions::assert_eq;
-    use std::sync::Mutex;
     use tempfile::TempDir;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    struct EnvGuard {
-        key: &'static str,
-        original: Option<String>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let original = std::env::var(key).ok();
-            // SAFETY: tests mutate process env only in scoped guard usage.
-            unsafe { std::env::set_var(key, value) };
-            Self { key, original }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.original {
-                Some(value) => {
-                    // SAFETY: tests restore process env only in scoped guard usage.
-                    unsafe { std::env::set_var(self.key, value) };
-                }
-                None => {
-                    // SAFETY: tests restore process env only in scoped guard usage.
-                    unsafe { std::env::remove_var(self.key) };
-                }
-            }
-        }
-    }
 
     fn write(path: &std::path::Path, contents: &str) {
         if let Some(parent) = path.parent() {
@@ -97,13 +66,13 @@ mod tests {
 
     #[test]
     fn cache_disabled_builds_index_from_zsh_root() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let lock = GlobalStateLock::new();
         let temp = TempDir::new().unwrap();
         let root = temp.path();
         write(&root.join(".zshrc"), "alias ll='ls -la'\n");
 
-        let _guard = EnvGuard::set("ZDOTDIR", root.to_string_lossy().as_ref());
-        let _guard_cache = EnvGuard::set("FZF_DEF_DOC_CACHE_ENABLED", "0");
+        let _guard = EnvGuard::set(&lock, "ZDOTDIR", root.to_string_lossy().as_ref());
+        let _guard_cache = EnvGuard::set(&lock, "FZF_DEF_DOC_CACHE_ENABLED", "0");
 
         let index = load_or_build().expect("load");
         assert!(index.aliases.iter().any(|a| a.name == "ll"));
@@ -111,7 +80,7 @@ mod tests {
 
     #[test]
     fn cache_enabled_uses_fresh_cache() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let lock = GlobalStateLock::new();
         let temp = TempDir::new().unwrap();
         let cache_dir = temp.path().join("cache");
         std::fs::create_dir_all(&cache_dir).unwrap();
@@ -132,10 +101,11 @@ mod tests {
             &serde_json::to_string(&cached).unwrap(),
         );
 
-        let _guard_cache = EnvGuard::set("FZF_DEF_DOC_CACHE_ENABLED", "1");
-        let _guard_ttl = EnvGuard::set("FZF_DEF_DOC_CACHE_EXPIRE_MINUTES", "10");
-        let _guard_cache_dir = EnvGuard::set("ZSH_CACHE_DIR", cache_dir.to_string_lossy().as_ref());
-        let _guard_zdot = EnvGuard::set("ZDOTDIR", temp.path().to_string_lossy().as_ref());
+        let _guard_cache = EnvGuard::set(&lock, "FZF_DEF_DOC_CACHE_ENABLED", "1");
+        let _guard_ttl = EnvGuard::set(&lock, "FZF_DEF_DOC_CACHE_EXPIRE_MINUTES", "10");
+        let _guard_cache_dir =
+            EnvGuard::set(&lock, "ZSH_CACHE_DIR", cache_dir.to_string_lossy().as_ref());
+        let _guard_zdot = EnvGuard::set(&lock, "ZDOTDIR", temp.path().to_string_lossy().as_ref());
 
         let index = load_or_build().expect("load");
         assert_eq!(index.aliases.len(), 1);
@@ -144,7 +114,7 @@ mod tests {
 
     #[test]
     fn cache_stale_rebuilds_and_overwrites() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let lock = GlobalStateLock::new();
         let temp = TempDir::new().unwrap();
         let root = temp.path().join("zsh");
         std::fs::create_dir_all(&root).unwrap();
@@ -171,10 +141,11 @@ mod tests {
             &serde_json::to_string(&stale).unwrap(),
         );
 
-        let _guard_cache = EnvGuard::set("FZF_DEF_DOC_CACHE_ENABLED", "1");
-        let _guard_ttl = EnvGuard::set("FZF_DEF_DOC_CACHE_EXPIRE_MINUTES", "0");
-        let _guard_cache_dir = EnvGuard::set("ZSH_CACHE_DIR", cache_dir.to_string_lossy().as_ref());
-        let _guard_zdot = EnvGuard::set("ZDOTDIR", root.to_string_lossy().as_ref());
+        let _guard_cache = EnvGuard::set(&lock, "FZF_DEF_DOC_CACHE_ENABLED", "1");
+        let _guard_ttl = EnvGuard::set(&lock, "FZF_DEF_DOC_CACHE_EXPIRE_MINUTES", "0");
+        let _guard_cache_dir =
+            EnvGuard::set(&lock, "ZSH_CACHE_DIR", cache_dir.to_string_lossy().as_ref());
+        let _guard_zdot = EnvGuard::set(&lock, "ZDOTDIR", root.to_string_lossy().as_ref());
 
         let index = load_or_build().expect("load");
         assert!(index.aliases.iter().any(|a| a.name == "fresh"));
