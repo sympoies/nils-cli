@@ -1,6 +1,6 @@
 use anyhow::Result;
 use nils_common::env as shared_env;
-use std::process::Command;
+use nils_common::git as common_git;
 
 use crate::messages;
 use crate::store::LockStore;
@@ -78,7 +78,7 @@ pub fn run(args: &[String]) -> Result<i32> {
     let range = format!("{hash1}..{hash2}");
     log_args.push(&range);
 
-    let status = Command::new("git").args(&log_args).status()?;
+    let status = common_git::run_status_inherit(&log_args)?;
 
     Ok(status.code().unwrap_or(1))
 }

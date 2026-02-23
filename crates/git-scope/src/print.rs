@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
+use nils_common::git as common_git;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::OnceLock;
 use tempfile::NamedTempFile;
 
@@ -146,19 +147,13 @@ fn emit_from_head(path: &str, fallback: HeadFallback) -> Result<()> {
 }
 
 fn git_has_object(spec: &str) -> Result<bool> {
-    let status = Command::new("git")
-        .args(["cat-file", "-e", spec])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
+    let status = common_git::run_status_quiet(&["cat-file", "-e", spec])?;
     Ok(status.success())
 }
 
 fn git_show_to_file(spec: &str, dest: &Path) -> Result<()> {
-    let output = Command::new("git")
-        .args(["show", spec])
-        .output()
-        .with_context(|| format!("git show {spec}"))?;
+    let output =
+        common_git::run_output(&["show", spec]).with_context(|| format!("git show {spec}"))?;
     if !output.status.success() {
         anyhow::bail!("git show {spec} failed");
     }
