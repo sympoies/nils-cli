@@ -39,6 +39,17 @@ pub fn make_stub_dir() -> StubBinDir {
 }
 
 #[allow(dead_code)]
+pub fn path_with_prepend(dir: &Path) -> String {
+    cmd::CmdOptions::default()
+        .with_path_prepend(dir)
+        .envs
+        .into_iter()
+        .rev()
+        .find_map(|(key, value)| (key == "PATH").then_some(value))
+        .expect("PATH should be set")
+}
+
+#[allow(dead_code)]
 pub fn fzf_stub_script() -> &'static str {
     nils_test_support::stubs::fzf_stub_script()
 }

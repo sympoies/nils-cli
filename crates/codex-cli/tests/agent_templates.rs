@@ -3,7 +3,7 @@ use nils_test_support::cmd::{self, CmdOptions, CmdOutput};
 use nils_test_support::fs as test_fs;
 use pretty_assertions::assert_eq;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn codex_cli_bin() -> PathBuf {
     bin::resolve("codex-cli")
@@ -11,6 +11,15 @@ fn codex_cli_bin() -> PathBuf {
 
 fn run(args: &[&str], vars: &[(&str, &str)]) -> CmdOutput {
     let mut options = CmdOptions::default();
+    for (key, value) in vars {
+        options = options.with_env(key, value);
+    }
+    let bin = codex_cli_bin();
+    cmd::run_with(&bin, args, &options)
+}
+
+fn run_with_path_prepend(args: &[&str], vars: &[(&str, &str)], path_prepend: &Path) -> CmdOutput {
+    let mut options = CmdOptions::default().with_path_prepend(path_prepend);
     for (key, value) in vars {
         options = options.with_env(key, value);
     }
@@ -78,18 +87,14 @@ fn agent_advice_substitutes_arguments() {
     write_stub_codex(&stub_dir, &out_dir);
 
     let out_dir_str = out_dir.to_string_lossy().to_string();
-
-    let path = std::env::var("PATH").unwrap_or_default();
-    let combined_path = format!("{}:{}", stub_dir.to_string_lossy(), path);
-
-    let output = run(
+    let output = run_with_path_prepend(
         &["agent", "advice", "hello", "world"],
         &[
             ("CODEX_ALLOW_DANGEROUS_ENABLED", "true"),
             ("ZDOTDIR", &zdotdir_str),
-            ("PATH", &combined_path),
             ("CODEX_STUB_OUT_DIR", &out_dir_str),
         ],
+        &stub_dir,
     );
     assert_exit(&output, 0);
 

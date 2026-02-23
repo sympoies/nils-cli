@@ -2,11 +2,6 @@ mod common;
 
 use pretty_assertions::assert_eq;
 use std::fs;
-use std::path::Path;
-
-fn path_with_stub(stub: &Path) -> String {
-    format!("{}:{}", stub.display(), std::env::var("PATH").unwrap())
-}
 
 #[test]
 fn git_branch_checkout_confirmed() {
@@ -47,7 +42,7 @@ exit 0
 "#,
     );
 
-    let path_s = path_with_stub(stub.path());
+    let path_s = common::path_with_prepend(stub.path());
     let out_dir_s = out_dir.to_string_lossy().to_string();
     let git_log_s = git_log.to_string_lossy().to_string();
     let envs = [
@@ -105,7 +100,7 @@ exit 0
 "#,
     );
 
-    let path_s = path_with_stub(stub.path());
+    let path_s = common::path_with_prepend(stub.path());
     let out_dir_s = out_dir.to_string_lossy().to_string();
     let git_log_s = git_log.to_string_lossy().to_string();
     let envs = [
@@ -188,7 +183,7 @@ exit 0
 "#,
     );
 
-    let path_s = path_with_stub(stub.path());
+    let path_s = common::path_with_prepend(stub.path());
     let out_dir_s = out_dir.to_string_lossy().to_string();
     let checkout_count_s = checkout_count.to_string_lossy().to_string();
     let envs = [
@@ -232,7 +227,7 @@ exit 0
 "#,
     );
 
-    let path_s = path_with_stub(stub.path());
+    let path_s = common::path_with_prepend(stub.path());
     let out_dir_s = out_dir.to_string_lossy().to_string();
     let envs = [
         ("PATH", path_s.as_str()),
@@ -306,7 +301,7 @@ exit 0
 "#,
     );
 
-    let path_s = path_with_stub(stub.path());
+    let path_s = common::path_with_prepend(stub.path());
     let out_dir_s = out_dir.to_string_lossy().to_string();
     let repo_root_s = repo_root.to_string_lossy().to_string();
     let vi_log_s = vi_log.to_string_lossy().to_string();

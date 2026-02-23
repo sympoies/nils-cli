@@ -1,13 +1,8 @@
 mod common;
 
-use common::{fzf_stub_script, make_stub_dir, run_fzf_cli, write_exe};
+use common::{fzf_stub_script, make_stub_dir, path_with_prepend, run_fzf_cli, write_exe};
 use std::fs;
-use std::path::Path;
 use tempfile::TempDir;
-
-fn path_with_stub(stub: &Path) -> String {
-    format!("{}:{}", stub.display(), std::env::var("PATH").unwrap())
-}
 
 #[test]
 fn file_opens_in_vscode_workspace() {
@@ -33,7 +28,7 @@ exit 0
 "#,
     );
 
-    let path_env = path_with_stub(stub.path());
+    let path_env = path_with_prepend(stub.path());
     let envs = [
         ("PATH", path_env.as_str()),
         ("FZF_STUB_OUT_DIR", out_dir.to_str().unwrap()),
@@ -83,7 +78,7 @@ exit 0
 "#,
     );
 
-    let path_env = path_with_stub(stub.path());
+    let path_env = path_with_prepend(stub.path());
     let envs = [
         ("PATH", path_env.as_str()),
         ("FZF_STUB_OUT_DIR", out_dir.to_str().unwrap()),

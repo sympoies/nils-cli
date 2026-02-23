@@ -46,6 +46,24 @@ fn run_with(args: &[&str], envs: &[(&str, &Path)], vars: &[(&str, &str)]) -> Cmd
     cmd::run_with(&bin, args, &options)
 }
 
+fn run_with_path_prepend(
+    args: &[&str],
+    envs: &[(&str, &Path)],
+    vars: &[(&str, &str)],
+    path_prepend: &Path,
+) -> CmdOutput {
+    let mut options = CmdOptions::default().with_path_prepend(path_prepend);
+    for (key, path) in envs {
+        let value = path.to_string_lossy();
+        options = options.with_env(key, value.as_ref());
+    }
+    for (key, value) in vars {
+        options = options.with_env(key, value);
+    }
+    let bin = codex_cli_bin();
+    cmd::run_with(&bin, args, &options)
+}
+
 fn stdout(output: &CmdOutput) -> String {
     output.stdout_text()
 }
@@ -441,14 +459,7 @@ fn auth_json_contract_login_success_includes_stable_fields() {
     fs::create_dir_all(&stubs).expect("stubs");
     write_exe(&stubs, "codex", codex_stub_script());
 
-    let current_path = std::env::var("PATH").unwrap_or_default();
-    let path = format!("{}:{current_path}", stubs.to_string_lossy());
-
-    let output = run_with(
-        &["auth", "login", "--json", "--api-key"],
-        &[],
-        &[("PATH", &path)],
-    );
+    let output = run_with_path_prepend(&["auth", "login", "--json", "--api-key"], &[], &[], &stubs);
     assert_eq!(output.code, 0);
 
     let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");

@@ -1,13 +1,9 @@
 mod common;
 
-use common::{fzf_stub_script, make_stub_dir, run_fzf_cli, write_exe};
+use common::{fzf_stub_script, make_stub_dir, path_with_prepend, run_fzf_cli, write_exe};
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
-
-fn path_with_stub(stub: &Path) -> String {
-    format!("{}:{}", stub.display(), std::env::var("PATH").unwrap())
-}
 
 fn setup_fzf_outputs(out_dir: &Path, key: &str, file_line: &str) {
     fs::create_dir_all(out_dir).unwrap();
@@ -86,7 +82,7 @@ exit 0
 "#,
     );
 
-    let path_env = path_with_stub(stub.path());
+    let path_env = path_with_prepend(stub.path());
     let out_dir_s = out_dir.to_string_lossy().to_string();
     let repo_root_s = repo_root.to_string_lossy().to_string();
     let vi_log_s = vi_log.to_string_lossy().to_string();
@@ -134,7 +130,7 @@ exit 0
 "#,
     );
 
-    let path_env = path_with_stub(stub.path());
+    let path_env = path_with_prepend(stub.path());
     let out_dir_s = out_dir.to_string_lossy().to_string();
     let repo_root_s = repo_root.to_string_lossy().to_string();
     let vi_log_s = vi_log.to_string_lossy().to_string();
