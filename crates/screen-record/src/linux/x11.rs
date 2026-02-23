@@ -383,3 +383,68 @@ fn intern_atom<C: Connection>(conn: &C, name: &str) -> Result<Atom, CliError> {
         .map_err(|err| CliError::runtime(format!("failed to intern atom {name}: {err}")))?;
     Ok(reply.atom)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn window(owner_name: &str, owner_pid: i32, id: u32) -> WindowInfo {
+        WindowInfo {
+            id,
+            owner_name: owner_name.to_string(),
+            title: format!("Window {id}"),
+            bounds: Rect {
+                x: 0,
+                y: 0,
+                width: 100,
+                height: 80,
+            },
+            on_screen: true,
+            active: false,
+            owner_pid,
+            z_order: 0,
+        }
+    }
+
+    #[test]
+    fn bytes_to_string_trims_non_empty_values_and_rejects_blank_values() {
+        assert_eq!(
+            bytes_to_string(b"  Hello X11  "),
+            Some("Hello X11".to_string())
+        );
+        assert_eq!(bytes_to_string(b" \n\t "), None);
+    }
+
+    #[test]
+    fn z_order_map_assigns_highest_order_to_first_window() {
+        let map = z_order_map(&[10, 20, 30]);
+        assert_eq!(map.get(&10), Some(&2));
+        assert_eq!(map.get(&20), Some(&1));
+        assert_eq!(map.get(&30), Some(&0));
+    }
+
+    #[test]
+    fn derive_apps_deduplicates_by_owner_name_and_pid() {
+        let windows = vec![
+            window("Terminal", 100, 1),
+            window("Terminal", 100, 2),
+            window("Browser", 200, 3),
+            window("Terminal", 101, 4),
+        ];
+
+        let apps = derive_apps(&windows);
+        assert_eq!(apps.len(), 3);
+        assert!(
+            apps.iter()
+                .any(|app| app.name == "Terminal" && app.pid == 100)
+        );
+        assert!(
+            apps.iter()
+                .any(|app| app.name == "Terminal" && app.pid == 101)
+        );
+        assert!(
+            apps.iter()
+                .any(|app| app.name == "Browser" && app.pid == 200)
+        );
+    }
+}

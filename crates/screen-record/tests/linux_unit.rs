@@ -4,7 +4,7 @@ mod linux_unit {
     use std::path::{Path, PathBuf};
 
     use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
-    use screen_record::cli::{AudioMode, ContainerFormat};
+    use screen_record::cli::{AudioMode, ContainerFormat, ImageFormat};
     use screen_record::linux::ffmpeg;
     use screen_record::linux::portal::PortalCapture;
     use screen_record::types::{Rect, WindowInfo};
@@ -65,6 +65,76 @@ EOF
     exit 0
   fi
 done
+
+out="${@: -1}"
+mkdir -p "$(dirname "$out")"
+printf "stub" > "$out"
+"#,
+        );
+    }
+
+    fn write_ffmpeg_stub_with_pipewire_fd_support(dir: &StubBinDir) {
+        dir.write_exe(
+            "ffmpeg",
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -n "${AGENTS_FFMPEG_LOG:-}" ]]; then
+  printf 'CALL\n' >> "${AGENTS_FFMPEG_LOG}"
+  printf '%s\n' "$@" >> "${AGENTS_FFMPEG_LOG}"
+  printf 'END\n' >> "${AGENTS_FFMPEG_LOG}"
+fi
+
+if [[ "$*" == *"-devices"* ]]; then
+  cat <<'EOF'
+Devices:
+ D  pipewire           PipeWire audio and video capture
+EOF
+  exit 0
+fi
+
+if [[ "$*" == *"-h demuxer=pipewire"* ]]; then
+  cat <<'EOF'
+pipewire demuxer options:
+  -pipewire_fd <fd>    Use already-open PipeWire fd
+EOF
+  exit 0
+fi
+
+out="${@: -1}"
+mkdir -p "$(dirname "$out")"
+printf "stub" > "$out"
+"#,
+        );
+    }
+
+    fn write_ffmpeg_stub_with_pipewire_help_but_no_fd_flag(dir: &StubBinDir) {
+        dir.write_exe(
+            "ffmpeg",
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -n "${AGENTS_FFMPEG_LOG:-}" ]]; then
+  printf 'CALL\n' >> "${AGENTS_FFMPEG_LOG}"
+  printf '%s\n' "$@" >> "${AGENTS_FFMPEG_LOG}"
+  printf 'END\n' >> "${AGENTS_FFMPEG_LOG}"
+fi
+
+if [[ "$*" == *"-devices"* ]]; then
+  cat <<'EOF'
+Devices:
+ D  pipewire           PipeWire audio and video capture
+EOF
+  exit 0
+fi
+
+if [[ "$*" == *"-h demuxer=pipewire"* ]]; then
+  cat <<'EOF'
+pipewire demuxer options:
+  -video_size <WxH>    Set capture frame size
+EOF
+  exit 0
+fi
 
 out="${@: -1}"
 mkdir -p "$(dirname "$out")"
@@ -608,5 +678,166 @@ exit 9
         assert_eq!(err.exit_code(), 1);
         assert!(err.to_string().contains("ffmpeg failed (exit code 9)"));
         assert!(err.to_string().contains("encoder failed in stub"));
+    }
+
+    #[test]
+    fn linux_unit_ffmpeg_screenshot_window_uses_single_frame_capture() {
+        let lock = GlobalStateLock::new();
+        let stubs = StubBinDir::new();
+        write_ffmpeg_stub(&stubs);
+
+        let _path_guard = prepend_path(&lock, stubs.path());
+        let _display_guard = EnvGuard::set(&lock, "DISPLAY", ":99");
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let out_path = tmp.path().join("shot.png");
+        let log_path = tmp.path().join("ffmpeg-args.txt");
+        let _ffmpeg_log = EnvGuard::set(&lock, "AGENTS_FFMPEG_LOG", &log_path.to_string_lossy());
+
+        ffmpeg::screenshot_window(&window(321), &out_path, ImageFormat::Png).expect("screenshot");
+
+        let args = read_log(&log_path);
+        assert!(args.contains(&"-window_id".to_string()));
+        assert!(args.contains(&format!("0x{:x}", 321)));
+        assert!(args.contains(&"-frames:v".to_string()));
+        assert!(args.contains(&"1".to_string()));
+        assert!(!args.contains(&"-t".to_string()));
+        assert!(out_path.exists());
+    }
+
+    #[test]
+    fn linux_unit_ffmpeg_screenshot_window_errors_when_display_missing() {
+        let lock = GlobalStateLock::new();
+        let stubs = StubBinDir::new();
+        write_ffmpeg_stub(&stubs);
+
+        let _path_guard = prepend_path(&lock, stubs.path());
+        let _display_guard = EnvGuard::remove(&lock, "DISPLAY");
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let out_path = tmp.path().join("shot.png");
+        let err = ffmpeg::screenshot_window(&window(322), &out_path, ImageFormat::Png)
+            .expect_err("missing DISPLAY");
+        assert_eq!(err.exit_code(), 1);
+        assert!(err.to_string().contains("DISPLAY is unset"));
+    }
+
+    #[test]
+    fn linux_unit_ffmpeg_record_portal_with_remote_uses_pipewire_fd_flag_when_supported() {
+        let lock = GlobalStateLock::new();
+        let stubs = StubBinDir::new();
+        write_ffmpeg_stub_with_pipewire_fd_support(&stubs);
+
+        let _path_guard = prepend_path(&lock, stubs.path());
+        let capture = portal_capture_with_remote(4242);
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let out_path = tmp.path().join("portal-record.mp4");
+        let log_path = tmp.path().join("ffmpeg-args.txt");
+        let _ffmpeg_log = EnvGuard::set(&lock, "AGENTS_FFMPEG_LOG", &log_path.to_string_lossy());
+
+        ffmpeg::record_portal(&capture, 1, &out_path, ContainerFormat::Mp4).expect("record portal");
+
+        let args = read_log(&log_path);
+        assert!(args.iter().any(|arg| arg == "-devices"));
+        assert!(args.iter().any(|arg| arg == "demuxer=pipewire"));
+        assert!(args.iter().any(|arg| arg == "-pipewire_fd"));
+        assert!(args.iter().any(|arg| arg == "3"));
+        assert!(args.iter().any(|arg| arg == "4242"));
+        assert!(args.iter().any(|arg| arg == "-t"));
+        assert!(args.iter().any(|arg| arg == "1"));
+        assert!(out_path.exists());
+    }
+
+    #[test]
+    fn linux_unit_ffmpeg_record_portal_with_remote_errors_when_pipewire_fd_flag_missing() {
+        let lock = GlobalStateLock::new();
+        let stubs = StubBinDir::new();
+        write_ffmpeg_stub_with_pipewire_help_but_no_fd_flag(&stubs);
+
+        let _path_guard = prepend_path(&lock, stubs.path());
+        let capture = portal_capture_with_remote(4242);
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let out_path = tmp.path().join("portal-record.mp4");
+        let err = ffmpeg::record_portal(&capture, 1, &out_path, ContainerFormat::Mp4)
+            .expect_err("missing pipewire fd flag");
+        assert_eq!(err.exit_code(), 1);
+        assert!(err.to_string().contains("missing -pipewire_fd"));
+    }
+
+    #[test]
+    fn linux_unit_ffmpeg_screenshot_portal_without_remote_falls_back_to_pipewire_node() {
+        let lock = GlobalStateLock::new();
+        let stubs = StubBinDir::new();
+        write_ffmpeg_stub_with_devices(&stubs);
+
+        let _path_guard = prepend_path(&lock, stubs.path());
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let out_path = tmp.path().join("portal-shot.png");
+        let log_path = tmp.path().join("ffmpeg-args.txt");
+        let _ffmpeg_log = EnvGuard::set(&lock, "AGENTS_FFMPEG_LOG", &log_path.to_string_lossy());
+
+        let capture = PortalCapture {
+            node_id: 7007,
+            pipewire_remote: None,
+        };
+
+        ffmpeg::screenshot_portal(&capture, &out_path, ImageFormat::Png)
+            .expect("screenshot portal");
+
+        let args = read_log(&log_path);
+        assert!(args.iter().any(|arg| arg == "-devices"));
+        assert!(args.iter().any(|arg| arg == "-f"));
+        assert!(args.iter().any(|arg| arg == "pipewire"));
+        assert!(args.iter().any(|arg| arg == "7007"));
+        assert!(args.iter().any(|arg| arg == "-frames:v"));
+        assert!(args.iter().any(|arg| arg == "1"));
+        assert!(out_path.exists());
+    }
+
+    #[test]
+    fn linux_unit_ffmpeg_screenshot_portal_with_remote_uses_pipewire_fd_flag_when_supported() {
+        let lock = GlobalStateLock::new();
+        let stubs = StubBinDir::new();
+        write_ffmpeg_stub_with_pipewire_fd_support(&stubs);
+
+        let _path_guard = prepend_path(&lock, stubs.path());
+        let capture = portal_capture_with_remote(5555);
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let out_path = tmp.path().join("portal-shot.png");
+        let log_path = tmp.path().join("ffmpeg-args.txt");
+        let _ffmpeg_log = EnvGuard::set(&lock, "AGENTS_FFMPEG_LOG", &log_path.to_string_lossy());
+
+        ffmpeg::screenshot_portal(&capture, &out_path, ImageFormat::Png)
+            .expect("screenshot portal");
+
+        let args = read_log(&log_path);
+        assert!(args.iter().any(|arg| arg == "demuxer=pipewire"));
+        assert!(args.iter().any(|arg| arg == "-pipewire_fd"));
+        assert!(args.iter().any(|arg| arg == "3"));
+        assert!(args.iter().any(|arg| arg == "5555"));
+        assert!(args.iter().any(|arg| arg == "-frames:v"));
+        assert!(args.iter().any(|arg| arg == "1"));
+        assert!(out_path.exists());
+    }
+
+    #[test]
+    fn linux_unit_ffmpeg_screenshot_portal_with_remote_errors_when_pipewire_fd_flag_missing() {
+        let lock = GlobalStateLock::new();
+        let stubs = StubBinDir::new();
+        write_ffmpeg_stub_with_pipewire_help_but_no_fd_flag(&stubs);
+
+        let _path_guard = prepend_path(&lock, stubs.path());
+        let capture = portal_capture_with_remote(5555);
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let out_path = tmp.path().join("portal-shot.png");
+        let err = ffmpeg::screenshot_portal(&capture, &out_path, ImageFormat::Png)
+            .expect_err("missing pipewire fd flag");
+        assert_eq!(err.exit_code(), 1);
+        assert!(err.to_string().contains("missing -pipewire_fd"));
     }
 }

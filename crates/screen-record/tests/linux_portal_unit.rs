@@ -71,6 +71,26 @@ mod linux_portal_unit {
     }
 
     #[test]
+    fn portal_without_session_bus_reports_actionable_runtime_error() {
+        let lock = GlobalStateLock::new();
+
+        let _force_available =
+            EnvGuard::remove(&lock, "AGENTS_SCREEN_RECORD_PORTAL_FORCE_AVAILABLE");
+        let _force_missing = EnvGuard::remove(&lock, "AGENTS_SCREEN_RECORD_PORTAL_FORCE_MISSING");
+        let _dbus = EnvGuard::set(
+            &lock,
+            "DBUS_SESSION_BUS_ADDRESS",
+            "unix:path=/definitely-missing-agent-screen-record-portal.sock",
+        );
+
+        let err =
+            portal::ensure_portal_available().expect_err("expected DBus session connect failure");
+        let message = err.to_string();
+        assert!(message.contains("Wayland-only session detected"));
+        assert!(message.contains("DBUS_SESSION_BUS_ADDRESS is unset"));
+    }
+
+    #[test]
     fn parse_session_handle_reports_missing_key_and_type_mismatch() {
         let missing = HashMap::new();
         let err = portal::parse_session_handle_from_results(&missing).expect_err("missing key");
@@ -102,11 +122,62 @@ mod linux_portal_unit {
     }
 
     #[test]
+    fn parse_session_handle_and_streams_accept_valid_values() {
+        let session_path = zbus::zvariant::ObjectPath::try_from(
+            "/org/freedesktop/portal/desktop/session/1_42/screen_record",
+        )
+        .expect("session path");
+        let mut session_dict = HashMap::new();
+        session_dict.insert(
+            "session_handle".to_string(),
+            zbus::zvariant::OwnedValue::from(session_path.clone()),
+        );
+
+        let parsed_session =
+            portal::parse_session_handle_from_results(&session_dict).expect("parse session");
+        assert_eq!(parsed_session.to_string(), session_path.to_string());
+
+        let mut stream_meta = HashMap::new();
+        stream_meta.insert(
+            "source_type".to_string(),
+            zbus::zvariant::OwnedValue::from(1u32),
+        );
+        let expected_streams = vec![(4242u32, stream_meta)];
+        let mut stream_dict = HashMap::new();
+        stream_dict.insert(
+            "streams".to_string(),
+            zbus::zvariant::OwnedValue::try_from(zbus::zvariant::Value::from(
+                expected_streams.clone(),
+            ))
+            .expect("streams value"),
+        );
+
+        let streams = portal::parse_streams_from_results(&stream_dict).expect("parse streams");
+        assert_eq!(streams.len(), 1);
+        assert_eq!(streams[0].0, 4242);
+        assert_eq!(streams[0].1.len(), 1);
+        assert!(streams[0].1.contains_key("source_type"));
+    }
+
+    #[test]
     fn ensure_response_code_ok_rejects_non_zero_portal_response_code() {
         let err = portal::ensure_response_code_ok(2, HashMap::new())
             .expect_err("non-zero response must be rejected");
         let message = err.to_string();
         assert!(message.contains("portal request failed or was cancelled"));
         assert!(message.contains("response=2"));
+    }
+
+    #[test]
+    fn ensure_response_code_ok_accepts_zero_and_preserves_results() {
+        let mut results = HashMap::new();
+        results.insert(
+            "kind".to_string(),
+            zbus::zvariant::OwnedValue::from(zbus::zvariant::Str::from("ok")),
+        );
+
+        let out = portal::ensure_response_code_ok(0, results).expect("zero response should pass");
+        assert_eq!(out.len(), 1);
+        assert!(out.contains_key("kind"));
     }
 }

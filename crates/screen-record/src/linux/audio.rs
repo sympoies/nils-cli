@@ -187,3 +187,52 @@ fn map_spawn_error(err: std::io::Error) -> CliError {
     }
     CliError::runtime(format!("failed to spawn pactl: {err}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_info_field_trims_values_and_ignores_empty_or_missing_fields() {
+        let info = "\
+Server Name: PulseAudio (on PipeWire)\n\
+Default Sink:   speakers.main  \n\
+Default Source:   \n";
+
+        assert_eq!(
+            parse_info_field(info, "Default Sink:"),
+            Some("speakers.main".to_string())
+        );
+        assert_eq!(parse_info_field(info, "Default Source:"), None);
+        assert_eq!(parse_info_field(info, "Missing Field:"), None);
+    }
+
+    #[test]
+    fn bounded_utf8_keeps_only_trailing_bytes_when_output_exceeds_limit() {
+        let mut bytes = vec![b'a'; OUTPUT_LIMIT_BYTES + 16];
+        bytes.extend_from_slice(b"tail-marker");
+
+        let out = bounded_utf8(&bytes);
+        assert!(out.ends_with("tail-marker"));
+        assert_eq!(out.len(), OUTPUT_LIMIT_BYTES);
+    }
+
+    #[test]
+    fn output_snippet_and_exit_code_suffix_handle_empty_and_present_values() {
+        assert_eq!(output_snippet(""), "");
+        assert_eq!(output_snippet("   \n\t  "), "");
+        assert_eq!(output_snippet(" ffmpeg exploded \n"), ": ffmpeg exploded");
+
+        assert_eq!(exit_code_suffix(None), "");
+        assert_eq!(exit_code_suffix(Some(17)), " (exit code 17)");
+    }
+
+    #[test]
+    fn map_spawn_error_formats_not_found_and_other_errors() {
+        let missing = map_spawn_error(std::io::Error::from(std::io::ErrorKind::NotFound));
+        assert!(missing.to_string().contains("pactl not found on PATH"));
+
+        let other = map_spawn_error(std::io::Error::other("boom"));
+        assert!(other.to_string().contains("failed to spawn pactl: boom"));
+    }
+}
