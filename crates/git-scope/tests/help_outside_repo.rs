@@ -1,34 +1,22 @@
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::path::Path;
+use std::process::Output;
 
-fn git_scope_bin() -> PathBuf {
-    if let Ok(bin) = std::env::var("CARGO_BIN_EXE_git-scope")
-        .or_else(|_| std::env::var("CARGO_BIN_EXE_git_scope"))
-    {
-        return PathBuf::from(bin);
-    }
+use nils_test_support::bin::resolve;
+use nils_test_support::cmd::{options_in_dir_with_envs, run_with};
 
-    let exe = std::env::current_exe().expect("current exe");
-    let target_dir = exe.parent().and_then(|p| p.parent()).expect("target dir");
-    let bin = target_dir.join("git-scope");
-    if bin.exists() {
-        return bin;
-    }
+fn git_scope_bin() -> std::path::PathBuf {
+    resolve("git-scope")
+}
 
-    panic!("git-scope binary path: NotPresent");
+fn run_git_scope_outside_repo(dir: &Path, args: &[&str]) -> Output {
+    let options = options_in_dir_with_envs(dir, &[]);
+    run_with(&git_scope_bin(), args, &options).into_output()
 }
 
 #[test]
 fn help_flag_succeeds_outside_git_repo() {
     let temp = tempfile::TempDir::new().unwrap();
-    let output = Command::new(git_scope_bin())
-        .args(["--help"])
-        .current_dir(temp.path())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("run git-scope --help");
+    let output = run_git_scope_outside_repo(temp.path(), &["--help"]);
 
     assert!(
         output.status.success(),
@@ -48,14 +36,7 @@ fn help_flag_succeeds_outside_git_repo() {
 #[test]
 fn help_subcommand_succeeds_outside_git_repo() {
     let temp = tempfile::TempDir::new().unwrap();
-    let output = Command::new(git_scope_bin())
-        .args(["help"])
-        .current_dir(temp.path())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("run git-scope help");
+    let output = run_git_scope_outside_repo(temp.path(), &["help"]);
 
     assert!(
         output.status.success(),
@@ -75,14 +56,7 @@ fn help_subcommand_succeeds_outside_git_repo() {
 #[test]
 fn version_flag_succeeds_outside_git_repo() {
     let temp = tempfile::TempDir::new().unwrap();
-    let output = Command::new(git_scope_bin())
-        .args(["--version"])
-        .current_dir(temp.path())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("run git-scope --version");
+    let output = run_git_scope_outside_repo(temp.path(), &["--version"]);
 
     assert!(
         output.status.success(),
@@ -102,14 +76,7 @@ fn version_flag_succeeds_outside_git_repo() {
 #[test]
 fn root_help_does_not_advertise_subcommand_print_flag() {
     let temp = tempfile::TempDir::new().unwrap();
-    let output = Command::new(git_scope_bin())
-        .args(["--help"])
-        .current_dir(temp.path())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("run git-scope --help");
+    let output = run_git_scope_outside_repo(temp.path(), &["--help"]);
 
     assert!(
         output.status.success(),
@@ -125,14 +92,7 @@ fn root_help_does_not_advertise_subcommand_print_flag() {
 #[test]
 fn subcommand_help_uses_subcommand_scope() {
     let temp = tempfile::TempDir::new().unwrap();
-    let output = Command::new(git_scope_bin())
-        .args(["all", "--help"])
-        .current_dir(temp.path())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("run git-scope all --help");
+    let output = run_git_scope_outside_repo(temp.path(), &["all", "--help"]);
 
     assert!(
         output.status.success(),
@@ -152,14 +112,7 @@ fn subcommand_help_uses_subcommand_scope() {
 #[test]
 fn completion_export_succeeds_outside_git_repo() {
     let temp = tempfile::TempDir::new().unwrap();
-    let output = Command::new(git_scope_bin())
-        .args(["completion", "zsh"])
-        .current_dir(temp.path())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("run git-scope completion zsh");
+    let output = run_git_scope_outside_repo(temp.path(), &["completion", "zsh"]);
 
     assert!(
         output.status.success(),
@@ -179,14 +132,7 @@ fn completion_export_succeeds_outside_git_repo() {
 #[test]
 fn completion_rejects_unknown_shell_outside_git_repo() {
     let temp = tempfile::TempDir::new().unwrap();
-    let output = Command::new(git_scope_bin())
-        .args(["completion", "fish"])
-        .current_dir(temp.path())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("run git-scope completion fish");
+    let output = run_git_scope_outside_repo(temp.path(), &["completion", "fish"]);
 
     assert!(
         !output.status.success(),

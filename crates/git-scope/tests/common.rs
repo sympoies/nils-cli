@@ -35,6 +35,13 @@ pub fn run_git_scope_output(dir: &Path, args: &[&str], envs: &[(&str, &str)]) ->
 }
 
 #[allow(dead_code)]
+pub fn run_git_scope_allow_fail(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> (i32, String) {
+    let options = options_in_dir_with_envs(dir, envs);
+    let output = run_resolved("git-scope", args, &options);
+    (output.code, output.stdout_text())
+}
+
+#[allow(dead_code)]
 pub fn resolve_path_command(cmd: &str) -> String {
     nils_common::process::find_in_path(cmd)
         .map(|path| path.to_string_lossy().to_string())
