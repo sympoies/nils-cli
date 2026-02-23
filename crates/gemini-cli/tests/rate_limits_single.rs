@@ -1,44 +1,9 @@
 use gemini_cli::rate_limits;
+use nils_test_support::{EnvGuard, GlobalStateLock};
 
-use std::ffi::{OsStr, OsString};
 use std::fs as stdfs;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
-
-fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    match LOCK.get_or_init(|| Mutex::new(())).lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    }
-}
-
-struct EnvGuard {
-    key: &'static str,
-    previous: Option<OsString>,
-}
-
-impl EnvGuard {
-    fn set(key: &'static str, value: impl AsRef<OsStr>) -> Self {
-        let previous = std::env::var_os(key);
-        // SAFETY: tests serialize env mutations via env_lock.
-        unsafe { std::env::set_var(key, value) };
-        Self { key, previous }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        if let Some(value) = self.previous.take() {
-            // SAFETY: tests serialize env mutations via env_lock.
-            unsafe { std::env::set_var(self.key, value) };
-        } else {
-            // SAFETY: tests serialize env mutations via env_lock.
-            unsafe { std::env::remove_var(self.key) };
-        }
-    }
-}
 
 struct TestDir {
     path: PathBuf,
@@ -81,7 +46,7 @@ fn write_secret(path: &Path, with_access_token: bool) {
 
 #[test]
 fn rate_limits_single_json_one_line_conflict_returns_64() {
-    let _lock = env_lock();
+    let _lock = GlobalStateLock::new();
 
     let options = rate_limits::RateLimitsOptions {
         json: true,
@@ -93,7 +58,7 @@ fn rate_limits_single_json_one_line_conflict_returns_64() {
 
 #[test]
 fn rate_limits_single_cached_json_conflict_returns_64() {
-    let _lock = env_lock();
+    let _lock = GlobalStateLock::new();
 
     let options = rate_limits::RateLimitsOptions {
         cached: true,
@@ -105,7 +70,7 @@ fn rate_limits_single_cached_json_conflict_returns_64() {
 
 #[test]
 fn rate_limits_single_cached_clear_cache_conflict_returns_64() {
-    let _lock = env_lock();
+    let _lock = GlobalStateLock::new();
 
     let options = rate_limits::RateLimitsOptions {
         cached: true,
@@ -117,14 +82,15 @@ fn rate_limits_single_cached_clear_cache_conflict_returns_64() {
 
 #[test]
 fn rate_limits_single_json_target_not_found_returns_1() {
-    let _lock = env_lock();
+    let lock = GlobalStateLock::new();
     let dir = TestDir::new("rate-limits-single-target-not-found");
     let secrets = dir.join("secrets");
     stdfs::create_dir_all(&secrets).expect("secrets");
     let secrets = stdfs::canonicalize(&secrets).expect("canonical secrets");
+    let secrets_env = secrets.display().to_string();
 
-    let _secret_dir = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
-    let _default_all = EnvGuard::set("GEMINI_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false");
+    let _secret_dir = EnvGuard::set(&lock, "GEMINI_SECRET_DIR", &secrets_env);
+    let _default_all = EnvGuard::set(&lock, "GEMINI_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false");
 
     let options = rate_limits::RateLimitsOptions {
         json: true,
@@ -136,7 +102,7 @@ fn rate_limits_single_json_target_not_found_returns_1() {
 
 #[test]
 fn rate_limits_single_cached_missing_cache_returns_1() {
-    let _lock = env_lock();
+    let lock = GlobalStateLock::new();
     let dir = TestDir::new("rate-limits-single-missing-cache");
 
     let auth_file = dir.join("auth.json");
@@ -144,9 +110,11 @@ fn rate_limits_single_cached_missing_cache_returns_1() {
     let cache_root = dir.join("cache-root");
     stdfs::create_dir_all(&cache_root).expect("cache root");
 
-    let _auth = EnvGuard::set("GEMINI_AUTH_FILE", &auth_file);
-    let _cache_root = EnvGuard::set("ZSH_CACHE_DIR", &cache_root);
-    let _default_all = EnvGuard::set("GEMINI_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false");
+    let auth_file_env = auth_file.display().to_string();
+    let cache_root_env = cache_root.display().to_string();
+    let _auth = EnvGuard::set(&lock, "GEMINI_AUTH_FILE", &auth_file_env);
+    let _cache_root = EnvGuard::set(&lock, "ZSH_CACHE_DIR", &cache_root_env);
+    let _default_all = EnvGuard::set(&lock, "GEMINI_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false");
 
     let options = rate_limits::RateLimitsOptions {
         cached: true,
@@ -157,7 +125,7 @@ fn rate_limits_single_cached_missing_cache_returns_1() {
 
 #[test]
 fn rate_limits_single_cached_success_returns_0() {
-    let _lock = env_lock();
+    let lock = GlobalStateLock::new();
     let dir = TestDir::new("rate-limits-single-cached-success");
 
     let secrets = dir.join("secrets");
@@ -170,9 +138,11 @@ fn rate_limits_single_cached_success_returns_0() {
     let cache_root = dir.join("cache-root");
     stdfs::create_dir_all(&cache_root).expect("cache root");
 
-    let _secret_dir = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
-    let _cache_root = EnvGuard::set("ZSH_CACHE_DIR", &cache_root);
-    let _default_all = EnvGuard::set("GEMINI_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false");
+    let secrets_env = secrets.display().to_string();
+    let cache_root_env = cache_root.display().to_string();
+    let _secret_dir = EnvGuard::set(&lock, "GEMINI_SECRET_DIR", &secrets_env);
+    let _cache_root = EnvGuard::set(&lock, "ZSH_CACHE_DIR", &cache_root_env);
+    let _default_all = EnvGuard::set(&lock, "GEMINI_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false");
 
     let cache_file = rate_limits::cache_file_for_target(&secret_file).expect("cache path");
     if let Some(parent) = cache_file.parent() {
@@ -194,7 +164,7 @@ fn rate_limits_single_cached_success_returns_0() {
 
 #[test]
 fn rate_limits_single_json_missing_access_token_returns_2() {
-    let _lock = env_lock();
+    let lock = GlobalStateLock::new();
     let dir = TestDir::new("rate-limits-single-json-missing-token");
 
     let secrets = dir.join("secrets");
@@ -202,8 +172,9 @@ fn rate_limits_single_json_missing_access_token_returns_2() {
     write_secret(&secrets.join("alpha.json"), false);
     let secrets = stdfs::canonicalize(&secrets).expect("canonical secrets");
 
-    let _secret_dir = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
-    let _default_all = EnvGuard::set("GEMINI_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false");
+    let secrets_env = secrets.display().to_string();
+    let _secret_dir = EnvGuard::set(&lock, "GEMINI_SECRET_DIR", &secrets_env);
+    let _default_all = EnvGuard::set(&lock, "GEMINI_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false");
 
     let options = rate_limits::RateLimitsOptions {
         json: true,

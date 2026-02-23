@@ -1,47 +1,12 @@
 use gemini_cli::{rate_limits, starship};
+use nils_test_support::{EnvGuard, GlobalStateLock};
 
-use std::ffi::{OsStr, OsString};
 use std::fs as stdfs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    match LOCK.get_or_init(|| Mutex::new(())).lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    }
-}
-
-struct EnvGuard {
-    key: &'static str,
-    previous: Option<OsString>,
-}
-
-impl EnvGuard {
-    fn set(key: &'static str, value: impl AsRef<OsStr>) -> Self {
-        let previous = std::env::var_os(key);
-        // SAFETY: tests serialize env mutations via env_lock.
-        unsafe { std::env::set_var(key, value) };
-        Self { key, previous }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        if let Some(value) = self.previous.take() {
-            // SAFETY: tests serialize env mutations via env_lock.
-            unsafe { std::env::set_var(self.key, value) };
-        } else {
-            // SAFETY: tests serialize env mutations via env_lock.
-            unsafe { std::env::remove_var(self.key) };
-        }
-    }
-}
 
 struct TestDir {
     path: PathBuf,
@@ -151,19 +116,22 @@ fn spawn_usage_server() -> (String, thread::JoinHandle<usize>) {
 
 #[test]
 fn starship_refresh_updates_cache() {
-    let _lock = env_lock();
+    let lock = GlobalStateLock::new();
     let dir = TestDir::new("starship-refresh-updates-cache");
     let (auth_file, secrets, cache_root) = write_auth_secret(&dir);
 
     let (base_url, server) = spawn_usage_server();
 
-    let _auth = EnvGuard::set("GEMINI_AUTH_FILE", &auth_file);
-    let _secret_dir = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
-    let _cache_root = EnvGuard::set("ZSH_CACHE_DIR", &cache_root);
-    let _enabled = EnvGuard::set("GEMINI_STARSHIP_ENABLED", "true");
-    let _base = EnvGuard::set("CODE_ASSIST_ENDPOINT", &base_url);
-    let _connect = EnvGuard::set("GEMINI_STARSHIP_CURL_CONNECT_TIMEOUT_SECONDS", "1");
-    let _max_time = EnvGuard::set("GEMINI_STARSHIP_CURL_MAX_TIME_SECONDS", "3");
+    let auth_file_env = auth_file.display().to_string();
+    let secrets_env = secrets.display().to_string();
+    let cache_root_env = cache_root.display().to_string();
+    let _auth = EnvGuard::set(&lock, "GEMINI_AUTH_FILE", &auth_file_env);
+    let _secret_dir = EnvGuard::set(&lock, "GEMINI_SECRET_DIR", &secrets_env);
+    let _cache_root = EnvGuard::set(&lock, "ZSH_CACHE_DIR", &cache_root_env);
+    let _enabled = EnvGuard::set(&lock, "GEMINI_STARSHIP_ENABLED", "true");
+    let _base = EnvGuard::set(&lock, "CODE_ASSIST_ENDPOINT", &base_url);
+    let _connect = EnvGuard::set(&lock, "GEMINI_STARSHIP_CURL_CONNECT_TIMEOUT_SECONDS", "1");
+    let _max_time = EnvGuard::set(&lock, "GEMINI_STARSHIP_CURL_MAX_TIME_SECONDS", "3");
 
     let options = starship::StarshipOptions {
         refresh: true,
@@ -181,19 +149,22 @@ fn starship_refresh_updates_cache() {
 
 #[test]
 fn starship_stale_cached_entry_refreshes_on_run() {
-    let _lock = env_lock();
+    let lock = GlobalStateLock::new();
     let dir = TestDir::new("starship-stale-cache-refreshes");
     let (auth_file, secrets, cache_root) = write_auth_secret(&dir);
 
     let (base_url, server) = spawn_usage_server();
 
-    let _auth = EnvGuard::set("GEMINI_AUTH_FILE", &auth_file);
-    let _secret_dir = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
-    let _cache_root = EnvGuard::set("ZSH_CACHE_DIR", &cache_root);
-    let _enabled = EnvGuard::set("GEMINI_STARSHIP_ENABLED", "true");
-    let _base = EnvGuard::set("CODE_ASSIST_ENDPOINT", &base_url);
-    let _connect = EnvGuard::set("GEMINI_STARSHIP_CURL_CONNECT_TIMEOUT_SECONDS", "1");
-    let _max_time = EnvGuard::set("GEMINI_STARSHIP_CURL_MAX_TIME_SECONDS", "3");
+    let auth_file_env = auth_file.display().to_string();
+    let secrets_env = secrets.display().to_string();
+    let cache_root_env = cache_root.display().to_string();
+    let _auth = EnvGuard::set(&lock, "GEMINI_AUTH_FILE", &auth_file_env);
+    let _secret_dir = EnvGuard::set(&lock, "GEMINI_SECRET_DIR", &secrets_env);
+    let _cache_root = EnvGuard::set(&lock, "ZSH_CACHE_DIR", &cache_root_env);
+    let _enabled = EnvGuard::set(&lock, "GEMINI_STARSHIP_ENABLED", "true");
+    let _base = EnvGuard::set(&lock, "CODE_ASSIST_ENDPOINT", &base_url);
+    let _connect = EnvGuard::set(&lock, "GEMINI_STARSHIP_CURL_CONNECT_TIMEOUT_SECONDS", "1");
+    let _max_time = EnvGuard::set(&lock, "GEMINI_STARSHIP_CURL_MAX_TIME_SECONDS", "3");
 
     let stale_fetched = now_epoch().saturating_sub(10).max(1);
     rate_limits::write_starship_cache(
