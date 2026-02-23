@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::process::Command;
+use nils_common::git as common_git;
 
 use crate::git;
 use crate::messages;
@@ -83,9 +83,8 @@ pub fn run(args: &[String]) -> Result<i32> {
         }
     }
 
-    let status = Command::new("git")
-        .args(["tag", "-a", tag_name, &hash, "-m", &message])
-        .status()?;
+    let create_tag_args = ["tag", "-a", tag_name, hash.as_str(), "-m", message.as_str()];
+    let status = common_git::run_status_inherit(&create_tag_args)?;
     if !status.success() {
         return Ok(status.code().unwrap_or(1));
     }
@@ -94,15 +93,13 @@ pub fn run(args: &[String]) -> Result<i32> {
     println!("📝 Message: {message}");
 
     if do_push {
-        let status = Command::new("git")
-            .args(["push", "origin", tag_name])
-            .status()?;
+        let status = common_git::run_status_inherit(&["push", "origin", tag_name])?;
         if !status.success() {
             return Ok(status.code().unwrap_or(1));
         }
         println!("🚀 Pushed tag [{tag_name}] to origin");
 
-        let status = Command::new("git").args(["tag", "-d", tag_name]).status()?;
+        let status = common_git::run_status_inherit(&["tag", "-d", tag_name])?;
         if status.success() {
             println!("🧹 Deleted local tag [{tag_name}]");
         }
