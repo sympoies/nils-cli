@@ -17,6 +17,35 @@ _nils_cli_completion_common_fail_closed_zsh() {
   return 1
 }
 
+_nils_cli_completion_common_warn_once_zsh() {
+  emulate -L zsh
+
+  local state_var="${1-}"
+  local cli_bin="${2-}"
+  local reason="${3-}"
+  local diag_var=''
+
+  if [[ -n "$state_var" ]]; then
+    diag_var="${state_var}_DIAG_SHOWN"
+    if [[ "${(P)diag_var-0}" == "1" ]]; then
+      return 0
+    fi
+    typeset -g "${diag_var}=1"
+  fi
+
+  local msg='nils-cli completion (zsh): generated completion load failed'
+  if [[ -n "$cli_bin" ]]; then
+    msg="${msg} for '${cli_bin}'"
+  fi
+  msg="${msg}; fail-closed mode active"
+  if [[ -n "$reason" ]]; then
+    msg="${msg} (${reason})"
+  fi
+
+  print -u2 -r -- "$msg"
+  return 0
+}
+
 _nils_cli_completion_common_load_generated_zsh() {
   emulate -L zsh -o extendedglob
 
@@ -28,6 +57,7 @@ _nils_cli_completion_common_load_generated_zsh() {
   local strip_end_regex="${6-}"
 
   if [[ -z "$state_var" || -z "$generated_fn" || -z "$cli_bin" || -z "$generated_symbol" ]]; then
+    _nils_cli_completion_common_warn_once_zsh '' "${cli_bin}" 'invalid helper arguments'
     _nils_cli_completion_common_fail_closed_zsh
     return 1
   fi
@@ -37,13 +67,23 @@ _nils_cli_completion_common_load_generated_zsh() {
     (( $+functions[$generated_fn] )) && return 0
     typeset -g "${state_var}=0"
   elif [[ "$state" == "-1" ]]; then
+    _nils_cli_completion_common_warn_once_zsh \
+      "$state_var" \
+      "$cli_bin" \
+      'cached previous load failure; restart shell after fixing the CLI'
     _nils_cli_completion_common_fail_closed_zsh
     return 1
   fi
 
   local script=''
-  script="$(command "$cli_bin" completion zsh 2>/dev/null)" || {
+  local cmd_rc=0
+  script="$(command "$cli_bin" completion zsh)" || {
+    cmd_rc=$?
     typeset -g "${state_var}=-1"
+    _nils_cli_completion_common_warn_once_zsh \
+      "$state_var" \
+      "$cli_bin" \
+      "command '${cli_bin} completion zsh' failed (exit ${cmd_rc})"
     _nils_cli_completion_common_fail_closed_zsh
     return 1
   }
@@ -53,6 +93,10 @@ _nils_cli_completion_common_load_generated_zsh() {
   if [[ -n "$strip_begin_regex" && -n "$strip_end_regex" ]]; then
     script="$(printf '%s\n' "$script" | sed "/${strip_begin_regex}/,/${strip_end_regex}/d")" || {
       typeset -g "${state_var}=-1"
+      _nils_cli_completion_common_warn_once_zsh \
+        "$state_var" \
+        "$cli_bin" \
+        'failed to post-process generated zsh completion script'
       _nils_cli_completion_common_fail_closed_zsh
       return 1
     }
@@ -60,17 +104,26 @@ _nils_cli_completion_common_load_generated_zsh() {
 
   eval "$script" || {
     typeset -g "${state_var}=-1"
+    _nils_cli_completion_common_warn_once_zsh \
+      "$state_var" \
+      "$cli_bin" \
+      'failed to eval generated zsh completion script'
     _nils_cli_completion_common_fail_closed_zsh
     return 1
   }
 
   if (( ! $+functions[$generated_fn] )); then
     typeset -g "${state_var}=-1"
+    _nils_cli_completion_common_warn_once_zsh \
+      "$state_var" \
+      "$cli_bin" \
+      "generated function '${generated_fn}' was not defined"
     _nils_cli_completion_common_fail_closed_zsh
     return 1
   fi
 
   typeset -g "${state_var}=1"
+  typeset -g "${state_var}_DIAG_SHOWN=0"
   return 0
 }
 

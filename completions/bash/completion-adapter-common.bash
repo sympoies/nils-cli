@@ -18,6 +18,33 @@ _nils_cli_completion_common_fail_closed_bash() {
   return 0
 }
 
+_nils_cli_completion_common_warn_once_bash() {
+  local state_var="${1-}"
+  local cli_bin="${2-}"
+  local reason="${3-}"
+  local diag_var=''
+
+  if [[ -n "$state_var" ]]; then
+    diag_var="${state_var}_DIAG_SHOWN"
+    if [[ "${!diag_var:-0}" == "1" ]]; then
+      return 0
+    fi
+    printf -v "$diag_var" '%s' '1'
+  fi
+
+  local msg='nils-cli completion (bash): generated completion load failed'
+  if [[ -n "$cli_bin" ]]; then
+    msg+=" for '${cli_bin}'"
+  fi
+  msg+='; fail-closed mode active'
+  if [[ -n "$reason" ]]; then
+    msg+=" (${reason})"
+  fi
+
+  printf '%s\n' "$msg" >&2
+  return 0
+}
+
 _nils_cli_completion_common_has_word_bash() {
   local needle="$1"
   shift
@@ -38,6 +65,7 @@ _nils_cli_completion_common_load_generated_bash() {
   local strip_end_regex="${6-}"
 
   if [[ -z "$state_var" || -z "$generated_fn" || -z "$cli_bin" || -z "$generated_symbol" ]]; then
+    _nils_cli_completion_common_warn_once_bash '' "${cli_bin}" 'invalid helper arguments'
     _nils_cli_completion_common_fail_closed_bash
     return 1
   fi
@@ -47,13 +75,23 @@ _nils_cli_completion_common_load_generated_bash() {
     declare -F "$generated_fn" >/dev/null 2>&1 && return 0
     printf -v "$state_var" '%s' '0'
   elif [[ "$state" == "-1" ]]; then
+    _nils_cli_completion_common_warn_once_bash \
+      "$state_var" \
+      "$cli_bin" \
+      'cached previous load failure; restart shell after fixing the CLI'
     _nils_cli_completion_common_fail_closed_bash
     return 1
   fi
 
   local script=''
-  script="$(command "$cli_bin" completion bash 2>/dev/null)" || {
+  local cmd_rc=0
+  script="$(command "$cli_bin" completion bash)" || {
+    cmd_rc=$?
     printf -v "$state_var" '%s' '-1'
+    _nils_cli_completion_common_warn_once_bash \
+      "$state_var" \
+      "$cli_bin" \
+      "command '${cli_bin} completion bash' failed (exit ${cmd_rc})"
     _nils_cli_completion_common_fail_closed_bash
     return 1
   }
@@ -63,6 +101,10 @@ _nils_cli_completion_common_load_generated_bash() {
   if [[ -n "$strip_begin_regex" && -n "$strip_end_regex" ]]; then
     script="$(printf '%s\n' "$script" | sed "/${strip_begin_regex}/,/${strip_end_regex}/d")" || {
       printf -v "$state_var" '%s' '-1'
+      _nils_cli_completion_common_warn_once_bash \
+        "$state_var" \
+        "$cli_bin" \
+        'failed to post-process generated bash completion script'
       _nils_cli_completion_common_fail_closed_bash
       return 1
     }
@@ -70,17 +112,26 @@ _nils_cli_completion_common_load_generated_bash() {
 
   eval "$script" || {
     printf -v "$state_var" '%s' '-1'
+    _nils_cli_completion_common_warn_once_bash \
+      "$state_var" \
+      "$cli_bin" \
+      'failed to eval generated bash completion script'
     _nils_cli_completion_common_fail_closed_bash
     return 1
   }
 
   declare -F "$generated_fn" >/dev/null 2>&1 || {
     printf -v "$state_var" '%s' '-1'
+    _nils_cli_completion_common_warn_once_bash \
+      "$state_var" \
+      "$cli_bin" \
+      "generated function '${generated_fn}' was not defined"
     _nils_cli_completion_common_fail_closed_bash
     return 1
   }
 
   printf -v "$state_var" '%s' '1'
+  printf -v "${state_var}_DIAG_SHOWN" '%s' '0'
   return 0
 }
 
