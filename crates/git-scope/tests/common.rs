@@ -33,3 +33,10 @@ pub fn run_git_scope_output(dir: &Path, args: &[&str], envs: &[(&str, &str)]) ->
     }
     output.into_output()
 }
+
+#[allow(dead_code)]
+pub fn resolve_path_command(cmd: &str) -> String {
+    nils_common::process::find_in_path(cmd)
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_else(|| panic!("{cmd} not found in PATH for tests"))
+}

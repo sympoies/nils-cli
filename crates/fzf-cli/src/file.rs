@@ -92,31 +92,12 @@ fn list_files(max_depth: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-    use std::sync::Mutex;
+    use nils_test_support::{CwdGuard, GlobalStateLock};
     use tempfile::TempDir;
-
-    static CWD_LOCK: Mutex<()> = Mutex::new(());
-
-    struct CwdGuard {
-        original: PathBuf,
-    }
-
-    impl CwdGuard {
-        fn new(original: PathBuf) -> Self {
-            Self { original }
-        }
-    }
-
-    impl Drop for CwdGuard {
-        fn drop(&mut self) {
-            let _ = std::env::set_current_dir(&self.original);
-        }
-    }
 
     #[test]
     fn list_files_skips_git_and_sorts() {
-        let _lock = CWD_LOCK.lock().unwrap();
+        let lock = GlobalStateLock::new();
         let dir = TempDir::new().unwrap();
 
         std::fs::create_dir_all(dir.path().join(".git/objects")).unwrap();
@@ -126,9 +107,7 @@ mod tests {
         std::fs::write(dir.path().join("b.txt"), "x").unwrap();
         std::fs::write(dir.path().join("nested/c.txt"), "x").unwrap();
 
-        let original = std::env::current_dir().unwrap();
-        let _guard = CwdGuard::new(original);
-        std::env::set_current_dir(dir.path()).unwrap();
+        let _cwd = CwdGuard::set(&lock, dir.path()).expect("cwd");
 
         let files = list_files(5);
         assert_eq!(files, vec!["a.txt", "b.txt", "nested/c.txt"]);
@@ -136,16 +115,14 @@ mod tests {
 
     #[test]
     fn list_files_respects_max_depth() {
-        let _lock = CWD_LOCK.lock().unwrap();
+        let lock = GlobalStateLock::new();
         let dir = TempDir::new().unwrap();
 
         std::fs::write(dir.path().join("root.txt"), "x").unwrap();
         std::fs::create_dir_all(dir.path().join("nested")).unwrap();
         std::fs::write(dir.path().join("nested/deeper.txt"), "x").unwrap();
 
-        let original = std::env::current_dir().unwrap();
-        let _guard = CwdGuard::new(original);
-        std::env::set_current_dir(dir.path()).unwrap();
+        let _cwd = CwdGuard::set(&lock, dir.path()).expect("cwd");
 
         let files = list_files(1);
         assert_eq!(files, vec!["root.txt"]);

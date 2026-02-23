@@ -170,45 +170,14 @@ fn run_code(args: &[String]) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nils_test_support::{EnvGuard, GlobalStateLock};
     use pretty_assertions::assert_eq;
-    use std::sync::Mutex;
     use tempfile::TempDir;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    struct EnvGuard {
-        key: &'static str,
-        original: Option<String>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let original = std::env::var(key).ok();
-            // SAFETY: tests mutate process env only in scoped guard usage.
-            unsafe { std::env::set_var(key, value) };
-            Self { key, original }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.original {
-                Some(value) => {
-                    // SAFETY: tests restore process env only in scoped guard usage.
-                    unsafe { std::env::set_var(self.key, value) };
-                }
-                None => {
-                    // SAFETY: tests restore process env only in scoped guard usage.
-                    unsafe { std::env::remove_var(self.key) };
-                }
-            }
-        }
-    }
 
     #[test]
     fn parse_open_with_flags_respects_env_and_explicit_flags() {
-        let _lock = ENV_LOCK.lock().unwrap();
-        let _guard = EnvGuard::set("FZF_FILE_OPEN_WITH", "vscode");
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::set(&lock, "FZF_FILE_OPEN_WITH", "vscode");
         let (open_with, rest) = parse_open_with_flags(&[String::from("file.txt")]).expect("parse");
         assert_eq!(open_with, OpenWith::Vscode);
         assert_eq!(rest, vec!["file.txt".to_string()]);
@@ -225,7 +194,7 @@ mod tests {
 
     #[test]
     fn parse_open_with_flags_rejects_conflicts_and_unknowns() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = GlobalStateLock::new();
         let err =
             parse_open_with_flags(&[String::from("--vi"), String::from("--vscode")]).unwrap_err();
         assert_eq!(err, 2);

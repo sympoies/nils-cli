@@ -32,7 +32,7 @@ fn tree_missing_emits_warning() {
     common::git(root, &["add", "file.txt"]);
 
     let temp_path = tempfile::TempDir::new().unwrap();
-    let git_path = which_git();
+    let git_path = common::resolve_path_command("git");
     let link_path = temp_path.path().join("git");
     symlink(&git_path, &link_path).unwrap();
 
@@ -61,7 +61,7 @@ fn tree_fromfile_unsupported_emits_warning() {
     common::git(root, &["add", "file.txt"]);
 
     let temp_path = tempfile::TempDir::new().unwrap();
-    let git_path = which_git();
+    let git_path = common::resolve_path_command("git");
     let link_path = temp_path.path().join("git");
     symlink(&git_path, &link_path).unwrap();
 
@@ -85,14 +85,4 @@ fn tree_fromfile_unsupported_emits_warning() {
         output.contains("tree does not support --fromfile"),
         "tree unsupported warning not found: {output}"
     );
-}
-
-fn which_git() -> String {
-    let output = std::process::Command::new("which")
-        .arg("git")
-        .output()
-        .expect("which git");
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    assert!(!path.is_empty(), "git not found in PATH for tests");
-    path
 }
