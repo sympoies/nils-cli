@@ -1839,6 +1839,7 @@ dependencies = [
  "chrono-tz",
  "clap",
  "clap_complete",
+ "nils-common",
  "nils-test-support",
  "pretty_assertions",
  "rusqlite",
