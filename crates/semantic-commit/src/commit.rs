@@ -1,9 +1,11 @@
 use crate::git;
+use nils_common::git as common_git;
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
+use std::ffi::OsString;
 use std::fs::File;
 use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Output, Stdio};
 
 const EXIT_ERROR: i32 = 1;
 const EXIT_NO_STAGED_CHANGES: i32 = 2;
@@ -331,25 +333,68 @@ fn read_message_contents(options: &CommitOptions) -> Result<String, i32> {
     Ok(message_contents)
 }
 
+struct EnvVarGuard {
+    key: &'static str,
+    old: Option<OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let old = std::env::var_os(key);
+        // SAFETY: semantic-commit is single-process CLI flow; we mutate and restore env in a
+        // tight scope before returning to caller.
+        unsafe { std::env::set_var(key, value) };
+        Self { key, old }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        if let Some(old) = self.old.take() {
+            // SAFETY: restore original env value for scoped mutation.
+            unsafe { std::env::set_var(self.key, old) };
+        } else {
+            // SAFETY: restore original env state for scoped mutation.
+            unsafe { std::env::remove_var(self.key) };
+        }
+    }
+}
+
+fn with_cat_pager_env<T>(f: impl FnOnce() -> T) -> T {
+    let _git_pager = EnvVarGuard::set("GIT_PAGER", "cat");
+    let _pager = EnvVarGuard::set("PAGER", "cat");
+    f()
+}
+
+fn run_git_output_with_pager(repo: Option<&Path>, args: &[&str]) -> std::io::Result<Output> {
+    with_cat_pager_env(|| match repo {
+        Some(repo) => common_git::run_output_in(repo, args),
+        None => common_git::run_output(args),
+    })
+}
+
+fn run_git_status_inherit_with_pager(
+    repo: Option<&Path>,
+    args: &[&str],
+) -> std::io::Result<ExitStatus> {
+    with_cat_pager_env(|| match repo {
+        Some(repo) => common_git::run_status_inherit_in(repo, args),
+        None => common_git::run_status_inherit(args),
+    })
+}
+
 fn git_commit(
     message_path: &Path,
     repo: Option<&Path>,
 ) -> anyhow::Result<std::process::ExitStatus> {
-    let mut command = Command::new("git");
-    if let Some(repo) = repo {
-        command.arg("-C").arg(repo);
+    let message_path = message_path.to_string_lossy();
+    let output = run_git_output_with_pager(repo, &["commit", "-F", message_path.as_ref()])?;
+
+    if !output.stderr.is_empty() {
+        std::io::stderr().write_all(&output.stderr)?;
     }
 
-    command
-        .args(["commit", "-F"])
-        .arg(message_path)
-        .env("GIT_PAGER", "cat")
-        .env("PAGER", "cat")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
-        .status()
-        .map_err(Into::into)
+    Ok(output.status)
 }
 
 fn print_summary(summary_mode: SummaryMode, repo: Option<&Path>) -> i32 {
@@ -407,19 +452,10 @@ fn run_git_scope_summary(repo: Option<&Path>) -> bool {
 }
 
 fn print_git_show_summary(repo: Option<&Path>) -> i32 {
-    let mut command = Command::new("git");
-    if let Some(repo) = repo {
-        command.arg("-C").arg(repo);
-    }
-
-    let status = command
-        .args(["show", "-1", "--name-status", "--oneline", "--no-color"])
-        .env("GIT_PAGER", "cat")
-        .env("PAGER", "cat")
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status();
+    let status = run_git_status_inherit_with_pager(
+        repo,
+        &["show", "-1", "--name-status", "--oneline", "--no-color"],
+    );
 
     match status {
         Ok(status) if status.success() => 0,
