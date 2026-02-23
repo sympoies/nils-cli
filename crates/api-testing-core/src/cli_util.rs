@@ -1,6 +1,8 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use nils_common::shell::quote_posix_single;
+
 use crate::{Result, env_file};
 
 pub trait WarnSink {
@@ -113,20 +115,7 @@ pub fn maybe_relpath(path: &Path, base: &Path) -> String {
 }
 
 pub fn shell_quote(s: &str) -> String {
-    if s.is_empty() {
-        return "''".to_string();
-    }
-
-    let mut out = String::from("'");
-    for ch in s.chars() {
-        if ch == '\'' {
-            out.push_str("'\\''");
-        } else {
-            out.push(ch);
-        }
-    }
-    out.push('\'');
-    out
+    quote_posix_single(s)
 }
 
 pub fn list_available_suffixes(file: &Path, prefix: &str) -> Vec<String> {
