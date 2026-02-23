@@ -59,9 +59,6 @@ Contributors should treat `nils-common` as the shared helper boundary for cross-
 Detailed scope, API examples, migration conventions, and non-goals are documented in
 [crates/nils-common/README.md](crates/nils-common/README.md).
 
-Cross-lane parity contract:
-- [docs/specs/codex-gemini-cli-parity-contract-v1.md](docs/specs/codex-gemini-cli-parity-contract-v1.md)
-
 ## Shell wrappers and completions
 
 Canonical completion architecture and contributor validation live in
