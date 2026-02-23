@@ -8,15 +8,11 @@ pub mod save;
 pub mod sync;
 pub mod use_secret;
 
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-
-pub(crate) const SECRET_FILE_MODE: u32 = 0o600;
+pub(crate) const SECRET_FILE_MODE: u32 = crate::fs::SECRET_FILE_MODE;
 
 #[cfg(test)]
 pub(crate) fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
@@ -50,66 +46,15 @@ pub fn identity_key_from_auth_file(path: &Path) -> io::Result<Option<String>> {
 }
 
 pub(crate) fn write_atomic(path: &Path, contents: &[u8], mode: u32) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    let mut attempt = 0u32;
-    loop {
-        let tmp_path = temp_path(path, attempt);
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp_path)
-        {
-            Ok(mut file) => {
-                file.write_all(contents)?;
-                let _ = file.flush();
-
-                set_permissions(&tmp_path, mode)?;
-                drop(file);
-
-                fs::rename(&tmp_path, path)?;
-                set_permissions(path, mode)?;
-                return Ok(());
-            }
-            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-                attempt += 1;
-                if attempt > 10 {
-                    return Err(err);
-                }
-            }
-            Err(err) => return Err(err),
-        }
-    }
+    crate::fs::write_atomic(path, contents, mode)
 }
 
 pub(crate) fn write_timestamp(path: &Path, iso: Option<&str>) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    if let Some(raw) = iso {
-        let trimmed = strip_newlines(raw);
-        if !trimmed.is_empty() {
-            fs::write(path, trimmed)?;
-            return Ok(());
-        }
-    }
-
-    let _ = fs::remove_file(path);
-    Ok(())
-}
-
-pub(crate) fn strip_newlines(raw: &str) -> String {
-    raw.split(&['\n', '\r'][..])
-        .next()
-        .unwrap_or("")
-        .to_string()
+    crate::fs::write_timestamp(path, iso)
 }
 
 pub(crate) fn normalize_iso(raw: &str) -> String {
-    let mut trimmed = strip_newlines(raw);
+    let mut trimmed = crate::json::strip_newlines(raw);
     if let Some(dot) = trimmed.find('.')
         && trimmed.ends_with('Z')
     {
@@ -201,30 +146,6 @@ pub(crate) fn temp_file_path(prefix: &str) -> PathBuf {
 
 fn core_error_to_io(err: crate::runtime::CoreError) -> io::Error {
     io::Error::other(err.to_string())
-}
-
-#[cfg(unix)]
-fn set_permissions(path: &Path, mode: u32) -> io::Result<()> {
-    let permissions = fs::Permissions::from_mode(mode);
-    fs::set_permissions(path, permissions)
-}
-
-#[cfg(not(unix))]
-fn set_permissions(_path: &Path, _mode: u32) -> io::Result<()> {
-    Ok(())
-}
-
-fn temp_path(path: &Path, attempt: u32) -> PathBuf {
-    let filename = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("tmp");
-    let pid = std::process::id();
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    path.with_file_name(format!(".{filename}.tmp-{pid}-{nanos}-{attempt}"))
 }
 
 fn parse_u32(raw: &str) -> Option<u32> {
