@@ -141,6 +141,16 @@ pub fn is_inside_work_tree_in(cwd: &Path) -> io::Result<bool> {
     Ok(run_status_quiet_in(cwd, &["rev-parse", "--is-inside-work-tree"])?.success())
 }
 
+pub fn has_staged_changes() -> io::Result<bool> {
+    let status = run_status_quiet(&["diff", "--cached", "--quiet", "--"])?;
+    Ok(has_staged_changes_from_status(status))
+}
+
+pub fn has_staged_changes_in(cwd: &Path) -> io::Result<bool> {
+    let status = run_status_quiet_in(cwd, &["diff", "--cached", "--quiet", "--"])?;
+    Ok(has_staged_changes_from_status(status))
+}
+
 pub fn is_git_repo() -> io::Result<bool> {
     Ok(run_status_quiet(&["rev-parse", "--git-dir"])?.success())
 }
@@ -230,6 +240,14 @@ fn rev_parse_args<'a>(args: &'a [&'a str]) -> Vec<&'a str> {
     full.push("rev-parse");
     full.extend_from_slice(args);
     full
+}
+
+fn has_staged_changes_from_status(status: ExitStatus) -> bool {
+    match status.code() {
+        Some(0) => false,
+        Some(1) => true,
+        _ => !status.success(),
+    }
 }
 
 fn trimmed_stdout_if_success(output: &Output) -> Option<String> {
@@ -338,10 +356,23 @@ mod tests {
 
         assert!(is_git_repo().expect("is_git_repo"));
         assert!(is_inside_work_tree().expect("is_inside_work_tree"));
+        assert!(!has_staged_changes().expect("has_staged_changes"));
         assert_eq!(require_repo(), Ok(()));
         assert_eq!(require_work_tree(), Ok(()));
         assert_eq!(repo_root().expect("repo_root"), Some(root.into()));
         assert_eq!(rev_parse(&["HEAD"]).expect("rev_parse"), Some(head));
+    }
+
+    #[test]
+    fn has_staged_changes_in_reports_index_state() {
+        let repo = init_repo_with(InitRepoOptions::new().with_initial_commit());
+
+        assert!(!has_staged_changes_in(repo.path()).expect("no staged changes"));
+
+        std::fs::write(repo.path().join("a.txt"), "hello\n").expect("write staged file");
+        run_git(repo.path(), &["add", "a.txt"]);
+
+        assert!(has_staged_changes_in(repo.path()).expect("staged changes present"));
     }
 
     #[test]
