@@ -1,38 +1,5 @@
 use gemini_cli::agent::exec;
-use std::sync::{Mutex, OnceLock};
-
-fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .expect("env lock")
-}
-
-struct EnvGuard {
-    key: &'static str,
-    old: Option<std::ffi::OsString>,
-}
-
-impl EnvGuard {
-    fn set(key: &'static str, value: &str) -> Self {
-        let old = std::env::var_os(key);
-        // SAFETY: tests mutate process env with a global lock.
-        unsafe { std::env::set_var(key, value) };
-        Self { key, old }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        if let Some(value) = self.old.take() {
-            // SAFETY: tests mutate process env with a global lock.
-            unsafe { std::env::set_var(self.key, value) };
-        } else {
-            // SAFETY: tests mutate process env with a global lock.
-            unsafe { std::env::remove_var(self.key) };
-        }
-    }
-}
+use nils_test_support::{EnvGuard, GlobalStateLock};
 
 #[test]
 fn exec_dangerous_missing_prompt_exits_1() {
@@ -44,8 +11,8 @@ fn exec_dangerous_missing_prompt_exits_1() {
 
 #[test]
 fn require_allow_dangerous_without_caller_uses_gemini_prefix() {
-    let _lock = env_lock();
-    let _danger = EnvGuard::set("GEMINI_ALLOW_DANGEROUS_ENABLED", "false");
+    let lock = GlobalStateLock::new();
+    let _danger = EnvGuard::set(&lock, "GEMINI_ALLOW_DANGEROUS_ENABLED", "false");
 
     let mut stderr: Vec<u8> = Vec::new();
     let allowed = exec::require_allow_dangerous(None, &mut stderr);
@@ -58,8 +25,8 @@ fn require_allow_dangerous_without_caller_uses_gemini_prefix() {
 
 #[test]
 fn require_allow_dangerous_warns_on_invalid_value() {
-    let _lock = env_lock();
-    let _danger = EnvGuard::set("GEMINI_ALLOW_DANGEROUS_ENABLED", "wat");
+    let lock = GlobalStateLock::new();
+    let _danger = EnvGuard::set(&lock, "GEMINI_ALLOW_DANGEROUS_ENABLED", "wat");
 
     let mut stderr: Vec<u8> = Vec::new();
     let allowed = exec::require_allow_dangerous(Some("caller"), &mut stderr);

@@ -1,14 +1,7 @@
 use gemini_cli::auth;
+use nils_test_support::{EnvGuard, GlobalStateLock};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
-
-fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .expect("env lock")
-}
 
 struct TempDir {
     path: PathBuf,
@@ -38,45 +31,21 @@ impl Drop for TempDir {
     }
 }
 
-struct EnvGuard {
-    key: String,
-    old: Option<std::ffi::OsString>,
-}
-
-impl EnvGuard {
-    fn set(key: &str, value: impl AsRef<std::ffi::OsStr>) -> Self {
-        let old = std::env::var_os(key);
-        // SAFETY: test-scoped env mutation.
-        unsafe { std::env::set_var(key, value) };
-        Self {
-            key: key.to_string(),
-            old,
-        }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        if let Some(value) = self.old.take() {
-            // SAFETY: test-scoped env restore.
-            unsafe { std::env::set_var(&self.key, value) };
-        } else {
-            // SAFETY: test-scoped env restore.
-            unsafe { std::env::remove_var(&self.key) };
-        }
-    }
+fn set_env(lock: &GlobalStateLock, key: &str, value: impl AsRef<std::ffi::OsStr>) -> EnvGuard {
+    let value = value.as_ref().to_string_lossy().into_owned();
+    EnvGuard::set(lock, key, &value)
 }
 
 #[test]
 fn auth_auto_refresh_invalid_min_days() {
-    let _lock = env_lock();
+    let lock = GlobalStateLock::new();
 
     let dir = TempDir::new("gemini-auto-refresh-invalid");
     let auth_file = dir.join("auth.json");
     fs::write(&auth_file, r#"{"last_refresh":"2025-01-20T12:34:56Z"}"#).expect("write auth");
 
-    let _auth = EnvGuard::set("GEMINI_AUTH_FILE", &auth_file);
-    let _min = EnvGuard::set("GEMINI_AUTO_REFRESH_MIN_DAYS", "oops");
+    let _auth = set_env(&lock, "GEMINI_AUTH_FILE", &auth_file);
+    let _min = set_env(&lock, "GEMINI_AUTO_REFRESH_MIN_DAYS", "oops");
 
     let code = auth::auto_refresh::run();
     assert_eq!(code, 64);
@@ -84,15 +53,15 @@ fn auth_auto_refresh_invalid_min_days() {
 
 #[test]
 fn auth_auto_refresh_unconfigured_exits_zero() {
-    let _lock = env_lock();
+    let lock = GlobalStateLock::new();
 
     let dir = TempDir::new("gemini-auto-refresh-unconfigured");
     let auth_file = dir.join("missing_auth.json");
     let secrets = dir.join("secrets");
     fs::create_dir_all(&secrets).expect("secrets");
 
-    let _auth = EnvGuard::set("GEMINI_AUTH_FILE", &auth_file);
-    let _secret = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
+    let _auth = set_env(&lock, "GEMINI_AUTH_FILE", &auth_file);
+    let _secret = set_env(&lock, "GEMINI_SECRET_DIR", &secrets);
 
     let code = auth::auto_refresh::run();
     assert_eq!(code, 0);
@@ -100,7 +69,7 @@ fn auth_auto_refresh_unconfigured_exits_zero() {
 
 #[test]
 fn auth_auto_refresh_backfills_timestamp() {
-    let _lock = env_lock();
+    let lock = GlobalStateLock::new();
 
     let dir = TempDir::new("gemini-auto-refresh-backfill");
     let auth_file = dir.join("auth.json");
@@ -115,10 +84,10 @@ fn auth_auto_refresh_backfills_timestamp() {
     )
     .expect("write auth");
 
-    let _auth = EnvGuard::set("GEMINI_AUTH_FILE", &auth_file);
-    let _cache = EnvGuard::set("GEMINI_SECRET_CACHE_DIR", &cache);
-    let _secret = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
-    let _min = EnvGuard::set("GEMINI_AUTO_REFRESH_MIN_DAYS", "9999");
+    let _auth = set_env(&lock, "GEMINI_AUTH_FILE", &auth_file);
+    let _cache = set_env(&lock, "GEMINI_SECRET_CACHE_DIR", &cache);
+    let _secret = set_env(&lock, "GEMINI_SECRET_DIR", &secrets);
+    let _min = set_env(&lock, "GEMINI_AUTO_REFRESH_MIN_DAYS", "9999");
 
     let code = auth::auto_refresh::run();
     assert_eq!(code, 0);

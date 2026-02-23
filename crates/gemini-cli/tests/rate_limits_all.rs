@@ -1,44 +1,9 @@
 use gemini_cli::rate_limits;
+use nils_test_support::{EnvGuard, GlobalStateLock};
 
-use std::ffi::{OsStr, OsString};
 use std::fs as stdfs;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
-
-fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    match LOCK.get_or_init(|| Mutex::new(())).lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    }
-}
-
-struct EnvGuard {
-    key: &'static str,
-    previous: Option<OsString>,
-}
-
-impl EnvGuard {
-    fn set(key: &'static str, value: impl AsRef<OsStr>) -> Self {
-        let previous = std::env::var_os(key);
-        // SAFETY: tests serialize env mutations via env_lock.
-        unsafe { std::env::set_var(key, value) };
-        Self { key, previous }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        if let Some(value) = self.previous.take() {
-            // SAFETY: tests serialize env mutations via env_lock.
-            unsafe { std::env::set_var(self.key, value) };
-        } else {
-            // SAFETY: tests serialize env mutations via env_lock.
-            unsafe { std::env::remove_var(self.key) };
-        }
-    }
-}
 
 struct TestDir {
     path: PathBuf,
@@ -80,11 +45,12 @@ fn write_secret(path: PathBuf) {
 
 #[test]
 fn rate_limits_all_missing_secret_dir_returns_1() {
-    let _lock = env_lock();
+    let lock = GlobalStateLock::new();
     let dir = TestDir::new("rate-limits-all-missing-secret-dir");
     let missing = dir.join("missing");
+    let missing_env = missing.display().to_string();
 
-    let _secret_dir = EnvGuard::set("GEMINI_SECRET_DIR", &missing);
+    let _secret_dir = EnvGuard::set(&lock, "GEMINI_SECRET_DIR", &missing_env);
     let options = rate_limits::RateLimitsOptions {
         all: true,
         ..Default::default()
@@ -94,7 +60,7 @@ fn rate_limits_all_missing_secret_dir_returns_1() {
 
 #[test]
 fn rate_limits_all_with_positional_secret_returns_64() {
-    let _lock = env_lock();
+    let _lock = GlobalStateLock::new();
     let options = rate_limits::RateLimitsOptions {
         all: true,
         secret: Some("alpha.json".to_string()),
@@ -105,13 +71,14 @@ fn rate_limits_all_with_positional_secret_returns_64() {
 
 #[test]
 fn rate_limits_all_json_empty_secret_dir_returns_1() {
-    let _lock = env_lock();
+    let lock = GlobalStateLock::new();
     let dir = TestDir::new("rate-limits-all-json-empty-secret-dir");
     let secrets = dir.join("secrets");
     stdfs::create_dir_all(&secrets).expect("secrets");
     let secrets = stdfs::canonicalize(&secrets).expect("canonical secrets");
 
-    let _secret_dir = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
+    let secrets_env = secrets.display().to_string();
+    let _secret_dir = EnvGuard::set(&lock, "GEMINI_SECRET_DIR", &secrets_env);
     let options = rate_limits::RateLimitsOptions {
         all: true,
         json: true,
@@ -122,7 +89,7 @@ fn rate_limits_all_json_empty_secret_dir_returns_1() {
 
 #[test]
 fn rate_limits_all_cached_success_returns_0() {
-    let _lock = env_lock();
+    let lock = GlobalStateLock::new();
     let dir = TestDir::new("rate-limits-all-cached-success");
 
     let secrets = dir.join("secrets");
@@ -138,8 +105,10 @@ fn rate_limits_all_cached_success_returns_0() {
     let cache_root = dir.join("cache-root");
     stdfs::create_dir_all(&cache_root).expect("cache root");
 
-    let _secret_dir = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
-    let _cache_root = EnvGuard::set("ZSH_CACHE_DIR", &cache_root);
+    let secrets_env = secrets.display().to_string();
+    let cache_root_env = cache_root.display().to_string();
+    let _secret_dir = EnvGuard::set(&lock, "GEMINI_SECRET_DIR", &secrets_env);
+    let _cache_root = EnvGuard::set(&lock, "ZSH_CACHE_DIR", &cache_root_env);
 
     for target in [&alpha, &beta] {
         let cache = rate_limits::cache_file_for_target(target).expect("cache file");
@@ -163,7 +132,7 @@ fn rate_limits_all_cached_success_returns_0() {
 
 #[test]
 fn rate_limits_all_cached_partial_failure_returns_1() {
-    let _lock = env_lock();
+    let lock = GlobalStateLock::new();
     let dir = TestDir::new("rate-limits-all-cached-partial-failure");
 
     let secrets = dir.join("secrets");
@@ -178,8 +147,10 @@ fn rate_limits_all_cached_partial_failure_returns_1() {
     let cache_root = dir.join("cache-root");
     stdfs::create_dir_all(&cache_root).expect("cache root");
 
-    let _secret_dir = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
-    let _cache_root = EnvGuard::set("ZSH_CACHE_DIR", &cache_root);
+    let secrets_env = secrets.display().to_string();
+    let cache_root_env = cache_root.display().to_string();
+    let _secret_dir = EnvGuard::set(&lock, "GEMINI_SECRET_DIR", &secrets_env);
+    let _cache_root = EnvGuard::set(&lock, "ZSH_CACHE_DIR", &cache_root_env);
 
     let alpha_cache = rate_limits::cache_file_for_target(&alpha).expect("alpha cache");
     if let Some(parent) = alpha_cache.parent() {

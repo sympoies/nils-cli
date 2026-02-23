@@ -1385,32 +1385,11 @@ fn json_escape(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::OsString;
+    use nils_test_support::{EnvGuard, GlobalStateLock};
 
-    struct EnvGuard {
-        key: &'static str,
-        old: Option<OsString>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
-            let old = std::env::var_os(key);
-            // SAFETY: test-scoped env mutation.
-            unsafe { std::env::set_var(key, value) };
-            Self { key, old }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            if let Some(value) = self.old.take() {
-                // SAFETY: test-scoped env restore.
-                unsafe { std::env::set_var(self.key, value) };
-            } else {
-                // SAFETY: test-scoped env restore.
-                unsafe { std::env::remove_var(self.key) };
-            }
-        }
+    fn set_env(lock: &GlobalStateLock, key: &str, value: impl AsRef<std::ffi::OsStr>) -> EnvGuard {
+        let value = value.as_ref().to_string_lossy().into_owned();
+        EnvGuard::set(lock, key, &value)
     }
 
     #[test]
@@ -1430,11 +1409,12 @@ mod tests {
 
     #[test]
     fn env_truthy_accepts_expected_variants() {
-        let _v1 = EnvGuard::set("GEMINI_TEST_TRUTHY", "true");
+        let lock = GlobalStateLock::new();
+        let _v1 = set_env(&lock, "GEMINI_TEST_TRUTHY", "true");
         assert!(shared_env::env_truthy("GEMINI_TEST_TRUTHY"));
-        let _v2 = EnvGuard::set("GEMINI_TEST_TRUTHY", "ON");
+        let _v2 = set_env(&lock, "GEMINI_TEST_TRUTHY", "ON");
         assert!(shared_env::env_truthy("GEMINI_TEST_TRUTHY"));
-        let _v3 = EnvGuard::set("GEMINI_TEST_TRUTHY", "0");
+        let _v3 = set_env(&lock, "GEMINI_TEST_TRUTHY", "0");
         assert!(!shared_env::env_truthy("GEMINI_TEST_TRUTHY"));
     }
 
@@ -1507,13 +1487,14 @@ mod tests {
 
     #[test]
     fn collect_secret_files_returns_sorted_json_files() {
+        let lock = GlobalStateLock::new();
         let dir = tempfile::TempDir::new().expect("tempdir");
         let secrets = dir.path().join("secrets");
         std::fs::create_dir_all(&secrets).expect("secrets");
         std::fs::write(secrets.join("b.json"), "{}").expect("b");
         std::fs::write(secrets.join("a.json"), "{}").expect("a");
         std::fs::write(secrets.join("skip.txt"), "x").expect("skip");
-        let _secret = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
+        let _secret = set_env(&lock, "GEMINI_SECRET_DIR", &secrets);
 
         let files = collect_secret_files().expect("files");
         assert_eq!(
@@ -1527,12 +1508,13 @@ mod tests {
 
     #[test]
     fn resolve_single_target_appends_json_when_secret_dir_is_configured() {
+        let lock = GlobalStateLock::new();
         let dir = tempfile::TempDir::new().expect("tempdir");
         let secrets = dir.path().join("secrets");
         std::fs::create_dir_all(&secrets).expect("secrets");
         let target = secrets.join("alpha.json");
         std::fs::write(&target, "{}").expect("target");
-        let _secret = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
+        let _secret = set_env(&lock, "GEMINI_SECRET_DIR", &secrets);
 
         let resolved = resolve_single_target(Some("alpha")).expect("resolved");
         assert_eq!(resolved, target);
@@ -1540,7 +1522,8 @@ mod tests {
 
     #[test]
     fn clear_starship_cache_rejects_non_absolute_cache_root() {
-        let _cache = EnvGuard::set("ZSH_CACHE_DIR", "relative-cache");
+        let lock = GlobalStateLock::new();
+        let _cache = set_env(&lock, "ZSH_CACHE_DIR", "relative-cache");
         let err = clear_starship_cache().expect_err("non-absolute should fail");
         assert!(err.contains("non-absolute cache root"));
     }
