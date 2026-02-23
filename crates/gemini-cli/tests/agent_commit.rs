@@ -1,4 +1,5 @@
 use gemini_cli::agent;
+use nils_common::process as shared_process;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -81,15 +82,9 @@ fn write_executable(path: &Path, content: &str) {
 }
 
 fn real_git_path() -> String {
-    let output = Command::new("/bin/sh")
-        .arg("-c")
-        .arg("command -v git")
-        .output()
-        .expect("which git");
-    assert!(output.status.success());
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    assert!(!path.is_empty());
-    path
+    shared_process::find_in_path("git")
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_else(|| panic!("git not found in PATH for tests"))
 }
 
 fn write_stub_git(dir: &Path) {

@@ -934,12 +934,9 @@ fn derive_websocket_case_name(s: &WebsocketCallSnippet) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
-
     use super::*;
+    use nils_test_support::{EnvGuard, GlobalStateLock};
     use pretty_assertions::assert_eq;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn tokenization_truncates_at_first_pipe() {
@@ -963,11 +960,9 @@ mod tests {
 
     #[test]
     fn tokenization_expands_env_vars_best_effort() {
-        let _g = ENV_LOCK.lock().expect("lock");
+        let lock = GlobalStateLock::new();
         let key = "NILS_TEST_HOME";
-        let prev = std::env::var(key).ok();
-        // SAFETY: tests mutate process env while guarded by ENV_LOCK.
-        unsafe { std::env::set_var(key, "/tmp/nils-test-home") };
+        let _guard = EnvGuard::set(&lock, key, "/tmp/nils-test-home");
 
         let s = "$NILS_TEST_HOME/bin/api-gql call --env staging op.graphql";
         let tokens = tokenize_call_snippet(s).expect("tokens");
@@ -981,14 +976,6 @@ mod tests {
                 "op.graphql"
             ]
         );
-
-        if let Some(v) = prev {
-            // SAFETY: tests restore process env while guarded by ENV_LOCK.
-            unsafe { std::env::set_var(key, v) };
-        } else {
-            // SAFETY: tests restore process env while guarded by ENV_LOCK.
-            unsafe { std::env::remove_var(key) };
-        }
     }
 
     #[test]

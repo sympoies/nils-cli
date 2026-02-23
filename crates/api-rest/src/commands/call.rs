@@ -425,10 +425,10 @@ mod tests {
     use super::*;
     use base64::Engine;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use nils_test_support::fs::write_text;
+    use nils_test_support::{EnvGuard, GlobalStateLock};
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
-
-    use crate::test_support::{ENV_LOCK, EnvGuard, write_file};
 
     fn b64url_json(value: &serde_json::Value) -> String {
         let bytes = serde_json::to_vec(value).expect("json");
@@ -445,7 +445,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let setup_dir = tmp.path().join("setup/rest");
         std::fs::create_dir_all(&setup_dir).unwrap();
-        write_file(
+        write_text(
             &setup_dir.join("endpoints.env"),
             "REST_ENV_DEFAULT=prod\nREST_URL_PROD=http://prod\nREST_URL_STAGING=http://staging\n",
         );
@@ -493,7 +493,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let setup_dir = tmp.path().join("setup/rest");
         std::fs::create_dir_all(&setup_dir).unwrap();
-        write_file(
+        write_text(
             &setup_dir.join("endpoints.env"),
             "REST_URL_PROD=http://prod\nREST_URL_DEV=http://dev\n",
         );
@@ -515,13 +515,13 @@ mod tests {
 
     #[test]
     fn resolve_auth_for_call_prefers_profile_then_env_fallback() {
-        let _lock = ENV_LOCK.lock().unwrap();
-        let _guard = EnvGuard::set("ACCESS_TOKEN", "env-token");
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::set(&lock, "ACCESS_TOKEN", "env-token");
 
         let tmp = TempDir::new().unwrap();
         let setup_dir = tmp.path().join("setup/rest");
         std::fs::create_dir_all(&setup_dir).unwrap();
-        write_file(&setup_dir.join("tokens.env"), "REST_TOKEN_SVC=svc-token\n");
+        write_text(&setup_dir.join("tokens.env"), "REST_TOKEN_SVC=svc-token\n");
         let setup = api_testing_core::config::ResolvedSetup::rest(setup_dir, None);
 
         let args = CallArgs {
@@ -557,9 +557,9 @@ mod tests {
 
     #[test]
     fn validate_bearer_token_warns_when_non_strict() {
-        let _lock = ENV_LOCK.lock().unwrap();
-        let _enabled = EnvGuard::set("REST_JWT_VALIDATE_ENABLED", "true");
-        let _strict = EnvGuard::set("REST_JWT_VALIDATE_STRICT", "false");
+        let lock = GlobalStateLock::new();
+        let _enabled = EnvGuard::set(&lock, "REST_JWT_VALIDATE_ENABLED", "true");
+        let _strict = EnvGuard::set(&lock, "REST_JWT_VALIDATE_STRICT", "false");
 
         let mut stderr = Vec::new();
         let res = validate_bearer_token_if_jwt(
@@ -575,9 +575,9 @@ mod tests {
 
     #[test]
     fn validate_bearer_token_errors_when_strict_invalid() {
-        let _lock = ENV_LOCK.lock().unwrap();
-        let _enabled = EnvGuard::set("REST_JWT_VALIDATE_ENABLED", "true");
-        let _strict = EnvGuard::set("REST_JWT_VALIDATE_STRICT", "true");
+        let lock = GlobalStateLock::new();
+        let _enabled = EnvGuard::set(&lock, "REST_JWT_VALIDATE_ENABLED", "true");
+        let _strict = EnvGuard::set(&lock, "REST_JWT_VALIDATE_STRICT", "true");
 
         let mut stderr = Vec::new();
         let err = validate_bearer_token_if_jwt(
@@ -592,9 +592,9 @@ mod tests {
 
     #[test]
     fn validate_bearer_token_errors_when_expired() {
-        let _lock = ENV_LOCK.lock().unwrap();
-        let _enabled = EnvGuard::set("REST_JWT_VALIDATE_ENABLED", "true");
-        let _strict = EnvGuard::set("REST_JWT_VALIDATE_STRICT", "false");
+        let lock = GlobalStateLock::new();
+        let _enabled = EnvGuard::set(&lock, "REST_JWT_VALIDATE_ENABLED", "true");
+        let _strict = EnvGuard::set(&lock, "REST_JWT_VALIDATE_STRICT", "false");
 
         let token = make_jwt(serde_json::json!({ "exp": 1 }));
         let mut stderr = Vec::new();
@@ -606,9 +606,9 @@ mod tests {
 
     #[test]
     fn validate_bearer_token_errors_when_nbf_in_future() {
-        let _lock = ENV_LOCK.lock().unwrap();
-        let _enabled = EnvGuard::set("REST_JWT_VALIDATE_ENABLED", "true");
-        let _strict = EnvGuard::set("REST_JWT_VALIDATE_STRICT", "false");
+        let lock = GlobalStateLock::new();
+        let _enabled = EnvGuard::set(&lock, "REST_JWT_VALIDATE_ENABLED", "true");
+        let _strict = EnvGuard::set(&lock, "REST_JWT_VALIDATE_STRICT", "false");
 
         let token = make_jwt(serde_json::json!({ "nbf": 4_000_000_000i64 }));
         let mut stderr = Vec::new();

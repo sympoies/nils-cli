@@ -1,8 +1,6 @@
 mod cli;
 mod commands;
 mod completion;
-#[cfg(test)]
-mod test_support;
 
 use std::io::IsTerminal;
 use std::path::PathBuf;

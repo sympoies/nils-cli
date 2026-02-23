@@ -1,3 +1,4 @@
+use nils_common::process as shared_process;
 use nils_test_support::bin;
 use nils_test_support::cmd::{self, CmdOptions, CmdOutput};
 use pretty_assertions::assert_eq;
@@ -47,13 +48,9 @@ fn init_repo(repo: &Path) {
 }
 
 fn real_git_path() -> String {
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg("command -v git")
-        .output()
-        .expect("which git");
-    assert!(output.status.success());
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
+    shared_process::find_in_path("git")
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_else(|| panic!("git not found in PATH for tests"))
 }
 
 fn write_git_proxy(dir: &Path) {
