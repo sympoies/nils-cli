@@ -23,7 +23,13 @@ fn setup_linked_worktree(workspace: &Path) -> (TempDir, PathBuf) {
         .expect("linked worktree path should be utf-8");
     let _ = test_git::git(
         repo.path(),
-        &["worktree", "add", linked_worktree_arg, "-b", "linked-worktree"],
+        &[
+            "worktree",
+            "add",
+            linked_worktree_arg,
+            "-b",
+            "linked-worktree",
+        ],
     );
     (repo, linked_worktree)
 }
