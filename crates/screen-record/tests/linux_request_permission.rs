@@ -1,20 +1,14 @@
 #[cfg(target_os = "linux")]
 mod linux_request_permission {
-    use std::fs;
-    use std::os::unix::fs::PermissionsExt;
-
     use nils_test_support::bin::resolve;
     use nils_test_support::cmd::{CmdOptions, run_with};
+    use nils_test_support::fs::write_executable;
     use tempfile::TempDir;
 
     fn ffmpeg_stub_dir() -> TempDir {
         let temp_dir = TempDir::new().expect("tempdir");
         let ffmpeg_path = temp_dir.path().join("ffmpeg");
-
-        fs::write(&ffmpeg_path, "#!/bin/sh\nexit 0\n").expect("write ffmpeg stub");
-        let mut perms = fs::metadata(&ffmpeg_path).expect("metadata").permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&ffmpeg_path, perms).expect("chmod ffmpeg stub");
+        write_executable(&ffmpeg_path, "#!/bin/sh\nexit 0\n");
 
         temp_dir
     }
