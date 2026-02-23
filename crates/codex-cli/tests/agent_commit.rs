@@ -2,10 +2,10 @@ use nils_common::process as shared_process;
 use nils_test_support::bin;
 use nils_test_support::cmd::{self, CmdOptions, CmdOutput};
 use nils_test_support::fs as test_fs;
+use nils_test_support::git as test_git;
 use pretty_assertions::assert_eq;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn codex_cli_bin() -> PathBuf {
     bin::resolve("codex-cli")
@@ -69,33 +69,10 @@ done
 }
 
 fn init_repo(dir: &Path) {
-    let status = Command::new("git")
-        .current_dir(dir)
-        .arg("init")
-        .status()
-        .expect("git init");
-    assert!(status.success());
-
-    let status = Command::new("git")
-        .current_dir(dir)
-        .args(["config", "user.name", "Test User"])
-        .status()
-        .expect("git config name");
-    assert!(status.success());
-
-    let status = Command::new("git")
-        .current_dir(dir)
-        .args(["config", "user.email", "test@example.com"])
-        .status()
-        .expect("git config email");
-    assert!(status.success());
-
-    let status = Command::new("git")
-        .current_dir(dir)
-        .args(["config", "commit.gpgsign", "false"])
-        .status()
-        .expect("git config gpgsign");
-    assert!(status.success());
+    test_git::git(dir, &["init"]);
+    test_git::git(dir, &["config", "user.name", "Test User"]);
+    test_git::git(dir, &["config", "user.email", "test@example.com"]);
+    test_git::git(dir, &["config", "commit.gpgsign", "false"]);
 }
 
 #[test]
@@ -106,12 +83,7 @@ fn agent_commit_fallback_creates_commit() {
     init_repo(&repo);
 
     fs::write(repo.join("a.txt"), "hello").expect("write file");
-    let status = Command::new("git")
-        .current_dir(&repo)
-        .args(["add", "a.txt"])
-        .status()
-        .expect("git add");
-    assert!(status.success());
+    test_git::git(&repo, &["add", "a.txt"]);
 
     let stub_dir = dir.path().join("bin");
     fs::create_dir_all(&stub_dir).expect("stub dir");
@@ -127,14 +99,8 @@ fn agent_commit_fallback_creates_commit() {
     assert_exit(&output, 0);
     assert!(stderr(&output).contains("fallback mode"));
 
-    let out = Command::new("git")
-        .current_dir(&repo)
-        .args(["log", "-1", "--pretty=%s"])
-        .output()
-        .expect("git log");
-    assert!(out.status.success());
     assert_eq!(
-        String::from_utf8_lossy(&out.stdout).trim(),
+        test_git::git(&repo, &["log", "-1", "--pretty=%s"]).trim(),
         "chore: my subject"
     );
 }
