@@ -348,7 +348,9 @@ mod tests {
         let non_executable = dir.path().join("tool-no");
         test_fs::write_executable(&executable, "#!/bin/sh\necho ok\n");
         fs::write(&non_executable, "plain text").expect("write non executable");
-        let mut perms = fs::metadata(&non_executable).expect("metadata").permissions();
+        let mut perms = fs::metadata(&non_executable)
+            .expect("metadata")
+            .permissions();
         perms.set_mode(0o644);
         fs::set_permissions(&non_executable, perms).expect("chmod non executable");
 
