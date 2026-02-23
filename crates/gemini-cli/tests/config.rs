@@ -1,59 +1,18 @@
 use gemini_cli::config;
-use std::ffi::{OsStr, OsString};
-use std::sync::{Mutex, OnceLock};
-
-fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .expect("env lock")
-}
-
-struct EnvGuard {
-    key: &'static str,
-    previous: Option<OsString>,
-}
-
-impl EnvGuard {
-    fn set(key: &'static str, value: impl AsRef<OsStr>) -> Self {
-        let previous = std::env::var_os(key);
-        // SAFETY: tests serialize env mutations via env_lock.
-        unsafe { std::env::set_var(key, value) };
-        Self { key, previous }
-    }
-
-    fn remove(key: &'static str) -> Self {
-        let previous = std::env::var_os(key);
-        // SAFETY: tests serialize env mutations via env_lock.
-        unsafe { std::env::remove_var(key) };
-        Self { key, previous }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        if let Some(value) = self.previous.take() {
-            // SAFETY: tests serialize env mutations via env_lock.
-            unsafe { std::env::set_var(self.key, value) };
-        } else {
-            // SAFETY: tests serialize env mutations via env_lock.
-            unsafe { std::env::remove_var(self.key) };
-        }
-    }
-}
+use nils_test_support::{EnvGuard, GlobalStateLock};
 
 #[test]
 fn config_show_with_io_prints_effective_values() {
-    let _lock = env_lock();
-    let _model = EnvGuard::set("GEMINI_CLI_MODEL", "m1");
-    let _reasoning = EnvGuard::set("GEMINI_CLI_REASONING", "low");
-    let _dangerous = EnvGuard::set("GEMINI_ALLOW_DANGEROUS_ENABLED", "true");
-    let _secret = EnvGuard::set("GEMINI_SECRET_DIR", "/tmp/secrets");
-    let _auth = EnvGuard::set("GEMINI_AUTH_FILE", "/tmp/auth.json");
-    let _cache = EnvGuard::set("GEMINI_SECRET_CACHE_DIR", "/tmp/cache/secrets");
-    let _starship = EnvGuard::set("GEMINI_STARSHIP_ENABLED", "true");
-    let _auto_refresh = EnvGuard::set("GEMINI_AUTO_REFRESH_ENABLED", "true");
-    let _min_days = EnvGuard::set("GEMINI_AUTO_REFRESH_MIN_DAYS", "9");
+    let lock = GlobalStateLock::new();
+    let _model = EnvGuard::set(&lock, "GEMINI_CLI_MODEL", "m1");
+    let _reasoning = EnvGuard::set(&lock, "GEMINI_CLI_REASONING", "low");
+    let _dangerous = EnvGuard::set(&lock, "GEMINI_ALLOW_DANGEROUS_ENABLED", "true");
+    let _secret = EnvGuard::set(&lock, "GEMINI_SECRET_DIR", "/tmp/secrets");
+    let _auth = EnvGuard::set(&lock, "GEMINI_AUTH_FILE", "/tmp/auth.json");
+    let _cache = EnvGuard::set(&lock, "GEMINI_SECRET_CACHE_DIR", "/tmp/cache/secrets");
+    let _starship = EnvGuard::set(&lock, "GEMINI_STARSHIP_ENABLED", "true");
+    let _auto_refresh = EnvGuard::set(&lock, "GEMINI_AUTO_REFRESH_ENABLED", "true");
+    let _min_days = EnvGuard::set(&lock, "GEMINI_AUTO_REFRESH_MIN_DAYS", "9");
 
     let mut out: Vec<u8> = Vec::new();
     assert_eq!(config::show_with_io(&mut out), 0);
@@ -71,15 +30,15 @@ fn config_show_with_io_prints_effective_values() {
 
 #[test]
 fn config_show_with_io_prints_blank_paths_when_unresolvable() {
-    let _lock = env_lock();
-    let _home = EnvGuard::remove("HOME");
-    let _zdotdir = EnvGuard::remove("ZDOTDIR");
-    let _script = EnvGuard::remove("ZSH_SCRIPT_DIR");
-    let _preload = EnvGuard::remove("_ZSH_BOOTSTRAP_PRELOAD_PATH");
-    let _cache_root = EnvGuard::remove("ZSH_CACHE_DIR");
-    let _secret = EnvGuard::remove("GEMINI_SECRET_DIR");
-    let _auth = EnvGuard::remove("GEMINI_AUTH_FILE");
-    let _secret_cache = EnvGuard::remove("GEMINI_SECRET_CACHE_DIR");
+    let lock = GlobalStateLock::new();
+    let _home = EnvGuard::remove(&lock, "HOME");
+    let _zdotdir = EnvGuard::remove(&lock, "ZDOTDIR");
+    let _script = EnvGuard::remove(&lock, "ZSH_SCRIPT_DIR");
+    let _preload = EnvGuard::remove(&lock, "_ZSH_BOOTSTRAP_PRELOAD_PATH");
+    let _cache_root = EnvGuard::remove(&lock, "ZSH_CACHE_DIR");
+    let _secret = EnvGuard::remove(&lock, "GEMINI_SECRET_DIR");
+    let _auth = EnvGuard::remove(&lock, "GEMINI_AUTH_FILE");
+    let _secret_cache = EnvGuard::remove(&lock, "GEMINI_SECRET_CACHE_DIR");
 
     let mut out: Vec<u8> = Vec::new();
     assert_eq!(config::show_with_io(&mut out), 0);
@@ -91,7 +50,7 @@ fn config_show_with_io_prints_blank_paths_when_unresolvable() {
 
 #[test]
 fn config_set_with_io_model_quotes_value() {
-    let _lock = env_lock();
+    let _lock = GlobalStateLock::new();
     let mut out: Vec<u8> = Vec::new();
     let mut err: Vec<u8> = Vec::new();
 
@@ -108,7 +67,7 @@ fn config_set_with_io_model_quotes_value() {
 
 #[test]
 fn config_set_with_io_reason_alias_is_supported() {
-    let _lock = env_lock();
+    let _lock = GlobalStateLock::new();
     let mut out: Vec<u8> = Vec::new();
     let mut err: Vec<u8> = Vec::new();
 
@@ -122,7 +81,7 @@ fn config_set_with_io_reason_alias_is_supported() {
 
 #[test]
 fn config_set_with_io_dangerous_rejects_invalid_values() {
-    let _lock = env_lock();
+    let _lock = GlobalStateLock::new();
     let mut out: Vec<u8> = Vec::new();
     let mut err: Vec<u8> = Vec::new();
 
@@ -140,7 +99,7 @@ fn config_set_with_io_dangerous_rejects_invalid_values() {
 
 #[test]
 fn config_set_with_io_unknown_key_returns_64() {
-    let _lock = env_lock();
+    let _lock = GlobalStateLock::new();
     let mut out: Vec<u8> = Vec::new();
     let mut err: Vec<u8> = Vec::new();
 
@@ -153,7 +112,7 @@ fn config_set_with_io_unknown_key_returns_64() {
 
 #[test]
 fn config_set_with_io_escapes_single_quotes() {
-    let _lock = env_lock();
+    let _lock = GlobalStateLock::new();
     let mut out: Vec<u8> = Vec::new();
     let mut err: Vec<u8> = Vec::new();
 

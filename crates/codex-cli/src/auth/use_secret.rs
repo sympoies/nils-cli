@@ -241,6 +241,7 @@ enum ResolveResult {
 #[cfg(test)]
 mod tests {
     use super::{ResolveResult, file_name, resolve_by_email, secret_timestamp_path};
+    use nils_test_support::{EnvGuard, GlobalStateLock};
     use pretty_assertions::assert_eq;
     use std::path::Path;
 
@@ -258,32 +259,6 @@ mod tests {
             token(payload),
             token(payload)
         )
-    }
-
-    struct EnvGuard {
-        key: &'static str,
-        old: Option<std::ffi::OsString>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
-            let old = std::env::var_os(key);
-            // SAFETY: tests mutate process env only in scoped guard usage.
-            unsafe { std::env::set_var(key, value) };
-            Self { key, old }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            if let Some(value) = self.old.take() {
-                // SAFETY: tests restore process env only in scoped guard usage.
-                unsafe { std::env::set_var(self.key, value) };
-            } else {
-                // SAFETY: tests restore process env only in scoped guard usage.
-                unsafe { std::env::remove_var(self.key) };
-            }
-        }
     }
 
     #[test]
@@ -325,10 +300,12 @@ mod tests {
 
     #[test]
     fn secret_timestamp_path_uses_cache_dir_and_default_file_name() {
+        let lock = GlobalStateLock::new();
         let dir = tempfile::TempDir::new().expect("tempdir");
         let cache = dir.path().join("cache");
         std::fs::create_dir_all(&cache).expect("cache");
-        let _guard = EnvGuard::set("CODEX_SECRET_CACHE_DIR", &cache);
+        let cache_value = cache.to_string_lossy().to_string();
+        let _guard = EnvGuard::set(&lock, "CODEX_SECRET_CACHE_DIR", &cache_value);
 
         let with_name =
             secret_timestamp_path(Path::new("/tmp/demo-auth.json")).expect("timestamp path");

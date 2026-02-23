@@ -1,5 +1,7 @@
 use std::io::Write;
 
+use nils_common::shell::{SingleQuoteEscapeStyle, quote_posix_single_with_style};
+
 pub fn show() -> i32 {
     let stdout = std::io::stdout();
     let mut stdout = stdout.lock();
@@ -107,8 +109,7 @@ pub fn set_with_io(
 }
 
 fn quote_posix_single(raw: &str) -> String {
-    let escaped = raw.replace('\'', "'\"'\"'");
-    format!("'{escaped}'")
+    quote_posix_single_with_style(raw, SingleQuoteEscapeStyle::DoubleQuoteBoundary)
 }
 
 #[cfg(test)]

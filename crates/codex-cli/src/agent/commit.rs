@@ -322,33 +322,8 @@ fn command_exists(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{command_exists, semantic_commit_prompt, suggested_scope_from_staged};
+    use nils_test_support::{GlobalStateLock, prepend_path};
     use pretty_assertions::assert_eq;
-
-    struct EnvGuard {
-        key: &'static str,
-        old: Option<std::ffi::OsString>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
-            let old = std::env::var_os(key);
-            // SAFETY: tests mutate process env only in scoped guard usage.
-            unsafe { std::env::set_var(key, value) };
-            Self { key, old }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            if let Some(value) = self.old.take() {
-                // SAFETY: tests restore process env only in scoped guard usage.
-                unsafe { std::env::set_var(self.key, value) };
-            } else {
-                // SAFETY: tests restore process env only in scoped guard usage.
-                unsafe { std::env::remove_var(self.key) };
-            }
-        }
-    }
 
     #[test]
     fn suggested_scope_prefers_single_top_level_directory() {
@@ -378,6 +353,7 @@ mod tests {
     fn command_exists_checks_executable_bit() {
         use std::os::unix::fs::PermissionsExt;
 
+        let lock = GlobalStateLock::new();
         let dir = tempfile::TempDir::new().expect("tempdir");
         let executable = dir.path().join("tool-ok");
         let non_executable = dir.path().join("tool-no");
@@ -396,7 +372,7 @@ mod tests {
         perms.set_mode(0o644);
         std::fs::set_permissions(&non_executable, perms).expect("chmod non executable");
 
-        let _path_guard = EnvGuard::set("PATH", dir.path().as_os_str());
+        let _path_guard = prepend_path(&lock, dir.path());
         assert!(command_exists("tool-ok"));
         assert!(!command_exists("tool-no"));
         assert!(!command_exists("tool-missing"));
