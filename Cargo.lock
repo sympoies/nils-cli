@@ -1542,6 +1542,8 @@ dependencies = [
  "clap",
  "clap_complete",
  "directories",
+ "nils-common",
+ "nils-test-support",
  "serde",
  "serde_json",
  "tempfile",
