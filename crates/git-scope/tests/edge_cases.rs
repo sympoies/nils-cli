@@ -79,7 +79,8 @@ fn staged_deletion_is_listed() {
 #[test]
 fn outside_repo_prints_warning() {
     let temp = tempfile::TempDir::new().unwrap();
-    let (code, output) = common::run_git_scope_allow_fail(temp.path(), &["staged"], &[("NO_COLOR", "1")]);
+    let (code, output) =
+        common::run_git_scope_allow_fail(temp.path(), &["staged"], &[("NO_COLOR", "1")]);
     assert!(code != 0, "expected non-zero exit code");
     assert!(
         output.contains("Not a Git repository"),
