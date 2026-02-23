@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use nils_test_support::bin::resolve;
 use nils_test_support::cmd::{CmdOptions, CmdOutput, run_with};
-use nils_test_support::fs::write_json;
+use nils_test_support::fs::{write_executable, write_json};
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
@@ -42,17 +42,6 @@ fn run_api_grpc(cwd: &Path, args: &[&str], envs: &[(&str, &str)]) -> CmdOutput {
     run_with(&api_grpc_bin(), args, &options)
 }
 
-fn write_executable_script(path: &Path, body: &str) {
-    std::fs::write(path, body).expect("write script");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(path).expect("metadata").permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(path, perms).expect("chmod");
-    }
-}
-
 fn write_health_request(path: &Path, with_expect: bool) {
     let expect = if with_expect {
         serde_json::json!({"status": 0, "jq": ".ok == true"})
@@ -79,7 +68,7 @@ fn call_success_prints_response_and_writes_history() {
     write_health_request(&root.join("requests/health.grpc.json"), true);
 
     let script = root.join("grpcurl-ok.sh");
-    write_executable_script(&script, "#!/bin/sh\necho '{\"ok\":true}'\nexit 0\n");
+    write_executable(&script, "#!/bin/sh\necho '{\"ok\":true}'\nexit 0\n");
 
     let script_str = script.to_string_lossy().to_string();
     let out = run_api_grpc(
@@ -145,7 +134,7 @@ fn call_expect_failure_non_json_prints_response_preview_to_stderr() {
     write_health_request(&root.join("requests/fail.grpc.json"), true);
 
     let script = root.join("grpcurl-text.sh");
-    write_executable_script(&script, "#!/bin/sh\necho 'boom-body'\nexit 0\n");
+    write_executable(&script, "#!/bin/sh\necho 'boom-body'\nexit 0\n");
     let script_str = script.to_string_lossy().to_string();
 
     let out = run_api_grpc(
@@ -178,7 +167,7 @@ fn report_run_writes_markdown_report() {
 
     write_health_request(&root.join("requests/health.grpc.json"), true);
     let script = root.join("grpcurl-ok.sh");
-    write_executable_script(&script, "#!/bin/sh\necho '{\"ok\":true}'\nexit 0\n");
+    write_executable(&script, "#!/bin/sh\necho '{\"ok\":true}'\nexit 0\n");
     let script_str = script.to_string_lossy().to_string();
 
     let out = run_api_grpc(
