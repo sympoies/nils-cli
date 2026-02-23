@@ -2,6 +2,7 @@ use crate::output::format_item_id;
 use crate::storage::derivations::ApplySummary;
 use crate::storage::repository::{FetchItem, ListItem};
 use crate::storage::search::{ReportSummary, SearchItem};
+use nils_common::env as shared_env;
 
 pub fn print_add(item_id: i64, created_at: &str) {
     println!("added {} at {}", format_item_id(item_id), created_at);
@@ -162,10 +163,12 @@ fn style_state(state: &str) -> String {
 }
 
 fn color_enabled() -> bool {
-    match std::env::var("NO_COLOR") {
-        Ok(value) => value.trim().is_empty(),
-        Err(_) => true,
+    if !shared_env::no_color_enabled() {
+        return true;
     }
+
+    // Keep memo-cli's legacy behavior: empty NO_COLOR still keeps color enabled.
+    shared_env::env_or_default("NO_COLOR", "").trim().is_empty()
 }
 
 #[cfg(test)]
@@ -173,6 +176,7 @@ mod tests {
     use super::*;
     use crate::storage::derivations::{ApplyItemError, ApplyItemOutcome};
     use crate::storage::search::{NameCount, ReportRange, ReportTotals};
+    use nils_test_support::{EnvGuard, GlobalStateLock};
 
     fn sample_list_rows() -> Vec<ListItem> {
         vec![
@@ -311,20 +315,25 @@ mod tests {
 
     #[test]
     fn style_helpers_cover_color_and_no_color_modes() {
-        unsafe { std::env::set_var("NO_COLOR", "1") };
-        assert_eq!(style_heading("item_id"), "item_id");
-        assert_eq!(style_state("pending"), "pending");
+        let lock = GlobalStateLock::new();
+        let _baseline = EnvGuard::remove(&lock, "NO_COLOR");
 
-        unsafe { std::env::set_var("NO_COLOR", "") };
-        let heading = style_heading("item_id");
-        assert!(heading.contains("item_id"));
-        assert!(heading.contains('\u{1b}'));
-        let pending = style_state("pending");
-        assert!(pending.contains('\u{1b}'));
-        let enriched = style_state("enriched");
-        assert!(enriched.contains('\u{1b}'));
-        assert_eq!(style_state("unknown"), "unknown");
+        {
+            let _no_color = EnvGuard::set(&lock, "NO_COLOR", "1");
+            assert_eq!(style_heading("item_id"), "item_id");
+            assert_eq!(style_state("pending"), "pending");
+        }
 
-        unsafe { std::env::remove_var("NO_COLOR") };
+        {
+            let _empty_no_color = EnvGuard::set(&lock, "NO_COLOR", "");
+            let heading = style_heading("item_id");
+            assert!(heading.contains("item_id"));
+            assert!(heading.contains('\u{1b}'));
+            let pending = style_state("pending");
+            assert!(pending.contains('\u{1b}'));
+            let enriched = style_state("enriched");
+            assert!(enriched.contains('\u{1b}'));
+            assert_eq!(style_state("unknown"), "unknown");
+        }
     }
 }
