@@ -1,10 +1,11 @@
 use nils_common::process as shared_process;
 use nils_test_support::bin;
 use nils_test_support::cmd::{self, CmdOptions, CmdOutput};
+use nils_test_support::fs as test_fs;
+use nils_test_support::git as test_git;
 use pretty_assertions::assert_eq;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn gemini_cli_bin() -> PathBuf {
     bin::resolve("gemini-cli")
@@ -21,22 +22,11 @@ fn run(repo: &Path, args: &[&str], path_env: &str, stdin: Option<&str>) -> CmdOu
 }
 
 fn git(repo: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .current_dir(repo)
-        .args(args)
-        .status()
-        .expect("run git");
-    assert!(status.success(), "git {:?} failed", args);
+    test_git::git(repo, args);
 }
 
 fn git_stdout(repo: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .current_dir(repo)
-        .args(args)
-        .output()
-        .expect("run git");
-    assert!(output.status.success(), "git {:?} failed", args);
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
+    test_git::git(repo, args).trim().to_string()
 }
 
 fn init_repo(repo: &Path) {
@@ -56,14 +46,8 @@ fn real_git_path() -> String {
 fn write_git_proxy(dir: &Path) {
     let git = real_git_path();
     let proxy = dir.join("git");
-    fs::write(&proxy, format!("#!/bin/sh\nexec \"{git}\" \"$@\"\n")).expect("write proxy");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&proxy).expect("metadata").permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&proxy, perms).expect("chmod");
-    }
+    let script = format!("#!/bin/sh\nexec \"{git}\" \"$@\"\n");
+    test_fs::write_executable(&proxy, &script);
 }
 
 #[test]
