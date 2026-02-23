@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serde_json::json;
 use std::io::{self, IsTerminal, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::auth::output::{self, AuthRemoveResult};
 use crate::paths;
@@ -32,7 +32,7 @@ pub fn run_with_json(target: &str, yes: bool, output_json: bool) -> Result<i32> 
         return Ok(64);
     }
 
-    let secret_dir = match resolve_secret_dir_from_env() {
+    let secret_dir = match paths::resolve_secret_dir_from_env() {
         Some(path) => path,
         None => {
             if output_json {
@@ -170,14 +170,6 @@ fn usage_error(output_json: bool, message: &str) -> Result<i32> {
     Ok(64)
 }
 
-fn resolve_secret_dir_from_env() -> Option<PathBuf> {
-    let raw = std::env::var_os("CODEX_SECRET_DIR")?;
-    if raw.is_empty() {
-        return None;
-    }
-    Some(PathBuf::from(raw))
-}
-
 fn is_invalid_target(target: &str) -> bool {
     target.contains('/') || target.contains('\\') || target.contains("..")
 }
@@ -210,7 +202,8 @@ fn remove_target_timestamp(target_file: &Path) {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_invalid_target, resolve_secret_dir_from_env};
+    use super::is_invalid_target;
+    use crate::paths;
     use nils_test_support::{EnvGuard, GlobalStateLock};
 
     #[test]
@@ -226,7 +219,7 @@ mod tests {
         let lock = GlobalStateLock::new();
         let _set = EnvGuard::set(&lock, "CODEX_SECRET_DIR", "/tmp/secrets");
         assert_eq!(
-            resolve_secret_dir_from_env().expect("secret dir"),
+            paths::resolve_secret_dir_from_env().expect("secret dir"),
             std::path::PathBuf::from("/tmp/secrets")
         );
     }

@@ -59,6 +59,30 @@ fn auth_save_errors_when_secret_dir_missing() {
 }
 
 #[test]
+fn auth_save_keeps_env_only_contract_even_if_home_secret_dir_exists() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let home = dir.path().join("home");
+    let fallback_secret_dir = home.join(".config").join("codex_secrets");
+    fs::create_dir_all(&fallback_secret_dir).expect("fallback secret dir");
+
+    let auth_file = dir.path().join("auth.json");
+    fs::write(&auth_file, r#"{"tokens":{"access_token":"tok"}}"#).expect("write auth");
+
+    let output = run_with(
+        &["auth", "save", "alpha.json"],
+        &[("CODEX_AUTH_FILE", &auth_file), ("HOME", &home)],
+        &[("CODEX_SECRET_DIR", "")],
+    );
+
+    assert_eq!(output.code, 1);
+    assert!(stderr(&output).contains("CODEX_SECRET_DIR is not configured"));
+    assert!(
+        !fallback_secret_dir.join("alpha.json").exists(),
+        "save must not use HOME fallback when CODEX_SECRET_DIR is empty"
+    );
+}
+
+#[test]
 fn auth_save_errors_when_auth_file_missing() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let secrets = dir.path().join("secrets");

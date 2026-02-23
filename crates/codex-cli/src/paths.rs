@@ -1,7 +1,13 @@
 use std::path::PathBuf;
 
+use crate::provider_profile::CODEX_PROVIDER_PROFILE;
+
 pub fn resolve_secret_dir() -> Option<PathBuf> {
     crate::runtime::resolve_secret_dir()
+}
+
+pub fn resolve_secret_dir_from_env() -> Option<PathBuf> {
+    nils_common::provider_runtime::paths::resolve_secret_dir_from_env(&CODEX_PROVIDER_PROFILE)
 }
 
 pub fn resolve_auth_file() -> Option<PathBuf> {
