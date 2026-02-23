@@ -2,9 +2,10 @@ use crate::git;
 use nils_common::git as common_git;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Output;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -433,6 +434,39 @@ fn is_lockfile(path: &str) -> bool {
     common_git::is_lockfile_path(path)
 }
 
+struct EnvVarGuard {
+    key: &'static str,
+    old: Option<OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let old = std::env::var_os(key);
+        // SAFETY: semantic-commit is single-process CLI flow; we mutate and restore env in a
+        // tight scope before returning to caller.
+        unsafe { std::env::set_var(key, value) };
+        Self { key, old }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        if let Some(old) = self.old.take() {
+            // SAFETY: restore original env value for scoped mutation.
+            unsafe { std::env::set_var(self.key, old) };
+        } else {
+            // SAFETY: restore original env state for scoped mutation.
+            unsafe { std::env::remove_var(self.key) };
+        }
+    }
+}
+
+fn with_cat_pager_env<T>(f: impl FnOnce() -> T) -> T {
+    let _git_pager = EnvVarGuard::set("GIT_PAGER", "cat");
+    let _pager = EnvVarGuard::set("PAGER", "cat");
+    f()
+}
+
 fn git_string(repo: Option<&Path>, args: &[&str]) -> anyhow::Result<String> {
     let output = git_output(repo, args)?;
 
@@ -474,19 +508,12 @@ fn git_bytes(repo: Option<&Path>, args: &[&str]) -> anyhow::Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
-fn git_output(repo: Option<&Path>, args: &[&str]) -> anyhow::Result<std::process::Output> {
-    let mut command = Command::new("git");
-    if let Some(repo) = repo {
-        command.arg("-C").arg(repo);
-    }
-
-    command
-        .args(args)
-        .env("GIT_PAGER", "cat")
-        .env("PAGER", "cat")
-        .stdin(Stdio::null())
-        .output()
-        .map_err(Into::into)
+fn git_output(repo: Option<&Path>, args: &[&str]) -> anyhow::Result<Output> {
+    with_cat_pager_env(|| match repo {
+        Some(repo) => common_git::run_output_in(repo, args),
+        None => common_git::run_output(args),
+    })
+    .map_err(Into::into)
 }
 
 fn print_usage_stdout() {

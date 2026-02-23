@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
+use nils_common::git as common_git;
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 use serde::Serialize;
 
@@ -176,10 +176,7 @@ fn discover_default_plan_files(repo_root: &Path) -> Vec<String> {
 }
 
 fn git_ls_files(repo_root: &Path, pattern: &str) -> Vec<String> {
-    let output = Command::new("git")
-        .args(["ls-files", "--", pattern])
-        .current_dir(repo_root)
-        .output();
+    let output = common_git::run_output_in(repo_root, &["ls-files", "--", pattern]);
     let Ok(out) = output else {
         return Vec::new();
     };
