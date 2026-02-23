@@ -165,38 +165,15 @@ fn shell_escape(arg: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nils_test_support::{EnvGuard, GlobalStateLock};
     use pretty_assertions::assert_eq;
-
-    struct EnvGuard {
-        key: &'static str,
-        old: Option<std::ffi::OsString>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
-            let old = std::env::var_os(key);
-            // SAFETY: test code mutates process env in a scoped guard.
-            unsafe { std::env::set_var(key, value) };
-            Self { key, old }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            if let Some(value) = self.old.take() {
-                // SAFETY: test code restores process env in a scoped guard.
-                unsafe { std::env::set_var(self.key, value) };
-            } else {
-                // SAFETY: test code restores process env in a scoped guard.
-                unsafe { std::env::remove_var(self.key) };
-            }
-        }
-    }
 
     #[test]
     fn expand_user_supports_tilde_and_home_prefix() {
+        let lock = GlobalStateLock::new();
         let temp = tempfile::TempDir::new().expect("tempdir");
-        let _guard = EnvGuard::set("HOME", temp.path());
+        let home = temp.path().to_string_lossy().to_string();
+        let _guard = EnvGuard::set(&lock, "HOME", &home);
 
         assert_eq!(expand_user("~"), temp.path().to_path_buf());
         assert_eq!(expand_user("~/x/y"), temp.path().join("x/y"));

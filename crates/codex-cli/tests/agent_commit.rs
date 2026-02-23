@@ -1,3 +1,4 @@
+use nils_common::process as shared_process;
 use nils_test_support::bin;
 use nils_test_support::cmd::{self, CmdOptions, CmdOutput};
 use nils_test_support::fs as test_fs;
@@ -29,15 +30,9 @@ fn assert_exit(output: &CmdOutput, code: i32) {
 }
 
 fn real_git_path() -> String {
-    let out = Command::new("sh")
-        .arg("-c")
-        .arg("command -v git")
-        .output()
-        .expect("which git");
-    assert!(out.status.success());
-    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    assert!(!path.is_empty());
-    path
+    shared_process::find_in_path("git")
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_else(|| panic!("git not found in PATH for tests"))
 }
 
 fn write_stub_git(dir: &Path) {

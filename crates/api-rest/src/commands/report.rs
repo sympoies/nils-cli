@@ -408,10 +408,10 @@ fn build_report_command_snippet(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nils_test_support::fs::{write_json, write_text};
+    use nils_test_support::{EnvGuard, GlobalStateLock};
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
-
-    use crate::test_support::{ENV_LOCK, EnvGuard, write_file, write_json};
 
     #[test]
     fn build_report_commands_include_expected_flags() {
@@ -491,9 +491,9 @@ mod tests {
 
     #[test]
     fn cmd_report_writes_report_from_response_file() {
-        let _lock = ENV_LOCK.lock().unwrap();
-        let _guard = EnvGuard::set("REST_REPORT_INCLUDE_COMMAND_ENABLED", "true");
-        let _guard_url = EnvGuard::set("REST_REPORT_COMMAND_LOG_URL_ENABLED", "false");
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::set(&lock, "REST_REPORT_INCLUDE_COMMAND_ENABLED", "true");
+        let _guard_url = EnvGuard::set(&lock, "REST_REPORT_COMMAND_LOG_URL_ENABLED", "false");
 
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
@@ -511,7 +511,7 @@ mod tests {
         );
 
         let response_file = root.join("response.json");
-        write_file(&response_file, r#"{"ok":true}"#);
+        write_text(&response_file, r#"{"ok":true}"#);
 
         let out_path = root.join("report.md");
         let args = ReportArgs {
