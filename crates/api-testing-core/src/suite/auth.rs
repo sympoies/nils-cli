@@ -896,4 +896,406 @@ mod tests {
             .expect("url");
         assert_eq!(got, "http://prod.example/graphql");
     }
+
+    fn stub_mgr_with_auth(
+        provider: AuthProvider,
+        provider_label: &str,
+        auth: SuiteAuth,
+        secret_json: serde_json::Value,
+    ) -> SuiteAuthManager {
+        SuiteAuthManager {
+            provider,
+            provider_label: provider_label.to_string(),
+            secret_json,
+            auth,
+            tokens: HashMap::new(),
+            errors: HashMap::new(),
+        }
+    }
+
+    fn write_text(path: &std::path::Path, contents: &str) {
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(path, contents).expect("write");
+    }
+
+    fn login_secret_json() -> serde_json::Value {
+        serde_json::json!({
+            "profiles": {
+                "admin": {
+                    "username": "alice",
+                    "password": "secret"
+                }
+            }
+        })
+    }
+
+    fn auth_rest_manager_with_secret(
+        rest: crate::suite::schema::SuiteAuthRest,
+    ) -> SuiteAuthManager {
+        stub_mgr_with_auth(
+            AuthProvider::Rest,
+            "rest",
+            SuiteAuth {
+                provider: "rest".to_string(),
+                required: true,
+                secret_env: "API_TEST_AUTH_JSON".to_string(),
+                rest: Some(rest),
+                graphql: None,
+            },
+            login_secret_json(),
+        )
+    }
+
+    fn auth_graphql_manager_with_secret(
+        graphql: crate::suite::schema::SuiteAuthGraphql,
+    ) -> SuiteAuthManager {
+        stub_mgr_with_auth(
+            AuthProvider::Graphql,
+            "graphql",
+            SuiteAuth {
+                provider: "graphql".to_string(),
+                required: true,
+                secret_env: "API_TEST_AUTH_JSON".to_string(),
+                rest: None,
+                graphql: Some(graphql),
+            },
+            login_secret_json(),
+        )
+    }
+
+    #[test]
+    fn suite_auth_credentials_jq_covers_error_variants() {
+        let auth = SuiteAuth {
+            provider: "rest".to_string(),
+            required: true,
+            secret_env: "API_TEST_AUTH_JSON".to_string(),
+            rest: Some(auth_rest_stub()),
+            graphql: None,
+        };
+
+        let mgr = stub_mgr_with_auth(
+            AuthProvider::Rest,
+            "rest",
+            auth,
+            serde_json::json!({
+                "profiles": {
+                    "admin": [{"u":"a"}, {"u":"b"}],
+                    "nullish": null,
+                    "scalar": "nope"
+                }
+            }),
+        );
+
+        let err = mgr
+            .render_credentials("admin", ".profiles[$profile][]", "rest")
+            .unwrap_err();
+        assert!(err.contains("auth_credentials_ambiguous"));
+        assert!(err.contains("count=2"));
+
+        let err = mgr
+            .render_credentials("nullish", ".profiles[$profile]", "rest")
+            .unwrap_err();
+        assert!(err.contains("auth_credentials_missing"));
+
+        let err = mgr
+            .render_credentials("scalar", ".profiles[$profile]", "rest")
+            .unwrap_err();
+        assert!(err.contains("auth_credentials_invalid"));
+
+        let err = mgr.render_credentials("admin", ".[", "rest").unwrap_err();
+        assert!(err.contains("auth_credentials_jq_error"));
+    }
+
+    #[test]
+    fn extract_token_covers_success_and_error_paths() {
+        let mgr = stub_mgr(AuthProvider::Rest, "rest");
+
+        let token = mgr
+            .extract_token(
+                &serde_json::json!({"accessToken": "  tok-admin  "}),
+                ".accessToken",
+                "rest",
+                "admin",
+            )
+            .expect("token");
+        assert_eq!(token, "tok-admin");
+
+        let err = mgr
+            .extract_token(&serde_json::json!({}), ".accessToken", "rest", "admin")
+            .unwrap_err();
+        assert!(err.contains("auth_token_missing"));
+
+        let err = mgr
+            .extract_token(
+                &serde_json::json!({"accessToken": null}),
+                ".accessToken",
+                "rest",
+                "admin",
+            )
+            .unwrap_err();
+        assert!(err.contains("auth_token_missing"));
+
+        let err = mgr
+            .extract_token(
+                &serde_json::json!({"accessToken": "tok"}),
+                ".[",
+                "rest",
+                "admin",
+            )
+            .unwrap_err();
+        assert!(err.contains("auth_token_jq_error"));
+    }
+
+    #[test]
+    fn ensure_token_validates_profile_and_preserves_non_empty_error() {
+        use std::cell::Cell;
+
+        let mut mgr = stub_mgr(AuthProvider::Rest, "rest");
+
+        let err = mgr
+            .ensure_token_with_login("   ", |_mgr, _profile| Ok("tok".to_string()))
+            .unwrap_err();
+        assert_eq!(err, "auth_login_failed(provider=rest,profile=)");
+
+        let calls = Cell::new(0);
+        let err = mgr
+            .ensure_token_with_login("ops", |_mgr, _profile| {
+                calls.set(calls.get() + 1);
+                Err("backend-down".to_string())
+            })
+            .unwrap_err();
+        assert_eq!(err, "backend-down");
+
+        let err = mgr
+            .ensure_token_with_login("ops", |_mgr, _profile| {
+                calls.set(calls.get() + 1);
+                Ok("should-not-run".to_string())
+            })
+            .unwrap_err();
+        assert_eq!(err, "backend-down");
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn canonical_provider_requires_auth_rest_or_graphql() {
+        let auth = SuiteAuth {
+            provider: String::new(),
+            required: true,
+            secret_env: "API_TEST_AUTH_JSON".to_string(),
+            rest: None,
+            graphql: None,
+        };
+
+        let err = canonical_provider(&auth).unwrap_err().to_string();
+        assert!(err.contains("missing auth.rest/auth.graphql"));
+    }
+
+    #[test]
+    fn init_from_suite_rejects_blank_secret_env_and_inherits_config_dirs() {
+        let blank_auth = SuiteAuth {
+            provider: "rest".to_string(),
+            required: true,
+            secret_env: "   ".to_string(),
+            rest: Some(auth_rest_stub()),
+            graphql: None,
+        };
+        let err = SuiteAuthManager::init_from_suite(blank_auth, &SuiteDefaults::default())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(".auth.secretEnv is empty"));
+
+        let lock = GlobalStateLock::new();
+        let key = "NILS_TEST_AUTH_JSON_INHERIT";
+        let _guard = EnvGuard::set(&lock, key, r#"{"profiles":{"admin":{"u":"a"}}}"#);
+
+        let mut rest = auth_rest_stub();
+        rest.config_dir = String::new();
+        let mut gql = auth_graphql_stub();
+        gql.config_dir = String::new();
+        let auth = SuiteAuth {
+            provider: "rest".to_string(),
+            required: true,
+            secret_env: key.to_string(),
+            rest: Some(rest),
+            graphql: Some(gql),
+        };
+        let defaults = SuiteDefaults {
+            rest: crate::suite::schema::SuiteDefaultsRest {
+                config_dir: "setup/rest-custom".to_string(),
+                ..Default::default()
+            },
+            graphql: crate::suite::schema::SuiteDefaultsGraphql {
+                config_dir: "setup/graphql-custom".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let init = SuiteAuthManager::init_from_suite(auth, &defaults).expect("init");
+        let AuthInit::Enabled(mgr) = init else {
+            panic!("expected enabled auth");
+        };
+        let rest = mgr.auth.rest.as_ref().expect("rest");
+        let gql = mgr.auth.graphql.as_ref().expect("graphql");
+        assert_eq!(rest.config_dir, "setup/rest-custom");
+        assert_eq!(gql.config_dir, "setup/graphql-custom");
+    }
+
+    #[test]
+    fn resolve_auth_url_helpers_error_when_no_url_or_env_is_available() {
+        let tmp = TempDir::new().expect("tempdir");
+        let repo_root = tmp.path();
+        let defaults = SuiteDefaults::default();
+
+        let err = resolve_auth_rest_base_url(repo_root, "setup/rest", "", "", &defaults, "")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("auth missing rest env/url"));
+
+        let err = resolve_auth_gql_url(repo_root, "setup/graphql", "", "", &defaults, "")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("auth missing graphql env/url"));
+    }
+
+    #[test]
+    fn login_rest_covers_early_error_paths_without_network_calls() {
+        let tmp = TempDir::new().expect("tempdir");
+        let repo_root = tmp.path();
+        let defaults = SuiteDefaults::default();
+
+        let mgr = stub_mgr(AuthProvider::Rest, "rest");
+        let err = mgr
+            .login_rest("admin", repo_root, &defaults, "")
+            .unwrap_err();
+        assert_eq!(err, "");
+
+        let mgr = auth_rest_manager_with_secret(auth_rest_stub());
+        let err = mgr
+            .login_rest("admin", repo_root, &defaults, "")
+            .unwrap_err();
+        assert!(err.contains("auth_login_template_render_failed"));
+
+        let template_path = repo_root.join("setup/rest/requests/login.request.json");
+
+        write_text(&template_path, "{");
+        let mgr = auth_rest_manager_with_secret(auth_rest_stub());
+        let err = mgr
+            .login_rest("admin", repo_root, &defaults, "")
+            .unwrap_err();
+        assert!(err.contains("auth_login_template_render_failed"));
+
+        write_text(&template_path, "[]");
+        let mgr = auth_rest_manager_with_secret(auth_rest_stub());
+        let err = mgr
+            .login_rest("admin", repo_root, &defaults, "")
+            .unwrap_err();
+        assert!(err.contains("auth_login_template_render_failed"));
+
+        write_text(&template_path, r#"{"body":1}"#);
+        let mgr = auth_rest_manager_with_secret(auth_rest_stub());
+        let err = mgr
+            .login_rest("admin", repo_root, &defaults, "")
+            .unwrap_err();
+        assert!(err.contains("auth_login_template_render_failed"));
+
+        write_text(&template_path, r#"{"body":{}}"#);
+        let mut rest = auth_rest_stub();
+        rest.credentials_jq = ".profiles[$profile].username".to_string();
+        let mgr = auth_rest_manager_with_secret(rest);
+        let err = mgr
+            .login_rest("admin", repo_root, &defaults, "")
+            .unwrap_err();
+        assert!(err.contains("auth_credentials_invalid(provider=rest,profile=admin)"));
+
+        write_text(&template_path, r#"{"body":{}}"#);
+        let mgr = auth_rest_manager_with_secret(auth_rest_stub());
+        let err = mgr
+            .login_rest("admin", repo_root, &defaults, "")
+            .unwrap_err();
+        assert!(err.contains("auth_login_template_render_failed"));
+
+        write_text(
+            &template_path,
+            r#"{"method":"GET","path":"/login","body":{"seed":true}}"#,
+        );
+        let mgr = auth_rest_manager_with_secret(auth_rest_stub());
+        let err = mgr
+            .login_rest("admin", repo_root, &SuiteDefaults::default(), "")
+            .unwrap_err();
+        assert!(err.contains("auth_login_request_failed(provider=rest,profile=admin,rc=1)"));
+    }
+
+    #[test]
+    fn login_graphql_covers_early_error_paths_without_network_calls() {
+        let tmp = TempDir::new().expect("tempdir");
+        let repo_root = tmp.path();
+        let defaults = SuiteDefaults::default();
+
+        let mgr = stub_mgr(AuthProvider::Graphql, "graphql");
+        let err = mgr
+            .login_graphql("admin", repo_root, &defaults, "")
+            .unwrap_err();
+        assert_eq!(err, "");
+
+        let mgr = auth_graphql_manager_with_secret(auth_graphql_stub());
+        let err = mgr
+            .login_graphql("admin", repo_root, &defaults, "")
+            .unwrap_err();
+        assert!(err.contains("auth_login_template_render_failed"));
+
+        let op_path = repo_root.join("setup/graphql/operations/login.graphql");
+        write_text(&op_path, "query Login { login }\n");
+        let mgr = auth_graphql_manager_with_secret(auth_graphql_stub());
+        let err = mgr
+            .login_graphql("admin", repo_root, &defaults, "")
+            .unwrap_err();
+        assert!(err.contains("auth_login_template_render_failed"));
+
+        let vars_path = repo_root.join("setup/graphql/vars/login.json");
+        write_text(&vars_path, "{");
+        let mgr = auth_graphql_manager_with_secret(auth_graphql_stub());
+        let err = mgr
+            .login_graphql("admin", repo_root, &defaults, "")
+            .unwrap_err();
+        assert!(err.contains("auth_login_template_render_failed"));
+
+        write_text(&vars_path, "[]");
+        let mgr = auth_graphql_manager_with_secret(auth_graphql_stub());
+        let err = mgr
+            .login_graphql("admin", repo_root, &defaults, "")
+            .unwrap_err();
+        assert!(err.contains("auth_login_template_render_failed"));
+
+        write_text(&vars_path, r#"{"seed":true}"#);
+        let mut gql = auth_graphql_stub();
+        gql.credentials_jq = ".profiles[$profile].username".to_string();
+        let mgr = auth_graphql_manager_with_secret(gql);
+        let err = mgr
+            .login_graphql("admin", repo_root, &defaults, "")
+            .unwrap_err();
+        assert!(err.contains("auth_credentials_invalid(provider=graphql,profile=admin)"));
+
+        write_text(&vars_path, r#"{"seed":true}"#);
+        let mgr = auth_graphql_manager_with_secret(auth_graphql_stub());
+        let err = mgr
+            .login_graphql("admin", repo_root, &SuiteDefaults::default(), "")
+            .unwrap_err();
+        assert!(err.contains("auth_login_request_failed(provider=graphql,profile=admin,rc=1)"));
+
+        let defaults = SuiteDefaults {
+            graphql: crate::suite::schema::SuiteDefaultsGraphql {
+                url: "http://example.invalid/graphql".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        std::fs::remove_file(&op_path).expect("remove op");
+        std::fs::create_dir_all(&op_path).expect("mkdir op dir");
+        let mgr = auth_graphql_manager_with_secret(auth_graphql_stub());
+        let err = mgr
+            .login_graphql("admin", repo_root, &defaults, "")
+            .unwrap_err();
+        assert!(err.contains("auth_login_template_render_failed"));
+    }
 }

@@ -290,3 +290,162 @@ pub fn git_scope_stub_script() -> String {
     script.push_str("\nexit 0\n");
     script
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_all_contains(haystack: &str, needles: &[&str]) {
+        for needle in needles {
+            assert!(
+                haystack.contains(needle),
+                "expected script to contain `{needle}`\nscript:\n{haystack}"
+            );
+        }
+    }
+
+    #[test]
+    fn identify_stub_script_logs_and_detects_common_formats() {
+        let script = identify_stub_script();
+        assert_all_contains(
+            &script,
+            &[
+                "#!/bin/bash",
+                "set -euo pipefail",
+                "echo \"identify $*\"",
+                "basename",
+                "fmt=\"PNG\"",
+                "fmt=\"JPEG\"",
+                "fmt=\"WEBP\"",
+                "channels=\"rgba\"",
+                "echo \"${fmt}|100|50|${channels}|1\"",
+            ],
+        );
+    }
+
+    #[test]
+    fn convert_and_magick_stub_scripts_copy_input_to_output() {
+        let convert = convert_stub_script();
+        assert_all_contains(
+            &convert,
+            &[
+                "echo \"convert $*\"",
+                "in=\"$1\"",
+                "out=\"${@: -1}\"",
+                "/bin/mkdir -p \"$dir\"",
+                "/bin/cp \"$in\" \"$out\"",
+            ],
+        );
+
+        let magick = magick_stub_script();
+        assert_all_contains(
+            &magick,
+            &[
+                "echo \"magick $*\"",
+                "if [[ \"${1:-}\" == \"identify\" ]]; then",
+                "fmt=\"JPEG\"",
+                "fmt=\"WEBP\"",
+                "channels=\"rgba\"",
+                "exit 0",
+                "in=\"$1\"",
+                "out=\"${@: -1}\"",
+                "/bin/cp \"$in\" \"$out\"",
+            ],
+        );
+    }
+
+    #[test]
+    fn webp_and_jpeg_stub_scripts_cover_required_output_flags() {
+        let dwebp = dwebp_stub_script();
+        assert_all_contains(
+            &dwebp,
+            &[
+                "echo \"dwebp $*\"",
+                "if [[ \"$prev\" == \"-o\" ]]; then",
+                "dwebp: missing -o",
+                "/bin/cp \"$in\" \"$out\"",
+            ],
+        );
+
+        let cwebp = cwebp_stub_script();
+        assert_all_contains(
+            &cwebp,
+            &[
+                "echo \"cwebp $*\"",
+                "if [[ \"$a\" == \"-o\" ]]; then",
+                "cwebp: missing -o",
+                "src=\"$prev\"",
+                "/bin/cp \"$src\" \"$out\"",
+            ],
+        );
+
+        let djpeg = djpeg_stub_script();
+        assert_all_contains(
+            &djpeg,
+            &["echo \"djpeg $*\"", "in=\"$1\"", "/bin/cat \"$in\""],
+        );
+
+        let cjpeg = cjpeg_stub_script();
+        assert_all_contains(
+            &cjpeg,
+            &[
+                "echo \"cjpeg $*\"",
+                "if [[ \"$prev\" == \"-outfile\" ]]; then",
+                "cjpeg: missing -outfile",
+                "/bin/cat > \"$out\"",
+            ],
+        );
+    }
+
+    #[test]
+    fn generic_cli_stub_scripts_emit_expected_contracts() {
+        let fzf = fzf_stub_script();
+        assert_all_contains(
+            fzf,
+            &[
+                "echo \"fzf $*\"",
+                "FZF_STUB_OUT_DIR",
+                "counter=\"$dir/.counter\"",
+                "out=\"$dir/$n.out\"",
+                "code_file=\"$dir/$n.code\"",
+            ],
+        );
+
+        let bat = bat_stub_script();
+        assert_all_contains(
+            bat,
+            &["echo \"bat $*\"", "file=\"${@: -1}\"", "/bin/cat \"$file\""],
+        );
+
+        let tree = tree_stub_script();
+        assert_all_contains(tree, &["echo \"tree $*\"", "echo \".\""]);
+
+        let file = file_stub_script();
+        assert_all_contains(file, &["echo \"file $*\"", "echo \"text/plain\""]);
+    }
+
+    #[test]
+    fn clipboard_and_git_scope_stubs_share_logging_prefix() {
+        for script in [
+            pbcopy_stub_script(),
+            wl_copy_stub_script(),
+            xclip_stub_script(),
+            xsel_stub_script(),
+        ] {
+            assert_all_contains(
+                &script,
+                &[
+                    "#!/bin/bash",
+                    "set -euo pipefail",
+                    "if [[ -n \"${NILS_TEST_STUB_LOG:-}\" ]]",
+                    "if [[ ! -t 0 ]]; then",
+                    "/bin/cat >/dev/null",
+                    "exit 0",
+                ],
+            );
+        }
+
+        let git_scope = git_scope_stub_script();
+        assert_all_contains(&git_scope, &["echo \"git-scope $*\"", "exit 0"]);
+    }
+}
