@@ -1,6 +1,6 @@
-nils-agent-docs
 nils-test-support
 nils-common
+nils-agent-docs
 nils-term
 nils-git-cli
 nils-memo-cli
