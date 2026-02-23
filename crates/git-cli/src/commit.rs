@@ -761,34 +761,8 @@ mod tests {
         CommitCommand, OutputMode, ParseOutcome, dispatch, file_probe, git_scope_available,
         parse_command, parse_context_args, pattern_matches, short_sha, strip_ansi, wildcard_match,
     };
-    use nils_test_support::{CwdGuard, GlobalStateLock};
+    use nils_test_support::{CwdGuard, EnvGuard, GlobalStateLock};
     use pretty_assertions::assert_eq;
-
-    struct EnvGuard {
-        key: &'static str,
-        old: Option<std::ffi::OsString>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
-            let old = std::env::var_os(key);
-            // SAFETY: tests mutate process env only in scoped guard usage.
-            unsafe { std::env::set_var(key, value) };
-            Self { key, old }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            if let Some(value) = self.old.take() {
-                // SAFETY: tests restore process env only in scoped guard usage.
-                unsafe { std::env::set_var(self.key, value) };
-            } else {
-                // SAFETY: tests restore process env only in scoped guard usage.
-                unsafe { std::env::remove_var(self.key) };
-            }
-        }
-    }
 
     #[test]
     fn parse_command_supports_aliases() {
@@ -876,13 +850,15 @@ mod tests {
 
     #[test]
     fn git_scope_available_honors_fixture_override() {
-        let _guard = EnvGuard::set("GIT_CLI_FIXTURE_GIT_SCOPE_MODE", "missing");
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::set(&lock, "GIT_CLI_FIXTURE_GIT_SCOPE_MODE", "missing");
         assert!(!git_scope_available());
     }
 
     #[test]
     fn file_probe_respects_missing_file_fixture() {
-        let _guard = EnvGuard::set("GIT_CLI_FIXTURE_FILE_MODE", "missing");
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::set(&lock, "GIT_CLI_FIXTURE_FILE_MODE", "missing");
         assert_eq!(file_probe("HEAD:README.md"), None);
     }
 
