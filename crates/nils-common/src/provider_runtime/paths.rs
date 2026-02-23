@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use super::profile::{HomePathSelection, ProviderProfile};
 
 pub fn resolve_secret_dir(profile: &ProviderProfile) -> Option<PathBuf> {
-    if let Some(dir) = env_path(profile.env.secret_dir) {
+    if let Some(dir) = resolve_secret_dir_from_env(profile) {
         return Some(dir);
     }
 
@@ -21,6 +21,10 @@ pub fn resolve_secret_dir(profile: &ProviderProfile) -> Option<PathBuf> {
         return Some(feature_dir.join("secrets"));
     }
     Some(feature_dir)
+}
+
+pub fn resolve_secret_dir_from_env(profile: &ProviderProfile) -> Option<PathBuf> {
+    env_path(profile.env.secret_dir)
 }
 
 pub fn resolve_auth_file(profile: &ProviderProfile) -> Option<PathBuf> {

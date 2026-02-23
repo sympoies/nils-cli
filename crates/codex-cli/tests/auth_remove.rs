@@ -55,6 +55,29 @@ fn auth_remove_errors_when_secret_dir_missing() {
 }
 
 #[test]
+fn auth_remove_keeps_env_only_contract_even_if_home_secret_dir_exists() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let home = dir.path().join("home");
+    let fallback_secret_dir = home.join(".config").join("codex_secrets");
+    let target = fallback_secret_dir.join("alpha.json");
+    fs::create_dir_all(&fallback_secret_dir).expect("fallback secret dir");
+    fs::write(&target, r#"{"tokens":{"access_token":"tok"}}"#).expect("target");
+
+    let output = run_with(
+        &["auth", "remove", "--yes", "alpha.json"],
+        &[("HOME", &home)],
+        &[("CODEX_SECRET_DIR", "")],
+    );
+
+    assert_eq!(output.code, 1);
+    assert!(stderr(&output).contains("CODEX_SECRET_DIR is not configured"));
+    assert!(
+        target.exists(),
+        "remove must not use HOME fallback when CODEX_SECRET_DIR is empty"
+    );
+}
+
+#[test]
 fn auth_remove_errors_when_target_missing() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let secrets = dir.path().join("secrets");
