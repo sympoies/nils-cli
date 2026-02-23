@@ -3,6 +3,8 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use nils_common::process;
+
 use crate::prompts;
 
 use super::exec;
@@ -308,104 +310,14 @@ fn semantic_commit_prompt(mode: &str) -> Option<String> {
 }
 
 fn command_exists(name: &str) -> bool {
-    if name.is_empty() {
-        return false;
-    }
-
-    if name.contains('/') {
-        return is_executable(Path::new(name));
-    }
-
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    for part in std::env::split_paths(&path) {
-        let candidate = part.join(name);
-        if is_executable(&candidate) {
-            return true;
-        }
-    }
-    false
-}
-
-fn is_executable(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::metadata(path)
-            .map(|meta| meta.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false)
-    }
-
-    #[cfg(not(unix))]
-    {
-        true
-    }
+    process::cmd_exists(name)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{command_exists, suggested_scope_from_staged};
+    use nils_test_support::{GlobalStateLock, fs as test_fs, prepend_path};
     use std::fs;
-    use std::path::{Path, PathBuf};
-    use std::sync::{Mutex, OnceLock};
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("env lock")
-    }
-
-    struct EnvGuard {
-        key: &'static str,
-        old: Option<std::ffi::OsString>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
-            let old = std::env::var_os(key);
-            // SAFETY: tests mutate env in guarded scope.
-            unsafe { std::env::set_var(key, value) };
-            Self { key, old }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            if let Some(value) = self.old.take() {
-                // SAFETY: tests restore env in guarded scope.
-                unsafe { std::env::set_var(self.key, value) };
-            } else {
-                // SAFETY: tests restore env in guarded scope.
-                unsafe { std::env::remove_var(self.key) };
-            }
-        }
-    }
-
-    fn temp_dir(prefix: &str) -> PathBuf {
-        let mut path = std::env::temp_dir();
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_nanos())
-            .unwrap_or(0);
-        path.push(format!("{prefix}-{}-{nanos}", std::process::id()));
-        let _ = fs::remove_dir_all(&path);
-        fs::create_dir_all(&path).expect("temp dir");
-        path
-    }
-
-    #[cfg(unix)]
-    fn write_executable(path: &Path, content: &str, mode: u32) {
-        use std::os::unix::fs::PermissionsExt;
-        fs::write(path, content).expect("write");
-        let mut perms = fs::metadata(path).expect("metadata").permissions();
-        perms.set_mode(mode);
-        fs::set_permissions(path, perms).expect("chmod");
-    }
 
     #[test]
     fn suggested_scope_prefers_single_top_level_directory() {
@@ -428,18 +340,23 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn command_exists_checks_executable_bit() {
-        let _lock = env_lock();
-        let dir = temp_dir("gemini-commit-command-exists");
-        let executable = dir.join("tool-ok");
-        let non_executable = dir.join("tool-no");
-        write_executable(&executable, "#!/bin/sh\necho ok\n", 0o755);
-        write_executable(&non_executable, "plain text", 0o644);
+        use std::os::unix::fs::PermissionsExt;
 
-        let _path = EnvGuard::set("PATH", dir.as_os_str());
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let executable = dir.path().join("tool-ok");
+        let non_executable = dir.path().join("tool-no");
+        test_fs::write_executable(&executable, "#!/bin/sh\necho ok\n");
+        fs::write(&non_executable, "plain text").expect("write non executable");
+        let mut perms = fs::metadata(&non_executable)
+            .expect("metadata")
+            .permissions();
+        perms.set_mode(0o644);
+        fs::set_permissions(&non_executable, perms).expect("chmod non executable");
+
+        let _path_guard = prepend_path(&lock, dir.path());
         assert!(command_exists("tool-ok"));
         assert!(!command_exists("tool-no"));
         assert!(!command_exists("tool-missing"));
-
-        let _ = fs::remove_dir_all(dir);
     }
 }
