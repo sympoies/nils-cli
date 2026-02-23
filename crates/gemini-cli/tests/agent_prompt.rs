@@ -1,35 +1,10 @@
 use gemini_cli::agent;
-use nils_test_support::{EnvGuard, GlobalStateLock, prepend_path};
+use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
 use std::fs;
 use std::io::{BufReader, Cursor};
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::Path;
 
-fn temp_dir(label: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    let path = std::env::temp_dir().join(format!(
-        "nils-gemini-cli-{label}-{}-{nanos}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&path);
-    fs::create_dir_all(&path).expect("temp dir");
-    path
-}
-
-#[cfg(unix)]
-fn write_executable(path: &Path, content: &str) {
-    use std::os::unix::fs::PermissionsExt;
-
-    fs::write(path, content).expect("write executable");
-    let mut perms = fs::metadata(path).expect("metadata").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(path, perms).expect("chmod");
-}
-
-fn write_gemini_stub(stub_path: &Path) {
+fn write_gemini_stub(stub: &StubBinDir) {
     let script = r#"#!/bin/sh
 set -eu
 out="${GEMINI_TEST_ARGV_LOG:?missing GEMINI_TEST_ARGV_LOG}"
@@ -38,7 +13,7 @@ for a in "$@"; do
   echo "$a" >> "$out"
 done
 "#;
-    write_executable(stub_path, script);
+    stub.write_exe("gemini", script);
 }
 
 fn read_args(log_path: &Path) -> Vec<String> {
@@ -51,13 +26,13 @@ fn read_args(log_path: &Path) -> Vec<String> {
 #[test]
 fn agent_prompt_requires_dangerous_mode() {
     let lock = GlobalStateLock::new();
-    let dir = temp_dir("agent-prompt-requires-dangerous");
-    let stub = dir.join("gemini");
-    let args_log = dir.join("argv.log");
-    write_gemini_stub(&stub);
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let stubs = StubBinDir::new();
+    let args_log = dir.path().join("argv.log");
+    write_gemini_stub(&stubs);
 
     let args_log_value = args_log.to_string_lossy().to_string();
-    let _path = prepend_path(&lock, &dir);
+    let _path = prepend_path(&lock, stubs.path());
     let _danger = EnvGuard::set(&lock, "GEMINI_ALLOW_DANGEROUS_ENABLED", "false");
     let _model = EnvGuard::set(&lock, "GEMINI_CLI_MODEL", "m");
     let _reasoning = EnvGuard::set(&lock, "GEMINI_CLI_REASONING", "low");
@@ -73,20 +48,18 @@ fn agent_prompt_requires_dangerous_mode() {
             .contains("gemini-tools:prompt: disabled (set GEMINI_ALLOW_DANGEROUS_ENABLED=true)")
     );
     assert!(read_args(&args_log).is_empty());
-
-    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn agent_prompt_execs_gemini_with_expected_args() {
     let lock = GlobalStateLock::new();
-    let dir = temp_dir("agent-prompt-args");
-    let stub = dir.join("gemini");
-    let args_log = dir.join("argv.log");
-    write_gemini_stub(&stub);
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let stubs = StubBinDir::new();
+    let args_log = dir.path().join("argv.log");
+    write_gemini_stub(&stubs);
 
     let args_log_value = args_log.to_string_lossy().to_string();
-    let _path = prepend_path(&lock, &dir);
+    let _path = prepend_path(&lock, stubs.path());
     let _danger = EnvGuard::set(&lock, "GEMINI_ALLOW_DANGEROUS_ENABLED", "true");
     let _model = EnvGuard::set(&lock, "GEMINI_CLI_MODEL", "m-test");
     let _reasoning = EnvGuard::set(&lock, "GEMINI_CLI_REASONING", "high");
@@ -118,20 +91,18 @@ fn agent_prompt_execs_gemini_with_expected_args() {
         .map(|value| value.to_string())
         .collect::<Vec<_>>()
     );
-
-    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn agent_prompt_reads_stdin_when_no_args() {
     let lock = GlobalStateLock::new();
-    let dir = temp_dir("agent-prompt-stdin");
-    let stub = dir.join("gemini");
-    let args_log = dir.join("argv.log");
-    write_gemini_stub(&stub);
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let stubs = StubBinDir::new();
+    let args_log = dir.path().join("argv.log");
+    write_gemini_stub(&stubs);
 
     let args_log_value = args_log.to_string_lossy().to_string();
-    let _path = prepend_path(&lock, &dir);
+    let _path = prepend_path(&lock, stubs.path());
     let _danger = EnvGuard::set(&lock, "GEMINI_ALLOW_DANGEROUS_ENABLED", "true");
     let _model = EnvGuard::set(&lock, "GEMINI_CLI_MODEL", "m");
     let _reasoning = EnvGuard::set(&lock, "GEMINI_CLI_REASONING", "medium");
@@ -148,6 +119,4 @@ fn agent_prompt_reads_stdin_when_no_args() {
     let args = read_args(&args_log);
     let prompt_flag = args.first().map(String::as_str).unwrap_or_default();
     assert_eq!(prompt_flag, "--prompt=from stdin");
-
-    let _ = fs::remove_dir_all(&dir);
 }

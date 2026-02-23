@@ -1,3 +1,4 @@
+use nils_test_support::StubBinDir;
 use nils_test_support::bin;
 use nils_test_support::cmd::{self, CmdOptions, CmdOutput};
 use pretty_assertions::assert_eq;
@@ -9,8 +10,16 @@ fn gemini_cli_bin() -> PathBuf {
     bin::resolve("gemini-cli")
 }
 
-fn run(args: &[&str], envs: &[(&str, &Path)], vars: &[(&str, &str)]) -> CmdOutput {
+fn run(
+    args: &[&str],
+    envs: &[(&str, &Path)],
+    vars: &[(&str, &str)],
+    path_prepend: Option<&Path>,
+) -> CmdOutput {
     let mut options = CmdOptions::default();
+    if let Some(path) = path_prepend {
+        options = options.with_path_prepend(path);
+    }
     for (key, path) in envs {
         let value = path.to_string_lossy();
         options = options.with_env(key, value.as_ref());
@@ -34,26 +43,8 @@ fn assert_exit(output: &CmdOutput, code: i32) {
     assert_eq!(output.code, code);
 }
 
-fn write_curl_stub(dir: &Path, script_body: &str) -> PathBuf {
-    let path = dir.join("curl");
-    fs::write(&path, script_body).expect("write curl stub");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&path).expect("metadata").permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&path, perms).expect("chmod");
-    }
-    path
-}
-
-fn path_with_stub(stub_dir: &Path) -> String {
-    let current = std::env::var("PATH").unwrap_or_default();
-    if current.is_empty() {
-        stub_dir.display().to_string()
-    } else {
-        format!("{}:{current}", stub_dir.display())
-    }
+fn write_curl_stub(stubs: &StubBinDir, script_body: &str) {
+    stubs.write_exe("curl", script_body);
 }
 
 #[test]
@@ -66,6 +57,7 @@ fn auth_refresh_missing_token() {
         &["auth", "refresh"],
         &[("GEMINI_AUTH_FILE", &auth_file)],
         &[],
+        None,
     );
     assert_exit(&output, 2);
     assert!(stderr(&output).contains("failed to read refresh token"));
@@ -73,7 +65,7 @@ fn auth_refresh_missing_token() {
 
 #[test]
 fn auth_refresh_invalid_name() {
-    let output = run(&["auth", "refresh", "../bad.json"], &[], &[]);
+    let output = run(&["auth", "refresh", "../bad.json"], &[], &[], None);
     assert_exit(&output, 64);
     assert!(stderr(&output).contains("invalid secret file name"));
 }
@@ -88,6 +80,7 @@ fn auth_refresh_missing_secret_file() {
         &["auth", "refresh", "missing.json"],
         &[("GEMINI_SECRET_DIR", &secrets)],
         &[],
+        None,
     );
     assert_exit(&output, 1);
     assert!(stderr(&output).contains("not found"));
@@ -103,6 +96,7 @@ fn auth_refresh_json_missing_token() {
         &["auth", "refresh", "--json"],
         &[("GEMINI_AUTH_FILE", &auth_file)],
         &[],
+        None,
     );
     assert_exit(&output, 2);
     let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
@@ -113,7 +107,12 @@ fn auth_refresh_json_missing_token() {
 
 #[test]
 fn auth_refresh_json_invalid_name() {
-    let output = run(&["auth", "refresh", "--json", "../bad.json"], &[], &[]);
+    let output = run(
+        &["auth", "refresh", "--json", "../bad.json"],
+        &[],
+        &[],
+        None,
+    );
     assert_exit(&output, 64);
     let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
     assert_eq!(payload["ok"], false);
@@ -130,6 +129,7 @@ fn auth_refresh_json_missing_secret_file() {
         &["auth", "refresh", "--json", "missing.json"],
         &[("GEMINI_SECRET_DIR", &secrets)],
         &[],
+        None,
     );
     assert_exit(&output, 1);
     let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
@@ -140,18 +140,16 @@ fn auth_refresh_json_missing_secret_file() {
 #[test]
 fn auth_refresh_success_updates_tokens_and_timestamp() {
     let dir = tempfile::TempDir::new().expect("tempdir");
-    let bin_dir = dir.path().join("bin");
-    fs::create_dir_all(&bin_dir).expect("bin dir");
+    let stubs = StubBinDir::new();
     let secrets = dir.path().join("secrets");
     fs::create_dir_all(&secrets).expect("secrets");
     let cache_dir = dir.path().join("cache");
     fs::create_dir_all(&cache_dir).expect("cache");
 
     write_curl_stub(
-        &bin_dir,
+        &stubs,
         "#!/bin/sh\ncat <<'EOF'\n{\"access_token\":\"new_access\",\"refresh_token\":\"new_refresh\",\"id_token\":\"new_id\"}\n__HTTP_STATUS__:200\nEOF\n",
     );
-    let path_env = path_with_stub(&bin_dir);
 
     let target = secrets.join("alpha.json");
     fs::write(
@@ -166,7 +164,8 @@ fn auth_refresh_success_updates_tokens_and_timestamp() {
             ("GEMINI_SECRET_DIR", &secrets),
             ("GEMINI_SECRET_CACHE_DIR", &cache_dir),
         ],
-        &[("PATH", &path_env)],
+        &[],
+        Some(stubs.path()),
     );
     assert_exit(&output, 0);
     assert!(stdout(&output).contains("gemini: refreshed"));
@@ -184,14 +183,12 @@ fn auth_refresh_success_updates_tokens_and_timestamp() {
 #[test]
 fn auth_refresh_json_http_error_contains_summary() {
     let dir = tempfile::TempDir::new().expect("tempdir");
-    let bin_dir = dir.path().join("bin");
-    fs::create_dir_all(&bin_dir).expect("bin dir");
+    let stubs = StubBinDir::new();
 
     write_curl_stub(
-        &bin_dir,
+        &stubs,
         "#!/bin/sh\ncat <<'EOF'\n{\"error\":{\"code\":\"invalid_grant\",\"message\":\"expired\"},\"error_description\":\"reauth\"}\n__HTTP_STATUS__:401\nEOF\n",
     );
-    let path_env = path_with_stub(&bin_dir);
 
     let auth_file = dir.path().join("auth.json");
     fs::write(
@@ -203,7 +200,8 @@ fn auth_refresh_json_http_error_contains_summary() {
     let output = run(
         &["auth", "refresh", "--json"],
         &[("GEMINI_AUTH_FILE", &auth_file)],
-        &[("PATH", &path_env)],
+        &[],
+        Some(stubs.path()),
     );
     assert_exit(&output, 3);
     let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
@@ -220,14 +218,12 @@ fn auth_refresh_json_http_error_contains_summary() {
 #[test]
 fn auth_refresh_invalid_json_payload_returns_4() {
     let dir = tempfile::TempDir::new().expect("tempdir");
-    let bin_dir = dir.path().join("bin");
-    fs::create_dir_all(&bin_dir).expect("bin dir");
+    let stubs = StubBinDir::new();
 
     write_curl_stub(
-        &bin_dir,
+        &stubs,
         "#!/bin/sh\ncat <<'EOF'\nnot-json\n__HTTP_STATUS__:200\nEOF\n",
     );
-    let path_env = path_with_stub(&bin_dir);
 
     let auth_file = dir.path().join("auth.json");
     fs::write(
@@ -239,7 +235,8 @@ fn auth_refresh_invalid_json_payload_returns_4() {
     let output = run(
         &["auth", "refresh"],
         &[("GEMINI_AUTH_FILE", &auth_file)],
-        &[("PATH", &path_env)],
+        &[],
+        Some(stubs.path()),
     );
     assert_exit(&output, 4);
     assert!(stderr(&output).contains("invalid JSON"));
@@ -248,14 +245,12 @@ fn auth_refresh_invalid_json_payload_returns_4() {
 #[test]
 fn auth_refresh_merge_failed_when_endpoint_payload_not_object() {
     let dir = tempfile::TempDir::new().expect("tempdir");
-    let bin_dir = dir.path().join("bin");
-    fs::create_dir_all(&bin_dir).expect("bin dir");
+    let stubs = StubBinDir::new();
 
     write_curl_stub(
-        &bin_dir,
+        &stubs,
         "#!/bin/sh\ncat <<'EOF'\n123\n__HTTP_STATUS__:200\nEOF\n",
     );
-    let path_env = path_with_stub(&bin_dir);
 
     let auth_file = dir.path().join("auth.json");
     fs::write(
@@ -267,7 +262,8 @@ fn auth_refresh_merge_failed_when_endpoint_payload_not_object() {
     let output = run(
         &["auth", "refresh", "--json"],
         &[("GEMINI_AUTH_FILE", &auth_file)],
-        &[("PATH", &path_env)],
+        &[],
+        Some(stubs.path()),
     );
     assert_exit(&output, 5);
     let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
@@ -288,6 +284,7 @@ fn auth_refresh_missing_curl_binary_returns_3() {
         &["auth", "refresh"],
         &[("GEMINI_AUTH_FILE", &auth_file)],
         &[("PATH", "")],
+        None,
     );
     assert_exit(&output, 3);
     assert!(stderr(&output).contains("token endpoint request failed"));

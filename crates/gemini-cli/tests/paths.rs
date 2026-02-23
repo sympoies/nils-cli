@@ -1,120 +1,44 @@
 use gemini_cli::paths;
-use std::ffi::{OsStr, OsString};
+use nils_test_support::{EnvGuard, GlobalStateLock};
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
-
-struct TestDir {
-    path: PathBuf,
-}
-
-impl TestDir {
-    fn new(label: &str) -> Self {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_nanos())
-            .unwrap_or(0);
-        let path = std::env::temp_dir().join(format!(
-            "nils-gemini-cli-{label}-{}-{nanos}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&path).expect("create temp test dir");
-        Self { path }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TestDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
-    }
-}
-
-struct EnvVarGuard {
-    key: &'static str,
-    previous: Option<OsString>,
-}
-
-impl EnvVarGuard {
-    fn set(key: &'static str, value: impl AsRef<OsStr>) -> Self {
-        let previous = std::env::var_os(key);
-        set_env_var(key, value);
-        Self { key, previous }
-    }
-
-    fn remove(key: &'static str) -> Self {
-        let previous = std::env::var_os(key);
-        remove_env_var(key);
-        Self { key, previous }
-    }
-}
-
-impl Drop for EnvVarGuard {
-    fn drop(&mut self) {
-        if let Some(previous) = &self.previous {
-            set_env_var(self.key, previous);
-        } else {
-            remove_env_var(self.key);
-        }
-    }
-}
-
-fn env_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
-fn set_env_var(key: &str, value: impl AsRef<OsStr>) {
-    // SAFETY: tests serialize env access with env_lock.
-    unsafe {
-        std::env::set_var(key, value);
-    }
-}
-
-fn remove_env_var(key: &str) {
-    // SAFETY: tests serialize env access with env_lock.
-    unsafe {
-        std::env::remove_var(key);
-    }
+fn set_env(lock: &GlobalStateLock, key: &str, value: impl AsRef<std::ffi::OsStr>) -> EnvGuard {
+    let value = value.as_ref().to_string_lossy().into_owned();
+    EnvGuard::set(lock, key, &value)
 }
 
 #[test]
 fn paths_resolve_zdotdir_variants() {
-    let _lock = env_lock().lock().expect("lock");
-    let dir = TestDir::new("paths-zdotdir");
+    let lock = GlobalStateLock::new();
+    let dir = tempfile::TempDir::new().expect("tempdir");
 
     let zdotdir_env = dir.path().join("zdot_env");
     fs::create_dir_all(&zdotdir_env).expect("zdot_env");
 
     {
-        let _zdotdir = EnvVarGuard::set("ZDOTDIR", zdotdir_env.as_os_str());
-        let _preload = EnvVarGuard::remove("_ZSH_BOOTSTRAP_PRELOAD_PATH");
+        let _zdotdir = set_env(&lock, "ZDOTDIR", zdotdir_env.as_os_str());
+        let _preload = EnvGuard::remove(&lock, "_ZSH_BOOTSTRAP_PRELOAD_PATH");
         assert_eq!(paths::resolve_zdotdir().expect("zdotdir"), zdotdir_env);
     }
 
     {
-        let _zdotdir = EnvVarGuard::remove("ZDOTDIR");
+        let _zdotdir = EnvGuard::remove(&lock, "ZDOTDIR");
 
         let preload = dir.path().join("a").join("b").join("preload.zsh");
         fs::create_dir_all(preload.parent().expect("parent")).expect("preload parent");
 
-        let _preload = EnvVarGuard::set("_ZSH_BOOTSTRAP_PRELOAD_PATH", preload.as_os_str());
+        let _preload = set_env(&lock, "_ZSH_BOOTSTRAP_PRELOAD_PATH", preload.as_os_str());
 
         let expected = dir.path().join("a");
         assert_eq!(paths::resolve_zdotdir().expect("zdotdir"), expected);
     }
 
     {
-        let _zdotdir = EnvVarGuard::remove("ZDOTDIR");
-        let _preload = EnvVarGuard::remove("_ZSH_BOOTSTRAP_PRELOAD_PATH");
+        let _zdotdir = EnvGuard::remove(&lock, "ZDOTDIR");
+        let _preload = EnvGuard::remove(&lock, "_ZSH_BOOTSTRAP_PRELOAD_PATH");
 
         let home = dir.path().join("home");
         fs::create_dir_all(&home).expect("home");
-        let _home = EnvVarGuard::set("HOME", home.as_os_str());
+        let _home = set_env(&lock, "HOME", home.as_os_str());
 
         assert_eq!(
             paths::resolve_zdotdir().expect("zdotdir"),
@@ -125,14 +49,14 @@ fn paths_resolve_zdotdir_variants() {
 
 #[test]
 fn paths_resolve_secret_dir_from_feature_dir() {
-    let _lock = env_lock().lock().expect("lock");
-    let dir = TestDir::new("paths-secret-dir");
+    let lock = GlobalStateLock::new();
+    let dir = tempfile::TempDir::new().expect("tempdir");
 
     let override_dir = dir.path().join("override_secrets");
     fs::create_dir_all(&override_dir).expect("override dir");
 
     {
-        let _secret = EnvVarGuard::set("GEMINI_SECRET_DIR", override_dir.as_os_str());
+        let _secret = set_env(&lock, "GEMINI_SECRET_DIR", override_dir.as_os_str());
         assert_eq!(
             paths::resolve_secret_dir().expect("secret dir"),
             override_dir
@@ -147,8 +71,8 @@ fn paths_resolve_secret_dir_from_feature_dir() {
     {
         let home = dir.path().join("home");
         fs::create_dir_all(&home).expect("home");
-        let _secret = EnvVarGuard::remove("GEMINI_SECRET_DIR");
-        let _home = EnvVarGuard::set("HOME", home.as_os_str());
+        let _secret = EnvGuard::remove(&lock, "GEMINI_SECRET_DIR");
+        let _home = set_env(&lock, "HOME", home.as_os_str());
         assert_eq!(
             paths::resolve_secret_dir().expect("secret dir"),
             home.join(".gemini").join("secrets")
@@ -156,9 +80,9 @@ fn paths_resolve_secret_dir_from_feature_dir() {
     }
 
     {
-        let _secret = EnvVarGuard::remove("GEMINI_SECRET_DIR");
-        let _home = EnvVarGuard::remove("HOME");
-        let _script_dir = EnvVarGuard::set("ZSH_SCRIPT_DIR", script_dir.as_os_str());
+        let _secret = EnvGuard::remove(&lock, "GEMINI_SECRET_DIR");
+        let _home = EnvGuard::remove(&lock, "HOME");
+        let _script_dir = set_env(&lock, "ZSH_SCRIPT_DIR", script_dir.as_os_str());
 
         fs::write(feature_dir.join("init.zsh"), "#").expect("init.zsh");
         assert_eq!(
@@ -176,12 +100,12 @@ fn paths_resolve_secret_dir_from_feature_dir() {
 
 #[test]
 fn paths_resolve_secret_cache_dir_variants() {
-    let _lock = env_lock().lock().expect("lock");
-    let dir = TestDir::new("paths-cache-dir");
+    let lock = GlobalStateLock::new();
+    let dir = tempfile::TempDir::new().expect("tempdir");
 
     let override_dir = dir.path().join("cache_override");
     {
-        let _override = EnvVarGuard::set("GEMINI_SECRET_CACHE_DIR", override_dir.as_os_str());
+        let _override = set_env(&lock, "GEMINI_SECRET_CACHE_DIR", override_dir.as_os_str());
         assert_eq!(
             paths::resolve_secret_cache_dir().expect("secret cache dir"),
             override_dir
@@ -189,9 +113,9 @@ fn paths_resolve_secret_cache_dir_variants() {
     }
 
     {
-        let _override = EnvVarGuard::remove("GEMINI_SECRET_CACHE_DIR");
+        let _override = EnvGuard::remove(&lock, "GEMINI_SECRET_CACHE_DIR");
         let cache_root = dir.path().join("cache_root");
-        let _cache_root = EnvVarGuard::set("ZSH_CACHE_DIR", cache_root.as_os_str());
+        let _cache_root = set_env(&lock, "ZSH_CACHE_DIR", cache_root.as_os_str());
 
         assert_eq!(
             paths::resolve_secret_cache_dir().expect("secret cache dir"),
@@ -200,11 +124,11 @@ fn paths_resolve_secret_cache_dir_variants() {
     }
 
     {
-        let _override = EnvVarGuard::remove("GEMINI_SECRET_CACHE_DIR");
-        let _cache_root = EnvVarGuard::remove("ZSH_CACHE_DIR");
+        let _override = EnvGuard::remove(&lock, "GEMINI_SECRET_CACHE_DIR");
+        let _cache_root = EnvGuard::remove(&lock, "ZSH_CACHE_DIR");
         let home = dir.path().join("home");
         fs::create_dir_all(&home).expect("home");
-        let _home = EnvVarGuard::set("HOME", home.as_os_str());
+        let _home = set_env(&lock, "HOME", home.as_os_str());
 
         assert_eq!(
             paths::resolve_secret_cache_dir().expect("secret cache dir"),
@@ -213,11 +137,11 @@ fn paths_resolve_secret_cache_dir_variants() {
     }
 
     {
-        let _override = EnvVarGuard::remove("GEMINI_SECRET_CACHE_DIR");
-        let _cache_root = EnvVarGuard::remove("ZSH_CACHE_DIR");
-        let _home = EnvVarGuard::remove("HOME");
+        let _override = EnvGuard::remove(&lock, "GEMINI_SECRET_CACHE_DIR");
+        let _cache_root = EnvGuard::remove(&lock, "ZSH_CACHE_DIR");
+        let _home = EnvGuard::remove(&lock, "HOME");
         let zdotdir = dir.path().join("zdotdir");
-        let _zdotdir = EnvVarGuard::set("ZDOTDIR", zdotdir.as_os_str());
+        let _zdotdir = set_env(&lock, "ZDOTDIR", zdotdir.as_os_str());
         assert_eq!(
             paths::resolve_secret_cache_dir().expect("secret cache dir"),
             zdotdir.join("cache").join("gemini").join("secrets")
@@ -227,25 +151,25 @@ fn paths_resolve_secret_cache_dir_variants() {
 
 #[test]
 fn paths_resolve_auth_file_prefers_env() {
-    let _lock = env_lock().lock().expect("lock");
-    let dir = TestDir::new("paths-auth-file");
+    let lock = GlobalStateLock::new();
+    let dir = tempfile::TempDir::new().expect("tempdir");
 
     let auth_file = dir.path().join("auth.json");
-    let _auth = EnvVarGuard::set("GEMINI_AUTH_FILE", auth_file.as_os_str());
+    let _auth = set_env(&lock, "GEMINI_AUTH_FILE", auth_file.as_os_str());
 
     assert_eq!(paths::resolve_auth_file().expect("auth file"), auth_file);
 }
 
 #[test]
 fn paths_resolve_script_dir_ignores_empty_env_override() {
-    let _lock = env_lock().lock().expect("lock");
-    let dir = TestDir::new("paths-script-dir");
+    let lock = GlobalStateLock::new();
+    let dir = tempfile::TempDir::new().expect("tempdir");
 
     let zdotdir = dir.path().join("zdotdir");
     fs::create_dir_all(&zdotdir).expect("zdotdir");
 
-    let _zdotdir = EnvVarGuard::set("ZDOTDIR", zdotdir.as_os_str());
-    let _script = EnvVarGuard::set("ZSH_SCRIPT_DIR", "");
+    let _zdotdir = set_env(&lock, "ZDOTDIR", zdotdir.as_os_str());
+    let _script = EnvGuard::set(&lock, "ZSH_SCRIPT_DIR", "");
 
     assert_eq!(
         paths::resolve_script_dir().expect("script dir"),
