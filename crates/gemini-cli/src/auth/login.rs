@@ -632,11 +632,11 @@ impl LoginMethod {
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::OsString;
+    use std::ffi::OsStr;
     use std::fs;
-    use std::path::{Path, PathBuf};
-    use std::sync::{Mutex, OnceLock};
 
+    use nils_test_support::fs as test_fs;
+    use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use tempfile::TempDir;
@@ -649,83 +649,13 @@ mod tests {
         split_http_status_marker,
     };
 
-    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        match LOCK.get_or_init(|| Mutex::new(())).lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        }
+    fn set_env(lock: &GlobalStateLock, key: &str, value: impl AsRef<OsStr>) -> EnvGuard {
+        let value = value.as_ref().to_string_lossy().into_owned();
+        EnvGuard::set(lock, key, &value)
     }
 
-    struct EnvGuard {
-        key: String,
-        old: Option<OsString>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &str, value: &str) -> Self {
-            let old = std::env::var_os(key);
-            // SAFETY: tests serialize process environment mutations with `env_lock`.
-            unsafe { std::env::set_var(key, value) };
-            Self {
-                key: key.to_string(),
-                old,
-            }
-        }
-
-        fn unset(key: &str) -> Self {
-            let old = std::env::var_os(key);
-            // SAFETY: tests serialize process environment mutations with `env_lock`.
-            unsafe { std::env::remove_var(key) };
-            Self {
-                key: key.to_string(),
-                old,
-            }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            if let Some(value) = self.old.take() {
-                // SAFETY: tests serialize process environment mutations with `env_lock`.
-                unsafe { std::env::set_var(&self.key, value) };
-            } else {
-                // SAFETY: tests serialize process environment mutations with `env_lock`.
-                unsafe { std::env::remove_var(&self.key) };
-            }
-        }
-    }
-
-    fn prepend_path(dir: &Path) -> EnvGuard {
-        let mut value = dir.display().to_string();
-        if let Ok(path) = std::env::var("PATH")
-            && !path.is_empty()
-        {
-            value.push(':');
-            value.push_str(&path);
-        }
-        EnvGuard::set("PATH", &value)
-    }
-
-    #[cfg(unix)]
-    fn write_exe(path: &Path, content: &str) {
-        use std::os::unix::fs::PermissionsExt;
-
-        fs::write(path, content).expect("write executable");
-        let mut perms = fs::metadata(path).expect("metadata").permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(path, perms).expect("chmod");
-    }
-
-    #[cfg(not(unix))]
-    fn write_exe(path: &Path, content: &str) {
-        fs::write(path, content).expect("write executable");
-    }
-
-    fn write_script(dir: &Path, name: &str, content: &str) -> PathBuf {
-        let path = dir.join(name);
-        write_exe(&path, content);
-        path
+    fn remove_env(lock: &GlobalStateLock, key: &str) -> EnvGuard {
+        EnvGuard::remove(lock, key)
     }
 
     fn curl_success_script() -> &'static str {
@@ -766,121 +696,114 @@ exit 9
 
     #[test]
     fn run_delegates_to_run_with_json_non_json_mode() {
-        let _lock = env_lock();
-        let _api = EnvGuard::set("GEMINI_API_KEY", "dummy");
-        let _google = EnvGuard::unset("GOOGLE_API_KEY");
+        let lock = GlobalStateLock::new();
+        let _api = set_env(&lock, "GEMINI_API_KEY", "dummy");
+        let _google = remove_env(&lock, "GOOGLE_API_KEY");
         assert_eq!(run(true, false), 0);
     }
 
     #[test]
     fn run_with_json_reports_invalid_usage_for_conflicting_flags() {
-        let _lock = env_lock();
         assert_eq!(run_with_json(true, true, true), 64);
     }
 
     #[test]
     fn run_api_key_login_json_errors_when_keys_are_missing() {
-        let _lock = env_lock();
-        let _api = EnvGuard::set("GEMINI_API_KEY", "");
-        let _google = EnvGuard::set("GOOGLE_API_KEY", "");
+        let lock = GlobalStateLock::new();
+        let _api = set_env(&lock, "GEMINI_API_KEY", "");
+        let _google = set_env(&lock, "GOOGLE_API_KEY", "");
         assert_eq!(run_api_key_login(true), 64);
     }
 
     #[test]
     fn run_api_key_login_uses_google_api_key_when_gemini_key_missing() {
-        let _lock = env_lock();
-        let _api = EnvGuard::set("GEMINI_API_KEY", "");
-        let _google = EnvGuard::set("GOOGLE_API_KEY", "google-key");
+        let lock = GlobalStateLock::new();
+        let _api = set_env(&lock, "GEMINI_API_KEY", "");
+        let _google = set_env(&lock, "GOOGLE_API_KEY", "google-key");
         assert_eq!(run_api_key_login(true), 0);
     }
 
     #[test]
     fn run_oauth_session_check_missing_auth_file_returns_error() {
-        let _lock = env_lock();
+        let lock = GlobalStateLock::new();
         let temp = TempDir::new().expect("temp dir");
         let auth_file = temp.path().join("missing-auth.json");
-        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", &auth_file.display().to_string());
+        let _auth = set_env(&lock, "GEMINI_AUTH_FILE", auth_file.as_os_str());
         assert_eq!(run_oauth_session_check(LoginMethod::GeminiBrowser, true), 1);
     }
 
     #[test]
     fn run_oauth_session_check_invalid_auth_json_returns_error() {
-        let _lock = env_lock();
+        let lock = GlobalStateLock::new();
         let temp = TempDir::new().expect("temp dir");
         let auth_file = temp.path().join("oauth.json");
-        fs::write(&auth_file, "{invalid").expect("write auth");
-        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", &auth_file.display().to_string());
+        test_fs::write_text(&auth_file, "{invalid");
+        let _auth = set_env(&lock, "GEMINI_AUTH_FILE", auth_file.as_os_str());
         assert_eq!(run_oauth_session_check(LoginMethod::GeminiBrowser, true), 1);
     }
 
     #[test]
     fn run_oauth_session_check_missing_access_token_returns_error() {
-        let _lock = env_lock();
+        let lock = GlobalStateLock::new();
         let temp = TempDir::new().expect("temp dir");
         let auth_file = temp.path().join("oauth.json");
-        fs::write(&auth_file, "{}").expect("write auth");
-        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", &auth_file.display().to_string());
+        test_fs::write_text(&auth_file, "{}");
+        let _auth = set_env(&lock, "GEMINI_AUTH_FILE", auth_file.as_os_str());
         assert_eq!(run_oauth_session_check(LoginMethod::GeminiBrowser, true), 2);
     }
 
     #[test]
     fn run_oauth_session_check_http_error_returns_error() {
-        let _lock = env_lock();
+        let lock = GlobalStateLock::new();
         let temp = TempDir::new().expect("temp dir");
-        let bin_dir = temp.path().join("bin");
-        fs::create_dir_all(&bin_dir).expect("create bin");
-        write_script(&bin_dir, "curl", curl_http_error_script());
+        let stubs = StubBinDir::new();
+        stubs.write_exe("curl", curl_http_error_script());
 
         let auth_file = temp.path().join("oauth.json");
-        fs::write(&auth_file, r#"{"access_token":"tok"}"#).expect("write auth");
-        let _path = prepend_path(&bin_dir);
-        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", &auth_file.display().to_string());
+        test_fs::write_text(&auth_file, r#"{"access_token":"tok"}"#);
+        let _path = prepend_path(&lock, stubs.path());
+        let _auth = set_env(&lock, "GEMINI_AUTH_FILE", auth_file.as_os_str());
         assert_eq!(run_oauth_session_check(LoginMethod::GeminiBrowser, true), 3);
     }
 
     #[test]
     fn run_oauth_session_check_invalid_userinfo_json_returns_error() {
-        let _lock = env_lock();
+        let lock = GlobalStateLock::new();
         let temp = TempDir::new().expect("temp dir");
-        let bin_dir = temp.path().join("bin");
-        fs::create_dir_all(&bin_dir).expect("create bin");
-        write_script(&bin_dir, "curl", curl_invalid_json_script());
+        let stubs = StubBinDir::new();
+        stubs.write_exe("curl", curl_invalid_json_script());
 
         let auth_file = temp.path().join("oauth.json");
-        fs::write(&auth_file, r#"{"access_token":"tok"}"#).expect("write auth");
-        let _path = prepend_path(&bin_dir);
-        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", &auth_file.display().to_string());
+        test_fs::write_text(&auth_file, r#"{"access_token":"tok"}"#);
+        let _path = prepend_path(&lock, stubs.path());
+        let _auth = set_env(&lock, "GEMINI_AUTH_FILE", auth_file.as_os_str());
         assert_eq!(run_oauth_session_check(LoginMethod::GeminiBrowser, true), 4);
     }
 
     #[test]
     fn run_oauth_session_check_success_supports_nested_tokens() {
-        let _lock = env_lock();
+        let lock = GlobalStateLock::new();
         let temp = TempDir::new().expect("temp dir");
-        let bin_dir = temp.path().join("bin");
-        fs::create_dir_all(&bin_dir).expect("create bin");
-        write_script(&bin_dir, "curl", curl_success_script());
+        let stubs = StubBinDir::new();
+        stubs.write_exe("curl", curl_success_script());
 
         let auth_file = temp.path().join("oauth.json");
-        fs::write(
+        test_fs::write_text(
             &auth_file,
             r#"{"tokens":{"access_token":"tok","refresh_token":"refresh-token"}}"#,
-        )
-        .expect("write auth");
-        let _path = prepend_path(&bin_dir);
-        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", &auth_file.display().to_string());
+        );
+        let _path = prepend_path(&lock, stubs.path());
+        let _auth = set_env(&lock, "GEMINI_AUTH_FILE", auth_file.as_os_str());
         assert_eq!(run_oauth_session_check(LoginMethod::GeminiBrowser, true), 0);
     }
 
     #[test]
     fn run_oauth_interactive_login_success_device_code_returns_zero() {
-        let _lock = env_lock();
+        let lock = GlobalStateLock::new();
         let temp = TempDir::new().expect("temp dir");
-        let bin_dir = temp.path().join("bin");
-        fs::create_dir_all(&bin_dir).expect("create bin");
-        write_script(&bin_dir, "curl", curl_success_script());
-        write_script(
-            &bin_dir,
+        let stubs = StubBinDir::new();
+        stubs.write_exe("curl", curl_success_script());
+        stubs.write_exe(
             "gemini",
             r#"#!/bin/sh
 set -eu
@@ -892,9 +815,9 @@ EOF
         );
 
         let auth_file = temp.path().join("oauth.json");
-        fs::write(&auth_file, r#"{"access_token":"old-token"}"#).expect("write auth");
-        let _path = prepend_path(&bin_dir);
-        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", &auth_file.display().to_string());
+        test_fs::write_text(&auth_file, r#"{"access_token":"old-token"}"#);
+        let _path = prepend_path(&lock, stubs.path());
+        let _auth = set_env(&lock, "GEMINI_AUTH_FILE", auth_file.as_os_str());
         assert_eq!(
             run_oauth_interactive_login(LoginMethod::GeminiDeviceCode),
             0
@@ -905,12 +828,10 @@ EOF
 
     #[test]
     fn run_oauth_interactive_login_non_zero_status_restores_backup() {
-        let _lock = env_lock();
+        let lock = GlobalStateLock::new();
         let temp = TempDir::new().expect("temp dir");
-        let bin_dir = temp.path().join("bin");
-        fs::create_dir_all(&bin_dir).expect("create bin");
-        write_script(
-            &bin_dir,
+        let stubs = StubBinDir::new();
+        stubs.write_exe(
             "gemini",
             r#"#!/bin/sh
 set -eu
@@ -923,21 +844,19 @@ exit 7
 
         let auth_file = temp.path().join("oauth.json");
         let original = r#"{"access_token":"old-token"}"#;
-        fs::write(&auth_file, original).expect("write auth");
-        let _path = prepend_path(&bin_dir);
-        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", &auth_file.display().to_string());
+        test_fs::write_text(&auth_file, original);
+        let _path = prepend_path(&lock, stubs.path());
+        let _auth = set_env(&lock, "GEMINI_AUTH_FILE", auth_file.as_os_str());
         assert_eq!(run_oauth_interactive_login(LoginMethod::GeminiBrowser), 7);
         assert_eq!(fs::read_to_string(&auth_file).expect("read auth"), original);
     }
 
     #[test]
     fn run_oauth_interactive_login_missing_token_restores_backup() {
-        let _lock = env_lock();
+        let lock = GlobalStateLock::new();
         let temp = TempDir::new().expect("temp dir");
-        let bin_dir = temp.path().join("bin");
-        fs::create_dir_all(&bin_dir).expect("create bin");
-        write_script(
-            &bin_dir,
+        let stubs = StubBinDir::new();
+        stubs.write_exe(
             "gemini",
             r#"#!/bin/sh
 set -eu
@@ -949,22 +868,20 @@ EOF
 
         let auth_file = temp.path().join("oauth.json");
         let original = r#"{"access_token":"old-token"}"#;
-        fs::write(&auth_file, original).expect("write auth");
-        let _path = prepend_path(&bin_dir);
-        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", &auth_file.display().to_string());
+        test_fs::write_text(&auth_file, original);
+        let _path = prepend_path(&lock, stubs.path());
+        let _auth = set_env(&lock, "GEMINI_AUTH_FILE", auth_file.as_os_str());
         assert_eq!(run_oauth_interactive_login(LoginMethod::GeminiBrowser), 2);
         assert_eq!(fs::read_to_string(&auth_file).expect("read auth"), original);
     }
 
     #[test]
     fn run_oauth_interactive_login_userinfo_error_restores_backup() {
-        let _lock = env_lock();
+        let lock = GlobalStateLock::new();
         let temp = TempDir::new().expect("temp dir");
-        let bin_dir = temp.path().join("bin");
-        fs::create_dir_all(&bin_dir).expect("create bin");
-        write_script(&bin_dir, "curl", curl_http_error_script());
-        write_script(
-            &bin_dir,
+        let stubs = StubBinDir::new();
+        stubs.write_exe("curl", curl_http_error_script());
+        stubs.write_exe(
             "gemini",
             r#"#!/bin/sh
 set -eu
@@ -976,27 +893,25 @@ EOF
 
         let auth_file = temp.path().join("oauth.json");
         let original = r#"{"access_token":"old-token"}"#;
-        fs::write(&auth_file, original).expect("write auth");
-        let _path = prepend_path(&bin_dir);
-        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", &auth_file.display().to_string());
+        test_fs::write_text(&auth_file, original);
+        let _path = prepend_path(&lock, stubs.path());
+        let _auth = set_env(&lock, "GEMINI_AUTH_FILE", auth_file.as_os_str());
         assert_eq!(run_oauth_interactive_login(LoginMethod::GeminiBrowser), 3);
         assert_eq!(fs::read_to_string(&auth_file).expect("read auth"), original);
     }
 
     #[test]
     fn run_gemini_interactive_login_errors_when_auth_file_not_created() {
-        let _lock = env_lock();
+        let lock = GlobalStateLock::new();
         let temp = TempDir::new().expect("temp dir");
-        let bin_dir = temp.path().join("bin");
-        fs::create_dir_all(&bin_dir).expect("create bin");
-        write_script(
-            &bin_dir,
+        let stubs = StubBinDir::new();
+        stubs.write_exe(
             "gemini",
             r#"#!/bin/sh
 exit 0
 "#,
         );
-        let _path = prepend_path(&bin_dir);
+        let _path = prepend_path(&lock, stubs.path());
         let auth_file = temp.path().join("missing-output.json");
         let err = run_gemini_interactive_login(LoginMethod::GeminiBrowser, &auth_file)
             .expect_err("missing output file should fail");
@@ -1006,19 +921,17 @@ exit 0
 
     #[test]
     fn fetch_google_userinfo_handles_command_failures_and_invalid_json() {
-        let _lock = env_lock();
-        let temp = TempDir::new().expect("temp dir");
-        let bin_dir = temp.path().join("bin");
-        fs::create_dir_all(&bin_dir).expect("create bin");
+        let lock = GlobalStateLock::new();
+        let stubs = StubBinDir::new();
 
-        write_script(&bin_dir, "curl", curl_exit_failure_script());
-        let _path = prepend_path(&bin_dir);
+        stubs.write_exe("curl", curl_exit_failure_script());
+        let _path = prepend_path(&lock, stubs.path());
         let request_err =
             fetch_google_userinfo("token").expect_err("non-zero curl exit should be an error");
         assert_eq!(request_err.code, "login-request-failed");
         assert_eq!(request_err.exit_code, 3);
 
-        write_script(&bin_dir, "curl", curl_invalid_json_script());
+        stubs.write_exe("curl", curl_invalid_json_script());
         let invalid_json_err =
             fetch_google_userinfo("token").expect_err("invalid payload should fail");
         assert_eq!(invalid_json_err.code, "login-invalid-json");
@@ -1046,8 +959,8 @@ exit 0
 
     #[test]
     fn env_timeout_and_token_helpers_cover_defaults_and_nested_values() {
-        let _lock = env_lock();
-        let _timeout = EnvGuard::set("GEMINI_LOGIN_CURL_MAX_TIME_SECONDS", "11");
+        let lock = GlobalStateLock::new();
+        let _timeout = set_env(&lock, "GEMINI_LOGIN_CURL_MAX_TIME_SECONDS", "11");
         assert_eq!(env_timeout("GEMINI_LOGIN_CURL_MAX_TIME_SECONDS", 8), 11);
         assert_eq!(env_timeout("GEMINI_LOGIN_CURL_UNKNOWN", 5), 5);
 
@@ -1075,7 +988,6 @@ exit 0
 
     #[test]
     fn backup_restore_and_refresh_detection_behave_as_expected() {
-        let _lock = env_lock();
         let temp = TempDir::new().expect("temp dir");
         let auth_file = temp.path().join("oauth.json");
 

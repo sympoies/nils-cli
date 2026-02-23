@@ -270,96 +270,43 @@ mod tests {
         timestamp_path,
     };
     use crate::auth;
-    use std::ffi::{OsStr, OsString};
+    use nils_test_support::fs as test_fs;
+    use nils_test_support::{EnvGuard, GlobalStateLock};
+    use std::ffi::OsStr;
     use std::fs;
-    use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::path::Path;
+    use tempfile::TempDir;
 
-    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        crate::auth::test_env_lock()
-    }
-
-    struct EnvGuard {
-        key: &'static str,
-        old: Option<OsString>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: impl AsRef<OsStr>) -> Self {
-            let old = std::env::var_os(key);
-            // SAFETY: tests mutate env in guarded scope.
-            unsafe { std::env::set_var(key, value) };
-            Self { key, old }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            if let Some(value) = self.old.take() {
-                // SAFETY: tests restore env in guarded scope.
-                unsafe { std::env::set_var(self.key, value) };
-            } else {
-                // SAFETY: tests restore env in guarded scope.
-                unsafe { std::env::remove_var(self.key) };
-            }
-        }
-    }
-
-    struct TestDir {
-        path: PathBuf,
-    }
-
-    impl TestDir {
-        fn new(label: &str) -> Self {
-            let nanos = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|duration| duration.as_nanos())
-                .unwrap_or(0);
-            let path = std::env::temp_dir().join(format!(
-                "nils-gemini-auto-refresh-{label}-{}-{nanos}",
-                std::process::id()
-            ));
-            let _ = fs::remove_dir_all(&path);
-            fs::create_dir_all(&path).expect("temp dir");
-            Self { path }
-        }
-
-        fn join(&self, child: &str) -> PathBuf {
-            self.path.join(child)
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
-        }
+    fn set_env(lock: &GlobalStateLock, key: &str, value: impl AsRef<OsStr>) -> EnvGuard {
+        let value = value.as_ref().to_string_lossy().into_owned();
+        EnvGuard::set(lock, key, &value)
     }
 
     fn write_auth(target: &Path, last_refresh: &str) {
-        fs::write(target, format!("{{\"last_refresh\":\"{last_refresh}\"}}")).expect("write auth");
+        test_fs::write_text(target, &format!("{{\"last_refresh\":\"{last_refresh}\"}}"));
     }
 
     #[test]
     fn run_with_json_returns_zero_when_not_configured() {
-        let _lock = env_lock();
-        let dir = TestDir::new("not-configured");
-        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", dir.join("missing-auth.json"));
-        let _secret = EnvGuard::set("GEMINI_SECRET_DIR", dir.join("missing-secrets"));
+        let lock = GlobalStateLock::new();
+        let dir = TempDir::new().expect("tempdir");
+        let _auth = set_env(&lock, "GEMINI_AUTH_FILE", dir.path().join("missing-auth.json"));
+        let _secret = set_env(&lock, "GEMINI_SECRET_DIR", dir.path().join("missing-secrets"));
         assert_eq!(run_with_json(true), 0);
         assert_eq!(run_with_json(false), 0);
     }
 
     #[test]
     fn run_with_json_invalid_min_days_returns_64() {
-        let _lock = env_lock();
-        let dir = TestDir::new("invalid-min-days");
-        let secrets = dir.join("secrets");
+        let lock = GlobalStateLock::new();
+        let dir = TempDir::new().expect("tempdir");
+        let secrets = dir.path().join("secrets");
         fs::create_dir_all(&secrets).expect("secrets");
         write_auth(&secrets.join("alpha.json"), "2026-01-01T00:00:00Z");
 
-        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", dir.join("missing-auth.json"));
-        let _secret = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
-        let _min_days = EnvGuard::set("GEMINI_AUTO_REFRESH_MIN_DAYS", "bogus");
+        let _auth = set_env(&lock, "GEMINI_AUTH_FILE", dir.path().join("missing-auth.json"));
+        let _secret = set_env(&lock, "GEMINI_SECRET_DIR", &secrets);
+        let _min_days = set_env(&lock, "GEMINI_AUTO_REFRESH_MIN_DAYS", "bogus");
 
         assert_eq!(run_with_json(true), 64);
         assert_eq!(run_with_json(false), 64);
@@ -367,8 +314,8 @@ mod tests {
 
     #[test]
     fn should_refresh_covers_refresh_skip_and_future() {
-        let dir = TestDir::new("should-refresh");
-        let auth_file = dir.join("auth.json");
+        let dir = TempDir::new().expect("tempdir");
+        let auth_file = dir.path().join("auth.json");
         write_auth(&auth_file, "2026-01-01T00:00:00Z");
         let last_epoch = auth::parse_rfc3339_epoch("2026-01-01T00:00:00Z").expect("epoch");
 
@@ -388,21 +335,20 @@ mod tests {
 
     #[test]
     fn last_refresh_epoch_prefers_timestamp_and_backfills_when_needed() {
-        let _lock = env_lock();
-        let dir = TestDir::new("last-refresh");
-        let auth_file = dir.join("auth.json");
-        let cache_dir = dir.join("cache");
+        let dir = TempDir::new().expect("tempdir");
+        let auth_file = dir.path().join("auth.json");
+        let cache_dir = dir.path().join("cache");
         fs::create_dir_all(&cache_dir).expect("cache dir");
         let ts_file = cache_dir.join("auth.json.timestamp");
         write_auth(&auth_file, "2026-01-01T00:00:00Z");
 
-        fs::write(&ts_file, "2026-01-02T00:00:00Z").expect("write timestamp");
+        test_fs::write_text(&ts_file, "2026-01-02T00:00:00Z");
         let from_timestamp =
             last_refresh_epoch(&auth_file, Some(&ts_file)).expect("epoch from timestamp");
         let expected_from_ts = auth::parse_rfc3339_epoch("2026-01-02T00:00:00Z").expect("epoch");
         assert_eq!(from_timestamp, expected_from_ts);
 
-        fs::write(&ts_file, "not-an-iso").expect("write bad timestamp");
+        test_fs::write_text(&ts_file, "not-an-iso");
         let from_auth = last_refresh_epoch(&auth_file, Some(&ts_file)).expect("epoch from auth");
         let expected_from_auth = auth::parse_rfc3339_epoch("2026-01-01T00:00:00Z").expect("epoch");
         assert_eq!(from_auth, expected_from_auth);
@@ -415,64 +361,64 @@ mod tests {
 
     #[test]
     fn is_configured_detects_auth_or_secret_files() {
-        let _lock = env_lock();
-        let dir = TestDir::new("is-configured");
-        let auth_file = dir.join("auth.json");
-        let secrets = dir.join("secrets");
+        let lock = GlobalStateLock::new();
+        let dir = TempDir::new().expect("tempdir");
+        let auth_file = dir.path().join("auth.json");
+        let secrets = dir.path().join("secrets");
         fs::create_dir_all(&secrets).expect("secrets");
 
-        let missing_auth = dir.join("missing-auth.json");
-        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", &missing_auth);
-        let _secret = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
+        let missing_auth = dir.path().join("missing-auth.json");
+        let _auth = set_env(&lock, "GEMINI_AUTH_FILE", &missing_auth);
+        let _secret = set_env(&lock, "GEMINI_SECRET_DIR", &secrets);
         assert!(!is_configured());
 
         write_auth(&auth_file, "2026-01-01T00:00:00Z");
-        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", &auth_file);
+        let _auth = set_env(&lock, "GEMINI_AUTH_FILE", &auth_file);
         assert!(is_configured());
 
-        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", &missing_auth);
+        let _auth = set_env(&lock, "GEMINI_AUTH_FILE", &missing_auth);
         write_auth(&secrets.join("alpha.json"), "2026-01-01T00:00:00Z");
         assert!(is_configured());
     }
 
     #[test]
     fn timestamp_path_uses_secret_cache_dir() {
-        let _lock = env_lock();
-        let dir = TestDir::new("timestamp-path");
-        let cache_root = dir.join("cache");
+        let lock = GlobalStateLock::new();
+        let dir = TempDir::new().expect("tempdir");
+        let cache_root = dir.path().join("cache");
         fs::create_dir_all(&cache_root).expect("cache root");
-        let _cache = EnvGuard::set("GEMINI_SECRET_CACHE_DIR", &cache_root);
+        let _cache = set_env(&lock, "GEMINI_SECRET_CACHE_DIR", &cache_root);
         let path = timestamp_path(Path::new("/tmp/alpha.json")).expect("timestamp path");
         assert_eq!(path, cache_root.join("alpha.json.timestamp"));
     }
 
     #[test]
     fn run_with_json_reports_failed_for_missing_file_like_target() {
-        let _lock = env_lock();
-        let dir = TestDir::new("missing-target");
-        let secrets = dir.join("secrets");
+        let lock = GlobalStateLock::new();
+        let dir = TempDir::new().expect("tempdir");
+        let secrets = dir.path().join("secrets");
         fs::create_dir_all(&secrets).expect("secrets");
 
         write_auth(&secrets.join("good.json"), "2100-01-01T00:00:00Z");
         fs::create_dir_all(secrets.join("broken.json")).expect("broken json dir");
 
-        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", dir.join("missing-auth.json"));
-        let _secret = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
-        let _min_days = EnvGuard::set("GEMINI_AUTO_REFRESH_MIN_DAYS", "5");
+        let _auth = set_env(&lock, "GEMINI_AUTH_FILE", dir.path().join("missing-auth.json"));
+        let _secret = set_env(&lock, "GEMINI_SECRET_DIR", &secrets);
+        let _min_days = set_env(&lock, "GEMINI_AUTO_REFRESH_MIN_DAYS", "5");
         assert_eq!(run_with_json(false), 1);
     }
 
     #[test]
     fn run_with_json_emits_summary_when_targets_are_skipped() {
-        let _lock = env_lock();
-        let dir = TestDir::new("json-summary");
-        let secrets = dir.join("secrets");
+        let lock = GlobalStateLock::new();
+        let dir = TempDir::new().expect("tempdir");
+        let secrets = dir.path().join("secrets");
         fs::create_dir_all(&secrets).expect("secrets");
         write_auth(&secrets.join("alpha.json"), "2026-01-01T00:00:00Z");
 
-        let _auth = EnvGuard::set("GEMINI_AUTH_FILE", dir.join("missing-auth.json"));
-        let _secret = EnvGuard::set("GEMINI_SECRET_DIR", &secrets);
-        let _min_days = EnvGuard::set("GEMINI_AUTO_REFRESH_MIN_DAYS", "99999");
+        let _auth = set_env(&lock, "GEMINI_AUTH_FILE", dir.path().join("missing-auth.json"));
+        let _secret = set_env(&lock, "GEMINI_SECRET_DIR", &secrets);
+        let _min_days = set_env(&lock, "GEMINI_AUTO_REFRESH_MIN_DAYS", "99999");
         assert_eq!(run_with_json(true), 0);
     }
 }
