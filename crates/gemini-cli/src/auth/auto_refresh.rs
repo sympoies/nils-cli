@@ -290,8 +290,16 @@ mod tests {
     fn run_with_json_returns_zero_when_not_configured() {
         let lock = GlobalStateLock::new();
         let dir = TempDir::new().expect("tempdir");
-        let _auth = set_env(&lock, "GEMINI_AUTH_FILE", dir.path().join("missing-auth.json"));
-        let _secret = set_env(&lock, "GEMINI_SECRET_DIR", dir.path().join("missing-secrets"));
+        let _auth = set_env(
+            &lock,
+            "GEMINI_AUTH_FILE",
+            dir.path().join("missing-auth.json"),
+        );
+        let _secret = set_env(
+            &lock,
+            "GEMINI_SECRET_DIR",
+            dir.path().join("missing-secrets"),
+        );
         assert_eq!(run_with_json(true), 0);
         assert_eq!(run_with_json(false), 0);
     }
@@ -304,7 +312,11 @@ mod tests {
         fs::create_dir_all(&secrets).expect("secrets");
         write_auth(&secrets.join("alpha.json"), "2026-01-01T00:00:00Z");
 
-        let _auth = set_env(&lock, "GEMINI_AUTH_FILE", dir.path().join("missing-auth.json"));
+        let _auth = set_env(
+            &lock,
+            "GEMINI_AUTH_FILE",
+            dir.path().join("missing-auth.json"),
+        );
         let _secret = set_env(&lock, "GEMINI_SECRET_DIR", &secrets);
         let _min_days = set_env(&lock, "GEMINI_AUTO_REFRESH_MIN_DAYS", "bogus");
 
@@ -402,7 +414,11 @@ mod tests {
         write_auth(&secrets.join("good.json"), "2100-01-01T00:00:00Z");
         fs::create_dir_all(secrets.join("broken.json")).expect("broken json dir");
 
-        let _auth = set_env(&lock, "GEMINI_AUTH_FILE", dir.path().join("missing-auth.json"));
+        let _auth = set_env(
+            &lock,
+            "GEMINI_AUTH_FILE",
+            dir.path().join("missing-auth.json"),
+        );
         let _secret = set_env(&lock, "GEMINI_SECRET_DIR", &secrets);
         let _min_days = set_env(&lock, "GEMINI_AUTO_REFRESH_MIN_DAYS", "5");
         assert_eq!(run_with_json(false), 1);
@@ -416,7 +432,11 @@ mod tests {
         fs::create_dir_all(&secrets).expect("secrets");
         write_auth(&secrets.join("alpha.json"), "2026-01-01T00:00:00Z");
 
-        let _auth = set_env(&lock, "GEMINI_AUTH_FILE", dir.path().join("missing-auth.json"));
+        let _auth = set_env(
+            &lock,
+            "GEMINI_AUTH_FILE",
+            dir.path().join("missing-auth.json"),
+        );
         let _secret = set_env(&lock, "GEMINI_SECRET_DIR", &secrets);
         let _min_days = set_env(&lock, "GEMINI_AUTO_REFRESH_MIN_DAYS", "99999");
         assert_eq!(run_with_json(true), 0);
