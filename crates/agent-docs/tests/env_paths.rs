@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use nils_test_support::cmd;
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -19,22 +20,20 @@ fn write_markdown(path: &Path) {
 }
 
 fn run_agent_docs(cwd: &Path, args: &[&str], envs: &[(&str, &Path)], unset: &[&str]) -> CmdOutput {
-    let mut command = Command::new(agent_docs_bin());
-    command.current_dir(cwd).args(args);
-
+    let mut options = cmd::CmdOptions::default().with_cwd(cwd);
     for key in unset {
-        command.env_remove(key);
+        options = options.with_env_remove(key);
     }
-
     for (key, value) in envs {
-        command.env(key, value);
+        let value = value.to_str().expect("fixture env path should be utf-8");
+        options = options.with_env(key, value);
     }
 
-    let output = command.output().expect("run agent-docs");
+    let output = cmd::run_resolved("agent-docs", args, &options);
     CmdOutput {
-        code: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        code: output.code,
+        stdout: output.stdout_text(),
+        stderr: output.stderr_text(),
     }
 }
 
@@ -493,24 +492,4 @@ fn resolve_strict_auto_uses_primary_worktree_fallback_but_local_only_keeps_local
         "local-only baseline strict should keep local-only failure semantics: stdout=\n{}\nstderr=\n{}",
         baseline_local_only_output.stdout, baseline_local_only_output.stderr
     );
-}
-
-fn agent_docs_bin() -> PathBuf {
-    for env_name in ["CARGO_BIN_EXE_agent-docs", "CARGO_BIN_EXE_agent_docs"] {
-        if let Some(path) = std::env::var_os(env_name) {
-            return PathBuf::from(path);
-        }
-    }
-
-    let current = std::env::current_exe().expect("current exe");
-    let Some(target_profile_dir) = current.parent().and_then(|path| path.parent()) else {
-        panic!("failed to resolve target profile dir");
-    };
-
-    let candidate = target_profile_dir.join(format!("agent-docs{}", std::env::consts::EXE_SUFFIX));
-    if candidate.exists() {
-        return candidate;
-    }
-
-    panic!("agent-docs binary path not found: {}", candidate.display());
 }

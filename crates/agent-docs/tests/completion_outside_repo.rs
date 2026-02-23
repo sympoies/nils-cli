@@ -1,44 +1,13 @@
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
-
-fn agent_docs_bin() -> PathBuf {
-    for env_name in ["CARGO_BIN_EXE_agent-docs", "CARGO_BIN_EXE_agent_docs"] {
-        if let Some(path) = std::env::var_os(env_name) {
-            return PathBuf::from(path);
-        }
-    }
-
-    let current = std::env::current_exe().expect("current test executable");
-    let target_profile_dir = current
-        .parent()
-        .and_then(|path| path.parent())
-        .expect("target profile dir");
-    let candidate = target_profile_dir.join(format!("agent-docs{}", std::env::consts::EXE_SUFFIX));
-    assert!(
-        candidate.exists(),
-        "agent-docs binary path not found via env vars or fallback candidate {}",
-        candidate.display()
-    );
-    candidate
-}
+use nils_test_support::cmd;
 
 #[test]
 fn completion_export_succeeds_outside_git_repo() {
     let temp = tempfile::TempDir::new().unwrap();
-    let output = Command::new(agent_docs_bin())
-        .args(["completion", "zsh"])
-        .current_dir(temp.path())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("run agent-docs completion zsh");
+    let options = cmd::CmdOptions::default().with_cwd(temp.path());
+    let output = cmd::run_resolved("agent-docs", &["completion", "zsh"], &options);
 
-    assert!(
-        output.status.success(),
-        "expected exit code 0, got: {output:?}"
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.code, 0, "expected exit code 0, got: {output:?}");
+    let stdout = output.stdout_text();
     assert!(
         stdout.contains("#compdef agent-docs"),
         "missing zsh completion header: {stdout}"
@@ -48,20 +17,14 @@ fn completion_export_succeeds_outside_git_repo() {
 #[test]
 fn completion_rejects_unknown_shell_outside_git_repo() {
     let temp = tempfile::TempDir::new().unwrap();
-    let output = Command::new(agent_docs_bin())
-        .args(["completion", "fish"])
-        .current_dir(temp.path())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("run agent-docs completion fish");
+    let options = cmd::CmdOptions::default().with_cwd(temp.path());
+    let output = cmd::run_resolved("agent-docs", &["completion", "fish"], &options);
 
     assert!(
-        !output.status.success(),
+        output.code != 0,
         "expected non-zero exit code for unknown shell, got: {output:?}"
     );
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = output.stderr_text();
     assert!(
         stderr.contains("invalid value") && stderr.contains("fish"),
         "missing invalid shell error: {stderr}"

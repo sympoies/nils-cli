@@ -3,12 +3,12 @@
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agent_docs::env::ResolvedRoots;
 use agent_docs::model::{Context, OutputFormat};
+use nils_test_support::{cmd, fs as test_fs};
 
 static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -160,27 +160,28 @@ impl CliOutput {
 }
 
 pub fn run_agent_docs_command(workspace: &FixtureWorkspace, args: &[&str]) -> CliOutput {
-    let mut command = Command::new(agent_docs_bin_path());
-    command
-        .arg("--agent-home")
-        .arg(&workspace.agent_home)
-        .arg("--project-path")
-        .arg(&workspace.project_path)
-        .args(args);
+    let agent_home = workspace
+        .agent_home
+        .to_str()
+        .expect("fixture agent_home path should be utf-8");
+    let project_path = workspace
+        .project_path
+        .to_str()
+        .expect("fixture project_path path should be utf-8");
 
-    let output = command.output().expect("run agent-docs command");
+    let mut full_args = vec!["--agent-home", agent_home, "--project-path", project_path];
+    full_args.extend_from_slice(args);
+
+    let output = cmd::run_resolved("agent-docs", &full_args, &cmd::CmdOptions::default());
     CliOutput {
-        exit_code: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        exit_code: output.code,
+        stdout: output.stdout_text(),
+        stderr: output.stderr_text(),
     }
 }
 
 pub fn write_text(path: &Path, body: &str) {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("create parent directory");
-    }
-    fs::write(path, body).expect("write file");
+    let _ = test_fs::write_text(path, body);
 }
 
 fn parse_begin_line(line: &str) -> ChecklistBegin<'_> {
@@ -321,27 +322,4 @@ impl Drop for TestTempDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.path);
     }
-}
-
-fn agent_docs_bin_path() -> PathBuf {
-    for env_name in ["CARGO_BIN_EXE_agent-docs", "CARGO_BIN_EXE_agent_docs"] {
-        if let Some(path) = std::env::var_os(env_name) {
-            return PathBuf::from(path);
-        }
-    }
-
-    let current = std::env::current_exe().expect("current test executable");
-    let Some(target_profile_dir) = current.parent().and_then(|path| path.parent()) else {
-        panic!("failed to resolve target profile directory from current executable");
-    };
-
-    let candidate = target_profile_dir.join(format!("agent-docs{}", std::env::consts::EXE_SUFFIX));
-    if candidate.exists() {
-        return candidate;
-    }
-
-    panic!(
-        "agent-docs binary path not found via env vars or fallback candidate {}",
-        candidate.display()
-    );
 }

@@ -1,8 +1,8 @@
 use std::env;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{Context, Result, bail};
+use nils_common::git as shared_git;
 
 use crate::paths::normalize_root_path;
 
@@ -109,21 +109,6 @@ fn resolve_linked_worktree_metadata(cwd: &Path) -> LinkedWorktreeMetadata {
 }
 
 fn git_rev_parse_path(cwd: &Path, arg: &str) -> Option<PathBuf> {
-    let output = Command::new("git")
-        .args(["rev-parse", arg])
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let trimmed = stdout.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(normalize_root_path(Path::new(trimmed), cwd))
-    }
+    let raw = shared_git::rev_parse_in(cwd, &[arg]).ok().flatten()?;
+    Some(normalize_root_path(Path::new(&raw), cwd))
 }
