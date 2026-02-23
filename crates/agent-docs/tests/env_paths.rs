@@ -1,8 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
-use nils_test_support::cmd;
+use nils_test_support::{cmd, fs as test_fs, git as test_git};
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -13,10 +12,20 @@ struct CmdOutput {
 }
 
 fn write_markdown(path: &Path) {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("create parent dirs");
-    }
-    fs::write(path, "# fixture\n").expect("write fixture markdown");
+    let _ = test_fs::write_text(path, "# fixture\n");
+}
+
+fn setup_linked_worktree(workspace: &Path) -> (TempDir, PathBuf) {
+    let repo = test_git::init_repo_with(test_git::InitRepoOptions::new().with_initial_commit());
+    let linked_worktree = workspace.join("linked");
+    let linked_worktree_arg = linked_worktree
+        .to_str()
+        .expect("linked worktree path should be utf-8");
+    let _ = test_git::git(
+        repo.path(),
+        &["worktree", "add", linked_worktree_arg, "-b", "linked-worktree"],
+    );
+    (repo, linked_worktree)
 }
 
 fn run_agent_docs(cwd: &Path, args: &[&str], envs: &[(&str, &Path)], unset: &[&str]) -> CmdOutput {
@@ -119,85 +128,8 @@ fn resolve_fails_when_agent_home_is_missing() {
 fn resolve_detects_linked_worktree_metadata_when_project_path_not_set() {
     let home = TempDir::new().expect("create home");
     let workspace = TempDir::new().expect("create workspace");
-    let repo = workspace.path().join("repo");
-    let linked_worktree = workspace.path().join("linked");
-    fs::create_dir_all(&repo).expect("create repo directory");
-
-    let git_init = Command::new("git")
-        .current_dir(&repo)
-        .args(["init"]) // NOPMD
-        .output()
-        .expect("run git init");
-    assert!(
-        git_init.status.success(),
-        "git init failed: {}",
-        String::from_utf8_lossy(&git_init.stderr)
-    );
-
-    let git_user_name = Command::new("git")
-        .current_dir(&repo)
-        .args(["config", "user.name", "Agent Docs Tests"])
-        .output()
-        .expect("set git user.name");
-    assert!(
-        git_user_name.status.success(),
-        "git config user.name failed: {}",
-        String::from_utf8_lossy(&git_user_name.stderr)
-    );
-
-    let git_user_email = Command::new("git")
-        .current_dir(&repo)
-        .args(["config", "user.email", "agent-docs@example.test"])
-        .output()
-        .expect("set git user.email");
-    assert!(
-        git_user_email.status.success(),
-        "git config user.email failed: {}",
-        String::from_utf8_lossy(&git_user_email.stderr)
-    );
-
-    fs::write(repo.join("README.md"), "seed\n").expect("write initial commit file");
-    let git_add = Command::new("git")
-        .current_dir(&repo)
-        .args(["add", "."])
-        .output()
-        .expect("run git add");
-    assert!(
-        git_add.status.success(),
-        "git add failed: {}",
-        String::from_utf8_lossy(&git_add.stderr)
-    );
-
-    let git_commit = Command::new("git")
-        .current_dir(&repo)
-        .args(["commit", "-m", "seed"])
-        .output()
-        .expect("run git commit");
-    assert!(
-        git_commit.status.success(),
-        "git commit failed: {}",
-        String::from_utf8_lossy(&git_commit.stderr)
-    );
-
-    let linked_worktree_arg = linked_worktree
-        .to_str()
-        .expect("linked worktree path should be utf-8");
-    let git_worktree_add = Command::new("git")
-        .current_dir(&repo)
-        .args([
-            "worktree",
-            "add",
-            linked_worktree_arg,
-            "-b",
-            "linked-worktree",
-        ])
-        .output()
-        .expect("run git worktree add");
-    assert!(
-        git_worktree_add.status.success(),
-        "git worktree add failed: {}",
-        String::from_utf8_lossy(&git_worktree_add.stderr)
-    );
+    let (repo_temp, linked_worktree) = setup_linked_worktree(workspace.path());
+    let repo = repo_temp.path().to_path_buf();
 
     let nested = linked_worktree.join("nested/work");
     fs::create_dir_all(&nested).expect("create nested directory");
@@ -297,85 +229,8 @@ fn cli_help_documents_worktree_mode_values() {
 fn resolve_strict_auto_uses_primary_worktree_fallback_but_local_only_keeps_local_strict_behavior() {
     let home = TempDir::new().expect("create home");
     let workspace = TempDir::new().expect("create workspace");
-    let repo = workspace.path().join("repo");
-    let linked_worktree = workspace.path().join("linked");
-    fs::create_dir_all(&repo).expect("create repo directory");
-
-    let git_init = Command::new("git")
-        .current_dir(&repo)
-        .args(["init"]) // NOPMD
-        .output()
-        .expect("run git init");
-    assert!(
-        git_init.status.success(),
-        "git init failed: {}",
-        String::from_utf8_lossy(&git_init.stderr)
-    );
-
-    let git_user_name = Command::new("git")
-        .current_dir(&repo)
-        .args(["config", "user.name", "Agent Docs Tests"])
-        .output()
-        .expect("set git user.name");
-    assert!(
-        git_user_name.status.success(),
-        "git config user.name failed: {}",
-        String::from_utf8_lossy(&git_user_name.stderr)
-    );
-
-    let git_user_email = Command::new("git")
-        .current_dir(&repo)
-        .args(["config", "user.email", "agent-docs@example.test"])
-        .output()
-        .expect("set git user.email");
-    assert!(
-        git_user_email.status.success(),
-        "git config user.email failed: {}",
-        String::from_utf8_lossy(&git_user_email.stderr)
-    );
-
-    fs::write(repo.join("README.md"), "seed\n").expect("write initial commit file");
-    let git_add = Command::new("git")
-        .current_dir(&repo)
-        .args(["add", "."])
-        .output()
-        .expect("run git add");
-    assert!(
-        git_add.status.success(),
-        "git add failed: {}",
-        String::from_utf8_lossy(&git_add.stderr)
-    );
-
-    let git_commit = Command::new("git")
-        .current_dir(&repo)
-        .args(["commit", "-m", "seed"])
-        .output()
-        .expect("run git commit");
-    assert!(
-        git_commit.status.success(),
-        "git commit failed: {}",
-        String::from_utf8_lossy(&git_commit.stderr)
-    );
-
-    let linked_worktree_arg = linked_worktree
-        .to_str()
-        .expect("linked worktree path should be utf-8");
-    let git_worktree_add = Command::new("git")
-        .current_dir(&repo)
-        .args([
-            "worktree",
-            "add",
-            linked_worktree_arg,
-            "-b",
-            "linked-worktree",
-        ])
-        .output()
-        .expect("run git worktree add");
-    assert!(
-        git_worktree_add.status.success(),
-        "git worktree add failed: {}",
-        String::from_utf8_lossy(&git_worktree_add.stderr)
-    );
+    let (repo_temp, linked_worktree) = setup_linked_worktree(workspace.path());
+    let repo = repo_temp.path().to_path_buf();
 
     write_markdown(&home.path().join("DEVELOPMENT.md"));
     write_markdown(&repo.join("AGENTS.md"));
