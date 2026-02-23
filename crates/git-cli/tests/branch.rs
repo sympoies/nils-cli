@@ -47,7 +47,9 @@ fn branch_cleanup_help() {
     assert!(
         output
             .stdout_text()
-            .contains("Usage: git-delete-merged-branches [-b|--base <ref>] [-s|--squash]\n")
+            .contains(
+                "Usage: git-delete-merged-branches [-b|--base <ref>] [-s|--squash] [-w|--remove-worktrees]\n"
+            )
     );
     assert_eq!(output.stderr_text(), "");
 }
@@ -176,4 +178,70 @@ fn branch_cleanup_squash_no_candidates_message() {
 
     assert_eq!(output.code, 0);
     assert_eq!(output.stdout_text(), "✅ No deletable branches found.\n");
+}
+
+#[test]
+fn branch_cleanup_reports_failed_deletion_for_linked_worktree_branch() {
+    let harness = GitCliHarness::new();
+    let dir = setup_repo_with_branches();
+
+    let linked_worktree = dir.path().join("linked-worktree");
+    let linked_worktree_path = linked_worktree.to_str().expect("utf8 linked worktree path");
+    git(
+        dir.path(),
+        &["worktree", "add", linked_worktree_path, "feature-merged"],
+    );
+
+    let output = run_with_stdin(&harness, dir.path(), &["branch", "cleanup"], "y\n");
+
+    assert_eq!(output.code, 1);
+    assert!(
+        output
+            .stdout_text()
+            .contains("🧹 Merged branches to delete (base: HEAD):")
+    );
+    assert!(output.stdout_text().contains("  - feature-merged"));
+    assert!(
+        output
+            .stderr_text()
+            .contains("⚠️  Failed to delete 1 branch(es):")
+    );
+    assert!(output.stderr_text().contains("feature-merged"));
+    assert!(git(dir.path(), &["branch", "--list", "feature-merged"]).contains("feature-merged"));
+}
+
+#[test]
+fn branch_cleanup_remove_worktrees_flag_deletes_linked_worktree_branch() {
+    let harness = GitCliHarness::new();
+    let dir = setup_repo_with_branches();
+
+    let linked_worktree = dir.path().join("linked-worktree");
+    let linked_worktree_path = linked_worktree.to_str().expect("utf8 linked worktree path");
+    git(
+        dir.path(),
+        &["worktree", "add", linked_worktree_path, "feature-merged"],
+    );
+
+    let output = run_with_stdin(
+        &harness,
+        dir.path(),
+        &["branch", "cleanup", "--remove-worktrees"],
+        "y\n",
+    );
+
+    assert_eq!(output.code, 0);
+    assert!(
+        output
+            .stdout_text()
+            .contains("⚠️  Linked worktrees to remove (--remove-worktrees):")
+    );
+    assert!(output.stdout_text().contains("feature-merged"));
+    assert!(
+        output
+            .stdout_text()
+            .contains("✅ Removed 1 linked worktree(s).")
+    );
+    assert!(output.stdout_text().contains("✅ Deleted 1 branch(es)."));
+    assert!(!linked_worktree.exists());
+    assert_eq!(git(dir.path(), &["branch", "--list", "feature-merged"]), "");
 }
