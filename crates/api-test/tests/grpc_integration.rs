@@ -2,7 +2,7 @@ use std::path::Path;
 
 use nils_test_support::bin::resolve;
 use nils_test_support::cmd::{CmdOptions, CmdOutput, run_with};
-use nils_test_support::fs::write_text;
+use nils_test_support::fs::{write_executable, write_text};
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
@@ -28,14 +28,7 @@ fn api_test_run_supports_grpc_case() {
     std::fs::create_dir_all(root.join(".git")).expect("git marker");
 
     let mock = root.join("grpcurl-mock.sh");
-    std::fs::write(&mock, "#!/bin/sh\necho '{\"ok\":true}'\nexit 0\n").expect("write script");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&mock).expect("stat").permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&mock, perms).expect("chmod");
-    }
+    write_executable(&mock, "#!/bin/sh\necho '{\"ok\":true}'\nexit 0\n");
 
     write_text(
         &root.join("setup/grpc/requests/health.grpc.json"),
