@@ -1,42 +1,9 @@
 use gemini_cli::agent;
+use nils_test_support::{EnvGuard, GlobalStateLock, prepend_path};
 use std::fs;
 use std::io::{BufReader, Cursor};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
-
-fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .expect("env lock")
-}
-
-struct EnvGuard {
-    key: &'static str,
-    old: Option<std::ffi::OsString>,
-}
-
-impl EnvGuard {
-    fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
-        let old = std::env::var_os(key);
-        // SAFETY: tests mutate process env with a global lock.
-        unsafe { std::env::set_var(key, value) };
-        Self { key, old }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        if let Some(value) = self.old.take() {
-            // SAFETY: tests mutate process env with a global lock.
-            unsafe { std::env::set_var(self.key, value) };
-        } else {
-            // SAFETY: tests mutate process env with a global lock.
-            unsafe { std::env::remove_var(self.key) };
-        }
-    }
-}
 
 fn temp_dir(label: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -83,17 +50,18 @@ fn read_args(log_path: &Path) -> Vec<String> {
 
 #[test]
 fn agent_prompt_requires_dangerous_mode() {
-    let _lock = env_lock();
+    let lock = GlobalStateLock::new();
     let dir = temp_dir("agent-prompt-requires-dangerous");
     let stub = dir.join("gemini");
     let args_log = dir.join("argv.log");
     write_gemini_stub(&stub);
 
-    let _path = EnvGuard::set("PATH", dir.as_os_str());
-    let _danger = EnvGuard::set("GEMINI_ALLOW_DANGEROUS_ENABLED", "false");
-    let _model = EnvGuard::set("GEMINI_CLI_MODEL", "m");
-    let _reasoning = EnvGuard::set("GEMINI_CLI_REASONING", "low");
-    let _argv = EnvGuard::set("GEMINI_TEST_ARGV_LOG", args_log.as_os_str());
+    let args_log_value = args_log.to_string_lossy().to_string();
+    let _path = prepend_path(&lock, &dir);
+    let _danger = EnvGuard::set(&lock, "GEMINI_ALLOW_DANGEROUS_ENABLED", "false");
+    let _model = EnvGuard::set(&lock, "GEMINI_CLI_MODEL", "m");
+    let _reasoning = EnvGuard::set(&lock, "GEMINI_CLI_REASONING", "low");
+    let _argv = EnvGuard::set(&lock, "GEMINI_TEST_ARGV_LOG", &args_log_value);
 
     let mut stdin = BufReader::new(Cursor::new(""));
     let mut stdout: Vec<u8> = Vec::new();
@@ -111,17 +79,18 @@ fn agent_prompt_requires_dangerous_mode() {
 
 #[test]
 fn agent_prompt_execs_gemini_with_expected_args() {
-    let _lock = env_lock();
+    let lock = GlobalStateLock::new();
     let dir = temp_dir("agent-prompt-args");
     let stub = dir.join("gemini");
     let args_log = dir.join("argv.log");
     write_gemini_stub(&stub);
 
-    let _path = EnvGuard::set("PATH", dir.as_os_str());
-    let _danger = EnvGuard::set("GEMINI_ALLOW_DANGEROUS_ENABLED", "true");
-    let _model = EnvGuard::set("GEMINI_CLI_MODEL", "m-test");
-    let _reasoning = EnvGuard::set("GEMINI_CLI_REASONING", "high");
-    let _argv = EnvGuard::set("GEMINI_TEST_ARGV_LOG", args_log.as_os_str());
+    let args_log_value = args_log.to_string_lossy().to_string();
+    let _path = prepend_path(&lock, &dir);
+    let _danger = EnvGuard::set(&lock, "GEMINI_ALLOW_DANGEROUS_ENABLED", "true");
+    let _model = EnvGuard::set(&lock, "GEMINI_CLI_MODEL", "m-test");
+    let _reasoning = EnvGuard::set(&lock, "GEMINI_CLI_REASONING", "high");
+    let _argv = EnvGuard::set(&lock, "GEMINI_TEST_ARGV_LOG", &args_log_value);
 
     let mut stdin = BufReader::new(Cursor::new(""));
     let mut stdout: Vec<u8> = Vec::new();
@@ -155,17 +124,18 @@ fn agent_prompt_execs_gemini_with_expected_args() {
 
 #[test]
 fn agent_prompt_reads_stdin_when_no_args() {
-    let _lock = env_lock();
+    let lock = GlobalStateLock::new();
     let dir = temp_dir("agent-prompt-stdin");
     let stub = dir.join("gemini");
     let args_log = dir.join("argv.log");
     write_gemini_stub(&stub);
 
-    let _path = EnvGuard::set("PATH", dir.as_os_str());
-    let _danger = EnvGuard::set("GEMINI_ALLOW_DANGEROUS_ENABLED", "true");
-    let _model = EnvGuard::set("GEMINI_CLI_MODEL", "m");
-    let _reasoning = EnvGuard::set("GEMINI_CLI_REASONING", "medium");
-    let _argv = EnvGuard::set("GEMINI_TEST_ARGV_LOG", args_log.as_os_str());
+    let args_log_value = args_log.to_string_lossy().to_string();
+    let _path = prepend_path(&lock, &dir);
+    let _danger = EnvGuard::set(&lock, "GEMINI_ALLOW_DANGEROUS_ENABLED", "true");
+    let _model = EnvGuard::set(&lock, "GEMINI_CLI_MODEL", "m");
+    let _reasoning = EnvGuard::set(&lock, "GEMINI_CLI_REASONING", "medium");
+    let _argv = EnvGuard::set(&lock, "GEMINI_TEST_ARGV_LOG", &args_log_value);
 
     let mut stdin = BufReader::new(Cursor::new("from stdin\n"));
     let mut stdout: Vec<u8> = Vec::new();
