@@ -167,7 +167,7 @@ fn color_enabled() -> bool {
         return true;
     }
 
-    // Keep memo-cli's legacy behavior: empty NO_COLOR still keeps color enabled.
+    // Keep memo-cli's existing behavior: empty NO_COLOR still keeps color enabled.
     shared_env::env_or_default("NO_COLOR", "").trim().is_empty()
 }
 
