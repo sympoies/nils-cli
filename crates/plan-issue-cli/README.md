@@ -8,11 +8,11 @@ Sprint 1 establishes the v1 command contract, gate semantics, and deterministic 
 to preserve orchestration compatibility before implementation cutover.
 
 ## Status
-- Current scope includes Sprint 2 scaffold implementation:
-  - crate package `nils-plan-issue-cli`
-  - binaries `plan-issue` and `plan-issue-local`
-  - typed clap command model for v1 command surface
-  - deterministic text and JSON output envelopes
+- Current scope includes Sprint 3 implementation:
+  - deterministic task-spec generation core using `plan-tooling` parsing primitives
+  - issue-body and sprint-comment markdown rendering engine
+  - local-first dry-run workflow for `plan-issue-local`
+  - Sprint 2 scaffold + typed command model + text/JSON output envelopes
 
 ## Specifications
 - [CLI contract v1](docs/specs/plan-issue-cli-contract-v1.md)

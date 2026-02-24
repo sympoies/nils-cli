@@ -1,6 +1,9 @@
 pub mod cli;
 pub mod commands;
+mod execute;
 pub mod output;
+mod render;
+mod task_spec;
 
 use std::ffi::OsString;
 
@@ -50,6 +53,31 @@ impl ValidationError {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandError {
+    pub code: &'static str,
+    pub message: String,
+    pub exit_code: i32,
+}
+
+impl CommandError {
+    pub fn new(code: &'static str, message: impl Into<String>, exit_code: i32) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            exit_code,
+        }
+    }
+
+    pub fn runtime(code: &'static str, message: impl Into<String>) -> Self {
+        Self::new(code, message, EXIT_FAILURE)
+    }
+
+    pub fn usage(code: &'static str, message: impl Into<String>) -> Self {
+        Self::new(code, message, EXIT_USAGE)
+    }
+}
+
 pub fn run(binary: BinaryFlavor) -> i32 {
     run_with_args(binary, std::env::args_os())
 }
@@ -94,6 +122,23 @@ where
         return EXIT_FAILURE;
     }
 
+    let execution_result = match execute::execute(binary, &cli) {
+        Ok(result) => result,
+        Err(err) => {
+            let schema_version = cli.command.schema_version();
+            if let Err(render_err) = output::emit_error(
+                output_format,
+                &schema_version,
+                cli.command.command_id(),
+                err.code,
+                &err.message,
+            ) {
+                eprintln!("error: {render_err}");
+            }
+            return err.exit_code;
+        }
+    };
+
     let schema_version = cli.command.schema_version();
     let payload = json!({
         "binary": binary.binary_name(),
@@ -101,6 +146,7 @@ where
         "dry_run": cli.dry_run,
         "repo": cli.repo,
         "arguments": cli.command.payload(),
+        "result": execution_result,
     });
 
     if let Err(err) = output::emit_success(

@@ -1,6 +1,6 @@
 mod batches;
 mod completion;
-mod parse;
+pub mod parse;
 mod repo_root;
 mod repr;
 mod scaffold;

@@ -51,6 +51,16 @@ pub struct ReadySprintArgs {
     #[arg(long, value_parser = clap::value_parser!(u16).range(1..), value_name = "number")]
     pub sprint: u16,
 
+    /// Sprint task-spec output path override.
+    #[arg(long, value_name = "path")]
+    pub task_spec_out: Option<PathBuf>,
+
+    #[command(flatten)]
+    pub prefixes: PrefixArgs,
+
+    #[command(flatten)]
+    pub grouping: GroupingArgs,
+
     #[command(flatten)]
     pub summary: SummaryArgs,
 
@@ -71,6 +81,16 @@ pub struct AcceptSprintArgs {
     /// Sprint number.
     #[arg(long, value_parser = clap::value_parser!(u16).range(1..), value_name = "number")]
     pub sprint: u16,
+
+    /// Sprint task-spec output path override.
+    #[arg(long, value_name = "path")]
+    pub task_spec_out: Option<PathBuf>,
+
+    #[command(flatten)]
+    pub prefixes: PrefixArgs,
+
+    #[command(flatten)]
+    pub grouping: GroupingArgs,
 
     /// Review approval comment URL.
     #[arg(long = "approved-comment-url", value_name = "url")]
