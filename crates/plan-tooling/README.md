@@ -2,7 +2,8 @@
 
 ## Overview
 plan-tooling works with Plan Format v1 markdown files. It can parse plans to JSON, validate plan
-files, compute dependency batches for a sprint, and scaffold new plans.
+files, compute dependency batches for a sprint, scaffold new plans, and generate deterministic
+task-to-PR split specs.
 
 ## Usage
 ```text
@@ -13,6 +14,7 @@ Commands:
   to-json   Parse a plan markdown file into a stable JSON schema
   validate  Lint plan markdown files
   batches   Compute dependency layers (parallel batches) for a sprint
+  split-prs Build deterministic task-to-PR split records
   scaffold  Create a new plan from template
   help      Display help message
 
@@ -33,6 +35,11 @@ Help:
 ### batches
 - `batches --file <plan.md> --sprint <n> [--format json|text]`: Compute dependency batches for a
   sprint.
+
+### split-prs
+- `split-prs --file <plan.md> --scope <plan|sprint> [--sprint <n>] --pr-grouping <per-sprint|group> [--pr-group <task-or-plan-id>=<group>]... [--strategy deterministic|auto] [--format json|tsv]`
+- `--strategy auto` is reserved for future scoring based on `Complexity`, `Location`, and
+  `Dependencies`; in v1 it intentionally returns `not implemented`.
 
 ### scaffold
 - `scaffold --slug <kebab-case> [--title <title>] [--force]`: Write to

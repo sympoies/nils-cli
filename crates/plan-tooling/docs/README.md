@@ -4,7 +4,8 @@
 
 ## Specs
 
-- None yet. Add documents under `docs/specs/` and register them here.
+- [`split-prs Contract v1`](specs/split-prs-contract-v1.md): deterministic split contract for
+  `plan-tooling split-prs`.
 
 ## Runbooks
 
