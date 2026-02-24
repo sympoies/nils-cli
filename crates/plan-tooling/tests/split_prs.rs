@@ -107,8 +107,7 @@ fn split_prs_deterministic_group_json_matches_fixture() {
 #[test]
 fn split_prs_library_core_auto_group_records_are_deterministic() {
     let plan = parsed_fixture_plan("duck-plan.md");
-    let selected =
-        select_sprints_for_scope(&plan, SplitScope::Sprint(2)).expect("scope selection");
+    let selected = select_sprints_for_scope(&plan, SplitScope::Sprint(2)).expect("scope selection");
     let options = SplitPlanOptions {
         pr_grouping: SplitPrGrouping::Group,
         strategy: SplitPrStrategy::Auto,
@@ -128,14 +127,20 @@ fn split_prs_library_core_auto_group_records_are_deterministic() {
     for record in &first {
         group_by_task.insert(record.task_id.clone(), record.pr_group.clone());
         notes_by_task.insert(record.task_id.clone(), record.notes.clone());
-        assert!(record.pr_group.starts_with("s2-auto-g"), "{}", record.pr_group);
+        assert!(
+            record.pr_group.starts_with("s2-auto-g"),
+            "{}",
+            record.pr_group
+        );
         assert!(
             record.notes.contains("pr-grouping=group"),
             "{}",
             record.notes
         );
         assert!(
-            record.notes.contains(&format!("pr-group={}", record.pr_group)),
+            record
+                .notes
+                .contains(&format!("pr-group={}", record.pr_group)),
             "{}",
             record.notes
         );
@@ -163,8 +168,7 @@ fn split_prs_library_core_auto_group_records_are_deterministic() {
 #[test]
 fn split_prs_library_core_deterministic_group_requires_mapping() {
     let plan = parsed_fixture_plan("duck-plan.md");
-    let selected =
-        select_sprints_for_scope(&plan, SplitScope::Sprint(2)).expect("scope selection");
+    let selected = select_sprints_for_scope(&plan, SplitScope::Sprint(2)).expect("scope selection");
     let options = SplitPlanOptions {
         pr_grouping: SplitPrGrouping::Group,
         strategy: SplitPrStrategy::Deterministic,
