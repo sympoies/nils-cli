@@ -5,7 +5,7 @@ Replace downstream `build-task-spec` split generation with `plan-tooling split-p
 
 ## Command Mapping
 
-Legacy shape:
+Prior command shape:
 
 ```bash
 build-task-spec --plan <plan.md> --sprint <n> --pr-grouping <mode> [--pr-group <task=group>]... --task-spec-out <out.tsv>
