@@ -16,6 +16,7 @@ Commands:
   batches   Compute dependency layers (parallel batches) for a sprint
   split-prs Build task-to-PR split records (deterministic/auto)
   scaffold  Create a new plan from template
+  completion Export shell completion script
   help      Display help message
 
 Help:
@@ -58,6 +59,35 @@ Help:
 - `scaffold --slug <kebab-case> [--title <title>] [--force]`: Write to
   `docs/plans/<slug>-plan.md` (or `<slug>.md` if the slug already ends with `-plan`).
 - `scaffold --file <path> [--title <title>] [--force]`: Write to a specific `-plan.md` path.
+
+### completion
+- `completion <bash|zsh>`: Export completion script for shell integration.
+
+## Quick examples
+```bash
+# Parse one plan to JSON
+plan-tooling to-json --file docs/plans/example-plan.md --pretty
+
+# Validate all tracked plan docs (default discovery)
+plan-tooling validate
+
+# Compute sprint batches in text mode
+plan-tooling batches --file docs/plans/example-plan.md --sprint 2 --format text
+
+# Split sprint tasks with deterministic groups
+plan-tooling split-prs \
+  --file docs/plans/example-plan.md \
+  --scope sprint \
+  --sprint 2 \
+  --pr-grouping group \
+  --pr-group S2T1=isolated \
+  --pr-group S2T2=shared \
+  --strategy deterministic \
+  --format json
+
+# Export completion
+plan-tooling completion zsh > completions/zsh/_plan-tooling
+```
 
 ## Template
 - Plan template: `crates/plan-tooling/plan-template.md`.
