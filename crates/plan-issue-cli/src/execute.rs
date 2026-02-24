@@ -51,6 +51,10 @@ pub fn execute(binary: BinaryFlavor, cli: &Cli) -> Result<Value, CommandError> {
             run_accept_sprint(binary, cli.dry_run, cli.repo.as_deref(), args)
         }
         CliCommand::MultiSprintGuide(args) => run_multi_sprint_guide(args),
+        CliCommand::Completion(_) => Err(CommandError::usage(
+            "completion-direct-output-only",
+            "completion output is emitted directly; run `<binary> completion <bash|zsh>`",
+        )),
     }
 }
 

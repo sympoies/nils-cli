@@ -1,4 +1,5 @@
 pub mod build;
+pub mod completion;
 pub mod plan;
 pub mod sprint;
 
@@ -9,6 +10,7 @@ use serde_json::Value;
 use crate::ValidationError;
 
 use self::build::{BuildPlanTaskSpecArgs, BuildTaskSpecArgs};
+use self::completion::CompletionArgs;
 use self::plan::{
     CleanupWorktreesArgs, ClosePlanArgs, ReadyPlanArgs, StartPlanArgs, StatusPlanArgs,
 };
@@ -146,6 +148,9 @@ pub enum Command {
 
     /// Print the full repeated command flow for a plan (1 plan = 1 issue).
     MultiSprintGuide(MultiSprintGuideArgs),
+
+    /// Export shell completion script.
+    Completion(CompletionArgs),
 }
 
 impl Command {
@@ -162,6 +167,7 @@ impl Command {
             Self::ReadySprint(_) => "ready-sprint",
             Self::AcceptSprint(_) => "accept-sprint",
             Self::MultiSprintGuide(_) => "multi-sprint-guide",
+            Self::Completion(_) => "completion",
         }
     }
 
@@ -182,6 +188,7 @@ impl Command {
             Self::ReadySprint(args) => serde_json::to_value(args),
             Self::AcceptSprint(args) => serde_json::to_value(args),
             Self::MultiSprintGuide(args) => serde_json::to_value(args),
+            Self::Completion(args) => serde_json::to_value(args),
         };
 
         payload.unwrap_or(Value::Null)
@@ -197,7 +204,10 @@ impl Command {
             Self::AcceptSprint(args) => validate_grouping(&args.grouping),
             Self::ClosePlan(args) => validate_close_plan_args(args, dry_run),
             Self::MultiSprintGuide(args) => validate_multi_sprint_guide_args(args),
-            Self::StatusPlan(_) | Self::ReadyPlan(_) | Self::CleanupWorktrees(_) => Ok(()),
+            Self::Completion(_)
+            | Self::StatusPlan(_)
+            | Self::ReadyPlan(_)
+            | Self::CleanupWorktrees(_) => Ok(()),
         }
     }
 }

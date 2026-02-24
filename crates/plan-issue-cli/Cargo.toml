@@ -22,6 +22,7 @@ path = "src/bin/plan-issue-local.rs"
 
 [dependencies]
 clap = { workspace = true }
+clap_complete = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 plan-tooling = { version = "0.5.1", path = "../plan-tooling", package = "nils-plan-tooling" }

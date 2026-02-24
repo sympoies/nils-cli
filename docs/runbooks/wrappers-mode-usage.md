@@ -28,9 +28,14 @@ This applies to all current wrappers under `wrappers/`:
 - `image-processing`
 - `macos-agent`
 - `memo-cli`
+- `plan-issue`
+- `plan-issue-local`
 - `plan-tooling`
 - `screen-record`
 - `semantic-commit`
+
+Compatibility shim:
+- `plan-issue-delivery-loop.sh` delegates to `plan-issue` and preserves historical entrypoint naming.
 
 ## Environment Contract
 

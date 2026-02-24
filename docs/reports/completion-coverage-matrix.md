@@ -5,7 +5,6 @@
 - Inventory source of truth: `bash scripts/workspace-bins.sh`.
 - Obligation rule for this matrix: all workspace binaries are `required` unless explicitly `excluded` as internal/example binaries.
 - Explicit exclusion: `cli-template` is `excluded` because it is an example/template CLI and is out of scope for user-facing release contract migration (`docs/plans/repo-completion-standard-rollout-plan.md`).
-- Explicit exclusion: `plan-issue` and `plan-issue-local` are `excluded` until Sprint 6 completion rollout finalizes their user-facing command surface.
 - Explicit treatment: `image-processing` is `required` (user-facing CLI in `README.md`) and must ship clap-first thin completion adapters in both shells.
 - Alias policy: alias families are required only for `git-scope` (`gs*`), `git-cli` (`gx*`), `codex-cli` (`cx*`), and `fzf-cli` (`fx*`) per `AGENTS.md`; other binaries have no alias requirement.
 - Completion quality baseline for every `required` binary: subcommands + long/short flags + declared value candidates.
@@ -36,13 +35,13 @@
 | `image-processing` | `required` | `present` (`_image-processing`) | `present` (`image-processing`) | not required | `completion_mode=clap-first; completion_mode_toggles=forbidden; alternate_completion_dispatch=forbidden; generated_load_failure=fail-closed` | Explicitly treated as a user-facing CLI (not internal/example); completion is exported by `image-processing completion <bash|zsh>` and loaded through thin fail-closed shell adapters. |
 | `macos-agent` | `required` | `present` (`_macos-agent`) | `present` (`macos-agent`) | not required | `completion_mode=clap-first; completion_mode_toggles=forbidden; alternate_completion_dispatch=forbidden; generated_load_failure=fail-closed` | Workspace binary; completion files exist in both shell directories. |
 | `memo-cli` | `required` | `present` (`_memo-cli`) | `present` (`memo-cli`) | not required | `completion_mode=clap-first; completion_mode_toggles=forbidden; alternate_completion_dispatch=forbidden; generated_load_failure=fail-closed` | Workspace binary; completion files exist in both shell directories. |
-| `plan-issue` | `excluded` | `missing` | `missing` | not required | `not required (excluded)` | Sprint 2 scaffold binary; completion assets are deferred until Sprint 6 completion rollout. |
-| `plan-issue-local` | `excluded` | `missing` | `missing` | not required | `not required (excluded)` | Sprint 2 scaffold binary; completion assets are deferred until Sprint 6 completion rollout. |
+| `plan-issue` | `required` | `present` (`_plan-issue`) | `present` (`plan-issue`) | not required | `completion_mode=clap-first; completion_mode_toggles=forbidden; alternate_completion_dispatch=forbidden; generated_load_failure=fail-closed` | Rust orchestration CLI entrypoint; completion is exported by `plan-issue completion <bash|zsh>` and loaded through thin fail-closed shell adapters. |
+| `plan-issue-local` | `required` | `present` (`_plan-issue-local`) | `present` (`plan-issue-local`) | not required | `completion_mode=clap-first; completion_mode_toggles=forbidden; alternate_completion_dispatch=forbidden; generated_load_failure=fail-closed` | Local rehearsal binary paired with `plan-issue`; completion is exported by `plan-issue-local completion <bash|zsh>` and loaded through thin fail-closed shell adapters. |
 | `plan-tooling` | `required` | `present` (`_plan-tooling`) | `present` (`plan-tooling`) | not required | `completion_mode=clap-first; completion_mode_toggles=forbidden; alternate_completion_dispatch=forbidden; generated_load_failure=fail-closed` | Workspace binary; completion files exist in both shell directories. |
 | `screen-record` | `required` | `present` (`_screen-record`) | `present` (`screen-record`) | not required | `completion_mode=clap-first; completion_mode_toggles=forbidden; alternate_completion_dispatch=forbidden; generated_load_failure=fail-closed` | Workspace binary; completion files exist in both shell directories. |
 | `semantic-commit` | `required` | `present` (`_semantic-commit`) | `present` (`semantic-commit`) | not required | `completion_mode=clap-first; completion_mode_toggles=forbidden; alternate_completion_dispatch=forbidden; generated_load_failure=fail-closed` | Workspace binary; completion files exist in both shell directories. |
 
 ## Exclusion summary
 
-- `excluded`: `cli-template`, `plan-issue`, `plan-issue-local` (explicit staged exclusions).
+- `excluded`: `cli-template` (explicit staged exclusion).
 - No other workspace binary is excluded in this matrix.
