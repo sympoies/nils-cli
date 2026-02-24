@@ -228,7 +228,11 @@ mod tests {
 
         let err = fetch_shareable_macos().expect_err("non-macos should be unsupported");
         assert_eq!(err.exit_code(), 2);
-        assert!(err.to_string().to_ascii_lowercase().contains("unsupported"));
+        assert!(
+            err.to_string()
+                .to_ascii_lowercase()
+                .contains("only supported on macos")
+        );
 
         let temp = TempDir::new().expect("tempdir");
         let out = temp.path().join("shot.png");
@@ -240,6 +244,10 @@ mod tests {
         let err = capture_window_screenshot_macos(&window, &out, ScreenshotFormat::Png)
             .expect_err("non-macos screenshot should be unsupported");
         assert_eq!(err.exit_code(), 2);
-        assert!(err.to_string().to_ascii_lowercase().contains("unsupported"));
+        assert!(
+            err.to_string()
+                .to_ascii_lowercase()
+                .contains("only supported on macos")
+        );
     }
 }
