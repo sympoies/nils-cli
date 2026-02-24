@@ -35,6 +35,80 @@ Exit:
   2: usage error
 "#;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitScope {
+    Plan,
+    Sprint(i32),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitPrGrouping {
+    PerSprint,
+    Group,
+}
+
+impl SplitPrGrouping {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PerSprint => "per-sprint",
+            Self::Group => "group",
+        }
+    }
+
+    fn from_cli(value: &str) -> Option<Self> {
+        match value {
+            "per-sprint" => Some(Self::PerSprint),
+            "group" => Some(Self::Group),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitPrStrategy {
+    Deterministic,
+    Auto,
+}
+
+impl SplitPrStrategy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Deterministic => "deterministic",
+            Self::Auto => "auto",
+        }
+    }
+
+    fn from_cli(value: &str) -> Option<Self> {
+        match value {
+            "deterministic" => Some(Self::Deterministic),
+            "auto" => Some(Self::Auto),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SplitPlanOptions {
+    pub pr_grouping: SplitPrGrouping,
+    pub strategy: SplitPrStrategy,
+    pub pr_group_entries: Vec<String>,
+    pub owner_prefix: String,
+    pub branch_prefix: String,
+    pub worktree_prefix: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SplitPlanRecord {
+    pub task_id: String,
+    pub sprint: i32,
+    pub summary: String,
+    pub branch: String,
+    pub worktree: String,
+    pub owner: String,
+    pub notes: String,
+    pub pr_group: String,
+}
+
 #[derive(Debug, Clone)]
 struct Record {
     task_id: String,
@@ -290,32 +364,134 @@ pub fn run(args: &[String]) -> i32 {
         return 1;
     }
 
-    let selected_sprints: Vec<&Sprint> = if scope == "plan" {
-        plan.sprints
-            .iter()
-            .filter(|s| !s.tasks.is_empty())
-            .collect()
-    } else {
-        let Some(want) = sprint_num else {
-            return die("internal error: missing sprint number");
-        };
-        match plan.sprints.iter().find(|s| s.number == want) {
-            Some(sprint) if !sprint.tasks.is_empty() => vec![sprint],
-            Some(_) => {
-                eprintln!("error: {display_path}: sprint {want} has no tasks");
-                return 1;
-            }
-            None => {
-                eprintln!("error: {display_path}: sprint not found: {want}");
-                return 1;
-            }
+    let split_scope = match scope.as_str() {
+        "plan" => SplitScope::Plan,
+        "sprint" => {
+            let Some(want) = sprint_num else {
+                return die("internal error: missing sprint number");
+            };
+            SplitScope::Sprint(want)
+        }
+        _ => return die("internal error: invalid scope"),
+    };
+    let Some(grouping_mode) = SplitPrGrouping::from_cli(&pr_grouping) else {
+        return die("internal error: invalid pr-grouping");
+    };
+    let Some(strategy_mode) = SplitPrStrategy::from_cli(&strategy) else {
+        return die("internal error: invalid strategy");
+    };
+
+    let selected_sprints = match select_sprints_for_scope(&plan, split_scope) {
+        Ok(sprints) => sprints,
+        Err(err) => {
+            eprintln!("error: {display_path}: {err}");
+            return 1;
         }
     };
 
-    if selected_sprints.is_empty() {
-        eprintln!("error: {display_path}: selected scope has no tasks");
-        return 1;
+    let options = SplitPlanOptions {
+        pr_grouping: grouping_mode,
+        strategy: strategy_mode,
+        pr_group_entries,
+        owner_prefix,
+        branch_prefix,
+        worktree_prefix,
+    };
+    let split_records = match build_split_plan_records(&selected_sprints, &options) {
+        Ok(records) => records,
+        Err(err) => {
+            eprintln!("error: {err}");
+            return 1;
+        }
+    };
+
+    let out_records: Vec<OutputRecord> = split_records
+        .iter()
+        .map(OutputRecord::from_split_record)
+        .collect();
+
+    if format == "tsv" {
+        print_tsv(&out_records);
+        return 0;
     }
+
+    let output = Output {
+        file: path_to_posix(&maybe_relativize(&read_path, &repo_root)),
+        scope: scope.clone(),
+        sprint: sprint_num,
+        pr_grouping,
+        strategy,
+        records: out_records,
+    };
+    match serde_json::to_string(&output) {
+        Ok(json) => {
+            println!("{json}");
+            0
+        }
+        Err(err) => {
+            eprintln!("error: failed to encode JSON: {err}");
+            1
+        }
+    }
+}
+
+impl OutputRecord {
+    fn from_split_record(record: &SplitPlanRecord) -> Self {
+        Self {
+            task_id: record.task_id.clone(),
+            summary: record.summary.clone(),
+            branch: record.branch.clone(),
+            worktree: record.worktree.clone(),
+            owner: record.owner.clone(),
+            notes: record.notes.clone(),
+            pr_group: record.pr_group.clone(),
+        }
+    }
+}
+
+pub fn select_sprints_for_scope(plan: &Plan, scope: SplitScope) -> Result<Vec<Sprint>, String> {
+    let selected = match scope {
+        SplitScope::Plan => plan
+            .sprints
+            .iter()
+            .filter(|s| !s.tasks.is_empty())
+            .cloned()
+            .collect::<Vec<_>>(),
+        SplitScope::Sprint(want) => match plan.sprints.iter().find(|s| s.number == want) {
+            Some(sprint) if !sprint.tasks.is_empty() => vec![sprint.clone()],
+            Some(_) => return Err(format!("sprint {want} has no tasks")),
+            None => return Err(format!("sprint not found: {want}")),
+        },
+    };
+    if selected.is_empty() {
+        return Err("selected scope has no tasks".to_string());
+    }
+    Ok(selected)
+}
+
+pub fn build_split_plan_records(
+    selected_sprints: &[Sprint],
+    options: &SplitPlanOptions,
+) -> Result<Vec<SplitPlanRecord>, String> {
+    if selected_sprints.is_empty() {
+        return Err("selected scope has no tasks".to_string());
+    }
+    if options.pr_grouping == SplitPrGrouping::Group
+        && options.strategy == SplitPrStrategy::Deterministic
+        && options.pr_group_entries.is_empty()
+    {
+        return Err(
+            "--pr-grouping group requires at least one --pr-group <task-or-plan-id>=<group> entry"
+                .to_string(),
+        );
+    }
+    if options.pr_grouping != SplitPrGrouping::Group && !options.pr_group_entries.is_empty() {
+        return Err("--pr-group can only be used when --pr-grouping group".to_string());
+    }
+
+    let branch_prefix_norm = normalize_branch_prefix(&options.branch_prefix);
+    let worktree_prefix_norm = normalize_worktree_prefix(&options.worktree_prefix);
+    let owner_prefix_norm = normalize_owner_prefix(&options.owner_prefix);
 
     let mut records: Vec<Record> = Vec::new();
     for sprint in selected_sprints {
@@ -333,29 +509,6 @@ pub fn run(args: &[String]) -> i32 {
                 task.name.trim().to_string()
             });
             let slug = normalize_token(&summary, &format!("task-{ordinal}"), 48);
-
-            let branch_prefix_norm = branch_prefix.trim().trim_end_matches('/');
-            let branch_prefix_norm = if branch_prefix_norm.is_empty() {
-                "issue"
-            } else {
-                branch_prefix_norm
-            };
-
-            let worktree_prefix_norm = worktree_prefix.trim().trim_end_matches(['-', '_']);
-            let worktree_prefix_norm = if worktree_prefix_norm.is_empty() {
-                "issue"
-            } else {
-                worktree_prefix_norm
-            };
-
-            let owner_prefix_trim = owner_prefix.trim();
-            let owner_prefix_norm = if owner_prefix_trim.is_empty() {
-                String::from("subagent")
-            } else if owner_prefix_trim.to_ascii_lowercase().contains("subagent") {
-                owner_prefix_trim.to_string()
-            } else {
-                format!("subagent-{owner_prefix_trim}")
-            };
 
             let deps: Vec<String> = task
                 .dependencies
@@ -415,39 +568,36 @@ pub fn run(args: &[String]) -> i32 {
                 notes_parts,
                 complexity,
                 location_paths,
-                dependency_keys: deps.clone(),
+                dependency_keys: deps,
                 pr_group: String::new(),
             });
         }
     }
 
     if records.is_empty() {
-        eprintln!("error: {display_path}: selected scope has no tasks");
-        return 1;
+        return Err("selected scope has no tasks".to_string());
     }
 
     let mut group_assignments: HashMap<String, String> = HashMap::new();
     let mut assignment_sources: Vec<String> = Vec::new();
-    for entry in &pr_group_entries {
+    for entry in &options.pr_group_entries {
         let trimmed = entry.trim();
         if trimmed.is_empty() {
             continue;
         }
         let Some((raw_key, raw_group)) = trimmed.split_once('=') else {
-            eprintln!("error: --pr-group must use <task-or-plan-id>=<group> format");
-            return 1;
+            return Err("--pr-group must use <task-or-plan-id>=<group> format".to_string());
         };
         let key = raw_key.trim();
         let group = normalize_token(raw_group.trim(), "", 48);
         if key.is_empty() || group.is_empty() {
-            eprintln!("error: --pr-group must include both task key and group");
-            return 1;
+            return Err("--pr-group must include both task key and group".to_string());
         }
         assignment_sources.push(key.to_string());
         group_assignments.insert(key.to_ascii_lowercase(), group);
     }
 
-    if pr_grouping == "group" && !assignment_sources.is_empty() {
+    if options.pr_grouping == SplitPrGrouping::Group && !assignment_sources.is_empty() {
         let mut known: HashMap<String, bool> = HashMap::new();
         for rec in &records {
             known.insert(rec.task_id.to_ascii_lowercase(), true);
@@ -462,20 +612,19 @@ pub fn run(args: &[String]) -> i32 {
             .cloned()
             .collect();
         if !unknown.is_empty() {
-            eprintln!(
-                "error: --pr-group references unknown task keys: {}",
+            return Err(format!(
+                "--pr-group references unknown task keys: {}",
                 unknown
                     .iter()
                     .take(5)
                     .cloned()
                     .collect::<Vec<_>>()
                     .join(", ")
-            );
-            return 1;
+            ));
         }
     }
 
-    if pr_grouping == "group" {
+    if options.pr_grouping == SplitPrGrouping::Group {
         let mut missing: Vec<String> = Vec::new();
         for rec in &mut records {
             rec.pr_group.clear();
@@ -492,18 +641,17 @@ pub fn run(args: &[String]) -> i32 {
                 missing.push(rec.task_id.clone());
             }
         }
-        if strategy == "deterministic" {
+        if options.strategy == SplitPrStrategy::Deterministic {
             if !missing.is_empty() {
-                eprintln!(
-                    "error: --pr-grouping group requires explicit mapping for every task; missing: {}",
+                return Err(format!(
+                    "--pr-grouping group requires explicit mapping for every task; missing: {}",
                     missing
                         .iter()
                         .take(8)
                         .cloned()
                         .collect::<Vec<_>>()
                         .join(", ")
-                );
-                return 1;
+                ));
             }
         } else if !missing.is_empty() {
             assign_auto_groups(&mut records);
@@ -526,50 +674,29 @@ pub fn run(args: &[String]) -> i32 {
             .or_insert_with(|| rec.task_id.clone());
     }
 
-    let mut out_records: Vec<OutputRecord> = Vec::new();
-    for rec in &records {
+    let mut out: Vec<SplitPlanRecord> = Vec::new();
+    for rec in records {
         let mut notes = rec.notes_parts.clone();
-        notes.push(format!("pr-grouping={pr_grouping}"));
+        notes.push(format!("pr-grouping={}", options.pr_grouping.as_str()));
         notes.push(format!("pr-group={}", rec.pr_group));
         if group_sizes.get(&rec.pr_group).copied().unwrap_or(0) > 1
             && let Some(anchor) = group_anchor.get(&rec.pr_group)
         {
             notes.push(format!("shared-pr-anchor={anchor}"));
         }
-        out_records.push(OutputRecord {
-            task_id: rec.task_id.clone(),
-            summary: rec.summary.clone(),
-            branch: rec.branch.clone(),
-            worktree: rec.worktree.clone(),
-            owner: rec.owner.clone(),
+        out.push(SplitPlanRecord {
+            task_id: rec.task_id,
+            sprint: rec.sprint,
+            summary: rec.summary,
+            branch: rec.branch,
+            worktree: rec.worktree,
+            owner: rec.owner,
             notes: notes.join("; "),
-            pr_group: rec.pr_group.clone(),
+            pr_group: rec.pr_group,
         });
     }
 
-    if format == "tsv" {
-        print_tsv(&out_records);
-        return 0;
-    }
-
-    let output = Output {
-        file: path_to_posix(&maybe_relativize(&read_path, &repo_root)),
-        scope: scope.clone(),
-        sprint: sprint_num,
-        pr_grouping,
-        strategy,
-        records: out_records,
-    };
-    match serde_json::to_string(&output) {
-        Ok(json) => {
-            println!("{json}");
-            0
-        }
-        Err(err) => {
-            eprintln!("error: failed to encode JSON: {err}");
-            1
-        }
-    }
+    Ok(out)
 }
 
 #[derive(Debug)]
@@ -1007,6 +1134,35 @@ fn maybe_relativize(path: &Path, repo_root: &Path) -> PathBuf {
 fn path_to_posix(path: &Path) -> String {
     path.to_string_lossy()
         .replace(std::path::MAIN_SEPARATOR, "/")
+}
+
+fn normalize_branch_prefix(value: &str) -> String {
+    let trimmed = value.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        "issue".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn normalize_worktree_prefix(value: &str) -> String {
+    let trimmed = value.trim().trim_end_matches(['-', '_']);
+    if trimmed.is_empty() {
+        "issue".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn normalize_owner_prefix(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        "subagent".to_string()
+    } else if trimmed.to_ascii_lowercase().contains("subagent") {
+        trimmed.to_string()
+    } else {
+        format!("subagent-{trimmed}")
+    }
 }
 
 fn normalize_spaces(value: String) -> String {
