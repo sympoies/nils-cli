@@ -102,6 +102,77 @@ fn build_completion_command() -> Command {
                 ),
         )
         .subcommand(
+            Command::new("split-prs")
+                .about("Build deterministic task-to-PR split records")
+                .arg(
+                    Arg::new("file")
+                        .long("file")
+                        .help("Plan markdown file path")
+                        .value_name("path")
+                        .required(false),
+                )
+                .arg(
+                    Arg::new("scope")
+                        .long("scope")
+                        .help("Split scope")
+                        .value_name("scope")
+                        .value_parser(["plan", "sprint"]),
+                )
+                .arg(
+                    Arg::new("sprint")
+                        .long("sprint")
+                        .help("Sprint number when --scope sprint")
+                        .value_name("n")
+                        .required(false),
+                )
+                .arg(
+                    Arg::new("pr-grouping")
+                        .long("pr-grouping")
+                        .help("PR grouping mode")
+                        .value_name("mode")
+                        .value_parser(["per-sprint", "group"]),
+                )
+                .arg(
+                    Arg::new("pr-group")
+                        .long("pr-group")
+                        .help("Explicit group mapping: <task-or-plan-id>=<group>")
+                        .value_name("mapping")
+                        .action(ArgAction::Append),
+                )
+                .arg(
+                    Arg::new("strategy")
+                        .long("strategy")
+                        .help("Split strategy")
+                        .value_name("strategy")
+                        .value_parser(["deterministic", "auto"]),
+                )
+                .arg(
+                    Arg::new("owner-prefix")
+                        .long("owner-prefix")
+                        .help("Owner prefix for generated task rows")
+                        .value_name("text"),
+                )
+                .arg(
+                    Arg::new("branch-prefix")
+                        .long("branch-prefix")
+                        .help("Branch prefix for generated task rows")
+                        .value_name("text"),
+                )
+                .arg(
+                    Arg::new("worktree-prefix")
+                        .long("worktree-prefix")
+                        .help("Worktree prefix for generated task rows")
+                        .value_name("text"),
+                )
+                .arg(
+                    Arg::new("format")
+                        .long("format")
+                        .help("Split output format")
+                        .value_name("fmt")
+                        .value_parser(["json", "tsv"]),
+                ),
+        )
+        .subcommand(
             Command::new("scaffold")
                 .about("Create a new plan from template")
                 .arg(
