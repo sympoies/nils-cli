@@ -27,28 +27,28 @@ pub fn execute(binary: BinaryFlavor, cli: &Cli) -> Result<Value, CommandError> {
         CliCommand::BuildTaskSpec(args) => run_build_task_spec(args),
         CliCommand::BuildPlanTaskSpec(args) => run_build_plan_task_spec(args),
         CliCommand::StartPlan(args) => {
-            run_start_plan(binary, cli.dry_run, cli.repo.as_deref(), args)
+            run_start_plan(binary, cli.dry_run, cli.force, cli.repo.as_deref(), args)
         }
         CliCommand::StatusPlan(args) => {
-            run_status_plan(binary, cli.dry_run, cli.repo.as_deref(), args)
+            run_status_plan(binary, cli.dry_run, cli.force, cli.repo.as_deref(), args)
         }
         CliCommand::ReadyPlan(args) => {
-            run_ready_plan(binary, cli.dry_run, cli.repo.as_deref(), args)
+            run_ready_plan(binary, cli.dry_run, cli.force, cli.repo.as_deref(), args)
         }
         CliCommand::ClosePlan(args) => {
-            run_close_plan(binary, cli.dry_run, cli.repo.as_deref(), args)
+            run_close_plan(binary, cli.dry_run, cli.force, cli.repo.as_deref(), args)
         }
         CliCommand::CleanupWorktrees(args) => {
-            run_cleanup_worktrees(binary, cli.dry_run, cli.repo.as_deref(), args)
+            run_cleanup_worktrees(binary, cli.dry_run, cli.force, cli.repo.as_deref(), args)
         }
         CliCommand::StartSprint(args) => {
-            run_start_sprint(binary, cli.dry_run, cli.repo.as_deref(), args)
+            run_start_sprint(binary, cli.dry_run, cli.force, cli.repo.as_deref(), args)
         }
         CliCommand::ReadySprint(args) => {
-            run_ready_sprint(binary, cli.dry_run, cli.repo.as_deref(), args)
+            run_ready_sprint(binary, cli.dry_run, cli.force, cli.repo.as_deref(), args)
         }
         CliCommand::AcceptSprint(args) => {
-            run_accept_sprint(binary, cli.dry_run, cli.repo.as_deref(), args)
+            run_accept_sprint(binary, cli.dry_run, cli.force, cli.repo.as_deref(), args)
         }
         CliCommand::MultiSprintGuide(args) => run_multi_sprint_guide(args),
         CliCommand::Completion(_) => Err(CommandError::usage(
@@ -119,6 +119,7 @@ fn run_build_plan_task_spec(args: &BuildPlanTaskSpecArgs) -> Result<Value, Comma
 fn run_start_plan(
     binary: BinaryFlavor,
     dry_run: bool,
+    force: bool,
     repo_override: Option<&str>,
     args: &StartPlanArgs,
 ) -> Result<Value, CommandError> {
@@ -166,7 +167,7 @@ fn run_start_plan(
 
     if binary == BinaryFlavor::PlanIssue && !dry_run {
         let repo = resolve_repo_for_live(binary, repo_override)?;
-        let adapter = GhCliAdapter;
+        let adapter = GhCliAdapter::new(force);
         let (number, url) = adapter
             .create_issue(&repo, &plan_title, &issue_body_out, &args.label)
             .map_err(|err| CommandError::runtime("github-issue-create-failed", err))?;
@@ -192,10 +193,11 @@ fn run_start_plan(
 fn run_status_plan(
     binary: BinaryFlavor,
     dry_run: bool,
+    force: bool,
     repo_override: Option<&str>,
     args: &StatusPlanArgs,
 ) -> Result<Value, CommandError> {
-    let adapter = GhCliAdapter;
+    let adapter = GhCliAdapter::new(force);
 
     let (body, issue, repo, source) = if let Some(path) = &args.body_file {
         let body = fs::read_to_string(path).map_err(|err| {
@@ -267,10 +269,11 @@ fn run_status_plan(
 fn run_ready_plan(
     binary: BinaryFlavor,
     dry_run: bool,
+    force: bool,
     repo_override: Option<&str>,
     args: &ReadyPlanArgs,
 ) -> Result<Value, CommandError> {
-    let adapter = GhCliAdapter;
+    let adapter = GhCliAdapter::new(force);
 
     let (body, issue, repo, source) = if let Some(path) = &args.body_file {
         let body = fs::read_to_string(path).map_err(|err| {
@@ -358,6 +361,7 @@ fn run_ready_plan(
 fn run_close_plan(
     binary: BinaryFlavor,
     dry_run: bool,
+    force: bool,
     repo_override: Option<&str>,
     args: &ClosePlanArgs,
 ) -> Result<Value, CommandError> {
@@ -368,7 +372,7 @@ fn run_close_plan(
         ));
     }
 
-    let adapter = GhCliAdapter;
+    let adapter = GhCliAdapter::new(force);
     let close_comment = load_close_comment(&args.close_comment)?;
 
     let (body, issue, repo, source) = if let Some(path) = &args.body_file {
@@ -480,13 +484,14 @@ fn run_close_plan(
 fn run_cleanup_worktrees(
     binary: BinaryFlavor,
     dry_run: bool,
+    force: bool,
     repo_override: Option<&str>,
     args: &CleanupWorktreesArgs,
 ) -> Result<Value, CommandError> {
     ensure_live_binary(binary)?;
 
     let repo = resolve_repo_for_live(binary, repo_override)?;
-    let adapter = GhCliAdapter;
+    let adapter = GhCliAdapter::new(force);
     let body = adapter
         .issue_body(&repo, args.issue)
         .map_err(|err| CommandError::runtime("github-issue-read-failed", err))?;
@@ -521,6 +526,7 @@ fn run_cleanup_worktrees(
 fn run_start_sprint(
     binary: BinaryFlavor,
     dry_run: bool,
+    force: bool,
     repo_override: Option<&str>,
     args: &StartSprintArgs,
 ) -> Result<Value, CommandError> {
@@ -563,7 +569,7 @@ fn run_start_sprint(
         .clone()
         .unwrap_or_else(|| format!("Sprint {}", args.sprint));
 
-    let adapter = GhCliAdapter;
+    let adapter = GhCliAdapter::new(force);
     let mut issue_body_for_comment: Option<String> = None;
     let mut synced_rows = 0usize;
     let mut live_mutations = false;
@@ -654,6 +660,7 @@ fn run_start_sprint(
 fn run_ready_sprint(
     binary: BinaryFlavor,
     dry_run: bool,
+    force: bool,
     repo_override: Option<&str>,
     args: &ReadySprintArgs,
 ) -> Result<Value, CommandError> {
@@ -685,7 +692,7 @@ fn run_ready_sprint(
         .clone()
         .unwrap_or_else(|| format!("Sprint {}", args.sprint));
 
-    let adapter = GhCliAdapter;
+    let adapter = GhCliAdapter::new(force);
     let mut issue_body_for_comment: Option<String> = None;
     let mut live_mutations = false;
 
@@ -751,6 +758,7 @@ fn run_ready_sprint(
 fn run_accept_sprint(
     binary: BinaryFlavor,
     dry_run: bool,
+    force: bool,
     repo_override: Option<&str>,
     args: &AcceptSprintArgs,
 ) -> Result<Value, CommandError> {
@@ -789,7 +797,7 @@ fn run_accept_sprint(
         .clone()
         .unwrap_or_else(|| format!("Sprint {}", args.sprint));
 
-    let adapter = GhCliAdapter;
+    let adapter = GhCliAdapter::new(force);
     let mut issue_body_for_comment: Option<String> = None;
     let mut synced_done_rows = 0usize;
     let mut live_mutations = false;

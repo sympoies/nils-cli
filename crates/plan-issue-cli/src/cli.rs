@@ -25,6 +25,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub dry_run: bool,
 
+    /// Bypass markdown payload guard for GitHub body/comment writes.
+    #[arg(short = 'f', long, global = true)]
+    pub force: bool,
+
     /// Output machine-readable JSON (alias for --format json).
     #[arg(long, global = true)]
     pub json: bool,

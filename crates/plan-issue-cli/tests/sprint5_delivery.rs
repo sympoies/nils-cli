@@ -81,6 +81,8 @@ fn parity_shell_help_surface_tracks_shell_fixture_commands() {
         "Pass-through repository target for GitHub operations",
         "--dry-run",
         "Print write actions without mutating GitHub state",
+        "--force",
+        "Bypass markdown payload guard for GitHub body/comment writes",
     ] {
         assert!(
             out.stdout.contains(token),

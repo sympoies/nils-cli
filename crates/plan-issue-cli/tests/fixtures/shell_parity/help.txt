@@ -22,6 +22,7 @@ Main-agent role boundary:
 Common options:
   --repo <owner/repo>  Pass-through repository target for GitHub operations
   --dry-run            Print write actions without mutating GitHub state
+  --force              Bypass markdown payload guard for GitHub body/comment writes
 
 build-task-spec options (sprint scope):
   --plan <path>                  Plan markdown path (required)
