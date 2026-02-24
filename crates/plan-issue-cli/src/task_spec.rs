@@ -1,10 +1,13 @@
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use plan_tooling::parse::{Plan, Sprint, parse_plan_with_display};
+use plan_tooling::parse::parse_plan_with_display;
+use plan_tooling::split_prs::{
+    SplitPlanOptions, SplitPrGrouping, SplitPrStrategy, SplitScope, build_split_plan_records,
+    select_sprints_for_scope,
+};
 
-use crate::commands::{PrGroupMapping, PrGrouping};
+use crate::commands::{PrGroupMapping, PrGrouping, SplitStrategy};
 
 pub const TASK_SPEC_HEADER: &str = "# task_id\tsummary\tbranch\tworktree\towner\tnotes\tpr_group";
 
@@ -20,6 +23,7 @@ pub struct TaskSpecBuildOptions {
     pub branch_prefix: String,
     pub worktree_prefix: String,
     pub pr_grouping: PrGrouping,
+    pub strategy: SplitStrategy,
     pub pr_group: Vec<PrGroupMapping>,
 }
 
@@ -44,19 +48,6 @@ pub struct TaskSpecBuild {
     pub rows: Vec<TaskSpecRow>,
 }
 
-#[derive(Debug, Clone)]
-struct WorkingRecord {
-    task_id: String,
-    plan_task_id: String,
-    sprint: i32,
-    summary: String,
-    branch: String,
-    worktree: String,
-    owner: String,
-    notes_parts: Vec<String>,
-    pr_group: String,
-}
-
 pub fn build_task_spec(
     plan_file: &Path,
     scope: TaskSpecScope,
@@ -74,121 +65,44 @@ pub fn build_task_spec(
         return Err(format!("{display_path}: {}", parse_errors.join(" | ")));
     }
 
-    let (selected_sprints, sprint_name) = select_sprints(&plan, scope)?;
+    let split_scope = match scope {
+        TaskSpecScope::Plan => SplitScope::Plan,
+        TaskSpecScope::Sprint(sprint) => SplitScope::Sprint(sprint),
+    };
 
-    let mut records: Vec<WorkingRecord> = Vec::new();
-    for sprint in selected_sprints {
-        for (idx, task) in sprint.tasks.iter().enumerate() {
-            let ordinal = idx + 1;
-            let task_id = format!("S{}T{ordinal}", sprint.number);
-            let plan_task_id = task.id.trim().to_string();
-            let summary = normalize_spaces(if task.name.trim().is_empty() {
-                if plan_task_id.is_empty() {
-                    format!("sprint-{}-task-{ordinal}", sprint.number)
-                } else {
-                    plan_task_id.clone()
-                }
-            } else {
-                task.name.trim().to_string()
-            });
+    let selected_sprints = select_sprints_for_scope(&plan, split_scope)?;
+    let sprint_name = match scope {
+        TaskSpecScope::Plan => None,
+        TaskSpecScope::Sprint(_) => selected_sprints.first().map(|sprint| sprint.name.clone()),
+    };
 
-            let slug = normalize_token(&summary, &format!("task-{ordinal}"), 48);
-            let branch_prefix = normalize_branch_prefix(&options.branch_prefix);
-            let worktree_prefix = normalize_worktree_prefix(&options.worktree_prefix);
-            let owner_prefix = normalize_owner_prefix(&options.owner_prefix);
+    let split_options = SplitPlanOptions {
+        pr_grouping: to_split_grouping(options.pr_grouping),
+        strategy: to_split_strategy(options.strategy),
+        pr_group_entries: options
+            .pr_group
+            .iter()
+            .map(|entry| format!("{}={}", entry.task, entry.group))
+            .collect(),
+        owner_prefix: options.owner_prefix.clone(),
+        branch_prefix: options.branch_prefix.clone(),
+        worktree_prefix: options.worktree_prefix.clone(),
+    };
 
-            let deps: Vec<String> = task
-                .dependencies
-                .clone()
-                .unwrap_or_default()
-                .into_iter()
-                .map(|d| d.trim().to_string())
-                .filter(|d| !d.is_empty())
-                .filter(|d| !is_placeholder(d))
-                .collect();
-
-            let validations: Vec<String> = task
-                .validation
-                .iter()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-                .filter(|v| !is_placeholder(v))
-                .collect();
-
-            let mut notes_parts = vec![
-                format!("sprint=S{}", sprint.number),
-                format!(
-                    "plan-task:{}",
-                    if plan_task_id.is_empty() {
-                        task_id.clone()
-                    } else {
-                        plan_task_id.clone()
-                    }
-                ),
-            ];
-            if !deps.is_empty() {
-                notes_parts.push(format!("deps={}", deps.join(",")));
-            }
-            if let Some(first) = validations.first() {
-                notes_parts.push(format!("validate={first}"));
-            }
-
-            records.push(WorkingRecord {
-                task_id,
-                plan_task_id,
-                sprint: sprint.number,
-                summary,
-                branch: format!("{branch_prefix}/s{}-t{ordinal}-{slug}", sprint.number),
-                worktree: format!("{worktree_prefix}-s{}-t{ordinal}", sprint.number),
-                owner: format!("{owner_prefix}-s{}-t{ordinal}", sprint.number),
-                notes_parts,
-                pr_group: String::new(),
-            });
-        }
-    }
-
-    if records.is_empty() {
-        return Err(format!("{display_path}: selected scope has no tasks"));
-    }
-
-    apply_pr_groups(&mut records, options)?;
-
-    let mut group_sizes: HashMap<String, usize> = HashMap::new();
-    let mut group_anchor: HashMap<String, String> = HashMap::new();
-    for rec in &records {
-        let size = group_sizes.entry(rec.pr_group.clone()).or_insert(0);
-        *size += 1;
-        group_anchor
-            .entry(rec.pr_group.clone())
-            .or_insert_with(|| rec.task_id.clone());
-    }
-
-    let mut rows: Vec<TaskSpecRow> = Vec::new();
-    for rec in records {
-        let mut notes = rec.notes_parts.clone();
-        notes.push(format!(
-            "pr-grouping={}",
-            grouping_label(options.pr_grouping)
-        ));
-        notes.push(format!("pr-group={}", rec.pr_group));
-        if group_sizes.get(&rec.pr_group).copied().unwrap_or(0) > 1
-            && let Some(anchor) = group_anchor.get(&rec.pr_group)
-        {
-            notes.push(format!("shared-pr-anchor={anchor}"));
-        }
-
-        rows.push(TaskSpecRow {
-            task_id: rec.task_id,
-            summary: rec.summary,
-            branch: rec.branch,
-            worktree: rec.worktree,
-            owner: rec.owner,
-            notes: notes.join("; "),
-            pr_group: rec.pr_group,
-            sprint: rec.sprint,
+    let rows = build_split_plan_records(&selected_sprints, &split_options)?
+        .into_iter()
+        .map(|record| TaskSpecRow {
+            task_id: record.task_id,
+            summary: record.summary,
+            branch: record.branch,
+            worktree: record.worktree,
+            owner: record.owner,
+            notes: record.notes,
+            pr_group: record.pr_group,
+            sprint: record.sprint,
             grouping: options.pr_grouping,
-        });
-    }
+        })
+        .collect();
 
     Ok(TaskSpecBuild {
         plan_title: plan.title,
@@ -271,115 +185,6 @@ pub fn resolve_plan_file(plan_file: &Path) -> PathBuf {
     resolve_repo_relative(&repo_root, plan_file)
 }
 
-fn apply_pr_groups(
-    records: &mut [WorkingRecord],
-    options: &TaskSpecBuildOptions,
-) -> Result<(), String> {
-    let mut group_assignments: HashMap<String, String> = HashMap::new();
-    let mut assignment_sources: Vec<String> = Vec::new();
-    for entry in &options.pr_group {
-        let key = entry.task.trim();
-        let group = normalize_token(entry.group.trim(), "", 48);
-        if key.is_empty() || group.is_empty() {
-            return Err("--pr-group must include both task key and group".to_string());
-        }
-        assignment_sources.push(key.to_string());
-        group_assignments.insert(key.to_ascii_lowercase(), group);
-    }
-
-    if options.pr_grouping == PrGrouping::Group {
-        let mut known: HashMap<String, bool> = HashMap::new();
-        for rec in records.iter() {
-            known.insert(rec.task_id.to_ascii_lowercase(), true);
-            if !rec.plan_task_id.is_empty() {
-                known.insert(rec.plan_task_id.to_ascii_lowercase(), true);
-            }
-        }
-
-        let unknown: Vec<String> = assignment_sources
-            .iter()
-            .filter(|key| !known.contains_key(&key.to_ascii_lowercase()))
-            .cloned()
-            .collect();
-        if !unknown.is_empty() {
-            return Err(format!(
-                "--pr-group references unknown task keys: {}",
-                unknown
-                    .iter()
-                    .take(5)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
-    }
-
-    if options.pr_grouping == PrGrouping::Group {
-        let mut missing: Vec<String> = Vec::new();
-        for rec in records.iter_mut() {
-            let mut found = String::new();
-            for key in [&rec.task_id, &rec.plan_task_id] {
-                if key.is_empty() {
-                    continue;
-                }
-                if let Some(v) = group_assignments.get(&key.to_ascii_lowercase()) {
-                    found = v.to_string();
-                    break;
-                }
-            }
-            if found.is_empty() {
-                missing.push(rec.task_id.clone());
-            } else {
-                rec.pr_group = found;
-            }
-        }
-        if !missing.is_empty() {
-            return Err(format!(
-                "--pr-grouping group requires mapping for every task; missing: {}",
-                missing
-                    .iter()
-                    .take(8)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
-    } else {
-        for rec in records.iter_mut() {
-            rec.pr_group =
-                normalize_token(&format!("s{}", rec.sprint), &format!("s{}", rec.sprint), 48);
-        }
-    }
-
-    Ok(())
-}
-
-fn select_sprints(
-    plan: &Plan,
-    scope: TaskSpecScope,
-) -> Result<(Vec<&Sprint>, Option<String>), String> {
-    match scope {
-        TaskSpecScope::Plan => {
-            let selected: Vec<&Sprint> = plan
-                .sprints
-                .iter()
-                .filter(|sprint| !sprint.tasks.is_empty())
-                .collect();
-            if selected.is_empty() {
-                return Err("selected scope has no tasks".to_string());
-            }
-            Ok((selected, None))
-        }
-        TaskSpecScope::Sprint(want) => match plan.sprints.iter().find(|s| s.number == want) {
-            Some(sprint) if !sprint.tasks.is_empty() => {
-                Ok((vec![sprint], Some(sprint.name.clone())))
-            }
-            Some(_) => Err(format!("sprint {want} has no tasks")),
-            None => Err(format!("sprint not found: {want}")),
-        },
-    }
-}
-
 fn detect_repo_root() -> PathBuf {
     let output = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
@@ -402,78 +207,16 @@ fn resolve_repo_relative(repo_root: &Path, path: &Path) -> PathBuf {
     repo_root.join(path)
 }
 
-fn normalize_branch_prefix(value: &str) -> &str {
-    let trimmed = value.trim().trim_end_matches('/');
-    if trimmed.is_empty() { "issue" } else { trimmed }
-}
-
-fn normalize_worktree_prefix(value: &str) -> &str {
-    let trimmed = value.trim().trim_end_matches(['-', '_']);
-    if trimmed.is_empty() { "issue" } else { trimmed }
-}
-
-fn normalize_owner_prefix(value: &str) -> String {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return String::from("subagent");
-    }
-    if trimmed.to_ascii_lowercase().contains("subagent") {
-        return trimmed.to_string();
-    }
-    format!("subagent-{trimmed}")
-}
-
-fn normalize_spaces(value: String) -> String {
-    let joined = value.split_whitespace().collect::<Vec<_>>().join(" ");
-    if joined.is_empty() {
-        String::from("task")
-    } else {
-        joined
-    }
-}
-
-fn normalize_token(value: &str, fallback: &str, max_len: usize) -> String {
-    let mut out = String::new();
-    let mut last_dash = false;
-    for ch in value.chars().flat_map(char::to_lowercase) {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch);
-            last_dash = false;
-        } else if !last_dash {
-            out.push('-');
-            last_dash = true;
-        }
-    }
-
-    let normalized = out.trim_matches('-').to_string();
-    let mut token = if normalized.is_empty() {
-        fallback.to_string()
-    } else {
-        normalized
-    };
-
-    if token.len() > max_len {
-        token.truncate(max_len);
-        token = token.trim_matches('-').to_string();
-    }
-
-    token
-}
-
-fn is_placeholder(value: &str) -> bool {
-    let token = value.trim().to_ascii_lowercase();
-    if matches!(token.as_str(), "" | "-" | "none" | "n/a" | "na" | "...") {
-        return true;
-    }
-    if token.starts_with('<') && token.ends_with('>') {
-        return true;
-    }
-    token.contains("task ids")
-}
-
-fn grouping_label(grouping: PrGrouping) -> &'static str {
+fn to_split_grouping(grouping: PrGrouping) -> SplitPrGrouping {
     match grouping {
-        PrGrouping::PerSprint => "per-sprint",
-        PrGrouping::Group => "group",
+        PrGrouping::PerSprint => SplitPrGrouping::PerSprint,
+        PrGrouping::Group => SplitPrGrouping::Group,
+    }
+}
+
+fn to_split_strategy(strategy: SplitStrategy) -> SplitPrStrategy {
+    match strategy {
+        SplitStrategy::Deterministic => SplitPrStrategy::Deterministic,
+        SplitStrategy::Auto => SplitPrStrategy::Auto,
     }
 }

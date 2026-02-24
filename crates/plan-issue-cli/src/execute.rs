@@ -64,6 +64,7 @@ fn run_build_task_spec(args: &BuildTaskSpecArgs) -> Result<Value, CommandError> 
         args.prefixes.branch_prefix.clone(),
         args.prefixes.worktree_prefix.clone(),
         args.grouping.pr_grouping,
+        args.grouping.strategy,
         args.grouping.pr_group.clone(),
     );
     let build = task_spec::build_task_spec(
@@ -94,6 +95,7 @@ fn run_build_plan_task_spec(args: &BuildPlanTaskSpecArgs) -> Result<Value, Comma
         args.prefixes.branch_prefix.clone(),
         args.prefixes.worktree_prefix.clone(),
         args.grouping.pr_grouping,
+        args.grouping.strategy,
         args.grouping.pr_group.clone(),
     );
     let build = task_spec::build_task_spec(&args.plan, TaskSpecScope::Plan, &options)
@@ -125,6 +127,7 @@ fn run_start_plan(
         args.prefixes.branch_prefix.clone(),
         args.prefixes.worktree_prefix.clone(),
         args.grouping.pr_grouping,
+        args.grouping.strategy,
         args.grouping.pr_group.clone(),
     );
 
@@ -522,6 +525,7 @@ fn run_start_sprint(
         args.prefixes.branch_prefix.clone(),
         args.prefixes.worktree_prefix.clone(),
         args.grouping.pr_grouping,
+        args.grouping.strategy,
         args.grouping.pr_group.clone(),
     );
 
@@ -654,6 +658,7 @@ fn run_ready_sprint(
         args.prefixes.branch_prefix.clone(),
         args.prefixes.worktree_prefix.clone(),
         args.grouping.pr_grouping,
+        args.grouping.strategy,
         args.grouping.pr_group.clone(),
     );
 
@@ -757,6 +762,7 @@ fn run_accept_sprint(
         args.prefixes.branch_prefix.clone(),
         args.prefixes.worktree_prefix.clone(),
         args.grouping.pr_grouping,
+        args.grouping.strategy,
         args.grouping.pr_group.clone(),
     );
 
@@ -984,6 +990,7 @@ fn to_build_options(
     branch_prefix: String,
     worktree_prefix: String,
     pr_grouping: crate::commands::PrGrouping,
+    strategy: crate::commands::SplitStrategy,
     pr_group: Vec<crate::commands::PrGroupMapping>,
 ) -> TaskSpecBuildOptions {
     TaskSpecBuildOptions {
@@ -991,6 +998,7 @@ fn to_build_options(
         branch_prefix,
         worktree_prefix,
         pr_grouping,
+        strategy,
         pr_group,
     }
 }
