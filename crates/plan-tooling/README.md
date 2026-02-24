@@ -38,8 +38,13 @@ Help:
 
 ### split-prs
 - `split-prs --file <plan.md> --scope <plan|sprint> [--sprint <n>] --pr-grouping <per-sprint|group> [--pr-group <task-or-plan-id>=<group>]... [--strategy deterministic|auto] [--format json|tsv]`
-- `--strategy auto` is reserved for future scoring based on `Complexity`, `Location`, and
-  `Dependencies`; in v1 it intentionally returns `not implemented`.
+- deterministic mode:
+  - `--pr-grouping per-sprint`: one shared `pr_group` per sprint (`s<n>`).
+  - `--pr-grouping group`: every selected task needs explicit `--pr-group` mapping.
+- strategy auto contract (future behavior, currently returns `not implemented`):
+  - scoring inputs are `Complexity`, dependency topology, and `Location` overlap.
+  - in `pr-grouping=group`, explicit `--pr-group` mappings pin tasks and remaining tasks are auto-grouped.
+  - ordering and tie-breakers stay deterministic (`Task N.M`, then `SxTy`, then lexical summary).
 - deterministic examples:
   - `split-prs --file docs/plans/example-plan.md --scope sprint --sprint 1 --pr-grouping per-sprint --format tsv`
   - `split-prs --file docs/plans/example-plan.md --scope sprint --sprint 2 --pr-grouping group --pr-group S2T1=isolated --pr-group S2T2=shared --pr-group S2T3=shared --format json`

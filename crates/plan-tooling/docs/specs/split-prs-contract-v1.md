@@ -1,11 +1,13 @@
 # split-prs Contract v1
 
 ## Purpose
-`plan-tooling split-prs` deterministically converts plan tasks into executable PR slices.
+`plan-tooling split-prs` converts plan tasks into executable PR slices while preserving a stable
+schema and deterministic ordering.
 
-Deterministic v1 supports:
-- grouping mode: `per-sprint` or `group`
-- output format: `tsv` or `json`
+v1 runtime behavior:
+- `strategy=deterministic` is fully implemented.
+- `strategy=auto` contract is frozen for implementation, but runtime still returns
+  `not implemented`.
 
 ## CLI
 
@@ -35,15 +37,21 @@ Defaults:
 - `scope=sprint` requires `--sprint <n>`.
 - `scope=plan` includes all sprints and ignores `--sprint`.
 
-## Grouping Rules
-- `pr-grouping=per-sprint`:
-  - each sprint maps to one deterministic `pr_group` (`s<n>`)
-- `pr-grouping=group`:
-  - every task in selected scope must have explicit `--pr-group` mapping
-  - mapping key may be generated task id (`SxTy`) or plan task id (`Task N.M`)
+## Strategy + Grouping Matrix
+- `strategy=deterministic`, `pr-grouping=per-sprint`:
+  - one `pr_group` per sprint (`s<n>`).
+- `strategy=deterministic`, `pr-grouping=group`:
+  - every selected task must have explicit `--pr-group` mapping.
+  - mapping key can be generated task id (`SxTy`) or plan task id (`Task N.M`).
+- `strategy=auto`, `pr-grouping=per-sprint` (contract):
+  - generated grouping is still deterministic and anchored by sprint key.
+- `strategy=auto`, `pr-grouping=group` (contract):
+  - explicit `--pr-group` mappings are optional pins.
+  - unmapped tasks are auto-assigned by rubric.
+  - output still preserves deterministic ordering and stable anchor semantics.
 
 ## Deterministic Normalization
-- Generated task id: `S<sprint>T<index-within-sprint>` (1-based)
+- Generated task id: `S<sprint>T<index-within-sprint>` (1-based).
 - Summary: normalized whitespace from task heading.
 - Branch slug:
   - lowercase
@@ -57,6 +65,32 @@ Defaults:
   - trimmed `-`
   - fallback from scope context
   - max length 48
+
+## Deterministic Ordering
+- Records are emitted by sprint number, then task appearance order in plan markdown.
+- Group anchors are the first emitted record in each `pr_group`.
+- Tie-break rules for future auto assignment are stable and deterministic:
+  - primary stable key: `Task N.M`
+  - secondary key: generated `SxTy`
+  - tertiary key: lexical summary
+
+## Auto Scoring Rubric (Contract for Future Runtime)
+When `strategy=auto` is implemented, grouping decisions use three scored signals:
+- `Complexity`:
+  - normalized to bucket (`low`, `medium`, `high`) from integer range.
+  - missing complexity uses stable fallback bucket `medium`.
+- `Dependencies`:
+  - dependency-layer depth increases grouping pressure for coordination-heavy tasks.
+  - missing dependencies use fallback layer `0`.
+- `Location`:
+  - overlap of normalized location tokens prefers co-location when risk is low.
+  - missing locations use fallback token `unscoped`.
+
+Deterministic tie-break algorithm for equal scores:
+1. Prefer explicit pinned `--pr-group` entries.
+2. Prefer lower dependency-layer index when coordination risk is equal.
+3. Prefer lexical `Task N.M`.
+4. Prefer lexical generated `SxTy`.
 
 ## TSV Output (format=tsv)
 Header:
@@ -92,23 +126,37 @@ Object shape:
 - `strategy`: `deterministic` or `auto`
 - `records`: array of records with the same fields as TSV columns
 
-## Strategy
-- `strategy=deterministic`: enabled in v1.
-- `strategy=auto`: **not implemented in v1**.
-  - command returns non-zero
-  - error message must mention planned factors exactly: `Complexity`, `Location`, `Dependencies`
+## Strategy Runtime Status
+- `strategy=deterministic`: enabled in v1 runtime.
+- `strategy=auto`: **not implemented in v1 runtime**.
+  - command returns non-zero.
+  - error message must mention planned factors exactly once each:
+    `Complexity`, `Location`, `Dependencies`.
 
-## Error Matrix (deterministic)
+## Error Matrix
+Core errors:
 - missing `--file`
 - plan file not found
 - invalid/unknown `--scope`
 - `scope=sprint` without valid `--sprint`
 - invalid `--pr-grouping`
-- `pr-grouping=group` without mappings
 - `--pr-group` used when not in `group` mode
+- empty selected scope (no tasks)
+
+Deterministic/group-mode errors:
+- `pr-grouping=group` without mappings
 - unknown mapping key in `--pr-group`
 - missing mapping for any selected task in `group` mode
-- empty selected scope (no tasks)
+
+Auto-contract errors (future runtime):
+- `strategy=auto` with unknown pinned mapping key
+- `strategy=auto` with invalid pin syntax in `--pr-group`
+- `strategy=auto` fallback assignment impossible because selected scope has no eligible tasks
+
+## Compatibility Guarantees
+- TSV and JSON field names remain unchanged across strategies.
+- `notes` key vocabulary stays backward compatible with downstream orchestration.
+- Group naming remains normalized and deterministic to keep diff noise low.
 
 ## Exit Codes
 - `0`: success

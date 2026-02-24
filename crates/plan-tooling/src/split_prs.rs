@@ -247,6 +247,11 @@ pub fn run(args: &[String]) -> i32 {
         None
     };
 
+    // Sprint 1 contract freeze for future auto behavior:
+    // - scoring inputs: Complexity, dependency layers, and Location overlap
+    // - optional `--pr-group` entries in group mode act as pinned assignments
+    // - deterministic tie-break keys: Task N.M, then SxTy, then lexical summary
+    // Runtime intentionally remains disabled until the auto assignment engine lands.
     if strategy == "auto" {
         eprintln!(
             "error: split-prs strategy 'auto' is not implemented yet (planned factors: Complexity, Location, Dependencies)"
@@ -499,6 +504,7 @@ pub fn run(args: &[String]) -> i32 {
         }
     }
 
+    // Anchor selection is deterministic because records are emitted in stable sprint/task order.
     let mut group_sizes: HashMap<String, usize> = HashMap::new();
     let mut group_anchor: HashMap<String, String> = HashMap::new();
     for rec in &records {

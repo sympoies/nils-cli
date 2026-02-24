@@ -177,6 +177,68 @@ fn split_prs_auto_not_implemented() {
 }
 
 #[test]
+fn split_prs_non_regression_auto_sparse_plan_scaffold() {
+    let dir = TempDir::new().expect("tempdir");
+    common::write_file(
+        &dir.path().join("plan.md"),
+        &fixture_text("auto_sparse_plan.md"),
+    );
+
+    let out = common::run_plan_tooling(
+        dir.path(),
+        &[
+            "split-prs",
+            "--file",
+            "plan.md",
+            "--scope",
+            "sprint",
+            "--sprint",
+            "1",
+            "--pr-grouping",
+            "group",
+            "--strategy",
+            "auto",
+            "--format",
+            "json",
+        ],
+    );
+    // Baseline guard: sparse metadata plans must still hit the stable "not implemented" gate.
+    assert_eq!(out.code, 1);
+    assert!(out.stderr.contains("not implemented"), "{}", out.stderr);
+}
+
+#[test]
+fn split_prs_non_regression_auto_overlap_heavy_plan_scaffold() {
+    let dir = TempDir::new().expect("tempdir");
+    common::write_file(
+        &dir.path().join("plan.md"),
+        &fixture_text("auto_overlap_plan.md"),
+    );
+
+    let out = common::run_plan_tooling(
+        dir.path(),
+        &[
+            "split-prs",
+            "--file",
+            "plan.md",
+            "--scope",
+            "sprint",
+            "--sprint",
+            "1",
+            "--pr-grouping",
+            "group",
+            "--strategy",
+            "auto",
+            "--format",
+            "json",
+        ],
+    );
+    // Baseline guard: overlap-heavy plans use the same auto gate until Sprint 2 runtime lands.
+    assert_eq!(out.code, 1);
+    assert!(out.stderr.contains("not implemented"), "{}", out.stderr);
+}
+
+#[test]
 fn split_prs_fixture_tsv_header_is_stable() {
     for file in ["per_sprint_expected.tsv", "group_expected.tsv"] {
         let path = fixture_path(file);
