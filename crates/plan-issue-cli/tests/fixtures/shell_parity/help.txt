@@ -87,7 +87,7 @@ start-sprint / ready-sprint / accept-sprint options:
   --issue <number>               Plan issue number (required)
   --sprint <number>              Sprint number (required)
   --task-spec-out <path>         Sprint task-spec output path override
-  --subagent-prompts-out <dir>   start-sprint only; rendered per-task prompt output dir
+  --subagent-prompts-out <dir>   start-sprint only; rendered subagent prompt output dir
   --owner-prefix <text>          Default: subagent
   --branch-prefix <text>         Default: issue
   --worktree-prefix <text>       Default: issue__
