@@ -91,11 +91,11 @@ Row-level status rules:
 - Required columns:
   - `Task`, `Summary`, `Owner`, `Branch`, `Worktree`, `Execution Mode`, `PR`, `Status`, `Notes`
 - `Status` must be one of `{planned, in-progress, blocked, done}`.
-- `Execution Mode` must be one of `{per-task, per-sprint, pr-isolated, pr-shared}` or `TBD`.
+- `Execution Mode` must be one of `{per-sprint, pr-isolated, pr-shared}` or `TBD`.
 - Owner policy for non-planned/non-blocked rows:
   - must include `subagent`
   - must not reference main-agent identity.
-- `per-task` rows must have unique `Branch` and unique `Worktree`.
+- `pr-isolated` rows must have unique `Branch` and unique `Worktree`.
 
 ### PR Normalization and Presence Invariants
 - PR references are normalized to canonical `#<number>` when possible.
@@ -140,6 +140,6 @@ Row-level status rules:
 - `close-plan --dry-run` requires `--body-file` to evaluate gates locally.
 
 ## Failure Contract
-- Gate violations fail the command (`exit 1`) with explicit per-task diagnostics.
+- Gate violations fail the command (`exit 1`) with explicit task-row diagnostics.
 - Usage/argument errors return `exit 2`.
 - Successful transitions return `exit 0`.

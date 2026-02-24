@@ -99,20 +99,25 @@ fn render_issue_body_start_plan_writes_issue_body_artifact() {
 
     assert_eq!(out.code, 0, "stderr: {}", out.stderr);
     let rendered = fs::read_to_string(&issue_body).expect("read issue body");
-    assert!(rendered.contains("## Goal"), "{rendered}");
+    assert!(
+        rendered.starts_with("# Plan: Rust Plan-Issue CLI Full Delivery\n\n## Overview\n"),
+        "{rendered}"
+    );
     assert!(
         rendered.contains(
             "This plan delivers a shell-free Rust implementation for the current plan-issue orchestration workflow"
         ),
         "{rendered}"
     );
-    assert!(rendered.contains("## Acceptance Criteria"), "{rendered}");
+    assert!(rendered.contains("## Scope"), "{rendered}");
+    assert!(rendered.contains("## Assumptions (if any)"), "{rendered}");
+    assert!(rendered.contains("## Success criteria"), "{rendered}");
+    assert!(rendered.contains("## Sprint gate policy"), "{rendered}");
     assert!(
-        rendered.contains("- All current command surfaces are implemented in Rust:"),
+        rendered.contains("## Validation command conventions"),
         "{rendered}"
     );
-    assert!(rendered.contains("## Scope"), "{rendered}");
-    assert!(rendered.contains("- In scope:"), "{rendered}");
+    assert!(!rendered.contains("## Goal"), "{rendered}");
     assert!(rendered.contains("## Task Decomposition"), "{rendered}");
     assert!(
         rendered.contains("| S3T1 | Implement task-spec generation core using `plan-tooling` |")
@@ -174,21 +179,11 @@ fn render_issue_body_start_plan_falls_back_when_preface_sections_missing() {
     assert_eq!(out.code, 0, "stderr: {}", out.stderr);
     let rendered = fs::read_to_string(&issue_body).expect("read issue body");
     assert!(
-        rendered.contains(&format!(
-            "- Execute plan `{plan_s}` end-to-end using one GitHub issue and subagent-owned PRs."
-        )),
+        rendered.starts_with("# Plan: Minimal fallback"),
         "{rendered}"
     );
-    assert!(
-        rendered.contains(
-            "- All in-scope plan tasks are implemented via subagent PRs and linked in the issue task table."
-        ),
-        "{rendered}"
-    );
-    assert!(
-        rendered.contains(&format!("- In-scope: tasks defined in `{plan_s}`")),
-        "{rendered}"
-    );
+    assert!(!rendered.contains("## Goal"), "{rendered}");
+    assert!(rendered.contains("## Task Decomposition"), "{rendered}");
 }
 
 #[test]

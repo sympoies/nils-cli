@@ -66,31 +66,25 @@ pub fn render_plan_issue_body(
     plan_title: &str,
     rows: &[TaskSpecRow],
 ) -> String {
-    let title = if plan_title.trim().is_empty() {
-        let fallback = Path::new(plan_file_display)
+    let fallback_title = if plan_title.trim().is_empty() {
+        Path::new(plan_file_display)
             .file_stem()
             .and_then(|v| v.to_str())
-            .unwrap_or("Plan");
-        fallback.to_string()
+            .unwrap_or("Plan")
+            .to_string()
     } else {
         plan_title.trim().to_string()
     };
 
-    let preface_sections = derive_plan_issue_sections(plan_file, plan_file_display);
+    let mut out: Vec<String> = load_pre_sprint_plan_lines(plan_file)
+        .filter(|lines| !lines.is_empty())
+        .unwrap_or_else(|| vec![format!("# {fallback_title}")]);
 
-    let mut out: Vec<String> = vec![format!("# {title}"), String::new(), "## Goal".to_string()];
-    out.push(String::new());
-    out.extend(preface_sections.goal);
-    out.push(String::new());
-    out.push("## Acceptance Criteria".to_string());
-    out.push(String::new());
-    out.extend(preface_sections.acceptance_criteria);
-    out.push(String::new());
-    out.push("## Scope".to_string());
-    out.push(String::new());
-    out.extend(preface_sections.scope);
+    if out.last().is_some_and(|line| !line.trim().is_empty()) {
+        out.push(String::new());
+    }
+
     out.extend([
-        String::new(),
         "## Task Decomposition".to_string(),
         String::new(),
         "| Task | Summary | Owner | Branch | Worktree | Execution Mode | PR | Status | Notes |"
@@ -117,8 +111,8 @@ pub fn render_plan_issue_body(
         "- `Status` must be one of: `planned`, `in-progress`, `blocked`, `done`.".to_string(),
         "- `Status` = `in-progress` or `done` requires non-`TBD` execution metadata (`Owner`, `Branch`, `Worktree`, `Execution Mode`, `PR`).".to_string(),
         "- `Owner` must be a subagent identifier (contains `subagent`) once the task is assigned; `main-agent` ownership is invalid for implementation tasks.".to_string(),
-        "- `Execution Mode` should be one of: `per-task`, `per-sprint`, `pr-isolated`, `pr-shared` (or `TBD` before assignment).".to_string(),
-        "- `Branch` and `Worktree` uniqueness is enforced only for rows using `Execution Mode = per-task`.".to_string(),
+        "- `Execution Mode` should be one of: `per-sprint`, `pr-isolated`, `pr-shared` (or `TBD` before assignment).".to_string(),
+        "- `Branch` and `Worktree` uniqueness is enforced only for rows using `Execution Mode = pr-isolated`.".to_string(),
         String::new(),
         "## Risks / Uncertainties".to_string(),
         String::new(),
@@ -135,85 +129,6 @@ pub fn render_plan_issue_body(
     format!("{}\n", out.join("\n"))
 }
 
-#[derive(Debug, Clone)]
-struct PlanIssuePrefaceSections {
-    goal: Vec<String>,
-    acceptance_criteria: Vec<String>,
-    scope: Vec<String>,
-}
-
-fn derive_plan_issue_sections(
-    plan_file: &Path,
-    plan_file_display: &str,
-) -> PlanIssuePrefaceSections {
-    let default_goal = default_goal_lines(plan_file_display);
-    let default_acceptance = default_acceptance_criteria_lines();
-    let default_scope = default_scope_lines(plan_file_display);
-
-    let Some(preface_lines) = load_pre_sprint_plan_lines(plan_file) else {
-        return PlanIssuePrefaceSections {
-            goal: default_goal,
-            acceptance_criteria: default_acceptance,
-            scope: default_scope,
-        };
-    };
-
-    let seed_lines = section_content(&preface_lines, 2, "Issue Body Copy/Paste Seed");
-    let seed_goal = seed_lines
-        .as_ref()
-        .and_then(|lines| section_content(lines, 3, "Goal"));
-    let seed_acceptance = seed_lines
-        .as_ref()
-        .and_then(|lines| section_content(lines, 3, "Acceptance Criteria"));
-    let seed_scope = seed_lines
-        .as_ref()
-        .and_then(|lines| section_content(lines, 3, "Scope"));
-
-    let goal = seed_goal
-        .or_else(|| section_content(&preface_lines, 2, "Goal"))
-        .or_else(|| section_content(&preface_lines, 2, "Overview"))
-        .unwrap_or(default_goal);
-    let acceptance_criteria = seed_acceptance
-        .or_else(|| section_content(&preface_lines, 2, "Acceptance Criteria"))
-        .or_else(|| section_content(&preface_lines, 2, "Success criteria"))
-        .unwrap_or(default_acceptance);
-    let scope = seed_scope
-        .or_else(|| section_content(&preface_lines, 2, "Scope"))
-        .unwrap_or(default_scope);
-
-    PlanIssuePrefaceSections {
-        goal,
-        acceptance_criteria,
-        scope,
-    }
-}
-
-fn default_goal_lines(plan_file_display: &str) -> Vec<String> {
-    vec![
-        format!(
-            "- Execute plan `{plan_file_display}` end-to-end using one GitHub issue and subagent-owned PRs."
-        ),
-        "- Track sprint progress via issue comments while keeping task/PR state in the issue body."
-            .to_string(),
-    ]
-}
-
-fn default_acceptance_criteria_lines() -> Vec<String> {
-    vec![
-        "- All in-scope plan tasks are implemented via subagent PRs and linked in the issue task table."
-            .to_string(),
-        "- Final plan review approval comment URL is recorded.".to_string(),
-        "- The single plan issue closes after close-gate checks pass.".to_string(),
-    ]
-}
-
-fn default_scope_lines(plan_file_display: &str) -> Vec<String> {
-    vec![
-        format!("- In-scope: tasks defined in `{plan_file_display}`"),
-        "- Out-of-scope: work not represented in the plan task list".to_string(),
-    ]
-}
-
 fn load_pre_sprint_plan_lines(plan_file: &Path) -> Option<Vec<String>> {
     let repo_root = detect_repo_root();
     let resolved = resolve_repo_relative(&repo_root, plan_file);
@@ -227,7 +142,7 @@ fn load_pre_sprint_plan_lines(plan_file: &Path) -> Option<Vec<String>> {
     for (idx, line) in lines.iter().enumerate() {
         if let Some((level, heading)) = parse_heading(line)
             && level == 2
-            && heading.to_ascii_lowercase().starts_with("sprint ")
+            && parse_sprint_heading_number(&heading) == Some(1)
         {
             preface_end = idx;
             break;
@@ -237,44 +152,14 @@ fn load_pre_sprint_plan_lines(plan_file: &Path) -> Option<Vec<String>> {
     Some(lines.into_iter().take(preface_end).collect())
 }
 
-fn section_content(lines: &[String], heading_level: usize, heading: &str) -> Option<Vec<String>> {
-    let (start, end) = markdown_section_bounds(lines, heading_level, heading)?;
-    let section: Vec<String> = lines[start..end].to_vec();
-    let trimmed = trim_blank_lines(section);
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed)
+fn parse_sprint_heading_number(heading: &str) -> Option<i32> {
+    let normalized = heading.trim().to_ascii_lowercase();
+    let rest = normalized.strip_prefix("sprint ")?;
+    let digits: String = rest.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return None;
     }
-}
-
-fn markdown_section_bounds(
-    lines: &[String],
-    heading_level: usize,
-    heading: &str,
-) -> Option<(usize, usize)> {
-    let mut start: Option<usize> = None;
-    for (idx, line) in lines.iter().enumerate() {
-        if let Some((level, text)) = parse_heading(line)
-            && level == heading_level
-            && text.eq_ignore_ascii_case(heading)
-        {
-            start = Some(idx + 1);
-            break;
-        }
-    }
-
-    let start = start?;
-    let mut end = lines.len();
-    for (idx, line) in lines.iter().enumerate().skip(start) {
-        if let Some((level, _)) = parse_heading(line)
-            && level <= heading_level
-        {
-            end = idx;
-            break;
-        }
-    }
-    Some((start, end))
+    digits.parse::<i32>().ok()
 }
 
 fn parse_heading(line: &str) -> Option<(usize, String)> {
@@ -294,17 +179,6 @@ fn parse_heading(line: &str) -> Option<(usize, String)> {
     } else {
         Some((level, heading.to_string()))
     }
-}
-
-fn trim_blank_lines(lines: Vec<String>) -> Vec<String> {
-    let Some(start) = lines.iter().position(|line| !line.trim().is_empty()) else {
-        return Vec::new();
-    };
-    let end = lines
-        .iter()
-        .rposition(|line| !line.trim().is_empty())
-        .map_or(start, |idx| idx + 1);
-    lines[start..end].to_vec()
 }
 
 pub fn render_sprint_comment(input: SprintCommentInput<'_>) -> Result<String, String> {
