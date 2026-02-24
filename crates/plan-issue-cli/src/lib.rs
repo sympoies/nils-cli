@@ -1,6 +1,8 @@
 pub mod cli;
 pub mod commands;
 mod execute;
+mod github;
+mod issue_body;
 pub mod output;
 mod render;
 mod task_spec;

@@ -62,9 +62,8 @@ pub fn build_task_spec(
     scope: TaskSpecScope,
     options: &TaskSpecBuildOptions,
 ) -> Result<TaskSpecBuild, String> {
-    let repo_root = detect_repo_root();
     let display_path = plan_file.to_string_lossy().to_string();
-    let resolved_plan_path = resolve_repo_relative(&repo_root, plan_file);
+    let resolved_plan_path = resolve_plan_file(plan_file);
     if !resolved_plan_path.is_file() {
         return Err(format!("plan file not found: {display_path}"));
     }
@@ -265,6 +264,11 @@ pub fn agent_home() -> PathBuf {
         }
     }
     detect_repo_root().join(".agents")
+}
+
+pub fn resolve_plan_file(plan_file: &Path) -> PathBuf {
+    let repo_root = detect_repo_root();
+    resolve_repo_relative(&repo_root, plan_file)
 }
 
 fn apply_pr_groups(
