@@ -17,7 +17,7 @@ pub enum OutputFormat {
     disable_help_subcommand = true
 )]
 pub struct Cli {
-    /// Repository override for GitHub-backed operations.
+    /// Pass-through repository target for GitHub operations.
     #[arg(long, global = true, value_name = "owner/repo")]
     pub repo: Option<String>,
 

@@ -129,7 +129,7 @@ pub enum Command {
     /// Wrapper of issue-delivery-loop ready-for-review for final plan review.
     ReadyPlan(ReadyPlanArgs),
 
-    /// Close the single plan issue after final approval and merged PR gates.
+    /// Close the single plan issue after final approval + merged PR gates, then enforce worktree cleanup.
     ClosePlan(ClosePlanArgs),
 
     /// Enforce cleanup of all issue-assigned task worktrees.
@@ -144,7 +144,7 @@ pub enum Command {
     /// Enforce merged-PR gate, sync sprint status=done, then post accepted comment.
     AcceptSprint(AcceptSprintArgs),
 
-    /// Print the full repeated command flow for a plan.
+    /// Print the full repeated command flow for a plan (1 plan = 1 issue).
     MultiSprintGuide(MultiSprintGuideArgs),
 }
 
@@ -196,10 +196,8 @@ impl Command {
             Self::ReadySprint(args) => validate_grouping(&args.grouping),
             Self::AcceptSprint(args) => validate_grouping(&args.grouping),
             Self::ClosePlan(args) => validate_close_plan_args(args, dry_run),
-            Self::StatusPlan(_)
-            | Self::ReadyPlan(_)
-            | Self::CleanupWorktrees(_)
-            | Self::MultiSprintGuide(_) => Ok(()),
+            Self::MultiSprintGuide(args) => validate_multi_sprint_guide_args(args),
+            Self::StatusPlan(_) | Self::ReadyPlan(_) | Self::CleanupWorktrees(_) => Ok(()),
         }
     }
 }
@@ -219,19 +217,45 @@ fn validate_grouping(grouping: &GroupingArgs) -> Result<(), ValidationError> {
 }
 
 fn validate_close_plan_args(args: &ClosePlanArgs, dry_run: bool) -> Result<(), ValidationError> {
+    if args.issue.is_some() && args.body_file.is_some() {
+        return Err(ValidationError::new(
+            "conflicting-issue-source",
+            "use either --issue or --body-file for close-plan, not both",
+        ));
+    }
+
+    if dry_run && args.body_file.is_none() {
+        return Err(ValidationError::new(
+            "missing-body-file",
+            "--body-file is required for close-plan --dry-run",
+        ));
+    }
+
     if !dry_run && args.issue.is_none() {
         return Err(ValidationError::new(
             "missing-issue",
-            "--issue is required for close-plan unless --dry-run is enabled",
+            "--issue is required for close-plan",
         ));
     }
 
-    if dry_run && args.issue.is_none() && args.body_file.is_none() {
+    if !dry_run && args.body_file.is_some() {
         return Err(ValidationError::new(
-            "missing-issue-source",
-            "--dry-run close-plan requires --issue or --body-file",
+            "invalid-body-file-mode",
+            "--body-file is only supported with --dry-run",
         ));
     }
 
+    Ok(())
+}
+
+fn validate_multi_sprint_guide_args(args: &MultiSprintGuideArgs) -> Result<(), ValidationError> {
+    if let Some(to_sprint) = args.to_sprint
+        && to_sprint < args.from_sprint
+    {
+        return Err(ValidationError::new(
+            "invalid-sprint-range",
+            "--from-sprint must be <= --to-sprint",
+        ));
+    }
     Ok(())
 }
