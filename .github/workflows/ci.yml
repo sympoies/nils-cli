@@ -60,8 +60,56 @@ jobs:
           name: junit-nextest
           path: target/nextest/ci/junit.xml
 
+  test_macos:
+    runs-on: macos-14
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Completion asset audit
+        run: bash scripts/ci/completion-asset-audit.sh --strict
+
+      - name: Nils CLI checks (includes docs-placement-audit)
+        env:
+          NILS_CLI_TEST_RUNNER: nextest
+        run: ./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh
+
+      - name: Publish JUnit report
+        if: always() && hashFiles('target/nextest/ci/junit.xml') != ''
+        uses: mikepenz/action-junit-report@v6
+        with:
+          token: ${{ github.token }}
+          check_name: JUnit Test Report (macOS)
+          report_paths: target/nextest/ci/junit.xml
+          detailed_summary: true
+          group_suite: true
+          include_passed: true
+
+      - name: Upload JUnit XML
+        if: always() && hashFiles('target/nextest/ci/junit.xml') != ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: junit-nextest-macos
+          path: target/nextest/ci/junit.xml
+
   coverage:
-    runs-on: ubuntu-24.04
+    runs-on: macos-14
     permissions:
       contents: read
       pull-requests: write
@@ -79,9 +127,6 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Install xvfb + ripgrep
-        run: sudo apt-get update && sudo apt-get install -y xvfb xauth ripgrep
-
       - name: Install cargo tools
         uses: taiki-e/install-action@v2
         with:
@@ -93,14 +138,14 @@ jobs:
         run: rm -rf target/coverage && mkdir -p target/coverage
 
       - name: Generate LCOV report
-        run: xvfb-run -a cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines "$COVERAGE_FAIL_UNDER_LINES"
+        run: cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines "$COVERAGE_FAIL_UNDER_LINES"
 
       - name: Generate HTML report
         if: always() && hashFiles('target/coverage/lcov.info') != ''
         run: cargo llvm-cov report --html --output-dir target/coverage
 
       - name: Run doctests (not included in coverage)
-        run: xvfb-run -a cargo test --workspace --doc
+        run: cargo test --workspace --doc
 
       - name: Coverage summary
         if: always()
