@@ -1,6 +1,7 @@
 use std::path::Path;
-use std::process::Command;
 
+use nils_common::git as common_git;
+use nils_common::process as common_process;
 use serde_json::Value;
 
 use crate::commands::plan::CloseReason;
@@ -44,9 +45,9 @@ pub struct GhCliAdapter;
 
 impl GhCliAdapter {
     fn run(args: &[String]) -> Result<String, String> {
-        let output = Command::new("gh")
-            .args(args)
-            .output()
+        let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+        let output = common_process::run_output("gh", &arg_refs)
+            .map(|output| output.into_std_output())
             .map_err(|err| format!("failed to execute gh: {err}"))?;
 
         if !output.status.success() {
@@ -248,9 +249,7 @@ pub fn resolve_repo(repo_override: Option<&str>) -> Result<String, String> {
         return normalize_repo_slug(repo).ok_or_else(|| format!("invalid --repo value: {repo}"));
     }
 
-    let output = Command::new("git")
-        .args(["remote", "get-url", "origin"])
-        .output()
+    let output = common_git::run_output(&["remote", "get-url", "origin"])
         .map_err(|err| format!("failed to run `git remote get-url origin`: {err}"))?;
 
     if !output.status.success() {

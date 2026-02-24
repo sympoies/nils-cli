@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
+use nils_common::git as common_git;
 use plan_tooling::parse::parse_plan_with_display;
 use plan_tooling::split_prs::{
     SplitPlanOptions, SplitPrGrouping, SplitPrStrategy, SplitScope, build_split_plan_records,
@@ -186,18 +186,7 @@ pub fn resolve_plan_file(plan_file: &Path) -> PathBuf {
 }
 
 fn detect_repo_root() -> PathBuf {
-    let output = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .output();
-    if let Ok(out) = output
-        && out.status.success()
-    {
-        let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if !raw.is_empty() {
-            return PathBuf::from(raw);
-        }
-    }
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    common_git::repo_root_or_cwd()
 }
 
 fn resolve_repo_relative(repo_root: &Path, path: &Path) -> PathBuf {
