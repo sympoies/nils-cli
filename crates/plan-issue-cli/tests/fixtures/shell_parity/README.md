@@ -1,0 +1,19 @@
+# Shell Parity Fixtures
+
+This directory captures baseline output from the current shell entrypoint:
+`$AGENT_HOME/skills/automation/plan-issue-delivery-loop/scripts/plan-issue-delivery-loop.sh`.
+
+## Regenerate fixtures
+
+```bash
+bash crates/plan-issue-cli/tests/fixtures/shell_parity/regenerate.sh
+```
+
+Normalization rules applied by `regenerate.sh`:
+- Replace `${AGENT_HOME}` absolute path with `$AGENT_HOME`.
+- Replace `${HOME}/.config/agent-kit` absolute path with `$AGENT_KIT_HOME`.
+
+Fixtures:
+- `help.txt`: `--help` surface baseline.
+- `multi_sprint_guide_dry_run.txt`: `multi-sprint-guide --dry-run` baseline.
+- `comment_template_start.md`: extracted start-sprint markdown comment template.
