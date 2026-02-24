@@ -74,6 +74,13 @@ impl CmdOptions {
         Self::default()
     }
 
+    pub fn with_envs(mut self, envs: &[(&str, &str)]) -> Self {
+        for (key, value) in envs {
+            self = self.with_env(key, value);
+        }
+        self
+    }
+
     pub fn with_env_remove_prefix(mut self, prefix: &str) -> Self {
         for (key, _) in std::env::vars_os() {
             let key = key.to_string_lossy();
@@ -137,10 +144,7 @@ impl CmdOptions {
 /// - `envs` overrides or adds environment variables (existing vars are preserved).
 /// - `stdin` (when `Some`) is piped into the process before waiting for output.
 pub fn run(bin: &Path, args: &[&str], envs: &[(&str, &str)], stdin: Option<&[u8]>) -> CmdOutput {
-    let mut options = CmdOptions::default();
-    for (key, value) in envs {
-        options = options.with_env(key, value);
-    }
+    let mut options = CmdOptions::default().with_envs(envs);
     if let Some(input) = stdin {
         options = options.with_stdin_bytes(input);
     }
@@ -155,10 +159,7 @@ pub fn run_in_dir(
     envs: &[(&str, &str)],
     stdin: Option<&[u8]>,
 ) -> CmdOutput {
-    let mut options = CmdOptions::default().with_cwd(dir);
-    for (key, value) in envs {
-        options = options.with_env(key, value);
-    }
+    let mut options = CmdOptions::default().with_cwd(dir).with_envs(envs);
     if let Some(input) = stdin {
         options = options.with_stdin_bytes(input);
     }
@@ -167,11 +168,7 @@ pub fn run_in_dir(
 
 /// Build command options with cwd + env pairs for common integration test usage.
 pub fn options_in_dir_with_envs(dir: &Path, envs: &[(&str, &str)]) -> CmdOptions {
-    let mut options = CmdOptions::default().with_cwd(dir);
-    for (key, value) in envs {
-        options = options.with_env(key, value);
-    }
-    options
+    CmdOptions::default().with_cwd(dir).with_envs(envs)
 }
 
 /// Resolve a workspace binary by name and run it with explicit options.

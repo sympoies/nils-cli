@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 
 use nils_test_support::StubBinDir;
+use nils_test_support::cmd::CmdOptions;
 
 mod common;
 
@@ -93,9 +94,13 @@ esac
 "#
 }
 
-fn env_path_with_stub(stub_dir: &Path) -> String {
-    let base = std::env::var("PATH").unwrap_or_default();
-    format!("{}:{}", stub_dir.display(), base)
+fn gh_cmd_options(stub_dir: &Path, envs: &[(&str, &str)]) -> CmdOptions {
+    common::plan_issue_cmd_options()
+        // Keep stubbed gh behavior deterministic even when the outer shell
+        // exports PLAN_ISSUE_GH_* variables.
+        .with_env_remove_prefix("PLAN_ISSUE_GH_")
+        .with_path_prepend(stub_dir)
+        .with_envs(envs)
 }
 
 fn issue_body_with_preface(task_rows: &str) -> String {
@@ -162,7 +167,6 @@ fn github_adapter_live_commands_use_gh_backend_for_issue_and_pr_state() {
 
     let log_path = tmp.path().join("gh.log");
     let log_s = log_path.to_string_lossy().to_string();
-    let path_env = env_path_with_stub(stub.path());
 
     let agent_home = tmp.path().join("agent-home");
     fs::create_dir_all(&agent_home).expect("agent home");
@@ -170,7 +174,7 @@ fn github_adapter_live_commands_use_gh_backend_for_issue_and_pr_state() {
 
     let body_json = json!({"body": issue_body_sprint4_in_progress()}).to_string();
 
-    let out = common::run_plan_issue_with_env(
+    let out = common::run_plan_issue_with_options(
         &[
             "--format",
             "json",
@@ -190,12 +194,14 @@ fn github_adapter_live_commands_use_gh_backend_for_issue_and_pr_state() {
             "per-sprint",
             "--no-comment",
         ],
-        &[
-            ("PATH", &path_env),
-            ("PLAN_ISSUE_GH_LOG", &log_s),
-            ("PLAN_ISSUE_GH_BODY_JSON", &body_json),
-            ("AGENT_HOME", &agent_home_s),
-        ],
+        gh_cmd_options(
+            stub.path(),
+            &[
+                ("PLAN_ISSUE_GH_LOG", &log_s),
+                ("PLAN_ISSUE_GH_BODY_JSON", &body_json),
+                ("AGENT_HOME", &agent_home_s),
+            ],
+        ),
     );
 
     assert_eq!(out.code, 0, "stderr: {}", out.stderr);
@@ -218,7 +224,6 @@ fn live_plan_commands_ready_and_close_follow_gate_contracts() {
 
     let log_path = tmp.path().join("gh.log");
     let log_s = log_path.to_string_lossy().to_string();
-    let path_env = env_path_with_stub(stub.path());
 
     let agent_home = tmp.path().join("agent-home");
     fs::create_dir_all(&agent_home).expect("agent home");
@@ -229,7 +234,7 @@ fn live_plan_commands_ready_and_close_follow_gate_contracts() {
 
     let body_json = json!({"body": issue_body_plan_done()}).to_string();
 
-    let ready_out = common::run_plan_issue_with_env(
+    let ready_out = common::run_plan_issue_with_options(
         &[
             "--format",
             "json",
@@ -241,13 +246,15 @@ fn live_plan_commands_ready_and_close_follow_gate_contracts() {
             "--summary",
             "Final plan review",
         ],
-        &[
-            ("PATH", &path_env),
-            ("PLAN_ISSUE_GH_LOG", &log_s),
-            ("PLAN_ISSUE_GH_BODY_JSON", &body_json),
-            ("PLAN_ISSUE_GH_CAPTURE_COMMENT_FILE", &comment_capture_s),
-            ("AGENT_HOME", &agent_home_s),
-        ],
+        gh_cmd_options(
+            stub.path(),
+            &[
+                ("PLAN_ISSUE_GH_LOG", &log_s),
+                ("PLAN_ISSUE_GH_BODY_JSON", &body_json),
+                ("PLAN_ISSUE_GH_CAPTURE_COMMENT_FILE", &comment_capture_s),
+                ("AGENT_HOME", &agent_home_s),
+            ],
+        ),
     );
 
     assert_eq!(ready_out.code, 0, "stderr: {}", ready_out.stderr);
@@ -262,7 +269,7 @@ fn live_plan_commands_ready_and_close_follow_gate_contracts() {
     fs::write(&close_body_path, issue_body_plan_done()).expect("write close body");
     let close_body_s = close_body_path.to_string_lossy().to_string();
 
-    let close_out = common::run_plan_issue_with_env(
+    let close_out = common::run_plan_issue_with_options(
         &[
             "--format",
             "json",
@@ -275,12 +282,14 @@ fn live_plan_commands_ready_and_close_follow_gate_contracts() {
             "--approved-comment-url",
             "https://github.com/graysurf/nils-cli/issues/217#issuecomment-4000000001",
         ],
-        &[
-            ("PATH", &path_env),
-            ("PLAN_ISSUE_GH_LOG", &log_s),
-            ("PLAN_ISSUE_GH_BODY_JSON", &body_json),
-            ("AGENT_HOME", &agent_home_s),
-        ],
+        gh_cmd_options(
+            stub.path(),
+            &[
+                ("PLAN_ISSUE_GH_LOG", &log_s),
+                ("PLAN_ISSUE_GH_BODY_JSON", &body_json),
+                ("AGENT_HOME", &agent_home_s),
+            ],
+        ),
     );
 
     assert_eq!(close_out.code, 0, "stderr: {}", close_out.stderr);
@@ -311,7 +320,6 @@ fn live_sprint_commands_start_ready_accept_and_guide_are_deterministic() {
 
     let log_path = tmp.path().join("gh.log");
     let log_s = log_path.to_string_lossy().to_string();
-    let path_env = env_path_with_stub(stub.path());
 
     let agent_home = tmp.path().join("agent-home");
     fs::create_dir_all(&agent_home).expect("agent home");
@@ -321,7 +329,7 @@ fn live_sprint_commands_start_ready_accept_and_guide_are_deterministic() {
     let start_capture_s = start_capture.to_string_lossy().to_string();
     let start_body_json = json!({"body": issue_body_sprint4_planned()}).to_string();
 
-    let start_out = common::run_plan_issue_with_env(
+    let start_out = common::run_plan_issue_with_options(
         &[
             "--format",
             "json",
@@ -338,13 +346,15 @@ fn live_sprint_commands_start_ready_accept_and_guide_are_deterministic() {
             "per-sprint",
             "--no-comment",
         ],
-        &[
-            ("PATH", &path_env),
-            ("PLAN_ISSUE_GH_LOG", &log_s),
-            ("PLAN_ISSUE_GH_BODY_JSON", &start_body_json),
-            ("PLAN_ISSUE_GH_CAPTURE_BODY_FILE", &start_capture_s),
-            ("AGENT_HOME", &agent_home_s),
-        ],
+        gh_cmd_options(
+            stub.path(),
+            &[
+                ("PLAN_ISSUE_GH_LOG", &log_s),
+                ("PLAN_ISSUE_GH_BODY_JSON", &start_body_json),
+                ("PLAN_ISSUE_GH_CAPTURE_BODY_FILE", &start_capture_s),
+                ("AGENT_HOME", &agent_home_s),
+            ],
+        ),
     );
 
     assert_eq!(start_out.code, 0, "stderr: {}", start_out.stderr);
@@ -367,7 +377,7 @@ fn live_sprint_commands_start_ready_accept_and_guide_are_deterministic() {
         "{start_body}"
     );
 
-    let ready_out = common::run_plan_issue_with_env(
+    let ready_out = common::run_plan_issue_with_options(
         &[
             "--format",
             "json",
@@ -387,12 +397,14 @@ fn live_sprint_commands_start_ready_accept_and_guide_are_deterministic() {
             "Sprint 4 ready",
             "--no-comment",
         ],
-        &[
-            ("PATH", &path_env),
-            ("PLAN_ISSUE_GH_LOG", &log_s),
-            ("PLAN_ISSUE_GH_BODY_JSON", &start_body_json),
-            ("AGENT_HOME", &agent_home_s),
-        ],
+        gh_cmd_options(
+            stub.path(),
+            &[
+                ("PLAN_ISSUE_GH_LOG", &log_s),
+                ("PLAN_ISSUE_GH_BODY_JSON", &start_body_json),
+                ("AGENT_HOME", &agent_home_s),
+            ],
+        ),
     );
 
     assert_eq!(ready_out.code, 0, "stderr: {}", ready_out.stderr);
@@ -401,7 +413,7 @@ fn live_sprint_commands_start_ready_accept_and_guide_are_deterministic() {
     let accept_capture_s = accept_capture.to_string_lossy().to_string();
     let accept_body_json = json!({"body": issue_body_sprint4_in_progress()}).to_string();
 
-    let accept_out = common::run_plan_issue_with_env(
+    let accept_out = common::run_plan_issue_with_options(
         &[
             "--format",
             "json",
@@ -420,13 +432,15 @@ fn live_sprint_commands_start_ready_accept_and_guide_are_deterministic() {
             "per-sprint",
             "--no-comment",
         ],
-        &[
-            ("PATH", &path_env),
-            ("PLAN_ISSUE_GH_LOG", &log_s),
-            ("PLAN_ISSUE_GH_BODY_JSON", &accept_body_json),
-            ("PLAN_ISSUE_GH_CAPTURE_BODY_FILE", &accept_capture_s),
-            ("AGENT_HOME", &agent_home_s),
-        ],
+        gh_cmd_options(
+            stub.path(),
+            &[
+                ("PLAN_ISSUE_GH_LOG", &log_s),
+                ("PLAN_ISSUE_GH_BODY_JSON", &accept_body_json),
+                ("PLAN_ISSUE_GH_CAPTURE_BODY_FILE", &accept_capture_s),
+                ("AGENT_HOME", &agent_home_s),
+            ],
+        ),
     );
 
     assert_eq!(accept_out.code, 0, "stderr: {}", accept_out.stderr);

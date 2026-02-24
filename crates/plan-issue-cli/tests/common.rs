@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use nils_test_support::cmd::run_resolved_in_dir;
+use nils_test_support::cmd::{CmdOptions, run_resolved};
 
 pub struct CmdOut {
     pub code: i32,
@@ -8,9 +8,15 @@ pub struct CmdOut {
     pub stderr: String,
 }
 
-fn run_bin_with_env(bin_name: &str, args: &[&str], env: &[(&str, &str)]) -> CmdOut {
-    let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let output = run_resolved_in_dir(bin_name, cwd, args, env, None);
+/// Build a deterministic baseline for plan-issue integration tests.
+/// Tests can compose env/path overrides via `CmdOptions` instead of ad-hoc
+/// shell-style setup in each test body.
+pub fn plan_issue_cmd_options() -> CmdOptions {
+    CmdOptions::new().with_cwd(Path::new(env!("CARGO_MANIFEST_DIR")))
+}
+
+fn run_bin_with_options(bin_name: &str, args: &[&str], options: CmdOptions) -> CmdOut {
+    let output = run_resolved(bin_name, args, &options);
 
     CmdOut {
         code: output.code,
@@ -19,12 +25,21 @@ fn run_bin_with_env(bin_name: &str, args: &[&str], env: &[(&str, &str)]) -> CmdO
     }
 }
 
+fn run_bin_with_env(bin_name: &str, args: &[&str], env: &[(&str, &str)]) -> CmdOut {
+    run_bin_with_options(bin_name, args, plan_issue_cmd_options().with_envs(env))
+}
+
 fn run_bin(bin_name: &str, args: &[&str]) -> CmdOut {
-    run_bin_with_env(bin_name, args, &[])
+    run_bin_with_options(bin_name, args, plan_issue_cmd_options())
 }
 
 pub fn run_plan_issue(args: &[&str]) -> CmdOut {
     run_bin("plan-issue", args)
+}
+
+#[allow(dead_code)]
+pub fn run_plan_issue_with_options(args: &[&str], options: CmdOptions) -> CmdOut {
+    run_bin_with_options("plan-issue", args, options)
 }
 
 #[allow(dead_code)]
@@ -35,6 +50,11 @@ pub fn run_plan_issue_with_env(args: &[&str], env: &[(&str, &str)]) -> CmdOut {
 #[allow(dead_code)]
 pub fn run_plan_issue_local(args: &[&str]) -> CmdOut {
     run_bin("plan-issue-local", args)
+}
+
+#[allow(dead_code)]
+pub fn run_plan_issue_local_with_options(args: &[&str], options: CmdOptions) -> CmdOut {
+    run_bin_with_options("plan-issue-local", args, options)
 }
 
 #[allow(dead_code)]
