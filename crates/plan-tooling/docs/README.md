@@ -9,7 +9,8 @@
 
 ## Runbooks
 
-- None yet. Add documents under `docs/runbooks/` and register them here.
+- [`split-prs Build Task-Spec Cutover`](runbooks/split-prs-build-task-spec-cutover.md):
+  command mapping and parity checks for downstream `build-task-spec` migration.
 
 ## Reports
 
