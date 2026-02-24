@@ -227,7 +227,7 @@ mod tests {
         let _test_mode = EnvGuard::remove(&lock, "AGENTS_MACOS_AGENT_TEST_MODE");
 
         let err = fetch_shareable_macos().expect_err("non-macos should be unsupported");
-        assert_eq!(err.exit_code(), 1);
+        assert_eq!(err.exit_code(), 2);
         assert!(err.to_string().to_ascii_lowercase().contains("unsupported"));
 
         let temp = TempDir::new().expect("tempdir");
@@ -239,7 +239,7 @@ mod tests {
             .expect("test window");
         let err = capture_window_screenshot_macos(&window, &out, ScreenshotFormat::Png)
             .expect_err("non-macos screenshot should be unsupported");
-        assert_eq!(err.exit_code(), 1);
+        assert_eq!(err.exit_code(), 2);
         assert!(err.to_string().to_ascii_lowercase().contains("unsupported"));
     }
 }
