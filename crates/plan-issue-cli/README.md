@@ -8,8 +8,11 @@ Sprint 1 establishes the v1 command contract, gate semantics, and deterministic 
 to preserve orchestration compatibility before implementation cutover.
 
 ## Status
-- Current scope is documentation + parity fixtures.
-- Runtime command implementation is intentionally deferred to later tasks.
+- Current scope includes Sprint 2 scaffold implementation:
+  - crate package `nils-plan-issue-cli`
+  - binaries `plan-issue` and `plan-issue-local`
+  - typed clap command model for v1 command surface
+  - deterministic text and JSON output envelopes
 
 ## Specifications
 - [CLI contract v1](docs/specs/plan-issue-cli-contract-v1.md)

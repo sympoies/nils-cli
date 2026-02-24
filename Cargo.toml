@@ -19,6 +19,7 @@ members = [
   "crates/api-test",
   "crates/semantic-commit",
   "crates/plan-tooling",
+  "crates/plan-issue-cli",
   "crates/agent-docs",
   "crates/gemini-cli",
 ]

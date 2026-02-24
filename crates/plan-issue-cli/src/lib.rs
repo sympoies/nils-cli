@@ -1,0 +1,117 @@
+pub mod cli;
+pub mod commands;
+pub mod output;
+
+use std::ffi::OsString;
+
+use clap::Parser;
+use serde_json::json;
+
+use crate::cli::Cli;
+
+pub const EXIT_SUCCESS: i32 = 0;
+pub const EXIT_FAILURE: i32 = 1;
+pub const EXIT_USAGE: i32 = 2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinaryFlavor {
+    PlanIssue,
+    PlanIssueLocal,
+}
+
+impl BinaryFlavor {
+    pub fn binary_name(self) -> &'static str {
+        match self {
+            Self::PlanIssue => "plan-issue",
+            Self::PlanIssueLocal => "plan-issue-local",
+        }
+    }
+
+    pub fn execution_mode(self) -> &'static str {
+        match self {
+            Self::PlanIssue => "live",
+            Self::PlanIssueLocal => "local",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidationError {
+    pub code: &'static str,
+    pub message: String,
+}
+
+impl ValidationError {
+    pub fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+}
+
+pub fn run(binary: BinaryFlavor) -> i32 {
+    run_with_args(binary, std::env::args_os())
+}
+
+pub fn run_with_args<I, T>(binary: BinaryFlavor, args: I) -> i32
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
+    let cli = match Cli::try_parse_from(args) {
+        Ok(cli) => cli,
+        Err(err) => {
+            let code = if err.use_stderr() {
+                EXIT_USAGE
+            } else {
+                EXIT_SUCCESS
+            };
+            let _ = err.print();
+            return code;
+        }
+    };
+
+    let output_format = match cli.resolve_output_format() {
+        Ok(format) => format,
+        Err(err) => {
+            eprintln!("error: {}", err.message);
+            return EXIT_USAGE;
+        }
+    };
+
+    if let Err(err) = cli.validate() {
+        let schema_version = cli.command.schema_version();
+        if let Err(render_err) = output::emit_error(
+            output_format,
+            &schema_version,
+            cli.command.command_id(),
+            err.code,
+            &err.message,
+        ) {
+            eprintln!("error: {render_err}");
+        }
+        return EXIT_FAILURE;
+    }
+
+    let schema_version = cli.command.schema_version();
+    let payload = json!({
+        "binary": binary.binary_name(),
+        "execution_mode": binary.execution_mode(),
+        "dry_run": cli.dry_run,
+        "repo": cli.repo,
+        "arguments": cli.command.payload(),
+    });
+
+    if let Err(err) = output::emit_success(
+        output_format,
+        &schema_version,
+        cli.command.command_id(),
+        &payload,
+    ) {
+        eprintln!("error: {err}");
+        return EXIT_FAILURE;
+    }
+
+    EXIT_SUCCESS
+}
