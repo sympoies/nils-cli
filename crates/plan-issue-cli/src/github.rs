@@ -2,8 +2,8 @@ use std::fs;
 use std::path::Path;
 
 use nils_common::git as common_git;
-use nils_common::process as common_process;
 use nils_common::markdown;
+use nils_common::process as common_process;
 use serde_json::Value;
 
 use crate::commands::plan::CloseReason;

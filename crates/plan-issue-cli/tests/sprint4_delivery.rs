@@ -488,7 +488,6 @@ fn github_adapter_rejects_literal_escaped_newline_without_force() {
 
     let log_path = tmp.path().join("gh.log");
     let log_s = log_path.to_string_lossy().to_string();
-    let path_env = env_path_with_stub(stub.path());
 
     let agent_home = tmp.path().join("agent-home");
     fs::create_dir_all(&agent_home).expect("agent home");
@@ -496,7 +495,7 @@ fn github_adapter_rejects_literal_escaped_newline_without_force() {
 
     let body_json = json!({"body": issue_body_plan_done()}).to_string();
 
-    let out = common::run_plan_issue_with_env(
+    let out = common::run_plan_issue_with_options(
         &[
             "--format",
             "json",
@@ -509,12 +508,14 @@ fn github_adapter_rejects_literal_escaped_newline_without_force() {
             r"Final plan review\nPlease confirm",
             "--no-label-update",
         ],
-        &[
-            ("PATH", &path_env),
-            ("PLAN_ISSUE_GH_LOG", &log_s),
-            ("PLAN_ISSUE_GH_BODY_JSON", &body_json),
-            ("AGENT_HOME", &agent_home_s),
-        ],
+        gh_cmd_options(
+            stub.path(),
+            &[
+                ("PLAN_ISSUE_GH_LOG", &log_s),
+                ("PLAN_ISSUE_GH_BODY_JSON", &body_json),
+                ("AGENT_HOME", &agent_home_s),
+            ],
+        ),
     );
 
     assert_eq!(out.code, 1, "stderr: {}", out.stderr);
@@ -545,7 +546,6 @@ fn github_adapter_force_flag_allows_literal_escaped_newline() {
 
     let log_path = tmp.path().join("gh.log");
     let log_s = log_path.to_string_lossy().to_string();
-    let path_env = env_path_with_stub(stub.path());
 
     let agent_home = tmp.path().join("agent-home");
     fs::create_dir_all(&agent_home).expect("agent home");
@@ -556,7 +556,7 @@ fn github_adapter_force_flag_allows_literal_escaped_newline() {
 
     let body_json = json!({"body": issue_body_plan_done()}).to_string();
 
-    let out = common::run_plan_issue_with_env(
+    let out = common::run_plan_issue_with_options(
         &[
             "--format",
             "json",
@@ -570,13 +570,15 @@ fn github_adapter_force_flag_allows_literal_escaped_newline() {
             r"Final plan review\nPlease confirm",
             "--no-label-update",
         ],
-        &[
-            ("PATH", &path_env),
-            ("PLAN_ISSUE_GH_LOG", &log_s),
-            ("PLAN_ISSUE_GH_BODY_JSON", &body_json),
-            ("PLAN_ISSUE_GH_CAPTURE_COMMENT_FILE", &comment_capture_s),
-            ("AGENT_HOME", &agent_home_s),
-        ],
+        gh_cmd_options(
+            stub.path(),
+            &[
+                ("PLAN_ISSUE_GH_LOG", &log_s),
+                ("PLAN_ISSUE_GH_BODY_JSON", &body_json),
+                ("PLAN_ISSUE_GH_CAPTURE_COMMENT_FILE", &comment_capture_s),
+                ("AGENT_HOME", &agent_home_s),
+            ],
+        ),
     );
 
     assert_eq!(out.code, 0, "stderr: {}", out.stderr);
