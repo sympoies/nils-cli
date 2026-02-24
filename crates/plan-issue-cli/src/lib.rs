@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod commands;
+mod completion;
 mod execute;
 mod github;
 mod issue_body;
@@ -13,6 +14,7 @@ use clap::Parser;
 use serde_json::json;
 
 use crate::cli::Cli;
+use crate::commands::Command;
 
 pub const EXIT_SUCCESS: i32 = 0;
 pub const EXIT_FAILURE: i32 = 1;
@@ -101,6 +103,10 @@ where
             return code;
         }
     };
+
+    if let Command::Completion(args) = &cli.command {
+        return completion::run(binary, args.shell);
+    }
 
     let output_format = match cli.resolve_output_format() {
         Ok(format) => format,

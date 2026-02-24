@@ -8,11 +8,13 @@ Sprint 1 establishes the v1 command contract, gate semantics, and deterministic 
 to preserve orchestration compatibility before implementation cutover.
 
 ## Status
-- Current scope includes Sprint 3 implementation:
+- Current scope includes Sprint 6 implementation:
   - deterministic task-spec generation core using `plan-tooling` parsing primitives
   - issue-body and sprint-comment markdown rendering engine
-  - local-first dry-run workflow for `plan-issue-local`
-  - Sprint 2 scaffold + typed command model + text/JSON output envelopes
+  - live plan-level and sprint-level orchestration commands
+  - local-first rehearsal workflow for `plan-issue-local`
+  - parity and JSON contract regression coverage
+  - `completion <bash|zsh>` export path for `plan-issue` and `plan-issue-local`
 
 ## Specifications
 - [CLI contract v1](docs/specs/plan-issue-cli-contract-v1.md)

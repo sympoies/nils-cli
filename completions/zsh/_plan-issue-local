@@ -1,0 +1,60 @@
+#compdef plan-issue-local
+
+_nils_cli_plan_issue_local_source_common_zsh() {
+  (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+
+  local source_file="${functions_source[_plan-issue-local]-}"
+  local helper_path=''
+
+  if [[ -n "$source_file" && -r "$source_file" ]]; then
+    helper_path="${source_file:h}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
+  fi
+
+  local dir=''
+  for dir in "${fpath[@]}"; do
+    helper_path="${dir}/_completion-adapter-common.zsh"
+    if [[ -r "$helper_path" ]]; then
+      source "$helper_path" || return 1
+      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
+    fi
+  done
+
+  return 1
+}
+
+typeset -gi _NILS_PLAN_ISSUE_LOCAL_ZSH_GENERATED_STATE=0
+
+_nils_cli_plan_issue_local_load_generated_zsh() {
+  _nils_cli_plan_issue_local_source_common_zsh || return 1
+
+  _nils_cli_completion_common_load_generated_zsh \
+    "_NILS_PLAN_ISSUE_LOCAL_ZSH_GENERATED_STATE" \
+    "_nils_cli_plan_issue_local_generated" \
+    "plan-issue-local" \
+    "_plan-issue-local" \
+    '^if \[ "\$funcstack\[1\]" = "_nils_cli_plan_issue_local_generated" \]; then$' \
+    '^fi$'
+}
+
+_plan-issue-local() {
+  emulate -L zsh -o extendedglob
+
+  if ! _nils_cli_plan_issue_local_load_generated_zsh; then
+    if (( $+functions[_nils_cli_completion_common_fail_closed_zsh] )); then
+      _nils_cli_completion_common_fail_closed_zsh
+    fi
+    return 1
+  fi
+
+  _nils_cli_plan_issue_local_generated
+}
+
+if _nils_cli_plan_issue_local_source_common_zsh; then
+  _nils_cli_completion_common_register_zsh _plan-issue-local plan-issue-local
+else
+  compdef _plan-issue-local plan-issue-local
+fi
