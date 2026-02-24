@@ -971,7 +971,8 @@ fn run_multi_sprint_guide(args: &MultiSprintGuideArgs) -> Result<Value, CommandE
 
     lines.extend([
         "NOTE_DRY_RUN=Dry-run guide is local-only and does not call GitHub.".to_string(),
-        "NOTE_GROUP_MODE=When using --pr-grouping group, pass --pr-group for every task in the selected scope.".to_string(),
+        "NOTE_GROUP_MODE_DETERMINISTIC=When using --pr-grouping group with --strategy deterministic, pass --pr-group for every task in the selected scope.".to_string(),
+        "NOTE_GROUP_MODE_AUTO=When using --pr-grouping group with --strategy auto, --pr-group mappings are optional pins and remaining tasks are auto-grouped.".to_string(),
         "NOTE_SPRINT_GATE=Before starting sprint N+1, sprint N must be reviewed, merged, and accepted.".to_string(),
         "NOTE_ACCEPT_SYNC=accept-sprint enforces merged PRs for the sprint and syncs sprint task Status to done.".to_string(),
         "MULTI_SPRINT_GUIDE_END".to_string(),

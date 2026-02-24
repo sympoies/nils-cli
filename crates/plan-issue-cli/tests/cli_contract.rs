@@ -242,7 +242,7 @@ fn cli_conflict_rules_require_pr_group_mapping_for_group_mode() {
 
     let err = cli.validate().expect_err("semantic validation should fail");
     assert_eq!(err.code, "invalid-pr-grouping");
-    assert!(err.message.contains("requires at least one --pr-group"));
+    assert!(err.message.contains("with --strategy deterministic"));
 }
 
 #[test]

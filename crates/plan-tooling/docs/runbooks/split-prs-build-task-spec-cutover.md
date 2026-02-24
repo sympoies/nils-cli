@@ -41,8 +41,8 @@ And preserve these notes keys:
 - optional `shared-pr-anchor=...` when a group has more than one task
 
 ## Group Mode Rules
-- `--pr-grouping group` + `--strategy deterministic` requires explicit `--pr-group` for every selected task.
-- `--pr-grouping group` + `--strategy auto` accepts optional `--pr-group` pins and auto-assigns remaining tasks.
+- `--pr-grouping group` + `--strategy deterministic`: pass `--pr-group` for every selected task.
+- `--pr-grouping group` + `--strategy auto`: `--pr-group` mappings are optional pins; remaining tasks are auto-grouped.
 - mapping key accepts either `SxTy` or plan task id (`Task N.M`).
 - shared group output should map to one PR (`pr-shared` downstream execution mode).
 
@@ -115,7 +115,7 @@ fi
 ```
 
 ## Auto Strategy
-`--strategy auto` is implemented in v1 with deterministic grouping semantics:
+`--strategy auto` is implemented in v1 with deterministic output semantics:
 - scores merge candidates using `Complexity`, dependency topology, and `Location` overlap.
 - preserves stable output ordering and notes schema.
 - allows optional `--pr-group` pins in `pr-grouping=group`.

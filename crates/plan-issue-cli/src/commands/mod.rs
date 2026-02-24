@@ -230,14 +230,18 @@ impl Command {
 }
 
 fn validate_grouping(grouping: &GroupingArgs) -> Result<(), ValidationError> {
-    match (grouping.pr_grouping, grouping.strategy, grouping.pr_group.is_empty()) {
+    match (
+        grouping.pr_grouping,
+        grouping.strategy,
+        grouping.pr_group.is_empty(),
+    ) {
         (PrGrouping::PerSprint, _, false) => Err(ValidationError::new(
             "invalid-pr-grouping",
             "--pr-group is only valid when --pr-grouping group",
         )),
         (PrGrouping::Group, SplitStrategy::Deterministic, true) => Err(ValidationError::new(
             "invalid-pr-grouping",
-            "--pr-grouping group requires at least one --pr-group",
+            "--pr-grouping group with --strategy deterministic requires --pr-group mappings",
         )),
         _ => Ok(()),
     }

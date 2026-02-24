@@ -14,7 +14,8 @@ STEP_4=$AGENT_HOME/skills/automation/plan-issue-delivery-loop/scripts/plan-issue
 STEP_5=$AGENT_HOME/skills/automation/plan-issue-delivery-loop/scripts/plan-issue-delivery-loop.sh ready-plan --body-file $AGENT_HOME/out/plan-issue-delivery-loop/duck-plan-plan-issue-body.md --summary Final\ plan\ review --no-comment --no-label-update --dry-run
 STEP_6=$AGENT_HOME/skills/automation/plan-issue-delivery-loop/scripts/plan-issue-delivery-loop.sh close-plan --body-file $AGENT_HOME/out/plan-issue-delivery-loop/duck-plan-plan-issue-body.md --approved-comment-url \<final-plan-approval-comment-url\> --dry-run
 NOTE_DRY_RUN=Dry-run guide is local-only and does not call GitHub.
-NOTE_GROUP_MODE=When using --pr-grouping group, pass --pr-group for every task in the selected scope.
+NOTE_GROUP_MODE_DETERMINISTIC=When using --pr-grouping group with --strategy deterministic, pass --pr-group for every task in the selected scope.
+NOTE_GROUP_MODE_AUTO=When using --pr-grouping group with --strategy auto, --pr-group mappings are optional pins and remaining tasks are auto-grouped.
 NOTE_SPRINT_GATE=Before starting sprint N+1, sprint N must be reviewed, merged, and accepted.
 NOTE_ACCEPT_SYNC=accept-sprint enforces merged PRs for the sprint and syncs sprint task Status to done.
 MULTI_SPRINT_GUIDE_END
