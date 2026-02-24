@@ -179,7 +179,10 @@ fn split_prs_auto_not_implemented() {
 #[test]
 fn split_prs_non_regression_auto_sparse_plan_scaffold() {
     let dir = TempDir::new().expect("tempdir");
-    common::write_file(&dir.path().join("plan.md"), &fixture_text("auto_sparse_plan.md"));
+    common::write_file(
+        &dir.path().join("plan.md"),
+        &fixture_text("auto_sparse_plan.md"),
+    );
 
     let out = common::run_plan_tooling(
         dir.path(),
@@ -207,7 +210,10 @@ fn split_prs_non_regression_auto_sparse_plan_scaffold() {
 #[test]
 fn split_prs_non_regression_auto_overlap_heavy_plan_scaffold() {
     let dir = TempDir::new().expect("tempdir");
-    common::write_file(&dir.path().join("plan.md"), &fixture_text("auto_overlap_plan.md"));
+    common::write_file(
+        &dir.path().join("plan.md"),
+        &fixture_text("auto_overlap_plan.md"),
+    );
 
     let out = common::run_plan_tooling(
         dir.path(),
