@@ -75,6 +75,7 @@ done
 declare -a reference_roots=(
   "README.md"
   "DEVELOPMENT.md"
+  "BINARY_DEPENDENCIES.md"
   "AGENTS.md"
   "docs/runbooks"
   "docs/specs"
