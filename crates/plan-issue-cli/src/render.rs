@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::task_spec::{TaskSpecRow, agent_home};
+use nils_common::git as common_git;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SprintCommentMode {
@@ -505,18 +505,7 @@ fn extract_sprint_section(plan_file: &Path, sprint: i32) -> Result<String, Strin
 }
 
 fn detect_repo_root() -> PathBuf {
-    let output = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .output();
-    if let Ok(out) = output
-        && out.status.success()
-    {
-        let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if !raw.is_empty() {
-            return PathBuf::from(raw);
-        }
-    }
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    common_git::repo_root_or_cwd()
 }
 
 fn resolve_repo_relative(repo_root: &Path, path: &Path) -> PathBuf {

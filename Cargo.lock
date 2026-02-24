@@ -1854,6 +1854,7 @@ version = "0.5.1"
 dependencies = [
  "clap",
  "clap_complete",
+ "nils-common",
  "nils-plan-tooling",
  "nils-test-support",
  "pretty_assertions",
