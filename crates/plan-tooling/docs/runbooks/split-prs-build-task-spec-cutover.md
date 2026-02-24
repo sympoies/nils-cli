@@ -47,6 +47,8 @@ And preserve these notes keys:
 
 ## Parity Checks
 
+### CI-required checks
+
 ```bash
 mkdir -p "$AGENT_HOME/out/plan-issue-delivery-loop"
 
@@ -72,6 +74,32 @@ plan-tooling split-prs \
 rg -n '^# task_id\tsummary\tbranch\tworktree\towner\tnotes\tpr_group$' \
   "$AGENT_HOME/out/plan-issue-delivery-loop/duck-s1.tsv" \
   "$AGENT_HOME/out/plan-issue-delivery-loop/duck-s2.tsv"
+```
+
+### Local corpus manual regression (optional)
+This loop is intentionally no-op safe so CI does not depend on machine-local repos. Use it when
+you have the graysurf local corpus checked out and want manual regression visibility before
+changing heuristics.
+
+```bash
+LOCAL_CORPUS="/Users/terry/Project/graysurf/nils-cli/docs/plans"
+
+if [ -d "$LOCAL_CORPUS" ]; then
+  find "$LOCAL_CORPUS" -name '*-plan.md' -exec plan-tooling validate --file '{}' ';'
+
+  # Deterministic baseline output check for an overlap-heavy plan.
+  plan-tooling split-prs \
+    --file "$LOCAL_CORPUS/plan-tooling-split-prs-cutover-plan.md" \
+    --scope sprint \
+    --sprint 2 \
+    --pr-grouping per-sprint \
+    --strategy deterministic \
+    --format json | jq -S . > /tmp/split-prs-local-corpus-s2.json
+
+  # Conflict-risk visibility: inspect shared-group concentration by sprint record.
+  jq -r '.records[] | [.task_id, .pr_group, .summary] | @tsv' \
+    /tmp/split-prs-local-corpus-s2.json | sort
+fi
 ```
 
 ## Auto Strategy
