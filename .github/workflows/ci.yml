@@ -77,8 +77,11 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Install ripgrep
+      - name: Install bash + ripgrep
         run: |
+          if ! /opt/homebrew/bin/bash --version >/dev/null 2>&1; then
+            brew install bash
+          fi
           if ! command -v rg >/dev/null 2>&1; then
             brew install ripgrep
           fi
@@ -89,12 +92,12 @@ jobs:
           tool: cargo-nextest
 
       - name: Completion asset audit
-        run: bash scripts/ci/completion-asset-audit.sh --strict
+        run: /opt/homebrew/bin/bash scripts/ci/completion-asset-audit.sh --strict
 
       - name: Nils CLI checks (includes docs-placement-audit)
         env:
           NILS_CLI_TEST_RUNNER: nextest
-        run: ./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh
+        run: /opt/homebrew/bin/bash ./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh
 
       - name: Publish JUnit report
         if: always() && hashFiles('target/nextest/ci/junit.xml') != ''
