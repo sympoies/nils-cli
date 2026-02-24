@@ -2,6 +2,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use serde_json::Value;
+use tempfile::TempDir;
+
+mod common;
 
 fn fixture_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -9,6 +12,159 @@ fn fixture_path(name: &str) -> PathBuf {
         .join("fixtures")
         .join("split_prs")
         .join(name)
+}
+
+fn fixture_text(name: &str) -> String {
+    fs::read_to_string(fixture_path(name)).expect("fixture exists")
+}
+
+#[test]
+fn split_prs_deterministic_per_sprint_tsv_matches_fixture() {
+    let dir = TempDir::new().expect("tempdir");
+    common::write_file(&dir.path().join("plan.md"), &fixture_text("duck-plan.md"));
+
+    let out = common::run_plan_tooling(
+        dir.path(),
+        &[
+            "split-prs",
+            "--file",
+            "plan.md",
+            "--scope",
+            "sprint",
+            "--sprint",
+            "1",
+            "--pr-grouping",
+            "per-sprint",
+            "--format",
+            "tsv",
+        ],
+    );
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+    assert_eq!(out.stdout, fixture_text("per_sprint_expected.tsv"));
+}
+
+#[test]
+fn split_prs_deterministic_group_json_matches_fixture() {
+    let dir = TempDir::new().expect("tempdir");
+    common::write_file(&dir.path().join("plan.md"), &fixture_text("duck-plan.md"));
+
+    let out = common::run_plan_tooling(
+        dir.path(),
+        &[
+            "split-prs",
+            "--file",
+            "plan.md",
+            "--scope",
+            "sprint",
+            "--sprint",
+            "2",
+            "--pr-grouping",
+            "group",
+            "--pr-group",
+            "S2T1=s2-isolated",
+            "--pr-group",
+            "S2T2=s2-shared",
+            "--pr-group",
+            "S2T3=s2-shared",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+
+    let actual: Value = serde_json::from_str(&out.stdout).expect("json");
+    let mut expected: Value =
+        serde_json::from_str(&fixture_text("group_expected.json")).expect("fixture json");
+
+    expected["file"] = actual["file"].clone();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn split_prs_error_group_requires_mapping() {
+    let dir = TempDir::new().expect("tempdir");
+    common::write_file(&dir.path().join("plan.md"), &fixture_text("duck-plan.md"));
+
+    let out = common::run_plan_tooling(
+        dir.path(),
+        &[
+            "split-prs",
+            "--file",
+            "plan.md",
+            "--scope",
+            "sprint",
+            "--sprint",
+            "2",
+            "--pr-grouping",
+            "group",
+        ],
+    );
+    assert_eq!(out.code, 2);
+    assert!(
+        out.stderr
+            .contains("--pr-grouping group requires at least one --pr-group"),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
+fn split_prs_error_unknown_mapping_key() {
+    let dir = TempDir::new().expect("tempdir");
+    common::write_file(&dir.path().join("plan.md"), &fixture_text("duck-plan.md"));
+
+    let out = common::run_plan_tooling(
+        dir.path(),
+        &[
+            "split-prs",
+            "--file",
+            "plan.md",
+            "--scope",
+            "sprint",
+            "--sprint",
+            "2",
+            "--pr-grouping",
+            "group",
+            "--pr-group",
+            "S2T1=s2-isolated",
+            "--pr-group",
+            "S2T2=s2-shared",
+            "--pr-group",
+            "S2T9=s2-shared",
+        ],
+    );
+    assert_eq!(out.code, 1);
+    assert!(out.stderr.contains("unknown task keys"), "{}", out.stderr);
+}
+
+#[test]
+fn split_prs_auto_not_implemented() {
+    let dir = TempDir::new().expect("tempdir");
+    common::write_file(&dir.path().join("plan.md"), &fixture_text("duck-plan.md"));
+
+    let out = common::run_plan_tooling(
+        dir.path(),
+        &[
+            "split-prs",
+            "--file",
+            "plan.md",
+            "--scope",
+            "sprint",
+            "--sprint",
+            "1",
+            "--pr-grouping",
+            "per-sprint",
+            "--strategy",
+            "auto",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(out.code, 1);
+    assert!(out.stderr.contains("not implemented"), "{}", out.stderr);
+    assert_eq!(out.stderr.matches("Complexity").count(), 1);
+    assert_eq!(out.stderr.matches("Location").count(), 1);
+    assert_eq!(out.stderr.matches("Dependencies").count(), 1);
 }
 
 #[test]
@@ -31,7 +187,7 @@ fn split_prs_fixture_json_contains_required_fields() {
         let text = fs::read_to_string(path).expect("fixture exists");
         let value: Value = serde_json::from_str(&text).expect("valid json");
 
-        assert!(value["file"].is_string());
+        assert!(value["file"].is_string() || value["file"].is_null());
         assert!(value["scope"].is_string());
         assert!(value["pr_grouping"].is_string());
         assert!(value["strategy"].is_string());
