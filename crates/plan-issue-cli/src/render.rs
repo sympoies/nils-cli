@@ -1,0 +1,486 @@
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use crate::task_spec::{TaskSpecRow, agent_home};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SprintCommentMode {
+    Start,
+    Ready,
+    Accepted,
+}
+
+#[derive(Debug, Clone)]
+pub struct SprintCommentInput<'a> {
+    pub mode: SprintCommentMode,
+    pub plan_file: &'a Path,
+    pub sprint: i32,
+    pub sprint_name: &'a str,
+    pub rows: &'a [TaskSpecRow],
+    pub note_text: Option<&'a str>,
+    pub approval_comment_url: Option<&'a str>,
+    pub issue_body_text: Option<&'a str>,
+}
+
+pub fn default_plan_issue_body_path(plan_file: &Path) -> PathBuf {
+    let plan_stem = plan_file
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("plan")
+        .to_string();
+    agent_home()
+        .join("out")
+        .join("plan-issue-delivery-loop")
+        .join(format!("{plan_stem}-plan-issue-body.md"))
+}
+
+pub fn default_sprint_comment_path(
+    plan_file: &Path,
+    sprint: i32,
+    mode: SprintCommentMode,
+) -> PathBuf {
+    let plan_stem = plan_file
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("plan")
+        .to_string();
+    let mode_label = match mode {
+        SprintCommentMode::Start => "start",
+        SprintCommentMode::Ready => "ready",
+        SprintCommentMode::Accepted => "accepted",
+    };
+
+    agent_home()
+        .join("out")
+        .join("plan-issue-delivery-loop")
+        .join(format!(
+            "{plan_stem}-sprint-{sprint}-{mode_label}-comment.md"
+        ))
+}
+
+pub fn render_plan_issue_body(
+    plan_file_display: &str,
+    plan_title: &str,
+    rows: &[TaskSpecRow],
+) -> String {
+    let title = if plan_title.trim().is_empty() {
+        let fallback = Path::new(plan_file_display)
+            .file_stem()
+            .and_then(|v| v.to_str())
+            .unwrap_or("Plan");
+        fallback.to_string()
+    } else {
+        plan_title.trim().to_string()
+    };
+
+    let mut out: Vec<String> = vec![
+        format!("# {title}"),
+        String::new(),
+        "## Goal".to_string(),
+        String::new(),
+        format!(
+            "- Execute plan `{plan_file_display}` end-to-end using one GitHub issue and subagent-owned PRs."
+        ),
+        "- Track sprint progress via issue comments while keeping task/PR state in the issue body.".to_string(),
+        String::new(),
+        "## Acceptance Criteria".to_string(),
+        String::new(),
+        "- All in-scope plan tasks are implemented via subagent PRs and linked in the issue task table."
+            .to_string(),
+        "- Final plan review approval comment URL is recorded.".to_string(),
+        "- The single plan issue closes after close-gate checks pass.".to_string(),
+        String::new(),
+        "## Scope".to_string(),
+        String::new(),
+        format!("- In-scope: tasks defined in `{plan_file_display}`"),
+        "- Out-of-scope: work not represented in the plan task list".to_string(),
+        String::new(),
+        "## Task Decomposition".to_string(),
+        String::new(),
+        "| Task | Summary | Owner | Branch | Worktree | Execution Mode | PR | Status | Notes |"
+            .to_string(),
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |".to_string(),
+    ];
+
+    for row in rows {
+        let notes = if row.notes.trim().is_empty() {
+            "-".to_string()
+        } else {
+            row.notes.trim().to_string()
+        };
+        out.push(format!(
+            "| {} | {} | TBD | TBD | TBD | TBD | TBD | planned | {} |",
+            row.task_id, row.summary, notes
+        ));
+    }
+
+    out.extend([
+        String::new(),
+        "## Consistency Rules".to_string(),
+        String::new(),
+        "- `Status` must be one of: `planned`, `in-progress`, `blocked`, `done`.".to_string(),
+        "- `Status` = `in-progress` or `done` requires non-`TBD` execution metadata (`Owner`, `Branch`, `Worktree`, `Execution Mode`, `PR`).".to_string(),
+        "- `Owner` must be a subagent identifier (contains `subagent`) once the task is assigned; `main-agent` ownership is invalid for implementation tasks.".to_string(),
+        "- `Execution Mode` should be one of: `per-task`, `per-sprint`, `pr-isolated`, `pr-shared` (or `TBD` before assignment).".to_string(),
+        "- `Branch` and `Worktree` uniqueness is enforced only for rows using `Execution Mode = per-task`.".to_string(),
+        String::new(),
+        "## Risks / Uncertainties".to_string(),
+        String::new(),
+        "- Sprint approvals may be recorded before final close; issue stays open until final plan acceptance.".to_string(),
+        "- Close gate fails if task statuses or PR merge states in the issue body are incomplete.".to_string(),
+        String::new(),
+        "## Evidence".to_string(),
+        String::new(),
+        format!("- Plan source: `{plan_file_display}`"),
+        "- Sprint approvals: issue comments (one comment per accepted sprint)".to_string(),
+        "- Final approval: issue/pull comment URL passed to `close-plan`".to_string(),
+    ]);
+
+    format!("{}\n", out.join("\n"))
+}
+
+pub fn render_sprint_comment(input: SprintCommentInput<'_>) -> Result<String, String> {
+    let SprintCommentInput {
+        mode,
+        plan_file,
+        sprint,
+        sprint_name,
+        rows,
+        note_text,
+        approval_comment_url,
+        issue_body_text,
+    } = input;
+
+    if rows.is_empty() {
+        return Err("task spec contains no rows".to_string());
+    }
+
+    let mut group_sizes: HashMap<String, usize> = HashMap::new();
+    for row in rows {
+        *group_sizes.entry(row.pr_group.clone()).or_insert(0) += 1;
+    }
+
+    let issue_pr_values = issue_body_text
+        .map(parse_issue_pr_values)
+        .unwrap_or_default();
+
+    let mut out: Vec<String> = Vec::new();
+    let (heading, lead) = match mode {
+        SprintCommentMode::Start => (
+            format!("## Sprint {sprint} Start"),
+            "Main-agent starts this sprint on the plan issue and dispatches implementation to subagents.",
+        ),
+        SprintCommentMode::Ready => (
+            format!("## Sprint {sprint} Ready for Review"),
+            "Main-agent requests sprint-level review before merge/acceptance on the plan issue (the issue remains open).",
+        ),
+        SprintCommentMode::Accepted => (
+            format!("## Sprint {sprint} Accepted"),
+            "Main-agent records sprint acceptance after merge gate passes and sprint rows are synced to done (issue remains open for remaining sprints).",
+        ),
+    };
+
+    out.push(heading);
+    out.push(String::new());
+    out.push(format!("- Sprint: {sprint} ({sprint_name})"));
+    out.push(format!("- Tasks in sprint: {}", rows.len()));
+    out.push(format!("- Note: {lead}"));
+    if mode == SprintCommentMode::Start {
+        out.push(
+            "- Execution Mode comes from current Task Decomposition for each sprint task."
+                .to_string(),
+        );
+    } else {
+        out.push(
+            "- PR values come from current Task Decomposition; unresolved tasks remain `TBD` until PRs are linked."
+                .to_string(),
+        );
+    }
+
+    if let Some(url) = approval_comment_url {
+        let trimmed = url.trim();
+        if !trimmed.is_empty() {
+            out.push(format!("- Approval comment URL: {trimmed}"));
+        }
+    }
+
+    out.push(String::new());
+    match mode {
+        SprintCommentMode::Start => {
+            out.push("| Task | Summary | Execution Mode |".to_string());
+            out.push("| --- | --- | --- |".to_string());
+            for row in rows {
+                let execution_mode = if row.grouping == crate::commands::PrGrouping::PerSprint {
+                    "per-sprint"
+                } else if group_sizes.get(&row.pr_group).copied().unwrap_or(0) > 1 {
+                    "pr-shared"
+                } else {
+                    "pr-isolated"
+                };
+                out.push(format!(
+                    "| {} | {} | {} |",
+                    row.task_id,
+                    if row.summary.is_empty() {
+                        "-"
+                    } else {
+                        &row.summary
+                    },
+                    execution_mode
+                ));
+            }
+
+            let sprint_section = extract_sprint_section(plan_file, sprint)?;
+            if !sprint_section.is_empty() {
+                out.push(String::new());
+                out.push(sprint_section);
+            }
+        }
+        SprintCommentMode::Ready | SprintCommentMode::Accepted => {
+            out.push("| Task | Summary | PR |".to_string());
+            out.push("| --- | --- | --- |".to_string());
+            for row in rows {
+                let mut pr_value = issue_pr_values
+                    .get(&row.task_id)
+                    .map(|v| normalize_pr_display(v))
+                    .unwrap_or_default();
+                if pr_value.is_empty() {
+                    pr_value = if row.grouping == crate::commands::PrGrouping::PerSprint {
+                        "TBD (per-sprint)".to_string()
+                    } else {
+                        format!("TBD (group:{})", row.pr_group)
+                    };
+                }
+                out.push(format!(
+                    "| {} | {} | {} |",
+                    row.task_id,
+                    if row.summary.is_empty() {
+                        "-"
+                    } else {
+                        &row.summary
+                    },
+                    pr_value
+                ));
+            }
+        }
+    }
+
+    if let Some(note) = note_text {
+        let trimmed = note.trim();
+        if !trimmed.is_empty() {
+            out.push(String::new());
+            out.push("## Main-Agent Notes".to_string());
+            out.push(String::new());
+            out.push(trimmed.to_string());
+        }
+    }
+
+    Ok(format!("{}\n", out.join("\n")))
+}
+
+pub fn write_rendered(path: &Path, content: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| {
+            format!(
+                "failed to create output directory {}: {err}",
+                parent.display()
+            )
+        })?;
+    }
+    std::fs::write(path, content)
+        .map_err(|err| format!("failed to write {}: {err}", path.display()))
+}
+
+fn parse_issue_pr_values(issue_body_text: &str) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let lines: Vec<&str> = issue_body_text.lines().collect();
+
+    let Some((start, end)) = section_bounds(&lines, "## Task Decomposition") else {
+        return out;
+    };
+
+    let table_lines: Vec<&str> = lines[start..end]
+        .iter()
+        .copied()
+        .filter(|line| line.trim().starts_with('|'))
+        .collect();
+
+    if table_lines.len() < 3 {
+        return out;
+    }
+
+    let headers = parse_markdown_row(table_lines[0]);
+    let Some(task_idx) = headers.iter().position(|h| h == "Task") else {
+        return out;
+    };
+    let Some(pr_idx) = headers.iter().position(|h| h == "PR") else {
+        return out;
+    };
+
+    for line in table_lines.iter().skip(2) {
+        let cells = parse_markdown_row(line);
+        if cells.len() != headers.len() {
+            continue;
+        }
+        let task = cells[task_idx].trim();
+        let pr = cells[pr_idx].trim();
+        if task.is_empty() {
+            continue;
+        }
+        let normalized = normalize_pr_display(pr);
+        if !normalized.is_empty() {
+            out.insert(task.to_string(), normalized);
+        }
+    }
+
+    out
+}
+
+fn section_bounds(lines: &[&str], heading: &str) -> Option<(usize, usize)> {
+    let mut start = None;
+    for (idx, line) in lines.iter().enumerate() {
+        if line.trim() == heading {
+            start = Some(idx + 1);
+            break;
+        }
+    }
+    let start = start?;
+
+    let mut end = lines.len();
+    for (idx, line) in lines.iter().enumerate().skip(start) {
+        if line.starts_with("## ") {
+            end = idx;
+            break;
+        }
+    }
+
+    Some((start, end))
+}
+
+fn parse_markdown_row(line: &str) -> Vec<String> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('|') || !trimmed.ends_with('|') {
+        return Vec::new();
+    }
+    trimmed[1..trimmed.len() - 1]
+        .split('|')
+        .map(|cell| cell.trim().to_string())
+        .collect()
+}
+
+fn is_placeholder(value: &str) -> bool {
+    let token = value.trim().to_ascii_lowercase();
+    if matches!(
+        token.as_str(),
+        "" | "-" | "tbd" | "none" | "n/a" | "na" | "..."
+    ) {
+        return true;
+    }
+    if token.starts_with("tbd") {
+        return true;
+    }
+    if token.starts_with('<') && token.ends_with('>') {
+        return true;
+    }
+    token.contains("task ids")
+}
+
+fn parse_digits(token: &str) -> Option<String> {
+    if token.is_empty() || !token.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    Some(token.to_string())
+}
+
+fn normalize_pr_display(value: &str) -> String {
+    let token = value.trim();
+    if is_placeholder(token) {
+        return String::new();
+    }
+
+    if let Some(rest) = token.strip_prefix('#')
+        && let Some(num) = parse_digits(rest)
+    {
+        return format!("#{num}");
+    }
+
+    if let Some(rest) = token.to_ascii_lowercase().strip_prefix("pr#")
+        && let Some(num) = parse_digits(rest)
+    {
+        return format!("#{num}");
+    }
+
+    if let Some((_, tail)) = token.rsplit_once('#')
+        && let Some(num) = parse_digits(tail)
+        && token.contains('/')
+    {
+        return format!("#{num}");
+    }
+
+    if let Some(idx) = token.to_ascii_lowercase().find("/pull/") {
+        let after = &token[idx + "/pull/".len()..];
+        let number: String = after.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+        if let Some(num) = parse_digits(&number) {
+            return format!("#{num}");
+        }
+    }
+
+    token.to_string()
+}
+
+fn extract_sprint_section(plan_file: &Path, sprint: i32) -> Result<String, String> {
+    let repo_root = detect_repo_root();
+    let resolved = resolve_repo_relative(&repo_root, plan_file);
+    let text = std::fs::read_to_string(&resolved).map_err(|err| {
+        format!(
+            "failed to read plan file {}: {err}",
+            plan_file.to_string_lossy()
+        )
+    })?;
+    let lines: Vec<&str> = text.lines().collect();
+
+    let target_prefix = format!("## Sprint {sprint}");
+    let mut start = None;
+    for (idx, line) in lines.iter().enumerate() {
+        if line.trim().starts_with(&target_prefix) {
+            start = Some(idx);
+            break;
+        }
+    }
+
+    let Some(start_idx) = start else {
+        return Ok(String::new());
+    };
+
+    let mut end_idx = lines.len();
+    for (idx, line) in lines.iter().enumerate().skip(start_idx + 1) {
+        if line.starts_with("## ") {
+            end_idx = idx;
+            break;
+        }
+    }
+
+    Ok(lines[start_idx..end_idx].join("\n").trim().to_string())
+}
+
+fn detect_repo_root() -> PathBuf {
+    let output = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output();
+    if let Ok(out) = output
+        && out.status.success()
+    {
+        let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !raw.is_empty() {
+            return PathBuf::from(raw);
+        }
+    }
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn resolve_repo_relative(repo_root: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    repo_root.join(path)
+}

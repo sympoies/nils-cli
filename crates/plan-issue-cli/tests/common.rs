@@ -8,9 +8,9 @@ pub struct CmdOut {
     pub stderr: String,
 }
 
-fn run_bin(bin_name: &str, args: &[&str]) -> CmdOut {
+fn run_bin_with_env(bin_name: &str, args: &[&str], env: &[(&str, &str)]) -> CmdOut {
     let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let output = run_resolved_in_dir(bin_name, cwd, args, &[], None);
+    let output = run_resolved_in_dir(bin_name, cwd, args, env, None);
 
     CmdOut {
         code: output.code,
@@ -19,11 +19,25 @@ fn run_bin(bin_name: &str, args: &[&str]) -> CmdOut {
     }
 }
 
+fn run_bin(bin_name: &str, args: &[&str]) -> CmdOut {
+    run_bin_with_env(bin_name, args, &[])
+}
+
 pub fn run_plan_issue(args: &[&str]) -> CmdOut {
     run_bin("plan-issue", args)
 }
 
 #[allow(dead_code)]
+pub fn run_plan_issue_with_env(args: &[&str], env: &[(&str, &str)]) -> CmdOut {
+    run_bin_with_env("plan-issue", args, env)
+}
+
+#[allow(dead_code)]
 pub fn run_plan_issue_local(args: &[&str]) -> CmdOut {
     run_bin("plan-issue-local", args)
+}
+
+#[allow(dead_code)]
+pub fn run_plan_issue_local_with_env(args: &[&str], env: &[(&str, &str)]) -> CmdOut {
+    run_bin_with_env("plan-issue-local", args, env)
 }

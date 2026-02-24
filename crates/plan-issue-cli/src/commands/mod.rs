@@ -193,12 +193,12 @@ impl Command {
             Self::BuildPlanTaskSpec(args) => validate_grouping(&args.grouping),
             Self::StartPlan(args) => validate_grouping(&args.grouping),
             Self::StartSprint(args) => validate_grouping(&args.grouping),
+            Self::ReadySprint(args) => validate_grouping(&args.grouping),
+            Self::AcceptSprint(args) => validate_grouping(&args.grouping),
             Self::ClosePlan(args) => validate_close_plan_args(args, dry_run),
             Self::StatusPlan(_)
             | Self::ReadyPlan(_)
             | Self::CleanupWorktrees(_)
-            | Self::ReadySprint(_)
-            | Self::AcceptSprint(_)
             | Self::MultiSprintGuide(_) => Ok(()),
         }
     }

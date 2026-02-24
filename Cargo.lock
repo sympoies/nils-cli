@@ -1853,10 +1853,12 @@ name = "nils-plan-issue-cli"
 version = "0.5.1"
 dependencies = [
  "clap",
+ "nils-plan-tooling",
  "nils-test-support",
  "pretty_assertions",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
