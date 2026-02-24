@@ -1,6 +1,8 @@
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::PathBuf;
 
+use pretty_assertions::assert_eq;
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -178,12 +180,9 @@ fn split_prs_auto_group_without_mapping_succeeds() {
     let records = value["records"].as_array().expect("records");
     assert_eq!(records.len(), 3);
 
-    let mut group_by_task: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
-    let mut first_task_by_group: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
-    let mut size_by_group: std::collections::HashMap<String, usize> =
-        std::collections::HashMap::new();
+    let mut group_by_task: HashMap<String, String> = HashMap::new();
+    let mut first_task_by_group: HashMap<String, String> = HashMap::new();
+    let mut size_by_group: HashMap<String, usize> = HashMap::new();
     for record in records {
         let task_id = record["task_id"].as_str().unwrap_or_default().to_string();
         let group = record["pr_group"].as_str().unwrap_or_default().to_string();
@@ -212,6 +211,243 @@ fn split_prs_auto_group_without_mapping_succeeds() {
             );
         }
     }
+}
+
+#[test]
+fn split_prs_auto_group_partial_mapping_preserves_pinned_group() {
+    let dir = TempDir::new().expect("tempdir");
+    common::write_file(&dir.path().join("plan.md"), &fixture_text("duck-plan.md"));
+
+    let out = common::run_plan_tooling(
+        dir.path(),
+        &[
+            "split-prs",
+            "--file",
+            "plan.md",
+            "--scope",
+            "sprint",
+            "--sprint",
+            "2",
+            "--pr-grouping",
+            "group",
+            "--strategy",
+            "auto",
+            "--pr-group",
+            "S2T3=manual-docs",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+
+    let value: Value = serde_json::from_str(&out.stdout).expect("json");
+    let records = value["records"].as_array().expect("records");
+    assert_eq!(records.len(), 3);
+
+    let mut group_by_task: HashMap<String, String> = HashMap::new();
+    let mut notes_by_task: HashMap<String, String> = HashMap::new();
+    for record in records {
+        let task_id = record["task_id"].as_str().unwrap_or_default().to_string();
+        let group = record["pr_group"].as_str().unwrap_or_default().to_string();
+        let notes = record["notes"].as_str().unwrap_or_default().to_string();
+        group_by_task.insert(task_id.clone(), group);
+        notes_by_task.insert(task_id, notes);
+    }
+
+    let pinned = group_by_task.get("S2T3").expect("S2T3 group");
+    assert_eq!(pinned, "manual-docs");
+    assert!(
+        notes_by_task
+            .get("S2T3")
+            .expect("S2T3 notes")
+            .contains("pr-group=manual-docs")
+    );
+    assert!(
+        !notes_by_task
+            .get("S2T3")
+            .expect("S2T3 notes")
+            .contains("shared-pr-anchor=")
+    );
+
+    let auto_a = group_by_task.get("S2T1").expect("S2T1 group");
+    let auto_b = group_by_task.get("S2T2").expect("S2T2 group");
+    assert_eq!(auto_a, auto_b, "overlap pair should stay shared");
+    assert!(auto_a.starts_with("s2-auto-g"), "{auto_a}");
+    assert_ne!(auto_a, pinned);
+    assert!(
+        notes_by_task
+            .get("S2T1")
+            .expect("S2T1 notes")
+            .contains("shared-pr-anchor=S2T1")
+    );
+    assert!(
+        notes_by_task
+            .get("S2T2")
+            .expect("S2T2 notes")
+            .contains("shared-pr-anchor=S2T1")
+    );
+}
+
+#[test]
+fn split_prs_auto_group_rejects_malformed_pin_entry() {
+    let dir = TempDir::new().expect("tempdir");
+    common::write_file(&dir.path().join("plan.md"), &fixture_text("duck-plan.md"));
+
+    let out = common::run_plan_tooling(
+        dir.path(),
+        &[
+            "split-prs",
+            "--file",
+            "plan.md",
+            "--scope",
+            "sprint",
+            "--sprint",
+            "2",
+            "--pr-grouping",
+            "group",
+            "--strategy",
+            "auto",
+            "--pr-group",
+            "S2T2",
+        ],
+    );
+    assert_eq!(out.code, 1);
+    assert!(
+        out.stderr
+            .contains("--pr-group must use <task-or-plan-id>=<group> format"),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
+fn split_prs_auto_group_rejects_unknown_pin_key() {
+    let dir = TempDir::new().expect("tempdir");
+    common::write_file(&dir.path().join("plan.md"), &fixture_text("duck-plan.md"));
+
+    let out = common::run_plan_tooling(
+        dir.path(),
+        &[
+            "split-prs",
+            "--file",
+            "plan.md",
+            "--scope",
+            "sprint",
+            "--sprint",
+            "2",
+            "--pr-grouping",
+            "group",
+            "--strategy",
+            "auto",
+            "--pr-group",
+            "S2T9=manual-docs",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(out.code, 1);
+    assert!(out.stderr.contains("unknown task keys"), "{}", out.stderr);
+}
+
+#[test]
+fn split_prs_auto_repeatability_is_byte_stable() {
+    for fixture in [
+        "duck-plan.md",
+        "auto_sparse_plan.md",
+        "auto_overlap_plan.md",
+        "auto_regression_matrix_plan.md",
+    ] {
+        let dir = TempDir::new().expect("tempdir");
+        common::write_file(&dir.path().join("plan.md"), &fixture_text(fixture));
+
+        let first = common::run_plan_tooling(
+            dir.path(),
+            &[
+                "split-prs",
+                "--file",
+                "plan.md",
+                "--scope",
+                "sprint",
+                "--sprint",
+                "1",
+                "--pr-grouping",
+                "group",
+                "--strategy",
+                "auto",
+                "--format",
+                "json",
+            ],
+        );
+        let second = common::run_plan_tooling(
+            dir.path(),
+            &[
+                "split-prs",
+                "--file",
+                "plan.md",
+                "--scope",
+                "sprint",
+                "--sprint",
+                "1",
+                "--pr-grouping",
+                "group",
+                "--strategy",
+                "auto",
+                "--format",
+                "json",
+            ],
+        );
+
+        assert_eq!(
+            first.code, 0,
+            "first run failed for fixture {fixture}: {}",
+            first.stderr
+        );
+        assert_eq!(
+            second.code, 0,
+            "second run failed for fixture {fixture}: {}",
+            second.stderr
+        );
+        assert_eq!(
+            first.stdout, second.stdout,
+            "repeatability drift in {fixture}"
+        );
+    }
+}
+
+#[test]
+fn split_prs_auto_matrix_fixture_matches_expected_json() {
+    let dir = TempDir::new().expect("tempdir");
+    common::write_file(
+        &dir.path().join("plan.md"),
+        &fixture_text("auto_regression_matrix_plan.md"),
+    );
+
+    let out = common::run_plan_tooling(
+        dir.path(),
+        &[
+            "split-prs",
+            "--file",
+            "plan.md",
+            "--scope",
+            "sprint",
+            "--sprint",
+            "1",
+            "--pr-grouping",
+            "group",
+            "--strategy",
+            "auto",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+
+    let actual: Value = serde_json::from_str(&out.stdout).expect("json");
+    let mut expected: Value =
+        serde_json::from_str(&fixture_text("auto_regression_matrix_expected.json"))
+            .expect("fixture json");
+    expected["file"] = actual["file"].clone();
+    assert_eq!(actual, expected);
 }
 
 #[test]
@@ -344,7 +580,7 @@ fn split_prs_non_regression_auto_overlap_heavy_plan_scaffold() {
     let records = value["records"].as_array().expect("records");
     assert_eq!(records.len(), 3);
 
-    let mut unique_groups = std::collections::BTreeSet::new();
+    let mut unique_groups = BTreeSet::new();
     for record in records {
         let group = record["pr_group"].as_str().unwrap_or_default();
         let notes = record["notes"].as_str().unwrap_or_default();

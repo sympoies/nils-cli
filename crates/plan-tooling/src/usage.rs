@@ -74,7 +74,7 @@ fn print_help(stderr: bool) {
     );
     let _ = writeln!(
         out,
-        "  {:<10}  Build deterministic task-to-PR split records",
+        "  {:<10}  Build task-to-PR split records (deterministic/auto)",
         "split-prs"
     );
     let _ = writeln!(out, "  {:<10}  Create a new plan from template", "scaffold");

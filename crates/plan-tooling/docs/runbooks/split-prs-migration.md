@@ -1,7 +1,8 @@
 # split-prs Migration
 
 ## Objective
-Migrate plan task splitting from embedded downstream logic to `plan-tooling split-prs` with deterministic output compatibility.
+Migrate plan task splitting from embedded downstream logic to `plan-tooling split-prs` with
+deterministic and auto strategy compatibility.
 
 ## Before / After
 Before:
@@ -21,6 +22,18 @@ plan-tooling split-prs \
   [--pr-group <task=group>]... \
   --strategy deterministic \
   --format tsv > <out.tsv>
+```
+
+Auto group example (no full manual mapping):
+
+```bash
+plan-tooling split-prs \
+  --file <plan.md> \
+  --scope sprint \
+  --sprint <n> \
+  --pr-grouping group \
+  --strategy auto \
+  --format json
 ```
 
 ## Required Compatibility
@@ -44,17 +57,19 @@ plan-tooling split-prs \
 - Use `per-sprint` when one shared PR should represent all sprint tasks.
 - Use `group` for mixed isolated/shared PR shapes.
 - In `pr-grouping=group` + `strategy=deterministic`, every selected task must have an explicit mapping.
-- In `pr-grouping=group` + `strategy=auto` (future runtime), explicit mappings are optional pins and remaining tasks are auto-assigned.
+- In `pr-grouping=group` + `strategy=auto`, explicit mappings are optional pins and remaining tasks are auto-assigned.
 
 ## Auto Strategy Status
-- `--strategy auto` is intentionally not implemented in v1.
-- Current message references planned scoring factors: `Complexity`, `Location`, `Dependencies`.
-- Contract is fixed ahead of runtime work: auto grouping remains deterministic and uses stable tie-break keys.
+- `--strategy auto` is implemented in v1 runtime.
+- Grouping uses deterministic heuristics from `Complexity`, dependency topology, and `Location`.
+- Explicit `--pr-group` mappings in auto/group mode are optional pins and still validated.
+- Output ordering and notes schema remain deterministic and backward compatible.
 
 ## Release Gate Checklist
 1. Verify deterministic command output against fixture expectations.
-2. Verify downstream consumers still parse TSV columns/notes without changes.
-3. Verify fallback/rollback command sequence is documented before rollout.
+2. Verify auto/group output is byte-stable across repeated runs.
+3. Verify downstream consumers still parse TSV columns/notes without changes.
+4. Verify fallback/rollback command sequence is documented before rollout.
 
 ## Deterministic Rollback Command Path
 If auto rollout is disabled or deferred, keep downstream command paths pinned to deterministic mode:
@@ -75,3 +90,23 @@ If downstream integration fails:
 1. Keep `split-prs` implementation intact.
 2. Revert downstream invocation wiring only.
 3. Re-run fixture parity checks and reopen cutover PR once fixed.
+
+## Emergency Switchback (Restore Auto to Not-Implemented)
+Use this only if production incidents require disabling auto runtime behavior in the CLI itself.
+
+Impacted files:
+- `crates/plan-tooling/src/split_prs.rs`
+- `crates/plan-tooling/tests/split_prs.rs`
+- `crates/plan-tooling/docs/specs/split-prs-contract-v1.md`
+- `crates/plan-tooling/README.md`
+
+Switchback commands:
+
+```bash
+# Revert the auto-runtime introduction commit from issue #220 Sprint 2.
+git revert --no-edit e1cdc5a
+
+# Validate fallback behavior and deterministic guardrails.
+cargo test -p nils-plan-tooling --test split_prs split_prs_auto_not_implemented -- --exact
+cargo test -p nils-plan-tooling --test split_prs split_prs_error_group_requires_mapping -- --exact
+```

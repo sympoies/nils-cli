@@ -10,7 +10,7 @@ const USAGE: &str = r#"Usage:
   plan-tooling split-prs --file <plan.md> --pr-grouping <per-sprint|group> [options]
 
 Purpose:
-  Build deterministic task-to-PR split records from a Plan Format v1 file.
+  Build task-to-PR split records from a Plan Format v1 file.
 
 Required:
   --file <path>                    Plan file to parse
@@ -19,7 +19,9 @@ Required:
 Options:
   --scope <plan|sprint>            Scope to split (default: sprint)
   --sprint <n>                     Sprint number when --scope sprint
-  --pr-group <task=group>          Explicit mapping; repeatable (group mode only)
+  --pr-group <task=group>          Group pin; repeatable (group mode only)
+                                   deterministic/group: required for every task
+                                   auto/group: optional pins + auto assignment for remaining tasks
   --strategy <deterministic|auto>  Split strategy (default: deterministic)
   --owner-prefix <text>            Owner prefix (default: subagent)
   --branch-prefix <text>           Branch prefix (default: issue)

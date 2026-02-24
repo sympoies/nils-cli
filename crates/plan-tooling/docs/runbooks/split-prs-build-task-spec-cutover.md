@@ -41,7 +41,8 @@ And preserve these notes keys:
 - optional `shared-pr-anchor=...` when a group has more than one task
 
 ## Group Mode Rules
-- `--pr-grouping group` requires explicit `--pr-group` for every selected task.
+- `--pr-grouping group` + `--strategy deterministic` requires explicit `--pr-group` for every selected task.
+- `--pr-grouping group` + `--strategy auto` accepts optional `--pr-group` pins and auto-assigns remaining tasks.
 - mapping key accepts either `SxTy` or plan task id (`Task N.M`).
 - shared group output should map to one PR (`pr-shared` downstream execution mode).
 
@@ -83,8 +84,10 @@ changing heuristics.
 
 ```bash
 LOCAL_CORPUS="/Users/terry/Project/graysurf/nils-cli/docs/plans"
+OUT_DIR="${AGENT_HOME}/out/plan-tooling-split-prs"
 
 if [ -d "$LOCAL_CORPUS" ]; then
+  mkdir -p "$OUT_DIR"
   find "$LOCAL_CORPUS" -name '*-plan.md' -exec plan-tooling validate --file '{}' ';'
 
   # Deterministic baseline output check for an overlap-heavy plan.
@@ -94,16 +97,25 @@ if [ -d "$LOCAL_CORPUS" ]; then
     --sprint 2 \
     --pr-grouping per-sprint \
     --strategy deterministic \
-    --format json | jq -S . > /tmp/split-prs-local-corpus-s2.json
+    --format json | jq -S . > "$OUT_DIR/split-prs-local-corpus-s2-deterministic.json"
+
+  # Auto-mode smoke check for generated grouping without manual mapping.
+  plan-tooling split-prs \
+    --file "$LOCAL_CORPUS/plan-tooling-split-prs-cutover-plan.md" \
+    --scope sprint \
+    --sprint 2 \
+    --pr-grouping group \
+    --strategy auto \
+    --format json | jq -S . > "$OUT_DIR/split-prs-local-corpus-s2-auto.json"
 
   # Conflict-risk visibility: inspect shared-group concentration by sprint record.
   jq -r '.records[] | [.task_id, .pr_group, .summary] | @tsv' \
-    /tmp/split-prs-local-corpus-s2.json | sort
+    "$OUT_DIR/split-prs-local-corpus-s2-auto.json" | sort
 fi
 ```
 
 ## Auto Strategy
-`--strategy auto` is intentionally non-functional in v1 and returns `not implemented` with planned factors:
-- `Complexity`
-- `Location`
-- `Dependencies`
+`--strategy auto` is implemented in v1 with deterministic grouping semantics:
+- scores merge candidates using `Complexity`, dependency topology, and `Location` overlap.
+- preserves stable output ordering and notes schema.
+- allows optional `--pr-group` pins in `pr-grouping=group`.

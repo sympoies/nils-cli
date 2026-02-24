@@ -103,7 +103,7 @@ fn build_completion_command() -> Command {
         )
         .subcommand(
             Command::new("split-prs")
-                .about("Build deterministic task-to-PR split records")
+                .about("Build task-to-PR split records (deterministic/auto)")
                 .arg(
                     Arg::new("file")
                         .long("file")
@@ -135,14 +135,16 @@ fn build_completion_command() -> Command {
                 .arg(
                     Arg::new("pr-group")
                         .long("pr-group")
-                        .help("Explicit group mapping: <task-or-plan-id>=<group>")
+                        .help(
+                            "Group pin: <task-or-plan-id>=<group> (required in deterministic/group, optional in auto/group)",
+                        )
                         .value_name("mapping")
                         .action(ArgAction::Append),
                 )
                 .arg(
                     Arg::new("strategy")
                         .long("strategy")
-                        .help("Split strategy")
+                        .help("Split strategy (deterministic requires full group mapping)")
                         .value_name("strategy")
                         .value_parser(["deterministic", "auto"]),
                 )
