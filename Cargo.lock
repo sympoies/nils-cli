@@ -1849,6 +1849,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nils-plan-issue-cli"
+version = "0.5.1"
+dependencies = [
+ "clap",
+ "nils-test-support",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "nils-plan-tooling"
 version = "0.5.1"
 dependencies = [
