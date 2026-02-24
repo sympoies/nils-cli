@@ -61,6 +61,7 @@ These tools enable richer behavior. Missing tools typically trigger fallback beh
 | `zsh` | Required for `tests/zsh/completion.test.zsh` | `brew install zsh` |
 | `python3` | `scripts/crates-io-status.sh`, `scripts/publish-crates.sh` | `brew install python` |
 | `bash`, `awk`, `sed` | CI helper scripts in `scripts/ci/` | Typically preinstalled |
+| `rg` (ripgrep) | Required by docs/CI audit scripts (for example `scripts/ci/docs-hygiene-audit.sh`) | `brew install ripgrep` |
 | `bash-completion` | Bash completion loading (optional) | `brew install bash-completion` |
 | `gh` | PR/release operations in GitHub-driven workflows | `brew install gh` |
 
