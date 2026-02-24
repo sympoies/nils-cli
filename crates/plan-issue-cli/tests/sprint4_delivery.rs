@@ -479,3 +479,123 @@ fn live_sprint_commands_start_ready_accept_and_guide_are_deterministic() {
         "{guide_text}"
     );
 }
+
+#[test]
+fn github_adapter_rejects_literal_escaped_newline_without_force() {
+    let tmp = TempDir::new().expect("temp dir");
+    let stub = StubBinDir::new();
+    stub.write_exe("gh", gh_stub_script());
+
+    let log_path = tmp.path().join("gh.log");
+    let log_s = log_path.to_string_lossy().to_string();
+
+    let agent_home = tmp.path().join("agent-home");
+    fs::create_dir_all(&agent_home).expect("agent home");
+    let agent_home_s = agent_home.to_string_lossy().to_string();
+
+    let body_json = json!({"body": issue_body_plan_done()}).to_string();
+
+    let out = common::run_plan_issue_with_options(
+        &[
+            "--format",
+            "json",
+            "--repo",
+            "graysurf/nils-cli",
+            "ready-plan",
+            "--issue",
+            "217",
+            "--summary",
+            r"Final plan review\nPlease confirm",
+            "--no-label-update",
+        ],
+        gh_cmd_options(
+            stub.path(),
+            &[
+                ("PLAN_ISSUE_GH_LOG", &log_s),
+                ("PLAN_ISSUE_GH_BODY_JSON", &body_json),
+                ("AGENT_HOME", &agent_home_s),
+            ],
+        ),
+    );
+
+    assert_eq!(out.code, 1, "stderr: {}", out.stderr);
+    let payload = parse_json(&out.stdout);
+    assert_eq!(payload["status"], "error");
+    assert_eq!(payload["error"]["code"], "github-comment-failed");
+
+    let message = payload["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains(r"\n"), "{message}");
+    assert!(message.contains("--force"), "{message}");
+
+    let log = fs::read_to_string(&log_path).expect("read log");
+    assert!(
+        log.contains("issue view 217 --repo graysurf/nils-cli --json body"),
+        "{log}"
+    );
+    assert!(
+        !log.contains("issue comment 217 --repo graysurf/nils-cli --body-file"),
+        "{log}"
+    );
+}
+
+#[test]
+fn github_adapter_force_flag_allows_literal_escaped_newline() {
+    let tmp = TempDir::new().expect("temp dir");
+    let stub = StubBinDir::new();
+    stub.write_exe("gh", gh_stub_script());
+
+    let log_path = tmp.path().join("gh.log");
+    let log_s = log_path.to_string_lossy().to_string();
+
+    let agent_home = tmp.path().join("agent-home");
+    fs::create_dir_all(&agent_home).expect("agent home");
+    let agent_home_s = agent_home.to_string_lossy().to_string();
+
+    let comment_capture = tmp.path().join("ready-plan-force-comment.md");
+    let comment_capture_s = comment_capture.to_string_lossy().to_string();
+
+    let body_json = json!({"body": issue_body_plan_done()}).to_string();
+
+    let out = common::run_plan_issue_with_options(
+        &[
+            "--format",
+            "json",
+            "--force",
+            "--repo",
+            "graysurf/nils-cli",
+            "ready-plan",
+            "--issue",
+            "217",
+            "--summary",
+            r"Final plan review\nPlease confirm",
+            "--no-label-update",
+        ],
+        gh_cmd_options(
+            stub.path(),
+            &[
+                ("PLAN_ISSUE_GH_LOG", &log_s),
+                ("PLAN_ISSUE_GH_BODY_JSON", &body_json),
+                ("PLAN_ISSUE_GH_CAPTURE_COMMENT_FILE", &comment_capture_s),
+                ("AGENT_HOME", &agent_home_s),
+            ],
+        ),
+    );
+
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+    let payload = parse_json(&out.stdout);
+    assert_eq!(payload["status"], "ok");
+    assert_eq!(
+        payload["payload"]["result"]["comment_posted"], true,
+        "{}",
+        out.stdout
+    );
+
+    let log = fs::read_to_string(&log_path).expect("read log");
+    assert!(
+        log.contains("issue comment 217 --repo graysurf/nils-cli --body-file"),
+        "{log}"
+    );
+
+    let captured_comment = fs::read_to_string(&comment_capture).expect("captured comment");
+    assert!(captured_comment.contains(r"\n"), "{captured_comment}");
+}

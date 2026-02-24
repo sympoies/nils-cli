@@ -57,6 +57,7 @@ pub mod clipboard;
 pub mod env;
 pub mod fs;
 pub mod git;
+pub mod markdown;
 pub mod process;
 pub mod provider_runtime;
 pub mod shell;

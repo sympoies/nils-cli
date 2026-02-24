@@ -1,6 +1,8 @@
+use std::fs;
 use std::path::Path;
 
 use nils_common::git as common_git;
+use nils_common::markdown;
 use nils_common::process as common_process;
 use serde_json::Value;
 
@@ -41,9 +43,15 @@ pub trait GitHubAdapter {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-pub struct GhCliAdapter;
+pub struct GhCliAdapter {
+    force: bool,
+}
 
 impl GhCliAdapter {
+    pub const fn new(force: bool) -> Self {
+        Self { force }
+    }
+
     fn run(args: &[String]) -> Result<String, String> {
         let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
         let output = common_process::run_output("gh", &arg_refs)
@@ -63,6 +71,31 @@ impl GhCliAdapter {
     fn parse_json(stdout: &str, context: &str) -> Result<Value, String> {
         serde_json::from_str(stdout.trim())
             .map_err(|err| format!("failed to parse gh JSON for {context}: {err}"))
+    }
+
+    fn guard_markdown_payload(&self, payload: &str, context: &str) -> Result<(), String> {
+        if self.force {
+            return Ok(());
+        }
+
+        markdown::validate_markdown_payload(payload).map_err(|err| {
+            format!("{context}: {err}. Replace escaped controls or re-run with --force.")
+        })
+    }
+
+    fn guard_markdown_file(&self, path: &Path, context: &str) -> Result<(), String> {
+        if self.force {
+            return Ok(());
+        }
+
+        let payload = fs::read_to_string(path).map_err(|err| {
+            format!(
+                "{context}: failed to read markdown payload {}: {err}",
+                path.display()
+            )
+        })?;
+
+        self.guard_markdown_payload(&payload, context)
     }
 }
 
@@ -93,6 +126,8 @@ impl GitHubAdapter for GhCliAdapter {
         body_file: &Path,
         labels: &[String],
     ) -> Result<(u64, String), String> {
+        self.guard_markdown_file(body_file, "github issue create body write rejected")?;
+
         let mut args = vec![
             "issue".to_string(),
             "create".to_string(),
@@ -120,6 +155,8 @@ impl GitHubAdapter for GhCliAdapter {
     }
 
     fn edit_issue_body(&self, repo: &str, issue: u64, body_file: &Path) -> Result<(), String> {
+        self.guard_markdown_file(body_file, "github issue body update rejected")?;
+
         let args = vec![
             "issue".to_string(),
             "edit".to_string(),
@@ -133,6 +170,8 @@ impl GitHubAdapter for GhCliAdapter {
     }
 
     fn comment_issue(&self, repo: &str, issue: u64, body_file: &Path) -> Result<(), String> {
+        self.guard_markdown_file(body_file, "github issue comment write rejected")?;
+
         let args = vec![
             "issue".to_string(),
             "comment".to_string(),
@@ -213,6 +252,7 @@ impl GitHubAdapter for GhCliAdapter {
         if let Some(comment) = close_comment {
             let trimmed = comment.trim();
             if !trimmed.is_empty() {
+                self.guard_markdown_payload(trimmed, "github issue close comment write rejected")?;
                 args.push("--comment".to_string());
                 args.push(trimmed.to_string());
             }
