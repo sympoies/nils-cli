@@ -148,8 +148,12 @@ fn run_start_plan(
         .clone()
         .unwrap_or_else(|| build.plan_title.clone());
 
-    let issue_body =
-        render::render_plan_issue_body(&build.display_plan_path, &plan_title, &build.rows);
+    let issue_body = render::render_plan_issue_body(
+        &args.plan,
+        &build.display_plan_path,
+        &plan_title,
+        &build.rows,
+    );
     render::write_rendered(&issue_body_out, &issue_body)
         .map_err(|err| CommandError::runtime("issue-body-write-failed", err))?;
 
