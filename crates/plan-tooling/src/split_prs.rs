@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -43,6 +43,9 @@ struct Record {
     worktree: String,
     owner: String,
     notes_parts: Vec<String>,
+    complexity: i32,
+    location_paths: Vec<String>,
+    dependency_keys: Vec<String>,
     pr_group: String,
 }
 
@@ -247,19 +250,9 @@ pub fn run(args: &[String]) -> i32 {
         None
     };
 
-    // Sprint 1 contract freeze for future auto behavior:
-    // - scoring inputs: Complexity, dependency layers, and Location overlap
-    // - optional `--pr-group` entries in group mode act as pinned assignments
-    // - deterministic tie-break keys: Task N.M, then SxTy, then lexical summary
-    // Runtime intentionally remains disabled until the auto assignment engine lands.
-    if strategy == "auto" {
-        eprintln!(
-            "error: split-prs strategy 'auto' is not implemented yet (planned factors: Complexity, Location, Dependencies)"
-        );
-        return 1;
-    }
-
-    if pr_grouping == "group" && pr_group_entries.is_empty() {
+    // Deterministic group mode requires full explicit mappings.
+    // Auto group mode can derive missing assignments from topology/conflict signals.
+    if pr_grouping == "group" && strategy == "deterministic" && pr_group_entries.is_empty() {
         return die(
             "--pr-grouping group requires at least one --pr-group <task-or-plan-id>=<group> entry",
         );
@@ -371,6 +364,17 @@ pub fn run(args: &[String]) -> i32 {
                 .filter(|d| !d.is_empty())
                 .filter(|d| !is_placeholder(d))
                 .collect();
+            let location_paths: Vec<String> = task
+                .location
+                .iter()
+                .map(|p| p.trim().to_string())
+                .filter(|p| !p.is_empty())
+                .filter(|p| !is_placeholder(p))
+                .collect();
+            let complexity = match task.complexity {
+                Some(value) if value > 0 => value,
+                _ => 5,
+            };
 
             let validations: Vec<String> = task
                 .validation
@@ -407,6 +411,9 @@ pub fn run(args: &[String]) -> i32 {
                 worktree: format!("{worktree_prefix_norm}-s{}-t{ordinal}", sprint.number),
                 owner: format!("{owner_prefix_norm}-s{}-t{ordinal}", sprint.number),
                 notes_parts,
+                complexity,
+                location_paths,
+                dependency_keys: deps.clone(),
                 pr_group: String::new(),
             });
         }
@@ -438,7 +445,7 @@ pub fn run(args: &[String]) -> i32 {
         group_assignments.insert(key.to_ascii_lowercase(), group);
     }
 
-    if pr_grouping == "group" {
+    if pr_grouping == "group" && !assignment_sources.is_empty() {
         let mut known: HashMap<String, bool> = HashMap::new();
         for rec in &records {
             known.insert(rec.task_id.to_ascii_lowercase(), true);
@@ -469,33 +476,35 @@ pub fn run(args: &[String]) -> i32 {
     if pr_grouping == "group" {
         let mut missing: Vec<String> = Vec::new();
         for rec in &mut records {
-            let mut found = String::new();
+            rec.pr_group.clear();
             for key in [&rec.task_id, &rec.plan_task_id] {
                 if key.is_empty() {
                     continue;
                 }
                 if let Some(v) = group_assignments.get(&key.to_ascii_lowercase()) {
-                    found = v.to_string();
+                    rec.pr_group = v.to_string();
                     break;
                 }
             }
-            if found.is_empty() {
+            if rec.pr_group.is_empty() {
                 missing.push(rec.task_id.clone());
-            } else {
-                rec.pr_group = found;
             }
         }
-        if !missing.is_empty() {
-            eprintln!(
-                "error: --pr-grouping group requires explicit mapping for every task; missing: {}",
-                missing
-                    .iter()
-                    .take(8)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-            return 1;
+        if strategy == "deterministic" {
+            if !missing.is_empty() {
+                eprintln!(
+                    "error: --pr-grouping group requires explicit mapping for every task; missing: {}",
+                    missing
+                        .iter()
+                        .take(8)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                return 1;
+            }
+        } else if !missing.is_empty() {
+            assign_auto_groups(&mut records);
         }
     } else {
         for rec in &mut records {
@@ -558,6 +567,393 @@ pub fn run(args: &[String]) -> i32 {
             eprintln!("error: failed to encode JSON: {err}");
             1
         }
+    }
+}
+
+#[derive(Debug)]
+struct AutoMergeCandidate {
+    i: usize,
+    j: usize,
+    score_key: i64,
+    key_a: String,
+    key_b: String,
+}
+
+fn assign_auto_groups(records: &mut [Record]) {
+    let mut sprint_to_indices: BTreeMap<i32, Vec<usize>> = BTreeMap::new();
+    for (idx, rec) in records.iter().enumerate() {
+        if rec.pr_group.is_empty() {
+            sprint_to_indices.entry(rec.sprint).or_default().push(idx);
+        }
+    }
+
+    for (sprint, indices) in sprint_to_indices {
+        let assignments = auto_groups_for_sprint(records, sprint, &indices);
+        for (idx, group) in assignments {
+            if let Some(rec) = records.get_mut(idx)
+                && rec.pr_group.is_empty()
+            {
+                rec.pr_group = group;
+            }
+        }
+    }
+}
+
+fn auto_groups_for_sprint(
+    records: &[Record],
+    sprint: i32,
+    indices: &[usize],
+) -> BTreeMap<usize, String> {
+    let mut lookup: HashMap<String, usize> = HashMap::new();
+    for idx in indices {
+        let rec = &records[*idx];
+        lookup.insert(rec.task_id.to_ascii_lowercase(), *idx);
+        if !rec.plan_task_id.is_empty() {
+            lookup.insert(rec.plan_task_id.to_ascii_lowercase(), *idx);
+        }
+    }
+
+    let mut deps: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
+    let mut paths: BTreeMap<usize, BTreeSet<String>> = BTreeMap::new();
+    for idx in indices {
+        let rec = &records[*idx];
+        let mut resolved_deps: BTreeSet<usize> = BTreeSet::new();
+        for dep in &rec.dependency_keys {
+            let dep_key = dep.trim().to_ascii_lowercase();
+            if dep_key.is_empty() {
+                continue;
+            }
+            if let Some(dep_idx) = lookup.get(&dep_key)
+                && dep_idx != idx
+            {
+                resolved_deps.insert(*dep_idx);
+            }
+        }
+        deps.insert(*idx, resolved_deps);
+
+        let normalized_paths: BTreeSet<String> = rec
+            .location_paths
+            .iter()
+            .map(|path| normalize_location_path(path))
+            .filter(|path| !path.is_empty())
+            .collect();
+        paths.insert(*idx, normalized_paths);
+    }
+
+    let batch_by_idx = compute_batch_index(records, indices, &deps);
+    let mut parent: HashMap<usize, usize> = indices.iter().copied().map(|idx| (idx, idx)).collect();
+
+    let mut by_batch: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for idx in indices {
+        let batch = batch_by_idx.get(idx).copied().unwrap_or(0);
+        by_batch.entry(batch).or_default().push(*idx);
+    }
+
+    for members in by_batch.values_mut() {
+        members.sort_by_key(|idx| task_sort_key(records, *idx));
+
+        let mut path_to_members: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        for idx in members {
+            for path in paths.get(idx).into_iter().flatten() {
+                path_to_members.entry(path.clone()).or_default().push(*idx);
+            }
+        }
+        for overlap_members in path_to_members.values() {
+            if overlap_members.len() < 2 {
+                continue;
+            }
+            let first = overlap_members[0];
+            for other in overlap_members.iter().skip(1) {
+                uf_union(&mut parent, first, *other);
+            }
+        }
+    }
+
+    let mut grouped: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
+    for idx in indices {
+        let root = uf_find(&mut parent, *idx);
+        grouped.entry(root).or_default().insert(*idx);
+    }
+    let mut groups: Vec<BTreeSet<usize>> = grouped.into_values().collect();
+
+    loop {
+        let mut candidates: Vec<AutoMergeCandidate> = Vec::new();
+        for i in 0..groups.len() {
+            for j in (i + 1)..groups.len() {
+                let merged_complexity =
+                    group_complexity(records, &groups[i]) + group_complexity(records, &groups[j]);
+                if merged_complexity > 20 {
+                    continue;
+                }
+
+                let dep_cross = dependency_cross_edges(&deps, &groups[i], &groups[j]);
+                let overlap_paths = overlap_path_count(&paths, &groups[i], &groups[j]);
+                let min_group_size = groups[i].len().min(groups[j].len()).max(1) as f64;
+                let dep_affinity = ((dep_cross as f64) / min_group_size).min(1.0);
+                let ovl_affinity = ((overlap_paths as f64) / 2.0).min(1.0);
+                let size_fit = (1.0 - ((merged_complexity as f64 - 12.0).abs() / 12.0)).max(0.0);
+                let span = group_span(&batch_by_idx, &groups[i], &groups[j]);
+                let serial_penalty = ((span as f64 - 1.0).max(0.0)) / 3.0;
+                let oversize_penalty = ((merged_complexity as f64 - 20.0).max(0.0)) / 20.0;
+
+                let score = (0.45 * dep_affinity) + (0.35 * ovl_affinity) + (0.20 * size_fit)
+                    - (0.25 * serial_penalty)
+                    - (0.45 * oversize_penalty);
+                if score < 0.30 {
+                    continue;
+                }
+
+                let mut key_a = group_min_task_key(records, &groups[i]);
+                let mut key_b = group_min_task_key(records, &groups[j]);
+                if key_b < key_a {
+                    std::mem::swap(&mut key_a, &mut key_b);
+                }
+                candidates.push(AutoMergeCandidate {
+                    i,
+                    j,
+                    score_key: (score * 1_000_000.0).round() as i64,
+                    key_a,
+                    key_b,
+                });
+            }
+        }
+
+        if candidates.is_empty() {
+            break;
+        }
+
+        candidates.sort_by(|a, b| {
+            b.score_key
+                .cmp(&a.score_key)
+                .then_with(|| a.key_a.cmp(&b.key_a))
+                .then_with(|| a.key_b.cmp(&b.key_b))
+                .then_with(|| a.i.cmp(&b.i))
+                .then_with(|| a.j.cmp(&b.j))
+        });
+        let chosen = &candidates[0];
+
+        let mut merged = groups[chosen.i].clone();
+        merged.extend(groups[chosen.j].iter().copied());
+        groups[chosen.i] = merged;
+        groups.remove(chosen.j);
+    }
+
+    groups.sort_by(|a, b| {
+        group_min_batch(&batch_by_idx, a)
+            .cmp(&group_min_batch(&batch_by_idx, b))
+            .then_with(|| group_min_task_key(records, a).cmp(&group_min_task_key(records, b)))
+    });
+
+    let mut out: BTreeMap<usize, String> = BTreeMap::new();
+    for (idx, group) in groups.iter().enumerate() {
+        let fallback = format!("s{sprint}-auto-g{}", idx + 1);
+        let group_key = normalize_token(&fallback, &fallback, 48);
+        for member in group {
+            out.insert(*member, group_key.clone());
+        }
+    }
+    out
+}
+
+fn compute_batch_index(
+    records: &[Record],
+    indices: &[usize],
+    deps: &BTreeMap<usize, BTreeSet<usize>>,
+) -> BTreeMap<usize, usize> {
+    let mut in_deg: HashMap<usize, usize> = indices.iter().copied().map(|idx| (idx, 0)).collect();
+    let mut reverse: HashMap<usize, BTreeSet<usize>> = indices
+        .iter()
+        .copied()
+        .map(|idx| (idx, BTreeSet::new()))
+        .collect();
+
+    for idx in indices {
+        for dep in deps.get(idx).cloned().unwrap_or_default() {
+            if !in_deg.contains_key(&dep) {
+                continue;
+            }
+            if let Some(value) = in_deg.get_mut(idx) {
+                *value += 1;
+            }
+            if let Some(children) = reverse.get_mut(&dep) {
+                children.insert(*idx);
+            }
+        }
+    }
+
+    let mut remaining: BTreeSet<usize> = indices.iter().copied().collect();
+    let mut batch_by_idx: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut layer = 0usize;
+    let mut ready: VecDeque<usize> = {
+        let mut start: Vec<usize> = indices
+            .iter()
+            .copied()
+            .filter(|idx| in_deg.get(idx).copied().unwrap_or(0) == 0)
+            .collect();
+        start.sort_by_key(|idx| task_sort_key(records, *idx));
+        start.into_iter().collect()
+    };
+
+    while !remaining.is_empty() {
+        let mut batch_members: Vec<usize> = ready.drain(..).collect();
+        batch_members.sort_by_key(|idx| task_sort_key(records, *idx));
+
+        if batch_members.is_empty() {
+            let mut cycle_members: Vec<usize> = remaining.iter().copied().collect();
+            cycle_members.sort_by_key(|idx| task_sort_key(records, *idx));
+            for idx in cycle_members {
+                remaining.remove(&idx);
+                batch_by_idx.insert(idx, layer);
+            }
+            break;
+        }
+
+        for idx in &batch_members {
+            remaining.remove(idx);
+            batch_by_idx.insert(*idx, layer);
+        }
+
+        let mut next: Vec<usize> = Vec::new();
+        for idx in batch_members {
+            for child in reverse.get(&idx).cloned().unwrap_or_default() {
+                if let Some(value) = in_deg.get_mut(&child) {
+                    *value = value.saturating_sub(1);
+                    if *value == 0 && remaining.contains(&child) {
+                        next.push(child);
+                    }
+                }
+            }
+        }
+        next.sort_by_key(|idx| task_sort_key(records, *idx));
+        next.dedup();
+        ready.extend(next);
+        layer += 1;
+    }
+
+    for idx in indices {
+        batch_by_idx.entry(*idx).or_insert(0);
+    }
+    batch_by_idx
+}
+
+fn task_sort_key(records: &[Record], idx: usize) -> (String, String) {
+    let rec = &records[idx];
+    let primary = if rec.plan_task_id.trim().is_empty() {
+        rec.task_id.to_ascii_lowercase()
+    } else {
+        rec.plan_task_id.to_ascii_lowercase()
+    };
+    (primary, rec.task_id.to_ascii_lowercase())
+}
+
+fn normalize_location_path(path: &str) -> String {
+    path.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
+}
+
+fn group_complexity(records: &[Record], group: &BTreeSet<usize>) -> i32 {
+    group
+        .iter()
+        .map(|idx| records[*idx].complexity.max(1))
+        .sum::<i32>()
+}
+
+fn group_min_task_key(records: &[Record], group: &BTreeSet<usize>) -> String {
+    group
+        .iter()
+        .map(|idx| task_sort_key(records, *idx).0)
+        .min()
+        .unwrap_or_default()
+}
+
+fn group_min_batch(batch_by_idx: &BTreeMap<usize, usize>, group: &BTreeSet<usize>) -> usize {
+    group
+        .iter()
+        .filter_map(|idx| batch_by_idx.get(idx).copied())
+        .min()
+        .unwrap_or(0)
+}
+
+fn group_span(
+    batch_by_idx: &BTreeMap<usize, usize>,
+    left: &BTreeSet<usize>,
+    right: &BTreeSet<usize>,
+) -> usize {
+    let mut min_batch = usize::MAX;
+    let mut max_batch = 0usize;
+    for idx in left.union(right) {
+        let batch = batch_by_idx.get(idx).copied().unwrap_or(0);
+        min_batch = min_batch.min(batch);
+        max_batch = max_batch.max(batch);
+    }
+    if min_batch == usize::MAX {
+        0
+    } else {
+        max_batch.saturating_sub(min_batch)
+    }
+}
+
+fn dependency_cross_edges(
+    deps: &BTreeMap<usize, BTreeSet<usize>>,
+    left: &BTreeSet<usize>,
+    right: &BTreeSet<usize>,
+) -> usize {
+    let mut count = 0usize;
+    for src in left {
+        if let Some(edges) = deps.get(src) {
+            count += edges.iter().filter(|dep| right.contains(dep)).count();
+        }
+    }
+    for src in right {
+        if let Some(edges) = deps.get(src) {
+            count += edges.iter().filter(|dep| left.contains(dep)).count();
+        }
+    }
+    count
+}
+
+fn overlap_path_count(
+    paths: &BTreeMap<usize, BTreeSet<String>>,
+    left: &BTreeSet<usize>,
+    right: &BTreeSet<usize>,
+) -> usize {
+    let mut left_paths: BTreeSet<String> = BTreeSet::new();
+    let mut right_paths: BTreeSet<String> = BTreeSet::new();
+    for idx in left {
+        for path in paths.get(idx).into_iter().flatten() {
+            left_paths.insert(path.clone());
+        }
+    }
+    for idx in right {
+        for path in paths.get(idx).into_iter().flatten() {
+            right_paths.insert(path.clone());
+        }
+    }
+    left_paths.intersection(&right_paths).count()
+}
+
+fn uf_find(parent: &mut HashMap<usize, usize>, node: usize) -> usize {
+    let parent_node = parent.get(&node).copied().unwrap_or(node);
+    if parent_node == node {
+        return node;
+    }
+    let root = uf_find(parent, parent_node);
+    parent.insert(node, root);
+    root
+}
+
+fn uf_union(parent: &mut HashMap<usize, usize>, left: usize, right: usize) {
+    let left_root = uf_find(parent, left);
+    let right_root = uf_find(parent, right);
+    if left_root == right_root {
+        return;
+    }
+    if left_root < right_root {
+        parent.insert(right_root, left_root);
+    } else {
+        parent.insert(left_root, right_root);
     }
 }
 
