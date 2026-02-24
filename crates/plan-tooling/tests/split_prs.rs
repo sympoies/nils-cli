@@ -290,9 +290,23 @@ fn split_prs_non_regression_auto_sparse_plan_scaffold() {
             "json",
         ],
     );
-    // Baseline guard: sparse metadata plans must still hit the stable "not implemented" gate.
-    assert_eq!(out.code, 1);
-    assert!(out.stderr.contains("not implemented"), "{}", out.stderr);
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+
+    let value: Value = serde_json::from_str(&out.stdout).expect("json");
+    assert_eq!(value["strategy"], "auto");
+    assert_eq!(value["pr_grouping"], "group");
+
+    let records = value["records"].as_array().expect("records");
+    assert_eq!(records.len(), 2);
+
+    for record in records {
+        let group = record["pr_group"].as_str().unwrap_or_default();
+        let notes = record["notes"].as_str().unwrap_or_default();
+        assert!(group.starts_with("s1-auto-g"), "{group}");
+        assert!(notes.contains("pr-grouping=group"), "{notes}");
+        assert!(notes.contains(&format!("pr-group={group}")), "{notes}");
+        assert!(notes.contains("shared-pr-anchor=S1T1"), "{notes}");
+    }
 }
 
 #[test]
@@ -321,9 +335,27 @@ fn split_prs_non_regression_auto_overlap_heavy_plan_scaffold() {
             "json",
         ],
     );
-    // Baseline guard: overlap-heavy plans use the same auto gate until Sprint 2 runtime lands.
-    assert_eq!(out.code, 1);
-    assert!(out.stderr.contains("not implemented"), "{}", out.stderr);
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+
+    let value: Value = serde_json::from_str(&out.stdout).expect("json");
+    assert_eq!(value["strategy"], "auto");
+    assert_eq!(value["pr_grouping"], "group");
+
+    let records = value["records"].as_array().expect("records");
+    assert_eq!(records.len(), 3);
+
+    let mut unique_groups = std::collections::BTreeSet::new();
+    for record in records {
+        let group = record["pr_group"].as_str().unwrap_or_default();
+        let notes = record["notes"].as_str().unwrap_or_default();
+        unique_groups.insert(group.to_string());
+        assert!(group.starts_with("s1-auto-g"), "{group}");
+        assert!(notes.contains("pr-grouping=group"), "{notes}");
+        assert!(notes.contains(&format!("pr-group={group}")), "{notes}");
+        assert!(notes.contains("shared-pr-anchor=S1T1"), "{notes}");
+    }
+
+    assert_eq!(unique_groups.len(), 1);
 }
 
 #[test]
