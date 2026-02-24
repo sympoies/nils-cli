@@ -40,6 +40,9 @@ Help:
 - `split-prs --file <plan.md> --scope <plan|sprint> [--sprint <n>] --pr-grouping <per-sprint|group> [--pr-group <task-or-plan-id>=<group>]... [--strategy deterministic|auto] [--format json|tsv]`
 - `--strategy auto` is reserved for future scoring based on `Complexity`, `Location`, and
   `Dependencies`; in v1 it intentionally returns `not implemented`.
+- deterministic examples:
+  - `split-prs --file docs/plans/example-plan.md --scope sprint --sprint 1 --pr-grouping per-sprint --format tsv`
+  - `split-prs --file docs/plans/example-plan.md --scope sprint --sprint 2 --pr-grouping group --pr-group S2T1=isolated --pr-group S2T2=shared --pr-group S2T3=shared --format json`
 
 ### scaffold
 - `scaffold --slug <kebab-case> [--title <title>] [--force]`: Write to
@@ -57,3 +60,4 @@ Help:
 ## Docs
 
 - [Docs index](docs/README.md)
+- [Migration runbook](docs/runbooks/split-prs-migration.md)

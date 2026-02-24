@@ -18,6 +18,15 @@ fn fixture_text(name: &str) -> String {
     fs::read_to_string(fixture_path(name)).expect("fixture exists")
 }
 
+fn tsv_rows(name: &str) -> Vec<Vec<String>> {
+    fixture_text(name)
+        .lines()
+        .skip(1)
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.split('\t').map(|part| part.to_string()).collect())
+        .collect()
+}
+
 #[test]
 fn split_prs_deterministic_per_sprint_tsv_matches_fixture() {
     let dir = TempDir::new().expect("tempdir");
@@ -177,6 +186,33 @@ fn split_prs_fixture_tsv_header_is_stable() {
             first,
             "# task_id\tsummary\tbranch\tworktree\towner\tnotes\tpr_group"
         );
+    }
+}
+
+#[test]
+fn split_prs_non_regression_required_notes_keys() {
+    for row in tsv_rows("per_sprint_expected.tsv") {
+        assert_eq!(row.len(), 7);
+        let notes = &row[5];
+        assert!(notes.contains("sprint=S1"));
+        assert!(notes.contains("plan-task:Task "));
+        assert!(notes.contains("pr-grouping=per-sprint"));
+        assert!(notes.contains("pr-group=s1"));
+    }
+}
+
+#[test]
+fn split_prs_non_regression_shared_anchor_rules() {
+    for row in tsv_rows("group_expected.tsv") {
+        assert_eq!(row.len(), 7);
+        let task_id = &row[0];
+        let notes = &row[5];
+        assert!(notes.contains("pr-grouping=group"));
+        if task_id == "S2T1" {
+            assert!(!notes.contains("shared-pr-anchor="));
+        } else {
+            assert!(notes.contains("shared-pr-anchor=S2T2"));
+        }
     }
 }
 

@@ -11,6 +11,8 @@
 
 - [`split-prs Build Task-Spec Cutover`](runbooks/split-prs-build-task-spec-cutover.md):
   command mapping and parity checks for downstream `build-task-spec` migration.
+- [`split-prs Migration`](runbooks/split-prs-migration.md): rollout, compatibility contract,
+  and rollback checklist for adopting `split-prs`.
 
 ## Reports
 
