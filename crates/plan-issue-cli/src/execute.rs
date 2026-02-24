@@ -904,11 +904,7 @@ fn run_multi_sprint_guide(args: &MultiSprintGuideArgs) -> Result<Value, CommandE
         .map(|s| s.number)
         .max()
         .unwrap_or(from_sprint);
-    let to_sprint = args
-        .to_sprint
-        .map(i32::from)
-        .unwrap_or(max_sprint)
-        .max(from_sprint);
+    let to_sprint = args.to_sprint.map(i32::from).unwrap_or(max_sprint);
 
     if to_sprint < from_sprint {
         return Err(CommandError::usage(
