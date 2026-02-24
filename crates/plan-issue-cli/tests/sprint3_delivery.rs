@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 
 use pretty_assertions::assert_eq;
@@ -65,6 +66,68 @@ fn task_spec_generation_build_task_spec_writes_grouped_rows() {
     assert!(rendered.contains("\ts3-a"), "{rendered}");
     assert!(rendered.contains("\ts3-b"), "{rendered}");
     assert!(rendered.contains("\ts3-c"), "{rendered}");
+}
+
+#[test]
+fn strategy_auto_partial_mapping_allows_unmapped_rows() {
+    let tmp = TempDir::new().expect("temp dir");
+    let out_path = tmp.path().join("sprint3-auto.tsv");
+    let out_path_s = out_path.to_string_lossy().to_string();
+
+    let out = common::run_plan_issue(&[
+        "--format",
+        "json",
+        "build-task-spec",
+        "--plan",
+        PLAN_PATH,
+        "--sprint",
+        "3",
+        "--pr-grouping",
+        "group",
+        "--strategy",
+        "auto",
+        "--pr-group",
+        "S3T3=manual-docs",
+        "--task-spec-out",
+        &out_path_s,
+    ]);
+
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+    let payload = parse_json(&out.stdout);
+    assert_eq!(payload["command"], "build-task-spec");
+    assert_eq!(payload["status"], "ok");
+
+    let rendered = fs::read_to_string(&out_path).expect("read task-spec");
+    let mut groups_by_task: HashMap<String, String> = HashMap::new();
+    let mut notes_by_task: HashMap<String, String> = HashMap::new();
+    for row in rendered.lines().filter(|line| line.starts_with("S3T")) {
+        let cols: Vec<&str> = row.split('\t').collect();
+        assert_eq!(cols.len(), 7, "unexpected row: {row}");
+        groups_by_task.insert(cols[0].to_string(), cols[6].to_string());
+        notes_by_task.insert(cols[0].to_string(), cols[5].to_string());
+    }
+    assert_eq!(groups_by_task.len(), 3, "{rendered}");
+
+    let pinned = groups_by_task.get("S3T3").expect("S3T3 group");
+    assert_eq!(pinned, "manual-docs");
+    assert!(
+        notes_by_task
+            .get("S3T3")
+            .expect("S3T3 notes")
+            .contains("pr-group=manual-docs")
+    );
+
+    for task_id in ["S3T1", "S3T2"] {
+        let group = groups_by_task.get(task_id).expect("auto-assigned group");
+        assert!(group.starts_with("s3-auto-g"), "{group}");
+        assert_ne!(group, pinned);
+        assert!(
+            notes_by_task
+                .get(task_id)
+                .expect("notes by task")
+                .contains(&format!("pr-group={group}"))
+        );
+    }
 }
 
 #[test]

@@ -2,6 +2,11 @@ use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::PathBuf;
 
+use plan_tooling::parse::parse_plan_with_display;
+use plan_tooling::split_prs::{
+    SplitPlanOptions, SplitPrGrouping, SplitPrStrategy, SplitScope, build_split_plan_records,
+    select_sprints_for_scope,
+};
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use tempfile::TempDir;
@@ -27,6 +32,14 @@ fn tsv_rows(name: &str) -> Vec<Vec<String>> {
         .filter(|line| !line.trim().is_empty())
         .map(|line| line.split('\t').map(|part| part.to_string()).collect())
         .collect()
+}
+
+fn parsed_fixture_plan(name: &str) -> plan_tooling::parse::Plan {
+    let path = fixture_path(name);
+    let (plan, errors) =
+        parse_plan_with_display(&path, &path.to_string_lossy()).expect("fixture parses");
+    assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
+    plan
 }
 
 #[test]
@@ -89,6 +102,83 @@ fn split_prs_deterministic_group_json_matches_fixture() {
 
     expected["file"] = actual["file"].clone();
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn split_prs_library_core_auto_group_records_are_deterministic() {
+    let plan = parsed_fixture_plan("duck-plan.md");
+    let selected =
+        select_sprints_for_scope(&plan, SplitScope::Sprint(2)).expect("scope selection");
+    let options = SplitPlanOptions {
+        pr_grouping: SplitPrGrouping::Group,
+        strategy: SplitPrStrategy::Auto,
+        pr_group_entries: vec![],
+        owner_prefix: "subagent".to_string(),
+        branch_prefix: "issue".to_string(),
+        worktree_prefix: "issue__".to_string(),
+    };
+
+    let first = build_split_plan_records(&selected, &options).expect("first run");
+    let second = build_split_plan_records(&selected, &options).expect("second run");
+    assert_eq!(first, second);
+    assert_eq!(first.len(), 3);
+
+    let mut group_by_task: HashMap<String, String> = HashMap::new();
+    let mut notes_by_task: HashMap<String, String> = HashMap::new();
+    for record in &first {
+        group_by_task.insert(record.task_id.clone(), record.pr_group.clone());
+        notes_by_task.insert(record.task_id.clone(), record.notes.clone());
+        assert!(record.pr_group.starts_with("s2-auto-g"), "{}", record.pr_group);
+        assert!(
+            record.notes.contains("pr-grouping=group"),
+            "{}",
+            record.notes
+        );
+        assert!(
+            record.notes.contains(&format!("pr-group={}", record.pr_group)),
+            "{}",
+            record.notes
+        );
+    }
+
+    assert_eq!(
+        group_by_task.get("S2T1"),
+        group_by_task.get("S2T2"),
+        "same-layer overlap should be grouped"
+    );
+    assert!(
+        notes_by_task
+            .get("S2T1")
+            .expect("S2T1 notes")
+            .contains("shared-pr-anchor=S2T1")
+    );
+    assert!(
+        notes_by_task
+            .get("S2T2")
+            .expect("S2T2 notes")
+            .contains("shared-pr-anchor=S2T1")
+    );
+}
+
+#[test]
+fn split_prs_library_core_deterministic_group_requires_mapping() {
+    let plan = parsed_fixture_plan("duck-plan.md");
+    let selected =
+        select_sprints_for_scope(&plan, SplitScope::Sprint(2)).expect("scope selection");
+    let options = SplitPlanOptions {
+        pr_grouping: SplitPrGrouping::Group,
+        strategy: SplitPrStrategy::Deterministic,
+        pr_group_entries: vec![],
+        owner_prefix: "subagent".to_string(),
+        branch_prefix: "issue".to_string(),
+        worktree_prefix: "issue__".to_string(),
+    };
+
+    let err = build_split_plan_records(&selected, &options).expect_err("must reject");
+    assert!(
+        err.contains("--pr-grouping group requires at least one --pr-group"),
+        "{err}"
+    );
 }
 
 #[test]

@@ -61,7 +61,7 @@ fn output_json_contract_error_envelope_contains_code_and_message() {
     assert!(
         payload["error"]["message"]
             .as_str()
-            .is_some_and(|value| value.contains("requires at least one --pr-group")),
+            .is_some_and(|value| value.contains("with --strategy deterministic")),
         "{}",
         out.stdout
     );
@@ -123,6 +123,6 @@ fn output_text_contract_error_output_is_deterministic() {
     assert_eq!(lines[3], "code: invalid-pr-grouping");
     assert_eq!(
         lines[4],
-        "message: --pr-grouping group requires at least one --pr-group"
+        "message: --pr-grouping group with --strategy deterministic requires --pr-group mappings"
     );
 }

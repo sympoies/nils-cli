@@ -4,7 +4,7 @@ pub mod parse;
 mod repo_root;
 mod repr;
 mod scaffold;
-mod split_prs;
+pub mod split_prs;
 mod usage;
 mod validate;
 
