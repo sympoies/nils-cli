@@ -2,8 +2,8 @@
 
 ## Overview
 plan-tooling works with Plan Format v1 markdown files. It can parse plans to JSON, validate plan
-files, compute dependency batches for a sprint, scaffold new plans, and generate deterministic
-task-to-PR split specs.
+files, compute dependency batches for a sprint, scaffold new plans, and generate task-to-PR split
+specs in deterministic or auto strategy modes.
 
 ## Usage
 ```text
@@ -14,7 +14,7 @@ Commands:
   to-json   Parse a plan markdown file into a stable JSON schema
   validate  Lint plan markdown files
   batches   Compute dependency layers (parallel batches) for a sprint
-  split-prs Build deterministic task-to-PR split records
+  split-prs Build task-to-PR split records (deterministic/auto)
   scaffold  Create a new plan from template
   help      Display help message
 
@@ -41,13 +41,18 @@ Help:
 - deterministic mode:
   - `--pr-grouping per-sprint`: one shared `pr_group` per sprint (`s<n>`).
   - `--pr-grouping group`: every selected task needs explicit `--pr-group` mapping.
-- strategy auto contract (future behavior, currently returns `not implemented`):
+- auto mode:
   - scoring inputs are `Complexity`, dependency topology, and `Location` overlap.
-  - in `pr-grouping=group`, explicit `--pr-group` mappings pin tasks and remaining tasks are auto-grouped.
+  - in `pr-grouping=group`, explicit `--pr-group` mappings are optional pins; remaining tasks are auto-grouped.
+  - `pr-grouping=per-sprint` keeps one shared group per sprint (`s<n>`).
   - ordering and tie-breakers stay deterministic (`Task N.M`, then `SxTy`, then lexical summary).
 - deterministic examples:
   - `split-prs --file docs/plans/example-plan.md --scope sprint --sprint 1 --pr-grouping per-sprint --format tsv`
   - `split-prs --file docs/plans/example-plan.md --scope sprint --sprint 2 --pr-grouping group --pr-group S2T1=isolated --pr-group S2T2=shared --pr-group S2T3=shared --format json`
+- auto example:
+  - `split-prs --file docs/plans/example-plan.md --scope sprint --sprint 2 --pr-grouping group --strategy auto --format json`
+- rollback switchback:
+  - if auto rollout is unhealthy, pin orchestration calls to `--strategy deterministic` until follow-up fixes land.
 
 ### scaffold
 - `scaffold --slug <kebab-case> [--title <title>] [--force]`: Write to
