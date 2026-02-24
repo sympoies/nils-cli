@@ -26,8 +26,8 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Install zsh + xvfb
-        run: sudo apt-get update && sudo apt-get install -y zsh xvfb xauth
+      - name: Install zsh + xvfb + ripgrep
+        run: sudo apt-get update && sudo apt-get install -y zsh xvfb xauth ripgrep
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
@@ -79,8 +79,8 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Install xvfb
-        run: sudo apt-get update && sudo apt-get install -y xvfb xauth
+      - name: Install xvfb + ripgrep
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth ripgrep
 
       - name: Install cargo tools
         uses: taiki-e/install-action@v2
