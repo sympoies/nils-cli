@@ -20,6 +20,7 @@ pub fn dispatch(args: &[String]) -> i32 {
         "to-json" => crate::parse::to_json::run(&args[2..]),
         "validate" => validate::run(&args[2..]),
         "batches" => batches::run(&args[2..]),
+        "split-prs" => crate::split_prs::run(&args[2..]),
         "scaffold" => scaffold::run(&args[2..]),
         "completion" => crate::completion::run(&args[2..]),
         other => {
@@ -70,6 +71,11 @@ fn print_help(stderr: bool) {
         out,
         "  {:<10}  Compute dependency layers (parallel batches) for a sprint",
         "batches"
+    );
+    let _ = writeln!(
+        out,
+        "  {:<10}  Build deterministic task-to-PR split records",
+        "split-prs"
     );
     let _ = writeln!(out, "  {:<10}  Create a new plan from template", "scaffold");
     let _ = writeln!(
