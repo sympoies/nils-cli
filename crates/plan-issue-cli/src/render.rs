@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -60,48 +61,36 @@ pub fn default_sprint_comment_path(
 }
 
 pub fn render_plan_issue_body(
+    plan_file: &Path,
     plan_file_display: &str,
     plan_title: &str,
     rows: &[TaskSpecRow],
 ) -> String {
-    let title = if plan_title.trim().is_empty() {
-        let fallback = Path::new(plan_file_display)
+    let fallback_title = if plan_title.trim().is_empty() {
+        Path::new(plan_file_display)
             .file_stem()
             .and_then(|v| v.to_str())
-            .unwrap_or("Plan");
-        fallback.to_string()
+            .unwrap_or("Plan")
+            .to_string()
     } else {
         plan_title.trim().to_string()
     };
 
-    let mut out: Vec<String> = vec![
-        format!("# {title}"),
-        String::new(),
-        "## Goal".to_string(),
-        String::new(),
-        format!(
-            "- Execute plan `{plan_file_display}` end-to-end using one GitHub issue and subagent-owned PRs."
-        ),
-        "- Track sprint progress via issue comments while keeping task/PR state in the issue body.".to_string(),
-        String::new(),
-        "## Acceptance Criteria".to_string(),
-        String::new(),
-        "- All in-scope plan tasks are implemented via subagent PRs and linked in the issue task table."
-            .to_string(),
-        "- Final plan review approval comment URL is recorded.".to_string(),
-        "- The single plan issue closes after close-gate checks pass.".to_string(),
-        String::new(),
-        "## Scope".to_string(),
-        String::new(),
-        format!("- In-scope: tasks defined in `{plan_file_display}`"),
-        "- Out-of-scope: work not represented in the plan task list".to_string(),
-        String::new(),
+    let mut out: Vec<String> = load_pre_sprint_plan_lines(plan_file)
+        .filter(|lines| !lines.is_empty())
+        .unwrap_or_else(|| vec![format!("# {fallback_title}")]);
+
+    if out.last().is_some_and(|line| !line.trim().is_empty()) {
+        out.push(String::new());
+    }
+
+    out.extend([
         "## Task Decomposition".to_string(),
         String::new(),
         "| Task | Summary | Owner | Branch | Worktree | Execution Mode | PR | Status | Notes |"
             .to_string(),
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- |".to_string(),
-    ];
+    ]);
 
     for row in rows {
         let notes = if row.notes.trim().is_empty() {
@@ -122,8 +111,8 @@ pub fn render_plan_issue_body(
         "- `Status` must be one of: `planned`, `in-progress`, `blocked`, `done`.".to_string(),
         "- `Status` = `in-progress` or `done` requires non-`TBD` execution metadata (`Owner`, `Branch`, `Worktree`, `Execution Mode`, `PR`).".to_string(),
         "- `Owner` must be a subagent identifier (contains `subagent`) once the task is assigned; `main-agent` ownership is invalid for implementation tasks.".to_string(),
-        "- `Execution Mode` should be one of: `per-task`, `per-sprint`, `pr-isolated`, `pr-shared` (or `TBD` before assignment).".to_string(),
-        "- `Branch` and `Worktree` uniqueness is enforced only for rows using `Execution Mode = per-task`.".to_string(),
+        "- `Execution Mode` should be one of: `per-sprint`, `pr-isolated`, `pr-shared` (or `TBD` before assignment).".to_string(),
+        "- `Branch` and `Worktree` uniqueness is enforced only for rows using `Execution Mode = pr-isolated`.".to_string(),
         String::new(),
         "## Risks / Uncertainties".to_string(),
         String::new(),
@@ -138,6 +127,58 @@ pub fn render_plan_issue_body(
     ]);
 
     format!("{}\n", out.join("\n"))
+}
+
+fn load_pre_sprint_plan_lines(plan_file: &Path) -> Option<Vec<String>> {
+    let repo_root = detect_repo_root();
+    let resolved = resolve_repo_relative(&repo_root, plan_file);
+    let text = fs::read_to_string(&resolved).ok()?;
+    let lines: Vec<String> = text.lines().map(|line| line.to_string()).collect();
+    if lines.is_empty() {
+        return None;
+    }
+
+    let mut preface_end = lines.len();
+    for (idx, line) in lines.iter().enumerate() {
+        if let Some((level, heading)) = parse_heading(line)
+            && level == 2
+            && parse_sprint_heading_number(&heading) == Some(1)
+        {
+            preface_end = idx;
+            break;
+        }
+    }
+
+    Some(lines.into_iter().take(preface_end).collect())
+}
+
+fn parse_sprint_heading_number(heading: &str) -> Option<i32> {
+    let normalized = heading.trim().to_ascii_lowercase();
+    let rest = normalized.strip_prefix("sprint ")?;
+    let digits: String = rest.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse::<i32>().ok()
+}
+
+fn parse_heading(line: &str) -> Option<(usize, String)> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('#') {
+        return None;
+    }
+
+    let level = trimmed.chars().take_while(|ch| *ch == '#').count();
+    if !(1..=6).contains(&level) {
+        return None;
+    }
+
+    let heading = trimmed[level..].trim();
+    if heading.is_empty() {
+        None
+    } else {
+        Some((level, heading.to_string()))
+    }
 }
 
 pub fn render_sprint_comment(input: SprintCommentInput<'_>) -> Result<String, String> {

@@ -147,7 +147,13 @@ fn parity_shell_start_comment_template_matches_shell_fixture() {
             "--sprint",
             "1",
             "--pr-grouping",
-            "per-sprint",
+            "group",
+            "--pr-group",
+            "S1T1=s1-foundation",
+            "--pr-group",
+            "S1T2=s1-fixtures",
+            "--pr-group",
+            "S1T3=s1-fixtures",
             "--no-comment",
         ],
         &[("AGENT_HOME", &agent_home_s)],
@@ -161,6 +167,8 @@ fn parity_shell_start_comment_template_matches_shell_fixture() {
     let actual = fs::read_to_string(comment_path).expect("read rendered comment");
     let expected = shell_fixture("comment_template_start.md");
 
+    assert!(actual.contains("pr-isolated"), "{actual}");
+    assert!(actual.contains("pr-shared"), "{actual}");
     assert_eq!(actual.trim(), expected.trim());
 }
 

@@ -98,46 +98,60 @@ fn env_path_with_stub(stub_dir: &Path) -> String {
     format!("{}:{}", stub_dir.display(), base)
 }
 
-fn issue_body_sprint4_planned() -> String {
-    r#"## Task Decomposition
+fn issue_body_with_preface(task_rows: &str) -> String {
+    format!(
+        r#"# Plan: Rust Plan-Issue CLI Full Delivery
+
+## Overview
+
+- This plan delivers a shell-free Rust implementation for the current plan-issue orchestration workflow.
+- The issue body keeps pre-sprint context so sprint commands only sync task table rows.
+
+## Scope
+
+- Maintain one plan issue for the full multi-sprint workflow.
+- Keep pre-sprint sections stable when sprint commands update Task Decomposition.
+
+## Task Decomposition
 
 | Task | Summary | Owner | Branch | Worktree | Execution Mode | PR | Status | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| S3T1 | Implement task-spec generation core using `plan-tooling` | subagent-s3-t1 | issue/s3-t1-implement-task-spec-generation-core-using-plan-t | issue-s3-t1 | per-sprint | #221 | done | sprint=S3; plan-task:Task 3.1 |
+{task_rows}
+"#
+    )
+}
+
+fn issue_body_sprint4_planned() -> String {
+    issue_body_with_preface(
+        r#"| S3T1 | Implement task-spec generation core using `plan-tooling` | subagent-s3-t1 | issue/s3-t1-implement-task-spec-generation-core-using-plan-t | issue-s3-t1 | per-sprint | #221 | done | sprint=S3; plan-task:Task 3.1 |
 | S3T2 | Implement issue-body and sprint-comment rendering engine | subagent-s3-t2 | issue/s3-t2-implement-issue-body-and-sprint-comment-rendering | issue-s3-t2 | per-sprint | #221 | done | sprint=S3; plan-task:Task 3.2 |
 | S3T3 | Implement independent local dry-run workflow | subagent-s3-t3 | issue/s3-t3-implement-independent-local-dry-run-workflow | issue-s3-t3 | per-sprint | #221 | done | sprint=S3; plan-task:Task 3.3 |
 | S4T1 | Implement GitHub adapter abstraction and `gh` backend | TBD | TBD | TBD | TBD | TBD | planned | sprint=S4; plan-task:Task 4.1 |
 | S4T2 | Implement live plan-level commands | TBD | TBD | TBD | TBD | TBD | planned | sprint=S4; plan-task:Task 4.2 |
 | S4T3 | Implement live sprint-level commands and guide output | TBD | TBD | TBD | TBD | TBD | planned | sprint=S4; plan-task:Task 4.3 |
-"#
-    .to_string()
+"#,
+    )
 }
 
 fn issue_body_sprint4_in_progress() -> String {
-    r#"## Task Decomposition
-
-| Task | Summary | Owner | Branch | Worktree | Execution Mode | PR | Status | Notes |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| S3T1 | Implement task-spec generation core using `plan-tooling` | subagent-s3-t1 | issue/s3-t1-implement-task-spec-generation-core-using-plan-t | issue-s3-t1 | per-sprint | #221 | done | sprint=S3; plan-task:Task 3.1 |
+    issue_body_with_preface(
+        r#"| S3T1 | Implement task-spec generation core using `plan-tooling` | subagent-s3-t1 | issue/s3-t1-implement-task-spec-generation-core-using-plan-t | issue-s3-t1 | per-sprint | #221 | done | sprint=S3; plan-task:Task 3.1 |
 | S3T2 | Implement issue-body and sprint-comment rendering engine | subagent-s3-t2 | issue/s3-t2-implement-issue-body-and-sprint-comment-rendering | issue-s3-t2 | per-sprint | #221 | done | sprint=S3; plan-task:Task 3.2 |
 | S3T3 | Implement independent local dry-run workflow | subagent-s3-t3 | issue/s3-t3-implement-independent-local-dry-run-workflow | issue-s3-t3 | per-sprint | #221 | done | sprint=S3; plan-task:Task 3.3 |
 | S4T1 | Implement GitHub adapter abstraction and `gh` backend | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #222 | in-progress | sprint=S4; plan-task:Task 4.1 |
 | S4T2 | Implement live plan-level commands | subagent-s4-t2 | issue/s4-t2-implement-live-plan-level-commands | issue-s4-t2 | per-sprint | #223 | in-progress | sprint=S4; plan-task:Task 4.2 |
 | S4T3 | Implement live sprint-level commands and guide output | subagent-s4-t3 | issue/s4-t3-implement-live-sprint-level-commands-and-guide-out | issue-s4-t3 | per-sprint | #224 | in-progress | sprint=S4; plan-task:Task 4.3 |
-"#
-    .to_string()
+"#,
+    )
 }
 
 fn issue_body_plan_done() -> String {
-    r#"## Task Decomposition
-
-| Task | Summary | Owner | Branch | Worktree | Execution Mode | PR | Status | Notes |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| S4T1 | Implement GitHub adapter abstraction and `gh` backend | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #222 | done | sprint=S4; plan-task:Task 4.1 |
+    issue_body_with_preface(
+        r#"| S4T1 | Implement GitHub adapter abstraction and `gh` backend | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #222 | done | sprint=S4; plan-task:Task 4.1 |
 | S4T2 | Implement live plan-level commands | subagent-s4-t2 | issue/s4-t2-implement-live-plan-level-commands | issue-s4-t2 | per-sprint | #223 | done | sprint=S4; plan-task:Task 4.2 |
 | S4T3 | Implement live sprint-level commands and guide output | subagent-s4-t3 | issue/s4-t3-implement-live-sprint-level-commands-and-guide-out | issue-s4-t3 | per-sprint | #224 | done | sprint=S4; plan-task:Task 4.3 |
-"#
-    .to_string()
+"#,
+    )
 }
 
 #[test]
@@ -339,6 +353,14 @@ fn live_sprint_commands_start_ready_accept_and_guide_are_deterministic() {
     assert_eq!(start_payload["payload"]["result"]["synced_issue_rows"], 3);
 
     let start_body = fs::read_to_string(&start_capture).expect("captured start body");
+    assert!(
+        start_body.contains("## Overview"),
+        "preface should be preserved\n{start_body}"
+    );
+    assert!(
+        start_body.contains("shell-free Rust implementation"),
+        "preface should be preserved\n{start_body}"
+    );
     assert!(start_body.contains("subagent-s4-t1"), "{start_body}");
     assert!(
         start_body.contains("pr-grouping=per-sprint"),
@@ -409,6 +431,10 @@ fn live_sprint_commands_start_ready_accept_and_guide_are_deterministic() {
 
     assert_eq!(accept_out.code, 0, "stderr: {}", accept_out.stderr);
     let accept_body = fs::read_to_string(&accept_capture).expect("captured accept body");
+    assert!(
+        accept_body.contains("## Overview"),
+        "preface should be preserved\n{accept_body}"
+    );
     assert!(accept_body.contains("| S4T1 |"), "{accept_body}");
     assert!(accept_body.contains("| done |"), "{accept_body}");
 

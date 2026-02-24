@@ -99,10 +99,91 @@ fn render_issue_body_start_plan_writes_issue_body_artifact() {
 
     assert_eq!(out.code, 0, "stderr: {}", out.stderr);
     let rendered = fs::read_to_string(&issue_body).expect("read issue body");
+    assert!(
+        rendered.starts_with("# Plan: Rust Plan-Issue CLI Full Delivery\n\n## Overview\n"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains(
+            "This plan delivers a shell-free Rust implementation for the current plan-issue orchestration workflow"
+        ),
+        "{rendered}"
+    );
+    assert!(rendered.contains("## Scope"), "{rendered}");
+    assert!(rendered.contains("## Assumptions (if any)"), "{rendered}");
+    assert!(rendered.contains("## Success criteria"), "{rendered}");
+    assert!(rendered.contains("## Sprint gate policy"), "{rendered}");
+    assert!(
+        rendered.contains("## Validation command conventions"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("## Goal"), "{rendered}");
     assert!(rendered.contains("## Task Decomposition"), "{rendered}");
     assert!(
         rendered.contains("| S3T1 | Implement task-spec generation core using `plan-tooling` |")
     );
+}
+
+#[test]
+fn render_issue_body_start_plan_falls_back_when_preface_sections_missing() {
+    let tmp = TempDir::new().expect("temp dir");
+    let agent_home = tmp.path().join("agent-home");
+    fs::create_dir_all(&agent_home).expect("create agent home");
+    let agent_home_s = agent_home.to_string_lossy().to_string();
+
+    let plan = tmp.path().join("minimal-plan.md");
+    fs::write(
+        &plan,
+        r#"# Plan: Minimal fallback
+
+## Sprint 1: Minimal
+### Task 1.1: Keep defaults
+- **Location**:
+  - crates/plan-issue-cli/src/render.rs
+- **Description**: Keep fallback issue body text deterministic.
+- **Dependencies**:
+  - none
+- **Complexity**: 1
+- **Acceptance criteria**:
+  - Fallback text is present.
+- **Validation**:
+  - cargo test -p nils-plan-issue-cli render_issue_body_start_plan_falls_back_when_preface_sections_missing -- --exact
+"#,
+    )
+    .expect("write fallback plan");
+
+    let task_spec = tmp.path().join("plan.tsv");
+    let issue_body = tmp.path().join("issue-body.md");
+    let plan_s = plan.to_string_lossy().to_string();
+    let task_spec_s = task_spec.to_string_lossy().to_string();
+    let issue_body_s = issue_body.to_string_lossy().to_string();
+
+    let out = common::run_plan_issue_local_with_env(
+        &[
+            "--format",
+            "json",
+            "--dry-run",
+            "start-plan",
+            "--plan",
+            &plan_s,
+            "--pr-grouping",
+            "per-sprint",
+            "--task-spec-out",
+            &task_spec_s,
+            "--issue-body-out",
+            &issue_body_s,
+        ],
+        &[("AGENT_HOME", &agent_home_s)],
+    );
+
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+    let rendered = fs::read_to_string(&issue_body).expect("read issue body");
+    assert!(
+        rendered.starts_with("# Plan: Minimal fallback"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("## Goal"), "{rendered}");
+    assert!(rendered.contains("## Task Decomposition"), "{rendered}");
 }
 
 #[test]

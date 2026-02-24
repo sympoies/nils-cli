@@ -129,8 +129,8 @@ pub fn parse_task_table(body: &str) -> Result<TaskTable, String> {
 pub fn validate_rows(rows: &[TaskRow]) -> Vec<String> {
     let mut errors = Vec::new();
 
-    let mut per_task_branches: HashMap<String, String> = HashMap::new();
-    let mut per_task_worktrees: HashMap<String, String> = HashMap::new();
+    let mut isolated_branches: HashMap<String, String> = HashMap::new();
+    let mut isolated_worktrees: HashMap<String, String> = HashMap::new();
 
     for row in rows {
         let status = row.status.trim().to_ascii_lowercase();
@@ -148,7 +148,7 @@ pub fn validate_rows(rows: &[TaskRow]) -> Vec<String> {
         let execution_mode = row.execution_mode.trim().to_ascii_lowercase();
         if !matches!(
             execution_mode.as_str(),
-            "per-task" | "per-sprint" | "pr-isolated" | "pr-shared" | "tbd"
+            "per-sprint" | "pr-isolated" | "pr-shared" | "tbd"
         ) {
             errors.push(format!(
                 "{}: invalid Execution Mode `{}`",
@@ -190,12 +190,12 @@ pub fn validate_rows(rows: &[TaskRow]) -> Vec<String> {
             }
         }
 
-        if execution_mode == "per-task" {
+        if execution_mode == "pr-isolated" {
             if !is_placeholder(&row.branch) {
                 let key = row.branch.trim().to_ascii_lowercase();
-                if let Some(prev_task) = per_task_branches.insert(key.clone(), row.task.clone()) {
+                if let Some(prev_task) = isolated_branches.insert(key.clone(), row.task.clone()) {
                     errors.push(format!(
-                        "{}: per-task Branch `{}` duplicates task {}",
+                        "{}: pr-isolated Branch `{}` duplicates task {}",
                         row.task,
                         row.branch.trim(),
                         prev_task
@@ -205,9 +205,9 @@ pub fn validate_rows(rows: &[TaskRow]) -> Vec<String> {
 
             if !is_placeholder(&row.worktree) {
                 let key = row.worktree.trim().to_ascii_lowercase();
-                if let Some(prev_task) = per_task_worktrees.insert(key.clone(), row.task.clone()) {
+                if let Some(prev_task) = isolated_worktrees.insert(key.clone(), row.task.clone()) {
                     errors.push(format!(
-                        "{}: per-task Worktree `{}` duplicates task {}",
+                        "{}: pr-isolated Worktree `{}` duplicates task {}",
                         row.task,
                         row.worktree.trim(),
                         prev_task
@@ -414,5 +414,63 @@ mod tests {
         }];
         let errs = validate_rows(&rows);
         assert!(!errs.is_empty());
+    }
+
+    #[test]
+    fn validate_rows_rejects_per_task_execution_mode() {
+        let rows = [TaskRow {
+            task: "S4T1".to_string(),
+            summary: "x".to_string(),
+            owner: "subagent-s4-t1".to_string(),
+            branch: "issue/s4-t1".to_string(),
+            worktree: "issue-s4-t1".to_string(),
+            execution_mode: "per-task".to_string(),
+            pr: "#1".to_string(),
+            status: "in-progress".to_string(),
+            notes: "sprint=S4".to_string(),
+            line_index: 0,
+        }];
+
+        let errs = validate_rows(&rows);
+        assert_eq!(errs, vec!["S4T1: invalid Execution Mode `per-task`"]);
+    }
+
+    #[test]
+    fn validate_rows_requires_unique_branch_and_worktree_for_pr_isolated_rows() {
+        let rows = [
+            TaskRow {
+                task: "S4T1".to_string(),
+                summary: "x".to_string(),
+                owner: "subagent-s4-t1".to_string(),
+                branch: "issue/s4-shared".to_string(),
+                worktree: "issue-s4-shared".to_string(),
+                execution_mode: "pr-isolated".to_string(),
+                pr: "#1".to_string(),
+                status: "in-progress".to_string(),
+                notes: "sprint=S4".to_string(),
+                line_index: 0,
+            },
+            TaskRow {
+                task: "S4T2".to_string(),
+                summary: "x".to_string(),
+                owner: "subagent-s4-t2".to_string(),
+                branch: "issue/s4-shared".to_string(),
+                worktree: "issue-s4-shared".to_string(),
+                execution_mode: "pr-isolated".to_string(),
+                pr: "#2".to_string(),
+                status: "in-progress".to_string(),
+                notes: "sprint=S4".to_string(),
+                line_index: 1,
+            },
+        ];
+
+        let errs = validate_rows(&rows);
+        assert_eq!(
+            errs,
+            vec![
+                "S4T2: pr-isolated Branch `issue/s4-shared` duplicates task S4T1",
+                "S4T2: pr-isolated Worktree `issue-s4-shared` duplicates task S4T1",
+            ]
+        );
     }
 }

@@ -7,9 +7,9 @@
 
 | Task | Summary | Execution Mode |
 | --- | --- | --- |
-| S1T1 | Define split-prs CLI contract and output schema | per-sprint |
-| S1T2 | Capture deterministic parity fixtures from current task-spec behavior | per-sprint |
-| S1T3 | Define deterministic normalization and error matrix | per-sprint |
+| S1T1 | Define split-prs CLI contract and output schema | pr-isolated |
+| S1T2 | Capture deterministic parity fixtures from current task-spec behavior | pr-shared |
+| S1T3 | Define deterministic normalization and error matrix | pr-shared |
 
 ## Sprint 1: Contract fixtures
 
