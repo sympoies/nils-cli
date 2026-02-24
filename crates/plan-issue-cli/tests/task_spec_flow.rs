@@ -20,6 +20,33 @@ fn result_path(payload: &Value, key: &str) -> String {
         .to_string()
 }
 
+fn render_issue_body_for_local_plan(tmp: &TempDir, agent_home: &str) -> String {
+    let task_spec = tmp.path().join("plan.tsv");
+    let issue_body = tmp.path().join("issue-body.md");
+    let task_spec_s = task_spec.to_string_lossy().to_string();
+    let issue_body_s = issue_body.to_string_lossy().to_string();
+
+    let out = common::run_plan_issue_local_with_env(
+        &[
+            "--format",
+            "json",
+            "--dry-run",
+            "start-plan",
+            "--plan",
+            PLAN_PATH,
+            "--pr-grouping",
+            "per-sprint",
+            "--task-spec-out",
+            &task_spec_s,
+            "--issue-body-out",
+            &issue_body_s,
+        ],
+        &[("AGENT_HOME", agent_home)],
+    );
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+    issue_body_s
+}
+
 #[test]
 fn task_spec_generation_build_task_spec_writes_grouped_rows() {
     let tmp = TempDir::new().expect("temp dir");
@@ -412,5 +439,132 @@ fn local_flow_plan_issue_local_dry_run_end_to_end_generates_artifacts() {
         accepted_comment
             .contains("https://github.com/graysurf/nils-cli/issues/217#issuecomment-123456789"),
         "{accepted_comment}"
+    );
+}
+
+#[test]
+fn local_flow_status_plan_body_file_reports_counts_and_comment_preview() {
+    let tmp = TempDir::new().expect("temp dir");
+    let agent_home = tmp.path().join("agent-home");
+    fs::create_dir_all(&agent_home).expect("create agent home");
+    let agent_home_s = agent_home.to_string_lossy().to_string();
+
+    let issue_body_s = render_issue_body_for_local_plan(&tmp, &agent_home_s);
+    let out = common::run_plan_issue_local_with_env(
+        &[
+            "--format",
+            "json",
+            "status-plan",
+            "--body-file",
+            &issue_body_s,
+            "--comment",
+        ],
+        &[("AGENT_HOME", &agent_home_s)],
+    );
+
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+    let payload = parse_json(&out.stdout);
+    let result = &payload["payload"]["result"];
+    assert_eq!(payload["command"], "status-plan");
+    assert_eq!(payload["status"], "ok");
+    assert!(
+        result["issue_source"]
+            .as_str()
+            .is_some_and(|source| source.starts_with("body-file:")),
+        "{}",
+        out.stdout
+    );
+    assert!(result["task_count"].as_u64().unwrap_or_default() > 0);
+    assert!(
+        result["status_counts"]["planned"]
+            .as_u64()
+            .unwrap_or_default()
+            > 0
+    );
+    assert_eq!(result["comment_requested"], true);
+    assert!(
+        result["comment_preview"]
+            .as_str()
+            .is_some_and(|preview| preview.contains("## Plan Status Snapshot")),
+        "{}",
+        out.stdout
+    );
+}
+
+#[test]
+fn local_flow_ready_plan_body_file_accepts_summary_file_without_comment() {
+    let tmp = TempDir::new().expect("temp dir");
+    let agent_home = tmp.path().join("agent-home");
+    fs::create_dir_all(&agent_home).expect("create agent home");
+    let agent_home_s = agent_home.to_string_lossy().to_string();
+
+    let issue_body_s = render_issue_body_for_local_plan(&tmp, &agent_home_s);
+    let summary_file = tmp.path().join("ready-summary.md");
+    fs::write(&summary_file, "Final plan review from summary file.\n").expect("write summary file");
+    let summary_file_s = summary_file.to_string_lossy().to_string();
+
+    let out = common::run_plan_issue_local_with_env(
+        &[
+            "--format",
+            "json",
+            "ready-plan",
+            "--body-file",
+            &issue_body_s,
+            "--summary-file",
+            &summary_file_s,
+            "--no-label-update",
+            "--no-comment",
+        ],
+        &[("AGENT_HOME", &agent_home_s)],
+    );
+
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+    let payload = parse_json(&out.stdout);
+    let result = &payload["payload"]["result"];
+    assert_eq!(payload["command"], "ready-plan");
+    assert_eq!(payload["status"], "ok");
+    assert_eq!(result["summary"], "Final plan review from summary file.\n");
+    assert_eq!(result["label_update_requested"], false);
+    assert_eq!(result["label_update_applied"], false);
+    assert_eq!(result["comment_requested"], false);
+    assert_eq!(result["comment_posted"], false);
+}
+
+#[test]
+fn local_flow_ready_plan_missing_summary_file_returns_error() {
+    let tmp = TempDir::new().expect("temp dir");
+    let agent_home = tmp.path().join("agent-home");
+    fs::create_dir_all(&agent_home).expect("create agent home");
+    let agent_home_s = agent_home.to_string_lossy().to_string();
+
+    let issue_body_s = render_issue_body_for_local_plan(&tmp, &agent_home_s);
+    let missing_summary = tmp.path().join("missing-summary.md");
+    let missing_summary_s = missing_summary.to_string_lossy().to_string();
+
+    let out = common::run_plan_issue_local_with_env(
+        &[
+            "--format",
+            "json",
+            "ready-plan",
+            "--body-file",
+            &issue_body_s,
+            "--summary-file",
+            &missing_summary_s,
+            "--no-comment",
+        ],
+        &[("AGENT_HOME", &agent_home_s)],
+    );
+
+    assert_eq!(out.code, 1, "stderr: {}", out.stderr);
+    let payload = parse_json(&out.stdout);
+    assert_eq!(payload["command"], "ready-plan");
+    assert_eq!(payload["status"], "error");
+    assert_eq!(payload["error"]["code"], "summary-read-failed");
+    assert!(
+        payload["error"]["message"]
+            .as_str()
+            .is_some_and(|msg| msg.contains("failed to read summary file")),
+        "{}",
+        out.stdout
     );
 }

@@ -93,6 +93,30 @@ fn parity_shell_help_surface_tracks_shell_fixture_commands() {
 }
 
 #[test]
+fn parity_shell_completion_scripts_emit_expected_headers() {
+    let bash_out = common::run_plan_issue(&["completion", "bash"]);
+    assert_eq!(bash_out.code, 0, "stderr: {}", bash_out.stderr);
+    assert!(
+        bash_out.stdout.contains("complete -F"),
+        "{}",
+        bash_out.stdout
+    );
+    assert!(
+        bash_out.stdout.contains("plan-issue"),
+        "{}",
+        bash_out.stdout
+    );
+
+    let zsh_out = common::run_plan_issue_local(&["completion", "zsh"]);
+    assert_eq!(zsh_out.code, 0, "stderr: {}", zsh_out.stderr);
+    assert!(
+        zsh_out.stdout.contains("#compdef plan-issue-local"),
+        "{}",
+        zsh_out.stdout
+    );
+}
+
+#[test]
 fn parity_shell_multi_sprint_guide_matches_shell_fixture_after_normalization() {
     let tmp = TempDir::new().expect("temp dir");
     let agent_home = tmp.path().join("agent-home");
@@ -223,6 +247,34 @@ fn command_guardrails_close_plan_rejects_body_file_without_dry_run() {
     assert_eq!(
         payload["error"]["message"],
         "use either --issue or --body-file for close-plan, not both"
+    );
+}
+
+#[test]
+fn command_guardrails_close_plan_requires_github_comment_url_format() {
+    let tmp = TempDir::new().expect("temp dir");
+    let body_file = tmp.path().join("body.md");
+    fs::write(&body_file, "placeholder body").expect("body file");
+    let body_file_s = body_file.to_string_lossy().to_string();
+
+    let out = common::run_plan_issue(&[
+        "--format",
+        "json",
+        "--dry-run",
+        "close-plan",
+        "--body-file",
+        &body_file_s,
+        "--approved-comment-url",
+        "https://example.com/not-github-comment",
+    ]);
+
+    assert_eq!(out.code, 2, "stderr: {}", out.stderr);
+    let payload = parse_json(&out.stdout);
+    assert_eq!(payload["status"], "error");
+    assert_eq!(payload["error"]["code"], "invalid-approval-comment-url");
+    assert_eq!(
+        payload["error"]["message"],
+        "--approved-comment-url must be a GitHub issue/pull comment URL"
     );
 }
 

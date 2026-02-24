@@ -396,6 +396,7 @@ Use this section as the source for plan issue body `Goal / Acceptance Criteria /
 - **Location**:
   - `crates/plan-issue-cli/tests/task_spec_flow.rs`
   - `crates/plan-issue-cli/tests/parity_guardrails.rs`
+  - `scripts/ci/plan-issue-cli-coverage-delta.sh`
   - `docs/plans/plan-issue-cli-tooling-delivery-loop-alignment-plan.md`
   - `$AGENT_HOME/out/plan-issue-cli-coverage/summary.txt`
 - **Description**: Capture baseline vs final `cargo llvm-cov` line coverage for `nils-plan-issue-cli`, using baseline `72.78%` from this plan. Fail delivery unless final `TOTAL` line coverage is at least `73.28%`, and store a concise coverage summary artifact.
@@ -406,11 +407,12 @@ Use this section as the source for plan issue body `Goal / Acceptance Criteria /
   - Coverage baseline and final value are recorded and reproducible.
   - Final line coverage is `>= 73.28%`.
   - Coverage command output path is documented for reviewers.
+- **Coverage gate details**:
+  - Baseline: `72.78%`
+  - Required minimum: `73.28%`
+  - Artifact path: `$AGENT_HOME/out/plan-issue-cli-coverage/summary.txt`
 - **Validation**:
-  - `mkdir -p "$AGENT_HOME/out/plan-issue-cli-coverage"`
-  - `cargo llvm-cov --package nils-plan-issue-cli --summary-only | tee "$AGENT_HOME/out/plan-issue-cli-coverage/summary.txt"`
-  - `rg -n 'TOTAL' "$AGENT_HOME/out/plan-issue-cli-coverage/summary.txt"`
-  - `python3 -c 'import os,re,pathlib; p=pathlib.Path(os.environ.get(\"AGENT_HOME\", str(pathlib.Path.home()/\".agents\"))) / \"out\" / \"plan-issue-cli-coverage\" / \"summary.txt\"; t=p.read_text(encoding=\"utf-8\"); m=re.search(r\"TOTAL\\s+\\d+\\s+\\d+\\s+[0-9.]+%\\s+\\d+\\s+\\d+\\s+[0-9.]+%\\s+\\d+\\s+\\d+\\s+([0-9.]+)%\", t); assert m, \"unable to parse TOTAL line coverage\"; v=float(m.group(1)); assert v>=73.28, f\"line coverage {v:.2f}% is below required 73.28%\"; print(f\"line coverage gate passed: {v:.2f}%\")'`
+  - `bash scripts/ci/plan-issue-cli-coverage-delta.sh`
 
 ## Testing Strategy
 - Unit:
