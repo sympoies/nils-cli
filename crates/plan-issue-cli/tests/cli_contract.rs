@@ -4,7 +4,7 @@ use clap::Parser;
 use pretty_assertions::assert_eq;
 
 use plan_issue_cli::cli::{Cli, OutputFormat};
-use plan_issue_cli::commands::{Command, PrGrouping};
+use plan_issue_cli::commands::{Command, PrGrouping, SplitStrategy};
 
 mod common;
 
@@ -74,6 +74,7 @@ fn cli_parse_contract_build_task_spec_accepts_per_spring_alias() {
             );
             assert_eq!(args.sprint, 2);
             assert_eq!(args.grouping.pr_grouping, PrGrouping::PerSprint);
+            assert_eq!(args.grouping.strategy, SplitStrategy::Deterministic);
             assert!(args.grouping.pr_group.is_empty());
         }
         other => panic!("unexpected command parsed: {other:?}"),
@@ -93,6 +94,8 @@ fn cli_parse_contract_start_sprint_parses_typed_group_mapping() {
         "2",
         "--pr-grouping",
         "group",
+        "--strategy",
+        "auto",
         "--pr-group",
         "S2T1=s2-core",
         "--pr-group",
@@ -107,11 +110,100 @@ fn cli_parse_contract_start_sprint_parses_typed_group_mapping() {
             assert_eq!(args.issue, 217);
             assert_eq!(args.sprint, 2);
             assert_eq!(args.grouping.pr_grouping, PrGrouping::Group);
+            assert_eq!(args.grouping.strategy, SplitStrategy::Auto);
             assert_eq!(args.grouping.pr_group.len(), 2);
             assert_eq!(args.grouping.pr_group[0].task, "S2T1");
             assert_eq!(args.grouping.pr_group[0].group, "s2-core");
             assert_eq!(args.grouping.pr_group[1].task, "Task 2.2");
             assert_eq!(args.grouping.pr_group[1].group, "s2-core");
+        }
+        other => panic!("unexpected command parsed: {other:?}"),
+    }
+}
+
+#[test]
+fn cli_parse_contract_start_plan_group_auto_allows_optional_pr_groups() {
+    let cli = Cli::try_parse_from([
+        "plan-issue",
+        "start-plan",
+        "--plan",
+        "plan.md",
+        "--pr-grouping",
+        "group",
+        "--strategy",
+        "auto",
+    ])
+    .expect("parse start-plan");
+
+    cli.validate().expect("validation");
+
+    match &cli.command {
+        Command::StartPlan(args) => {
+            assert_eq!(args.grouping.pr_grouping, PrGrouping::Group);
+            assert_eq!(args.grouping.strategy, SplitStrategy::Auto);
+            assert!(args.grouping.pr_group.is_empty());
+        }
+        other => panic!("unexpected command parsed: {other:?}"),
+    }
+}
+
+#[test]
+fn cli_parse_contract_ready_sprint_group_auto_allows_optional_pr_groups() {
+    let cli = Cli::try_parse_from([
+        "plan-issue",
+        "ready-sprint",
+        "--plan",
+        "plan.md",
+        "--issue",
+        "217",
+        "--sprint",
+        "2",
+        "--pr-grouping",
+        "group",
+        "--strategy",
+        "auto",
+    ])
+    .expect("parse ready-sprint");
+
+    cli.validate().expect("validation");
+
+    match &cli.command {
+        Command::ReadySprint(args) => {
+            assert_eq!(args.grouping.pr_grouping, PrGrouping::Group);
+            assert_eq!(args.grouping.strategy, SplitStrategy::Auto);
+            assert!(args.grouping.pr_group.is_empty());
+        }
+        other => panic!("unexpected command parsed: {other:?}"),
+    }
+}
+
+#[test]
+fn cli_parse_contract_accept_sprint_group_auto_allows_optional_pr_groups() {
+    let cli = Cli::try_parse_from([
+        "plan-issue",
+        "accept-sprint",
+        "--plan",
+        "plan.md",
+        "--issue",
+        "217",
+        "--sprint",
+        "2",
+        "--pr-grouping",
+        "group",
+        "--strategy",
+        "auto",
+        "--approved-comment-url",
+        "https://example.invalid/review",
+    ])
+    .expect("parse accept-sprint");
+
+    cli.validate().expect("validation");
+
+    match &cli.command {
+        Command::AcceptSprint(args) => {
+            assert_eq!(args.grouping.pr_grouping, PrGrouping::Group);
+            assert_eq!(args.grouping.strategy, SplitStrategy::Auto);
+            assert!(args.grouping.pr_group.is_empty());
         }
         other => panic!("unexpected command parsed: {other:?}"),
     }
@@ -151,6 +243,24 @@ fn cli_conflict_rules_require_pr_group_mapping_for_group_mode() {
     let err = cli.validate().expect_err("semantic validation should fail");
     assert_eq!(err.code, "invalid-pr-grouping");
     assert!(err.message.contains("requires at least one --pr-group"));
+}
+
+#[test]
+fn cli_conflict_rules_group_auto_allows_no_pr_group_mapping() {
+    let cli = Cli::try_parse_from([
+        "plan-issue",
+        "build-plan-task-spec",
+        "--plan",
+        "plan.md",
+        "--pr-grouping",
+        "group",
+        "--strategy",
+        "auto",
+    ])
+    .expect("parse should succeed before semantic validation");
+
+    cli.validate()
+        .expect("group+auto should allow empty --pr-group");
 }
 
 #[test]

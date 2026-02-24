@@ -24,6 +24,14 @@ pub enum PrGrouping {
     Group,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ValueEnum)]
+pub enum SplitStrategy {
+    #[value(name = "deterministic")]
+    Deterministic,
+    #[value(name = "auto")]
+    Auto,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PrGroupMapping {
     pub task: String,
@@ -71,6 +79,15 @@ pub struct GroupingArgs {
     /// PR grouping mode.
     #[arg(long, value_enum, value_name = "mode")]
     pub pr_grouping: PrGrouping,
+
+    /// Split strategy for group assignment.
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = SplitStrategy::Deterministic,
+        value_name = "strategy"
+    )]
+    pub strategy: SplitStrategy,
 
     /// Explicit task->group mapping (`<task>=<group>`). Repeatable.
     #[arg(
@@ -213,12 +230,12 @@ impl Command {
 }
 
 fn validate_grouping(grouping: &GroupingArgs) -> Result<(), ValidationError> {
-    match grouping.pr_grouping {
-        PrGrouping::PerSprint if !grouping.pr_group.is_empty() => Err(ValidationError::new(
+    match (grouping.pr_grouping, grouping.strategy, grouping.pr_group.is_empty()) {
+        (PrGrouping::PerSprint, _, false) => Err(ValidationError::new(
             "invalid-pr-grouping",
             "--pr-group is only valid when --pr-grouping group",
         )),
-        PrGrouping::Group if grouping.pr_group.is_empty() => Err(ValidationError::new(
+        (PrGrouping::Group, SplitStrategy::Deterministic, true) => Err(ValidationError::new(
             "invalid-pr-grouping",
             "--pr-grouping group requires at least one --pr-group",
         )),
