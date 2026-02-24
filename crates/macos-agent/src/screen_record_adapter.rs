@@ -128,10 +128,14 @@ fn to_screen_record_format(format: ScreenshotFormat) -> screen_record::cli::Imag
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
-    use super::{ImageCropRegion, crop_image, map_error};
+    use super::{
+        ImageCropRegion, ScreenshotFormat, crop_image, map_error, test_screenshot_fixture,
+    };
 
     #[test]
     fn map_error_preserves_usage_and_runtime_exit_code() {
@@ -171,5 +175,79 @@ mod tests {
         let cropped = image::open(&output).expect("open output");
         assert_eq!(cropped.width(), 20);
         assert_eq!(cropped.height(), 16);
+    }
+
+    #[test]
+    fn crop_image_reports_decode_error_for_non_image_input() {
+        let temp = TempDir::new().expect("tempdir");
+        let input = temp.path().join("not-image.txt");
+        let output = temp.path().join("out.png");
+        fs::write(&input, "not an image").expect("write invalid image payload");
+
+        let err = crop_image(
+            &input,
+            &output,
+            ImageCropRegion {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+            },
+        )
+        .expect_err("invalid image should fail decode");
+        assert!(
+            err.to_string()
+                .contains("failed to decode screenshot for cropping")
+        );
+    }
+
+    #[test]
+    fn test_screenshot_fixture_supports_jpg_and_webp_formats() {
+        let temp = TempDir::new().expect("tempdir");
+        let jpg = temp.path().join("shot.jpg");
+        let webp = temp.path().join("shot.webp");
+
+        test_screenshot_fixture(&jpg, ScreenshotFormat::Jpg).expect("jpg screenshot fixture");
+        test_screenshot_fixture(&webp, ScreenshotFormat::Webp).expect("webp screenshot fixture");
+
+        assert!(jpg.exists());
+        assert!(webp.exists());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn macos_only_screen_record_functions_return_unsupported_on_non_macos() {
+        use nils_test_support::{EnvGuard, GlobalStateLock};
+
+        use super::{
+            capture_window_screenshot_macos, fetch_shareable_macos, test_shareable_content,
+        };
+
+        let lock = GlobalStateLock::new();
+        let _test_mode = EnvGuard::remove(&lock, "AGENTS_MACOS_AGENT_TEST_MODE");
+
+        let err = fetch_shareable_macos().expect_err("non-macos should be unsupported");
+        assert_eq!(err.exit_code(), 2);
+        assert!(
+            err.to_string()
+                .to_ascii_lowercase()
+                .contains("only supported on macos")
+        );
+
+        let temp = TempDir::new().expect("tempdir");
+        let out = temp.path().join("shot.png");
+        let window = test_shareable_content()
+            .windows
+            .into_iter()
+            .next()
+            .expect("test window");
+        let err = capture_window_screenshot_macos(&window, &out, ScreenshotFormat::Png)
+            .expect_err("non-macos screenshot should be unsupported");
+        assert_eq!(err.exit_code(), 2);
+        assert!(
+            err.to_string()
+                .to_ascii_lowercase()
+                .contains("only supported on macos")
+        );
     }
 }
