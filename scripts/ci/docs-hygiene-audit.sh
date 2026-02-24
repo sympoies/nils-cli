@@ -82,11 +82,21 @@ declare -a reference_roots=(
   "crates"
 )
 
+declare -a existing_reference_roots=()
+for root in "${reference_roots[@]}"; do
+  if [[ -e "$root" ]]; then
+    existing_reference_roots+=("$root")
+  fi
+done
+
 for path in "${removed_transient_docs[@]}"; do
-  refs="$(rg -n --fixed-strings "$path" "${reference_roots[@]}" \
-    -g '!**/docs/plans/**' \
-    -g '!**/tests/**' \
-    -g '!**/target/**' || true)"
+  refs=""
+  if [[ ${#existing_reference_roots[@]} -gt 0 ]]; then
+    refs="$(rg -n --fixed-strings "$path" "${existing_reference_roots[@]}" \
+      -g '!**/docs/plans/**' \
+      -g '!**/tests/**' \
+      -g '!**/target/**' || true)"
+  fi
   if [[ -n "$refs" ]]; then
     record_issue error "stale reference to removed doc: $path"
     while IFS= read -r line; do
