@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command as ProcessCommand;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use nils_common::git as common_git;
 use plan_tooling::parse::parse_plan_with_display;
 use serde_json::{Value, json};
 
@@ -1413,15 +1413,14 @@ fn cleanup_worktrees_from_rows(rows: &[TaskRow], dry_run: bool) -> Result<Cleanu
             continue;
         }
 
-        let status = ProcessCommand::new("git")
-            .args([
-                "worktree",
-                "remove",
-                "--force",
-                worktree.path.to_string_lossy().as_ref(),
-            ])
-            .status()
-            .map_err(|err| format!("failed to execute `git worktree remove`: {err}"))?;
+        let worktree_path = worktree.path.to_string_lossy().to_string();
+        let status = common_git::run_status_inherit(&[
+            "worktree",
+            "remove",
+            "--force",
+            worktree_path.as_str(),
+        ])
+        .map_err(|err| format!("failed to execute `git worktree remove`: {err}"))?;
 
         if status.success() {
             outcome
@@ -1435,9 +1434,7 @@ fn cleanup_worktrees_from_rows(rows: &[TaskRow], dry_run: bool) -> Result<Cleanu
     }
 
     if !dry_run {
-        let prune_status = ProcessCommand::new("git")
-            .args(["worktree", "prune"])
-            .status()
+        let prune_status = common_git::run_status_inherit(&["worktree", "prune"])
             .map_err(|err| format!("failed to execute `git worktree prune`: {err}"))?;
         if !prune_status.success() {
             return Err("git worktree prune failed".to_string());
@@ -1477,9 +1474,7 @@ fn cleanup_worktrees_from_rows(rows: &[TaskRow], dry_run: bool) -> Result<Cleanu
 }
 
 fn list_linked_worktrees() -> Result<Vec<LinkedWorktree>, String> {
-    let output = ProcessCommand::new("git")
-        .args(["worktree", "list", "--porcelain"])
-        .output()
+    let output = common_git::run_output(&["worktree", "list", "--porcelain"])
         .map_err(|err| format!("failed to run `git worktree list --porcelain`: {err}"))?;
 
     if !output.status.success() {
@@ -1532,18 +1527,9 @@ fn list_linked_worktrees() -> Result<Vec<LinkedWorktree>, String> {
 }
 
 fn repo_root() -> Result<PathBuf, String> {
-    let output = ProcessCommand::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-        .map_err(|err| format!("failed to run `git rev-parse --show-toplevel`: {err}"))?;
-
-    if !output.status.success() {
-        return Err("unable to resolve repository root".to_string());
-    }
-
-    Ok(PathBuf::from(
-        String::from_utf8_lossy(&output.stdout).trim(),
-    ))
+    common_git::repo_root()
+        .map_err(|err| format!("failed to run `git rev-parse --show-toplevel`: {err}"))?
+        .ok_or_else(|| "unable to resolve repository root".to_string())
 }
 
 fn resolve_worktree_path(repo_root: &Path, worktree: &str) -> PathBuf {
