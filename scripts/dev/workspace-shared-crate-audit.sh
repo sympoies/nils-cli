@@ -5,6 +5,7 @@ usage() {
   cat <<'USAGE'
 Usage:
   workspace-shared-crate-audit.sh [--format tsv] [--out <crate-matrix.tsv>] [--root <repo>]
+  workspace-shared-crate-audit.sh --emit-lanes --in <crate-matrix.tsv> [--out <task-lanes.tsv>] [--root <repo>]
 
 Generates a deterministic shared-crate audit bundle under:
   $AGENT_HOME/out/workspace-shared-audit/
@@ -17,10 +18,13 @@ Primary outputs:
   hotspots-nils-test-support.md
   hotspots-index.tsv
   decision-rubric.md
+  task-lanes.tsv
 
 Options:
   --format <tsv>   Output format (currently only `tsv` is supported)
-  --out <file>     Target crate matrix TSV path
+  --out <file>     Target output TSV path
+  --emit-lanes     Emit task execution lanes from an existing crate matrix TSV
+  --in <file>      Input crate matrix TSV (required with --emit-lanes)
   --root <dir>     Repo root (defaults to current git worktree root)
   -h, --help       Show this help
 USAGE
@@ -28,7 +32,9 @@ USAGE
 
 format="tsv"
 out_file=""
+in_file=""
 repo_root=""
+emit_lanes=0
 
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
@@ -39,6 +45,14 @@ while [[ $# -gt 0 ]]; do
     --out)
       out_file="${2:-}"
       shift 2
+      ;;
+    --in)
+      in_file="${2:-}"
+      shift 2
+      ;;
+    --emit-lanes)
+      emit_lanes=1
+      shift
       ;;
     --root)
       repo_root="${2:-}"
@@ -82,8 +96,12 @@ if [[ ! -f "Cargo.toml" || ! -d "crates" ]]; then
 fi
 
 audit_root="${AGENT_HOME}/out/workspace-shared-audit"
+default_out_name="crate-matrix.tsv"
+if [[ "$emit_lanes" -eq 1 ]]; then
+  default_out_name="task-lanes.tsv"
+fi
 if [[ -z "$out_file" ]]; then
-  out_file="${audit_root}/crate-matrix.tsv"
+  out_file="${audit_root}/${default_out_name}"
 fi
 case "$out_file" in
   "$audit_root"/*) ;;
@@ -103,6 +121,7 @@ hotspots_term_md="${out_dir}/hotspots-nils-term.md"
 hotspots_test_support_md="${out_dir}/hotspots-nils-test-support.md"
 hotspots_index_tsv="${out_dir}/hotspots-index.tsv"
 decision_rubric_md="${out_dir}/decision-rubric.md"
+task_lanes_tsv="${out_dir}/task-lanes.tsv"
 
 tmp_hotspots="$(mktemp "${TMPDIR:-/tmp}/workspace-shared-hotspots.XXXXXX.tsv")"
 tmp_matrix="$(mktemp "${TMPDIR:-/tmp}/workspace-shared-matrix.XXXXXX.tsv")"
@@ -161,6 +180,173 @@ owner_task_for() {
       printf 'Task 5.1'
       ;;
   esac
+}
+
+requires_serialization() {
+  local action="${1:-}"
+  local signal="${2:-}"
+  case "$action" in
+    extend-shared|defer)
+      return 0
+      ;;
+  esac
+  case "$signal" in
+    manual_atomic_fs|manual_secret_dir_resolution|manual_git_process)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+task5_owner_for() {
+  local action="${1:-}"
+  case "$action" in
+    defer|keep-local)
+      printf 'Task 5.1'
+      ;;
+    extend-shared)
+      printf 'Task 5.2'
+      ;;
+    *)
+      printf 'Task 5.3'
+      ;;
+  esac
+}
+
+task6_owner_for() {
+  local action="${1:-}"
+  case "$action" in
+    migrate|extend-shared)
+      printf 'Task 6.2'
+      ;;
+    *)
+      printf 'Task 6.1'
+      ;;
+  esac
+}
+
+execution_lane_for() {
+  local owner_task="${1:-}"
+  local action="${2:-}"
+  local signal="${3:-}"
+  local lane_prefix
+  case "$owner_task" in
+    "Task 2."*) lane_prefix="s2-runtime" ;;
+    "Task 3."*) lane_prefix="s3-progress" ;;
+    "Task 4."*) lane_prefix="s4-test-support" ;;
+    "Task 5."*) lane_prefix="s5-closeout" ;;
+    "Task 6."*) lane_prefix="s6-docs" ;;
+    *) lane_prefix="unassigned" ;;
+  esac
+  if requires_serialization "$action" "$signal"; then
+    printf '%s-serialized' "$lane_prefix"
+  else
+    printf '%s-parallel' "$lane_prefix"
+  fi
+}
+
+emit_lane_row() {
+  local out_path="$1"
+  local crate="$2"
+  local target="$3"
+  local signal="$4"
+  local execution_lane="$5"
+  local owner_task="$6"
+  local phase="$7"
+  local source_owner_task="$8"
+  local action="$9"
+  local serialization="${10}"
+
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$(sanitize_tsv_field "$crate")" \
+    "$(sanitize_tsv_field "$target")" \
+    "$(sanitize_tsv_field "$signal")" \
+    "$(sanitize_tsv_field "$execution_lane")" \
+    "$(sanitize_tsv_field "$owner_task")" \
+    "$(sanitize_tsv_field "$phase")" \
+    "$(sanitize_tsv_field "$source_owner_task")" \
+    "$(sanitize_tsv_field "$action")" \
+    "$(sanitize_tsv_field "$serialization")" \
+    >>"$out_path"
+}
+
+emit_task_lanes() {
+  local matrix_tsv="$1"
+  local lanes_tsv="$2"
+  if [[ ! -s "$matrix_tsv" ]]; then
+    echo "error: crate matrix input is missing or empty: $matrix_tsv" >&2
+    exit 2
+  fi
+
+  local tmp_lanes
+  tmp_lanes="$(mktemp "${TMPDIR:-/tmp}/workspace-shared-lanes.XXXXXX.tsv")"
+
+  {
+    printf 'crate\ttarget_shared_crate\tsignal\texecution_lane\towner_task\tphase\tsource_owner_task\tproposed_action\tserialization\n'
+  } >"$tmp_lanes"
+
+  awk -F '\t' 'NR>1 {print $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5}' "$matrix_tsv" \
+    | LC_ALL=C sort -t $'\t' -k1,1 -k2,2 -k3,3 -k4,4 -k5,5 \
+    | while IFS=$'\t' read -r crate target signal action owner_task; do
+      [[ -z "$crate" ]] && continue
+      if [[ -z "$owner_task" ]]; then
+        owner_task="$(owner_task_for "$target" "$signal")"
+      fi
+      if [[ -z "$owner_task" ]]; then
+        owner_task="Task 5.1"
+      fi
+
+      local serialization
+      if requires_serialization "$action" "$signal"; then
+        serialization="serialized"
+      else
+        serialization="parallel-safe"
+      fi
+
+      local owner_task5 owner_task6
+      owner_task5="$(task5_owner_for "$action")"
+      owner_task6="$(task6_owner_for "$action")"
+
+      emit_lane_row "$tmp_lanes" \
+        "$crate" "$target" "$signal" \
+        "$(execution_lane_for "$owner_task" "$action" "$signal")" \
+        "$owner_task" \
+        "implementation" \
+        "$owner_task" \
+        "$action" \
+        "$serialization"
+
+      emit_lane_row "$tmp_lanes" \
+        "$crate" "$target" "$signal" \
+        "$(execution_lane_for "$owner_task5" "$action" "$signal")" \
+        "$owner_task5" \
+        "closeout" \
+        "$owner_task" \
+        "$action" \
+        "$serialization"
+
+      emit_lane_row "$tmp_lanes" \
+        "$crate" "$target" "$signal" \
+        "$(execution_lane_for "$owner_task6" "$action" "$signal")" \
+        "$owner_task6" \
+        "docs" \
+        "$owner_task" \
+        "$action" \
+        "$serialization"
+    done
+
+  emit_lane_row "$tmp_lanes" \
+    "workspace" \
+    "workspace" \
+    "final-docs-gate" \
+    "s6-docs-serialized" \
+    "Task 6.3" \
+    "final-gate" \
+    "Task 6.1" \
+    "verify" \
+    "serialized"
+
+  mv "$tmp_lanes" "$lanes_tsv"
 }
 
 emit_hotspot() {
@@ -350,6 +536,21 @@ This rubric classifies findings into `migrate`, `extend-shared`, `keep-local`, o
 RUBRIC
 }
 
+if [[ "$emit_lanes" -eq 1 ]]; then
+  if [[ -z "$in_file" ]]; then
+    echo "error: --in is required with --emit-lanes" >&2
+    exit 2
+  fi
+  emit_task_lanes "$in_file" "$out_file"
+  echo "wrote lanes:    $out_file"
+  exit 0
+fi
+
+if [[ -n "$in_file" ]]; then
+  echo "error: --in is only valid with --emit-lanes" >&2
+  exit 2
+fi
+
 crates_list="$(find crates -mindepth 1 -maxdepth 1 -type d -print | sed 's#^crates/##' | LC_ALL=C sort)"
 if [[ -z "$crates_list" ]]; then
   echo "error: no crates found under crates/" >&2
@@ -504,6 +705,7 @@ done <<<"$crates_list"
 } >"$tmp_matrix"
 
 cp "$tmp_matrix" "$crate_matrix_tsv"
+emit_task_lanes "$crate_matrix_tsv" "$task_lanes_tsv"
 
 render_matrix_markdown "$crate_matrix_tsv" "$crate_matrix_md"
 render_hotspot_report "nils-common" "$hotspots_index_tsv" "$hotspots_common_md"
@@ -518,3 +720,4 @@ echo "wrote hotspots: $hotspots_term_md"
 echo "wrote hotspots: $hotspots_test_support_md"
 echo "wrote index:    $hotspots_index_tsv"
 echo "wrote rubric:   $decision_rubric_md"
+echo "wrote lanes:    $task_lanes_tsv"
