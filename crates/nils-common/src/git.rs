@@ -1,8 +1,9 @@
+use crate::process;
 use std::error::Error;
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Output, Stdio};
+use std::process::{ExitStatus, Output};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GitContextError {
@@ -88,27 +89,57 @@ pub fn is_lockfile_path(path: &str) -> bool {
 }
 
 pub fn run_output(args: &[&str]) -> io::Result<Output> {
-    run_output_inner(None, args)
+    run_output_inner(None, args, &[])
 }
 
 pub fn run_output_in(cwd: &Path, args: &[&str]) -> io::Result<Output> {
-    run_output_inner(Some(cwd), args)
+    run_output_inner(Some(cwd), args, &[])
+}
+
+pub fn run_output_with_env(
+    args: &[&str],
+    env: &[process::ProcessEnvPair<'_>],
+) -> io::Result<Output> {
+    run_output_inner(None, args, env)
+}
+
+pub fn run_output_in_with_env(
+    cwd: &Path,
+    args: &[&str],
+    env: &[process::ProcessEnvPair<'_>],
+) -> io::Result<Output> {
+    run_output_inner(Some(cwd), args, env)
 }
 
 pub fn run_status_quiet(args: &[&str]) -> io::Result<ExitStatus> {
-    run_status_quiet_inner(None, args)
+    run_status_quiet_inner(None, args, &[])
 }
 
 pub fn run_status_quiet_in(cwd: &Path, args: &[&str]) -> io::Result<ExitStatus> {
-    run_status_quiet_inner(Some(cwd), args)
+    run_status_quiet_inner(Some(cwd), args, &[])
 }
 
 pub fn run_status_inherit(args: &[&str]) -> io::Result<ExitStatus> {
-    run_status_inherit_inner(None, args)
+    run_status_inherit_inner(None, args, &[])
 }
 
 pub fn run_status_inherit_in(cwd: &Path, args: &[&str]) -> io::Result<ExitStatus> {
-    run_status_inherit_inner(Some(cwd), args)
+    run_status_inherit_inner(Some(cwd), args, &[])
+}
+
+pub fn run_status_inherit_with_env(
+    args: &[&str],
+    env: &[process::ProcessEnvPair<'_>],
+) -> io::Result<ExitStatus> {
+    run_status_inherit_inner(None, args, env)
+}
+
+pub fn run_status_inherit_in_with_env(
+    cwd: &Path,
+    args: &[&str],
+    env: &[process::ProcessEnvPair<'_>],
+) -> io::Result<ExitStatus> {
+    run_status_inherit_inner(Some(cwd), args, env)
 }
 
 pub fn is_git_available() -> bool {
@@ -187,33 +218,28 @@ pub fn rev_parse_in(cwd: &Path, args: &[&str]) -> io::Result<Option<String>> {
     Ok(trimmed_stdout_if_success(&output))
 }
 
-fn run_output_inner(cwd: Option<&Path>, args: &[&str]) -> io::Result<Output> {
-    let mut cmd = Command::new("git");
-    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
-    if let Some(cwd) = cwd {
-        cmd.current_dir(cwd);
-    }
-    cmd.output()
+fn run_output_inner(
+    cwd: Option<&Path>,
+    args: &[&str],
+    env: &[process::ProcessEnvPair<'_>],
+) -> io::Result<Output> {
+    process::run_output_with("git", args, cwd, env).map(|output| output.into_std_output())
 }
 
-fn run_status_quiet_inner(cwd: Option<&Path>, args: &[&str]) -> io::Result<ExitStatus> {
-    let mut cmd = Command::new("git");
-    cmd.args(args).stdout(Stdio::null()).stderr(Stdio::null());
-    if let Some(cwd) = cwd {
-        cmd.current_dir(cwd);
-    }
-    cmd.status()
+fn run_status_quiet_inner(
+    cwd: Option<&Path>,
+    args: &[&str],
+    env: &[process::ProcessEnvPair<'_>],
+) -> io::Result<ExitStatus> {
+    process::run_status_quiet_with("git", args, cwd, env)
 }
 
-fn run_status_inherit_inner(cwd: Option<&Path>, args: &[&str]) -> io::Result<ExitStatus> {
-    let mut cmd = Command::new("git");
-    cmd.args(args)
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-    if let Some(cwd) = cwd {
-        cmd.current_dir(cwd);
-    }
-    cmd.status()
+fn run_status_inherit_inner(
+    cwd: Option<&Path>,
+    args: &[&str],
+    env: &[process::ProcessEnvPair<'_>],
+) -> io::Result<ExitStatus> {
+    process::run_status_inherit_with("git", args, cwd, env)
 }
 
 fn require_context(cwd: Option<&Path>, probe_args: &[&str]) -> Result<(), GitContextError> {
@@ -293,6 +319,39 @@ mod tests {
 
         assert!(ok.success());
         assert!(!bad.success());
+    }
+
+    #[test]
+    fn run_output_with_env_passes_environment_variables_to_git() {
+        let output = run_output_with_env(
+            &["config", "--get", "nils.test-env"],
+            &[
+                ("GIT_CONFIG_COUNT", "1"),
+                ("GIT_CONFIG_KEY_0", "nils.test-env"),
+                ("GIT_CONFIG_VALUE_0", "ready"),
+            ],
+        )
+        .expect("run git output with env");
+
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ready");
+    }
+
+    #[test]
+    fn run_status_inherit_in_with_env_applies_cwd_and_environment() {
+        let repo = init_repo_with(InitRepoOptions::new().with_initial_commit());
+        let status = run_status_inherit_in_with_env(
+            repo.path(),
+            &["config", "--get", "nils.test-status"],
+            &[
+                ("GIT_CONFIG_COUNT", "1"),
+                ("GIT_CONFIG_KEY_0", "nils.test-status"),
+                ("GIT_CONFIG_VALUE_0", "ok"),
+            ],
+        )
+        .expect("run git status in with env");
+
+        assert!(status.success());
     }
 
     #[test]

@@ -1,7 +1,6 @@
 use crate::git;
 use nils_common::git as common_git;
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
-use std::ffi::OsString;
 use std::fs::File;
 use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
@@ -12,6 +11,7 @@ const EXIT_NO_STAGED_CHANGES: i32 = 2;
 const EXIT_MESSAGE_REQUIRED: i32 = 3;
 const EXIT_VALIDATION_FAILED: i32 = 4;
 const EXIT_DEPENDENCY_ERROR: i32 = 5;
+const CAT_PAGER_ENV: [(&str, &str); 2] = [("GIT_PAGER", "cat"), ("PAGER", "cat")];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SummaryMode {
@@ -333,54 +333,21 @@ fn read_message_contents(options: &CommitOptions) -> Result<String, i32> {
     Ok(message_contents)
 }
 
-struct EnvVarGuard {
-    key: &'static str,
-    old: Option<OsString>,
-}
-
-impl EnvVarGuard {
-    fn set(key: &'static str, value: &str) -> Self {
-        let old = std::env::var_os(key);
-        // SAFETY: semantic-commit is single-process CLI flow; we mutate and restore env in a
-        // tight scope before returning to caller.
-        unsafe { std::env::set_var(key, value) };
-        Self { key, old }
-    }
-}
-
-impl Drop for EnvVarGuard {
-    fn drop(&mut self) {
-        if let Some(old) = self.old.take() {
-            // SAFETY: restore original env value for scoped mutation.
-            unsafe { std::env::set_var(self.key, old) };
-        } else {
-            // SAFETY: restore original env state for scoped mutation.
-            unsafe { std::env::remove_var(self.key) };
-        }
-    }
-}
-
-fn with_cat_pager_env<T>(f: impl FnOnce() -> T) -> T {
-    let _git_pager = EnvVarGuard::set("GIT_PAGER", "cat");
-    let _pager = EnvVarGuard::set("PAGER", "cat");
-    f()
-}
-
 fn run_git_output_with_pager(repo: Option<&Path>, args: &[&str]) -> std::io::Result<Output> {
-    with_cat_pager_env(|| match repo {
-        Some(repo) => common_git::run_output_in(repo, args),
-        None => common_git::run_output(args),
-    })
+    match repo {
+        Some(repo) => common_git::run_output_in_with_env(repo, args, &CAT_PAGER_ENV),
+        None => common_git::run_output_with_env(args, &CAT_PAGER_ENV),
+    }
 }
 
 fn run_git_status_inherit_with_pager(
     repo: Option<&Path>,
     args: &[&str],
 ) -> std::io::Result<ExitStatus> {
-    with_cat_pager_env(|| match repo {
-        Some(repo) => common_git::run_status_inherit_in(repo, args),
-        None => common_git::run_status_inherit(args),
-    })
+    match repo {
+        Some(repo) => common_git::run_status_inherit_in_with_env(repo, args, &CAT_PAGER_ENV),
+        None => common_git::run_status_inherit_with_env(args, &CAT_PAGER_ENV),
+    }
 }
 
 fn git_commit(

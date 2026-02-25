@@ -11,6 +11,8 @@ pub struct ProcessOutput {
     pub stderr: Vec<u8>,
 }
 
+pub type ProcessEnvPair<'a> = (&'a str, &'a str);
+
 impl ProcessOutput {
     pub fn into_std_output(self) -> Output {
         Output {
@@ -74,8 +76,21 @@ impl From<io::Error> for ProcessError {
 }
 
 pub fn run_output(program: &str, args: &[&str]) -> io::Result<ProcessOutput> {
-    Command::new(program)
-        .args(args)
+    run_output_with(program, args, None, &[])
+}
+
+pub fn run_output_in(program: &str, args: &[&str], cwd: &Path) -> io::Result<ProcessOutput> {
+    run_output_with(program, args, Some(cwd), &[])
+}
+
+pub fn run_output_with(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: &[ProcessEnvPair<'_>],
+) -> io::Result<ProcessOutput> {
+    let mut command = command_with(program, args, cwd, env);
+    command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
@@ -102,16 +117,39 @@ pub fn run_stdout_trimmed(program: &str, args: &[&str]) -> Result<String, Proces
 }
 
 pub fn run_status_quiet(program: &str, args: &[&str]) -> io::Result<ExitStatus> {
-    Command::new(program)
-        .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+    run_status_quiet_with(program, args, None, &[])
+}
+
+pub fn run_status_quiet_in(program: &str, args: &[&str], cwd: &Path) -> io::Result<ExitStatus> {
+    run_status_quiet_with(program, args, Some(cwd), &[])
+}
+
+pub fn run_status_quiet_with(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: &[ProcessEnvPair<'_>],
+) -> io::Result<ExitStatus> {
+    let mut command = command_with(program, args, cwd, env);
+    command.stdout(Stdio::null()).stderr(Stdio::null()).status()
 }
 
 pub fn run_status_inherit(program: &str, args: &[&str]) -> io::Result<ExitStatus> {
-    Command::new(program)
-        .args(args)
+    run_status_inherit_with(program, args, None, &[])
+}
+
+pub fn run_status_inherit_in(program: &str, args: &[&str], cwd: &Path) -> io::Result<ExitStatus> {
+    run_status_inherit_with(program, args, Some(cwd), &[])
+}
+
+pub fn run_status_inherit_with(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: &[ProcessEnvPair<'_>],
+) -> io::Result<ExitStatus> {
+    let mut command = command_with(program, args, cwd, env);
+    command
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()
@@ -230,6 +268,23 @@ fn looks_like_path(program: &str) -> bool {
     // Treat both separators as paths, even on unix. It is harmless and avoids surprises when a
     // caller passes a Windows-style path.
     program.contains('/') || program.contains('\\')
+}
+
+fn command_with<'a>(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: &[ProcessEnvPair<'a>],
+) -> Command {
+    let mut command = Command::new(program);
+    command.args(args);
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    if !env.is_empty() {
+        command.envs(env.iter().copied());
+    }
+    command
 }
 
 fn is_executable_file(path: &Path) -> bool {
@@ -372,6 +427,31 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn run_output_with_applies_cwd_and_env_overrides() {
+        let cwd = tempfile::TempDir::new().expect("tempdir");
+        let output = run_output_with(
+            shell_program(),
+            &["-c", "printf '%s|%s' \"$PWD\" \"$NILS_PROCESS_TEST_ENV\""],
+            Some(cwd.path()),
+            &[("NILS_PROCESS_TEST_ENV", "ok")],
+        )
+        .expect("run output with cwd/env");
+
+        let rendered = output.stdout_trimmed();
+        let (reported_pwd, reported_flag) = rendered
+            .split_once('|')
+            .expect("expected delimiter in output");
+        assert_eq!(reported_flag, "ok");
+
+        let expected = cwd.path().canonicalize().expect("canonicalize cwd");
+        let reported = Path::new(reported_pwd)
+            .canonicalize()
+            .expect("canonicalize reported pwd");
+        assert_eq!(reported, expected);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn run_checked_returns_nonzero_error_with_captured_output() {
         let err = run_checked(
             shell_program(),
@@ -407,6 +487,20 @@ mod tests {
         let inherit =
             run_status_inherit(shell_program(), &["-c", "exit 3"]).expect("inherit status");
         assert_eq!(inherit.code(), Some(3));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_status_quiet_with_applies_env_overrides() {
+        let status = run_status_quiet_with(
+            shell_program(),
+            &["-c", "test \"$NILS_PROCESS_TEST_FLAG\" = on"],
+            None,
+            &[("NILS_PROCESS_TEST_FLAG", "on")],
+        )
+        .expect("status with env");
+
+        assert!(status.success());
     }
 
     #[test]
