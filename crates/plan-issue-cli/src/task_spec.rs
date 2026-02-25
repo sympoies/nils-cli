@@ -456,7 +456,7 @@ pub fn runtime_lane_metadata_by_task(
 
 fn execution_mode_from_rows(
     rows: &[TaskSpecRow],
-    strategy: SplitStrategy,
+    _strategy: SplitStrategy,
 ) -> HashMap<String, String> {
     let mut sprint_group_set: HashMap<i32, BTreeSet<String>> = HashMap::new();
     let mut sprint_group_sizes: HashMap<(i32, String), usize> = HashMap::new();
@@ -483,9 +483,10 @@ fn execution_mode_from_rows(
 
         let mode = if row.grouping == PrGrouping::PerSprint {
             "per-sprint"
-        } else if strategy == SplitStrategy::Auto && sprint_group_count == 1 && group_size > 1 {
-            // Auto/group can converge to a single shared PR lane. Expose that as per-sprint so
-            // downstream execution semantics match explicit per-sprint mode.
+        } else if sprint_group_count == 1 && group_size > 1 {
+            // Group mode (auto or deterministic) can converge to a single shared PR lane.
+            // Expose that as per-sprint so downstream execution semantics match explicit
+            // per-sprint mode.
             "per-sprint"
         } else if group_size > 1 {
             "pr-shared"
@@ -632,6 +633,36 @@ mod tests {
         ];
 
         let modes = execution_mode_by_task(&rows, SplitStrategy::Auto);
+        assert_eq!(modes.get("S1T1").map(String::as_str), Some("per-sprint"));
+        assert_eq!(modes.get("S1T2").map(String::as_str), Some("per-sprint"));
+    }
+
+    #[test]
+    fn execution_mode_by_task_deterministic_single_lane_uses_per_sprint() {
+        let rows = vec![
+            spec_row(
+                "S1T1",
+                1,
+                "s1-serial",
+                PrGrouping::Group,
+                "subagent-s1-t1",
+                "issue/s1-t1",
+                "wt-1",
+                "sprint=S1; plan-task:Task 1.1; pr-group=s1-serial; shared-pr-anchor=S1T1",
+            ),
+            spec_row(
+                "S1T2",
+                1,
+                "s1-serial",
+                PrGrouping::Group,
+                "subagent-s1-t1",
+                "issue/s1-t1",
+                "wt-1",
+                "sprint=S1; plan-task:Task 1.2; pr-group=s1-serial; shared-pr-anchor=S1T1",
+            ),
+        ];
+
+        let modes = execution_mode_by_task(&rows, SplitStrategy::Deterministic);
         assert_eq!(modes.get("S1T1").map(String::as_str), Some("per-sprint"));
         assert_eq!(modes.get("S1T2").map(String::as_str), Some("per-sprint"));
     }

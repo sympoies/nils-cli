@@ -49,7 +49,7 @@ This prevents drift caused only by markdown table rendering/parsing normalizatio
 - Task-spec TSV and subagent prompt files are derived artifacts.
 - Drift checks compare issue rows against plan-issue materialized runtime metadata (not split-prs
   runtime placeholders).
-- `group + auto` single-lane sprints are normalized to `Execution Mode=per-sprint`.
+- `group + auto|deterministic` single-lane sprints are normalized to `Execution Mode=per-sprint`.
 
 ## Task-spec TSV Header (unchanged)
 

@@ -66,8 +66,8 @@ Shell wrapper scripts are deprecated for this crate path. Use `plan-issue` / `pl
 - `--pr-grouping per-sprint`: one shared group per sprint (default style).
 - `--pr-grouping group --strategy deterministic`: requires explicit `--pr-group <task>=<group>` mappings.
 - `--pr-grouping group --strategy auto`: allows optional pins and auto assignment for remaining tasks.
-  - when auto resolves a sprint to a single shared PR group, `Execution Mode` is normalized to `per-sprint` (instead of `pr-shared`) to reflect single-lane execution semantics.
-  - runtime lane metadata is materialized locally in `plan-issue-cli` (not read from split-prs runtime placeholders).
+- when a sprint resolves to a single shared PR group, `Execution Mode` is normalized to `per-sprint` (instead of `pr-shared`) to reflect single-lane execution semantics.
+- runtime lane metadata is materialized locally in `plan-issue-cli` (not read from split-prs runtime placeholders).
 
 ## Quick examples
 ```bash

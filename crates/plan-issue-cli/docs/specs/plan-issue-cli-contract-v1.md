@@ -62,7 +62,7 @@ v1 subcommands:
 - `--pr-grouping <per-sprint|group>`:
   - required for `build-task-spec`, `build-plan-task-spec`, `start-plan`, `start-sprint`.
   - `per-spring` must be accepted as compatibility alias for `per-sprint`.
-  - with `--pr-grouping group --strategy auto`, when a sprint resolves to exactly one shared PR group, runtime-truth/render paths normalize `Execution Mode` to `per-sprint` (single-lane semantics).
+  - with `--pr-grouping group --strategy auto|deterministic`, when a sprint resolves to exactly one shared PR group, runtime-truth/render paths normalize `Execution Mode` to `per-sprint` (single-lane semantics).
 - `--pr-group <task=group>`:
   - repeatable.
   - valid only when `--pr-grouping group`.
@@ -82,7 +82,7 @@ v1 subcommands:
 - `task-spec` TSV rows and subagent prompt artifacts must be derived from the same `Task Decomposition` runtime-truth rows and must not intentionally diverge from the issue table.
 - Lane canonicalization rules:
   - rows that share one execution lane (`per-sprint` or `pr-shared`) must keep canonical lane metadata (`Owner`, `Branch`, `Worktree`, lane-note tokens) synchronized across the lane.
-  - `--pr-grouping group --strategy auto` single-lane sprints normalize to `Execution Mode=per-sprint` and use canonical per-sprint lane metadata rather than per-task pseudo-lanes.
+  - `--pr-grouping group --strategy auto|deterministic` single-lane sprints normalize to `Execution Mode=per-sprint` and use canonical per-sprint lane metadata rather than per-task pseudo-lanes.
 
 ## Deterministic Artifact Contracts
 
