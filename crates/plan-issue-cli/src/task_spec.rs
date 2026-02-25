@@ -49,6 +49,14 @@ pub struct TaskSpecBuild {
     pub rows: Vec<TaskSpecRow>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeLaneMetadata {
+    pub execution_mode: String,
+    pub owner: String,
+    pub branch: String,
+    pub worktree: String,
+}
+
 pub fn build_task_spec(
     plan_file: &Path,
     scope: TaskSpecScope,
@@ -150,6 +158,65 @@ pub fn execution_mode_by_task(
     rows: &[TaskSpecRow],
     strategy: SplitStrategy,
 ) -> HashMap<String, String> {
+    runtime_lane_metadata_by_task(rows, strategy)
+        .into_iter()
+        .map(|(task_id, lane)| (task_id, lane.execution_mode))
+        .collect()
+}
+
+pub fn runtime_lane_metadata_by_task(
+    rows: &[TaskSpecRow],
+    strategy: SplitStrategy,
+) -> HashMap<String, RuntimeLaneMetadata> {
+    let execution_modes = execution_mode_from_rows(rows, strategy);
+    let row_by_task: HashMap<&str, &TaskSpecRow> =
+        rows.iter().map(|row| (row.task_id.as_str(), row)).collect();
+
+    let mut anchor_by_lane: HashMap<(i32, String), String> = HashMap::new();
+    for row in rows {
+        anchor_by_lane
+            .entry((row.sprint, row.pr_group.clone()))
+            .or_insert_with(|| {
+                canonical_lane_anchor_task_id(rows, row.sprint, &row.pr_group)
+                    .unwrap_or_else(|| row.task_id.clone())
+            });
+    }
+
+    let mut out = HashMap::new();
+    for row in rows {
+        let execution_mode = execution_modes
+            .get(&row.task_id)
+            .cloned()
+            .unwrap_or_else(|| "pr-isolated".to_string());
+        let lane_key = (row.sprint, row.pr_group.clone());
+        let anchor_row = if execution_mode == "pr-isolated" {
+            row
+        } else {
+            anchor_by_lane
+                .get(&lane_key)
+                .and_then(|task_id| row_by_task.get(task_id.as_str()))
+                .copied()
+                .unwrap_or(row)
+        };
+
+        out.insert(
+            row.task_id.clone(),
+            RuntimeLaneMetadata {
+                execution_mode,
+                owner: anchor_row.owner.clone(),
+                branch: anchor_row.branch.clone(),
+                worktree: anchor_row.worktree.clone(),
+            },
+        );
+    }
+
+    out
+}
+
+fn execution_mode_from_rows(
+    rows: &[TaskSpecRow],
+    strategy: SplitStrategy,
+) -> HashMap<String, String> {
     let mut sprint_group_set: HashMap<i32, BTreeSet<String>> = HashMap::new();
     let mut sprint_group_sizes: HashMap<(i32, String), usize> = HashMap::new();
     for row in rows {
@@ -188,6 +255,43 @@ pub fn execution_mode_by_task(
     }
 
     out
+}
+
+fn note_value(notes: &str, key: &str) -> Option<String> {
+    notes
+        .split(';')
+        .map(str::trim)
+        .find_map(|part| part.strip_prefix(&format!("{key}=")).map(str::to_string))
+}
+
+fn canonical_lane_anchor_task_id(
+    rows: &[TaskSpecRow],
+    sprint: i32,
+    pr_group: &str,
+) -> Option<String> {
+    let mut lane_rows = rows
+        .iter()
+        .filter(|row| row.sprint == sprint && row.pr_group == pr_group)
+        .collect::<Vec<_>>();
+    if lane_rows.is_empty() {
+        return None;
+    }
+
+    lane_rows.sort_unstable_by(|a, b| a.task_id.cmp(&b.task_id));
+    let lane_task_ids = lane_rows
+        .iter()
+        .map(|row| row.task_id.as_str())
+        .collect::<BTreeSet<_>>();
+
+    if let Some(anchor) = lane_rows
+        .iter()
+        .find_map(|row| note_value(&row.notes, "shared-pr-anchor"))
+        .filter(|anchor| lane_task_ids.contains(anchor.as_str()))
+    {
+        return Some(anchor);
+    }
+
+    lane_rows.first().map(|row| row.task_id.clone())
 }
 
 pub fn default_plan_task_spec_path(plan_file: &Path) -> PathBuf {
@@ -279,37 +383,6 @@ mod tests {
             sprint,
             grouping,
         }
-    }
-
-    fn note_value(notes: &str, key: &str) -> Option<String> {
-        notes
-            .split(';')
-            .map(str::trim)
-            .find_map(|part| part.strip_prefix(&format!("{key}=")).map(str::to_string))
-    }
-
-    fn canonical_lane_anchor_task_id(
-        rows: &[TaskSpecRow],
-        sprint: i32,
-        pr_group: &str,
-    ) -> Option<String> {
-        let lane_rows = rows
-            .iter()
-            .filter(|row| row.sprint == sprint && row.pr_group == pr_group)
-            .collect::<Vec<_>>();
-        if lane_rows.is_empty() {
-            return None;
-        }
-
-        if let Some(anchor) = lane_rows
-            .iter()
-            .find_map(|row| note_value(&row.notes, "shared-pr-anchor"))
-            .filter(|anchor| lane_rows.iter().any(|row| row.task_id == *anchor))
-        {
-            return Some(anchor);
-        }
-
-        lane_rows.iter().map(|row| row.task_id.clone()).min()
     }
 
     #[test]
@@ -456,8 +529,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "S2 lane canonicalization should rewrite single-lane metadata to anchor values"]
-    fn auto_single_lane_canonicalization_expectations_document_anchor_invariants() {
+    fn runtime_lane_canonicalization_uses_shared_anchor_metadata() {
         let rows = vec![
             spec_row(
                 "S1T1",
@@ -480,45 +552,39 @@ mod tests {
                 "sprint=S1; plan-task:Task 1.2; pr-group=s1-auto-g1; shared-pr-anchor=S1T2",
             ),
         ];
-        let modes = execution_mode_by_task(&rows, SplitStrategy::Auto);
-        assert_eq!(modes.get("S1T1").map(String::as_str), Some("per-sprint"));
-        assert_eq!(modes.get("S1T2").map(String::as_str), Some("per-sprint"));
 
-        let anchor_task =
-            canonical_lane_anchor_task_id(&rows, 1, "s1-auto-g1").expect("anchor task");
-        let anchor_row = rows
-            .iter()
-            .find(|row| row.task_id == anchor_task)
-            .expect("anchor row");
-        let anchor_owner = anchor_row.owner.clone();
-        let anchor_branch = anchor_row.branch.clone();
-        let anchor_worktree = anchor_row.worktree.clone();
-        let anchor_notes = anchor_row.notes.clone();
+        let runtime_by_task = runtime_lane_metadata_by_task(&rows, SplitStrategy::Auto);
+        let expected_anchor = runtime_by_task
+            .get("S1T2")
+            .expect("anchor runtime lane metadata")
+            .clone();
 
         for row in rows
             .iter()
             .filter(|row| row.sprint == 1 && row.pr_group == "s1-auto-g1")
         {
+            let lane = runtime_by_task
+                .get(&row.task_id)
+                .expect("runtime lane metadata");
+            assert_eq!(lane.execution_mode, "per-sprint");
             assert_eq!(
-                row.owner, anchor_owner,
+                lane.owner, expected_anchor.owner,
                 "task {} owner should match anchor",
                 row.task_id
             );
             assert_eq!(
-                row.branch, anchor_branch,
+                lane.branch, expected_anchor.branch,
                 "task {} branch should match anchor",
                 row.task_id
             );
             assert_eq!(
-                row.worktree, anchor_worktree,
+                lane.worktree, expected_anchor.worktree,
                 "task {} worktree should match anchor",
                 row.task_id
             );
-            assert_eq!(
-                row.notes, anchor_notes,
-                "task {} notes should match anchor",
-                row.task_id
-            );
         }
+
+        let rerun = runtime_lane_metadata_by_task(&rows, SplitStrategy::Auto);
+        assert_eq!(runtime_by_task, rerun);
     }
 }
