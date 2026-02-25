@@ -23,11 +23,15 @@ Options:
                                    deterministic/group: required for every task
                                    auto/group: optional pins + auto assignment for remaining tasks
   --strategy <deterministic|auto>  Split strategy (default: deterministic)
+  --explain                        Include grouping rationale in JSON output
   --owner-prefix <text>            Owner prefix (default: subagent)
   --branch-prefix <text>           Branch prefix (default: issue)
   --worktree-prefix <text>         Worktree prefix (default: issue__)
   --format <json|tsv>              Output format (default: json)
   -h, --help                       Show help
+
+Argument style:
+  --key value and --key=value are both accepted for value options.
 
 Exit:
   0: success
@@ -125,6 +129,13 @@ struct Record {
     pr_group: String,
 }
 
+#[derive(Debug, Clone, Default)]
+struct AutoSprintHint {
+    pr_grouping_intent: Option<SplitPrGrouping>,
+    execution_profile: Option<String>,
+    target_parallel_width: Option<usize>,
+}
+
 #[derive(Debug, Serialize)]
 struct Output {
     file: String,
@@ -133,6 +144,8 @@ struct Output {
     pr_grouping: String,
     strategy: String,
     records: Vec<OutputRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    explain: Option<Vec<ExplainSprint>>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -146,6 +159,25 @@ struct OutputRecord {
     pr_group: String,
 }
 
+#[derive(Debug, Serialize, PartialEq, Eq)]
+struct ExplainSprint {
+    sprint: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_parallel_width: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    execution_profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pr_grouping_intent: Option<String>,
+    groups: Vec<ExplainGroup>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+struct ExplainGroup {
+    pr_group: String,
+    task_ids: Vec<String>,
+    anchor: String,
+}
+
 pub fn run(args: &[String]) -> i32 {
     let mut file: Option<String> = None;
     let mut scope = String::from("sprint");
@@ -153,6 +185,7 @@ pub fn run(args: &[String]) -> i32 {
     let mut pr_grouping: Option<String> = None;
     let mut pr_group_entries: Vec<String> = Vec::new();
     let mut strategy = String::from("deterministic");
+    let mut explain = false;
     let mut owner_prefix = String::from("subagent");
     let mut branch_prefix = String::from("issue");
     let mut worktree_prefix = String::from("issue__");
@@ -160,113 +193,105 @@ pub fn run(args: &[String]) -> i32 {
 
     let mut i = 0usize;
     while i < args.len() {
-        match args[i].as_str() {
+        let raw_arg = args[i].as_str();
+        let (flag, inline_value) = split_value_arg(raw_arg);
+        match flag {
             "--file" => {
-                let Some(v) = args.get(i + 1) else {
+                let Ok((v, next_i)) = consume_option_value(args, i, inline_value, "--file") else {
                     return die("missing value for --file");
                 };
-                if v.is_empty() {
-                    return die("missing value for --file");
-                }
-                file = Some(v.to_string());
-                i += 2;
+                file = Some(v);
+                i = next_i;
             }
             "--scope" => {
-                let Some(v) = args.get(i + 1) else {
+                let Ok((v, next_i)) = consume_option_value(args, i, inline_value, "--scope") else {
                     return die("missing value for --scope");
                 };
-                if v.is_empty() {
-                    return die("missing value for --scope");
-                }
-                scope = v.to_string();
-                i += 2;
+                scope = v;
+                i = next_i;
             }
             "--sprint" => {
-                let Some(v) = args.get(i + 1) else {
+                let Ok((v, next_i)) = consume_option_value(args, i, inline_value, "--sprint")
+                else {
                     return die("missing value for --sprint");
                 };
-                if v.is_empty() {
-                    return die("missing value for --sprint");
-                }
-                sprint = Some(v.to_string());
-                i += 2;
+                sprint = Some(v);
+                i = next_i;
             }
             "--pr-grouping" => {
-                let Some(v) = args.get(i + 1) else {
+                let Ok((v, next_i)) = consume_option_value(args, i, inline_value, "--pr-grouping")
+                else {
                     return die("missing value for --pr-grouping");
                 };
-                if v.is_empty() {
-                    return die("missing value for --pr-grouping");
-                }
-                pr_grouping = Some(v.to_string());
-                i += 2;
+                pr_grouping = Some(v);
+                i = next_i;
             }
             "--pr-group" => {
-                let Some(v) = args.get(i + 1) else {
+                let Ok((v, next_i)) = consume_option_value(args, i, inline_value, "--pr-group")
+                else {
                     return die("missing value for --pr-group");
                 };
-                if v.is_empty() {
-                    return die("missing value for --pr-group");
-                }
-                pr_group_entries.push(v.to_string());
-                i += 2;
+                pr_group_entries.push(v);
+                i = next_i;
             }
             "--strategy" => {
-                let Some(v) = args.get(i + 1) else {
+                let Ok((v, next_i)) = consume_option_value(args, i, inline_value, "--strategy")
+                else {
                     return die("missing value for --strategy");
                 };
-                if v.is_empty() {
-                    return die("missing value for --strategy");
+                strategy = v;
+                i = next_i;
+            }
+            "--explain" => {
+                if inline_value.is_some() {
+                    return die("unexpected value for --explain");
                 }
-                strategy = v.to_string();
-                i += 2;
+                explain = true;
+                i += 1;
             }
             "--owner-prefix" => {
-                let Some(v) = args.get(i + 1) else {
+                let Ok((v, next_i)) = consume_option_value(args, i, inline_value, "--owner-prefix")
+                else {
                     return die("missing value for --owner-prefix");
                 };
-                if v.is_empty() {
-                    return die("missing value for --owner-prefix");
-                }
-                owner_prefix = v.to_string();
-                i += 2;
+                owner_prefix = v;
+                i = next_i;
             }
             "--branch-prefix" => {
-                let Some(v) = args.get(i + 1) else {
+                let Ok((v, next_i)) =
+                    consume_option_value(args, i, inline_value, "--branch-prefix")
+                else {
                     return die("missing value for --branch-prefix");
                 };
-                if v.is_empty() {
-                    return die("missing value for --branch-prefix");
-                }
-                branch_prefix = v.to_string();
-                i += 2;
+                branch_prefix = v;
+                i = next_i;
             }
             "--worktree-prefix" => {
-                let Some(v) = args.get(i + 1) else {
+                let Ok((v, next_i)) =
+                    consume_option_value(args, i, inline_value, "--worktree-prefix")
+                else {
                     return die("missing value for --worktree-prefix");
                 };
-                if v.is_empty() {
-                    return die("missing value for --worktree-prefix");
-                }
-                worktree_prefix = v.to_string();
-                i += 2;
+                worktree_prefix = v;
+                i = next_i;
             }
             "--format" => {
-                let Some(v) = args.get(i + 1) else {
+                let Ok((v, next_i)) = consume_option_value(args, i, inline_value, "--format")
+                else {
                     return die("missing value for --format");
                 };
-                if v.is_empty() {
-                    return die("missing value for --format");
-                }
-                format = v.to_string();
-                i += 2;
+                format = v;
+                i = next_i;
             }
             "-h" | "--help" => {
+                if inline_value.is_some() {
+                    return die(&format!("unknown argument: {raw_arg}"));
+                }
                 print_usage();
                 return 0;
             }
-            other => {
-                return die(&format!("unknown argument: {other}"));
+            _ => {
+                return die(&format!("unknown argument: {raw_arg}"));
             }
         }
     }
@@ -388,6 +413,7 @@ pub fn run(args: &[String]) -> i32 {
             return 1;
         }
     };
+    let sprint_hints = sprint_hints(&selected_sprints);
 
     let options = SplitPlanOptions {
         pr_grouping: grouping_mode,
@@ -403,6 +429,15 @@ pub fn run(args: &[String]) -> i32 {
             eprintln!("error: {err}");
             return 1;
         }
+    };
+    let explain_payload = if explain {
+        Some(build_explain_payload(
+            &split_records,
+            &sprint_hints,
+            options.pr_grouping,
+        ))
+    } else {
+        None
     };
 
     let out_records: Vec<OutputRecord> = split_records
@@ -422,6 +457,7 @@ pub fn run(args: &[String]) -> i32 {
         pr_grouping,
         strategy,
         records: out_records,
+        explain: explain_payload,
     };
     match serde_json::to_string(&output) {
         Ok(json) => {
@@ -492,6 +528,7 @@ pub fn build_split_plan_records(
     let branch_prefix_norm = normalize_branch_prefix(&options.branch_prefix);
     let worktree_prefix_norm = normalize_worktree_prefix(&options.worktree_prefix);
     let owner_prefix_norm = normalize_owner_prefix(&options.owner_prefix);
+    let sprint_hints = sprint_hints(selected_sprints);
 
     let mut records: Vec<Record> = Vec::new();
     for sprint in selected_sprints {
@@ -654,7 +691,7 @@ pub fn build_split_plan_records(
                 ));
             }
         } else if !missing.is_empty() {
-            assign_auto_groups(&mut records);
+            assign_auto_groups(&mut records, &sprint_hints);
         }
     } else {
         for rec in &mut records {
@@ -708,7 +745,17 @@ struct AutoMergeCandidate {
     key_b: String,
 }
 
-fn assign_auto_groups(records: &mut [Record]) {
+#[derive(Debug)]
+struct ForcedMergeCandidate {
+    i: usize,
+    j: usize,
+    span: usize,
+    complexity: i32,
+    key_a: String,
+    key_b: String,
+}
+
+fn assign_auto_groups(records: &mut [Record], hints: &HashMap<i32, AutoSprintHint>) {
     let mut sprint_to_indices: BTreeMap<i32, Vec<usize>> = BTreeMap::new();
     for (idx, rec) in records.iter().enumerate() {
         if rec.pr_group.is_empty() {
@@ -717,7 +764,8 @@ fn assign_auto_groups(records: &mut [Record]) {
     }
 
     for (sprint, indices) in sprint_to_indices {
-        let assignments = auto_groups_for_sprint(records, sprint, &indices);
+        let hint = hints.get(&sprint).cloned().unwrap_or_default();
+        let assignments = auto_groups_for_sprint(records, sprint, &indices, &hint);
         for (idx, group) in assignments {
             if let Some(rec) = records.get_mut(idx)
                 && rec.pr_group.is_empty()
@@ -732,6 +780,7 @@ fn auto_groups_for_sprint(
     records: &[Record],
     sprint: i32,
     indices: &[usize],
+    hint: &AutoSprintHint,
 ) -> BTreeMap<usize, String> {
     let mut lookup: HashMap<String, usize> = HashMap::new();
     for idx in indices {
@@ -804,8 +853,15 @@ fn auto_groups_for_sprint(
         grouped.entry(root).or_default().insert(*idx);
     }
     let mut groups: Vec<BTreeSet<usize>> = grouped.into_values().collect();
+    let target_group_count = desired_auto_group_count(indices.len(), hint);
 
     loop {
+        if let Some(target) = target_group_count
+            && groups.len() <= target
+        {
+            break;
+        }
+
         let mut candidates: Vec<AutoMergeCandidate> = Vec::new();
         for i in 0..groups.len() {
             for j in (i + 1)..groups.len() {
@@ -848,6 +904,16 @@ fn auto_groups_for_sprint(
         }
 
         if candidates.is_empty() {
+            if let Some(target) = target_group_count
+                && groups.len() > target
+                && let Some(chosen) = pick_forced_merge(records, &batch_by_idx, &groups)
+            {
+                let mut merged = groups[chosen.i].clone();
+                merged.extend(groups[chosen.j].iter().copied());
+                groups[chosen.i] = merged;
+                groups.remove(chosen.j);
+                continue;
+            }
             break;
         }
 
@@ -1061,6 +1127,181 @@ fn overlap_path_count(
         }
     }
     left_paths.intersection(&right_paths).count()
+}
+
+fn desired_auto_group_count(max_groups: usize, hint: &AutoSprintHint) -> Option<usize> {
+    if max_groups == 0 {
+        return None;
+    }
+    let preferred = hint
+        .target_parallel_width
+        .or_else(|| {
+            if hint.execution_profile.as_deref() == Some("serial") {
+                Some(1usize)
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            if hint.pr_grouping_intent == Some(SplitPrGrouping::PerSprint) {
+                Some(1usize)
+            } else {
+                None
+            }
+        })?;
+    Some(preferred.clamp(1, max_groups))
+}
+
+fn pick_forced_merge(
+    records: &[Record],
+    batch_by_idx: &BTreeMap<usize, usize>,
+    groups: &[BTreeSet<usize>],
+) -> Option<ForcedMergeCandidate> {
+    let mut chosen: Option<ForcedMergeCandidate> = None;
+    for i in 0..groups.len() {
+        for j in (i + 1)..groups.len() {
+            let mut key_a = group_min_task_key(records, &groups[i]);
+            let mut key_b = group_min_task_key(records, &groups[j]);
+            if key_b < key_a {
+                std::mem::swap(&mut key_a, &mut key_b);
+            }
+            let candidate = ForcedMergeCandidate {
+                i,
+                j,
+                span: group_span(batch_by_idx, &groups[i], &groups[j]),
+                complexity: group_complexity(records, &groups[i])
+                    + group_complexity(records, &groups[j]),
+                key_a,
+                key_b,
+            };
+            let replace = match &chosen {
+                None => true,
+                Some(best) => {
+                    (
+                        candidate.span,
+                        candidate.complexity,
+                        &candidate.key_a,
+                        &candidate.key_b,
+                        candidate.i,
+                        candidate.j,
+                    ) < (
+                        best.span,
+                        best.complexity,
+                        &best.key_a,
+                        &best.key_b,
+                        best.i,
+                        best.j,
+                    )
+                }
+            };
+            if replace {
+                chosen = Some(candidate);
+            }
+        }
+    }
+    chosen
+}
+
+fn sprint_hints(selected_sprints: &[Sprint]) -> HashMap<i32, AutoSprintHint> {
+    let mut hints: HashMap<i32, AutoSprintHint> = HashMap::new();
+    for sprint in selected_sprints {
+        let pr_grouping_intent = sprint
+            .metadata
+            .pr_grouping_intent
+            .as_deref()
+            .and_then(SplitPrGrouping::from_cli);
+        let execution_profile = sprint.metadata.execution_profile.clone();
+        let target_parallel_width = sprint.metadata.parallel_width;
+        hints.insert(
+            sprint.number,
+            AutoSprintHint {
+                pr_grouping_intent,
+                execution_profile,
+                target_parallel_width,
+            },
+        );
+    }
+    hints
+}
+
+fn build_explain_payload(
+    records: &[SplitPlanRecord],
+    hints: &HashMap<i32, AutoSprintHint>,
+    pr_grouping: SplitPrGrouping,
+) -> Vec<ExplainSprint> {
+    let mut grouped: BTreeMap<i32, BTreeMap<String, Vec<String>>> = BTreeMap::new();
+    for record in records {
+        grouped
+            .entry(record.sprint)
+            .or_default()
+            .entry(record.pr_group.clone())
+            .or_default()
+            .push(record.task_id.clone());
+    }
+
+    let mut out: Vec<ExplainSprint> = Vec::new();
+    for (sprint, per_group) in grouped {
+        let hint = hints.get(&sprint).cloned().unwrap_or_default();
+        let groups = per_group
+            .into_iter()
+            .map(|(pr_group, task_ids)| {
+                let anchor = task_ids.first().cloned().unwrap_or_default();
+                ExplainGroup {
+                    pr_group,
+                    task_ids,
+                    anchor,
+                }
+            })
+            .collect::<Vec<_>>();
+        out.push(ExplainSprint {
+            sprint,
+            target_parallel_width: hint.target_parallel_width,
+            execution_profile: hint.execution_profile,
+            pr_grouping_intent: hint
+                .pr_grouping_intent
+                .map(|value| value.as_str().to_string())
+                .or_else(|| Some(pr_grouping.as_str().to_string())),
+            groups,
+        });
+    }
+    out
+}
+
+fn split_value_arg(raw: &str) -> (&str, Option<&str>) {
+    if raw.starts_with("--")
+        && let Some((flag, value)) = raw.split_once('=')
+        && !flag.is_empty()
+    {
+        return (flag, Some(value));
+    }
+    (raw, None)
+}
+
+fn consume_option_value(
+    args: &[String],
+    idx: usize,
+    inline_value: Option<&str>,
+    _flag: &str,
+) -> Result<(String, usize), ()> {
+    match inline_value {
+        Some(value) => {
+            if value.is_empty() {
+                Err(())
+            } else {
+                Ok((value.to_string(), idx + 1))
+            }
+        }
+        None => {
+            let Some(value) = args.get(idx + 1) else {
+                return Err(());
+            };
+            if value.is_empty() {
+                Err(())
+            } else {
+                Ok((value.to_string(), idx + 2))
+            }
+        }
+    }
 }
 
 fn uf_find(parent: &mut HashMap<usize, usize>, node: usize) -> usize {

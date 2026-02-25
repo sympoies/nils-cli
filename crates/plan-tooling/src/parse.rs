@@ -3,6 +3,16 @@ use std::path::Path;
 
 pub mod to_json;
 
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SprintMetadata {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr_grouping_intent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parallel_width: Option<usize>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Plan {
     pub title: String,
@@ -16,6 +26,8 @@ pub struct Sprint {
     pub name: String,
     pub start_line: u32,
     pub tasks: Vec<Task>,
+    #[serde(skip_serializing)]
+    pub metadata: SprintMetadata,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -96,6 +108,7 @@ pub fn parse_plan_with_display(
                 name,
                 start_line: (i + 1) as u32,
                 tasks: Vec::new(),
+                metadata: SprintMetadata::default(),
             });
             i += 1;
             continue;
@@ -125,6 +138,17 @@ pub fn parse_plan_with_display(
         }
 
         if current_task.is_none() {
+            if let Some((_, field, rest)) = parse_field_line(line)
+                && let Some(sprint) = current_sprint.as_mut()
+            {
+                let value = rest.unwrap_or_default();
+                if field == "PR grouping intent" {
+                    sprint.metadata.pr_grouping_intent = parse_pr_grouping_intent(&value);
+                } else if field == "Execution Profile" {
+                    sprint.metadata.execution_profile = parse_execution_profile(&value);
+                    sprint.metadata.parallel_width = parse_parallel_width(&value);
+                }
+            }
             i += 1;
             continue;
         }
@@ -283,8 +307,11 @@ fn parse_task_heading(line: &str) -> Option<(i32, i32, String)> {
 fn parse_field_line(line: &str) -> Option<(usize, String, Option<String>)> {
     let base_indent = line.chars().take_while(|c| *c == ' ').count();
     let trimmed = line.trim_start_matches(' ');
-    let after_dash = trimmed.strip_prefix('-')?;
-    let after_space = after_dash.trim_start();
+    let after_space = if let Some(after_dash) = trimmed.strip_prefix('-') {
+        after_dash.trim_start()
+    } else {
+        trimmed
+    };
     let after_star = after_space.strip_prefix("**")?;
     let (field, rest) = after_star.split_once("**:")?;
     let field = field.to_string();
@@ -294,9 +321,82 @@ fn parse_field_line(line: &str) -> Option<(usize, String, Option<String>)> {
         | "Dependencies"
         | "Complexity"
         | "Acceptance criteria"
-        | "Validation" => Some((base_indent, field, Some(rest.trim().to_string()))),
+        | "Validation"
+        | "PR grouping intent"
+        | "Execution Profile" => Some((base_indent, field, Some(rest.trim().to_string()))),
         _ => None,
     }
+}
+
+fn parse_pr_grouping_intent(text: &str) -> Option<String> {
+    let token = extract_primary_token(text);
+    if token.is_empty() {
+        return None;
+    }
+    let normalized = token.to_ascii_lowercase();
+    if normalized.contains("per-sprint") || normalized == "persprint" {
+        Some("per-sprint".to_string())
+    } else if normalized.contains("group") {
+        Some("group".to_string())
+    } else {
+        None
+    }
+}
+
+fn parse_execution_profile(text: &str) -> Option<String> {
+    let token = extract_primary_token(text);
+    if token.is_empty() {
+        None
+    } else {
+        Some(token.to_ascii_lowercase())
+    }
+}
+
+fn parse_parallel_width(text: &str) -> Option<usize> {
+    let lower = text.to_ascii_lowercase();
+    let marker = "parallel width";
+    let pos = lower.find(marker)?;
+    let tail = &lower[pos + marker.len()..];
+    let mut digits = String::new();
+    let mut reading = false;
+    for ch in tail.chars() {
+        if ch.is_ascii_digit() {
+            digits.push(ch);
+            reading = true;
+            continue;
+        }
+        if reading {
+            break;
+        }
+    }
+    if digits.is_empty() {
+        None
+    } else {
+        digits.parse::<usize>().ok().filter(|v| *v > 0)
+    }
+}
+
+fn extract_primary_token(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if let Some(start) = trimmed.find('`')
+        && let Some(end_rel) = trimmed[start + 1..].find('`')
+    {
+        let token = trimmed[start + 1..start + 1 + end_rel].trim();
+        if !token.is_empty() {
+            return token.to_string();
+        }
+    }
+    trimmed
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_end_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-')
+        .trim_start_matches(|c: char| !c.is_ascii_alphanumeric())
+        .to_string()
 }
 
 fn strip_inline_code(text: &str) -> String {
