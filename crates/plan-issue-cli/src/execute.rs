@@ -1664,6 +1664,13 @@ mod tests {
         out
     }
 
+    fn note_value(notes: &str, key: &str) -> Option<String> {
+        notes
+            .split(';')
+            .map(str::trim)
+            .find_map(|part| part.strip_prefix(&format!("{key}=")).map(str::to_string))
+    }
+
     #[derive(Default)]
     struct MockGitHubAdapter {
         merged: HashMap<u64, Result<bool, String>>,
@@ -2083,7 +2090,8 @@ mod tests {
                 branch: "issue/s3-t1".to_string(),
                 worktree: "wt-1".to_string(),
                 owner: "subagent-s3-t1".to_string(),
-                notes: "sprint=S3; plan-task:Task 3.1; pr-group=s3-auto-g1".to_string(),
+                notes: "sprint=S3; plan-task:Task 3.1; pr-group=s3-auto-g1; shared-pr-anchor=S3T2"
+                    .to_string(),
                 pr_group: "s3-auto-g1".to_string(),
                 sprint: 3,
                 grouping: PrGrouping::Group,
@@ -2094,7 +2102,8 @@ mod tests {
                 branch: "issue/s3-t2".to_string(),
                 worktree: "wt-2".to_string(),
                 owner: "subagent-s3-t2".to_string(),
-                notes: "sprint=S3; plan-task:Task 3.2; pr-group=s3-auto-g1".to_string(),
+                notes: "sprint=S3; plan-task:Task 3.2; pr-group=s3-auto-g1; shared-pr-anchor=S3T2"
+                    .to_string(),
                 pr_group: "s3-auto-g1".to_string(),
                 sprint: 3,
                 grouping: PrGrouping::Group,
@@ -2108,6 +2117,102 @@ mod tests {
         let rows = table.rows();
         assert_eq!(rows[0].execution_mode, "per-sprint");
         assert_eq!(rows[1].execution_mode, "per-sprint");
+
+        let anchor_task = note_value(&rows[0].notes, "shared-pr-anchor").expect("anchor note");
+        assert_eq!(anchor_task, "S3T2");
+        assert_eq!(
+            note_value(&rows[1].notes, "shared-pr-anchor"),
+            Some("S3T2".to_string())
+        );
+        let anchor_row = rows
+            .iter()
+            .find(|row| row.task == anchor_task)
+            .expect("anchor row present");
+
+        // Characterization: auto single-lane normalizes only execution_mode today. Lane metadata
+        // remains per-task, so rows do not converge on the shared anchor row's owner/branch/worktree/notes.
+        assert_ne!(rows[0].owner, rows[1].owner);
+        assert_ne!(rows[0].branch, rows[1].branch);
+        assert_ne!(rows[0].worktree, rows[1].worktree);
+        assert_ne!(rows[0].notes, rows[1].notes);
+        assert_ne!(rows[0].owner, anchor_row.owner);
+        assert_ne!(rows[0].branch, anchor_row.branch);
+        assert_ne!(rows[0].worktree, anchor_row.worktree);
+        assert_ne!(rows[0].notes, anchor_row.notes);
+    }
+
+    #[test]
+    #[ignore = "S2 lane canonicalization should unify single-lane metadata on the shared anchor"]
+    fn sync_issue_rows_from_task_spec_auto_single_group_should_canonicalize_lane_metadata() {
+        let body = task_table_markdown(&[
+            task_row("S3T1", "TBD", "TBD", "TBD", "", "sprint=S3"),
+            task_row("S3T2", "TBD", "TBD", "TBD", "", "sprint=S3"),
+        ]);
+        let mut table = issue_body::parse_task_table(&body).expect("table");
+
+        let specs = vec![
+            TaskSpecRow {
+                task_id: "S3T1".to_string(),
+                summary: "Task 1".to_string(),
+                branch: "issue/s3-t1".to_string(),
+                worktree: "wt-1".to_string(),
+                owner: "subagent-s3-t1".to_string(),
+                notes: "sprint=S3; plan-task:Task 3.1; pr-group=s3-auto-g1; shared-pr-anchor=S3T2"
+                    .to_string(),
+                pr_group: "s3-auto-g1".to_string(),
+                sprint: 3,
+                grouping: PrGrouping::Group,
+            },
+            TaskSpecRow {
+                task_id: "S3T2".to_string(),
+                summary: "Task 2".to_string(),
+                branch: "issue/s3-t2".to_string(),
+                worktree: "wt-2".to_string(),
+                owner: "subagent-s3-t2".to_string(),
+                notes: "sprint=S3; plan-task:Task 3.2; pr-group=s3-auto-g1; shared-pr-anchor=S3T2"
+                    .to_string(),
+                pr_group: "s3-auto-g1".to_string(),
+                sprint: 3,
+                grouping: PrGrouping::Group,
+            },
+        ];
+
+        sync_issue_rows_from_task_spec(&mut table, &specs, SplitStrategy::Auto).expect("sync");
+
+        let rows = table.rows();
+        let anchor_task = note_value(&rows[0].notes, "shared-pr-anchor").expect("anchor note");
+        let anchor_row = rows
+            .iter()
+            .find(|row| row.task == anchor_task)
+            .expect("anchor row present");
+        let anchor_owner = anchor_row.owner.clone();
+        let anchor_branch = anchor_row.branch.clone();
+        let anchor_worktree = anchor_row.worktree.clone();
+        let anchor_notes = anchor_row.notes.clone();
+
+        for row in rows {
+            assert_eq!(row.execution_mode, "per-sprint");
+            assert_eq!(
+                row.owner, anchor_owner,
+                "task {} owner should match anchor",
+                row.task
+            );
+            assert_eq!(
+                row.branch, anchor_branch,
+                "task {} branch should match anchor",
+                row.task
+            );
+            assert_eq!(
+                row.worktree, anchor_worktree,
+                "task {} worktree should match anchor",
+                row.task
+            );
+            assert_eq!(
+                row.notes, anchor_notes,
+                "task {} notes should match anchor",
+                row.task
+            );
+        }
     }
 
     #[test]
