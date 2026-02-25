@@ -30,11 +30,7 @@ fn git_stdout(repo: &Path, args: &[&str]) -> String {
 }
 
 fn init_repo(repo: &Path) {
-    git(repo, &["init"]);
-    git(repo, &["config", "user.name", "Test User"]);
-    git(repo, &["config", "user.email", "test@example.com"]);
-    git(repo, &["config", "commit.gpgSign", "false"]);
-    git(repo, &["config", "tag.gpgSign", "false"]);
+    test_git::init_repo_at_with(repo, test_git::InitRepoOptions::new().without_branch());
 }
 
 fn real_git_path() -> String {

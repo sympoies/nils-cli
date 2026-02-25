@@ -271,6 +271,7 @@ fn write_target_timestamp(target_file: &Path, auth_file: &Path) -> io::Result<()
 #[cfg(test)]
 mod tests {
     use super::{is_invalid_target, resolve_secret_dir};
+    use nils_test_support::{EnvGuard, GlobalStateLock};
 
     #[test]
     fn invalid_target_rejects_paths_and_traversal() {
@@ -282,30 +283,12 @@ mod tests {
 
     #[test]
     fn resolve_secret_dir_uses_gemini_secret_dir_env_override() {
-        let _lock = crate::auth::test_env_lock();
-        let old_home = std::env::var_os("HOME");
-        let old = std::env::var_os("GEMINI_SECRET_DIR");
-        // SAFETY: test-scoped env mutation.
-        unsafe { std::env::set_var("HOME", "") };
-        // SAFETY: test-scoped env mutation.
-        unsafe { std::env::set_var("GEMINI_SECRET_DIR", "/tmp/secrets") };
+        let lock = GlobalStateLock::new();
+        let _home_guard = EnvGuard::set(&lock, "HOME", "");
+        let _secret_dir_guard = EnvGuard::set(&lock, "GEMINI_SECRET_DIR", "/tmp/secrets");
         assert_eq!(
             resolve_secret_dir().expect("secret dir"),
             std::path::PathBuf::from("/tmp/secrets")
         );
-        if let Some(value) = old_home {
-            // SAFETY: test-scoped env restore.
-            unsafe { std::env::set_var("HOME", value) };
-        } else {
-            // SAFETY: test-scoped env restore.
-            unsafe { std::env::remove_var("HOME") };
-        }
-        if let Some(value) = old {
-            // SAFETY: test-scoped env restore.
-            unsafe { std::env::set_var("GEMINI_SECRET_DIR", value) };
-        } else {
-            // SAFETY: test-scoped env restore.
-            unsafe { std::env::remove_var("GEMINI_SECRET_DIR") };
-        }
     }
 }

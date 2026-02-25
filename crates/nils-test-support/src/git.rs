@@ -89,31 +89,36 @@ fn git_output_with_env(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> Outp
     cmd.output().expect("git command failed to spawn")
 }
 
-pub fn init_repo_with(options: InitRepoOptions) -> TempDir {
-    let dir = TempDir::new().expect("tempdir");
-    git(dir.path(), &["init", "-q"]);
+pub fn init_repo_at_with(dir: &Path, options: InitRepoOptions) {
+    git(dir, &["init", "-q"]);
 
     if let Some(branch) = options.branch.as_deref() {
         // Make the initial branch deterministic across environments.
-        git(dir.path(), &["checkout", "-q", "-B", branch]);
+        git(dir, &["checkout", "-q", "-B", branch]);
     }
 
-    git(dir.path(), &["config", "user.email", "test@example.com"]);
-    git(dir.path(), &["config", "user.name", "Test User"]);
-    git(dir.path(), &["config", "commit.gpgsign", "false"]);
-    git(dir.path(), &["config", "tag.gpgSign", "false"]);
+    git(dir, &["config", "user.email", "test@example.com"]);
+    git(dir, &["config", "user.name", "Test User"]);
+    git(dir, &["config", "commit.gpgsign", "false"]);
+    git(dir, &["config", "tag.gpgSign", "false"]);
 
     if options.initial_commit {
-        let file_path = dir.path().join(&options.initial_commit_name);
+        let file_path = dir.join(&options.initial_commit_name);
         fs::write(&file_path, &options.initial_commit_contents).expect("write initial commit");
-        git(dir.path(), &["add", &options.initial_commit_name]);
-        git(
-            dir.path(),
-            &["commit", "-m", &options.initial_commit_message],
-        );
+        git(dir, &["add", &options.initial_commit_name]);
+        git(dir, &["commit", "-m", &options.initial_commit_message]);
     }
+}
 
+pub fn init_repo_with(options: InitRepoOptions) -> TempDir {
+    let dir = TempDir::new().expect("tempdir");
+    init_repo_at_with(dir.path(), options);
     dir
+}
+
+pub fn worktree_add_branch(repo: &Path, worktree_path: &Path, branch: &str) {
+    let worktree_path = worktree_path.to_string_lossy().to_string();
+    git(repo, &["worktree", "add", &worktree_path, "-b", branch]);
 }
 
 pub fn commit_file(dir: &Path, name: &str, contents: &str, message: &str) -> String {

@@ -1,5 +1,6 @@
 use nils_test_support::git;
 use pretty_assertions::assert_eq;
+use std::fs;
 
 #[test]
 fn init_repo_with_default_branch_and_config() {
@@ -17,6 +18,30 @@ fn init_repo_with_initial_commit_creates_commit() {
     let head = git::git(repo.path(), &["rev-parse", "HEAD"]);
     let head = head.trim();
     assert_eq!(head.len(), 40);
+}
+
+#[test]
+fn init_repo_at_with_initializes_existing_directory() {
+    let workspace = tempfile::TempDir::new().expect("tempdir");
+    let repo = workspace.path().join("repo");
+    fs::create_dir_all(&repo).expect("create repo dir");
+
+    git::init_repo_at_with(&repo, git::InitRepoOptions::new().with_initial_commit());
+
+    let head = git::git(&repo, &["rev-parse", "HEAD"]);
+    assert_eq!(head.trim().len(), 40);
+}
+
+#[test]
+fn worktree_add_branch_creates_linked_worktree() {
+    let repo = git::init_repo_with(git::InitRepoOptions::new().with_initial_commit());
+    let workspace = tempfile::TempDir::new().expect("tempdir");
+    let linked = workspace.path().join("linked");
+
+    git::worktree_add_branch(repo.path(), &linked, "linked-worktree");
+
+    let branch = git::git(&linked, &["symbolic-ref", "--short", "HEAD"]);
+    assert_eq!(branch.trim_end(), "linked-worktree");
 }
 
 #[test]

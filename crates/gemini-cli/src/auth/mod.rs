@@ -14,17 +14,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) const SECRET_FILE_MODE: u32 = crate::fs::SECRET_FILE_MODE;
 
-#[cfg(test)]
-pub(crate) fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
-    use std::sync::{Mutex, OnceLock};
-
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    match LOCK.get_or_init(|| Mutex::new(())).lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    }
-}
-
 pub fn identity_from_auth_file(path: &Path) -> io::Result<Option<String>> {
     crate::runtime::auth::identity_from_auth_file(path).map_err(core_error_to_io)
 }
