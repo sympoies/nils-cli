@@ -118,10 +118,7 @@ pub fn init_repo_with(options: InitRepoOptions) -> TempDir {
 
 pub fn worktree_add_branch(repo: &Path, worktree_path: &Path, branch: &str) {
     let worktree_path = worktree_path.to_string_lossy().to_string();
-    git(
-        repo,
-        &["worktree", "add", &worktree_path, "-b", branch],
-    );
+    git(repo, &["worktree", "add", &worktree_path, "-b", branch]);
 }
 
 pub fn commit_file(dir: &Path, name: &str, contents: &str, message: &str) -> String {

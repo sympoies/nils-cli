@@ -1,6 +1,8 @@
 use gemini_cli::agent;
 use nils_common::process as shared_process;
-use nils_test_support::{CwdGuard, EnvGuard, GlobalStateLock, StubBinDir, git as test_git, prepend_path};
+use nils_test_support::{
+    CwdGuard, EnvGuard, GlobalStateLock, StubBinDir, git as test_git, prepend_path,
+};
 use std::fs;
 use std::path::Path;
 
