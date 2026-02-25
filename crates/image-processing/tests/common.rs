@@ -1,8 +1,7 @@
 #![allow(dead_code)]
 
-use nils_test_support::bin;
 use nils_test_support::cmd;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use nils_test_support::StubBinDir;
 
@@ -10,10 +9,6 @@ pub struct CmdOutput {
     pub code: i32,
     pub stdout: String,
     pub stderr: String,
-}
-
-pub fn image_processing_bin() -> PathBuf {
-    bin::resolve("image-processing")
 }
 
 pub fn run_image_processing(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> CmdOutput {

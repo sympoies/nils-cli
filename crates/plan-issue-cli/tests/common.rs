@@ -44,18 +44,8 @@ pub fn run_plan_issue_with_options(args: &[&str], options: CmdOptions) -> CmdOut
 }
 
 #[allow(dead_code)]
-pub fn run_plan_issue_with_env(args: &[&str], env: &[(&str, &str)]) -> CmdOut {
-    run_bin_with_env("plan-issue", args, env)
-}
-
-#[allow(dead_code)]
 pub fn run_plan_issue_local(args: &[&str]) -> CmdOut {
     run_bin("plan-issue-local", args)
-}
-
-#[allow(dead_code)]
-pub fn run_plan_issue_local_with_options(args: &[&str], options: CmdOptions) -> CmdOut {
-    run_bin_with_options("plan-issue-local", args, options)
 }
 
 #[allow(dead_code)]

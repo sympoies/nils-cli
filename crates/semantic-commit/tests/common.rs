@@ -3,7 +3,6 @@
 use std::path::Path;
 use std::process::Output;
 
-use nils_test_support::bin::resolve;
 use nils_test_support::cmd::{options_in_dir_with_envs, run_resolved};
 use nils_test_support::fs::{write_executable as write_executable_file, write_text};
 use nils_test_support::git::{InitRepoOptions, init_repo_with};
@@ -17,10 +16,6 @@ pub fn init_repo() -> tempfile::TempDir {
 pub fn write_file(dir: &Path, name: &str, contents: &str) {
     let path = dir.join(name);
     write_text(&path, contents);
-}
-
-pub fn semantic_commit_bin() -> std::path::PathBuf {
-    resolve("semantic-commit")
 }
 
 pub fn run_semantic_commit_output(

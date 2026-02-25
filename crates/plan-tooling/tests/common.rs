@@ -2,7 +2,6 @@
 
 use std::path::Path;
 
-use nils_test_support::bin::resolve;
 use nils_test_support::cmd::run_resolved_in_dir;
 use nils_test_support::fs::write_text;
 #[allow(unused_imports)]
@@ -13,10 +12,6 @@ pub struct CmdOut {
     pub code: i32,
     pub stdout: String,
     pub stderr: String,
-}
-
-pub fn plan_tooling_bin() -> std::path::PathBuf {
-    resolve("plan-tooling")
 }
 
 pub fn run_plan_tooling(dir: &Path, args: &[&str]) -> CmdOut {

@@ -29,10 +29,6 @@ impl RepoFixture {
         }
     }
 
-    pub fn root_path(&self, rel: &str) -> PathBuf {
-        self.root.join(rel)
-    }
-
     pub fn mkdir(&self, rel: &str) -> PathBuf {
         let path = self.root.join(rel);
         std::fs::create_dir_all(&path).expect("mkdir");
@@ -43,32 +39,16 @@ impl RepoFixture {
         write_text(&self.rest_setup.join("endpoints.env"), contents)
     }
 
-    pub fn write_rest_endpoints_local(&self, contents: &str) -> PathBuf {
-        write_text(&self.rest_setup.join("endpoints.local.env"), contents)
-    }
-
     pub fn write_rest_tokens(&self, contents: &str) -> PathBuf {
         write_text(&self.rest_setup.join("tokens.env"), contents)
-    }
-
-    pub fn write_rest_tokens_local(&self, contents: &str) -> PathBuf {
-        write_text(&self.rest_setup.join("tokens.local.env"), contents)
     }
 
     pub fn write_gql_endpoints(&self, contents: &str) -> PathBuf {
         write_text(&self.gql_setup.join("endpoints.env"), contents)
     }
 
-    pub fn write_gql_endpoints_local(&self, contents: &str) -> PathBuf {
-        write_text(&self.gql_setup.join("endpoints.local.env"), contents)
-    }
-
     pub fn write_gql_jwts(&self, contents: &str) -> PathBuf {
         write_text(&self.gql_setup.join("jwts.env"), contents)
-    }
-
-    pub fn write_gql_jwts_local(&self, contents: &str) -> PathBuf {
-        write_text(&self.gql_setup.join("jwts.local.env"), contents)
     }
 
     pub fn write_gql_schema_env(&self, contents: &str) -> PathBuf {

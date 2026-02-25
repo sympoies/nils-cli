@@ -1,7 +1,7 @@
 #[allow(unused_imports)]
 pub use nils_test_support::write_exe;
-use nils_test_support::{StubBinDir, bin, cmd};
-use std::path::{Path, PathBuf};
+use nils_test_support::{StubBinDir, cmd};
+use std::path::Path;
 
 #[allow(dead_code)]
 pub struct CmdOutput {
@@ -9,11 +9,6 @@ pub struct CmdOutput {
     pub stdout: String,
     #[allow(dead_code)]
     pub stderr: String,
-}
-
-#[allow(dead_code)]
-pub fn fzf_cli_bin() -> PathBuf {
-    bin::resolve("fzf-cli")
 }
 
 #[allow(dead_code)]
