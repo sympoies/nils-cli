@@ -375,7 +375,10 @@ fn auto_single_lane_end_to_end_keeps_per_sprint_runtime_truth() {
         ready_comment.contains("| S1T2 | Follow-up lane task | TBD (per-sprint) |"),
         "{ready_comment}"
     );
-    assert!(ready_comment.contains("runtime truth ready"), "{ready_comment}");
+    assert!(
+        ready_comment.contains("runtime truth ready"),
+        "{ready_comment}"
+    );
     assert!(!ready_comment.contains("pr-shared"), "{ready_comment}");
 
     let log = fs::read_to_string(&log_path).expect("read gh log");

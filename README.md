@@ -46,7 +46,7 @@ Each crate is either a standalone CLI binary or a shared library used across the
 - [crates/gemini-cli](crates/gemini-cli): Provider-specific CLI lane for Gemini workflows, with adapters over `nils-common::provider_runtime`.
 - [crates/semantic-commit](crates/semantic-commit): Helper CLI for generating staged context and creating semantic commits.
 - [crates/plan-tooling](crates/plan-tooling): Plan Format v1 tooling CLI (`to-json`, `validate`, `batches`, `split-prs`, `scaffold`, `completion`).
-- [crates/plan-issue-cli](crates/plan-issue-cli): Plan issue orchestration binaries (`plan-issue`, `plan-issue-local`) for task-spec build/start/status/ready/accept/close workflows plus completion export.
+- [crates/plan-issue-cli](crates/plan-issue-cli): Plan issue orchestration binaries (`plan-issue`, `plan-issue-local`) where `Task Decomposition` is runtime truth and sprint artifacts are derived outputs.
 
 ## Shared helper policy (`nils-common`)
 
