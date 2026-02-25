@@ -22,7 +22,6 @@ Primary constraint: shared helpers must preserve behavioral parity for each cons
 
 ## Modules and purpose
 
-- `env`: truthy parsing helpers and `NO_COLOR` presence checks.
 - `env`: truthy parsing helpers, `NO_COLOR` checks, and trimmed non-empty env lookup.
 - `shell`: POSIX single-quote escaping and ANSI stripping modes.
 - `process`: command execution wrappers plus PATH lookup helpers.

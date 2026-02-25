@@ -6,6 +6,20 @@
 It provides small utilities to keep tests deterministic when they need to manipulate global state
 or stub external commands.
 
+## Shared helper policy
+
+### What belongs in `nils-test-support`
+
+- Test-only utilities reused by multiple crates (guards, git helpers, command wrappers, stubs).
+- Deterministic helpers that reduce flakiness and remove local test boilerplate.
+- APIs that keep tests explicit while avoiding duplicated harness logic.
+
+### What stays crate-local
+
+- Test assertions specific to one CLI's output/contract expectations.
+- Product-specific fixture semantics that are not reusable elsewhere.
+- Command-specific golden text snapshots and local approval-test policy.
+
 ## Utilities
 - Global guards
   - `GlobalStateLock`: serialize tests that mutate process-global state (env, cwd, PATH, etc.)
@@ -36,6 +50,15 @@ let stub_dir = StubBinDir::new();
 let _path = prepend_path(&lock, stub_dir.path());
 let _env = EnvGuard::set(&lock, "EXAMPLE", "1");
 ```
+
+## Migration guidance
+
+When migrating existing crate-local test helpers:
+
+1. Move only reusable primitives; keep command-specific assertions local.
+2. Prefer `GlobalStateLock`, `EnvGuard`, and `CwdGuard` for global-state safety.
+3. Replace manual `PATH`/stub setup with `StubBinDir`, `prepend_path`, and `stubs`.
+4. Re-run affected crate tests and keep flaky-risk notes up to date.
 
 ## Docs
 
