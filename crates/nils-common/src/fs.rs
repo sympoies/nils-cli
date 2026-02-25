@@ -195,16 +195,15 @@ pub fn write_atomic(path: &Path, contents: &[u8], mode: u32) -> Result<(), Atomi
 /// - `Some(value)`: trims at first newline and writes if non-empty.
 /// - `None` or empty value: removes the file, ignoring `NotFound`.
 pub fn write_timestamp(path: &Path, iso: Option<&str>) -> Result<(), TimestampError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|source| TimestampError::CreateParentDir {
-            path: parent.to_path_buf(),
-            source,
-        })?;
-    }
-
     if let Some(raw) = iso {
         let trimmed = raw.split(&['\n', '\r'][..]).next().unwrap_or("");
         if !trimmed.is_empty() {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).map_err(|source| TimestampError::CreateParentDir {
+                    path: parent.to_path_buf(),
+                    source,
+                })?;
+            }
             fs::write(path, trimmed).map_err(|source| TimestampError::WriteFile {
                 path: path.to_path_buf(),
                 source,
@@ -584,6 +583,19 @@ mod tests {
     }
 
     #[test]
+    fn fs_write_timestamp_creates_parent_for_write_path() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("nested").join("stamp.txt");
+
+        write_timestamp(&path, Some("2025-01-20T00:00:00Z")).expect("write timestamp");
+
+        assert_eq!(
+            fs::read_to_string(&path).expect("read timestamp"),
+            "2025-01-20T00:00:00Z"
+        );
+    }
+
+    #[test]
     fn fs_write_timestamp_removes_file_when_value_missing_or_empty() {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("stamp.txt");
@@ -603,6 +615,20 @@ mod tests {
         let missing = dir.path().join("missing.timestamp");
 
         write_timestamp(&missing, None).expect("missing remove should not fail");
+    }
+
+    #[test]
+    fn fs_write_timestamp_remove_path_does_not_create_parent_dir() {
+        let dir = TempDir::new().expect("tempdir");
+        let parent = dir.path().join("missing").join("cache");
+        let missing = parent.join("auth.json.timestamp");
+
+        write_timestamp(&missing, None).expect("missing remove should not fail");
+
+        assert!(
+            !parent.exists(),
+            "remove path should not create parent directories"
+        );
     }
 
     #[test]
