@@ -357,7 +357,65 @@ fn issue_number_from_url(url: &str) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::{issue_number_from_url, normalize_repo_slug};
+    use crate::commands::plan::CloseReason;
+    use crate::github::{GhCliAdapter, GitHubAdapter, resolve_repo};
+    use nils_test_support::git::{InitRepoOptions, git, init_repo_with};
+    use nils_test_support::{CwdGuard, EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
+    use tempfile::TempDir;
+
+    fn gh_stub_script() -> &'static str {
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -n "${GH_STUB_LOG:-}" ]]; then
+  printf '%s\n' "$*" >> "$GH_STUB_LOG"
+fi
+
+if [[ -n "${GH_STUB_FORCE_FAIL:-}" ]]; then
+  echo "${GH_STUB_FORCE_FAIL}" >&2
+  exit 1
+fi
+
+cmd="${1:-}"
+sub="${2:-}"
+case "$cmd $sub" in
+  "issue view")
+    if [[ -n "${GH_STUB_ISSUE_VIEW_JSON:-}" ]]; then
+      printf '%s\n' "$GH_STUB_ISSUE_VIEW_JSON"
+    else
+      printf '%s\n' '{"body":"from-stub-body"}'
+    fi
+    ;;
+  "issue create")
+    if [[ -n "${GH_STUB_ISSUE_CREATE_URL:-}" ]]; then
+      printf '%s\n' "$GH_STUB_ISSUE_CREATE_URL"
+    else
+      printf '%s\n' 'https://github.com/graysurf/nils-cli/issues/217'
+    fi
+    ;;
+  "issue edit")
+    ;;
+  "issue comment")
+    ;;
+  "issue close")
+    ;;
+  "pr view")
+    if [[ -n "${GH_STUB_PR_VIEW_JSON:-}" ]]; then
+      printf '%s\n' "$GH_STUB_PR_VIEW_JSON"
+    else
+      printf '%s\n' '{"state":"MERGED","mergedAt":null}'
+    fi
+    ;;
+  *)
+    echo "unsupported gh call: $*" >&2
+    exit 1
+    ;;
+esac
+"#
+    }
 
     #[test]
     fn normalize_repo_slug_accepts_common_remote_forms() {
@@ -388,6 +446,196 @@ mod tests {
         assert_eq!(
             issue_number_from_url("https://github.com/graysurf/nils-cli/pull/221"),
             Some(221)
+        );
+    }
+
+    #[test]
+    fn gh_adapter_live_methods_work_with_stubbed_gh() {
+        let lock = GlobalStateLock::new();
+        let stubs = StubBinDir::new();
+        stubs.write_exe("gh", gh_stub_script());
+        let _path = prepend_path(&lock, stubs.path());
+
+        let tmp = TempDir::new().expect("tempdir");
+        let body_file = tmp.path().join("body.md");
+        fs::write(&body_file, "normal markdown body").expect("write body");
+
+        let adapter = GhCliAdapter::new(false);
+        let body = adapter
+            .issue_body("graysurf/nils-cli", 217)
+            .expect("issue body");
+        assert_eq!(body, "from-stub-body");
+
+        let (issue_no, issue_url) = adapter
+            .create_issue(
+                "graysurf/nils-cli",
+                "title",
+                &body_file,
+                &["triage".to_string(), " ".to_string(), "plan".to_string()],
+            )
+            .expect("create issue");
+        assert_eq!(issue_no, 217);
+        assert_eq!(issue_url, "https://github.com/graysurf/nils-cli/issues/217");
+
+        adapter
+            .edit_issue_body("graysurf/nils-cli", 217, &body_file)
+            .expect("edit body");
+        adapter
+            .comment_issue("graysurf/nils-cli", 217, &body_file)
+            .expect("comment");
+        adapter
+            .edit_issue_labels(
+                "graysurf/nils-cli",
+                217,
+                &["needs-review".to_string()],
+                &["blocked".to_string()],
+            )
+            .expect("edit labels");
+        adapter
+            .close_issue(
+                "graysurf/nils-cli",
+                217,
+                CloseReason::Completed,
+                Some("closing comment"),
+            )
+            .expect("close issue");
+
+        assert!(
+            adapter
+                .pr_is_merged("graysurf/nils-cli", 221)
+                .expect("merged check")
+        );
+    }
+
+    #[test]
+    fn gh_adapter_guard_rejects_escaped_payload_without_force() {
+        let lock = GlobalStateLock::new();
+        let stubs = StubBinDir::new();
+        stubs.write_exe("gh", gh_stub_script());
+        let _path = prepend_path(&lock, stubs.path());
+
+        let tmp = TempDir::new().expect("tempdir");
+        let escaped_file = tmp.path().join("escaped.md");
+        fs::write(&escaped_file, "line one\\nline two").expect("write escaped payload");
+
+        let strict = GhCliAdapter::new(false);
+        let strict_err = strict
+            .create_issue("graysurf/nils-cli", "title", &escaped_file, &[])
+            .expect_err("escaped payload should fail");
+        assert!(strict_err.contains("write rejected"), "{strict_err}");
+
+        let force = GhCliAdapter::new(true);
+        let forced = force
+            .create_issue("graysurf/nils-cli", "title", &escaped_file, &[])
+            .expect("force mode bypasses markdown guard");
+        assert_eq!(forced.0, 217);
+    }
+
+    #[test]
+    fn gh_adapter_pr_merge_logic_and_error_paths_are_covered() {
+        let lock = GlobalStateLock::new();
+        let stubs = StubBinDir::new();
+        stubs.write_exe("gh", gh_stub_script());
+        let _path = prepend_path(&lock, stubs.path());
+
+        let adapter = GhCliAdapter::new(false);
+        let _open_state = EnvGuard::set(
+            &lock,
+            "GH_STUB_PR_VIEW_JSON",
+            r#"{"state":"OPEN","mergedAt":null}"#,
+        );
+        assert!(
+            !adapter
+                .pr_is_merged("graysurf/nils-cli", 221)
+                .expect("open pr")
+        );
+        drop(_open_state);
+
+        let _merged_at = EnvGuard::set(
+            &lock,
+            "GH_STUB_PR_VIEW_JSON",
+            r#"{"state":"OPEN","mergedAt":"2026-02-25T00:00:00Z"}"#,
+        );
+        assert!(
+            adapter
+                .pr_is_merged("graysurf/nils-cli", 221)
+                .expect("mergedAt present")
+        );
+        drop(_merged_at);
+
+        let _bad_json = EnvGuard::set(&lock, "GH_STUB_ISSUE_VIEW_JSON", "not-json");
+        let parse_err = adapter
+            .issue_body("graysurf/nils-cli", 217)
+            .expect_err("invalid json should fail");
+        assert!(parse_err.contains("failed to parse gh JSON"), "{parse_err}");
+        drop(_bad_json);
+
+        let _missing_body = EnvGuard::set(&lock, "GH_STUB_ISSUE_VIEW_JSON", r#"{"id":217}"#);
+        let missing_body = adapter
+            .issue_body("graysurf/nils-cli", 217)
+            .expect_err("missing body should fail");
+        assert!(
+            missing_body.contains("JSON missing `body`"),
+            "{missing_body}"
+        );
+        drop(_missing_body);
+
+        let _force_fail = EnvGuard::set(&lock, "GH_STUB_FORCE_FAIL", "forced failure");
+        let run_err = adapter
+            .pr_is_merged("graysurf/nils-cli", 221)
+            .expect_err("gh failure should surface");
+        assert!(run_err.contains("gh pr view"), "{run_err}");
+    }
+
+    #[test]
+    fn resolve_repo_supports_override_and_origin_remote_detection() {
+        assert_eq!(
+            resolve_repo(Some("graysurf/nils-cli")).expect("override"),
+            "graysurf/nils-cli"
+        );
+        assert!(resolve_repo(Some("https://example.com/repo")).is_err());
+
+        let lock = GlobalStateLock::new();
+        let repo = init_repo_with(InitRepoOptions::new().with_branch("main"));
+        git(
+            repo.path(),
+            &[
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:graysurf/nils-cli.git",
+            ],
+        );
+        let _cwd = CwdGuard::set(&lock, repo.path()).expect("set cwd");
+        assert_eq!(
+            resolve_repo(None).expect("resolve from origin"),
+            "graysurf/nils-cli"
+        );
+    }
+
+    #[test]
+    fn resolve_repo_reports_missing_or_unparseable_origin() {
+        let lock = GlobalStateLock::new();
+
+        let missing = init_repo_with(InitRepoOptions::new().with_branch("main"));
+        let _cwd_missing = CwdGuard::set(&lock, missing.path()).expect("set cwd missing");
+        let err_missing = resolve_repo(None).expect_err("missing origin should fail");
+        assert!(
+            err_missing.contains("failed to resolve repository from git remote"),
+            "{err_missing}"
+        );
+        drop(_cwd_missing);
+
+        let unparseable = init_repo_with(InitRepoOptions::new().with_branch("main"));
+        git(
+            unparseable.path(),
+            &["remote", "add", "origin", "ssh://example.com/project.git"],
+        );
+        let _cwd_unparseable = CwdGuard::set(&lock, unparseable.path()).expect("set cwd parse");
+        let err_unparseable = resolve_repo(None).expect_err("unparseable origin should fail");
+        assert!(
+            err_unparseable.contains("unable to derive owner/repo"),
+            "{err_unparseable}"
         );
     }
 }

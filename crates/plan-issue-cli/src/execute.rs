@@ -1559,3 +1559,577 @@ fn path_key(path: &Path) -> String {
         .to_string_lossy()
         .to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use crate::commands::plan::CloseReason;
+    use crate::commands::{
+        CommentModeArgs, CommentTextArgs, PrGroupMapping, PrGrouping, SplitStrategy,
+    };
+    use nils_test_support::git::{InitRepoOptions, git, init_repo_with};
+    use nils_test_support::{CwdGuard, EnvGuard, GlobalStateLock};
+    use pretty_assertions::assert_eq;
+    use tempfile::TempDir;
+
+    static LINKED_WORKTREE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    fn task_row(
+        task: &str,
+        branch: &str,
+        worktree: &str,
+        pr: &str,
+        status: &str,
+        notes: &str,
+    ) -> TaskRow {
+        TaskRow {
+            task: task.to_string(),
+            summary: format!("Summary for {task}"),
+            owner: "subagent-owner".to_string(),
+            branch: branch.to_string(),
+            worktree: worktree.to_string(),
+            execution_mode: "per-sprint".to_string(),
+            pr: pr.to_string(),
+            status: status.to_string(),
+            notes: notes.to_string(),
+            line_index: 0,
+        }
+    }
+
+    fn task_table_markdown(rows: &[TaskRow]) -> String {
+        let mut out = String::from(
+            "## Task Decomposition\n\n| Task | Summary | Owner | Branch | Worktree | Execution Mode | PR | Status | Notes |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n",
+        );
+
+        for row in rows {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+                row.task,
+                row.summary,
+                row.owner,
+                row.branch,
+                row.worktree,
+                row.execution_mode,
+                row.pr,
+                row.status,
+                row.notes
+            ));
+        }
+
+        out
+    }
+
+    #[derive(Default)]
+    struct MockGitHubAdapter {
+        merged: HashMap<u64, Result<bool, String>>,
+    }
+
+    impl MockGitHubAdapter {
+        fn with_merge(mut self, pr: u64, result: Result<bool, String>) -> Self {
+            self.merged.insert(pr, result);
+            self
+        }
+    }
+
+    impl GitHubAdapter for MockGitHubAdapter {
+        fn issue_body(&self, _repo: &str, _issue: u64) -> Result<String, String> {
+            unreachable!("issue_body is not needed in this test")
+        }
+
+        fn create_issue(
+            &self,
+            _repo: &str,
+            _title: &str,
+            _body_file: &Path,
+            _labels: &[String],
+        ) -> Result<(u64, String), String> {
+            unreachable!("create_issue is not needed in this test")
+        }
+
+        fn edit_issue_body(
+            &self,
+            _repo: &str,
+            _issue: u64,
+            _body_file: &Path,
+        ) -> Result<(), String> {
+            unreachable!("edit_issue_body is not needed in this test")
+        }
+
+        fn comment_issue(&self, _repo: &str, _issue: u64, _body_file: &Path) -> Result<(), String> {
+            unreachable!("comment_issue is not needed in this test")
+        }
+
+        fn edit_issue_labels(
+            &self,
+            _repo: &str,
+            _issue: u64,
+            _add_labels: &[String],
+            _remove_labels: &[String],
+        ) -> Result<(), String> {
+            unreachable!("edit_issue_labels is not needed in this test")
+        }
+
+        fn close_issue(
+            &self,
+            _repo: &str,
+            _issue: u64,
+            _reason: CloseReason,
+            _close_comment: Option<&str>,
+        ) -> Result<(), String> {
+            unreachable!("close_issue is not needed in this test")
+        }
+
+        fn pr_is_merged(&self, _repo: &str, pr: u64) -> Result<bool, String> {
+            self.merged.get(&pr).cloned().unwrap_or(Ok(true))
+        }
+    }
+
+    #[test]
+    fn helper_url_validation_and_comment_mode_are_stable() {
+        assert!(approval_comment_url_looks_valid(
+            "https://github.com/graysurf/nils-cli/issues/217#issuecomment-123"
+        ));
+        assert!(approval_comment_url_looks_valid(
+            "https://github.com/graysurf/nils-cli/pull/221#issuecomment-456"
+        ));
+        assert!(!approval_comment_url_looks_valid(
+            "https://example.com/issues/217#issuecomment-123"
+        ));
+        assert!(!approval_comment_url_looks_valid(
+            "https://github.com/graysurf/nils-cli/issues/217#comment-123"
+        ));
+
+        assert!(should_emit_comment(&CommentModeArgs {
+            comment: false,
+            no_comment: false,
+        }));
+        assert!(!should_emit_comment(&CommentModeArgs {
+            comment: true,
+            no_comment: true,
+        }));
+    }
+
+    #[test]
+    fn summary_and_close_comment_loaders_cover_inline_file_and_error() {
+        let tmp = TempDir::new().expect("tempdir");
+
+        let summary = SummaryArgs {
+            summary: Some("inline summary".to_string()),
+            summary_file: None,
+        };
+        assert_eq!(
+            load_summary(&summary).expect("inline summary"),
+            Some("inline summary".to_string())
+        );
+
+        let summary_file = tmp.path().join("summary.md");
+        fs::write(&summary_file, "file summary").expect("write summary");
+        let from_file = SummaryArgs {
+            summary: None,
+            summary_file: Some(summary_file.clone()),
+        };
+        assert_eq!(
+            load_summary(&from_file).expect("summary file"),
+            Some("file summary".to_string())
+        );
+
+        let missing_summary = SummaryArgs {
+            summary: None,
+            summary_file: Some(tmp.path().join("missing-summary.md")),
+        };
+        let err = load_summary(&missing_summary).expect_err("missing summary should error");
+        assert_eq!(err.code, "summary-read-failed");
+
+        let close_inline = CommentTextArgs {
+            comment: Some("inline close".to_string()),
+            comment_file: None,
+        };
+        assert_eq!(
+            load_close_comment(&close_inline).expect("inline close comment"),
+            Some("inline close".to_string())
+        );
+
+        let close_file = tmp.path().join("close.md");
+        fs::write(&close_file, "file close").expect("write close");
+        let close_from_file = CommentTextArgs {
+            comment: None,
+            comment_file: Some(close_file),
+        };
+        assert_eq!(
+            load_close_comment(&close_from_file).expect("file close comment"),
+            Some("file close".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_repo_for_live_and_binary_guards_work_as_expected() {
+        assert!(ensure_live_binary(BinaryFlavor::PlanIssue).is_ok());
+        let local_only = ensure_live_binary(BinaryFlavor::PlanIssueLocal).expect_err("must fail");
+        assert_eq!(local_only.code, "live-command-unavailable");
+
+        assert_eq!(
+            resolve_repo_for_live(BinaryFlavor::PlanIssue, Some("graysurf/nils-cli"))
+                .expect("valid repo"),
+            "graysurf/nils-cli"
+        );
+
+        let invalid_repo =
+            resolve_repo_for_live(BinaryFlavor::PlanIssue, Some("https://example.com/repo"))
+                .expect_err("invalid override should fail");
+        assert_eq!(invalid_repo.code, "repo-resolution-failed");
+
+        let local_repo = resolve_repo_for_live(BinaryFlavor::PlanIssueLocal, Some("foo/bar"))
+            .expect_err("local binary should fail before resolving repo");
+        assert_eq!(local_repo.code, "live-command-unavailable");
+    }
+
+    #[test]
+    fn render_status_and_build_options_helpers_are_deterministic() {
+        let rows = vec![
+            task_row("S1T1", "issue/s1-t1", "wt-1", "#1", "planned", "sprint=S1"),
+            task_row(
+                "S1T2",
+                "issue/s1-t2",
+                "wt-2",
+                "#2",
+                "in-progress",
+                "sprint=S1",
+            ),
+            task_row("S1T3", "issue/s1-t3", "wt-3", "#3", "done", "sprint=S1"),
+        ];
+        let comment = render_plan_status_comment(&rows);
+        assert!(comment.contains("- Total tasks: 3"), "{comment}");
+        assert!(comment.contains("- planned: 1"), "{comment}");
+        assert!(comment.contains("- in-progress: 1"), "{comment}");
+        assert!(comment.contains("- done: 1"), "{comment}");
+
+        let options = to_build_options(
+            "owner".to_string(),
+            "branch".to_string(),
+            "worktree".to_string(),
+            PrGrouping::Group,
+            crate::commands::SplitStrategy::Auto,
+            vec![PrGroupMapping {
+                task: "S1T1".to_string(),
+                group: "g1".to_string(),
+            }],
+        );
+        assert_eq!(options.owner_prefix, "owner");
+        assert_eq!(options.branch_prefix, "branch");
+        assert_eq!(options.worktree_prefix, "worktree");
+        assert_eq!(options.pr_grouping, PrGrouping::Group);
+        assert_eq!(options.strategy, SplitStrategy::Auto);
+        assert_eq!(options.pr_group.len(), 1);
+    }
+
+    #[test]
+    fn collect_required_prs_and_merge_checks_cover_success_and_errors() {
+        let rows = vec![
+            task_row("S1T1", "issue/s1-t1", "wt-1", "#12", "done", "sprint=S1"),
+            task_row("S1T2", "issue/s1-t2", "wt-2", "12", "done", "sprint=S1"),
+        ];
+        assert_eq!(
+            collect_required_prs(&rows, "close-plan").expect("dedup"),
+            vec![12]
+        );
+
+        let bad_rows = vec![task_row(
+            "S1T3",
+            "issue/s1-t3",
+            "wt-3",
+            "TBD",
+            "done",
+            "sprint=S1",
+        )];
+        let err = collect_required_prs(&bad_rows, "close-plan").expect_err("missing pr");
+        assert!(err.contains("requires concrete PR reference"), "{err}");
+
+        let adapter_ok = MockGitHubAdapter::default().with_merge(12, Ok(true));
+        ensure_prs_merged(&adapter_ok, "graysurf/nils-cli", &[12], "scope").expect("merged");
+
+        let adapter_unmerged = MockGitHubAdapter::default().with_merge(12, Ok(false));
+        let unmerged = ensure_prs_merged(&adapter_unmerged, "graysurf/nils-cli", &[12], "scope")
+            .expect_err("unmerged should fail");
+        assert!(
+            unmerged.contains("scope: PR #12 is not merged"),
+            "{unmerged}"
+        );
+
+        let adapter_error =
+            MockGitHubAdapter::default().with_merge(12, Err("gh failure".to_string()));
+        let query_err = ensure_prs_merged(&adapter_error, "graysurf/nils-cli", &[12], "scope")
+            .expect_err("query failure should fail");
+        assert!(
+            query_err.contains("failed to query PR #12: gh failure"),
+            "{query_err}"
+        );
+    }
+
+    #[test]
+    fn previous_sprint_gate_enforces_status_pr_and_merge_requirements() {
+        let rows_ok = vec![
+            task_row("S1T1", "issue/s1-t1", "wt-1", "#11", "done", "sprint=S1"),
+            task_row("S2T1", "issue/s2-t1", "wt-2", "#21", "planned", "sprint=S2"),
+        ];
+        let adapter_ok = MockGitHubAdapter::default().with_merge(11, Ok(true));
+        enforce_previous_sprint_gate(&adapter_ok, "graysurf/nils-cli", &rows_ok, 2)
+            .expect("gate should pass");
+
+        let no_prev = enforce_previous_sprint_gate(
+            &adapter_ok,
+            "graysurf/nils-cli",
+            &[task_row(
+                "S2T1",
+                "issue/s2-t1",
+                "wt-2",
+                "#21",
+                "planned",
+                "sprint=S2",
+            )],
+            2,
+        )
+        .expect_err("missing previous sprint rows");
+        assert!(
+            no_prev.contains("no rows found for previous sprint S1"),
+            "{no_prev}"
+        );
+
+        let status_err_rows = vec![task_row(
+            "S1T1",
+            "issue/s1-t1",
+            "wt-1",
+            "#11",
+            "in-progress",
+            "sprint=S1",
+        )];
+        let status_err =
+            enforce_previous_sprint_gate(&adapter_ok, "graysurf/nils-cli", &status_err_rows, 2)
+                .expect_err("status gate must fail");
+        assert!(status_err.contains("requires Status=done"), "{status_err}");
+
+        let pr_err_rows = vec![task_row(
+            "S1T1",
+            "issue/s1-t1",
+            "wt-1",
+            "TBD",
+            "done",
+            "sprint=S1",
+        )];
+        let pr_err =
+            enforce_previous_sprint_gate(&adapter_ok, "graysurf/nils-cli", &pr_err_rows, 2)
+                .expect_err("PR gate must fail");
+        assert!(
+            pr_err.contains("requires concrete PR reference"),
+            "{pr_err}"
+        );
+
+        let adapter_unmerged = MockGitHubAdapter::default().with_merge(11, Ok(false));
+        let unmerged =
+            enforce_previous_sprint_gate(&adapter_unmerged, "graysurf/nils-cli", &rows_ok, 2)
+                .expect_err("merge gate must fail");
+        assert!(unmerged.contains("PR #11 is not merged"), "{unmerged}");
+    }
+
+    #[test]
+    fn sync_issue_rows_from_task_spec_updates_table_and_detects_missing_rows() {
+        let body = task_table_markdown(&[
+            task_row("S1T1", "TBD", "TBD", "TBD", "", "sprint=S1"),
+            task_row("S1T2", "issue/s1-t2", "wt-2", "#22", "", "sprint=S1"),
+        ]);
+        let mut table = issue_body::parse_task_table(&body).expect("table");
+
+        let specs = vec![
+            TaskSpecRow {
+                task_id: "S1T1".to_string(),
+                summary: "Task 1".to_string(),
+                branch: "issue/s1-t1".to_string(),
+                worktree: "wt-1".to_string(),
+                owner: "subagent-s1-t1".to_string(),
+                notes: "sprint=S1; plan-task:Task 1.1".to_string(),
+                pr_group: "s1".to_string(),
+                sprint: 1,
+                grouping: PrGrouping::PerSprint,
+            },
+            TaskSpecRow {
+                task_id: "S1T2".to_string(),
+                summary: "Task 2".to_string(),
+                branch: "issue/s1-t2".to_string(),
+                worktree: "wt-2".to_string(),
+                owner: "subagent-s1-t2".to_string(),
+                notes: "sprint=S1; plan-task:Task 1.2".to_string(),
+                pr_group: "s1".to_string(),
+                sprint: 1,
+                grouping: PrGrouping::Group,
+            },
+        ];
+
+        let updated = sync_issue_rows_from_task_spec(&mut table, &specs).expect("sync");
+        assert_eq!(updated, 2);
+        let rows = table.rows();
+        assert_eq!(rows[0].branch, "issue/s1-t1");
+        assert_eq!(rows[0].pr, "TBD");
+        assert_eq!(rows[0].status, "planned");
+        assert_eq!(rows[0].execution_mode, "per-sprint");
+        assert_eq!(rows[1].execution_mode, "pr-shared");
+
+        let missing = sync_issue_rows_from_task_spec(
+            &mut table,
+            &[TaskSpecRow {
+                task_id: "S9T9".to_string(),
+                summary: "Missing".to_string(),
+                branch: "issue/s9-t9".to_string(),
+                worktree: "wt-9".to_string(),
+                owner: "subagent-s9-t9".to_string(),
+                notes: "sprint=S9".to_string(),
+                pr_group: "s9".to_string(),
+                sprint: 9,
+                grouping: PrGrouping::PerSprint,
+            }],
+        )
+        .expect_err("missing table rows should fail");
+        assert!(
+            missing.contains("issue task table missing rows"),
+            "{missing}"
+        );
+    }
+
+    fn setup_repo_with_linked_worktree() -> (TempDir, PathBuf) {
+        let repo = init_repo_with(InitRepoOptions::new().with_initial_commit());
+        git(repo.path(), &["checkout", "-b", "issue/s1-t1"]);
+        git(repo.path(), &["checkout", "main"]);
+
+        let unique = LINKED_WORKTREE_SEQ.fetch_add(1, Ordering::Relaxed);
+        let linked_path =
+            std::env::temp_dir().join(format!("linked-s1-t1-{}-{unique}", std::process::id()));
+        let _ = fs::remove_dir_all(&linked_path);
+        let linked_s = linked_path.to_string_lossy().to_string();
+        git(repo.path(), &["worktree", "add", &linked_s, "issue/s1-t1"]);
+        (repo, linked_path)
+    }
+
+    #[test]
+    fn linked_worktree_listing_and_cleanup_modes_are_covered() {
+        let lock = GlobalStateLock::new();
+        let (repo, linked_path) = setup_repo_with_linked_worktree();
+        let _cwd = CwdGuard::set(&lock, repo.path()).expect("set cwd");
+
+        let listed = list_linked_worktrees().expect("list worktrees");
+        let listed_paths = listed
+            .iter()
+            .map(|entry| path_key(&entry.path))
+            .collect::<Vec<_>>();
+        assert!(listed_paths.contains(&path_key(repo.path())));
+        assert!(listed_paths.contains(&path_key(&linked_path)));
+
+        let rows = vec![task_row(
+            "S1T1",
+            "issue/s1-t1",
+            linked_path.to_string_lossy().as_ref(),
+            "#11",
+            "done",
+            "sprint=S1",
+        )];
+
+        let dry_run = cleanup_worktrees_from_rows(&rows, true).expect("dry-run cleanup");
+        assert!(dry_run.targeted.iter().any(|p| p.contains("linked-s1-t1")));
+        assert!(dry_run.removed.iter().any(|p| p.contains("linked-s1-t1")));
+        assert!(linked_path.exists(), "dry-run must not remove worktree");
+
+        let real = cleanup_worktrees_from_rows(&rows, false).expect("real cleanup");
+        assert!(real.removed.iter().any(|p| p.contains("linked-s1-t1")));
+        assert!(
+            !linked_path.exists(),
+            "cleanup should remove linked worktree"
+        );
+    }
+
+    #[test]
+    fn cleanup_skips_current_worktree_root_path() {
+        let lock = GlobalStateLock::new();
+        let (repo, linked_path) = setup_repo_with_linked_worktree();
+        let _cwd = CwdGuard::set(&lock, &linked_path).expect("set cwd");
+
+        let rows = vec![task_row(
+            "S1T1",
+            "issue/s1-t1",
+            linked_path.to_string_lossy().as_ref(),
+            "#11",
+            "done",
+            "sprint=S1",
+        )];
+        let outcome =
+            cleanup_worktrees_from_rows(&rows, false).expect("current worktree path is skipped");
+        assert!(outcome.targeted.iter().any(|p| p.contains("linked-s1-t1")));
+        assert!(outcome.removed.is_empty());
+        assert!(outcome.residual.is_empty());
+
+        let _reset = CwdGuard::set(&lock, repo.path()).expect("reset cwd");
+        let cleanup = cleanup_worktrees_from_rows(&rows, false).expect("cleanup after reset");
+        assert!(cleanup.removed.iter().any(|p| p.contains("linked-s1-t1")));
+    }
+
+    #[test]
+    fn temp_markdown_and_prompt_outputs_use_agent_home_and_expected_paths() {
+        let lock = GlobalStateLock::new();
+        let tmp = TempDir::new().expect("tempdir");
+        let _agent_home = EnvGuard::set(&lock, "AGENT_HOME", tmp.path().to_string_lossy().as_ref());
+
+        let markdown = write_temp_markdown("status", "hello").expect("write temp markdown");
+        assert!(
+            markdown
+                .to_string_lossy()
+                .contains("plan-issue-delivery-loop/tmp")
+        );
+        assert_eq!(
+            fs::read_to_string(&markdown).expect("read markdown"),
+            "hello"
+        );
+
+        let prompts_path = default_subagent_prompts_path(Path::new("docs/plans/sample-plan.md"), 3);
+        assert!(
+            prompts_path
+                .to_string_lossy()
+                .contains("sample-plan-sprint-3-subagent-prompts")
+        );
+
+        let out_dir = tmp.path().join("out").join("subagent-prompts");
+        let rows = vec![TaskSpecRow {
+            task_id: "S3T1".to_string(),
+            summary: "Build feature".to_string(),
+            branch: "issue/s3-t1".to_string(),
+            worktree: "issue-s3-t1".to_string(),
+            owner: "subagent-s3-t1".to_string(),
+            notes: "sprint=S3".to_string(),
+            pr_group: "s3".to_string(),
+            sprint: 3,
+            grouping: PrGrouping::PerSprint,
+        }];
+        let files = write_subagent_prompts(&out_dir, 217, 3, &rows).expect("write prompts");
+        assert_eq!(files.len(), 1);
+        let rendered = fs::read_to_string(&files[0]).expect("read prompt");
+        assert!(rendered.contains("Issue: #217"), "{rendered}");
+        assert!(rendered.contains("Task: S3T1"), "{rendered}");
+    }
+
+    #[test]
+    fn path_normalization_helpers_are_stable() {
+        let repo_root = PathBuf::from("/tmp/repo-root");
+        assert_eq!(
+            resolve_worktree_path(&repo_root, "issue-s1-t1"),
+            repo_root.join("issue-s1-t1")
+        );
+        assert_eq!(
+            resolve_worktree_path(&repo_root, "/tmp/issue-s1-t1"),
+            PathBuf::from("/tmp/issue-s1-t1")
+        );
+
+        assert_eq!(
+            normalize_branch_name("refs/heads/issue/s1-t1"),
+            "issue/s1-t1"
+        );
+        assert_eq!(normalize_branch_name(" issue/s1-t2 "), "issue/s1-t2");
+    }
+}
