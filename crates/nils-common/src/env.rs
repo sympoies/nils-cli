@@ -18,7 +18,9 @@ pub fn env_present(name: &str) -> bool {
 }
 
 pub fn env_truthy_if_present(name: &str) -> Option<bool> {
-    std::env::var(name).ok().map(|value| is_truthy(value.trim()))
+    std::env::var(name)
+        .ok()
+        .map(|value| is_truthy(value.trim()))
 }
 
 pub fn env_truthy(name: &str) -> bool {
