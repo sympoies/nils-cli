@@ -66,6 +66,20 @@ v1 subcommands:
 - `--summary` and `--summary-file` are mutually exclusive where provided (`ready-plan`, `ready-sprint`).
 - `close-plan --dry-run` requires `--body-file` when no live issue read is available.
 
+## Task Decomposition Runtime-Truth Contract (v1)
+
+- `## Task Decomposition` in the plan issue body is the single runtime-truth execution table for plan/sprint orchestration.
+- No second issue-body dispatch table is introduced in v1; task dispatch artifacts are derived from `Task Decomposition`.
+- Column roles are split as follows:
+  - runtime-truth execution columns: `Owner`, `Branch`, `Worktree`, `Execution Mode`, and lane metadata tokens in `Notes`.
+  - runtime-progress columns: `PR`, `Status` (may remain placeholders until execution/review advances).
+  - descriptive row identity columns: `Task`, `Summary`.
+- `Owner` stores a stable dispatch alias (for example `subagent-s1-t1`, or a shared-lane `dispatch` alias), not a platform-internal ephemeral spawned-agent identifier.
+- `task-spec` TSV rows and subagent prompt artifacts must be derived from the same `Task Decomposition` runtime-truth rows and must not intentionally diverge from the issue table.
+- Lane canonicalization rules:
+  - rows that share one execution lane (`per-sprint` or `pr-shared`) must keep canonical lane metadata (`Owner`, `Branch`, `Worktree`, lane-note tokens) synchronized across the lane.
+  - `--pr-grouping group --strategy auto` single-lane sprints normalize to `Execution Mode=per-sprint` and use canonical per-sprint lane metadata rather than per-task pseudo-lanes.
+
 ## Deterministic Artifact Contracts
 
 ### Task-spec TSV
@@ -98,6 +112,9 @@ When explicit output paths are omitted, v1 keeps AGENT_HOME-based deterministic 
 ## Gate Semantics (v1)
 
 - Single-plan issue model: one plan maps to one GitHub issue for the full delivery lifecycle.
+- `Task Decomposition` runtime-truth ownership:
+  - sprint execution and issue-sync flows read runtime-truth lane metadata from the issue table.
+  - task-spec and prompt generation are derived outputs, not an alternate source of runtime execution truth.
 - Sprint ordering gate:
   - `start-sprint` for sprint `N>1` is blocked until sprint `N-1` has merged PRs and `done` task statuses.
 - Acceptance gate:

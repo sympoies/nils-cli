@@ -21,6 +21,15 @@ This document is normative for lifecycle transitions that must remain compatible
   - `Notes` token `sprint=S<N>`, or
   - task id pattern `S<N>T<k>`.
 
+## Task Decomposition Runtime-Truth Row Model
+- `## Task Decomposition` is the only runtime-truth execution table in the issue body for plan/sprint orchestration.
+- No second issue-body dispatch table is introduced; task-spec and subagent prompt artifacts are derived views of the same runtime-truth rows.
+- Column role split:
+  - runtime-truth execution metadata: `Owner`, `Branch`, `Worktree`, `Execution Mode`, lane metadata tokens in `Notes`
+  - runtime-progress fields: `PR`, `Status`
+  - descriptive row identity: `Task`, `Summary`
+- `Owner` is a stable dispatch alias (for example `subagent-s1-t1` or a shared-lane `dispatch` alias), not an ephemeral platform-internal worker identifier.
+
 ## Plan Lifecycle State Machine
 
 States:
@@ -95,8 +104,9 @@ Row-level status rules:
 - Execution Mode derivation rule:
   - `group + auto` that resolves to one shared PR lane for a sprint is represented as `per-sprint` (single-lane execution).
   - `group + auto|deterministic` with multiple resolved PR groups keeps `pr-shared` / `pr-isolated` per group size.
+  - rows that share a `per-sprint` or `pr-shared` lane must keep canonical runtime-truth lane metadata aligned (`Owner`, `Branch`, `Worktree`, lane-note tokens).
 - Owner policy for non-planned/non-blocked rows:
-  - must include `subagent`
+  - must be a stable dispatch alias (`subagent-*` and shared-lane `dispatch` alias are valid shapes)
   - must not reference main-agent identity.
 - `pr-isolated` rows must have unique `Branch` and unique `Worktree`.
 
@@ -126,7 +136,7 @@ Row-level status rules:
   - all task rows are `Status=done` unless `--allow-not-done` is explicitly used
   - every task row has non-placeholder PR
   - every referenced PR is merged
-  - subagent-owner policy passes.
+  - dispatch-owner alias policy passes (including subagent alias compatibility checks).
 - After close gate success, strict task worktree cleanup is enforced.
 
 ### Worktree Cleanup Invariants
