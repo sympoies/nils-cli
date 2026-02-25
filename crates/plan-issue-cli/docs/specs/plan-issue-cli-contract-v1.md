@@ -46,7 +46,7 @@ v1 subcommands:
 | `ready-plan` | Request final plan review | yes (unless `--body-file` only mode) | `--issue` or `--body-file` | review-ready signal (+ label/comment controls) |
 | `close-plan` | Final gate + issue close | yes (except dry-run with `--body-file`) | `--approved-comment-url` and issue context | issue close + required worktree cleanup |
 | `cleanup-worktrees` | Remove all issue-assigned worktrees | yes (to read issue body) | `--issue` | deleted worktree set (or dry-run listing) |
-| `start-sprint` | Begin sprint execution on existing plan issue | yes (unless dry-run) | `--plan`, `--issue`, `--sprint`, `--pr-grouping` | sprint TSV, rendered subagent prompts, issue row sync, kickoff comment |
+| `start-sprint` | Begin sprint execution on existing plan issue | yes (unless dry-run) | `--plan`, `--issue`, `--sprint`, `--pr-grouping` | sprint TSV, rendered subagent prompts, issue-row runtime-truth validation, kickoff comment |
 | `ready-sprint` | Request sprint acceptance review | yes | `--plan`, `--issue`, `--sprint` | sprint review-ready comment |
 | `accept-sprint` | Enforce merged-PR gate and mark sprint done | yes | `--plan`, `--issue`, `--sprint`, `--approved-comment-url` | task status sync to `done` + acceptance comment |
 | `multi-sprint-guide` | Print repeatable command flow | no (with `--dry-run`) | `--plan` | execution guide text |
@@ -58,7 +58,7 @@ v1 subcommands:
 - `--pr-grouping <per-sprint|group>`:
   - required for `build-task-spec`, `build-plan-task-spec`, `start-plan`, `start-sprint`.
   - `per-spring` must be accepted as compatibility alias for `per-sprint`.
-  - with `--pr-grouping group --strategy auto`, when a sprint resolves to exactly one shared PR group, issue-sync/render paths normalize `Execution Mode` to `per-sprint` (single-lane semantics).
+  - with `--pr-grouping group --strategy auto`, when a sprint resolves to exactly one shared PR group, runtime-truth/render paths normalize `Execution Mode` to `per-sprint` (single-lane semantics).
 - `--pr-group <task=group>`:
   - repeatable.
   - valid only when `--pr-grouping group`.
