@@ -158,7 +158,7 @@ fn parse_prompt_fields(prompt: &str) -> HashMap<String, String> {
 }
 
 #[test]
-fn start_plan_and_start_sprint_auto_single_lane_use_canonical_lane_metadata() {
+fn start_plan_dry_run_writes_runtime_truth_task_decomposition_metadata() {
     let tmp = TempDir::new().expect("temp dir");
     let agent_home = tmp.path().join("agent-home");
     fs::create_dir_all(&agent_home).expect("create agent home");
@@ -304,38 +304,56 @@ fn start_plan_and_start_sprint_auto_single_lane_use_canonical_lane_metadata() {
     let prompt_files = sprint_payload["payload"]["result"]["subagent_prompt_files"]
         .as_array()
         .expect("subagent prompt files");
-    assert_eq!(prompt_files.len(), 2, "{}", start_sprint_out.stdout);
-    let other_prompt_path = prompt_files
+    assert_eq!(prompt_files.len(), 1, "{}", start_sprint_out.stdout);
+    let lane_prompt_path = prompt_files
         .iter()
         .filter_map(|value| value.as_str())
-        .find(|path| path.contains(&format!("{other_id}-subagent-prompt.md")))
-        .expect("non-anchor prompt path");
-    let other_prompt = fs::read_to_string(other_prompt_path).expect("read non-anchor prompt");
-    let prompt_fields = parse_prompt_fields(&other_prompt);
+        .find(|path| path.contains(&format!("{anchor_id}-subagent-prompt.md")))
+        .expect("lane prompt path");
+    let lane_prompt = fs::read_to_string(lane_prompt_path).expect("read lane prompt");
+    let prompt_fields = parse_prompt_fields(&lane_prompt);
     assert_eq!(
         prompt_fields.get("Task").map(String::as_str),
-        Some(other_id),
-        "{other_prompt}"
+        Some(anchor_id),
+        "{lane_prompt}"
+    );
+    assert_eq!(
+        prompt_fields.get("Tasks").map(String::as_str),
+        Some("S3T1, S3T2"),
+        "{lane_prompt}"
     );
     assert_eq!(
         prompt_fields.get("Owner").map(String::as_str),
-        Some(other_row.owner.as_str()),
-        "{other_prompt}"
+        Some(anchor_row.owner.as_str()),
+        "{lane_prompt}"
     );
     assert_eq!(
         prompt_fields.get("Branch").map(String::as_str),
-        Some(other_row.branch.as_str()),
-        "{other_prompt}"
+        Some(anchor_row.branch.as_str()),
+        "{lane_prompt}"
     );
     assert_eq!(
         prompt_fields.get("Worktree").map(String::as_str),
-        Some(other_row.worktree.as_str()),
-        "{other_prompt}"
+        Some(anchor_row.worktree.as_str()),
+        "{lane_prompt}"
+    );
+    assert_eq!(
+        prompt_fields.get("Execution Mode").map(String::as_str),
+        Some("per-sprint"),
+        "{lane_prompt}"
     );
     assert_eq!(
         prompt_fields.get("Notes").map(String::as_str),
-        Some(other_row.notes.as_str()),
-        "{other_prompt}"
+        Some(anchor_row.notes.as_str()),
+        "{lane_prompt}"
+    );
+    assert!(
+        lane_prompt.contains("- S3T1: First lane task"),
+        "{lane_prompt}"
+    );
+    assert!(
+        lane_prompt.contains("- S3T2: Follow-up lane task"),
+        "{lane_prompt}"
     );
 
     let issue_anchor = issue_rows.get(anchor_id).expect("anchor issue row");
@@ -355,4 +373,9 @@ fn start_plan_and_start_sprint_auto_single_lane_use_canonical_lane_metadata() {
     assert_ne!(other_row.branch, issue_other.branch);
     assert_ne!(other_row.worktree, issue_other.worktree);
     assert_ne!(other_row.notes, issue_other.notes);
+}
+
+#[test]
+fn write_subagent_prompts_groups_tasks_by_runtime_lane() {
+    start_plan_dry_run_writes_runtime_truth_task_decomposition_metadata();
 }

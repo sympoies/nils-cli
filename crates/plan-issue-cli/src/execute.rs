@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -161,6 +161,15 @@ fn run_start_plan(
         &build.rows,
         args.grouping.strategy,
     );
+    let rendered_table = issue_body::parse_task_table(&issue_body)
+        .map_err(|err| CommandError::runtime("issue-body-render-failed", err))?;
+    let rendered_errors = issue_body::validate_rows(rendered_table.rows());
+    if !rendered_errors.is_empty() {
+        return Err(CommandError::runtime(
+            "issue-body-invalid",
+            rendered_errors.join(" | "),
+        ));
+    }
     render::write_rendered(&issue_body_out, &issue_body)
         .map_err(|err| CommandError::runtime("issue-body-write-failed", err))?;
 
@@ -563,24 +572,7 @@ fn run_start_sprint(
         &options,
     )
     .map_err(|err| CommandError::runtime("task-spec-generation-failed", err))?;
-
-    let task_spec_out = args.task_spec_out.clone().unwrap_or_else(|| {
-        task_spec::default_sprint_task_spec_path(&args.plan, i32::from(args.sprint))
-    });
-    task_spec::write_tsv(&task_spec_out, &build.rows)
-        .map_err(|err| CommandError::runtime("task-spec-write-failed", err))?;
-
-    let prompts_out = args
-        .subagent_prompts_out
-        .clone()
-        .unwrap_or_else(|| default_subagent_prompts_path(&args.plan, i32::from(args.sprint)));
-    let prompt_files = write_subagent_prompts(
-        &prompts_out,
-        args.issue,
-        i32::from(args.sprint),
-        &build.rows,
-    )
-    .map_err(|err| CommandError::runtime("subagent-prompt-write-failed", err))?;
+    let mut artifact_rows = build.rows.clone();
 
     let sprint_name = build
         .sprint_name
@@ -598,7 +590,7 @@ fn run_start_sprint(
             .issue_body(&repo, args.issue)
             .map_err(|err| CommandError::runtime("github-issue-read-failed", err))?;
 
-        let mut table = issue_body::parse_task_table(&body)
+        let table = issue_body::parse_task_table(&body)
             .map_err(|err| CommandError::runtime("issue-body-parse-failed", err))?;
 
         let structure_errors = issue_body::validate_rows(table.rows());
@@ -614,29 +606,40 @@ fn run_start_sprint(
                 .map_err(|err| CommandError::runtime("previous-sprint-gate-failed", err))?;
         }
 
-        synced_rows =
-            sync_issue_rows_from_task_spec(&mut table, &build.rows, args.grouping.strategy)
-                .map_err(|err| CommandError::runtime("task-sync-failed", err))?;
-
-        let updated_body = table.render();
-        issue_body_for_comment = Some(updated_body.clone());
-
-        if !dry_run {
-            let body_path = write_temp_markdown("start-sprint-issue-body", &updated_body)
-                .map_err(|err| CommandError::runtime("issue-body-write-failed", err))?;
-            adapter
-                .edit_issue_body(&repo, args.issue, &body_path)
-                .map_err(|err| CommandError::runtime("github-issue-update-failed", err))?;
-            live_mutations = true;
-        }
+        let sprint_rows = issue_rows_for_sprint(table.rows(), i32::from(args.sprint));
+        ensure_issue_rows_match_runtime_plan(&sprint_rows, &build.rows, args.grouping.strategy)
+            .map_err(|err| CommandError::runtime("task-sync-drift-detected", err))?;
+        artifact_rows = task_spec_rows_from_issue_rows(&sprint_rows, i32::from(args.sprint))
+            .map_err(|err| CommandError::runtime("task-spec-from-issue-rows-failed", err))?;
+        issue_body_for_comment = Some(body);
+        synced_rows = artifact_rows.len();
     }
+
+    let task_spec_out = args.task_spec_out.clone().unwrap_or_else(|| {
+        task_spec::default_sprint_task_spec_path(&args.plan, i32::from(args.sprint))
+    });
+    task_spec::write_tsv(&task_spec_out, &artifact_rows)
+        .map_err(|err| CommandError::runtime("task-spec-write-failed", err))?;
+
+    let prompts_out = args
+        .subagent_prompts_out
+        .clone()
+        .unwrap_or_else(|| default_subagent_prompts_path(&args.plan, i32::from(args.sprint)));
+    let prompt_files = write_subagent_prompts(
+        &prompts_out,
+        args.issue,
+        i32::from(args.sprint),
+        &artifact_rows,
+        args.grouping.strategy,
+    )
+    .map_err(|err| CommandError::runtime("subagent-prompt-write-failed", err))?;
 
     let comment = render::render_sprint_comment(SprintCommentInput {
         mode: SprintCommentMode::Start,
         plan_file: &args.plan,
         sprint: i32::from(args.sprint),
         sprint_name: &sprint_name,
-        rows: &build.rows,
+        rows: &artifact_rows,
         strategy: args.grouping.strategy,
         note_text: None,
         approval_comment_url: None,
@@ -668,7 +671,7 @@ fn run_start_sprint(
         "dry_run": dry_run,
         "task_spec_path": path_text(&task_spec_out),
         "comment_path": path_text(&comment_out),
-        "record_count": build.rows.len(),
+        "record_count": artifact_rows.len(),
         "subagent_prompts_out": path_text(&prompts_out),
         "subagent_prompt_files": prompt_files,
         "synced_issue_rows": synced_rows,
@@ -1207,6 +1210,7 @@ fn write_subagent_prompts(
     issue: u64,
     sprint: i32,
     rows: &[TaskSpecRow],
+    strategy: SplitStrategy,
 ) -> Result<Vec<String>, String> {
     fs::create_dir_all(out_dir).map_err(|err| {
         format!(
@@ -1215,19 +1219,316 @@ fn write_subagent_prompts(
         )
     })?;
 
-    let mut paths = Vec::new();
+    #[derive(Debug, Clone)]
+    struct PromptLane {
+        execution_mode: String,
+        owner: String,
+        branch: String,
+        worktree: String,
+        notes: String,
+        rows: Vec<TaskSpecRow>,
+    }
+
+    let runtime_lanes = task_spec::runtime_lane_metadata_by_task(rows, strategy);
+    let mut lanes: BTreeMap<String, PromptLane> = BTreeMap::new();
+
     for row in rows {
-        let path = out_dir.join(format!("{}-subagent-prompt.md", row.task_id));
+        let lane = runtime_lanes.get(&row.task_id);
+        let execution_mode = lane
+            .map(|metadata| metadata.execution_mode.clone())
+            .unwrap_or_else(|| "pr-isolated".to_string());
+        let owner = lane
+            .map(|metadata| metadata.owner.clone())
+            .unwrap_or_else(|| row.owner.clone());
+        let branch = lane
+            .map(|metadata| metadata.branch.clone())
+            .unwrap_or_else(|| row.branch.clone());
+        let worktree = lane
+            .map(|metadata| metadata.worktree.clone())
+            .unwrap_or_else(|| row.worktree.clone());
+        let notes = lane
+            .map(|metadata| metadata.notes.clone())
+            .unwrap_or_else(|| row.notes.clone());
+        let lane_key = runtime_lane_key(row, &execution_mode, &notes);
+        lanes
+            .entry(lane_key)
+            .or_insert_with(|| PromptLane {
+                execution_mode: execution_mode.clone(),
+                owner,
+                branch,
+                worktree,
+                notes: notes.clone(),
+                rows: Vec::new(),
+            })
+            .rows
+            .push(row.clone());
+    }
+
+    let mut paths = Vec::new();
+    for lane in lanes.values_mut() {
+        lane.rows
+            .sort_unstable_by(|left, right| left.task_id.cmp(&right.task_id));
+        let anchor_task = prompt_lane_anchor_task_id(&lane.rows, &lane.notes)?;
+        let task_list = lane
+            .rows
+            .iter()
+            .map(|row| row.task_id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let summary = if lane.rows.len() == 1 {
+            lane.rows[0].summary.trim().to_string()
+        } else {
+            format!("{} tasks in shared runtime lane", lane.rows.len())
+        };
+        let lane_tasks = lane
+            .rows
+            .iter()
+            .map(|row| {
+                let summary = if row.summary.trim().is_empty() {
+                    "-"
+                } else {
+                    row.summary.trim()
+                };
+                format!("- {}: {summary}", row.task_id)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let path = out_dir.join(format!("{anchor_task}-subagent-prompt.md"));
         let body = format!(
-            "# Subagent Task Prompt\n\n- Issue: #{issue}\n- Sprint: S{sprint}\n- Task: {}\n- Summary: {}\n- Owner: {}\n- Branch: {}\n- Worktree: {}\n- Notes: {}\n",
-            row.task_id, row.summary, row.owner, row.branch, row.worktree, row.notes
+            "# Subagent Task Prompt\n\n- Issue: #{issue}\n- Sprint: S{sprint}\n- Task: {anchor_task}\n- Tasks: {task_list}\n- Summary: {summary}\n- Owner: {}\n- Branch: {}\n- Worktree: {}\n- Execution Mode: {}\n- Notes: {}\n\n## Lane Tasks\n{lane_tasks}\n",
+            lane.owner, lane.branch, lane.worktree, lane.execution_mode, lane.notes
         );
         fs::write(&path, body)
             .map_err(|err| format!("failed to write subagent prompt {}: {err}", path.display()))?;
         paths.push(path.to_string_lossy().to_string());
     }
 
+    paths.sort();
     Ok(paths)
+}
+
+fn issue_rows_for_sprint(rows: &[TaskRow], sprint: i32) -> Vec<TaskRow> {
+    rows.iter()
+        .filter(|row| issue_body::row_sprint(row) == Some(sprint))
+        .cloned()
+        .collect()
+}
+
+fn task_spec_rows_from_issue_rows(
+    rows: &[TaskRow],
+    sprint: i32,
+) -> Result<Vec<TaskSpecRow>, String> {
+    let mut scoped = Vec::new();
+    for row in rows {
+        if issue_body::row_sprint(row) != Some(sprint) {
+            continue;
+        }
+
+        let task_id = row.task.trim();
+        if task_id.is_empty() {
+            return Err(format!(
+                "issue task table contains empty Task id for sprint S{sprint}"
+            ));
+        }
+        if issue_body::is_placeholder(&row.owner)
+            || issue_body::is_placeholder(&row.branch)
+            || issue_body::is_placeholder(&row.worktree)
+            || issue_body::is_placeholder(&row.execution_mode)
+        {
+            return Err(format!(
+                "{task_id}: issue task row must include concrete Owner/Branch/Worktree/Execution Mode before start-sprint dispatch"
+            ));
+        }
+
+        let execution_mode = row.execution_mode.trim().to_ascii_lowercase();
+        let grouping = if execution_mode == "per-sprint" {
+            crate::commands::PrGrouping::PerSprint
+        } else {
+            crate::commands::PrGrouping::Group
+        };
+        let pr_group = note_value(&row.notes, "pr-group")
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| default_pr_group_for_issue_row(task_id, sprint, &execution_mode));
+
+        scoped.push(TaskSpecRow {
+            task_id: task_id.to_string(),
+            summary: row.summary.clone(),
+            branch: row.branch.clone(),
+            worktree: row.worktree.clone(),
+            owner: row.owner.clone(),
+            notes: row.notes.clone(),
+            pr_group,
+            sprint,
+            grouping,
+        });
+    }
+
+    if scoped.is_empty() {
+        return Err(format!(
+            "issue task table missing rows for sprint S{sprint}"
+        ));
+    }
+
+    scoped.sort_unstable_by(|left, right| left.task_id.cmp(&right.task_id));
+    Ok(scoped)
+}
+
+fn default_pr_group_for_issue_row(task_id: &str, sprint: i32, execution_mode: &str) -> String {
+    match execution_mode {
+        "per-sprint" => format!("s{sprint}-per-sprint"),
+        "pr-shared" => format!("s{sprint}-pr-shared"),
+        _ => task_id.to_string(),
+    }
+}
+
+fn runtime_lane_key(row: &TaskSpecRow, execution_mode: &str, notes: &str) -> String {
+    match execution_mode {
+        "per-sprint" => format!("per-sprint:S{}", row.sprint),
+        "pr-shared" => {
+            let pr_group = note_value(notes, "pr-group")
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| row.pr_group.clone());
+            format!(
+                "pr-shared:S{}:{}",
+                row.sprint,
+                pr_group.trim().to_ascii_lowercase()
+            )
+        }
+        _ => format!("pr-isolated:{}", row.task_id),
+    }
+}
+
+fn prompt_lane_anchor_task_id(rows: &[TaskSpecRow], notes: &str) -> Result<String, String> {
+    let task_ids = rows
+        .iter()
+        .map(|row| row.task_id.clone())
+        .collect::<BTreeSet<_>>();
+    if task_ids.is_empty() {
+        return Err("runtime lane has no task rows".to_string());
+    }
+
+    if let Some(anchor) =
+        note_value(notes, "shared-pr-anchor").filter(|anchor| task_ids.contains(anchor))
+    {
+        return Ok(anchor);
+    }
+
+    task_ids
+        .first()
+        .cloned()
+        .ok_or_else(|| "runtime lane has no task rows".to_string())
+}
+
+fn note_value(notes: &str, key: &str) -> Option<String> {
+    notes
+        .split(';')
+        .map(str::trim)
+        .find_map(|part| part.strip_prefix(&format!("{key}=")).map(str::to_string))
+}
+
+fn ensure_issue_rows_match_runtime_plan(
+    issue_rows: &[TaskRow],
+    plan_rows: &[TaskSpecRow],
+    strategy: SplitStrategy,
+) -> Result<(), String> {
+    let mut errors = Vec::new();
+    let expected_by_task = plan_rows
+        .iter()
+        .map(|row| (row.task_id.clone(), row))
+        .collect::<HashMap<_, _>>();
+    let expected_lane_by_task = task_spec::runtime_lane_metadata_by_task(plan_rows, strategy);
+
+    let mut seen = HashSet::new();
+    for row in issue_rows {
+        let task_id = row.task.trim();
+        if task_id.is_empty() {
+            continue;
+        }
+        seen.insert(task_id.to_string());
+
+        let Some(expected) = expected_by_task.get(task_id) else {
+            errors.push(format!(
+                "{task_id}: present in issue table but missing from plan-derived sprint rows"
+            ));
+            continue;
+        };
+        let Some(expected_lane) = expected_lane_by_task.get(task_id) else {
+            errors.push(format!(
+                "{task_id}: missing runtime lane metadata in plan-derived sprint rows"
+            ));
+            continue;
+        };
+
+        if row.summary.trim() != expected.summary.trim() {
+            errors.push(format!(
+                "{task_id}: summary drift (issue=`{}` expected=`{}`)",
+                row.summary.trim(),
+                expected.summary.trim()
+            ));
+        }
+        if row.owner.trim() != expected_lane.owner.trim() {
+            errors.push(format!(
+                "{task_id}: owner drift (issue=`{}` expected=`{}`)",
+                row.owner.trim(),
+                expected_lane.owner.trim()
+            ));
+        }
+        if row.branch.trim() != expected_lane.branch.trim() {
+            errors.push(format!(
+                "{task_id}: branch drift (issue=`{}` expected=`{}`)",
+                row.branch.trim(),
+                expected_lane.branch.trim()
+            ));
+        }
+        if row.worktree.trim() != expected_lane.worktree.trim() {
+            errors.push(format!(
+                "{task_id}: worktree drift (issue=`{}` expected=`{}`)",
+                row.worktree.trim(),
+                expected_lane.worktree.trim()
+            ));
+        }
+        if row.execution_mode.trim().to_ascii_lowercase() != expected_lane.execution_mode {
+            errors.push(format!(
+                "{task_id}: execution mode drift (issue=`{}` expected=`{}`)",
+                row.execution_mode.trim(),
+                expected_lane.execution_mode
+            ));
+        }
+        if row.notes.trim() != expected_lane.notes.trim() {
+            errors.push(format!(
+                "{task_id}: notes drift (issue=`{}` expected=`{}`)",
+                row.notes.trim(),
+                expected_lane.notes.trim()
+            ));
+        }
+        if note_value(&row.notes, "pr-group")
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_default()
+            != expected.pr_group
+        {
+            errors.push(format!(
+                "{task_id}: pr-group drift (issue=`{}` expected=`{}`)",
+                note_value(&row.notes, "pr-group").unwrap_or_default(),
+                expected.pr_group
+            ));
+        }
+    }
+
+    for expected in plan_rows {
+        if !seen.contains(&expected.task_id) {
+            errors.push(format!(
+                "{}: missing from issue table for requested sprint",
+                expected.task_id
+            ));
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join(" | "))
+    }
 }
 
 fn collect_required_prs(rows: &[TaskRow], scope: &str) -> Result<Vec<u64>, String> {
@@ -1340,6 +1641,7 @@ fn enforce_previous_sprint_gate(
     }
 }
 
+#[cfg(test)]
 fn sync_issue_rows_from_task_spec(
     table: &mut issue_body::TaskTable,
     spec_rows: &[TaskSpecRow],
@@ -2352,11 +2654,170 @@ mod tests {
             sprint: 3,
             grouping: PrGrouping::PerSprint,
         }];
-        let files = write_subagent_prompts(&out_dir, 217, 3, &rows).expect("write prompts");
+        let files = write_subagent_prompts(&out_dir, 217, 3, &rows, SplitStrategy::Deterministic)
+            .expect("write prompts");
         assert_eq!(files.len(), 1);
         let rendered = fs::read_to_string(&files[0]).expect("read prompt");
         assert!(rendered.contains("Issue: #217"), "{rendered}");
         assert!(rendered.contains("Task: S3T1"), "{rendered}");
+        assert!(rendered.contains("Tasks: S3T1"), "{rendered}");
+        assert!(
+            rendered.contains("Execution Mode: per-sprint"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn write_subagent_prompts_groups_tasks_by_runtime_lane() {
+        let tmp = TempDir::new().expect("tempdir");
+        let out_dir = tmp.path().join("subagent-prompts");
+        let rows = vec![
+            TaskSpecRow {
+                task_id: "S3T1".to_string(),
+                summary: "First lane task".to_string(),
+                branch: "issue/s3-t1".to_string(),
+                worktree: "issue-s3-t1".to_string(),
+                owner: "subagent-s3-t1".to_string(),
+                notes: "sprint=S3; pr-group=s3-auto-g1; shared-pr-anchor=S3T2".to_string(),
+                pr_group: "s3-auto-g1".to_string(),
+                sprint: 3,
+                grouping: PrGrouping::Group,
+            },
+            TaskSpecRow {
+                task_id: "S3T2".to_string(),
+                summary: "Second lane task".to_string(),
+                branch: "issue/s3-t2".to_string(),
+                worktree: "issue-s3-t2".to_string(),
+                owner: "subagent-s3-t2".to_string(),
+                notes: "sprint=S3; pr-group=s3-auto-g1; shared-pr-anchor=S3T2".to_string(),
+                pr_group: "s3-auto-g1".to_string(),
+                sprint: 3,
+                grouping: PrGrouping::Group,
+            },
+            TaskSpecRow {
+                task_id: "S3T3".to_string(),
+                summary: "Isolated task".to_string(),
+                branch: "issue/s3-t3".to_string(),
+                worktree: "issue-s3-t3".to_string(),
+                owner: "subagent-s3-t3".to_string(),
+                notes: "sprint=S3; pr-group=s3-auto-g2".to_string(),
+                pr_group: "s3-auto-g2".to_string(),
+                sprint: 3,
+                grouping: PrGrouping::Group,
+            },
+        ];
+
+        let files = write_subagent_prompts(&out_dir, 217, 3, &rows, SplitStrategy::Auto)
+            .expect("write grouped prompts");
+        assert_eq!(files.len(), 2);
+
+        let lane_prompt_path = files
+            .iter()
+            .find(|path| path.contains("S3T2-subagent-prompt.md"))
+            .expect("shared lane prompt");
+        let lane_prompt = fs::read_to_string(lane_prompt_path).expect("read shared lane prompt");
+        assert!(lane_prompt.contains("Task: S3T2"), "{lane_prompt}");
+        assert!(lane_prompt.contains("Tasks: S3T1, S3T2"), "{lane_prompt}");
+        assert!(
+            lane_prompt.contains("Execution Mode: per-sprint"),
+            "{lane_prompt}"
+        );
+        assert!(
+            lane_prompt.contains("Owner: subagent-s3-t2"),
+            "{lane_prompt}"
+        );
+        assert!(lane_prompt.contains("Branch: issue/s3-t2"), "{lane_prompt}");
+        assert!(
+            lane_prompt.contains("Worktree: issue-s3-t2"),
+            "{lane_prompt}"
+        );
+        assert!(
+            lane_prompt.contains("- S3T1: First lane task"),
+            "{lane_prompt}"
+        );
+        assert!(
+            lane_prompt.contains("- S3T2: Second lane task"),
+            "{lane_prompt}"
+        );
+
+        let isolated_prompt_path = files
+            .iter()
+            .find(|path| path.contains("S3T3-subagent-prompt.md"))
+            .expect("isolated lane prompt");
+        let isolated_prompt =
+            fs::read_to_string(isolated_prompt_path).expect("read isolated lane prompt");
+        assert!(isolated_prompt.contains("Tasks: S3T3"), "{isolated_prompt}");
+        assert!(
+            isolated_prompt.contains("Execution Mode: pr-isolated"),
+            "{isolated_prompt}"
+        );
+    }
+
+    #[test]
+    fn task_spec_from_issue_rows_preserves_runtime_truth_metadata() {
+        let rows = vec![
+            TaskRow {
+                task: "S3T1".to_string(),
+                summary: "First lane task".to_string(),
+                owner: "subagent-s3-anchor".to_string(),
+                branch: "issue/s3-shared".to_string(),
+                worktree: "issue-s3-shared".to_string(),
+                execution_mode: "per-sprint".to_string(),
+                pr: "TBD".to_string(),
+                status: "planned".to_string(),
+                notes: "sprint=S3; plan-task:Task 3.1; pr-group=s3-auto-g1; shared-pr-anchor=S3T2"
+                    .to_string(),
+                line_index: 0,
+            },
+            TaskRow {
+                task: "S3T2".to_string(),
+                summary: "Second lane task".to_string(),
+                owner: "subagent-s3-anchor".to_string(),
+                branch: "issue/s3-shared".to_string(),
+                worktree: "issue-s3-shared".to_string(),
+                execution_mode: "per-sprint".to_string(),
+                pr: "TBD".to_string(),
+                status: "planned".to_string(),
+                notes: "sprint=S3; plan-task:Task 3.2; pr-group=s3-auto-g1; shared-pr-anchor=S3T2"
+                    .to_string(),
+                line_index: 1,
+            },
+            TaskRow {
+                task: "S4T1".to_string(),
+                summary: "Other sprint".to_string(),
+                owner: "subagent-s4".to_string(),
+                branch: "issue/s4".to_string(),
+                worktree: "issue-s4".to_string(),
+                execution_mode: "pr-isolated".to_string(),
+                pr: "TBD".to_string(),
+                status: "planned".to_string(),
+                notes: "sprint=S4; plan-task:Task 4.1".to_string(),
+                line_index: 2,
+            },
+        ];
+
+        let scoped = task_spec_rows_from_issue_rows(&rows, 3).expect("sprint rows");
+        assert_eq!(scoped.len(), 2);
+        assert_eq!(scoped[0].task_id, "S3T1");
+        assert_eq!(scoped[1].task_id, "S3T2");
+        assert_eq!(scoped[0].owner, "subagent-s3-anchor");
+        assert_eq!(scoped[1].owner, "subagent-s3-anchor");
+        assert_eq!(scoped[0].branch, "issue/s3-shared");
+        assert_eq!(scoped[1].branch, "issue/s3-shared");
+        assert_eq!(scoped[0].worktree, "issue-s3-shared");
+        assert_eq!(scoped[1].worktree, "issue-s3-shared");
+        assert_eq!(scoped[0].grouping, PrGrouping::PerSprint);
+        assert_eq!(scoped[1].grouping, PrGrouping::PerSprint);
+        assert_eq!(scoped[0].pr_group, "s3-auto-g1");
+        assert_eq!(scoped[1].pr_group, "s3-auto-g1");
+        assert_eq!(
+            note_value(&scoped[0].notes, "shared-pr-anchor"),
+            Some("S3T2".to_string())
+        );
+        assert_eq!(
+            note_value(&scoped[1].notes, "shared-pr-anchor"),
+            Some("S3T2".to_string())
+        );
     }
 
     #[test]
