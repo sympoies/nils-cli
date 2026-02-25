@@ -127,35 +127,10 @@ BEGIN {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
+    use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir, prepend_path, stubs};
     use pretty_assertions::assert_eq;
     use std::fs;
     use tempfile::TempDir;
-
-    fn fzf_stub_script() -> &'static str {
-        r#"#!/bin/bash
-set -euo pipefail
-
-dir="${FZF_STUB_OUT_DIR:?FZF_STUB_OUT_DIR is required}"
-counter="$dir/.counter"
-n=1
-if [[ -f "$counter" ]]; then
-  n=$(( $(/bin/cat "$counter") + 1 ))
-fi
-echo "$n" > "$counter"
-
-out="$dir/$n.out"
-code_file="$dir/$n.code"
-if [[ -f "$out" ]]; then
-  /bin/cat "$out"
-fi
-
-if [[ -f "$code_file" ]]; then
-  exit "$(/bin/cat "$code_file")"
-fi
-exit 0
-"#
-    }
 
     #[test]
     fn run_requires_delimiters() {
@@ -179,7 +154,7 @@ exit 0
 
         let clipboard = temp.path().join("clipboard.txt");
         let stub = StubBinDir::new();
-        stub.write_exe("fzf", fzf_stub_script());
+        stub.write_exe("fzf", stubs::fzf_stub_script());
         stub.write_exe(
             "pbcopy",
             r#"#!/bin/bash

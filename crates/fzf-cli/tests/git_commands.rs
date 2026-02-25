@@ -42,16 +42,20 @@ exit 0
 "#,
     );
 
-    let path_s = common::path_with_prepend(stub.path());
     let out_dir_s = out_dir.to_string_lossy().to_string();
     let git_log_s = git_log.to_string_lossy().to_string();
     let envs = [
-        ("PATH", path_s.as_str()),
         ("FZF_STUB_OUT_DIR", out_dir_s.as_str()),
         ("GIT_LOG", git_log_s.as_str()),
     ];
 
-    let out = common::run_fzf_cli(temp.path(), &["git-branch"], &envs, Some("y\n"));
+    let out = common::run_fzf_cli_with_stub_path(
+        temp.path(),
+        stub.path(),
+        &["git-branch"],
+        &envs,
+        Some("y\n"),
+    );
     assert_eq!(out.code, 0);
     assert!(out.stdout.contains("✅ Checked out to main"));
     let log = fs::read_to_string(&git_log).unwrap();
@@ -100,16 +104,20 @@ exit 0
 "#,
     );
 
-    let path_s = common::path_with_prepend(stub.path());
     let out_dir_s = out_dir.to_string_lossy().to_string();
     let git_log_s = git_log.to_string_lossy().to_string();
     let envs = [
-        ("PATH", path_s.as_str()),
         ("FZF_STUB_OUT_DIR", out_dir_s.as_str()),
         ("GIT_LOG", git_log_s.as_str()),
     ];
 
-    let out = common::run_fzf_cli(temp.path(), &["git-tag"], &envs, Some("y\n"));
+    let out = common::run_fzf_cli_with_stub_path(
+        temp.path(),
+        stub.path(),
+        &["git-tag"],
+        &envs,
+        Some("y\n"),
+    );
     assert_eq!(out.code, 0);
     assert!(
         out.stdout
@@ -183,16 +191,20 @@ exit 0
 "#,
     );
 
-    let path_s = common::path_with_prepend(stub.path());
     let out_dir_s = out_dir.to_string_lossy().to_string();
     let checkout_count_s = checkout_count.to_string_lossy().to_string();
     let envs = [
-        ("PATH", path_s.as_str()),
         ("FZF_STUB_OUT_DIR", out_dir_s.as_str()),
         ("CHECKOUT_COUNT", checkout_count_s.as_str()),
     ];
 
-    let out = common::run_fzf_cli(temp.path(), &["git-checkout"], &envs, Some("y\ny\n"));
+    let out = common::run_fzf_cli_with_stub_path(
+        temp.path(),
+        stub.path(),
+        &["git-checkout"],
+        &envs,
+        Some("y\ny\n"),
+    );
     assert_eq!(out.code, 0);
     assert!(out.stdout.contains("📦 Changes stashed"));
     assert!(out.stdout.contains("✅ Checked out to abc123"));
@@ -227,14 +239,11 @@ exit 0
 "#,
     );
 
-    let path_s = common::path_with_prepend(stub.path());
     let out_dir_s = out_dir.to_string_lossy().to_string();
-    let envs = [
-        ("PATH", path_s.as_str()),
-        ("FZF_STUB_OUT_DIR", out_dir_s.as_str()),
-    ];
+    let envs = [("FZF_STUB_OUT_DIR", out_dir_s.as_str())];
 
-    let out = common::run_fzf_cli(temp.path(), &["git-status"], &envs, None);
+    let out =
+        common::run_fzf_cli_with_stub_path(temp.path(), stub.path(), &["git-status"], &envs, None);
     assert_eq!(out.code, 0);
 }
 
@@ -301,19 +310,18 @@ exit 0
 "#,
     );
 
-    let path_s = common::path_with_prepend(stub.path());
     let out_dir_s = out_dir.to_string_lossy().to_string();
     let repo_root_s = repo_root.to_string_lossy().to_string();
     let vi_log_s = vi_log.to_string_lossy().to_string();
     let envs = [
-        ("PATH", path_s.as_str()),
         ("FZF_STUB_OUT_DIR", out_dir_s.as_str()),
         ("FZF_FILE_OPEN_WITH", "vi"),
         ("REPO_ROOT", repo_root_s.as_str()),
         ("VI_LOG", vi_log_s.as_str()),
     ];
 
-    let out = common::run_fzf_cli(temp.path(), &["git-commit"], &envs, None);
+    let out =
+        common::run_fzf_cli_with_stub_path(temp.path(), stub.path(), &["git-commit"], &envs, None);
     assert_eq!(out.code, 0);
     let log = fs::read_to_string(&vi_log).unwrap();
     assert!(log.contains("file.txt"));
