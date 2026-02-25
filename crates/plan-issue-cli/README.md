@@ -4,6 +4,8 @@
 `plan-issue-cli` provides the Rust command contract for plan/issue delivery orchestration.
 It is the typed replacement lane for `plan-issue-delivery-loop.sh` behavior and is built around
 deterministic task-spec generation, issue-body rendering, and gate-enforced sprint transitions.
+`Task Decomposition` is the runtime-truth execution table; sprint task-spec/prompt artifacts are
+derived from those issue rows.
 
 The crate ships two binaries with the same command surface:
 
@@ -26,7 +28,7 @@ Shell wrapper scripts are deprecated for this crate path. Use `plan-issue` / `pl
 - `cleanup-worktrees`: enforce cleanup of all issue-assigned task worktrees.
 
 ### Sprint-level flow
-- `start-sprint`: open sprint execution loop after previous sprint gate passes.
+- `start-sprint`: open sprint execution loop after previous sprint gate passes, validate runtime-truth rows against plan lanes, and render artifacts without rewriting issue rows.
 - `ready-sprint`: post sprint-ready signal for main-agent review.
 - `accept-sprint`: enforce merged-PR gate and mark sprint accepted.
 - `multi-sprint-guide`: print repeated command flow for a whole plan.

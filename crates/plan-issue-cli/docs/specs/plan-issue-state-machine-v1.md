@@ -61,7 +61,8 @@ States per sprint `N`:
 Transitions:
 - `start-sprint N`: `SPRINT_NOT_STARTED -> SPRINT_IN_PROGRESS`
   - Renders sprint task-spec and subagent prompts.
-  - Syncs Task Decomposition execution metadata from task-spec.
+  - Validates Task Decomposition runtime-truth rows against plan-derived sprint lanes.
+  - Derives sprint task-spec and prompt artifacts from runtime-truth issue rows (no row rewrite).
   - For `N > 1`, requires previous sprint merge gate pass (see gate invariants).
 - `ready-sprint N`: `SPRINT_IN_PROGRESS -> SPRINT_REVIEW_READY`
   - Posts or prints sprint-ready review artifact.

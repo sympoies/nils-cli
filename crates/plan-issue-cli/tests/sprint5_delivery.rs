@@ -118,6 +118,7 @@ fn parse_task_decomposition_rows(issue_body: &str) -> HashMap<String, IssueTaskR
 
 fn parse_task_spec_rows(tsv: &str) -> HashMap<String, SpecRow> {
     let mut rows = HashMap::new();
+
     for line in tsv.lines() {
         if line.starts_with('#') || line.trim().is_empty() {
             continue;
@@ -134,6 +135,7 @@ fn parse_task_spec_rows(tsv: &str) -> HashMap<String, SpecRow> {
             },
         );
     }
+
     rows
 }
 
@@ -145,22 +147,6 @@ if [[ -n "${PLAN_ISSUE_GH_LOG:-}" ]]; then
   printf '%s\n' "$*" >> "$PLAN_ISSUE_GH_LOG"
 fi
 
-capture_body_file() {
-  local body_file=""
-  local prev=""
-  for arg in "$@"; do
-    if [[ "$prev" == "--body-file" ]]; then
-      body_file="$arg"
-      break
-    fi
-    prev="$arg"
-  done
-
-  if [[ -n "${PLAN_ISSUE_GH_CAPTURE_BODY_FILE:-}" && -n "$body_file" ]]; then
-    cp "$body_file" "$PLAN_ISSUE_GH_CAPTURE_BODY_FILE"
-  fi
-}
-
 case "${1:-} ${2:-}" in
   "issue view")
     body_json="${PLAN_ISSUE_GH_BODY_JSON:-}"
@@ -170,7 +156,6 @@ case "${1:-} ${2:-}" in
     printf '%s\n' "$body_json"
     ;;
   "issue edit")
-    capture_body_file "$@"
     ;;
   "issue comment")
     ;;
@@ -190,25 +175,20 @@ fn gh_cmd_options(stub_dir: &Path, envs: &[(&str, &str)]) -> CmdOptions {
 }
 
 #[test]
-fn live_start_sprint_uses_issue_table_runtime_truth_without_rewrite() {
+fn auto_single_lane_end_to_end_keeps_per_sprint_runtime_truth() {
     let tmp = TempDir::new().expect("temp dir");
     let stub = StubBinDir::new();
     stub.write_exe("gh", gh_stub_script());
 
     let agent_home = tmp.path().join("agent-home");
-    fs::create_dir_all(&agent_home).expect("agent home");
+    fs::create_dir_all(&agent_home).expect("create agent home");
     let agent_home_s = agent_home.to_string_lossy().to_string();
 
-    let log_path = tmp.path().join("gh.log");
-    let log_s = log_path.to_string_lossy().to_string();
-    let capture_body = tmp.path().join("captured-start-sprint-body.md");
-    let capture_body_s = capture_body.to_string_lossy().to_string();
-
-    let plan_file = tmp.path().join("sprint1-runtime-truth.md");
+    let plan_file = tmp.path().join("sprint1-auto-single-lane.md");
     let plan_file_s = plan_file.to_string_lossy().to_string();
     fs::write(
         &plan_file,
-        r#"# Plan: Sprint 1 runtime truth
+        r#"# Plan: Sprint 1 runtime-truth end-to-end
 
 ## Sprint 1: Shared lane
 - **PR grouping intent**: `group`.
@@ -256,17 +236,30 @@ fn live_start_sprint_uses_issue_table_runtime_truth_without_rewrite() {
     assert_eq!(start_plan_out.code, 0, "stderr: {}", start_plan_out.stderr);
 
     let issue_body = fs::read_to_string(&plan_issue_body).expect("read issue body");
-    let body_json = json!({ "body": issue_body.clone() }).to_string();
+    let issue_rows = parse_task_decomposition_rows(&issue_body);
+    let issue_s1t1 = issue_rows.get("S1T1").expect("S1T1 issue row");
+    let issue_s1t2 = issue_rows.get("S1T2").expect("S1T2 issue row");
+    assert_eq!(issue_s1t1.execution_mode, "per-sprint");
+    assert_eq!(issue_s1t2.execution_mode, "per-sprint");
+    assert_eq!(issue_s1t1.owner, issue_s1t2.owner);
+    assert_eq!(issue_s1t1.branch, issue_s1t2.branch);
+    assert_eq!(issue_s1t1.worktree, issue_s1t2.worktree);
+    assert_eq!(issue_s1t1.notes, issue_s1t2.notes);
 
-    let task_spec_out = tmp.path().join("sprint1-task-spec.tsv");
-    let task_spec_out_s = task_spec_out.to_string_lossy().to_string();
+    let body_json = json!({ "body": issue_body }).to_string();
+    let log_path = tmp.path().join("gh.log");
+    let log_s = log_path.to_string_lossy().to_string();
+
+    let sprint_task_spec = tmp.path().join("sprint1-task-spec.tsv");
+    let sprint_task_spec_s = sprint_task_spec.to_string_lossy().to_string();
     let prompts_out = tmp.path().join("sprint1-prompts");
     let prompts_out_s = prompts_out.to_string_lossy().to_string();
 
-    let out = common::run_plan_issue_with_options(
+    let start_sprint_out = common::run_plan_issue_with_options(
         &[
             "--format",
             "json",
+            "--dry-run",
             "--repo",
             "graysurf/nils-cli",
             "start-sprint",
@@ -277,7 +270,7 @@ fn live_start_sprint_uses_issue_table_runtime_truth_without_rewrite() {
             "--sprint",
             "1",
             "--task-spec-out",
-            &task_spec_out_s,
+            &sprint_task_spec_s,
             "--subagent-prompts-out",
             &prompts_out_s,
             "--pr-grouping",
@@ -291,70 +284,106 @@ fn live_start_sprint_uses_issue_table_runtime_truth_without_rewrite() {
             &[
                 ("PLAN_ISSUE_GH_LOG", &log_s),
                 ("PLAN_ISSUE_GH_BODY_JSON", &body_json),
-                ("PLAN_ISSUE_GH_CAPTURE_BODY_FILE", &capture_body_s),
                 ("AGENT_HOME", &agent_home_s),
             ],
         ),
     );
-
     assert_eq!(
-        out.code, 0,
+        start_sprint_out.code, 0,
         "stdout:\n{}\nstderr:\n{}",
-        out.stdout, out.stderr
-    );
-    let payload = parse_json(&out.stdout);
-    assert_eq!(payload["command"], "start-sprint");
-    assert_eq!(payload["payload"]["result"]["synced_issue_rows"], 2);
-    assert_eq!(
-        payload["payload"]["result"]["live_mutations_performed"],
-        false
+        start_sprint_out.stdout, start_sprint_out.stderr
     );
 
+    let sprint_payload = parse_json(&start_sprint_out.stdout);
+    let start_comment_path = result_path(&sprint_payload, "comment_path");
+    let start_comment = fs::read_to_string(&start_comment_path).expect("read start comment");
     assert!(
-        !capture_body.exists(),
-        "start-sprint should not rewrite issue body in runtime-truth mode"
+        start_comment.contains("| S1T1 | First lane task | per-sprint |"),
+        "{start_comment}"
     );
+    assert!(
+        start_comment.contains("| S1T2 | Follow-up lane task | per-sprint |"),
+        "{start_comment}"
+    );
+    assert!(!start_comment.contains("pr-shared"), "{start_comment}");
 
-    let issue_rows = parse_task_decomposition_rows(&issue_body);
-    let issue_s1t1 = issue_rows.get("S1T1").expect("S1T1 issue row");
-    let issue_s1t2 = issue_rows.get("S1T2").expect("S1T2 issue row");
-    assert_eq!(issue_s1t1.execution_mode, "per-sprint");
-    assert_eq!(issue_s1t2.execution_mode, "per-sprint");
-
-    let spec_path = result_path(&payload, "task_spec_path");
-    let spec_text = fs::read_to_string(&spec_path).expect("read task-spec");
+    let spec_text = fs::read_to_string(&sprint_task_spec).expect("read sprint task-spec");
     let spec_rows = parse_task_spec_rows(&spec_text);
-
-    for (task_id, issue_row) in [("S1T1", issue_s1t1), ("S1T2", issue_s1t2)] {
-        let spec_row = spec_rows
-            .get(task_id)
-            .unwrap_or_else(|| panic!("missing spec row {task_id}"));
-        assert_eq!(issue_row.owner, spec_row.owner);
-        assert_eq!(issue_row.branch, spec_row.branch);
-        assert_eq!(issue_row.worktree, spec_row.worktree);
-        assert_eq!(issue_row.notes, spec_row.notes);
+    for task in ["S1T1", "S1T2"] {
+        let issue_row = issue_rows.get(task).expect("issue row");
+        let spec_row = spec_rows.get(task).expect("spec row");
+        assert_eq!(spec_row.owner, issue_row.owner);
+        assert_eq!(spec_row.branch, issue_row.branch);
+        assert_eq!(spec_row.worktree, issue_row.worktree);
+        assert_eq!(spec_row.notes, issue_row.notes);
     }
 
-    let prompt_files = payload["payload"]["result"]["subagent_prompt_files"]
+    let prompt_files = sprint_payload["payload"]["result"]["subagent_prompt_files"]
         .as_array()
-        .expect("subagent prompt files");
-    assert_eq!(prompt_files.len(), 1, "{}", out.stdout);
+        .expect("prompt files");
+    assert_eq!(prompt_files.len(), 1, "{}", start_sprint_out.stdout);
+
     let prompt_path = prompt_files[0].as_str().expect("prompt path");
     let prompt = fs::read_to_string(prompt_path).expect("read prompt");
     assert!(prompt.contains("Tasks: S1T1, S1T2"), "{prompt}");
     assert!(prompt.contains("Execution Mode: per-sprint"), "{prompt}");
 
+    let ready_out = common::run_plan_issue_with_options(
+        &[
+            "--format",
+            "json",
+            "--dry-run",
+            "--repo",
+            "graysurf/nils-cli",
+            "ready-sprint",
+            "--plan",
+            &plan_file_s,
+            "--issue",
+            "217",
+            "--sprint",
+            "1",
+            "--summary",
+            "runtime truth ready",
+            "--pr-grouping",
+            "group",
+            "--strategy",
+            "auto",
+        ],
+        gh_cmd_options(
+            stub.path(),
+            &[
+                ("PLAN_ISSUE_GH_LOG", &log_s),
+                ("PLAN_ISSUE_GH_BODY_JSON", &body_json),
+                ("AGENT_HOME", &agent_home_s),
+            ],
+        ),
+    );
+    assert_eq!(
+        ready_out.code, 0,
+        "stdout:\n{}\nstderr:\n{}",
+        ready_out.stdout, ready_out.stderr
+    );
+
+    let ready_payload = parse_json(&ready_out.stdout);
+    let ready_comment_path = result_path(&ready_payload, "comment_path");
+    let ready_comment = fs::read_to_string(&ready_comment_path).expect("read ready comment");
+    assert!(
+        ready_comment.contains("| S1T1 | First lane task | TBD (per-sprint) |"),
+        "{ready_comment}"
+    );
+    assert!(
+        ready_comment.contains("| S1T2 | Follow-up lane task | TBD (per-sprint) |"),
+        "{ready_comment}"
+    );
+    assert!(
+        ready_comment.contains("runtime truth ready"),
+        "{ready_comment}"
+    );
+    assert!(!ready_comment.contains("pr-shared"), "{ready_comment}");
+
     let log = fs::read_to_string(&log_path).expect("read gh log");
     assert!(
         log.contains("issue view 217 --repo graysurf/nils-cli --json body"),
-        "{log}"
-    );
-    assert!(
-        !log.contains("issue edit 217 --repo graysurf/nils-cli --body-file"),
-        "{log}"
-    );
-    assert!(
-        !log.contains("issue comment 217 --repo graysurf/nils-cli --body-file"),
         "{log}"
     );
 }

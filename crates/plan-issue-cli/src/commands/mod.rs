@@ -154,7 +154,7 @@ pub enum Command {
     /// Enforce cleanup of all issue-assigned task worktrees.
     CleanupWorktrees(CleanupWorktreesArgs),
 
-    /// Start sprint only after previous sprint merge+done gate passes.
+    /// Start sprint from Task Decomposition runtime truth after previous sprint merge+done gate passes.
     StartSprint(StartSprintArgs),
 
     /// Post sprint-ready comment for main-agent review before merge.

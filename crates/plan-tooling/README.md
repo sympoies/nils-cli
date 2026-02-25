@@ -49,6 +49,7 @@ Help:
   - when sprint metadata provides `Execution Profile` parallel width hints, auto grouping targets that lane count (deterministic fallback merges apply when needed).
   - `pr-grouping=per-sprint` keeps one shared group per sprint (`s<n>`).
   - ordering and tie-breakers stay deterministic (`Task N.M`, then `SxTy`, then lexical summary).
+  - emitted lane metadata (`pr_group`, anchor notes, prefixes) is consumed by `plan-issue` runtime-truth validation and sprint artifact rendering.
 - deterministic examples:
   - `split-prs --file docs/plans/example-plan.md --scope sprint --sprint 1 --pr-grouping per-sprint --format tsv`
   - `split-prs --file docs/plans/example-plan.md --scope sprint --sprint 2 --pr-grouping group --pr-group S2T1=isolated --pr-group S2T2=shared --pr-group S2T3=shared --format json`

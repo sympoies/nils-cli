@@ -29,27 +29,28 @@ execution.
 | `G6` | Worktree cleanup gate | `cleanup-worktrees`, successful `close-plan` | targeted linked worktrees removed, prune succeeds, no targeted residues | `1` |
 | `G7` | Dry-run non-mutation gate | all commands with `--dry-run` | command prints intended actions and performs no GitHub mutation | `1` |
 | `G8` | Close-plan dry-run body-file gate | `close-plan --dry-run` | `--body-file` is provided for local gate evaluation | `2` |
+| `G9` | Runtime-truth drift gate | `start-sprint` | sprint issue rows match plan-derived runtime lane metadata before artifact render | `1` |
 
 ## Command-to-Gate Matrix
 
-| Command | G0 | G1 | G2 | G3 | G4 | G5 | G6 | G7 | G8 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `build-task-spec` | required | - | - | - | - | - | - | optional | - |
-| `build-plan-task-spec` | required | - | - | - | - | - | - | optional | - |
-| `start-plan` | required | - | - | - | - | - | - | optional | - |
-| `status-plan` | required | required (issue/body mode) | - | - | - | - | - | optional | - |
-| `ready-plan` | required | required (issue/body mode) | - | - | - | - | - | optional | - |
-| `close-plan` | required | required | required | - | - | required | required (on success path) | optional | required when dry-run |
-| `cleanup-worktrees` | required | required | - | - | - | - | required | optional | - |
-| `start-sprint` | required | required | required for `N > 1` | required for `N > 1` | - | - | - | optional | - |
-| `ready-sprint` | required | required | - | - | - | - | - | optional | - |
-| `accept-sprint` | required | required | required | - | required | - | - | optional | - |
-| `multi-sprint-guide` | required | - | - | - | - | - | - | optional | - |
+| Command | G0 | G1 | G2 | G3 | G4 | G5 | G6 | G7 | G8 | G9 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `build-task-spec` | required | - | - | - | - | - | - | optional | - | - |
+| `build-plan-task-spec` | required | - | - | - | - | - | - | optional | - | - |
+| `start-plan` | required | - | - | - | - | - | - | optional | - | - |
+| `status-plan` | required | required (issue/body mode) | - | - | - | - | - | optional | - | - |
+| `ready-plan` | required | required (issue/body mode) | - | - | - | - | - | optional | - | - |
+| `close-plan` | required | required | required | - | - | required | required (on success path) | optional | required when dry-run | - |
+| `cleanup-worktrees` | required | required | - | - | - | - | required | optional | - | - |
+| `start-sprint` | required | required | required for `N > 1` | required for `N > 1` | - | - | - | optional | - | required |
+| `ready-sprint` | required | required | - | - | - | - | - | optional | - | - |
+| `accept-sprint` | required | required | required | - | required | - | - | optional | - | - |
+| `multi-sprint-guide` | required | - | - | - | - | - | - | optional | - | - |
 
 ## Gate Evaluation Order (Normative)
 1. `G0` usage/argument validation.
 2. Command-specific structural checks (`G1`) before remote mutations.
-3. Progression/merge gates (`G2`, `G3`, `G4`, `G5`) in command-specific order.
+3. Progression/merge/drift gates (`G2`, `G3`, `G4`, `G5`, `G9`) in command-specific order.
 4. Cleanup gate (`G6`) only after command gate success where cleanup is required.
 5. Dry-run behavior (`G7`, `G8`) wraps command execution and must preserve non-mutation semantics.
 
@@ -62,5 +63,5 @@ execution.
 
 ## Failure Contract
 - `exit 2`: usage errors (`G0`, `G8`) and invalid required inputs.
-- `exit 1`: gate failures (`G1` through `G7`) and runtime dependency failures.
+- `exit 1`: gate failures (`G1` through `G7`, `G9`) and runtime dependency failures.
 - `exit 0`: all applicable gates pass.

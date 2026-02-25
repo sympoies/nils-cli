@@ -110,12 +110,12 @@ fn issue_body_with_preface(task_rows: &str) -> String {
 ## Overview
 
 - This plan delivers a shell-free Rust implementation for the current plan-issue orchestration workflow.
-- The issue body keeps pre-sprint context so sprint commands only sync task table rows.
+- The issue body keeps pre-sprint context and uses Task Decomposition as runtime truth.
 
 ## Scope
 
 - Maintain one plan issue for the full multi-sprint workflow.
-- Keep pre-sprint sections stable when sprint commands update Task Decomposition.
+- Keep pre-sprint sections stable while sprint commands read/validate runtime-truth rows.
 
 ## Task Decomposition
 
@@ -131,9 +131,9 @@ fn issue_body_sprint4_planned() -> String {
         r#"| S3T1 | Implement task-spec generation core using `plan-tooling` | subagent-s3-t1 | issue/s3-t1-implement-task-spec-generation-core-using-plan-t | issue-s3-t1 | per-sprint | #221 | done | sprint=S3; plan-task:Task 3.1 |
 | S3T2 | Implement issue-body and sprint-comment rendering engine | subagent-s3-t1 | issue/s3-t1-implement-task-spec-generation-core-using-plan-t | issue-s3-t1 | per-sprint | #221 | done | sprint=S3; plan-task:Task 3.2 |
 | S3T3 | Implement independent local dry-run workflow | subagent-s3-t1 | issue/s3-t1-implement-task-spec-generation-core-using-plan-t | issue-s3-t1 | per-sprint | #221 | done | sprint=S3; plan-task:Task 3.3 |
-| S4T1 | Implement GitHub adapter abstraction and `gh` backend | TBD | TBD | TBD | TBD | TBD | planned | sprint=S4; plan-task:Task 4.1 |
-| S4T2 | Implement live plan-level commands | TBD | TBD | TBD | TBD | TBD | planned | sprint=S4; plan-task:Task 4.2 |
-| S4T3 | Implement live sprint-level commands and guide output | TBD | TBD | TBD | TBD | TBD | planned | sprint=S4; plan-task:Task 4.3 |
+| S4T1 | Implement GitHub adapter abstraction and `gh` backend | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | TBD | planned | sprint=S4; plan-task:Task 4.1; deps=Task 3.3; validate=cargo test -p nils-plan-issue-cli github_adapter; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
+| S4T2 | Implement live plan-level commands | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | TBD | planned | sprint=S4; plan-task:Task 4.1; deps=Task 3.3; validate=cargo test -p nils-plan-issue-cli github_adapter; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
+| S4T3 | Implement live sprint-level commands and guide output | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | TBD | planned | sprint=S4; plan-task:Task 4.1; deps=Task 3.3; validate=cargo test -p nils-plan-issue-cli github_adapter; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
 "#,
     )
 }
@@ -143,18 +143,18 @@ fn issue_body_sprint4_in_progress() -> String {
         r#"| S3T1 | Implement task-spec generation core using `plan-tooling` | subagent-s3-t1 | issue/s3-t1-implement-task-spec-generation-core-using-plan-t | issue-s3-t1 | per-sprint | #221 | done | sprint=S3; plan-task:Task 3.1 |
 | S3T2 | Implement issue-body and sprint-comment rendering engine | subagent-s3-t1 | issue/s3-t1-implement-task-spec-generation-core-using-plan-t | issue-s3-t1 | per-sprint | #221 | done | sprint=S3; plan-task:Task 3.2 |
 | S3T3 | Implement independent local dry-run workflow | subagent-s3-t1 | issue/s3-t1-implement-task-spec-generation-core-using-plan-t | issue-s3-t1 | per-sprint | #221 | done | sprint=S3; plan-task:Task 3.3 |
-| S4T1 | Implement GitHub adapter abstraction and `gh` backend | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #222 | in-progress | sprint=S4; plan-task:Task 4.1 |
-| S4T2 | Implement live plan-level commands | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #223 | in-progress | sprint=S4; plan-task:Task 4.2 |
-| S4T3 | Implement live sprint-level commands and guide output | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #224 | in-progress | sprint=S4; plan-task:Task 4.3 |
+| S4T1 | Implement GitHub adapter abstraction and `gh` backend | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #222 | in-progress | sprint=S4; plan-task:Task 4.1; deps=Task 3.3; validate=cargo test -p nils-plan-issue-cli github_adapter; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
+| S4T2 | Implement live plan-level commands | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #223 | in-progress | sprint=S4; plan-task:Task 4.1; deps=Task 3.3; validate=cargo test -p nils-plan-issue-cli github_adapter; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
+| S4T3 | Implement live sprint-level commands and guide output | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #224 | in-progress | sprint=S4; plan-task:Task 4.1; deps=Task 3.3; validate=cargo test -p nils-plan-issue-cli github_adapter; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
 "#,
     )
 }
 
 fn issue_body_plan_done() -> String {
     issue_body_with_preface(
-        r#"| S4T1 | Implement GitHub adapter abstraction and `gh` backend | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #222 | done | sprint=S4; plan-task:Task 4.1 |
-| S4T2 | Implement live plan-level commands | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #223 | done | sprint=S4; plan-task:Task 4.2 |
-| S4T3 | Implement live sprint-level commands and guide output | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #224 | done | sprint=S4; plan-task:Task 4.3 |
+        r#"| S4T1 | Implement GitHub adapter abstraction and `gh` backend | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #222 | done | sprint=S4; plan-task:Task 4.1; deps=Task 3.3; validate=cargo test -p nils-plan-issue-cli github_adapter; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
+| S4T2 | Implement live plan-level commands | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #223 | done | sprint=S4; plan-task:Task 4.1; deps=Task 3.3; validate=cargo test -p nils-plan-issue-cli github_adapter; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
+| S4T3 | Implement live sprint-level commands and guide output | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #224 | done | sprint=S4; plan-task:Task 4.1; deps=Task 3.3; validate=cargo test -p nils-plan-issue-cli github_adapter; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
 "#,
     )
 }
@@ -325,8 +325,6 @@ fn live_sprint_commands_start_ready_accept_and_guide_are_deterministic() {
     fs::create_dir_all(&agent_home).expect("agent home");
     let agent_home_s = agent_home.to_string_lossy().to_string();
 
-    let start_capture = tmp.path().join("start-sprint-body.md");
-    let start_capture_s = start_capture.to_string_lossy().to_string();
     let start_body_json = json!({"body": issue_body_sprint4_planned()}).to_string();
 
     let start_out = common::run_plan_issue_with_options(
@@ -351,7 +349,6 @@ fn live_sprint_commands_start_ready_accept_and_guide_are_deterministic() {
             &[
                 ("PLAN_ISSUE_GH_LOG", &log_s),
                 ("PLAN_ISSUE_GH_BODY_JSON", &start_body_json),
-                ("PLAN_ISSUE_GH_CAPTURE_BODY_FILE", &start_capture_s),
                 ("AGENT_HOME", &agent_home_s),
             ],
         ),
@@ -361,20 +358,22 @@ fn live_sprint_commands_start_ready_accept_and_guide_are_deterministic() {
     let start_payload = parse_json(&start_out.stdout);
     assert_eq!(start_payload["command"], "start-sprint");
     assert_eq!(start_payload["payload"]["result"]["synced_issue_rows"], 3);
-
-    let start_body = fs::read_to_string(&start_capture).expect("captured start body");
+    assert_eq!(
+        start_payload["payload"]["result"]["live_mutations_performed"],
+        false
+    );
+    let start_spec_path = start_payload["payload"]["result"]["task_spec_path"]
+        .as_str()
+        .expect("start task-spec path");
+    let start_spec = fs::read_to_string(start_spec_path).expect("read start task-spec");
+    assert!(start_spec.contains("subagent-s4-t1"), "{start_spec}");
     assert!(
-        start_body.contains("## Overview"),
-        "preface should be preserved\n{start_body}"
+        start_spec.contains("issue/s4-t1-implement-github-adapter-abstraction-and-gh-back"),
+        "{start_spec}"
     );
     assert!(
-        start_body.contains("shell-free Rust implementation"),
-        "preface should be preserved\n{start_body}"
-    );
-    assert!(start_body.contains("subagent-s4-t1"), "{start_body}");
-    assert!(
-        start_body.contains("pr-grouping=per-sprint"),
-        "{start_body}"
+        start_spec.contains("pr-grouping=per-sprint"),
+        "{start_spec}"
     );
 
     let ready_out = common::run_plan_issue_with_options(
