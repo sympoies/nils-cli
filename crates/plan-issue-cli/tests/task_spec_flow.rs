@@ -96,6 +96,38 @@ fn task_spec_generation_build_task_spec_writes_grouped_rows() {
 }
 
 #[test]
+fn task_spec_generation_creates_missing_output_directory() {
+    let tmp = TempDir::new().expect("temp dir");
+    let out_path = tmp.path().join("nested").join("deep").join("sprint3.tsv");
+    let out_path_s = out_path.to_string_lossy().to_string();
+    assert!(
+        !out_path.parent().expect("parent").exists(),
+        "precondition: parent should not exist"
+    );
+
+    let out = common::run_plan_issue(&[
+        "--format",
+        "json",
+        "build-task-spec",
+        "--plan",
+        PLAN_PATH,
+        "--sprint",
+        "3",
+        "--pr-grouping",
+        "per-sprint",
+        "--task-spec-out",
+        &out_path_s,
+    ]);
+
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+    let rendered = fs::read_to_string(&out_path).expect("read task-spec");
+    assert!(
+        rendered.starts_with("# task_id\tsummary\tbranch\tworktree\towner\tnotes\tpr_group\n"),
+        "{rendered}"
+    );
+}
+
+#[test]
 fn strategy_auto_partial_mapping_allows_unmapped_rows() {
     let tmp = TempDir::new().expect("temp dir");
     let out_path = tmp.path().join("sprint3-auto.tsv");
@@ -212,6 +244,49 @@ fn render_issue_body_start_plan_writes_issue_body_artifact() {
     assert!(
         rendered.contains("| S3T1 | Implement task-spec generation core using `plan-tooling` |")
     );
+}
+
+#[test]
+fn render_issue_body_start_plan_creates_missing_issue_body_directory() {
+    let tmp = TempDir::new().expect("temp dir");
+    let agent_home = tmp.path().join("agent-home");
+    fs::create_dir_all(&agent_home).expect("create agent home");
+
+    let task_spec = tmp.path().join("nested").join("spec").join("plan.tsv");
+    let issue_body = tmp
+        .path()
+        .join("nested")
+        .join("issue")
+        .join("issue-body.md");
+    let task_spec_s = task_spec.to_string_lossy().to_string();
+    let issue_body_s = issue_body.to_string_lossy().to_string();
+    let agent_home_s = agent_home.to_string_lossy().to_string();
+    assert!(
+        !issue_body.parent().expect("parent").exists(),
+        "precondition: parent should not exist"
+    );
+
+    let out = common::run_plan_issue_local_with_env(
+        &[
+            "--format",
+            "json",
+            "--dry-run",
+            "start-plan",
+            "--plan",
+            PLAN_PATH,
+            "--pr-grouping",
+            "per-sprint",
+            "--task-spec-out",
+            &task_spec_s,
+            "--issue-body-out",
+            &issue_body_s,
+        ],
+        &[("AGENT_HOME", &agent_home_s)],
+    );
+
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+    let rendered = fs::read_to_string(&issue_body).expect("read issue body");
+    assert!(rendered.contains("## Task Decomposition"), "{rendered}");
 }
 
 #[test]

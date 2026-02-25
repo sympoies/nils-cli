@@ -69,6 +69,22 @@ pub enum TimestampError {
 }
 
 #[derive(Debug, Error)]
+pub enum WriteTextError {
+    #[error("failed to create parent directory {path}: {source}")]
+    CreateParentDir {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to write file {path}: {source}")]
+    WriteFile {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+}
+
+#[derive(Debug, Error)]
 pub enum FileHashError {
     #[error("failed to open file for hashing {path}: {source}")]
     OpenFile {
@@ -205,6 +221,21 @@ pub fn write_timestamp(path: &Path, iso: Option<&str>) -> Result<(), TimestampEr
             source,
         }),
     }
+}
+
+/// Write UTF-8 text to `path`, creating parent directories when needed.
+pub fn write_text(path: &Path, text: &str) -> Result<(), WriteTextError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| WriteTextError::CreateParentDir {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+
+    fs::write(path, text).map_err(|source| WriteTextError::WriteFile {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 /// Replace `to` by renaming `from` to `to`.
@@ -572,5 +603,30 @@ mod tests {
         let missing = dir.path().join("missing.timestamp");
 
         write_timestamp(&missing, None).expect("missing remove should not fail");
+    }
+
+    #[test]
+    fn fs_write_text_creates_parent_and_writes_contents() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("nested").join("note.md");
+
+        write_text(&path, "hello").expect("write_text");
+
+        assert_eq!(fs::read_to_string(&path).expect("read text"), "hello");
+    }
+
+    #[test]
+    fn fs_write_text_returns_structured_parent_error() {
+        let dir = TempDir::new().expect("tempdir");
+        let parent_file = dir.path().join("not-a-directory");
+        let target = parent_file.join("note.md");
+        fs::write(&parent_file, "block parent dir creation").expect("seed file");
+
+        let err = write_text(&target, "hello").expect_err("parent dir creation should fail");
+
+        match err {
+            WriteTextError::CreateParentDir { path, .. } => assert_eq!(path, parent_file),
+            other => panic!("unexpected error variant: {other:?}"),
+        }
     }
 }
