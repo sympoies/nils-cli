@@ -501,6 +501,78 @@ fn render_issue_body_start_sprint_writes_start_comment_with_modes() {
 }
 
 #[test]
+fn render_issue_body_start_sprint_group_auto_single_pr_lane_uses_per_sprint_mode() {
+    let tmp = TempDir::new().expect("temp dir");
+    let agent_home = tmp.path().join("agent-home");
+    fs::create_dir_all(&agent_home).expect("create agent home");
+    let agent_home_s = agent_home.to_string_lossy().to_string();
+
+    let plan_file = tmp.path().join("auto-single-lane-plan.md");
+    let plan_file_s = plan_file.to_string_lossy().to_string();
+    fs::write(
+        &plan_file,
+        r#"# Plan: auto single lane mode test
+
+## Sprint 1: Serial lane
+- **PR grouping intent**: `per-sprint`.
+- **Execution Profile**: `serial` (parallel width 1).
+
+### Task 1.1: First lane task
+- **Location**:
+  - crates/plan-issue-cli/src/a.rs
+- **Dependencies**:
+  - none
+
+### Task 1.2: Follow-up task
+- **Location**:
+  - crates/plan-issue-cli/src/b.rs
+- **Dependencies**:
+  - Task 1.1
+"#,
+    )
+    .expect("write plan");
+
+    let out = common::run_plan_issue_local_with_env(
+        &[
+            "--format",
+            "json",
+            "--dry-run",
+            "start-sprint",
+            "--plan",
+            &plan_file_s,
+            "--issue",
+            "217",
+            "--sprint",
+            "1",
+            "--pr-grouping",
+            "group",
+            "--strategy",
+            "auto",
+            "--no-comment",
+        ],
+        &[("AGENT_HOME", &agent_home_s)],
+    );
+
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+    let payload = parse_json(&out.stdout);
+    let comment_path = result_path(&payload, "comment_path");
+    let comment = fs::read_to_string(&comment_path).expect("read sprint comment");
+    assert!(
+        comment.contains("| Task | Summary | Execution Mode |"),
+        "{comment}"
+    );
+    assert!(
+        comment.contains("| S1T1 | First lane task | per-sprint |"),
+        "{comment}"
+    );
+    assert!(
+        comment.contains("| S1T2 | Follow-up task | per-sprint |"),
+        "{comment}"
+    );
+    assert!(!comment.contains("pr-shared"), "{comment}");
+}
+
+#[test]
 fn local_flow_plan_issue_local_dry_run_end_to_end_generates_artifacts() {
     let tmp = TempDir::new().expect("temp dir");
     let agent_home = tmp.path().join("agent-home");

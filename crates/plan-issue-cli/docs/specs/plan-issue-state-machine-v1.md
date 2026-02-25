@@ -92,6 +92,9 @@ Row-level status rules:
   - `Task`, `Summary`, `Owner`, `Branch`, `Worktree`, `Execution Mode`, `PR`, `Status`, `Notes`
 - `Status` must be one of `{planned, in-progress, blocked, done}`.
 - `Execution Mode` must be one of `{per-sprint, pr-isolated, pr-shared}` or `TBD`.
+- Execution Mode derivation rule:
+  - `group + auto` that resolves to one shared PR lane for a sprint is represented as `per-sprint` (single-lane execution).
+  - `group + auto|deterministic` with multiple resolved PR groups keeps `pr-shared` / `pr-isolated` per group size.
 - Owner policy for non-planned/non-blocked rows:
   - must include `subagent`
   - must not reference main-agent identity.

@@ -58,6 +58,7 @@ v1 subcommands:
 - `--pr-grouping <per-sprint|group>`:
   - required for `build-task-spec`, `build-plan-task-spec`, `start-plan`, `start-sprint`.
   - `per-spring` must be accepted as compatibility alias for `per-sprint`.
+  - with `--pr-grouping group --strategy auto`, when a sprint resolves to exactly one shared PR group, issue-sync/render paths normalize `Execution Mode` to `per-sprint` (single-lane semantics).
 - `--pr-group <task=group>`:
   - repeatable.
   - valid only when `--pr-grouping group`.

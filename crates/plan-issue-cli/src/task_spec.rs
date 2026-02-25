@@ -1,3 +1,4 @@
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use nils_common::{env as common_env, fs as common_fs, git as common_git};
@@ -143,6 +144,50 @@ pub fn write_tsv(path: &Path, rows: &[TaskSpecRow]) -> Result<(), String> {
             format!("failed to write task-spec {}: {source}", path.display())
         }
     })
+}
+
+pub fn execution_mode_by_task(
+    rows: &[TaskSpecRow],
+    strategy: SplitStrategy,
+) -> HashMap<String, String> {
+    let mut sprint_group_set: HashMap<i32, BTreeSet<String>> = HashMap::new();
+    let mut sprint_group_sizes: HashMap<(i32, String), usize> = HashMap::new();
+    for row in rows {
+        sprint_group_set
+            .entry(row.sprint)
+            .or_default()
+            .insert(row.pr_group.clone());
+        *sprint_group_sizes
+            .entry((row.sprint, row.pr_group.clone()))
+            .or_insert(0) += 1;
+    }
+
+    let mut out = HashMap::new();
+    for row in rows {
+        let sprint_group_count = sprint_group_set
+            .get(&row.sprint)
+            .map(BTreeSet::len)
+            .unwrap_or(0);
+        let group_size = sprint_group_sizes
+            .get(&(row.sprint, row.pr_group.clone()))
+            .copied()
+            .unwrap_or(0);
+
+        let mode = if row.grouping == PrGrouping::PerSprint {
+            "per-sprint"
+        } else if strategy == SplitStrategy::Auto && sprint_group_count == 1 && group_size > 1 {
+            // Auto/group can converge to a single shared PR lane. Expose that as per-sprint so
+            // downstream execution semantics match explicit per-sprint mode.
+            "per-sprint"
+        } else if group_size > 1 {
+            "pr-shared"
+        } else {
+            "pr-isolated"
+        };
+        out.insert(row.task_id.clone(), mode.to_string());
+    }
+
+    out
 }
 
 pub fn default_plan_task_spec_path(plan_file: &Path) -> PathBuf {
