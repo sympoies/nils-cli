@@ -38,13 +38,15 @@ Help:
   sprint.
 
 ### split-prs
-- `split-prs --file <plan.md> --scope <plan|sprint> [--sprint <n>] --pr-grouping <per-sprint|group> [--pr-group <task-or-plan-id>=<group>]... [--strategy deterministic|auto] [--format json|tsv]`
+- `split-prs --file <plan.md> --scope <plan|sprint> [--sprint <n>] --pr-grouping <per-sprint|group> [--pr-group <task-or-plan-id>=<group>]... [--strategy deterministic|auto] [--explain] [--format json|tsv]`
+- value options accept both `--key value` and `--key=value`.
 - deterministic mode:
   - `--pr-grouping per-sprint`: one shared `pr_group` per sprint (`s<n>`).
   - `--pr-grouping group`: pass `--pr-group` for every selected task.
 - auto mode:
   - scoring inputs are `Complexity`, dependency topology, and `Location` overlap.
   - in `pr-grouping=group`, `--pr-group` mappings are optional pins; remaining tasks are auto-grouped.
+  - when sprint metadata provides `Execution Profile` parallel width hints, auto grouping targets that lane count (deterministic fallback merges apply when needed).
   - `pr-grouping=per-sprint` keeps one shared group per sprint (`s<n>`).
   - ordering and tie-breakers stay deterministic (`Task N.M`, then `SxTy`, then lexical summary).
 - deterministic examples:

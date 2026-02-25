@@ -595,6 +595,182 @@ fn split_prs_auto_json_contains_required_fields() {
 }
 
 #[test]
+fn split_prs_cli_accepts_equals_style_value_flags() {
+    let dir = TempDir::new().expect("tempdir");
+    common::write_file(&dir.path().join("plan.md"), &fixture_text("duck-plan.md"));
+
+    let out = common::run_plan_tooling(
+        dir.path(),
+        &[
+            "split-prs",
+            "--file=plan.md",
+            "--scope=sprint",
+            "--sprint=2",
+            "--pr-grouping=group",
+            "--strategy=auto",
+            "--format=json",
+        ],
+    );
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+
+    let value: Value = serde_json::from_str(&out.stdout).expect("json");
+    assert_eq!(value["scope"], "sprint");
+    assert_eq!(value["sprint"], 2);
+    assert_eq!(value["pr_grouping"], "group");
+    assert_eq!(value["strategy"], "auto");
+}
+
+#[test]
+fn split_prs_auto_explain_json_includes_group_breakdown() {
+    let dir = TempDir::new().expect("tempdir");
+    common::write_file(&dir.path().join("plan.md"), &fixture_text("duck-plan.md"));
+
+    let out = common::run_plan_tooling(
+        dir.path(),
+        &[
+            "split-prs",
+            "--file=plan.md",
+            "--scope=sprint",
+            "--sprint=2",
+            "--pr-grouping=group",
+            "--strategy=auto",
+            "--format=json",
+            "--explain",
+        ],
+    );
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+
+    let value: Value = serde_json::from_str(&out.stdout).expect("json");
+    let explain = value["explain"].as_array().expect("explain array");
+    assert_eq!(explain.len(), 1);
+    assert_eq!(explain[0]["sprint"], 2);
+    assert!(explain[0]["groups"].is_array());
+    assert!(
+        explain[0]["groups"]
+            .as_array()
+            .expect("groups")
+            .iter()
+            .all(|entry| entry["task_ids"].is_array()),
+        "{}",
+        out.stdout
+    );
+}
+
+#[test]
+fn split_prs_auto_uses_execution_profile_parallel_width_as_target() {
+    let dir = TempDir::new().expect("tempdir");
+    let plan = r#"# Plan: metadata-guided auto split
+
+## Sprint 1: Parallel lane
+- **PR grouping intent**: `group` (parallel lanes).
+- **Execution Profile**: `parallel-x2` (parallel width 2).
+
+### Task 1.1: API slice A
+- **Location**:
+  - crates/plan-issue-cli/src/a.rs
+- **Dependencies**:
+  - none
+- **Complexity**: 2
+
+### Task 1.2: API slice B
+- **Location**:
+  - crates/plan-issue-cli/src/b.rs
+- **Dependencies**:
+  - none
+- **Complexity**: 2
+
+### Task 1.3: API slice C
+- **Location**:
+  - crates/plan-issue-cli/src/c.rs
+- **Dependencies**:
+  - none
+- **Complexity**: 2
+
+### Task 1.4: API slice D
+- **Location**:
+  - crates/plan-issue-cli/src/d.rs
+- **Dependencies**:
+  - none
+- **Complexity**: 2
+
+## Sprint 2: Serial lane
+- **PR grouping intent**: `group` (single lane).
+- **Execution Profile**: `serial` (parallel width 1).
+
+### Task 2.1: Runtime A
+- **Location**:
+  - crates/plan-issue-cli/src/runtime_a.rs
+- **Dependencies**:
+  - none
+- **Complexity**: 2
+
+### Task 2.2: Runtime B
+- **Location**:
+  - crates/plan-issue-cli/src/runtime_b.rs
+- **Dependencies**:
+  - none
+- **Complexity**: 2
+
+### Task 2.3: Runtime C
+- **Location**:
+  - crates/plan-issue-cli/src/runtime_c.rs
+- **Dependencies**:
+  - none
+- **Complexity**: 2
+"#;
+    common::write_file(&dir.path().join("plan.md"), plan);
+
+    let out = common::run_plan_tooling(
+        dir.path(),
+        &[
+            "split-prs",
+            "--file",
+            "plan.md",
+            "--scope",
+            "plan",
+            "--pr-grouping",
+            "group",
+            "--strategy",
+            "auto",
+            "--format",
+            "json",
+            "--explain",
+        ],
+    );
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+
+    let value: Value = serde_json::from_str(&out.stdout).expect("json");
+    let records = value["records"].as_array().expect("records");
+    let mut by_sprint: HashMap<i32, BTreeSet<String>> = HashMap::new();
+    for record in records {
+        let task_id = record["task_id"].as_str().unwrap_or_default();
+        let sprint = task_id
+            .strip_prefix('S')
+            .and_then(|rest| rest.split('T').next())
+            .and_then(|num| num.parse::<i32>().ok())
+            .expect("task sprint");
+        by_sprint
+            .entry(sprint)
+            .or_default()
+            .insert(record["pr_group"].as_str().unwrap_or_default().to_string());
+    }
+    assert_eq!(by_sprint.get(&1).map(BTreeSet::len), Some(2));
+    assert_eq!(by_sprint.get(&2).map(BTreeSet::len), Some(1));
+
+    let explain = value["explain"].as_array().expect("explain");
+    let sprint1 = explain
+        .iter()
+        .find(|entry| entry["sprint"] == 1)
+        .expect("sprint1 explain");
+    let sprint2 = explain
+        .iter()
+        .find(|entry| entry["sprint"] == 2)
+        .expect("sprint2 explain");
+    assert_eq!(sprint1["target_parallel_width"], 2);
+    assert_eq!(sprint2["target_parallel_width"], 1);
+}
+
+#[test]
 fn split_prs_non_regression_auto_sparse_plan_scaffold() {
     let dir = TempDir::new().expect("tempdir");
     common::write_file(

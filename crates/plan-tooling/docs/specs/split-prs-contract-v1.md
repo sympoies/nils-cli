@@ -18,11 +18,14 @@ plan-tooling split-prs \
   --pr-grouping <per-sprint|group> \
   [--pr-group <task-or-plan-id>=<group>]... \
   [--strategy <deterministic|auto>] \
+  [--explain] \
   [--owner-prefix <text>] \
   [--branch-prefix <text>] \
   [--worktree-prefix <text>] \
   [--format <tsv|json>]
 ```
+
+Value options accept both `--key value` and `--key=value`.
 
 Defaults:
 - `--scope sprint`
@@ -47,6 +50,7 @@ Defaults:
 - `strategy=auto`, `pr-grouping=group`:
   - explicit `--pr-group` mappings are optional pins.
   - unmapped tasks are auto-assigned by rubric.
+  - when sprint metadata provides `Execution Profile` parallel width hints, auto grouping targets that lane count with deterministic tie-break fallback.
   - output still preserves deterministic ordering and stable anchor semantics.
 
 ## Deterministic Normalization
@@ -127,6 +131,7 @@ Object shape:
 - `pr_grouping`: `per-sprint` or `group`
 - `strategy`: `deterministic` or `auto`
 - `records`: array of records with the same fields as TSV columns
+- optional `explain` (present only with `--explain`): per-sprint grouping breakdown including selected target parallel width and grouped task ids.
 
 ## Strategy Runtime Status
 - `strategy=deterministic`: enabled in v1 runtime.
