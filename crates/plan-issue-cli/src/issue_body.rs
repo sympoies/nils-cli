@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use nils_common::markdown as common_markdown;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskRow {
     pub task: String,
@@ -416,7 +418,7 @@ fn parse_sprint_from_task_id(task: &str) -> Option<i32> {
 }
 
 fn sanitize_table_value(value: &str) -> String {
-    value.replace(['\n', '\r'], " ").replace('|', "/")
+    common_markdown::canonicalize_table_cell(value)
 }
 
 fn format_markdown_row(row: &TaskRow) -> String {

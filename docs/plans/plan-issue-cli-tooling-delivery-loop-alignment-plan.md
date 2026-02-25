@@ -3,6 +3,9 @@
 ## Overview
 This plan aligns `crates/plan-issue-cli` and `crates/plan-tooling` with the latest plan-execution and issue-orchestration contract used by `plan-issue-delivery-loop`. It removes legacy `per-task` semantics, makes issue body sections derive from the plan preface, and adds strategy-aware split behavior (`deterministic|auto`) where group assignment rules differ. It also includes a targeted maintainability refactor to adopt `nils-common` and `nils-test-support` for repeated primitives, adds shared markdown-payload linting for GitHub body/comment content (with force override), then consolidates the `plan-issue-cli` test suite into meaningful file groupings with measurable coverage increase.
 
+Historical note: current `split-prs` runtime ownership is grouping-only output (`task_id`,
+`summary`, `pr_group`); `plan-issue-cli` now materializes runtime execution metadata locally.
+
 ## Scope
 - In scope:
   - `crates/plan-issue-cli`: issue-body rendering source sections, execution-mode semantics, strategy-aware grouping, helper refactors, test consolidation.
@@ -56,7 +59,7 @@ Use this section as the source for plan issue body `Goal / Acceptance Criteria /
 - Command(s):
   - `plan-tooling validate --file docs/plans/plan-issue-cli-tooling-delivery-loop-alignment-plan.md`
   - `cargo test -p nils-plan-issue-cli issue_body`
-  - `cargo test -p nils-plan-issue-cli sprint3_delivery`
+  - `cargo test -p nils-plan-issue-cli runtime_truth_plan_and_sprint_flow`
 - Verify:
   - `start-plan` issue body uses plan-preface-derived text for `Goal`, `Acceptance Criteria`, and `Scope`.
   - `Execution Mode` contract only allows `per-sprint`, `pr-isolated`, `pr-shared`, or `TBD`.
@@ -73,7 +76,7 @@ Use this section as the source for plan issue body `Goal / Acceptance Criteria /
 - **Location**:
   - `crates/plan-issue-cli/src/render.rs`
   - `crates/plan-issue-cli/src/execute.rs`
-  - `crates/plan-issue-cli/tests/sprint3_delivery.rs`
+  - `crates/plan-issue-cli/tests/runtime_truth_plan_and_sprint_flow.rs`
 - **Description**: Replace hard-coded issue body `Goal`/`Acceptance Criteria`/`Scope` strings with parser-based extraction from plan sections before `## Sprint 1`, with deterministic fallback text when sections are missing.
 - **Dependencies**:
   - none
@@ -105,8 +108,8 @@ Use this section as the source for plan issue body `Goal / Acceptance Criteria /
 
 ### Task 1.3: Refresh fixtures and regression tests for updated execution-mode contract
 - **Location**:
-  - `crates/plan-issue-cli/tests/sprint4_delivery.rs`
-  - `crates/plan-issue-cli/tests/sprint5_delivery.rs`
+  - `crates/plan-issue-cli/tests/live_start_sprint_runtime_truth.rs`
+  - `crates/plan-issue-cli/tests/auto_single_lane_runtime_truth.rs`
   - `crates/plan-issue-cli/tests/fixtures/shell_parity/comment_template_start.md`
   - `crates/plan-issue-cli/tests/fixtures/shell_parity/help.txt`
 - **Description**: Update existing live/local regression fixtures and tests to assert `pr-isolated` behavior and new issue-body preface rendering paths.
@@ -118,8 +121,8 @@ Use this section as the source for plan issue body `Goal / Acceptance Criteria /
   - Shell parity fixtures remain deterministic after updates.
   - No stale `per-task` references remain in plan-issue-cli test fixtures.
 - **Validation**:
-  - `cargo test -p nils-plan-issue-cli --test sprint4_delivery`
-  - `cargo test -p nils-plan-issue-cli --test sprint5_delivery`
+  - `cargo test -p nils-plan-issue-cli --test live_start_sprint_runtime_truth`
+  - `cargo test -p nils-plan-issue-cli --test auto_single_lane_runtime_truth`
   - `rg -n 'per-task' crates/plan-issue-cli/tests crates/plan-issue-cli/tests/fixtures/shell_parity`
 
 ## Sprint 2: Strategy-aware split planning alignment (`deterministic|auto`)
@@ -130,7 +133,7 @@ Use this section as the source for plan issue body `Goal / Acceptance Criteria /
 - Command(s):
   - `cargo test -p nils-plan-tooling --test split_prs`
   - `cargo test -p nils-plan-issue-cli --test output_contract`
-  - `cargo test -p nils-plan-issue-cli --test sprint5_delivery`
+  - `cargo test -p nils-plan-issue-cli --test auto_single_lane_runtime_truth`
 - Verify:
   - `plan-issue-cli` accepts strategy input and applies strategy-specific group rules.
   - `group + auto` supports optional pin mappings and deterministic auto assignment.
@@ -183,7 +186,7 @@ Use this section as the source for plan issue body `Goal / Acceptance Criteria /
 - **Location**:
   - `crates/plan-issue-cli/src/task_spec.rs`
   - `crates/plan-issue-cli/src/execute.rs`
-  - `crates/plan-issue-cli/tests/sprint3_delivery.rs`
+  - `crates/plan-issue-cli/tests/runtime_truth_plan_and_sprint_flow.rs`
 - **Description**: Replace local group-assignment logic with plan-tooling split core integration, including strategy passthrough and deterministic notes projection in task-spec output.
 - **Dependencies**:
   - Task 2.1
@@ -194,8 +197,8 @@ Use this section as the source for plan issue body `Goal / Acceptance Criteria /
   - `group + auto` works without full mapping when strategy is auto.
   - Deterministic/group output remains stable for existing fixtures.
 - **Validation**:
-  - `cargo test -p nils-plan-issue-cli --test sprint3_delivery strategy_auto_partial_mapping_allows_unmapped_rows -- --exact`
-  - `cargo test -p nils-plan-issue-cli --test sprint3_delivery task_spec_generation_build_task_spec_writes_grouped_rows -- --exact`
+  - `cargo test -p nils-plan-issue-cli --test runtime_truth_plan_and_sprint_flow strategy_auto_partial_mapping_allows_unmapped_rows -- --exact`
+  - `cargo test -p nils-plan-issue-cli --test runtime_truth_plan_and_sprint_flow task_spec_generation_build_task_spec_writes_grouped_rows -- --exact`
   - `cargo test -p nils-plan-issue-cli --test output_contract`
 
 ### Task 2.4: Update guide messaging, fixtures, and docs for strategy-specific group rules
@@ -213,7 +216,7 @@ Use this section as the source for plan issue body `Goal / Acceptance Criteria /
   - Parity fixtures and docs agree on strategy-specific semantics.
   - No stale message claims remain in plan-issue-cli and plan-tooling docs.
 - **Validation**:
-  - `cargo test -p nils-plan-issue-cli --test sprint5_delivery parity_shell_multi_sprint_guide_matches_shell_fixture_after_normalization -- --exact`
+  - `cargo test -p nils-plan-issue-cli --test auto_single_lane_runtime_truth parity_shell_multi_sprint_guide_matches_shell_fixture_after_normalization -- --exact`
   - `rg -n 'requires mapping for every task|requires at least one --pr-group' crates/plan-issue-cli/src crates/plan-issue-cli/tests/fixtures/shell_parity crates/plan-tooling/README.md crates/plan-tooling/docs/runbooks/split-prs-build-task-spec-cutover.md`
 
 ## Sprint 3: Shared helper refactor using nils-common / nils-test-support
@@ -234,7 +237,7 @@ Use this section as the source for plan issue body `Goal / Acceptance Criteria /
 - `TotalComplexity`: 22
 - `CriticalPathComplexity`: 14
 - `MaxBatchWidth`: 3
-- `OverlapHotspots`: batch-2 overlap includes `crates/plan-issue-cli/src/execute.rs`, `crates/plan-issue-cli/tests/sprint4_delivery.rs`, and `crates/plan-issue-cli/tests/sprint5_delivery.rs`; keep runtime/write-path edits serialized when conflicts appear.
+- `OverlapHotspots`: batch-2 overlap includes `crates/plan-issue-cli/src/execute.rs`, `crates/plan-issue-cli/tests/live_start_sprint_runtime_truth.rs`, and `crates/plan-issue-cli/tests/auto_single_lane_runtime_truth.rs`; keep runtime/write-path edits serialized when conflicts appear.
 **Parallelizable tasks**:
 - `Task 3.2`, `Task 3.3`, and `Task 3.5` can run in parallel after `Task 3.1`.
 
@@ -270,14 +273,14 @@ Use this section as the source for plan issue body `Goal / Acceptance Criteria /
   - Error surfaces remain deterministic for dry-run and live paths.
   - No regressions in close-plan cleanup gating behavior.
 - **Validation**:
-  - `cargo test -p nils-plan-issue-cli --test sprint4_delivery live_plan_commands_ready_and_close_follow_gate_contracts -- --exact`
-  - `cargo test -p nils-plan-issue-cli --test sprint5_delivery command_guardrails_close_plan_requires_body_file_in_dry_run_mode -- --exact`
+  - `cargo test -p nils-plan-issue-cli --test live_start_sprint_runtime_truth live_plan_commands_ready_and_close_follow_gate_contracts -- --exact`
+  - `cargo test -p nils-plan-issue-cli --test auto_single_lane_runtime_truth command_guardrails_close_plan_requires_body_file_in_dry_run_mode -- --exact`
 
 ### Task 3.3: Consolidate integration test harness around nils-test-support command utilities
 - **Location**:
   - `crates/plan-issue-cli/tests/common.rs`
-  - `crates/plan-issue-cli/tests/sprint4_delivery.rs`
-  - `crates/plan-issue-cli/tests/sprint5_delivery.rs`
+  - `crates/plan-issue-cli/tests/live_start_sprint_runtime_truth.rs`
+  - `crates/plan-issue-cli/tests/auto_single_lane_runtime_truth.rs`
   - `crates/nils-test-support/src/cmd.rs`
 - **Description**: Replace local ad-hoc env/path command harness patterns with `nils_test_support::cmd::CmdOptions` and shared helper flows, keeping test readability and determinism.
 - **Dependencies**:
@@ -288,14 +291,14 @@ Use this section as the source for plan issue body `Goal / Acceptance Criteria /
   - GH stub tests still pass without shell-environment flakiness.
   - Shared helper usage is explicit and documented in test helpers.
 - **Validation**:
-  - `cargo test -p nils-plan-issue-cli --test sprint4_delivery`
-  - `cargo test -p nils-plan-issue-cli --test sprint5_delivery`
+  - `cargo test -p nils-plan-issue-cli --test live_start_sprint_runtime_truth`
+  - `cargo test -p nils-plan-issue-cli --test auto_single_lane_runtime_truth`
 
 ### Task 3.4: Add characterization tests for helper-migration parity
 - **Location**:
   - `crates/plan-issue-cli/tests/output_contract.rs`
   - `crates/plan-issue-cli/tests/cli_contract.rs`
-  - `crates/plan-issue-cli/tests/sprint4_delivery.rs`
+  - `crates/plan-issue-cli/tests/live_start_sprint_runtime_truth.rs`
 - **Description**: Add focused parity tests that pin error messages and key output rows affected by helper migration so runtime behavior cannot drift silently.
 - **Dependencies**:
   - Task 3.2
@@ -319,8 +322,8 @@ Use this section as the source for plan issue body `Goal / Acceptance Criteria /
   - `crates/plan-issue-cli/src/commands/sprint.rs`
   - `crates/plan-issue-cli/src/execute.rs`
   - `crates/plan-issue-cli/src/github.rs`
-  - `crates/plan-issue-cli/tests/sprint4_delivery.rs`
-  - `crates/plan-issue-cli/tests/sprint5_delivery.rs`
+  - `crates/plan-issue-cli/tests/live_start_sprint_runtime_truth.rs`
+  - `crates/plan-issue-cli/tests/auto_single_lane_runtime_truth.rs`
 - **Description**: Implement a shared markdown payload validator in `nils-common` that detects literal escaped-control artifacts (for example `\\n`, `\\r`, `\\t`) before GitHub issue/pr body/comment writes. Integrate this guard in `plan-issue-cli` GitHub write paths, return actionable errors that explain why content is rejected, and add `-f`/`--force` command support to bypass this guard when intentionally needed.
 - **Dependencies**:
   - Task 3.1
@@ -332,8 +335,8 @@ Use this section as the source for plan issue body `Goal / Acceptance Criteria /
   - Dry-run and local-only read paths are unaffected; only outgoing GitHub markdown writes are guarded.
 - **Validation**:
   - `cargo test -p nils-common markdown_payload`
-  - `cargo test -p nils-plan-issue-cli --test sprint4_delivery github_adapter_rejects_literal_escaped_newline_without_force -- --exact`
-  - `cargo test -p nils-plan-issue-cli --test sprint4_delivery github_adapter_force_flag_allows_literal_escaped_newline -- --exact`
+  - `cargo test -p nils-plan-issue-cli --test live_start_sprint_runtime_truth github_adapter_rejects_literal_escaped_newline_without_force -- --exact`
+  - `cargo test -p nils-plan-issue-cli --test live_start_sprint_runtime_truth github_adapter_force_flag_allows_literal_escaped_newline -- --exact`
 
 ## Sprint 4: Test-suite consolidation and coverage uplift
 **Goal**: Replace ambiguous sprint-numbered test file naming with domain-based suites and raise plan-issue-cli coverage by at least `+10%`.
@@ -362,7 +365,7 @@ Use this section as the source for plan issue body `Goal / Acceptance Criteria /
   - `crates/plan-issue-cli/tests/live_issue_ops.rs`
   - `crates/plan-issue-cli/tests/parity_guardrails.rs`
   - `crates/plan-issue-cli/tests/common.rs`
-- **Description**: Replace `sprint3_delivery.rs`, `sprint4_delivery.rs`, and `sprint5_delivery.rs` naming with domain-based suites (for example `task_spec_flow.rs`, `live_issue_ops.rs`, `parity_and_guardrails.rs`) and move shared helpers accordingly.
+- **Description**: Replace legacy sprint-numbered integration test filenames (formerly `sprint3_delivery.rs`, `sprint4_delivery.rs`, `sprint5_delivery.rs`; now renamed to more readable suite names) with domain-based suites (for example `task_spec_flow.rs`, `live_issue_ops.rs`, `parity_and_guardrails.rs`) and move shared helpers accordingly.
 - **Dependencies**:
   - none
 - **Complexity**: 4

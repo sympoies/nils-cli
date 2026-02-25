@@ -1397,19 +1397,13 @@ fn runtime_lane_key(row: &TaskSpecRow, execution_mode: &str, notes: &str) -> Str
     }
 }
 
-fn prompt_lane_anchor_task_id(rows: &[TaskSpecRow], notes: &str) -> Result<String, String> {
+fn prompt_lane_anchor_task_id(rows: &[TaskSpecRow], _notes: &str) -> Result<String, String> {
     let task_ids = rows
         .iter()
         .map(|row| row.task_id.clone())
         .collect::<BTreeSet<_>>();
     if task_ids.is_empty() {
         return Err("runtime lane has no task rows".to_string());
-    }
-
-    if let Some(anchor) =
-        note_value(notes, "shared-pr-anchor").filter(|anchor| task_ids.contains(anchor))
-    {
-        return Ok(anchor);
     }
 
     task_ids
@@ -1916,29 +1910,6 @@ mod tests {
             notes: notes.to_string(),
             line_index: 0,
         }
-    }
-
-    fn task_table_markdown(rows: &[TaskRow]) -> String {
-        let mut out = String::from(
-            "## Task Decomposition\n\n| Task | Summary | Owner | Branch | Worktree | Execution Mode | PR | Status | Notes |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n",
-        );
-
-        for row in rows {
-            out.push_str(&format!(
-                "| {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
-                row.task,
-                row.summary,
-                row.owner,
-                row.branch,
-                row.worktree,
-                row.execution_mode,
-                row.pr,
-                row.status,
-                row.notes
-            ));
-        }
-
-        out
     }
 
     fn note_value(notes: &str, key: &str) -> Option<String> {
@@ -2475,22 +2446,22 @@ mod tests {
 
         let lane_prompt_path = files
             .iter()
-            .find(|path| path.contains("S3T2-subagent-prompt.md"))
+            .find(|path| path.contains("S3T1-subagent-prompt.md"))
             .expect("shared lane prompt");
         let lane_prompt = fs::read_to_string(lane_prompt_path).expect("read shared lane prompt");
-        assert!(lane_prompt.contains("Task: S3T2"), "{lane_prompt}");
+        assert!(lane_prompt.contains("Task: S3T1"), "{lane_prompt}");
         assert!(lane_prompt.contains("Tasks: S3T1, S3T2"), "{lane_prompt}");
         assert!(
             lane_prompt.contains("Execution Mode: pr-shared"),
             "{lane_prompt}"
         );
         assert!(
-            lane_prompt.contains("Owner: subagent-s3-t2"),
+            lane_prompt.contains("Owner: subagent-s3-t1"),
             "{lane_prompt}"
         );
-        assert!(lane_prompt.contains("Branch: issue/s3-t2"), "{lane_prompt}");
+        assert!(lane_prompt.contains("Branch: issue/s3-t1"), "{lane_prompt}");
         assert!(
-            lane_prompt.contains("Worktree: issue-s3-t2"),
+            lane_prompt.contains("Worktree: issue-s3-t1"),
             "{lane_prompt}"
         );
         assert!(

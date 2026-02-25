@@ -1,8 +1,9 @@
 # split-prs Migration
 
 ## Objective
-Migrate plan task splitting from embedded downstream logic to `plan-tooling split-prs` with
-deterministic and auto strategy compatibility.
+Migrate plan task splitting to `plan-tooling split-prs` grouping primitives with deterministic and
+auto strategy compatibility, while moving runtime execution metadata materialization to
+`plan-issue-cli`.
 
 ## Before / After
 Before:
@@ -11,7 +12,7 @@ Before:
 build-task-spec --plan <plan.md> --sprint <n> --pr-grouping <mode> [--pr-group <task=group>]... --task-spec-out <out.tsv>
 ```
 
-After:
+After (grouping primitives):
 
 ```bash
 plan-tooling split-prs \
@@ -21,7 +22,7 @@ plan-tooling split-prs \
   --pr-grouping <mode> \
   [--pr-group <task=group>]... \
   --strategy deterministic \
-  --format tsv > <out.tsv>
+  --format json
 ```
 
 Auto group example (no full manual mapping):
@@ -37,21 +38,16 @@ plan-tooling split-prs \
 ```
 
 ## Required Compatibility
-- Keep TSV header exactly:
+- Keep grouping output deterministic and replayable across repeated runs.
+- Keep reduced TSV header exactly (when `--format tsv` is used):
 
 ```text
-# task_id\tsummary\tbranch\tworktree\towner\tnotes\tpr_group
+# task_id\tsummary\tpr_group
 ```
 
-- Keep notes keys expected by downstream orchestration:
-  - `sprint=S<n>`
-  - `plan-task:Task N.M`
-  - `pr-grouping=<mode>`
-  - `pr-group=<group>`
-  - optional `deps=...`
-  - optional `validate=...`
-  - optional `shared-pr-anchor=...`
-- Preserve deterministic ordering for records and anchors so repeated runs are byte-stable.
+- Runtime execution metadata (`branch`, `worktree`, `owner`, `notes`) is no longer part of
+  `split-prs` output and must be materialized by `plan-issue-cli` runtime lane logic.
+- Preserve deterministic ordering for records and explain anchors so repeated runs are byte-stable.
 
 ## Grouping Guidance
 - Use `per-sprint` when one shared PR should represent all sprint tasks.
@@ -63,12 +59,13 @@ plan-tooling split-prs \
 - `--strategy auto` is implemented in v1 runtime.
 - Grouping uses deterministic heuristics from `Complexity`, dependency topology, and `Location`.
 - Explicit `--pr-group` mappings in auto/group mode are optional pins and still validated.
-- Output ordering and notes schema remain deterministic and backward compatible.
+- Output ordering and reduced record schema remain deterministic.
 
 ## Release Gate Checklist
 1. Verify deterministic command output against fixture expectations.
 2. Verify auto/group output is byte-stable across repeated runs.
-3. Verify downstream consumers still parse TSV columns/notes without changes.
+3. Verify downstream consumers use `plan-issue-cli` runtime materialization (instead of parsing
+   removed split output runtime metadata columns/notes).
 4. Verify fallback/rollback command sequence is documented before rollout.
 
 ## Deterministic Rollback Command Path
@@ -82,7 +79,7 @@ plan-tooling split-prs \
   --pr-grouping <per-sprint|group> \
   [--pr-group <task=group>]... \
   --strategy deterministic \
-  --format tsv > <out.tsv>
+  --format json
 ```
 
 ## Rollback

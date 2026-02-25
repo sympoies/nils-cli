@@ -92,8 +92,8 @@ This plan refactors `crates/plan-issue-cli` so `Task Decomposition` becomes the 
 
 ### Task 1.3: Add end-to-end characterization coverage for source-of-truth drift between issue table and artifacts
 - **Location**:
-  - `crates/plan-issue-cli/tests/sprint3_delivery.rs`
-  - `crates/plan-issue-cli/tests/sprint4_delivery.rs`
+  - `crates/plan-issue-cli/tests/runtime_truth_plan_and_sprint_flow.rs`
+  - `crates/plan-issue-cli/tests/live_start_sprint_runtime_truth.rs`
   - `crates/plan-issue-cli/tests/task_spec_flow.rs`
 - **Description**: Add characterization coverage that records current `start-plan`/`start-sprint` behavior where task-spec rows are recomputed and used to overwrite issue rows, plus prompt/task-spec artifact outputs that can disagree with shared/per-sprint lane semantics.
 - **Dependencies**:
@@ -105,7 +105,7 @@ This plan refactors `crates/plan-issue-cli` so `Task Decomposition` becomes the 
   - Task-spec/prompt artifact assertions demonstrate the current per-task prompt generation mismatch for single-lane auto/group sprints.
   - Fixtures/tests are isolated enough to be safely updated in later sprints without broad shell-parity churn.
 - **Validation**:
-  - `cargo test -p nils-plan-issue-cli --test sprint3_delivery`
+  - `cargo test -p nils-plan-issue-cli --test runtime_truth_plan_and_sprint_flow`
   - `cargo test -p nils-plan-issue-cli --test task_spec_flow`
 
 ## Sprint 2: Canonical runtime lane metadata and row validation
@@ -190,7 +190,7 @@ This plan refactors `crates/plan-issue-cli` so `Task Decomposition` becomes the 
 ### Task 2.4: Add regression coverage for cleanup targeting and normalized notes metadata
 - **Location**:
   - `crates/plan-issue-cli/src/execute.rs`
-  - `crates/plan-issue-cli/tests/sprint4_delivery.rs`
+  - `crates/plan-issue-cli/tests/live_start_sprint_runtime_truth.rs`
   - `crates/plan-issue-cli/tests/task_spec_flow.rs`
 - **Description**: Add tests confirming cleanup and downstream row parsing still work when multiple rows share canonical lane metadata and notes are normalized for the single-lane auto/per-sprint path.
 - **Dependencies**:
@@ -216,8 +216,8 @@ This plan refactors `crates/plan-issue-cli` so `Task Decomposition` becomes the 
 **Execution Profile**: `parallel-x3` (parallel width 3).
 **Demo/Validation**:
 - Command(s):
-  - `cargo test -p nils-plan-issue-cli --test sprint3_delivery`
-  - `cargo test -p nils-plan-issue-cli --test sprint5_delivery`
+  - `cargo test -p nils-plan-issue-cli --test runtime_truth_plan_and_sprint_flow`
+  - `cargo test -p nils-plan-issue-cli --test auto_single_lane_runtime_truth`
   - `cargo test -p nils-plan-issue-cli --test task_spec_flow`
 - Verify:
   - `start-plan` precomputes a full-plan executable dispatch layout and writes concrete runtime-truth metadata into `Task Decomposition`.
@@ -248,7 +248,7 @@ This plan refactors `crates/plan-issue-cli` so `Task Decomposition` becomes the 
   - Row validation runs against the generated table before live GitHub writes and fails if runtime-truth invariants are violated.
   - `PR` and `Status` remain mutable workflow fields while execution metadata remains stable unless an explicit refresh workflow is invoked.
 - **Validation**:
-  - `cargo test -p nils-plan-issue-cli --test sprint3_delivery start_plan_dry_run_writes_runtime_truth_task_decomposition_metadata -- --exact`
+  - `cargo test -p nils-plan-issue-cli --test runtime_truth_plan_and_sprint_flow start_plan_dry_run_writes_runtime_truth_task_decomposition_metadata -- --exact`
   - `cargo test -p nils-plan-issue-cli --test output_contract`
 
 ### Task 3.2: Generate task-spec and subagent prompts from Task Decomposition rows with lane-aware prompt deduplication
@@ -273,7 +273,7 @@ This plan refactors `crates/plan-issue-cli` so `Task Decomposition` becomes the 
 - **Location**:
   - `crates/plan-issue-cli/src/execute.rs`
   - `crates/plan-issue-cli/src/github.rs`
-  - `crates/plan-issue-cli/tests/sprint3_delivery.rs`
+  - `crates/plan-issue-cli/tests/runtime_truth_plan_and_sprint_flow.rs`
 - **Description**: Change `start-sprint` so it parses and validates `Task Decomposition`, selects rows for the target sprint, derives runtime artifacts from those rows, and treats mismatches against current plan-derived split output (if checked) as explicit drift errors rather than silently overwriting the issue table.
 - **Dependencies**:
   - Task 3.1
@@ -284,13 +284,13 @@ This plan refactors `crates/plan-issue-cli` so `Task Decomposition` becomes the 
   - `start-sprint` no longer overwrites runtime-lane columns from freshly computed split rows in normal operation.
   - Drift diagnostics are actionable (identify row/task/column mismatch and remediation path).
 - **Validation**:
-  - `cargo test -p nils-plan-issue-cli --test sprint3_delivery start_sprint_uses_issue_table_runtime_truth_and_rejects_drift -- --exact`
-  - `cargo test -p nils-plan-issue-cli --test sprint3_delivery`
+  - `cargo test -p nils-plan-issue-cli --test runtime_truth_plan_and_sprint_flow start_sprint_uses_issue_table_runtime_truth_and_rejects_drift -- --exact`
+  - `cargo test -p nils-plan-issue-cli --test runtime_truth_plan_and_sprint_flow`
 
 ### Task 3.4: Add end-to-end regression coverage for auto single-lane per-sprint runtime execution path
 - **Location**:
-  - `crates/plan-issue-cli/tests/sprint3_delivery.rs`
-  - `crates/plan-issue-cli/tests/sprint5_delivery.rs`
+  - `crates/plan-issue-cli/tests/runtime_truth_plan_and_sprint_flow.rs`
+  - `crates/plan-issue-cli/tests/auto_single_lane_runtime_truth.rs`
   - `crates/plan-issue-cli/tests/fixtures/shell_parity`
 - **Description**: Add full-flow regression tests/fixtures demonstrating that `group + auto` single-lane sprints are rendered, synced, and executed as `per-sprint` with one canonical runtime lane and consistent artifact outputs.
 - **Dependencies**:
@@ -301,8 +301,8 @@ This plan refactors `crates/plan-issue-cli` so `Task Decomposition` becomes the 
   - Fixtures assert no contradictory lane metadata across issue rows and generated prompts/task-spec.
   - Multi-group auto behavior remains unchanged except for canonicalized shared-lane metadata.
 - **Validation**:
-  - `cargo test -p nils-plan-issue-cli --test sprint5_delivery`
-  - `cargo test -p nils-plan-issue-cli --test sprint3_delivery`
+  - `cargo test -p nils-plan-issue-cli --test auto_single_lane_runtime_truth`
+  - `cargo test -p nils-plan-issue-cli --test runtime_truth_plan_and_sprint_flow`
 
 ## Sprint 4: Contract and fixture parity finalization
 **Goal**: Finalize runtime-truth contracts/help/fixtures and stabilize regression outputs before the final documentation review sprint.
@@ -311,9 +311,9 @@ This plan refactors `crates/plan-issue-cli` so `Task Decomposition` becomes the 
 **Demo/Validation**:
 - Command(s):
   - `plan-tooling validate --file docs/plans/plan-issue-cli-task-decomposition-runtime-truth-plan.md`
-  - `cargo test -p nils-plan-issue-cli --test sprint3_delivery`
-  - `cargo test -p nils-plan-issue-cli --test sprint4_delivery`
-  - `cargo test -p nils-plan-issue-cli --test sprint5_delivery`
+  - `cargo test -p nils-plan-issue-cli --test runtime_truth_plan_and_sprint_flow`
+  - `cargo test -p nils-plan-issue-cli --test live_start_sprint_runtime_truth`
+  - `cargo test -p nils-plan-issue-cli --test auto_single_lane_runtime_truth`
 - Verify:
   - Contracts/specs/help and fixtures describe runtime-truth semantics consistently before the final docs sweep.
   - Regression fixtures stabilize with canonical lane metadata and lane-aware prompt outputs.
@@ -346,9 +346,9 @@ This plan refactors `crates/plan-issue-cli` so `Task Decomposition` becomes the 
 ### Task 4.2: Refresh shell-parity and regression fixtures for runtime-truth outputs
 - **Location**:
   - `crates/plan-issue-cli/tests/fixtures/shell_parity`
-  - `crates/plan-issue-cli/tests/sprint3_delivery.rs`
-  - `crates/plan-issue-cli/tests/sprint4_delivery.rs`
-  - `crates/plan-issue-cli/tests/sprint5_delivery.rs`
+  - `crates/plan-issue-cli/tests/runtime_truth_plan_and_sprint_flow.rs`
+  - `crates/plan-issue-cli/tests/live_start_sprint_runtime_truth.rs`
+  - `crates/plan-issue-cli/tests/auto_single_lane_runtime_truth.rs`
 - **Description**: Update parity and regression fixtures to match the new runtime-truth issue rows, lane-aware prompts, and drift diagnostics without changing unrelated user-visible behavior.
 - **Dependencies**:
   - Task 4.1
@@ -358,9 +358,9 @@ This plan refactors `crates/plan-issue-cli` so `Task Decomposition` becomes the 
   - Regression tests remain deterministic after normalization changes.
   - Unrelated command outputs do not regress.
 - **Validation**:
-  - `cargo test -p nils-plan-issue-cli --test sprint3_delivery`
-  - `cargo test -p nils-plan-issue-cli --test sprint4_delivery`
-  - `cargo test -p nils-plan-issue-cli --test sprint5_delivery`
+  - `cargo test -p nils-plan-issue-cli --test runtime_truth_plan_and_sprint_flow`
+  - `cargo test -p nils-plan-issue-cli --test live_start_sprint_runtime_truth`
+  - `cargo test -p nils-plan-issue-cli --test auto_single_lane_runtime_truth`
 
 ## Sprint 5: Final README/docs review and release gates
 **Goal**: Perform a final documentation QA/review pass (README + specs + help text) after runtime behavior stabilizes, apply only residual corrections, then run the required release gates and rollback rehearsal.
@@ -445,4 +445,4 @@ This plan refactors `crates/plan-issue-cli` so `Task Decomposition` becomes the 
 1. Keep the refactor staged in small PRs so runtime-lane canonicalization and source-of-truth cutover can be reverted independently.
 2. If source-of-truth cutover regresses sprint execution, revert the `start-sprint` issue-row dispatch path first and temporarily restore task-spec-as-source behavior while keeping non-breaking validation improvements.
 3. If canonical lane normalization regresses cleanup or row validation, revert the normalization helper/sync integration commits and restore current per-task lane metadata behavior.
-4. Re-run `cargo test -p nils-plan-issue-cli --test sprint3_delivery`, `cargo test -p nils-plan-issue-cli --test sprint5_delivery`, and required checks before reattempting the cutover.
+4. Re-run `cargo test -p nils-plan-issue-cli --test runtime_truth_plan_and_sprint_flow`, `cargo test -p nils-plan-issue-cli --test auto_single_lane_runtime_truth`, and required checks before reattempting the cutover.

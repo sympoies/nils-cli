@@ -123,26 +123,12 @@ fn split_prs_library_core_auto_group_records_are_deterministic() {
     assert_eq!(first.len(), 3);
 
     let mut group_by_task: HashMap<String, String> = HashMap::new();
-    let mut notes_by_task: HashMap<String, String> = HashMap::new();
     for record in &first {
         group_by_task.insert(record.task_id.clone(), record.pr_group.clone());
-        notes_by_task.insert(record.task_id.clone(), record.notes.clone());
         assert!(
             record.pr_group.starts_with("s2-auto-g"),
             "{}",
             record.pr_group
-        );
-        assert!(
-            record.notes.contains("pr-grouping=group"),
-            "{}",
-            record.notes
-        );
-        assert!(
-            record
-                .notes
-                .contains(&format!("pr-group={}", record.pr_group)),
-            "{}",
-            record.notes
         );
     }
 
@@ -150,18 +136,6 @@ fn split_prs_library_core_auto_group_records_are_deterministic() {
         group_by_task.get("S2T1"),
         group_by_task.get("S2T2"),
         "same-layer overlap should be grouped"
-    );
-    assert!(
-        notes_by_task
-            .get("S2T1")
-            .expect("S2T1 notes")
-            .contains("shared-pr-anchor=S2T1")
-    );
-    assert!(
-        notes_by_task
-            .get("S2T2")
-            .expect("S2T2 notes")
-            .contains("shared-pr-anchor=S2T1")
     );
 }
 
@@ -275,15 +249,12 @@ fn split_prs_auto_group_without_mapping_succeeds() {
     assert_eq!(records.len(), 3);
 
     let mut group_by_task: HashMap<String, String> = HashMap::new();
-    let mut first_task_by_group: HashMap<String, String> = HashMap::new();
-    let mut size_by_group: HashMap<String, usize> = HashMap::new();
     for record in records {
         let task_id = record["task_id"].as_str().unwrap_or_default().to_string();
         let group = record["pr_group"].as_str().unwrap_or_default().to_string();
         assert!(group.starts_with("s2-auto-g"), "{group}");
         group_by_task.insert(task_id.clone(), group.clone());
-        first_task_by_group.entry(group.clone()).or_insert(task_id);
-        *size_by_group.entry(group).or_insert(0) += 1;
+        assert!(record["summary"].is_string(), "{}", out.stdout);
     }
 
     assert_eq!(
@@ -291,20 +262,6 @@ fn split_prs_auto_group_without_mapping_succeeds() {
         group_by_task.get("S2T2"),
         "same-layer location overlap should be grouped"
     );
-
-    for record in records {
-        let group = record["pr_group"].as_str().unwrap_or_default();
-        let notes = record["notes"].as_str().unwrap_or_default();
-        assert!(notes.contains("pr-grouping=group"), "{notes}");
-        assert!(notes.contains(&format!("pr-group={group}")), "{notes}");
-        if size_by_group.get(group).copied().unwrap_or(0) > 1 {
-            let anchor = first_task_by_group.get(group).expect("anchor exists");
-            assert!(
-                notes.contains(&format!("shared-pr-anchor={anchor}")),
-                "{notes}"
-            );
-        }
-    }
 }
 
 #[test]
@@ -339,47 +296,20 @@ fn split_prs_auto_group_partial_mapping_preserves_pinned_group() {
     assert_eq!(records.len(), 3);
 
     let mut group_by_task: HashMap<String, String> = HashMap::new();
-    let mut notes_by_task: HashMap<String, String> = HashMap::new();
     for record in records {
         let task_id = record["task_id"].as_str().unwrap_or_default().to_string();
         let group = record["pr_group"].as_str().unwrap_or_default().to_string();
-        let notes = record["notes"].as_str().unwrap_or_default().to_string();
         group_by_task.insert(task_id.clone(), group);
-        notes_by_task.insert(task_id, notes);
+        assert!(record["summary"].is_string());
     }
 
     let pinned = group_by_task.get("S2T3").expect("S2T3 group");
     assert_eq!(pinned, "manual-docs");
-    assert!(
-        notes_by_task
-            .get("S2T3")
-            .expect("S2T3 notes")
-            .contains("pr-group=manual-docs")
-    );
-    assert!(
-        !notes_by_task
-            .get("S2T3")
-            .expect("S2T3 notes")
-            .contains("shared-pr-anchor=")
-    );
-
     let auto_a = group_by_task.get("S2T1").expect("S2T1 group");
     let auto_b = group_by_task.get("S2T2").expect("S2T2 group");
     assert_eq!(auto_a, auto_b, "overlap pair should stay shared");
     assert!(auto_a.starts_with("s2-auto-g"), "{auto_a}");
     assert_ne!(auto_a, pinned);
-    assert!(
-        notes_by_task
-            .get("S2T1")
-            .expect("S2T1 notes")
-            .contains("shared-pr-anchor=S2T1")
-    );
-    assert!(
-        notes_by_task
-            .get("S2T2")
-            .expect("S2T2 notes")
-            .contains("shared-pr-anchor=S2T1")
-    );
 }
 
 #[test]
@@ -580,17 +510,8 @@ fn split_prs_auto_json_contains_required_fields() {
     for record in records {
         assert!(record["task_id"].is_string());
         assert!(record["summary"].is_string());
-        assert!(record["branch"].is_string());
-        assert!(record["worktree"].is_string());
-        assert!(record["owner"].is_string());
-        assert!(record["notes"].is_string());
         assert!(record["pr_group"].is_string());
-
-        let notes = record["notes"].as_str().unwrap_or_default();
-        assert!(notes.contains("sprint=S1"), "{notes}");
-        assert!(notes.contains("plan-task:Task "), "{notes}");
-        assert!(notes.contains("pr-grouping=per-sprint"), "{notes}");
-        assert!(notes.contains("pr-group=s1"), "{notes}");
+        assert_eq!(record["pr_group"], "s1");
     }
 }
 
@@ -807,11 +728,7 @@ fn split_prs_non_regression_auto_sparse_plan_scaffold() {
 
     for record in records {
         let group = record["pr_group"].as_str().unwrap_or_default();
-        let notes = record["notes"].as_str().unwrap_or_default();
         assert!(group.starts_with("s1-auto-g"), "{group}");
-        assert!(notes.contains("pr-grouping=group"), "{notes}");
-        assert!(notes.contains(&format!("pr-group={group}")), "{notes}");
-        assert!(notes.contains("shared-pr-anchor=S1T1"), "{notes}");
     }
 }
 
@@ -853,12 +770,8 @@ fn split_prs_non_regression_auto_overlap_heavy_plan_scaffold() {
     let mut unique_groups = BTreeSet::new();
     for record in records {
         let group = record["pr_group"].as_str().unwrap_or_default();
-        let notes = record["notes"].as_str().unwrap_or_default();
         unique_groups.insert(group.to_string());
         assert!(group.starts_with("s1-auto-g"), "{group}");
-        assert!(notes.contains("pr-grouping=group"), "{notes}");
-        assert!(notes.contains(&format!("pr-group={group}")), "{notes}");
-        assert!(notes.contains("shared-pr-anchor=S1T1"), "{notes}");
     }
 
     assert_eq!(unique_groups.len(), 1);
@@ -870,63 +783,43 @@ fn split_prs_fixture_tsv_header_is_stable() {
         let path = fixture_path(file);
         let text = fs::read_to_string(path).expect("fixture exists");
         let first = text.lines().next().unwrap_or_default();
-        assert_eq!(
-            first,
-            "# task_id\tsummary\tbranch\tworktree\towner\tnotes\tpr_group"
-        );
+        assert_eq!(first, "# task_id\tsummary\tpr_group");
     }
 }
 
 #[test]
-fn split_prs_non_regression_required_notes_keys() {
+fn split_prs_non_regression_fixture_tsv_schema_matches_reduced_output() {
     for row in tsv_rows("per_sprint_expected.tsv") {
-        assert_eq!(row.len(), 7);
-        let notes = &row[5];
-        assert!(notes.contains("sprint=S1"));
-        assert!(notes.contains("plan-task:Task "));
-        assert!(notes.contains("pr-grouping=per-sprint"));
-        assert!(notes.contains("pr-group=s1"));
+        assert_eq!(row.len(), 3);
+        assert_eq!(row[2], "s1");
     }
 
     let group_rows = tsv_rows("group_expected.tsv");
     let mut members_by_group: HashMap<String, Vec<String>> = HashMap::new();
     for row in &group_rows {
-        assert_eq!(row.len(), 7);
+        assert_eq!(row.len(), 3);
         members_by_group
-            .entry(row[6].clone())
+            .entry(row[2].clone())
             .or_default()
             .push(row[0].clone());
     }
 
     for row in &group_rows {
-        let notes = &row[5];
-        let pr_group = &row[6];
-        assert!(notes.contains("pr-grouping=group"), "{notes}");
-        assert!(notes.contains(&format!("pr-group={pr_group}")), "{notes}");
-
+        let pr_group = &row[2];
         let members = members_by_group.get(pr_group).expect("group members");
-        if members.len() > 1 {
-            let anchor = notes
-                .split(';')
-                .map(str::trim)
-                .find_map(|token| token.strip_prefix("shared-pr-anchor="))
-                .expect("shared-pr-anchor note");
-            assert!(members.iter().any(|task| task == anchor), "{notes}");
-        }
+        assert!(!members.is_empty());
     }
 }
 
 #[test]
-fn split_prs_non_regression_shared_anchor_rules() {
+fn split_prs_non_regression_group_fixture_preserves_expected_shared_membership() {
     for row in tsv_rows("group_expected.tsv") {
-        assert_eq!(row.len(), 7);
+        assert_eq!(row.len(), 3);
         let task_id = &row[0];
-        let notes = &row[5];
-        assert!(notes.contains("pr-grouping=group"));
         if task_id == "S2T1" {
-            assert!(!notes.contains("shared-pr-anchor="));
+            assert_eq!(&row[2], "s2-isolated");
         } else {
-            assert!(notes.contains("shared-pr-anchor=S2T2"));
+            assert_eq!(&row[2], "s2-shared");
         }
     }
 }
@@ -948,10 +841,6 @@ fn split_prs_fixture_json_contains_required_fields() {
         for record in records {
             assert!(record["task_id"].is_string());
             assert!(record["summary"].is_string());
-            assert!(record["branch"].is_string());
-            assert!(record["worktree"].is_string());
-            assert!(record["owner"].is_string());
-            assert!(record["notes"].is_string());
             assert!(record["pr_group"].is_string());
         }
     }

@@ -59,9 +59,35 @@ pub fn validate_markdown_payload(markdown: &str) -> Result<(), MarkdownPayloadEr
     }
 }
 
+pub fn canonicalize_table_cell(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut in_line_break_run = false;
+
+    for ch in value.chars() {
+        match ch {
+            '\n' | '\r' => {
+                if !in_line_break_run {
+                    out.push(' ');
+                    in_line_break_run = true;
+                }
+            }
+            '|' => {
+                out.push('/');
+                in_line_break_run = false;
+            }
+            _ => {
+                out.push(ch);
+                in_line_break_run = false;
+            }
+        }
+    }
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{markdown_payload_violations, validate_markdown_payload};
+    use super::{canonicalize_table_cell, markdown_payload_violations, validate_markdown_payload};
 
     #[test]
     fn markdown_payload_validator_accepts_real_control_chars() {
@@ -106,5 +132,18 @@ mod tests {
         assert_eq!(violations[0].count, 2);
         assert_eq!(violations[1].sequence, r"\t");
         assert_eq!(violations[1].count, 1);
+    }
+
+    #[test]
+    fn canonicalize_table_cell_normalizes_markdown_unsafe_chars() {
+        let value = "A|B\r\nC\nD\rE";
+        assert_eq!(canonicalize_table_cell(value), "A/B C D E");
+    }
+
+    #[test]
+    fn canonicalize_table_cell_is_idempotent() {
+        let first = canonicalize_table_cell("x|y\r\nz");
+        let second = canonicalize_table_cell(&first);
+        assert_eq!(first, second);
     }
 }

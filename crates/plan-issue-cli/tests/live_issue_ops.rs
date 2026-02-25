@@ -132,8 +132,8 @@ fn issue_body_sprint4_planned() -> String {
 | S3T2 | Implement issue-body and sprint-comment rendering engine | subagent-s3-t1 | issue/s3-t1-implement-task-spec-generation-core-using-plan-t | issue-s3-t1 | per-sprint | #221 | done | sprint=S3; plan-task:Task 3.2 |
 | S3T3 | Implement independent local dry-run workflow | subagent-s3-t1 | issue/s3-t1-implement-task-spec-generation-core-using-plan-t | issue-s3-t1 | per-sprint | #221 | done | sprint=S3; plan-task:Task 3.3 |
 | S4T1 | Implement GitHub adapter abstraction and `gh` backend | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | TBD | planned | sprint=S4; plan-task:Task 4.1; deps=Task 3.3; validate=cargo test -p nils-plan-issue-cli github_adapter; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
-| S4T2 | Implement live plan-level commands | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | TBD | planned | sprint=S4; plan-task:Task 4.1; deps=Task 3.3; validate=cargo test -p nils-plan-issue-cli github_adapter; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
-| S4T3 | Implement live sprint-level commands and guide output | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | TBD | planned | sprint=S4; plan-task:Task 4.1; deps=Task 3.3; validate=cargo test -p nils-plan-issue-cli github_adapter; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
+| S4T2 | Implement live plan-level commands | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | TBD | planned | sprint=S4; plan-task:Task 4.2; deps=Task 4.1; validate=cargo test -p nils-plan-issue-cli live_plan_commands; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
+| S4T3 | Implement live sprint-level commands and guide output | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | TBD | planned | sprint=S4; plan-task:Task 4.3; deps=Task 4.1; validate=cargo test -p nils-plan-issue-cli live_sprint_commands; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
 "#,
     )
 }
@@ -144,8 +144,8 @@ fn issue_body_sprint4_in_progress() -> String {
 | S3T2 | Implement issue-body and sprint-comment rendering engine | subagent-s3-t1 | issue/s3-t1-implement-task-spec-generation-core-using-plan-t | issue-s3-t1 | per-sprint | #221 | done | sprint=S3; plan-task:Task 3.2 |
 | S3T3 | Implement independent local dry-run workflow | subagent-s3-t1 | issue/s3-t1-implement-task-spec-generation-core-using-plan-t | issue-s3-t1 | per-sprint | #221 | done | sprint=S3; plan-task:Task 3.3 |
 | S4T1 | Implement GitHub adapter abstraction and `gh` backend | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #222 | in-progress | sprint=S4; plan-task:Task 4.1; deps=Task 3.3; validate=cargo test -p nils-plan-issue-cli github_adapter; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
-| S4T2 | Implement live plan-level commands | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #223 | in-progress | sprint=S4; plan-task:Task 4.1; deps=Task 3.3; validate=cargo test -p nils-plan-issue-cli github_adapter; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
-| S4T3 | Implement live sprint-level commands and guide output | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #224 | in-progress | sprint=S4; plan-task:Task 4.1; deps=Task 3.3; validate=cargo test -p nils-plan-issue-cli github_adapter; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
+| S4T2 | Implement live plan-level commands | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #223 | in-progress | sprint=S4; plan-task:Task 4.2; deps=Task 4.1; validate=cargo test -p nils-plan-issue-cli live_plan_commands; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
+| S4T3 | Implement live sprint-level commands and guide output | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #224 | in-progress | sprint=S4; plan-task:Task 4.3; deps=Task 4.1; validate=cargo test -p nils-plan-issue-cli live_sprint_commands; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
 "#,
     )
 }
@@ -153,8 +153,8 @@ fn issue_body_sprint4_in_progress() -> String {
 fn issue_body_plan_done() -> String {
     issue_body_with_preface(
         r#"| S4T1 | Implement GitHub adapter abstraction and `gh` backend | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #222 | done | sprint=S4; plan-task:Task 4.1; deps=Task 3.3; validate=cargo test -p nils-plan-issue-cli github_adapter; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
-| S4T2 | Implement live plan-level commands | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #223 | done | sprint=S4; plan-task:Task 4.1; deps=Task 3.3; validate=cargo test -p nils-plan-issue-cli github_adapter; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
-| S4T3 | Implement live sprint-level commands and guide output | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #224 | done | sprint=S4; plan-task:Task 4.1; deps=Task 3.3; validate=cargo test -p nils-plan-issue-cli github_adapter; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
+| S4T2 | Implement live plan-level commands | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #223 | done | sprint=S4; plan-task:Task 4.2; deps=Task 4.1; validate=cargo test -p nils-plan-issue-cli live_plan_commands; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
+| S4T3 | Implement live sprint-level commands and guide output | subagent-s4-t1 | issue/s4-t1-implement-github-adapter-abstraction-and-gh-back | issue-s4-t1 | per-sprint | #224 | done | sprint=S4; plan-task:Task 4.3; deps=Task 4.1; validate=cargo test -p nils-plan-issue-cli live_sprint_commands; pr-grouping=per-sprint; pr-group=s4; shared-pr-anchor=S4T1 |
 "#,
     )
 }

@@ -4,8 +4,10 @@
 
 ## Specs
 
-- [`split-prs Contract v1`](specs/split-prs-contract-v1.md): deterministic/auto split contract for
-  `plan-tooling split-prs`.
+- [`split-prs Contract v2`](specs/split-prs-contract-v2.md): grouping-only split-prs output
+  contract (runtime metadata is materialized by `plan-issue-cli`).
+- [`split-prs Contract v1`](specs/split-prs-contract-v1.md): historical pre-v2 reference (split-prs
+  emitted runtime metadata fields).
 
 ## Runbooks
 

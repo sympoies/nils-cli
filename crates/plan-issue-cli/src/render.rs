@@ -9,6 +9,7 @@ use crate::task_spec::{
 };
 use nils_common::fs as common_fs;
 use nils_common::git as common_git;
+use nils_common::markdown as common_markdown;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SprintCommentMode {
@@ -117,7 +118,8 @@ pub fn render_plan_issue_body(
         let notes = lane
             .map(|metadata| metadata.notes.trim().to_string())
             .unwrap_or_else(|| row.notes.trim().to_string());
-        let notes = if notes.is_empty() {
+        let notes = common_markdown::canonicalize_table_cell(&notes);
+        let notes = if notes.trim().is_empty() {
             "-".to_string()
         } else {
             notes

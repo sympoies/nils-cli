@@ -30,6 +30,8 @@ Primary constraint: shared helpers must preserve behavioral parity for each cons
 - `clipboard`: best-effort clipboard copy with explicit tool priority.
 - `fs`: atomic write, timestamp write/remove, SHA-256 hashing, and cross-platform replace helpers
   with structured errors.
+- `markdown`: markdown payload validation and markdown-table-safe cell canonicalization helpers
+  used by orchestration/reporting CLIs.
 - `greeting`: tiny sample helper used by `cli-template`.
 
 ## API examples
@@ -150,3 +152,4 @@ When introducing a shared helper at a call site:
 ## Docs
 
 - [Docs index](docs/README.md)
+- [markdown helpers contract v1](docs/specs/markdown-helpers-contract-v1.md)

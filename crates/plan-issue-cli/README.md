@@ -5,7 +5,9 @@
 It is the typed replacement lane for `plan-issue-delivery-loop.sh` behavior and is built around
 deterministic task-spec generation, issue-body rendering, and gate-enforced sprint transitions.
 `Task Decomposition` is the runtime-truth execution table; sprint task-spec/prompt artifacts are
-derived from those issue rows.
+derived from those issue rows. `plan-tooling split-prs` provides grouping primitives only in the
+current model; `plan-issue-cli` materializes runtime `Owner/Branch/Worktree/Notes` metadata from
+plan content plus grouping results.
 
 The crate ships two binaries with the same command surface:
 
@@ -53,7 +55,8 @@ Shell wrapper scripts are deprecated for this crate path. Use `plan-issue` / `pl
 - Canonical table columns are fixed to:
   - `Task | Summary | Owner | Branch | Worktree | Execution Mode | PR | Status | Notes`
 - Writer and parser share the same schema contract.
-- Writer sanitizes cell values (including `|`) so parser column count remains deterministic.
+- Writer sanitizes cell values (including `|`) via `nils-common::markdown::canonicalize_table_cell`
+  so parser column count remains deterministic and drift checks stay stable.
 
 ## Grouping and strategy rules
 - `--pr-grouping` is required for split-dependent commands:
@@ -62,6 +65,7 @@ Shell wrapper scripts are deprecated for this crate path. Use `plan-issue` / `pl
 - `--pr-grouping group --strategy deterministic`: requires explicit `--pr-group <task>=<group>` mappings.
 - `--pr-grouping group --strategy auto`: allows optional pins and auto assignment for remaining tasks.
   - when auto resolves a sprint to a single shared PR group, `Execution Mode` is normalized to `per-sprint` (instead of `pr-shared`) to reflect single-lane execution semantics.
+  - runtime lane metadata is materialized locally in `plan-issue-cli` (not read from split-prs runtime placeholders).
 
 ## Quick examples
 ```bash
@@ -92,6 +96,7 @@ plan-issue-local completion bash > completions/bash/plan-issue-local
 - `2`: usage failure
 
 ## Specifications
+- [CLI contract v2](docs/specs/plan-issue-cli-contract-v2.md)
 - [CLI contract v1](docs/specs/plan-issue-cli-contract-v1.md)
 - [State machine and gate invariants v1](docs/specs/plan-issue-state-machine-v1.md)
 - [Gate matrix v1](docs/specs/plan-issue-gate-matrix-v1.md)

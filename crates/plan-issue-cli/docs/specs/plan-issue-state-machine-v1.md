@@ -105,7 +105,10 @@ Row-level status rules:
 - Execution Mode derivation rule:
   - `group + auto` that resolves to one shared PR lane for a sprint is represented as `per-sprint` (single-lane execution).
   - `group + auto|deterministic` with multiple resolved PR groups keeps `pr-shared` / `pr-isolated` per group size.
-  - rows that share a `per-sprint` or `pr-shared` lane must keep canonical runtime-truth lane metadata aligned (`Owner`, `Branch`, `Worktree`, lane-note tokens).
+  - rows that share a `per-sprint` or `pr-shared` lane must keep canonical runtime-truth
+    execution metadata aligned (`Owner`, `Branch`, `Worktree`).
+  - `Notes` may remain task-specific, but shared-lane tokens used for lane parsing (for example
+    `pr-group` and `shared-pr-anchor`) must stay compatible across rows in the same lane.
 - Owner policy for non-planned/non-blocked rows:
   - must be a stable dispatch alias (`subagent-*` and shared-lane `dispatch` alias are valid shapes)
   - must not reference main-agent identity.

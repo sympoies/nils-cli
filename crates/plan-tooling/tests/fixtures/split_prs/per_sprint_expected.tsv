@@ -1,4 +1,4 @@
-# task_id	summary	branch	worktree	owner	notes	pr_group
-S1T1	Define split-prs CLI contract and output schema	issue/s1-t1-define-split-prs-cli-contract-and-output-schema	issue-s1-t1	subagent-s1-t1	sprint=S1; plan-task:Task 1.1; validate=test -f crates/plan-tooling/docs/specs/split-prs-contract-v1.md; pr-grouping=per-sprint; pr-group=s1; shared-pr-anchor=S1T1	s1
-S1T2	Capture deterministic parity fixtures from current task-spec behavior	issue/s1-t2-capture-deterministic-parity-fixtures-from-curre	issue-s1-t2	subagent-s1-t2	sprint=S1; plan-task:Task 1.2; deps=Task 1.1; validate=test -f crates/plan-tooling/tests/fixtures/split_prs/per_sprint_expected.tsv; pr-grouping=per-sprint; pr-group=s1; shared-pr-anchor=S1T1	s1
-S1T3	Define deterministic normalization and error matrix	issue/s1-t3-define-deterministic-normalization-and-error-mat	issue-s1-t3	subagent-s1-t3	sprint=S1; plan-task:Task 1.3; deps=Task 1.1,Task 1.2; validate=test -f crates/plan-tooling/docs/specs/split-prs-contract-v1.md; pr-grouping=per-sprint; pr-group=s1; shared-pr-anchor=S1T1	s1
+# task_id	summary	pr_group
+S1T1	Define split-prs CLI contract and output schema	s1
+S1T2	Capture deterministic parity fixtures from current task-spec behavior	s1
+S1T3	Define deterministic normalization and error matrix	s1

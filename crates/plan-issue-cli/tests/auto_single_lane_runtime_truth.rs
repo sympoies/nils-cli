@@ -244,7 +244,11 @@ fn auto_single_lane_end_to_end_keeps_per_sprint_runtime_truth() {
     assert_eq!(issue_s1t1.owner, issue_s1t2.owner);
     assert_eq!(issue_s1t1.branch, issue_s1t2.branch);
     assert_eq!(issue_s1t1.worktree, issue_s1t2.worktree);
-    assert_eq!(issue_s1t1.notes, issue_s1t2.notes);
+    assert_ne!(issue_s1t1.notes, issue_s1t2.notes);
+    assert!(issue_s1t1.notes.contains("pr-group=s1-auto-g1"));
+    assert!(issue_s1t2.notes.contains("pr-group=s1-auto-g1"));
+    assert!(issue_s1t1.notes.contains("shared-pr-anchor=S1T1"));
+    assert!(issue_s1t2.notes.contains("shared-pr-anchor=S1T1"));
 
     let body_json = json!({ "body": issue_body }).to_string();
     let log_path = tmp.path().join("gh.log");

@@ -337,9 +337,9 @@ fn start_plan_dry_run_writes_runtime_truth_task_decomposition_metadata() {
         ("S3T2", spec_s3t2, "S3T1", spec_s3t1)
     };
 
-    assert_ne!(anchor_row.owner, other_row.owner);
-    assert_ne!(anchor_row.branch, other_row.branch);
-    assert_ne!(anchor_row.worktree, other_row.worktree);
+    assert_eq!(anchor_row.owner, other_row.owner);
+    assert_eq!(anchor_row.branch, other_row.branch);
+    assert_eq!(anchor_row.worktree, other_row.worktree);
     assert_ne!(anchor_row.notes, other_row.notes);
 
     let prompt_files = sprint_payload["payload"]["result"]["subagent_prompt_files"]
@@ -408,12 +408,12 @@ fn start_plan_dry_run_writes_runtime_truth_task_decomposition_metadata() {
     assert_eq!(issue_anchor.worktree, anchor_row.worktree);
     assert_eq!(issue_other.worktree, anchor_row.worktree);
     assert_eq!(issue_anchor.notes, anchor_row.notes);
-    assert_eq!(issue_other.notes, anchor_row.notes);
+    assert_eq!(issue_other.notes, other_row.notes);
 
-    assert_ne!(other_row.owner, issue_other.owner);
-    assert_ne!(other_row.branch, issue_other.branch);
-    assert_ne!(other_row.worktree, issue_other.worktree);
-    assert_ne!(other_row.notes, issue_other.notes);
+    assert_eq!(other_row.owner, issue_other.owner);
+    assert_eq!(other_row.branch, issue_other.branch);
+    assert_eq!(other_row.worktree, issue_other.worktree);
+    assert_eq!(other_row.notes, issue_other.notes);
 }
 
 #[test]

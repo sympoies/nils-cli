@@ -106,10 +106,6 @@ pub struct SplitPlanRecord {
     pub task_id: String,
     pub sprint: i32,
     pub summary: String,
-    pub branch: String,
-    pub worktree: String,
-    pub owner: String,
-    pub notes: String,
     pub pr_group: String,
 }
 
@@ -119,10 +115,6 @@ struct Record {
     plan_task_id: String,
     sprint: i32,
     summary: String,
-    branch: String,
-    worktree: String,
-    owner: String,
-    notes_parts: Vec<String>,
     complexity: i32,
     location_paths: Vec<String>,
     dependency_keys: Vec<String>,
@@ -152,10 +144,6 @@ struct Output {
 struct OutputRecord {
     task_id: String,
     summary: String,
-    branch: String,
-    worktree: String,
-    owner: String,
-    notes: String,
     pr_group: String,
 }
 
@@ -476,10 +464,6 @@ impl OutputRecord {
         Self {
             task_id: record.task_id.clone(),
             summary: record.summary.clone(),
-            branch: record.branch.clone(),
-            worktree: record.worktree.clone(),
-            owner: record.owner.clone(),
-            notes: record.notes.clone(),
             pr_group: record.pr_group.clone(),
         }
     }
@@ -525,9 +509,6 @@ pub fn build_split_plan_records(
         return Err("--pr-group can only be used when --pr-grouping group".to_string());
     }
 
-    let branch_prefix_norm = normalize_branch_prefix(&options.branch_prefix);
-    let worktree_prefix_norm = normalize_worktree_prefix(&options.worktree_prefix);
-    let owner_prefix_norm = normalize_owner_prefix(&options.owner_prefix);
     let sprint_hints = sprint_hints(selected_sprints);
 
     let mut records: Vec<Record> = Vec::new();
@@ -545,8 +526,6 @@ pub fn build_split_plan_records(
             } else {
                 task.name.trim().to_string()
             });
-            let slug = normalize_token(&summary, &format!("task-{ordinal}"), 48);
-
             let deps: Vec<String> = task
                 .dependencies
                 .clone()
@@ -568,41 +547,11 @@ pub fn build_split_plan_records(
                 _ => 5,
             };
 
-            let validations: Vec<String> = task
-                .validation
-                .iter()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-                .filter(|v| !is_placeholder(v))
-                .collect();
-
-            let mut notes_parts = vec![
-                format!("sprint=S{}", sprint.number),
-                format!(
-                    "plan-task:{}",
-                    if plan_task_id.is_empty() {
-                        task_id.clone()
-                    } else {
-                        plan_task_id.clone()
-                    }
-                ),
-            ];
-            if !deps.is_empty() {
-                notes_parts.push(format!("deps={}", deps.join(",")));
-            }
-            if let Some(first) = validations.first() {
-                notes_parts.push(format!("validate={first}"));
-            }
-
             records.push(Record {
                 task_id,
                 plan_task_id,
                 sprint: sprint.number,
                 summary,
-                branch: format!("{branch_prefix_norm}/s{}-t{ordinal}-{slug}", sprint.number),
-                worktree: format!("{worktree_prefix_norm}-s{}-t{ordinal}", sprint.number),
-                owner: format!("{owner_prefix_norm}-s{}-t{ordinal}", sprint.number),
-                notes_parts,
                 complexity,
                 location_paths,
                 dependency_keys: deps,
@@ -700,35 +649,12 @@ pub fn build_split_plan_records(
         }
     }
 
-    // Anchor selection is deterministic because records are emitted in stable sprint/task order.
-    let mut group_sizes: HashMap<String, usize> = HashMap::new();
-    let mut group_anchor: HashMap<String, String> = HashMap::new();
-    for rec in &records {
-        let size = group_sizes.entry(rec.pr_group.clone()).or_insert(0);
-        *size += 1;
-        group_anchor
-            .entry(rec.pr_group.clone())
-            .or_insert_with(|| rec.task_id.clone());
-    }
-
     let mut out: Vec<SplitPlanRecord> = Vec::new();
     for rec in records {
-        let mut notes = rec.notes_parts.clone();
-        notes.push(format!("pr-grouping={}", options.pr_grouping.as_str()));
-        notes.push(format!("pr-group={}", rec.pr_group));
-        if group_sizes.get(&rec.pr_group).copied().unwrap_or(0) > 1
-            && let Some(anchor) = group_anchor.get(&rec.pr_group)
-        {
-            notes.push(format!("shared-pr-anchor={anchor}"));
-        }
         out.push(SplitPlanRecord {
             task_id: rec.task_id,
             sprint: rec.sprint,
             summary: rec.summary,
-            branch: rec.branch,
-            worktree: rec.worktree,
-            owner: rec.owner,
-            notes: notes.join("; "),
             pr_group: rec.pr_group,
         });
     }
@@ -1328,16 +1254,12 @@ fn uf_union(parent: &mut HashMap<usize, usize>, left: usize, right: usize) {
 }
 
 fn print_tsv(records: &[OutputRecord]) {
-    println!("# task_id\tsummary\tbranch\tworktree\towner\tnotes\tpr_group");
+    println!("# task_id\tsummary\tpr_group");
     for rec in records {
         println!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}",
             rec.task_id.replace('\t', " "),
             rec.summary.replace('\t', " "),
-            rec.branch.replace('\t', " "),
-            rec.worktree.replace('\t', " "),
-            rec.owner.replace('\t', " "),
-            rec.notes.replace('\t', " "),
             rec.pr_group.replace('\t', " "),
         );
     }
@@ -1375,35 +1297,6 @@ fn maybe_relativize(path: &Path, repo_root: &Path) -> PathBuf {
 fn path_to_posix(path: &Path) -> String {
     path.to_string_lossy()
         .replace(std::path::MAIN_SEPARATOR, "/")
-}
-
-fn normalize_branch_prefix(value: &str) -> String {
-    let trimmed = value.trim().trim_end_matches('/');
-    if trimmed.is_empty() {
-        "issue".to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
-
-fn normalize_worktree_prefix(value: &str) -> String {
-    let trimmed = value.trim().trim_end_matches(['-', '_']);
-    if trimmed.is_empty() {
-        "issue".to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
-
-fn normalize_owner_prefix(value: &str) -> String {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        "subagent".to_string()
-    } else if trimmed.to_ascii_lowercase().contains("subagent") {
-        trimmed.to_string()
-    } else {
-        format!("subagent-{trimmed}")
-    }
 }
 
 fn normalize_spaces(value: String) -> String {

@@ -3,7 +3,8 @@
 ## Overview
 plan-tooling works with Plan Format v1 markdown files. It can parse plans to JSON, validate plan
 files, compute dependency batches for a sprint, scaffold new plans, and generate task-to-PR split
-specs in deterministic or auto strategy modes.
+grouping primitives in deterministic or auto strategy modes. Runtime execution metadata for
+orchestration is materialized by `plan-issue-cli` from split results plus parsed plan content.
 
 ## Usage
 ```text
@@ -38,8 +39,11 @@ Help:
   sprint.
 
 ### split-prs
-- `split-prs --file <plan.md> --scope <plan|sprint> [--sprint <n>] --pr-grouping <per-sprint|group> [--pr-group <task-or-plan-id>=<group>]... [--strategy deterministic|auto] [--explain] [--owner-prefix <text>] [--branch-prefix <text>] [--worktree-prefix <text>] [--format json|tsv]`
+- `split-prs --file <plan.md> --scope <plan|sprint> [--sprint <n>] --pr-grouping <per-sprint|group> [--pr-group <task-or-plan-id>=<group>]... [--strategy deterministic|auto] [--explain] [--format json|tsv]`
+- compatibility flags accepted by the CLI parser: `--owner-prefix`, `--branch-prefix`, `--worktree-prefix`
 - value options accept both `--key value` and `--key=value`.
+- `--owner-prefix`, `--branch-prefix`, and `--worktree-prefix` are accepted for compatibility with
+  older automation, but v2 `split-prs` output is grouping-only (`task_id`, `summary`, `pr_group`).
 - deterministic mode:
   - `--pr-grouping per-sprint`: one shared `pr_group` per sprint (`s<n>`).
   - `--pr-grouping group`: pass `--pr-group` for every selected task.
@@ -49,7 +53,7 @@ Help:
   - when sprint metadata provides `Execution Profile` parallel width hints, auto grouping targets that lane count (deterministic fallback merges apply when needed).
   - `pr-grouping=per-sprint` keeps one shared group per sprint (`s<n>`).
   - ordering and tie-breakers stay deterministic (`Task N.M`, then `SxTy`, then lexical summary).
-  - emitted lane metadata (`pr_group`, anchor notes, prefixes) is consumed by `plan-issue` runtime-truth validation and sprint artifact rendering.
+  - emitted grouping primitives (`task_id`, `summary`, `pr_group`, optional `--explain`) are consumed by `plan-issue` runtime materialization and runtime-truth validation.
 - deterministic examples:
   - `split-prs --file docs/plans/example-plan.md --scope sprint --sprint 1 --pr-grouping per-sprint --format tsv`
   - `split-prs --file docs/plans/example-plan.md --scope sprint --sprint 2 --pr-grouping group --pr-group S2T1=isolated --pr-group S2T2=shared --pr-group S2T3=shared --format json`
@@ -103,4 +107,5 @@ plan-tooling completion zsh > completions/zsh/_plan-tooling
 ## Docs
 
 - [Docs index](docs/README.md)
+- [split-prs contract v2](docs/specs/split-prs-contract-v2.md)
 - [Migration runbook](docs/runbooks/split-prs-migration.md)

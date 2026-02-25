@@ -1,11 +1,13 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
-use nils_common::{env as common_env, fs as common_fs, git as common_git};
-use plan_tooling::parse::parse_plan_with_display;
+use nils_common::{
+    env as common_env, fs as common_fs, git as common_git, markdown as common_markdown,
+};
+use plan_tooling::parse::{Sprint as ParsedSprint, parse_plan_with_display};
 use plan_tooling::split_prs::{
-    SplitPlanOptions, SplitPrGrouping, SplitPrStrategy, SplitScope, build_split_plan_records,
-    select_sprints_for_scope,
+    SplitPlanOptions, SplitPlanRecord, SplitPrGrouping, SplitPrStrategy, SplitScope,
+    build_split_plan_records, select_sprints_for_scope,
 };
 
 use crate::commands::{PrGroupMapping, PrGrouping, SplitStrategy};
@@ -99,20 +101,9 @@ pub fn build_task_spec(
         worktree_prefix: options.worktree_prefix.clone(),
     };
 
-    let rows = build_split_plan_records(&selected_sprints, &split_options)?
-        .into_iter()
-        .map(|record| TaskSpecRow {
-            task_id: record.task_id,
-            summary: record.summary,
-            branch: record.branch,
-            worktree: record.worktree,
-            owner: record.owner,
-            notes: record.notes,
-            pr_group: record.pr_group,
-            sprint: record.sprint,
-            grouping: options.pr_grouping,
-        })
-        .collect();
+    let split_records = build_split_plan_records(&selected_sprints, &split_options)?;
+    let rows = RuntimeMetadataMaterializer::new(&selected_sprints, options)?
+        .materialize_rows(&split_records)?;
 
     Ok(TaskSpecBuild {
         plan_title: plan.title,
@@ -120,6 +111,254 @@ pub fn build_task_spec(
         sprint_name,
         rows,
     })
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeTaskSeed {
+    sprint: i32,
+    ordinal: usize,
+    plan_task_id: String,
+    dependencies: Vec<String>,
+    first_validation: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeMetadataMaterializer {
+    owner_prefix: String,
+    branch_prefix: String,
+    worktree_prefix: String,
+    grouping: PrGrouping,
+    strategy: SplitStrategy,
+    task_seed_by_id: HashMap<String, RuntimeTaskSeed>,
+}
+
+impl RuntimeMetadataMaterializer {
+    fn new(
+        selected_sprints: &[ParsedSprint],
+        options: &TaskSpecBuildOptions,
+    ) -> Result<Self, String> {
+        let mut task_seed_by_id: HashMap<String, RuntimeTaskSeed> = HashMap::new();
+
+        for sprint in selected_sprints {
+            for (idx, task) in sprint.tasks.iter().enumerate() {
+                let ordinal = idx + 1;
+                let task_id = format!("S{}T{ordinal}", sprint.number);
+                let plan_task_id = if task.id.trim().is_empty() {
+                    task_id.clone()
+                } else {
+                    task.id.trim().to_string()
+                };
+                let dependencies = task
+                    .dependencies
+                    .clone()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|dep| dep.trim().to_string())
+                    .filter(|dep| !dep.is_empty())
+                    .filter(|dep| !is_plan_placeholder(dep))
+                    .collect::<Vec<_>>();
+                let first_validation = task
+                    .validation
+                    .iter()
+                    .map(|validation| validation.trim().to_string())
+                    .find(|validation| !validation.is_empty() && !is_plan_placeholder(validation));
+
+                let inserted = task_seed_by_id.insert(
+                    task_id.clone(),
+                    RuntimeTaskSeed {
+                        sprint: sprint.number,
+                        ordinal,
+                        plan_task_id,
+                        dependencies,
+                        first_validation,
+                    },
+                );
+                if inserted.is_some() {
+                    return Err(format!(
+                        "duplicate synthesized task id while materializing runtime metadata: {task_id}"
+                    ));
+                }
+            }
+        }
+
+        Ok(Self {
+            owner_prefix: normalize_owner_prefix(&options.owner_prefix),
+            branch_prefix: normalize_branch_prefix(&options.branch_prefix),
+            worktree_prefix: normalize_worktree_prefix(&options.worktree_prefix),
+            grouping: options.pr_grouping,
+            strategy: options.strategy,
+            task_seed_by_id,
+        })
+    }
+
+    fn materialize_rows(
+        &self,
+        split_records: &[SplitPlanRecord],
+    ) -> Result<Vec<TaskSpecRow>, String> {
+        let mut group_sizes: HashMap<(i32, String), usize> = HashMap::new();
+        let mut anchor_by_lane: HashMap<(i32, String), String> = HashMap::new();
+        for record in split_records {
+            let lane_key = (record.sprint, record.pr_group.clone());
+            *group_sizes.entry(lane_key.clone()).or_insert(0) += 1;
+            anchor_by_lane
+                .entry(lane_key)
+                .or_insert_with(|| record.task_id.clone());
+        }
+
+        let mut rows = Vec::with_capacity(split_records.len());
+        for record in split_records {
+            let seed = self
+                .task_seed_by_id
+                .get(&record.task_id)
+                .ok_or_else(|| format!("{}: missing parsed plan task metadata", record.task_id))?;
+            let lane_key = (record.sprint, record.pr_group.clone());
+            let shared_anchor = if group_sizes.get(&lane_key).copied().unwrap_or(0) > 1 {
+                anchor_by_lane.get(&lane_key).cloned()
+            } else {
+                None
+            };
+
+            let slug_fallback = format!("task-{}", seed.ordinal);
+            let slug = normalize_token(&record.summary, &slug_fallback, 48);
+            let notes = synthesize_notes(
+                seed,
+                self.grouping,
+                &record.pr_group,
+                shared_anchor.as_deref(),
+            );
+
+            rows.push(TaskSpecRow {
+                task_id: record.task_id.clone(),
+                summary: record.summary.clone(),
+                branch: format!(
+                    "{}/s{}-t{}-{}",
+                    self.branch_prefix, seed.sprint, seed.ordinal, slug
+                ),
+                worktree: format!(
+                    "{}-s{}-t{}",
+                    self.worktree_prefix, seed.sprint, seed.ordinal
+                ),
+                owner: format!("{}-s{}-t{}", self.owner_prefix, seed.sprint, seed.ordinal),
+                notes,
+                pr_group: record.pr_group.clone(),
+                sprint: record.sprint,
+                grouping: self.grouping,
+            });
+        }
+
+        let runtime_lane_metadata = runtime_lane_metadata_by_task(&rows, self.strategy);
+        for row in &mut rows {
+            let metadata = runtime_lane_metadata.get(&row.task_id).ok_or_else(|| {
+                format!(
+                    "{}: missing runtime lane metadata after materialization",
+                    row.task_id
+                )
+            })?;
+            row.owner = metadata.owner.clone();
+            row.branch = metadata.branch.clone();
+            row.worktree = metadata.worktree.clone();
+            row.notes = metadata.notes.clone();
+        }
+
+        Ok(rows)
+    }
+}
+
+fn synthesize_notes(
+    seed: &RuntimeTaskSeed,
+    grouping: PrGrouping,
+    pr_group: &str,
+    shared_anchor: Option<&str>,
+) -> String {
+    let mut notes = vec![
+        format!("sprint=S{}", seed.sprint),
+        format!("plan-task:{}", seed.plan_task_id),
+    ];
+    if !seed.dependencies.is_empty() {
+        notes.push(format!("deps={}", seed.dependencies.join(",")));
+    }
+    if let Some(first_validation) = &seed.first_validation {
+        notes.push(format!("validate={first_validation}"));
+    }
+    notes.push(format!("pr-grouping={}", pr_grouping_label(grouping)));
+    notes.push(format!("pr-group={pr_group}"));
+    if let Some(anchor) = shared_anchor {
+        notes.push(format!("shared-pr-anchor={anchor}"));
+    }
+
+    common_markdown::canonicalize_table_cell(&notes.join("; "))
+}
+
+fn pr_grouping_label(grouping: PrGrouping) -> &'static str {
+    match grouping {
+        PrGrouping::PerSprint => "per-sprint",
+        PrGrouping::Group => "group",
+    }
+}
+
+fn normalize_branch_prefix(value: &str) -> String {
+    let trimmed = value.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        "issue".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn normalize_worktree_prefix(value: &str) -> String {
+    let trimmed = value.trim().trim_end_matches(['-', '_']);
+    if trimmed.is_empty() {
+        "issue".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn normalize_owner_prefix(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        "subagent".to_string()
+    } else if trimmed.to_ascii_lowercase().contains("subagent") {
+        trimmed.to_string()
+    } else {
+        format!("subagent-{trimmed}")
+    }
+}
+
+fn normalize_token(value: &str, fallback: &str, max_len: usize) -> String {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in value.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+            last_dash = false;
+        } else if !last_dash {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+    let normalized = out.trim_matches('-').to_string();
+    let mut final_token = if normalized.is_empty() {
+        fallback.to_string()
+    } else {
+        normalized
+    };
+    if final_token.len() > max_len {
+        final_token.truncate(max_len);
+        final_token = final_token.trim_matches('-').to_string();
+    }
+    final_token
+}
+
+fn is_plan_placeholder(value: &str) -> bool {
+    let token = value.trim().to_ascii_lowercase();
+    if matches!(token.as_str(), "" | "-" | "none" | "n/a" | "na" | "...") {
+        return true;
+    }
+    if token.starts_with('<') && token.ends_with('>') {
+        return true;
+    }
+    token.contains("task ids")
 }
 
 pub fn render_tsv(rows: &[TaskSpecRow]) -> String {
@@ -207,7 +446,7 @@ pub fn runtime_lane_metadata_by_task(
                 owner: anchor_row.owner.clone(),
                 branch: anchor_row.branch.clone(),
                 worktree: anchor_row.worktree.clone(),
-                notes: anchor_row.notes.clone(),
+                notes: common_markdown::canonicalize_table_cell(&row.notes),
             },
         );
     }
@@ -259,13 +498,6 @@ fn execution_mode_from_rows(
     out
 }
 
-fn note_value(notes: &str, key: &str) -> Option<String> {
-    notes
-        .split(';')
-        .map(str::trim)
-        .find_map(|part| part.strip_prefix(&format!("{key}=")).map(str::to_string))
-}
-
 fn canonical_lane_anchor_task_id(
     rows: &[TaskSpecRow],
     sprint: i32,
@@ -280,19 +512,6 @@ fn canonical_lane_anchor_task_id(
     }
 
     lane_rows.sort_unstable_by(|a, b| a.task_id.cmp(&b.task_id));
-    let lane_task_ids = lane_rows
-        .iter()
-        .map(|row| row.task_id.as_str())
-        .collect::<BTreeSet<_>>();
-
-    if let Some(anchor) = lane_rows
-        .iter()
-        .find_map(|row| note_value(&row.notes, "shared-pr-anchor"))
-        .filter(|anchor| lane_task_ids.contains(anchor.as_str()))
-    {
-        return Some(anchor);
-    }
-
     lane_rows.first().map(|row| row.task_id.clone())
 }
 
@@ -459,7 +678,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_lane_anchor_prefers_shared_pr_anchor_note() {
+    fn canonical_lane_anchor_uses_stable_task_order_even_when_notes_disagree() {
         let rows = vec![
             spec_row(
                 "S1T1",
@@ -485,7 +704,7 @@ mod tests {
 
         assert_eq!(
             canonical_lane_anchor_task_id(&rows, 1, "s1-auto-g1"),
-            Some("S1T2".to_string())
+            Some("S1T1".to_string())
         );
     }
 

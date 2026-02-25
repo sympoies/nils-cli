@@ -1,5 +1,9 @@
 # plan-issue CLI Contract v1
 
+> Historical reference: see `plan-issue-cli-contract-v2.md` for the current runtime metadata
+> ownership model where `split-prs` outputs grouping primitives only and `plan-issue-cli`
+> materializes runtime execution metadata.
+
 ## Purpose
 Define the v1 command contract for the Rust replacement of the current plan issue orchestration shell entrypoint (`plan-issue-delivery-loop.sh`).
 

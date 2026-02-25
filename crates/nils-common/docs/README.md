@@ -4,7 +4,8 @@
 
 ## Specs
 
-- None yet. Add documents under `docs/specs/` and register them here.
+- [`markdown Helpers Contract v1`](specs/markdown-helpers-contract-v1.md): shared markdown payload
+  validation and table-cell canonicalization contract.
 
 ## Runbooks
 

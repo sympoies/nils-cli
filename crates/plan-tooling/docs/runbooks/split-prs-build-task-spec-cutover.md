@@ -1,7 +1,8 @@
 # split-prs Build Task-Spec Cutover
 
 ## Goal
-Replace downstream `build-task-spec` split generation with `plan-tooling split-prs` while preserving TSV compatibility.
+Replace downstream ad-hoc split generation with `plan-tooling split-prs` grouping primitives while
+keeping `plan-issue-cli build-task-spec` as the runtime metadata materialization authority.
 
 ## Command Mapping
 
@@ -11,7 +12,7 @@ Prior command shape:
 build-task-spec --plan <plan.md> --sprint <n> --pr-grouping <mode> [--pr-group <task=group>]... --task-spec-out <out.tsv>
 ```
 
-Equivalent with `plan-tooling`:
+Equivalent split grouping primitive call (debug/inspection use):
 
 ```bash
 plan-tooling split-prs \
@@ -21,24 +22,20 @@ plan-tooling split-prs \
   --pr-grouping <mode> \
   [--pr-group <task=group>]... \
   --strategy deterministic \
-  --format tsv > <out.tsv>
+  --format json
 ```
 
 ## Compatibility Contract
-The generated TSV must keep this exact header:
+`split-prs` no longer emits task-spec-compatible runtime metadata TSV. In the cutover model:
+- `split-prs` emits grouping primitives only (`task_id`, `summary`, `pr_group`).
+- `plan-issue-cli` materializes `branch`, `worktree`, `owner`, and `notes` from plan content +
+  grouping output.
+
+Reduced `split-prs --format tsv` header:
 
 ```text
-# task_id\tsummary\tbranch\tworktree\towner\tnotes\tpr_group
+# task_id\tsummary\tpr_group
 ```
-
-And preserve these notes keys:
-- `sprint=S<n>`
-- `plan-task:Task N.M`
-- `pr-grouping=<mode>`
-- `pr-group=<group>`
-- optional `deps=...`
-- optional `validate=...`
-- optional `shared-pr-anchor=...` when a group has more than one task
 
 ## Group Mode Rules
 - `--pr-grouping group` + `--strategy deterministic`: pass `--pr-group` for every selected task.
@@ -72,7 +69,7 @@ plan-tooling split-prs \
   --strategy deterministic \
   --format tsv > "$AGENT_HOME/out/plan-issue-delivery-loop/duck-s2.tsv"
 
-rg -n '^# task_id\tsummary\tbranch\tworktree\towner\tnotes\tpr_group$' \
+rg -n '^# task_id\tsummary\tpr_group$' \
   "$AGENT_HOME/out/plan-issue-delivery-loop/duck-s1.tsv" \
   "$AGENT_HOME/out/plan-issue-delivery-loop/duck-s2.tsv"
 ```
@@ -115,7 +112,7 @@ fi
 ```
 
 ## Auto Strategy
-`--strategy auto` is implemented in v1 with deterministic output semantics:
+`--strategy auto` is implemented with deterministic grouping output semantics:
 - scores merge candidates using `Complexity`, dependency topology, and `Location` overlap.
-- preserves stable output ordering and notes schema.
+- preserves stable output ordering and reduced record schema.
 - allows optional `--pr-group` pins in `pr-grouping=group`.

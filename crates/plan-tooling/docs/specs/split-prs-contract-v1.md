@@ -1,5 +1,9 @@
 # split-prs Contract v1
 
+> Historical reference: v1 documents the pre-v2 output shape where `split-prs` emitted runtime
+> execution metadata fields (`branch`, `worktree`, `owner`, `notes`). For current behavior, see
+> `split-prs-contract-v2.md`.
+
 ## Purpose
 `plan-tooling split-prs` converts plan tasks into executable PR slices while preserving a stable
 schema and deterministic ordering.
