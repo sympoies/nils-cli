@@ -137,13 +137,6 @@ fn parse_task_spec_rows(tsv: &str) -> HashMap<String, SpecRow> {
     rows
 }
 
-fn note_value(notes: &str, key: &str) -> Option<String> {
-    notes
-        .split(';')
-        .map(str::trim)
-        .find_map(|part| part.strip_prefix(&format!("{key}=")).map(str::to_string))
-}
-
 fn gh_stub_script() -> &'static str {
     r#"#!/usr/bin/env bash
 set -euo pipefail
@@ -196,26 +189,8 @@ fn gh_cmd_options(stub_dir: &Path, envs: &[(&str, &str)]) -> CmdOptions {
         .with_envs(envs)
 }
 
-fn issue_body_with_preface(task_rows: &str) -> String {
-    format!(
-        r#"# Plan: Sprint 1 overwrite characterization
-
-## Overview
-
-- This issue body starts with canonical shared-lane metadata for the sprint rows.
-- The test characterizes current start-sprint behavior that rewrites those rows from task-spec.
-
-## Task Decomposition
-
-| Task | Summary | Owner | Branch | Worktree | Execution Mode | PR | Status | Notes |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-{task_rows}
-"#
-    )
-}
-
 #[test]
-fn live_start_sprint_overwrites_issue_rows_from_recomputed_task_spec_in_auto_single_lane() {
+fn live_start_sprint_uses_issue_table_runtime_truth_without_rewrite() {
     let tmp = TempDir::new().expect("temp dir");
     let stub = StubBinDir::new();
     stub.write_exe("gh", gh_stub_script());
@@ -229,11 +204,11 @@ fn live_start_sprint_overwrites_issue_rows_from_recomputed_task_spec_in_auto_sin
     let capture_body = tmp.path().join("captured-start-sprint-body.md");
     let capture_body_s = capture_body.to_string_lossy().to_string();
 
-    let plan_file = tmp.path().join("sprint1-auto-single-lane.md");
+    let plan_file = tmp.path().join("sprint1-runtime-truth.md");
     let plan_file_s = plan_file.to_string_lossy().to_string();
     fs::write(
         &plan_file,
-        r#"# Plan: Sprint 1 overwrite characterization
+        r#"# Plan: Sprint 1 runtime truth
 
 ## Sprint 1: Shared lane
 - **PR grouping intent**: `group`.
@@ -254,12 +229,34 @@ fn live_start_sprint_overwrites_issue_rows_from_recomputed_task_spec_in_auto_sin
     )
     .expect("write plan");
 
-    let canonical_issue_body = issue_body_with_preface(
-        r#"| S1T1 | First lane task | subagent-s1-lane | issue/s1-shared-lane | issue-s1-lane | per-sprint | TBD | planned | sprint=S1; plan-task:Task 1.1; pr-group=s1-auto-g1; shared-pr-anchor=S1T2; source=issue-table-canonical |
-| S1T2 | Follow-up lane task | subagent-s1-lane | issue/s1-shared-lane | issue-s1-lane | per-sprint | TBD | planned | sprint=S1; plan-task:Task 1.2; pr-group=s1-auto-g1; shared-pr-anchor=S1T2; source=issue-table-canonical |
-"#,
+    let plan_task_spec = tmp.path().join("plan-task-spec.tsv");
+    let plan_issue_body = tmp.path().join("plan-issue-body.md");
+    let plan_task_spec_s = plan_task_spec.to_string_lossy().to_string();
+    let plan_issue_body_s = plan_issue_body.to_string_lossy().to_string();
+
+    let start_plan_out = common::run_plan_issue_local_with_env(
+        &[
+            "--format",
+            "json",
+            "--dry-run",
+            "start-plan",
+            "--plan",
+            &plan_file_s,
+            "--pr-grouping",
+            "group",
+            "--strategy",
+            "auto",
+            "--task-spec-out",
+            &plan_task_spec_s,
+            "--issue-body-out",
+            &plan_issue_body_s,
+        ],
+        &[("AGENT_HOME", &agent_home_s)],
     );
-    let body_json = json!({ "body": canonical_issue_body }).to_string();
+    assert_eq!(start_plan_out.code, 0, "stderr: {}", start_plan_out.stderr);
+
+    let issue_body = fs::read_to_string(&plan_issue_body).expect("read issue body");
+    let body_json = json!({ "body": issue_body.clone() }).to_string();
 
     let task_spec_out = tmp.path().join("sprint1-task-spec.tsv");
     let task_spec_out_s = task_spec_out.to_string_lossy().to_string();
@@ -310,43 +307,42 @@ fn live_start_sprint_overwrites_issue_rows_from_recomputed_task_spec_in_auto_sin
     assert_eq!(payload["payload"]["result"]["synced_issue_rows"], 2);
     assert_eq!(
         payload["payload"]["result"]["live_mutations_performed"],
-        true
+        false
     );
 
-    let captured_body = fs::read_to_string(&capture_body).expect("read captured issue body");
-    let issue_rows = parse_task_decomposition_rows(&captured_body);
+    assert!(
+        !capture_body.exists(),
+        "start-sprint should not rewrite issue body in runtime-truth mode"
+    );
+
+    let issue_rows = parse_task_decomposition_rows(&issue_body);
     let issue_s1t1 = issue_rows.get("S1T1").expect("S1T1 issue row");
     let issue_s1t2 = issue_rows.get("S1T2").expect("S1T2 issue row");
     assert_eq!(issue_s1t1.execution_mode, "per-sprint");
     assert_eq!(issue_s1t2.execution_mode, "per-sprint");
-    assert!(
-        !captured_body.contains("source=issue-table-canonical"),
-        "{captured_body}"
-    );
-    assert!(
-        !captured_body.contains("issue/s1-shared-lane"),
-        "{captured_body}"
-    );
-    assert!(!captured_body.contains("issue-s1-lane"), "{captured_body}");
-    assert!(
-        !captured_body.contains("| subagent-s1-lane |"),
-        "{captured_body}"
-    );
 
     let spec_path = result_path(&payload, "task_spec_path");
     let spec_text = fs::read_to_string(&spec_path).expect("read task-spec");
     let spec_rows = parse_task_spec_rows(&spec_text);
-    let anchor_task = note_value(&issue_s1t1.notes, "shared-pr-anchor").expect("shared anchor");
-    let spec_anchor = spec_rows
-        .get(&anchor_task)
-        .unwrap_or_else(|| panic!("missing spec row for anchor task {anchor_task}"));
 
-    for issue_row in [issue_s1t1, issue_s1t2] {
-        assert_eq!(issue_row.owner, spec_anchor.owner);
-        assert_eq!(issue_row.branch, spec_anchor.branch);
-        assert_eq!(issue_row.worktree, spec_anchor.worktree);
-        assert_eq!(issue_row.notes, spec_anchor.notes);
+    for (task_id, issue_row) in [("S1T1", issue_s1t1), ("S1T2", issue_s1t2)] {
+        let spec_row = spec_rows
+            .get(task_id)
+            .unwrap_or_else(|| panic!("missing spec row {task_id}"));
+        assert_eq!(issue_row.owner, spec_row.owner);
+        assert_eq!(issue_row.branch, spec_row.branch);
+        assert_eq!(issue_row.worktree, spec_row.worktree);
+        assert_eq!(issue_row.notes, spec_row.notes);
     }
+
+    let prompt_files = payload["payload"]["result"]["subagent_prompt_files"]
+        .as_array()
+        .expect("subagent prompt files");
+    assert_eq!(prompt_files.len(), 1, "{}", out.stdout);
+    let prompt_path = prompt_files[0].as_str().expect("prompt path");
+    let prompt = fs::read_to_string(prompt_path).expect("read prompt");
+    assert!(prompt.contains("Tasks: S1T1, S1T2"), "{prompt}");
+    assert!(prompt.contains("Execution Mode: per-sprint"), "{prompt}");
 
     let log = fs::read_to_string(&log_path).expect("read gh log");
     assert!(
@@ -354,7 +350,7 @@ fn live_start_sprint_overwrites_issue_rows_from_recomputed_task_spec_in_auto_sin
         "{log}"
     );
     assert!(
-        log.contains("issue edit 217 --repo graysurf/nils-cli --body-file"),
+        !log.contains("issue edit 217 --repo graysurf/nils-cli --body-file"),
         "{log}"
     );
     assert!(
