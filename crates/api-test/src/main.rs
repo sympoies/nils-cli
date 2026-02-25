@@ -11,7 +11,7 @@ use api_testing_core::suite::resolve::{
 use api_testing_core::suite::runner::{SuiteRunOptions, run_suite};
 use api_testing_core::suite::schema::load_and_validate_suite;
 use api_testing_core::suite::summary::{SummaryOptions, render_summary_from_json_str};
-use nils_term::progress::{Progress, ProgressOptions};
+use nils_term::progress::{Progress, ProgressEnabled, ProgressOptions};
 
 mod completion;
 
@@ -171,6 +171,44 @@ fn print_root_help() {
     println!("  api-test completion zsh");
 }
 
+fn progress_enabled_from_env(raw: Option<&str>) -> ProgressEnabled {
+    let Some(value) = raw.map(str::trim).filter(|v| !v.is_empty()) else {
+        return ProgressEnabled::Auto;
+    };
+
+    if value.eq_ignore_ascii_case("auto") {
+        return ProgressEnabled::Auto;
+    }
+
+    if value.eq_ignore_ascii_case("on")
+        || value == "1"
+        || value.eq_ignore_ascii_case("true")
+        || value.eq_ignore_ascii_case("yes")
+    {
+        return ProgressEnabled::On;
+    }
+
+    if value.eq_ignore_ascii_case("off")
+        || value == "0"
+        || value.eq_ignore_ascii_case("false")
+        || value.eq_ignore_ascii_case("no")
+    {
+        return ProgressEnabled::Off;
+    }
+
+    ProgressEnabled::Auto
+}
+
+fn suite_progress(total_cases: usize) -> Progress {
+    let enabled = progress_enabled_from_env(std::env::var("API_TEST_PROGRESS").ok().as_deref());
+    Progress::new(
+        total_cases as u64,
+        ProgressOptions::default()
+            .with_prefix("api-test ")
+            .with_enabled(enabled),
+    )
+}
+
 fn main() {
     std::process::exit(run());
 }
@@ -242,10 +280,7 @@ fn cmd_run(args: &RunArgs) -> i32 {
         }
     };
 
-    let progress = Progress::new(
-        loaded.manifest.cases.len() as u64,
-        ProgressOptions::default().with_prefix("api-test "),
-    );
+    let progress = suite_progress(loaded.manifest.cases.len());
 
     let out_dir_base_raw = std::env::var("API_TEST_OUTPUT_DIR")
         .ok()
@@ -401,7 +436,8 @@ fn cmd_summary(args: &SummaryArgs) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::argv_with_default_command;
+    use super::{argv_with_default_command, progress_enabled_from_env};
+    use nils_term::progress::ProgressEnabled;
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -434,6 +470,38 @@ mod tests {
                 "--suite".to_string(),
                 "smoke".to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn progress_enabled_from_env_parses_auto_on_off_aliases() {
+        assert_eq!(progress_enabled_from_env(None), ProgressEnabled::Auto);
+        assert_eq!(progress_enabled_from_env(Some("")), ProgressEnabled::Auto);
+        assert_eq!(
+            progress_enabled_from_env(Some("auto")),
+            ProgressEnabled::Auto
+        );
+        assert_eq!(
+            progress_enabled_from_env(Some("AUTO")),
+            ProgressEnabled::Auto
+        );
+
+        assert_eq!(progress_enabled_from_env(Some("on")), ProgressEnabled::On);
+        assert_eq!(progress_enabled_from_env(Some("1")), ProgressEnabled::On);
+        assert_eq!(progress_enabled_from_env(Some("true")), ProgressEnabled::On);
+        assert_eq!(progress_enabled_from_env(Some("yes")), ProgressEnabled::On);
+
+        assert_eq!(progress_enabled_from_env(Some("off")), ProgressEnabled::Off);
+        assert_eq!(progress_enabled_from_env(Some("0")), ProgressEnabled::Off);
+        assert_eq!(
+            progress_enabled_from_env(Some("false")),
+            ProgressEnabled::Off
+        );
+        assert_eq!(progress_enabled_from_env(Some("no")), ProgressEnabled::Off);
+
+        assert_eq!(
+            progress_enabled_from_env(Some("unexpected")),
+            ProgressEnabled::Auto
         );
     }
 }
