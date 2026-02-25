@@ -2719,7 +2719,7 @@ mod tests {
         assert!(lane_prompt.contains("Task: S3T2"), "{lane_prompt}");
         assert!(lane_prompt.contains("Tasks: S3T1, S3T2"), "{lane_prompt}");
         assert!(
-            lane_prompt.contains("Execution Mode: per-sprint"),
+            lane_prompt.contains("Execution Mode: pr-shared"),
             "{lane_prompt}"
         );
         assert!(
