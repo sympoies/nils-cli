@@ -582,6 +582,79 @@ fn render_issue_body_start_sprint_group_auto_single_pr_lane_uses_per_sprint_mode
 }
 
 #[test]
+fn write_subagent_prompts_groups_tasks_by_runtime_lane() {
+    let tmp = TempDir::new().expect("temp dir");
+    let agent_home = tmp.path().join("agent-home");
+    fs::create_dir_all(&agent_home).expect("create agent home");
+    let agent_home_s = agent_home.to_string_lossy().to_string();
+
+    let plan_file = tmp.path().join("auto-single-lane-prompts-plan.md");
+    let plan_file_s = plan_file.to_string_lossy().to_string();
+    fs::write(
+        &plan_file,
+        r#"# Plan: auto single lane prompt grouping test
+
+## Sprint 1: Serial lane
+- **PR grouping intent**: `group`.
+- **Execution Profile**: `serial` (parallel width 1).
+
+### Task 1.1: First lane task
+- **Location**:
+  - crates/plan-issue-cli/src/a.rs
+- **Dependencies**:
+  - none
+
+### Task 1.2: Follow-up task
+- **Location**:
+  - crates/plan-issue-cli/src/b.rs
+- **Dependencies**:
+  - Task 1.1
+"#,
+    )
+    .expect("write plan");
+
+    let prompts_out = tmp.path().join("sprint1-prompts");
+    let prompts_out_s = prompts_out.to_string_lossy().to_string();
+    let out = common::run_plan_issue_local_with_env(
+        &[
+            "--format",
+            "json",
+            "--dry-run",
+            "start-sprint",
+            "--plan",
+            &plan_file_s,
+            "--issue",
+            "217",
+            "--sprint",
+            "1",
+            "--subagent-prompts-out",
+            &prompts_out_s,
+            "--pr-grouping",
+            "group",
+            "--strategy",
+            "auto",
+            "--no-comment",
+        ],
+        &[("AGENT_HOME", &agent_home_s)],
+    );
+
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+    let payload = parse_json(&out.stdout);
+    let prompt_files = payload["payload"]["result"]["subagent_prompt_files"]
+        .as_array()
+        .expect("prompt files");
+    assert_eq!(prompt_files.len(), 1, "{}", out.stdout);
+
+    let prompt_path = prompt_files[0].as_str().expect("prompt path");
+    let prompt = fs::read_to_string(prompt_path).expect("read prompt");
+    assert!(prompt.contains("- Tasks: S1T1, S1T2"), "{prompt}");
+    assert!(prompt.contains("- Execution Mode: per-sprint"), "{prompt}");
+    assert!(prompt.contains("## Lane Tasks"), "{prompt}");
+    assert!(prompt.contains("- S1T1: First lane task"), "{prompt}");
+    assert!(prompt.contains("- S1T2: Follow-up task"), "{prompt}");
+}
+
+#[test]
 fn local_flow_plan_issue_local_dry_run_end_to_end_generates_artifacts() {
     let tmp = TempDir::new().expect("temp dir");
     let agent_home = tmp.path().join("agent-home");
