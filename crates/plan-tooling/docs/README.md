@@ -4,7 +4,7 @@
 
 ## Specs
 
-- [`split-prs Contract v1`](specs/split-prs-contract-v1.md): deterministic split contract for
+- [`split-prs Contract v1`](specs/split-prs-contract-v1.md): deterministic/auto split contract for
   `plan-tooling split-prs`.
 
 ## Runbooks

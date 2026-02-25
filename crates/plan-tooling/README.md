@@ -38,7 +38,7 @@ Help:
   sprint.
 
 ### split-prs
-- `split-prs --file <plan.md> --scope <plan|sprint> [--sprint <n>] --pr-grouping <per-sprint|group> [--pr-group <task-or-plan-id>=<group>]... [--strategy deterministic|auto] [--explain] [--format json|tsv]`
+- `split-prs --file <plan.md> --scope <plan|sprint> [--sprint <n>] --pr-grouping <per-sprint|group> [--pr-group <task-or-plan-id>=<group>]... [--strategy deterministic|auto] [--explain] [--owner-prefix <text>] [--branch-prefix <text>] [--worktree-prefix <text>] [--format json|tsv]`
 - value options accept both `--key value` and `--key=value`.
 - deterministic mode:
   - `--pr-grouping per-sprint`: one shared `pr_group` per sprint (`s<n>`).

@@ -40,7 +40,8 @@ The crate ships two binaries with the same command surface:
 - `--format text`: human-readable output.
 
 ## Grouping and strategy rules
-- `--pr-grouping` is required for build/start/ready/accept flows.
+- `--pr-grouping` is required for split-dependent commands:
+  - `build-task-spec`, `build-plan-task-spec`, `start-plan`, `start-sprint`, `ready-sprint`, `accept-sprint`.
 - `--pr-grouping per-sprint`: one shared group per sprint (default style).
 - `--pr-grouping group --strategy deterministic`: requires explicit `--pr-group <task>=<group>` mappings.
 - `--pr-grouping group --strategy auto`: allows optional pins and auto assignment for remaining tasks.
