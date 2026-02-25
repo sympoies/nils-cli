@@ -887,6 +887,33 @@ fn split_prs_non_regression_required_notes_keys() {
         assert!(notes.contains("pr-grouping=per-sprint"));
         assert!(notes.contains("pr-group=s1"));
     }
+
+    let group_rows = tsv_rows("group_expected.tsv");
+    let mut members_by_group: HashMap<String, Vec<String>> = HashMap::new();
+    for row in &group_rows {
+        assert_eq!(row.len(), 7);
+        members_by_group
+            .entry(row[6].clone())
+            .or_default()
+            .push(row[0].clone());
+    }
+
+    for row in &group_rows {
+        let notes = &row[5];
+        let pr_group = &row[6];
+        assert!(notes.contains("pr-grouping=group"), "{notes}");
+        assert!(notes.contains(&format!("pr-group={pr_group}")), "{notes}");
+
+        let members = members_by_group.get(pr_group).expect("group members");
+        if members.len() > 1 {
+            let anchor = notes
+                .split(';')
+                .map(str::trim)
+                .find_map(|token| token.strip_prefix("shared-pr-anchor="))
+                .expect("shared-pr-anchor note");
+            assert!(members.iter().any(|task| task == anchor), "{notes}");
+        }
+    }
 }
 
 #[test]
