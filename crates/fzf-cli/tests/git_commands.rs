@@ -1,5 +1,6 @@
 mod common;
 
+use nils_test_support::fs as test_fs;
 use pretty_assertions::assert_eq;
 use std::fs;
 
@@ -8,11 +9,10 @@ fn git_branch_checkout_confirmed() {
     let temp = tempfile::TempDir::new().unwrap();
     let stub = common::make_stub_dir();
     let out_dir = stub.path().join("fzf-out");
-    fs::create_dir_all(&out_dir).unwrap();
-    fs::write(out_dir.join("1.out"), "main\n").unwrap();
+    test_fs::write_text(&out_dir.join("1.out"), "main\n");
 
     let git_log = temp.path().join("git.log");
-    fs::write(&git_log, "").unwrap();
+    test_fs::write_text(&git_log, "");
 
     common::write_exe(stub.path(), "fzf", common::fzf_stub_script());
     common::write_exe(
@@ -67,11 +67,10 @@ fn git_tag_checkout_success() {
     let temp = tempfile::TempDir::new().unwrap();
     let stub = common::make_stub_dir();
     let out_dir = stub.path().join("fzf-out");
-    fs::create_dir_all(&out_dir).unwrap();
-    fs::write(out_dir.join("1.out"), "v1.0.0\n").unwrap();
+    test_fs::write_text(&out_dir.join("1.out"), "v1.0.0\n");
 
     let git_log = temp.path().join("git.log");
-    fs::write(&git_log, "").unwrap();
+    test_fs::write_text(&git_log, "");
 
     common::write_exe(stub.path(), "fzf", common::fzf_stub_script());
     common::write_exe(
@@ -132,15 +131,13 @@ fn git_checkout_stashes_and_retries() {
     let temp = tempfile::TempDir::new().unwrap();
     let stub = common::make_stub_dir();
     let out_dir = stub.path().join("fzf-out");
-    fs::create_dir_all(&out_dir).unwrap();
-    fs::write(
-        out_dir.join("1.out"),
+    test_fs::write_text(
+        &out_dir.join("1.out"),
         "query\nabc123 01-01 00:00 User subject\n",
-    )
-    .unwrap();
+    );
 
     let checkout_count = temp.path().join("checkout.count");
-    fs::write(&checkout_count, "0").unwrap();
+    test_fs::write_text(&checkout_count, "0");
 
     common::write_exe(stub.path(), "fzf", common::fzf_stub_script());
     common::write_exe(
@@ -215,8 +212,7 @@ fn git_status_runs_with_stubbed_fzf() {
     let temp = tempfile::TempDir::new().unwrap();
     let stub = common::make_stub_dir();
     let out_dir = stub.path().join("fzf-out");
-    fs::create_dir_all(&out_dir).unwrap();
-    fs::write(out_dir.join("1.out"), "").unwrap();
+    test_fs::write_text(&out_dir.join("1.out"), "");
 
     common::write_exe(stub.path(), "fzf", common::fzf_stub_script());
     common::write_exe(
@@ -256,16 +252,14 @@ fn git_commit_opens_selected_worktree_file() {
 
     let stub = common::make_stub_dir();
     let out_dir = stub.path().join("fzf-out");
-    fs::create_dir_all(&out_dir).unwrap();
-    fs::write(
-        out_dir.join("1.out"),
+    test_fs::write_text(
+        &out_dir.join("1.out"),
         "query\nabcdef1 01-01 00:00 User subject\n",
-    )
-    .unwrap();
-    fs::write(out_dir.join("2.out"), "\n[M] file.txt  [+1 / -0]\n").unwrap();
+    );
+    test_fs::write_text(&out_dir.join("2.out"), "\n[M] file.txt  [+1 / -0]\n");
 
     let vi_log = temp.path().join("vi.log");
-    fs::write(&vi_log, "").unwrap();
+    test_fs::write_text(&vi_log, "");
 
     common::write_exe(stub.path(), "fzf", common::fzf_stub_script());
     common::write_exe(

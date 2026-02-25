@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use nils_common::{fs as common_fs, git as common_git};
+use nils_common::{env as common_env, fs as common_fs, git as common_git};
 use plan_tooling::parse::parse_plan_with_display;
 use plan_tooling::split_prs::{
     SplitPlanOptions, SplitPrGrouping, SplitPrStrategy, SplitScope, build_split_plan_records,
@@ -172,11 +172,8 @@ pub fn default_sprint_task_spec_path(plan_file: &Path, sprint: i32) -> PathBuf {
 }
 
 pub fn agent_home() -> PathBuf {
-    if let Ok(raw) = std::env::var("AGENT_HOME") {
-        let trimmed = raw.trim();
-        if !trimmed.is_empty() {
-            return PathBuf::from(trimmed);
-        }
+    if let Some(agent_home) = common_env::env_non_empty("AGENT_HOME") {
+        return PathBuf::from(agent_home);
     }
     detect_repo_root().join(".agents")
 }

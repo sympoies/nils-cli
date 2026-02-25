@@ -2,14 +2,9 @@ use std::collections::HashSet;
 
 use api_testing_core::suite::runner::{SuiteRunOptions, run_suite};
 use api_testing_core::suite::schema::load_and_validate_suite;
-use nils_test_support::fs::write_executable;
+use nils_test_support::fs::{write_executable, write_text};
 use nils_test_support::{EnvGuard, GlobalStateLock};
 use tempfile::TempDir;
-
-fn write_file(path: &std::path::Path, body: &str) {
-    std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
-    std::fs::write(path, body).expect("write");
-}
 
 #[test]
 fn suite_runner_executes_grpc_case_with_mock_transport() {
@@ -20,7 +15,7 @@ fn suite_runner_executes_grpc_case_with_mock_transport() {
     let mock = root.join("grpcurl-mock.sh");
     write_executable(&mock, "#!/bin/sh\necho '{\"ok\":true}'\nexit 0\n");
 
-    write_file(
+    write_text(
         &root.join("requests/health.grpc.json"),
         r#"{
   "method": "health.HealthService/Check",
@@ -29,7 +24,7 @@ fn suite_runner_executes_grpc_case_with_mock_transport() {
 }"#,
     );
 
-    write_file(
+    write_text(
         &root.join("grpc.suite.json"),
         r#"{
   "version": 1,
