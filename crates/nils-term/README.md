@@ -3,6 +3,20 @@
 ## Overview
 Small terminal utilities shared across the workspace.
 
+## Shared helper policy
+
+### What belongs in `nils-term`
+
+- Domain-neutral progress primitives that can be reused by multiple binaries.
+- Structured APIs (`Progress`, `ProgressOptions`, `ProgressEnabled`) that callers can compose.
+- Behavior that can be verified with deterministic unit/integration tests.
+
+### What stays crate-local
+
+- Product-specific progress copy, emoji/prefix style, and section wording.
+- CLI-specific policy decisions about when progress should appear for a command.
+- Exit-code mapping and command-level error/warning text.
+
 ## Progress
 `nils-term` provides a minimal, RAII-friendly progress abstraction that is safe for
 machine-readable stdout output:
@@ -44,6 +58,14 @@ Prefer accepting a `Progress` (or `ProgressOptions`) from the caller instead of 
 inside library code. This keeps libraries deterministic and lets binaries decide whether to show
 progress (e.g. interactive vs CI).
 
+## Migration guidance
+
+When migrating crate-local progress code into `nils-term`:
+
+1. Add/keep characterization tests before moving behavior.
+2. Keep progress rendering to `stderr` so machine-readable `stdout` remains stable.
+3. Keep CLI-local adapters for command wording and error/exit semantics.
+4. Re-run command-contract tests for TTY, non-TTY, JSON, and `NO_COLOR` flows.
 
 ## Docs
 
