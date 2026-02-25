@@ -386,7 +386,7 @@ contains_token() {
   local token="$2"
   local escaped
   escaped="$(escape_ere "$token")"
-  printf '%s\n' "$haystack" | LC_ALL=C grep -Eq "(^|[^[:alnum:]-])${escaped}([^[:alnum:]-]|$)"
+  LC_ALL=C grep -Eq "(^|[^[:alnum:]-])${escaped}([^[:alnum:]-]|$)" <<<"$haystack"
 }
 
 command_display_for_path() {
