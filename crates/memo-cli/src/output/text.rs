@@ -163,12 +163,8 @@ fn style_state(state: &str) -> String {
 }
 
 fn color_enabled() -> bool {
-    if !shared_env::no_color_enabled() {
-        return true;
-    }
-
     // Keep memo-cli's existing behavior: empty NO_COLOR still keeps color enabled.
-    shared_env::env_or_default("NO_COLOR", "").trim().is_empty()
+    !shared_env::no_color_non_empty_enabled()
 }
 
 #[cfg(test)]

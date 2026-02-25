@@ -13,6 +13,14 @@ fn truthy_from_env(name: &str) -> Option<bool> {
     })
 }
 
+pub fn env_present(name: &str) -> bool {
+    std::env::var_os(name).is_some()
+}
+
+pub fn env_truthy_if_present(name: &str) -> Option<bool> {
+    std::env::var(name).ok().map(|value| is_truthy(value.trim()))
+}
+
 pub fn env_truthy(name: &str) -> bool {
     truthy_from_env(name).unwrap_or(false)
 }
@@ -26,7 +34,13 @@ pub fn env_or_default(name: &str, default: &str) -> String {
 }
 
 pub fn no_color_enabled() -> bool {
-    std::env::var_os("NO_COLOR").is_some()
+    env_present("NO_COLOR")
+}
+
+pub fn no_color_non_empty_enabled() -> bool {
+    std::env::var("NO_COLOR")
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty())
 }
 
 pub fn no_color_requested(explicit_no_color: bool) -> bool {
@@ -64,6 +78,37 @@ mod tests {
         let lock = GlobalStateLock::new();
         let _guard = EnvGuard::set(&lock, "NILS_COMMON_ENV_TRUTHY_TEST", "yes");
         assert!(env_truthy("NILS_COMMON_ENV_TRUTHY_TEST"));
+    }
+
+    #[test]
+    fn env_present_checks_var_presence() {
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::set(&lock, "NILS_COMMON_ENV_PRESENT_TEST", "");
+        assert!(env_present("NILS_COMMON_ENV_PRESENT_TEST"));
+    }
+
+    #[test]
+    fn env_truthy_if_present_returns_none_when_missing() {
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::remove(&lock, "NILS_COMMON_ENV_TRUTHY_IF_PRESENT_MISSING_TEST");
+        assert_eq!(
+            env_truthy_if_present("NILS_COMMON_ENV_TRUTHY_IF_PRESENT_MISSING_TEST"),
+            None
+        );
+    }
+
+    #[test]
+    fn env_truthy_if_present_parses_trimmed_value() {
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::set(
+            &lock,
+            "NILS_COMMON_ENV_TRUTHY_IF_PRESENT_VALUE_TEST",
+            " yes ",
+        );
+        assert_eq!(
+            env_truthy_if_present("NILS_COMMON_ENV_TRUTHY_IF_PRESENT_VALUE_TEST"),
+            Some(true)
+        );
     }
 
     #[test]
@@ -113,6 +158,21 @@ mod tests {
         let lock = GlobalStateLock::new();
         let _guard = EnvGuard::set(&lock, "NO_COLOR", "");
         assert!(no_color_enabled());
+    }
+
+    #[test]
+    fn no_color_non_empty_enabled_distinguishes_empty_and_non_empty() {
+        let lock = GlobalStateLock::new();
+
+        {
+            let _guard = EnvGuard::set(&lock, "NO_COLOR", "1");
+            assert!(no_color_non_empty_enabled());
+        }
+
+        {
+            let _guard = EnvGuard::set(&lock, "NO_COLOR", "");
+            assert!(!no_color_non_empty_enabled());
+        }
     }
 
     #[test]
