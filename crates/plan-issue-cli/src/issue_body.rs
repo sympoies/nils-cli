@@ -168,6 +168,7 @@ pub fn validate_rows(rows: &[TaskRow]) -> Vec<String> {
     let mut isolated_worktrees: HashMap<String, String> = HashMap::new();
     let mut shared_lane_metadata: HashMap<String, (String, String, String, String)> =
         HashMap::new();
+    let mut shared_lane_prs: HashMap<String, (String, String)> = HashMap::new();
 
     for row in rows {
         let status = row.status.trim().to_ascii_lowercase();
@@ -281,12 +282,39 @@ pub fn validate_rows(rows: &[TaskRow]) -> Vec<String> {
                     ));
                 }
             } else {
-                shared_lane_metadata.insert(lane_key, (row.task.clone(), owner, branch, worktree));
+                shared_lane_metadata.insert(
+                    lane_key.clone(),
+                    (row.task.clone(), owner, branch, worktree),
+                );
+            }
+
+            if let Some(pr_key) = canonical_pr_key(&row.pr) {
+                let current_pr_display = normalize_pr_display(&row.pr);
+                if let Some((prev_task, prev_pr_key)) = shared_lane_prs.get(&lane_key) {
+                    if prev_pr_key != &pr_key {
+                        errors.push(format!(
+                            "{}: {} lane `{}` PR `{}` conflicts with task {} (`{}`)",
+                            row.task,
+                            execution_mode,
+                            lane_label,
+                            current_pr_display,
+                            prev_task,
+                            prev_pr_key
+                        ));
+                    }
+                } else {
+                    shared_lane_prs.insert(lane_key, (row.task.clone(), pr_key));
+                }
             }
         }
     }
 
     errors
+}
+
+pub fn runtime_pr_sync_lane(row: &TaskRow) -> Option<(String, String)> {
+    let execution_mode = row.execution_mode.trim().to_ascii_lowercase();
+    shared_lane_key(row, &execution_mode)
 }
 
 fn shared_lane_key(row: &TaskRow, execution_mode: &str) -> Option<(String, String)> {
@@ -349,6 +377,18 @@ pub fn parse_pr_number(value: &str) -> Option<u64> {
     }
 
     None
+}
+
+fn canonical_pr_key(value: &str) -> Option<String> {
+    if is_placeholder(value) {
+        return None;
+    }
+
+    if let Some(pr) = parse_pr_number(value) {
+        return Some(format!("#{pr}"));
+    }
+
+    Some(value.trim().to_ascii_lowercase())
 }
 
 pub fn normalize_pr_display(value: &str) -> String {
@@ -628,6 +668,81 @@ mod tests {
         assert!(
             errs.iter()
                 .any(|err| err.contains("S5T2: per-sprint lane `S5`")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn validate_rows_detects_conflicting_shared_lane_pr_values() {
+        let rows = [
+            TaskRow {
+                task: "S5T1".to_string(),
+                summary: "x".to_string(),
+                owner: "subagent-s5-lane".to_string(),
+                branch: "issue/s5-shared".to_string(),
+                worktree: "issue-s5-shared".to_string(),
+                execution_mode: "pr-shared".to_string(),
+                pr: "#5".to_string(),
+                status: "in-progress".to_string(),
+                notes: "sprint=S5; pr-group=s5-core".to_string(),
+                line_index: 0,
+            },
+            TaskRow {
+                task: "S5T2".to_string(),
+                summary: "x".to_string(),
+                owner: "subagent-s5-lane".to_string(),
+                branch: "issue/s5-shared".to_string(),
+                worktree: "issue-s5-shared".to_string(),
+                execution_mode: "pr-shared".to_string(),
+                pr: "#6".to_string(),
+                status: "in-progress".to_string(),
+                notes: "sprint=S5; pr-group=s5-core".to_string(),
+                line_index: 1,
+            },
+        ];
+
+        let errs = validate_rows(&rows);
+        assert!(
+            errs.iter()
+                .any(|err| err.contains("S5T2: pr-shared lane `S5/s5-core` PR `#6` conflicts")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn validate_rows_accepts_equivalent_pr_references_in_shared_lane() {
+        let rows = [
+            TaskRow {
+                task: "S5T1".to_string(),
+                summary: "x".to_string(),
+                owner: "subagent-s5-lane".to_string(),
+                branch: "issue/s5-shared".to_string(),
+                worktree: "issue-s5-shared".to_string(),
+                execution_mode: "per-sprint".to_string(),
+                pr: "#5".to_string(),
+                status: "in-progress".to_string(),
+                notes: "sprint=S5".to_string(),
+                line_index: 0,
+            },
+            TaskRow {
+                task: "S5T2".to_string(),
+                summary: "x".to_string(),
+                owner: "subagent-s5-lane".to_string(),
+                branch: "issue/s5-shared".to_string(),
+                worktree: "issue-s5-shared".to_string(),
+                execution_mode: "per-sprint".to_string(),
+                pr: "https://github.com/x/y/pull/5".to_string(),
+                status: "in-progress".to_string(),
+                notes: "sprint=S5".to_string(),
+                line_index: 1,
+            },
+        ];
+
+        let errs = validate_rows(&rows);
+        assert!(
+            !errs
+                .iter()
+                .any(|err| err.contains("PR") && err.contains("conflicts")),
             "{errs:?}"
         );
     }

@@ -85,6 +85,11 @@ Expected transitions:
 - `planned|in-progress -> blocked` when execution is paused by external constraint.
 - `blocked -> in-progress` when blocker is cleared.
 
+Mutation command notes:
+- `link-pr` records a concrete `PR` reference and updates selected row `Status` (default `in-progress`).
+- `link-pr --task <id>` expands to all rows in the same runtime PR lane for `per-sprint` / `pr-shared` rows to keep shared-lane `PR` values consistent.
+- `link-pr --sprint <N>` must target a single runtime PR lane (or use `--pr-group`) to avoid ambiguous multi-lane updates.
+
 Row-level status rules:
 - `Status in {in-progress, done}` requires non-placeholder values for:
   - `Owner`

@@ -11,7 +11,8 @@ use serde_json::{Value, json};
 use crate::cli::Cli;
 use crate::commands::build::{BuildPlanTaskSpecArgs, BuildTaskSpecArgs};
 use crate::commands::plan::{
-    CleanupWorktreesArgs, ClosePlanArgs, ReadyPlanArgs, StartPlanArgs, StatusPlanArgs,
+    CleanupWorktreesArgs, ClosePlanArgs, LinkPrArgs, LinkPrStatus, ReadyPlanArgs, StartPlanArgs,
+    StatusPlanArgs,
 };
 use crate::commands::sprint::{
     AcceptSprintArgs, MultiSprintGuideArgs, ReadySprintArgs, StartSprintArgs,
@@ -34,6 +35,9 @@ pub fn execute(binary: BinaryFlavor, cli: &Cli) -> Result<Value, CommandError> {
         }
         CliCommand::StatusPlan(args) => {
             run_status_plan(binary, cli.dry_run, cli.force, cli.repo.as_deref(), args)
+        }
+        CliCommand::LinkPr(args) => {
+            run_link_pr(binary, cli.dry_run, cli.force, cli.repo.as_deref(), args)
         }
         CliCommand::ReadyPlan(args) => {
             run_ready_plan(binary, cli.dry_run, cli.force, cli.repo.as_deref(), args)
@@ -282,6 +286,299 @@ fn run_status_plan(
         "comment_preview": should_comment.then_some(comment_text),
         "live_mutations_performed": live_mutations,
     }))
+}
+
+#[derive(Debug, Clone)]
+struct LinkPrSelection {
+    row_indexes: Vec<usize>,
+    row_tasks: Vec<String>,
+    lane_sync_applied: bool,
+    lane_label: Option<String>,
+    target_label: String,
+}
+
+#[derive(Debug, Clone)]
+struct LinkPrScope {
+    key: String,
+    label: String,
+    lane_label: Option<String>,
+}
+
+fn run_link_pr(
+    binary: BinaryFlavor,
+    dry_run: bool,
+    force: bool,
+    repo_override: Option<&str>,
+    args: &LinkPrArgs,
+) -> Result<Value, CommandError> {
+    let adapter = GhCliAdapter::new(force);
+
+    let (body, issue, repo, source, body_file_path) = if let Some(path) = &args.body_file {
+        let body = fs::read_to_string(path).map_err(|err| {
+            CommandError::runtime(
+                "issue-body-read-failed",
+                format!("failed to read body file {}: {err}", path.display()),
+            )
+        })?;
+        (
+            body,
+            None,
+            None,
+            format!("body-file:{}", path.display()),
+            Some(path.clone()),
+        )
+    } else {
+        let issue = args
+            .issue
+            .ok_or_else(|| CommandError::usage("missing-issue", "--issue is required"))?;
+        ensure_live_binary_for_command(
+            binary,
+            "link-pr --issue <number> --task <task-id> --pr <ref>",
+            Some(
+                "plan-issue-local link-pr --body-file <path> --task <task-id> --pr <ref> --dry-run",
+            ),
+        )?;
+        let repo = resolve_repo_for_live(binary, repo_override)?;
+        let body = adapter
+            .issue_body(&repo, issue)
+            .map_err(|err| CommandError::runtime("github-issue-read-failed", err))?;
+        (
+            body,
+            Some(issue),
+            Some(repo),
+            format!("issue:{issue}"),
+            None,
+        )
+    };
+
+    let mut table = issue_body::parse_task_table(&body)
+        .map_err(|err| CommandError::runtime("issue-body-parse-failed", err))?;
+    let selection = select_link_pr_rows(table.rows(), args)
+        .map_err(|err| CommandError::runtime("link-pr-target-invalid", err))?;
+
+    let normalized_pr = issue_body::normalize_pr_display(&args.pr);
+    let status_value = link_pr_status_text(args.status).to_string();
+    for idx in &selection.row_indexes {
+        let row = &mut table.rows_mut()[*idx];
+        row.pr = normalized_pr.clone();
+        row.status = status_value.clone();
+    }
+
+    let structure_errors = issue_body::validate_rows(table.rows());
+    if !structure_errors.is_empty() {
+        return Err(CommandError::runtime(
+            "issue-body-invalid",
+            structure_errors.join(" | "),
+        ));
+    }
+
+    let updated_body = table.render();
+    let mut body_file_updated = false;
+    let mut live_mutations = false;
+
+    if let Some(path) = body_file_path.as_ref() {
+        if !dry_run {
+            fs::write(path, &updated_body).map_err(|err| {
+                CommandError::runtime(
+                    "issue-body-write-failed",
+                    format!("failed to write body file {}: {err}", path.display()),
+                )
+            })?;
+            body_file_updated = true;
+        }
+    } else if !dry_run {
+        let repo = repo.as_deref().ok_or_else(|| {
+            CommandError::usage(
+                "missing-repo",
+                "unable to resolve repository for live link-pr update",
+            )
+        })?;
+        let issue = issue.ok_or_else(|| {
+            CommandError::usage("missing-issue", "--issue is required for live link-pr")
+        })?;
+        let body_path = write_temp_markdown("link-pr-issue-body", &updated_body)
+            .map_err(|err| CommandError::runtime("issue-body-write-failed", err))?;
+        adapter
+            .edit_issue_body(repo, issue, &body_path)
+            .map_err(|err| CommandError::runtime("github-issue-update-failed", err))?;
+        live_mutations = true;
+    }
+
+    Ok(json!({
+        "scope": "plan",
+        "operation": "link-pr",
+        "execution_mode": binary.execution_mode(),
+        "dry_run": dry_run,
+        "issue_source": source,
+        "target": selection.target_label,
+        "lane_sync_applied": selection.lane_sync_applied,
+        "lane": selection.lane_label,
+        "rows_changed": selection.row_indexes.len(),
+        "tasks_changed": selection.row_tasks,
+        "pr": normalized_pr,
+        "status": status_value,
+        "body_file_updated": body_file_updated,
+        "live_mutations_performed": live_mutations,
+    }))
+}
+
+fn link_pr_status_text(status: LinkPrStatus) -> &'static str {
+    match status {
+        LinkPrStatus::Planned => "planned",
+        LinkPrStatus::InProgress => "in-progress",
+        LinkPrStatus::Blocked => "blocked",
+    }
+}
+
+fn select_link_pr_rows(rows: &[TaskRow], args: &LinkPrArgs) -> Result<LinkPrSelection, String> {
+    if let Some(task_id) = args.task.as_deref() {
+        return select_link_pr_rows_by_task(rows, task_id);
+    }
+
+    let sprint = args
+        .sprint
+        .map(i32::from)
+        .ok_or_else(|| "missing target selector (`--task` or `--sprint`)".to_string())?;
+    select_link_pr_rows_by_sprint(rows, sprint, args.pr_group.as_deref())
+}
+
+fn select_link_pr_rows_by_task(rows: &[TaskRow], task_id: &str) -> Result<LinkPrSelection, String> {
+    let task_id = task_id.trim();
+    let matching_indexes = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, row)| row.task.trim().eq_ignore_ascii_case(task_id).then_some(idx))
+        .collect::<Vec<_>>();
+
+    let target_index = match matching_indexes.as_slice() {
+        [] => {
+            return Err(format!(
+                "task `{task_id}` not found in issue Task Decomposition rows"
+            ));
+        }
+        [idx] => *idx,
+        _ => {
+            return Err(format!(
+                "task selector `{task_id}` matched multiple rows; repair duplicate task ids before linking PR"
+            ));
+        }
+    };
+
+    let mut row_indexes = vec![target_index];
+    let mut lane_label = None;
+    let mut lane_sync_applied = false;
+    if let Some((lane_key, label)) = issue_body::runtime_pr_sync_lane(&rows[target_index]) {
+        row_indexes = rows
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, row)| {
+                issue_body::runtime_pr_sync_lane(row)
+                    .and_then(|(candidate_key, _)| (candidate_key == lane_key).then_some(idx))
+            })
+            .collect();
+        lane_sync_applied = row_indexes.len() > 1;
+        lane_label = Some(label);
+    }
+
+    let row_tasks = row_indexes
+        .iter()
+        .map(|idx| rows[*idx].task.clone())
+        .collect::<Vec<_>>();
+
+    Ok(LinkPrSelection {
+        row_indexes,
+        row_tasks,
+        lane_sync_applied,
+        lane_label,
+        target_label: format!("task:{task_id}"),
+    })
+}
+
+fn select_link_pr_rows_by_sprint(
+    rows: &[TaskRow],
+    sprint: i32,
+    pr_group: Option<&str>,
+) -> Result<LinkPrSelection, String> {
+    let mut row_indexes = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, row)| (issue_body::row_sprint(row) == Some(sprint)).then_some(idx))
+        .collect::<Vec<_>>();
+
+    if row_indexes.is_empty() {
+        return Err(format!("issue task table has no rows for sprint S{sprint}"));
+    }
+
+    let mut target_label = format!("sprint:S{sprint}");
+    if let Some(group_raw) = pr_group {
+        let group = group_raw.trim();
+        row_indexes.retain(|idx| {
+            note_value(&rows[*idx].notes, "pr-group")
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case(group))
+        });
+        if row_indexes.is_empty() {
+            return Err(format!(
+                "sprint S{sprint} has no rows with pr-group `{group}`; use --task or a valid --pr-group"
+            ));
+        }
+        target_label = format!("sprint:S{sprint}/pr-group:{group}");
+    }
+
+    let mut scopes: BTreeMap<String, LinkPrScope> = BTreeMap::new();
+    for idx in &row_indexes {
+        let scope = row_link_pr_scope(&rows[*idx]);
+        scopes.entry(scope.key.clone()).or_insert(scope);
+    }
+
+    if scopes.len() > 1 {
+        let scope_labels = scopes
+            .values()
+            .map(|scope| scope.label.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let guidance = if pr_group.is_some() {
+            "target still spans multiple runtime scopes; narrow with --task"
+        } else {
+            "use --pr-group to select a shared lane or --task for a single row/lane"
+        };
+        return Err(format!(
+            "sprint S{sprint} target is ambiguous across runtime scopes ({scope_labels}); {guidance}"
+        ));
+    }
+
+    let lane_label = scopes
+        .values()
+        .next()
+        .and_then(|scope| scope.lane_label.clone());
+    let row_tasks = row_indexes
+        .iter()
+        .map(|idx| rows[*idx].task.clone())
+        .collect::<Vec<_>>();
+
+    Ok(LinkPrSelection {
+        row_indexes,
+        row_tasks,
+        lane_sync_applied: false,
+        lane_label,
+        target_label,
+    })
+}
+
+fn row_link_pr_scope(row: &TaskRow) -> LinkPrScope {
+    if let Some((lane_key, lane_label)) = issue_body::runtime_pr_sync_lane(row) {
+        return LinkPrScope {
+            key: format!("lane:{lane_key}"),
+            label: format!("lane:{lane_label}"),
+            lane_label: Some(lane_label),
+        };
+    }
+
+    let task = row.task.trim().to_string();
+    LinkPrScope {
+        key: format!("task:{}", task.to_ascii_lowercase()),
+        label: format!("task:{task}"),
+        lane_label: None,
+    }
 }
 
 fn run_ready_plan(

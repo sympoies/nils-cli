@@ -7,12 +7,12 @@ use clap::{Args, Subcommand, ValueEnum};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::ValidationError;
+use crate::{ValidationError, issue_body};
 
 use self::build::{BuildPlanTaskSpecArgs, BuildTaskSpecArgs};
 use self::completion::CompletionArgs;
 use self::plan::{
-    CleanupWorktreesArgs, ClosePlanArgs, ReadyPlanArgs, StartPlanArgs, StatusPlanArgs,
+    CleanupWorktreesArgs, ClosePlanArgs, LinkPrArgs, ReadyPlanArgs, StartPlanArgs, StatusPlanArgs,
 };
 use self::sprint::{AcceptSprintArgs, MultiSprintGuideArgs, ReadySprintArgs, StartSprintArgs};
 
@@ -145,6 +145,9 @@ pub enum Command {
     /// Wrapper of issue-delivery-loop status for the plan issue.
     StatusPlan(StatusPlanArgs),
 
+    /// Link PR to task rows and set runtime status (default: in-progress).
+    LinkPr(LinkPrArgs),
+
     /// Wrapper of issue-delivery-loop ready-for-review for final plan review.
     ReadyPlan(ReadyPlanArgs),
 
@@ -177,6 +180,7 @@ impl Command {
             Self::BuildPlanTaskSpec(_) => "build-plan-task-spec",
             Self::StartPlan(_) => "start-plan",
             Self::StatusPlan(_) => "status-plan",
+            Self::LinkPr(_) => "link-pr",
             Self::ReadyPlan(_) => "ready-plan",
             Self::ClosePlan(_) => "close-plan",
             Self::CleanupWorktrees(_) => "cleanup-worktrees",
@@ -198,6 +202,7 @@ impl Command {
             Self::BuildPlanTaskSpec(args) => serde_json::to_value(args),
             Self::StartPlan(args) => serde_json::to_value(args),
             Self::StatusPlan(args) => serde_json::to_value(args),
+            Self::LinkPr(args) => serde_json::to_value(args),
             Self::ReadyPlan(args) => serde_json::to_value(args),
             Self::ClosePlan(args) => serde_json::to_value(args),
             Self::CleanupWorktrees(args) => serde_json::to_value(args),
@@ -220,6 +225,7 @@ impl Command {
             Self::ReadySprint(args) => validate_grouping(&args.grouping),
             Self::AcceptSprint(args) => validate_grouping(&args.grouping),
             Self::ClosePlan(args) => validate_close_plan_args(args, dry_run),
+            Self::LinkPr(args) => validate_link_pr_args(args),
             Self::MultiSprintGuide(args) => validate_multi_sprint_guide_args(args),
             Self::Completion(_)
             | Self::StatusPlan(_)
@@ -273,6 +279,36 @@ fn validate_close_plan_args(args: &ClosePlanArgs, dry_run: bool) -> Result<(), V
         return Err(ValidationError::new(
             "invalid-body-file-mode",
             "--body-file is only supported with --dry-run",
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_link_pr_args(args: &LinkPrArgs) -> Result<(), ValidationError> {
+    let pr = args.pr.trim();
+    if issue_body::parse_pr_number(pr).is_none() {
+        return Err(ValidationError::new(
+            "invalid-pr-reference",
+            "--pr must be a concrete PR reference (`#123`, `123`, or GitHub pull URL)",
+        ));
+    }
+
+    if let Some(task) = args.task.as_deref()
+        && task.trim().is_empty()
+    {
+        return Err(ValidationError::new(
+            "invalid-task-id",
+            "--task cannot be empty",
+        ));
+    }
+
+    if let Some(group) = args.pr_group.as_deref()
+        && group.trim().is_empty()
+    {
+        return Err(ValidationError::new(
+            "invalid-pr-group",
+            "--pr-group cannot be empty",
         ));
     }
 

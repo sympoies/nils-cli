@@ -1,11 +1,13 @@
-Usage:
-  plan-issue-delivery-loop.sh <subcommand> [options]
+Rust implementation of the plan-issue orchestration workflow.
 
-Subcommands:
+Usage: plan-issue-local [OPTIONS] <COMMAND>
+
+Commands:
   build-task-spec       Build sprint-scoped task-spec TSV from a plan
   build-plan-task-spec  Build plan-scoped task-spec TSV (all sprints) for the single plan issue
   start-plan            Open one plan issue with all plan tasks in Task Decomposition
   status-plan           Wrapper of issue-delivery-loop status for the plan issue
+  link-pr               Link PR to task rows and set runtime status (default: in-progress)
   ready-plan            Wrapper of issue-delivery-loop ready-for-review for final plan review
   close-plan            Close the single plan issue after final approval + merged PR gates, then enforce worktree cleanup
   cleanup-worktrees     Enforce cleanup of all issue-assigned task worktrees
@@ -13,93 +15,26 @@ Subcommands:
   ready-sprint          Post sprint-ready comment for main-agent review before merge
   accept-sprint         Enforce merged-PR gate, sync sprint status=done, then post accepted comment
   multi-sprint-guide    Print the full repeated command flow for a plan (1 plan = 1 issue)
+  completion            Export shell completion script
 
-Main-agent role boundary:
-  - main-agent is orchestration/review-only
-  - implementation must be subagent-owned PR work
-  - the plan issue closes only after the final plan acceptance gate
+Options:
+      --repo <owner/repo>  Pass-through repository target for GitHub operations
+      --dry-run            Print write actions without mutating GitHub state
+  -f, --force              Bypass markdown payload guard for GitHub body/comment writes
+      --json               Output machine-readable JSON (alias for --format json)
+      --format <FORMAT>    Output format [possible values: text, json]
+  -h, --help               Print help
+  -V, --version            Print version
 
-Common options:
-  --repo <owner/repo>  Pass-through repository target for GitHub operations
-  --dry-run            Print write actions without mutating GitHub state
-  --force              Bypass markdown payload guard for GitHub body/comment writes
+Usage paths:
+  - plan-issue: live GitHub-backed orchestration
+  - plan-issue-local: local-first rehearsal and dry-run flow
 
-build-task-spec options (sprint scope):
-  --plan <path>                  Plan markdown path (required)
-  --sprint <number>              Sprint number (required)
-  --task-spec-out <path>         Output TSV path (default: $AGENT_HOME/out/plan-issue-delivery-loop/...)
-  --owner-prefix <text>          Default: subagent
-  --branch-prefix <text>         Default: issue
-  --worktree-prefix <text>       Default: issue__
-  --pr-grouping <mode>           per-sprint | group (required; `per-spring` alias accepted)
-  --pr-group <task=group>        Repeatable; group mode only; task can be SxTy or plan task id
+Unsupported in plan-issue-local:
+  - Any --issue path that requires live GitHub reads/writes (for example: status-plan/ready-plan with --issue, close-plan with --issue-only, cleanup-worktrees).
 
-build-plan-task-spec options:
-  --plan <path>                  Plan markdown path (required)
-  --task-spec-out <path>         Output TSV path (default: $AGENT_HOME/out/plan-issue-delivery-loop/...)
-  --owner-prefix <text>          Default: subagent
-  --branch-prefix <text>         Default: issue
-  --worktree-prefix <text>       Default: issue__
-  --pr-grouping <mode>           per-sprint | group (required; `per-spring` alias accepted)
-  --pr-group <task=group>        Repeatable; group mode only; task can be SxTy or plan task id
+Use instead:
+  - plan-issue <command> ...        (live GitHub path)
+  - --body-file + --dry-run flows   (local rehearsal path where supported)
 
-start-plan options:
-  --plan <path>                  Plan markdown path (required)
-  --title <text>                 Override plan issue title
-  --task-spec-out <path>         Plan task-spec output path override
-  --issue-body-out <path>        Rendered plan issue body output path override
-  --owner-prefix <text>          Default: subagent
-  --branch-prefix <text>         Default: issue
-  --worktree-prefix <text>       Default: issue__
-  --pr-grouping <mode>           per-sprint | group (required; `per-spring` alias accepted)
-  --pr-group <task=group>        Repeatable; group mode only; task can be SxTy or plan task id
-  --label <name>                 Repeatable; default labels: issue, plan
-
-status-plan options:
-  --issue <number>               Plan issue number (required unless --body-file)
-  --body-file <path>             Offline issue body
-  --comment | --no-comment
-
-ready-plan options:
-  --issue <number>               Plan issue number (required unless --body-file)
-  --body-file <path>             Offline issue body
-  --summary <text> | --summary-file <path>
-  --label <name>                 Review label (default: needs-review)
-  --remove-label <name>          Repeatable
-  --comment | --no-comment
-  --no-label-update
-
-close-plan options:
-  --issue <number>               Plan issue number (required unless --body-file in --dry-run mode)
-  --body-file <path>             Local issue body (dry-run only; no GitHub dependency)
-  --approved-comment-url <url>   Final approval comment URL (required)
-  --reason <completed|not planned>
-  --comment <text> | --comment-file <path>
-  --allow-not-done
-  Note: after close gate succeeds, close-plan always runs strict worktree cleanup for issue task rows.
-
-cleanup-worktrees options:
-  --issue <number>               Plan issue number (required)
-  --repo <owner/repo>            Optional repository override
-  --dry-run                      Print matching worktrees without removing
-
-start-sprint / ready-sprint / accept-sprint options:
-  --plan <path>                  Plan markdown path (required)
-  --issue <number>               Plan issue number (required)
-  --sprint <number>              Sprint number (required)
-  --task-spec-out <path>         Sprint task-spec output path override
-  --subagent-prompts-out <dir>   start-sprint only; rendered subagent prompt output dir
-  --owner-prefix <text>          Default: subagent
-  --branch-prefix <text>         Default: issue
-  --worktree-prefix <text>       Default: issue__
-  --pr-grouping <mode>           per-sprint | group (required; `per-spring` alias accepted)
-  --pr-group <task=group>        Repeatable; group mode only; task can be SxTy or plan task id
-  --summary <text> | --summary-file <path>
-  --comment | --no-comment       Default: comment when --issue is provided
-  --approved-comment-url <url>   accept-sprint only (required; review approval record)
-
-multi-sprint-guide options:
-  --plan <path>                  Plan markdown path (required)
-  --from-sprint <number>         Default: 1
-  --to-sprint <number>           Default: max sprint in plan
-  --dry-run                      Print a local-only rehearsal flow (no GitHub calls)
+Both binaries share the same typed command contract.

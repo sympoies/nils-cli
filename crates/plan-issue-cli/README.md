@@ -25,6 +25,7 @@ Shell wrapper scripts are deprecated for this crate path. Use `plan-issue` / `pl
 ### Plan-level flow
 - `start-plan`: open one plan issue and emit plan artifacts.
 - `status-plan`: summarize Task Decomposition status from issue body/body file.
+- `link-pr`: link a concrete PR to task rows and update row status (default `in-progress`).
 - `ready-plan`: apply review-ready markers and optional review summary comment.
 - `close-plan`: enforce final close gate and close the plan issue.
 - `cleanup-worktrees`: enforce cleanup of all issue-assigned task worktrees.
@@ -57,6 +58,7 @@ Shell wrapper scripts are deprecated for this crate path. Use `plan-issue` / `pl
 - Writer and parser share the same schema contract.
 - Writer sanitizes cell values (including `|`) via `nils-common::markdown::canonicalize_table_cell`
   so parser column count remains deterministic and drift checks stay stable.
+- Shared runtime lanes (`per-sprint`, `pr-shared`) must keep a consistent `PR` value across rows.
 
 ## Grouping and strategy rules
 - `--pr-grouping` is required for split-dependent commands:
