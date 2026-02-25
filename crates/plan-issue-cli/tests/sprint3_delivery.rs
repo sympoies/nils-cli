@@ -158,7 +158,7 @@ fn parse_prompt_fields(prompt: &str) -> HashMap<String, String> {
 }
 
 #[test]
-fn start_plan_and_start_sprint_auto_single_lane_artifacts_can_drift_from_per_sprint_semantics() {
+fn start_plan_and_start_sprint_auto_single_lane_use_canonical_lane_metadata() {
     let tmp = TempDir::new().expect("temp dir");
     let agent_home = tmp.path().join("agent-home");
     fs::create_dir_all(&agent_home).expect("create agent home");
@@ -219,16 +219,14 @@ fn start_plan_and_start_sprint_auto_single_lane_artifacts_can_drift_from_per_spr
     let issue_rows = parse_task_decomposition_rows(&issue_body);
     let issue_s3t1 = issue_rows.get("S3T1").expect("S3T1 issue row");
     let issue_s3t2 = issue_rows.get("S3T2").expect("S3T2 issue row");
-    // Characterization: start-plan issue body leaves execution metadata placeholders, while
-    // later sprint artifacts are generated from recomputed task-spec rows.
-    assert_eq!(issue_s3t1.execution_mode, "TBD");
-    assert_eq!(issue_s3t2.execution_mode, "TBD");
-    assert_eq!(issue_s3t1.owner, "TBD");
-    assert_eq!(issue_s3t2.owner, "TBD");
-    assert_eq!(issue_s3t1.branch, "TBD");
-    assert_eq!(issue_s3t2.branch, "TBD");
-    assert_eq!(issue_s3t1.worktree, "TBD");
-    assert_eq!(issue_s3t2.worktree, "TBD");
+    assert_eq!(issue_s3t1.execution_mode, "per-sprint");
+    assert_eq!(issue_s3t2.execution_mode, "per-sprint");
+    assert_ne!(issue_s3t1.owner, "TBD");
+    assert_ne!(issue_s3t2.owner, "TBD");
+    assert_ne!(issue_s3t1.branch, "TBD");
+    assert_ne!(issue_s3t2.branch, "TBD");
+    assert_ne!(issue_s3t1.worktree, "TBD");
+    assert_ne!(issue_s3t2.worktree, "TBD");
 
     let sprint_task_spec = tmp.path().join("sprint3-task-spec.tsv");
     let sprint_task_spec_s = sprint_task_spec.to_string_lossy().to_string();
@@ -342,17 +340,19 @@ fn start_plan_and_start_sprint_auto_single_lane_artifacts_can_drift_from_per_spr
 
     let issue_anchor = issue_rows.get(anchor_id).expect("anchor issue row");
     let issue_other = issue_rows.get(other_id).expect("non-anchor issue row");
-    assert_eq!(issue_anchor.execution_mode, "TBD");
-    assert_eq!(issue_other.execution_mode, "TBD");
-    assert_eq!(issue_anchor.owner, "TBD");
-    assert_eq!(issue_other.owner, "TBD");
-    assert_eq!(issue_anchor.branch, "TBD");
-    assert_eq!(issue_other.branch, "TBD");
-    assert_eq!(issue_anchor.worktree, "TBD");
-    assert_eq!(issue_other.worktree, "TBD");
+    assert_eq!(issue_anchor.execution_mode, "per-sprint");
+    assert_eq!(issue_other.execution_mode, "per-sprint");
+    assert_eq!(issue_anchor.owner, anchor_row.owner);
+    assert_eq!(issue_other.owner, anchor_row.owner);
+    assert_eq!(issue_anchor.branch, anchor_row.branch);
+    assert_eq!(issue_other.branch, anchor_row.branch);
+    assert_eq!(issue_anchor.worktree, anchor_row.worktree);
+    assert_eq!(issue_other.worktree, anchor_row.worktree);
+    assert_eq!(issue_anchor.notes, anchor_row.notes);
+    assert_eq!(issue_other.notes, anchor_row.notes);
 
     assert_ne!(other_row.owner, issue_other.owner);
     assert_ne!(other_row.branch, issue_other.branch);
     assert_ne!(other_row.worktree, issue_other.worktree);
-    assert_eq!(other_row.notes, issue_other.notes);
+    assert_ne!(other_row.notes, issue_other.notes);
 }
