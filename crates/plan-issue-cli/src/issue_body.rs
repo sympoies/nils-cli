@@ -164,6 +164,8 @@ pub fn validate_rows(rows: &[TaskRow]) -> Vec<String> {
 
     let mut isolated_branches: HashMap<String, String> = HashMap::new();
     let mut isolated_worktrees: HashMap<String, String> = HashMap::new();
+    let mut shared_lane_metadata: HashMap<String, (String, String, String, String)> =
+        HashMap::new();
 
     for row in rows {
         let status = row.status.trim().to_ascii_lowercase();
@@ -248,9 +250,68 @@ pub fn validate_rows(rows: &[TaskRow]) -> Vec<String> {
                 }
             }
         }
+
+        if let Some((lane_key, lane_label)) = shared_lane_key(row, &execution_mode)
+            && !is_placeholder(&row.owner)
+            && !is_placeholder(&row.branch)
+            && !is_placeholder(&row.worktree)
+        {
+            let owner = row.owner.trim().to_string();
+            let branch = row.branch.trim().to_string();
+            let worktree = row.worktree.trim().to_string();
+
+            if let Some((prev_task, prev_owner, prev_branch, prev_worktree)) =
+                shared_lane_metadata.get(&lane_key)
+            {
+                if prev_owner != &owner || prev_branch != &branch || prev_worktree != &worktree {
+                    errors.push(format!(
+                        "{}: {} lane `{}` Owner/Branch/Worktree (`{}` / `{}` / `{}`) conflicts with task {} (`{}` / `{}` / `{}`)",
+                        row.task,
+                        execution_mode,
+                        lane_label,
+                        owner,
+                        branch,
+                        worktree,
+                        prev_task,
+                        prev_owner,
+                        prev_branch,
+                        prev_worktree
+                    ));
+                }
+            } else {
+                shared_lane_metadata.insert(lane_key, (row.task.clone(), owner, branch, worktree));
+            }
+        }
     }
 
     errors
+}
+
+fn shared_lane_key(row: &TaskRow, execution_mode: &str) -> Option<(String, String)> {
+    let sprint = row_sprint(row)
+        .map(|value| format!("S{value}"))
+        .unwrap_or_else(|| "unknown".to_string());
+
+    match execution_mode {
+        "per-sprint" => Some((format!("per-sprint:{sprint}"), sprint)),
+        "pr-shared" => {
+            let group = note_value(&row.notes, "pr-group")
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "unknown-group".to_string());
+            Some((
+                format!("pr-shared:{sprint}:{}", group.to_ascii_lowercase()),
+                format!("{sprint}/{group}"),
+            ))
+        }
+        _ => None,
+    }
+}
+
+fn note_value(notes: &str, key: &str) -> Option<String> {
+    notes
+        .split(';')
+        .map(str::trim)
+        .find_map(|part| part.strip_prefix(&format!("{key}=")).map(str::to_string))
 }
 
 pub fn row_sprint(row: &TaskRow) -> Option<i32> {
@@ -492,6 +553,80 @@ mod tests {
                 "S4T2: pr-isolated Branch `issue/s4-shared` duplicates task S4T1",
                 "S4T2: pr-isolated Worktree `issue-s4-shared` duplicates task S4T1",
             ]
+        );
+    }
+
+    #[test]
+    fn validate_rows_detects_conflicting_shared_lane_metadata() {
+        let rows = [
+            TaskRow {
+                task: "S4T1".to_string(),
+                summary: "x".to_string(),
+                owner: "subagent-s4-lane-a".to_string(),
+                branch: "issue/s4-shared-a".to_string(),
+                worktree: "issue-s4-shared-a".to_string(),
+                execution_mode: "pr-shared".to_string(),
+                pr: "#1".to_string(),
+                status: "in-progress".to_string(),
+                notes: "sprint=S4; pr-group=s4-auto-g1".to_string(),
+                line_index: 0,
+            },
+            TaskRow {
+                task: "S4T2".to_string(),
+                summary: "x".to_string(),
+                owner: "subagent-s4-lane-b".to_string(),
+                branch: "issue/s4-shared-b".to_string(),
+                worktree: "issue-s4-shared-b".to_string(),
+                execution_mode: "pr-shared".to_string(),
+                pr: "#1".to_string(),
+                status: "in-progress".to_string(),
+                notes: "sprint=S4; pr-group=s4-auto-g1".to_string(),
+                line_index: 1,
+            },
+        ];
+
+        let errs = validate_rows(&rows);
+        assert!(
+            errs.iter()
+                .any(|err| err.contains("S4T2: pr-shared lane `S4/s4-auto-g1`")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn validate_rows_detects_conflicting_per_sprint_lane_metadata() {
+        let rows = [
+            TaskRow {
+                task: "S5T1".to_string(),
+                summary: "x".to_string(),
+                owner: "subagent-s5-lane-a".to_string(),
+                branch: "issue/s5-shared-a".to_string(),
+                worktree: "issue-s5-shared-a".to_string(),
+                execution_mode: "per-sprint".to_string(),
+                pr: "#5".to_string(),
+                status: "in-progress".to_string(),
+                notes: "sprint=S5; pr-group=s5-auto-g1".to_string(),
+                line_index: 0,
+            },
+            TaskRow {
+                task: "S5T2".to_string(),
+                summary: "x".to_string(),
+                owner: "subagent-s5-lane-b".to_string(),
+                branch: "issue/s5-shared-b".to_string(),
+                worktree: "issue-s5-shared-b".to_string(),
+                execution_mode: "per-sprint".to_string(),
+                pr: "#5".to_string(),
+                status: "in-progress".to_string(),
+                notes: "sprint=S5; pr-group=s5-auto-g1".to_string(),
+                line_index: 1,
+            },
+        ];
+
+        let errs = validate_rows(&rows);
+        assert!(
+            errs.iter()
+                .any(|err| err.contains("S5T2: per-sprint lane `S5`")),
+            "{errs:?}"
         );
     }
 
