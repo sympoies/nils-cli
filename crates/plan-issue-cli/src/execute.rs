@@ -22,6 +22,8 @@ use crate::render::{self, SprintCommentInput, SprintCommentMode};
 use crate::task_spec::{self, TaskSpecBuildOptions, TaskSpecRow, TaskSpecScope};
 use crate::{BinaryFlavor, CommandError};
 
+const LOCAL_ISSUE_PLACEHOLDER: u64 = 999;
+
 pub fn execute(binary: BinaryFlavor, cli: &Cli) -> Result<Value, CommandError> {
     match &cli.command {
         CliCommand::BuildTaskSpec(args) => run_build_task_spec(args),
@@ -50,7 +52,7 @@ pub fn execute(binary: BinaryFlavor, cli: &Cli) -> Result<Value, CommandError> {
         CliCommand::AcceptSprint(args) => {
             run_accept_sprint(binary, cli.dry_run, cli.force, cli.repo.as_deref(), args)
         }
-        CliCommand::MultiSprintGuide(args) => run_multi_sprint_guide(args),
+        CliCommand::MultiSprintGuide(args) => run_multi_sprint_guide(binary, args),
         CliCommand::Completion(_) => Err(CommandError::usage(
             "completion-direct-output-only",
             "completion output is emitted directly; run `<binary> completion <bash|zsh>`",
@@ -161,7 +163,8 @@ fn run_start_plan(
     render::write_rendered(&issue_body_out, &issue_body)
         .map_err(|err| CommandError::runtime("issue-body-write-failed", err))?;
 
-    let mut issue_number: Option<u64> = None;
+    let mut issue_number: Option<u64> =
+        (binary == BinaryFlavor::PlanIssueLocal).then_some(LOCAL_ISSUE_PLACEHOLDER);
     let mut issue_url: Option<String> = None;
     let mut live_mutations = false;
 
@@ -211,7 +214,11 @@ fn run_status_plan(
         let issue = args
             .issue
             .ok_or_else(|| CommandError::usage("missing-issue", "--issue is required"))?;
-        ensure_live_binary(binary)?;
+        ensure_live_binary_for_command(
+            binary,
+            "status-plan --issue <number>",
+            Some("plan-issue-local status-plan --body-file <path> --dry-run"),
+        )?;
         let repo = resolve_repo_for_live(binary, repo_override)?;
         let body = adapter
             .issue_body(&repo, issue)
@@ -287,7 +294,11 @@ fn run_ready_plan(
         let issue = args
             .issue
             .ok_or_else(|| CommandError::usage("missing-issue", "--issue is required"))?;
-        ensure_live_binary(binary)?;
+        ensure_live_binary_for_command(
+            binary,
+            "ready-plan --issue <number>",
+            Some("plan-issue-local ready-plan --body-file <path> --summary <text> --dry-run"),
+        )?;
         let repo = resolve_repo_for_live(binary, repo_override)?;
         let body = adapter
             .issue_body(&repo, issue)
@@ -395,7 +406,13 @@ fn run_close_plan(
         let issue = args
             .issue
             .ok_or_else(|| CommandError::usage("missing-issue", "--issue is required"))?;
-        ensure_live_binary(binary)?;
+        ensure_live_binary_for_command(
+            binary,
+            "close-plan --issue <number> --approved-comment-url <url>",
+            Some(
+                "plan-issue-local close-plan --body-file <path> --approved-comment-url <url> --dry-run",
+            ),
+        )?;
         let repo = resolve_repo_for_live(binary, repo_override)?;
         let body = adapter
             .issue_body(&repo, issue)
@@ -488,7 +505,7 @@ fn run_cleanup_worktrees(
     repo_override: Option<&str>,
     args: &CleanupWorktreesArgs,
 ) -> Result<Value, CommandError> {
-    ensure_live_binary(binary)?;
+    ensure_live_binary_for_command(binary, "cleanup-worktrees --issue <number>", None)?;
 
     let repo = resolve_repo_for_live(binary, repo_override)?;
     let adapter = GhCliAdapter::new(force);
@@ -900,7 +917,10 @@ fn run_accept_sprint(
     }))
 }
 
-fn run_multi_sprint_guide(args: &MultiSprintGuideArgs) -> Result<Value, CommandError> {
+fn run_multi_sprint_guide(
+    binary: BinaryFlavor,
+    args: &MultiSprintGuideArgs,
+) -> Result<Value, CommandError> {
     let display_path = args.plan.to_string_lossy().to_string();
     let resolved_plan_path = task_spec::resolve_plan_file(&args.plan);
     if !resolved_plan_path.is_file() {
@@ -936,48 +956,54 @@ fn run_multi_sprint_guide(args: &MultiSprintGuideArgs) -> Result<Value, CommandE
     }
 
     let issue_body_path = render::default_plan_issue_body_path(&args.plan);
-    let script = "$AGENT_HOME/skills/automation/plan-issue-delivery-loop/scripts/plan-issue-delivery-loop.sh";
+    let cli = binary.binary_name();
 
     let mut lines = vec![
         "MULTI_SPRINT_GUIDE_BEGIN".to_string(),
         "DESIGN=ONE_PLAN_ONE_ISSUE".to_string(),
-        "MODE=DRY_RUN_LOCAL".to_string(),
+        format!(
+            "MODE={}",
+            match binary {
+                BinaryFlavor::PlanIssue => "DRY_RUN_LIVE_BINARY",
+                BinaryFlavor::PlanIssueLocal => "DRY_RUN_LOCAL",
+            }
+        ),
         format!("PLAN_FILE={display_path}"),
         format!("PLAN_TITLE={}", plan.title),
         format!("FROM_SPRINT={from_sprint}"),
         format!("TO_SPRINT={to_sprint}"),
-        "DRY_RUN_PLAN_ISSUE=DRY_RUN_PLAN_ISSUE".to_string(),
+        format!("DRY_RUN_PLAN_ISSUE={LOCAL_ISSUE_PLACEHOLDER}"),
         format!("DRY_RUN_ISSUE_BODY={}", issue_body_path.display()),
     ];
 
     let mut step = 1usize;
     lines.push(format!(
-        "STEP_{step}={script} start-plan --plan {display_path} --pr-grouping <per-sprint\\|group> --dry-run"
+        "STEP_{step}={cli} start-plan --plan {display_path} --pr-grouping <per-sprint\\|group> --dry-run"
     ));
     step += 1;
 
     for sprint in from_sprint..=to_sprint {
         lines.push(format!(
-            "STEP_{step}={script} start-sprint --plan {display_path} --issue DRY_RUN_PLAN_ISSUE --sprint {sprint} --pr-grouping <per-sprint\\|group> --no-comment --dry-run"
+            "STEP_{step}={cli} start-sprint --plan {display_path} --issue {LOCAL_ISSUE_PLACEHOLDER} --sprint {sprint} --pr-grouping <per-sprint\\|group> --no-comment --dry-run"
         ));
         step += 1;
 
         if sprint < to_sprint {
             lines.push(format!(
-                "STEP_{step}={script} accept-sprint --plan {display_path} --issue DRY_RUN_PLAN_ISSUE --sprint {sprint} --approved-comment-url <approval-comment-url-sprint-{sprint}> --pr-grouping <per-sprint\\|group> --no-comment --dry-run"
+                "STEP_{step}={cli} accept-sprint --plan {display_path} --issue {LOCAL_ISSUE_PLACEHOLDER} --sprint {sprint} --approved-comment-url <approval-comment-url-sprint-{sprint}> --pr-grouping <per-sprint\\|group> --no-comment --dry-run"
             ));
             step += 1;
         }
     }
 
     lines.push(format!(
-        "STEP_{step}={script} ready-plan --body-file {} --summary Final\\ plan\\ review --no-comment --no-label-update --dry-run",
+        "STEP_{step}={cli} ready-plan --body-file {} --summary Final\\ plan\\ review --no-comment --no-label-update --dry-run",
         issue_body_path.display()
     ));
     step += 1;
 
     lines.push(format!(
-        "STEP_{step}={script} close-plan --body-file {} --approved-comment-url <final-plan-approval-comment-url> --dry-run",
+        "STEP_{step}={cli} close-plan --body-file {} --approved-comment-url <final-plan-approval-comment-url> --dry-run",
         issue_body_path.display()
     ));
 
@@ -1078,9 +1104,28 @@ fn ensure_live_binary(binary: BinaryFlavor) -> Result<(), CommandError> {
     } else {
         Err(CommandError::usage(
             "live-command-unavailable",
-            "this command path requires the live `plan-issue` binary",
+            "this command path is not supported in `plan-issue-local`; use `plan-issue <command>` for live GitHub operations, or switch to `--body-file` local rehearsal where supported",
         ))
     }
+}
+
+fn ensure_live_binary_for_command(
+    binary: BinaryFlavor,
+    live_command: &str,
+    local_rehearsal_example: Option<&str>,
+) -> Result<(), CommandError> {
+    if binary == BinaryFlavor::PlanIssue {
+        return Ok(());
+    }
+
+    let mut message = format!(
+        "this command path is not supported in `plan-issue-local`: `{live_command}`; use `plan-issue {live_command}` for live GitHub operations"
+    );
+    if let Some(example) = local_rehearsal_example {
+        message.push_str(&format!(", or use local rehearsal: `{example}`"));
+    }
+
+    Err(CommandError::usage("live-command-unavailable", message))
 }
 
 fn resolve_repo_for_live(
@@ -1769,6 +1814,33 @@ mod tests {
         assert!(ensure_live_binary(BinaryFlavor::PlanIssue).is_ok());
         let local_only = ensure_live_binary(BinaryFlavor::PlanIssueLocal).expect_err("must fail");
         assert_eq!(local_only.code, "live-command-unavailable");
+        assert!(
+            local_only.message.contains("plan-issue <command>"),
+            "{}",
+            local_only.message
+        );
+
+        let local_status = ensure_live_binary_for_command(
+            BinaryFlavor::PlanIssueLocal,
+            "status-plan --issue <number>",
+            Some("plan-issue-local status-plan --body-file <path> --dry-run"),
+        )
+        .expect_err("local command-specific guard should fail");
+        assert_eq!(local_status.code, "live-command-unavailable");
+        assert!(
+            local_status
+                .message
+                .contains("status-plan --issue <number>"),
+            "{}",
+            local_status.message
+        );
+        assert!(
+            local_status
+                .message
+                .contains("status-plan --body-file <path> --dry-run"),
+            "{}",
+            local_status.message
+        );
 
         assert_eq!(
             resolve_repo_for_live(BinaryFlavor::PlanIssue, Some("graysurf/nils-cli"))

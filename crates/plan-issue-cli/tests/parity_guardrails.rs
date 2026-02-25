@@ -154,6 +154,26 @@ fn parity_shell_multi_sprint_guide_matches_shell_fixture_after_normalization() {
 }
 
 #[test]
+fn command_guardrails_local_issue_path_error_contains_subcommand_specific_guidance() {
+    let out = common::run_plan_issue_local(&["--format", "json", "status-plan", "--issue", "217"]);
+    assert_eq!(out.code, 2, "stderr: {}", out.stderr);
+
+    let payload = parse_json(&out.stdout);
+    assert_eq!(payload["status"], "error");
+    assert_eq!(payload["error"]["code"], "live-command-unavailable");
+
+    let message = payload["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("status-plan --issue <number>"),
+        "{message}"
+    );
+    assert!(
+        message.contains("status-plan --body-file <path> --dry-run"),
+        "{message}"
+    );
+}
+
+#[test]
 fn parity_shell_start_comment_template_matches_shell_fixture() {
     let tmp = TempDir::new().expect("temp dir");
     let agent_home = tmp.path().join("agent-home");
@@ -334,6 +354,13 @@ fn json_contract_multi_sprint_guide_success_envelope_is_stable() {
         payload["payload"]["result"]["guide"]
             .as_str()
             .is_some_and(|guide| guide.contains("MULTI_SPRINT_GUIDE_BEGIN")),
+        "{}",
+        out.stdout
+    );
+    assert!(
+        payload["payload"]["result"]["guide"]
+            .as_str()
+            .is_some_and(|guide| guide.contains("MODE=DRY_RUN_LIVE_BINARY")),
         "{}",
         out.stdout
     );

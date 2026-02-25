@@ -10,6 +10,8 @@ The crate ships two binaries with the same command surface:
 - `plan-issue`: live GitHub-backed mode
 - `plan-issue-local`: local-first rehearsal mode (offline/dry-run friendly)
 
+Shell wrapper scripts are deprecated for this crate path. Use `plan-issue` / `plan-issue-local` directly.
+
 ## Command surface
 
 ### Build and preparation
@@ -39,6 +41,18 @@ The crate ships two binaries with the same command surface:
 - `--json` or `--format json`: machine-readable contract output.
 - `--format text`: human-readable output.
 
+## Local-mode constraints
+- `plan-issue-local` does not support live `--issue` paths that require GitHub reads/writes.
+- Use `plan-issue <command>` for live operations.
+- Use `--body-file` + `--dry-run` flows for local rehearsal where supported.
+- `start-plan` in local mode emits deterministic placeholder issue number `999`.
+
+## Task Decomposition schema
+- Canonical table columns are fixed to:
+  - `Task | Summary | Owner | Branch | Worktree | Execution Mode | PR | Status | Notes`
+- Writer and parser share the same schema contract.
+- Writer sanitizes cell values (including `|`) so parser column count remains deterministic.
+
 ## Grouping and strategy rules
 - `--pr-grouping` is required for split-dependent commands:
   - `build-task-spec`, `build-plan-task-spec`, `start-plan`, `start-sprint`, `ready-sprint`, `accept-sprint`.
@@ -59,7 +73,12 @@ plan-issue start-plan \
   --plan docs/plans/example-plan.md \
   --pr-grouping per-sprint
 
-# 3) Export completion
+# 3) Local rehearsal start-plan (deterministic placeholder issue_number=999)
+plan-issue-local --format json --dry-run start-plan \
+  --plan docs/plans/example-plan.md \
+  --pr-grouping per-sprint
+
+# 4) Export completion
 plan-issue completion zsh > completions/zsh/_plan-issue
 plan-issue-local completion bash > completions/bash/plan-issue-local
 ```

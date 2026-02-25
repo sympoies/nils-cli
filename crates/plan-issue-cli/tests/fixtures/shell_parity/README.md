@@ -1,7 +1,8 @@
 # Shell Parity Fixtures
 
-This directory captures baseline output from the current shell entrypoint:
-`$AGENT_HOME/skills/automation/plan-issue-delivery-loop/scripts/plan-issue-delivery-loop.sh`.
+This directory captures baseline output from the Rust CLI entrypoints:
+- `plan-issue`
+- `plan-issue-local`
 
 ## Regenerate fixtures
 

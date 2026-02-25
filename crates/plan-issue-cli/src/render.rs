@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::issue_body;
 use crate::task_spec::{TaskSpecRow, agent_home};
 use nils_common::git as common_git;
 
@@ -87,9 +88,8 @@ pub fn render_plan_issue_body(
     out.extend([
         "## Task Decomposition".to_string(),
         String::new(),
-        "| Task | Summary | Owner | Branch | Worktree | Execution Mode | PR | Status | Notes |"
-            .to_string(),
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |".to_string(),
+        issue_body::task_decomposition_header_row(),
+        issue_body::task_decomposition_separator_row(),
     ]);
 
     for row in rows {
@@ -98,10 +98,17 @@ pub fn render_plan_issue_body(
         } else {
             row.notes.trim().to_string()
         };
-        out.push(format!(
-            "| {} | {} | TBD | TBD | TBD | TBD | TBD | planned | {} |",
-            row.task_id, row.summary, notes
-        ));
+        out.push(issue_body::format_task_decomposition_row([
+            &row.task_id,
+            &row.summary,
+            "TBD",
+            "TBD",
+            "TBD",
+            "TBD",
+            "TBD",
+            "planned",
+            &notes,
+        ]));
     }
 
     out.extend([

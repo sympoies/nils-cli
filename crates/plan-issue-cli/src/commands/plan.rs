@@ -48,7 +48,7 @@ pub struct StartPlanArgs {
         .args(["issue", "body_file"])
 ))]
 pub struct StatusPlanArgs {
-    /// Plan issue number.
+    /// Plan issue number (live `plan-issue` path only).
     #[arg(long, value_name = "number")]
     pub issue: Option<u64>,
 
@@ -67,7 +67,7 @@ pub struct StatusPlanArgs {
         .args(["issue", "body_file"])
 ))]
 pub struct ReadyPlanArgs {
-    /// Plan issue number.
+    /// Plan issue number (live `plan-issue` path only).
     #[arg(long, value_name = "number")]
     pub issue: Option<u64>,
 
@@ -96,7 +96,7 @@ pub struct ReadyPlanArgs {
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct ClosePlanArgs {
-    /// Plan issue number.
+    /// Plan issue number (`--issue`-only path is live `plan-issue` only).
     #[arg(long, value_name = "number")]
     pub issue: Option<u64>,
 
@@ -122,7 +122,7 @@ pub struct ClosePlanArgs {
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct CleanupWorktreesArgs {
-    /// Plan issue number.
+    /// Plan issue number (live `plan-issue` only).
     #[arg(long, value_name = "number")]
     pub issue: u64,
 }

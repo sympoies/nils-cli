@@ -44,6 +44,17 @@ fn cli_help_lists_full_surface_for_live_and_local_bins() {
         local.stdout
     );
     assert!(local.stdout.contains("Usage paths"), "{}", local.stdout);
+    assert!(
+        local.stdout.contains("Unsupported in plan-issue-local"),
+        "{}",
+        local.stdout
+    );
+    assert!(local.stdout.contains("Use instead"), "{}", local.stdout);
+    assert!(
+        local.stdout.contains("plan-issue <command>"),
+        "{}",
+        local.stdout
+    );
 }
 
 #[test]

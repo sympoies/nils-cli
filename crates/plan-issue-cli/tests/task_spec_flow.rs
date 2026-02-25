@@ -215,6 +215,34 @@ fn render_issue_body_start_plan_writes_issue_body_artifact() {
 }
 
 #[test]
+fn local_start_plan_returns_deterministic_issue_placeholder() {
+    let tmp = TempDir::new().expect("temp dir");
+    let agent_home = tmp.path().join("agent-home");
+    fs::create_dir_all(&agent_home).expect("create agent home");
+    let agent_home_s = agent_home.to_string_lossy().to_string();
+
+    let out = common::run_plan_issue_local_with_env(
+        &[
+            "--format",
+            "json",
+            "--dry-run",
+            "start-plan",
+            "--plan",
+            PLAN_PATH,
+            "--pr-grouping",
+            "per-sprint",
+        ],
+        &[("AGENT_HOME", &agent_home_s)],
+    );
+
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+    let payload = parse_json(&out.stdout);
+    assert_eq!(payload["command"], "start-plan");
+    assert_eq!(payload["payload"]["binary"], "plan-issue-local");
+    assert_eq!(payload["payload"]["result"]["issue_number"], 999);
+}
+
+#[test]
 fn render_issue_body_start_plan_falls_back_when_preface_sections_missing() {
     let tmp = TempDir::new().expect("temp dir");
     let agent_home = tmp.path().join("agent-home");
@@ -274,6 +302,79 @@ fn render_issue_body_start_plan_falls_back_when_preface_sections_missing() {
     );
     assert!(!rendered.contains("## Goal"), "{rendered}");
     assert!(rendered.contains("## Task Decomposition"), "{rendered}");
+}
+
+#[test]
+fn task_decomposition_writer_and_parser_use_one_sanitized_schema() {
+    let tmp = TempDir::new().expect("temp dir");
+    let agent_home = tmp.path().join("agent-home");
+    fs::create_dir_all(&agent_home).expect("create agent home");
+    let agent_home_s = agent_home.to_string_lossy().to_string();
+
+    let plan = tmp.path().join("pipe-summary-plan.md");
+    fs::write(
+        &plan,
+        r#"# Plan: Pipe summary
+
+## Sprint 1: Minimal
+### Task 1.1: Keep parser | writer aligned
+- **Location**:
+  - crates/plan-issue-cli/src/render.rs
+- **Description**: Ensure pipe in summary does not break task table parsing.
+- **Dependencies**:
+  - none
+- **Complexity**: 1
+- **Acceptance criteria**:
+  - start-plan output can be parsed by status-plan parser.
+- **Validation**:
+  - cargo test -p nils-plan-issue-cli task_decomposition_writer_and_parser_use_one_sanitized_schema -- --exact
+"#,
+    )
+    .expect("write plan");
+
+    let task_spec = tmp.path().join("plan.tsv");
+    let issue_body = tmp.path().join("issue-body.md");
+    let plan_s = plan.to_string_lossy().to_string();
+    let task_spec_s = task_spec.to_string_lossy().to_string();
+    let issue_body_s = issue_body.to_string_lossy().to_string();
+
+    let start_out = common::run_plan_issue_local_with_env(
+        &[
+            "--format",
+            "json",
+            "--dry-run",
+            "start-plan",
+            "--plan",
+            &plan_s,
+            "--pr-grouping",
+            "per-sprint",
+            "--task-spec-out",
+            &task_spec_s,
+            "--issue-body-out",
+            &issue_body_s,
+        ],
+        &[("AGENT_HOME", &agent_home_s)],
+    );
+    assert_eq!(start_out.code, 0, "stderr: {}", start_out.stderr);
+
+    let rendered = fs::read_to_string(&issue_body).expect("read issue body");
+    assert!(
+        rendered.contains("Keep parser / writer aligned"),
+        "{rendered}"
+    );
+
+    let status_out = common::run_plan_issue_local(&[
+        "--format",
+        "json",
+        "--dry-run",
+        "status-plan",
+        "--body-file",
+        &issue_body_s,
+    ]);
+    assert_eq!(status_out.code, 0, "stderr: {}", status_out.stderr);
+    let payload = parse_json(&status_out.stdout);
+    assert_eq!(payload["command"], "status-plan");
+    assert_eq!(payload["payload"]["result"]["task_count"], 1);
 }
 
 #[test]

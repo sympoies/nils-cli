@@ -21,6 +21,18 @@ pub struct TaskTable {
     trailing_newline: bool,
 }
 
+pub const TASK_DECOMPOSITION_COLUMNS: [&str; 9] = [
+    "Task",
+    "Summary",
+    "Owner",
+    "Branch",
+    "Worktree",
+    "Execution Mode",
+    "PR",
+    "Status",
+    "Notes",
+];
+
 impl TaskTable {
     pub fn rows(&self) -> &[TaskRow] {
         &self.rows
@@ -93,10 +105,11 @@ pub fn parse_task_table(body: &str) -> Result<TaskTable, String> {
         }
 
         let cells = split_table_cells(trimmed);
-        if cells.len() != 9 {
+        if cells.len() != TASK_DECOMPOSITION_COLUMNS.len() {
             return Err(format!(
-                "task decomposition row has {} columns (expected 9): {}",
+                "task decomposition row has {} columns (expected {}): {}",
                 cells.len(),
+                TASK_DECOMPOSITION_COLUMNS.len(),
                 trimmed
             ));
         }
@@ -124,6 +137,26 @@ pub fn parse_task_table(body: &str) -> Result<TaskTable, String> {
         rows,
         trailing_newline,
     })
+}
+
+pub fn task_decomposition_header_row() -> String {
+    format!("| {} |", TASK_DECOMPOSITION_COLUMNS.join(" | "))
+}
+
+pub fn task_decomposition_separator_row() -> String {
+    let separators = std::iter::repeat_n("---", TASK_DECOMPOSITION_COLUMNS.len())
+        .collect::<Vec<_>>()
+        .join(" | ");
+    format!("| {separators} |")
+}
+
+pub fn format_task_decomposition_row(cells: [&str; TASK_DECOMPOSITION_COLUMNS.len()]) -> String {
+    let rendered = cells
+        .into_iter()
+        .map(sanitize_table_value)
+        .collect::<Vec<_>>()
+        .join(" | ");
+    format!("| {rendered} |")
 }
 
 pub fn validate_rows(rows: &[TaskRow]) -> Vec<String> {
@@ -275,25 +308,13 @@ pub fn is_placeholder(value: &str) -> bool {
 }
 
 fn normalize_header_cells(cells: &[String]) -> bool {
-    let expected = [
-        "task",
-        "summary",
-        "owner",
-        "branch",
-        "worktree",
-        "execution mode",
-        "pr",
-        "status",
-        "notes",
-    ];
-
-    if cells.len() != expected.len() {
+    if cells.len() != TASK_DECOMPOSITION_COLUMNS.len() {
         return false;
     }
 
     cells
         .iter()
-        .zip(expected)
+        .zip(TASK_DECOMPOSITION_COLUMNS)
         .all(|(cell, expected)| cell.trim().eq_ignore_ascii_case(expected))
 }
 
@@ -338,25 +359,25 @@ fn sanitize_table_value(value: &str) -> String {
 }
 
 fn format_markdown_row(row: &TaskRow) -> String {
-    format!(
-        "| {} | {} | {} | {} | {} | {} | {} | {} | {} |",
-        sanitize_table_value(&row.task),
-        sanitize_table_value(&row.summary),
-        sanitize_table_value(&row.owner),
-        sanitize_table_value(&row.branch),
-        sanitize_table_value(&row.worktree),
-        sanitize_table_value(&row.execution_mode),
-        sanitize_table_value(&row.pr),
-        sanitize_table_value(&row.status),
-        sanitize_table_value(&row.notes),
-    )
+    format_task_decomposition_row([
+        &row.task,
+        &row.summary,
+        &row.owner,
+        &row.branch,
+        &row.worktree,
+        &row.execution_mode,
+        &row.pr,
+        &row.status,
+        &row.notes,
+    ])
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        TaskRow, is_placeholder, normalize_pr_display, parse_pr_number, parse_task_table,
-        row_sprint, validate_rows,
+        TaskRow, format_task_decomposition_row, is_placeholder, normalize_pr_display,
+        parse_pr_number, parse_task_table, row_sprint, task_decomposition_header_row,
+        task_decomposition_separator_row, validate_rows,
     };
 
     #[test]
@@ -472,5 +493,29 @@ mod tests {
                 "S4T2: pr-isolated Worktree `issue-s4-shared` duplicates task S4T1",
             ]
         );
+    }
+
+    #[test]
+    fn task_table_schema_helpers_and_parser_stay_aligned() {
+        let body = format!(
+            "## Task Decomposition\n\n{}\n{}\n{}\n",
+            task_decomposition_header_row(),
+            task_decomposition_separator_row(),
+            format_task_decomposition_row([
+                "S4T1",
+                "A | B",
+                "subagent",
+                "issue/s4",
+                "issue-s4",
+                "per-sprint",
+                "#1",
+                "done",
+                "sprint=S4"
+            ])
+        );
+
+        let table = parse_task_table(&body).expect("parse table");
+        assert_eq!(table.rows().len(), 1);
+        assert_eq!(table.rows()[0].summary, "A / B");
     }
 }
