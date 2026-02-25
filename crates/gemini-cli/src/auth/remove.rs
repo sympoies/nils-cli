@@ -1,6 +1,7 @@
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
+use crate::auth;
 use crate::auth::output;
 
 pub fn run(target: &str, yes: bool) -> i32 {
@@ -204,7 +205,7 @@ fn remove_target_timestamp(target_file: &Path) {
         .and_then(|v| v.to_str())
         .unwrap_or("auth.json");
     let timestamp_file = cache_dir.join(format!("{file_name}.timestamp"));
-    let _ = std::fs::remove_file(timestamp_file);
+    let _ = auth::write_timestamp(&timestamp_file, None);
 }
 
 #[cfg(test)]
