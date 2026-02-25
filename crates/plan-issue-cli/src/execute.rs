@@ -15,7 +15,7 @@ use crate::commands::plan::{
 use crate::commands::sprint::{
     AcceptSprintArgs, MultiSprintGuideArgs, ReadySprintArgs, StartSprintArgs,
 };
-use crate::commands::{Command as CliCommand, SummaryArgs};
+use crate::commands::{Command as CliCommand, SplitStrategy, SummaryArgs};
 use crate::github::{GhCliAdapter, GitHubAdapter};
 use crate::issue_body::{self, TaskRow};
 use crate::render::{self, SprintCommentInput, SprintCommentMode};
@@ -613,8 +613,9 @@ fn run_start_sprint(
                 .map_err(|err| CommandError::runtime("previous-sprint-gate-failed", err))?;
         }
 
-        synced_rows = sync_issue_rows_from_task_spec(&mut table, &build.rows)
-            .map_err(|err| CommandError::runtime("task-sync-failed", err))?;
+        synced_rows =
+            sync_issue_rows_from_task_spec(&mut table, &build.rows, args.grouping.strategy)
+                .map_err(|err| CommandError::runtime("task-sync-failed", err))?;
 
         let updated_body = table.render();
         issue_body_for_comment = Some(updated_body.clone());
@@ -635,6 +636,7 @@ fn run_start_sprint(
         sprint: i32::from(args.sprint),
         sprint_name: &sprint_name,
         rows: &build.rows,
+        strategy: args.grouping.strategy,
         note_text: None,
         approval_comment_url: None,
         issue_body_text: issue_body_for_comment.as_deref(),
@@ -736,6 +738,7 @@ fn run_ready_sprint(
         sprint: i32::from(args.sprint),
         sprint_name: &sprint_name,
         rows: &build.rows,
+        strategy: args.grouping.strategy,
         note_text: summary.as_deref(),
         approval_comment_url: None,
         issue_body_text: issue_body_for_comment.as_deref(),
@@ -879,6 +882,7 @@ fn run_accept_sprint(
         sprint: i32::from(args.sprint),
         sprint_name: &sprint_name,
         rows: &build.rows,
+        strategy: args.grouping.strategy,
         note_text: summary.as_deref(),
         approval_comment_url: Some(&args.approved_comment_url),
         issue_body_text: issue_body_for_comment.as_deref(),
@@ -1338,34 +1342,27 @@ fn enforce_previous_sprint_gate(
 fn sync_issue_rows_from_task_spec(
     table: &mut issue_body::TaskTable,
     spec_rows: &[TaskSpecRow],
+    strategy: SplitStrategy,
 ) -> Result<usize, String> {
-    let mut group_sizes: HashMap<String, usize> = HashMap::new();
+    let execution_modes = task_spec::execution_mode_by_task(spec_rows, strategy);
+    let mut spec_by_task: HashMap<String, TaskSpecRow> = HashMap::new();
     for spec in spec_rows {
-        *group_sizes.entry(spec.pr_group.clone()).or_insert(0) += 1;
-    }
-
-    let mut spec_by_task: HashMap<String, (TaskSpecRow, String)> = HashMap::new();
-    for spec in spec_rows {
-        let mode = if spec.grouping == crate::commands::PrGrouping::PerSprint {
-            "per-sprint".to_string()
-        } else if group_sizes.get(&spec.pr_group).copied().unwrap_or(0) > 1 {
-            "pr-shared".to_string()
-        } else {
-            "pr-isolated".to_string()
-        };
-        spec_by_task.insert(spec.task_id.clone(), (spec.clone(), mode));
+        spec_by_task.insert(spec.task_id.clone(), spec.clone());
     }
 
     let mut touched = HashSet::new();
     let mut updated = 0usize;
 
     for row in table.rows_mut() {
-        if let Some((spec, mode)) = spec_by_task.get(&row.task) {
+        if let Some(spec) = spec_by_task.get(&row.task) {
             row.summary = spec.summary.clone();
             row.owner = spec.owner.clone();
             row.branch = spec.branch.clone();
             row.worktree = spec.worktree.clone();
-            row.execution_mode = mode.clone();
+            row.execution_mode = execution_modes
+                .get(&spec.task_id)
+                .cloned()
+                .unwrap_or_else(|| "pr-isolated".to_string());
             row.notes = spec.notes.clone();
             if issue_body::is_placeholder(&row.pr) {
                 row.pr = "TBD".to_string();
@@ -2038,7 +2035,9 @@ mod tests {
             },
         ];
 
-        let updated = sync_issue_rows_from_task_spec(&mut table, &specs).expect("sync");
+        let updated =
+            sync_issue_rows_from_task_spec(&mut table, &specs, SplitStrategy::Deterministic)
+                .expect("sync");
         assert_eq!(updated, 2);
         let rows = table.rows();
         assert_eq!(rows[0].branch, "issue/s1-t1");
@@ -2060,12 +2059,110 @@ mod tests {
                 sprint: 9,
                 grouping: PrGrouping::PerSprint,
             }],
+            SplitStrategy::Deterministic,
         )
         .expect_err("missing table rows should fail");
         assert!(
             missing.contains("issue task table missing rows"),
             "{missing}"
         );
+    }
+
+    #[test]
+    fn sync_issue_rows_from_task_spec_auto_single_group_uses_per_sprint_mode() {
+        let body = task_table_markdown(&[
+            task_row("S3T1", "TBD", "TBD", "TBD", "", "sprint=S3"),
+            task_row("S3T2", "TBD", "TBD", "TBD", "", "sprint=S3"),
+        ]);
+        let mut table = issue_body::parse_task_table(&body).expect("table");
+
+        let specs = vec![
+            TaskSpecRow {
+                task_id: "S3T1".to_string(),
+                summary: "Task 1".to_string(),
+                branch: "issue/s3-t1".to_string(),
+                worktree: "wt-1".to_string(),
+                owner: "subagent-s3-t1".to_string(),
+                notes: "sprint=S3; plan-task:Task 3.1; pr-group=s3-auto-g1".to_string(),
+                pr_group: "s3-auto-g1".to_string(),
+                sprint: 3,
+                grouping: PrGrouping::Group,
+            },
+            TaskSpecRow {
+                task_id: "S3T2".to_string(),
+                summary: "Task 2".to_string(),
+                branch: "issue/s3-t2".to_string(),
+                worktree: "wt-2".to_string(),
+                owner: "subagent-s3-t2".to_string(),
+                notes: "sprint=S3; plan-task:Task 3.2; pr-group=s3-auto-g1".to_string(),
+                pr_group: "s3-auto-g1".to_string(),
+                sprint: 3,
+                grouping: PrGrouping::Group,
+            },
+        ];
+
+        let updated =
+            sync_issue_rows_from_task_spec(&mut table, &specs, SplitStrategy::Auto).expect("sync");
+        assert_eq!(updated, 2);
+
+        let rows = table.rows();
+        assert_eq!(rows[0].execution_mode, "per-sprint");
+        assert_eq!(rows[1].execution_mode, "per-sprint");
+    }
+
+    #[test]
+    fn sync_issue_rows_from_task_spec_auto_multi_group_keeps_group_modes() {
+        let body = task_table_markdown(&[
+            task_row("S4T1", "TBD", "TBD", "TBD", "", "sprint=S4"),
+            task_row("S4T2", "TBD", "TBD", "TBD", "", "sprint=S4"),
+            task_row("S4T3", "TBD", "TBD", "TBD", "", "sprint=S4"),
+        ]);
+        let mut table = issue_body::parse_task_table(&body).expect("table");
+
+        let specs = vec![
+            TaskSpecRow {
+                task_id: "S4T1".to_string(),
+                summary: "Task 1".to_string(),
+                branch: "issue/s4-t1".to_string(),
+                worktree: "wt-1".to_string(),
+                owner: "subagent-s4-t1".to_string(),
+                notes: "sprint=S4; plan-task:Task 4.1; pr-group=s4-auto-g1".to_string(),
+                pr_group: "s4-auto-g1".to_string(),
+                sprint: 4,
+                grouping: PrGrouping::Group,
+            },
+            TaskSpecRow {
+                task_id: "S4T2".to_string(),
+                summary: "Task 2".to_string(),
+                branch: "issue/s4-t2".to_string(),
+                worktree: "wt-2".to_string(),
+                owner: "subagent-s4-t2".to_string(),
+                notes: "sprint=S4; plan-task:Task 4.2; pr-group=s4-auto-g1".to_string(),
+                pr_group: "s4-auto-g1".to_string(),
+                sprint: 4,
+                grouping: PrGrouping::Group,
+            },
+            TaskSpecRow {
+                task_id: "S4T3".to_string(),
+                summary: "Task 3".to_string(),
+                branch: "issue/s4-t3".to_string(),
+                worktree: "wt-3".to_string(),
+                owner: "subagent-s4-t3".to_string(),
+                notes: "sprint=S4; plan-task:Task 4.3; pr-group=s4-auto-g2".to_string(),
+                pr_group: "s4-auto-g2".to_string(),
+                sprint: 4,
+                grouping: PrGrouping::Group,
+            },
+        ];
+
+        let updated =
+            sync_issue_rows_from_task_spec(&mut table, &specs, SplitStrategy::Auto).expect("sync");
+        assert_eq!(updated, 3);
+
+        let rows = table.rows();
+        assert_eq!(rows[0].execution_mode, "pr-shared");
+        assert_eq!(rows[1].execution_mode, "pr-shared");
+        assert_eq!(rows[2].execution_mode, "pr-isolated");
     }
 
     fn setup_repo_with_linked_worktree() -> (TempDir, PathBuf) {

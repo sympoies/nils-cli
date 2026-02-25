@@ -116,9 +116,11 @@ fn resolve_cli_endpoint_unknown_env_lists_available() {
 
 #[test]
 fn resolve_cli_endpoint_env_default_from_env_file() {
+    let lock = GlobalStateLock::new();
     let tmp = TempDir::new().unwrap();
     let endpoints_env = tmp.path().join("endpoints.env");
     let endpoints_local = tmp.path().join("endpoints.local.env");
+    let _url_guard = EnvGuard::remove(&lock, "REST_URL");
     write_file(
         &endpoints_env,
         "REST_ENV_DEFAULT=prod\nREST_URL_PROD=http://prod\n",

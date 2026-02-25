@@ -2,8 +2,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::commands::SplitStrategy;
 use crate::issue_body;
-use crate::task_spec::{TaskSpecRow, agent_home};
+use crate::task_spec::{TaskSpecRow, agent_home, execution_mode_by_task};
 use nils_common::fs as common_fs;
 use nils_common::git as common_git;
 
@@ -21,6 +22,7 @@ pub struct SprintCommentInput<'a> {
     pub sprint: i32,
     pub sprint_name: &'a str,
     pub rows: &'a [TaskSpecRow],
+    pub strategy: SplitStrategy,
     pub note_text: Option<&'a str>,
     pub approval_comment_url: Option<&'a str>,
     pub issue_body_text: Option<&'a str>,
@@ -196,6 +198,7 @@ pub fn render_sprint_comment(input: SprintCommentInput<'_>) -> Result<String, St
         sprint,
         sprint_name,
         rows,
+        strategy,
         note_text,
         approval_comment_url,
         issue_body_text,
@@ -205,10 +208,7 @@ pub fn render_sprint_comment(input: SprintCommentInput<'_>) -> Result<String, St
         return Err("task spec contains no rows".to_string());
     }
 
-    let mut group_sizes: HashMap<String, usize> = HashMap::new();
-    for row in rows {
-        *group_sizes.entry(row.pr_group.clone()).or_insert(0) += 1;
-    }
+    let execution_modes = execution_mode_by_task(rows, strategy);
 
     let issue_pr_values = issue_body_text
         .map(parse_issue_pr_values)
@@ -260,13 +260,10 @@ pub fn render_sprint_comment(input: SprintCommentInput<'_>) -> Result<String, St
             out.push("| Task | Summary | Execution Mode |".to_string());
             out.push("| --- | --- | --- |".to_string());
             for row in rows {
-                let execution_mode = if row.grouping == crate::commands::PrGrouping::PerSprint {
-                    "per-sprint"
-                } else if group_sizes.get(&row.pr_group).copied().unwrap_or(0) > 1 {
-                    "pr-shared"
-                } else {
-                    "pr-isolated"
-                };
+                let execution_mode = execution_modes
+                    .get(&row.task_id)
+                    .map(String::as_str)
+                    .unwrap_or("pr-isolated");
                 out.push(format!(
                     "| {} | {} | {} |",
                     row.task_id,
@@ -294,7 +291,11 @@ pub fn render_sprint_comment(input: SprintCommentInput<'_>) -> Result<String, St
                     .map(|v| normalize_pr_display(v))
                     .unwrap_or_default();
                 if pr_value.is_empty() {
-                    pr_value = if row.grouping == crate::commands::PrGrouping::PerSprint {
+                    let execution_mode = execution_modes
+                        .get(&row.task_id)
+                        .map(String::as_str)
+                        .unwrap_or("pr-isolated");
+                    pr_value = if execution_mode == "per-sprint" {
                         "TBD (per-sprint)".to_string()
                     } else {
                         format!("TBD (group:{})", row.pr_group)
