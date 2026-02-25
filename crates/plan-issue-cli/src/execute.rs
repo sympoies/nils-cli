@@ -1668,68 +1668,6 @@ fn compare_drift_field(
     }
 }
 
-#[cfg(test)]
-fn sync_issue_rows_from_task_spec(
-    table: &mut issue_body::TaskTable,
-    spec_rows: &[TaskSpecRow],
-    strategy: SplitStrategy,
-) -> Result<usize, String> {
-    let runtime_lane_metadata = task_spec::runtime_lane_metadata_by_task(spec_rows, strategy);
-    let mut spec_by_task: HashMap<String, TaskSpecRow> = HashMap::new();
-    for spec in spec_rows {
-        spec_by_task.insert(spec.task_id.clone(), spec.clone());
-    }
-
-    let mut touched = HashSet::new();
-    let mut updated = 0usize;
-
-    for row in table.rows_mut() {
-        if let Some(spec) = spec_by_task.get(&row.task) {
-            let lane = runtime_lane_metadata.get(&spec.task_id);
-            row.summary = spec.summary.clone();
-            row.owner = lane
-                .map(|metadata| metadata.owner.clone())
-                .unwrap_or_else(|| spec.owner.clone());
-            row.branch = lane
-                .map(|metadata| metadata.branch.clone())
-                .unwrap_or_else(|| spec.branch.clone());
-            row.worktree = lane
-                .map(|metadata| metadata.worktree.clone())
-                .unwrap_or_else(|| spec.worktree.clone());
-            row.execution_mode = lane
-                .map(|metadata| metadata.execution_mode.clone())
-                .unwrap_or_else(|| "pr-isolated".to_string());
-            row.notes = lane
-                .map(|metadata| metadata.notes.clone())
-                .unwrap_or_else(|| spec.notes.clone());
-            if issue_body::is_placeholder(&row.pr) {
-                row.pr = "TBD".to_string();
-            } else {
-                row.pr = issue_body::normalize_pr_display(&row.pr);
-            }
-            if row.status.trim().is_empty() {
-                row.status = "planned".to_string();
-            }
-            touched.insert(spec.task_id.clone());
-            updated += 1;
-        }
-    }
-
-    if touched.len() != spec_rows.len() {
-        let missing = spec_rows
-            .iter()
-            .filter(|row| !touched.contains(&row.task_id))
-            .map(|row| row.task_id.clone())
-            .collect::<Vec<_>>();
-        return Err(format!(
-            "issue task table missing rows for sprint tasks: {}",
-            missing.join(",")
-        ));
-    }
-
-    Ok(updated)
-}
-
 #[derive(Debug, Default)]
 struct CleanupOutcome {
     targeted: Vec<String>,
