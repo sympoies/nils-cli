@@ -170,8 +170,14 @@ parse_flags() {
         spec = substr(spec, 1, spec_end - 1)
       }
 
-      while (match(spec, /-{1,2}[A-Za-z0-9][A-Za-z0-9-]*/)) {
+      # Ignore placeholder metavariables (for example <task-id>) so we do not
+      # misinterpret suffixes like "-id" as real flags.
+      gsub(/<[^>]*>/, "", spec)
+      gsub(/\[[^]]*\]/, "", spec)
+
+      while (match(spec, /(^|[[:space:],])-{1,2}[A-Za-z0-9][A-Za-z0-9-]*/)) {
         token = substr(spec, RSTART, RLENGTH)
+        sub(/^[[:space:],]+/, "", token)
         spec = substr(spec, RSTART + RLENGTH)
         if (token == "-h" || token == "--help") {
           continue
