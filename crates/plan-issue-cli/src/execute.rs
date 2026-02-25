@@ -590,7 +590,7 @@ fn run_start_sprint(
             .issue_body(&repo, args.issue)
             .map_err(|err| CommandError::runtime("github-issue-read-failed", err))?;
 
-        let mut table = issue_body::parse_task_table(&body)
+        let table = issue_body::parse_task_table(&body)
             .map_err(|err| CommandError::runtime("issue-body-parse-failed", err))?;
 
         let structure_errors = issue_body::validate_rows(table.rows());
@@ -606,23 +606,17 @@ fn run_start_sprint(
                 .map_err(|err| CommandError::runtime("previous-sprint-gate-failed", err))?;
         }
 
-        synced_rows =
-            sync_issue_rows_from_task_spec(&mut table, &build.rows, args.grouping.strategy)
-                .map_err(|err| CommandError::runtime("task-sync-failed", err))?;
         artifact_rows = task_spec_rows_from_issue_rows(table.rows(), i32::from(args.sprint))
             .map_err(|err| CommandError::runtime("task-spec-from-issue-rows-failed", err))?;
-
-        let updated_body = table.render();
-        issue_body_for_comment = Some(updated_body.clone());
-
-        if !dry_run {
-            let body_path = write_temp_markdown("start-sprint-issue-body", &updated_body)
-                .map_err(|err| CommandError::runtime("issue-body-write-failed", err))?;
-            adapter
-                .edit_issue_body(&repo, args.issue, &body_path)
-                .map_err(|err| CommandError::runtime("github-issue-update-failed", err))?;
-            live_mutations = true;
-        }
+        synced_rows = artifact_rows.len();
+        ensure_start_sprint_runtime_truth_matches_plan(
+            table.rows(),
+            i32::from(args.sprint),
+            &build.rows,
+            args.grouping.strategy,
+        )
+        .map_err(|err| CommandError::runtime("task-sync-drift-detected", err))?;
+        issue_body_for_comment = Some(body);
     }
 
     let task_spec_out = args.task_spec_out.clone().unwrap_or_else(|| {
@@ -1540,6 +1534,141 @@ fn enforce_previous_sprint_gate(
     }
 }
 
+fn ensure_start_sprint_runtime_truth_matches_plan(
+    issue_rows: &[TaskRow],
+    sprint: i32,
+    plan_rows: &[TaskSpecRow],
+    strategy: SplitStrategy,
+) -> Result<(), String> {
+    let mut issue_rows_by_task: HashMap<String, &TaskRow> = HashMap::new();
+    let mut issue_duplicates = Vec::new();
+    for row in issue_rows {
+        if issue_body::row_sprint(row) != Some(sprint) {
+            continue;
+        }
+        let task_id = row.task.trim().to_string();
+        if let Some(previous) = issue_rows_by_task.insert(task_id.clone(), row) {
+            issue_duplicates.push(format!(
+                "{task_id}: duplicate issue rows for sprint S{sprint} (line {} and line {})",
+                previous.line_index + 1,
+                row.line_index + 1
+            ));
+        }
+    }
+
+    let runtime_lane_metadata = task_spec::runtime_lane_metadata_by_task(plan_rows, strategy);
+    let mut expected_by_task: HashMap<String, DriftComparableRow> = HashMap::new();
+    for plan_row in plan_rows {
+        let lane = runtime_lane_metadata
+            .get(&plan_row.task_id)
+            .ok_or_else(|| format!("{}: missing runtime lane metadata", plan_row.task_id))?;
+        expected_by_task.insert(
+            plan_row.task_id.clone(),
+            DriftComparableRow {
+                summary: plan_row.summary.trim().to_string(),
+                owner: lane.owner.trim().to_string(),
+                branch: lane.branch.trim().to_string(),
+                worktree: lane.worktree.trim().to_string(),
+                execution_mode: lane.execution_mode.trim().to_ascii_lowercase(),
+                notes: lane.notes.trim().to_string(),
+            },
+        );
+    }
+
+    let mut errors = issue_duplicates;
+
+    for (task_id, expected) in &expected_by_task {
+        let Some(issue_row) = issue_rows_by_task.get(task_id) else {
+            errors.push(format!(
+                "{task_id}: missing issue row for sprint S{sprint}; rerun start-plan to refresh runtime-truth rows"
+            ));
+            continue;
+        };
+
+        compare_drift_field(
+            &mut errors,
+            task_id,
+            "Summary",
+            issue_row.summary.trim(),
+            &expected.summary,
+        );
+        compare_drift_field(
+            &mut errors,
+            task_id,
+            "Owner",
+            issue_row.owner.trim(),
+            &expected.owner,
+        );
+        compare_drift_field(
+            &mut errors,
+            task_id,
+            "Branch",
+            issue_row.branch.trim(),
+            &expected.branch,
+        );
+        compare_drift_field(
+            &mut errors,
+            task_id,
+            "Worktree",
+            issue_row.worktree.trim(),
+            &expected.worktree,
+        );
+        compare_drift_field(
+            &mut errors,
+            task_id,
+            "Execution Mode",
+            &issue_row.execution_mode.trim().to_ascii_lowercase(),
+            &expected.execution_mode,
+        );
+        compare_drift_field(
+            &mut errors,
+            task_id,
+            "Notes",
+            issue_row.notes.trim(),
+            &expected.notes,
+        );
+    }
+
+    for task_id in issue_rows_by_task.keys() {
+        if !expected_by_task.contains_key(task_id) {
+            errors.push(format!(
+                "{task_id}: issue row exists for sprint S{sprint} but is absent from current plan split output"
+            ));
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join(" | "))
+    }
+}
+
+#[derive(Debug)]
+struct DriftComparableRow {
+    summary: String,
+    owner: String,
+    branch: String,
+    worktree: String,
+    execution_mode: String,
+    notes: String,
+}
+
+fn compare_drift_field(
+    errors: &mut Vec<String>,
+    task_id: &str,
+    field: &str,
+    actual: &str,
+    expected: &str,
+) {
+    if actual != expected {
+        errors.push(format!(
+            "{task_id}: {field} drift (issue `{actual}` != plan `{expected}`)"
+        ));
+    }
+}
+
+#[cfg(test)]
 fn sync_issue_rows_from_task_spec(
     table: &mut issue_body::TaskTable,
     spec_rows: &[TaskSpecRow],
