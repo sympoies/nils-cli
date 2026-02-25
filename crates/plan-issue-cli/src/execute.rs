@@ -159,6 +159,7 @@ fn run_start_plan(
         &build.display_plan_path,
         &plan_title,
         &build.rows,
+        args.grouping.strategy,
     );
     render::write_rendered(&issue_body_out, &issue_body)
         .map_err(|err| CommandError::runtime("issue-body-write-failed", err))?;
@@ -1344,7 +1345,7 @@ fn sync_issue_rows_from_task_spec(
     spec_rows: &[TaskSpecRow],
     strategy: SplitStrategy,
 ) -> Result<usize, String> {
-    let execution_modes = task_spec::execution_mode_by_task(spec_rows, strategy);
+    let runtime_lane_metadata = task_spec::runtime_lane_metadata_by_task(spec_rows, strategy);
     let mut spec_by_task: HashMap<String, TaskSpecRow> = HashMap::new();
     for spec in spec_rows {
         spec_by_task.insert(spec.task_id.clone(), spec.clone());
@@ -1355,15 +1356,23 @@ fn sync_issue_rows_from_task_spec(
 
     for row in table.rows_mut() {
         if let Some(spec) = spec_by_task.get(&row.task) {
+            let lane = runtime_lane_metadata.get(&spec.task_id);
             row.summary = spec.summary.clone();
-            row.owner = spec.owner.clone();
-            row.branch = spec.branch.clone();
-            row.worktree = spec.worktree.clone();
-            row.execution_mode = execution_modes
-                .get(&spec.task_id)
-                .cloned()
+            row.owner = lane
+                .map(|metadata| metadata.owner.clone())
+                .unwrap_or_else(|| spec.owner.clone());
+            row.branch = lane
+                .map(|metadata| metadata.branch.clone())
+                .unwrap_or_else(|| spec.branch.clone());
+            row.worktree = lane
+                .map(|metadata| metadata.worktree.clone())
+                .unwrap_or_else(|| spec.worktree.clone());
+            row.execution_mode = lane
+                .map(|metadata| metadata.execution_mode.clone())
                 .unwrap_or_else(|| "pr-isolated".to_string());
-            row.notes = spec.notes.clone();
+            row.notes = lane
+                .map(|metadata| metadata.notes.clone())
+                .unwrap_or_else(|| spec.notes.clone());
             if issue_body::is_placeholder(&row.pr) {
                 row.pr = "TBD".to_string();
             } else {
@@ -2128,63 +2137,6 @@ mod tests {
             .iter()
             .find(|row| row.task == anchor_task)
             .expect("anchor row present");
-
-        // Characterization: auto single-lane normalizes only execution_mode today. Lane metadata
-        // remains per-task, so rows do not converge on the shared anchor row's owner/branch/worktree/notes.
-        assert_ne!(rows[0].owner, rows[1].owner);
-        assert_ne!(rows[0].branch, rows[1].branch);
-        assert_ne!(rows[0].worktree, rows[1].worktree);
-        assert_ne!(rows[0].notes, rows[1].notes);
-        assert_ne!(rows[0].owner, anchor_row.owner);
-        assert_ne!(rows[0].branch, anchor_row.branch);
-        assert_ne!(rows[0].worktree, anchor_row.worktree);
-        assert_ne!(rows[0].notes, anchor_row.notes);
-    }
-
-    #[test]
-    #[ignore = "S2 lane canonicalization should unify single-lane metadata on the shared anchor"]
-    fn sync_issue_rows_from_task_spec_auto_single_group_should_canonicalize_lane_metadata() {
-        let body = task_table_markdown(&[
-            task_row("S3T1", "TBD", "TBD", "TBD", "", "sprint=S3"),
-            task_row("S3T2", "TBD", "TBD", "TBD", "", "sprint=S3"),
-        ]);
-        let mut table = issue_body::parse_task_table(&body).expect("table");
-
-        let specs = vec![
-            TaskSpecRow {
-                task_id: "S3T1".to_string(),
-                summary: "Task 1".to_string(),
-                branch: "issue/s3-t1".to_string(),
-                worktree: "wt-1".to_string(),
-                owner: "subagent-s3-t1".to_string(),
-                notes: "sprint=S3; plan-task:Task 3.1; pr-group=s3-auto-g1; shared-pr-anchor=S3T2"
-                    .to_string(),
-                pr_group: "s3-auto-g1".to_string(),
-                sprint: 3,
-                grouping: PrGrouping::Group,
-            },
-            TaskSpecRow {
-                task_id: "S3T2".to_string(),
-                summary: "Task 2".to_string(),
-                branch: "issue/s3-t2".to_string(),
-                worktree: "wt-2".to_string(),
-                owner: "subagent-s3-t2".to_string(),
-                notes: "sprint=S3; plan-task:Task 3.2; pr-group=s3-auto-g1; shared-pr-anchor=S3T2"
-                    .to_string(),
-                pr_group: "s3-auto-g1".to_string(),
-                sprint: 3,
-                grouping: PrGrouping::Group,
-            },
-        ];
-
-        sync_issue_rows_from_task_spec(&mut table, &specs, SplitStrategy::Auto).expect("sync");
-
-        let rows = table.rows();
-        let anchor_task = note_value(&rows[0].notes, "shared-pr-anchor").expect("anchor note");
-        let anchor_row = rows
-            .iter()
-            .find(|row| row.task == anchor_task)
-            .expect("anchor row present");
         let anchor_owner = anchor_row.owner.clone();
         let anchor_branch = anchor_row.branch.clone();
         let anchor_worktree = anchor_row.worktree.clone();
@@ -2298,16 +2250,35 @@ mod tests {
         assert!(listed_paths.contains(&path_key(repo.path())));
         assert!(listed_paths.contains(&path_key(&linked_path)));
 
-        let rows = vec![task_row(
-            "S1T1",
-            "issue/s1-t1",
-            linked_path.to_string_lossy().as_ref(),
-            "#11",
-            "done",
-            "sprint=S1",
-        )];
+        let linked = linked_path.to_string_lossy().to_string();
+        let rows = vec![
+            task_row(
+                "S1T1",
+                "issue/s1-t1",
+                &linked,
+                "#11",
+                "done",
+                "sprint=S1; pr-group=s1-auto-g1; shared-pr-anchor=S1T2",
+            ),
+            task_row(
+                "S1T2",
+                "issue/s1-t1",
+                &linked,
+                "#11",
+                "done",
+                "sprint=S1; pr-group=s1-auto-g1; shared-pr-anchor=S1T2",
+            ),
+        ];
 
         let dry_run = cleanup_worktrees_from_rows(&rows, true).expect("dry-run cleanup");
+        assert_eq!(
+            dry_run
+                .targeted
+                .iter()
+                .filter(|path| path.contains("linked-s1-t1"))
+                .count(),
+            1
+        );
         assert!(dry_run.targeted.iter().any(|p| p.contains("linked-s1-t1")));
         assert!(dry_run.removed.iter().any(|p| p.contains("linked-s1-t1")));
         assert!(linked_path.exists(), "dry-run must not remove worktree");

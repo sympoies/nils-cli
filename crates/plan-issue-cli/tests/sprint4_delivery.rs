@@ -137,6 +137,13 @@ fn parse_task_spec_rows(tsv: &str) -> HashMap<String, SpecRow> {
     rows
 }
 
+fn note_value(notes: &str, key: &str) -> Option<String> {
+    notes
+        .split(';')
+        .map(str::trim)
+        .find_map(|part| part.strip_prefix(&format!("{key}=")).map(str::to_string))
+}
+
 fn gh_stub_script() -> &'static str {
     r#"#!/usr/bin/env bash
 set -euo pipefail
@@ -329,18 +336,17 @@ fn live_start_sprint_overwrites_issue_rows_from_recomputed_task_spec_in_auto_sin
     let spec_path = result_path(&payload, "task_spec_path");
     let spec_text = fs::read_to_string(&spec_path).expect("read task-spec");
     let spec_rows = parse_task_spec_rows(&spec_text);
-    let spec_s1t1 = spec_rows.get("S1T1").expect("S1T1 spec row");
-    let spec_s1t2 = spec_rows.get("S1T2").expect("S1T2 spec row");
+    let anchor_task = note_value(&issue_s1t1.notes, "shared-pr-anchor").expect("shared anchor");
+    let spec_anchor = spec_rows
+        .get(&anchor_task)
+        .unwrap_or_else(|| panic!("missing spec row for anchor task {anchor_task}"));
 
-    assert_eq!(issue_s1t1.owner, spec_s1t1.owner);
-    assert_eq!(issue_s1t1.branch, spec_s1t1.branch);
-    assert_eq!(issue_s1t1.worktree, spec_s1t1.worktree);
-    assert_eq!(issue_s1t1.notes, spec_s1t1.notes);
-
-    assert_eq!(issue_s1t2.owner, spec_s1t2.owner);
-    assert_eq!(issue_s1t2.branch, spec_s1t2.branch);
-    assert_eq!(issue_s1t2.worktree, spec_s1t2.worktree);
-    assert_eq!(issue_s1t2.notes, spec_s1t2.notes);
+    for issue_row in [issue_s1t1, issue_s1t2] {
+        assert_eq!(issue_row.owner, spec_anchor.owner);
+        assert_eq!(issue_row.branch, spec_anchor.branch);
+        assert_eq!(issue_row.worktree, spec_anchor.worktree);
+        assert_eq!(issue_row.notes, spec_anchor.notes);
+    }
 
     let log = fs::read_to_string(&log_path).expect("read gh log");
     assert!(

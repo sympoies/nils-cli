@@ -244,6 +244,15 @@ fn render_issue_body_start_plan_writes_issue_body_artifact() {
     assert!(
         rendered.contains("| S3T1 | Implement task-spec generation core using `plan-tooling` |")
     );
+    assert!(
+        !rendered.contains("| TBD | TBD | TBD | TBD | TBD | planned |"),
+        "{rendered}"
+    );
+
+    for line in rendered.lines().filter(|line| line.starts_with("| S3T")) {
+        assert!(line.contains("sprint=S3"), "{line}");
+        assert!(line.contains("pr-group="), "{line}");
+    }
 }
 
 #[test]

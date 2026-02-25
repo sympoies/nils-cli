@@ -55,6 +55,7 @@ pub struct RuntimeLaneMetadata {
     pub owner: String,
     pub branch: String,
     pub worktree: String,
+    pub notes: String,
 }
 
 pub fn build_task_spec(
@@ -206,6 +207,7 @@ pub fn runtime_lane_metadata_by_task(
                 owner: anchor_row.owner.clone(),
                 branch: anchor_row.branch.clone(),
                 worktree: anchor_row.worktree.clone(),
+                notes: anchor_row.notes.clone(),
             },
         );
     }

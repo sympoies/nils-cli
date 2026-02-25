@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 
 use crate::commands::SplitStrategy;
 use crate::issue_body;
-use crate::task_spec::{TaskSpecRow, agent_home, execution_mode_by_task};
+use crate::task_spec::{
+    TaskSpecRow, agent_home, execution_mode_by_task, runtime_lane_metadata_by_task,
+};
 use nils_common::fs as common_fs;
 use nils_common::git as common_git;
 
@@ -69,6 +71,7 @@ pub fn render_plan_issue_body(
     plan_file_display: &str,
     plan_title: &str,
     rows: &[TaskSpecRow],
+    strategy: SplitStrategy,
 ) -> String {
     let fallback_title = if plan_title.trim().is_empty() {
         Path::new(plan_file_display)
@@ -95,19 +98,37 @@ pub fn render_plan_issue_body(
         issue_body::task_decomposition_separator_row(),
     ]);
 
+    let runtime_lane_metadata = runtime_lane_metadata_by_task(rows, strategy);
+
     for row in rows {
-        let notes = if row.notes.trim().is_empty() {
+        let lane = runtime_lane_metadata.get(&row.task_id);
+        let owner = lane
+            .map(|metadata| metadata.owner.clone())
+            .unwrap_or_else(|| row.owner.clone());
+        let branch = lane
+            .map(|metadata| metadata.branch.clone())
+            .unwrap_or_else(|| row.branch.clone());
+        let worktree = lane
+            .map(|metadata| metadata.worktree.clone())
+            .unwrap_or_else(|| row.worktree.clone());
+        let execution_mode = lane
+            .map(|metadata| metadata.execution_mode.clone())
+            .unwrap_or_else(|| "pr-isolated".to_string());
+        let notes = lane
+            .map(|metadata| metadata.notes.trim().to_string())
+            .unwrap_or_else(|| row.notes.trim().to_string());
+        let notes = if notes.is_empty() {
             "-".to_string()
         } else {
-            row.notes.trim().to_string()
+            notes
         };
         out.push(issue_body::format_task_decomposition_row([
             &row.task_id,
             &row.summary,
-            "TBD",
-            "TBD",
-            "TBD",
-            "TBD",
+            &owner,
+            &branch,
+            &worktree,
+            &execution_mode,
             "TBD",
             "planned",
             &notes,
