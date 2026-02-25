@@ -35,6 +35,13 @@ pub fn env_or_default(name: &str, default: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| default.to_string())
 }
 
+pub fn env_non_empty(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 pub fn no_color_enabled() -> bool {
     env_present("NO_COLOR")
 }
@@ -152,6 +159,32 @@ mod tests {
         assert_eq!(
             env_or_default("NILS_COMMON_ENV_OR_DEFAULT_MISSING_TEST", "fallback"),
             "fallback"
+        );
+    }
+
+    #[test]
+    fn env_non_empty_returns_none_for_missing_or_blank_values() {
+        let lock = GlobalStateLock::new();
+        let _missing = EnvGuard::remove(&lock, "NILS_COMMON_ENV_NON_EMPTY_MISSING_TEST");
+        assert_eq!(
+            env_non_empty("NILS_COMMON_ENV_NON_EMPTY_MISSING_TEST"),
+            None
+        );
+
+        let _blank = EnvGuard::set(&lock, "NILS_COMMON_ENV_NON_EMPTY_MISSING_TEST", "   ");
+        assert_eq!(
+            env_non_empty("NILS_COMMON_ENV_NON_EMPTY_MISSING_TEST"),
+            None
+        );
+    }
+
+    #[test]
+    fn env_non_empty_returns_trimmed_value_when_present() {
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::set(&lock, "NILS_COMMON_ENV_NON_EMPTY_VALUE_TEST", "  value  ");
+        assert_eq!(
+            env_non_empty("NILS_COMMON_ENV_NON_EMPTY_VALUE_TEST"),
+            Some("value".to_string())
         );
     }
 

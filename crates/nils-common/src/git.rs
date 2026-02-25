@@ -1,4 +1,5 @@
 use crate::process;
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 use std::io;
@@ -86,6 +87,47 @@ pub fn is_lockfile_path(path: &str) -> bool {
             | "bun.lock"
             | "npm-shrinkwrap.json"
     )
+}
+
+pub fn trim_trailing_newlines(input: &str) -> String {
+    input.trim_end_matches(['\n', '\r']).to_string()
+}
+
+pub fn staged_name_only() -> io::Result<String> {
+    staged_name_only_inner(None)
+}
+
+pub fn staged_name_only_in(cwd: &Path) -> io::Result<String> {
+    staged_name_only_inner(Some(cwd))
+}
+
+pub fn suggested_scope_from_staged_paths(staged: &str) -> String {
+    let mut top: BTreeSet<String> = BTreeSet::new();
+    for line in staged.lines() {
+        let file = line.trim();
+        if file.is_empty() {
+            continue;
+        }
+        if let Some((first, _rest)) = file.split_once('/') {
+            top.insert(first.to_string());
+        } else {
+            top.insert(String::new());
+        }
+    }
+
+    if top.len() == 1 {
+        return top.iter().next().cloned().unwrap_or_default();
+    }
+
+    if top.len() == 2 && top.contains("") {
+        for part in top {
+            if !part.is_empty() {
+                return part;
+            }
+        }
+    }
+
+    String::new()
 }
 
 pub fn run_output(args: &[&str]) -> io::Result<Output> {
@@ -266,6 +308,22 @@ fn rev_parse_args<'a>(args: &'a [&'a str]) -> Vec<&'a str> {
     full.push("rev-parse");
     full.extend_from_slice(args);
     full
+}
+
+fn staged_name_only_inner(cwd: Option<&Path>) -> io::Result<String> {
+    let args = [
+        "-c",
+        "core.quotepath=false",
+        "diff",
+        "--cached",
+        "--name-only",
+        "--diff-filter=ACMRTUXBD",
+    ];
+    let output = match cwd {
+        Some(cwd) => run_output_in(cwd, &args)?,
+        None => run_output(&args)?,
+    };
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 fn has_staged_changes_from_status(status: ExitStatus) -> bool {
@@ -532,5 +590,52 @@ mod tests {
 
         assert!(!is_lockfile_path("Cargo.lock"));
         assert!(!is_lockfile_path("package-lock.json.bak"));
+    }
+
+    #[test]
+    fn trim_trailing_newlines_drops_lf_and_crlf_suffixes() {
+        assert_eq!(trim_trailing_newlines("value\n"), "value");
+        assert_eq!(trim_trailing_newlines("value\r\n"), "value");
+        assert_eq!(trim_trailing_newlines("value"), "value");
+    }
+
+    #[test]
+    fn suggested_scope_from_staged_paths_matches_single_top_level_dir() {
+        let staged = "src/main.rs\nsrc/lib.rs\n";
+        assert_eq!(suggested_scope_from_staged_paths(staged), "src");
+    }
+
+    #[test]
+    fn suggested_scope_from_staged_paths_ignores_root_file_when_single_dir_exists() {
+        let staged = "README.md\nsrc/main.rs\n";
+        assert_eq!(suggested_scope_from_staged_paths(staged), "src");
+    }
+
+    #[test]
+    fn suggested_scope_from_staged_paths_returns_empty_when_multiple_dirs_exist() {
+        let staged = "src/main.rs\ncrates/a.rs\n";
+        assert_eq!(suggested_scope_from_staged_paths(staged), "");
+    }
+
+    #[test]
+    fn staged_name_only_in_lists_cached_paths() {
+        let repo = init_repo_with(InitRepoOptions::new().with_initial_commit());
+        std::fs::write(repo.path().join("src.txt"), "hi\n").expect("write file");
+        run_git(repo.path(), &["add", "src.txt"]);
+
+        let staged = staged_name_only_in(repo.path()).expect("staged names");
+        assert!(staged.contains("src.txt"));
+    }
+
+    #[test]
+    fn staged_name_only_wrapper_uses_current_working_repo() {
+        let lock = GlobalStateLock::new();
+        let repo = init_repo_with(InitRepoOptions::new().with_initial_commit());
+        std::fs::write(repo.path().join("docs.md"), "hello\n").expect("write file");
+        run_git(repo.path(), &["add", "docs.md"]);
+        let _cwd = CwdGuard::set(&lock, repo.path()).expect("set cwd");
+
+        let staged = staged_name_only().expect("staged names");
+        assert!(staged.contains("docs.md"));
     }
 }

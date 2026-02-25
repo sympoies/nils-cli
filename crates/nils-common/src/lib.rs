@@ -12,6 +12,7 @@
 //! pub fn env_truthy(name: &str) -> bool;
 //! pub fn env_truthy_or(name: &str, default: bool) -> bool;
 //! pub fn env_or_default(name: &str, default: &str) -> String;
+//! pub fn env_non_empty(name: &str) -> Option<String>;
 //! pub fn no_color_enabled() -> bool;
 //!
 //! // shell
@@ -35,6 +36,8 @@
 //! pub fn repo_root(cwd: &std::path::Path) -> Result<Option<std::path::PathBuf>, ProcessError>;
 //! pub fn rev_parse(cwd: &std::path::Path, args: &[&str]) -> Result<String, ProcessError>;
 //! pub fn rev_parse_opt(cwd: &std::path::Path, args: &[&str]) -> Result<Option<String>, ProcessError>;
+//! pub fn staged_name_only() -> std::io::Result<String>;
+//! pub fn suggested_scope_from_staged_paths(staged: &str) -> String;
 //!
 //! // clipboard
 //! pub enum ClipboardTool { Pbcopy, WlCopy, Xclip, Xsel, Clip }

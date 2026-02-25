@@ -5,7 +5,7 @@ use nils_common::git as common_git;
 use std::process::Output;
 
 pub(crate) fn trim_trailing_newlines(input: &str) -> String {
-    input.trim_end_matches(['\n', '\r']).to_string()
+    common_git::trim_trailing_newlines(input)
 }
 
 pub(crate) fn git_output(args: &[&str]) -> Result<Output> {

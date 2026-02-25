@@ -1,6 +1,5 @@
 use anyhow::Result;
-use nils_common::process;
-use std::collections::BTreeSet;
+use nils_common::{git as common_git, process};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -200,32 +199,7 @@ fn run_fallback(git_root: &Path, push_flag: bool, extra_prompt: &str) -> Result<
 }
 
 fn suggested_scope_from_staged(staged: &str) -> String {
-    let mut top: BTreeSet<String> = BTreeSet::new();
-    for line in staged.lines() {
-        let file = line.trim();
-        if file.is_empty() {
-            continue;
-        }
-        if let Some((first, _rest)) = file.split_once('/') {
-            top.insert(first.to_string());
-        } else {
-            top.insert(String::new());
-        }
-    }
-
-    if top.len() == 1 {
-        return top.iter().next().cloned().unwrap_or_default();
-    }
-
-    if top.len() == 2 && top.contains("") {
-        for part in top {
-            if !part.is_empty() {
-                return part;
-            }
-        }
-    }
-
-    String::new()
+    common_git::suggested_scope_from_staged_paths(staged)
 }
 
 fn read_prompt(prompt: &str) -> Result<String> {
@@ -241,37 +215,11 @@ fn read_prompt(prompt: &str) -> Result<String> {
 }
 
 fn staged_files(git_root: &Path) -> String {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(git_root)
-        .arg("-c")
-        .arg("core.quotepath=false")
-        .arg("diff")
-        .arg("--cached")
-        .arg("--name-only")
-        .arg("--diff-filter=ACMRTUXBD")
-        .output();
-
-    match output {
-        Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
-        Err(_) => String::new(),
-    }
+    common_git::staged_name_only_in(git_root).unwrap_or_default()
 }
 
 fn git_root() -> Option<PathBuf> {
-    let output = Command::new("git")
-        .arg("rev-parse")
-        .arg("--show-toplevel")
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if path.is_empty() {
-        return None;
-    }
-    Some(PathBuf::from(path))
+    common_git::repo_root().ok().flatten()
 }
 
 fn semantic_commit_prompt(mode: &str) -> Option<String> {

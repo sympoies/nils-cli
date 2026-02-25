@@ -23,9 +23,11 @@ Primary constraint: shared helpers must preserve behavioral parity for each cons
 ## Modules and purpose
 
 - `env`: truthy parsing helpers and `NO_COLOR` presence checks.
+- `env`: truthy parsing helpers, `NO_COLOR` checks, and trimmed non-empty env lookup.
 - `shell`: POSIX single-quote escaping and ANSI stripping modes.
 - `process`: command execution wrappers plus PATH lookup helpers.
-- `git`: `git` command wrappers for repo probes and `rev-parse` helpers.
+- `git`: `git` command wrappers for repo probes, `rev-parse` helpers, staged-path listing, and scope
+  suggestion primitives for commit tooling.
 - `clipboard`: best-effort clipboard copy with explicit tool priority.
 - `fs`: atomic write, timestamp write/remove, SHA-256 hashing, and cross-platform replace helpers
   with structured errors.
@@ -40,6 +42,7 @@ use nils_common::env;
 
 let starship_enabled = env::env_truthy_or("AGENTS_CLI_STARSHIP", false);
 let no_color = env::no_color_enabled();
+let maybe_agent_home = env::env_non_empty("AGENT_HOME");
 println!("starship={starship_enabled}, no_color={no_color}");
 ```
 
@@ -74,7 +77,10 @@ use nils_common::git;
 let inside = git::is_inside_work_tree().expect("git check should run");
 if inside {
     let root = git::repo_root().expect("repo root check");
+    let staged = git::staged_name_only().expect("staged list");
+    let scope = git::suggested_scope_from_staged_paths(&staged);
     println!("repo root: {root:?}");
+    println!("suggested scope: {scope}");
 }
 ```
 
