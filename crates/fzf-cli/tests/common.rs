@@ -1,10 +1,7 @@
-use nils_test_support::bin;
-use nils_test_support::cmd;
-use std::path::{Path, PathBuf};
-
-use nils_test_support::StubBinDir;
 #[allow(unused_imports)]
 pub use nils_test_support::write_exe;
+use nils_test_support::{StubBinDir, bin, cmd};
+use std::path::{Path, PathBuf};
 
 #[allow(dead_code)]
 pub struct CmdOutput {
@@ -19,13 +16,59 @@ pub fn fzf_cli_bin() -> PathBuf {
     bin::resolve("fzf-cli")
 }
 
+#[allow(dead_code)]
 pub fn run_fzf_cli(
     dir: &Path,
     args: &[&str],
     envs: &[(&str, &str)],
     stdin: Option<&str>,
 ) -> CmdOutput {
-    let output = cmd::run_resolved_in_dir("fzf-cli", dir, args, envs, stdin.map(str::as_bytes));
+    let mut options = cmd::options_in_dir_with_envs(dir, envs);
+    if let Some(input) = stdin {
+        options = options.with_stdin_str(input);
+    }
+    let output = cmd::run_resolved("fzf-cli", args, &options);
+    CmdOutput {
+        code: output.code,
+        stdout: output.stdout_text(),
+        stderr: output.stderr_text(),
+    }
+}
+
+#[allow(dead_code)]
+pub fn run_fzf_cli_with_stub_path(
+    dir: &Path,
+    stub_path: &Path,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    stdin: Option<&str>,
+) -> CmdOutput {
+    let mut options = cmd::options_in_dir_with_envs(dir, envs).with_path_prepend(stub_path);
+    if let Some(input) = stdin {
+        options = options.with_stdin_str(input);
+    }
+    let output = cmd::run_resolved("fzf-cli", args, &options);
+    CmdOutput {
+        code: output.code,
+        stdout: output.stdout_text(),
+        stderr: output.stderr_text(),
+    }
+}
+
+#[allow(dead_code)]
+pub fn run_fzf_cli_with_stub_only_path(
+    dir: &Path,
+    stub_path: &Path,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    stdin: Option<&str>,
+) -> CmdOutput {
+    let path = stub_path.to_string_lossy().to_string();
+    let mut options = cmd::options_in_dir_with_envs(dir, envs).with_env("PATH", &path);
+    if let Some(input) = stdin {
+        options = options.with_stdin_str(input);
+    }
+    let output = cmd::run_resolved("fzf-cli", args, &options);
     CmdOutput {
         code: output.code,
         stdout: output.stdout_text(),
@@ -36,17 +79,6 @@ pub fn run_fzf_cli(
 #[allow(dead_code)]
 pub fn make_stub_dir() -> StubBinDir {
     StubBinDir::new()
-}
-
-#[allow(dead_code)]
-pub fn path_with_prepend(dir: &Path) -> String {
-    cmd::CmdOptions::default()
-        .with_path_prepend(dir)
-        .envs
-        .into_iter()
-        .rev()
-        .find_map(|(key, value)| (key == "PATH").then_some(value))
-        .expect("PATH should be set")
 }
 
 #[allow(dead_code)]

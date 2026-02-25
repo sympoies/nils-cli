@@ -1,6 +1,6 @@
 mod common;
 
-use common::{fzf_stub_script, make_stub_dir, path_with_prepend, run_fzf_cli, write_exe};
+use common::{fzf_stub_script, make_stub_dir, run_fzf_cli_with_stub_path, write_exe};
 use std::fs;
 use tempfile::TempDir;
 
@@ -28,15 +28,13 @@ exit 0
 "#,
     );
 
-    let path_env = path_with_prepend(stub.path());
     let envs = [
-        ("PATH", path_env.as_str()),
         ("FZF_STUB_OUT_DIR", out_dir.to_str().unwrap()),
         ("FZF_FILE_OPEN_WITH", "vscode"),
         ("CODE_STUB_LOG", code_log.to_str().unwrap()),
     ];
 
-    let output = run_fzf_cli(temp.path(), &["file"], &envs, None);
+    let output = run_fzf_cli_with_stub_path(temp.path(), stub.path(), &["file"], &envs, None);
     assert_eq!(output.code, 0);
 
     let code_args = fs::read_to_string(&code_log).unwrap();
@@ -78,16 +76,14 @@ exit 0
 "#,
     );
 
-    let path_env = path_with_prepend(stub.path());
     let envs = [
-        ("PATH", path_env.as_str()),
         ("FZF_STUB_OUT_DIR", out_dir.to_str().unwrap()),
         ("FZF_FILE_OPEN_WITH", "vscode"),
         ("CODE_STUB_LOG", code_log.to_str().unwrap()),
         ("VI_STUB_LOG", vi_log.to_str().unwrap()),
     ];
 
-    let output = run_fzf_cli(temp.path(), &["file"], &envs, None);
+    let output = run_fzf_cli_with_stub_path(temp.path(), stub.path(), &["file"], &envs, None);
     assert_eq!(output.code, 0);
 
     let vi_args = fs::read_to_string(&vi_log).unwrap();

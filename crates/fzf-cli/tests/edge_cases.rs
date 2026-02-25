@@ -73,18 +73,13 @@ fn history_parsing_strips_icon_prefix() {
 
     let hist_s = hist.to_string_lossy().to_string();
     let out_dir_s = out_dir.to_string_lossy().to_string();
-    let path_s = format!(
-        "{}:{}",
-        stub.path().display(),
-        std::env::var("PATH").unwrap()
-    );
     let envs = [
         ("HISTFILE", hist_s.as_str()),
-        ("PATH", path_s.as_str()),
         ("FZF_STUB_OUT_DIR", out_dir_s.as_str()),
     ];
 
-    let out = common::run_fzf_cli(dir.path(), &["history"], &envs, None);
+    let out =
+        common::run_fzf_cli_with_stub_path(dir.path(), stub.path(), &["history"], &envs, None);
     assert_eq!(out.code, 0);
     assert_eq!(out.stdout.trim(), "echo hi");
 }
@@ -104,17 +99,10 @@ fn directory_ctrl_d_emits_cd_command() {
     common::write_exe(stub.path(), "fzf", common::fzf_stub_script());
 
     let out_dir_s = out_dir.to_string_lossy().to_string();
-    let path_s = format!(
-        "{}:{}",
-        stub.path().display(),
-        std::env::var("PATH").unwrap()
-    );
-    let envs = [
-        ("PATH", path_s.as_str()),
-        ("FZF_STUB_OUT_DIR", out_dir_s.as_str()),
-    ];
+    let envs = [("FZF_STUB_OUT_DIR", out_dir_s.as_str())];
 
-    let out = common::run_fzf_cli(dir.path(), &["directory"], &envs, None);
+    let out =
+        common::run_fzf_cli_with_stub_path(dir.path(), stub.path(), &["directory"], &envs, None);
     assert_eq!(out.code, 0);
     assert!(
         out.stdout.contains("cd "),
@@ -156,20 +144,21 @@ echo "$@" >> "${KILL_LOG:?}"
 
     let kill_log = dir.path().join("kill.log");
     fs::write(&kill_log, "").unwrap();
-    let kill_bin = stub.path().join("kill");
 
-    let path_s = stub.path().to_string_lossy().to_string();
     let out_dir_s = out_dir.to_string_lossy().to_string();
     let kill_log_s = kill_log.to_string_lossy().to_string();
-    let kill_bin_s = kill_bin.to_string_lossy().to_string();
     let envs = [
-        ("PATH", path_s.as_str()),
         ("FZF_STUB_OUT_DIR", out_dir_s.as_str()),
         ("KILL_LOG", kill_log_s.as_str()),
-        ("NILS_TEST_KILL_BIN", kill_bin_s.as_str()),
     ];
 
-    let out = common::run_fzf_cli(dir.path(), &["process", "-k"], &envs, None);
+    let out = common::run_fzf_cli_with_stub_only_path(
+        dir.path(),
+        stub.path(),
+        &["process", "-k"],
+        &envs,
+        None,
+    );
     assert_eq!(out.code, 0);
     assert!(
         out.stdout.contains("SIGTERM"),
@@ -208,20 +197,21 @@ echo "$@" >> "${KILL_LOG:?}"
 
     let kill_log = dir.path().join("kill.log");
     fs::write(&kill_log, "").unwrap();
-    let kill_bin = stub.path().join("kill");
 
-    let path_s = stub.path().to_string_lossy().to_string();
     let out_dir_s = out_dir.to_string_lossy().to_string();
     let kill_log_s = kill_log.to_string_lossy().to_string();
-    let kill_bin_s = kill_bin.to_string_lossy().to_string();
     let envs = [
-        ("PATH", path_s.as_str()),
         ("FZF_STUB_OUT_DIR", out_dir_s.as_str()),
         ("KILL_LOG", kill_log_s.as_str()),
-        ("NILS_TEST_KILL_BIN", kill_bin_s.as_str()),
     ];
 
-    let out = common::run_fzf_cli(dir.path(), &["process"], &envs, Some("n\n"));
+    let out = common::run_fzf_cli_with_stub_only_path(
+        dir.path(),
+        stub.path(),
+        &["process"],
+        &envs,
+        Some("n\n"),
+    );
     assert_eq!(out.code, 1);
     assert!(
         out.stdout.contains("🚫 Aborted."),
@@ -253,14 +243,11 @@ echo "tcp4 0 0 127.0.0.1.1234 *.* LISTEN"
 "#,
     );
 
-    let path_s = stub.path().to_string_lossy().to_string();
     let out_dir_s = out_dir.to_string_lossy().to_string();
-    let envs = [
-        ("PATH", path_s.as_str()),
-        ("FZF_STUB_OUT_DIR", out_dir_s.as_str()),
-    ];
+    let envs = [("FZF_STUB_OUT_DIR", out_dir_s.as_str())];
 
-    let out = common::run_fzf_cli(dir.path(), &["port"], &envs, None);
+    let out =
+        common::run_fzf_cli_with_stub_only_path(dir.path(), stub.path(), &["port"], &envs, None);
     assert_eq!(out.code, 0);
 }
 
@@ -292,20 +279,21 @@ echo "$@" >> "${KILL_LOG:?}"
 
     let kill_log = dir.path().join("kill.log");
     fs::write(&kill_log, "").unwrap();
-    let kill_bin = stub.path().join("kill");
 
-    let path_s = stub.path().to_string_lossy().to_string();
     let out_dir_s = out_dir.to_string_lossy().to_string();
     let kill_log_s = kill_log.to_string_lossy().to_string();
-    let kill_bin_s = kill_bin.to_string_lossy().to_string();
     let envs = [
-        ("PATH", path_s.as_str()),
         ("FZF_STUB_OUT_DIR", out_dir_s.as_str()),
         ("KILL_LOG", kill_log_s.as_str()),
-        ("NILS_TEST_KILL_BIN", kill_bin_s.as_str()),
     ];
 
-    let out = common::run_fzf_cli(dir.path(), &["port", "-k"], &envs, None);
+    let out = common::run_fzf_cli_with_stub_only_path(
+        dir.path(),
+        stub.path(),
+        &["port", "-k"],
+        &envs,
+        None,
+    );
     assert_eq!(out.code, 0);
     let log = fs::read_to_string(&kill_log).unwrap();
     assert!(log.contains("999"), "kill log missing pid: {log}");

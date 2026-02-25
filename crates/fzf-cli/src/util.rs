@@ -85,7 +85,7 @@ pub fn zsh_cache_dir() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir};
+    use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
     use tempfile::TempDir;
 
     #[test]
@@ -148,7 +148,7 @@ fi
 exit 1
 "#,
         );
-        let _path_success = EnvGuard::set(&lock, "PATH", &success_stubs.path_str());
+        let _path_success = prepend_path(&lock, success_stubs.path());
         assert!(probe());
         drop(_path_success);
 
@@ -163,7 +163,7 @@ fi
 exit 1
 "#,
         );
-        let _path_fail = EnvGuard::set(&lock, "PATH", &fail_stubs.path_str());
+        let _path_fail = prepend_path(&lock, fail_stubs.path());
         assert!(!probe());
         drop(_path_fail);
 
