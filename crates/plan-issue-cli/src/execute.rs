@@ -590,7 +590,7 @@ fn run_start_sprint(
             .issue_body(&repo, args.issue)
             .map_err(|err| CommandError::runtime("github-issue-read-failed", err))?;
 
-        let table = issue_body::parse_task_table(&body)
+        let mut table = issue_body::parse_task_table(&body)
             .map_err(|err| CommandError::runtime("issue-body-parse-failed", err))?;
 
         let structure_errors = issue_body::validate_rows(table.rows());
@@ -606,13 +606,23 @@ fn run_start_sprint(
                 .map_err(|err| CommandError::runtime("previous-sprint-gate-failed", err))?;
         }
 
-        let sprint_rows = issue_rows_for_sprint(table.rows(), i32::from(args.sprint));
-        ensure_issue_rows_match_runtime_plan(&sprint_rows, &build.rows, args.grouping.strategy)
-            .map_err(|err| CommandError::runtime("task-sync-drift-detected", err))?;
-        artifact_rows = task_spec_rows_from_issue_rows(&sprint_rows, i32::from(args.sprint))
+        synced_rows =
+            sync_issue_rows_from_task_spec(&mut table, &build.rows, args.grouping.strategy)
+                .map_err(|err| CommandError::runtime("task-sync-failed", err))?;
+        artifact_rows = task_spec_rows_from_issue_rows(table.rows(), i32::from(args.sprint))
             .map_err(|err| CommandError::runtime("task-spec-from-issue-rows-failed", err))?;
-        issue_body_for_comment = Some(body);
-        synced_rows = artifact_rows.len();
+
+        let updated_body = table.render();
+        issue_body_for_comment = Some(updated_body.clone());
+
+        if !dry_run {
+            let body_path = write_temp_markdown("start-sprint-issue-body", &updated_body)
+                .map_err(|err| CommandError::runtime("issue-body-write-failed", err))?;
+            adapter
+                .edit_issue_body(&repo, args.issue, &body_path)
+                .map_err(|err| CommandError::runtime("github-issue-update-failed", err))?;
+            live_mutations = true;
+        }
     }
 
     let task_spec_out = args.task_spec_out.clone().unwrap_or_else(|| {
@@ -1308,13 +1318,6 @@ fn write_subagent_prompts(
     Ok(paths)
 }
 
-fn issue_rows_for_sprint(rows: &[TaskRow], sprint: i32) -> Vec<TaskRow> {
-    rows.iter()
-        .filter(|row| issue_body::row_sprint(row) == Some(sprint))
-        .cloned()
-        .collect()
-}
-
 fn task_spec_rows_from_issue_rows(
     rows: &[TaskRow],
     sprint: i32,
@@ -1427,110 +1430,6 @@ fn note_value(notes: &str, key: &str) -> Option<String> {
         .find_map(|part| part.strip_prefix(&format!("{key}=")).map(str::to_string))
 }
 
-fn ensure_issue_rows_match_runtime_plan(
-    issue_rows: &[TaskRow],
-    plan_rows: &[TaskSpecRow],
-    strategy: SplitStrategy,
-) -> Result<(), String> {
-    let mut errors = Vec::new();
-    let expected_by_task = plan_rows
-        .iter()
-        .map(|row| (row.task_id.clone(), row))
-        .collect::<HashMap<_, _>>();
-    let expected_lane_by_task = task_spec::runtime_lane_metadata_by_task(plan_rows, strategy);
-
-    let mut seen = HashSet::new();
-    for row in issue_rows {
-        let task_id = row.task.trim();
-        if task_id.is_empty() {
-            continue;
-        }
-        seen.insert(task_id.to_string());
-
-        let Some(expected) = expected_by_task.get(task_id) else {
-            errors.push(format!(
-                "{task_id}: present in issue table but missing from plan-derived sprint rows"
-            ));
-            continue;
-        };
-        let Some(expected_lane) = expected_lane_by_task.get(task_id) else {
-            errors.push(format!(
-                "{task_id}: missing runtime lane metadata in plan-derived sprint rows"
-            ));
-            continue;
-        };
-
-        if row.summary.trim() != expected.summary.trim() {
-            errors.push(format!(
-                "{task_id}: summary drift (issue=`{}` expected=`{}`)",
-                row.summary.trim(),
-                expected.summary.trim()
-            ));
-        }
-        if row.owner.trim() != expected_lane.owner.trim() {
-            errors.push(format!(
-                "{task_id}: owner drift (issue=`{}` expected=`{}`)",
-                row.owner.trim(),
-                expected_lane.owner.trim()
-            ));
-        }
-        if row.branch.trim() != expected_lane.branch.trim() {
-            errors.push(format!(
-                "{task_id}: branch drift (issue=`{}` expected=`{}`)",
-                row.branch.trim(),
-                expected_lane.branch.trim()
-            ));
-        }
-        if row.worktree.trim() != expected_lane.worktree.trim() {
-            errors.push(format!(
-                "{task_id}: worktree drift (issue=`{}` expected=`{}`)",
-                row.worktree.trim(),
-                expected_lane.worktree.trim()
-            ));
-        }
-        if row.execution_mode.trim().to_ascii_lowercase() != expected_lane.execution_mode {
-            errors.push(format!(
-                "{task_id}: execution mode drift (issue=`{}` expected=`{}`)",
-                row.execution_mode.trim(),
-                expected_lane.execution_mode
-            ));
-        }
-        if row.notes.trim() != expected_lane.notes.trim() {
-            errors.push(format!(
-                "{task_id}: notes drift (issue=`{}` expected=`{}`)",
-                row.notes.trim(),
-                expected_lane.notes.trim()
-            ));
-        }
-        if note_value(&row.notes, "pr-group")
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_default()
-            != expected.pr_group
-        {
-            errors.push(format!(
-                "{task_id}: pr-group drift (issue=`{}` expected=`{}`)",
-                note_value(&row.notes, "pr-group").unwrap_or_default(),
-                expected.pr_group
-            ));
-        }
-    }
-
-    for expected in plan_rows {
-        if !seen.contains(&expected.task_id) {
-            errors.push(format!(
-                "{}: missing from issue table for requested sprint",
-                expected.task_id
-            ));
-        }
-    }
-
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors.join(" | "))
-    }
-}
-
 fn collect_required_prs(rows: &[TaskRow], scope: &str) -> Result<Vec<u64>, String> {
     let mut errors = Vec::new();
     let mut prs = Vec::new();
@@ -1641,7 +1540,6 @@ fn enforce_previous_sprint_gate(
     }
 }
 
-#[cfg(test)]
 fn sync_issue_rows_from_task_spec(
     table: &mut issue_body::TaskTable,
     spec_rows: &[TaskSpecRow],
@@ -2719,7 +2617,7 @@ mod tests {
         assert!(lane_prompt.contains("Task: S3T2"), "{lane_prompt}");
         assert!(lane_prompt.contains("Tasks: S3T1, S3T2"), "{lane_prompt}");
         assert!(
-            lane_prompt.contains("Execution Mode: per-sprint"),
+            lane_prompt.contains("Execution Mode: pr-shared"),
             "{lane_prompt}"
         );
         assert!(
