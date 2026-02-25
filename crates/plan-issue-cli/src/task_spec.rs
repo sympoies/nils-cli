@@ -252,3 +252,272 @@ fn to_split_strategy(strategy: SplitStrategy) -> SplitPrStrategy {
         SplitStrategy::Auto => SplitPrStrategy::Auto,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spec_row(
+        task_id: &str,
+        sprint: i32,
+        pr_group: &str,
+        grouping: PrGrouping,
+        owner: &str,
+        branch: &str,
+        worktree: &str,
+        notes: &str,
+    ) -> TaskSpecRow {
+        TaskSpecRow {
+            task_id: task_id.to_string(),
+            summary: format!("Summary for {task_id}"),
+            branch: branch.to_string(),
+            worktree: worktree.to_string(),
+            owner: owner.to_string(),
+            notes: notes.to_string(),
+            pr_group: pr_group.to_string(),
+            sprint,
+            grouping,
+        }
+    }
+
+    fn note_value(notes: &str, key: &str) -> Option<String> {
+        notes
+            .split(';')
+            .map(str::trim)
+            .find_map(|part| part.strip_prefix(&format!("{key}=")).map(str::to_string))
+    }
+
+    fn canonical_lane_anchor_task_id(
+        rows: &[TaskSpecRow],
+        sprint: i32,
+        pr_group: &str,
+    ) -> Option<String> {
+        let lane_rows = rows
+            .iter()
+            .filter(|row| row.sprint == sprint && row.pr_group == pr_group)
+            .collect::<Vec<_>>();
+        if lane_rows.is_empty() {
+            return None;
+        }
+
+        if let Some(anchor) = lane_rows
+            .iter()
+            .find_map(|row| note_value(&row.notes, "shared-pr-anchor"))
+            .filter(|anchor| lane_rows.iter().any(|row| row.task_id == *anchor))
+        {
+            return Some(anchor);
+        }
+
+        lane_rows.iter().map(|row| row.task_id.clone()).min()
+    }
+
+    #[test]
+    fn execution_mode_by_task_auto_single_lane_uses_per_sprint() {
+        let rows = vec![
+            spec_row(
+                "S1T1",
+                1,
+                "s1-auto-g1",
+                PrGrouping::Group,
+                "subagent-s1-t1",
+                "issue/s1-t1",
+                "wt-1",
+                "sprint=S1; plan-task:Task 1.1; pr-group=s1-auto-g1; shared-pr-anchor=S1T2",
+            ),
+            spec_row(
+                "S1T2",
+                1,
+                "s1-auto-g1",
+                PrGrouping::Group,
+                "subagent-s1-t2",
+                "issue/s1-t2",
+                "wt-2",
+                "sprint=S1; plan-task:Task 1.2; pr-group=s1-auto-g1; shared-pr-anchor=S1T2",
+            ),
+        ];
+
+        let modes = execution_mode_by_task(&rows, SplitStrategy::Auto);
+        assert_eq!(modes.get("S1T1").map(String::as_str), Some("per-sprint"));
+        assert_eq!(modes.get("S1T2").map(String::as_str), Some("per-sprint"));
+    }
+
+    #[test]
+    fn execution_mode_by_task_auto_multi_group_keeps_group_modes() {
+        let rows = vec![
+            spec_row(
+                "S2T1",
+                2,
+                "s2-auto-g1",
+                PrGrouping::Group,
+                "subagent-s2-t1",
+                "issue/s2-t1",
+                "wt-1",
+                "sprint=S2; plan-task:Task 2.1; pr-group=s2-auto-g1",
+            ),
+            spec_row(
+                "S2T2",
+                2,
+                "s2-auto-g1",
+                PrGrouping::Group,
+                "subagent-s2-t2",
+                "issue/s2-t2",
+                "wt-2",
+                "sprint=S2; plan-task:Task 2.2; pr-group=s2-auto-g1",
+            ),
+            spec_row(
+                "S2T3",
+                2,
+                "s2-auto-g2",
+                PrGrouping::Group,
+                "subagent-s2-t3",
+                "issue/s2-t3",
+                "wt-3",
+                "sprint=S2; plan-task:Task 2.3; pr-group=s2-auto-g2",
+            ),
+        ];
+
+        let modes = execution_mode_by_task(&rows, SplitStrategy::Auto);
+        assert_eq!(modes.get("S2T1").map(String::as_str), Some("pr-shared"));
+        assert_eq!(modes.get("S2T2").map(String::as_str), Some("pr-shared"));
+        assert_eq!(modes.get("S2T3").map(String::as_str), Some("pr-isolated"));
+    }
+
+    #[test]
+    fn canonical_lane_anchor_prefers_shared_pr_anchor_note() {
+        let rows = vec![
+            spec_row(
+                "S1T1",
+                1,
+                "s1-auto-g1",
+                PrGrouping::Group,
+                "subagent-s1-t1",
+                "issue/s1-t1",
+                "wt-1",
+                "sprint=S1; plan-task:Task 1.1; pr-group=s1-auto-g1; shared-pr-anchor=S1T2",
+            ),
+            spec_row(
+                "S1T2",
+                1,
+                "s1-auto-g1",
+                PrGrouping::Group,
+                "subagent-s1-t2",
+                "issue/s1-t2",
+                "wt-2",
+                "sprint=S1; plan-task:Task 1.2; pr-group=s1-auto-g1; shared-pr-anchor=S1T2",
+            ),
+        ];
+
+        assert_eq!(
+            canonical_lane_anchor_task_id(&rows, 1, "s1-auto-g1"),
+            Some("S1T2".to_string())
+        );
+    }
+
+    #[test]
+    fn canonical_lane_anchor_uses_deterministic_task_id_fallback_when_note_absent() {
+        let rows = vec![
+            spec_row(
+                "S4T3",
+                4,
+                "s4-auto-g2",
+                PrGrouping::Group,
+                "subagent-s4-t3",
+                "issue/s4-t3",
+                "wt-3",
+                "sprint=S4; plan-task:Task 4.3; pr-group=s4-auto-g2",
+            ),
+            spec_row(
+                "S4T1",
+                4,
+                "s4-auto-g2",
+                PrGrouping::Group,
+                "subagent-s4-t1",
+                "issue/s4-t1",
+                "wt-1",
+                "sprint=S4; plan-task:Task 4.1; pr-group=s4-auto-g2",
+            ),
+            spec_row(
+                "S4T2",
+                4,
+                "s4-auto-g2",
+                PrGrouping::Group,
+                "subagent-s4-t2",
+                "issue/s4-t2",
+                "wt-2",
+                "sprint=S4; plan-task:Task 4.2; pr-group=s4-auto-g2",
+            ),
+        ];
+
+        assert_eq!(
+            canonical_lane_anchor_task_id(&rows, 4, "s4-auto-g2"),
+            Some("S4T1".to_string())
+        );
+    }
+
+    #[test]
+    #[ignore = "S2 lane canonicalization should rewrite single-lane metadata to anchor values"]
+    fn auto_single_lane_canonicalization_expectations_document_anchor_invariants() {
+        let rows = vec![
+            spec_row(
+                "S1T1",
+                1,
+                "s1-auto-g1",
+                PrGrouping::Group,
+                "subagent-s1-t1",
+                "issue/s1-t1",
+                "wt-1",
+                "sprint=S1; plan-task:Task 1.1; pr-group=s1-auto-g1; shared-pr-anchor=S1T2",
+            ),
+            spec_row(
+                "S1T2",
+                1,
+                "s1-auto-g1",
+                PrGrouping::Group,
+                "subagent-s1-t2",
+                "issue/s1-t2",
+                "wt-2",
+                "sprint=S1; plan-task:Task 1.2; pr-group=s1-auto-g1; shared-pr-anchor=S1T2",
+            ),
+        ];
+        let modes = execution_mode_by_task(&rows, SplitStrategy::Auto);
+        assert_eq!(modes.get("S1T1").map(String::as_str), Some("per-sprint"));
+        assert_eq!(modes.get("S1T2").map(String::as_str), Some("per-sprint"));
+
+        let anchor_task =
+            canonical_lane_anchor_task_id(&rows, 1, "s1-auto-g1").expect("anchor task");
+        let anchor_row = rows
+            .iter()
+            .find(|row| row.task_id == anchor_task)
+            .expect("anchor row");
+        let anchor_owner = anchor_row.owner.clone();
+        let anchor_branch = anchor_row.branch.clone();
+        let anchor_worktree = anchor_row.worktree.clone();
+        let anchor_notes = anchor_row.notes.clone();
+
+        for row in rows
+            .iter()
+            .filter(|row| row.sprint == 1 && row.pr_group == "s1-auto-g1")
+        {
+            assert_eq!(
+                row.owner, anchor_owner,
+                "task {} owner should match anchor",
+                row.task_id
+            );
+            assert_eq!(
+                row.branch, anchor_branch,
+                "task {} branch should match anchor",
+                row.task_id
+            );
+            assert_eq!(
+                row.worktree, anchor_worktree,
+                "task {} worktree should match anchor",
+                row.task_id
+            );
+            assert_eq!(
+                row.notes, anchor_notes,
+                "task {} notes should match anchor",
+                row.task_id
+            );
+        }
+    }
+}
