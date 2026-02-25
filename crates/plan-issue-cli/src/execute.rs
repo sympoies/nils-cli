@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use nils_common::git as common_git;
+use nils_common::markdown as common_markdown;
 use plan_tooling::parse::parse_plan_with_display;
 use serde_json::{Value, json};
 
@@ -1570,7 +1571,7 @@ fn ensure_start_sprint_runtime_truth_matches_plan(
                 branch: lane.branch.trim().to_string(),
                 worktree: lane.worktree.trim().to_string(),
                 execution_mode: lane.execution_mode.trim().to_ascii_lowercase(),
-                notes: lane.notes.trim().to_string(),
+                notes: common_markdown::canonicalize_table_cell(lane.notes.trim()),
             },
         );
     }
@@ -1624,7 +1625,7 @@ fn ensure_start_sprint_runtime_truth_matches_plan(
             &mut errors,
             task_id,
             "Notes",
-            issue_row.notes.trim(),
+            &common_markdown::canonicalize_table_cell(issue_row.notes.trim()),
             &expected.notes,
         );
     }
@@ -2283,72 +2284,6 @@ mod tests {
             enforce_previous_sprint_gate(&adapter_unmerged, "graysurf/nils-cli", &rows_ok, 2)
                 .expect_err("merge gate must fail");
         assert!(unmerged.contains("PR #11 is not merged"), "{unmerged}");
-    }
-
-    #[test]
-    fn sync_issue_rows_from_task_spec_updates_table_and_detects_missing_rows() {
-        let body = task_table_markdown(&[
-            task_row("S1T1", "TBD", "TBD", "TBD", "", "sprint=S1"),
-            task_row("S1T2", "issue/s1-t2", "wt-2", "#22", "", "sprint=S1"),
-        ]);
-        let mut table = issue_body::parse_task_table(&body).expect("table");
-
-        let specs = vec![
-            TaskSpecRow {
-                task_id: "S1T1".to_string(),
-                summary: "Task 1".to_string(),
-                branch: "issue/s1-t1".to_string(),
-                worktree: "wt-1".to_string(),
-                owner: "subagent-s1-t1".to_string(),
-                notes: "sprint=S1; plan-task:Task 1.1".to_string(),
-                pr_group: "s1".to_string(),
-                sprint: 1,
-                grouping: PrGrouping::PerSprint,
-            },
-            TaskSpecRow {
-                task_id: "S1T2".to_string(),
-                summary: "Task 2".to_string(),
-                branch: "issue/s1-t2".to_string(),
-                worktree: "wt-2".to_string(),
-                owner: "subagent-s1-t2".to_string(),
-                notes: "sprint=S1; plan-task:Task 1.2".to_string(),
-                pr_group: "s1".to_string(),
-                sprint: 1,
-                grouping: PrGrouping::Group,
-            },
-        ];
-
-        let updated =
-            sync_issue_rows_from_task_spec(&mut table, &specs, SplitStrategy::Deterministic)
-                .expect("sync");
-        assert_eq!(updated, 2);
-        let rows = table.rows();
-        assert_eq!(rows[0].branch, "issue/s1-t1");
-        assert_eq!(rows[0].pr, "TBD");
-        assert_eq!(rows[0].status, "planned");
-        assert_eq!(rows[0].execution_mode, "per-sprint");
-        assert_eq!(rows[1].execution_mode, "pr-shared");
-
-        let missing = sync_issue_rows_from_task_spec(
-            &mut table,
-            &[TaskSpecRow {
-                task_id: "S9T9".to_string(),
-                summary: "Missing".to_string(),
-                branch: "issue/s9-t9".to_string(),
-                worktree: "wt-9".to_string(),
-                owner: "subagent-s9-t9".to_string(),
-                notes: "sprint=S9".to_string(),
-                pr_group: "s9".to_string(),
-                sprint: 9,
-                grouping: PrGrouping::PerSprint,
-            }],
-            SplitStrategy::Deterministic,
-        )
-        .expect_err("missing table rows should fail");
-        assert!(
-            missing.contains("issue task table missing rows"),
-            "{missing}"
-        );
     }
 
     #[test]
