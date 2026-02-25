@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::issue_body;
 use crate::task_spec::{TaskSpecRow, agent_home};
+use nils_common::fs as common_fs;
 use nils_common::git as common_git;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -327,16 +328,17 @@ pub fn render_sprint_comment(input: SprintCommentInput<'_>) -> Result<String, St
 }
 
 pub fn write_rendered(path: &Path, content: &str) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|err| {
+    common_fs::write_text(path, content).map_err(|err| match err {
+        common_fs::WriteTextError::CreateParentDir { path, source } => {
             format!(
-                "failed to create output directory {}: {err}",
-                parent.display()
+                "failed to create output directory {}: {source}",
+                path.display()
             )
-        })?;
-    }
-    std::fs::write(path, content)
-        .map_err(|err| format!("failed to write {}: {err}", path.display()))
+        }
+        common_fs::WriteTextError::WriteFile { source, .. } => {
+            format!("failed to write {}: {source}", path.display())
+        }
+    })
 }
 
 fn parse_issue_pr_values(issue_body_text: &str) -> HashMap<String, String> {

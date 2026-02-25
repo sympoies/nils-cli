@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use nils_common::git as common_git;
+use nils_common::{fs as common_fs, git as common_git};
 use plan_tooling::parse::parse_plan_with_display;
 use plan_tooling::split_prs::{
     SplitPlanOptions, SplitPrGrouping, SplitPrStrategy, SplitScope, build_split_plan_records,
@@ -132,16 +132,17 @@ pub fn render_tsv(rows: &[TaskSpecRow]) -> String {
 }
 
 pub fn write_tsv(path: &Path, rows: &[TaskSpecRow]) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|err| {
+    common_fs::write_text(path, &render_tsv(rows)).map_err(|err| match err {
+        common_fs::WriteTextError::CreateParentDir { path, source } => {
             format!(
-                "failed to create output directory {}: {err}",
-                parent.display()
+                "failed to create output directory {}: {source}",
+                path.display()
             )
-        })?;
-    }
-    std::fs::write(path, render_tsv(rows))
-        .map_err(|err| format!("failed to write task-spec {}: {err}", path.display()))
+        }
+        common_fs::WriteTextError::WriteFile { source, .. } => {
+            format!("failed to write task-spec {}: {source}", path.display())
+        }
+    })
 }
 
 pub fn default_plan_task_spec_path(plan_file: &Path) -> PathBuf {
