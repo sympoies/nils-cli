@@ -648,6 +648,7 @@ mod tests {
         AuthProvider, detect_provider, env_timeout, error_summary, file_name, is_auth_file,
         merge_failed, resolve_client_id, resolve_target, split_http_status_marker,
     };
+    use nils_test_support::{EnvGuard, GlobalStateLock};
     use std::path::Path;
 
     #[test]
@@ -666,18 +667,16 @@ mod tests {
 
     #[test]
     fn env_timeout_uses_default_when_missing_or_invalid() {
-        let _lock = crate::auth::test_env_lock();
+        let lock = GlobalStateLock::new();
         let key = "GEMINI_TEST_ENV_TIMEOUT_SECONDS_DEFAULT";
-        // SAFETY: test-scoped env mutation.
-        unsafe { std::env::remove_var(key) };
-        assert_eq!(env_timeout(key, 123), 123);
-
-        // SAFETY: test-scoped env mutation.
-        unsafe { std::env::set_var(key, "not-a-number") };
-        assert_eq!(env_timeout(key, 456), 456);
-
-        // SAFETY: test-scoped env cleanup.
-        unsafe { std::env::remove_var(key) };
+        {
+            let _guard = EnvGuard::remove(&lock, key);
+            assert_eq!(env_timeout(key, 123), 123);
+        }
+        {
+            let _guard = EnvGuard::set(&lock, key, "not-a-number");
+            assert_eq!(env_timeout(key, 456), 456);
+        }
     }
 
     #[test]
@@ -693,37 +692,20 @@ mod tests {
 
     #[test]
     fn resolve_target_uses_default_auth_path_when_env_missing() {
-        let _lock = crate::auth::test_env_lock();
+        let lock = GlobalStateLock::new();
         let key = "GEMINI_AUTH_FILE";
         let home_key = "HOME";
-        let old = std::env::var_os(key);
-        let old_home = std::env::var_os(home_key);
         let temp_home = std::env::temp_dir().join(format!(
             "nils-gemini-refresh-home-{}-{}",
             std::process::id(),
             super::auth::now_epoch_seconds()
         ));
         let _ = std::fs::create_dir_all(&temp_home);
-        // SAFETY: test-scoped env mutation.
-        unsafe { std::env::remove_var(key) };
-        // SAFETY: test-scoped env mutation.
-        unsafe { std::env::set_var(home_key, &temp_home) };
+        let _auth_file_guard = EnvGuard::remove(&lock, key);
+        let temp_home_string = temp_home.to_string_lossy().to_string();
+        let _home_guard = EnvGuard::set(&lock, home_key, &temp_home_string);
         let resolved = resolve_target(&[], false).expect("resolved path");
         assert!(resolved.ends_with("oauth_creds.json"));
-        if let Some(value) = old {
-            // SAFETY: test-scoped env restore.
-            unsafe { std::env::set_var(key, value) };
-        } else {
-            // SAFETY: test-scoped env restore.
-            unsafe { std::env::remove_var(key) };
-        }
-        if let Some(value) = old_home {
-            // SAFETY: test-scoped env restore.
-            unsafe { std::env::set_var(home_key, value) };
-        } else {
-            // SAFETY: test-scoped env restore.
-            unsafe { std::env::remove_var(home_key) };
-        }
         let _ = std::fs::remove_dir_all(temp_home);
     }
 
@@ -744,19 +726,10 @@ mod tests {
 
     #[test]
     fn is_auth_file_matches_env_path() {
-        let _lock = crate::auth::test_env_lock();
+        let lock = GlobalStateLock::new();
         let key = "GEMINI_AUTH_FILE";
-        let old = std::env::var_os(key);
-        // SAFETY: test-scoped env mutation.
-        unsafe { std::env::set_var(key, "/tmp/gemini-auth.json") };
+        let _guard = EnvGuard::set(&lock, key, "/tmp/gemini-auth.json");
         assert!(is_auth_file(Path::new("/tmp/gemini-auth.json")));
-        if let Some(value) = old {
-            // SAFETY: test-scoped env restore.
-            unsafe { std::env::set_var(key, value) };
-        } else {
-            // SAFETY: test-scoped env restore.
-            unsafe { std::env::remove_var(key) };
-        }
     }
 
     #[test]

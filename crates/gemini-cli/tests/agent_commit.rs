@@ -1,9 +1,8 @@
 use gemini_cli::agent;
 use nils_common::process as shared_process;
-use nils_test_support::{CwdGuard, EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
+use nils_test_support::{CwdGuard, EnvGuard, GlobalStateLock, StubBinDir, git as test_git, prepend_path};
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 fn set_env(lock: &GlobalStateLock, key: &str, value: impl AsRef<std::ffi::OsStr>) -> EnvGuard {
     let value = value.as_ref().to_string_lossy().into_owned();
@@ -44,31 +43,7 @@ done
 }
 
 fn init_repo(path: &Path) {
-    let git = real_git_path();
-    assert!(
-        Command::new(&git)
-            .current_dir(path)
-            .arg("init")
-            .status()
-            .expect("git init")
-            .success()
-    );
-    assert!(
-        Command::new(&git)
-            .current_dir(path)
-            .args(["config", "user.name", "Test User"])
-            .status()
-            .expect("git config user.name")
-            .success()
-    );
-    assert!(
-        Command::new(&git)
-            .current_dir(path)
-            .args(["config", "user.email", "test@example.com"])
-            .status()
-            .expect("git config user.email")
-            .success()
-    );
+    test_git::init_repo_at_with(path, test_git::InitRepoOptions::new().without_branch());
 }
 
 #[test]

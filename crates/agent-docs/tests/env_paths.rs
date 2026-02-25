@@ -18,19 +18,7 @@ fn write_markdown(path: &Path) {
 fn setup_linked_worktree(workspace: &Path) -> (TempDir, PathBuf) {
     let repo = test_git::init_repo_with(test_git::InitRepoOptions::new().with_initial_commit());
     let linked_worktree = workspace.join("linked");
-    let linked_worktree_arg = linked_worktree
-        .to_str()
-        .expect("linked worktree path should be utf-8");
-    let _ = test_git::git(
-        repo.path(),
-        &[
-            "worktree",
-            "add",
-            linked_worktree_arg,
-            "-b",
-            "linked-worktree",
-        ],
-    );
+    test_git::worktree_add_branch(repo.path(), &linked_worktree, "linked-worktree");
     (repo, linked_worktree)
 }
 
