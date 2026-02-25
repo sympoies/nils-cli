@@ -1,8 +1,11 @@
 use std::collections::HashMap;
 use std::fs;
+use std::path::Path;
 
+use nils_test_support::StubBinDir;
+use nils_test_support::cmd::CmdOptions;
 use pretty_assertions::assert_eq;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tempfile::TempDir;
 
 mod common;
@@ -155,6 +158,44 @@ fn parse_prompt_fields(prompt: &str) -> HashMap<String, String> {
         }
     }
     out
+}
+
+fn gh_stub_script() -> &'static str {
+    r#"#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -n "${PLAN_ISSUE_GH_LOG:-}" ]]; then
+  printf '%s\n' "$*" >> "$PLAN_ISSUE_GH_LOG"
+fi
+
+case "${1:-} ${2:-}" in
+  "issue view")
+    body_json="${PLAN_ISSUE_GH_BODY_JSON:-}"
+    if [[ -z "$body_json" ]]; then
+      body_json='{"body":""}'
+    fi
+    printf '%s\n' "$body_json"
+    ;;
+  "issue edit")
+    ;;
+  "issue comment")
+    ;;
+  "pr view")
+    printf '%s\n' '{"state":"MERGED","mergedAt":"2026-02-25T00:00:00Z"}'
+    ;;
+  *)
+    printf 'unsupported gh call: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+"#
+}
+
+fn gh_cmd_options(stub_dir: &Path, envs: &[(&str, &str)]) -> CmdOptions {
+    common::plan_issue_cmd_options()
+        .with_env_remove_prefix("PLAN_ISSUE_GH_")
+        .with_path_prepend(stub_dir)
+        .with_envs(envs)
 }
 
 #[test]
@@ -378,4 +419,187 @@ fn start_plan_dry_run_writes_runtime_truth_task_decomposition_metadata() {
 #[test]
 fn write_subagent_prompts_groups_tasks_by_runtime_lane() {
     start_plan_dry_run_writes_runtime_truth_task_decomposition_metadata();
+}
+
+#[test]
+fn start_sprint_uses_issue_table_runtime_truth_and_rejects_drift() {
+    let tmp = TempDir::new().expect("temp dir");
+    let stub = StubBinDir::new();
+    stub.write_exe("gh", gh_stub_script());
+
+    let agent_home = tmp.path().join("agent-home");
+    fs::create_dir_all(&agent_home).expect("create agent home");
+    let agent_home_s = agent_home.to_string_lossy().to_string();
+
+    let plan_file = tmp.path().join("sprint1-runtime-truth.md");
+    let plan_file_s = plan_file.to_string_lossy().to_string();
+    fs::write(
+        &plan_file,
+        r#"# Plan: Sprint 1 runtime truth
+
+## Sprint 1: Shared lane
+- **PR grouping intent**: `group`.
+- **Execution Profile**: `serial` (parallel width 1).
+
+### Task 1.1: First lane task
+- **Location**:
+  - crates/plan-issue-cli/src/a.rs
+- **Dependencies**:
+  - none
+
+### Task 1.2: Follow-up lane task
+- **Location**:
+  - crates/plan-issue-cli/src/b.rs
+- **Dependencies**:
+  - Task 1.1
+"#,
+    )
+    .expect("write plan");
+
+    let plan_task_spec = tmp.path().join("plan-task-spec.tsv");
+    let plan_issue_body = tmp.path().join("plan-issue-body.md");
+    let plan_task_spec_s = plan_task_spec.to_string_lossy().to_string();
+    let plan_issue_body_s = plan_issue_body.to_string_lossy().to_string();
+    let start_plan_out = common::run_plan_issue_local_with_env(
+        &[
+            "--format",
+            "json",
+            "--dry-run",
+            "start-plan",
+            "--plan",
+            &plan_file_s,
+            "--pr-grouping",
+            "group",
+            "--strategy",
+            "auto",
+            "--task-spec-out",
+            &plan_task_spec_s,
+            "--issue-body-out",
+            &plan_issue_body_s,
+        ],
+        &[("AGENT_HOME", &agent_home_s)],
+    );
+    assert_eq!(start_plan_out.code, 0, "stderr: {}", start_plan_out.stderr);
+
+    let issue_body = fs::read_to_string(&plan_issue_body).expect("read issue body");
+    let body_json = json!({ "body": issue_body.clone() }).to_string();
+
+    let sprint_task_spec = tmp.path().join("sprint1-task-spec.tsv");
+    let sprint_task_spec_s = sprint_task_spec.to_string_lossy().to_string();
+    let prompts_out = tmp.path().join("sprint1-prompts");
+    let prompts_out_s = prompts_out.to_string_lossy().to_string();
+    let log_path = tmp.path().join("gh.log");
+    let log_s = log_path.to_string_lossy().to_string();
+
+    let start_out = common::run_plan_issue_with_options(
+        &[
+            "--format",
+            "json",
+            "--dry-run",
+            "--repo",
+            "graysurf/nils-cli",
+            "start-sprint",
+            "--plan",
+            &plan_file_s,
+            "--issue",
+            "217",
+            "--sprint",
+            "1",
+            "--task-spec-out",
+            &sprint_task_spec_s,
+            "--subagent-prompts-out",
+            &prompts_out_s,
+            "--pr-grouping",
+            "group",
+            "--strategy",
+            "auto",
+            "--no-comment",
+        ],
+        gh_cmd_options(
+            stub.path(),
+            &[
+                ("PLAN_ISSUE_GH_LOG", &log_s),
+                ("PLAN_ISSUE_GH_BODY_JSON", &body_json),
+                ("AGENT_HOME", &agent_home_s),
+            ],
+        ),
+    );
+    assert_eq!(
+        start_out.code, 0,
+        "stdout:\n{}\nstderr:\n{}",
+        start_out.stdout, start_out.stderr
+    );
+
+    let issue_rows = parse_task_decomposition_rows(&issue_body);
+    let spec_text = fs::read_to_string(&sprint_task_spec).expect("read sprint task-spec");
+    let spec_rows = parse_task_spec_rows(&spec_text);
+    for task in ["S1T1", "S1T2"] {
+        let issue_row = issue_rows.get(task).expect("issue row");
+        let spec_row = spec_rows.get(task).expect("spec row");
+        assert_eq!(spec_row.owner, issue_row.owner);
+        assert_eq!(spec_row.branch, issue_row.branch);
+        assert_eq!(spec_row.worktree, issue_row.worktree);
+        assert_eq!(spec_row.notes, issue_row.notes);
+    }
+
+    let payload = parse_json(&start_out.stdout);
+    let prompt_files = payload["payload"]["result"]["subagent_prompt_files"]
+        .as_array()
+        .expect("prompt files");
+    assert_eq!(prompt_files.len(), 1, "{}", start_out.stdout);
+
+    let prompt_path = prompt_files[0].as_str().expect("prompt path");
+    let prompt = fs::read_to_string(prompt_path).expect("read prompt");
+    assert!(prompt.contains("Tasks: S1T1, S1T2"), "{prompt}");
+    assert!(prompt.contains("Execution Mode: per-sprint"), "{prompt}");
+
+    let drift_body = issue_body.replace("Follow-up lane task", "Follow-up lane task DRIFT");
+    let drift_body_json = json!({ "body": drift_body }).to_string();
+    let drift_out = common::run_plan_issue_with_options(
+        &[
+            "--format",
+            "json",
+            "--dry-run",
+            "--repo",
+            "graysurf/nils-cli",
+            "start-sprint",
+            "--plan",
+            &plan_file_s,
+            "--issue",
+            "217",
+            "--sprint",
+            "1",
+            "--task-spec-out",
+            &sprint_task_spec_s,
+            "--subagent-prompts-out",
+            &prompts_out_s,
+            "--pr-grouping",
+            "group",
+            "--strategy",
+            "auto",
+            "--no-comment",
+        ],
+        gh_cmd_options(
+            stub.path(),
+            &[
+                ("PLAN_ISSUE_GH_LOG", &log_s),
+                ("PLAN_ISSUE_GH_BODY_JSON", &drift_body_json),
+                ("AGENT_HOME", &agent_home_s),
+            ],
+        ),
+    );
+    assert_eq!(
+        drift_out.code, 1,
+        "stdout={} stderr={}",
+        drift_out.stdout, drift_out.stderr
+    );
+    let drift_payload = parse_json(&drift_out.stdout);
+    assert_eq!(drift_payload["status"], "error");
+    assert_eq!(drift_payload["error"]["code"], "task-sync-drift-detected");
+
+    let log = fs::read_to_string(&log_path).expect("read log");
+    assert!(
+        log.contains("issue view 217 --repo graysurf/nils-cli --json body"),
+        "{log}"
+    );
 }
