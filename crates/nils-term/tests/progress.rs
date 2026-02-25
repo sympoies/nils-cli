@@ -61,6 +61,42 @@ fn disabled_mode_produces_no_output() {
 }
 
 #[test]
+fn writer_target_tty_contract_distinguishes_auto_and_off() {
+    let auto_buffer = Arc::new(Mutex::new(Vec::new()));
+    let auto = Progress::new(
+        2,
+        ProgressOptions::default()
+            .with_enabled(ProgressEnabled::Auto)
+            .with_draw_target(ProgressDrawTarget::to_writer(auto_buffer.clone()))
+            .with_width(Some(60))
+            .with_prefix("tty "),
+    );
+    auto.inc(1);
+    auto.finish();
+
+    let auto_out = normalize(&read_output(&auto_buffer));
+    assert!(auto_out.contains("1/2"), "output was: {auto_out:?}");
+    assert!(auto_out.contains("tty"), "output was: {auto_out:?}");
+
+    let off_buffer = Arc::new(Mutex::new(Vec::new()));
+    let off = Progress::new(
+        2,
+        ProgressOptions::default()
+            .with_enabled(ProgressEnabled::Off)
+            .with_draw_target(ProgressDrawTarget::to_writer(off_buffer.clone()))
+            .with_width(Some(60))
+            .with_prefix("tty "),
+    );
+    off.inc(1);
+    off.finish();
+
+    assert!(
+        read_output(&off_buffer).is_empty(),
+        "off mode should stay silent"
+    );
+}
+
+#[test]
 fn determinate_renders_and_finishes() {
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let opts = ProgressOptions::default()
