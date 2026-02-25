@@ -257,6 +257,7 @@ fn to_split_strategy(strategy: SplitStrategy) -> SplitPrStrategy {
 mod tests {
     use super::*;
 
+    #[allow(clippy::too_many_arguments)]
     fn spec_row(
         task_id: &str,
         sprint: i32,

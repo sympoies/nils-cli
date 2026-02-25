@@ -33,6 +33,7 @@ fn run_bin(bin_name: &str, args: &[&str]) -> CmdOut {
     run_bin_with_options(bin_name, args, plan_issue_cmd_options())
 }
 
+#[allow(dead_code)]
 pub fn run_plan_issue(args: &[&str]) -> CmdOut {
     run_bin("plan-issue", args)
 }
