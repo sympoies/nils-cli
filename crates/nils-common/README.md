@@ -19,6 +19,7 @@ Primary constraint: shared helpers must preserve behavioral parity for each cons
 - Exit-code mapping and command-level failure policy.
 - CLI-specific command composition and UX defaults.
 - Product/business/domain flows that only make sense in one crate.
+- GitHub adapters and `gh` command orchestration (for example issue/PR write workflows).
 
 ## Modules and purpose
 
@@ -30,8 +31,7 @@ Primary constraint: shared helpers must preserve behavioral parity for each cons
 - `clipboard`: best-effort clipboard copy with explicit tool priority.
 - `fs`: atomic write, timestamp write/remove, SHA-256 hashing, and cross-platform replace helpers
   with structured errors.
-- `markdown`: markdown payload validation and markdown-table-safe cell canonicalization helpers
-  used by orchestration/reporting CLIs.
+- `markdown`: markdown payload validation, markdown-table-safe cell canonicalization, markdown heading/code-block rendering, and stable JSON pretty-format helpers used by orchestration/reporting CLIs.
 - `greeting`: tiny sample helper used by `cli-template`.
 
 ## API examples
@@ -146,6 +146,7 @@ When introducing a shared helper at a call site:
 
 - Defining CLI-specific UX copy, warning templates, or emoji policy.
 - Owning command-level business logic for a single CLI.
+- Owning shared GitHub operation adapters such as `nils-common::github` (keep crate-local adapters).
 - Hiding meaningful behavior differences that should remain explicit in local adapters.
 - Replacing specialized shared crates such as `api-testing-core`, `nils-term`, or `nils-test-support`.
 

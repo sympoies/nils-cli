@@ -1,46 +1,17 @@
 use crate::Result;
-
-fn sort_json(value: &serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Object(map) => {
-            let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort();
-            let mut out = serde_json::Map::new();
-            for k in keys {
-                let v = map.get(k).expect("key exists");
-                out.insert(k.clone(), sort_json(v));
-            }
-            serde_json::Value::Object(out)
-        }
-        serde_json::Value::Array(values) => {
-            serde_json::Value::Array(values.iter().map(sort_json).collect())
-        }
-        other => other.clone(),
-    }
-}
+use nils_common::markdown as common_markdown;
 
 /// Format JSON similar to `jq -S .` (stable key order, pretty printed).
 pub fn format_json_pretty_sorted(value: &serde_json::Value) -> Result<String> {
-    let sorted = sort_json(value);
-    Ok(serde_json::to_string_pretty(&sorted)?)
+    Ok(common_markdown::format_json_pretty_sorted(value)?)
 }
 
 pub fn heading(level: u8, text: &str) -> String {
-    let level = level.clamp(1, 6);
-    format!("{} {}\n", "#".repeat(level.into()), text.trim())
+    common_markdown::heading(level, text)
 }
 
 pub fn code_block(lang: &str, body: &str) -> String {
-    let mut out = String::new();
-    out.push_str("```");
-    out.push_str(lang.trim());
-    out.push('\n');
-    out.push_str(body);
-    if !body.ends_with('\n') {
-        out.push('\n');
-    }
-    out.push_str("```\n");
-    out
+    common_markdown::code_block(lang, body)
 }
 
 #[cfg(test)]

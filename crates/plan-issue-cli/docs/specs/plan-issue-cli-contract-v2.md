@@ -45,6 +45,10 @@ Materialized `Notes` tokens include:
 
 This prevents drift caused only by markdown table rendering/parsing normalization (`|`, `\n`, `\r`).
 
+GitHub integration boundary:
+- Live issue/pull writes remain crate-local `gh` adapter behavior (`plan-issue-cli` ownership).
+- `nils-common` does not provide a shared `github` module for these operations.
+
 ## Task Decomposition Runtime-Truth Contract (v2)
 
 - `## Task Decomposition` remains the single runtime-truth execution table.
