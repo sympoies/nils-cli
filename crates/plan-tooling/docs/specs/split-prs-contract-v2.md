@@ -39,6 +39,7 @@ Compatibility note:
 - `strategy=deterministic` + `pr-grouping=group` requires explicit `--pr-group` mapping for every task.
 - `strategy=auto` + `pr-grouping=group` allows optional pin mappings and auto-assigns the rest.
 - `strategy=auto` + `pr-grouping=per-sprint` still emits one shared `pr_group` per sprint.
+- `explain[].pr_grouping_intent_source` reports whether grouping intent came from plan metadata (`plan-metadata`) or CLI fallback (`cli-fallback`).
 
 ## TSV Output (format=tsv)
 
@@ -70,7 +71,7 @@ Top-level object:
 - `pr_group`
 
 `explain` continues to expose per-sprint grouping breakdown (`groups[].task_ids`, deterministic
-anchor task id, and optional sprint metadata hints).
+anchor task id, optional sprint metadata hints, and `pr_grouping_intent_source`).
 
 ## Migration Notes (v1 -> v2)
 

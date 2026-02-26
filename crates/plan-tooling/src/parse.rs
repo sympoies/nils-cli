@@ -13,6 +13,12 @@ pub struct SprintMetadata {
     pub parallel_width: Option<usize>,
 }
 
+fn sprint_metadata_is_empty(metadata: &SprintMetadata) -> bool {
+    metadata.pr_grouping_intent.is_none()
+        && metadata.execution_profile.is_none()
+        && metadata.parallel_width.is_none()
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Plan {
     pub title: String,
@@ -26,7 +32,7 @@ pub struct Sprint {
     pub name: String,
     pub start_line: u32,
     pub tasks: Vec<Task>,
-    #[serde(skip_serializing)]
+    #[serde(skip_serializing_if = "sprint_metadata_is_empty")]
     pub metadata: SprintMetadata,
 }
 
@@ -138,15 +144,46 @@ pub fn parse_plan_with_display(
         }
 
         if current_task.is_none() {
-            if let Some((_, field, rest)) = parse_field_line(line)
+            if let Some((_, field, rest)) = parse_any_field_line(line)
                 && let Some(sprint) = current_sprint.as_mut()
             {
                 let value = rest.unwrap_or_default();
-                if field == "PR grouping intent" {
-                    sprint.metadata.pr_grouping_intent = parse_pr_grouping_intent(&value);
-                } else if field == "Execution Profile" {
-                    sprint.metadata.execution_profile = parse_execution_profile(&value);
-                    sprint.metadata.parallel_width = parse_parallel_width(&value);
+                match field.as_str() {
+                    "PR grouping intent" => {
+                        sprint.metadata.pr_grouping_intent = parse_pr_grouping_intent(&value);
+                        if sprint.metadata.pr_grouping_intent.is_none() && !value.trim().is_empty()
+                        {
+                            errors.push(format!(
+                                "{display_path}:{}: invalid PR grouping intent (expected per-sprint|group): {}",
+                                i + 1,
+                                crate::repr::py_repr(value.trim())
+                            ));
+                        }
+                    }
+                    "Execution Profile" => {
+                        sprint.metadata.execution_profile = parse_execution_profile(&value);
+                        if sprint.metadata.execution_profile.is_none() && !value.trim().is_empty() {
+                            errors.push(format!(
+                                "{display_path}:{}: invalid Execution Profile (expected serial|parallel-xN): {}",
+                                i + 1,
+                                crate::repr::py_repr(value.trim())
+                            ));
+                        }
+                        sprint.metadata.parallel_width = parse_parallel_width(
+                            &value,
+                            sprint.metadata.execution_profile.as_deref(),
+                        );
+                    }
+                    _ => {
+                        if let Some(expected) = canonical_metadata_field_name(&field) {
+                            errors.push(format!(
+                                "{display_path}:{}: invalid metadata field {}; use '{}'",
+                                i + 1,
+                                crate::repr::py_repr(&field),
+                                expected
+                            ));
+                        }
+                    }
                 }
             }
             i += 1;
@@ -305,6 +342,21 @@ fn parse_task_heading(line: &str) -> Option<(i32, i32, String)> {
 }
 
 fn parse_field_line(line: &str) -> Option<(usize, String, Option<String>)> {
+    let parsed = parse_any_field_line(line)?;
+    match parsed.1.as_str() {
+        "Location"
+        | "Description"
+        | "Dependencies"
+        | "Complexity"
+        | "Acceptance criteria"
+        | "Validation"
+        | "PR grouping intent"
+        | "Execution Profile" => Some(parsed),
+        _ => None,
+    }
+}
+
+fn parse_any_field_line(line: &str) -> Option<(usize, String, Option<String>)> {
     let base_indent = line.chars().take_while(|c| *c == ' ').count();
     let trimmed = line.trim_start_matches(' ');
     let after_space = if let Some(after_dash) = trimmed.strip_prefix('-') {
@@ -315,17 +367,17 @@ fn parse_field_line(line: &str) -> Option<(usize, String, Option<String>)> {
     let after_star = after_space.strip_prefix("**")?;
     let (field, rest) = after_star.split_once("**:")?;
     let field = field.to_string();
-    match field.as_str() {
-        "Location"
-        | "Description"
-        | "Dependencies"
-        | "Complexity"
-        | "Acceptance criteria"
-        | "Validation"
-        | "PR grouping intent"
-        | "Execution Profile" => Some((base_indent, field, Some(rest.trim().to_string()))),
-        _ => None,
+    Some((base_indent, field, Some(rest.trim().to_string())))
+}
+
+fn canonical_metadata_field_name(field: &str) -> Option<&'static str> {
+    if field.eq_ignore_ascii_case("PR grouping intent") && field != "PR grouping intent" {
+        return Some("PR grouping intent");
     }
+    if field.eq_ignore_ascii_case("Execution Profile") && field != "Execution Profile" {
+        return Some("Execution Profile");
+    }
+    None
 }
 
 fn parse_pr_grouping_intent(text: &str) -> Option<String> {
@@ -333,28 +385,34 @@ fn parse_pr_grouping_intent(text: &str) -> Option<String> {
     if token.is_empty() {
         return None;
     }
-    let normalized = token.to_ascii_lowercase();
-    if normalized.contains("per-sprint") || normalized == "persprint" {
-        Some("per-sprint".to_string())
-    } else if normalized.contains("group") {
-        Some("group".to_string())
-    } else {
-        None
+    match token.to_ascii_lowercase().as_str() {
+        "per-sprint" | "persprint" | "per_sprint" => Some("per-sprint".to_string()),
+        "group" => Some("group".to_string()),
+        _ => None,
     }
 }
 
 fn parse_execution_profile(text: &str) -> Option<String> {
     let token = extract_primary_token(text);
     if token.is_empty() {
-        None
-    } else {
-        Some(token.to_ascii_lowercase())
+        return None;
     }
+    let normalized = token.to_ascii_lowercase();
+    if normalized == "serial" {
+        return Some(normalized);
+    }
+    let width = parse_parallel_width_from_profile_token(&normalized)?;
+    Some(format!("parallel-x{width}"))
 }
 
-fn parse_parallel_width(text: &str) -> Option<usize> {
+fn parse_parallel_width(text: &str, execution_profile: Option<&str>) -> Option<usize> {
+    parse_width_after_marker(text, "parallel width")
+        .or_else(|| parse_width_after_marker(text, "intended width"))
+        .or_else(|| execution_profile.and_then(parse_parallel_width_from_profile_token))
+}
+
+fn parse_width_after_marker(text: &str, marker: &str) -> Option<usize> {
     let lower = text.to_ascii_lowercase();
-    let marker = "parallel width";
     let pos = lower.find(marker)?;
     let tail = &lower[pos + marker.len()..];
     let mut digits = String::new();
@@ -374,6 +432,14 @@ fn parse_parallel_width(text: &str) -> Option<usize> {
     } else {
         digits.parse::<usize>().ok().filter(|v| *v > 0)
     }
+}
+
+fn parse_parallel_width_from_profile_token(token: &str) -> Option<usize> {
+    let digits = token.strip_prefix("parallel-x")?;
+    if digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse::<usize>().ok().filter(|v| *v > 0)
 }
 
 fn extract_primary_token(text: &str) -> String {

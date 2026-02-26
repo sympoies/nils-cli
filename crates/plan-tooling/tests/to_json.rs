@@ -48,6 +48,35 @@ fn to_json_sprint_filter_returns_exact_sprint() {
 }
 
 #[test]
+fn to_json_includes_sprint_metadata_when_present() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let plan_path = dir.path().join("plan.md");
+    write_file(&plan_path, METADATA_PLAN);
+
+    let out = run_plan_tooling(dir.path(), &["to-json", "--file", "plan.md"]);
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+    let v: serde_json::Value = serde_json::from_str(&out.stdout).expect("json");
+    assert_eq!(v["sprints"][0]["metadata"]["pr_grouping_intent"], "group");
+    assert_eq!(
+        v["sprints"][0]["metadata"]["execution_profile"],
+        "parallel-x2"
+    );
+    assert_eq!(v["sprints"][0]["metadata"]["parallel_width"], 2);
+}
+
+#[test]
+fn to_json_rejects_near_miss_metadata_field_name() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let plan_path = dir.path().join("plan.md");
+    write_file(&plan_path, METADATA_BAD_FIELD_PLAN);
+
+    let out = run_plan_tooling(dir.path(), &["to-json", "--file", "plan.md"]);
+    assert_eq!(out.code, 1);
+    assert!(out.stderr.contains("invalid metadata field"));
+    assert!(out.stderr.contains("PR grouping intent"));
+}
+
+#[test]
 fn to_json_invalid_sprint_is_usage_error() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let plan_path = dir.path().join("plan.md");
@@ -152,6 +181,44 @@ const VALID_PLAN: &str = r#"# Plan: Example
 - **Complexity**: 2
 - **Acceptance criteria**:
   - B works
+- **Validation**:
+  - cargo test -p plan-tooling
+"#;
+
+const METADATA_PLAN: &str = r#"# Plan: Metadata Example
+
+## Sprint 1: First sprint
+- **PR grouping intent**: `group`
+- **Execution Profile**: `parallel-x2` (parallel width 2)
+
+### Task 1.1: Do thing
+- **Location**:
+  - `src/a.rs`
+- **Description**: Do A
+- **Dependencies**:
+  - none
+- **Complexity**: 3
+- **Acceptance criteria**:
+  - A works
+- **Validation**:
+  - cargo test -p plan-tooling
+"#;
+
+const METADATA_BAD_FIELD_PLAN: &str = r#"# Plan: Metadata Bad Field
+
+## Sprint 1: First sprint
+- **PR Grouping Intent**: `group`
+- **Execution Profile**: `serial` (parallel width 1)
+
+### Task 1.1: Do thing
+- **Location**:
+  - `src/a.rs`
+- **Description**: Do A
+- **Dependencies**:
+  - none
+- **Complexity**: 3
+- **Acceptance criteria**:
+  - A works
 - **Validation**:
   - cargo test -p plan-tooling
 "#;

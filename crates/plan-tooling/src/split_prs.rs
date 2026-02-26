@@ -156,6 +156,8 @@ struct ExplainSprint {
     execution_profile: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pr_grouping_intent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pr_grouping_intent_source: Option<String>,
     groups: Vec<ExplainGroup>,
 }
 
@@ -1187,6 +1189,11 @@ fn build_explain_payload(
                 .pr_grouping_intent
                 .map(|value| value.as_str().to_string())
                 .or_else(|| Some(pr_grouping.as_str().to_string())),
+            pr_grouping_intent_source: if hint.pr_grouping_intent.is_some() {
+                Some("plan-metadata".to_string())
+            } else {
+                Some("cli-fallback".to_string())
+            },
             groups,
         });
     }

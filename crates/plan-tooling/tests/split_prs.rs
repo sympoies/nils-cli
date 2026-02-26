@@ -565,6 +565,7 @@ fn split_prs_auto_explain_json_includes_group_breakdown() {
     let explain = value["explain"].as_array().expect("explain array");
     assert_eq!(explain.len(), 1);
     assert_eq!(explain[0]["sprint"], 2);
+    assert_eq!(explain[0]["pr_grouping_intent_source"], "cli-fallback");
     assert!(explain[0]["groups"].is_array());
     assert!(
         explain[0]["groups"]
@@ -689,6 +690,8 @@ fn split_prs_auto_uses_execution_profile_parallel_width_as_target() {
         .expect("sprint2 explain");
     assert_eq!(sprint1["target_parallel_width"], 2);
     assert_eq!(sprint2["target_parallel_width"], 1);
+    assert_eq!(sprint1["pr_grouping_intent_source"], "plan-metadata");
+    assert_eq!(sprint2["pr_grouping_intent_source"], "plan-metadata");
 }
 
 #[test]

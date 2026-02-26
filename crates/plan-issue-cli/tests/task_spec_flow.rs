@@ -524,7 +524,7 @@ fn render_issue_body_start_sprint_group_auto_single_pr_lane_uses_per_sprint_mode
         r#"# Plan: auto single lane mode test
 
 ## Sprint 1: Serial lane
-- **PR grouping intent**: `per-sprint`.
+- **PR grouping intent**: `group`.
 - **Execution Profile**: `serial` (parallel width 1).
 
 ### Task 1.1: First lane task
@@ -656,6 +656,66 @@ fn render_issue_body_start_sprint_group_deterministic_single_pr_lane_uses_per_sp
         "{comment}"
     );
     assert!(!comment.contains("pr-shared"), "{comment}");
+}
+
+#[test]
+fn start_sprint_rejects_cli_grouping_mismatch_with_plan_metadata() {
+    let tmp = TempDir::new().expect("temp dir");
+    let agent_home = tmp.path().join("agent-home");
+    fs::create_dir_all(&agent_home).expect("create agent home");
+    let agent_home_s = agent_home.to_string_lossy().to_string();
+
+    let plan_file = tmp.path().join("mismatch-plan.md");
+    let plan_file_s = plan_file.to_string_lossy().to_string();
+    fs::write(
+        &plan_file,
+        r#"# Plan: metadata mismatch test
+
+## Sprint 1: Single lane metadata
+- **PR grouping intent**: `per-sprint`.
+- **Execution Profile**: `serial` (parallel width 1).
+
+### Task 1.1: First task
+- **Location**:
+  - crates/plan-issue-cli/src/a.rs
+- **Dependencies**:
+  - none
+"#,
+    )
+    .expect("write plan");
+
+    let out = common::run_plan_issue_local_with_env(
+        &[
+            "--format",
+            "json",
+            "--dry-run",
+            "start-sprint",
+            "--plan",
+            &plan_file_s,
+            "--issue",
+            "217",
+            "--sprint",
+            "1",
+            "--pr-grouping",
+            "group",
+            "--strategy",
+            "auto",
+            "--no-comment",
+        ],
+        &[("AGENT_HOME", &agent_home_s)],
+    );
+
+    assert_eq!(out.code, 1, "stderr: {}", out.stderr);
+    let payload = parse_json(&out.stdout);
+    assert_eq!(payload["status"], "error");
+    assert_eq!(payload["error"]["code"], "task-spec-generation-failed");
+    assert!(
+        payload["error"]["message"]
+            .as_str()
+            .is_some_and(|value| value.contains("plan metadata/CLI grouping mismatch")),
+        "{}",
+        out.stdout
+    );
 }
 
 #[test]

@@ -198,6 +198,36 @@ fn validate_invalid_format_is_usage_error() {
     assert!(out.stderr.contains("invalid --format"));
 }
 
+#[test]
+fn validate_fails_when_per_sprint_intent_conflicts_with_parallel_profile() {
+    let repo = init_repo();
+    write_file(
+        &repo.path().join("metadata-mismatch.md"),
+        METADATA_MISMATCH_PLAN,
+    );
+
+    let out = run_plan_tooling(repo.path(), &["validate", "--file", "metadata-mismatch.md"]);
+    assert_eq!(out.code, 1);
+    assert!(out.stderr.contains("PR grouping intent"));
+    assert!(out.stderr.contains("parallel width 2"));
+}
+
+#[test]
+fn validate_fails_when_sprint_metadata_is_partial() {
+    let repo = init_repo();
+    write_file(
+        &repo.path().join("metadata-partial.md"),
+        METADATA_PARTIAL_PLAN,
+    );
+
+    let out = run_plan_tooling(repo.path(), &["validate", "--file", "metadata-partial.md"]);
+    assert_eq!(out.code, 1);
+    assert!(
+        out.stderr
+            .contains("must include both `PR grouping intent` and `Execution Profile`")
+    );
+}
+
 const VALID_PLAN: &str = r#"# Plan: Example
 
 ## Sprint 1: First sprint
@@ -259,4 +289,39 @@ const REDIRECT_VALIDATION_PLAN: &str = r#"# Plan: Redirect
   - Redirect command is accepted
 - **Validation**:
   - cat < input.txt > output.txt
+"#;
+
+const METADATA_MISMATCH_PLAN: &str = r#"# Plan: Metadata mismatch
+
+## Sprint 1: First sprint
+- **PR grouping intent**: `per-sprint`
+- **Execution Profile**: `parallel-x2` (parallel width 2)
+
+### Task 1.1: Do thing
+- **Location**:
+  - `src/a.rs`
+- **Description**: Do A
+- **Dependencies**:
+  - none
+- **Acceptance criteria**:
+  - A works
+- **Validation**:
+  - cargo test -p plan-tooling
+"#;
+
+const METADATA_PARTIAL_PLAN: &str = r#"# Plan: Metadata partial
+
+## Sprint 1: First sprint
+- **PR grouping intent**: `group`
+
+### Task 1.1: Do thing
+- **Location**:
+  - `src/a.rs`
+- **Description**: Do A
+- **Dependencies**:
+  - none
+- **Acceptance criteria**:
+  - A works
+- **Validation**:
+  - cargo test -p plan-tooling
 "#;

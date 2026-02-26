@@ -83,6 +83,7 @@ pub fn build_task_spec(
     };
 
     let selected_sprints = select_sprints_for_scope(&plan, split_scope)?;
+    validate_pr_grouping_intent_alignment(&selected_sprints, options.pr_grouping)?;
     let sprint_name = match scope {
         TaskSpecScope::Plan => None,
         TaskSpecScope::Sprint(_) => selected_sprints.first().map(|sprint| sprint.name.clone()),
@@ -576,6 +577,34 @@ fn to_split_strategy(strategy: SplitStrategy) -> SplitPrStrategy {
     match strategy {
         SplitStrategy::Deterministic => SplitPrStrategy::Deterministic,
         SplitStrategy::Auto => SplitPrStrategy::Auto,
+    }
+}
+
+fn validate_pr_grouping_intent_alignment(
+    selected_sprints: &[ParsedSprint],
+    grouping: PrGrouping,
+) -> Result<(), String> {
+    let expected = pr_grouping_label(grouping);
+    let mut mismatches: Vec<String> = Vec::new();
+    for sprint in selected_sprints {
+        let Some(intent) = sprint.metadata.pr_grouping_intent.as_deref() else {
+            continue;
+        };
+        if intent != expected {
+            mismatches.push(format!(
+                "S{} metadata `PR grouping intent={intent}` conflicts with `--pr-grouping {expected}`",
+                sprint.number
+            ));
+        }
+    }
+
+    if mismatches.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "plan metadata/CLI grouping mismatch: {}",
+            mismatches.join(" | ")
+        ))
     }
 }
 

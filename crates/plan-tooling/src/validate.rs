@@ -6,7 +6,7 @@ use nils_common::git as common_git;
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 use serde::Serialize;
 
-use crate::parse::{Plan, Task, parse_plan_with_display};
+use crate::parse::{Plan, Sprint, Task, parse_plan_with_display};
 
 const USAGE: &str = r#"Usage:
   validate_plans.sh [--file <path>]... [--format text|json]
@@ -267,9 +267,39 @@ fn validate_plan(display_path: &str, read_path: &Path) -> Vec<String> {
 
     let all_task_ids: HashSet<String> = tasks.iter().map(|t| t.id.trim().to_string()).collect();
 
-    let mut errs: Vec<String> = Vec::new();
+    let mut errs: Vec<String> = validate_sprint_metadata(display_path, &plan.sprints);
     for task in tasks {
         errs.extend(validate_task(display_path, task, &all_task_ids));
+    }
+    errs
+}
+
+fn validate_sprint_metadata(plan_path: &str, sprints: &[Sprint]) -> Vec<String> {
+    let mut errs = Vec::new();
+    for sprint in sprints {
+        let prefix = format!("{plan_path}:Sprint {}", sprint.number);
+        let intent = sprint.metadata.pr_grouping_intent.as_deref();
+        let profile = sprint.metadata.execution_profile.as_deref();
+
+        if (intent.is_some() && profile.is_none()) || (intent.is_none() && profile.is_some()) {
+            errs.push(format!(
+                "{prefix}: sprint metadata must include both `PR grouping intent` and `Execution Profile`"
+            ));
+        }
+
+        if intent == Some("per-sprint") {
+            let width = sprint
+                .metadata
+                .parallel_width
+                .or_else(|| profile.and_then(parse_parallel_width_from_execution_profile));
+            if let Some(width) = width
+                && width > 1
+            {
+                errs.push(format!(
+                    "{prefix}: `PR grouping intent` is per-sprint but `Execution Profile` indicates parallel width {width}; use `PR grouping intent: group` for multi-lane execution"
+                ));
+            }
+        }
     }
     errs
 }
@@ -476,6 +506,17 @@ fn is_task_id(s: &str) -> bool {
         return false;
     }
     a.chars().all(|c| c.is_ascii_digit()) && b.chars().all(|c| c.is_ascii_digit())
+}
+
+fn parse_parallel_width_from_execution_profile(profile: &str) -> Option<usize> {
+    let digits = profile
+        .to_ascii_lowercase()
+        .strip_prefix("parallel-x")?
+        .to_string();
+    if digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse::<usize>().ok().filter(|value| *value > 0)
 }
 
 #[cfg(test)]

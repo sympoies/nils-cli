@@ -52,6 +52,7 @@ Help:
   - in `pr-grouping=group`, `--pr-group` mappings are optional pins; remaining tasks are auto-grouped.
   - when sprint metadata provides `Execution Profile` parallel width hints, auto grouping targets that lane count (deterministic fallback merges apply when needed).
   - `pr-grouping=per-sprint` keeps one shared group per sprint (`s<n>`).
+  - `--explain` includes `pr_grouping_intent_source` (`plan-metadata` or `cli-fallback`) for traceability.
   - ordering and tie-breakers stay deterministic (`Task N.M`, then `SxTy`, then lexical summary).
   - emitted grouping primitives (`task_id`, `summary`, `pr_group`, optional `--explain`) are consumed by `plan-issue` runtime materialization and runtime-truth validation.
 - deterministic examples:
@@ -69,6 +70,14 @@ Help:
 
 ### completion
 - `completion <bash|zsh>`: Export completion script for shell integration.
+
+### Sprint metadata hints (Plan markdown)
+- Supported sprint metadata fields are case-sensitive:
+  - `**PR grouping intent**: per-sprint|group`
+  - `**Execution Profile**: serial|parallel-xN`
+- `validate` enforces metadata coherence by default:
+  - if one metadata field is present, both must be present.
+  - `PR grouping intent=per-sprint` cannot be combined with parallel width `>1`.
 
 ## Quick examples
 ```bash

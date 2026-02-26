@@ -114,6 +114,9 @@ Row-level status rules:
     execution metadata aligned (`Owner`, `Branch`, `Worktree`).
   - `Notes` may remain task-specific, but shared-lane tokens used for lane parsing (for example
     `pr-group` and `shared-pr-anchor`) must stay compatible across rows in the same lane.
+- Plan metadata grouping invariant:
+  - when sprint metadata includes `PR grouping intent`, it must match command `--pr-grouping`.
+  - mismatch is a hard gate failure for split/task-spec generation commands.
 - Owner policy for non-planned/non-blocked rows:
   - must be a stable dispatch alias (`subagent-*` and shared-lane `dispatch` alias are valid shapes)
   - must not reference main-agent identity.

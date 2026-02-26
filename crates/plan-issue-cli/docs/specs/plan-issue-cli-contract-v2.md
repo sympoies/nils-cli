@@ -23,6 +23,8 @@ Rules:
 - `Notes` are task-specific and include shared-lane tokens when applicable.
 - Anchor selection for runtime lane materialization is deterministic from lane membership
   (stable task ordering), not passthrough split-prs task placeholders.
+- If sprint metadata declares `PR grouping intent`, command `--pr-grouping` must match or
+  task-spec generation fails before issue/comment artifact writes.
 
 ## Notes Token Contract (v2)
 
