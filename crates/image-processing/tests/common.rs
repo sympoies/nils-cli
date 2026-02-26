@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use nils_test_support::cmd;
 use std::path::Path;
 
@@ -20,38 +18,7 @@ pub fn run_image_processing(dir: &Path, args: &[&str], envs: &[(&str, &str)]) ->
     }
 }
 
+#[allow(dead_code)]
 pub fn make_stub_dir() -> StubBinDir {
     StubBinDir::new()
-}
-
-pub fn write_exe(dir: &Path, name: &str, content: impl AsRef<str>) {
-    nils_test_support::write_exe(dir, name, content.as_ref());
-}
-
-pub fn identify_stub_script() -> String {
-    nils_test_support::stubs::identify_stub_script()
-}
-
-pub fn convert_stub_script() -> String {
-    nils_test_support::stubs::convert_stub_script()
-}
-
-pub fn magick_stub_script() -> String {
-    nils_test_support::stubs::magick_stub_script()
-}
-
-pub fn dwebp_stub_script() -> String {
-    nils_test_support::stubs::dwebp_stub_script()
-}
-
-pub fn cwebp_stub_script() -> String {
-    nils_test_support::stubs::cwebp_stub_script()
-}
-
-pub fn djpeg_stub_script() -> String {
-    nils_test_support::stubs::djpeg_stub_script()
-}
-
-pub fn cjpeg_stub_script() -> String {
-    nils_test_support::stubs::cjpeg_stub_script()
 }

@@ -1,18 +1,12 @@
 use std::path::Path;
 use std::process::Output;
 
-use nils_test_support::bin::resolve;
 use nils_test_support::cmd::{options_in_dir_with_envs, run_resolved};
 pub use nils_test_support::git::git;
 use nils_test_support::git::{InitRepoOptions, init_repo_with};
 
 pub fn init_repo() -> tempfile::TempDir {
     init_repo_with(InitRepoOptions::new().with_branch("main"))
-}
-
-#[allow(dead_code)]
-pub fn git_scope_bin() -> std::path::PathBuf {
-    resolve("git-scope")
 }
 
 pub fn run_git_scope(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> String {

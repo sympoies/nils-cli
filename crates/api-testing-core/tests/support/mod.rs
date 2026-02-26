@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use nils_test_support::fixtures::write_text;
 use tempfile::TempDir;
@@ -29,12 +29,6 @@ impl RepoFixture {
         }
     }
 
-    pub fn mkdir(&self, rel: &str) -> PathBuf {
-        let path = self.root.join(rel);
-        std::fs::create_dir_all(&path).expect("mkdir");
-        path
-    }
-
     pub fn write_rest_endpoints(&self, contents: &str) -> PathBuf {
         write_text(&self.rest_setup.join("endpoints.env"), contents)
     }
@@ -59,10 +53,6 @@ impl RepoFixture {
         write_text(&self.gql_setup.join(name), contents)
     }
 
-    pub fn write_request(&self, rel: &str, contents: &str) -> PathBuf {
-        write_text(&self.root.join(rel), contents)
-    }
-
     pub fn write_operation(&self, rel: &str, contents: &str) -> PathBuf {
         write_text(&self.root.join(rel), contents)
     }
@@ -72,10 +62,4 @@ impl Default for RepoFixture {
     fn default() -> Self {
         Self::new()
     }
-}
-
-pub fn create_dir(root: &Path, rel: &str) -> PathBuf {
-    let path = root.join(rel);
-    std::fs::create_dir_all(&path).expect("mkdir");
-    path
 }
