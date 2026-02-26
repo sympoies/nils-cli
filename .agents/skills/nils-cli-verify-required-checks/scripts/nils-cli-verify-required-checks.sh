@@ -9,6 +9,7 @@ Usage:
 Runs the required pre-delivery checks from DEVELOPMENT.md:
   - bash scripts/ci/docs-placement-audit.sh --strict
   - bash scripts/ci/docs-hygiene-audit.sh --strict
+  - bash scripts/ci/test-stale-audit.sh --strict
   - bash scripts/ci/completion-asset-audit.sh --strict
   - bash scripts/ci/completion-flag-parity-audit.sh --strict
   - cargo fmt --all -- --check
@@ -60,7 +61,7 @@ done
 
 required_cmds=(git)
 if [[ "$docs_only" -eq 0 ]]; then
-  required_cmds+=(cargo zsh)
+  required_cmds+=(cargo zsh rg)
 fi
 
 for cmd in "${required_cmds[@]}"; do
@@ -115,6 +116,7 @@ if [[ "$docs_only" -eq 1 ]]; then
   exit 0
 fi
 
+run bash scripts/ci/test-stale-audit.sh --strict
 coverage_dir="${NILS_CLI_COVERAGE_DIR:-target/coverage}"
 run mkdir -p "$coverage_dir"
 run bash scripts/ci/completion-asset-audit.sh --strict
