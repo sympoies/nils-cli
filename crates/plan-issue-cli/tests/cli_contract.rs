@@ -96,7 +96,7 @@ fn cli_parse_contract_build_task_spec_accepts_per_spring_alias() {
         "plan-issue",
         "build-task-spec",
         "--plan",
-        "docs/plans/plan-issue-rust-cli-full-delivery-plan.md",
+        "crates/plan-issue-cli/tests/fixtures/plans/plan-issue-rust-cli-full-delivery-plan.md",
         "--sprint",
         "2",
         "--pr-grouping",
@@ -114,7 +114,9 @@ fn cli_parse_contract_build_task_spec_accepts_per_spring_alias() {
         Command::BuildTaskSpec(args) => {
             assert_eq!(
                 args.plan,
-                PathBuf::from("docs/plans/plan-issue-rust-cli-full-delivery-plan.md")
+                PathBuf::from(
+                    "crates/plan-issue-cli/tests/fixtures/plans/plan-issue-rust-cli-full-delivery-plan.md"
+                )
             );
             assert_eq!(args.sprint, 2);
             assert_eq!(args.grouping.pr_grouping, PrGrouping::PerSprint);
@@ -131,7 +133,7 @@ fn cli_parse_contract_start_sprint_parses_typed_group_mapping() {
         "plan-issue",
         "start-sprint",
         "--plan",
-        "docs/plans/plan-issue-rust-cli-full-delivery-plan.md",
+        "crates/plan-issue-cli/tests/fixtures/plans/plan-issue-rust-cli-full-delivery-plan.md",
         "--issue",
         "217",
         "--sprint",

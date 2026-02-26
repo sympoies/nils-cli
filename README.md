@@ -71,7 +71,6 @@ Assets:
 - [completions/zsh/](completions/zsh/): zsh completions (plus `aliases.zsh`)
 - [completions/bash/](completions/bash/): bash completions (plus `aliases.bash`)
 - [wrappers/](wrappers/): dev-only wrapper scripts
-- [wrappers/plan-issue-delivery-loop.sh](wrappers/plan-issue-delivery-loop.sh): compatibility wrapper that delegates to `plan-issue`
 
 Local shell setup:
 

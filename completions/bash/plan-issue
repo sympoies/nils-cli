@@ -57,7 +57,7 @@ _nils_cli_plan_issue_complete() {
 }
 
 if _nils_cli_plan_issue_source_common_bash; then
-  _nils_cli_completion_common_register_bash _nils_cli_plan_issue_complete plan-issue plan-issue-delivery-loop.sh
+  _nils_cli_completion_common_register_bash _nils_cli_plan_issue_complete plan-issue
 else
-  complete -F _nils_cli_plan_issue_complete plan-issue plan-issue-delivery-loop.sh
+  complete -F _nils_cli_plan_issue_complete plan-issue
 fi

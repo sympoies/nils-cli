@@ -1,4 +1,4 @@
-#compdef plan-issue plan-issue-delivery-loop.sh
+#compdef plan-issue
 
 _nils_cli_plan_issue_source_common_zsh() {
   (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
@@ -54,7 +54,7 @@ _plan-issue() {
 }
 
 if _nils_cli_plan_issue_source_common_zsh; then
-  _nils_cli_completion_common_register_zsh _plan-issue plan-issue plan-issue-delivery-loop.sh
+  _nils_cli_completion_common_register_zsh _plan-issue plan-issue
 else
-  compdef _plan-issue plan-issue plan-issue-delivery-loop.sh
+  compdef _plan-issue plan-issue
 fi

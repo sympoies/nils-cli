@@ -10,7 +10,7 @@ fn output_json_contract_success_envelope_contains_version_status_and_payload() {
         "json",
         "build-task-spec",
         "--plan",
-        "docs/plans/plan-issue-rust-cli-full-delivery-plan.md",
+        "crates/plan-issue-cli/tests/fixtures/plans/plan-issue-rust-cli-full-delivery-plan.md",
         "--sprint",
         "2",
         "--pr-grouping",
@@ -46,7 +46,7 @@ fn output_json_contract_error_envelope_contains_code_and_message() {
         "json",
         "build-task-spec",
         "--plan",
-        "docs/plans/plan-issue-rust-cli-full-delivery-plan.md",
+        "crates/plan-issue-cli/tests/fixtures/plans/plan-issue-rust-cli-full-delivery-plan.md",
         "--sprint",
         "2",
         "--pr-grouping",
@@ -72,7 +72,7 @@ fn output_text_contract_success_output_is_deterministic() {
     let out = common::run_plan_issue(&[
         "build-plan-task-spec",
         "--plan",
-        "docs/plans/plan-issue-rust-cli-full-delivery-plan.md",
+        "crates/plan-issue-cli/tests/fixtures/plans/plan-issue-rust-cli-full-delivery-plan.md",
         "--pr-grouping",
         "per-sprint",
     ]);
@@ -100,7 +100,7 @@ fn output_text_contract_error_output_is_deterministic() {
     let out = common::run_plan_issue(&[
         "build-plan-task-spec",
         "--plan",
-        "docs/plans/plan-issue-rust-cli-full-delivery-plan.md",
+        "crates/plan-issue-cli/tests/fixtures/plans/plan-issue-rust-cli-full-delivery-plan.md",
         "--pr-grouping",
         "group",
     ]);

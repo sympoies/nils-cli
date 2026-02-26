@@ -54,7 +54,7 @@ This plan delivers a shell-free Rust implementation for the current plan-issue o
 **Goal**: Lock command contract, naming, and parity fixtures before implementation.
 **Demo/Validation**:
 - Command(s):
-  - `plan-tooling validate --file docs/plans/plan-issue-rust-cli-full-delivery-plan.md`
+  - `plan-tooling validate --file crates/plan-issue-cli/tests/fixtures/plans/plan-issue-rust-cli-full-delivery-plan.md`
   - `bash "$AGENT_HOME/skills/automation/plan-issue-delivery-loop/scripts/plan-issue-delivery-loop.sh" --help`
 - Verify:
   - Naming decision is documented and stable.
@@ -195,7 +195,7 @@ This plan delivers a shell-free Rust implementation for the current plan-issue o
 **Demo/Validation**:
 - Command(s):
   - `cargo test -p nils-plan-issue-cli local_mode`
-  - `cargo run -p nils-plan-issue-cli --bin plan-issue-local -- build-plan-task-spec --plan docs/plans/plan-issue-rust-cli-full-delivery-plan.md --pr-grouping per-sprint`
+  - `cargo run -p nils-plan-issue-cli --bin plan-issue-local -- build-plan-task-spec --plan crates/plan-issue-cli/tests/fixtures/plans/plan-issue-rust-cli-full-delivery-plan.md --pr-grouping per-sprint`
 - Verify:
   - Local commands run without `gh` on PATH.
   - Issue body and sprint comment generation are pure local operations.
@@ -485,12 +485,12 @@ This plan delivers a shell-free Rust implementation for the current plan-issue o
   - Sprint 5: use `group` with 3 groups (`s5-parity`, `s5-guardrails`, `s5-json`) to maximize parallel hardening tracks.
   - Sprint 6: use `group` with 3 groups (`s6-cutover`, `s6-docs`, `s6-final-gate`) so `Task 6.1` and `Task 6.2` can proceed in parallel before `Task 6.3`.
 - Reference commands:
-  - `plan-tooling split-prs --file docs/plans/plan-issue-rust-cli-full-delivery-plan.md --scope sprint --sprint 1 --pr-grouping group --pr-group S1T1=s1-foundation --pr-group S1T2=s1-fixtures --pr-group S1T3=s1-state --format tsv`
-  - `plan-tooling split-prs --file docs/plans/plan-issue-rust-cli-full-delivery-plan.md --scope sprint --sprint 2 --pr-grouping group --pr-group S2T1=s2-core --pr-group S2T2=s2-core --pr-group S2T3=s2-core --format tsv`
-  - `plan-tooling split-prs --file docs/plans/plan-issue-rust-cli-full-delivery-plan.md --scope sprint --sprint 3 --pr-grouping group --pr-group S3T1=s3-core --pr-group S3T2=s3-core --pr-group S3T3=s3-core --format tsv`
-  - `plan-tooling split-prs --file docs/plans/plan-issue-rust-cli-full-delivery-plan.md --scope sprint --sprint 4 --pr-grouping group --pr-group S4T1=s4-adapter --pr-group S4T2=s4-live-plan --pr-group S4T3=s4-live-sprint --format tsv`
-  - `plan-tooling split-prs --file docs/plans/plan-issue-rust-cli-full-delivery-plan.md --scope sprint --sprint 5 --pr-grouping group --pr-group S5T1=s5-parity --pr-group S5T2=s5-guardrails --pr-group S5T3=s5-json --format tsv`
-  - `plan-tooling split-prs --file docs/plans/plan-issue-rust-cli-full-delivery-plan.md --scope sprint --sprint 6 --pr-grouping group --pr-group S6T1=s6-cutover --pr-group S6T2=s6-docs --pr-group S6T3=s6-final-gate --format tsv`
+  - `plan-tooling split-prs --file crates/plan-issue-cli/tests/fixtures/plans/plan-issue-rust-cli-full-delivery-plan.md --scope sprint --sprint 1 --pr-grouping group --pr-group S1T1=s1-foundation --pr-group S1T2=s1-fixtures --pr-group S1T3=s1-state --format tsv`
+  - `plan-tooling split-prs --file crates/plan-issue-cli/tests/fixtures/plans/plan-issue-rust-cli-full-delivery-plan.md --scope sprint --sprint 2 --pr-grouping group --pr-group S2T1=s2-core --pr-group S2T2=s2-core --pr-group S2T3=s2-core --format tsv`
+  - `plan-tooling split-prs --file crates/plan-issue-cli/tests/fixtures/plans/plan-issue-rust-cli-full-delivery-plan.md --scope sprint --sprint 3 --pr-grouping group --pr-group S3T1=s3-core --pr-group S3T2=s3-core --pr-group S3T3=s3-core --format tsv`
+  - `plan-tooling split-prs --file crates/plan-issue-cli/tests/fixtures/plans/plan-issue-rust-cli-full-delivery-plan.md --scope sprint --sprint 4 --pr-grouping group --pr-group S4T1=s4-adapter --pr-group S4T2=s4-live-plan --pr-group S4T3=s4-live-sprint --format tsv`
+  - `plan-tooling split-prs --file crates/plan-issue-cli/tests/fixtures/plans/plan-issue-rust-cli-full-delivery-plan.md --scope sprint --sprint 5 --pr-grouping group --pr-group S5T1=s5-parity --pr-group S5T2=s5-guardrails --pr-group S5T3=s5-json --format tsv`
+  - `plan-tooling split-prs --file crates/plan-issue-cli/tests/fixtures/plans/plan-issue-rust-cli-full-delivery-plan.md --scope sprint --sprint 6 --pr-grouping group --pr-group S6T1=s6-cutover --pr-group S6T2=s6-docs --pr-group S6T3=s6-final-gate --format tsv`
 
 ## Sprint execution smoothness check
 - Derived from `plan-tooling split-prs` dependency notes:

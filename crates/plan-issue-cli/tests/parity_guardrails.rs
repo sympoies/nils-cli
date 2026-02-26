@@ -375,7 +375,7 @@ fn json_contract_local_binary_success_envelope_is_stable() {
         "json",
         "build-task-spec",
         "--plan",
-        "docs/plans/plan-issue-rust-cli-full-delivery-plan.md",
+        "crates/plan-issue-cli/tests/fixtures/plans/plan-issue-rust-cli-full-delivery-plan.md",
         "--sprint",
         "2",
         "--pr-grouping",

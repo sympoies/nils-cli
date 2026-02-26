@@ -34,9 +34,6 @@ This applies to all current wrappers under `wrappers/`:
 - `screen-record`
 - `semantic-commit`
 
-Compatibility shim:
-- `plan-issue-delivery-loop.sh` delegates to `plan-issue` and preserves historical entrypoint naming.
-
 ## Environment Contract
 
 ### `NILS_WRAPPER_MODE`

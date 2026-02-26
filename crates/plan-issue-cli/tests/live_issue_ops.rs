@@ -10,7 +10,8 @@ use nils_test_support::cmd::CmdOptions;
 
 mod common;
 
-const PLAN_PATH: &str = "docs/plans/plan-issue-rust-cli-full-delivery-plan.md";
+const PLAN_PATH: &str =
+    "crates/plan-issue-cli/tests/fixtures/plans/plan-issue-rust-cli-full-delivery-plan.md";
 
 fn parse_json(stdout: &str) -> Value {
     serde_json::from_str(stdout).expect("stdout should be valid JSON")
