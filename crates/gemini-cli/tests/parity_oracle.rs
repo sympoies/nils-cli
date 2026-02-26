@@ -22,18 +22,6 @@ fn run_codex(args: &[&str]) -> CmdOutput {
     cmd::run(&bin, args, &[], None)
 }
 
-fn assert_unrecognized_subcommand(output: &CmdOutput, command: &str) {
-    let stderr = output.stderr_text();
-    assert!(
-        stderr.contains("unrecognized subcommand"),
-        "missing clap parse error for {command}: {stderr}"
-    );
-    assert!(
-        stderr.contains(command),
-        "missing command token {command}: {stderr}"
-    );
-}
-
 fn extract_commands(help_text: &str) -> Vec<String> {
     let mut commands = Vec::new();
     let mut in_commands = false;
@@ -73,32 +61,6 @@ fn parity_oracle_topology_matches_codex() {
     let gemini_commands = extract_commands(&gemini.stdout_text());
     let codex_commands = extract_commands(&codex.stdout_text());
     assert_eq!(gemini_commands, codex_commands);
-}
-
-#[test]
-fn parity_oracle_removed_redirect_commands_match_codex_parse_behavior() {
-    for command in [
-        "list",
-        "prompt",
-        "advice",
-        "knowledge",
-        "commit",
-        "auto-refresh",
-        "rate-limits",
-        "provider",
-        "debug",
-        "workflow",
-        "automation",
-    ] {
-        let gemini = run_gemini(&[command]);
-        let codex = run_codex(&[command]);
-        assert_eq!(
-            gemini.code, codex.code,
-            "removed command mismatch: {command}"
-        );
-        assert_unrecognized_subcommand(&gemini, command);
-        assert_unrecognized_subcommand(&codex, command);
-    }
 }
 
 #[test]

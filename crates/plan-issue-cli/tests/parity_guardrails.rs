@@ -28,50 +28,30 @@ fn normalize_shell_text(text: &str, agent_home: &str) -> String {
         .replace("\\>", ">")
 }
 
-fn fixture_subcommands(help_fixture: &str) -> Vec<(String, String)> {
-    let mut rows = Vec::new();
-    let mut in_section = false;
-    for line in help_fixture.lines() {
-        if line.trim() == "Subcommands:" {
-            in_section = true;
-            continue;
-        }
-        if in_section && line.trim().is_empty() {
-            break;
-        }
-        if !in_section {
-            continue;
-        }
-
-        if !line.starts_with("  ") {
-            continue;
-        }
-        let trimmed = line.trim();
-        let mut parts = trimmed.splitn(2, char::is_whitespace);
-        let Some(name) = parts.next() else { continue };
-        let desc = parts.next().unwrap_or("").trim();
-        if !name.is_empty() && !desc.is_empty() {
-            rows.push((name.to_string(), desc.to_string()));
-        }
-    }
-    rows
-}
-
 #[test]
-fn parity_shell_help_surface_tracks_shell_fixture_commands() {
-    let fixture = shell_fixture("help.txt");
-    let out = common::run_plan_issue(&["--help"]);
+fn parity_shell_help_surface_tracks_current_command_contract() {
+    let out = common::run_plan_issue_local(&["--help"]);
     assert_eq!(out.code, 0, "stderr: {}", out.stderr);
 
-    for (name, description) in fixture_subcommands(&fixture) {
+    for token in [
+        "Commands:",
+        "build-task-spec       Build sprint-scoped task-spec TSV from a plan",
+        "build-plan-task-spec  Build plan-scoped task-spec TSV (all sprints) for the single plan issue",
+        "start-plan            Open one plan issue with all plan tasks in Task Decomposition",
+        "status-plan           Wrapper of issue-delivery-loop status for the plan issue",
+        "link-pr               Link PR to task rows and set runtime status (default: in-progress)",
+        "ready-plan            Wrapper of issue-delivery-loop ready-for-review for final plan review",
+        "close-plan            Close the single plan issue after final approval + merged PR gates, then enforce worktree cleanup",
+        "cleanup-worktrees     Enforce cleanup of all issue-assigned task worktrees",
+        "start-sprint          Start sprint from Task Decomposition runtime truth after previous sprint merge+done gate passes",
+        "ready-sprint          Post sprint-ready comment for main-agent review before merge",
+        "accept-sprint         Enforce merged-PR gate, sync sprint status=done, then post accepted comment",
+        "multi-sprint-guide    Print the full repeated command flow for a plan (1 plan = 1 issue)",
+        "completion            Export shell completion script",
+    ] {
         assert!(
-            out.stdout.contains(&name),
-            "help output missing subcommand `{name}`\n{}",
-            out.stdout
-        );
-        assert!(
-            out.stdout.contains(&description),
-            "help output missing description `{description}`\n{}",
+            out.stdout.contains(token),
+            "help output missing token `{token}`\n{}",
             out.stdout
         );
     }

@@ -15,6 +15,5 @@ Normalization rules applied by `regenerate.sh`:
 - Replace `${HOME}/.config/agent-kit` absolute path with `$AGENT_KIT_HOME`.
 
 Fixtures:
-- `help.txt`: `--help` surface baseline.
 - `multi_sprint_guide_dry_run.txt`: `multi-sprint-guide --dry-run` baseline.
 - `comment_template_start.md`: extracted start-sprint markdown comment template.

@@ -22,8 +22,6 @@ run_plan_issue_local() {
   cargo run -q -p nils-plan-issue-cli --bin plan-issue-local -- "$@"
 }
 
-run_plan_issue_local --help >"$script_dir/help.txt"
-
 run_plan_issue_local --format json multi-sprint-guide \
   --plan "$plan_fixture_rel" \
   --dry-run \
