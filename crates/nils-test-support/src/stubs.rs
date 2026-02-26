@@ -291,6 +291,27 @@ pub fn git_scope_stub_script() -> String {
     script
 }
 
+/// Install the default external command stubs used by git-cli integration
+/// harnesses.
+pub fn install_git_cli_runtime_stubs(dir: &crate::StubBinDir) {
+    let pbcopy = pbcopy_stub_script();
+    dir.write_exe("pbcopy", &pbcopy);
+
+    let wl_copy = wl_copy_stub_script();
+    dir.write_exe("wl-copy", &wl_copy);
+
+    let xclip = xclip_stub_script();
+    dir.write_exe("xclip", &xclip);
+
+    let xsel = xsel_stub_script();
+    dir.write_exe("xsel", &xsel);
+
+    dir.write_exe("file", file_stub_script());
+
+    let git_scope = git_scope_stub_script();
+    dir.write_exe("git-scope", &git_scope);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -447,5 +468,16 @@ mod tests {
 
         let git_scope = git_scope_stub_script();
         assert_all_contains(&git_scope, &["echo \"git-scope $*\"", "exit 0"]);
+    }
+
+    #[test]
+    fn install_git_cli_runtime_stubs_writes_expected_executables() {
+        let dir = crate::StubBinDir::new();
+        install_git_cli_runtime_stubs(&dir);
+
+        for name in ["pbcopy", "wl-copy", "xclip", "xsel", "file", "git-scope"] {
+            let path = dir.path().join(name);
+            assert!(path.exists(), "missing stub executable: {}", path.display());
+        }
     }
 }

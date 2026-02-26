@@ -6,7 +6,7 @@ use nils_test_support::StubBinDir;
 use nils_test_support::bin::resolve;
 use nils_test_support::cmd::{CmdOptions, CmdOutput, run_with};
 pub use nils_test_support::git::git;
-use nils_test_support::git::{InitRepoOptions, init_repo_with};
+use nils_test_support::git::init_repo_main_with_initial_commit;
 use tempfile::TempDir;
 
 pub struct GitCliHarness {
@@ -22,17 +22,7 @@ impl GitCliHarness {
         std::fs::create_dir_all(&xdg_config_home).expect("create XDG_CONFIG_HOME");
 
         let stub_bin_dir = StubBinDir::new();
-        let pbcopy = nils_test_support::stubs::pbcopy_stub_script();
-        stub_bin_dir.write_exe("pbcopy", pbcopy.as_str());
-        let wl_copy = nils_test_support::stubs::wl_copy_stub_script();
-        stub_bin_dir.write_exe("wl-copy", wl_copy.as_str());
-        let xclip = nils_test_support::stubs::xclip_stub_script();
-        stub_bin_dir.write_exe("xclip", xclip.as_str());
-        let xsel = nils_test_support::stubs::xsel_stub_script();
-        stub_bin_dir.write_exe("xsel", xsel.as_str());
-        stub_bin_dir.write_exe("file", nils_test_support::stubs::file_stub_script());
-        let git_scope = nils_test_support::stubs::git_scope_stub_script();
-        stub_bin_dir.write_exe("git-scope", git_scope.as_str());
+        nils_test_support::stubs::install_git_cli_runtime_stubs(&stub_bin_dir);
 
         Self {
             home_dir,
@@ -75,11 +65,7 @@ impl Default for GitCliHarness {
 }
 
 pub fn init_repo() -> tempfile::TempDir {
-    init_repo_with(
-        InitRepoOptions::new()
-            .with_branch("main")
-            .with_initial_commit(),
-    )
+    init_repo_main_with_initial_commit()
 }
 
 pub fn init_bare_remote() -> tempfile::TempDir {

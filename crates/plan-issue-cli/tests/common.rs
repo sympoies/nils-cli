@@ -25,17 +25,9 @@ fn run_bin_with_options(bin_name: &str, args: &[&str], options: CmdOptions) -> C
     }
 }
 
-fn run_bin_with_env(bin_name: &str, args: &[&str], env: &[(&str, &str)]) -> CmdOut {
-    run_bin_with_options(bin_name, args, plan_issue_cmd_options().with_envs(env))
-}
-
-fn run_bin(bin_name: &str, args: &[&str]) -> CmdOut {
-    run_bin_with_options(bin_name, args, plan_issue_cmd_options())
-}
-
 #[allow(dead_code)]
 pub fn run_plan_issue(args: &[&str]) -> CmdOut {
-    run_bin("plan-issue", args)
+    run_bin_with_options("plan-issue", args, plan_issue_cmd_options())
 }
 
 #[allow(dead_code)]
@@ -45,10 +37,14 @@ pub fn run_plan_issue_with_options(args: &[&str], options: CmdOptions) -> CmdOut
 
 #[allow(dead_code)]
 pub fn run_plan_issue_local(args: &[&str]) -> CmdOut {
-    run_bin("plan-issue-local", args)
+    run_bin_with_options("plan-issue-local", args, plan_issue_cmd_options())
 }
 
 #[allow(dead_code)]
 pub fn run_plan_issue_local_with_env(args: &[&str], env: &[(&str, &str)]) -> CmdOut {
-    run_bin_with_env("plan-issue-local", args, env)
+    run_bin_with_options(
+        "plan-issue-local",
+        args,
+        plan_issue_cmd_options().with_envs(env),
+    )
 }

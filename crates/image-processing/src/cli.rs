@@ -16,37 +16,6 @@ impl Operation {
     }
 }
 
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct FromSvgValidationRule {
-    pub when: &'static str,
-    pub expect: &'static str,
-}
-
-#[allow(dead_code)]
-pub const FROM_SVG_VALIDATION_MATRIX: [FromSvgValidationRule; 5] = [
-    FromSvgValidationRule {
-        when: "subcommand=convert",
-        expect: "requires --from-svg + --to png|webp|svg + --out",
-    },
-    FromSvgValidationRule {
-        when: "subcommand=convert",
-        expect: "forbids --in",
-    },
-    FromSvgValidationRule {
-        when: "subcommand=convert",
-        expect: "accepts optional --width/--height for png|webp outputs",
-    },
-    FromSvgValidationRule {
-        when: "subcommand=svg-validate",
-        expect: "requires exactly one --in and explicit --out",
-    },
-    FromSvgValidationRule {
-        when: "subcommand=svg-validate",
-        expect: "forbids --from-svg/--to/--width/--height",
-    },
-];
-
 #[derive(Debug, Parser)]
 #[command(
     name = "image-processing",

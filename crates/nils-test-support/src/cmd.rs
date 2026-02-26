@@ -192,6 +192,26 @@ pub fn run_resolved_in_dir(
     run_resolved(bin_name, args, &options)
 }
 
+/// Resolve and run a workspace binary in a specific directory with optional
+/// UTF-8 stdin.
+///
+/// When `stdin` is `None`, this helper sends empty stdin bytes to keep test
+/// command execution non-interactive.
+pub fn run_resolved_in_dir_with_stdin_str(
+    bin_name: &str,
+    dir: &Path,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    stdin: Option<&str>,
+) -> CmdOutput {
+    let mut options = options_in_dir_with_envs(dir, envs);
+    options = match stdin {
+        Some(input) => options.with_stdin_str(input),
+        None => options.with_stdin_bytes(&[]),
+    };
+    run_resolved(bin_name, args, &options)
+}
+
 pub fn run_with(bin: &Path, args: &[&str], options: &CmdOptions) -> CmdOutput {
     run_impl(bin, args, options, None)
 }

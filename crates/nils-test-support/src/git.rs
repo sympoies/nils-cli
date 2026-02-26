@@ -116,6 +116,18 @@ pub fn init_repo_with(options: InitRepoOptions) -> TempDir {
     dir
 }
 
+pub fn init_repo_main() -> TempDir {
+    init_repo_with(InitRepoOptions::new().with_branch("main"))
+}
+
+pub fn init_repo_main_with_initial_commit() -> TempDir {
+    init_repo_with(
+        InitRepoOptions::new()
+            .with_branch("main")
+            .with_initial_commit(),
+    )
+}
+
 pub fn worktree_add_branch(repo: &Path, worktree_path: &Path, branch: &str) {
     let worktree_path = worktree_path.to_string_lossy().to_string();
     git(repo, &["worktree", "add", &worktree_path, "-b", branch]);

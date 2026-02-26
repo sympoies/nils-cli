@@ -12,6 +12,13 @@ fn write_text_creates_parents_and_writes_contents() {
 }
 
 #[test]
+fn write_text_in_dir_joins_relative_path_and_writes_contents() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let written = fs::write_text_in_dir(temp.path(), "nested/dir/file.txt", "hello\n");
+    assert_eq!(std_fs::read_to_string(written).expect("read"), "hello\n");
+}
+
+#[test]
 fn write_bytes_preserves_raw_bytes() {
     let temp = tempfile::TempDir::new().expect("tempdir");
     let path = temp.path().join("bin/data.bin");
@@ -36,6 +43,16 @@ fn write_executable_writes_contents() {
     let temp = tempfile::TempDir::new().expect("tempdir");
     let path = temp.path().join("bin/run.sh");
     let written = fs::write_executable(&path, "#!/bin/sh\necho ok\n");
+    assert_eq!(
+        std_fs::read_to_string(written).expect("read"),
+        "#!/bin/sh\necho ok\n"
+    );
+}
+
+#[test]
+fn write_executable_in_dir_joins_relative_path() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let written = fs::write_executable_in_dir(temp.path(), "bin/run.sh", "#!/bin/sh\necho ok\n");
     assert_eq!(
         std_fs::read_to_string(written).expect("read"),
         "#!/bin/sh\necho ok\n"
