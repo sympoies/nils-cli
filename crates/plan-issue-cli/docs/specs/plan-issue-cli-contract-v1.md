@@ -105,13 +105,13 @@ Notes field must preserve orchestration metadata tokens used by issue-table sync
 ### Default output paths
 When explicit output paths are omitted, v1 keeps AGENT_HOME-based deterministic defaults:
 - plan task-spec:
-  - `$AGENT_HOME/out/plan-issue-delivery-loop/<plan-stem>-plan-tasks.tsv`
+  - `$AGENT_HOME/out/plan-issue-delivery/<plan-stem>-plan-tasks.tsv`
 - sprint task-spec:
-  - `$AGENT_HOME/out/plan-issue-delivery-loop/<plan-stem>-sprint-<n>-tasks.tsv`
+  - `$AGENT_HOME/out/plan-issue-delivery/<plan-stem>-sprint-<n>-tasks.tsv`
 - plan issue body artifact:
-  - `$AGENT_HOME/out/plan-issue-delivery-loop/<plan-stem>-plan-issue-body.md`
+  - `$AGENT_HOME/out/plan-issue-delivery/<plan-stem>-plan-issue-body.md`
 - sprint prompt directory:
-  - `$AGENT_HOME/out/plan-issue-delivery-loop/<plan-stem>-sprint-<n>-subagent-prompts/`
+  - `$AGENT_HOME/out/plan-issue-delivery/<plan-stem>-sprint-<n>-subagent-prompts/`
 
 ## Gate Semantics (v1)
 

@@ -525,7 +525,7 @@ pub fn default_plan_task_spec_path(plan_file: &Path) -> PathBuf {
 
     agent_home()
         .join("out")
-        .join("plan-issue-delivery-loop")
+        .join("plan-issue-delivery")
         .join(format!("{plan_stem}-plan-tasks.tsv"))
 }
 
@@ -538,7 +538,7 @@ pub fn default_sprint_task_spec_path(plan_file: &Path, sprint: i32) -> PathBuf {
 
     agent_home()
         .join("out")
-        .join("plan-issue-delivery-loop")
+        .join("plan-issue-delivery")
         .join(format!("{plan_stem}-sprint-{sprint}-tasks.tsv"))
 }
 

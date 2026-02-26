@@ -1479,7 +1479,7 @@ fn should_emit_comment(comment_mode: &crate::commands::CommentModeArgs) -> bool 
 fn write_temp_markdown(stem: &str, content: &str) -> Result<PathBuf, String> {
     let dir = task_spec::agent_home()
         .join("out")
-        .join("plan-issue-delivery-loop")
+        .join("plan-issue-delivery")
         .join("tmp");
     fs::create_dir_all(&dir).map_err(|err| {
         format!(
@@ -1511,7 +1511,7 @@ fn default_subagent_prompts_path(plan_file: &Path, sprint: i32) -> PathBuf {
 
     task_spec::agent_home()
         .join("out")
-        .join("plan-issue-delivery-loop")
+        .join("plan-issue-delivery")
         .join(format!("{plan_stem}-sprint-{sprint}-subagent-prompts"))
 }
 
@@ -2666,7 +2666,7 @@ mod tests {
         assert!(
             markdown
                 .to_string_lossy()
-                .contains("plan-issue-delivery-loop/tmp")
+                .contains("plan-issue-delivery/tmp")
         );
         assert_eq!(
             fs::read_to_string(&markdown).expect("read markdown"),

@@ -39,7 +39,7 @@ pub fn default_plan_issue_body_path(plan_file: &Path) -> PathBuf {
         .to_string();
     agent_home()
         .join("out")
-        .join("plan-issue-delivery-loop")
+        .join("plan-issue-delivery")
         .join(format!("{plan_stem}-plan-issue-body.md"))
 }
 
@@ -61,7 +61,7 @@ pub fn default_sprint_comment_path(
 
     agent_home()
         .join("out")
-        .join("plan-issue-delivery-loop")
+        .join("plan-issue-delivery")
         .join(format!(
             "{plan_stem}-sprint-{sprint}-{mode_label}-comment.md"
         ))
