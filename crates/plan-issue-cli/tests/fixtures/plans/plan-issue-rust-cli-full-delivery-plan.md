@@ -15,7 +15,7 @@ This plan delivers a shell-free Rust implementation for the current plan-issue o
   - Redesigning workflow policy semantics beyond current documented contract.
   - Replacing existing workspace issue-lifecycle policy definitions.
 
-## Assumptions (if any)
+## Assumptions
 1. Source behavior contract is the existing `plan-issue-delivery-loop.sh` flow and its documented skill contract.
 2. The new Rust CLI is built in this workspace and follows `DEVELOPMENT.md` quality gates.
 3. `plan-tooling` remains available and is the canonical plan parser/validator for plan markdown.

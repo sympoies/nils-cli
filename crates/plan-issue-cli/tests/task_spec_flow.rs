@@ -233,7 +233,7 @@ fn render_issue_body_start_plan_writes_issue_body_artifact() {
         "{rendered}"
     );
     assert!(rendered.contains("## Scope"), "{rendered}");
-    assert!(rendered.contains("## Assumptions (if any)"), "{rendered}");
+    assert!(rendered.contains("## Assumptions"), "{rendered}");
     assert!(rendered.contains("## Success criteria"), "{rendered}");
     assert!(rendered.contains("## Sprint gate policy"), "{rendered}");
     assert!(
