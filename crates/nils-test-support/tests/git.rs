@@ -13,6 +13,23 @@ fn init_repo_with_default_branch_and_config() {
 }
 
 #[test]
+fn init_repo_main_sets_main_branch() {
+    let repo = git::init_repo_main();
+    let branch = git::git(repo.path(), &["symbolic-ref", "--short", "HEAD"]);
+    assert_eq!(branch.trim_end(), "main");
+}
+
+#[test]
+fn init_repo_main_with_initial_commit_sets_main_and_commits() {
+    let repo = git::init_repo_main_with_initial_commit();
+    let branch = git::git(repo.path(), &["symbolic-ref", "--short", "HEAD"]);
+    assert_eq!(branch.trim_end(), "main");
+
+    let head = git::git(repo.path(), &["rev-parse", "HEAD"]);
+    assert_eq!(head.trim().len(), 40);
+}
+
+#[test]
 fn init_repo_with_initial_commit_creates_commit() {
     let repo = git::init_repo_with(git::InitRepoOptions::new().with_initial_commit());
     let head = git::git(repo.path(), &["rev-parse", "HEAD"]);

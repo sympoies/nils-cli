@@ -1,18 +1,19 @@
-#![allow(dead_code)]
-
 use nils_test_support::cmd::{CmdOptions, CmdOutput, run_resolved};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[allow(dead_code)]
 pub fn test_db_path(name: &str) -> PathBuf {
     let dir = tempfile::tempdir().expect("tempdir should be created");
     dir.keep().join(format!("{name}.db"))
 }
 
+#[allow(dead_code)]
 pub fn parse_json_stdout(output: &CmdOutput) -> serde_json::Value {
     serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON")
 }
 
+#[allow(dead_code)]
 pub fn fixture_json(name: &str) -> serde_json::Value {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
@@ -26,10 +27,12 @@ pub fn fixture_json(name: &str) -> serde_json::Value {
     })
 }
 
+#[allow(dead_code)]
 pub fn run_memo_cli(db_path: &Path, args: &[&str], stdin: Option<&str>) -> CmdOutput {
     run_memo_cli_with_env(db_path, args, stdin, &[])
 }
 
+#[allow(dead_code)]
 pub fn run_memo_cli_with_env(
     db_path: &Path,
     args: &[&str],

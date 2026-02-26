@@ -14,6 +14,10 @@ pub fn write_text(path: &Path, contents: &str) -> PathBuf {
     path.to_path_buf()
 }
 
+pub fn write_text_in_dir(dir: &Path, rel: &str, contents: &str) -> PathBuf {
+    write_text(&dir.join(rel), contents)
+}
+
 pub fn write_bytes(path: &Path, contents: &[u8]) -> PathBuf {
     ensure_parent_dir(path);
     std::fs::write(path, contents).expect("write bytes");
@@ -40,4 +44,8 @@ pub fn write_executable(path: &Path, contents: &str) -> PathBuf {
     }
 
     path.to_path_buf()
+}
+
+pub fn write_executable_in_dir(dir: &Path, rel: &str, contents: &str) -> PathBuf {
+    write_executable(&dir.join(rel), contents)
 }

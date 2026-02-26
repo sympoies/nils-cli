@@ -119,6 +119,44 @@ printf "%s|%s" "${NTS_REMOVE_ME-unset}" "${NTS_KEEP_ME-unset}"
 
 #[cfg(unix)]
 #[test]
+fn run_resolved_in_dir_with_stdin_str_supports_optional_text_stdin() {
+    let lock = GlobalStateLock::new();
+    let temp = TempDir::new().expect("tempdir");
+    let script = r#"#!/bin/sh
+printf "%s|" "${NTS_VALUE-unset}"
+cat -
+"#;
+    write_exe(temp.path(), "resolved-stdin-test", script);
+    let bin = temp.path().join("resolved-stdin-test");
+    let _guard = EnvGuard::set(
+        &lock,
+        "CARGO_BIN_EXE_resolved-stdin-test",
+        bin.to_str().expect("path"),
+    );
+
+    let with_text = cmd::run_resolved_in_dir_with_stdin_str(
+        "resolved-stdin-test",
+        temp.path(),
+        &[],
+        &[("NTS_VALUE", "ok")],
+        Some("payload"),
+    );
+    assert_eq!(with_text.code, 0);
+    assert_eq!(with_text.stdout_text(), "ok|payload");
+
+    let without_text = cmd::run_resolved_in_dir_with_stdin_str(
+        "resolved-stdin-test",
+        temp.path(),
+        &[],
+        &[("NTS_VALUE", "ok")],
+        None,
+    );
+    assert_eq!(without_text.code, 0);
+    assert_eq!(without_text.stdout_text(), "ok|");
+}
+
+#[cfg(unix)]
+#[test]
 fn run_with_env_set_wins_after_env_remove() {
     let lock = GlobalStateLock::new();
     let temp = TempDir::new().expect("tempdir");
