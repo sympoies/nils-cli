@@ -1,0 +1,15 @@
+crate	path	symbol_or_test	signal	proposed_action
+agent-docs	crates/agent-docs/tests/common.rs	drop (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_commit_hash_missing_ref_errors (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_commit_hash_outputs_sha_for_head (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_commit_hash_resolves_annotated_tag (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_copy_staged_both_outputs_diff_and_status (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_copy_staged_help_prints_usage (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_copy_staged_no_changes_warns_and_exits_1 (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_copy_staged_rejects_conflicting_modes (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_copy_staged_rejects_unknown_arg (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_copy_staged_stdout_outputs_diff_only (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_root_not_in_repo_errors (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_root_prints_message (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_root_shell_outputs_cd_command (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_zip_creates_backup_zip (fanout=0)	helper_fanout	remove
