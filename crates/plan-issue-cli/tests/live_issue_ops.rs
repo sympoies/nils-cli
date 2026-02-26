@@ -260,7 +260,7 @@ fn live_plan_commands_ready_and_close_follow_gate_contracts() {
     assert_eq!(ready_payload["command"], "ready-plan");
     assert_eq!(
         ready_payload["payload"]["result"]["label_update_applied"],
-        true
+        false
     );
 
     let close_body_path = tmp.path().join("close-body.md");
@@ -297,7 +297,7 @@ fn live_plan_commands_ready_and_close_follow_gate_contracts() {
 
     let log = fs::read_to_string(&log_path).expect("read log");
     assert!(
-        log.contains("issue edit 217 --repo graysurf/nils-cli --add-label needs-review"),
+        !log.contains("issue edit 217 --repo graysurf/nils-cli --add-label needs-review"),
         "{log}"
     );
     assert!(
@@ -306,6 +306,58 @@ fn live_plan_commands_ready_and_close_follow_gate_contracts() {
     );
     assert!(
         log.contains("pr view 222 --repo graysurf/nils-cli --json state,mergedAt"),
+        "{log}"
+    );
+}
+
+#[test]
+fn live_ready_plan_label_update_flag_applies_review_label() {
+    let tmp = TempDir::new().expect("temp dir");
+    let stub = StubBinDir::new();
+    stub.write_exe("gh", gh_stub_script());
+
+    let log_path = tmp.path().join("gh.log");
+    let log_s = log_path.to_string_lossy().to_string();
+
+    let agent_home = tmp.path().join("agent-home");
+    fs::create_dir_all(&agent_home).expect("agent home");
+    let agent_home_s = agent_home.to_string_lossy().to_string();
+
+    let body_json = json!({"body": issue_body_plan_done()}).to_string();
+
+    let ready_out = common::run_plan_issue_with_options(
+        &[
+            "--format",
+            "json",
+            "--repo",
+            "graysurf/nils-cli",
+            "ready-plan",
+            "--issue",
+            "217",
+            "--summary",
+            "Final plan review",
+            "--label-update",
+            "--no-comment",
+        ],
+        gh_cmd_options(
+            stub.path(),
+            &[
+                ("PLAN_ISSUE_GH_LOG", &log_s),
+                ("PLAN_ISSUE_GH_BODY_JSON", &body_json),
+                ("AGENT_HOME", &agent_home_s),
+            ],
+        ),
+    );
+
+    assert_eq!(ready_out.code, 0, "stderr: {}", ready_out.stderr);
+    let payload = parse_json(&ready_out.stdout);
+    assert_eq!(payload["command"], "ready-plan");
+    assert_eq!(payload["payload"]["result"]["label_update_requested"], true);
+    assert_eq!(payload["payload"]["result"]["label_update_applied"], true);
+
+    let log = fs::read_to_string(&log_path).expect("read log");
+    assert!(
+        log.contains("issue edit 217 --repo graysurf/nils-cli --add-label needs-review"),
         "{log}"
     );
 }
@@ -503,7 +555,6 @@ fn github_adapter_rejects_literal_escaped_newline_without_force() {
             "217",
             "--summary",
             r"Final plan review\nPlease confirm",
-            "--no-label-update",
         ],
         gh_cmd_options(
             stub.path(),
@@ -565,7 +616,6 @@ fn github_adapter_force_flag_allows_literal_escaped_newline() {
             "217",
             "--summary",
             r"Final plan review\nPlease confirm",
-            "--no-label-update",
         ],
         gh_cmd_options(
             stub.path(),

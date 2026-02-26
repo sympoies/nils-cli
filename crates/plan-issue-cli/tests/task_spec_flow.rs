@@ -918,7 +918,6 @@ fn local_flow_ready_plan_body_file_accepts_summary_file_without_comment() {
             &issue_body_s,
             "--summary-file",
             &summary_file_s,
-            "--no-label-update",
             "--no-comment",
         ],
         &[("AGENT_HOME", &agent_home_s)],

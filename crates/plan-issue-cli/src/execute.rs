@@ -628,6 +628,14 @@ fn run_ready_plan(
     let should_comment = !args.comment_mode.no_comment;
     let comment_text = summary.unwrap_or_else(|| "Final plan review requested.".to_string());
 
+    let ready_plan_label = args
+        .label
+        .as_deref()
+        .map(str::trim)
+        .filter(|label| !label.is_empty())
+        .unwrap_or("needs-review")
+        .to_string();
+
     let mut labels_updated = false;
     let mut comment_posted = false;
     let mut live_mutations = false;
@@ -636,12 +644,12 @@ fn run_ready_plan(
         && !dry_run
         && let (Some(issue), Some(repo)) = (issue, repo.as_deref())
     {
-        if !args.no_label_update {
+        if args.label_update {
             adapter
                 .edit_issue_labels(
                     repo,
                     issue,
-                    std::slice::from_ref(&args.label),
+                    std::slice::from_ref(&ready_plan_label),
                     &args.remove_label,
                 )
                 .map_err(|err| CommandError::runtime("github-label-update-failed", err))?;
@@ -667,9 +675,9 @@ fn run_ready_plan(
         "issue_source": source,
         "task_count": table.rows().len(),
         "summary": comment_text,
-        "label": args.label,
+        "label": ready_plan_label,
         "remove_label": args.remove_label,
-        "label_update_requested": !args.no_label_update,
+        "label_update_requested": args.label_update,
         "label_update_applied": labels_updated,
         "comment_requested": should_comment,
         "comment_posted": comment_posted,
@@ -1307,7 +1315,7 @@ fn run_multi_sprint_guide(
     }
 
     lines.push(format!(
-        "STEP_{step}={cli} ready-plan --body-file {} --summary Final\\ plan\\ review --no-comment --no-label-update --dry-run",
+        "STEP_{step}={cli} ready-plan --body-file {} --summary Final\\ plan\\ review --no-comment --dry-run",
         issue_body_path.display()
     ));
     step += 1;

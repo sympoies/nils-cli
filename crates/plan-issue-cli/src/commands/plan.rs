@@ -134,20 +134,20 @@ pub struct ReadyPlanArgs {
     #[command(flatten)]
     pub summary: SummaryArgs,
 
-    /// Review label.
-    #[arg(long = "label", value_name = "name", default_value = "needs-review")]
-    pub label: String,
+    /// Apply label updates in live mode.
+    #[arg(long)]
+    pub label_update: bool,
 
-    /// Labels to remove.
-    #[arg(long = "remove-label", value_name = "name")]
+    /// Review label to add when `--label-update` is set.
+    #[arg(long = "label", value_name = "name", requires = "label_update")]
+    pub label: Option<String>,
+
+    /// Labels to remove when `--label-update` is set.
+    #[arg(long = "remove-label", value_name = "name", requires = "label_update")]
     pub remove_label: Vec<String>,
 
     #[command(flatten)]
     pub comment_mode: CommentModeArgs,
-
-    /// Skip label updates.
-    #[arg(long)]
-    pub no_label_update: bool,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
