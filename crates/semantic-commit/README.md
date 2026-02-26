@@ -1,10 +1,12 @@
 # semantic-commit
 
 ## Overview
+
 semantic-commit validates commit messages and commits staged changes. It can also emit staged
 change context for message generation.
 
 ## Usage
+
 ```text
 Usage:
   semantic-commit <command> [args]
@@ -22,6 +24,7 @@ Help:
 ## Commands
 
 ### staged-context
+
 - `staged-context [--format <bundle|json|patch>] [--json] [--repo <path>]`
 - Output formats:
   - `bundle` (default): `commit-context.json` + `staged.patch`
@@ -30,6 +33,7 @@ Help:
 - `--repo <path>` runs against a repository path without changing shell cwd.
 
 ### commit
+
 - `commit [options]`
 - Message sources:
   - `-m, --message <text>`
@@ -46,12 +50,14 @@ Help:
   - `--quiet`
 
 ## Commit Message Validation
+
 - Header must be non-empty, `<= 100` characters, and use a lowercase type.
 - Header format: `type(scope): subject` or `type: subject`.
-- If a body exists, line 2 must be blank and each body line must start with `- ` followed by an
+- If a body exists, line 2 must be blank and each body line must start with `-` + space, followed by an
   uppercase letter and be `<= 100` characters.
 
 ## Exit codes
+
 - `0`: success and help output.
 - `1`: usage errors or operational errors.
 - `2`: no staged changes.
@@ -60,6 +66,7 @@ Help:
 - `5`: required dependency missing (for example, `git`).
 
 ## Dependencies
+
 - `git` is required.
 - `git-scope` is optional; when unavailable, commit summary falls back to `git show -1`.
 

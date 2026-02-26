@@ -1,16 +1,19 @@
 # Crate Docs Placement Policy
 
 ## Purpose
+
 This policy defines where documentation MUST live in the `nils-cli` workspace so contributors can
 add docs without ownership drift.
 
 ## Scope
+
 - Applies to contributor-authored Markdown docs (`*.md`) in repository root, `docs/`, and
   `crates/*/docs/`.
 - Does not govern Markdown test fixtures or embedded prompt/template assets under non-docs
   directories.
 
 ## Ownership Model
+
 - `workspace-level`: documentation owned by the whole repository, used across multiple crates, or
   defining shared governance/process.
 - `crate-local`: documentation owned by exactly one crate and primarily describing that crate's
@@ -22,6 +25,7 @@ Contributors MUST classify each new/updated documentation file into one of these
 types before choosing a path.
 
 ## Allowed Root Docs
+
 Only the following root-level documentation categories are allowed as canonical sources:
 
 - `/README.md` (workspace overview)
@@ -35,6 +39,7 @@ Only the following root-level documentation categories are allowed as canonical 
 Any new root `docs/` file MUST be `workspace-level`.
 
 ## Disallowed Root Docs
+
 The following are disallowed as canonical docs at repository root:
 
 - `crate-local` runbooks/specs/reports under `/docs/**`
@@ -45,6 +50,7 @@ If a historical root path must remain for compatibility, it MUST be a short stub
 `canonical` crate-local path and MUST NOT duplicate full canonical content.
 
 ## Compatibility Stub Lifecycle Decision
+
 Compatibility stubs under root `docs/` are permanent redirects (no deprecation sunset date planned).
 
 - Stubs MUST keep a `Moved to:` target and migration metadata.
@@ -59,6 +65,7 @@ Root stub retention criteria:
   path instead of keeping a dead redirect.
 
 ## Documentation Lifecycle and Retention
+
 Contributors MUST classify lifecycle status before adding/removing docs:
 
 - `canonical`: current source-of-truth documentation.
@@ -73,6 +80,7 @@ Contributors MUST classify lifecycle status before adding/removing docs:
    duplicate records.
 
 ## Canonical Crate-Local Paths
+
 `crate-local` documentation MUST live under `crates/<crate>/docs/`.
 
 Canonical structure:
@@ -91,6 +99,7 @@ Current repository examples:
 - `crates/codex-cli/docs/specs/codex-cli-diag-auth-json-contract-v1.md`
 
 ## New Documentation Contributor Requirements
+
 When adding or moving docs, contributors MUST:
 
 1. Classify ownership (`workspace-level` vs `crate-local`) before creating the file.
@@ -105,6 +114,7 @@ Contributors SHOULD:
 - Avoid creating new root docs when an existing workspace-level document can be extended.
 
 ## Enforcement Reference
+
 `DEVELOPMENT.md` required checks reference this policy. Future automation and CI checks MUST enforce
 the same placement rules.
 

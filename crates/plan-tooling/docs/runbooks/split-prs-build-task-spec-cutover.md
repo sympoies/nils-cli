@@ -1,6 +1,7 @@
 # split-prs Build Task-Spec Cutover
 
 ## Goal
+
 Replace downstream ad-hoc split generation with `plan-tooling split-prs` grouping primitives while
 keeping `plan-issue-cli build-task-spec` as the runtime metadata materialization authority.
 
@@ -26,7 +27,9 @@ plan-tooling split-prs \
 ```
 
 ## Compatibility Contract
+
 `split-prs` no longer emits task-spec-compatible runtime metadata TSV. In the cutover model:
+
 - `split-prs` emits grouping primitives only (`task_id`, `summary`, `pr_group`).
 - `plan-issue-cli` materializes `branch`, `worktree`, `owner`, and `notes` from plan content +
   grouping output.
@@ -38,6 +41,7 @@ Reduced `split-prs --format tsv` header:
 ```
 
 ## Group Mode Rules
+
 - `--pr-grouping group` + `--strategy deterministic`: pass `--pr-group` for every selected task.
 - `--pr-grouping group` + `--strategy auto`: `--pr-group` mappings are optional pins; remaining tasks are auto-grouped.
 - mapping key accepts either `SxTy` or plan task id (`Task N.M`).
@@ -75,6 +79,7 @@ rg -n '^# task_id\tsummary\tpr_group$' \
 ```
 
 ### Local corpus manual regression (optional)
+
 This loop is intentionally no-op safe so CI does not depend on machine-local repos. Use it when
 you have the graysurf local corpus checked out and want manual regression visibility before
 changing heuristics.
@@ -112,7 +117,9 @@ fi
 ```
 
 ## Auto Strategy
+
 `--strategy auto` is implemented with deterministic grouping output semantics:
+
 - scores merge candidates using `Complexity`, dependency topology, and `Location` overlap.
 - preserves stable output ordering and reduced record schema.
 - allows optional `--pr-group` pins in `pr-grouping=group`.

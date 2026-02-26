@@ -1,6 +1,7 @@
 # plan-issue Gate Matrix v1
 
 ## Purpose
+
 Define the canonical gate matrix for `plan-issue` v1 commands so transition checks and failure
 semantics remain consistent with the current shell orchestration flow.
 
@@ -8,6 +9,7 @@ This document is normative for which gates apply to each command and when those 
 execution.
 
 ## Scope
+
 - In scope:
   - Command-to-gate applicability.
   - Required validation inputs per gate.
@@ -48,6 +50,7 @@ execution.
 | `multi-sprint-guide` | required | - | - | - | - | - | - | optional | - | - |
 
 ## Gate Evaluation Order (Normative)
+
 1. `G0` usage/argument validation.
 2. Command-specific structural checks (`G1`) before remote mutations.
 3. Progression/merge/drift gates (`G2`, `G3`, `G4`, `G5`, `G9`) in command-specific order.
@@ -55,6 +58,7 @@ execution.
 5. Dry-run behavior (`G7`, `G8`) wraps command execution and must preserve non-mutation semantics.
 
 ## Data Sources and Inputs
+
 - Plan and sprint metadata: parsed from plan files and command flags.
 - Task decomposition rows: sourced from live issue body or `--body-file`.
 - PR merge state: sourced from GitHub for referenced PR numbers.
@@ -62,6 +66,7 @@ execution.
 - Worktree targets: resolved from task `Branch` and `Worktree` columns.
 
 ## Failure Contract
+
 - `exit 2`: usage errors (`G0`, `G8`) and invalid required inputs.
 - `exit 1`: gate failures (`G1` through `G7`, `G9`) and runtime dependency failures.
 - `exit 0`: all applicable gates pass.

@@ -1,12 +1,13 @@
 # gemini-cli
 
 ## Overview
-gemini-cli is a provider-specific Rust CLI for Gemini workflows: Gemini execution wrappers,
-auth/secret management, diagnostics, config output, starship rendering, and completion export.
-Runtime wiring is owned by `gemini-cli` adapters with shared
+
+gemini-cli is a provider-specific Rust CLI for Gemini workflows: Gemini execution wrappers, auth/secret management, diagnostics, config
+output, starship rendering, and completion export. Runtime wiring is owned by `gemini-cli` adapters with shared
 `nils-common::provider_runtime` helpers for common primitives.
 
 ## Usage
+
 ```text
 Usage:
   gemini-cli <group> <command> [args]
@@ -27,11 +28,12 @@ Help:
 ```
 
 ## Scope boundary
-| Job | Primary owner |
-|---|---|
-| Shared provider runtime helpers (`auth/path/config/exec/error`) | `nils-common::provider_runtime` + `gemini-cli` adapters |
-| Gemini auth, Gemini prompt wrappers, Gemini diagnostics, Starship, completion export | `gemini-cli` |
-| Unsupported commands/groups | clap usage error (`64`) |
+
+| Job                                                                                  | Primary owner                                           |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| Shared provider runtime helpers (`auth/path/config/exec/error`)                      | `nils-common::provider_runtime` + `gemini-cli` adapters |
+| Gemini auth, Gemini prompt wrappers, Gemini diagnostics, Starship, completion export | `gemini-cli`                                            |
+| Unsupported commands/groups                                                          | clap usage error (`64`)                                 |
 
 - `gemini-cli` owns only provider-specific Gemini operations (`agent`, `auth`, `diag rate-limits`, `config`, `starship`, `completion`).
 - Existing `gemini-cli` commands stay stable for provider-specific workflows.
@@ -40,22 +42,28 @@ Help:
 ## Commands
 
 ### agent
+
 - `prompt [PROMPT...]`: Run a raw prompt through `gemini --prompt-interactive`.
 - `advice [QUESTION...]`: Request actionable engineering advice.
 - `knowledge [CONCEPT...]`: Request a concept explanation.
 - `commit [-p|--push] [-a|--auto-stage] [EXTRA...]`: Run the semantic-commit workflow.
 
 ### auth
-- `login [--api-key|--device-code]`: Login via Gemini browser flow (`gemini-browser`, default), Gemini device-code flow (`gemini-device-code`), or API key flow (`api-key`). `--api-key` and `--device-code` are mutually exclusive (`64` on invalid usage).
+
+- `login [--api-key|--device-code]`: Login via Gemini browser flow (`gemini-browser`, default), Gemini device-code flow
+  (`gemini-device-code`), or API key flow (`api-key`). `--api-key` and `--device-code` are mutually exclusive (`64` on invalid usage).
 - `use <name|email>`: Switch to a secret by name or email.
-- `save [--yes] <secret.json>`: Save active `GEMINI_AUTH_FILE` into `GEMINI_SECRET_DIR` with an explicit file name. If target exists, interactive mode prompts for overwrite; non-interactive and JSON mode require `--yes` to overwrite.
-- `remove [--yes] <secret.json>`: Remove a secret file from `GEMINI_SECRET_DIR`. Interactive mode prompts for confirmation; non-interactive and JSON mode require `--yes`.
+- `save [--yes] <secret.json>`: Save active `GEMINI_AUTH_FILE` into `GEMINI_SECRET_DIR` with an explicit file name. If target exists,
+  interactive mode prompts for overwrite; non-interactive and JSON mode require `--yes` to overwrite.
+- `remove [--yes] <secret.json>`: Remove a secret file from `GEMINI_SECRET_DIR`. Interactive mode prompts for confirmation; non-interactive
+  and JSON mode require `--yes`.
 - `refresh [secret.json]`: Refresh OAuth tokens.
 - `auto-refresh`: Refresh stale tokens across auth + secrets.
 - `current`: Show which secret matches `GEMINI_AUTH_FILE`.
 - `sync`: Sync `GEMINI_AUTH_FILE` back into matching secrets.
 
 Auth examples:
+
 - `gemini-cli auth login`: Gemini browser login.
 - `gemini-cli auth login --device-code`: Gemini device-code login.
 - `gemini-cli auth login --api-key`: Gemini API key login.
@@ -64,19 +72,26 @@ Auth examples:
 - `gemini-cli auth remove --yes team-alpha.json`: Remove a saved secret file.
 
 ### diag
-- `rate-limits [options] [secret.json]`: Rate-limit diagnostics. Options: `-c/--clear-cache`, `-d/--debug`, `--cached`, `--no-refresh-auth`, `--json`, `--format json`, `--one-line`, `--all`, `--async`, `--jobs <n>`.
+
+- `rate-limits [options] [secret.json]`: Rate-limit diagnostics. Options: `-c/--clear-cache`, `-d/--debug`, `--cached`, `--no-refresh-auth`,
+  `--json`, `--format json`, `--one-line`, `--all`, `--async`, `--jobs <n>`.
 
 ### config
+
 - `show`: Print effective configuration values.
 - `set <key> <value>`: Emit a shell snippet for the current shell.
 
 ### starship
-- `starship [--no-5h] [--ttl <duration>] [--time-format <strftime>] [--show-timezone] [--refresh] [--is-enabled]`: Render or refresh the Starship line. Default reset time uses local time without timezone; `--show-timezone` adds the local offset.
+
+- `starship [--no-5h] [--ttl <duration>] [--time-format <strftime>] [--show-timezone] [--refresh] [--is-enabled]`: Render or refresh the
+  Starship line. Default reset time uses local time without timezone; `--show-timezone` adds the local offset.
 
 ### completion
+
 - `completion <bash|zsh>`: Export shell completion script to stdout.
 
 ## JSON contract (service consumers)
+
 - Human-readable text is the default output mode.
 - Machine-readable JSON mode is explicit: use `--format json` (preferred) or `--json` where supported for compatibility.
 - Contract spec: `docs/specs/gemini-cli-diag-auth-json-contract-v1.md`
@@ -84,6 +99,7 @@ Auth examples:
 - Covered surfaces: `diag rate-limits` (single/all/async) and `auth login|use|save|remove|refresh|auto-refresh|current|sync`.
 
 ## Environment
+
 - `GEMINI_ALLOW_DANGEROUS_ENABLED=true` is required for `agent` commands.
 - `GEMINI_CLI_MODEL` and `GEMINI_CLI_REASONING` set `gemini` execution defaults.
 - `GEMINI_SECRET_DIR` controls the secret directory path. When unset, it defaults to `~/.gemini/secrets`.
@@ -94,11 +110,13 @@ Auth examples:
 - `GEMINI_AUTO_REFRESH_ENABLED` and `GEMINI_AUTO_REFRESH_MIN_DAYS` configure auth auto-refresh behavior.
 
 ## Dependencies
+
 - `gemini` is required for `agent` commands and interactive OAuth login flows.
 - `git` is required for `agent commit`.
 - `semantic-commit` and `git-scope` are optional for `agent commit` (fallbacks apply).
 
 ## Exit codes
+
 - `0`: success and help output.
 - `64`: usage or argument errors.
 - `1`: operational errors.

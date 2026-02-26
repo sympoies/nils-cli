@@ -3,6 +3,7 @@
 ## Purpose
 
 This runbook defines how `wrappers/*` choose between:
+
 - a locally installed binary, and
 - workspace debug execution (`cargo run -q -p ...`).
 
@@ -11,6 +12,7 @@ It also documents the safety rules that prevent wrapper self-recursion and ambig
 ## Scope
 
 This applies to all current wrappers under `wrappers/`:
+
 - `agent-docs`
 - `api-gql`
 - `api-grpc`
@@ -39,6 +41,7 @@ This applies to all current wrappers under `wrappers/`:
 ### `NILS_WRAPPER_MODE`
 
 Supported values:
+
 - `auto` (default)
 - `debug`
 - `installed`
@@ -46,7 +49,7 @@ Supported values:
 Behavior summary:
 
 | Mode | Resolution behavior |
-|---|---|
+| --- | --- |
 | `auto` | Try installed binary first; if not found, fallback to `cargo run -q -p <package> -- ...`. |
 | `debug` | Force `cargo run -q -p <package> -- ...`; fail if `cargo` is unavailable. |
 | `installed` | Force installed binary lookup only; do not fallback to `cargo`. |
@@ -61,9 +64,11 @@ necessarily the binary name.
 Optional install prefix for installed binary lookup.
 
 Default:
+
 - `~/.local/nils-cli`
 
 Lookup order for installed mode resolution:
+
 1. `${NILS_WRAPPER_INSTALL_PREFIX:-$HOME/.local/nils-cli}/<bin>`
 2. `command -v <bin>`
 
@@ -72,6 +77,7 @@ Both `~` and `~/...` forms are expanded.
 ## Safety Guarantees
 
 All wrappers enforce:
+
 - self-recursion guard: candidate binary path must not resolve to the wrapper itself (`-ef` check)
 - explicit mode validation (`auto|debug|installed` only)
 - deterministic fallback and error messages by mode
@@ -81,6 +87,7 @@ This prevents infinite recursion when `wrappers/` appears before real binaries i
 ## `codex-cli` and `gemini-cli` parser behavior
 
 Both CLIs expose only the canonical groups:
+
 - `agent`
 - `auth`
 - `diag`
@@ -93,6 +100,7 @@ Unsupported groups/subcommands return exit `64` from clap parser validation.
 ## `git-cli` Compatibility Behavior
 
 `git-cli` wrapper preserves the existing compatibility rule:
+
 - when called as `git-cli -- help ...`, arguments are normalized to `git-cli help ...` before
   resolution/execution.
 
@@ -130,20 +138,24 @@ NILS_WRAPPER_MODE=debug
 ## Troubleshooting
 
 ### `... invalid NILS_WRAPPER_MODE=...`
+
 - Cause: unsupported mode string
 - Fix: use one of `auto`, `debug`, `installed`
 
 ### `... cargo not found (required when NILS_WRAPPER_MODE=debug)`
+
 - Cause: debug mode without Cargo on `PATH`
 - Fix: install Rust/Cargo, or switch mode to `auto`/`installed`
 
 ### `... installed binary not found (NILS_WRAPPER_MODE=installed)`
+
 - Cause: installed mode cannot find target binary in prefix or `PATH`
 - Fix:
   1. run install flow (`./.agents/skills/nils-cli-install-local-release-binaries/scripts/nils-cli-install-local-release-binaries.sh`)
   2. confirm `NILS_WRAPPER_INSTALL_PREFIX` and `PATH`
 
 ### `... binary not found (install via cargo install or build the workspace)`
+
 - Cause: `auto` mode could not find installed binary and cannot run cargo fallback
 - Fix: install binary or ensure Cargo is available
 

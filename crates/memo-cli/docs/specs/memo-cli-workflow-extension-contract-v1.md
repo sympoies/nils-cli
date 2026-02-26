@@ -1,11 +1,13 @@
 # memo-cli Workflow Extension Contract v1
 
 ## Purpose
+
 Define the required schema contract for future workflow-specific data in
 `memo-cli` (for example `game`, `sport`, `health`) so hard delete and update
 operations always clean dependent data without orphan rows.
 
 ## Required ownership model
+
 1. Every workflow record must be rooted at one `inbox_items.item_id`.
 2. Ownership must flow through `workflow_item_anchors`.
 3. Cleanup path must use `on delete cascade` all the way down.
@@ -19,6 +21,7 @@ inbox_items(item_id)
 ```
 
 ## Required table-level rules
+
 - Anchor table:
   - `workflow_item_anchors.anchor_id` is the stable parent key for typed rows.
   - `workflow_item_anchors.item_id` references `inbox_items(item_id)` with
@@ -34,6 +37,7 @@ inbox_items(item_id)
   - Triggers as primary cleanup mechanism for unknown future workflow tables.
 
 ## Trigger boundary policy
+
 - Triggers are allowed for:
   - projection refresh (for example search docs),
   - deterministic derived invariants.
@@ -41,6 +45,7 @@ inbox_items(item_id)
 - FK cascade chain is the source of truth for extension cleanup.
 
 ## Update/delete semantics
+
 - `memo-cli update <item_id> <text>`:
   - must clear `workflow_item_anchors` rows for that `item_id` in the same
     transaction as derivation cleanup.
@@ -49,6 +54,7 @@ inbox_items(item_id)
   - must remove the raw row and all extension rows reachable by cascade.
 
 ## Authoring checklist for new workflow types
+
 1. Add typed table with FK to `workflow_item_anchors(anchor_id) on delete cascade`.
 2. Add index for anchor lookup (`idx_workflow_<type>_entries_anchor`).
 3. Add integration test that inserts:

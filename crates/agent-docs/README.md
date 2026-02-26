@@ -58,13 +58,13 @@ Path resolution is deterministic and applies to all commands.
 
 ### Built-in required docs by context
 
-| Context | Scope | Required document contract | Required |
-| --- | --- | --- | --- |
-| `startup` | `home` | Use `AGENTS.override.md` when present; else `AGENTS.md` | `true` |
-| `startup` | `project` | Use `AGENTS.override.md` when present; else `AGENTS.md` | `true` |
-| `skill-dev` | `home` | `DEVELOPMENT.md` | `true` |
-| `task-tools` | `home` | `CLI_TOOLS.md` | `true` |
-| `project-dev` | `project` | `DEVELOPMENT.md` | `true` |
+| Context       | Scope     | Required document contract                              | Required |
+| ------------- | --------- | ------------------------------------------------------- | -------- |
+| `startup`     | `home`    | Use `AGENTS.override.md` when present; else `AGENTS.md` | `true`   |
+| `startup`     | `project` | Use `AGENTS.override.md` when present; else `AGENTS.md` | `true`   |
+| `skill-dev`   | `home`    | `DEVELOPMENT.md`                                        | `true`   |
+| `task-tools`  | `home`    | `CLI_TOOLS.md`                                          | `true`   |
+| `project-dev` | `project` | `DEVELOPMENT.md`                                        | `true`   |
 
 `AGENTS.override.md` precedence is evaluated per scope independently.
 
@@ -228,8 +228,7 @@ Flags:
 
 ## Worktree fallback
 
-Worktree fallback is deterministic and applies only to project-scope required docs when running
-from a linked worktree in `auto` mode.
+Worktree fallback is deterministic and applies only to project-scope required docs when running from a linked worktree in `auto` mode.
 
 ### Fallback order (project scope)
 
@@ -248,14 +247,12 @@ from a linked worktree in `auto` mode.
 ### Strict and compatibility semantics
 
 - `--strict` exits `1` only when all candidates in the deterministic order are missing.
-- `local-only` mode disables `<PRIMARY_WORKTREE_PATH>` fallback candidates and enforces local
-  project paths only.
+- `local-only` mode disables `<PRIMARY_WORKTREE_PATH>` fallback candidates and enforces local project paths only.
 - Non-worktree repositories are unchanged: only `<PROJECT_PATH>` candidates are evaluated.
 
 ### Output disclosure and local-only operation
 
-When fallback is used, output must disclose fallback provenance in addition to required-doc
-presence.
+When fallback is used, output must disclose fallback provenance in addition to required-doc presence.
 
 - `text`/`json`: include a fallback source marker and the resolved fallback path.
 - `checklist`: keep required-doc status lines and include fallback provenance in the same report.
@@ -321,9 +318,8 @@ summary: required_total=2 present_required=2 missing_required=0 strict=false
 
 ### `resolve` checklist example
 
-Checklist mode is designed for copy-paste verification. The required-doc section is delimited by
-`REQUIRED_DOCS_BEGIN` and `REQUIRED_DOCS_END`, with one required document per line:
-`<filename> status=<present|missing> path=<absolute-path>`.
+Checklist mode is designed for copy-paste verification. The required-doc section is delimited by `REQUIRED_DOCS_BEGIN` and
+`REQUIRED_DOCS_END`, with one required document per line: `<filename> status=<present|missing> path=<absolute-path>`.
 
 ```text
 $ agent-docs resolve --context project-dev --format checklist
@@ -335,8 +331,7 @@ REQUIRED_DOCS_END required=2 present=2 missing=0 mode=non-strict context=project
 
 ### `resolve` checklist strict + missing required example
 
-When `--strict` is set and any required doc is missing, checklist output is still emitted and
-the process exits with code `1`.
+When `--strict` is set and any required doc is missing, checklist output is still emitted and the process exits with code `1`.
 
 ```text
 $ agent-docs resolve --context skill-dev --format checklist --strict
@@ -389,9 +384,7 @@ suggested_actions:
   ],
   "missing_required": 1,
   "missing_optional": 0,
-  "suggested_actions": [
-    "agent-docs scaffold-baseline --missing-only --target home"
-  ]
+  "suggested_actions": ["agent-docs scaffold-baseline --missing-only --target home"]
 }
 ```
 
@@ -433,14 +426,14 @@ notes = "Track required external CLIs for this project"
 
 ### Field contract
 
-| Field | Type | Required | Rules |
-| --- | --- | --- | --- |
-| `context` | string | yes | One of: `startup`, `skill-dev`, `task-tools`, `project-dev` |
-| `scope` | string | yes | One of: `home`, `project` |
-| `path` | string | yes | Relative or absolute path to markdown doc |
-| `required` | bool | no | Default `false` |
-| `when` | string | no | Default `always`; supported values: `always` |
-| `notes` | string | no | Free text, default empty string |
+| Field      | Type   | Required | Rules                                                       |
+| ---------- | ------ | -------- | ----------------------------------------------------------- |
+| `context`  | string | yes      | One of: `startup`, `skill-dev`, `task-tools`, `project-dev` |
+| `scope`    | string | yes      | One of: `home`, `project`                                   |
+| `path`     | string | yes      | Relative or absolute path to markdown doc                   |
+| `required` | bool   | no       | Default `false`                                             |
+| `when`     | string | no       | Default `always`; supported values: `always`                |
+| `notes`    | string | no       | Free text, default empty string                             |
 
 ### Deterministic merge contract
 
@@ -468,7 +461,8 @@ This merge behavior is deterministic and test-friendly.
 
 - Same key appears twice in `$PROJECT_PATH/AGENT_DOCS.toml`: second entry wins.
 - Same key appears in both home and project configs: project entry wins.
-- Key matches built-in required doc (for example project `DEVELOPMENT.md` in `project-dev`): built-in contract remains required and present in output.
+- Key matches built-in required doc (for example project `DEVELOPMENT.md` in `project-dev`): built-in contract remains required and present
+  in output.
 
 ## Invalid Schema Behavior
 

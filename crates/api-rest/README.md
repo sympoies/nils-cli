@@ -1,10 +1,12 @@
 # api-rest
 
 ## Overview
+
 api-rest executes JSON-defined REST request files, prints response bodies to stdout, keeps
 optional history, and can generate Markdown reports.
 
 ## Usage
+
 ```text
 Usage:
   api-rest <command> [args]
@@ -24,6 +26,7 @@ Help:
 ```
 
 ## Commands
+
 - `call` (default): Execute a request file and print the response body.
   Options: `--env <name>`, `--url <url>`, `--token <name>`, `--config-dir <dir>`, `--no-history`.
 - `history`: Print the last entry or tail N entries.

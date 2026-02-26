@@ -1,14 +1,17 @@
 # memo-cli Command Contract v1
 
 ## Purpose
+
 This document defines the command-level behavior contract for `memo-cli` MVP commands:
 `add`, `update`, `delete`, `list`, `search`, `report`, `fetch`, and `apply`.
 
 It aligns with:
+
 - `docs/runbooks/new-cli-crate-development-standard.md`
 - `docs/specs/cli-service-json-contract-guideline-v1.md`
 
 ## Scope
+
 - Human-readable output is the default mode.
 - JSON output is opt-in via `--json` or `--format json`.
 - Raw memo capture supports explicit mutation commands (`update`, `delete --hard`);
@@ -32,12 +35,14 @@ Commands:
 ```
 
 ### Shared flags
+
 - `--db <path>`: SQLite file path.
   Default: `$XDG_DATA_HOME/nils-cli/memo.db` or `~/.local/share/nils-cli/memo.db`.
 - `--format <text|json>`: output mode selector. Default: `text`.
 - `--json`: shorthand for `--format json`.
 
 ### `--json` and `--format json` rules
+
 - `--json` and `--format json` are equivalent.
 - `--format text` is equivalent to not setting JSON flags.
 - If both are present, they must resolve to JSON mode.
@@ -55,27 +60,33 @@ Commands:
 | `stderr` | warnings, validation/runtime errors, diagnostics | optional diagnostics only; never required for machine parsing |
 
 Contract notes:
+
 - In JSON mode, consumers must determine outcome from JSON `ok` plus process exit code, not by parsing prose.
 - Help output (`--help`) is written to `stdout`.
 
 ## usage and exit code behavior
+
 - `0`: command completed successfully.
 - `64`: usage error (invalid flags, missing required arg, incompatible option combination).
 - `65`: input data error (for example malformed `apply` payload).
 - `1`: runtime/operational failure (I/O, DB open/query failure, unexpected internal failure).
 
 Rules:
+
 - Parsing/validation failures print brief diagnostic to `stderr` and return the documented exit code.
 - In JSON mode, command-level failures still emit a JSON error envelope to `stdout`.
 
 ## JSON envelope baseline
+
 For commands using JSON mode, response envelope follows
 `docs/specs/cli-service-json-contract-guideline-v1.md`:
+
 - required top-level keys: `schema_version`, `command`, `ok`
 - success: use `result` (single) or `results` (collection)
 - failure: `ok=false` with `error.code`, `error.message`, and optional `error.details`
 
 Planned schema identifiers for v1:
+
 - `add`: `memo-cli.add.v1`
 - `update`: `memo-cli.update.v1`
 - `delete`: `memo-cli.delete.v1`
@@ -86,6 +97,7 @@ Planned schema identifiers for v1:
 - `apply`: `memo-cli.apply.v1`
 
 ## Phase 1 metadata taxonomy (additive)
+
 For derivation-aware machine workflows (`apply` payload/result and any additive
 JSON fields that expose derivation metadata), the taxonomy is:
 
@@ -95,12 +107,14 @@ JSON fields that expose derivation metadata), the taxonomy is:
   `message`, and optional `path`.
 
 Rules:
+
 - Metadata is derivation-layer data (Approach A), not raw capture mutation.
 - In v1, these metadata fields are additive-only compatibility extensions.
 
 ## Command Semantics
 
 ### `add`
+
 Capture one raw inbox record.
 
 ```text
@@ -108,6 +122,7 @@ memo-cli add <text> [--source <label>] [--at <rfc3339>] [--json|--format json]
 ```
 
 Behavior:
+
 - Persists raw text as a new inbox item.
 - Allocates `item_id` from a monotonic per-database sequence; hard delete does not recycle IDs.
 - Sequence example: if `itm_00000001` is hard-deleted, the next `add` allocates
@@ -116,12 +131,15 @@ Behavior:
 - `--at` allows explicit RFC3339 timestamp input and stores the normalized UTC instant.
 
 Text output (`stdout`):
+
 - single-line acknowledgement including item id and created timestamp.
 
 JSON output:
+
 - `result` includes at least: `item_id`, `created_at`, `source`, `text`.
 
 ### `update`
+
 Update one raw inbox record and reset downstream derived workflow state.
 
 ```text
@@ -129,14 +147,17 @@ memo-cli update <item_id> <text> [--json|--format json]
 ```
 
 Behavior:
+
 - Replaces `raw_text` for one item.
 - Clears active derivations and extension workflow anchors for that item.
 - Item state returns to `pending` for future `fetch/apply` processing.
 
 Text output (`stdout`):
+
 - single-line acknowledgement including item id, update timestamp, and cleared counters.
 
 JSON output:
+
 - `result` includes at least:
   - `item_id`
   - `updated_at`
@@ -146,6 +167,7 @@ JSON output:
   - `cleared_workflow_anchors`
 
 ### `delete`
+
 Hard-delete one inbox record and all dependent data.
 
 ```text
@@ -153,14 +175,17 @@ memo-cli delete <item_id> --hard [--json|--format json]
 ```
 
 Behavior:
+
 - Requires `--hard`; soft-delete is not supported in v1.
 - Permanently removes raw row plus dependent derivations/search/workflow rows.
 - Deleted item is no longer addressable in `list/search/fetch/report`.
 
 Text output (`stdout`):
+
 - single-line acknowledgement including item id, delete timestamp, and removed counters.
 
 JSON output:
+
 - `result` includes at least:
   - `item_id`
   - `deleted` (`true`)
@@ -169,6 +194,7 @@ JSON output:
   - `removed_workflow_anchors`
 
 ### `list`
+
 List captured items in deterministic order.
 
 ```text
@@ -176,20 +202,24 @@ memo-cli list [--limit <n>] [--offset <n>] [--state <all|pending|enriched>] [--j
 ```
 
 Behavior:
+
 - Default ordering: `created_at DESC`, then `item_id DESC` as tie-breaker.
 - `--state pending` means items without active enrichment.
 - `--state enriched` means items with active enrichment.
 
 Text output (`stdout`):
+
 - table/list with id, timestamp, state, short preview.
 
 JSON output:
+
 - `results[]` includes stable pagination/state fields plus additive metadata
   fields when available:
   - `content_type`
   - `validation_status`
 
 ### `search`
+
 Search inbox and active derived fields.
 
 ```text
@@ -199,6 +229,7 @@ memo-cli search <query> [--limit <n>] [--state <all|pending|enriched>]
 ```
 
 Behavior:
+
 - Uses SQLite FTS-backed matching for raw capture and active enrichment text.
 - `--field` narrows the FTS search surface; default is all fields (`raw,derived,tags`).
 - `--field` accepts comma-separated multi-select (for example: `--field raw,tags`).
@@ -209,9 +240,11 @@ Behavior:
 - Ranking is deterministic for score ties (`created_at DESC`, `item_id DESC`).
 
 Text output (`stdout`):
+
 - ranked matches with score, id, timestamp, and preview.
 
 JSON output:
+
 - `results[]` includes score/match metadata and additive derivation metadata
   fields when available:
   - `content_type`
@@ -220,6 +253,7 @@ JSON output:
 - JSON `meta` includes `match` reflecting the effective match mode.
 
 ### `report`
+
 Generate period summaries from capture + enrichment data.
 
 ```text
@@ -227,6 +261,7 @@ memo-cli report <week|month> [--tz <iana-tz>] [--from <rfc3339>] [--to <rfc3339>
 ```
 
 Behavior:
+
 - `week` and `month` are canonical report windows.
 - `--tz` shifts canonical `week|month` window calculations to the provided IANA timezone.
 - `--from` and `--to` must be provided together and use RFC3339 input.
@@ -235,15 +270,18 @@ Behavior:
 - Works even if enrichment is absent (falls back to capture-only aggregates).
 
 Text output (`stdout`):
+
 - summary sections for counts, top categories/tags, and open pending items.
 
 JSON output:
+
 - `result` contains period metadata plus aggregate fields suitable for dashboards.
 - Additive aggregate sections may include:
   - `top_content_types[]`
   - `validation_status_totals[]`
 
 ### `fetch`
+
 Machine-facing read for agent enrichment jobs.
 
 ```text
@@ -251,20 +289,24 @@ memo-cli fetch [--limit <n>] [--cursor <opaque>] [--state <pending>] [--json|--f
 ```
 
 Behavior:
+
 - Returns records eligible for enrichment (default state: pending).
 - Cursor-based pagination for stable batch processing.
 - Does not mutate data.
 
 Text output (`stdout`):
+
 - human summary for manual inspection (batch size and ids).
 
 JSON output:
+
 - `results[]` includes source fields required by enrichment workers.
 - `results[]` may include additive metadata fields (`content_type`,
   `validation_status`) and are `null` when unavailable for pending rows.
 - `result.next_cursor` (or equivalent) for continuation.
 
 ### `apply`
+
 Machine-facing write-back for agent enrichment results.
 
 ```text
@@ -272,6 +314,7 @@ memo-cli apply (--input <file> | --stdin) [--dry-run] [--json|--format json]
 ```
 
 Behavior:
+
 - Accepts structured enrichment payload generated from `fetch`.
 - Writes derivations as new versions.
 - Active derivation selection follows latest accepted version per item.
@@ -280,15 +323,18 @@ Behavior:
   `validation_errors` are attached to derivation metadata, not raw rows.
 
 Text output (`stdout`):
+
 - apply summary: accepted, skipped, failed counts.
 
 JSON output:
+
 - `result` includes counts and per-item status entries.
 - Per-item metadata may include additive `content_type`, `validation_status`,
   and `validation_errors[]` fields.
 - invalid payload returns `ok=false` and exits with input/usage error code.
 
 ## End-to-end flow: capture -> maintenance -> agent enrichment -> report
+
 1. Quick capture:
    - `memo-cli add "buy 1tb ssd for mom"`
    - `memo-cli add "book pediatric dentist appointment"`
@@ -307,11 +353,13 @@ JSON output:
    - `memo-cli report month --json`
 
 Expected contract outcome:
+
 - capture supports explicit correction/removal commands with deterministic cleanup;
 - enrichment is versioned and replaceable;
 - report reflects latest active enrichment with capture fallback.
 
 ## Non-goals for this contract version
+
 - Cloud sync or multi-device conflict resolution.
 - Embedding/vector semantic search.
 - Background daemon mode.

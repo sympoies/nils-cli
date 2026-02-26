@@ -1,10 +1,12 @@
 # api-gql
 
 ## Overview
+
 api-gql executes GraphQL operations (and optional variables), prints response JSON to stdout,
 keeps optional history, and can generate Markdown reports.
 
 ## Usage
+
 ```text
 Usage:
   api-gql <command> [args]
@@ -26,6 +28,7 @@ Help:
 ```
 
 ## Commands
+
 - `call` (default): Execute an operation (and optional variables) and print response JSON.
   Options: `--env <name>`, `--url <url>`, `--jwt <name>`, `--config-dir <dir>`, `--list-envs`,
   `--list-jwts`, `--no-history`.
@@ -42,6 +45,7 @@ Help:
   Options: `--config-dir <dir>`, `--file <path>`, `--cat`.
 
 ## Auth selection
+
 - `--jwt <name>` or `GQL_JWT_NAME` selects `GQL_JWT_<NAME>` from the setup `jwts.env`/`.local` files.
 - If no JWT profile is selected, fallback uses `ACCESS_TOKEN` then `SERVICE_TOKEN`.
 - History entries record the env source as `token=ACCESS_TOKEN` or `token=SERVICE_TOKEN`.

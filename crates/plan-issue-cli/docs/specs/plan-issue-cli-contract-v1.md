@@ -1,15 +1,17 @@
 # plan-issue CLI Contract v1
 
-> Historical reference: see `plan-issue-cli-contract-v2.md` for the current runtime metadata
-> ownership model where `split-prs` outputs grouping primitives only and `plan-issue-cli`
-> materializes runtime execution metadata.
+> Historical reference: see `plan-issue-cli-contract-v2.md` for the current runtime metadata ownership model where `split-prs` outputs
+> grouping primitives only and `plan-issue-cli` materializes runtime execution metadata.
 
 ## Purpose
-Define the v1 command contract for the Rust replacement of the current plan issue orchestration shell entrypoint (`plan-issue-delivery-loop.sh`).
+
+Define the v1 command contract for the Rust replacement of the current plan issue orchestration shell entrypoint
+(`plan-issue-delivery-loop.sh`).
 
 This contract is the Sprint 1 source of truth for command names, required flags, gating behavior, and deterministic task-spec compatibility.
 
 ## Scope
+
 - In scope:
   - Canonical command surface and subcommand matrix.
   - Shared option rules (`--repo`, `--dry-run`, grouping flags, summary flags).
@@ -27,6 +29,7 @@ plan-issue <subcommand> [options]
 ```
 
 v1 subcommands:
+
 - `build-task-spec`
 - `build-plan-task-spec`
 - `start-plan`
@@ -41,19 +44,19 @@ v1 subcommands:
 
 ## Command Matrix
 
-| Subcommand | Scope | GitHub dependency | Required core inputs | Primary outputs |
-| --- | --- | --- | --- | --- |
-| `build-task-spec` | Sprint-scoped task split preview | no | `--plan`, `--sprint`, `--pr-grouping` | sprint TSV task-spec |
-| `build-plan-task-spec` | Plan-scoped task split preview | no | `--plan`, `--pr-grouping` | plan TSV task-spec |
-| `start-plan` | Initialize one plan issue | yes (unless dry-run) | `--plan`, `--pr-grouping` | issue creation + rendered issue body artifact |
-| `status-plan` | Plan issue status snapshot | yes (unless `--body-file`) | `--issue` or `--body-file` | status summary and optional comment |
-| `ready-plan` | Request final plan review | yes (unless `--body-file` only mode) | `--issue` or `--body-file` | review-ready signal (+ label/comment controls) |
-| `close-plan` | Final gate + issue close | yes (except dry-run with `--body-file`) | `--approved-comment-url` and issue context | issue close + required worktree cleanup |
-| `cleanup-worktrees` | Remove all issue-assigned worktrees | yes (to read issue body) | `--issue` | deleted worktree set (or dry-run listing) |
-| `start-sprint` | Begin sprint execution on existing plan issue | yes (unless dry-run) | `--plan`, `--issue`, `--sprint`, `--pr-grouping` | sprint TSV, rendered subagent prompts, issue-row runtime-truth validation, kickoff comment |
-| `ready-sprint` | Request sprint acceptance review | yes | `--plan`, `--issue`, `--sprint` | sprint review-ready comment |
-| `accept-sprint` | Enforce merged-PR gate and mark sprint done | yes | `--plan`, `--issue`, `--sprint`, `--approved-comment-url` | task status sync to `done` + acceptance comment |
-| `multi-sprint-guide` | Print repeatable command flow | no (with `--dry-run`) | `--plan` | execution guide text |
+| Subcommand             | Scope                                         | GitHub dependency                       | Required core inputs                                      | Primary outputs                                                                            |
+| ---------------------- | --------------------------------------------- | --------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `build-task-spec`      | Sprint-scoped task split preview              | no                                      | `--plan`, `--sprint`, `--pr-grouping`                     | sprint TSV task-spec                                                                       |
+| `build-plan-task-spec` | Plan-scoped task split preview                | no                                      | `--plan`, `--pr-grouping`                                 | plan TSV task-spec                                                                         |
+| `start-plan`           | Initialize one plan issue                     | yes (unless dry-run)                    | `--plan`, `--pr-grouping`                                 | issue creation + rendered issue body artifact                                              |
+| `status-plan`          | Plan issue status snapshot                    | yes (unless `--body-file`)              | `--issue` or `--body-file`                                | status summary and optional comment                                                        |
+| `ready-plan`           | Request final plan review                     | yes (unless `--body-file` only mode)    | `--issue` or `--body-file`                                | review-ready signal (+ label/comment controls)                                             |
+| `close-plan`           | Final gate + issue close                      | yes (except dry-run with `--body-file`) | `--approved-comment-url` and issue context                | issue close + required worktree cleanup                                                    |
+| `cleanup-worktrees`    | Remove all issue-assigned worktrees           | yes (to read issue body)                | `--issue`                                                 | deleted worktree set (or dry-run listing)                                                  |
+| `start-sprint`         | Begin sprint execution on existing plan issue | yes (unless dry-run)                    | `--plan`, `--issue`, `--sprint`, `--pr-grouping`          | sprint TSV, rendered subagent prompts, issue-row runtime-truth validation, kickoff comment |
+| `ready-sprint`         | Request sprint acceptance review              | yes                                     | `--plan`, `--issue`, `--sprint`                           | sprint review-ready comment                                                                |
+| `accept-sprint`        | Enforce merged-PR gate and mark sprint done   | yes                                     | `--plan`, `--issue`, `--sprint`, `--approved-comment-url` | task status sync to `done` + acceptance comment                                            |
+| `multi-sprint-guide`   | Print repeatable command flow                 | no (with `--dry-run`)                   | `--plan`                                                  | execution guide text                                                                       |
 
 ## Shared Flag and Validation Rules
 
@@ -62,7 +65,8 @@ v1 subcommands:
 - `--pr-grouping <per-sprint|group>`:
   - required for `build-task-spec`, `build-plan-task-spec`, `start-plan`, `start-sprint`.
   - `per-spring` must be accepted as compatibility alias for `per-sprint`.
-  - with `--pr-grouping group --strategy auto|deterministic`, when a sprint resolves to exactly one shared PR group, runtime-truth/render paths normalize `Execution Mode` to `per-sprint` (single-lane semantics).
+  - with `--pr-grouping group --strategy auto|deterministic`, when a sprint resolves to exactly one shared PR group, runtime-truth/render
+    paths normalize `Execution Mode` to `per-sprint` (single-lane semantics).
 - `--pr-group <task=group>`:
   - repeatable.
   - valid only when `--pr-grouping group`.
@@ -78,15 +82,20 @@ v1 subcommands:
   - runtime-truth execution columns: `Owner`, `Branch`, `Worktree`, `Execution Mode`, and lane metadata tokens in `Notes`.
   - runtime-progress columns: `PR`, `Status` (may remain placeholders until execution/review advances).
   - descriptive row identity columns: `Task`, `Summary`.
-- `Owner` stores a stable dispatch alias (for example `subagent-s1-t1`, or a shared-lane `dispatch` alias), not a platform-internal ephemeral spawned-agent identifier.
-- `task-spec` TSV rows and subagent prompt artifacts must be derived from the same `Task Decomposition` runtime-truth rows and must not intentionally diverge from the issue table.
+- `Owner` stores a stable dispatch alias (for example `subagent-s1-t1`, or a shared-lane `dispatch` alias), not a platform-internal
+  ephemeral spawned-agent identifier.
+- `task-spec` TSV rows and subagent prompt artifacts must be derived from the same `Task Decomposition` runtime-truth rows and must not
+  intentionally diverge from the issue table.
 - Lane canonicalization rules:
-  - rows that share one execution lane (`per-sprint` or `pr-shared`) must keep canonical lane metadata (`Owner`, `Branch`, `Worktree`, lane-note tokens) synchronized across the lane.
-  - `--pr-grouping group --strategy auto|deterministic` single-lane sprints normalize to `Execution Mode=per-sprint` and use canonical per-sprint lane metadata rather than per-task pseudo-lanes.
+  - rows that share one execution lane (`per-sprint` or `pr-shared`) must keep canonical lane metadata (`Owner`, `Branch`, `Worktree`,
+    lane-note tokens) synchronized across the lane.
+  - `--pr-grouping group --strategy auto|deterministic` single-lane sprints normalize to `Execution Mode=per-sprint` and use canonical
+    per-sprint lane metadata rather than per-task pseudo-lanes.
 
 ## Deterministic Artifact Contracts
 
 ### Task-spec TSV
+
 Header must remain exactly:
 
 ```text
@@ -94,6 +103,7 @@ Header must remain exactly:
 ```
 
 Notes field must preserve orchestration metadata tokens used by issue-table sync:
+
 - `sprint=S<n>`
 - `plan-task:Task N.M` (or deterministic fallback id)
 - optional `deps=...`
@@ -103,7 +113,9 @@ Notes field must preserve orchestration metadata tokens used by issue-table sync
 - optional `shared-pr-anchor=<task_id>`
 
 ### Default output paths
+
 When explicit output paths are omitted, v1 keeps AGENT_HOME-based deterministic defaults:
+
 - plan task-spec:
   - `$AGENT_HOME/out/plan-issue-delivery/<plan-stem>-plan-tasks.tsv`
 - sprint task-spec:

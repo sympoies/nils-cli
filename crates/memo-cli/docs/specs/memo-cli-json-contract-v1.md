@@ -1,10 +1,12 @@
 # memo-cli JSON Contract v1
 
 ## Purpose
+
 This document defines machine-consumable JSON contracts for `memo-cli` commands:
 `add`, `update`, `delete`, `list`, `search`, `report`, `fetch`, and `apply`.
 
 It is a command-specific extension of:
+
 - `docs/specs/cli-service-json-contract-guideline-v1.md`
 
 Human-readable mode remains the default UX. JSON mode is explicit (`--json` or `--format json`).
@@ -27,11 +29,13 @@ The `command` value must be stable across v1 and match the table exactly.
 ## Required Envelope Rules
 
 All JSON responses must include top-level:
+
 - `schema_version` (string)
 - `command` (string)
 - `ok` (boolean)
 
 Success response:
+
 - `ok=true`
 - exactly one of:
   - `result` for a single logical object
@@ -39,6 +43,7 @@ Success response:
 - optional additive metadata (`pagination`, `meta`) is allowed.
 
 Failure response:
+
 - `ok=false`
 - `error` object with:
   - `code` (stable machine-facing identifier)
@@ -57,6 +62,7 @@ and must not alter existing required envelope or command fields.
 - `validation_errors` (array): structured validation diagnostics.
 
 ### `content_type` allowed values (v1)
+
 - `url`
 - `json`
 - `yaml`
@@ -66,17 +72,20 @@ and must not alter existing required envelope or command fields.
 - `unknown`
 
 ### `validation_status` allowed values (v1)
+
 - `valid`
 - `invalid`
 - `unknown`
 - `skipped`
 
 ### `validation_errors[]` item shape
+
 - `code` (string, required): stable machine-facing validation error code.
 - `message` (string, required): concise human-readable validation message.
 - `path` (string, optional): payload path associated with the failure.
 
 Semantics:
+
 - `validation_errors` should be omitted or empty unless
   `validation_status='invalid'`.
 - `validation_status='skipped'` means validation was intentionally not run.
@@ -86,12 +95,14 @@ Semantics:
 ## Stable Payload Contracts by Command
 
 ### `add` (`result`)
+
 - `item_id`: stable unique item identifier (string, monotonic and non-reused per DB)
 - `created_at`: RFC3339 timestamp (UTC, string)
 - `source`: capture source label (string)
 - `text`: raw memo text (string)
 
 ### `update` (`result`)
+
 - `item_id`: stable unique item identifier (string, monotonic and non-reused per DB)
 - `updated_at`: RFC3339 timestamp (UTC, string)
 - `text`: updated raw memo text (string)
@@ -100,6 +111,7 @@ Semantics:
 - `cleared_workflow_anchors`: non-negative integer
 
 ### `delete` (`result`)
+
 - `item_id`: stable unique item identifier (string, monotonic and non-reused per DB)
 - `deleted`: always `true`
 - `deleted_at`: RFC3339 timestamp (UTC, string)
@@ -107,6 +119,7 @@ Semantics:
 - `removed_workflow_anchors`: non-negative integer
 
 ### `list` (`results`)
+
 - `results[]` item fields:
   - `item_id`, `created_at`
   - `state` (`pending` or `enriched`)
@@ -117,6 +130,7 @@ Semantics:
   - `limit`, `offset`, `returned`
 
 ### `search` (`results`)
+
 - `results[]` item fields:
   - `item_id`, `created_at`
   - `score` (number)
@@ -128,6 +142,7 @@ Semantics:
   - `query`, `limit`, `state`, `fields`, `match`
 
 ### `report` (`result`)
+
 - `result.period`: `week` or `month`
 - `result.range`: object with `from`, `to`, `timezone`
 - `result.totals`: object with `captured`, `enriched`, `pending`
@@ -138,6 +153,7 @@ Semantics:
   - `validation_status_totals[]`
 
 ### `fetch` (`results`, machine-facing)
+
 - `results[]` item fields:
   - `item_id`, `created_at`, `source`, `text`
   - `state` (expected `pending` in v1 fetch flows)
@@ -147,6 +163,7 @@ Semantics:
   - `limit`, `returned`, `next_cursor` (nullable string), `has_more` (boolean)
 
 ### `apply` (`result`, machine-facing)
+
 - `result` summary fields:
   - `dry_run` (boolean)
   - `processed`, `accepted`, `skipped`, `failed` (non-negative integers)
@@ -164,6 +181,7 @@ Semantics:
 ## Stable Error Contract
 
 Error envelope (all commands):
+
 - `error.code`: stable, machine-usable code
 - `error.message`: concise human-readable summary
 - `error.details`: optional structured context for diagnostics/automation
@@ -191,12 +209,14 @@ Recommended stable error codes in v1:
 JSON output must never leak sensitive fields.
 
 Rules:
+
 - Never emit token/secret material such as `access_token`, `refresh_token`, API keys,
   authorization headers, or private key content.
 - If upstream payloads include sensitive fields, drop or redact before output.
 - `error.details` must follow the same policy (no raw secret/token text).
 
 Redaction example (conceptual):
+
 - allowed: `"details": {"redact_applied": true, "fields": ["authorization"]}`
 - disallowed: raw bearer token or secret string in any field.
 
@@ -211,6 +231,7 @@ Redaction example (conceptual):
 ## Examples
 
 ### `add` success (`result`)
+
 ```json
 {
   "schema_version": "memo-cli.add.v1",
@@ -226,6 +247,7 @@ Redaction example (conceptual):
 ```
 
 ### `list` success (`results`)
+
 ```json
 {
   "schema_version": "memo-cli.list.v1",
@@ -258,6 +280,7 @@ Redaction example (conceptual):
 ```
 
 ### `search` success (`results`)
+
 ```json
 {
   "schema_version": "memo-cli.search.v1",
@@ -288,6 +311,7 @@ Redaction example (conceptual):
 ```
 
 ### `report` success (`result`)
+
 ```json
 {
   "schema_version": "memo-cli.report.v1",
@@ -340,6 +364,7 @@ Redaction example (conceptual):
 ```
 
 ### `fetch` success (`results`, machine-facing)
+
 ```json
 {
   "schema_version": "memo-cli.fetch.v1",
@@ -375,6 +400,7 @@ Redaction example (conceptual):
 ```
 
 ### `fetch` failure (invalid cursor)
+
 ```json
 {
   "schema_version": "memo-cli.fetch.v1",
@@ -391,6 +417,7 @@ Redaction example (conceptual):
 ```
 
 ### `apply` success (`result`, machine-facing)
+
 ```json
 {
   "schema_version": "memo-cli.apply.v1",
@@ -426,6 +453,7 @@ Redaction example (conceptual):
 ```
 
 ### `apply` failure (invalid payload)
+
 ```json
 {
   "schema_version": "memo-cli.apply.v1",
@@ -442,6 +470,7 @@ Redaction example (conceptual):
 ```
 
 ### `apply` success with metadata (`result`, machine-facing)
+
 ```json
 {
   "schema_version": "memo-cli.apply.v1",
@@ -474,6 +503,7 @@ Redaction example (conceptual):
 ```
 
 ### `report` failure (invalid arguments)
+
 ```json
 {
   "schema_version": "memo-cli.report.v1",

@@ -2,7 +2,8 @@
 
 `nils-common` is the workspace shared helper crate for cross-CLI primitives.
 
-Primary constraint: shared helpers must preserve behavioral parity for each consuming CLI. Moving logic into this crate must not change user-facing output text, warnings, color behavior, or exit-code contracts.
+Primary constraint: shared helpers must preserve behavioral parity for each consuming CLI. Moving logic into this crate must not change
+user-facing output text, warnings, color behavior, or exit-code contracts.
 
 ## Shared helper policy
 
@@ -26,12 +27,12 @@ Primary constraint: shared helpers must preserve behavioral parity for each cons
 - `env`: truthy parsing helpers, `NO_COLOR` checks, and trimmed non-empty env lookup.
 - `shell`: POSIX single-quote escaping and ANSI stripping modes.
 - `process`: command execution wrappers plus PATH lookup helpers.
-- `git`: `git` command wrappers for repo probes, `rev-parse` helpers, staged-path listing, and scope
-  suggestion primitives for commit tooling.
+- `git`: `git` command wrappers for repo probes, `rev-parse` helpers, staged-path listing, and scope suggestion primitives for commit
+  tooling.
 - `clipboard`: best-effort clipboard copy with explicit tool priority.
-- `fs`: atomic write, timestamp write/remove, SHA-256 hashing, and cross-platform replace helpers
-  with structured errors.
-- `markdown`: markdown payload validation, markdown-table-safe cell canonicalization, markdown heading/code-block rendering, and stable JSON pretty-format helpers used by orchestration/reporting CLIs.
+- `fs`: atomic write, timestamp write/remove, SHA-256 hashing, and cross-platform replace helpers with structured errors.
+- `markdown`: markdown payload validation, markdown-table-safe cell canonicalization, markdown heading/code-block rendering, and stable JSON
+  pretty-format helpers used by orchestration/reporting CLIs.
 - `greeting`: tiny sample helper used by `cli-template`.
 
 ## API examples
@@ -135,9 +136,8 @@ println!("sha256={digest}");
 When introducing a shared helper at a call site:
 
 1. Add or keep characterization tests in the caller crate first.
-2. Move only primitive logic; keep a crate-local adapter for message formatting and exit-code mapping.
-   For `write_atomic` / `write_timestamp` / `sha256_file` migrations, map structured errors back to
-   existing crate-local UX text.
+2. Move only primitive logic; keep a crate-local adapter for message formatting and exit-code mapping. For `write_atomic` /
+   `write_timestamp` / `sha256_file` migrations, map structured errors back to existing crate-local UX text.
 3. Preserve existing quote/ANSI mode choices and `NO_COLOR` behavior.
 4. Keep tool/command fallback order identical (for example clipboard tool order, git probe fallback behavior).
 5. Re-run crate tests that cover the touched command paths before merging.

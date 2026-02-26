@@ -1,7 +1,9 @@
 # codex/gemini CLI parity contract v1
 
 ## Purpose
-This document is the canonical parity contract for `nils-codex-cli` and `nils-gemini-cli` after core-crate consolidation into CLI adapters plus `nils-common::provider_runtime`.
+
+This document is the canonical parity contract for `nils-codex-cli` and `nils-gemini-cli` after core-crate consolidation into CLI adapters
+plus `nils-common::provider_runtime`.
 
 ## Topology parity
 
@@ -47,7 +49,8 @@ Compatibility rules:
 
 ## Runtime adapter invariants
 
-1. Provider-specific env key names, default model values, path precedence, and dangerous-exec command shape are configured via provider profiles.
+1. Provider-specific env key names, default model values, path precedence, and dangerous-exec command shape are configured via provider
+   profiles.
 2. Shared runtime primitives (`auth/json/jwt/error/path/config/exec` logic) stay in `nils-common::provider_runtime`.
 3. Human output text and exit semantics stay stable for existing commands.
 

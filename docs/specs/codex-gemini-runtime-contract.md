@@ -1,41 +1,46 @@
 # codex/gemini runtime contract matrix
 
 ## Purpose
-This document is the single runtime contract source for migrating `codex-core` and `gemini-core` into CLI-local adapters backed by `nils-common::provider_runtime`.
+
+This document is the single runtime contract source for migrating `codex-core` and `gemini-core` into CLI-local adapters backed by
+`nils-common::provider_runtime`.
 
 ## Provider-specific matrix
 
-| Domain | Contract field | Codex value/rule | Gemini value/rule | Compatibility note |
-| --- | --- | --- | --- | --- |
-| Config | Model env key | `CODEX_CLI_MODEL` | `GEMINI_CLI_MODEL` | Must keep env names stable. |
-| Config | Reasoning env key | `CODEX_CLI_REASONING` | `GEMINI_CLI_REASONING` | Value surfaced by `config show`; do not rename. |
-| Config | Default model | `gpt-5.1-codex-mini` | `gemini-2.5-flash` | Defaults are provider-specific and must not drift. |
-| Config | Default reasoning | `medium` | `medium` | Shared default allowed; env key still provider-specific. |
-| Config | Dangerous-policy env key | `CODEX_ALLOW_DANGEROUS_ENABLED` | `GEMINI_ALLOW_DANGEROUS_ENABLED` | Validation text must mention matching key. |
-| Config | Starship env key | `CODEX_STARSHIP_ENABLED` | `GEMINI_STARSHIP_ENABLED` | Keep key and output line names stable. |
-| Config | Auto-refresh env key | `CODEX_AUTO_REFRESH_ENABLED` | `GEMINI_AUTO_REFRESH_ENABLED` | Keep key and output line names stable. |
-| Config | Auto-refresh min-days key | `CODEX_AUTO_REFRESH_MIN_DAYS` | `GEMINI_AUTO_REFRESH_MIN_DAYS` | Keep key and output line names stable. |
-| Paths | Secret dir env key | `CODEX_SECRET_DIR` | `GEMINI_SECRET_DIR` | Env override always takes precedence. |
-| Paths | Auth file env key | `CODEX_AUTH_FILE` | `GEMINI_AUTH_FILE` | Env override always takes precedence. |
-| Paths | Secret cache env key | `CODEX_SECRET_CACHE_DIR` | `GEMINI_SECRET_CACHE_DIR` | Env override always takes precedence. |
-| Paths | Home secret dir default | `$HOME/.config/codex_secrets` | `$HOME/.gemini/secrets` | Home default is modern-path only. |
-| Paths | Home auth file default | `$HOME/.agents/auth.json` | `$HOME/.gemini/oauth_creds.json` | Home default is modern-path only. |
-| Paths | Secret cache fallback | `ZSH_CACHE_DIR/codex/secrets` else `ZDOTDIR/cache/codex/secrets` | `ZSH_CACHE_DIR/gemini/secrets` else `$HOME/.gemini/cache/secrets` else `ZDOTDIR/cache/gemini/secrets` | Keep provider-specific cache layout. |
-| Paths | Feature dir name | `_features/codex` | `_features/gemini` | Feature-lane isolation required. |
-| Paths | Feature bootstrap marker | `codex-tools.zsh` (or `init.zsh`) | `gemini-tools.zsh` (or `init.zsh`) | Marker determines `secrets/` fallback behavior. |
-| Exec | Dangerous disabled prefix | default caller `codex` | default caller `gemini` | User-visible disabled text must match provider lane. |
-| Exec | Missing prompt error text | `_codex_exec_dangerous: missing prompt` | `_gemini_exec_dangerous: missing prompt` | Preserve exact error string. |
-| Exec | External binary | `codex` | `gemini` | Missing-binary diagnostics must stay lane-specific. |
-| Exec | Command shape | `codex exec --dangerously-bypass-approvals-and-sandbox -s workspace-write -m <model> -c model_reasoning_effort="<reasoning>" -- <prompt>` | `gemini --prompt=<prompt> --model <model> --approval-mode yolo` | Argument ordering and flags are contract-sensitive. |
-| Exec | Exec failure prefix | `codex-tools: failed to run codex exec: ...` | `gemini-tools: failed to run gemini exec: ...` | Keep message text to avoid golden test drift. |
-| JSON/Auth/JWT/Error | Runtime primitive behavior | Shared implementation | Shared implementation | Provider brand strings forbidden in shared primitives. |
+| Domain              | Contract field             | Codex value/rule                                                                                                                          | Gemini value/rule                                                                                     | Compatibility note                                       |
+| ------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| Config              | Model env key              | `CODEX_CLI_MODEL`                                                                                                                         | `GEMINI_CLI_MODEL`                                                                                    | Must keep env names stable.                              |
+| Config              | Reasoning env key          | `CODEX_CLI_REASONING`                                                                                                                     | `GEMINI_CLI_REASONING`                                                                                | Value surfaced by `config show`; do not rename.          |
+| Config              | Default model              | `gpt-5.1-codex-mini`                                                                                                                      | `gemini-2.5-flash`                                                                                    | Defaults are provider-specific and must not drift.       |
+| Config              | Default reasoning          | `medium`                                                                                                                                  | `medium`                                                                                              | Shared default allowed; env key still provider-specific. |
+| Config              | Dangerous-policy env key   | `CODEX_ALLOW_DANGEROUS_ENABLED`                                                                                                           | `GEMINI_ALLOW_DANGEROUS_ENABLED`                                                                      | Validation text must mention matching key.               |
+| Config              | Starship env key           | `CODEX_STARSHIP_ENABLED`                                                                                                                  | `GEMINI_STARSHIP_ENABLED`                                                                             | Keep key and output line names stable.                   |
+| Config              | Auto-refresh env key       | `CODEX_AUTO_REFRESH_ENABLED`                                                                                                              | `GEMINI_AUTO_REFRESH_ENABLED`                                                                         | Keep key and output line names stable.                   |
+| Config              | Auto-refresh min-days key  | `CODEX_AUTO_REFRESH_MIN_DAYS`                                                                                                             | `GEMINI_AUTO_REFRESH_MIN_DAYS`                                                                        | Keep key and output line names stable.                   |
+| Paths               | Secret dir env key         | `CODEX_SECRET_DIR`                                                                                                                        | `GEMINI_SECRET_DIR`                                                                                   | Env override always takes precedence.                    |
+| Paths               | Auth file env key          | `CODEX_AUTH_FILE`                                                                                                                         | `GEMINI_AUTH_FILE`                                                                                    | Env override always takes precedence.                    |
+| Paths               | Secret cache env key       | `CODEX_SECRET_CACHE_DIR`                                                                                                                  | `GEMINI_SECRET_CACHE_DIR`                                                                             | Env override always takes precedence.                    |
+| Paths               | Home secret dir default    | `$HOME/.config/codex_secrets`                                                                                                             | `$HOME/.gemini/secrets`                                                                               | Home default is modern-path only.                        |
+| Paths               | Home auth file default     | `$HOME/.agents/auth.json`                                                                                                                 | `$HOME/.gemini/oauth_creds.json`                                                                      | Home default is modern-path only.                        |
+| Paths               | Secret cache fallback      | `ZSH_CACHE_DIR/codex/secrets` else `ZDOTDIR/cache/codex/secrets`                                                                          | `ZSH_CACHE_DIR/gemini/secrets` else `$HOME/.gemini/cache/secrets` else `ZDOTDIR/cache/gemini/secrets` | Keep provider-specific cache layout.                     |
+| Paths               | Feature dir name           | `_features/codex`                                                                                                                         | `_features/gemini`                                                                                    | Feature-lane isolation required.                         |
+| Paths               | Feature bootstrap marker   | `codex-tools.zsh` (or `init.zsh`)                                                                                                         | `gemini-tools.zsh` (or `init.zsh`)                                                                    | Marker determines `secrets/` fallback behavior.          |
+| Exec                | Dangerous disabled prefix  | default caller `codex`                                                                                                                    | default caller `gemini`                                                                               | User-visible disabled text must match provider lane.     |
+| Exec                | Missing prompt error text  | `_codex_exec_dangerous: missing prompt`                                                                                                   | `_gemini_exec_dangerous: missing prompt`                                                              | Preserve exact error string.                             |
+| Exec                | External binary            | `codex`                                                                                                                                   | `gemini`                                                                                              | Missing-binary diagnostics must stay lane-specific.      |
+| Exec                | Command shape              | `codex exec --dangerously-bypass-approvals-and-sandbox -s workspace-write -m <model> -c model_reasoning_effort="<reasoning>" -- <prompt>` | `gemini --prompt=<prompt> --model <model> --approval-mode yolo`                                       | Argument ordering and flags are contract-sensitive.      |
+| Exec                | Exec failure prefix        | `codex-tools: failed to run codex exec: ...`                                                                                              | `gemini-tools: failed to run gemini exec: ...`                                                        | Keep message text to avoid golden test drift.            |
+| JSON/Auth/JWT/Error | Runtime primitive behavior | Shared implementation                                                                                                                     | Shared implementation                                                                                 | Provider brand strings forbidden in shared primitives.   |
 
 ## Compatibility rules
 
-1. Human output/exit semantics are non-negotiable. Adapter migration cannot alter existing CLI warning prefixes, error strings, or exit codes.
+1. Human output/exit semantics are non-negotiable. Adapter migration cannot alter existing CLI warning prefixes, error strings, or exit
+   codes.
 2. JSON schema ids remain provider-specific (`codex-cli.*` vs `gemini-cli.*`) even when payload structure is parity-checked.
-3. Provider-specific env keys, defaults, path precedence, and external command shapes must remain adapter-level configuration, never hardcoded into shared runtime helpers.
-4. Shared runtime modules in `nils-common` must stay domain-neutral: no `codex`/`gemini` literals except values injected by provider profiles.
+3. Provider-specific env keys, defaults, path precedence, and external command shapes must remain adapter-level configuration, never
+   hardcoded into shared runtime helpers.
+4. Shared runtime modules in `nils-common` must stay domain-neutral: no `codex`/`gemini` literals except values injected by provider
+   profiles.
 5. `allow_dangerous` validation keeps boolean parsing behavior (`true|false`, invalid values warn once and are treated as false).
 6. Contract tests moved from former core crates must preserve pass/fail semantics and non-secret-leaking error payload expectations.
 

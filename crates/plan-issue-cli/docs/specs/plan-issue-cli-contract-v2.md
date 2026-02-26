@@ -1,9 +1,11 @@
 # plan-issue CLI Contract v2
 
 ## Purpose
+
 v2 defines the runtime metadata ownership model after split-prs output decoupling.
 
 Key change from v1:
+
 - `plan-tooling split-prs` provides grouping primitives only (`task_id`, `summary`, `pr_group`).
 - `plan-issue-cli` is the authority that materializes executable runtime metadata
   (`Owner`, `Branch`, `Worktree`, `Notes`) for task-spec artifacts and `Task Decomposition` rows.
@@ -13,12 +15,14 @@ Key change from v1:
 ## Runtime Metadata Materialization (v2)
 
 `plan-issue-cli` runtime metadata is derived from:
+
 - parsed plan tasks (`Task N.M`, dependencies, validation commands)
 - split-prs grouping output (`task_id`, `summary`, `pr_group`)
 - command grouping/strategy (`--pr-grouping`, `--strategy`)
 - prefix options (`--owner-prefix`, `--branch-prefix`, `--worktree-prefix`)
 
 Rules:
+
 - `Owner` / `Branch` / `Worktree` are lane-canonical for shared lanes (`per-sprint`, `pr-shared`).
 - `Notes` are task-specific and include shared-lane tokens when applicable.
 - Anchor selection for runtime lane materialization is deterministic from lane membership
@@ -29,6 +33,7 @@ Rules:
 ## Notes Token Contract (v2)
 
 Materialized `Notes` tokens include:
+
 - `sprint=S<n>`
 - `plan-task:Task N.M` (or deterministic fallback task id)
 - optional `deps=...`
@@ -40,12 +45,14 @@ Materialized `Notes` tokens include:
 ## Markdown Canonicalization Dependency
 
 `plan-issue-cli` must use shared helpers from `nils-common::markdown` for:
+
 - markdown payload validation (`validate_markdown_payload`)
 - markdown-table-safe cell canonicalization (`canonicalize_table_cell`)
 
 This prevents drift caused only by markdown table rendering/parsing normalization (`|`, `\n`, `\r`).
 
 GitHub integration boundary:
+
 - Live issue/pull writes remain crate-local `gh` adapter behavior (`plan-issue-cli` ownership).
 - `nils-common` does not provide a shared `github` module for these operations.
 

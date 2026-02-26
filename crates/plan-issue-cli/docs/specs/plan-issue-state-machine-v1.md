@@ -1,11 +1,13 @@
 # plan-issue State Machine and Gate Invariants v1
 
 ## Purpose
+
 Define the v1 state machine and gate invariants for the Rust replacement of `plan-issue-delivery-loop.sh`.
 
 This document is normative for lifecycle transitions that must remain compatible with the current shell orchestration flow.
 
 ## Scope
+
 - In scope:
   - Plan-level lifecycle states and transition commands.
   - Sprint-level transition gates.
@@ -15,6 +17,7 @@ This document is normative for lifecycle transitions that must remain compatible
   - Internal Rust module structure.
 
 ## Canonical State Objects
+
 - Plan issue: one GitHub issue for the full plan lifecycle.
 - Task rows: markdown table rows under `## Task Decomposition`.
 - Sprint set: tasks associated with sprint `N` by either:
@@ -22,23 +25,28 @@ This document is normative for lifecycle transitions that must remain compatible
   - task id pattern `S<N>T<k>`.
 
 ## Task Decomposition Runtime-Truth Row Model
+
 - `## Task Decomposition` is the only runtime-truth execution table in the issue body for plan/sprint orchestration.
-- No second issue-body dispatch table is introduced; task-spec and subagent prompt artifacts are derived views of the same runtime-truth rows.
+- No second issue-body dispatch table is introduced; task-spec and subagent prompt artifacts are derived views of the same runtime-truth
+  rows.
 - Column role split:
   - runtime-truth execution metadata: `Owner`, `Branch`, `Worktree`, `Execution Mode`, lane metadata tokens in `Notes`
   - runtime-progress fields: `PR`, `Status`
   - descriptive row identity: `Task`, `Summary`
-- `Owner` is a stable dispatch alias (for example `subagent-s1-t1` or a shared-lane `dispatch` alias), not an ephemeral platform-internal worker identifier.
+- `Owner` is a stable dispatch alias (for example `subagent-s1-t1` or a shared-lane `dispatch` alias), not an ephemeral platform-internal
+  worker identifier.
 
 ## Plan Lifecycle State Machine
 
 States:
+
 - `PLAN_UNSTARTED`: no plan issue exists yet.
 - `PLAN_OPEN`: plan issue exists and is open.
 - `PLAN_REVIEW_READY`: final plan review has been requested.
 - `PLAN_CLOSED`: issue is closed and plan lifecycle is complete.
 
 Transitions:
+
 - `start-plan`: `PLAN_UNSTARTED -> PLAN_OPEN`
   - Creates one issue with full task decomposition initialized to `Status=planned`, `PR=TBD`.
 - `ready-plan`: `PLAN_OPEN -> PLAN_REVIEW_READY`
@@ -53,12 +61,14 @@ Transitions:
 ## Sprint Lifecycle State Machine
 
 States per sprint `N`:
+
 - `SPRINT_NOT_STARTED`
 - `SPRINT_IN_PROGRESS`
 - `SPRINT_REVIEW_READY`
 - `SPRINT_ACCEPTED`
 
 Transitions:
+
 - `start-sprint N`: `SPRINT_NOT_STARTED -> SPRINT_IN_PROGRESS`
   - Renders sprint task-spec and subagent prompts.
   - Validates Task Decomposition runtime-truth rows against plan-derived sprint lanes.
@@ -74,23 +84,28 @@ Transitions:
 ## Task Row Status Machine
 
 Allowed statuses:
+
 - `planned`
 - `in-progress`
 - `blocked`
 - `done`
 
 Expected transitions:
+
 - `planned -> in-progress` when implementation PR work starts.
 - `in-progress -> done` only after acceptance/merge gates for that sprint pass.
 - `planned|in-progress -> blocked` when execution is paused by external constraint.
 - `blocked -> in-progress` when blocker is cleared.
 
 Mutation command notes:
+
 - `link-pr` records a concrete `PR` reference and updates selected row `Status` (default `in-progress`).
-- `link-pr --task <id>` expands to all rows in the same runtime PR lane for `per-sprint` / `pr-shared` rows to keep shared-lane `PR` values consistent.
+- `link-pr --task <id>` expands to all rows in the same runtime PR lane for `per-sprint` / `pr-shared` rows to keep shared-lane `PR` values
+  consistent.
 - `link-pr --sprint <N>` must target a single runtime PR lane (or use `--pr-group`) to avoid ambiguous multi-lane updates.
 
 Row-level status rules:
+
 - `Status in {in-progress, done}` requires non-placeholder values for:
   - `Owner`
   - `Branch`
@@ -102,6 +117,7 @@ Row-level status rules:
 ## Gate Invariants
 
 ### Issue Body Structural Invariants
+
 - `## Task Decomposition` table must exist with at least one task row.
 - Required columns:
   - `Task`, `Summary`, `Owner`, `Branch`, `Worktree`, `Execution Mode`, `PR`, `Status`, `Notes`
@@ -110,10 +126,10 @@ Row-level status rules:
 - Execution Mode derivation rule:
   - `group + auto|deterministic` that resolves to one shared PR lane for a sprint is represented as `per-sprint` (single-lane execution).
   - `group + auto|deterministic` with multiple resolved PR groups keeps `pr-shared` / `pr-isolated` per group size.
-  - rows that share a `per-sprint` or `pr-shared` lane must keep canonical runtime-truth
-    execution metadata aligned (`Owner`, `Branch`, `Worktree`).
-  - `Notes` may remain task-specific, but shared-lane tokens used for lane parsing (for example
-    `pr-group` and `shared-pr-anchor`) must stay compatible across rows in the same lane.
+  - rows that share a `per-sprint` or `pr-shared` lane must keep canonical runtime-truth execution metadata aligned (`Owner`, `Branch`,
+    `Worktree`).
+  - `Notes` may remain task-specific, but shared-lane tokens used for lane parsing (for example `pr-group` and `shared-pr-anchor`) must stay
+    compatible across rows in the same lane.
 - Plan metadata grouping invariant:
   - when sprint metadata includes `PR grouping intent`, it must match command `--pr-grouping`.
   - mismatch is a hard gate failure for split/task-spec generation commands.
@@ -123,6 +139,7 @@ Row-level status rules:
 - `pr-isolated` rows must have unique `Branch` and unique `Worktree`.
 
 ### PR Normalization and Presence Invariants
+
 - PR references are normalized to canonical `#<number>` when possible.
 - Placeholder PR values (`TBD`, `-`, empty, etc.) are invalid for:
   - sprint merge/accept gates
@@ -130,12 +147,14 @@ Row-level status rules:
   - rows with `Status in {in-progress, done}`.
 
 ### Sprint Progression Gate (`start-sprint N`, `N > 1`)
+
 - Previous sprint `N-1` must pass merge gate:
   - every previous-sprint row has `Status=done`
   - every previous-sprint row has concrete PR reference
   - every referenced PR is merged.
 
 ### Sprint Acceptance Gate (`accept-sprint N`)
+
 - Requires `--approved-comment-url` in valid GitHub issue/pull comment URL format.
 - For sprint `N` rows:
   - every row has concrete PR reference
@@ -143,6 +162,7 @@ Row-level status rules:
 - On pass, sprint `N` row statuses are synchronized to `done`.
 
 ### Plan Close Gate (`close-plan`)
+
 - Requires final `--approved-comment-url` in valid GitHub issue/pull comment URL format.
 - Delegated `close-after-review` invariants:
   - all task rows are `Status=done` unless `--allow-not-done` is explicitly used
@@ -152,6 +172,7 @@ Row-level status rules:
 - After close gate success, strict task worktree cleanup is enforced.
 
 ### Worktree Cleanup Invariants
+
 - Cleanup targets are resolved from Task Decomposition `Branch` and `Worktree`.
 - Main repository worktree must never be removed.
 - Cleanup succeeds only when:
@@ -160,11 +181,13 @@ Row-level status rules:
   - no targeted residual linked worktree/path remains.
 
 ## Dry-Run Contract
+
 - `--dry-run` commands print intended write actions and gate traces.
 - Dry-run mode must not mutate GitHub issue/PR state.
 - `close-plan --dry-run` requires `--body-file` to evaluate gates locally.
 
 ## Failure Contract
+
 - Gate violations fail the command (`exit 1`) with explicit task-row diagnostics.
 - Usage/argument errors return `exit 2`.
 - Successful transitions return `exit 0`.

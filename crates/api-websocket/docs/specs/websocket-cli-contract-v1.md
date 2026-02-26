@@ -1,36 +1,45 @@
 # WebSocket CLI Contract v1
 
 ## Commands
+
 `api-websocket` supports:
+
 - `call`
 - `history`
 - `report`
 - `report-from-cmd`
 
 Default command behavior:
+
 - bare positional request path is treated as `call`.
 
 ## Exit codes
+
 - `0`: success
 - `1`: operational/validation failure
 - `3`: history file exists but contains no records (`history`)
 
 ## Stdout/stderr behavior
+
 - `call` (text mode): stdout prints the last received message.
 - `history` (text mode): stdout prints selected history records.
 - `report`/`report-from-cmd`: stdout prints generated report path.
 - stderr is used for human-readable diagnostics in text mode.
 
 ## JSON mode
+
 - Explicit only: `--format json`
 - Supported commands: `call`, `history`
 - Human-readable mode remains default.
 
 ## JSON envelope
+
 Guideline reference:
+
 - `docs/specs/cli-service-json-contract-guideline-v1.md`
 
 ### `call` success
+
 ```json
 {
   "schema_version": "cli.api-websocket.call.v1",
@@ -45,6 +54,7 @@ Guideline reference:
 ```
 
 ### `call` failure
+
 ```json
 {
   "schema_version": "cli.api-websocket.call.v1",
@@ -58,6 +68,7 @@ Guideline reference:
 ```
 
 ### `history` success
+
 ```json
 {
   "schema_version": "cli.api-websocket.history.v1",
@@ -72,6 +83,7 @@ Guideline reference:
 ```
 
 ### `history` failure
+
 ```json
 {
   "schema_version": "cli.api-websocket.history.v1",
@@ -87,6 +99,7 @@ Guideline reference:
 ## Stable error codes
 
 ### `call`
+
 - `request_not_found`
 - `request_parse_error`
 - `setup_resolve_error`
@@ -97,12 +110,14 @@ Guideline reference:
 - `expectation_failed`
 
 ### `history`
+
 - `history_resolve_error`
 - `history_not_found`
 - `history_read_error`
 - `history_empty`
 
 ## Secret handling
+
 - JSON output must not include bearer token material.
 - Tokens are never emitted in `result` payloads.
 - history command snippets mask token values (`REDACTED`) in suite artifacts.

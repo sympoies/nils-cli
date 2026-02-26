@@ -1,14 +1,14 @@
 # split-prs Contract v1
 
-> Historical reference: v1 documents the pre-v2 output shape where `split-prs` emitted runtime
-> execution metadata fields (`branch`, `worktree`, `owner`, `notes`). For current behavior, see
-> `split-prs-contract-v2.md`.
+> Historical reference: v1 documents the pre-v2 output shape where `split-prs` emitted runtime execution metadata fields (`branch`,
+> `worktree`, `owner`, `notes`). For current behavior, see `split-prs-contract-v2.md`.
 
 ## Purpose
-`plan-tooling split-prs` converts plan tasks into executable PR slices while preserving a stable
-schema and deterministic ordering.
+
+`plan-tooling split-prs` converts plan tasks into executable PR slices while preserving a stable schema and deterministic ordering.
 
 v1 runtime behavior:
+
 - `strategy=deterministic` is fully implemented.
 - `strategy=auto` is fully implemented with deterministic heuristics.
 
@@ -32,6 +32,7 @@ plan-tooling split-prs \
 Value options accept both `--key value` and `--key=value`.
 
 Defaults:
+
 - `--scope sprint`
 - `--strategy deterministic`
 - `--owner-prefix subagent`
@@ -40,10 +41,12 @@ Defaults:
 - `--format json`
 
 ## Scope Rules
+
 - `scope=sprint` requires `--sprint <n>`.
 - `scope=plan` includes all sprints and ignores `--sprint`.
 
 ## Strategy + Grouping Matrix
+
 - `strategy=deterministic`, `pr-grouping=per-sprint`:
   - one `pr_group` per sprint (`s<n>`).
 - `strategy=deterministic`, `pr-grouping=group`:
@@ -54,10 +57,12 @@ Defaults:
 - `strategy=auto`, `pr-grouping=group`:
   - explicit `--pr-group` mappings are optional pins.
   - unmapped tasks are auto-assigned by rubric.
-  - when sprint metadata provides `Execution Profile` parallel width hints, auto grouping targets that lane count with deterministic tie-break fallback.
+  - when sprint metadata provides `Execution Profile` parallel width hints, auto grouping targets that lane count with deterministic
+    tie-break fallback.
   - output still preserves deterministic ordering and stable anchor semantics.
 
 ## Deterministic Normalization
+
 - Generated task id: `S<sprint>T<index-within-sprint>` (1-based).
 - Summary: normalized whitespace from task heading.
 - Branch slug:
@@ -74,6 +79,7 @@ Defaults:
   - max length 48
 
 ## Deterministic Ordering
+
 - Records are emitted by sprint number, then task appearance order in plan markdown.
 - Group anchors are the first emitted record in each `pr_group`.
 - Auto assignment tie-break rules are stable and deterministic:
@@ -82,7 +88,9 @@ Defaults:
   - tertiary key: lexical summary
 
 ## Auto Scoring Rubric (Runtime)
+
 When `strategy=auto` is used in `pr-grouping=group`, grouping decisions use three scored signals:
+
 - `Complexity`:
   - complexity is summed per candidate group.
   - merges are capped at total complexity `<= 20`.
@@ -97,12 +105,14 @@ When `strategy=auto` is used in `pr-grouping=group`, grouping decisions use thre
   - missing locations simply contribute no overlap signal.
 
 Deterministic tie-break algorithm for equal scores:
+
 1. Prefer explicit pinned `--pr-group` entries.
 2. Prefer highest scored merge candidates.
 3. Prefer lexical `Task N.M`.
 4. Prefer lexical generated `SxTy`.
 
 ## TSV Output (format=tsv)
+
 Header:
 
 ```text
@@ -110,6 +120,7 @@ Header:
 ```
 
 Column contract:
+
 - `task_id`: generated stable id (`SxTy`)
 - `summary`: task summary
 - `branch`: target branch name
@@ -119,6 +130,7 @@ Column contract:
 - `pr_group`: resolved group key
 
 `notes` contains:
+
 - `sprint=S<n>`
 - `plan-task:Task N.M` (or fallback task id)
 - optional `deps=...`
@@ -128,23 +140,29 @@ Column contract:
 - optional `shared-pr-anchor=<task_id>` when group has multiple tasks
 
 ## JSON Output (format=json)
+
 Object shape:
+
 - `file`: input plan path
 - `scope`: `plan` or `sprint`
 - `sprint`: integer or null
 - `pr_grouping`: `per-sprint` or `group`
 - `strategy`: `deterministic` or `auto`
 - `records`: array of records with the same fields as TSV columns
-- optional `explain` (present only with `--explain`): per-sprint grouping breakdown including selected target parallel width and grouped task ids.
+- optional `explain` (present only with `--explain`): per-sprint grouping breakdown including selected target parallel width and grouped
+  task ids.
 
 ## Strategy Runtime Status
+
 - `strategy=deterministic`: enabled in v1 runtime.
 - `strategy=auto`: enabled in v1 runtime.
   - deterministic ordering and notes schema are preserved.
   - in `pr-grouping=group`, explicit pins are optional and validated when provided.
 
 ## Error Matrix
+
 Core errors:
+
 - missing `--file`
 - plan file not found
 - invalid/unknown `--scope`
@@ -154,21 +172,25 @@ Core errors:
 - empty selected scope (no tasks)
 
 Deterministic/group-mode errors:
+
 - `pr-grouping=group` without mappings
 - unknown mapping key in `--pr-group`
 - missing mapping for any selected task in `group` mode
 
 Auto-mode errors:
+
 - `strategy=auto` with unknown pinned mapping key
 - `strategy=auto` with invalid pin syntax in `--pr-group`
 - `strategy=auto` request where selected scope has no tasks
 
 ## Compatibility Guarantees
+
 - TSV and JSON field names remain unchanged across strategies.
 - `notes` key vocabulary stays backward compatible with downstream orchestration.
 - Group naming remains normalized and deterministic to keep diff noise low.
 
 ## Exit Codes
+
 - `0`: success
 - `1`: runtime/validation failure
 - `2`: usage error

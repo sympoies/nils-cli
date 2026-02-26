@@ -9,6 +9,7 @@ Usage:
 Runs the required pre-delivery checks from DEVELOPMENT.md:
   - bash scripts/ci/docs-placement-audit.sh --strict
   - bash scripts/ci/docs-hygiene-audit.sh --strict
+  - bash scripts/ci/markdownlint-audit.sh --strict
   - bash scripts/ci/test-stale-audit.sh --strict
   - bash scripts/ci/completion-asset-audit.sh --strict
   - bash scripts/ci/completion-flag-parity-audit.sh --strict
@@ -24,6 +25,7 @@ Modes:
     Run documentation-only checks:
       - bash scripts/ci/docs-placement-audit.sh --strict
       - bash scripts/ci/docs-hygiene-audit.sh --strict
+      - bash scripts/ci/markdownlint-audit.sh --strict
     Skip fmt/clippy/workspace tests/zsh completion tests.
 
 Environment:
@@ -59,7 +61,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-required_cmds=(git)
+required_cmds=(git npx)
 if [[ "$docs_only" -eq 0 ]]; then
   required_cmds+=(cargo zsh rg)
 fi
@@ -111,6 +113,7 @@ run() {
 
 run bash scripts/ci/docs-placement-audit.sh --strict
 run bash scripts/ci/docs-hygiene-audit.sh --strict
+run bash scripts/ci/markdownlint-audit.sh --strict
 if [[ "$docs_only" -eq 1 ]]; then
   echo "ok: docs-only nils-cli checks passed"
   exit 0

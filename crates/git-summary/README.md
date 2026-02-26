@@ -1,10 +1,12 @@
 # git-summary
 
 ## Overview
+
 git-summary prints per-author contribution summaries (added, deleted, net, commits) for a date
 range, sorted by net contribution. Date ranges use local-time boundaries.
 
 ## Usage
+
 ```text
 Usage:
   git-summary <command> [args]
@@ -23,6 +25,7 @@ Commands:
 ```
 
 ## Commands
+
 - `all`: Summarize the entire Git history.
 - `today`: Summarize commits from today only.
 - `yesterday`: Summarize commits from yesterday only.
@@ -34,10 +37,12 @@ Commands:
 - `help`: Show help output.
 
 ## Exit codes
+
 - `0`: Success and help output.
 - `1`: Validation errors, Git errors, or invalid usage.
 
 ## Dependencies
+
 - `git` is required for all commands.
 
 ## Docs

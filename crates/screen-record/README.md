@@ -1,6 +1,7 @@
 # screen-record
 
 ## Overview
+
 screen-record is a macOS 12+ and Linux CLI that records a single window (or a full display)
 to a video file. On macOS it uses ScreenCaptureKit and AVFoundation; on Linux it relies on X11 for
 discovery and `ffmpeg` for capture/encoding. On Wayland-only sessions, it can use an interactive
@@ -8,11 +9,13 @@ portal picker (`--portal`) via xdg-desktop-portal + PipeWire. It also exposes pa
 window/app/display lists (X11) to make selection deterministic in scripts.
 
 ## Linux (X11 + Wayland portal)
+
 Linux support targets X11/Xorg sessions (including XWayland when `DISPLAY` is set). Ubuntu 24.04 is
 the CI/validation baseline, but other distros with X11 should work. For Wayland-only sessions
 (no `DISPLAY`), `--portal` provides an interactive capture path.
 
 Prerequisites:
+
 - `ffmpeg` on `PATH` (example: `sudo apt-get install ffmpeg`).
 - For X11 selectors and list modes: an X11 session with `DISPLAY` set.
 - For `--portal` on Wayland-only sessions:
@@ -21,6 +24,7 @@ Prerequisites:
   - a PipeWire session (Ubuntu default)
 
 Selection parity:
+
 - Recording selectors `--window-id`, `--active-window`, `--app`, `--display`, and `--display-id`
   are supported (X11).
 - `--portal` is supported for recording and screenshots on Wayland-only sessions, but is
@@ -31,56 +35,74 @@ Selection parity:
   when available; otherwise it selects the first display in the deterministic list.
 
 Linux examples:
+
 ```bash
 screen-record --list-windows
 screen-record --display --duration 3 --audio off --path "./recordings/display.mp4"
 ```
 
 ### Troubleshooting (Linux)
+
 - **Wayland-only session + X11 selectors / list modes**: X11-only selectors and list modes require
   an X11 session. Use `--portal` for recording/screenshot or log into an Xorg session (Ubuntu
   example: **"Ubuntu on Xorg"**). You may see:
+
   ```text
   error: X11 selectors require X11 (DISPLAY is unset). Use --portal on Wayland-only sessions, or log into "Ubuntu on Xorg".
   ```
+
 - **Wayland + XWayland (`DISPLAY` is set, but some apps are missing)**: only X11 client windows are
   discoverable/capturable. Wayland-native apps won’t appear in `--list-windows`; switch to Xorg.
 - **Missing portal packages** (Wayland-only + `--portal`): install xdg-desktop-portal + a backend.
   Error example:
+
   ```text
   error: Wayland-only session detected but xdg-desktop-portal is missing.
   ```
+
 - **ffmpeg missing portal FD support** (Wayland-only + `--portal`): install an ffmpeg build with
   PipeWire portal FD support. Error example:
+
   ```text
   error: ffmpeg PipeWire input does not appear to support portal FDs (missing -pipewire_fd in `ffmpeg -hide_banner -h demuxer=pipewire`).
   ```
+
 - **Missing `ffmpeg`**: install it (Ubuntu):
+
   ```text
   sudo apt-get install ffmpeg
   ```
+
   Error example:
+
   ```text
   error: ffmpeg not found on PATH. Install it with: sudo apt-get install ffmpeg
   ```
+
 - **Audio capture prerequisites (`--audio system|mic`)**: Linux audio capture uses PulseAudio
   compatibility via `pactl`. On Ubuntu, install:
+
   ```text
   sudo apt-get install pulseaudio-utils pipewire-pulse
   ```
+
   Error example:
+
   ```text
   error: pactl not found on PATH (install pipewire-pulse or pulseaudio-utils)
   ```
+
 - **Blank/occluded capture**: X11 region/window capture can include occlusion and typically cannot
   capture minimized windows. Keep the target visible and un-minimized while recording.
 
 ## Usage
+
 ```text
 screen-record [options]
 ```
 
 ## Flags
+
 | Flag | Value | Default | Description |
 | --- | --- | --- | --- |
 | `--screenshot` | (none) | (none) | Capture a single window screenshot and exit. |
@@ -111,6 +133,7 @@ screen-record [options]
 | `-V, --version` | (none) | (none) | Show version. |
 
 ## Mode rules
+
 - Exactly one mode must be selected: `--list-windows`, `--list-displays`, `--list-apps`,
   `--preflight`, `--request-permission`, `--screenshot`, or recording.
 - Recording mode requires exactly one selector: `--portal`, `--window-id`, `--active-window`,
@@ -129,6 +152,7 @@ screen-record [options]
   `--portal` currently supports `--audio off` only.
 
 ## Output contract
+
 - Success (recording/screenshot): stdout prints only the resolved output file path followed by `\n`.
 - Success (list): stdout prints only TSV rows followed by `\n`.
 - Success (preflight/request): stdout is empty; any user messaging goes to stderr.
@@ -147,6 +171,7 @@ screen-record [options]
 - Errors: stdout is empty; stderr contains user-facing errors (no stack traces).
 
 ## Permission schema (library adapter)
+
 - For automation integrations embedding `screen-record` as a Rust dependency, macOS permission state
   can be mapped to shared schema fields:
   `screen_recording`, `accessibility`, `automation`, `ready`, `hints`.
@@ -154,10 +179,12 @@ screen-record [options]
   macOS adapter helper is `screen_record::macos::permissions::permission_status()`.
 
 ## List output (TSV)
+
 All list output is UTF-8 TSV with no header and one record per line. Tabs or newlines in string
 fields are normalized to a single space. Sorting is deterministic.
 
 ### `--list-windows` column order
+
 1. `window_id` (decimal)
 2. `owner_name`
 3. `window_title` (empty when missing)
@@ -170,6 +197,7 @@ fields are normalized to a single space. Sorting is deterministic.
 Sorting: by `owner_name`, then `window_title`, then `window_id`.
 
 ### `--list-apps` column order
+
 1. `app_name`
 2. `pid` (decimal)
 3. `bundle_id` (empty when missing)
@@ -177,6 +205,7 @@ Sorting: by `owner_name`, then `window_title`, then `window_id`.
 Sorting: by `app_name`, then `pid`.
 
 ### `--list-displays` column order
+
 1. `display_id` (decimal)
 2. `width` (pixels; macOS reports points)
 3. `height` (pixels; macOS reports points)
@@ -184,6 +213,7 @@ Sorting: by `app_name`, then `pid`.
 Sorting: by `display_id`.
 
 ## Selection rules
+
 - `--window-id <id>` selects exactly that window id.
 - `--active-window` selects the single frontmost window on the current Space.
 - `--app <name>` matches windows by owner/app name substring (case-insensitive).
@@ -195,6 +225,7 @@ Sorting: by `display_id`.
   selection is ambiguous and the CLI exits 2 with candidate output.
 
 ## Ambiguous selection errors
+
 Ambiguous selection is a usage error (exit 2). The error format is fixed:
 
 ```text
@@ -207,6 +238,7 @@ error: refine with --window-name or use --window-id
 Candidate rows are identical to `--list-windows` TSV output and are printed to stderr.
 
 ## Container selection (.mov vs .mp4)
+
 - If `--format` is provided, its value selects the container.
 - Otherwise, `.mov` or `.mp4` is selected from the `--path` extension.
 - If no supported extension is present, the container defaults to `.mov`.
@@ -214,6 +246,7 @@ Candidate rows are identical to `--list-windows` TSV output and are printed to s
 - `--audio both` requires `.mov`; using `.mp4` exits 2 with a clear error.
 
 ## Screenshot format selection (.png vs .jpg vs .webp)
+
 - If `--image-format` is provided, its value selects the output format.
 - Otherwise, `.png`, `.jpg`/`.jpeg`, or `.webp` is selected from the `--path` extension.
 - If `--path` has no extension (or `--path` is omitted), the format defaults to `.png`.
@@ -223,6 +256,7 @@ Candidate rows are identical to `--list-windows` TSV output and are printed to s
   with exit 1.
 
 ## Diff-aware screenshot capture (`--if-changed`)
+
 - `--if-changed` is opt-in and affects screenshot mode only.
 - Baseline selection:
   - If `--if-changed-baseline <path>` is set, that file is hashed as baseline.
@@ -236,92 +270,112 @@ Candidate rows are identical to `--list-windows` TSV output and are printed to s
   - Unchanged: staged capture is deleted and target output is preserved.
 
 ## Screenshot default naming
+
 When `--screenshot` is used without `--path`, output is written under `./screenshots/` and the
 filename is generated from:
+
 - Local timestamp (`YYYYMMDD-HHMMSS`)
 - Window identity: `win<id>` + owner name + window title (sanitized)
 
 Shape:
+
 ```text
 ./screenshots/screenshot-20260101-000000-win100-Terminal-Inbox.png
 ```
 
 ## Exit codes
+
 - `0`: Success (recording completed, list output printed, or preflight success).
 - `1`: Runtime failure (permission denied, capture/encode failure).
 - `2`: Usage error (invalid flags, ambiguous selection, invalid format).
 
 ## Environment
+
 - `AGENTS_SCREEN_RECORD_TEST_MODE=1`: Use deterministic fixtures instead of macOS APIs. In test
   mode, recording copies a fixture file matching the selected container.
 
 ## Examples
+
 List windows:
+
 ```bash
 screen-record --list-windows
 ```
 
 List apps:
+
 ```bash
 screen-record --list-apps
 ```
 
 Record by app name:
+
 ```bash
 screen-record --app Terminal --duration 3 --audio off --path "./recordings/terminal.mov"
 ```
 
 Record by window id:
+
 ```bash
 screen-record --window-id 4811 --duration 5 --audio off --path "./recordings/window-4811.mov"
 ```
 
 Record for a short duration:
+
 ```bash
 screen-record --active-window --duration 2 --audio off --path "./recordings/active.mov"
 ```
 
 Record the main display:
+
 ```bash
 screen-record --display --duration 2 --audio off --path "./recordings/display.mov"
 ```
 
 List displays:
+
 ```bash
 screen-record --list-displays
 ```
 
 Record a specific display id:
+
 ```bash
 screen-record --display-id 1 --duration 2 --audio off --path "./recordings/display-1.mov"
 ```
 
 Record with system audio:
+
 ```bash
 screen-record --app Terminal --duration 5 --audio system --path "./recordings/terminal-audio.mov"
 ```
 
 Capture a screenshot (default png + default naming):
+
 ```bash
 screen-record --screenshot --active-window
 ```
 
 Capture a screenshot as WebP:
+
 ```bash
 screen-record --screenshot --app Terminal --image-format webp
 ```
 
 Capture a screenshot to an explicit path:
+
 ```bash
 screen-record --screenshot --window-id 4811 --path "./screenshots/window-4811.jpg"
 ```
 
 Skip screenshot publish when unchanged:
+
 ```bash
 screen-record --screenshot --app Terminal --path "./screenshots/inbox.png" --if-changed --if-changed-threshold 2
 ```
 
 Record with metadata + diagnostics manifests:
+
 ```bash
 screen-record --app Terminal --duration 3 --audio off --path "./recordings/terminal.mov" \
   --metadata-out "./recordings/terminal.metadata.json" \

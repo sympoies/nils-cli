@@ -1,13 +1,16 @@
 # image-processing
 
 ## Overview
+
 `image-processing` provides a modern SVG-first flow:
+
 - `svg-validate --in <svg> --out <svg>`
 - `convert --from-svg <path> --to png|webp|svg --out <file>`
 
 `generate` is removed.
 
 ## Usage
+
 ```text
 Usage:
   image-processing <subcommand> [flags]
@@ -20,10 +23,12 @@ Help:
 ```
 
 ## Commands
+
 - `svg-validate`: Validate and sanitize one SVG input into one SVG output.
 - `convert`: Render trusted SVG source into `png`, `webp`, or `svg` output.
 
 ## Common flags
+
 - Input:
   - `svg-validate`: `--in <path>` (exactly one)
   - `convert`: `--from-svg <path>`
@@ -32,6 +37,7 @@ Help:
 - Render sizing for raster output: `--width`, `--height`
 
 ## `convert --from-svg` contract (v1)
+
 - Required: `--from-svg`, `--to png|webp|svg`, `--out <file>`.
 - Forbidden: `--in`.
 - `--out` extension must match `--to`.
@@ -39,11 +45,13 @@ Help:
 - `--to svg` does not support `--width`/`--height`.
 
 ## `svg-validate` contract
+
 - Required: exactly one `--in <svg>` and `--out <svg>`.
 - Forbidden: `--from-svg`, `--to`, `--width`, `--height`.
 - Output is deterministic for identical input.
 
 ## Examples
+
 ```bash
 mkdir -p out/plan-doc-examples
 ```
@@ -72,11 +80,13 @@ cargo run -p nils-image-processing -- convert \
 ```
 
 ## Exit codes
+
 - `0`: Success with no item errors.
 - `1`: Runtime failure or one-or-more items failed.
 - `2`: Usage/validation error.
 
 ## Dependencies
+
 - `convert --from-svg` and `svg-validate`: no external binary dependency (Rust backend).
 
 ## Docs

@@ -1,9 +1,11 @@
 # image-processing LLM SVG workflow
 
 ## Purpose
+
 Use a provider-agnostic pipeline to turn user intent into policy-compliant SVG, then render with `image-processing convert --from-svg`.
 
 ## Contract
+
 - `generate` is removed.
 - `convert --from-svg <path>` is the canonical SVG source flow.
 - `svg-validate` must gate LLM output before raster export.
@@ -37,7 +39,9 @@ cargo run -p nils-image-processing -- convert \
 ```
 
 ## Pipeline artifacts
+
 Given `--out-svg out/plan-llm/sun.svg`, the pipeline emits:
+
 - `out/plan-llm/sun.prompt.md`
 - `out/plan-llm/sun.raw.txt` (when `SVG_LLM_CMD` is used)
 - `out/plan-llm/sun.candidate.svg`
@@ -45,6 +49,7 @@ Given `--out-svg out/plan-llm/sun.svg`, the pipeline emits:
 - `out/plan-llm/sun.repair.prompt.md` (only on validation failure)
 
 ## Repair loop
+
 If validation fails, re-run LLM with repair prompt:
 
 ```bash
@@ -54,7 +59,9 @@ cat out/plan-llm/sun.repair.prompt.md
 Feed that prompt to your LLM provider, write the new candidate SVG, and run `svg-validate` again.
 
 ## Migration note
+
 Any previous `generate --preset ...` usage must migrate to:
+
 1. intent -> SVG (LLM or hand-authored),
 2. `svg-validate`,
 3. `convert --from-svg`.

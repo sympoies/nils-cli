@@ -1,11 +1,13 @@
 # git-scope
 
 ## Overview
+
 git-scope is a Git status/commit inspection CLI that renders a change list and directory tree, with
 optional file-content printing for worktree, index, or commits. Output is colorized by default; use
 --no-color or NO_COLOR to disable color.
 
 ## Usage
+
 ```text
 Usage:
   git-scope <command> [args]
@@ -24,6 +26,7 @@ Options:
 ```
 
 ## Commands
+
 - `tracked [prefix...]`: List tracked files. Use `-p, --print` to emit worktree contents.
 - `staged`: List staged changes. Use `-p, --print` to emit index contents.
 - `unstaged`: List unstaged changes. Use `-p, --print` to emit worktree contents.
@@ -35,15 +38,18 @@ Options:
 - `help`: Show help output.
 
 ## Exit codes
+
 - `0`: Success and help output.
 - `1`: Operational errors.
 
 ## Dependencies
+
 - `git` is required for all commands.
 - `tree` is optional; missing or unsupported versions emit a warning and skip tree output.
 - `file` is optional; when unavailable, binary detection falls back to content inspection.
 
 ## Environment
+
 - `NO_COLOR`: Disable ANSI colors.
 - `GIT_SCOPE_PROGRESS`: Set to `1`, `true`, `yes`, or `on` to enable a progress bar while printing
   file contents.

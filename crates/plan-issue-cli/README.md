@@ -1,13 +1,12 @@
 # plan-issue-cli
 
 ## Overview
-`plan-issue-cli` provides the Rust command contract for plan/issue delivery orchestration.
-It is the typed replacement lane for `plan-issue-delivery-loop.sh` behavior and is built around
-deterministic task-spec generation, issue-body rendering, and gate-enforced sprint transitions.
-`Task Decomposition` is the runtime-truth execution table; sprint task-spec/prompt artifacts are
-derived from those issue rows. `plan-tooling split-prs` provides grouping primitives only in the
-current model; `plan-issue-cli` materializes runtime `Owner/Branch/Worktree/Notes` metadata from
-plan content plus grouping results.
+
+`plan-issue-cli` provides the Rust command contract for plan/issue delivery orchestration. It is the typed replacement lane for
+`plan-issue-delivery-loop.sh` behavior and is built around deterministic task-spec generation, issue-body rendering, and gate-enforced
+sprint transitions. `Task Decomposition` is the runtime-truth execution table; sprint task-spec/prompt artifacts are derived from those
+issue rows. `plan-tooling split-prs` provides grouping primitives only in the current model; `plan-issue-cli` materializes runtime
+`Owner/Branch/Worktree/Notes` metadata from plan content plus grouping results.
 
 The crate ships two binaries with the same command surface:
 
@@ -19,10 +18,12 @@ Shell wrapper scripts are deprecated for this crate path. Use `plan-issue` / `pl
 ## Command surface
 
 ### Build and preparation
+
 - `build-task-spec`: build sprint-scoped task-spec TSV from a plan.
 - `build-plan-task-spec`: build plan-scoped task-spec TSV (all sprints).
 
 ### Plan-level flow
+
 - `start-plan`: open one plan issue and emit plan artifacts.
 - `status-plan`: summarize Task Decomposition status from issue body/body file.
 - `link-pr`: link a concrete PR to task rows and update row status (default `in-progress`).
@@ -31,15 +32,19 @@ Shell wrapper scripts are deprecated for this crate path. Use `plan-issue` / `pl
 - `cleanup-worktrees`: enforce cleanup of all issue-assigned task worktrees.
 
 ### Sprint-level flow
-- `start-sprint`: open sprint execution loop after previous sprint gate passes, validate runtime-truth rows against plan lanes, and render artifacts without rewriting issue rows.
+
+- `start-sprint`: open sprint execution loop after previous sprint gate passes, validate runtime-truth rows against plan lanes, and render
+  artifacts without rewriting issue rows.
 - `ready-sprint`: post sprint-ready signal for main-agent review.
 - `accept-sprint`: enforce merged-PR gate and mark sprint accepted.
 - `multi-sprint-guide`: print repeated command flow for a whole plan.
 
 ### Shell completion
+
 - `completion <bash|zsh>`: export completion script for each binary.
 
 ## Global flags
+
 - `--repo <owner/repo>`: pass-through repo target for GitHub operations.
 - `--dry-run`: print write actions without mutating GitHub state.
 - `-f, --force`: bypass markdown payload guard for body/comment writes.
@@ -47,20 +52,23 @@ Shell wrapper scripts are deprecated for this crate path. Use `plan-issue` / `pl
 - `--format text`: human-readable output.
 
 ## Local-mode constraints
+
 - `plan-issue-local` does not support live `--issue` paths that require GitHub reads/writes.
 - Use `plan-issue <command>` for live operations.
 - Use `--body-file` + `--dry-run` flows for local rehearsal where supported.
 - `start-plan` in local mode emits deterministic placeholder issue number `999`.
 
 ## Task Decomposition schema
+
 - Canonical table columns are fixed to:
   - `Task | Summary | Owner | Branch | Worktree | Execution Mode | PR | Status | Notes`
 - Writer and parser share the same schema contract.
-- Writer sanitizes cell values (including `|`) via `nils-common::markdown::canonicalize_table_cell`
-  so parser column count remains deterministic and drift checks stay stable.
+- Writer sanitizes cell values (including `|`) via `nils-common::markdown::canonicalize_table_cell` so parser column count remains
+  deterministic and drift checks stay stable.
 - Shared runtime lanes (`per-sprint`, `pr-shared`) must keep a consistent `PR` value across rows.
 
 ## Grouping and strategy rules
+
 - `--pr-grouping` is required for split-dependent commands:
   - `build-task-spec`, `build-plan-task-spec`, `start-plan`, `start-sprint`, `ready-sprint`, `accept-sprint`.
 - `--pr-grouping per-sprint`: one shared group per sprint (default style).
@@ -68,10 +76,12 @@ Shell wrapper scripts are deprecated for this crate path. Use `plan-issue` / `pl
 - `--pr-grouping group --strategy auto`: allows optional pins and auto assignment for remaining tasks.
 - If sprint metadata includes `PR grouping intent`, it must match `--pr-grouping` or the command fails fast.
 - Use `plan-tooling validate` before orchestration when sprint metadata is present; invalid/partial metadata is blocked there.
-- When a sprint resolves to a single shared PR group, `Execution Mode` is normalized to `per-sprint` (instead of `pr-shared`) to reflect single-lane execution semantics.
+- When a sprint resolves to a single shared PR group, `Execution Mode` is normalized to `per-sprint` (instead of `pr-shared`) to reflect
+  single-lane execution semantics.
 - Runtime lane metadata is materialized locally in `plan-issue-cli` (not read from split-prs runtime placeholders).
 
 ## Quick examples
+
 ```bash
 # 1) Build plan-scoped task spec locally
 plan-issue-local build-plan-task-spec \
@@ -95,16 +105,19 @@ plan-issue-local completion bash > completions/bash/plan-issue-local
 ```
 
 ## Exit codes
+
 - `0`: success
 - `1`: runtime/validation failure
 - `2`: usage failure
 
 ## Specifications
+
 - [CLI contract v2](docs/specs/plan-issue-cli-contract-v2.md)
 - [CLI contract v1](docs/specs/plan-issue-cli-contract-v1.md)
 - [State machine and gate invariants v1](docs/specs/plan-issue-state-machine-v1.md)
 - [Gate matrix v1](docs/specs/plan-issue-gate-matrix-v1.md)
 
 ## Fixtures
+
 - Shell parity fixtures live under `tests/fixtures/shell_parity/`.
 - Use `tests/fixtures/shell_parity/regenerate.sh` to refresh fixture snapshots when shell behavior intentionally changes.

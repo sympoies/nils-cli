@@ -1,8 +1,12 @@
 # nils-cli
 
-[![CI](https://github.com/graysurf/nils-cli/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/graysurf/nils-cli/actions/workflows/ci.yml) [![Coverage](https://raw.githubusercontent.com/graysurf/nils-cli/coverage-badge/badges/coverage.svg)](https://github.com/graysurf/nils-cli/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/graysurf/nils-cli?sort=semver)](https://github.com/graysurf/nils-cli/releases) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/graysurf/nils-cli/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/graysurf/nils-cli/actions/workflows/ci.yml)
+[![Coverage](https://raw.githubusercontent.com/graysurf/nils-cli/coverage-badge/badges/coverage.svg)](https://github.com/graysurf/nils-cli/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/graysurf/nils-cli?sort=semver)](https://github.com/graysurf/nils-cli/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A Rust workspace of focused CLI binaries for Git operations, API test orchestration, and workflow automation, unified by shared cross-crate helpers.
+A Rust workspace of focused CLI binaries for Git operations, API test orchestration, and workflow automation, unified by shared cross-crate
+helpers.
 
 ## Workspace layout
 
@@ -10,7 +14,8 @@ Each crate is either a standalone CLI binary or a shared library used across the
 
 ### Shared foundations
 
-- [crates/nils-common](crates/nils-common): Shared cross-CLI utilities (including markdown payload validation and markdown-table canonicalization helpers).
+- [crates/nils-common](crates/nils-common): Shared cross-CLI utilities (including markdown payload validation and markdown-table
+  canonicalization helpers).
 - [crates/nils-term](crates/nils-term): Terminal UX helpers (TTY detection + progress rendering on stderr).
 - [crates/nils-test-support](crates/nils-test-support): Test-only helpers for deterministic workspace integration tests.
 - [crates/cli-template](crates/cli-template): Minimal example CLI for validating packaging and new-crate patterns.
@@ -22,7 +27,8 @@ Each crate is either a standalone CLI binary or a shared library used across the
 - [crates/api-gql](crates/api-gql): GraphQL operation runner for `.graphql` files (variables, history, reports, schema).
 - [crates/api-grpc](crates/api-grpc): gRPC request runner from JSON specs, with history + Markdown reports.
 - [crates/api-websocket](crates/api-websocket): Deterministic WebSocket request runner with history + Markdown reports.
-- [crates/api-test](crates/api-test): Suite runner that orchestrates REST/GraphQL/gRPC/WebSocket cases and outputs JSON (and optional JUnit).
+- [crates/api-test](crates/api-test): Suite runner that orchestrates REST/GraphQL/gRPC/WebSocket cases and outputs JSON (and optional
+  JUnit).
 
 ### Git tooling
 
@@ -33,20 +39,29 @@ Each crate is either a standalone CLI binary or a shared library used across the
 
 ### Automation and utility CLIs
 
-- [crates/macos-agent](crates/macos-agent): macOS desktop automation primitives for app/window discovery, input actions, screenshot, and wait helpers.
+- [crates/macos-agent](crates/macos-agent): macOS desktop automation primitives for app/window discovery, input actions, screenshot, and
+  wait helpers.
 - [crates/fzf-cli](crates/fzf-cli): Interactive `fzf` toolbox for files, Git, processes, ports, and shell history.
-- [crates/memo-cli](crates/memo-cli): Capture-first memo workflow CLI with agent enrichment loop (`add`, `list`, `search`, `report`, `fetch`, `apply`).
+- [crates/memo-cli](crates/memo-cli): Capture-first memo workflow CLI with agent enrichment loop (`add`, `list`, `search`, `report`,
+  `fetch`, `apply`).
 - [crates/image-processing](crates/image-processing): Batch image transformation CLI (resize/crop/optimize) with JSON/report outputs.
-- [crates/screen-record](crates/screen-record): macOS ScreenCaptureKit + Linux (X11) recorder for a single window or display with optional audio.
+- [crates/screen-record](crates/screen-record): macOS ScreenCaptureKit + Linux (X11) recorder for a single window or display with optional
+  audio.
 
 ### Agent and workflow tooling
 
-- [crates/agent-docs](crates/agent-docs): Deterministic policy-document resolver for Codex/agent workflows (`resolve`, `contexts`, `add`, `baseline`).
-- [crates/codex-cli](crates/codex-cli): Provider-specific CLI for OpenAI/Codex workflows (auth, diagnostics, execution wrappers, Starship), with adapters over `nils-common::provider_runtime`.
-- [crates/gemini-cli](crates/gemini-cli): Provider-specific CLI lane for Gemini workflows, with adapters over `nils-common::provider_runtime`.
+- [crates/agent-docs](crates/agent-docs): Deterministic policy-document resolver for Codex/agent workflows (`resolve`, `contexts`, `add`,
+  `baseline`).
+- [crates/codex-cli](crates/codex-cli): Provider-specific CLI for OpenAI/Codex workflows (auth, diagnostics, execution wrappers, Starship),
+  with adapters over `nils-common::provider_runtime`.
+- [crates/gemini-cli](crates/gemini-cli): Provider-specific CLI lane for Gemini workflows, with adapters over
+  `nils-common::provider_runtime`.
 - [crates/semantic-commit](crates/semantic-commit): Helper CLI for generating staged context and creating semantic commits.
-- [crates/plan-tooling](crates/plan-tooling): Plan Format v1 tooling CLI (`to-json`, `validate`, `batches`, `split-prs`, `scaffold`, `completion`), with `split-prs` emitting deterministic/auto grouping primitives and strict sprint-metadata validation gates.
-- [crates/plan-issue-cli](crates/plan-issue-cli): Plan issue orchestration binaries (`plan-issue`, `plan-issue-local`) where `Task Decomposition` is runtime truth, sprint artifacts are derived outputs, and runtime lane metadata is materialized from plan content + split-prs grouping results.
+- [crates/plan-tooling](crates/plan-tooling): Plan Format v1 tooling CLI (`to-json`, `validate`, `batches`, `split-prs`, `scaffold`,
+  `completion`), with `split-prs` emitting deterministic/auto grouping primitives and strict sprint-metadata validation gates.
+- [crates/plan-issue-cli](crates/plan-issue-cli): Plan issue orchestration binaries (`plan-issue`, `plan-issue-local`) where
+  `Task Decomposition` is runtime truth, sprint artifacts are derived outputs, and runtime lane metadata is materialized from plan content +
+  split-prs grouping results.
 
 ## Shared helper policy (`nils-common`)
 
@@ -63,8 +78,8 @@ Detailed scope, API examples, migration conventions, and non-goals are documente
 ## Shell wrappers and completions
 
 Canonical completion architecture and contributor validation live in
-[docs/runbooks/cli-completion-development-standard.md](docs/runbooks/cli-completion-development-standard.md).
-Use [DEVELOPMENT.md](DEVELOPMENT.md) for required delivery checks.
+[docs/runbooks/cli-completion-development-standard.md](docs/runbooks/cli-completion-development-standard.md). Use
+[DEVELOPMENT.md](DEVELOPMENT.md) for required delivery checks.
 
 Assets:
 
@@ -108,12 +123,10 @@ To trigger a release build, push a tag like `v0.5.7`:
 - `git tag -a v0.5.7 -m "v0.5.7"`
 - `git push origin v0.5.7`
 
-Then download the matching `nils-cli-<tag>-<target>.tar.gz` asset, extract it, and add
-`<extract_dir>/bin` to your `PATH`.
+Then download the matching `nils-cli-<tag>-<target>.tar.gz` asset, extract it, and add `<extract_dir>/bin` to your `PATH`.
 
-Release packaging contract: shipped artifacts must include `completions/zsh/`, `completions/bash/`,
-`completions/zsh/aliases.zsh`, and `completions/bash/aliases.bash`.
-After extracting release assets, follow the same setup flow from
+Release packaging contract: shipped artifacts must include `completions/zsh/`, `completions/bash/`, `completions/zsh/aliases.zsh`, and
+`completions/bash/aliases.bash`. After extracting release assets, follow the same setup flow from
 ["Shell wrappers and completions"](#shell-wrappers-and-completions).
 
 ## crates.io publishing (shared crates)
@@ -128,9 +141,9 @@ Use `scripts/publish-crates.sh` for crate publishing flow.
 - Override target crates:
   - `scripts/publish-crates.sh --crates "nils-term nils-common" --dry-run`
 
-In `--dry-run` mode, the script runs `cargo publish --dry-run` for every selected crate.
-In `--publish` mode, the script runs `dry-run -> publish` sequentially per crate (in your specified order).
-By default, `--publish` skips crates that are already published at the same version on crates.io.
+In `--dry-run` mode, the script runs `cargo publish --dry-run` for every selected crate. In `--publish` mode, the script runs
+`dry-run -> publish` sequentially per crate (in your specified order). By default, `--publish` skips crates that are already published at
+the same version on crates.io.
 
 To query crates.io publish status (single/multi/all crates), use:
 
@@ -138,8 +151,8 @@ To query crates.io publish status (single/multi/all crates), use:
 - `scripts/crates-io-status.sh --crates "nils-common nils-codex-cli" --version v0.3.1 --format json`
 - `scripts/crates-io-status.sh --crate nils-codex-cli --format both --json-out "$AGENT_HOME/out/codex-status.json"`
 
-`--version` checks that exact version; without `--version` the script checks each crate's current workspace version.
-Use `--fail-on-missing` for CI gates.
+`--version` checks that exact version; without `--version` the script checks each crate's current workspace version. Use `--fail-on-missing`
+for CI gates.
 
 GitHub Actions manual flow is also available at `.github/workflows/publish-crates.yml`:
 

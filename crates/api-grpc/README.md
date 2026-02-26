@@ -1,10 +1,12 @@
 # api-grpc
 
 ## Overview
+
 api-grpc executes JSON-defined GRPC request files, prints response bodies to stdout, keeps
 optional history, and can generate Markdown reports.
 
 ## Usage
+
 ```text
 Usage:
   api-grpc <command> [args]
@@ -24,6 +26,7 @@ Help:
 ```
 
 ## Commands
+
 - `call` (default): Execute a request file and print the response body.
   Options: `--env <name>`, `--url <url>`, `--token <name>`, `--config-dir <dir>`, `--no-history`.
 - `history`: Print the last entry or tail N entries.
@@ -39,6 +42,7 @@ Help:
 ## Quickstart
 
 ### 1) Setup files
+
 ```text
 setup/grpc/
   endpoints.env
@@ -48,16 +52,19 @@ setup/grpc/
 ```
 
 `setup/grpc/endpoints.env`
+
 ```bash
 GRPC_URL_LOCAL=127.0.0.1:50051
 ```
 
 `setup/grpc/tokens.env`
+
 ```bash
 GRPC_TOKEN_DEFAULT=<jwt-or-access-token>
 ```
 
 `setup/grpc/requests/health.grpc.json`
+
 ```json
 {
   "method": "health.HealthService/Check",
@@ -73,18 +80,21 @@ GRPC_TOKEN_DEFAULT=<jwt-or-access-token>
 ```
 
 ### 2) Call + history
+
 ```bash
 api-grpc call --env local --token default setup/grpc/requests/health.grpc.json
 api-grpc history --tail 5
 ```
 
 ### 3) Report
+
 ```bash
 api-grpc report --case grpc-health --request setup/grpc/requests/health.grpc.json --run
 api-grpc history --command-only | api-grpc report-from-cmd --stdin --dry-run
 ```
 
 ## Runtime dependency
+
 - Unary execution uses `grpcurl` backend (`GRPCURL_BIN` can override executable path).
 - Install:
   - macOS: `brew install grpcurl`

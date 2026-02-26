@@ -1,8 +1,10 @@
 # gemini-cli Diag/Auth JSON Contract v1
 
 ## Purpose
+
 This document extends `docs/specs/cli-service-json-contract-guideline-v1.md` for service-consumed
 JSON output from:
+
 - `gemini-cli diag rate-limits` (single/all/async)
 - `gemini-cli auth login|use|save|remove|refresh|auto-refresh|current|sync`
 
@@ -12,7 +14,7 @@ Human-readable output remains the default UX. JSON mode must be explicit (`--for
 ## Schema Versions and Command Paths
 
 | Surface | Canonical `command` | `schema_version` | Success payload key |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | diag rate-limits (single) | `diag rate-limits` | `gemini-cli.diag.rate-limits.v1` | `result` |
 | diag rate-limits (all/async) | `diag rate-limits` | `gemini-cli.diag.rate-limits.v1` | `results` |
 | auth login | `auth login` | `gemini-cli.auth.v1` | `result` |
@@ -29,17 +31,20 @@ Auth surfaces use one shared schema contract: `gemini-cli.auth.v1`.
 ## Required Envelope Rules
 
 Top-level required keys (stable):
+
 - `schema_version`: string
 - `command`: canonical command path string (table above)
 - `ok`: boolean
 
 Success envelope:
+
 - `ok=true`
 - exactly one of:
   - `result` for single-target/single-entity responses
   - `results` for collection responses
 
 Failure envelope:
+
 - `ok=false`
 - `error` object with:
   - `code` (stable machine code)
@@ -48,6 +53,7 @@ Failure envelope:
 - `result`/`results` must not be present when `ok=false`.
 
 Partial failure rule:
+
 - For collection workflows (`diag --all`, `diag --async`, and auth workflows that include per-target
   outcomes), top-level `ok=true` is allowed with per-item failures in `results`/`result.targets`.
 - Command-level failure that prevents a usable payload must return `ok=false` with top-level `error`.
@@ -55,6 +61,7 @@ Partial failure rule:
 ## Secret Redaction Policy
 
 Sensitive data must never be emitted in JSON success or failure payloads:
+
 - disallowed fields and raw values: `access_token`, `refresh_token`, `api_key`, bearer headers,
   private keys, full secret file contents, copied environment variable values
 - `error.details` must follow the same rule; include identifiers (such as target filename) but never
@@ -68,6 +75,7 @@ emitting secret values.
 ## Stable vs Informational Fields
 
 Stable (safe for strict parsing):
+
 - Top-level: `schema_version`, `command`, `ok`, `result|results|error`
 - Error envelope: `error.code`, `error.message`, optional `error.details`
 - Diag:
@@ -92,11 +100,13 @@ Stable (safe for strict parsing):
   - `auth sync`: `auth_file`, `synced`, `skipped`, `failed`, `updated_files`
 
 Informational (do not hard-depend for schema validation):
+
 - `raw_usage` (upstream payload passthrough; shape may evolve)
 - optional additive metadata (`source`, timestamps, debugging hints)
 - human-display-oriented strings inside `error.details`
 
 ## Compatibility Rules (v1)
+
 - Additive fields are allowed within `gemini-cli.diag.rate-limits.v1` and `gemini-cli.auth.v1`.
 - Renaming/removing/changing semantics of stable fields is breaking and requires a new schema
   version.
@@ -106,6 +116,7 @@ Informational (do not hard-depend for schema validation):
 ## Examples
 
 ### diag rate-limits (single, success: `result`)
+
 ```json
 {
   "schema_version": "gemini-cli.diag.rate-limits.v1",
@@ -130,6 +141,7 @@ Informational (do not hard-depend for schema validation):
 ```
 
 ### diag rate-limits (all/async, partial failure: `results`)
+
 ```json
 {
   "schema_version": "gemini-cli.diag.rate-limits.v1",
@@ -170,6 +182,7 @@ Informational (do not hard-depend for schema validation):
 ```
 
 ### diag rate-limits (command-level failure)
+
 ```json
 {
   "schema_version": "gemini-cli.diag.rate-limits.v1",
@@ -186,6 +199,7 @@ Informational (do not hard-depend for schema validation):
 ```
 
 ### auth use (success)
+
 ```json
 {
   "schema_version": "gemini-cli.auth.v1",
@@ -201,6 +215,7 @@ Informational (do not hard-depend for schema validation):
 ```
 
 ### auth login (success)
+
 ```json
 {
   "schema_version": "gemini-cli.auth.v1",
@@ -217,12 +232,13 @@ Informational (do not hard-depend for schema validation):
 ### auth login method mapping (stable)
 
 | CLI invocation | `result.method` | `result.provider` |
-|---|---|---|
+| --- | --- | --- |
 | `auth login` | `chatgpt-browser` | `chatgpt` |
 | `auth login --device-code` | `chatgpt-device-code` | `chatgpt` |
 | `auth login --api-key` | `api-key` | `openai-api` |
 
 ### auth save (success)
+
 ```json
 {
   "schema_version": "gemini-cli.auth.v1",
@@ -240,6 +256,7 @@ Informational (do not hard-depend for schema validation):
 `result.overwritten` is `true` when `auth save` replaces an existing target file.
 
 ### auth save (overwrite confirmation required, failure)
+
 ```json
 {
   "schema_version": "gemini-cli.auth.v1",
@@ -257,6 +274,7 @@ Informational (do not hard-depend for schema validation):
 ```
 
 ### auth remove (success)
+
 ```json
 {
   "schema_version": "gemini-cli.auth.v1",
@@ -270,6 +288,7 @@ Informational (do not hard-depend for schema validation):
 ```
 
 ### auth remove (confirmation required, failure)
+
 ```json
 {
   "schema_version": "gemini-cli.auth.v1",
@@ -287,6 +306,7 @@ Informational (do not hard-depend for schema validation):
 ```
 
 ### auth refresh (success)
+
 ```json
 {
   "schema_version": "gemini-cli.auth.v1",
@@ -302,6 +322,7 @@ Informational (do not hard-depend for schema validation):
 ```
 
 ### auth auto-refresh (success with per-target outcomes)
+
 ```json
 {
   "schema_version": "gemini-cli.auth.v1",

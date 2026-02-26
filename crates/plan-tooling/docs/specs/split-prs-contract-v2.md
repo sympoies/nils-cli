@@ -1,6 +1,7 @@
 # split-prs Contract v2
 
 ## Purpose
+
 `plan-tooling split-prs` emits deterministic grouping primitives for downstream orchestrators.
 
 v2 intentionally removes task-level runtime execution metadata from `split-prs` output.
@@ -29,11 +30,13 @@ plan-tooling split-prs \
 Value options accept both `--key value` and `--key=value`.
 
 Compatibility note:
+
 - Runtime-prefix compatibility options are still accepted by the CLI parser for older
   automation, but v2 `split-prs` output is grouping-only. Runtime execution metadata is generated in
   `plan-issue-cli`.
 
 ## Determinism and Grouping Rules
+
 - Output ordering remains deterministic: sprint number, then task appearance order.
 - `pr_group` naming remains normalized and deterministic.
 - `strategy=deterministic` + `pr-grouping=group` requires explicit `--pr-group` mapping for every task.
@@ -50,6 +53,7 @@ Header:
 ```
 
 Columns:
+
 - `task_id`: generated stable id (`SxTy`)
 - `summary`: normalized task summary
 - `pr_group`: resolved deterministic group key
@@ -57,6 +61,7 @@ Columns:
 ## JSON Output (format=json)
 
 Top-level object:
+
 - `file`
 - `scope`
 - `sprint`
@@ -66,6 +71,7 @@ Top-level object:
 - optional `explain` (only with `--explain`)
 
 `records[]` fields:
+
 - `task_id`
 - `summary`
 - `pr_group`
@@ -79,6 +85,7 @@ Removed `split-prs` runtime metadata fields are now produced inside `plan-issue-
 metadata, grouping results, and prefix inputs.
 
 ## Exit Codes
+
 - `0`: success
 - `1`: runtime / validation failure
 - `2`: usage error

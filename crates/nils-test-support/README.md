@@ -1,10 +1,10 @@
 # nils-test-support
 
 ## Overview
+
 `nils-test-support` is a test-only helper crate shared across this workspace.
 
-It provides small utilities to keep tests deterministic when they need to manipulate global state
-or stub external commands.
+It provides small utilities to keep tests deterministic when they need to manipulate global state or stub external commands.
 
 ## Shared helper policy
 
@@ -21,13 +21,15 @@ or stub external commands.
 - Command-specific golden text snapshots and local approval-test policy.
 
 ## Utilities
+
 - Global guards
   - `GlobalStateLock`: serialize tests that mutate process-global state (env, cwd, PATH, etc.)
   - `EnvGuard`, `CwdGuard`: RAII guards for temporarily setting env vars / current directory
 - FS helpers
   - `fs`: write text/bytes/json/executables while ensuring parent dirs exist
 - Command runners
-  - `cmd`: run binaries with captured output (`CmdOutput`) and flexible options (`CmdOptions`), including resolved workspace-binary helpers (`run_resolved*`)
+  - `cmd`: run binaries with captured output (`CmdOutput`) and flexible options (`CmdOptions`), including resolved workspace-binary helpers
+    (`run_resolved*`)
 - Workspace binaries
   - `bin`: `resolve` finds `CARGO_BIN_EXE_*` or falls back to `target/<profile>/<name>`
 - Git helpers
@@ -41,6 +43,7 @@ or stub external commands.
   - `http`: in-process loopback servers (`LoopbackServer`, `TestServer`) that record requests
 
 ## Example
+
 ```rust
 use nils_test_support::{prepend_path, EnvGuard, GlobalStateLock, StubBinDir};
 

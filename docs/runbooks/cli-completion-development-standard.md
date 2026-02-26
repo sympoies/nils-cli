@@ -1,9 +1,12 @@
 # CLI Completion Development Standard
 
 ## Purpose
-This runbook defines the workspace standard for CLI completion architecture, implementation boundaries, migration safety, and validation gates.
+
+This runbook defines the workspace standard for CLI completion architecture, implementation boundaries, migration safety, and validation
+gates.
 
 ## Canonical Sources
+
 - Global completion obligations and alias families:
   - `AGENTS.md`
 - Required checks and coverage policy:
@@ -19,6 +22,7 @@ This runbook defines the workspace standard for CLI completion architecture, imp
   - `docs/runbooks/new-cli-crate-development-standard.md`
 
 ## Completion Quality Contract
+
 For every completion-required CLI, baseline completion quality must include:
 
 1. subcommands and nested subcommands
@@ -27,10 +31,12 @@ For every completion-required CLI, baseline completion quality must include:
 4. context-aware filtering by cursor position (avoid global "show everything" candidate dumps)
 
 This matches modern Rust CLI expectations (e.g., ripgrep/bat/fd style behavior):
+
 - zsh usually shows richer descriptions
 - bash usually shows more compact candidates
 
 ## Canonical Completion Architecture (Clap-First)
+
 Every completion-required CLI must follow this layered architecture:
 
 1. clap command model as source of truth (`Parser`/`Subcommand`/`Args`)
@@ -38,6 +44,7 @@ Every completion-required CLI must follow this layered architecture:
 3. thin repo adapters only for alias wiring and optional dynamic extensions
 
 ### Clap command model contract
+
 The CLI crate must keep completion-relevant metadata in clap definitions:
 
 - command tree and flags from clap types
@@ -47,6 +54,7 @@ The CLI crate must keep completion-relevant metadata in clap definitions:
 Do not keep command/flag truth in shell scripts.
 
 ### Generation and export contract
+
 Each completion-required CLI must expose a user-facing export path for completions, for example:
 
 - `<cli> completion <shell>`
@@ -61,6 +69,7 @@ Repository distribution contract:
 - generated outputs must be deterministic and committed alongside CLI surface changes
 
 ### Thin adapter and dynamic extension contract
+
 Shell adapters may only:
 
 - register completion for canonical command names and required aliases
@@ -73,7 +82,9 @@ Dynamic/runtime value completion is optional and must extend (not replace) clap-
 - alternative dynamic path (when needed): crate-local hidden completion command (e.g., `__complete`)
 
 ### Shared adapter helper contract
-Workspace adapters may share common helper scripts for zsh/bash to reduce duplicated loader and registration logic while preserving thin adapter behavior.
+
+Workspace adapters may share common helper scripts for zsh/bash to reduce duplicated loader and registration logic while preserving thin
+adapter behavior.
 
 Canonical helper files:
 
@@ -82,23 +93,32 @@ Canonical helper files:
 
 Helper contract:
 
-- generated loading helper: fetches `<cli> completion <shell>`, renames generated function symbols per adapter, strips known self-registration blocks when needed, caches success/failure state, and validates that the generated function is callable
-- registration helper: registers one completion entrypoint for canonical command and alias names (`compdef`/`complete`) without mutating alias definitions
+- generated loading helper: fetches `<cli> completion <shell>`, renames generated function symbols per adapter, strips known
+  self-registration blocks when needed, caches success/failure state, and validates that the generated function is callable
+- registration helper: registers one completion entrypoint for canonical command and alias names (`compdef`/`complete`) without mutating
+  alias definitions
 - fail-closed helper: enforces empty/no-candidates behavior on generated-load failure and does not route to alternate completion stacks
 
 Adapter integration requirements:
 
 - adapters stay responsible for CLI-specific alias rewrite semantics (for example `cxgp -> agent prompt`)
-- adapters may source shared helpers from their own completion directory; on helper lookup failure, adapters must still fail closed and must not add alternate fallback code paths
+- adapters may source shared helpers from their own completion directory; on helper lookup failure, adapters must still fail closed and must
+  not add alternate fallback code paths
 - helper usage must keep completion behavior contract-compatible with existing adapter expectations
 
 ### Shell compatibility caveats
-- zsh helper loading should prefer the adapter source path (`functions_source[...]`) and then `fpath` lookup to support both direct `source` and autoloaded completion contexts
-- bash helper loading should resolve helper paths from `${BASH_SOURCE[0]}` so colocated helper files are found when completion scripts are sourced from arbitrary working directories
-- when generated scripts include shell/version-guard wrappers that conflict with renamed generated function names, helpers may strip those wrappers before `eval`, but only in deterministic, documented ways
-- `zsh -n` and `bash -n` checks verify syntax only; runtime behavior still requires completion tests (`tests/zsh/completion.test.zsh`) to protect alias wiring and single-path invariants
+
+- zsh helper loading should prefer the adapter source path (`functions_source[...]`) and then `fpath` lookup to support both direct `source`
+  and autoloaded completion contexts
+- bash helper loading should resolve helper paths from `${BASH_SOURCE[0]}` so colocated helper files are found when completion scripts are
+  sourced from arbitrary working directories
+- when generated scripts include shell/version-guard wrappers that conflict with renamed generated function names, helpers may strip those
+  wrappers before `eval`, but only in deterministic, documented ways
+- `zsh -n` and `bash -n` checks verify syntax only; runtime behavior still requires completion tests (`tests/zsh/completion.test.zsh`) to
+  protect alias wiring and single-path invariants
 
 ## Contract Boundaries: Rust vs Shell
+
 Rust responsibilities:
 
 - command/subcommand/flag/value completion truth
@@ -115,6 +135,7 @@ Shell responsibilities:
 Any logic that can drift from clap parsing belongs in Rust, not shell adapters.
 
 ## Alias Sync Policy (zsh/bash)
+
 When a CLI ships aliases, alias definitions are a dual-shell contract:
 
 - Zsh aliases: `completions/zsh/aliases.zsh`
@@ -131,6 +152,7 @@ Rules:
 - ensure completion registration covers aliases that require command completion behavior
 
 ## Single Completion Path Policy
+
 Completion implementations must use a single clap-generated completion stack.
 
 Rules:
@@ -141,6 +163,7 @@ Rules:
 - generated-load failure must fail closed (empty/no candidates) rather than routing to an alternate path
 
 ### Required completion enforcement metadata
+
 Every completion-required CLI migration must declare and validate this metadata contract in both:
 
 - the CLI row in `docs/reports/completion-coverage-matrix.md`
@@ -159,6 +182,7 @@ Validation expectation:
 - validation must include completion-mode toggle and alternate-dispatch grep checks for touched completion paths
 
 ## Testing Requirements and Required Checks Linkage
+
 Completion work must satisfy completion-specific checks and repository gates.
 
 Mandatory completion-focused validation when completion code changes:
@@ -180,25 +204,24 @@ Mandatory repository checks:
 Completion changes are not deliverable until required checks pass.
 
 ## Rollout Checklist: Migrating an Existing CLI
-Use this checklist for every existing CLI migration. The migration is only complete when the
-per-CLI contract is filled, validation evidence is captured, and acceptance criteria are checked.
 
-1. confirm the CLI is completion-required (or explicitly excluded) in
-   `docs/reports/completion-coverage-matrix.md`, and for `required` CLIs ensure the matrix row has
-   explicit completion enforcement metadata
+Use this checklist for every existing CLI migration. The migration is only complete when the per-CLI contract is filled, validation evidence
+is captured, and acceptance criteria are checked.
+
+1. confirm the CLI is completion-required (or explicitly excluded) in `docs/reports/completion-coverage-matrix.md`, and for `required` CLIs
+   ensure the matrix row has explicit completion enforcement metadata
 2. create the per-CLI migration contract from `docs/specs/completion-contract-template.md`:
    - `mkdir -p crates/<crate>/docs/reports`
    - `cp docs/specs/completion-contract-template.md crates/<crate>/docs/reports/<cli>-completion-migration-contract.md`
-3. fill the contract `command graph`, `value providers`, `alias map`, `completion enforcement metadata`,
-   and `single-path invariants` sections before changing code so scope and invariants are explicit
+3. fill the contract `command graph`, `value providers`, `alias map`, `completion enforcement metadata`, and `single-path invariants`
+   sections before changing code so scope and invariants are explicit
 4. ensure clap model fully expresses subcommands/flags/value candidates
 5. add completion export path (e.g., `completion <shell>`) powered by `clap_complete`
 6. generate/update `completions/zsh/_<cli>` and `completions/bash/<cli>`
 7. keep shell adapters thin (alias wiring and optional dynamic hooks only)
 8. if dynamic values are needed, add `CompleteEnv` (or crate-local `__complete` only where justified)
 9. enforce single-path completion policy and metadata values (no runtime completion-mode gates or alternate completion functions)
-10. sync aliases in both alias files when alias-bearing CLIs are touched and update the contract
-    `alias map` with any rewrite semantics
-11. run contract validation commands and required repository checks; record output in the contract,
-    including completion metadata verification evidence
+10. sync aliases in both alias files when alias-bearing CLIs are touched and update the contract `alias map` with any rewrite semantics
+11. run contract validation commands and required repository checks; record output in the contract, including completion metadata
+    verification evidence
 12. mark contract acceptance criteria complete and link the contract path in PR notes

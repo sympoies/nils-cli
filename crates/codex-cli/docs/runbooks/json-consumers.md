@@ -1,21 +1,27 @@
 # codex-cli JSON Consumers Runbook
 
 ## Scope
+
 This runbook covers service consumption of `codex-cli` JSON output for:
+
 - `diag rate-limits` (single/all/async)
 - `auth login|use|save|remove|refresh|auto-refresh|current|sync`
 
 Shared baseline guidance:
+
 - `docs/specs/cli-service-json-contract-guideline-v1.md`
 
 Codex-specific contract source:
+
 - `crates/codex-cli/docs/specs/codex-cli-diag-auth-json-contract-v1.md`
 
 ## Provider-specific schema routing
+
 - `diag rate-limits` => `schema_version=codex-cli.diag.rate-limits.v1`
 - `auth *` => `schema_version=codex-cli.auth.v1`
 
 ## Codex-specific integration notes
+
 - `auth login` stable method values:
   - `chatgpt-browser`
   - `chatgpt-device-code`
@@ -30,6 +36,7 @@ Codex-specific contract source:
   - `secret-dir-read-failed`
 
 ## Consumer checklist
+
 1. Follow the shared parsing/retry baseline from `docs/specs/cli-service-json-contract-guideline-v1.md`.
 2. Route logic by both `command` and codex schema ids above.
 3. Treat informational metadata (for example `raw_usage`) as optional.

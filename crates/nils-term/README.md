@@ -1,6 +1,7 @@
 # nils-term
 
 ## Overview
+
 Small terminal utilities shared across the workspace.
 
 ## Shared helper policy
@@ -18,12 +19,15 @@ Small terminal utilities shared across the workspace.
 - Exit-code mapping and command-level error/warning text.
 
 ## Progress
+
 `nils-term` provides a minimal, RAII-friendly progress abstraction that is safe for
 machine-readable stdout output:
+
 - progress is drawn to **stderr** by default
 - with `ProgressEnabled::Auto` (default), progress is enabled only when **stderr is a TTY**
 
 ### Determinate progress
+
 ```rust
 use nils_term::progress::{Progress, ProgressOptions};
 
@@ -39,6 +43,7 @@ progress.finish();
 ```
 
 ### Spinner progress
+
 ```rust
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 
@@ -54,6 +59,7 @@ spinner.finish_and_clear();
 ```
 
 ### Library guidance
+
 Prefer accepting a `Progress` (or `ProgressOptions`) from the caller instead of reading env vars
 inside library code. This keeps libraries deterministic and lets binaries decide whether to show
 progress (e.g. interactive vs CI).

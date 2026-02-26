@@ -1,12 +1,14 @@
 # memo-cli
 
 ## Overview
+
 `memo-cli` is a capture-first memo CLI with an agent enrichment loop.
 Default output is human-readable text. JSON is explicit and intended for service/agent callers.
 Storage bootstrap is consolidated into one init schema (`schema_v1.sql`); upgrade
 compatibility for pre-consolidation databases is not guaranteed after this consolidation.
 
 ## Usage
+
 ```text
 Usage:
   memo-cli [--db <path>] [--format <text|json> | --json] <command> [options]
@@ -26,6 +28,7 @@ Commands:
 ```
 
 ## Commands
+
 - `add`: append one raw capture record.
 - `update`: replace one raw memo text and clear derivations/workflow extension data for that item.
 - `delete --hard`: permanently delete one item and all dependent rows (derivations/search/workflow anchors).
@@ -42,6 +45,7 @@ Commands:
 - `apply`: machine-facing write-back for normalized enrichment results.
 
 ## JSON
+
 - Text mode is the default for all commands.
 - `--json` is shorthand for `--format json`.
 - `fetch` and `apply` are machine-facing commands and support both `--json` and `--format json`.
@@ -54,7 +58,9 @@ Commands:
 - Exit code policy: `0` success, `64` usage error, `65` input data error, `1` runtime failure.
 
 ## Examples
+
 ### Capture quickly
+
 ```bash
 memo-cli add "buy 1tb ssd for mom"
 memo-cli add "book pediatric dentist appointment"
@@ -64,6 +70,7 @@ memo-cli delete itm_00000002 --hard
 ```
 
 ### Agent enrichment loop
+
 ```bash
 memo-cli fetch --json --limit 50 > inbox-batch.json
 memo-cli apply --format json --input enrichment-batch.json
@@ -101,6 +108,7 @@ memo-cli fetch --json --limit 20 --cursor itm_00000042
 ```
 
 ### Human and machine reports
+
 ```bash
 memo-cli report week
 memo-cli report month --json
@@ -109,9 +117,11 @@ memo-cli report month --from 2026-02-01T00:00:00Z --to 2026-02-29T23:59:59Z --js
 ```
 
 ## Runbooks
+
 - Agent workflow: `crates/memo-cli/docs/runbooks/memo-cli-agent-workflow.md`
 
 ## Specs
+
 - Command contract: `crates/memo-cli/docs/specs/memo-cli-command-contract-v1.md`
 - JSON contract: `crates/memo-cli/docs/specs/memo-cli-json-contract-v1.md`
 - Storage schema: `crates/memo-cli/docs/specs/memo-cli-storage-schema-v1.md`

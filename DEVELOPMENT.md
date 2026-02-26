@@ -46,8 +46,8 @@
 - Canonical policy: `docs/specs/crate-docs-placement-policy.md`.
 - Stale-test lifecycle and reviewer checklist: `docs/runbooks/test-cleanup-governance.md`.
 - When Markdown files change, run: `bash scripts/ci/docs-placement-audit.sh --strict`.
-- For stale references, transient-doc cleanup, and cross-link hygiene, run:
-  `bash scripts/ci/docs-hygiene-audit.sh --strict`.
+- Run generic Markdown lint checks: `bash scripts/ci/markdownlint-audit.sh --strict`.
+- For stale references, transient-doc cleanup, and cross-link hygiene, run: `bash scripts/ci/docs-hygiene-audit.sh --strict`.
 
 ## Completion governance
 
@@ -65,15 +65,19 @@
 - `bash scripts/ci/completion-flag-parity-audit.sh --strict`
 - `bash scripts/ci/docs-placement-audit.sh --strict`
 - `bash scripts/ci/docs-hygiene-audit.sh --strict`
+- `bash scripts/ci/markdownlint-audit.sh --strict`
 - `bash scripts/ci/test-stale-audit.sh --strict`
 - Coverage must be **>= 85.00%** total line coverage:
   - `mkdir -p target/coverage`
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 85`
   - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
-- Or run the single entrypoint for required checks: `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh` (includes docs/completion/stale-test audits plus fmt/clippy/tests; it pre-creates `target/coverage`, but still run coverage commands above)
-- Docs-only fast path: if every changed file is documentation-only (`*.md`, `docs/**`, `crates/*/docs/**`, plus root docs like `README.md`, `DEVELOPMENT.md`), run:
+- Or run the single entrypoint for required checks:
+  `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh` (includes docs/completion/stale-test audits
+  plus fmt/clippy/tests; it pre-creates `target/coverage`, but still run coverage commands above)
+- Docs-only fast path: if every changed file is documentation-only (`*.md`, `docs/**`, `crates/*/docs/**`, plus root docs like `README.md`,
+  `DEVELOPMENT.md`), run:
   - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh --docs-only`
-  - In this mode, docs placement and docs hygiene checks still run; full workspace lint/test/coverage checks may be skipped.
+  - In this mode, docs placement/docs hygiene/markdown lint checks still run; full workspace lint/test/coverage checks may be skipped.
 
 ### CI-style test reporting (optional)
 
