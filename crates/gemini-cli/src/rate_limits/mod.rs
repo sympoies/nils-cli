@@ -8,7 +8,7 @@ use crate::fs as gemini_fs;
 use crate::paths;
 use crate::rate_limits::client::{UsageRequest, fetch_usage};
 
-pub mod ansi;
+pub use nils_common::rate_limits_ansi as ansi;
 pub mod client;
 pub mod render;
 
