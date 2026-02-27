@@ -63,6 +63,7 @@ pub mod git;
 pub mod markdown;
 pub mod process;
 pub mod provider_runtime;
+pub mod rate_limits_ansi;
 pub mod shell;
 
 pub fn greeting(name: &str) -> String {

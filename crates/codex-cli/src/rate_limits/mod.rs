@@ -13,7 +13,7 @@ use crate::rate_limits::client::{UsageRequest, fetch_usage};
 use nils_common::env as shared_env;
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 
-pub mod ansi;
+pub use nils_common::rate_limits_ansi as ansi;
 pub mod cache;
 pub mod client;
 pub mod render;
