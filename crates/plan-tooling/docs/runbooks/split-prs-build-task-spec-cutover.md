@@ -43,7 +43,8 @@ Reduced `split-prs --format tsv` header:
 ## Group Mode Rules
 
 - `--pr-grouping group` + `--strategy deterministic`: pass `--pr-group` for every selected task.
-- `--pr-grouping group` + `--strategy auto`: `--pr-group` mappings are optional pins; remaining tasks are auto-grouped.
+- `--strategy auto`: omit `--pr-grouping`; sprint metadata decides grouping intent and `--default-pr-grouping` is the fallback.
+- `--strategy auto` on group-resolved sprints: `--pr-group` mappings are optional pins; remaining tasks are auto-grouped.
 - mapping key accepts either `SxTy` or plan task id (`Task N.M`).
 - shared group output should map to one PR (`pr-shared` downstream execution mode).
 

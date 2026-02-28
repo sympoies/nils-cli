@@ -76,10 +76,6 @@ pub struct PrefixArgs {
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct GroupingArgs {
-    /// PR grouping mode.
-    #[arg(long, value_enum, value_name = "mode")]
-    pub pr_grouping: PrGrouping,
-
     /// Split strategy for group assignment.
     #[arg(
         long,
@@ -88,6 +84,14 @@ pub struct GroupingArgs {
         value_name = "strategy"
     )]
     pub strategy: SplitStrategy,
+
+    /// PR grouping mode (deterministic only).
+    #[arg(long, value_enum, value_name = "mode")]
+    pub pr_grouping: Option<PrGrouping>,
+
+    /// Auto fallback when sprint metadata omits grouping intent.
+    #[arg(long = "default-pr-grouping", value_enum, value_name = "mode")]
+    pub default_pr_grouping: Option<PrGrouping>,
 
     /// Explicit task->group mapping (`<task>=<group>`). Repeatable.
     #[arg(
@@ -236,20 +240,41 @@ impl Command {
 }
 
 fn validate_grouping(grouping: &GroupingArgs) -> Result<(), ValidationError> {
-    match (
-        grouping.pr_grouping,
-        grouping.strategy,
-        grouping.pr_group.is_empty(),
-    ) {
-        (PrGrouping::PerSprint, _, false) => Err(ValidationError::new(
-            "invalid-pr-grouping",
-            "--pr-group is only valid when --pr-grouping group",
-        )),
-        (PrGrouping::Group, SplitStrategy::Deterministic, true) => Err(ValidationError::new(
-            "invalid-pr-grouping",
-            "--pr-grouping group with --strategy deterministic requires --pr-group mappings",
-        )),
-        _ => Ok(()),
+    match grouping.strategy {
+        SplitStrategy::Deterministic => {
+            let Some(pr_grouping) = grouping.pr_grouping else {
+                return Err(ValidationError::new(
+                    "invalid-pr-grouping",
+                    "--strategy deterministic requires --pr-grouping <per-sprint|group>",
+                ));
+            };
+            if grouping.default_pr_grouping.is_some() {
+                return Err(ValidationError::new(
+                    "invalid-pr-grouping",
+                    "--default-pr-grouping is only valid when --strategy auto",
+                ));
+            }
+            match (pr_grouping, grouping.pr_group.is_empty()) {
+                (PrGrouping::PerSprint, false) => Err(ValidationError::new(
+                    "invalid-pr-grouping",
+                    "--pr-group is only valid when --pr-grouping group",
+                )),
+                (PrGrouping::Group, true) => Err(ValidationError::new(
+                    "invalid-pr-grouping",
+                    "--pr-grouping group with --strategy deterministic requires --pr-group mappings",
+                )),
+                _ => Ok(()),
+            }
+        }
+        SplitStrategy::Auto => {
+            if grouping.pr_grouping.is_some() {
+                return Err(ValidationError::new(
+                    "invalid-pr-grouping",
+                    "--pr-grouping cannot be used with --strategy auto; use sprint metadata or --default-pr-grouping",
+                ));
+            }
+            Ok(())
+        }
     }
 }
 

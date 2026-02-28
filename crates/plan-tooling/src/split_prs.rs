@@ -7,21 +7,22 @@ use serde::Serialize;
 use crate::parse::{Plan, Sprint, parse_plan_with_display};
 
 const USAGE: &str = r#"Usage:
-  plan-tooling split-prs --file <plan.md> --pr-grouping <per-sprint|group> [options]
+  plan-tooling split-prs --file <plan.md> [options]
 
 Purpose:
   Build task-to-PR split records from a Plan Format v1 file.
 
 Required:
   --file <path>                    Plan file to parse
-  --pr-grouping <mode>             per-sprint | group
 
 Options:
   --scope <plan|sprint>            Scope to split (default: sprint)
   --sprint <n>                     Sprint number when --scope sprint
   --pr-group <task=group>          Group pin; repeatable (group mode only)
                                    deterministic/group: required for every task
-                                   auto/group: optional pins + auto assignment for remaining tasks
+                                   auto/group lanes: optional pins + auto assignment for remaining tasks
+  --pr-grouping <mode>             deterministic only: per-sprint | group
+  --default-pr-grouping <mode>     auto fallback when sprint metadata omits grouping intent
   --strategy <deterministic|auto>  Split strategy (default: deterministic)
   --explain                        Include grouping rationale in JSON output
   --owner-prefix <text>            Owner prefix (default: subagent)
@@ -61,7 +62,7 @@ impl SplitPrGrouping {
 
     fn from_cli(value: &str) -> Option<Self> {
         match value {
-            "per-sprint" => Some(Self::PerSprint),
+            "per-sprint" | "per-spring" => Some(Self::PerSprint),
             "group" => Some(Self::Group),
             _ => None,
         }
@@ -93,7 +94,8 @@ impl SplitPrStrategy {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SplitPlanOptions {
-    pub pr_grouping: SplitPrGrouping,
+    pub pr_grouping: Option<SplitPrGrouping>,
+    pub default_pr_grouping: Option<SplitPrGrouping>,
     pub strategy: SplitPrStrategy,
     pub pr_group_entries: Vec<String>,
     pub owner_prefix: String,
@@ -126,6 +128,29 @@ struct AutoSprintHint {
     pr_grouping_intent: Option<SplitPrGrouping>,
     execution_profile: Option<String>,
     target_parallel_width: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolvedPrGroupingSource {
+    CommandPrGrouping,
+    PlanMetadata,
+    DefaultPrGrouping,
+}
+
+impl ResolvedPrGroupingSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::CommandPrGrouping => "command-pr-grouping",
+            Self::PlanMetadata => "plan-metadata",
+            Self::DefaultPrGrouping => "default-pr-grouping",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolvedPrGrouping {
+    pub grouping: SplitPrGrouping,
+    pub source: ResolvedPrGroupingSource,
 }
 
 #[derive(Debug, Serialize)]
@@ -173,6 +198,7 @@ pub fn run(args: &[String]) -> i32 {
     let mut scope = String::from("sprint");
     let mut sprint: Option<String> = None;
     let mut pr_grouping: Option<String> = None;
+    let mut default_pr_grouping: Option<String> = None;
     let mut pr_group_entries: Vec<String> = Vec::new();
     let mut strategy = String::from("deterministic");
     let mut explain = false;
@@ -214,6 +240,15 @@ pub fn run(args: &[String]) -> i32 {
                     return die("missing value for --pr-grouping");
                 };
                 pr_grouping = Some(v);
+                i = next_i;
+            }
+            "--default-pr-grouping" => {
+                let Ok((v, next_i)) =
+                    consume_option_value(args, i, inline_value, "--default-pr-grouping")
+                else {
+                    return die("missing value for --default-pr-grouping");
+                };
+                default_pr_grouping = Some(v);
                 i = next_i;
             }
             "--pr-group" => {
@@ -290,24 +325,10 @@ pub fn run(args: &[String]) -> i32 {
         print_usage();
         return 2;
     };
-    let Some(mut pr_grouping) = pr_grouping else {
-        print_usage();
-        return 2;
-    };
-
-    if pr_grouping == "per-spring" {
-        pr_grouping = String::from("per-sprint");
-    }
     if scope != "plan" && scope != "sprint" {
         return die(&format!(
             "invalid --scope (expected plan|sprint): {}",
             crate::repr::py_repr(&scope)
-        ));
-    }
-    if pr_grouping != "per-sprint" && pr_grouping != "group" {
-        return die(&format!(
-            "invalid --pr-grouping (expected per-sprint|group): {}",
-            crate::repr::py_repr(&pr_grouping)
         ));
     }
     if strategy != "deterministic" && strategy != "auto" {
@@ -341,15 +362,42 @@ pub fn run(args: &[String]) -> i32 {
         None
     };
 
-    // Deterministic group mode requires full explicit mappings.
-    // Auto group mode can derive missing assignments from topology/conflict signals.
-    if pr_grouping == "group" && strategy == "deterministic" && pr_group_entries.is_empty() {
-        return die(
-            "--pr-grouping group requires at least one --pr-group <task-or-plan-id>=<group> entry",
-        );
+    if let Some(value) = pr_grouping.as_deref()
+        && SplitPrGrouping::from_cli(value).is_none()
+    {
+        return die(&format!(
+            "invalid --pr-grouping (expected per-sprint|group): {}",
+            crate::repr::py_repr(value)
+        ));
     }
-    if pr_grouping != "group" && !pr_group_entries.is_empty() {
-        return die("--pr-group can only be used when --pr-grouping group");
+    if let Some(value) = default_pr_grouping.as_deref()
+        && SplitPrGrouping::from_cli(value).is_none()
+    {
+        return die(&format!(
+            "invalid --default-pr-grouping (expected per-sprint|group): {}",
+            crate::repr::py_repr(value)
+        ));
+    }
+
+    if strategy == "deterministic" {
+        let Some(grouping) = pr_grouping.as_deref() else {
+            return die("--strategy deterministic requires --pr-grouping <per-sprint|group>");
+        };
+        if default_pr_grouping.is_some() {
+            return die("--default-pr-grouping is only valid when --strategy auto");
+        }
+        if grouping == "group" && pr_group_entries.is_empty() {
+            return die(
+                "--pr-grouping group requires at least one --pr-group <task-or-plan-id>=<group> entry",
+            );
+        }
+        if grouping != "group" && !pr_group_entries.is_empty() {
+            return die("--pr-group can only be used when --pr-grouping group");
+        }
+    } else if pr_grouping.is_some() {
+        return die(
+            "--pr-grouping cannot be used with --strategy auto; use sprint metadata or --default-pr-grouping",
+        );
     }
 
     let repo_root = crate::repo_root::detect();
@@ -389,9 +437,6 @@ pub fn run(args: &[String]) -> i32 {
         }
         _ => return die("internal error: invalid scope"),
     };
-    let Some(grouping_mode) = SplitPrGrouping::from_cli(&pr_grouping) else {
-        return die("internal error: invalid pr-grouping");
-    };
     let Some(strategy_mode) = SplitPrStrategy::from_cli(&strategy) else {
         return die("internal error: invalid strategy");
     };
@@ -406,12 +451,22 @@ pub fn run(args: &[String]) -> i32 {
     let sprint_hints = sprint_hints(&selected_sprints);
 
     let options = SplitPlanOptions {
-        pr_grouping: grouping_mode,
+        pr_grouping: pr_grouping.as_deref().and_then(SplitPrGrouping::from_cli),
+        default_pr_grouping: default_pr_grouping
+            .as_deref()
+            .and_then(SplitPrGrouping::from_cli),
         strategy: strategy_mode,
         pr_group_entries,
         owner_prefix,
         branch_prefix,
         worktree_prefix,
+    };
+    let resolved_grouping = match resolve_pr_grouping_by_sprint(&selected_sprints, &options) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("error: {err}");
+            return 1;
+        }
     };
     let split_records = match build_split_plan_records(&selected_sprints, &options) {
         Ok(records) => records,
@@ -424,7 +479,7 @@ pub fn run(args: &[String]) -> i32 {
         Some(build_explain_payload(
             &split_records,
             &sprint_hints,
-            options.pr_grouping,
+            &resolved_grouping,
         ))
     } else {
         None
@@ -444,7 +499,7 @@ pub fn run(args: &[String]) -> i32 {
         file: path_to_posix(&maybe_relativize(&read_path, &repo_root)),
         scope: scope.clone(),
         sprint: sprint_num,
-        pr_grouping,
+        pr_grouping: summarize_resolved_grouping(&resolved_grouping),
         strategy,
         records: out_records,
         explain: explain_payload,
@@ -498,20 +553,9 @@ pub fn build_split_plan_records(
     if selected_sprints.is_empty() {
         return Err("selected scope has no tasks".to_string());
     }
-    if options.pr_grouping == SplitPrGrouping::Group
-        && options.strategy == SplitPrStrategy::Deterministic
-        && options.pr_group_entries.is_empty()
-    {
-        return Err(
-            "--pr-grouping group requires at least one --pr-group <task-or-plan-id>=<group> entry"
-                .to_string(),
-        );
-    }
-    if options.pr_grouping != SplitPrGrouping::Group && !options.pr_group_entries.is_empty() {
-        return Err("--pr-group can only be used when --pr-grouping group".to_string());
-    }
 
     let sprint_hints = sprint_hints(selected_sprints);
+    let resolved_grouping = resolve_pr_grouping_by_sprint(selected_sprints, options)?;
 
     let mut records: Vec<Record> = Vec::new();
     for sprint in selected_sprints {
@@ -585,7 +629,7 @@ pub fn build_split_plan_records(
         group_assignments.insert(key.to_ascii_lowercase(), group);
     }
 
-    if options.pr_grouping == SplitPrGrouping::Group && !assignment_sources.is_empty() {
+    if !assignment_sources.is_empty() {
         let mut known: HashMap<String, bool> = HashMap::new();
         for rec in &records {
             known.insert(rec.task_id.to_ascii_lowercase(), true);
@@ -612,43 +656,68 @@ pub fn build_split_plan_records(
         }
     }
 
-    if options.pr_grouping == SplitPrGrouping::Group {
-        let mut missing: Vec<String> = Vec::new();
-        for rec in &mut records {
-            rec.pr_group.clear();
-            for key in [&rec.task_id, &rec.plan_task_id] {
-                if key.is_empty() {
-                    continue;
+    let mut missing: Vec<String> = Vec::new();
+    let mut invalid_pin_targets: Vec<String> = Vec::new();
+    for rec in &mut records {
+        let grouping = resolved_grouping
+            .get(&rec.sprint)
+            .map(|value| value.grouping)
+            .ok_or_else(|| format!("missing resolved grouping for sprint {}", rec.sprint))?;
+
+        let mut pinned_group: Option<String> = None;
+        for key in [&rec.task_id, &rec.plan_task_id] {
+            if key.is_empty() {
+                continue;
+            }
+            if let Some(v) = group_assignments.get(&key.to_ascii_lowercase()) {
+                pinned_group = Some(v.to_string());
+                break;
+            }
+        }
+
+        match grouping {
+            SplitPrGrouping::PerSprint => {
+                if pinned_group.is_some() {
+                    invalid_pin_targets.push(rec.task_id.clone());
                 }
-                if let Some(v) = group_assignments.get(&key.to_ascii_lowercase()) {
-                    rec.pr_group = v.to_string();
-                    break;
+                rec.pr_group =
+                    normalize_token(&format!("s{}", rec.sprint), &format!("s{}", rec.sprint), 48);
+            }
+            SplitPrGrouping::Group => {
+                rec.pr_group = pinned_group.unwrap_or_default();
+                if rec.pr_group.is_empty() {
+                    missing.push(rec.task_id.clone());
                 }
             }
-            if rec.pr_group.is_empty() {
-                missing.push(rec.task_id.clone());
-            }
         }
-        if options.strategy == SplitPrStrategy::Deterministic {
-            if !missing.is_empty() {
-                return Err(format!(
-                    "--pr-grouping group requires explicit mapping for every task; missing: {}",
-                    missing
-                        .iter()
-                        .take(8)
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-            }
-        } else if !missing.is_empty() {
-            assign_auto_groups(&mut records, &sprint_hints);
+    }
+
+    if !invalid_pin_targets.is_empty() {
+        return Err(format!(
+            "--pr-group cannot target auto lanes resolved as per-sprint; offending tasks: {}",
+            invalid_pin_targets
+                .iter()
+                .take(8)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+
+    if options.strategy == SplitPrStrategy::Deterministic {
+        if !missing.is_empty() {
+            return Err(format!(
+                "--pr-grouping group requires explicit mapping for every task; missing: {}",
+                missing
+                    .iter()
+                    .take(8)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
         }
-    } else {
-        for rec in &mut records {
-            rec.pr_group =
-                normalize_token(&format!("s{}", rec.sprint), &format!("s{}", rec.sprint), 48);
-        }
+    } else if !missing.is_empty() {
+        assign_auto_groups(&mut records, &sprint_hints);
     }
 
     let mut out: Vec<SplitPlanRecord> = Vec::new();
@@ -662,6 +731,105 @@ pub fn build_split_plan_records(
     }
 
     Ok(out)
+}
+
+pub fn resolve_pr_grouping_by_sprint(
+    selected_sprints: &[Sprint],
+    options: &SplitPlanOptions,
+) -> Result<HashMap<i32, ResolvedPrGrouping>, String> {
+    if selected_sprints.is_empty() {
+        return Err("selected scope has no tasks".to_string());
+    }
+
+    match options.strategy {
+        SplitPrStrategy::Deterministic => {
+            let Some(grouping) = options.pr_grouping else {
+                return Err(
+                    "--strategy deterministic requires --pr-grouping <per-sprint|group>"
+                        .to_string(),
+                );
+            };
+            if options.default_pr_grouping.is_some() {
+                return Err("--default-pr-grouping is only valid when --strategy auto".to_string());
+            }
+
+            let mut mismatches: Vec<String> = Vec::new();
+            let mut out: HashMap<i32, ResolvedPrGrouping> = HashMap::new();
+            for sprint in selected_sprints {
+                if let Some(intent) = sprint.metadata.pr_grouping_intent.as_deref()
+                    && intent != grouping.as_str()
+                {
+                    mismatches.push(format!(
+                        "S{} metadata `PR grouping intent={intent}` conflicts with `--pr-grouping {}`",
+                        sprint.number,
+                        grouping.as_str()
+                    ));
+                }
+                out.insert(
+                    sprint.number,
+                    ResolvedPrGrouping {
+                        grouping,
+                        source: ResolvedPrGroupingSource::CommandPrGrouping,
+                    },
+                );
+            }
+
+            if mismatches.is_empty() {
+                Ok(out)
+            } else {
+                Err(format!(
+                    "plan metadata/CLI grouping mismatch: {}",
+                    mismatches.join(" | ")
+                ))
+            }
+        }
+        SplitPrStrategy::Auto => {
+            if options.pr_grouping.is_some() {
+                return Err(
+                    "--pr-grouping cannot be used with --strategy auto; use sprint metadata or --default-pr-grouping"
+                        .to_string(),
+                );
+            }
+
+            let mut out: HashMap<i32, ResolvedPrGrouping> = HashMap::new();
+            let mut missing: Vec<String> = Vec::new();
+            for sprint in selected_sprints {
+                let resolved = if let Some(intent) = sprint
+                    .metadata
+                    .pr_grouping_intent
+                    .as_deref()
+                    .and_then(SplitPrGrouping::from_cli)
+                {
+                    Some(ResolvedPrGrouping {
+                        grouping: intent,
+                        source: ResolvedPrGroupingSource::PlanMetadata,
+                    })
+                } else {
+                    options
+                        .default_pr_grouping
+                        .map(|grouping| ResolvedPrGrouping {
+                            grouping,
+                            source: ResolvedPrGroupingSource::DefaultPrGrouping,
+                        })
+                };
+
+                if let Some(value) = resolved {
+                    out.insert(sprint.number, value);
+                } else {
+                    missing.push(format!("S{}", sprint.number));
+                }
+            }
+
+            if missing.is_empty() {
+                Ok(out)
+            } else {
+                Err(format!(
+                    "auto grouping requires `PR grouping intent` metadata for every selected sprint or --default-pr-grouping <per-sprint|group>; missing: {}",
+                    missing.join(", ")
+                ))
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -1155,7 +1323,7 @@ fn sprint_hints(selected_sprints: &[Sprint]) -> HashMap<i32, AutoSprintHint> {
 fn build_explain_payload(
     records: &[SplitPlanRecord],
     hints: &HashMap<i32, AutoSprintHint>,
-    pr_grouping: SplitPrGrouping,
+    resolved_grouping: &HashMap<i32, ResolvedPrGrouping>,
 ) -> Vec<ExplainSprint> {
     let mut grouped: BTreeMap<i32, BTreeMap<String, Vec<String>>> = BTreeMap::new();
     for record in records {
@@ -1185,19 +1353,32 @@ fn build_explain_payload(
             sprint,
             target_parallel_width: hint.target_parallel_width,
             execution_profile: hint.execution_profile,
-            pr_grouping_intent: hint
-                .pr_grouping_intent
-                .map(|value| value.as_str().to_string())
-                .or_else(|| Some(pr_grouping.as_str().to_string())),
-            pr_grouping_intent_source: if hint.pr_grouping_intent.is_some() {
-                Some("plan-metadata".to_string())
-            } else {
-                Some("cli-fallback".to_string())
-            },
+            pr_grouping_intent: resolved_grouping
+                .get(&sprint)
+                .map(|value| value.grouping.as_str().to_string()),
+            pr_grouping_intent_source: resolved_grouping
+                .get(&sprint)
+                .map(|value| value.source.as_str().to_string()),
             groups,
         });
     }
     out
+}
+
+fn summarize_resolved_grouping(resolved_grouping: &HashMap<i32, ResolvedPrGrouping>) -> String {
+    let unique = resolved_grouping
+        .values()
+        .map(|value| value.grouping.as_str())
+        .collect::<BTreeSet<_>>();
+    if unique.len() == 1 {
+        unique
+            .iter()
+            .next()
+            .map(|value| (*value).to_string())
+            .unwrap_or_else(|| "mixed".to_string())
+    } else {
+        "mixed".to_string()
+    }
 }
 
 fn split_value_arg(raw: &str) -> (&str, Option<&str>) {

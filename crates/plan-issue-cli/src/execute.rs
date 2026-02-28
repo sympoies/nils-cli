@@ -71,6 +71,7 @@ fn run_build_task_spec(args: &BuildTaskSpecArgs) -> Result<Value, CommandError> 
         args.prefixes.branch_prefix.clone(),
         args.prefixes.worktree_prefix.clone(),
         args.grouping.pr_grouping,
+        args.grouping.default_pr_grouping,
         args.grouping.strategy,
         args.grouping.pr_group.clone(),
     );
@@ -102,6 +103,7 @@ fn run_build_plan_task_spec(args: &BuildPlanTaskSpecArgs) -> Result<Value, Comma
         args.prefixes.branch_prefix.clone(),
         args.prefixes.worktree_prefix.clone(),
         args.grouping.pr_grouping,
+        args.grouping.default_pr_grouping,
         args.grouping.strategy,
         args.grouping.pr_group.clone(),
     );
@@ -135,6 +137,7 @@ fn run_start_plan(
         args.prefixes.branch_prefix.clone(),
         args.prefixes.worktree_prefix.clone(),
         args.grouping.pr_grouping,
+        args.grouping.default_pr_grouping,
         args.grouping.strategy,
         args.grouping.pr_group.clone(),
     );
@@ -868,6 +871,7 @@ fn run_start_sprint(
         args.prefixes.branch_prefix.clone(),
         args.prefixes.worktree_prefix.clone(),
         args.grouping.pr_grouping,
+        args.grouping.default_pr_grouping,
         args.grouping.strategy,
         args.grouping.pr_group.clone(),
     );
@@ -1002,6 +1006,7 @@ fn run_ready_sprint(
         args.prefixes.branch_prefix.clone(),
         args.prefixes.worktree_prefix.clone(),
         args.grouping.pr_grouping,
+        args.grouping.default_pr_grouping,
         args.grouping.strategy,
         args.grouping.pr_group.clone(),
     );
@@ -1108,6 +1113,7 @@ fn run_accept_sprint(
         args.prefixes.branch_prefix.clone(),
         args.prefixes.worktree_prefix.clone(),
         args.grouping.pr_grouping,
+        args.grouping.default_pr_grouping,
         args.grouping.strategy,
         args.grouping.pr_group.clone(),
     );
@@ -1296,19 +1302,19 @@ fn run_multi_sprint_guide(
 
     let mut step = 1usize;
     lines.push(format!(
-        "STEP_{step}={cli} start-plan --plan {display_path} --pr-grouping <per-sprint\\|group> --dry-run"
+        "STEP_{step}={cli} start-plan --plan {display_path} <grouping-args> --dry-run"
     ));
     step += 1;
 
     for sprint in from_sprint..=to_sprint {
         lines.push(format!(
-            "STEP_{step}={cli} start-sprint --plan {display_path} --issue {LOCAL_ISSUE_PLACEHOLDER} --sprint {sprint} --pr-grouping <per-sprint\\|group> --no-comment --dry-run"
+            "STEP_{step}={cli} start-sprint --plan {display_path} --issue {LOCAL_ISSUE_PLACEHOLDER} --sprint {sprint} <grouping-args> --no-comment --dry-run"
         ));
         step += 1;
 
         if sprint < to_sprint {
             lines.push(format!(
-                "STEP_{step}={cli} accept-sprint --plan {display_path} --issue {LOCAL_ISSUE_PLACEHOLDER} --sprint {sprint} --approved-comment-url <approval-comment-url-sprint-{sprint}> --pr-grouping <per-sprint\\|group> --no-comment --dry-run"
+                "STEP_{step}={cli} accept-sprint --plan {display_path} --issue {LOCAL_ISSUE_PLACEHOLDER} --sprint {sprint} --approved-comment-url <approval-comment-url-sprint-{sprint}> <grouping-args> --no-comment --dry-run"
             ));
             step += 1;
         }
@@ -1327,8 +1333,10 @@ fn run_multi_sprint_guide(
 
     lines.extend([
         "NOTE_DRY_RUN=Dry-run guide is local-only and does not call GitHub.".to_string(),
+        "GROUPING_ARGS_DETERMINISTIC=--pr-grouping <per-sprint\\|group> [--strategy deterministic]".to_string(),
+        "GROUPING_ARGS_AUTO=--strategy auto [--default-pr-grouping <per-sprint\\|group>]".to_string(),
         "NOTE_GROUP_MODE_DETERMINISTIC=When using --pr-grouping group with --strategy deterministic, pass --pr-group for every task in the selected scope.".to_string(),
-        "NOTE_GROUP_MODE_AUTO=When using --pr-grouping group with --strategy auto, --pr-group mappings are optional pins and remaining tasks are auto-grouped.".to_string(),
+        "NOTE_GROUP_MODE_AUTO=When using --strategy auto, sprint metadata decides grouping intent and --default-pr-grouping fills metadata gaps.".to_string(),
         "NOTE_SPRINT_GATE=Before starting sprint N+1, sprint N must be reviewed, merged, and accepted.".to_string(),
         "NOTE_ACCEPT_SYNC=accept-sprint enforces merged PRs for the sprint and syncs sprint task Status to done.".to_string(),
         "MULTI_SPRINT_GUIDE_END".to_string(),
@@ -1346,7 +1354,8 @@ fn to_build_options(
     owner_prefix: String,
     branch_prefix: String,
     worktree_prefix: String,
-    pr_grouping: crate::commands::PrGrouping,
+    pr_grouping: Option<crate::commands::PrGrouping>,
+    default_pr_grouping: Option<crate::commands::PrGrouping>,
     strategy: crate::commands::SplitStrategy,
     pr_group: Vec<crate::commands::PrGroupMapping>,
 ) -> TaskSpecBuildOptions {
@@ -1355,6 +1364,7 @@ fn to_build_options(
         branch_prefix,
         worktree_prefix,
         pr_grouping,
+        default_pr_grouping,
         strategy,
         pr_group,
     }
@@ -2439,7 +2449,8 @@ mod tests {
             "owner".to_string(),
             "branch".to_string(),
             "worktree".to_string(),
-            PrGrouping::Group,
+            Some(PrGrouping::Group),
+            None,
             crate::commands::SplitStrategy::Auto,
             vec![PrGroupMapping {
                 task: "S1T1".to_string(),
@@ -2449,7 +2460,7 @@ mod tests {
         assert_eq!(options.owner_prefix, "owner");
         assert_eq!(options.branch_prefix, "branch");
         assert_eq!(options.worktree_prefix, "worktree");
-        assert_eq!(options.pr_grouping, PrGrouping::Group);
+        assert_eq!(options.pr_grouping, Some(PrGrouping::Group));
         assert_eq!(options.strategy, SplitStrategy::Auto);
         assert_eq!(options.pr_group.len(), 1);
     }

@@ -57,7 +57,8 @@ plan-tooling split-prs \
 - Use `per-sprint` when one shared PR should represent all sprint tasks.
 - Use `group` for mixed isolated/shared PR shapes.
 - In `pr-grouping=group` + `strategy=deterministic`, every selected task must have an explicit mapping.
-- In `pr-grouping=group` + `strategy=auto`, explicit mappings are optional pins and remaining tasks are auto-assigned.
+- In `strategy=auto`, omit `--pr-grouping`; per-sprint grouping comes from plan metadata first, then `--default-pr-grouping`.
+- In `strategy=auto` group-resolved sprints, explicit mappings are optional pins and remaining tasks are auto-assigned.
 
 ## Auto Strategy Status
 
@@ -69,7 +70,7 @@ plan-tooling split-prs \
 ## Release Gate Checklist
 
 1. Verify deterministic command output against fixture expectations.
-2. Verify auto/group output is byte-stable across repeated runs.
+2. Verify auto output is byte-stable across repeated runs.
 3. Verify downstream consumers use `plan-issue-cli` runtime materialization (instead of parsing
    removed split output runtime metadata columns/notes).
 4. Verify fallback/rollback command sequence is documented before rollout.

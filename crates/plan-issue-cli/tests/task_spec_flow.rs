@@ -142,10 +142,10 @@ fn strategy_auto_partial_mapping_allows_unmapped_rows() {
         PLAN_PATH,
         "--sprint",
         "3",
-        "--pr-grouping",
-        "group",
         "--strategy",
         "auto",
+        "--default-pr-grouping",
+        "group",
         "--pr-group",
         "S3T3=manual-docs",
         "--task-spec-out",
@@ -554,10 +554,10 @@ fn render_issue_body_start_sprint_group_auto_single_pr_lane_uses_per_sprint_mode
             "217",
             "--sprint",
             "1",
-            "--pr-grouping",
-            "group",
             "--strategy",
             "auto",
+            "--default-pr-grouping",
+            "group",
             "--no-comment",
         ],
         &[("AGENT_HOME", &agent_home_s)],
@@ -659,7 +659,7 @@ fn render_issue_body_start_sprint_group_deterministic_single_pr_lane_uses_per_sp
 }
 
 #[test]
-fn start_sprint_rejects_cli_grouping_mismatch_with_plan_metadata() {
+fn start_sprint_rejects_deterministic_grouping_mismatch_with_plan_metadata() {
     let tmp = TempDir::new().expect("temp dir");
     let agent_home = tmp.path().join("agent-home");
     fs::create_dir_all(&agent_home).expect("create agent home");
@@ -699,7 +699,9 @@ fn start_sprint_rejects_cli_grouping_mismatch_with_plan_metadata() {
             "--pr-grouping",
             "group",
             "--strategy",
-            "auto",
+            "deterministic",
+            "--pr-group",
+            "S1T1=s1-lane",
             "--no-comment",
         ],
         &[("AGENT_HOME", &agent_home_s)],
@@ -766,10 +768,10 @@ fn write_subagent_prompts_groups_tasks_by_runtime_lane() {
             "1",
             "--subagent-prompts-out",
             &prompts_out_s,
-            "--pr-grouping",
-            "group",
             "--strategy",
             "auto",
+            "--default-pr-grouping",
+            "group",
             "--no-comment",
         ],
         &[("AGENT_HOME", &agent_home_s)],

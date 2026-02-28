@@ -109,7 +109,8 @@ fn split_prs_library_core_auto_group_records_are_deterministic() {
     let plan = parsed_fixture_plan("duck-plan.md");
     let selected = select_sprints_for_scope(&plan, SplitScope::Sprint(2)).expect("scope selection");
     let options = SplitPlanOptions {
-        pr_grouping: SplitPrGrouping::Group,
+        pr_grouping: None,
+        default_pr_grouping: Some(SplitPrGrouping::Group),
         strategy: SplitPrStrategy::Auto,
         pr_group_entries: vec![],
         owner_prefix: "subagent".to_string(),
@@ -144,7 +145,8 @@ fn split_prs_library_core_deterministic_group_requires_mapping() {
     let plan = parsed_fixture_plan("duck-plan.md");
     let selected = select_sprints_for_scope(&plan, SplitScope::Sprint(2)).expect("scope selection");
     let options = SplitPlanOptions {
-        pr_grouping: SplitPrGrouping::Group,
+        pr_grouping: Some(SplitPrGrouping::Group),
+        default_pr_grouping: None,
         strategy: SplitPrStrategy::Deterministic,
         pr_group_entries: vec![],
         owner_prefix: "subagent".to_string(),
@@ -154,7 +156,7 @@ fn split_prs_library_core_deterministic_group_requires_mapping() {
 
     let err = build_split_plan_records(&selected, &options).expect_err("must reject");
     assert!(
-        err.contains("--pr-grouping group requires at least one --pr-group"),
+        err.contains("--pr-grouping group requires explicit mapping for every task"),
         "{err}"
     );
 }
@@ -231,10 +233,10 @@ fn split_prs_auto_group_without_mapping_succeeds() {
             "sprint",
             "--sprint",
             "2",
-            "--pr-grouping",
-            "group",
             "--strategy",
             "auto",
+            "--default-pr-grouping",
+            "group",
             "--format",
             "json",
         ],
@@ -279,10 +281,10 @@ fn split_prs_auto_group_partial_mapping_preserves_pinned_group() {
             "sprint",
             "--sprint",
             "2",
-            "--pr-grouping",
-            "group",
             "--strategy",
             "auto",
+            "--default-pr-grouping",
+            "group",
             "--pr-group",
             "S2T3=manual-docs",
             "--format",
@@ -327,10 +329,10 @@ fn split_prs_auto_group_rejects_malformed_pin_entry() {
             "sprint",
             "--sprint",
             "2",
-            "--pr-grouping",
-            "group",
             "--strategy",
             "auto",
+            "--default-pr-grouping",
+            "group",
             "--pr-group",
             "S2T2",
         ],
@@ -359,10 +361,10 @@ fn split_prs_auto_group_rejects_unknown_pin_key() {
             "sprint",
             "--sprint",
             "2",
-            "--pr-grouping",
-            "group",
             "--strategy",
             "auto",
+            "--default-pr-grouping",
+            "group",
             "--pr-group",
             "S2T9=manual-docs",
             "--format",
@@ -371,6 +373,65 @@ fn split_prs_auto_group_rejects_unknown_pin_key() {
     );
     assert_eq!(out.code, 1);
     assert!(out.stderr.contains("unknown task keys"), "{}", out.stderr);
+}
+
+#[test]
+fn split_prs_auto_requires_metadata_or_default_grouping() {
+    let dir = TempDir::new().expect("tempdir");
+    common::write_file(&dir.path().join("plan.md"), &fixture_text("duck-plan.md"));
+
+    let out = common::run_plan_tooling(
+        dir.path(),
+        &[
+            "split-prs",
+            "--file",
+            "plan.md",
+            "--scope",
+            "sprint",
+            "--sprint",
+            "2",
+            "--strategy",
+            "auto",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(out.code, 1);
+    assert!(
+        out.stderr
+            .contains("auto grouping requires `PR grouping intent` metadata"),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
+fn split_prs_auto_rejects_explicit_pr_grouping_flag() {
+    let dir = TempDir::new().expect("tempdir");
+    common::write_file(&dir.path().join("plan.md"), &fixture_text("duck-plan.md"));
+
+    let out = common::run_plan_tooling(
+        dir.path(),
+        &[
+            "split-prs",
+            "--file",
+            "plan.md",
+            "--scope",
+            "sprint",
+            "--sprint",
+            "2",
+            "--strategy",
+            "auto",
+            "--pr-grouping",
+            "group",
+        ],
+    );
+    assert_eq!(out.code, 2);
+    assert!(
+        out.stderr.contains("cannot be used with --strategy auto"),
+        "{}",
+        out.stderr
+    );
 }
 
 #[test]
@@ -394,10 +455,10 @@ fn split_prs_auto_repeatability_is_byte_stable() {
                 "sprint",
                 "--sprint",
                 "1",
-                "--pr-grouping",
-                "group",
                 "--strategy",
                 "auto",
+                "--default-pr-grouping",
+                "group",
                 "--format",
                 "json",
             ],
@@ -412,10 +473,10 @@ fn split_prs_auto_repeatability_is_byte_stable() {
                 "sprint",
                 "--sprint",
                 "1",
-                "--pr-grouping",
-                "group",
                 "--strategy",
                 "auto",
+                "--default-pr-grouping",
+                "group",
                 "--format",
                 "json",
             ],
@@ -456,10 +517,10 @@ fn split_prs_auto_matrix_fixture_matches_expected_json() {
             "sprint",
             "--sprint",
             "1",
-            "--pr-grouping",
-            "group",
             "--strategy",
             "auto",
+            "--default-pr-grouping",
+            "group",
             "--format",
             "json",
         ],
@@ -489,10 +550,10 @@ fn split_prs_auto_json_contains_required_fields() {
             "sprint",
             "--sprint",
             "1",
-            "--pr-grouping",
-            "per-sprint",
             "--strategy",
             "auto",
+            "--default-pr-grouping",
+            "per-sprint",
             "--format",
             "json",
         ],
@@ -527,8 +588,8 @@ fn split_prs_cli_accepts_equals_style_value_flags() {
             "--file=plan.md",
             "--scope=sprint",
             "--sprint=2",
-            "--pr-grouping=group",
             "--strategy=auto",
+            "--default-pr-grouping=group",
             "--format=json",
         ],
     );
@@ -553,8 +614,8 @@ fn split_prs_auto_explain_json_includes_group_breakdown() {
             "--file=plan.md",
             "--scope=sprint",
             "--sprint=2",
-            "--pr-grouping=group",
             "--strategy=auto",
+            "--default-pr-grouping=group",
             "--format=json",
             "--explain",
         ],
@@ -565,7 +626,10 @@ fn split_prs_auto_explain_json_includes_group_breakdown() {
     let explain = value["explain"].as_array().expect("explain array");
     assert_eq!(explain.len(), 1);
     assert_eq!(explain[0]["sprint"], 2);
-    assert_eq!(explain[0]["pr_grouping_intent_source"], "cli-fallback");
+    assert_eq!(
+        explain[0]["pr_grouping_intent_source"],
+        "default-pr-grouping"
+    );
     assert!(explain[0]["groups"].is_array());
     assert!(
         explain[0]["groups"]
@@ -650,8 +714,6 @@ fn split_prs_auto_uses_execution_profile_parallel_width_as_target() {
             "plan.md",
             "--scope",
             "plan",
-            "--pr-grouping",
-            "group",
             "--strategy",
             "auto",
             "--format",
@@ -712,10 +774,10 @@ fn split_prs_non_regression_auto_sparse_plan_scaffold() {
             "sprint",
             "--sprint",
             "1",
-            "--pr-grouping",
-            "group",
             "--strategy",
             "auto",
+            "--default-pr-grouping",
+            "group",
             "--format",
             "json",
         ],
@@ -753,10 +815,10 @@ fn split_prs_non_regression_auto_overlap_heavy_plan_scaffold() {
             "sprint",
             "--sprint",
             "1",
-            "--pr-grouping",
-            "group",
             "--strategy",
             "auto",
+            "--default-pr-grouping",
+            "group",
             "--format",
             "json",
         ],

@@ -1,60 +1,395 @@
 #compdef plan-issue
 
-_nils_cli_plan_issue_source_common_zsh() {
-  (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
-
-  local source_file="${functions_source[_plan-issue]-}"
-  local helper_path=''
-
-  if [[ -n "$source_file" && -r "$source_file" ]]; then
-    helper_path="${source_file:h}/_completion-adapter-common.zsh"
-    if [[ -r "$helper_path" ]]; then
-      source "$helper_path" || return 1
-      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
-    fi
-  fi
-
-  local dir=''
-  for dir in "${fpath[@]}"; do
-    helper_path="${dir}/_completion-adapter-common.zsh"
-    if [[ -r "$helper_path" ]]; then
-      source "$helper_path" || return 1
-      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
-    fi
-  done
-
-  return 1
-}
-
-typeset -gi _NILS_PLAN_ISSUE_ZSH_GENERATED_STATE=0
-
-_nils_cli_plan_issue_load_generated_zsh() {
-  _nils_cli_plan_issue_source_common_zsh || return 1
-
-  _nils_cli_completion_common_load_generated_zsh \
-    "_NILS_PLAN_ISSUE_ZSH_GENERATED_STATE" \
-    "_nils_cli_plan_issue_generated" \
-    "plan-issue" \
-    "_plan-issue" \
-    '^if \[ "\$funcstack\[1\]" = "_nils_cli_plan_issue_generated" \]; then$' \
-    '^fi$'
-}
+autoload -U is-at-least
 
 _plan-issue() {
-  emulate -L zsh -o extendedglob
+    typeset -A opt_args
+    typeset -a _arguments_options
+    local ret=1
 
-  if ! _nils_cli_plan_issue_load_generated_zsh; then
-    if (( $+functions[_nils_cli_completion_common_fail_closed_zsh] )); then
-      _nils_cli_completion_common_fail_closed_zsh
+    if is-at-least 5.2; then
+        _arguments_options=(-s -S -C)
+    else
+        _arguments_options=(-s -C)
     fi
-    return 1
-  fi
 
-  _nils_cli_plan_issue_generated
+    local context curcontext="$curcontext" state line
+    _arguments "${_arguments_options[@]}" : \
+'--repo=[Pass-through repository target for GitHub operations]:owner/repo:_default' \
+'--format=[Output format]:FORMAT:(text json)' \
+'--dry-run[Print write actions without mutating GitHub state]' \
+'-f[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--force[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--json[Output machine-readable JSON (alias for --format json)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+":: :_plan-issue_commands" \
+"*::: :->plan-issue" \
+&& ret=0
+    case $state in
+    (plan-issue)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:plan-issue-command-$line[1]:"
+        case $line[1] in
+            (build-task-spec)
+_arguments "${_arguments_options[@]}" : \
+'--plan=[Plan markdown path]:path:_files' \
+'--sprint=[Sprint number]:number:_default' \
+'--task-spec-out=[Output task-spec TSV path]:path:_files' \
+'--owner-prefix=[Task owner prefix]:text:_default' \
+'--branch-prefix=[Branch prefix]:text:_default' \
+'--worktree-prefix=[Worktree prefix]:text:_default' \
+'--strategy=[Split strategy for group assignment]:strategy:(deterministic auto)' \
+'--pr-grouping=[PR grouping mode (deterministic only)]:mode:(per-sprint group)' \
+'--default-pr-grouping=[Auto fallback when sprint metadata omits grouping intent]:mode:(per-sprint group)' \
+'*--pr-group=[Explicit task->group mapping (\`<task>=<group>\`). Repeatable]:task=group:_default' \
+'--repo=[Pass-through repository target for GitHub operations]:owner/repo:_default' \
+'--format=[Output format]:FORMAT:(text json)' \
+'--dry-run[Print write actions without mutating GitHub state]' \
+'-f[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--force[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--json[Output machine-readable JSON (alias for --format json)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(build-plan-task-spec)
+_arguments "${_arguments_options[@]}" : \
+'--plan=[Plan markdown path]:path:_files' \
+'--task-spec-out=[Output task-spec TSV path]:path:_files' \
+'--owner-prefix=[Task owner prefix]:text:_default' \
+'--branch-prefix=[Branch prefix]:text:_default' \
+'--worktree-prefix=[Worktree prefix]:text:_default' \
+'--strategy=[Split strategy for group assignment]:strategy:(deterministic auto)' \
+'--pr-grouping=[PR grouping mode (deterministic only)]:mode:(per-sprint group)' \
+'--default-pr-grouping=[Auto fallback when sprint metadata omits grouping intent]:mode:(per-sprint group)' \
+'*--pr-group=[Explicit task->group mapping (\`<task>=<group>\`). Repeatable]:task=group:_default' \
+'--repo=[Pass-through repository target for GitHub operations]:owner/repo:_default' \
+'--format=[Output format]:FORMAT:(text json)' \
+'--dry-run[Print write actions without mutating GitHub state]' \
+'-f[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--force[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--json[Output machine-readable JSON (alias for --format json)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(start-plan)
+_arguments "${_arguments_options[@]}" : \
+'--plan=[Plan markdown path]:path:_files' \
+'--title=[Override plan issue title]:text:_default' \
+'--task-spec-out=[Plan task-spec output path override]:path:_files' \
+'--issue-body-out=[Rendered plan issue body output path override]:path:_files' \
+'--owner-prefix=[Task owner prefix]:text:_default' \
+'--branch-prefix=[Branch prefix]:text:_default' \
+'--worktree-prefix=[Worktree prefix]:text:_default' \
+'--strategy=[Split strategy for group assignment]:strategy:(deterministic auto)' \
+'--pr-grouping=[PR grouping mode (deterministic only)]:mode:(per-sprint group)' \
+'--default-pr-grouping=[Auto fallback when sprint metadata omits grouping intent]:mode:(per-sprint group)' \
+'*--pr-group=[Explicit task->group mapping (\`<task>=<group>\`). Repeatable]:task=group:_default' \
+'*--label=[Labels to add at issue creation time]:name:_default' \
+'--repo=[Pass-through repository target for GitHub operations]:owner/repo:_default' \
+'--format=[Output format]:FORMAT:(text json)' \
+'--dry-run[Print write actions without mutating GitHub state]' \
+'-f[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--force[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--json[Output machine-readable JSON (alias for --format json)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(status-plan)
+_arguments "${_arguments_options[@]}" : \
+'--issue=[Plan issue number (live \`plan-issue\` path only)]:number:_default' \
+'--body-file=[Offline issue body path]:path:_files' \
+'--repo=[Pass-through repository target for GitHub operations]:owner/repo:_default' \
+'--format=[Output format]:FORMAT:(text json)' \
+'(--no-comment)--comment[Emit comment output]' \
+'(--comment)--no-comment[Disable comment output]' \
+'--dry-run[Print write actions without mutating GitHub state]' \
+'-f[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--force[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--json[Output machine-readable JSON (alias for --format json)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(link-pr)
+_arguments "${_arguments_options[@]}" : \
+'--issue=[Plan issue number (live \`plan-issue\` path only)]:number:_default' \
+'--body-file=[Offline issue body path]:path:_files' \
+'--task=[Target task row id (for example \`S2T3\`). Shared-lane rows sync automatically]:task-id:_default' \
+'--sprint=[Target sprint rows. If multiple shared lanes exist, use \`--pr-group\`]:number:_default' \
+'(--task)--pr-group=[Target PR group within the sprint (\`pr-shared\` lane selector)]:group:_default' \
+'--pr=[PR reference (\`#123\`, \`123\`, or GitHub pull URL)]:pr:_default' \
+'--status=[Row status to apply after linking PR (default\: \`in-progress\`)]:STATUS:(planned in-progress blocked)' \
+'--repo=[Pass-through repository target for GitHub operations]:owner/repo:_default' \
+'--format=[Output format]:FORMAT:(text json)' \
+'--dry-run[Print write actions without mutating GitHub state]' \
+'-f[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--force[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--json[Output machine-readable JSON (alias for --format json)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(ready-plan)
+_arguments "${_arguments_options[@]}" : \
+'--issue=[Plan issue number (live \`plan-issue\` path only)]:number:_default' \
+'--body-file=[Offline issue body path]:path:_files' \
+'(--summary-file)--summary=[Inline review summary text]:text:_default' \
+'(--summary)--summary-file=[Path to markdown/text review summary]:path:_files' \
+'--label=[Review label to add when \`--label-update\` is set]:name:_default' \
+'*--remove-label=[Labels to remove when \`--label-update\` is set]:name:_default' \
+'--repo=[Pass-through repository target for GitHub operations]:owner/repo:_default' \
+'--format=[Output format]:FORMAT:(text json)' \
+'--label-update[Apply label updates in live mode]' \
+'(--no-comment)--comment[Emit comment output]' \
+'(--comment)--no-comment[Disable comment output]' \
+'--dry-run[Print write actions without mutating GitHub state]' \
+'-f[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--force[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--json[Output machine-readable JSON (alias for --format json)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(close-plan)
+_arguments "${_arguments_options[@]}" : \
+'--issue=[Plan issue number (\`--issue\`-only path is live \`plan-issue\` only)]:number:_default' \
+'--body-file=[Local issue body path (dry-run mode)]:path:_files' \
+'--approved-comment-url=[Final approval comment URL]:url:_default' \
+'--reason=[Close reason]:REASON:(completed not-planned)' \
+'(--comment-file)--comment=[Inline close comment]:text:_default' \
+'(--comment)--comment-file=[Path to close comment markdown/text]:path:_files' \
+'--repo=[Pass-through repository target for GitHub operations]:owner/repo:_default' \
+'--format=[Output format]:FORMAT:(text json)' \
+'--allow-not-done[Allow closing when some tasks are not done]' \
+'--dry-run[Print write actions without mutating GitHub state]' \
+'-f[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--force[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--json[Output machine-readable JSON (alias for --format json)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(cleanup-worktrees)
+_arguments "${_arguments_options[@]}" : \
+'--issue=[Plan issue number (live \`plan-issue\` only)]:number:_default' \
+'--repo=[Pass-through repository target for GitHub operations]:owner/repo:_default' \
+'--format=[Output format]:FORMAT:(text json)' \
+'--dry-run[Print write actions without mutating GitHub state]' \
+'-f[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--force[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--json[Output machine-readable JSON (alias for --format json)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(start-sprint)
+_arguments "${_arguments_options[@]}" : \
+'--plan=[Plan markdown path]:path:_files' \
+'--issue=[Plan issue number]:number:_default' \
+'--sprint=[Sprint number]:number:_default' \
+'--task-spec-out=[Sprint task-spec output path override]:path:_files' \
+'--subagent-prompts-out=[start-sprint output directory for subagent task prompts]:path:_files' \
+'--owner-prefix=[Task owner prefix]:text:_default' \
+'--branch-prefix=[Branch prefix]:text:_default' \
+'--worktree-prefix=[Worktree prefix]:text:_default' \
+'--strategy=[Split strategy for group assignment]:strategy:(deterministic auto)' \
+'--pr-grouping=[PR grouping mode (deterministic only)]:mode:(per-sprint group)' \
+'--default-pr-grouping=[Auto fallback when sprint metadata omits grouping intent]:mode:(per-sprint group)' \
+'*--pr-group=[Explicit task->group mapping (\`<task>=<group>\`). Repeatable]:task=group:_default' \
+'--repo=[Pass-through repository target for GitHub operations]:owner/repo:_default' \
+'--format=[Output format]:FORMAT:(text json)' \
+'(--no-comment)--comment[Emit comment output]' \
+'(--comment)--no-comment[Disable comment output]' \
+'--dry-run[Print write actions without mutating GitHub state]' \
+'-f[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--force[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--json[Output machine-readable JSON (alias for --format json)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(ready-sprint)
+_arguments "${_arguments_options[@]}" : \
+'--plan=[Plan markdown path]:path:_files' \
+'--issue=[Plan issue number]:number:_default' \
+'--sprint=[Sprint number]:number:_default' \
+'--task-spec-out=[Sprint task-spec output path override]:path:_files' \
+'--owner-prefix=[Task owner prefix]:text:_default' \
+'--branch-prefix=[Branch prefix]:text:_default' \
+'--worktree-prefix=[Worktree prefix]:text:_default' \
+'--strategy=[Split strategy for group assignment]:strategy:(deterministic auto)' \
+'--pr-grouping=[PR grouping mode (deterministic only)]:mode:(per-sprint group)' \
+'--default-pr-grouping=[Auto fallback when sprint metadata omits grouping intent]:mode:(per-sprint group)' \
+'*--pr-group=[Explicit task->group mapping (\`<task>=<group>\`). Repeatable]:task=group:_default' \
+'(--summary-file)--summary=[Inline review summary text]:text:_default' \
+'(--summary)--summary-file=[Path to markdown/text review summary]:path:_files' \
+'--repo=[Pass-through repository target for GitHub operations]:owner/repo:_default' \
+'--format=[Output format]:FORMAT:(text json)' \
+'(--no-comment)--comment[Emit comment output]' \
+'(--comment)--no-comment[Disable comment output]' \
+'--dry-run[Print write actions without mutating GitHub state]' \
+'-f[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--force[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--json[Output machine-readable JSON (alias for --format json)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(accept-sprint)
+_arguments "${_arguments_options[@]}" : \
+'--plan=[Plan markdown path]:path:_files' \
+'--issue=[Plan issue number]:number:_default' \
+'--sprint=[Sprint number]:number:_default' \
+'--task-spec-out=[Sprint task-spec output path override]:path:_files' \
+'--owner-prefix=[Task owner prefix]:text:_default' \
+'--branch-prefix=[Branch prefix]:text:_default' \
+'--worktree-prefix=[Worktree prefix]:text:_default' \
+'--strategy=[Split strategy for group assignment]:strategy:(deterministic auto)' \
+'--pr-grouping=[PR grouping mode (deterministic only)]:mode:(per-sprint group)' \
+'--default-pr-grouping=[Auto fallback when sprint metadata omits grouping intent]:mode:(per-sprint group)' \
+'*--pr-group=[Explicit task->group mapping (\`<task>=<group>\`). Repeatable]:task=group:_default' \
+'--approved-comment-url=[Review approval comment URL]:url:_default' \
+'(--summary-file)--summary=[Inline review summary text]:text:_default' \
+'(--summary)--summary-file=[Path to markdown/text review summary]:path:_files' \
+'--repo=[Pass-through repository target for GitHub operations]:owner/repo:_default' \
+'--format=[Output format]:FORMAT:(text json)' \
+'(--no-comment)--comment[Emit comment output]' \
+'(--comment)--no-comment[Disable comment output]' \
+'--dry-run[Print write actions without mutating GitHub state]' \
+'-f[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--force[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--json[Output machine-readable JSON (alias for --format json)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(multi-sprint-guide)
+_arguments "${_arguments_options[@]}" : \
+'--plan=[Plan markdown path]:path:_files' \
+'--from-sprint=[First sprint to include]:FROM_SPRINT:_default' \
+'--to-sprint=[Last sprint to include]:number:_default' \
+'--repo=[Pass-through repository target for GitHub operations]:owner/repo:_default' \
+'--format=[Output format]:FORMAT:(text json)' \
+'--dry-run[Print write actions without mutating GitHub state]' \
+'-f[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--force[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--json[Output machine-readable JSON (alias for --format json)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(completion)
+_arguments "${_arguments_options[@]}" : \
+'--repo=[Pass-through repository target for GitHub operations]:owner/repo:_default' \
+'--format=[Output format]:FORMAT:(text json)' \
+'--dry-run[Print write actions without mutating GitHub state]' \
+'-f[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--force[Bypass markdown payload guard for GitHub body/comment writes]' \
+'--json[Output machine-readable JSON (alias for --format json)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':shell -- Shell to generate completion script for:(bash zsh)' \
+&& ret=0
+;;
+        esac
+    ;;
+esac
 }
 
-if _nils_cli_plan_issue_source_common_zsh; then
-  _nils_cli_completion_common_register_zsh _plan-issue plan-issue
+(( $+functions[_plan-issue_commands] )) ||
+_plan-issue_commands() {
+    local commands; commands=(
+'build-task-spec:Build sprint-scoped task-spec TSV from a plan' \
+'build-plan-task-spec:Build plan-scoped task-spec TSV (all sprints) for the single plan issue' \
+'start-plan:Open one plan issue with all plan tasks in Task Decomposition' \
+'status-plan:Wrapper of issue-delivery-loop status for the plan issue' \
+'link-pr:Link PR to task rows and set runtime status (default\: in-progress)' \
+'ready-plan:Wrapper of issue-delivery-loop ready-for-review for final plan review' \
+'close-plan:Close the single plan issue after final approval + merged PR gates, then enforce worktree cleanup' \
+'cleanup-worktrees:Enforce cleanup of all issue-assigned task worktrees' \
+'start-sprint:Start sprint from Task Decomposition runtime truth after previous sprint merge+done gate passes' \
+'ready-sprint:Post sprint-ready comment for main-agent review before merge' \
+'accept-sprint:Enforce merged-PR gate, sync sprint status=done, then post accepted comment' \
+'multi-sprint-guide:Print the full repeated command flow for a plan (1 plan = 1 issue)' \
+'completion:Export shell completion script' \
+    )
+    _describe -t commands 'plan-issue commands' commands "$@"
+}
+(( $+functions[_plan-issue__accept-sprint_commands] )) ||
+_plan-issue__accept-sprint_commands() {
+    local commands; commands=()
+    _describe -t commands 'plan-issue accept-sprint commands' commands "$@"
+}
+(( $+functions[_plan-issue__build-plan-task-spec_commands] )) ||
+_plan-issue__build-plan-task-spec_commands() {
+    local commands; commands=()
+    _describe -t commands 'plan-issue build-plan-task-spec commands' commands "$@"
+}
+(( $+functions[_plan-issue__build-task-spec_commands] )) ||
+_plan-issue__build-task-spec_commands() {
+    local commands; commands=()
+    _describe -t commands 'plan-issue build-task-spec commands' commands "$@"
+}
+(( $+functions[_plan-issue__cleanup-worktrees_commands] )) ||
+_plan-issue__cleanup-worktrees_commands() {
+    local commands; commands=()
+    _describe -t commands 'plan-issue cleanup-worktrees commands' commands "$@"
+}
+(( $+functions[_plan-issue__close-plan_commands] )) ||
+_plan-issue__close-plan_commands() {
+    local commands; commands=()
+    _describe -t commands 'plan-issue close-plan commands' commands "$@"
+}
+(( $+functions[_plan-issue__completion_commands] )) ||
+_plan-issue__completion_commands() {
+    local commands; commands=()
+    _describe -t commands 'plan-issue completion commands' commands "$@"
+}
+(( $+functions[_plan-issue__link-pr_commands] )) ||
+_plan-issue__link-pr_commands() {
+    local commands; commands=()
+    _describe -t commands 'plan-issue link-pr commands' commands "$@"
+}
+(( $+functions[_plan-issue__multi-sprint-guide_commands] )) ||
+_plan-issue__multi-sprint-guide_commands() {
+    local commands; commands=()
+    _describe -t commands 'plan-issue multi-sprint-guide commands' commands "$@"
+}
+(( $+functions[_plan-issue__ready-plan_commands] )) ||
+_plan-issue__ready-plan_commands() {
+    local commands; commands=()
+    _describe -t commands 'plan-issue ready-plan commands' commands "$@"
+}
+(( $+functions[_plan-issue__ready-sprint_commands] )) ||
+_plan-issue__ready-sprint_commands() {
+    local commands; commands=()
+    _describe -t commands 'plan-issue ready-sprint commands' commands "$@"
+}
+(( $+functions[_plan-issue__start-plan_commands] )) ||
+_plan-issue__start-plan_commands() {
+    local commands; commands=()
+    _describe -t commands 'plan-issue start-plan commands' commands "$@"
+}
+(( $+functions[_plan-issue__start-sprint_commands] )) ||
+_plan-issue__start-sprint_commands() {
+    local commands; commands=()
+    _describe -t commands 'plan-issue start-sprint commands' commands "$@"
+}
+(( $+functions[_plan-issue__status-plan_commands] )) ||
+_plan-issue__status-plan_commands() {
+    local commands; commands=()
+    _describe -t commands 'plan-issue status-plan commands' commands "$@"
+}
+
+if [ "$funcstack[1]" = "_plan-issue" ]; then
+    _plan-issue "$@"
 else
-  compdef _plan-issue plan-issue
+    compdef _plan-issue plan-issue
 fi
