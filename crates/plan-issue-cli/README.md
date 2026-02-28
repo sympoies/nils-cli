@@ -69,12 +69,13 @@ Shell wrapper scripts are deprecated for this crate path. Use `plan-issue` / `pl
 
 ## Grouping and strategy rules
 
-- `--pr-grouping` is required for split-dependent commands:
+- `--strategy deterministic` requires `--pr-grouping` for split-dependent commands:
   - `build-task-spec`, `build-plan-task-spec`, `start-plan`, `start-sprint`, `ready-sprint`, `accept-sprint`.
-- `--pr-grouping per-sprint`: one shared group per sprint (default style).
+- `--pr-grouping per-sprint`: one shared group per sprint.
 - `--pr-grouping group --strategy deterministic`: requires explicit `--pr-group <task>=<group>` mappings.
-- `--pr-grouping group --strategy auto`: allows optional pins and auto assignment for remaining tasks.
-- If sprint metadata includes `PR grouping intent`, it must match `--pr-grouping` or the command fails fast.
+- `--strategy auto` rejects `--pr-grouping`.
+- `--strategy auto` resolves each sprint from plan metadata `PR grouping intent` first, then `--default-pr-grouping` for metadata gaps.
+- `--strategy auto` allows optional pins only for sprints resolved to `group`; pins targeting `per-sprint` lanes fail fast.
 - Use `plan-tooling validate` before orchestration when sprint metadata is present; invalid/partial metadata is blocked there.
 - When a sprint resolves to a single shared PR group, `Execution Mode` is normalized to `per-sprint` (instead of `pr-shared`) to reflect
   single-lane execution semantics.
@@ -102,6 +103,12 @@ plan-issue-local --format json --dry-run start-plan \
 # 4) Export completion
 plan-issue completion zsh > completions/zsh/_plan-issue
 plan-issue-local completion bash > completions/bash/plan-issue-local
+
+# 5) Auto grouping with metadata fallback
+plan-issue-local build-plan-task-spec \
+  --plan docs/plans/example-plan.md \
+  --strategy auto \
+  --default-pr-grouping group
 ```
 
 ## Exit codes

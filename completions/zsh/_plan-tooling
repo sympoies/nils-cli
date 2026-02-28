@@ -1,60 +1,155 @@
 #compdef plan-tooling
 
-_nils_cli_plan_tooling_source_common_zsh() {
-  (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
-
-  local source_file="${functions_source[_plan-tooling]-}"
-  local helper_path=''
-
-  if [[ -n "$source_file" && -r "$source_file" ]]; then
-    helper_path="${source_file:h}/_completion-adapter-common.zsh"
-    if [[ -r "$helper_path" ]]; then
-      source "$helper_path" || return 1
-      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
-    fi
-  fi
-
-  local dir=''
-  for dir in "${fpath[@]}"; do
-    helper_path="${dir}/_completion-adapter-common.zsh"
-    if [[ -r "$helper_path" ]]; then
-      source "$helper_path" || return 1
-      (( $+functions[_nils_cli_completion_common_load_generated_zsh] )) && return 0
-    fi
-  done
-
-  return 1
-}
-
-typeset -gi _NILS_PLAN_TOOLING_ZSH_GENERATED_STATE=0
-
-_nils_cli_plan_tooling_load_generated_zsh() {
-  _nils_cli_plan_tooling_source_common_zsh || return 1
-
-  _nils_cli_completion_common_load_generated_zsh \
-    "_NILS_PLAN_TOOLING_ZSH_GENERATED_STATE" \
-    "_nils_cli_plan_tooling_generated" \
-    "plan-tooling" \
-    "_plan-tooling" \
-    '^if \[ "\$funcstack\[1\]" = "_nils_cli_plan_tooling_generated" \]; then$' \
-    '^fi$'
-}
+autoload -U is-at-least
 
 _plan-tooling() {
-  emulate -L zsh -o extendedglob
+    typeset -A opt_args
+    typeset -a _arguments_options
+    local ret=1
 
-  if ! _nils_cli_plan_tooling_load_generated_zsh; then
-    if (( $+functions[_nils_cli_completion_common_fail_closed_zsh] )); then
-      _nils_cli_completion_common_fail_closed_zsh
+    if is-at-least 5.2; then
+        _arguments_options=(-s -S -C)
+    else
+        _arguments_options=(-s -C)
     fi
-    return 1
-  fi
 
-  _nils_cli_plan_tooling_generated
+    local context curcontext="$curcontext" state line
+    _arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+":: :_plan-tooling_commands" \
+"*::: :->plan-tooling" \
+&& ret=0
+    case $state in
+    (plan-tooling)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:plan-tooling-command-$line[1]:"
+        case $line[1] in
+            (to-json)
+_arguments "${_arguments_options[@]}" : \
+'--file=[Plan markdown file path]:path:_default' \
+'--sprint=[Sprint number to parse]:n:_default' \
+'--pretty[Pretty-print JSON output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(validate)
+_arguments "${_arguments_options[@]}" : \
+'*--file=[Plan markdown file path (repeatable)]:path:_default' \
+'--format=[Validation output format]:fmt:(text json)' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(batches)
+_arguments "${_arguments_options[@]}" : \
+'--file=[Plan markdown file path]:path:_default' \
+'--sprint=[Sprint number to analyze]:n:_default' \
+'--format=[Batch output format]:fmt:(json text)' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(split-prs)
+_arguments "${_arguments_options[@]}" : \
+'--file=[Plan markdown file path]:path:_default' \
+'--scope=[Split scope]:scope:(plan sprint)' \
+'--sprint=[Sprint number when --scope sprint]:n:_default' \
+'--pr-grouping=[PR grouping mode (deterministic only)]:mode:(per-sprint group)' \
+'--default-pr-grouping=[Auto fallback when sprint metadata omits grouping intent]:mode:(per-sprint group)' \
+'*--pr-group=[Group pin\: <task-or-plan-id>=<group> (required in deterministic/group, optional in auto/group)]:mapping:_default' \
+'--strategy=[Split strategy (deterministic requires full group mapping)]:strategy:(deterministic auto)' \
+'--owner-prefix=[Owner prefix for generated task rows]:text:_default' \
+'--branch-prefix=[Branch prefix for generated task rows]:text:_default' \
+'--worktree-prefix=[Worktree prefix for generated task rows]:text:_default' \
+'--format=[Split output format]:fmt:(json tsv)' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(scaffold)
+_arguments "${_arguments_options[@]}" : \
+'--slug=[Plan slug used for output naming]:slug:_default' \
+'--file=[Explicit output plan path]:path:_default' \
+'--title=[Plan title override]:text:_default' \
+'--force[Overwrite existing output file]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(completion)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':shell:(bash zsh)' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+        esac
+    ;;
+esac
 }
 
-if _nils_cli_plan_tooling_source_common_zsh; then
-  _nils_cli_completion_common_register_zsh _plan-tooling plan-tooling
+(( $+functions[_plan-tooling_commands] )) ||
+_plan-tooling_commands() {
+    local commands; commands=(
+'to-json:Parse a plan markdown file into a stable JSON schema' \
+'validate:Lint plan markdown files' \
+'batches:Compute dependency layers (parallel batches) for a sprint' \
+'split-prs:Build task-to-PR split records (deterministic/auto)' \
+'scaffold:Create a new plan from template' \
+'completion:Export shell completion script' \
+'help:Display help message' \
+    )
+    _describe -t commands 'plan-tooling commands' commands "$@"
+}
+(( $+functions[_plan-tooling__batches_commands] )) ||
+_plan-tooling__batches_commands() {
+    local commands; commands=()
+    _describe -t commands 'plan-tooling batches commands' commands "$@"
+}
+(( $+functions[_plan-tooling__completion_commands] )) ||
+_plan-tooling__completion_commands() {
+    local commands; commands=()
+    _describe -t commands 'plan-tooling completion commands' commands "$@"
+}
+(( $+functions[_plan-tooling__help_commands] )) ||
+_plan-tooling__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'plan-tooling help commands' commands "$@"
+}
+(( $+functions[_plan-tooling__scaffold_commands] )) ||
+_plan-tooling__scaffold_commands() {
+    local commands; commands=()
+    _describe -t commands 'plan-tooling scaffold commands' commands "$@"
+}
+(( $+functions[_plan-tooling__split-prs_commands] )) ||
+_plan-tooling__split-prs_commands() {
+    local commands; commands=()
+    _describe -t commands 'plan-tooling split-prs commands' commands "$@"
+}
+(( $+functions[_plan-tooling__to-json_commands] )) ||
+_plan-tooling__to-json_commands() {
+    local commands; commands=()
+    _describe -t commands 'plan-tooling to-json commands' commands "$@"
+}
+(( $+functions[_plan-tooling__validate_commands] )) ||
+_plan-tooling__validate_commands() {
+    local commands; commands=()
+    _describe -t commands 'plan-tooling validate commands' commands "$@"
+}
+
+if [ "$funcstack[1]" = "_plan-tooling" ]; then
+    _plan-tooling "$@"
 else
-  compdef _plan-tooling plan-tooling
+    compdef _plan-tooling plan-tooling
 fi

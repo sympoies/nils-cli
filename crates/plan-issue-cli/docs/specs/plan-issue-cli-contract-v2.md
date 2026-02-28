@@ -18,7 +18,7 @@ Key change from v1:
 
 - parsed plan tasks (`Task N.M`, dependencies, validation commands)
 - split-prs grouping output (`task_id`, `summary`, `pr_group`)
-- command grouping/strategy (`--pr-grouping`, `--strategy`)
+- command grouping/strategy (`--strategy`, deterministic `--pr-grouping`, auto `--default-pr-grouping`)
 - prefix options (`--owner-prefix`, `--branch-prefix`, `--worktree-prefix`)
 
 Rules:
@@ -27,8 +27,10 @@ Rules:
 - `Notes` are task-specific and include shared-lane tokens when applicable.
 - Anchor selection for runtime lane materialization is deterministic from lane membership
   (stable task ordering), not passthrough split-prs task placeholders.
-- If sprint metadata declares `PR grouping intent`, command `--pr-grouping` must match or
-  task-spec generation fails before issue/comment artifact writes.
+- `strategy=deterministic` requires command `--pr-grouping`; if sprint metadata declares `PR grouping intent`, it must match or task-spec
+  generation fails before issue/comment artifact writes.
+- `strategy=auto` resolves each sprint from plan metadata `PR grouping intent` first and uses `--default-pr-grouping` only when metadata is
+  absent.
 
 ## Notes Token Contract (v2)
 

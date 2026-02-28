@@ -7,7 +7,7 @@ use nils_common::{
 use plan_tooling::parse::{Sprint as ParsedSprint, parse_plan_with_display};
 use plan_tooling::split_prs::{
     SplitPlanOptions, SplitPlanRecord, SplitPrGrouping, SplitPrStrategy, SplitScope,
-    build_split_plan_records, select_sprints_for_scope,
+    build_split_plan_records, resolve_pr_grouping_by_sprint, select_sprints_for_scope,
 };
 
 use crate::commands::{PrGroupMapping, PrGrouping, SplitStrategy};
@@ -25,7 +25,8 @@ pub struct TaskSpecBuildOptions {
     pub owner_prefix: String,
     pub branch_prefix: String,
     pub worktree_prefix: String,
-    pub pr_grouping: PrGrouping,
+    pub pr_grouping: Option<PrGrouping>,
+    pub default_pr_grouping: Option<PrGrouping>,
     pub strategy: SplitStrategy,
     pub pr_group: Vec<PrGroupMapping>,
 }
@@ -83,14 +84,14 @@ pub fn build_task_spec(
     };
 
     let selected_sprints = select_sprints_for_scope(&plan, split_scope)?;
-    validate_pr_grouping_intent_alignment(&selected_sprints, options.pr_grouping)?;
     let sprint_name = match scope {
         TaskSpecScope::Plan => None,
         TaskSpecScope::Sprint(_) => selected_sprints.first().map(|sprint| sprint.name.clone()),
     };
 
     let split_options = SplitPlanOptions {
-        pr_grouping: to_split_grouping(options.pr_grouping),
+        pr_grouping: options.pr_grouping.map(to_split_grouping),
+        default_pr_grouping: options.default_pr_grouping.map(to_split_grouping),
         strategy: to_split_strategy(options.strategy),
         pr_group_entries: options
             .pr_group
@@ -101,9 +102,16 @@ pub fn build_task_spec(
         branch_prefix: options.branch_prefix.clone(),
         worktree_prefix: options.worktree_prefix.clone(),
     };
+    let grouping_by_sprint =
+        resolve_pr_grouping_by_sprint(&selected_sprints, &split_options).map(|resolved| {
+            resolved
+                .into_iter()
+                .map(|(sprint, value)| (sprint, from_split_grouping(value.grouping)))
+                .collect::<HashMap<_, _>>()
+        })?;
 
     let split_records = build_split_plan_records(&selected_sprints, &split_options)?;
-    let rows = RuntimeMetadataMaterializer::new(&selected_sprints, options)?
+    let rows = RuntimeMetadataMaterializer::new(&selected_sprints, options, grouping_by_sprint)?
         .materialize_rows(&split_records)?;
 
     Ok(TaskSpecBuild {
@@ -128,7 +136,7 @@ struct RuntimeMetadataMaterializer {
     owner_prefix: String,
     branch_prefix: String,
     worktree_prefix: String,
-    grouping: PrGrouping,
+    grouping_by_sprint: HashMap<i32, PrGrouping>,
     strategy: SplitStrategy,
     task_seed_by_id: HashMap<String, RuntimeTaskSeed>,
 }
@@ -137,6 +145,7 @@ impl RuntimeMetadataMaterializer {
     fn new(
         selected_sprints: &[ParsedSprint],
         options: &TaskSpecBuildOptions,
+        grouping_by_sprint: HashMap<i32, PrGrouping>,
     ) -> Result<Self, String> {
         let mut task_seed_by_id: HashMap<String, RuntimeTaskSeed> = HashMap::new();
 
@@ -186,7 +195,7 @@ impl RuntimeMetadataMaterializer {
             owner_prefix: normalize_owner_prefix(&options.owner_prefix),
             branch_prefix: normalize_branch_prefix(&options.branch_prefix),
             worktree_prefix: normalize_worktree_prefix(&options.worktree_prefix),
-            grouping: options.pr_grouping,
+            grouping_by_sprint,
             strategy: options.strategy,
             task_seed_by_id,
         })
@@ -221,12 +230,14 @@ impl RuntimeMetadataMaterializer {
 
             let slug_fallback = format!("task-{}", seed.ordinal);
             let slug = normalize_token(&record.summary, &slug_fallback, 48);
-            let notes = synthesize_notes(
-                seed,
-                self.grouping,
-                &record.pr_group,
-                shared_anchor.as_deref(),
-            );
+            let grouping = *self.grouping_by_sprint.get(&record.sprint).ok_or_else(|| {
+                format!(
+                    "{}: missing resolved grouping for sprint {}",
+                    record.task_id, record.sprint
+                )
+            })?;
+            let notes =
+                synthesize_notes(seed, grouping, &record.pr_group, shared_anchor.as_deref());
 
             rows.push(TaskSpecRow {
                 task_id: record.task_id.clone(),
@@ -243,7 +254,7 @@ impl RuntimeMetadataMaterializer {
                 notes,
                 pr_group: record.pr_group.clone(),
                 sprint: record.sprint,
-                grouping: self.grouping,
+                grouping,
             });
         }
 
@@ -573,38 +584,17 @@ fn to_split_grouping(grouping: PrGrouping) -> SplitPrGrouping {
     }
 }
 
+fn from_split_grouping(grouping: SplitPrGrouping) -> PrGrouping {
+    match grouping {
+        SplitPrGrouping::PerSprint => PrGrouping::PerSprint,
+        SplitPrGrouping::Group => PrGrouping::Group,
+    }
+}
+
 fn to_split_strategy(strategy: SplitStrategy) -> SplitPrStrategy {
     match strategy {
         SplitStrategy::Deterministic => SplitPrStrategy::Deterministic,
         SplitStrategy::Auto => SplitPrStrategy::Auto,
-    }
-}
-
-fn validate_pr_grouping_intent_alignment(
-    selected_sprints: &[ParsedSprint],
-    grouping: PrGrouping,
-) -> Result<(), String> {
-    let expected = pr_grouping_label(grouping);
-    let mut mismatches: Vec<String> = Vec::new();
-    for sprint in selected_sprints {
-        let Some(intent) = sprint.metadata.pr_grouping_intent.as_deref() else {
-            continue;
-        };
-        if intent != expected {
-            mismatches.push(format!(
-                "S{} metadata `PR grouping intent={intent}` conflicts with `--pr-grouping {expected}`",
-                sprint.number
-            ));
-        }
-    }
-
-    if mismatches.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "plan metadata/CLI grouping mismatch: {}",
-            mismatches.join(" | ")
-        ))
     }
 }
 

@@ -20,7 +20,8 @@ plan-tooling split-prs \
   --file <plan.md> \
   --scope <plan|sprint> \
   [--sprint <n>] \
-  --pr-grouping <per-sprint|group> \
+  [--pr-grouping <per-sprint|group>] \
+  [--default-pr-grouping <per-sprint|group>] \
   [--pr-group <task-or-plan-id>=<group>]... \
   [--strategy <deterministic|auto>] \
   [--explain] \
@@ -39,10 +40,16 @@ Compatibility note:
 
 - Output ordering remains deterministic: sprint number, then task appearance order.
 - `pr_group` naming remains normalized and deterministic.
+- `strategy=deterministic` requires `--pr-grouping`.
 - `strategy=deterministic` + `pr-grouping=group` requires explicit `--pr-group` mapping for every task.
-- `strategy=auto` + `pr-grouping=group` allows optional pin mappings and auto-assigns the rest.
-- `strategy=auto` + `pr-grouping=per-sprint` still emits one shared `pr_group` per sprint.
-- `explain[].pr_grouping_intent_source` reports whether grouping intent came from plan metadata (`plan-metadata`) or CLI fallback (`cli-fallback`).
+- `strategy=auto` rejects `--pr-grouping`.
+- `strategy=auto` resolves grouping per sprint from `PR grouping intent` metadata first, then `--default-pr-grouping` if metadata is absent.
+- `strategy=auto` fails when a selected sprint has neither `PR grouping intent` metadata nor `--default-pr-grouping`.
+- `strategy=auto` allows optional pin mappings only for sprints resolved to `group`; pins targeting `per-sprint` lanes are rejected.
+- `explain[].pr_grouping_intent_source` reports whether grouping intent came from:
+  - command grouping (`command-pr-grouping`)
+  - plan metadata (`plan-metadata`)
+  - auto fallback (`default-pr-grouping`)
 
 ## TSV Output (format=tsv)
 
@@ -69,6 +76,12 @@ Top-level object:
 - `strategy`
 - `records`
 - optional `explain` (only with `--explain`)
+
+`pr_grouping` reports the resolved grouping summary for the selected scope:
+
+- `per-sprint` when every selected sprint resolves to `per-sprint`
+- `group` when every selected sprint resolves to `group`
+- `mixed` when the selected scope contains both resolved modes
 
 `records[]` fields:
 

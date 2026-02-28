@@ -1,63 +1,249 @@
-# nils-cli bash completion: plan-tooling
-
-if [[ -z ${BASH_VERSION-} ]]; then
-  return 0 2>/dev/null || exit 0
-fi
-
-shopt -s progcomp 2>/dev/null || true
-
-_nils_cli_plan-tooling_source_common_bash() {
-  declare -F _nils_cli_completion_common_load_generated_bash >/dev/null 2>&1 && return 0
-
-  local source_file="${BASH_SOURCE[0]}"
-  local script_dir=''
-  script_dir="$(cd -- "$(dirname -- "$source_file")" && pwd -P)" || return 1
-
-  local helper_path="${script_dir}/completion-adapter-common.bash"
-  [[ -r "$helper_path" ]] || return 1
-
-  # shellcheck source=/dev/null
-  source "$helper_path" || return 1
-
-  declare -F _nils_cli_completion_common_load_generated_bash >/dev/null 2>&1
-}
-
-_NILS_PLAN_TOOLING_BASH_GENERATED_STATE=0
-
-_nils_cli_plan-tooling_load_generated_bash() {
-  _nils_cli_plan-tooling_source_common_bash || return 1
-
-  # command plan-tooling completion bash
-  _nils_cli_completion_common_load_generated_bash \
-    "_NILS_PLAN_TOOLING_BASH_GENERATED_STATE" \
-    "_nils_cli_plan_tooling_generated" \
-    "plan-tooling" \
-    "_plan-tooling" \
-    '^if \[\[ "\${BASH_VERSINFO\[0\]}" -eq 4 ' \
-    '^fi$'
-}
-
-_nils_cli_plan-tooling_complete() {
-  if ! _nils_cli_plan-tooling_load_generated_bash; then
-    if declare -F _nils_cli_completion_common_fail_closed_bash >/dev/null 2>&1; then
-      _nils_cli_completion_common_fail_closed_bash
+_plan-tooling() {
+    local i cur prev opts cmd
+    COMPREPLY=()
+    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+        cur="$2"
     else
-      COMPREPLY=()
+        cur="${COMP_WORDS[COMP_CWORD]}"
     fi
-    return 0
-  fi
+    prev="$3"
+    cmd=""
+    opts=""
 
-  local cur="${COMP_WORDS[COMP_CWORD]}"
-  local prev=''
-  if (( COMP_CWORD > 0 )); then
-    prev="${COMP_WORDS[COMP_CWORD-1]}"
-  fi
+    for i in "${COMP_WORDS[@]:0:COMP_CWORD}"
+    do
+        case "${cmd},${i}" in
+            ",$1")
+                cmd="plan__tooling"
+                ;;
+            plan__tooling,batches)
+                cmd="plan__tooling__batches"
+                ;;
+            plan__tooling,completion)
+                cmd="plan__tooling__completion"
+                ;;
+            plan__tooling,help)
+                cmd="plan__tooling__help"
+                ;;
+            plan__tooling,scaffold)
+                cmd="plan__tooling__scaffold"
+                ;;
+            plan__tooling,split-prs)
+                cmd="plan__tooling__split__prs"
+                ;;
+            plan__tooling,to-json)
+                cmd="plan__tooling__to__json"
+                ;;
+            plan__tooling,validate)
+                cmd="plan__tooling__validate"
+                ;;
+            *)
+                ;;
+        esac
+    done
 
-  _nils_cli_plan_tooling_generated "plan-tooling" "$cur" "$prev"
+    case "${cmd}" in
+        plan__tooling)
+            opts="-h -V --help --version to-json validate batches split-prs scaffold completion help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        plan__tooling__batches)
+            opts="-h --file --sprint --format --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --file)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --sprint)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "json text" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        plan__tooling__completion)
+            opts="-h --help bash zsh"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        plan__tooling__help)
+            opts="-h --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        plan__tooling__scaffold)
+            opts="-h --slug --file --title --force --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --slug)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --file)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --title)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        plan__tooling__split__prs)
+            opts="-h --file --scope --sprint --pr-grouping --default-pr-grouping --pr-group --strategy --owner-prefix --branch-prefix --worktree-prefix --format --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --file)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --scope)
+                    COMPREPLY=($(compgen -W "plan sprint" -- "${cur}"))
+                    return 0
+                    ;;
+                --sprint)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --pr-grouping)
+                    COMPREPLY=($(compgen -W "per-sprint group" -- "${cur}"))
+                    return 0
+                    ;;
+                --default-pr-grouping)
+                    COMPREPLY=($(compgen -W "per-sprint group" -- "${cur}"))
+                    return 0
+                    ;;
+                --pr-group)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --strategy)
+                    COMPREPLY=($(compgen -W "deterministic auto" -- "${cur}"))
+                    return 0
+                    ;;
+                --owner-prefix)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --branch-prefix)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --worktree-prefix)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "json tsv" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        plan__tooling__to__json)
+            opts="-h --file --sprint --pretty --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --file)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --sprint)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        plan__tooling__validate)
+            opts="-h --file --format --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --file)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+    esac
 }
 
-if _nils_cli_plan-tooling_source_common_bash; then
-  _nils_cli_completion_common_register_bash _nils_cli_plan-tooling_complete plan-tooling
+if [[ "${BASH_VERSINFO[0]}" -eq 4 && "${BASH_VERSINFO[1]}" -ge 4 || "${BASH_VERSINFO[0]}" -gt 4 ]]; then
+    complete -F _plan-tooling -o nosort -o bashdefault -o default plan-tooling
 else
-  complete -F _nils_cli_plan-tooling_complete plan-tooling
+    complete -F _plan-tooling -o bashdefault -o default plan-tooling
 fi

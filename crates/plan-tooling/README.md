@@ -42,23 +42,29 @@ Help:
 
 ### split-prs
 
-- `split-prs --file <plan.md> --scope <plan|sprint> [--sprint <n>] --pr-grouping <per-sprint|group>`
+- `split-prs --file <plan.md> --scope <plan|sprint> [--sprint <n>]`
+  `[--pr-grouping <per-sprint|group>] [--default-pr-grouping <per-sprint|group>]`
   `[--pr-group <task-or-plan-id>=<group>]... [--strategy deterministic|auto] [--explain] [--format json|tsv]`
 - compatibility flags accepted by the CLI parser: `--owner-prefix`, `--branch-prefix`, `--worktree-prefix`
 - value options accept both `--key value` and `--key=value`.
 - `--owner-prefix`, `--branch-prefix`, and `--worktree-prefix` are accepted for compatibility with older automation, but v2 `split-prs`
   output is grouping-only (`task_id`, `summary`, `pr_group`).
 - deterministic mode:
+  - `--pr-grouping` is required.
   - `--pr-grouping per-sprint`: one shared `pr_group` per sprint (`s<n>`).
   - `--pr-grouping group`: pass `--pr-group` for every selected task.
 - auto mode:
+  - `--pr-grouping` is rejected.
+  - sprint metadata `PR grouping intent` is authoritative when present.
+  - `--default-pr-grouping` fills gaps only for sprints that omit grouping intent.
+  - if a selected sprint has neither metadata nor `--default-pr-grouping`, the command fails.
   - scoring inputs are `Complexity`, dependency topology, and `Location` overlap.
-  - in `pr-grouping=group`, `--pr-group` mappings are optional pins; remaining tasks are auto-grouped.
+  - for auto-resolved `group` sprints, `--pr-group` mappings are optional pins and remaining tasks are auto-grouped.
+  - pins targeting auto-resolved `per-sprint` sprints are rejected.
   - when sprint metadata provides `Execution Profile` parallel width hints, auto grouping targets that lane count (deterministic fallback
     merges apply when needed).
-  - `pr-grouping=per-sprint` keeps one shared group per sprint (`s<n>`).
   - parser metadata gates are strict; non-canonical field names (for example `PR Grouping Intent`) are rejected.
-  - `--explain` includes `pr_grouping_intent_source` (`plan-metadata` or `cli-fallback`) for traceability.
+  - `--explain` includes `pr_grouping_intent_source` (`plan-metadata`, `default-pr-grouping`, or `command-pr-grouping`) for traceability.
   - ordering and tie-breakers stay deterministic (`Task N.M`, then `SxTy`, then lexical summary).
   - emitted grouping primitives (`task_id`, `summary`, `pr_group`, optional `--explain`) are consumed by `plan-issue` runtime
     materialization and runtime-truth validation.
@@ -67,7 +73,7 @@ Help:
   - `split-prs --file docs/plans/example-plan.md --scope sprint --sprint 2 --pr-grouping group --pr-group S2T1=isolated`
     `--pr-group S2T2=shared --pr-group S2T3=shared --format json`
 - auto example:
-  - `split-prs --file docs/plans/example-plan.md --scope sprint --sprint 2 --pr-grouping group --strategy auto --format json`
+  - `split-prs --file docs/plans/example-plan.md --scope sprint --sprint 2 --strategy auto --default-pr-grouping group --format json`
 - rollback switchback:
   - if auto rollout is unhealthy, pin orchestration calls to `--strategy deterministic` until follow-up fixes land.
 

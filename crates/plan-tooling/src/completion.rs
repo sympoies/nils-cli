@@ -128,7 +128,14 @@ fn build_completion_command() -> Command {
                 .arg(
                     Arg::new("pr-grouping")
                         .long("pr-grouping")
-                        .help("PR grouping mode")
+                        .help("PR grouping mode (deterministic only)")
+                        .value_name("mode")
+                        .value_parser(["per-sprint", "group"]),
+                )
+                .arg(
+                    Arg::new("default-pr-grouping")
+                        .long("default-pr-grouping")
+                        .help("Auto fallback when sprint metadata omits grouping intent")
                         .value_name("mode")
                         .value_parser(["per-sprint", "group"]),
                 )

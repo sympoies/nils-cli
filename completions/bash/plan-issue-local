@@ -1,63 +1,759 @@
-# nils-cli bash completion: plan-issue-local
-
-if [[ -z ${BASH_VERSION-} ]]; then
-  return 0 2>/dev/null || exit 0
-fi
-
-shopt -s progcomp 2>/dev/null || true
-
-_nils_cli_plan_issue_local_source_common_bash() {
-  declare -F _nils_cli_completion_common_load_generated_bash >/dev/null 2>&1 && return 0
-
-  local source_file="${BASH_SOURCE[0]}"
-  local script_dir=''
-  script_dir="$(cd -- "$(dirname -- "$source_file")" && pwd -P)" || return 1
-
-  local helper_path="${script_dir}/completion-adapter-common.bash"
-  [[ -r "$helper_path" ]] || return 1
-
-  # shellcheck source=/dev/null
-  source "$helper_path" || return 1
-
-  declare -F _nils_cli_completion_common_load_generated_bash >/dev/null 2>&1
-}
-
-_NILS_PLAN_ISSUE_LOCAL_BASH_GENERATED_STATE=0
-
-_nils_cli_plan_issue_local_load_generated_bash() {
-  _nils_cli_plan_issue_local_source_common_bash || return 1
-
-  # command plan-issue-local completion bash
-  _nils_cli_completion_common_load_generated_bash \
-    "_NILS_PLAN_ISSUE_LOCAL_BASH_GENERATED_STATE" \
-    "_nils_cli_plan_issue_local_generated" \
-    "plan-issue-local" \
-    "_plan-issue-local" \
-    '^if \[\[ "\${BASH_VERSINFO\[0\]}" -eq 4 ' \
-    '^fi$'
-}
-
-_nils_cli_plan_issue_local_complete() {
-  if ! _nils_cli_plan_issue_local_load_generated_bash; then
-    if declare -F _nils_cli_completion_common_fail_closed_bash >/dev/null 2>&1; then
-      _nils_cli_completion_common_fail_closed_bash
+_plan-issue-local() {
+    local i cur prev opts cmd
+    COMPREPLY=()
+    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+        cur="$2"
     else
-      COMPREPLY=()
+        cur="${COMP_WORDS[COMP_CWORD]}"
     fi
-    return 0
-  fi
+    prev="$3"
+    cmd=""
+    opts=""
 
-  local cur="${COMP_WORDS[COMP_CWORD]}"
-  local prev=''
-  if (( COMP_CWORD > 0 )); then
-    prev="${COMP_WORDS[COMP_CWORD-1]}"
-  fi
+    for i in "${COMP_WORDS[@]:0:COMP_CWORD}"
+    do
+        case "${cmd},${i}" in
+            ",$1")
+                cmd="plan__issue__local"
+                ;;
+            plan__issue__local,accept-sprint)
+                cmd="plan__issue__local__accept__sprint"
+                ;;
+            plan__issue__local,build-plan-task-spec)
+                cmd="plan__issue__local__build__plan__task__spec"
+                ;;
+            plan__issue__local,build-task-spec)
+                cmd="plan__issue__local__build__task__spec"
+                ;;
+            plan__issue__local,cleanup-worktrees)
+                cmd="plan__issue__local__cleanup__worktrees"
+                ;;
+            plan__issue__local,close-plan)
+                cmd="plan__issue__local__close__plan"
+                ;;
+            plan__issue__local,completion)
+                cmd="plan__issue__local__completion"
+                ;;
+            plan__issue__local,link-pr)
+                cmd="plan__issue__local__link__pr"
+                ;;
+            plan__issue__local,multi-sprint-guide)
+                cmd="plan__issue__local__multi__sprint__guide"
+                ;;
+            plan__issue__local,ready-plan)
+                cmd="plan__issue__local__ready__plan"
+                ;;
+            plan__issue__local,ready-sprint)
+                cmd="plan__issue__local__ready__sprint"
+                ;;
+            plan__issue__local,start-plan)
+                cmd="plan__issue__local__start__plan"
+                ;;
+            plan__issue__local,start-sprint)
+                cmd="plan__issue__local__start__sprint"
+                ;;
+            plan__issue__local,status-plan)
+                cmd="plan__issue__local__status__plan"
+                ;;
+            *)
+                ;;
+        esac
+    done
 
-  _nils_cli_plan_issue_local_generated "plan-issue-local" "$cur" "$prev"
+    case "${cmd}" in
+        plan__issue__local)
+            opts="-f -h -V --repo --dry-run --force --json --format --help --version build-task-spec build-plan-task-spec start-plan status-plan link-pr ready-plan close-plan cleanup-worktrees start-sprint ready-sprint accept-sprint multi-sprint-guide completion"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        plan__issue__local__accept__sprint)
+            opts="-f -h --plan --issue --sprint --task-spec-out --owner-prefix --branch-prefix --worktree-prefix --strategy --pr-grouping --default-pr-grouping --pr-group --approved-comment-url --summary --summary-file --comment --no-comment --repo --dry-run --force --json --format --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --plan)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --issue)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --sprint)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --task-spec-out)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --owner-prefix)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --branch-prefix)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --worktree-prefix)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --strategy)
+                    COMPREPLY=($(compgen -W "deterministic auto" -- "${cur}"))
+                    return 0
+                    ;;
+                --pr-grouping)
+                    COMPREPLY=($(compgen -W "per-sprint group" -- "${cur}"))
+                    return 0
+                    ;;
+                --default-pr-grouping)
+                    COMPREPLY=($(compgen -W "per-sprint group" -- "${cur}"))
+                    return 0
+                    ;;
+                --pr-group)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --approved-comment-url)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --summary)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --summary-file)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        plan__issue__local__build__plan__task__spec)
+            opts="-f -h --plan --task-spec-out --owner-prefix --branch-prefix --worktree-prefix --strategy --pr-grouping --default-pr-grouping --pr-group --repo --dry-run --force --json --format --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --plan)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --task-spec-out)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --owner-prefix)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --branch-prefix)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --worktree-prefix)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --strategy)
+                    COMPREPLY=($(compgen -W "deterministic auto" -- "${cur}"))
+                    return 0
+                    ;;
+                --pr-grouping)
+                    COMPREPLY=($(compgen -W "per-sprint group" -- "${cur}"))
+                    return 0
+                    ;;
+                --default-pr-grouping)
+                    COMPREPLY=($(compgen -W "per-sprint group" -- "${cur}"))
+                    return 0
+                    ;;
+                --pr-group)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        plan__issue__local__build__task__spec)
+            opts="-f -h --plan --sprint --task-spec-out --owner-prefix --branch-prefix --worktree-prefix --strategy --pr-grouping --default-pr-grouping --pr-group --repo --dry-run --force --json --format --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --plan)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --sprint)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --task-spec-out)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --owner-prefix)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --branch-prefix)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --worktree-prefix)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --strategy)
+                    COMPREPLY=($(compgen -W "deterministic auto" -- "${cur}"))
+                    return 0
+                    ;;
+                --pr-grouping)
+                    COMPREPLY=($(compgen -W "per-sprint group" -- "${cur}"))
+                    return 0
+                    ;;
+                --default-pr-grouping)
+                    COMPREPLY=($(compgen -W "per-sprint group" -- "${cur}"))
+                    return 0
+                    ;;
+                --pr-group)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        plan__issue__local__cleanup__worktrees)
+            opts="-f -h --issue --repo --dry-run --force --json --format --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --issue)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        plan__issue__local__close__plan)
+            opts="-f -h --issue --body-file --approved-comment-url --reason --comment --comment-file --allow-not-done --repo --dry-run --force --json --format --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --issue)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --body-file)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --approved-comment-url)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --reason)
+                    COMPREPLY=($(compgen -W "completed not-planned" -- "${cur}"))
+                    return 0
+                    ;;
+                --comment)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --comment-file)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        plan__issue__local__completion)
+            opts="-f -h --repo --dry-run --force --json --format --help bash zsh"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        plan__issue__local__link__pr)
+            opts="-f -h --issue --body-file --task --sprint --pr-group --pr --status --repo --dry-run --force --json --format --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --issue)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --body-file)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --task)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --sprint)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --pr-group)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --pr)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --status)
+                    COMPREPLY=($(compgen -W "planned in-progress blocked" -- "${cur}"))
+                    return 0
+                    ;;
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        plan__issue__local__multi__sprint__guide)
+            opts="-f -h --plan --from-sprint --to-sprint --repo --dry-run --force --json --format --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --plan)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --from-sprint)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --to-sprint)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        plan__issue__local__ready__plan)
+            opts="-f -h --issue --body-file --summary --summary-file --label-update --label --remove-label --comment --no-comment --repo --dry-run --force --json --format --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --issue)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --body-file)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --summary)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --summary-file)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --label)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --remove-label)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        plan__issue__local__ready__sprint)
+            opts="-f -h --plan --issue --sprint --task-spec-out --owner-prefix --branch-prefix --worktree-prefix --strategy --pr-grouping --default-pr-grouping --pr-group --summary --summary-file --comment --no-comment --repo --dry-run --force --json --format --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --plan)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --issue)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --sprint)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --task-spec-out)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --owner-prefix)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --branch-prefix)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --worktree-prefix)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --strategy)
+                    COMPREPLY=($(compgen -W "deterministic auto" -- "${cur}"))
+                    return 0
+                    ;;
+                --pr-grouping)
+                    COMPREPLY=($(compgen -W "per-sprint group" -- "${cur}"))
+                    return 0
+                    ;;
+                --default-pr-grouping)
+                    COMPREPLY=($(compgen -W "per-sprint group" -- "${cur}"))
+                    return 0
+                    ;;
+                --pr-group)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --summary)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --summary-file)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        plan__issue__local__start__plan)
+            opts="-f -h --plan --title --task-spec-out --issue-body-out --owner-prefix --branch-prefix --worktree-prefix --strategy --pr-grouping --default-pr-grouping --pr-group --label --repo --dry-run --force --json --format --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --plan)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --title)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --task-spec-out)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --issue-body-out)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --owner-prefix)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --branch-prefix)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --worktree-prefix)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --strategy)
+                    COMPREPLY=($(compgen -W "deterministic auto" -- "${cur}"))
+                    return 0
+                    ;;
+                --pr-grouping)
+                    COMPREPLY=($(compgen -W "per-sprint group" -- "${cur}"))
+                    return 0
+                    ;;
+                --default-pr-grouping)
+                    COMPREPLY=($(compgen -W "per-sprint group" -- "${cur}"))
+                    return 0
+                    ;;
+                --pr-group)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --label)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        plan__issue__local__start__sprint)
+            opts="-f -h --plan --issue --sprint --task-spec-out --subagent-prompts-out --owner-prefix --branch-prefix --worktree-prefix --strategy --pr-grouping --default-pr-grouping --pr-group --comment --no-comment --repo --dry-run --force --json --format --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --plan)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --issue)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --sprint)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --task-spec-out)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --subagent-prompts-out)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --owner-prefix)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --branch-prefix)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --worktree-prefix)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --strategy)
+                    COMPREPLY=($(compgen -W "deterministic auto" -- "${cur}"))
+                    return 0
+                    ;;
+                --pr-grouping)
+                    COMPREPLY=($(compgen -W "per-sprint group" -- "${cur}"))
+                    return 0
+                    ;;
+                --default-pr-grouping)
+                    COMPREPLY=($(compgen -W "per-sprint group" -- "${cur}"))
+                    return 0
+                    ;;
+                --pr-group)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        plan__issue__local__status__plan)
+            opts="-f -h --issue --body-file --comment --no-comment --repo --dry-run --force --json --format --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --issue)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --body-file)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+    esac
 }
 
-if _nils_cli_plan_issue_local_source_common_bash; then
-  _nils_cli_completion_common_register_bash _nils_cli_plan_issue_local_complete plan-issue-local
+if [[ "${BASH_VERSINFO[0]}" -eq 4 && "${BASH_VERSINFO[1]}" -ge 4 || "${BASH_VERSINFO[0]}" -gt 4 ]]; then
+    complete -F _plan-issue-local -o nosort -o bashdefault -o default plan-issue-local
 else
-  complete -F _nils_cli_plan_issue_local_complete plan-issue-local
+    complete -F _plan-issue-local -o bashdefault -o default plan-issue-local
 fi
