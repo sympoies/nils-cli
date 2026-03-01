@@ -25,6 +25,14 @@ if [[ "$mode" != "auto" && "$mode" != "debug" && "$mode" != "installed" ]]; then
   exit 64
 fi
 
+emit_status() {
+  if [[ "${NILS_WRAPPER_STATUS_HINTS:-1}" == "0" ]]; then
+    return 0
+  fi
+
+  echo "$*" >&2
+}
+
 is_self_candidate() {
   local candidate="$1"
   [[ -n "$candidate" && -e "$candidate" && "$candidate" -ef "$self_path" ]]
@@ -50,6 +58,7 @@ resolve_installed() {
 
 run_debug() {
   if command -v cargo >/dev/null 2>&1; then
+    emit_status "${bin_name}: exec=cargo mode=${mode} crate=${crate_name} (cargo -q: build may stay silent while compiling)"
     exec cargo run -q -p "$crate_name" -- "${args[@]}"
   fi
 
@@ -60,6 +69,7 @@ run_debug() {
 run_installed() {
   local installed=""
   if installed="$(resolve_installed)"; then
+    emit_status "${bin_name}: exec=installed mode=${mode} path=${installed}"
     exec "$installed" "${args[@]}"
   fi
 
@@ -79,10 +89,12 @@ esac
 
 installed=""
 if installed="$(resolve_installed)"; then
+  emit_status "${bin_name}: exec=installed mode=${mode} path=${installed}"
   exec "$installed" "${args[@]}"
 fi
 
 if command -v cargo >/dev/null 2>&1; then
+  emit_status "${bin_name}: exec=cargo mode=${mode} crate=${crate_name} (cargo -q: build may stay silent while compiling)"
   exec cargo run -q -p "$crate_name" -- "${args[@]}"
 fi
 

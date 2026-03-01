@@ -20,6 +20,14 @@ if [[ "$mode" != "auto" && "$mode" != "debug" && "$mode" != "installed" ]]; then
   exit 64
 fi
 
+emit_status() {
+  if [[ "${NILS_WRAPPER_STATUS_HINTS:-1}" == "0" ]]; then
+    return 0
+  fi
+
+  echo "$*" >&2
+}
+
 is_self_candidate() {
   local candidate="$1"
   [[ -n "$candidate" && -e "$candidate" && "$candidate" -ef "$self_path" ]]
@@ -46,8 +54,10 @@ resolve_installed_for() {
 
 run_debug_for() {
   local target_crate="$1"
+  local effective_mode="${2:-$mode}"
 
   if command -v cargo >/dev/null 2>&1; then
+    emit_status "codex-cli: exec=cargo mode=${effective_mode} crate=${target_crate} (cargo -q: build may stay silent while compiling)"
     exec cargo run -q -p "$target_crate" -- "${args[@]}"
   fi
 
@@ -56,9 +66,11 @@ run_debug_for() {
 
 run_installed_for() {
   local target_bin="$1"
+  local effective_mode="${2:-$mode}"
   local installed=""
 
   if installed="$(resolve_installed_for "$target_bin")"; then
+    emit_status "codex-cli: exec=installed mode=${effective_mode} path=${installed}"
     exec "$installed" "${args[@]}"
   fi
 
@@ -69,11 +81,11 @@ run_auto_for() {
   local target_bin="$1"
   local target_crate="$2"
 
-  if run_installed_for "$target_bin"; then
+  if run_installed_for "$target_bin" "auto"; then
     return 0
   fi
 
-  if run_debug_for "$target_crate"; then
+  if run_debug_for "$target_crate" "auto"; then
     return 0
   fi
 
@@ -96,14 +108,14 @@ fi
 
 case "$mode" in
   debug)
-    if run_debug_for "nils-codex-cli"; then
+    if run_debug_for "nils-codex-cli" "debug"; then
       exit 0
     fi
     echo "codex-cli: cargo not found (required when NILS_WRAPPER_MODE=debug)" >&2
     exit 1
     ;;
   installed)
-    if run_installed_for "codex-cli"; then
+    if run_installed_for "codex-cli" "installed"; then
       exit 0
     fi
     echo "codex-cli: installed binary not found (NILS_WRAPPER_MODE=installed)" >&2

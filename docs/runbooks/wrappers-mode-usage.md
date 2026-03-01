@@ -8,6 +8,7 @@ This runbook defines how `wrappers/*` choose between:
 - workspace debug execution (`cargo run -q -p ...`).
 
 It also documents the safety rules that prevent wrapper self-recursion and ambiguous fallback behavior.
+Wrappers emit a short status line on `stderr` before execution so users can see which path is active.
 
 ## Scope
 
@@ -73,6 +74,18 @@ Lookup order for installed mode resolution:
 2. `command -v <bin>`
 
 Both `~` and `~/...` forms are expanded.
+
+### `NILS_WRAPPER_STATUS_HINTS`
+
+Controls whether wrappers print execution-path status lines on `stderr`.
+
+- `1` (default): print status hints
+- `0`: disable status hints
+
+Default status hints include:
+
+- `exec=installed mode=<mode> path=<resolved-path>`
+- `exec=cargo mode=<mode> crate=<crate-name> (cargo -q: build may stay silent while compiling)`
 
 ## Safety Guarantees
 
@@ -158,6 +171,11 @@ NILS_WRAPPER_MODE=debug
 
 - Cause: `auto` mode could not find installed binary and cannot run cargo fallback
 - Fix: install binary or ensure Cargo is available
+
+### Need fully quiet wrapper stderr
+
+- Cause: status hints are enabled by default
+- Fix: set `NILS_WRAPPER_STATUS_HINTS=0`
 
 ## Verification Quick Checks
 
