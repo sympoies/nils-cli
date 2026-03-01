@@ -35,6 +35,13 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Regenerate third-party artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/generate-third-party-artifacts.sh --write
+          bash scripts/generate-third-party-artifacts.sh --check
+
       - name: Install cross
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         uses: taiki-e/install-action@v2
@@ -81,7 +88,7 @@ jobs:
           done
 
           cp -R completions "${out_dir}/"
-          cp README.md LICENSE "${out_dir}/"
+          cp README.md LICENSE THIRD_PARTY_LICENSES.md THIRD_PARTY_NOTICES.md "${out_dir}/"
 
           tarball="dist/nils-cli-${tag}-${target}.tar.gz"
           tar -C dist -czf "${tarball}" "nils-cli-${tag}-${target}"
@@ -94,6 +101,14 @@ jobs:
             echo "error: sha256sum/shasum not found" >&2
             exit 1
           fi
+
+      - name: Audit release tarball third-party artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/ci/release-tarball-third-party-audit.sh \
+            --target "${{ matrix.target }}" \
+            --tag "${{ github.ref_name }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7

@@ -129,8 +129,9 @@ To trigger a release build, push a tag like `v0.6.1`:
 
 Then download the matching `nils-cli-<tag>-<target>.tar.gz` asset, extract it, and add `<extract_dir>/bin` to your `PATH`.
 
-Release packaging contract: shipped artifacts must include `completions/zsh/`, `completions/bash/`, `completions/zsh/aliases.zsh`, and
-`completions/bash/aliases.bash`. After extracting release assets, follow the same setup flow from
+Release packaging contract: shipped artifacts must include `completions/zsh/`, `completions/bash/`, `completions/zsh/aliases.zsh`,
+`completions/bash/aliases.bash`, `THIRD_PARTY_LICENSES.md`, and `THIRD_PARTY_NOTICES.md`. After extracting release assets, follow the
+same setup flow from
 ["Shell wrappers and completions"](#shell-wrappers-and-completions).
 
 ## crates.io publishing (shared crates)
