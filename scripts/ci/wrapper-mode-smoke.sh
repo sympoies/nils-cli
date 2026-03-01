@@ -39,6 +39,15 @@ assert_file_empty() {
   fi
 }
 
+assert_file_contains() {
+  local file="$1"
+  local pattern="$2"
+  local label="$3"
+  if ! grep -Fq "$pattern" "$file"; then
+    die "$label expected pattern '$pattern' in $file"
+  fi
+}
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 wrapper="$repo_root/wrappers/cli-template"
 
@@ -120,18 +129,21 @@ reset_logs
 run_wrapper debug "$tmp_dir/debug.out" "$tmp_dir/debug.err" smoke-debug
 assert_file_has_content "$cargo_log" "debug mode"
 assert_file_empty "$installed_log" "debug mode"
+assert_file_contains "$tmp_dir/debug.err" "exec=cargo mode=debug" "debug mode status hint"
 
 # 2) installed mode: force installed binary path.
 reset_logs
 run_wrapper installed "$tmp_dir/installed.out" "$tmp_dir/installed.err" smoke-installed
 assert_file_has_content "$installed_log" "installed mode"
 assert_file_empty "$cargo_log" "installed mode"
+assert_file_contains "$tmp_dir/installed.err" "exec=installed mode=installed" "installed mode status hint"
 
 # 3) auto mode: prefer installed binary when present.
 reset_logs
 run_wrapper auto "$tmp_dir/auto-prefer.out" "$tmp_dir/auto-prefer.err" smoke-auto-prefer
 assert_file_has_content "$installed_log" "auto mode (prefer installed)"
 assert_file_empty "$cargo_log" "auto mode (prefer installed)"
+assert_file_contains "$tmp_dir/auto-prefer.err" "exec=installed mode=auto" "auto mode (prefer installed) status hint"
 
 # 4) auto mode fallback: if installed missing, fallback to cargo.
 rm -f "$install_prefix/$bin_name"
@@ -139,5 +151,6 @@ reset_logs
 run_wrapper auto "$tmp_dir/auto-fallback.out" "$tmp_dir/auto-fallback.err" smoke-auto-fallback
 assert_file_has_content "$cargo_log" "auto mode (fallback cargo)"
 assert_file_empty "$installed_log" "auto mode (fallback cargo)"
+assert_file_contains "$tmp_dir/auto-fallback.err" "exec=cargo mode=auto" "auto mode (fallback cargo) status hint"
 
 echo "ok: wrapper mode smoke tests passed for $wrapper"
