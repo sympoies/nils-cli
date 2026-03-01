@@ -214,7 +214,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download coverage LCOV
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: coverage-lcov
           path: target/coverage
