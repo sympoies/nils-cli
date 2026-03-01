@@ -148,13 +148,20 @@ fn kind_color(kind: &str, no_color: bool) -> &'static str {
     if no_color {
         return "";
     }
+
+    // Use explicit RGB values for former xterm-256 indices so color output
+    // stays visually consistent across terminal renderers.
+    const COLOR_A: &str = "\x1b[38;2;95;135;135m"; // was 38;5;66
+    const COLOR_M: &str = "\x1b[38;2;135;175;215m"; // was 38;5;110
+    const COLOR_D: &str = "\x1b[38;2;135;95;95m"; // was 38;5;95
+
     match kind {
-        "A" => "\x1b[38;5;66m",
-        "M" => "\x1b[38;5;110m",
-        "D" => "\x1b[38;5;95m",
-        "U" => "\x1b[38;5;110m",
+        "A" => COLOR_A,
+        "M" => COLOR_M,
+        "D" => COLOR_D,
+        "U" => COLOR_M,
         "-" => "\x1b[0m",
-        _ => "\x1b[38;5;110m",
+        _ => COLOR_M,
     }
 }
 
@@ -195,9 +202,21 @@ fn render_tree(files: &[String], no_color: bool) -> Result<()> {
         .stdout(std::process::Stdio::piped());
 
     let mut child = cmd.spawn()?;
-    write_tree_input(child.stdin.take(), &tree_input)?;
+    if let Err(err) = write_tree_input(child.stdin.take(), &tree_input) {
+        let _ = child.wait();
+        println!("⚠️  Failed to stream paths to tree --fromfile ({err}). Skipping directory tree.");
+        return Ok(());
+    }
 
     let output = child.wait_with_output()?;
+    if !output.status.success() {
+        println!(
+            "⚠️  tree exited with status {}. Skipping directory tree output.",
+            output.status
+        );
+        return Ok(());
+    }
+
     let mut text = String::from_utf8_lossy(&output.stdout).to_string();
     if no_color {
         text = strip_ansi(&text);
@@ -264,9 +283,9 @@ mod tests {
 
     #[test]
     fn color_mode_uses_expected_commit_palette() {
-        assert_eq!(kind_color_for_commit("A", false), "\x1b[38;5;66m");
-        assert_eq!(kind_color_for_commit("M", false), "\x1b[38;5;110m");
-        assert_eq!(kind_color_for_commit("D", false), "\x1b[38;5;95m");
+        assert_eq!(kind_color_for_commit("A", false), "\x1b[38;2;95;135;135m");
+        assert_eq!(kind_color_for_commit("M", false), "\x1b[38;2;135;175;215m");
+        assert_eq!(kind_color_for_commit("D", false), "\x1b[38;2;135;95;95m");
         assert_eq!(color_reset_for_commit(false), "\x1b[0m");
     }
 

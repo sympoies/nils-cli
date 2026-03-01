@@ -27,7 +27,9 @@ fn detect_tree_support() -> TreeSupport {
         };
     }
 
-    let support = shared_process::run_status_quiet("tree", &["--fromfile"]);
+    // Probe support without reading interactive stdin. `tree --fromfile`
+    // alone reads from stdin and can block on a TTY.
+    let support = shared_process::run_status_quiet("tree", &["--fromfile", "/dev/null"]);
 
     if support.map(|s| !s.success()).unwrap_or(true) {
         return TreeSupport {
