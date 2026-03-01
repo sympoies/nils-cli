@@ -2,8 +2,8 @@
 
 This file documents third-party Rust crate licenses used by this workspace.
 
-- Generated at (UTC): 2026-03-01 03:58:00Z
 - Data source: `cargo metadata --format-version 1 --locked`
+- Cargo.lock SHA256: `600f9f2f2bd480cf4b773c378af8ef95bcbe31fd1e86d68afa6eec27e27b557e`
 - Third-party crates (`source != null`): 443
 - Workspace crates (`source == null`, excluded below): 25
 
@@ -11,7 +11,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 
 - `License` values are taken from each crate's Cargo metadata (`license` or `license_file`).
 - `Source` is the resolved package source from Cargo metadata.
-- This list is generated from the current `Cargo.lock`; dependency changes require regenerating this file.
+- This list is generated from the current `Cargo.lock`; dependency or script changes require regeneration.
 
 ## License Summary
 
