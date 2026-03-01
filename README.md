@@ -101,6 +101,10 @@ Use [DEVELOPMENT.md](DEVELOPMENT.md) as the canonical checklist.
 
 - Full required checks: `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - Docs-only fast path: `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh --docs-only`
+- Regenerate third-party license/notice artifacts after dependency or metadata changes:
+  - `bash scripts/generate-third-party-artifacts.sh --write`
+- Verify third-party artifacts are current (fails on drift):
+  - `bash scripts/generate-third-party-artifacts.sh --check`
 
 ## Local install (release)
 

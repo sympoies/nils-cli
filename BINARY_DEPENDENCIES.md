@@ -74,6 +74,7 @@ These are repository scripts (not third-party packages):
 - Run required repository checks:
   - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
 - Supporting utilities:
+  - `scripts/generate-third-party-artifacts.sh`
   - `scripts/workspace-bins.sh`
   - `scripts/ci/coverage-summary.sh`
   - `scripts/ci/coverage-badge.sh`
