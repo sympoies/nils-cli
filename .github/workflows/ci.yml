@@ -60,7 +60,7 @@ jobs:
 
       - name: Upload JUnit XML
         if: always() && hashFiles('target/nextest/ci/junit.xml') != ''
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: junit-nextest
           path: target/nextest/ci/junit.xml
@@ -122,7 +122,7 @@ jobs:
 
       - name: Upload JUnit XML
         if: always() && hashFiles('target/nextest/ci/junit.xml') != ''
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: junit-nextest-macos
           path: target/nextest/ci/junit.xml
@@ -181,7 +181,7 @@ jobs:
 
       - name: Upload coverage LCOV
         if: always() && hashFiles('target/coverage/lcov.info') != ''
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-lcov
           path: target/coverage/lcov.info
@@ -189,7 +189,7 @@ jobs:
 
       - name: Upload coverage HTML
         if: always() && hashFiles('target/coverage/html/index.html') != ''
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-html
           path: target/coverage/html
