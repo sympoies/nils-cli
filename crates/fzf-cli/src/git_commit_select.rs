@@ -7,6 +7,14 @@ pub struct CommitPick {
     pub hash: String,
 }
 
+fn restore_bind(default_query: &str) -> String {
+    if default_query.is_empty() {
+        "focus:unbind(focus)+clear-query".to_string()
+    } else {
+        format!("focus:unbind(focus)+change-query[{default_query}]")
+    }
+}
+
 pub fn pick_commit(default_query: &str, selected: Option<&str>) -> Result<Option<CommitPick>> {
     let log_out = util::run_capture(
         "git",
@@ -34,14 +42,9 @@ pub fn pick_commit(default_query: &str, selected: Option<&str>) -> Result<Option
     ];
 
     if let Some(selected) = selected.filter(|s| !s.is_empty()) {
-        let restore_bind = if default_query.is_empty() {
-            "focus:unbind(focus)+clear-query".to_string()
-        } else {
-            format!("focus:unbind(focus)+change-query[[{default_query}]]")
-        };
         args_vec.push("--track".to_string());
         args_vec.push("--bind".to_string());
-        args_vec.push(restore_bind);
+        args_vec.push(restore_bind(default_query));
         args_vec.push("--query".to_string());
         args_vec.push(selected.to_string());
     } else {
@@ -74,4 +77,25 @@ pub fn pick_commit(default_query: &str, selected: Option<&str>) -> Result<Option
     }
 
     Ok(Some(CommitPick { query, hash }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::restore_bind;
+
+    #[test]
+    fn restore_bind_uses_clear_query_when_empty() {
+        assert_eq!(
+            restore_bind(""),
+            "focus:unbind(focus)+clear-query".to_string()
+        );
+    }
+
+    #[test]
+    fn restore_bind_uses_single_bracket_action_argument() {
+        assert_eq!(
+            restore_bind("'gray"),
+            "focus:unbind(focus)+change-query['gray]".to_string()
+        );
+    }
 }
