@@ -2,6 +2,7 @@ use anyhow::Result;
 use chrono::Utc;
 use serde::Serialize;
 use serde_json::Value;
+use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
@@ -29,12 +30,15 @@ pub struct RateLimitsOptions {
     pub one_line: bool,
     pub all: bool,
     pub async_mode: bool,
+    pub watch: bool,
     pub jobs: Option<String>,
     pub secret: Option<String>,
 }
 
 const DIAG_SCHEMA_VERSION: &str = "codex-cli.diag.rate-limits.v1";
 const DIAG_COMMAND: &str = "diag rate-limits";
+const WATCH_INTERVAL_SECONDS: u64 = 60;
+const ANSI_CLEAR_SCREEN_AND_HOME: &str = "\x1b[2J\x1b[H";
 
 #[derive(Debug, Clone, Serialize)]
 struct RateLimitSummary {
@@ -95,12 +99,32 @@ pub fn run(args: &RateLimitsOptions) -> Result<i32> {
         debug_mode = true;
     }
 
+    if args.watch && !args.async_mode {
+        if output_json {
+            diag_output::emit_error(
+                DIAG_SCHEMA_VERSION,
+                DIAG_COMMAND,
+                "invalid-flag-combination",
+                "codex-rate-limits: --watch requires --async",
+                Some(serde_json::json!({
+                    "flags": ["--watch", "--async"],
+                })),
+            )?;
+        } else {
+            eprintln!("codex-rate-limits: --watch requires --async");
+        }
+        return Ok(64);
+    }
+
     if args.async_mode {
         if !args.cached {
             maybe_sync_all_mode_auth_silent(debug_mode);
         }
         if args.json {
             return run_async_json_mode(args, debug_mode);
+        }
+        if args.watch {
+            return run_async_watch_mode(args, debug_mode);
         }
         return run_async_mode(args, debug_mode);
     }
@@ -591,6 +615,18 @@ struct AsyncFetchResult {
 }
 
 fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
+    run_async_mode_impl(args, debug_mode, false)
+}
+
+fn run_async_watch_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
+    run_async_mode_impl(args, debug_mode, true)
+}
+
+fn run_async_mode_impl(
+    args: &RateLimitsOptions,
+    debug_mode: bool,
+    watch_mode: bool,
+) -> Result<i32> {
     if args.json {
         eprintln!("codex-rate-limits: --async does not support --json");
         return Ok(64);
@@ -654,6 +690,72 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
 
     secret_files.sort();
 
+    let current_name = current_secret_basename(&secret_files);
+
+    if !watch_mode {
+        let round = collect_async_round(&secret_files, args.cached, args.no_refresh_auth, jobs);
+        render_all_accounts_table(
+            round.rows,
+            &round.window_labels,
+            current_name.as_deref(),
+            None,
+        );
+        emit_async_debug(debug_mode, &secret_files, &round.stderr_map);
+        return Ok(round.rc);
+    }
+
+    let mut overall_rc = 0;
+    let mut rendered_rounds = 0u64;
+    let max_rounds = watch_max_rounds_for_test();
+    let is_terminal_stdout = std::io::stdout().is_terminal();
+
+    loop {
+        let round = collect_async_round(&secret_files, args.cached, args.no_refresh_auth, jobs);
+        if round.rc != 0 {
+            overall_rc = 1;
+        }
+
+        if is_terminal_stdout {
+            print!("{ANSI_CLEAR_SCREEN_AND_HOME}");
+        }
+
+        let now_epoch = Utc::now().timestamp();
+        let update_time = format_watch_update_time(now_epoch);
+        render_all_accounts_table(
+            round.rows,
+            &round.window_labels,
+            current_name.as_deref(),
+            Some(update_time.as_str()),
+        );
+        emit_async_debug(debug_mode, &secret_files, &round.stderr_map);
+        let _ = std::io::stdout().flush();
+
+        rendered_rounds += 1;
+        if let Some(limit) = max_rounds
+            && rendered_rounds >= limit
+        {
+            break;
+        }
+
+        thread::sleep(Duration::from_secs(WATCH_INTERVAL_SECONDS));
+    }
+
+    Ok(overall_rc)
+}
+
+struct AsyncRound {
+    rc: i32,
+    rows: Vec<Row>,
+    window_labels: std::collections::HashSet<String>,
+    stderr_map: std::collections::HashMap<String, String>,
+}
+
+fn collect_async_round(
+    secret_files: &[PathBuf],
+    cached_mode: bool,
+    no_refresh_auth: bool,
+    jobs: usize,
+) -> AsyncRound {
     let total = secret_files.len();
     let progress = if total > 1 {
         Some(Progress::new(
@@ -695,12 +797,7 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
     while index < total && handles.len() < worker_count {
         let path = secret_files[index].clone();
         index += 1;
-        handles.push(spawn_worker(
-            path,
-            args.cached,
-            args.no_refresh_auth,
-            tx.clone(),
-        ));
+        handles.push(spawn_worker(path, cached_mode, no_refresh_auth, tx.clone()));
     }
 
     let mut events: std::collections::HashMap<String, AsyncEvent> =
@@ -719,12 +816,7 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
         if index < total {
             let path = secret_files[index].clone();
             index += 1;
-            handles.push(spawn_worker(
-                path,
-                args.cached,
-                args.no_refresh_auth,
-                tx.clone(),
-            ));
+            handles.push(spawn_worker(path, cached_mode, no_refresh_auth, tx.clone()));
         }
     }
 
@@ -737,15 +829,13 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
         let _ = handle.join();
     }
 
-    println!("\n🚦 Codex rate limits for all accounts\n");
-
     let mut rc = 0;
     let mut rows: Vec<Row> = Vec::new();
     let mut window_labels = std::collections::HashSet::new();
     let mut stderr_map: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
 
-    for secret_file in &secret_files {
+    for secret_file in secret_files {
         let secret_name = secret_file
             .file_name()
             .and_then(|name| name.to_str())
@@ -758,7 +848,7 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
             if !event.err.is_empty() {
                 stderr_map.insert(secret_name.clone(), event.err.clone());
             }
-            if !args.cached && event.rc != 0 {
+            if !cached_mode && event.rc != 0 {
                 rc = 1;
             }
 
@@ -770,7 +860,7 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
                 row.weekly_remaining = parsed.weekly_remaining;
                 row.weekly_reset_iso = parsed.weekly_reset_iso.clone();
 
-                if args.cached {
+                if cached_mode {
                     if let Ok(cache_entry) = cache::read_cache_entry(secret_file) {
                         row.non_weekly_reset_epoch = cache_entry.non_weekly_reset_epoch;
                         row.weekly_reset_epoch = Some(cache_entry.weekly_reset_epoch);
@@ -805,19 +895,33 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
             }
         }
 
-        if !args.cached {
+        if !cached_mode {
             rc = 1;
         }
         rows.push(row);
     }
+
+    AsyncRound {
+        rc,
+        rows,
+        window_labels,
+        stderr_map,
+    }
+}
+
+fn render_all_accounts_table(
+    mut rows: Vec<Row>,
+    window_labels: &std::collections::HashSet<String>,
+    current_name: Option<&str>,
+    update_time: Option<&str>,
+) {
+    println!("\n🚦 Codex rate limits for all accounts\n");
 
     let mut non_weekly_header = "Non-weekly".to_string();
     let multiple_labels = window_labels.len() != 1;
     if !multiple_labels && let Some(label) = window_labels.iter().next() {
         non_weekly_header = label.clone();
     }
-
-    let current_name = current_secret_basename(&secret_files);
 
     let now_epoch = Utc::now().timestamp();
 
@@ -862,7 +966,7 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
             ansi::format_percent_cell("-", 8, None)
         };
 
-        let is_current = current_name.as_deref() == Some(row.name.as_str());
+        let is_current = current_name == Some(row.name.as_str());
         let name_display = ansi::format_name_cell(&row.name, 15, is_current, None);
 
         println!(
@@ -876,30 +980,53 @@ fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
         );
     }
 
-    if debug_mode {
-        let mut printed = false;
-        for secret_file in &secret_files {
-            let secret_name = secret_file
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("")
-                .to_string();
-            if let Some(err) = stderr_map.get(&secret_name) {
-                if err.is_empty() {
-                    continue;
-                }
-                if !printed {
-                    printed = true;
-                    eprintln!();
-                    eprintln!("codex-rate-limits-async: per-account stderr (captured):");
-                }
-                eprintln!("---- {} ----", secret_name);
-                eprintln!("{err}");
-            }
-        }
+    if let Some(update_time) = update_time {
+        println!();
+        println!("Last update: {update_time}");
+    }
+}
+
+fn emit_async_debug(
+    debug_mode: bool,
+    secret_files: &[PathBuf],
+    stderr_map: &std::collections::HashMap<String, String>,
+) {
+    if !debug_mode {
+        return;
     }
 
-    Ok(rc)
+    let mut printed = false;
+    for secret_file in secret_files {
+        let secret_name = secret_file
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("")
+            .to_string();
+        if let Some(err) = stderr_map.get(&secret_name) {
+            if err.is_empty() {
+                continue;
+            }
+            if !printed {
+                printed = true;
+                eprintln!();
+                eprintln!("codex-rate-limits-async: per-account stderr (captured):");
+            }
+            eprintln!("---- {} ----", secret_name);
+            eprintln!("{err}");
+        }
+    }
+}
+
+fn watch_max_rounds_for_test() -> Option<u64> {
+    std::env::var("CODEX_RATE_LIMITS_WATCH_MAX_ROUNDS")
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+}
+
+fn format_watch_update_time(now_epoch: i64) -> String {
+    render::format_epoch_local(now_epoch, "%Y-%m-%d %H:%M:%S %:z")
+        .unwrap_or_else(|| now_epoch.to_string())
 }
 
 fn async_fetch_one_line(

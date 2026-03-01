@@ -135,6 +135,7 @@ fn handle_diag(args: &cli::DiagArgs) -> i32 {
                 one_line: rate_args.one_line,
                 all: rate_args.all,
                 async_mode: rate_args.async_mode,
+                watch: rate_args.watch,
                 jobs: rate_args.jobs.clone(),
                 secret: rate_args.secret.clone(),
             };

@@ -207,6 +207,66 @@ fn rate_limits_async_one_line_conflict() {
 }
 
 #[test]
+fn rate_limits_watch_requires_async() {
+    let output = run(&["diag", "rate-limits", "--watch"], &[], &[]);
+    assert_exit(&output, 64);
+    assert!(stderr(&output).contains("--watch requires --async"));
+}
+
+#[test]
+fn rate_limits_async_watch_renders_last_update_timestamp() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let secret_dir = dir.path().join("secrets");
+    fs::create_dir_all(&secret_dir).expect("secret dir");
+    fs::write(
+        secret_dir.join("alpha.json"),
+        r#"{"tokens":{"access_token":"tok-alpha","account_id":"acct_001"}}"#,
+    )
+    .expect("write alpha");
+
+    let cache_root = dir.path().join("cache_root");
+    fs::create_dir_all(&cache_root).expect("cache root");
+
+    let server = LoopbackServer::new().expect("server");
+    server.add_route(
+        "GET",
+        "/wham/usage",
+        HttpResponse::new(
+            200,
+            r#"{
+  "rate_limit": {
+    "primary_window": { "limit_window_seconds": 18000, "used_percent": 6, "reset_at": 1700003600 },
+    "secondary_window": { "limit_window_seconds": 604800, "used_percent": 12, "reset_at": 1700600000 }
+  }
+}"#,
+        ),
+    );
+
+    let output = run(
+        &["diag", "rate-limits", "--async", "--watch"],
+        &[
+            ("CODEX_SECRET_DIR", &secret_dir),
+            ("ZSH_CACHE_DIR", &cache_root),
+        ],
+        &[
+            ("CODEX_CHATGPT_BASE_URL", &server.url()),
+            ("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false"),
+            ("CODEX_RATE_LIMITS_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
+            ("CODEX_RATE_LIMITS_CURL_MAX_TIME_SECONDS", "3"),
+            ("CODEX_RATE_LIMITS_WATCH_MAX_ROUNDS", "1"),
+            ("TZ", "UTC"),
+            ("NO_COLOR", "1"),
+        ],
+    );
+    assert_exit(&output, 0);
+
+    let out = stdout(&output);
+    assert!(out.contains("🚦 Codex rate limits for all accounts"));
+    assert!(out.contains("alpha"));
+    assert!(out.contains("Last update: "));
+}
+
+#[test]
 fn rate_limits_async_jobs_zero_defaults() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let secret_dir = dir.path().join("secrets");

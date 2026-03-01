@@ -199,6 +199,9 @@ pub struct RateLimitsArgs {
     /// Run concurrent async mode
     #[arg(long = "async")]
     pub async_mode: bool,
+    /// Refresh output every 60 seconds until interrupted (requires --async)
+    #[arg(long = "watch")]
+    pub watch: bool,
     /// Max concurrent jobs (async mode)
     #[arg(long = "jobs")]
     pub jobs: Option<String>,
