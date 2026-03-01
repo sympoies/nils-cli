@@ -92,7 +92,7 @@ if [[ "${1:-}" == "run" && "${2:-}" == "list" ]]; then
     "databaseId": 123456,
     "createdAt": "${now}",
     "headBranch": "main",
-    "url": "https://github.com/graysurf/nils-cli/actions/runs/123456",
+    "url": "https://github.com/sympoies/nils-cli/actions/runs/123456",
     "status": "completed",
     "conclusion": "${conclusion}"
   }
@@ -115,7 +115,7 @@ if [[ "${1:-}" == "run" && "${2:-}" == "view" ]]; then
   fi
   cat <<JSON
 {
-  "url": "https://github.com/graysurf/nils-cli/actions/runs/123456",
+  "url": "https://github.com/sympoies/nils-cli/actions/runs/123456",
   "status": "completed",
   "conclusion": "${conclusion}",
   "createdAt": "2026-02-11T12:00:00Z",

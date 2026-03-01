@@ -491,7 +491,7 @@ fn start_sprint_uses_issue_table_runtime_truth_and_rejects_drift() {
             "json",
             "--dry-run",
             "--repo",
-            "graysurf/nils-cli",
+            "sympoies/nils-cli",
             "start-sprint",
             "--plan",
             &plan_file_s,
@@ -553,7 +553,7 @@ fn start_sprint_uses_issue_table_runtime_truth_and_rejects_drift() {
             "json",
             "--dry-run",
             "--repo",
-            "graysurf/nils-cli",
+            "sympoies/nils-cli",
             "start-sprint",
             "--plan",
             &plan_file_s,
@@ -589,7 +589,7 @@ fn start_sprint_uses_issue_table_runtime_truth_and_rejects_drift() {
 
     let log = fs::read_to_string(&log_path).expect("read log");
     assert!(
-        log.contains("issue view 217 --repo graysurf/nils-cli --json body"),
+        log.contains("issue view 217 --repo sympoies/nils-cli --json body"),
         "{log}"
     );
 }

@@ -4,7 +4,7 @@ version = "0.6.1"
 edition.workspace = true
 license.workspace = true
 description = "Library crate for nils-term in the nils-cli workspace."
-repository = "https://github.com/graysurf/nils-cli"
+repository = "https://github.com/sympoies/nils-cli"
 
 [dependencies]
 indicatif = { workspace = true }

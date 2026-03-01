@@ -69,7 +69,7 @@ case "$cmd $sub" in
     printf '%s\n' "$body_json"
     ;;
   "issue create")
-    printf '%s\n' "${PLAN_ISSUE_GH_CREATE_URL:-https://github.com/graysurf/nils-cli/issues/999}"
+    printf '%s\n' "${PLAN_ISSUE_GH_CREATE_URL:-https://github.com/sympoies/nils-cli/issues/999}"
     ;;
   "issue edit")
     capture_body_file "$@"
@@ -181,7 +181,7 @@ fn github_adapter_live_commands_use_gh_backend_for_issue_and_pr_state() {
             "json",
             "--dry-run",
             "--repo",
-            "graysurf/nils-cli",
+            "sympoies/nils-cli",
             "accept-sprint",
             "--plan",
             PLAN_PATH,
@@ -190,7 +190,7 @@ fn github_adapter_live_commands_use_gh_backend_for_issue_and_pr_state() {
             "--sprint",
             "4",
             "--approved-comment-url",
-            "https://github.com/graysurf/nils-cli/issues/217#issuecomment-4000000000",
+            "https://github.com/sympoies/nils-cli/issues/217#issuecomment-4000000000",
             "--pr-grouping",
             "per-sprint",
             "--no-comment",
@@ -238,7 +238,7 @@ fn live_plan_commands_ready_and_close_follow_gate_contracts() {
             "--format",
             "json",
             "--repo",
-            "graysurf/nils-cli",
+            "sympoies/nils-cli",
             "ready-plan",
             "--issue",
             "217",
@@ -274,12 +274,12 @@ fn live_plan_commands_ready_and_close_follow_gate_contracts() {
             "json",
             "--dry-run",
             "--repo",
-            "graysurf/nils-cli",
+            "sympoies/nils-cli",
             "close-plan",
             "--body-file",
             &close_body_s,
             "--approved-comment-url",
-            "https://github.com/graysurf/nils-cli/issues/217#issuecomment-4000000001",
+            "https://github.com/sympoies/nils-cli/issues/217#issuecomment-4000000001",
         ],
         gh_cmd_options(
             stub.path(),
@@ -298,15 +298,15 @@ fn live_plan_commands_ready_and_close_follow_gate_contracts() {
 
     let log = fs::read_to_string(&log_path).expect("read log");
     assert!(
-        !log.contains("issue edit 217 --repo graysurf/nils-cli --add-label needs-review"),
+        !log.contains("issue edit 217 --repo sympoies/nils-cli --add-label needs-review"),
         "{log}"
     );
     assert!(
-        log.contains("issue comment 217 --repo graysurf/nils-cli --body-file"),
+        log.contains("issue comment 217 --repo sympoies/nils-cli --body-file"),
         "{log}"
     );
     assert!(
-        log.contains("pr view 222 --repo graysurf/nils-cli --json state,mergedAt"),
+        log.contains("pr view 222 --repo sympoies/nils-cli --json state,mergedAt"),
         "{log}"
     );
 }
@@ -331,7 +331,7 @@ fn live_ready_plan_label_update_flag_applies_review_label() {
             "--format",
             "json",
             "--repo",
-            "graysurf/nils-cli",
+            "sympoies/nils-cli",
             "ready-plan",
             "--issue",
             "217",
@@ -358,7 +358,7 @@ fn live_ready_plan_label_update_flag_applies_review_label() {
 
     let log = fs::read_to_string(&log_path).expect("read log");
     assert!(
-        log.contains("issue edit 217 --repo graysurf/nils-cli --add-label needs-review"),
+        log.contains("issue edit 217 --repo sympoies/nils-cli --add-label needs-review"),
         "{log}"
     );
 }
@@ -383,7 +383,7 @@ fn live_sprint_commands_start_ready_accept_and_guide_are_deterministic() {
             "--format",
             "json",
             "--repo",
-            "graysurf/nils-cli",
+            "sympoies/nils-cli",
             "start-sprint",
             "--plan",
             PLAN_PATH,
@@ -433,7 +433,7 @@ fn live_sprint_commands_start_ready_accept_and_guide_are_deterministic() {
             "json",
             "--dry-run",
             "--repo",
-            "graysurf/nils-cli",
+            "sympoies/nils-cli",
             "ready-sprint",
             "--plan",
             PLAN_PATH,
@@ -468,7 +468,7 @@ fn live_sprint_commands_start_ready_accept_and_guide_are_deterministic() {
             "--format",
             "json",
             "--repo",
-            "graysurf/nils-cli",
+            "sympoies/nils-cli",
             "accept-sprint",
             "--plan",
             PLAN_PATH,
@@ -477,7 +477,7 @@ fn live_sprint_commands_start_ready_accept_and_guide_are_deterministic() {
             "--sprint",
             "4",
             "--approved-comment-url",
-            "https://github.com/graysurf/nils-cli/issues/217#issuecomment-4000000002",
+            "https://github.com/sympoies/nils-cli/issues/217#issuecomment-4000000002",
             "--pr-grouping",
             "per-sprint",
             "--no-comment",
@@ -550,7 +550,7 @@ fn github_adapter_rejects_literal_escaped_newline_without_force() {
             "--format",
             "json",
             "--repo",
-            "graysurf/nils-cli",
+            "sympoies/nils-cli",
             "ready-plan",
             "--issue",
             "217",
@@ -578,11 +578,11 @@ fn github_adapter_rejects_literal_escaped_newline_without_force() {
 
     let log = fs::read_to_string(&log_path).expect("read log");
     assert!(
-        log.contains("issue view 217 --repo graysurf/nils-cli --json body"),
+        log.contains("issue view 217 --repo sympoies/nils-cli --json body"),
         "{log}"
     );
     assert!(
-        !log.contains("issue comment 217 --repo graysurf/nils-cli --body-file"),
+        !log.contains("issue comment 217 --repo sympoies/nils-cli --body-file"),
         "{log}"
     );
 }
@@ -611,7 +611,7 @@ fn github_adapter_force_flag_allows_literal_escaped_newline() {
             "json",
             "--force",
             "--repo",
-            "graysurf/nils-cli",
+            "sympoies/nils-cli",
             "ready-plan",
             "--issue",
             "217",
@@ -640,7 +640,7 @@ fn github_adapter_force_flag_allows_literal_escaped_newline() {
 
     let log = fs::read_to_string(&log_path).expect("read log");
     assert!(
-        log.contains("issue comment 217 --repo graysurf/nils-cli --body-file"),
+        log.contains("issue comment 217 --repo sympoies/nils-cli --body-file"),
         "{log}"
     );
 

@@ -13,7 +13,7 @@
   - `name = "nils-memo-cli"`
   - `version = "<semver>"`
   - `description = "<crate summary>"`
-  - `repository = "https://github.com/graysurf/nils-cli"`
+  - `repository = "https://github.com/sympoies/nils-cli"`
 - `publish = false` is forbidden for MVP and release candidates.
 
 ## Release order gate

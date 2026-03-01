@@ -887,7 +887,7 @@ fn local_flow_plan_issue_local_dry_run_end_to_end_generates_artifacts() {
             "--pr-grouping",
             "per-sprint",
             "--approved-comment-url",
-            "https://github.com/graysurf/nils-cli/issues/217#issuecomment-123456789",
+            "https://github.com/sympoies/nils-cli/issues/217#issuecomment-123456789",
         ],
         &[("AGENT_HOME", &agent_home_s)],
     );
@@ -906,7 +906,7 @@ fn local_flow_plan_issue_local_dry_run_end_to_end_generates_artifacts() {
     );
     assert!(
         accepted_comment
-            .contains("https://github.com/graysurf/nils-cli/issues/217#issuecomment-123456789"),
+            .contains("https://github.com/sympoies/nils-cli/issues/217#issuecomment-123456789"),
         "{accepted_comment}"
     );
 }

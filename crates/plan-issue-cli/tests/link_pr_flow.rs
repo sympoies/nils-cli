@@ -59,7 +59,7 @@ fn link_pr_body_file_task_target_syncs_all_rows_in_per_sprint_lane() {
         "--task",
         "S4T1",
         "--pr",
-        "https://github.com/graysurf/nils-cli/pull/221",
+        "https://github.com/sympoies/nils-cli/pull/221",
     ]);
 
     assert_eq!(out.code, 0, "stderr: {}", out.stderr);

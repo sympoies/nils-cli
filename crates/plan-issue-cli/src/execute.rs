@@ -2302,16 +2302,16 @@ mod tests {
     #[test]
     fn helper_url_validation_and_comment_mode_are_stable() {
         assert!(approval_comment_url_looks_valid(
-            "https://github.com/graysurf/nils-cli/issues/217#issuecomment-123"
+            "https://github.com/sympoies/nils-cli/issues/217#issuecomment-123"
         ));
         assert!(approval_comment_url_looks_valid(
-            "https://github.com/graysurf/nils-cli/pull/221#issuecomment-456"
+            "https://github.com/sympoies/nils-cli/pull/221#issuecomment-456"
         ));
         assert!(!approval_comment_url_looks_valid(
             "https://example.com/issues/217#issuecomment-123"
         ));
         assert!(!approval_comment_url_looks_valid(
-            "https://github.com/graysurf/nils-cli/issues/217#comment-123"
+            "https://github.com/sympoies/nils-cli/issues/217#comment-123"
         ));
 
         assert!(should_emit_comment(&CommentModeArgs {
@@ -2410,9 +2410,9 @@ mod tests {
         );
 
         assert_eq!(
-            resolve_repo_for_live(BinaryFlavor::PlanIssue, Some("graysurf/nils-cli"))
+            resolve_repo_for_live(BinaryFlavor::PlanIssue, Some("sympoies/nils-cli"))
                 .expect("valid repo"),
-            "graysurf/nils-cli"
+            "sympoies/nils-cli"
         );
 
         let invalid_repo =
@@ -2488,10 +2488,10 @@ mod tests {
         assert!(err.contains("requires concrete PR reference"), "{err}");
 
         let adapter_ok = MockGitHubAdapter::default().with_merge(12, Ok(true));
-        ensure_prs_merged(&adapter_ok, "graysurf/nils-cli", &[12], "scope").expect("merged");
+        ensure_prs_merged(&adapter_ok, "sympoies/nils-cli", &[12], "scope").expect("merged");
 
         let adapter_unmerged = MockGitHubAdapter::default().with_merge(12, Ok(false));
-        let unmerged = ensure_prs_merged(&adapter_unmerged, "graysurf/nils-cli", &[12], "scope")
+        let unmerged = ensure_prs_merged(&adapter_unmerged, "sympoies/nils-cli", &[12], "scope")
             .expect_err("unmerged should fail");
         assert!(
             unmerged.contains("scope: PR #12 is not merged"),
@@ -2500,7 +2500,7 @@ mod tests {
 
         let adapter_error =
             MockGitHubAdapter::default().with_merge(12, Err("gh failure".to_string()));
-        let query_err = ensure_prs_merged(&adapter_error, "graysurf/nils-cli", &[12], "scope")
+        let query_err = ensure_prs_merged(&adapter_error, "sympoies/nils-cli", &[12], "scope")
             .expect_err("query failure should fail");
         assert!(
             query_err.contains("failed to query PR #12: gh failure"),
@@ -2515,12 +2515,12 @@ mod tests {
             task_row("S2T1", "issue/s2-t1", "wt-2", "#21", "planned", "sprint=S2"),
         ];
         let adapter_ok = MockGitHubAdapter::default().with_merge(11, Ok(true));
-        enforce_previous_sprint_gate(&adapter_ok, "graysurf/nils-cli", &rows_ok, 2)
+        enforce_previous_sprint_gate(&adapter_ok, "sympoies/nils-cli", &rows_ok, 2)
             .expect("gate should pass");
 
         let no_prev = enforce_previous_sprint_gate(
             &adapter_ok,
-            "graysurf/nils-cli",
+            "sympoies/nils-cli",
             &[task_row(
                 "S2T1",
                 "issue/s2-t1",
@@ -2546,7 +2546,7 @@ mod tests {
             "sprint=S1",
         )];
         let status_err =
-            enforce_previous_sprint_gate(&adapter_ok, "graysurf/nils-cli", &status_err_rows, 2)
+            enforce_previous_sprint_gate(&adapter_ok, "sympoies/nils-cli", &status_err_rows, 2)
                 .expect_err("status gate must fail");
         assert!(status_err.contains("requires Status=done"), "{status_err}");
 
@@ -2559,7 +2559,7 @@ mod tests {
             "sprint=S1",
         )];
         let pr_err =
-            enforce_previous_sprint_gate(&adapter_ok, "graysurf/nils-cli", &pr_err_rows, 2)
+            enforce_previous_sprint_gate(&adapter_ok, "sympoies/nils-cli", &pr_err_rows, 2)
                 .expect_err("PR gate must fail");
         assert!(
             pr_err.contains("requires concrete PR reference"),
@@ -2568,7 +2568,7 @@ mod tests {
 
         let adapter_unmerged = MockGitHubAdapter::default().with_merge(11, Ok(false));
         let unmerged =
-            enforce_previous_sprint_gate(&adapter_unmerged, "graysurf/nils-cli", &rows_ok, 2)
+            enforce_previous_sprint_gate(&adapter_unmerged, "sympoies/nils-cli", &rows_ok, 2)
                 .expect_err("merge gate must fail");
         assert!(unmerged.contains("PR #11 is not merged"), "{unmerged}");
     }

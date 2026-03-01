@@ -266,7 +266,7 @@ fn live_start_sprint_uses_issue_table_runtime_truth_without_rewrite() {
             "--format",
             "json",
             "--repo",
-            "graysurf/nils-cli",
+            "sympoies/nils-cli",
             "start-sprint",
             "--plan",
             &plan_file_s,
@@ -342,15 +342,15 @@ fn live_start_sprint_uses_issue_table_runtime_truth_without_rewrite() {
 
     let log = fs::read_to_string(&log_path).expect("read gh log");
     assert!(
-        log.contains("issue view 217 --repo graysurf/nils-cli --json body"),
+        log.contains("issue view 217 --repo sympoies/nils-cli --json body"),
         "{log}"
     );
     assert!(
-        !log.contains("issue edit 217 --repo graysurf/nils-cli --body-file"),
+        !log.contains("issue edit 217 --repo sympoies/nils-cli --body-file"),
         "{log}"
     );
     assert!(
-        !log.contains("issue comment 217 --repo graysurf/nils-cli --body-file"),
+        !log.contains("issue comment 217 --repo sympoies/nils-cli --body-file"),
         "{log}"
     );
 }

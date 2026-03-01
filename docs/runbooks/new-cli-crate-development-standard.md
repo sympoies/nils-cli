@@ -55,7 +55,7 @@ For a new publishable CLI crate:
   - `edition.workspace = true`
   - `license.workspace = true`
   - `description = "CLI crate for nils-<name> in the nils-cli workspace."`
-  - `repository = "https://github.com/graysurf/nils-cli"`
+  - `repository = "https://github.com/sympoies/nils-cli"`
   - at least one `[[bin]]` target.
 - Crate must be listed in workspace `members` in root `Cargo.toml`.
 - Dependencies should use workspace/shared conventions when available (`[workspace.dependencies]`, local `nils-*` crates with explicit

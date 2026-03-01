@@ -263,7 +263,7 @@ fn auto_single_lane_end_to_end_keeps_per_sprint_runtime_truth() {
             "json",
             "--dry-run",
             "--repo",
-            "graysurf/nils-cli",
+            "sympoies/nils-cli",
             "start-sprint",
             "--plan",
             &plan_file_s,
@@ -334,7 +334,7 @@ fn auto_single_lane_end_to_end_keeps_per_sprint_runtime_truth() {
             "json",
             "--dry-run",
             "--repo",
-            "graysurf/nils-cli",
+            "sympoies/nils-cli",
             "ready-sprint",
             "--plan",
             &plan_file_s,
@@ -381,7 +381,7 @@ fn auto_single_lane_end_to_end_keeps_per_sprint_runtime_truth() {
 
     let log = fs::read_to_string(&log_path).expect("read gh log");
     assert!(
-        log.contains("issue view 217 --repo graysurf/nils-cli --json body"),
+        log.contains("issue view 217 --repo sympoies/nils-cli --json body"),
         "{log}"
     );
 }

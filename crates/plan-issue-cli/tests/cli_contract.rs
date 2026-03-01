@@ -69,7 +69,7 @@ fn cli_parse_contract_link_pr_supports_task_and_status_targeting() {
         "--task",
         "S2T1",
         "--pr",
-        "https://github.com/graysurf/nils-cli/pull/221",
+        "https://github.com/sympoies/nils-cli/pull/221",
         "--status",
         "blocked",
     ])
@@ -83,7 +83,7 @@ fn cli_parse_contract_link_pr_supports_task_and_status_targeting() {
             assert_eq!(args.task.as_deref(), Some("S2T1"));
             assert_eq!(args.sprint, None);
             assert_eq!(args.pr_group, None);
-            assert_eq!(args.pr, "https://github.com/graysurf/nils-cli/pull/221");
+            assert_eq!(args.pr, "https://github.com/sympoies/nils-cli/pull/221");
             assert_eq!(args.status, LinkPrStatus::Blocked);
         }
         other => panic!("unexpected command parsed: {other:?}"),

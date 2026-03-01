@@ -6,7 +6,7 @@ license.workspace = true
 default-run = "plan-issue"
 
 description = "CLI crate for nils-plan-issue-cli in the nils-cli workspace."
-repository = "https://github.com/graysurf/nils-cli"
+repository = "https://github.com/sympoies/nils-cli"
 
 [lib]
 name = "plan_issue_cli"

@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 description = "CLI crate for nils-api-gql in the nils-cli workspace."
-repository = "https://github.com/graysurf/nils-cli"
+repository = "https://github.com/sympoies/nils-cli"
 
 [[bin]]
 name = "api-gql"

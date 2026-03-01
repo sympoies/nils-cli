@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 description = "CLI crate for nils-git-scope in the nils-cli workspace."
-repository = "https://github.com/graysurf/nils-cli"
+repository = "https://github.com/sympoies/nils-cli"
 
 [[bin]]
 name = "git-scope"

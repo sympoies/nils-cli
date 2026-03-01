@@ -82,11 +82,10 @@ rg -n '^# task_id\tsummary\tpr_group$' \
 ### Local corpus manual regression (optional)
 
 This loop is intentionally no-op safe so CI does not depend on machine-local repos. Use it when
-you have the graysurf local corpus checked out and want manual regression visibility before
-changing heuristics.
+you have a local corpus checkout and want manual regression visibility before changing heuristics.
 
 ```bash
-LOCAL_CORPUS="/Users/terry/Project/graysurf/nils-cli/docs/plans"
+LOCAL_CORPUS="$PWD/docs/plans"
 OUT_DIR="${AGENT_HOME}/out/plan-tooling-split-prs"
 
 if [ -d "$LOCAL_CORPUS" ]; then

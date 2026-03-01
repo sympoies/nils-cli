@@ -513,7 +513,7 @@ mod tests {
         assert!(is_placeholder("TBD (per-sprint)"));
         assert_eq!(parse_pr_number("#221"), Some(221));
         assert_eq!(
-            parse_pr_number("https://github.com/graysurf/nils-cli/pull/221"),
+            parse_pr_number("https://github.com/sympoies/nils-cli/pull/221"),
             Some(221)
         );
         assert_eq!(

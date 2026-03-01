@@ -208,7 +208,7 @@ fn command_guardrails_close_plan_requires_body_file_in_dry_run_mode() {
         "--issue",
         "217",
         "--approved-comment-url",
-        "https://github.com/graysurf/nils-cli/issues/217#issuecomment-5000000001",
+        "https://github.com/sympoies/nils-cli/issues/217#issuecomment-5000000001",
     ]);
 
     assert_eq!(out.code, 1, "stderr: {}", out.stderr);
@@ -237,7 +237,7 @@ fn command_guardrails_close_plan_rejects_body_file_without_dry_run() {
         "--body-file",
         &body_file_s,
         "--approved-comment-url",
-        "https://github.com/graysurf/nils-cli/issues/217#issuecomment-5000000002",
+        "https://github.com/sympoies/nils-cli/issues/217#issuecomment-5000000002",
     ]);
 
     assert_eq!(out.code, 1, "stderr: {}", out.stderr);
@@ -356,7 +356,7 @@ fn json_contract_guardrail_error_envelope_is_stable() {
         "--issue",
         "217",
         "--approved-comment-url",
-        "https://github.com/graysurf/nils-cli/issues/217#issuecomment-5000000003",
+        "https://github.com/sympoies/nils-cli/issues/217#issuecomment-5000000003",
     ]);
     assert_eq!(out.code, 1, "stderr: {}", out.stderr);
 

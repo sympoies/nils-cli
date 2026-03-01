@@ -393,7 +393,7 @@ case "$cmd $sub" in
     if [[ -n "${GH_STUB_ISSUE_CREATE_URL:-}" ]]; then
       printf '%s\n' "$GH_STUB_ISSUE_CREATE_URL"
     else
-      printf '%s\n' 'https://github.com/graysurf/nils-cli/issues/217'
+      printf '%s\n' 'https://github.com/sympoies/nils-cli/issues/217'
     fi
     ;;
   "issue edit")
@@ -420,15 +420,15 @@ esac
     #[test]
     fn normalize_repo_slug_accepts_common_remote_forms() {
         let samples = [
-            ("graysurf/nils-cli", "graysurf/nils-cli"),
-            ("git@github.com:graysurf/nils-cli.git", "graysurf/nils-cli"),
+            ("sympoies/nils-cli", "sympoies/nils-cli"),
+            ("git@github.com:sympoies/nils-cli.git", "sympoies/nils-cli"),
             (
-                "https://github.com/graysurf/nils-cli.git",
-                "graysurf/nils-cli",
+                "https://github.com/sympoies/nils-cli.git",
+                "sympoies/nils-cli",
             ),
             (
-                "ssh://git@github.com/graysurf/nils-cli.git",
-                "graysurf/nils-cli",
+                "ssh://git@github.com/sympoies/nils-cli.git",
+                "sympoies/nils-cli",
             ),
         ];
 
@@ -440,11 +440,11 @@ esac
     #[test]
     fn issue_number_from_url_extracts_tail_numeric_segment() {
         assert_eq!(
-            issue_number_from_url("https://github.com/graysurf/nils-cli/issues/217"),
+            issue_number_from_url("https://github.com/sympoies/nils-cli/issues/217"),
             Some(217)
         );
         assert_eq!(
-            issue_number_from_url("https://github.com/graysurf/nils-cli/pull/221"),
+            issue_number_from_url("https://github.com/sympoies/nils-cli/pull/221"),
             Some(221)
         );
     }
@@ -462,30 +462,30 @@ esac
 
         let adapter = GhCliAdapter::new(false);
         let body = adapter
-            .issue_body("graysurf/nils-cli", 217)
+            .issue_body("sympoies/nils-cli", 217)
             .expect("issue body");
         assert_eq!(body, "from-stub-body");
 
         let (issue_no, issue_url) = adapter
             .create_issue(
-                "graysurf/nils-cli",
+                "sympoies/nils-cli",
                 "title",
                 &body_file,
                 &["triage".to_string(), " ".to_string(), "plan".to_string()],
             )
             .expect("create issue");
         assert_eq!(issue_no, 217);
-        assert_eq!(issue_url, "https://github.com/graysurf/nils-cli/issues/217");
+        assert_eq!(issue_url, "https://github.com/sympoies/nils-cli/issues/217");
 
         adapter
-            .edit_issue_body("graysurf/nils-cli", 217, &body_file)
+            .edit_issue_body("sympoies/nils-cli", 217, &body_file)
             .expect("edit body");
         adapter
-            .comment_issue("graysurf/nils-cli", 217, &body_file)
+            .comment_issue("sympoies/nils-cli", 217, &body_file)
             .expect("comment");
         adapter
             .edit_issue_labels(
-                "graysurf/nils-cli",
+                "sympoies/nils-cli",
                 217,
                 &["needs-review".to_string()],
                 &["blocked".to_string()],
@@ -493,7 +493,7 @@ esac
             .expect("edit labels");
         adapter
             .close_issue(
-                "graysurf/nils-cli",
+                "sympoies/nils-cli",
                 217,
                 CloseReason::Completed,
                 Some("closing comment"),
@@ -502,7 +502,7 @@ esac
 
         assert!(
             adapter
-                .pr_is_merged("graysurf/nils-cli", 221)
+                .pr_is_merged("sympoies/nils-cli", 221)
                 .expect("merged check")
         );
     }
@@ -520,13 +520,13 @@ esac
 
         let strict = GhCliAdapter::new(false);
         let strict_err = strict
-            .create_issue("graysurf/nils-cli", "title", &escaped_file, &[])
+            .create_issue("sympoies/nils-cli", "title", &escaped_file, &[])
             .expect_err("escaped payload should fail");
         assert!(strict_err.contains("write rejected"), "{strict_err}");
 
         let force = GhCliAdapter::new(true);
         let forced = force
-            .create_issue("graysurf/nils-cli", "title", &escaped_file, &[])
+            .create_issue("sympoies/nils-cli", "title", &escaped_file, &[])
             .expect("force mode bypasses markdown guard");
         assert_eq!(forced.0, 217);
     }
@@ -546,7 +546,7 @@ esac
         );
         assert!(
             !adapter
-                .pr_is_merged("graysurf/nils-cli", 221)
+                .pr_is_merged("sympoies/nils-cli", 221)
                 .expect("open pr")
         );
         drop(_open_state);
@@ -558,21 +558,21 @@ esac
         );
         assert!(
             adapter
-                .pr_is_merged("graysurf/nils-cli", 221)
+                .pr_is_merged("sympoies/nils-cli", 221)
                 .expect("mergedAt present")
         );
         drop(_merged_at);
 
         let _bad_json = EnvGuard::set(&lock, "GH_STUB_ISSUE_VIEW_JSON", "not-json");
         let parse_err = adapter
-            .issue_body("graysurf/nils-cli", 217)
+            .issue_body("sympoies/nils-cli", 217)
             .expect_err("invalid json should fail");
         assert!(parse_err.contains("failed to parse gh JSON"), "{parse_err}");
         drop(_bad_json);
 
         let _missing_body = EnvGuard::set(&lock, "GH_STUB_ISSUE_VIEW_JSON", r#"{"id":217}"#);
         let missing_body = adapter
-            .issue_body("graysurf/nils-cli", 217)
+            .issue_body("sympoies/nils-cli", 217)
             .expect_err("missing body should fail");
         assert!(
             missing_body.contains("JSON missing `body`"),
@@ -582,7 +582,7 @@ esac
 
         let _force_fail = EnvGuard::set(&lock, "GH_STUB_FORCE_FAIL", "forced failure");
         let run_err = adapter
-            .pr_is_merged("graysurf/nils-cli", 221)
+            .pr_is_merged("sympoies/nils-cli", 221)
             .expect_err("gh failure should surface");
         assert!(run_err.contains("gh pr view"), "{run_err}");
     }
@@ -590,8 +590,8 @@ esac
     #[test]
     fn resolve_repo_supports_override_and_origin_remote_detection() {
         assert_eq!(
-            resolve_repo(Some("graysurf/nils-cli")).expect("override"),
-            "graysurf/nils-cli"
+            resolve_repo(Some("sympoies/nils-cli")).expect("override"),
+            "sympoies/nils-cli"
         );
         assert!(resolve_repo(Some("https://example.com/repo")).is_err());
 
@@ -603,13 +603,13 @@ esac
                 "remote",
                 "add",
                 "origin",
-                "git@github.com:graysurf/nils-cli.git",
+                "git@github.com:sympoies/nils-cli.git",
             ],
         );
         let _cwd = CwdGuard::set(&lock, repo.path()).expect("set cwd");
         assert_eq!(
             resolve_repo(None).expect("resolve from origin"),
-            "graysurf/nils-cli"
+            "sympoies/nils-cli"
         );
     }
 
