@@ -11,6 +11,7 @@ Runs the required pre-delivery checks from DEVELOPMENT.md:
   - bash scripts/ci/docs-hygiene-audit.sh --strict
   - bash scripts/ci/markdownlint-audit.sh --strict
   - bash scripts/ci/test-stale-audit.sh --strict
+  - bash scripts/ci/third-party-artifacts-audit.sh --strict
   - bash scripts/ci/completion-asset-audit.sh --strict
   - bash scripts/ci/completion-flag-parity-audit.sh --strict
   - cargo fmt --all -- --check
@@ -120,6 +121,7 @@ if [[ "$docs_only" -eq 1 ]]; then
 fi
 
 run bash scripts/ci/test-stale-audit.sh --strict
+run bash scripts/ci/third-party-artifacts-audit.sh --strict
 coverage_dir="${NILS_CLI_COVERAGE_DIR:-target/coverage}"
 run mkdir -p "$coverage_dir"
 run bash scripts/ci/completion-asset-audit.sh --strict
