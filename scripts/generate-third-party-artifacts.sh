@@ -88,6 +88,23 @@ def normalize_manifest_dir(manifest_path: str) -> pathlib.Path:
     return pathlib.Path(manifest_path).resolve().parent
 
 
+def crate_top_level_files(crate_dir: pathlib.Path) -> list[str]:
+    if not crate_dir.is_dir():
+        return []
+    files = [child.name for child in crate_dir.iterdir() if child.is_file()]
+    files.sort(key=lambda value: value.lower())
+    return files
+
+
+def casefold_name_lookup(file_names: list[str]) -> dict[str, str]:
+    lookup: dict[str, str] = {}
+    for name in file_names:
+        key = name.lower()
+        if key not in lookup:
+            lookup[key] = name
+    return lookup
+
+
 def find_notice_files(crate_dir: pathlib.Path) -> list[str]:
     preferred = [
         "NOTICE",
@@ -99,27 +116,26 @@ def find_notice_files(crate_dir: pathlib.Path) -> list[str]:
         "notice.txt",
         "notice.rst",
     ]
+    file_names = crate_top_level_files(crate_dir)
+    name_lookup = casefold_name_lookup(file_names)
+
     found: list[str] = []
     seen: set[str] = set()
-
     for candidate in preferred:
-        path = crate_dir / candidate
-        if path.is_file():
-            found.append(candidate)
-            seen.add(candidate.lower())
+        key = candidate.lower()
+        resolved_name = name_lookup.get(key)
+        if resolved_name and key not in seen:
+            found.append(resolved_name)
+            seen.add(key)
 
-    if crate_dir.is_dir():
-        dynamic = []
-        for child in crate_dir.iterdir():
-            if not child.is_file():
-                continue
-            if re.match(r"(?i)^notice(?:[._-].*)?$", child.name):
-                key = child.name.lower()
-                if key not in seen:
-                    dynamic.append(child.name)
-                    seen.add(key)
-        dynamic.sort(key=lambda value: value.lower())
-        found.extend(dynamic)
+    dynamic = []
+    for file_name in file_names:
+        if re.match(r"(?i)^notice(?:[._-].*)?$", file_name):
+            key = file_name.lower()
+            if key not in seen:
+                dynamic.append(file_name)
+                seen.add(key)
+    found.extend(dynamic)
 
     return found
 
@@ -159,27 +175,26 @@ def find_license_files(crate_dir: pathlib.Path) -> list[str]:
         "UNLICENSE",
         "UNLICENSE.txt",
     ]
+    file_names = crate_top_level_files(crate_dir)
+    name_lookup = casefold_name_lookup(file_names)
+
     found: list[str] = []
     seen: set[str] = set()
-
     for candidate in preferred:
-        path = crate_dir / candidate
-        if path.is_file():
-            found.append(candidate)
-            seen.add(candidate.lower())
+        key = candidate.lower()
+        resolved_name = name_lookup.get(key)
+        if resolved_name and key not in seen:
+            found.append(resolved_name)
+            seen.add(key)
 
-    if crate_dir.is_dir():
-        dynamic = []
-        for child in crate_dir.iterdir():
-            if not child.is_file():
-                continue
-            if re.match(r"(?i)^(license|copying|unlicense)(?:[._-].*)?$", child.name):
-                key = child.name.lower()
-                if key not in seen:
-                    dynamic.append(child.name)
-                    seen.add(key)
-        dynamic.sort(key=lambda value: value.lower())
-        found.extend(dynamic)
+    dynamic = []
+    for file_name in file_names:
+        if re.match(r"(?i)^(license|copying|unlicense)(?:[._-].*)?$", file_name):
+            key = file_name.lower()
+            if key not in seen:
+                dynamic.append(file_name)
+                seen.add(key)
+    found.extend(dynamic)
 
     return found
 
