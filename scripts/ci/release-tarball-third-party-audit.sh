@@ -115,10 +115,16 @@ if ! tar -tzf "$tarball" >"$listing_file"; then
   exit 2
 fi
 
+if ! command -v rg >/dev/null 2>&1; then
+  echo "error: rg (ripgrep) is required for release tarball audit" >&2
+  exit 2
+fi
+
 required_artifacts=("THIRD_PARTY_LICENSES.md" "THIRD_PARTY_NOTICES.md")
 missing_count=0
 for artifact in "${required_artifacts[@]}"; do
-  if ! rg -q "/${artifact}$" "$listing_file"; then
+  artifact_pattern="/${artifact//./\\.}$"
+  if ! rg -q "$artifact_pattern" "$listing_file"; then
     echo "FAIL: missing required file in tarball: ${artifact}"
     missing_count=$((missing_count + 1))
   fi

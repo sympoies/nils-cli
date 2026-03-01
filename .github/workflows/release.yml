@@ -27,6 +27,31 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Install ripgrep
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v rg >/dev/null 2>&1; then
+            rg --version
+            exit 0
+          fi
+
+          case "${RUNNER_OS}" in
+            Linux)
+              sudo apt-get update
+              sudo apt-get install -y ripgrep
+              ;;
+            macOS)
+              brew install ripgrep
+              ;;
+            *)
+              echo "error: unsupported RUNNER_OS for ripgrep install: ${RUNNER_OS}" >&2
+              exit 1
+              ;;
+          esac
+
+          rg --version
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
