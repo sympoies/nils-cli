@@ -1,6 +1,5 @@
 use nils_common::env as shared_env;
 use std::path::Path;
-use std::{io, io::IsTerminal};
 
 use crate::rate_limits::ansi;
 
@@ -94,21 +93,7 @@ pub fn render_line(
 }
 
 fn should_color() -> bool {
-    if shared_env::no_color_enabled() {
-        return false;
-    }
-
-    if std::env::var("GEMINI_STARSHIP_COLOR_ENABLED").is_ok() {
-        return shared_env::env_truthy("GEMINI_STARSHIP_COLOR_ENABLED");
-    }
-
-    if std::env::var_os("STARSHIP_SESSION_KEY").is_some()
-        || std::env::var_os("STARSHIP_SHELL").is_some()
-    {
-        return true;
-    }
-
-    io::stdout().is_terminal()
+    shared_env::starship_color_enabled("GEMINI_STARSHIP_COLOR_ENABLED")
 }
 
 #[cfg(test)]
