@@ -39,6 +39,9 @@ jobs:
         with:
           tool: cargo-nextest
 
+      - name: Third-party artifact audit
+        run: bash scripts/ci/third-party-artifacts-audit.sh --strict
+
       - name: Completion asset audit
         run: bash scripts/ci/completion-asset-audit.sh --strict
 
@@ -100,6 +103,9 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
+
+      - name: Third-party artifact audit
+        run: /opt/homebrew/bin/bash scripts/ci/third-party-artifacts-audit.sh --strict
 
       - name: Completion asset audit
         run: /opt/homebrew/bin/bash scripts/ci/completion-asset-audit.sh --strict

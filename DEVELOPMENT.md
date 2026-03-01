@@ -67,12 +67,14 @@
 - `bash scripts/ci/docs-hygiene-audit.sh --strict`
 - `bash scripts/ci/markdownlint-audit.sh --strict`
 - `bash scripts/ci/test-stale-audit.sh --strict`
+- `bash scripts/ci/third-party-artifacts-audit.sh --strict`
 - Coverage must be **>= 85.00%** total line coverage:
   - `mkdir -p target/coverage`
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 85`
   - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
 - Or run the single entrypoint for required checks:
-  `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh` (includes docs/completion/stale-test audits
+  `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
+  (includes docs/completion/stale-test/third-party-artifact audits
   plus fmt/clippy/tests; it pre-creates `target/coverage`, but still run coverage commands above)
 - Docs-only fast path: if every changed file is documentation-only (`*.md`, `docs/**`, `crates/*/docs/**`, plus root docs like `README.md`,
   `DEVELOPMENT.md`), run:
