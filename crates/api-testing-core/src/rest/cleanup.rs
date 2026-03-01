@@ -20,6 +20,10 @@ pub fn render_cleanup_path(cleanup: &RestCleanup, main_response_body: &[u8]) -> 
         path = path.replace(&format!("{{{{{key}}}}}"), &value);
     }
 
+    if path.contains("{{") || path.contains("}}") {
+        anyhow::bail!("cleanup.pathTemplate has unresolved placeholders: {path}");
+    }
+
     if !path.starts_with('/') {
         anyhow::bail!("cleanup.pathTemplate must resolve to an absolute path (starts with /)");
     }
@@ -123,5 +127,24 @@ mod tests {
         let body = serde_json::to_vec(&serde_json::json!({"key": "abc"})).unwrap();
         let err = render_cleanup_path(&cleanup, &body).unwrap_err();
         assert!(err.to_string().contains("absolute path"));
+    }
+
+    #[test]
+    fn rest_cleanup_unresolved_placeholder_is_error() {
+        let cleanup = crate::rest::schema::parse_rest_request_json(serde_json::json!({
+            "method": "GET",
+            "path": "/x",
+            "cleanup": {
+                "pathTemplate": "/files/{{key}}/{{missing}}",
+                "vars": { "key": ".key" }
+            }
+        }))
+        .unwrap()
+        .cleanup
+        .unwrap();
+
+        let body = serde_json::to_vec(&serde_json::json!({"key": "abc"})).unwrap();
+        let err = render_cleanup_path(&cleanup, &body).unwrap_err();
+        assert!(err.to_string().contains("unresolved placeholders"));
     }
 }
