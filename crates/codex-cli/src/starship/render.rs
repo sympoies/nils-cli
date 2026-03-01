@@ -1,6 +1,5 @@
 use chrono::{Local, TimeZone};
 use nils_common::env as shared_env;
-use std::io::{self, IsTerminal};
 use std::path::Path;
 
 use crate::rate_limits::ansi;
@@ -97,21 +96,7 @@ fn format_epoch_local(epoch: i64, fmt: &str) -> Option<String> {
 }
 
 fn should_color() -> bool {
-    if shared_env::no_color_enabled() {
-        return false;
-    }
-
-    if std::env::var("CODEX_STARSHIP_COLOR_ENABLED").is_ok() {
-        return shared_env::env_truthy("CODEX_STARSHIP_COLOR_ENABLED");
-    }
-
-    if std::env::var_os("STARSHIP_SESSION_KEY").is_some()
-        || std::env::var_os("STARSHIP_SHELL").is_some()
-    {
-        return true;
-    }
-
-    io::stdout().is_terminal()
+    shared_env::starship_color_enabled("CODEX_STARSHIP_COLOR_ENABLED")
 }
 
 #[cfg(test)]
