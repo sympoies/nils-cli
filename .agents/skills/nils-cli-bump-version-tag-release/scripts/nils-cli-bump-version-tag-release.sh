@@ -38,6 +38,29 @@ refresh_lockfile_and_verify_locked() {
   cargo check --workspace --locked
 }
 
+refresh_third_party_artifacts_if_present() {
+  local generator_script="scripts/generate-third-party-artifacts.sh"
+  local artifacts=("THIRD_PARTY_LICENSES.md" "THIRD_PARTY_NOTICES.md")
+  local tracked_count=0
+  local artifact
+
+  for artifact in "${artifacts[@]}"; do
+    if git ls-files --error-unmatch "$artifact" >/dev/null 2>&1; then
+      tracked_count=$((tracked_count + 1))
+    fi
+  done
+
+  if [[ "$tracked_count" -eq 0 ]]; then
+    return 0
+  fi
+
+  [[ -f "$generator_script" ]] \
+    || die "tracked third-party artifacts require generator script: ${generator_script}"
+
+  note "regenerating third-party artifacts for release changes"
+  bash "$generator_script" --write
+}
+
 ci_gate_main_url=""
 ci_gate_main_error=""
 
@@ -391,6 +414,8 @@ else
   refresh_lockfile_and_verify_locked
 fi
 
+refresh_third_party_artifacts_if_present
+
 git add -A
 
 if git diff --cached --quiet; then
@@ -406,6 +431,9 @@ if [[ "$skip_readme" -eq 0 ]] && echo "$changed_files" | grep -qx "README.md"; t
 fi
 if echo "$changed_files" | grep -qx "Cargo.lock"; then
   body_lines+=("- Refresh Cargo.lock for workspace package versions")
+fi
+if echo "$changed_files" | grep -Eq "^(THIRD_PARTY_LICENSES\.md|THIRD_PARTY_NOTICES\.md)$"; then
+  body_lines+=("- Regenerate third-party artifacts for updated lockfile inputs")
 fi
 
 {
