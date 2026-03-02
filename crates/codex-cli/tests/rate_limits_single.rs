@@ -1,3 +1,4 @@
+use chrono::Utc;
 use nils_test_support::bin;
 use nils_test_support::cmd::{self, CmdOptions, CmdOutput};
 use nils_test_support::http::{HttpResponse, LoopbackServer};
@@ -143,9 +144,12 @@ fn rate_limits_single_cached_success_reads_cache() {
     let cache_root = dir.path().join("cache_root");
     let kv_path = cache_kv_path(&cache_root, "alpha");
     fs::create_dir_all(kv_path.parent().expect("cache parent")).expect("cache dir");
+    let fetched_at = Utc::now().timestamp();
     fs::write(
         &kv_path,
-        "fetched_at=1700000000\nnon_weekly_label=5h\nnon_weekly_remaining=94\nweekly_remaining=88\nweekly_reset_epoch=1700600000\n",
+        format!(
+            "fetched_at={fetched_at}\nnon_weekly_label=5h\nnon_weekly_remaining=94\nweekly_remaining=88\nweekly_reset_epoch=1700600000\n"
+        ),
     )
     .expect("kv");
 
@@ -163,6 +167,38 @@ fn rate_limits_single_cached_success_reads_cache() {
     );
     assert_exit(&output, 0);
     assert_eq!(stdout(&output), "alpha 5h:94% W:88% 11-21 20:53\n");
+}
+
+#[test]
+fn rate_limits_single_cached_stale_cache_is_rejected() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let secrets = dir.path().join("secrets");
+    fs::create_dir_all(&secrets).expect("secrets dir");
+    fs::write(
+        secrets.join("alpha.json"),
+        r#"{"tokens":{"access_token":"tok","account_id":"acct_001"}}"#,
+    )
+    .expect("alpha");
+
+    let cache_root = dir.path().join("cache_root");
+    let kv_path = cache_kv_path(&cache_root, "alpha");
+    fs::create_dir_all(kv_path.parent().expect("cache parent")).expect("cache dir");
+    fs::write(
+        &kv_path,
+        "fetched_at=1\nnon_weekly_label=5h\nnon_weekly_remaining=94\nweekly_remaining=88\nweekly_reset_epoch=1700600000\n",
+    )
+    .expect("kv");
+
+    let output = run(
+        &["diag", "rate-limits", "--cached", "alpha.json"],
+        &[
+            ("CODEX_SECRET_DIR", &secrets),
+            ("ZSH_CACHE_DIR", &cache_root),
+        ],
+        &[("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false")],
+    );
+    assert_exit(&output, 1);
+    assert!(stderr(&output).contains("cache expired"));
 }
 
 #[test]

@@ -73,6 +73,8 @@ Auth examples:
 
 - `rate-limits [options] [secret.json]`: Rate-limit diagnostics. Options: `-c/--clear-cache`, `-d/--debug`, `--cached`, `--no-refresh-auth`,
   `--json`, `--one-line`, `--all`, `--async`, `--jobs <n>`.
+- `--cached` reads cache only. Freshness is controlled by `CODEX_RATE_LIMITS_CACHE_TTL` (default `300s`); stale cache is rejected unless
+  `CODEX_RATE_LIMITS_CACHE_ALLOW_STALE=true`.
 
 ### config
 
@@ -94,13 +96,20 @@ Auth examples:
 
 ## Environment
 
-- `CODEX_ALLOW_DANGEROUS_ENABLED=true` is required for `agent` commands.
-- `CODEX_CLI_MODEL` and `CODEX_CLI_REASONING` set `codex exec` defaults.
-- `CODEX_SECRET_DIR` controls the secret directory path. When unset, it defaults to `~/.config/codex_secrets`.
-- `CODEX_AUTH_FILE` controls the active auth file path. When unset, it defaults to `~/.agents/auth.json`.
-- `CODEX_SECRET_CACHE_DIR` controls secret cache timestamps.
-- `CODEX_STARSHIP_ENABLED=true` enables Starship output.
-- `CODEX_STARSHIP_TTL` overrides the cache TTL.
+- `CODEX_ALLOW_DANGEROUS_ENABLED`: gate for `agent` commands (default: `false`).
+- `CODEX_CLI_MODEL`: `codex exec` default model (default: `gpt-5.1-codex-mini`).
+- `CODEX_CLI_REASONING`: `codex exec` default reasoning level (default: `medium`).
+- `CODEX_SECRET_DIR`: secret directory path (default: `~/.config/codex_secrets`).
+- `CODEX_AUTH_FILE`: active auth file path (default: `~/.agents/auth.json`).
+- `CODEX_SECRET_CACHE_DIR`: secret timestamp cache directory. If unset, resolver order is:
+  `ZSH_CACHE_DIR/codex/secrets` -> `ZDOTDIR/cache/codex/secrets` -> `~/.config/zsh/cache/codex/secrets`.
+- `CODEX_RATE_LIMITS_CACHE_TTL`: `diag rate-limits --cached` TTL (default: `300s`; supports `s|m|h|d|w` suffixes or raw seconds).
+- `CODEX_RATE_LIMITS_CACHE_ALLOW_STALE`: allow stale cache in `--cached` mode (default: `false`).
+- `CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED`: default `diag rate-limits` to `--all` when no target is provided (default: `false`).
+- `CODEX_STARSHIP_ENABLED`: enable Starship output (default: `false`; set `true` to enable).
+- `CODEX_STARSHIP_TTL`: Starship cache TTL override (default: `300s`; supports `s|m|h|d|w` suffixes or raw seconds).
+- `CODEX_AUTO_REFRESH_ENABLED`: enable `auth auto-refresh` behavior where applicable (default: `false`).
+- `CODEX_AUTO_REFRESH_MIN_DAYS`: `auth auto-refresh` minimum token age threshold (default: `5`).
 
 ## Dependencies
 
