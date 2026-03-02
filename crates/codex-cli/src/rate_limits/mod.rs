@@ -392,7 +392,7 @@ fn collect_json_result_for_secret(
     allow_cache_fallback: bool,
 ) -> RateLimitJsonResult {
     if cached_mode {
-        return collect_json_from_cache(target_file, "cache");
+        return collect_json_from_cache(target_file, "cache", true);
     }
 
     let base_url = std::env::var("CODEX_CHATGPT_BASE_URL")
@@ -468,7 +468,7 @@ fn collect_json_result_for_secret(
         }
         Err(err) => {
             if allow_cache_fallback {
-                let fallback = collect_json_from_cache(target_file, "cache-fallback");
+                let fallback = collect_json_from_cache(target_file, "cache-fallback", false);
                 if fallback.ok {
                     return fallback;
                 }
@@ -484,8 +484,18 @@ fn collect_json_result_for_secret(
     }
 }
 
-fn collect_json_from_cache(target_file: &Path, source: &str) -> RateLimitJsonResult {
-    match cache::read_cache_entry(target_file) {
+fn collect_json_from_cache(
+    target_file: &Path,
+    source: &str,
+    enforce_ttl: bool,
+) -> RateLimitJsonResult {
+    let cache_entry = if enforce_ttl {
+        cache::read_cache_entry_for_cached_mode(target_file)
+    } else {
+        cache::read_cache_entry(target_file)
+    };
+
+    match cache_entry {
         Ok(entry) => RateLimitJsonResult {
             name: secret_display_name(target_file),
             target_file: target_file_name(target_file),
@@ -861,7 +871,7 @@ fn collect_async_round(
                 row.weekly_reset_iso = parsed.weekly_reset_iso.clone();
 
                 if cached_mode {
-                    if let Ok(cache_entry) = cache::read_cache_entry(secret_file) {
+                    if let Ok(cache_entry) = cache::read_cache_entry_for_cached_mode(secret_file) {
                         row.non_weekly_reset_epoch = cache_entry.non_weekly_reset_epoch;
                         row.weekly_reset_epoch = Some(cache_entry.weekly_reset_epoch);
                     }
@@ -1221,7 +1231,7 @@ fn fetch_one_line_network(target_file: &Path, no_refresh_auth: bool) -> AsyncFet
 }
 
 fn fetch_one_line_cached(target_file: &Path) -> AsyncFetchResult {
-    match cache::read_cache_entry(target_file) {
+    match cache::read_cache_entry_for_cached_mode(target_file) {
         Ok(entry) => AsyncFetchResult {
             line: Some(format_one_line_output(
                 target_file,
@@ -1436,7 +1446,7 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
             row.weekly_reset_iso = parsed.weekly_reset_iso.clone();
 
             if cached_mode {
-                if let Ok(cache_entry) = cache::read_cache_entry(&secret_file) {
+                if let Ok(cache_entry) = cache::read_cache_entry_for_cached_mode(&secret_file) {
                     row.non_weekly_reset_epoch = cache_entry.non_weekly_reset_epoch;
                     row.weekly_reset_epoch = Some(cache_entry.weekly_reset_epoch);
                 }
@@ -1603,7 +1613,7 @@ fn run_single_mode(
     }
 
     if cached_mode {
-        match cache::read_cache_entry(&target_file) {
+        match cache::read_cache_entry_for_cached_mode(&target_file) {
             Ok(entry) => {
                 let weekly_reset_iso =
                     render::format_epoch_local_datetime(entry.weekly_reset_epoch)
@@ -1836,7 +1846,7 @@ fn single_one_line(
     }
 
     if cached_mode {
-        return match cache::read_cache_entry(target_file) {
+        return match cache::read_cache_entry_for_cached_mode(target_file) {
             Ok(entry) => {
                 let weekly_reset_iso =
                     render::format_epoch_local_datetime(entry.weekly_reset_epoch)
@@ -1896,6 +1906,18 @@ fn single_one_line(
     };
     let values = render::render_values(&usage_data);
     let weekly = render::weekly_values(&values);
+    let fetched_at_epoch = Utc::now().timestamp();
+    if fetched_at_epoch > 0 {
+        let _ = cache::write_starship_cache(
+            target_file,
+            fetched_at_epoch,
+            &weekly.non_weekly_label,
+            weekly.non_weekly_remaining,
+            weekly.weekly_remaining,
+            weekly.weekly_reset_epoch,
+            weekly.non_weekly_reset_epoch,
+        );
+    }
     let prefix = cache::secret_name_for_target(target_file)
         .map(|name| format!("{name} "))
         .unwrap_or_default();
@@ -2043,6 +2065,7 @@ mod tests {
         redact_sensitive_json, resolve_target, secret_display_name, single_one_line,
         sync_auth_silent, target_file_name,
     };
+    use chrono::Utc;
     use nils_test_support::{EnvGuard, GlobalStateLock};
     use serde_json::json;
     use std::fs;
@@ -2070,6 +2093,10 @@ mod tests {
             account_id,
             last_refresh
         )
+    }
+
+    fn fresh_fetched_at() -> i64 {
+        Utc::now().timestamp()
     }
 
     #[test]
@@ -2224,7 +2251,7 @@ mod tests {
         let _cache = EnvGuard::set(&lock, "ZSH_CACHE_DIR", cache_root.to_str().expect("cache"));
         cache::write_starship_cache(
             &alpha,
-            1_700_000_000,
+            fresh_fetched_at(),
             "3h",
             92,
             88,
@@ -2233,7 +2260,7 @@ mod tests {
         )
         .expect("write cache");
 
-        let hit = collect_json_from_cache(&alpha, "cache");
+        let hit = collect_json_from_cache(&alpha, "cache", true);
         assert!(hit.ok);
         assert_eq!(hit.status, "ok");
         let summary = hit.summary.expect("summary");
@@ -2242,7 +2269,7 @@ mod tests {
         assert_eq!(summary.weekly_remaining, 88);
 
         let missing_target = secret_dir.join("missing.json");
-        let miss = collect_json_from_cache(&missing_target, "cache");
+        let miss = collect_json_from_cache(&missing_target, "cache", true);
         assert!(!miss.ok);
         let error = miss.error.expect("error");
         assert_eq!(error.code, "cache-read-failed");
@@ -2269,7 +2296,7 @@ mod tests {
         let _cache = EnvGuard::set(&lock, "ZSH_CACHE_DIR", cache_root.to_str().expect("cache"));
         cache::write_starship_cache(
             &alpha,
-            1_700_000_000,
+            fresh_fetched_at(),
             "3h",
             70,
             55,
@@ -2307,7 +2334,7 @@ mod tests {
         let _cache = EnvGuard::set(&lock, "ZSH_CACHE_DIR", cache_root.to_str().expect("cache"));
         cache::write_starship_cache(
             &missing,
-            1_700_000_000,
+            fresh_fetched_at(),
             "3h",
             68,
             42,
@@ -2345,7 +2372,7 @@ mod tests {
         let _cache = EnvGuard::set(&lock, "ZSH_CACHE_DIR", cache_root.to_str().expect("cache"));
         cache::write_starship_cache(
             &alpha,
-            1_700_000_000,
+            fresh_fetched_at(),
             "3h",
             61,
             39,

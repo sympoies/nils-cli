@@ -5,14 +5,21 @@ use std::path::{Path, PathBuf};
 use crate::auth;
 use crate::fs as codex_fs;
 use crate::paths;
+use nils_common::env as shared_env;
 
+#[derive(Debug)]
 pub struct CacheEntry {
+    pub fetched_at_epoch: Option<i64>,
     pub non_weekly_label: String,
     pub non_weekly_remaining: i64,
     pub non_weekly_reset_epoch: Option<i64>,
     pub weekly_remaining: i64,
     pub weekly_reset_epoch: i64,
 }
+
+const DEFAULT_CACHE_TTL_SECONDS: u64 = 300;
+const CACHE_MISS_HINT: &str =
+    "rerun without --cached to refresh, or set CODEX_RATE_LIMITS_CACHE_ALLOW_STALE=true";
 
 pub fn clear_starship_cache() -> Result<()> {
     let root = cache_root().context("cache root")?;
@@ -84,6 +91,7 @@ pub fn read_cache_entry(target_file: &Path) -> Result<CacheEntry> {
 
     let content = fs::read_to_string(&cache_file)
         .with_context(|| format!("failed to read cache: {}", cache_file.display()))?;
+    let mut fetched_at_epoch: Option<i64> = None;
     let mut non_weekly_label: Option<String> = None;
     let mut non_weekly_remaining: Option<i64> = None;
     let mut non_weekly_reset_epoch: Option<i64> = None;
@@ -91,7 +99,9 @@ pub fn read_cache_entry(target_file: &Path) -> Result<CacheEntry> {
     let mut weekly_reset_epoch: Option<i64> = None;
 
     for line in content.lines() {
-        if let Some(value) = line.strip_prefix("non_weekly_label=") {
+        if let Some(value) = line.strip_prefix("fetched_at=") {
+            fetched_at_epoch = value.parse::<i64>().ok();
+        } else if let Some(value) = line.strip_prefix("non_weekly_label=") {
             non_weekly_label = Some(value.to_string());
         } else if let Some(value) = line.strip_prefix("non_weekly_remaining=") {
             non_weekly_remaining = value.parse::<i64>().ok();
@@ -134,12 +144,22 @@ pub fn read_cache_entry(target_file: &Path) -> Result<CacheEntry> {
     };
 
     Ok(CacheEntry {
+        fetched_at_epoch,
         non_weekly_label,
         non_weekly_remaining,
         non_weekly_reset_epoch,
         weekly_remaining,
         weekly_reset_epoch,
     })
+}
+
+pub fn read_cache_entry_for_cached_mode(target_file: &Path) -> Result<CacheEntry> {
+    let entry = read_cache_entry(target_file)?;
+    if cache_allow_stale() {
+        return Ok(entry);
+    }
+    ensure_cache_fresh(target_file, &entry)?;
+    Ok(entry)
 }
 
 pub fn write_starship_cache(
@@ -174,6 +194,88 @@ pub fn write_starship_cache(
 fn starship_cache_dir() -> Result<PathBuf> {
     let root = cache_root().context("cache root")?;
     Ok(root.join("codex").join("starship-rate-limits"))
+}
+
+fn ensure_cache_fresh(target_file: &Path, entry: &CacheEntry) -> Result<()> {
+    let ttl_seconds = cache_ttl_seconds();
+    let ttl_i64 = i64::try_from(ttl_seconds).unwrap_or(i64::MAX);
+    let cache_file = cache_file_for_target(target_file)?;
+
+    let fetched_at_epoch = match entry.fetched_at_epoch {
+        Some(value) if value > 0 => value,
+        _ => {
+            anyhow::bail!(
+                "codex-rate-limits: cache expired (missing fetched_at): {} ({})",
+                cache_file.display(),
+                CACHE_MISS_HINT
+            );
+        }
+    };
+
+    let now_epoch = chrono::Utc::now().timestamp();
+    if now_epoch <= 0 {
+        return Ok(());
+    }
+
+    let age_seconds = if now_epoch >= fetched_at_epoch {
+        now_epoch - fetched_at_epoch
+    } else {
+        0
+    };
+    if age_seconds > ttl_i64 {
+        anyhow::bail!(
+            "codex-rate-limits: cache expired (age={}s, ttl={}s): {} ({})",
+            age_seconds,
+            ttl_seconds,
+            cache_file.display(),
+            CACHE_MISS_HINT
+        );
+    }
+
+    Ok(())
+}
+
+fn cache_ttl_seconds() -> u64 {
+    if let Ok(raw) = std::env::var("CODEX_RATE_LIMITS_CACHE_TTL")
+        && let Some(value) = parse_duration_seconds(&raw)
+    {
+        return value;
+    }
+    DEFAULT_CACHE_TTL_SECONDS
+}
+
+fn cache_allow_stale() -> bool {
+    shared_env::env_truthy_or("CODEX_RATE_LIMITS_CACHE_ALLOW_STALE", false)
+}
+
+fn parse_duration_seconds(raw: &str) -> Option<u64> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    let raw = raw.to_ascii_lowercase();
+    let (num_part, multiplier): (&str, u64) = match raw.chars().last()? {
+        's' => (&raw[..raw.len().saturating_sub(1)], 1),
+        'm' => (&raw[..raw.len().saturating_sub(1)], 60),
+        'h' => (&raw[..raw.len().saturating_sub(1)], 60 * 60),
+        'd' => (&raw[..raw.len().saturating_sub(1)], 60 * 60 * 24),
+        'w' => (&raw[..raw.len().saturating_sub(1)], 60 * 60 * 24 * 7),
+        ch if ch.is_ascii_digit() => (raw.as_str(), 1),
+        _ => return None,
+    };
+
+    let num_part = num_part.trim();
+    if num_part.is_empty() {
+        return None;
+    }
+
+    let value = num_part.parse::<u64>().ok()?;
+    if value == 0 {
+        return None;
+    }
+
+    value.checked_mul(multiplier)
 }
 
 fn cache_root() -> Option<PathBuf> {
@@ -243,10 +345,11 @@ fn cache_key(name: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        cache_file_for_target, clear_starship_cache, read_cache_entry, secret_name_for_target,
-        write_starship_cache,
+        cache_file_for_target, clear_starship_cache, read_cache_entry,
+        read_cache_entry_for_cached_mode, secret_name_for_target, write_starship_cache,
     };
     use crate::fs as codex_fs;
+    use chrono::Utc;
     use nils_test_support::{EnvGuard, GlobalStateLock};
     use std::fs;
     use std::path::Path;
@@ -500,9 +603,7 @@ mod tests {
         )
         .expect("write invalid cache");
 
-        let err = read_cache_entry(&target)
-            .err()
-            .expect("missing weekly reset should fail");
+        let err = read_cache_entry(&target).expect_err("missing weekly reset should fail");
         assert!(err.to_string().contains("missing weekly data"));
     }
 
@@ -526,9 +627,76 @@ mod tests {
         )
         .expect("write invalid cache");
 
-        let err = read_cache_entry(&target)
-            .err()
-            .expect("missing non-weekly fields should fail");
+        let err = read_cache_entry(&target).expect_err("missing non-weekly fields should fail");
         assert!(err.to_string().contains("missing non-weekly data"));
+    }
+
+    #[test]
+    fn read_cache_entry_for_cached_mode_rejects_expired_cache_by_default() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        let cache_root = dir.path().join("cache");
+        fs::create_dir_all(&secret_dir).expect("secret dir");
+        fs::create_dir_all(&cache_root).expect("cache root");
+        let _env = set_cache_env(&lock, &secret_dir, &cache_root);
+
+        let target = secret_dir.join("alpha.json");
+        fs::write(&target, "{}").expect("write target");
+        write_starship_cache(&target, 1, "5h", 91, 12, 1_700_600_000, Some(1_700_003_600))
+            .expect("write cache");
+
+        let err = read_cache_entry_for_cached_mode(&target).expect_err("stale cache should fail");
+        assert!(err.to_string().contains("cache expired"));
+    }
+
+    #[test]
+    fn read_cache_entry_for_cached_mode_honors_ttl_env() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        let cache_root = dir.path().join("cache");
+        fs::create_dir_all(&secret_dir).expect("secret dir");
+        fs::create_dir_all(&cache_root).expect("cache root");
+        let _env = set_cache_env(&lock, &secret_dir, &cache_root);
+        let _ttl = EnvGuard::set(&lock, "CODEX_RATE_LIMITS_CACHE_TTL", "1h");
+
+        let target = secret_dir.join("alpha.json");
+        fs::write(&target, "{}").expect("write target");
+        let now = Utc::now().timestamp();
+        let fetched_at = now.saturating_sub(30 * 60);
+        write_starship_cache(
+            &target,
+            fetched_at,
+            "5h",
+            91,
+            12,
+            1_700_600_000,
+            Some(1_700_003_600),
+        )
+        .expect("write cache");
+
+        let entry = read_cache_entry_for_cached_mode(&target).expect("fresh cache");
+        assert_eq!(entry.non_weekly_label, "5h");
+    }
+
+    #[test]
+    fn read_cache_entry_for_cached_mode_allows_stale_when_enabled() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        let cache_root = dir.path().join("cache");
+        fs::create_dir_all(&secret_dir).expect("secret dir");
+        fs::create_dir_all(&cache_root).expect("cache root");
+        let _env = set_cache_env(&lock, &secret_dir, &cache_root);
+        let _allow_stale = EnvGuard::set(&lock, "CODEX_RATE_LIMITS_CACHE_ALLOW_STALE", "true");
+
+        let target = secret_dir.join("alpha.json");
+        fs::write(&target, "{}").expect("write target");
+        write_starship_cache(&target, 1, "5h", 91, 12, 1_700_600_000, Some(1_700_003_600))
+            .expect("write cache");
+
+        let entry = read_cache_entry_for_cached_mode(&target).expect("allow stale");
+        assert_eq!(entry.non_weekly_remaining, 91);
     }
 }
