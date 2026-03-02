@@ -675,34 +675,25 @@ fn run_async_mode_impl(
         return Ok(1);
     }
 
-    let secret_dir = crate::paths::resolve_secret_dir().unwrap_or_default();
-    if !secret_dir.is_dir() {
-        eprintln!(
-            "codex-rate-limits-async: CODEX_SECRET_DIR not found: {}",
-            secret_dir.display()
-        );
-        return Ok(1);
-    }
-
-    let mut secret_files: Vec<PathBuf> = std::fs::read_dir(&secret_dir)?
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("json"))
-        .collect();
-
-    if secret_files.is_empty() {
-        eprintln!(
-            "codex-rate-limits-async: no secrets found in {}",
-            secret_dir.display()
-        );
-        return Ok(1);
-    }
-
-    secret_files.sort();
-
-    let current_name = current_secret_basename(&secret_files);
+    let secret_files = match collect_secret_files_for_async_text() {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("{err}");
+            return Ok(1);
+        }
+    };
 
     if !watch_mode {
+        if secret_files.is_empty() {
+            let secret_dir = crate::paths::resolve_secret_dir().unwrap_or_default();
+            eprintln!(
+                "codex-rate-limits-async: no secrets found in {}",
+                secret_dir.display()
+            );
+            return Ok(1);
+        }
+
+        let current_name = current_secret_basename(&secret_files);
         let round = collect_async_round(&secret_files, args.cached, args.no_refresh_auth, jobs);
         render_all_accounts_table(
             round.rows,
@@ -717,9 +708,32 @@ fn run_async_mode_impl(
     let mut overall_rc = 0;
     let mut rendered_rounds = 0u64;
     let max_rounds = watch_max_rounds_for_test();
+    let watch_interval_seconds = watch_interval_seconds();
     let is_terminal_stdout = std::io::stdout().is_terminal();
 
     loop {
+        let secret_files = match collect_secret_files_for_async_text() {
+            Ok(value) => value,
+            Err(err) => {
+                overall_rc = 1;
+                if is_terminal_stdout {
+                    print!("{ANSI_CLEAR_SCREEN_AND_HOME}");
+                }
+                eprintln!("{err}");
+                let _ = std::io::stdout().flush();
+
+                rendered_rounds += 1;
+                if let Some(limit) = max_rounds
+                    && rendered_rounds >= limit
+                {
+                    break;
+                }
+
+                thread::sleep(Duration::from_secs(watch_interval_seconds));
+                continue;
+            }
+        };
+        let current_name = current_secret_basename(&secret_files);
         let round = collect_async_round(&secret_files, args.cached, args.no_refresh_auth, jobs);
         if round.rc != 0 {
             overall_rc = 1;
@@ -747,10 +761,30 @@ fn run_async_mode_impl(
             break;
         }
 
-        thread::sleep(Duration::from_secs(WATCH_INTERVAL_SECONDS));
+        thread::sleep(Duration::from_secs(watch_interval_seconds));
     }
 
     Ok(overall_rc)
+}
+
+fn collect_secret_files_for_async_text() -> std::result::Result<Vec<PathBuf>, String> {
+    let secret_dir = crate::paths::resolve_secret_dir().unwrap_or_default();
+    if !secret_dir.is_dir() {
+        return Err(format!(
+            "codex-rate-limits-async: CODEX_SECRET_DIR not found: {}",
+            secret_dir.display()
+        ));
+    }
+
+    let mut secret_files: Vec<PathBuf> = std::fs::read_dir(&secret_dir)
+        .map_err(|err| format!("codex-rate-limits-async: failed to read CODEX_SECRET_DIR: {err}"))?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("json"))
+        .collect();
+
+    secret_files.sort();
+    Ok(secret_files)
 }
 
 struct AsyncRound {
@@ -1032,6 +1066,14 @@ fn watch_max_rounds_for_test() -> Option<u64> {
         .ok()
         .and_then(|raw| raw.parse::<u64>().ok())
         .filter(|value| *value > 0)
+}
+
+fn watch_interval_seconds() -> u64 {
+    std::env::var("CODEX_RATE_LIMITS_WATCH_INTERVAL_SECONDS")
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(WATCH_INTERVAL_SECONDS)
 }
 
 fn format_watch_update_time(now_epoch: i64) -> String {
@@ -2060,7 +2102,8 @@ fn parse_one_line_output(line: &str) -> Option<ParsedOneLine> {
 #[cfg(test)]
 mod tests {
     use super::{
-        async_fetch_one_line, cache, collect_json_from_cache, collect_secret_files, env_timeout,
+        async_fetch_one_line, cache, collect_json_from_cache, collect_secret_files,
+        collect_secret_files_for_async_text, current_secret_basename, env_timeout,
         fetch_one_line_cached, is_auth_file, normalize_one_line, parse_one_line_output,
         redact_sensitive_json, resolve_target, secret_display_name, single_one_line,
         sync_auth_silent, target_file_name,
@@ -2179,6 +2222,22 @@ mod tests {
             files[1].file_name().and_then(|name| name.to_str()),
             Some("beta.json")
         );
+    }
+
+    #[test]
+    fn collect_secret_files_for_async_text_allows_empty_secret_dir() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        fs::create_dir_all(&secret_dir).expect("secret dir");
+        let _secret = EnvGuard::set(
+            &lock,
+            "CODEX_SECRET_DIR",
+            secret_dir.to_str().expect("secret"),
+        );
+
+        let files = collect_secret_files_for_async_text().expect("async text secret files");
+        assert!(files.is_empty());
     }
 
     #[test]
@@ -2478,5 +2537,47 @@ mod tests {
         assert_eq!(target_file_name(Path::new("alpha.json")), "alpha.json");
         assert_eq!(target_file_name(Path::new("")), "");
         assert_eq!(secret_display_name(Path::new("alpha.json")), "alpha");
+    }
+
+    #[test]
+    fn rate_limits_helper_current_secret_basename_tracks_auth_switch() {
+        let lock = GlobalStateLock::new();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secret_dir = dir.path().join("secrets");
+        fs::create_dir_all(&secret_dir).expect("secrets");
+
+        let auth_file = dir.path().join("auth.json");
+        let alpha = secret_dir.join("alpha.json");
+        let beta = secret_dir.join("beta.json");
+
+        let alpha_json = auth_json(
+            PAYLOAD_ALPHA,
+            "acct_001",
+            "refresh_alpha",
+            "2025-01-20T12:34:56Z",
+        );
+        let beta_json = auth_json(
+            PAYLOAD_BETA,
+            "acct_002",
+            "refresh_beta",
+            "2025-01-21T12:34:56Z",
+        );
+        fs::write(&alpha, &alpha_json).expect("alpha");
+        fs::write(&beta, &beta_json).expect("beta");
+        fs::write(&auth_file, &alpha_json).expect("auth alpha");
+
+        let _auth = EnvGuard::set(&lock, "CODEX_AUTH_FILE", auth_file.to_str().expect("auth"));
+
+        let secret_files = vec![alpha.clone(), beta.clone()];
+        assert_eq!(
+            current_secret_basename(&secret_files).as_deref(),
+            Some("alpha")
+        );
+
+        fs::write(&auth_file, &beta_json).expect("auth beta");
+        assert_eq!(
+            current_secret_basename(&secret_files).as_deref(),
+            Some("beta")
+        );
     }
 }
