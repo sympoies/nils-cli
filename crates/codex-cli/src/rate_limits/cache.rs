@@ -17,7 +17,7 @@ pub struct CacheEntry {
     pub weekly_reset_epoch: i64,
 }
 
-const DEFAULT_CACHE_TTL_SECONDS: u64 = 300;
+const DEFAULT_CACHE_TTL_SECONDS: u64 = 180;
 const CACHE_MISS_HINT: &str =
     "rerun without --cached to refresh, or set CODEX_RATE_LIMITS_CACHE_ALLOW_STALE=true";
 

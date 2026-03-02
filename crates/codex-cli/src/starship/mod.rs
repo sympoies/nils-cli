@@ -20,7 +20,7 @@ pub struct StarshipOptions {
     pub is_enabled: bool,
 }
 
-const DEFAULT_TTL_SECONDS: u64 = 300;
+const DEFAULT_TTL_SECONDS: u64 = 180;
 const DEFAULT_TIME_FORMAT: &str = "%m-%d %H:%M";
 const DEFAULT_TIME_FORMAT_WITH_TIMEZONE: &str = "%m-%d %H:%M %:z";
 

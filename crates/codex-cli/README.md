@@ -73,7 +73,7 @@ Auth examples:
 
 - `rate-limits [options] [secret.json]`: Rate-limit diagnostics. Options: `-c/--clear-cache`, `-d/--debug`, `--cached`, `--no-refresh-auth`,
   `--json`, `--one-line`, `--all`, `--async`, `--jobs <n>`.
-- `--cached` reads cache only. Freshness is controlled by `CODEX_RATE_LIMITS_CACHE_TTL` (default `300s`); stale cache is rejected unless
+- `--cached` reads cache only. Freshness is controlled by `CODEX_RATE_LIMITS_CACHE_TTL` (default `3m`); stale cache is rejected unless
   `CODEX_RATE_LIMITS_CACHE_ALLOW_STALE=true`.
 
 ### config
@@ -103,11 +103,11 @@ Auth examples:
 - `CODEX_AUTH_FILE`: active auth file path (default: `~/.agents/auth.json`).
 - `CODEX_SECRET_CACHE_DIR`: secret timestamp cache directory. If unset, resolver order is:
   `ZSH_CACHE_DIR/codex/secrets` -> `ZDOTDIR/cache/codex/secrets` -> `~/.config/zsh/cache/codex/secrets`.
-- `CODEX_RATE_LIMITS_CACHE_TTL`: `diag rate-limits --cached` TTL (default: `300s`; supports `s|m|h|d|w` suffixes or raw seconds).
+- `CODEX_RATE_LIMITS_CACHE_TTL`: `diag rate-limits --cached` TTL (default: `3m`; supports `s|m|h|d|w` suffixes or raw seconds).
 - `CODEX_RATE_LIMITS_CACHE_ALLOW_STALE`: allow stale cache in `--cached` mode (default: `false`).
 - `CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED`: default `diag rate-limits` to `--all` when no target is provided (default: `false`).
 - `CODEX_STARSHIP_ENABLED`: enable Starship output (default: `false`; set `true` to enable).
-- `CODEX_STARSHIP_TTL`: Starship cache TTL override (default: `300s`; supports `s|m|h|d|w` suffixes or raw seconds).
+- `CODEX_STARSHIP_TTL`: Starship cache TTL override (default: `3m`; supports `s|m|h|d|w` suffixes or raw seconds).
 - `CODEX_AUTO_REFRESH_ENABLED`: enable `auth auto-refresh` behavior where applicable (default: `false`).
 - `CODEX_AUTO_REFRESH_MIN_DAYS`: `auth auto-refresh` minimum token age threshold (default: `5`).
 
