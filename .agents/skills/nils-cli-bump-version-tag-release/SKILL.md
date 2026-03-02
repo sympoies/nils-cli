@@ -42,7 +42,8 @@ Outputs:
 - Updates README release tag examples (unless `--skip-readme`).
 - Selects check mode in this order: strict CI gate (`--ci-gate-main`) or auto CI gate attempt, then full checks fallback.
 - Refreshes `Cargo.lock` via `cargo generate-lockfile` and then validates via `cargo check --workspace --locked` (CI-gated/skip-check path), or uses the full checks script.
-- Regenerates tracked third-party artifacts (`THIRD_PARTY_LICENSES.md`, `THIRD_PARTY_NOTICES.md`) before commit.
+- Regenerates tracked third-party artifacts (`THIRD_PARTY_LICENSES.md`, `THIRD_PARTY_NOTICES.md`) before strict full-check audits and
+  again before commit.
 - Runs full release checks through `nils-cli-verify-required-checks.sh` with `NILS_CLI_TEST_RUNNER=nextest` by default (unless overridden).
 - Creates a semantic commit for the version bump.
 - Creates an annotated tag `vX.Y.Z` and (unless `--skip-push`) pushes commit + tag to `origin`.
@@ -76,6 +77,7 @@ Failure modes:
 - Run checks with CI-gate-first logic:
   - `--skip-checks`: refresh `Cargo.lock`; run `cargo check --workspace --locked`.
   - `--ci-gate-main`: require CI gate; then refresh `Cargo.lock`; run `cargo check --workspace --locked`.
-  - default: try CI gate first; if unavailable, run full checks (`nils-cli-verify-required-checks.sh`).
-- Regenerate tracked third-party artifacts before commit to keep release/CI artifacts in sync.
+  - default: try CI gate first; if unavailable, regenerate third-party artifacts, then run full checks
+    (`nils-cli-verify-required-checks.sh`).
+- Regenerate tracked third-party artifacts again before commit to keep release/CI artifacts in sync.
 - Commit with `semantic-commit`, tag `vX.Y.Z`, and push to trigger the release workflow.

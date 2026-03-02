@@ -402,6 +402,9 @@ fi
 
 checks_script="$repo_root/.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh"
 if [[ "$skip_checks" -eq 0 ]]; then
+  # Keep third-party artifacts aligned before strict audits (which include drift checks).
+  refresh_third_party_artifacts_if_present
+
   if [[ ! -f "$checks_script" ]]; then
     die "missing checks script: $checks_script"
   fi
@@ -414,6 +417,7 @@ else
   refresh_lockfile_and_verify_locked
 fi
 
+# Re-run artifact generation after checks in case lockfile changed during the check flow.
 refresh_third_party_artifacts_if_present
 
 git add -A
