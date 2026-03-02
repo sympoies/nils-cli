@@ -5,6 +5,8 @@ use pretty_assertions::assert_eq;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::Duration;
 
 fn codex_cli_bin() -> PathBuf {
     bin::resolve("codex-cli")
@@ -264,6 +266,78 @@ fn rate_limits_async_watch_renders_last_update_timestamp() {
     assert!(out.contains("🚦 Codex rate limits for all accounts"));
     assert!(out.contains("alpha"));
     assert!(out.contains("Last update: "));
+}
+
+#[test]
+fn rate_limits_async_watch_rescans_secrets_and_updates_last_rendered_rows() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let secret_dir = dir.path().join("secrets");
+    fs::create_dir_all(&secret_dir).expect("secret dir");
+
+    let alpha_json = r#"{"tokens":{"access_token":"tok-alpha","account_id":"acct_001"}}"#;
+    let beta_json = r#"{"tokens":{"access_token":"tok-beta","account_id":"acct_002"}}"#;
+    fs::write(secret_dir.join("alpha.json"), alpha_json).expect("write alpha");
+
+    let auth_file = dir.path().join("auth.json");
+    fs::write(&auth_file, alpha_json).expect("write auth");
+
+    let cache_root = dir.path().join("cache_root");
+    fs::create_dir_all(&cache_root).expect("cache root");
+
+    let server = LoopbackServer::new().expect("server");
+    server.add_route(
+        "GET",
+        "/wham/usage",
+        HttpResponse::new(
+            200,
+            r#"{
+  "rate_limit": {
+    "primary_window": { "limit_window_seconds": 18000, "used_percent": 6, "reset_at": 1700003600 },
+    "secondary_window": { "limit_window_seconds": 604800, "used_percent": 12, "reset_at": 1700600000 }
+  }
+}"#,
+        ),
+    );
+
+    let secret_dir_for_update = secret_dir.clone();
+    let auth_file_for_update = auth_file.clone();
+    let updater = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(500));
+        fs::remove_file(secret_dir_for_update.join("alpha.json")).expect("remove alpha");
+        fs::write(secret_dir_for_update.join("beta.json"), beta_json).expect("write beta");
+        fs::write(auth_file_for_update, beta_json).expect("switch auth");
+    });
+
+    let output = run(
+        &["diag", "rate-limits", "--async", "--watch"],
+        &[
+            ("CODEX_SECRET_DIR", &secret_dir),
+            ("CODEX_AUTH_FILE", &auth_file),
+            ("ZSH_CACHE_DIR", &cache_root),
+        ],
+        &[
+            ("CODEX_CHATGPT_BASE_URL", &server.url()),
+            ("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false"),
+            ("CODEX_RATE_LIMITS_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
+            ("CODEX_RATE_LIMITS_CURL_MAX_TIME_SECONDS", "3"),
+            ("CODEX_RATE_LIMITS_WATCH_MAX_ROUNDS", "2"),
+            ("CODEX_RATE_LIMITS_WATCH_INTERVAL_SECONDS", "2"),
+            ("TZ", "UTC"),
+            ("NO_COLOR", "1"),
+        ],
+    );
+
+    updater.join().expect("updater join");
+    assert_exit(&output, 0);
+
+    let out = stdout(&output);
+    let last_render_start = out
+        .rfind("🚦 Codex rate limits for all accounts")
+        .expect("last render start");
+    let last_render = &out[last_render_start..];
+    assert!(last_render.contains("beta"));
+    assert!(!last_render.contains("alpha"));
+    assert!(cache_kv_path(&cache_root, "beta").is_file());
 }
 
 #[test]
