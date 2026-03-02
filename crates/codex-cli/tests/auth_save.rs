@@ -130,6 +130,31 @@ fn auth_save_writes_target_file() {
 }
 
 #[test]
+fn auth_save_appends_json_suffix_when_missing() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let secrets = dir.path().join("secrets");
+    fs::create_dir_all(&secrets).expect("secrets");
+    let auth_file = dir.path().join("auth.json");
+    fs::write(
+        &auth_file,
+        r#"{"tokens":{"access_token":"tok","refresh_token":"refresh"}}"#,
+    )
+    .expect("write auth");
+
+    let output = run_with(
+        &["auth", "save", "alpha"],
+        &[
+            ("CODEX_AUTH_FILE", &auth_file),
+            ("CODEX_SECRET_DIR", &secrets),
+        ],
+        &[],
+    );
+    assert_eq!(output.code, 0);
+    assert!(secrets.join("alpha.json").is_file());
+    assert!(!secrets.join("alpha").is_file());
+}
+
+#[test]
 fn auth_save_overwrite_prompt_default_no_in_non_tty_mode() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let secrets = dir.path().join("secrets");
