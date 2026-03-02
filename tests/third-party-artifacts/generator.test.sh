@@ -63,6 +63,10 @@ cmp -s "$NOTICES_FILE" "$TMP_DIR/notices.after-first-write" || fail "--write is 
 run_generator --check "$TMP_DIR/check-clean.stdout" "$TMP_DIR/check-clean.stderr"
 CHECK_CLEAN_STDOUT="$(cat "$TMP_DIR/check-clean.stdout")"
 assert_contains "$CHECK_CLEAN_STDOUT" "PASS: third-party artifacts are up-to-date" "clean --check output"
+NOTICES_CONTENT="$(cat "$NOTICES_FILE")"
+assert_contains "$NOTICES_CONTENT" "### option-ext 0.2.0" "mpl crate section"
+assert_contains "$NOTICES_CONTENT" "- Source URL: <https://crates.io/crates/option-ext/0.2.0>" "mpl source url line"
+assert_contains "$NOTICES_CONTENT" "- License text (MPL-2.0): <https://mozilla.org/MPL/2.0/>" "mpl license text line"
 
 # Drift detection path: mutate one artifact and ensure --check fails with actionable guidance.
 printf '\n<!-- test drift marker -->\n' >>"$LICENSES_FILE"

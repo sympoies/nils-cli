@@ -63,6 +63,8 @@ The artifact must contain the following sections in order:
    - per-entry fields:
      - `License`
      - `Source`
+     - `Source URL` (only for entries where resolved `License` includes `MPL-2.0`, derived from package source metadata when available)
+     - `License text (MPL-2.0): <https://mozilla.org/MPL/2.0/>` (only for entries where resolved `License` includes `MPL-2.0`)
      - `Notice files` (discovered list or fallback wording)
      - `License file references` (deterministic list when discovered)
      - or `License file reference: none declared`
