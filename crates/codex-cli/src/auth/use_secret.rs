@@ -26,7 +26,7 @@ pub fn run_with_json(target: &str, output_json: bool) -> Result<i32> {
         return Ok(64);
     }
 
-    if target.contains('/') || target.contains("..") {
+    if auth::is_invalid_secret_target(target) {
         if output_json {
             output::emit_error(
                 "auth use",
@@ -62,10 +62,11 @@ pub fn run_with_json(target: &str, output_json: bool) -> Result<i32> {
     };
 
     let is_email = target.contains('@');
-    let mut secret_name = target.to_string();
-    if !secret_name.ends_with(".json") && !is_email {
-        secret_name.push_str(".json");
-    }
+    let secret_name = if is_email {
+        target.to_string()
+    } else {
+        auth::normalize_secret_file_name(target)
+    };
 
     if secret_dir.join(&secret_name).is_file() {
         let (code, auth_file) = apply_secret(&secret_dir, &secret_name, output_json)?;

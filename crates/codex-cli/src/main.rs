@@ -89,14 +89,14 @@ fn handle_auth(args: &cli::AuthArgs) -> i32 {
         }
         Some(cli::AuthCommand::Save { output, yes, args }) => {
             if args.len() != 1 || args[0].is_empty() {
-                eprintln!("codex-save: usage: codex-save [--yes] <secret.json>");
+                eprintln!("codex-save: usage: codex-save [--yes] <secret|secret.json>");
                 return 64;
             }
             auth::save::run_with_json(&args[0], *yes, output.is_json()).unwrap_or(1)
         }
         Some(cli::AuthCommand::Remove { output, yes, args }) => {
             if args.len() != 1 || args[0].is_empty() {
-                eprintln!("codex-remove: usage: codex-remove [--yes] <secret.json>");
+                eprintln!("codex-remove: usage: codex-remove [--yes] <secret|secret.json>");
                 return 64;
             }
             auth::remove::run_with_json(&args[0], *yes, output.is_json()).unwrap_or(1)

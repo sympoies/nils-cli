@@ -107,14 +107,14 @@ pub enum AuthCommand {
         #[arg(long = "device-code")]
         device_code: bool,
     },
-    /// Switch to a secret by name or email
+    /// Switch to a secret by name/name.json or email
     Use {
         #[command(flatten)]
         output: OutputModeArgs,
         #[arg(id = "target", value_name = "target", num_args = 0..)]
         args: Vec<String>,
     },
-    /// Save active CODEX_AUTH_FILE into CODEX_SECRET_DIR as SECRET_JSON
+    /// Save active CODEX_AUTH_FILE into CODEX_SECRET_DIR as SECRET_JSON (auto-appends .json when missing)
     Save {
         #[command(flatten)]
         output: OutputModeArgs,
@@ -124,7 +124,7 @@ pub enum AuthCommand {
         #[arg(id = "secret", value_name = "secret", num_args = 0..)]
         args: Vec<String>,
     },
-    /// Remove SECRET_JSON from CODEX_SECRET_DIR
+    /// Remove SECRET_JSON from CODEX_SECRET_DIR (auto-appends .json when missing)
     Remove {
         #[command(flatten)]
         output: OutputModeArgs,

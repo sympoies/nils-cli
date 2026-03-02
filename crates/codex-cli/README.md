@@ -50,11 +50,11 @@ Help:
 
 - `login [--api-key|--device-code]`: Login via ChatGPT browser flow (`chatgpt-browser`, default), ChatGPT device-code flow
   (`chatgpt-device-code`), or API key flow (`api-key`). `--api-key` and `--device-code` are mutually exclusive (`64` on invalid usage).
-- `use <name|email>`: Switch to a secret by name or email.
-- `save [--yes] <secret.json>`: Save active `CODEX_AUTH_FILE` into `CODEX_SECRET_DIR` with an explicit file name. If target exists,
-  interactive mode prompts for overwrite; non-interactive and JSON mode require `--yes` to overwrite.
-- `remove [--yes] <secret.json>`: Remove a secret file from `CODEX_SECRET_DIR`. Interactive mode prompts for confirmation; non-interactive
-  and JSON mode require `--yes`.
+- `use <name|name.json|email>`: Switch to a secret by name/name.json or email.
+- `save [--yes] <secret|secret.json>`: Save active `CODEX_AUTH_FILE` into `CODEX_SECRET_DIR`. Secret files are normalized to `.json`; if
+  target exists, interactive mode prompts for overwrite, while non-interactive and JSON mode require `--yes` to overwrite.
+- `remove [--yes] <secret|secret.json>`: Remove a secret file from `CODEX_SECRET_DIR`. Secret names are normalized to `.json`; interactive
+  mode prompts for confirmation, while non-interactive and JSON mode require `--yes`.
 - `refresh [secret.json]`: Refresh OAuth tokens.
 - `auto-refresh`: Refresh stale tokens across auth + secrets.
 - `current`: Show which secret matches `CODEX_AUTH_FILE`.
@@ -65,9 +65,9 @@ Auth examples:
 - `codex-cli auth login`: ChatGPT browser login.
 - `codex-cli auth login --device-code`: ChatGPT device-code login.
 - `codex-cli auth login --api-key`: OpenAI API key login.
-- `codex-cli auth save team-alpha.json`: Save and prompt before overwrite when applicable.
+- `codex-cli auth save team-alpha`: Save to `team-alpha.json` and prompt before overwrite when applicable.
 - `codex-cli auth save --yes team-alpha.json`: Force overwrite without prompt.
-- `codex-cli auth remove --yes team-alpha.json`: Remove a saved secret file.
+- `codex-cli auth remove --yes team-alpha`: Remove `team-alpha.json`.
 
 ### diag
 

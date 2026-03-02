@@ -137,6 +137,23 @@ fn auth_remove_yes_deletes_file_and_timestamp() {
 }
 
 #[test]
+fn auth_remove_appends_json_suffix_when_missing() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let secrets = dir.path().join("secrets");
+    fs::create_dir_all(&secrets).expect("secrets");
+    let target = secrets.join("alpha.json");
+    fs::write(&target, r#"{"tokens":{"access_token":"tok"}}"#).expect("target");
+
+    let output = run_with(
+        &["auth", "remove", "--yes", "alpha"],
+        &[("CODEX_SECRET_DIR", &secrets)],
+        &[],
+    );
+    assert_eq!(output.code, 0);
+    assert!(!target.exists(), "alpha.json should be removed");
+}
+
+#[test]
 fn auth_remove_yes_does_not_create_missing_cache_dir() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let secrets = dir.path().join("secrets");

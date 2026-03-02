@@ -3,6 +3,7 @@ use serde_json::json;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 
+use crate::auth;
 use crate::auth::output::{self, AuthRemoveResult};
 use crate::fs;
 use crate::paths;
@@ -15,11 +16,11 @@ pub fn run_with_json(target: &str, yes: bool, output_json: bool) -> Result<i32> 
     if target.is_empty() {
         return usage_error(
             output_json,
-            "codex-remove: usage: codex-remove [--yes] <secret.json>",
+            "codex-remove: usage: codex-remove [--yes] <secret|secret.json>",
         );
     }
 
-    if is_invalid_target(target) {
+    if auth::is_invalid_secret_target(target) {
         if output_json {
             output::emit_error(
                 "auth remove",
@@ -72,7 +73,8 @@ pub fn run_with_json(target: &str, yes: bool, output_json: bool) -> Result<i32> 
         return Ok(1);
     }
 
-    let target_file = secret_dir.join(target);
+    let secret_name = auth::normalize_secret_file_name(target);
+    let target_file = secret_dir.join(&secret_name);
     if !target_file.is_file() {
         if output_json {
             output::emit_error(
@@ -171,10 +173,6 @@ fn usage_error(output_json: bool, message: &str) -> Result<i32> {
     Ok(64)
 }
 
-fn is_invalid_target(target: &str) -> bool {
-    target.contains('/') || target.contains('\\') || target.contains("..")
-}
-
 fn interactive_io_available() -> bool {
     io::stdin().is_terminal() && io::stdout().is_terminal()
 }
@@ -203,16 +201,16 @@ fn remove_target_timestamp(target_file: &Path) {
 
 #[cfg(test)]
 mod tests {
-    use super::is_invalid_target;
+    use crate::auth::is_invalid_secret_target;
     use crate::paths;
     use nils_test_support::{EnvGuard, GlobalStateLock};
 
     #[test]
     fn invalid_target_rejects_paths_and_traversal() {
-        assert!(is_invalid_target("../a.json"));
-        assert!(is_invalid_target("a/b.json"));
-        assert!(is_invalid_target(r"a\b.json"));
-        assert!(!is_invalid_target("alpha.json"));
+        assert!(is_invalid_secret_target("../a.json"));
+        assert!(is_invalid_secret_target("a/b.json"));
+        assert!(is_invalid_secret_target(r"a\b.json"));
+        assert!(!is_invalid_secret_target("alpha.json"));
     }
 
     #[test]

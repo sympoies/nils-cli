@@ -70,6 +70,47 @@ fn auth_use_invalid_path() {
 }
 
 #[test]
+fn auth_use_rejects_backslash_path() {
+    let output = run(&["auth", "use", r"a\\secret"], &[]);
+    assert_exit(&output, 64);
+    assert!(stderr(&output).contains("codex-use: invalid secret name"));
+}
+
+#[test]
+fn auth_use_name_without_json_suffix_resolves_json_secret() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let secrets = dir.path().join("secrets");
+    let cache = dir.path().join("cache");
+    fs::create_dir_all(&secrets).expect("secrets dir");
+    fs::create_dir_all(&cache).expect("cache dir");
+
+    let auth_file = dir.path().join("auth.json");
+    let secret_file = secrets.join("alpha.json");
+    let content = auth_json(
+        PAYLOAD_ALPHA,
+        "acct_001",
+        "refresh_a",
+        "2025-01-20T12:34:56Z",
+    );
+    fs::write(&secret_file, &content).expect("write secret");
+
+    let output = run(
+        &["auth", "use", "alpha"],
+        &[
+            ("CODEX_AUTH_FILE", &auth_file),
+            ("CODEX_SECRET_DIR", &secrets),
+            ("CODEX_SECRET_CACHE_DIR", &cache),
+        ],
+    );
+
+    assert_exit(&output, 0);
+    let out = stdout(&output);
+    assert!(out.contains("applied alpha.json"));
+    let applied = fs::read_to_string(&auth_file).expect("read auth file");
+    assert_eq!(applied, content);
+}
+
+#[test]
 fn auth_use_email_resolution() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let secrets = dir.path().join("secrets");
