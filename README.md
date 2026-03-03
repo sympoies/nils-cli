@@ -52,7 +52,7 @@ Each crate is either a standalone CLI binary or a shared library used across the
 
 - [crates/agent-docs](crates/agent-docs): Deterministic policy-document resolver for Codex/agent workflows (`resolve`, `contexts`, `add`,
   `baseline`).
-- [crates/codex-cli](crates/codex-cli): Provider-specific CLI for OpenAI/Codex workflows (auth, diagnostics, execution wrappers, Starship),
+- [crates/codex-cli](crates/codex-cli): Provider-specific CLI for OpenAI/Codex workflows (auth, diagnostics, execution flows, Starship),
   with adapters over `nils-common::provider_runtime`.
 - [crates/gemini-cli](crates/gemini-cli): Provider-specific CLI lane for Gemini workflows, with adapters over
   `nils-common::provider_runtime`.
@@ -74,6 +74,9 @@ Contributors should treat `nils-common` as the shared helper boundary for cross-
 
 Detailed scope, API examples, migration conventions, and non-goals are documented in
 [crates/nils-common/README.md](crates/nils-common/README.md).
+
+Sprint-2 boundary freeze and extraction lane ownership are tracked in
+[docs/specs/workspace-shared-crate-boundary-v1.md](docs/specs/workspace-shared-crate-boundary-v1.md).
 
 ## Shell wrappers and completions
 

@@ -2,10 +2,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use nils_common::env as shared_env;
+use nils_common::fs as shared_fs;
+use nils_common::provider_runtime::persistence::{
+    SyncSecretsError, TimestampPolicy, sync_auth_to_matching_secrets,
+};
 
 use crate::auth;
-use crate::fs as gemini_fs;
 use crate::paths;
+use crate::provider_profile::GEMINI_PROVIDER_PROFILE;
 use crate::rate_limits::client::{UsageRequest, fetch_usage};
 
 pub use nils_common::rate_limits_ansi as ansi;
@@ -186,65 +190,34 @@ fn sync_auth_silent() -> Result<(), String> {
         None => return Ok(()),
     };
 
-    if !auth_file.is_file() {
+    let sync_result = match sync_auth_to_matching_secrets(
+        &GEMINI_PROVIDER_PROFILE,
+        &auth_file,
+        auth::SECRET_FILE_MODE,
+        TimestampPolicy::BestEffort,
+    ) {
+        Ok(result) => result,
+        Err(SyncSecretsError::ReadAuthFile { path, .. })
+        | Err(SyncSecretsError::HashAuthFile { path, .. })
+        | Err(SyncSecretsError::HashSecretFile { path, .. }) => {
+            return Err(format!(
+                "gemini-rate-limits: failed to read {}",
+                path.display()
+            ));
+        }
+        Err(SyncSecretsError::WriteSecretFile { path, .. })
+        | Err(SyncSecretsError::WriteTimestampFile { path, .. }) => {
+            return Err(format!(
+                "gemini-rate-limits: failed to write {}",
+                path.display()
+            ));
+        }
+    };
+    if !sync_result.auth_file_present || !sync_result.auth_identity_present {
         return Ok(());
     }
 
-    let auth_key = match auth::identity_key_from_auth_file(&auth_file) {
-        Ok(Some(key)) => key,
-        _ => return Ok(()),
-    };
-
-    let auth_last_refresh = auth::last_refresh_from_auth_file(&auth_file).ok().flatten();
-    let auth_contents = fs::read(&auth_file)
-        .map_err(|_| format!("gemini-rate-limits: failed to read {}", auth_file.display()))?;
-
-    if let Some(secret_dir) = paths::resolve_secret_dir()
-        && let Ok(entries) = fs::read_dir(&secret_dir)
-    {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|value| value.to_str()) != Some("json") {
-                continue;
-            }
-
-            let candidate_key = match auth::identity_key_from_auth_file(&path) {
-                Ok(Some(key)) => key,
-                _ => continue,
-            };
-            if candidate_key != auth_key {
-                continue;
-            }
-
-            let secret_contents = fs::read(&path)
-                .map_err(|_| format!("gemini-rate-limits: failed to read {}", path.display()))?;
-            if secret_contents == auth_contents {
-                continue;
-            }
-
-            auth::write_atomic(&path, &auth_contents, auth::SECRET_FILE_MODE)
-                .map_err(|_| format!("gemini-rate-limits: failed to write {}", path.display()))?;
-
-            if let Some(timestamp_path) = sync_timestamp_path(&path) {
-                let _ = auth::write_timestamp(&timestamp_path, auth_last_refresh.as_deref());
-            }
-        }
-    }
-
-    if let Some(auth_timestamp) = sync_timestamp_path(&auth_file) {
-        let _ = auth::write_timestamp(&auth_timestamp, auth_last_refresh.as_deref());
-    }
-
     Ok(())
-}
-
-fn sync_timestamp_path(target_file: &Path) -> Option<PathBuf> {
-    let cache_dir = paths::resolve_secret_cache_dir()?;
-    let name = target_file
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("auth.json");
-    Some(cache_dir.join(format!("{name}.timestamp")))
 }
 
 fn run_single_mode(args: &RateLimitsOptions, cached_mode: bool, output_json: bool) -> i32 {
@@ -728,7 +701,7 @@ pub fn cache_file_for_target(target_file: &Path) -> Result<PathBuf, String> {
         }
     }
 
-    let hash = gemini_fs::sha256_file(target_file).map_err(|err| err.to_string())?;
+    let hash = shared_fs::sha256_file(target_file).map_err(|err| err.to_string())?;
     Ok(cache_dir.join(format!("auth_{}.kv", hash.to_lowercase())))
 }
 
@@ -846,7 +819,7 @@ pub fn write_starship_cache(
     lines.push(format!("weekly_reset_epoch={weekly_reset_epoch}"));
 
     let data = lines.join("\n");
-    gemini_fs::write_atomic(&cache_file, data.as_bytes(), gemini_fs::SECRET_FILE_MODE)
+    shared_fs::write_atomic(&cache_file, data.as_bytes(), shared_fs::SECRET_FILE_MODE)
         .map_err(|err| err.to_string())
 }
 
@@ -1090,10 +1063,10 @@ fn current_secret_basename(secret_files: &[PathBuf]) -> Option<String> {
         return None;
     }
 
-    let auth_hash = gemini_fs::sha256_file(&auth_file).ok();
+    let auth_hash = shared_fs::sha256_file(&auth_file).ok();
     if let Some(auth_hash) = auth_hash.as_deref() {
         for secret_file in secret_files {
-            if let Ok(secret_hash) = gemini_fs::sha256_file(secret_file)
+            if let Ok(secret_hash) = shared_fs::sha256_file(secret_file)
                 && secret_hash == auth_hash
                 && let Ok(name) = secret_file_basename(secret_file)
             {

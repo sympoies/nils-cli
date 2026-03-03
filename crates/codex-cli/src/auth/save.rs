@@ -5,8 +5,8 @@ use std::path::Path;
 
 use crate::auth;
 use crate::auth::output::{self, AuthSaveResult};
-use crate::fs;
 use crate::paths;
+use nils_common::fs;
 
 pub fn run(target: &str, yes: bool) -> Result<i32> {
     run_with_json(target, yes, false)
@@ -247,18 +247,12 @@ fn confirm_overwrite(target: &Path) -> Result<bool> {
 }
 
 fn write_target_timestamp(target_file: &Path, auth_file: &Path) -> Result<()> {
-    let cache_dir = match paths::resolve_secret_cache_dir() {
-        Some(dir) => dir,
-        None => return Ok(()),
+    let Some(timestamp_file) = paths::resolve_secret_timestamp_path(target_file) else {
+        return Ok(());
     };
-
-    let file_name = target_file
-        .file_name()
-        .and_then(|v| v.to_str())
-        .unwrap_or("auth.json");
-    let timestamp_file = cache_dir.join(format!("{file_name}.timestamp"));
     let iso = auth::last_refresh_from_auth_file(auth_file).unwrap_or(None);
-    fs::write_timestamp(&timestamp_file, iso.as_deref())
+    fs::write_timestamp(&timestamp_file, iso.as_deref())?;
+    Ok(())
 }
 
 #[cfg(test)]

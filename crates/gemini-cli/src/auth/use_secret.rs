@@ -211,12 +211,7 @@ fn resolve_by_email(secret_dir: &Path, target: &str) -> ResolveResult {
 }
 
 fn secret_timestamp_path(target_file: &Path) -> Option<PathBuf> {
-    let cache_dir = crate::paths::resolve_secret_cache_dir()?;
-    let name = target_file
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("auth.json");
-    Some(cache_dir.join(format!("{name}.timestamp")))
+    crate::paths::resolve_secret_timestamp_path(target_file)
 }
 
 fn file_name(path: &Path) -> String {

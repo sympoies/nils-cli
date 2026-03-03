@@ -1,12 +1,12 @@
 use anyhow::Result;
 use chrono::Utc;
+use nils_common::fs;
 use reqwest::blocking::Client;
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::auth::output::{self, AuthRefreshResult};
-use crate::fs;
 use crate::json;
 use crate::paths;
 
@@ -234,12 +234,7 @@ fn run_with_mode(args: &[String], output_mode: RefreshOutputMode) -> Result<i32>
     let output = serde_json::to_vec(&merged)?;
     fs::write_atomic(&target_file, &output, fs::SECRET_FILE_MODE)?;
 
-    let cache_dir = match paths::resolve_secret_cache_dir() {
-        Some(dir) => dir,
-        None => PathBuf::new(),
-    };
-    let timestamp_path = cache_dir.join(format!("{}.timestamp", file_name(&target_file)));
-    if !cache_dir.as_os_str().is_empty() {
+    if let Some(timestamp_path) = paths::resolve_secret_timestamp_path(&target_file) {
         fs::write_timestamp(&timestamp_path, Some(&now_iso))?;
     }
 
@@ -378,6 +373,7 @@ fn env_timeout(key: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
+#[cfg(test)]
 fn file_name(path: &Path) -> String {
     path.file_name()
         .and_then(|name| name.to_str())

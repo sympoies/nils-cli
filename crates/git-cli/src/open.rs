@@ -1,4 +1,3 @@
-use crate::util;
 use nils_common::process;
 use std::io::{self, Write};
 use std::process::Output;
@@ -249,7 +248,7 @@ fn open_pr(args: &[String]) -> i32 {
     }
 
     if collab.provider == Provider::Github
-        && util::cmd_exists("gh")
+        && process::cmd_exists("gh")
         && try_open_pr_with_gh(&ctx, &collab)
     {
         return 0;
@@ -571,7 +570,7 @@ fn run_gh_pr_view(repo: Option<&str>, selector: Option<&str>) -> bool {
     }
     let args: Vec<&str> = owned_args.iter().map(String::as_str).collect();
 
-    let output = match util::run_output("gh", &args) {
+    let output = match run_output("gh", &args) {
         Ok(output) => output,
         Err(_) => return false,
     };
@@ -920,7 +919,7 @@ fn open_url(url: &str, label: &str) -> i32 {
         return 1;
     };
 
-    let output = match util::run_output(opener, &[url]) {
+    let output = match run_output(opener, &[url]) {
         Ok(output) => output,
         Err(err) => {
             eprintln!("{err}");
@@ -970,13 +969,19 @@ fn print_usage() {
 }
 
 fn run_git_output(args: &[&str]) -> Option<Output> {
-    match util::run_output("git", args) {
+    match run_output("git", args) {
         Ok(output) => Some(output),
         Err(err) => {
             eprintln!("{err}");
             None
         }
     }
+}
+
+fn run_output(cmd: &str, args: &[&str]) -> Result<Output, String> {
+    process::run_output(cmd, args)
+        .map(|output| output.into_std_output())
+        .map_err(|err| format!("spawn {cmd}: {err}"))
 }
 
 fn git_stdout_trimmed(args: &[&str]) -> Result<String, i32> {
