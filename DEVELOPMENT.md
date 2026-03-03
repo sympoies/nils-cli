@@ -75,7 +75,7 @@
 - Or run the single entrypoint for required checks:
   `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
   (includes docs/completion/stale-test/third-party-artifact audits
-  plus fmt/clippy/tests; it pre-creates `target/coverage`, but still run coverage commands above)
+  plus fmt/clippy/tests; coverage commands above are still required explicitly)
 - Docs-only fast path: if every changed file is documentation-only (`*.md`, `docs/**`, `crates/*/docs/**`, plus root docs like `README.md`,
   `DEVELOPMENT.md`), run:
   - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh --docs-only`
