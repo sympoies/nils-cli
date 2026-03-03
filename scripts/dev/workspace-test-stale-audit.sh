@@ -119,6 +119,15 @@ tmp_allowlist_sorted="$(mktemp "${TMPDIR:-/tmp}/workspace-stale-tests.allowlist.
 tmp_crate_metrics="$(mktemp "${TMPDIR:-/tmp}/workspace-stale-tests.metrics.XXXXXX.tsv")"
 tmp_high_overlap="$(mktemp "${TMPDIR:-/tmp}/workspace-stale-tests.high-overlap.XXXXXX.tsv")"
 
+# Frozen serial execution order from Sprint 3 Task 3.1.
+frozen_serial_crates=(
+  git-cli
+  agent-docs
+  macos-agent
+  fzf-cli
+  memo-cli
+)
+
 cleanup() {
   rm -f \
     "$tmp_rows" \
@@ -517,19 +526,42 @@ build_crate_metrics() {
 
 select_high_overlap() {
   : >"$tmp_high_overlap"
-  awk -F '\t' '$2+0 > 0 {print}' "$tmp_crate_metrics" | LC_ALL=C sort -t $'\t' -k5,5nr -k1,1 | head -n 5 >"$tmp_high_overlap"
+  local crate metrics total helper allow score
+  for crate in "${frozen_serial_crates[@]}"; do
+    metrics="$(awk -F '\t' -v crate="$crate" '
+      $1==crate {
+        print $2 "\t" $3 "\t" $4 "\t" $5
+        found=1
+        exit
+      }
+      END {
+        if (!found) {
+          print "0\t0\t0\t0"
+        }
+      }
+    ' "$tmp_crate_metrics")"
+    IFS=$'\t' read -r total helper allow score <<<"$metrics"
+    printf '%s\t%s\t%s\t%s\t%s\n' \
+      "$crate" \
+      "${total:-0}" \
+      "${helper:-0}" \
+      "${allow:-0}" \
+      "${score:-0}" \
+      >>"$tmp_high_overlap"
+  done
 }
 
 serial_group_for_crate() {
   local crate="${1:-}"
   local order=0
-  while IFS=$'\t' read -r overlap_crate _rest; do
+  local serial_crate
+  for serial_crate in "${frozen_serial_crates[@]}"; do
     order=$((order + 1))
-    if [[ "$crate" == "$overlap_crate" ]]; then
+    if [[ "$crate" == "$serial_crate" ]]; then
       printf 'serial-%d' "$order"
       return 0
     fi
-  done <"$tmp_high_overlap"
+  done
   printf 'parallel'
 }
 
@@ -612,7 +644,9 @@ render_execution_manifest() {
     echo "2. \`medium\` lane -> Task 2.2 (parallel allowed unless serial group set)."
     echo "3. \`high-risk\` lane -> Task 2.5 (execute after safe/medium plus contract guard checks)."
     echo
-    echo "## Serialized High-Overlap Crates"
+    echo "## Frozen Serialized Crates"
+    echo
+    echo "Order is frozen by Sprint 3 Task 3.1 to avoid serial-group drift while cleanup lanes run in parallel."
     echo
     echo "| Order | Crate | Candidates | Helper Signals | allow(dead_code) | Score |"
     echo "| ---: | --- | ---: | ---: | ---: | ---: |"

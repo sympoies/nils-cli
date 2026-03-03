@@ -16,6 +16,31 @@ Use it to decide whether a candidate should be `remove`, `keep`, `rewrite`, or `
 3. Validate contract safety before merge.
 4. Update CI baseline only after reviewed cleanup PRs merge.
 
+## Deterministic Cleanup Map Inputs
+
+Treat these artifacts as the authoritative cleanup map for Sprint 3:
+
+- `$AGENT_HOME/out/workspace-test-cleanup/stale-tests.tsv`
+- `$AGENT_HOME/out/workspace-test-cleanup/decision-rubric.md`
+- `$AGENT_HOME/out/workspace-test-cleanup/crate-tiers.tsv`
+- `$AGENT_HOME/out/workspace-test-cleanup/execution-manifest.md`
+- `docs/specs/workspace-test-cleanup-lane-matrix-v1.md`
+
+The spec freezes the `serial` vs `parallel` lane contract and the decision-mode mapping (`remove`, `rewrite`, `keep`, `defer`) so task
+lanes do not drift as cleanup work lands.
+
+## Frozen Serial Sequence
+
+The serialized crate order is fixed:
+
+1. `git-cli` (`serial-1`)
+2. `agent-docs` (`serial-2`)
+3. `macos-agent` (`serial-3`)
+4. `fzf-cli` (`serial-4`)
+5. `memo-cli` (`serial-5`)
+
+All other crates remain `parallel` unless the matrix spec is intentionally revised.
+
 ## Evidence Rules
 
 Before marking a candidate `remove`, include all of the following:
@@ -31,10 +56,19 @@ For `rewrite`, document:
 - Which test now guards the behavior.
 - Which command(s) prove parity/contract behavior still pass.
 
+## Baseline Update Policy
+
+- `scripts/ci/test-stale-audit-baseline.tsv` is a constrained allowlist for known `helper_fanout` + `remove` rows only.
+- New regression rows must be fixed in code; do not add them to baseline as a shortcut.
+- During cleanup lanes, baseline changes are limited to deleting rows for helpers that were actually removed with replacement coverage.
+- Any baseline expansion requires an explicit policy update to both this runbook and
+  `docs/specs/workspace-test-cleanup-lane-matrix-v1.md`, plus review evidence in the PR.
+
 ## CI Guardrails
 
 - `bash scripts/ci/test-stale-audit.sh --strict`
   - Fails on new orphaned helper regressions relative to `scripts/ci/test-stale-audit-baseline.tsv`.
+  - Fails when baseline contains entries outside the frozen S3T1 allowlist.
   - Fails on deprecated-path leftovers (`deprecated_path_marker`) in the current inventory.
 - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
   - Must pass before delivery.
