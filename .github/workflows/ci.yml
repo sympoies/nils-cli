@@ -39,16 +39,10 @@ jobs:
         with:
           tool: cargo-nextest
 
-      - name: Third-party artifact audit
-        run: bash scripts/ci/third-party-artifacts-audit.sh --strict
-
-      - name: Completion asset audit
-        run: bash scripts/ci/completion-asset-audit.sh --strict
-
-      - name: Nils CLI checks (includes docs-placement-audit)
+      - name: Nils CLI checks (includes third-party-artifacts-audit, Completion asset audit, docs-hygiene-audit, test-stale-audit)
         env:
           NILS_CLI_TEST_RUNNER: nextest
-        run: xvfb-run -a ./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh
+        run: bash scripts/ci/nils-cli-checks-entrypoint.sh --xvfb
 
       - name: Publish JUnit report
         if: always() && hashFiles('target/nextest/ci/junit.xml') != ''
@@ -104,16 +98,10 @@ jobs:
         with:
           tool: cargo-nextest
 
-      - name: Third-party artifact audit
-        run: /opt/homebrew/bin/bash scripts/ci/third-party-artifacts-audit.sh --strict
-
-      - name: Completion asset audit
-        run: /opt/homebrew/bin/bash scripts/ci/completion-asset-audit.sh --strict
-
-      - name: Nils CLI checks (includes docs-placement-audit)
+      - name: Nils CLI checks (includes third-party-artifacts-audit, Completion asset audit, docs-hygiene-audit, test-stale-audit)
         env:
           NILS_CLI_TEST_RUNNER: nextest
-        run: /opt/homebrew/bin/bash ./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh
+        run: /opt/homebrew/bin/bash scripts/ci/nils-cli-checks-entrypoint.sh
 
       - name: Publish JUnit report
         if: always() && hashFiles('target/nextest/ci/junit.xml') != ''

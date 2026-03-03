@@ -11,29 +11,28 @@ fn api_grpc_bin() -> PathBuf {
 }
 
 fn run_api_grpc(cwd: &Path, args: &[&str], envs: &[(&str, &str)]) -> CmdOutput {
-    let mut options = CmdOptions::default().with_cwd(cwd);
-    for key in [
-        "GRPCURL_BIN",
-        "GRPC_URL",
-        "GRPC_ENV_DEFAULT",
-        "GRPC_TOKEN_NAME",
-        "GRPC_HISTORY_ENABLED",
-        "GRPC_HISTORY_FILE",
-        "GRPC_HISTORY_LOG_URL_ENABLED",
-        "GRPC_JWT_VALIDATE_ENABLED",
-        "ACCESS_TOKEN",
-        "SERVICE_TOKEN",
-        "HTTP_PROXY",
-        "http_proxy",
-        "HTTPS_PROXY",
-        "https_proxy",
-        "ALL_PROXY",
-        "all_proxy",
-    ] {
-        options = options.with_env_remove(key);
-    }
-    options = options.with_env("NO_PROXY", "127.0.0.1,localhost");
-    options = options.with_env("no_proxy", "127.0.0.1,localhost");
+    let mut options = CmdOptions::default()
+        .with_cwd(cwd)
+        .with_env_remove_many(&[
+            "GRPCURL_BIN",
+            "GRPC_URL",
+            "GRPC_ENV_DEFAULT",
+            "GRPC_TOKEN_NAME",
+            "GRPC_HISTORY_ENABLED",
+            "GRPC_HISTORY_FILE",
+            "GRPC_HISTORY_LOG_URL_ENABLED",
+            "GRPC_JWT_VALIDATE_ENABLED",
+            "ACCESS_TOKEN",
+            "SERVICE_TOKEN",
+            "HTTP_PROXY",
+            "http_proxy",
+            "HTTPS_PROXY",
+            "https_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+        ])
+        .with_env("NO_PROXY", "127.0.0.1,localhost")
+        .with_env("no_proxy", "127.0.0.1,localhost");
 
     for (k, v) in envs {
         options = options.with_env(k, v);

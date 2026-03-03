@@ -19,15 +19,12 @@ fn run_api_test(cwd: &Path, args: &[&str]) -> CmdOutput {
 }
 
 fn run_api_test_with_env(cwd: &Path, args: &[&str], env: &[(&str, &str)]) -> CmdOutput {
-    let mut options = CmdOptions::default().with_cwd(cwd);
-    for key in [
+    let mut options = CmdOptions::default().with_cwd(cwd).with_env_remove_many(&[
         "ACCESS_TOKEN",
         "SERVICE_TOKEN",
         "REST_TOKEN_NAME",
         "GQL_JWT_NAME",
-    ] {
-        options = options.with_env_remove(key);
-    }
+    ]);
     for (k, v) in env {
         options = options.with_env(k, v);
     }

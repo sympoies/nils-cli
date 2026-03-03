@@ -91,6 +91,13 @@ impl CmdOptions {
         self
     }
 
+    pub fn with_env_remove_many(mut self, keys: &[&str]) -> Self {
+        for key in keys {
+            self = self.with_env_remove(key);
+        }
+        self
+    }
+
     pub fn with_path_prepend(self, dir: &Path) -> Self {
         let base = self
             .envs
@@ -137,6 +144,20 @@ impl CmdOptions {
         self.stdin_null = false;
         self
     }
+}
+
+/// Build a `PATH` value with `prepend` inserted first and any directory that
+/// contains `program` removed.
+pub fn path_with_prepend_excluding_program(prepend: &Path, program: &str) -> String {
+    let mut paths: Vec<PathBuf> =
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .filter(|dir| !dir.join(program).is_file())
+            .collect();
+    paths.insert(0, prepend.to_path_buf());
+    std::env::join_paths(paths)
+        .expect("join PATH")
+        .to_string_lossy()
+        .to_string()
 }
 
 /// Run a binary with arguments, capturing `code`, `stdout`, and `stderr`.

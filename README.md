@@ -52,7 +52,7 @@ Each crate is either a standalone CLI binary or a shared library used across the
 
 - [crates/agent-docs](crates/agent-docs): Deterministic policy-document resolver for Codex/agent workflows (`resolve`, `contexts`, `add`,
   `baseline`).
-- [crates/codex-cli](crates/codex-cli): Provider-specific CLI for OpenAI/Codex workflows (auth, diagnostics, execution wrappers, Starship),
+- [crates/codex-cli](crates/codex-cli): Provider-specific CLI for OpenAI/Codex workflows (auth, diagnostics, execution flows, Starship),
   with adapters over `nils-common::provider_runtime`.
 - [crates/gemini-cli](crates/gemini-cli): Provider-specific CLI lane for Gemini workflows, with adapters over
   `nils-common::provider_runtime`.
@@ -75,11 +75,20 @@ Contributors should treat `nils-common` as the shared helper boundary for cross-
 Detailed scope, API examples, migration conventions, and non-goals are documented in
 [crates/nils-common/README.md](crates/nils-common/README.md).
 
+Sprint-2 boundary freeze and extraction lane ownership are tracked in
+[docs/specs/workspace-shared-crate-boundary-v1.md](docs/specs/workspace-shared-crate-boundary-v1.md).
+
+Workspace doc retention scope and delete/keep decisions are tracked in
+[docs/specs/workspace-doc-retention-matrix-v1.md](docs/specs/workspace-doc-retention-matrix-v1.md).
+
 ## Shell wrappers and completions
 
 Canonical completion architecture and contributor validation live in
 [docs/runbooks/cli-completion-development-standard.md](docs/runbooks/cli-completion-development-standard.md). Use
 [DEVELOPMENT.md](DEVELOPMENT.md) for required delivery checks.
+
+Completion obligation coverage is tracked in
+[docs/specs/completion-coverage-matrix-v1.md](docs/specs/completion-coverage-matrix-v1.md).
 
 Assets:
 

@@ -1,4 +1,5 @@
-use crate::{clipboard, util};
+use crate::clipboard;
+use nils_common::process;
 use nils_common::shell::quote_posix_single;
 use std::io::{self, Write};
 use std::process::Output;
@@ -147,13 +148,19 @@ fn commit_hash(args: &[String]) -> i32 {
 }
 
 fn run_git_output(args: &[&str]) -> Option<Output> {
-    match util::run_output("git", args) {
+    match run_output("git", args) {
         Ok(output) => Some(output),
         Err(err) => {
             eprintln!("{err}");
             None
         }
     }
+}
+
+fn run_output(cmd: &str, args: &[&str]) -> Result<Output, String> {
+    process::run_output(cmd, args)
+        .map(|output| output.into_std_output())
+        .map_err(|err| format!("spawn {cmd}: {err}"))
 }
 
 fn git_stdout_trimmed(args: &[&str]) -> Result<String, i32> {

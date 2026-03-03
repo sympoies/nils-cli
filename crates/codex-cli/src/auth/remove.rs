@@ -5,8 +5,8 @@ use std::path::Path;
 
 use crate::auth;
 use crate::auth::output::{self, AuthRemoveResult};
-use crate::fs;
 use crate::paths;
+use nils_common::fs;
 
 pub fn run(target: &str, yes: bool) -> Result<i32> {
     run_with_json(target, yes, false)
@@ -188,14 +188,9 @@ fn confirm_remove(target: &Path) -> Result<bool> {
 }
 
 fn remove_target_timestamp(target_file: &Path) {
-    let Some(cache_dir) = paths::resolve_secret_cache_dir() else {
+    let Some(timestamp_file) = paths::resolve_secret_timestamp_path(target_file) else {
         return;
     };
-    let file_name = target_file
-        .file_name()
-        .and_then(|v| v.to_str())
-        .unwrap_or("auth.json");
-    let timestamp_file = cache_dir.join(format!("{file_name}.timestamp"));
     let _ = fs::write_timestamp(&timestamp_file, None);
 }
 

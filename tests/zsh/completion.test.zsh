@@ -4,7 +4,7 @@ setopt pipe_fail nounset
 
 SCRIPT_PATH="${0:A}"
 REPO_ROOT="${SCRIPT_PATH:h:h:h}"
-MATRIX_FILE="$REPO_ROOT/docs/reports/completion-coverage-matrix.md"
+MATRIX_FILE="$REPO_ROOT/docs/specs/completion-coverage-matrix-v1.md"
 ZSH_COMPLETIONS_DIR="$REPO_ROOT/completions/zsh"
 ALIASES_FILE="$ZSH_COMPLETIONS_DIR/aliases.zsh"
 

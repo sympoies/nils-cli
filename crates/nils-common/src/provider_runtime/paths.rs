@@ -59,6 +59,22 @@ pub fn resolve_secret_cache_dir(profile: &ProviderProfile) -> Option<PathBuf> {
     )
 }
 
+pub fn resolve_secret_timestamp_path(
+    profile: &ProviderProfile,
+    target_file: &Path,
+) -> Option<PathBuf> {
+    let cache_dir = resolve_secret_cache_dir(profile)?;
+    Some(secret_timestamp_path(&cache_dir, target_file))
+}
+
+pub fn secret_timestamp_path(cache_dir: &Path, target_file: &Path) -> PathBuf {
+    let file_name = target_file
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("auth.json");
+    cache_dir.join(format!("{file_name}.timestamp"))
+}
+
 pub fn resolve_feature_dir(profile: &ProviderProfile) -> Option<PathBuf> {
     let script_dir = resolve_script_dir()?;
     let feature_dir = script_dir
@@ -124,4 +140,23 @@ fn parent_dir(path: &Path, levels: usize) -> Option<PathBuf> {
         current = current.parent()?;
     }
     Some(current.to_path_buf())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::secret_timestamp_path;
+    use std::path::Path;
+
+    #[test]
+    fn secret_timestamp_path_defaults_file_name_when_missing() {
+        let cache = Path::new("/tmp/cache");
+        assert_eq!(
+            secret_timestamp_path(cache, Path::new("/tmp/alpha.json")),
+            cache.join("alpha.json.timestamp")
+        );
+        assert_eq!(
+            secret_timestamp_path(cache, Path::new("")),
+            cache.join("auth.json.timestamp")
+        );
+    }
 }

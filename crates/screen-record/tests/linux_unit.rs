@@ -1,9 +1,8 @@
 #[cfg(target_os = "linux")]
 mod linux_unit {
     use std::fs;
-    use std::path::{Path, PathBuf};
 
-    use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
+    use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir, cmd, prepend_path};
     use screen_record::cli::{AudioMode, ContainerFormat, ImageFormat};
     use screen_record::linux::ffmpeg;
     use screen_record::linux::portal::PortalCapture;
@@ -186,18 +185,6 @@ esac
             .lines()
             .map(|line| line.to_string())
             .collect()
-    }
-
-    fn path_with_stub_without_program(stub_dir: &Path, program: &str) -> String {
-        let mut paths: Vec<PathBuf> =
-            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
-                .filter(|dir| !dir.join(program).is_file())
-                .collect();
-        paths.insert(0, stub_dir.to_path_buf());
-        std::env::join_paths(paths)
-            .expect("join PATH")
-            .to_string_lossy()
-            .to_string()
     }
 
     fn portal_capture_with_remote(node_id: u32) -> PortalCapture {
@@ -446,7 +433,7 @@ exit 1
         let stubs = StubBinDir::new();
         write_ffmpeg_stub(&stubs);
 
-        let path = path_with_stub_without_program(stubs.path(), "pactl");
+        let path = cmd::path_with_prepend_excluding_program(stubs.path(), "pactl");
         let _path_guard = EnvGuard::set(&lock, "PATH", &path);
         let _display_guard = EnvGuard::set(&lock, "DISPLAY", ":99");
 

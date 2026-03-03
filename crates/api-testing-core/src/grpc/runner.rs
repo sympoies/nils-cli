@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::Context;
+use nils_common::env as shared_env;
 
 use crate::Result;
 use crate::grpc::schema::GrpcRequestFile;
@@ -43,11 +44,8 @@ pub fn execute_grpc_request(
         anyhow::bail!("gRPC target URL/endpoint is empty");
     }
 
-    let grpcurl_bin = std::env::var("GRPCURL_BIN")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "grpcurl".to_string());
+    let grpcurl_bin =
+        shared_env::env_non_empty("GRPCURL_BIN").unwrap_or_else(|| "grpcurl".to_string());
 
     let mut cmd = Command::new(&grpcurl_bin);
     cmd.arg("-format").arg("json");
@@ -113,6 +111,7 @@ pub fn execute_grpc_request(
 mod tests {
     use super::*;
     use crate::grpc::schema::GrpcRequestFile;
+    use nils_test_support::{EnvGuard, GlobalStateLock};
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
@@ -141,11 +140,10 @@ mod tests {
         .unwrap();
         let req = GrpcRequestFile::load(&req_path).unwrap();
 
-        // SAFETY: test-only process env mutation in isolated test process.
-        unsafe { std::env::set_var("GRPCURL_BIN", &script) };
+        let lock = GlobalStateLock::new();
+        let script_str = script.to_string_lossy();
+        let _grpcurl_bin = EnvGuard::set(&lock, "GRPCURL_BIN", script_str.as_ref());
         let executed = execute_grpc_request(&req, "127.0.0.1:50051", None).unwrap();
-        // SAFETY: test-only process env mutation in isolated test process.
-        unsafe { std::env::remove_var("GRPCURL_BIN") };
 
         assert_eq!(executed.grpc_status, 0);
         assert_eq!(
@@ -178,11 +176,10 @@ mod tests {
         .unwrap();
         let req = GrpcRequestFile::load(&req_path).unwrap();
 
-        // SAFETY: test-only process env mutation in isolated test process.
-        unsafe { std::env::set_var("GRPCURL_BIN", &script) };
+        let lock = GlobalStateLock::new();
+        let script_str = script.to_string_lossy();
+        let _grpcurl_bin = EnvGuard::set(&lock, "GRPCURL_BIN", script_str.as_ref());
         let err = execute_grpc_request(&req, "127.0.0.1:50051", None).unwrap_err();
-        // SAFETY: test-only process env mutation in isolated test process.
-        unsafe { std::env::remove_var("GRPCURL_BIN") };
 
         let msg = format!("{err:#}");
         assert!(msg.contains("grpcurl exit=7"));

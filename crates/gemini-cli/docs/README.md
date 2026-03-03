@@ -10,7 +10,7 @@
 
 ## Runbooks
 
-- [json-consumers.md](runbooks/json-consumers.md) (`docs/runbooks/json-consumers.md`)
+- [json-consumers.md](runbooks/json-consumers.md)
 
 ## Reports
 

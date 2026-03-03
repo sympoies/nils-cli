@@ -17,8 +17,7 @@ fn run_api_gql(cwd: &Path, args: &[&str]) -> CmdOutput {
 }
 
 fn run_api_gql_with(cwd: &Path, args: &[&str], envs: &[(&str, &str)]) -> CmdOutput {
-    let mut options = CmdOptions::default().with_cwd(cwd);
-    for key in [
+    let mut options = CmdOptions::default().with_cwd(cwd).with_env_remove_many(&[
         "GQL_HISTORY_ENABLED",
         "GQL_HISTORY_FILE",
         "GQL_HISTORY_LOG_URL_ENABLED",
@@ -29,9 +28,7 @@ fn run_api_gql_with(cwd: &Path, args: &[&str], envs: &[(&str, &str)]) -> CmdOutp
         "ACCESS_TOKEN",
         "SERVICE_TOKEN",
         "GQL_SCHEMA_FILE",
-    ] {
-        options = options.with_env_remove(key);
-    }
+    ]);
     for (k, v) in envs {
         options = options.with_env(k, v);
     }

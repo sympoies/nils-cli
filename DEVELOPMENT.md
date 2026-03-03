@@ -44,6 +44,8 @@
 ## Documentation placement
 
 - Canonical policy: `docs/specs/crate-docs-placement-policy.md`.
+- Workspace retention inventory: `docs/specs/workspace-doc-retention-matrix-v1.md`.
+- Completion obligations: `docs/specs/completion-coverage-matrix-v1.md`.
 - Stale-test lifecycle and reviewer checklist: `docs/runbooks/test-cleanup-governance.md`.
 - When Markdown files change, run: `bash scripts/ci/docs-placement-audit.sh --strict`.
 - Run generic Markdown lint checks: `bash scripts/ci/markdownlint-audit.sh --strict`.
@@ -75,7 +77,7 @@
 - Or run the single entrypoint for required checks:
   `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
   (includes docs/completion/stale-test/third-party-artifact audits
-  plus fmt/clippy/tests; it pre-creates `target/coverage`, but still run coverage commands above)
+  plus fmt/clippy/tests; coverage commands above are still required explicitly)
 - Docs-only fast path: if every changed file is documentation-only (`*.md`, `docs/**`, `crates/*/docs/**`, plus root docs like `README.md`,
   `DEVELOPMENT.md`), run:
   - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh --docs-only`

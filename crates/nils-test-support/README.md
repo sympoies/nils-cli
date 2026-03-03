@@ -8,6 +8,12 @@ It provides small utilities to keep tests deterministic when they need to manipu
 
 ## Shared helper policy
 
+Runtime shared-crate ownership boundaries are tracked in
+[`docs/specs/workspace-shared-crate-boundary-v1.md`](../../docs/specs/workspace-shared-crate-boundary-v1.md) so test-surface extractions
+stay aligned with production-lane decisions.
+Stale-test cleanup sequencing is frozen in
+[`docs/specs/workspace-test-cleanup-lane-matrix-v1.md`](../../docs/specs/workspace-test-cleanup-lane-matrix-v1.md).
+
 ### What belongs in `nils-test-support`
 
 - Test-only utilities reused by multiple crates (guards, git helpers, command wrappers, stubs).
@@ -30,6 +36,8 @@ It provides small utilities to keep tests deterministic when they need to manipu
 - Command runners
   - `cmd`: run binaries with captured output (`CmdOutput`) and flexible options (`CmdOptions`), including resolved workspace-binary helpers
     (`run_resolved*`)
+  - `CmdOptions::with_env_remove_many`: remove multiple env vars in one call for deterministic harness setup
+  - `cmd::path_with_prepend_excluding_program`: construct a PATH that prepends stubs while filtering one real binary
 - Workspace binaries
   - `bin`: `resolve` finds `CARGO_BIN_EXE_*` or falls back to `target/<profile>/<name>`
 - Git helpers

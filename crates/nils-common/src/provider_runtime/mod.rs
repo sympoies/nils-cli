@@ -5,6 +5,7 @@ pub mod exec;
 pub mod json;
 pub mod jwt;
 pub mod paths;
+pub mod persistence;
 pub mod profile;
 
 pub use error::{CoreError, CoreErrorCategory, ProviderCategoryHint};

@@ -123,8 +123,8 @@ hotspots_index_tsv="${out_dir}/hotspots-index.tsv"
 decision_rubric_md="${out_dir}/decision-rubric.md"
 task_lanes_tsv="${out_dir}/task-lanes.tsv"
 
-tmp_hotspots="$(mktemp "${TMPDIR:-/tmp}/workspace-shared-hotspots.XXXXXX.tsv")"
-tmp_matrix="$(mktemp "${TMPDIR:-/tmp}/workspace-shared-matrix.XXXXXX.tsv")"
+tmp_hotspots="$(mktemp "${TMPDIR:-/tmp}/workspace-shared-hotspots.XXXXXX")"
+tmp_matrix="$(mktemp "${TMPDIR:-/tmp}/workspace-shared-matrix.XXXXXX")"
 
 cleanup() {
   rm -f "$tmp_hotspots" "$tmp_matrix"

@@ -166,7 +166,7 @@ Rules:
 
 Every completion-required CLI migration must declare and validate this metadata contract in both:
 
-- the CLI row in `docs/reports/completion-coverage-matrix.md`
+- the CLI row in `docs/specs/completion-coverage-matrix-v1.md`
 - the crate-local migration contract copied from `docs/specs/completion-contract-template.md`
 
 Canonical metadata tuple:
@@ -208,7 +208,7 @@ Completion changes are not deliverable until required checks pass.
 Use this checklist for every existing CLI migration. The migration is only complete when the per-CLI contract is filled, validation evidence
 is captured, and acceptance criteria are checked.
 
-1. confirm the CLI is completion-required (or explicitly excluded) in `docs/reports/completion-coverage-matrix.md`, and for `required` CLIs
+1. confirm the CLI is completion-required (or explicitly excluded) in `docs/specs/completion-coverage-matrix-v1.md`, and for `required` CLIs
    ensure the matrix row has explicit completion enforcement metadata
 2. create the per-CLI migration contract from `docs/specs/completion-contract-template.md`:
    - `mkdir -p crates/<crate>/docs/reports`

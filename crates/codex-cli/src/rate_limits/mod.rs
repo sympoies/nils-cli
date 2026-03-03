@@ -10,8 +10,13 @@ use std::time::Duration;
 
 use crate::auth;
 use crate::diag_output;
+use crate::provider_profile::CODEX_PROVIDER_PROFILE;
 use crate::rate_limits::client::{UsageRequest, fetch_usage};
 use nils_common::env as shared_env;
+use nils_common::fs;
+use nils_common::provider_runtime::persistence::{
+    SyncSecretsError, TimestampPolicy, sync_auth_to_matching_secrets,
+};
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 
 pub use nils_common::rate_limits_ansi as ansi;
@@ -1322,62 +1327,22 @@ fn sync_auth_silent() -> Result<(i32, Option<String>)> {
         None => return Ok((0, None)),
     };
 
-    if !auth_file.is_file() {
+    let sync_result = match sync_auth_to_matching_secrets(
+        &CODEX_PROVIDER_PROFILE,
+        &auth_file,
+        fs::SECRET_FILE_MODE,
+        TimestampPolicy::Strict,
+    ) {
+        Ok(result) => result,
+        Err(SyncSecretsError::HashAuthFile { path, .. })
+        | Err(SyncSecretsError::HashSecretFile { path, .. }) => {
+            return Ok((1, Some(format!("codex: failed to hash {}", path.display()))));
+        }
+        Err(err) => return Err(err.into()),
+    };
+    if !sync_result.auth_file_present || !sync_result.auth_identity_present {
         return Ok((0, None));
     }
-
-    let auth_key = match auth::identity_key_from_auth_file(&auth_file) {
-        Ok(Some(key)) => key,
-        _ => return Ok((0, None)),
-    };
-
-    let auth_last_refresh = auth::last_refresh_from_auth_file(&auth_file).unwrap_or(None);
-    let auth_hash = match crate::fs::sha256_file(&auth_file) {
-        Ok(hash) => hash,
-        Err(_) => {
-            return Ok((
-                1,
-                Some(format!("codex: failed to hash {}", auth_file.display())),
-            ));
-        }
-    };
-
-    if let Some(secret_dir) = crate::paths::resolve_secret_dir()
-        && let Ok(entries) = std::fs::read_dir(&secret_dir)
-    {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) != Some("json") {
-                continue;
-            }
-            let candidate_key = match auth::identity_key_from_auth_file(&path) {
-                Ok(Some(key)) => key,
-                _ => continue,
-            };
-            if candidate_key != auth_key {
-                continue;
-            }
-
-            let secret_hash = match crate::fs::sha256_file(&path) {
-                Ok(hash) => hash,
-                Err(_) => {
-                    return Ok((1, Some(format!("codex: failed to hash {}", path.display()))));
-                }
-            };
-            if secret_hash == auth_hash {
-                continue;
-            }
-
-            let contents = std::fs::read(&auth_file)?;
-            crate::fs::write_atomic(&path, &contents, crate::fs::SECRET_FILE_MODE)?;
-
-            let timestamp_path = secret_timestamp_path(&path)?;
-            crate::fs::write_timestamp(&timestamp_path, auth_last_refresh.as_deref())?;
-        }
-    }
-
-    let auth_timestamp = secret_timestamp_path(&auth_file)?;
-    crate::fs::write_timestamp(&auth_timestamp, auth_last_refresh.as_deref())?;
 
     Ok((0, None))
 }
@@ -1399,16 +1364,6 @@ fn maybe_sync_all_mode_auth_silent(debug_mode: bool) {
             }
         }
     }
-}
-
-fn secret_timestamp_path(target_file: &Path) -> Result<PathBuf> {
-    let cache_dir = crate::paths::resolve_secret_cache_dir()
-        .ok_or_else(|| anyhow::anyhow!("CODEX_SECRET_CACHE_DIR not resolved"))?;
-    let name = target_file
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("auth.json");
-    Ok(cache_dir.join(format!("{name}.timestamp")))
 }
 
 fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -> Result<i32> {
@@ -1599,11 +1554,11 @@ fn current_secret_basename(secret_files: &[PathBuf]) -> Option<String> {
     }
 
     let auth_key = auth::identity_key_from_auth_file(&auth_file).ok().flatten();
-    let auth_hash = crate::fs::sha256_file(&auth_file).ok();
+    let auth_hash = fs::sha256_file(&auth_file).ok();
 
     if let Some(auth_hash) = auth_hash.as_deref() {
         for secret_file in secret_files {
-            if let Ok(secret_hash) = crate::fs::sha256_file(secret_file)
+            if let Ok(secret_hash) = fs::sha256_file(secret_file)
                 && secret_hash == auth_hash
                 && let Some(name) = secret_file.file_name().and_then(|name| name.to_str())
             {

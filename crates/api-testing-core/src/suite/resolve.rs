@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
+use nils_common::env as shared_env;
 
 use crate::{Result, cli_util};
 
@@ -240,9 +241,8 @@ pub fn resolve_suite_selection(
         anyhow::bail!("Missing suite (use --suite or --suite-file)");
     }
 
-    let suites_dir_override = std::env::var("API_TEST_SUITES_DIR")
-        .ok()
-        .and_then(|s| cli_util::trim_non_empty(&s));
+    let suites_dir_override =
+        shared_env::env_non_empty("API_TEST_SUITES_DIR").and_then(|s| cli_util::trim_non_empty(&s));
 
     let candidate = if let Some(dir) = suites_dir_override {
         let abs = resolve_path_from_repo_root(repo_root, &dir);
@@ -283,6 +283,7 @@ pub fn write_file(path: &Path, contents: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nils_test_support::{EnvGuard, GlobalStateLock};
 
     use tempfile::TempDir;
 
@@ -479,8 +480,8 @@ mod tests {
 
     #[test]
     fn suite_resolve_resolves_suite_name_under_tests_dir() {
-        // SAFETY: tests mutate process env in isolated test scope.
-        unsafe { std::env::remove_var("API_TEST_SUITES_DIR") };
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::remove(&lock, "API_TEST_SUITES_DIR");
 
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
@@ -501,8 +502,8 @@ mod tests {
 
     #[test]
     fn suite_resolve_resolves_suite_name_under_setup_dir() {
-        // SAFETY: tests mutate process env in isolated test scope.
-        unsafe { std::env::remove_var("API_TEST_SUITES_DIR") };
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::remove(&lock, "API_TEST_SUITES_DIR");
 
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();

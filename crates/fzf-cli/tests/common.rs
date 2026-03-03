@@ -1,17 +1,14 @@
-#[allow(unused_imports)]
-pub use nils_test_support::write_exe;
+#![allow(dead_code)]
+
 use nils_test_support::{StubBinDir, cmd};
 use std::path::Path;
 
-#[allow(dead_code)]
 pub struct CmdOutput {
     pub code: i32,
     pub stdout: String,
-    #[allow(dead_code)]
     pub stderr: String,
 }
 
-#[allow(dead_code)]
 pub fn run_fzf_cli(
     dir: &Path,
     args: &[&str],
@@ -30,7 +27,6 @@ pub fn run_fzf_cli(
     }
 }
 
-#[allow(dead_code)]
 pub fn run_fzf_cli_with_stub_path(
     dir: &Path,
     stub_path: &Path,
@@ -50,7 +46,6 @@ pub fn run_fzf_cli_with_stub_path(
     }
 }
 
-#[allow(dead_code)]
 pub fn run_fzf_cli_with_stub_only_path(
     dir: &Path,
     stub_path: &Path,
@@ -71,12 +66,14 @@ pub fn run_fzf_cli_with_stub_only_path(
     }
 }
 
-#[allow(dead_code)]
 pub fn make_stub_dir() -> StubBinDir {
     StubBinDir::new()
 }
 
-#[allow(dead_code)]
 pub fn fzf_stub_script() -> &'static str {
     nils_test_support::stubs::fzf_stub_script()
+}
+
+pub fn write_exe(dir: &Path, name: &str, content: &str) {
+    nils_test_support::write_exe(dir, name, content);
 }
