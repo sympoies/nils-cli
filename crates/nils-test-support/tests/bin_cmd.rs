@@ -119,6 +119,28 @@ printf "%s|%s" "${NTS_REMOVE_ME-unset}" "${NTS_KEEP_ME-unset}"
 
 #[cfg(unix)]
 #[test]
+fn run_with_env_remove_many_clears_all_requested_variables() {
+    let lock = GlobalStateLock::new();
+    let temp = TempDir::new().expect("tempdir");
+    let script = r#"#!/bin/sh
+printf "%s|%s|%s" "${NTS_REMOVE_A-unset}" "${NTS_REMOVE_B-unset}" "${NTS_KEEP-unset}"
+"#;
+    write_exe(temp.path(), "env-remove-many-test", script);
+    let bin = temp.path().join("env-remove-many-test");
+
+    let _remove_a = EnvGuard::set(&lock, "NTS_REMOVE_A", "present");
+    let _remove_b = EnvGuard::set(&lock, "NTS_REMOVE_B", "present");
+    let _keep = EnvGuard::set(&lock, "NTS_KEEP", "present");
+
+    let options = cmd::CmdOptions::new().with_env_remove_many(&["NTS_REMOVE_A", "NTS_REMOVE_B"]);
+    let output = cmd::run_with(&bin, &[], &options);
+
+    assert_eq!(output.code, 0);
+    assert_eq!(output.stdout_text(), "unset|unset|present");
+}
+
+#[cfg(unix)]
+#[test]
 fn run_resolved_in_dir_with_stdin_str_supports_optional_text_stdin() {
     let lock = GlobalStateLock::new();
     let temp = TempDir::new().expect("tempdir");
@@ -218,6 +240,41 @@ path-pick
     let prefixed = cmd::run_with(&bin, &[], &prefixed_options);
     assert_eq!(prefixed.code, 0);
     assert_eq!(prefixed.stdout_text(), "first");
+}
+
+#[cfg(unix)]
+#[test]
+fn path_with_prepend_excluding_program_filters_existing_program_and_prepends_stub_dir() {
+    let lock = GlobalStateLock::new();
+    let temp = TempDir::new().expect("tempdir");
+    let existing_program_dir = temp.path().join("existing");
+    let kept_dir = temp.path().join("kept");
+    let prepend_dir = temp.path().join("prepend");
+    std::fs::create_dir_all(&existing_program_dir).expect("create existing dir");
+    std::fs::create_dir_all(&kept_dir).expect("create kept dir");
+    std::fs::create_dir_all(&prepend_dir).expect("create prepend dir");
+    write_exe(
+        &existing_program_dir,
+        "path-filter-test",
+        "#!/bin/sh\nexit 0\n",
+    );
+
+    let base_path = std::env::join_paths([existing_program_dir.as_path(), kept_dir.as_path()])
+        .expect("join base path")
+        .to_string_lossy()
+        .to_string();
+    let _path = EnvGuard::set(&lock, "PATH", &base_path);
+
+    let filtered = cmd::path_with_prepend_excluding_program(&prepend_dir, "path-filter-test");
+    let split = std::env::split_paths(std::ffi::OsStr::new(&filtered)).collect::<Vec<_>>();
+
+    assert_eq!(split[0], prepend_dir);
+    assert!(
+        split
+            .iter()
+            .all(|dir| !dir.join("path-filter-test").is_file())
+    );
+    assert!(split.contains(&kept_dir));
 }
 
 #[cfg(unix)]

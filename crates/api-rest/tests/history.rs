@@ -13,28 +13,27 @@ fn api_rest_bin() -> std::path::PathBuf {
 }
 
 fn run_api_rest(cwd: &Path, args: &[&str], envs: &[(&str, &str)]) -> CmdOutput {
-    let mut options = CmdOptions::default().with_cwd(cwd);
-    for key in [
-        "REST_URL",
-        "REST_TOKEN_NAME",
-        "REST_HISTORY_ENABLED",
-        "REST_HISTORY_FILE",
-        "REST_HISTORY_LOG_URL_ENABLED",
-        "REST_ENV_DEFAULT",
-        "REST_JWT_VALIDATE_ENABLED",
-        "ACCESS_TOKEN",
-        "SERVICE_TOKEN",
-        "HTTP_PROXY",
-        "http_proxy",
-        "HTTPS_PROXY",
-        "https_proxy",
-        "ALL_PROXY",
-        "all_proxy",
-    ] {
-        options = options.with_env_remove(key);
-    }
-    options = options.with_env("NO_PROXY", "127.0.0.1,localhost");
-    options = options.with_env("no_proxy", "127.0.0.1,localhost");
+    let mut options = CmdOptions::default()
+        .with_cwd(cwd)
+        .with_env_remove_many(&[
+            "REST_URL",
+            "REST_TOKEN_NAME",
+            "REST_HISTORY_ENABLED",
+            "REST_HISTORY_FILE",
+            "REST_HISTORY_LOG_URL_ENABLED",
+            "REST_ENV_DEFAULT",
+            "REST_JWT_VALIDATE_ENABLED",
+            "ACCESS_TOKEN",
+            "SERVICE_TOKEN",
+            "HTTP_PROXY",
+            "http_proxy",
+            "HTTPS_PROXY",
+            "https_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+        ])
+        .with_env("NO_PROXY", "127.0.0.1,localhost")
+        .with_env("no_proxy", "127.0.0.1,localhost");
 
     for (k, v) in envs {
         options = options.with_env(k, v);
