@@ -21,7 +21,7 @@ add docs without ownership drift.
 - `transient-dev-record`: temporary planning/reporting/adoption notes used to complete a development
   cycle and removed after completion unless explicitly required by CI/governance contracts.
 
-Contributors MUST classify each new/updated documentation file into one of these two ownership
+Contributors MUST classify each new/updated documentation file into one of these three ownership
 types before choosing a path.
 
 ## Allowed Root Docs
@@ -51,11 +51,12 @@ If a historical root path must remain for compatibility, it MUST be a short stub
 
 ## Compatibility Stub Lifecycle Decision
 
-Compatibility stubs under root `docs/` are permanent redirects (no deprecation sunset date planned).
+Compatibility stubs under root `docs/` are temporary compatibility artifacts.
 
 - Stubs MUST keep a `Moved to:` target and migration metadata.
 - Stubs MUST remain redirect-only shims and MUST NOT carry canonical runbook/spec/report content.
-- If governance changes later, the policy update MUST explicitly document a new sunset decision first.
+- Stubs MUST be removed once inbound-reference checks show no active script/test/doc caller still
+  depends on the old path.
 
 Root stub retention criteria:
 
@@ -106,7 +107,8 @@ When adding or moving docs, contributors MUST:
 2. Place `crate-local` docs in `crates/<crate>/docs/...` using canonical paths.
 3. Keep root `docs/` paths for `workspace-level` docs only.
 4. Update references so README/runbooks/specs point to canonical locations.
-5. For moved root docs, leave only compatibility stubs with a `Moved to` pointer.
+5. For moved root docs, leave a compatibility stub only when active callers still reference the old
+   path; otherwise remove the root path entirely.
 
 Contributors SHOULD:
 

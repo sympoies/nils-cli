@@ -44,6 +44,8 @@
 ## Documentation placement
 
 - Canonical policy: `docs/specs/crate-docs-placement-policy.md`.
+- Workspace retention inventory: `docs/specs/workspace-doc-retention-matrix-v1.md`.
+- Completion obligations: `docs/specs/completion-coverage-matrix-v1.md`.
 - Stale-test lifecycle and reviewer checklist: `docs/runbooks/test-cleanup-governance.md`.
 - When Markdown files change, run: `bash scripts/ci/docs-placement-audit.sh --strict`.
 - Run generic Markdown lint checks: `bash scripts/ci/markdownlint-audit.sh --strict`.

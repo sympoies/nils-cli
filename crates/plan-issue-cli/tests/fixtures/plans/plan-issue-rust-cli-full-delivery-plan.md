@@ -62,9 +62,9 @@ This plan delivers a shell-free Rust implementation for the current plan-issue o
 **Parallelizable tasks**:
 - `Task 1.2` and `Task 1.3` can run in parallel after `Task 1.1`.
 
-### Task 1.1: Write Rust CLI contract v1 and command matrix
+### Task 1.1: Write Rust CLI contract v2 and command matrix
 - **Location**:
-  - `crates/plan-issue-cli/docs/specs/plan-issue-cli-contract-v1.md`
+  - `crates/plan-issue-cli/docs/specs/plan-issue-cli-contract-v2.md`
   - `crates/plan-issue-cli/README.md`
 - **Description**: Define command surface, argument rules, mutual exclusivity, exit codes, live vs local mode boundaries, and output schemas for `text` and `json`.
 - **Dependencies**:
@@ -75,9 +75,9 @@ This plan delivers a shell-free Rust implementation for the current plan-issue o
   - Contract defines required and incompatible flags for both binaries.
   - Contract defines deterministic error envelope for JSON mode.
 - **Validation**:
-  - `test -f crates/plan-issue-cli/docs/specs/plan-issue-cli-contract-v1.md`
+  - `test -f crates/plan-issue-cli/docs/specs/plan-issue-cli-contract-v2.md`
   - `test -f crates/plan-issue-cli/README.md`
-  - `rg -n 'build-task-spec|start-plan|start-sprint|close-plan|multi-sprint-guide|format json' crates/plan-issue-cli/docs/specs/plan-issue-cli-contract-v1.md`
+  - `rg -n 'build-task-spec|start-plan|start-sprint|close-plan|multi-sprint-guide|format json' crates/plan-issue-cli/docs/specs/plan-issue-cli-contract-v2.md`
 
 ### Task 1.2: Capture baseline shell fixtures for parity assertions
 - **Location**:

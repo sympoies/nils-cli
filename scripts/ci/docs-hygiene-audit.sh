@@ -59,8 +59,15 @@ record_issue() {
 
 declare -a removed_transient_docs=(
   "docs/reports/codex-gemini-doc-audit.md"
+  "docs/reports/completion-coverage-matrix.md"
   "docs/plans/codex-gemini-core-merge-plan.md"
+  "docs/plans/markdown-gh-handling-audit-remediation-plan.md"
+  "docs/plans/third-party-licenses-notices-release-packaging-plan.md"
   "docs/runbooks/image-processing-llm-svg.md"
+  "docs/runbooks/wrappers-mode-usage.md"
+  "docs/specs/markdown-github-handling-audit-v1.md"
+  "crates/plan-issue-cli/docs/specs/plan-issue-cli-contract-v1.md"
+  "crates/plan-tooling/docs/runbooks/split-prs-migration.md"
   "crates/api-test/docs/runbooks/api-test-websocket-adoption.md"
   "crates/api-websocket/docs/runbooks/api-websocket-rollout.md"
   "crates/memo-cli/docs/runbooks/memo-cli-rollout.md"
@@ -94,6 +101,7 @@ for path in "${removed_transient_docs[@]}"; do
   if [[ ${#existing_reference_roots[@]} -gt 0 ]]; then
     refs="$(rg -n --fixed-strings "$path" "${existing_reference_roots[@]}" \
       -g '!**/docs/plans/**' \
+      -g '!docs/specs/workspace-doc-retention-matrix-v1.md' \
       -g '!**/tests/**' \
       -g '!**/target/**' || true)"
   fi

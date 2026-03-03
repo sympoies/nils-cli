@@ -76,6 +76,8 @@ These are repository scripts (not third-party packages):
 - Supporting utilities:
   - `scripts/generate-third-party-artifacts.sh`
   - `scripts/workspace-bins.sh`
+  - `scripts/ci/docs-placement-audit.sh`
+  - `scripts/ci/docs-hygiene-audit.sh`
   - `scripts/ci/coverage-summary.sh`
   - `scripts/ci/coverage-badge.sh`
 

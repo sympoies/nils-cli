@@ -138,4 +138,3 @@ plan-tooling completion zsh > completions/zsh/_plan-tooling
 
 - [Docs index](docs/README.md)
 - [split-prs contract v2](docs/specs/split-prs-contract-v2.md)
-- [Migration runbook](docs/runbooks/split-prs-migration.md)

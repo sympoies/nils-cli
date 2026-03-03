@@ -59,12 +59,12 @@ No workflow may duplicate these audit commands as independent pre-steps unless t
 
 | Path | Decision | Active caller evidence |
 | --- | --- | --- |
-| `scripts/ci/wrapper-mode-smoke.sh` | keep | `docs/runbooks/wrappers-mode-usage.md` verification quick checks |
+| `scripts/ci/wrapper-mode-smoke.sh` | keep | `README.md` wrapper contributor flow + wrapper smoke command examples |
 | `scripts/ci/agent-docs-snapshots.sh` | keep | `crates/agent-docs/README.md` snapshot workflow |
 | obsolete completion matrix shell helper | delete | no active caller outside itself |
 | obsolete release package shell helper | delete | no active CI/release/contributor caller; replaced by canonical release tarball audit script |
 | `wrappers/plan-tooling` | keep | `README.md` wrapper contributor flow + runbook wrapper scope includes `plan-tooling` |
-| `wrappers/git-cli` | keep | `README.md` wrapper contributor flow + `docs/runbooks/wrappers-mode-usage.md` includes `git-cli` behavior |
+| `wrappers/git-cli` | keep | `README.md` wrapper contributor flow includes `git-cli` wrapper behavior |
 
 ## Validation Commands
 
