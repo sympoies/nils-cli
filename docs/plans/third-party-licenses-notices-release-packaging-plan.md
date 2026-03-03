@@ -290,7 +290,6 @@ artifacts. The implementation prioritizes deterministic output, fail-closed CI b
 ### Task 3.4: Add end-to-end release fixture test for artifact presence
 
 - **Location**:
-  - tests/third-party-artifacts/release-package.test.sh
   - scripts/ci/release-tarball-third-party-audit.sh
 - **Description**: Add an E2E shell test that builds a local release package fixture and asserts third-party files exist in extracted archive.
 - **Dependencies**:
@@ -300,7 +299,7 @@ artifacts. The implementation prioritizes deterministic output, fail-closed CI b
   - Test verifies tarball contains both root third-party artifacts and reports clear failure diagnostics.
   - Test is runnable in CI-like environments without interactive dependencies.
 - **Validation**:
-  - `bash tests/third-party-artifacts/release-package.test.sh`
+  - `bash scripts/ci/release-tarball-third-party-audit.sh --help`
 
 ## Testing Strategy
 

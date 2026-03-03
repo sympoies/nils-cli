@@ -14,10 +14,10 @@ Runs the required pre-delivery checks from DEVELOPMENT.md:
   - bash scripts/ci/third-party-artifacts-audit.sh --strict
   - bash scripts/ci/completion-asset-audit.sh --strict
   - bash scripts/ci/completion-flag-parity-audit.sh --strict
+  - zsh -f tests/zsh/completion.test.zsh
   - cargo fmt --all -- --check
   - cargo clippy --all-targets --all-features -- -D warnings
   - cargo test --workspace
-  - zsh -f tests/zsh/completion.test.zsh
 
 Modes:
   (default)
@@ -33,8 +33,6 @@ Environment:
   NILS_CLI_TEST_RUNNER=nextest
     Run `cargo nextest run --profile ci --workspace` and `cargo test --workspace --doc`
     instead of `cargo test --workspace`.
-  NILS_CLI_COVERAGE_DIR=target/coverage
-    Coverage output directory to create before checks.
 
 Exit codes:
   0  all checks passed
@@ -122,9 +120,9 @@ fi
 
 run bash scripts/ci/test-stale-audit.sh --strict
 run bash scripts/ci/third-party-artifacts-audit.sh --strict
-coverage_dir="${NILS_CLI_COVERAGE_DIR:-target/coverage}"
-run mkdir -p "$coverage_dir"
 run bash scripts/ci/completion-asset-audit.sh --strict
+run bash scripts/ci/completion-flag-parity-audit.sh --strict
+run zsh -f tests/zsh/completion.test.zsh
 run cargo fmt --all -- --check
 run cargo clippy --all-targets --all-features -- -D warnings
 if [[ "$test_runner" == "nextest" ]]; then
@@ -133,7 +131,5 @@ if [[ "$test_runner" == "nextest" ]]; then
 else
   run cargo test --workspace
 fi
-run bash scripts/ci/completion-flag-parity-audit.sh --strict
-run zsh -f tests/zsh/completion.test.zsh
 
 echo "ok: all nils-cli checks passed"
