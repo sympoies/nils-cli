@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This matrix freezes Sprint 4 documentation ownership and retention decisions for the simplified
+This matrix records finalized documentation ownership and retention decisions for the simplified
 workspace architecture.
 
 Decision fields:
@@ -94,6 +94,6 @@ Rationale: each file is owned by one crate and lives under `crates/<crate>/docs/
 | `docs/plans/third-party-licenses-notices-release-packaging-plan.md` | `transient-dev-record` | `delete` | `delete` | Completed migration plan; contract moved to canonical spec + scripts. | `rg -n 'third-party-licenses-notices-release-packaging-plan\\.md' README.md DEVELOPMENT.md AGENTS.md BINARY_DEPENDENCIES.md docs crates scripts tests .github` -> no matches. |
 | `docs/reports/completion-coverage-matrix.md` | `workspace-level` | `delete` | `move` | Promoted from report to canonical workspace spec. | `rg -n 'docs/reports/completion-coverage-matrix\\.md' README.md DEVELOPMENT.md AGENTS.md BINARY_DEPENDENCIES.md docs crates scripts tests .github` -> no matches. |
 | `docs/runbooks/wrappers-mode-usage.md` | `transient-dev-record` | `delete` | `delete` | Compatibility-only wrapper-mode runbook superseded by canonical README guidance. | `rg -n 'wrappers-mode-usage\\.md' README.md DEVELOPMENT.md AGENTS.md BINARY_DEPENDENCIES.md docs crates scripts tests .github` -> no matches. |
-| `docs/specs/markdown-github-handling-audit-v1.md` | `transient-dev-record` | `delete` | `delete` | Sprint audit artifact completed; no active policy gate depends on it. | `rg -n 'markdown-github-handling-audit-v1\\.md' README.md DEVELOPMENT.md AGENTS.md BINARY_DEPENDENCIES.md docs crates scripts tests .github` -> no matches. |
+| `docs/specs/markdown-github-handling-audit-v1.md` | `transient-dev-record` | `delete` | `delete` | Audit artifact completed; no active policy gate depends on it. | `rg -n 'markdown-github-handling-audit-v1\\.md' README.md DEVELOPMENT.md AGENTS.md BINARY_DEPENDENCIES.md docs crates scripts tests .github` -> no matches. |
 | `crates/plan-tooling/docs/runbooks/split-prs-migration.md` | `crate-local` | `delete` | `delete` | Migration-only runbook superseded by cutover runbook + v2 contract docs. | `rg -n 'split-prs-migration\\.md' README.md DEVELOPMENT.md AGENTS.md BINARY_DEPENDENCIES.md docs crates scripts tests .github` -> no matches. |
 | `crates/plan-issue-cli/docs/specs/plan-issue-cli-contract-v1.md` | `crate-local` | `delete` | `delete` | Compatibility-era contract superseded by active v2 contract. | `rg -n 'plan-issue-cli-contract-v1\\.md' README.md DEVELOPMENT.md AGENTS.md BINARY_DEPENDENCIES.md docs crates scripts tests .github` -> no matches. |

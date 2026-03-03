@@ -58,10 +58,10 @@ Each crate is either a standalone CLI binary or a shared library used across the
   `nils-common::provider_runtime`.
 - [crates/semantic-commit](crates/semantic-commit): Helper CLI for generating staged context and creating semantic commits.
 - [crates/plan-tooling](crates/plan-tooling): Plan Format v1 tooling CLI (`to-json`, `validate`, `batches`, `split-prs`, `scaffold`,
-  `completion`), with `split-prs` emitting deterministic/auto grouping primitives and strict sprint-metadata validation gates.
+  `completion`), with `split-prs` emitting deterministic/auto grouping primitives and strict lane-metadata validation gates.
 - [crates/plan-issue-cli](crates/plan-issue-cli): Plan issue orchestration binaries (`plan-issue`, `plan-issue-local`) where
-  `Task Decomposition` is runtime truth, sprint artifacts are derived outputs, and runtime lane metadata is materialized from plan content +
-  split-prs grouping results.
+  `Task Decomposition` is runtime truth, planning artifacts are derived outputs, and runtime lane metadata is materialized from
+  plan content + split-prs grouping results.
 
 ## Shared helper policy (`nils-common`)
 
@@ -75,7 +75,7 @@ Contributors should treat `nils-common` as the shared helper boundary for cross-
 Detailed scope, API examples, migration conventions, and non-goals are documented in
 [crates/nils-common/README.md](crates/nils-common/README.md).
 
-Sprint-2 boundary freeze and extraction lane ownership are tracked in
+Finalized shared-crate boundary and extraction lane ownership are tracked in
 [docs/specs/workspace-shared-crate-boundary-v1.md](docs/specs/workspace-shared-crate-boundary-v1.md).
 
 Workspace doc retention scope and delete/keep decisions are tracked in

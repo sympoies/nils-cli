@@ -2,8 +2,8 @@
 
 ## Purpose
 
-This spec freezes Sprint 2 shared-crate boundaries from the canonical audit artifacts so extraction work stays deterministic across
-subagent lanes.
+This spec records finalized shared-crate boundaries from canonical audit artifacts so extraction ownership stays deterministic across
+execution lanes.
 
 Audit inputs:
 
@@ -35,12 +35,12 @@ Audit inputs:
 
 ## Hotspot Lane Matrix
 
-| Theme | Audit signals | Decision | Owner sprint tasks | Notes |
+| Theme | Audit signals | Decision | Execution lane ID | Notes |
 | --- | --- | --- | --- | --- |
 | process/env/no-color primitives | `manual_process_probe`, `manual_env_mutation`, `manual_no_color_logic` | `extract` to `nils-common` with crate-local adapters | `S2T2` | Keep UX text and exit semantics in crate-local adapters. |
 | provider auth persistence + atomic fs | `manual_atomic_fs` | `extract` to `nils-common::provider_runtime` substrate | `S2T3` | Shared sync substrate + timestamp path rules; keep provider JSON/text copy local. |
-| parity-sensitive secret-dir routing | `manual_secret_dir_resolution` | `defer` / `keep-local` until characterization remains green | `S2T3` | Do not force full Codex/Gemini secret-dir unification without explicit parity evidence. |
-| redundant local wrappers post-extraction | `dependency_present` + wrapper shims | `keep-local` only if still contract-relevant, otherwise delete | `S2T4` | Wrapper removal depends on `S2T2` + `S2T3` substrate landing. |
+| parity-sensitive secret-dir routing | `manual_secret_dir_resolution` | `keep-local` (`defer` full unification pending explicit parity evidence) | `S2T3` | Do not force full Codex/Gemini secret-dir unification without explicit parity evidence. |
+| redundant local wrappers post-extraction | `dependency_present` + wrapper shims | `keep-local` only if still contract-relevant, otherwise delete | `S2T4` | Wrapper removal depends on process/env and provider-runtime substrate landing. |
 
 ## Keep/Remove Rules for Runtime Helpers
 
@@ -48,8 +48,8 @@ Audit inputs:
 - `keep-local` when helper exists only to preserve user-visible contract fidelity.
 - `defer` when migration risks parity-sensitive behavior without characterization coverage.
 - `remove` when no live caller remains after extraction and wrapper no longer provides contract value.
-- Post-S2T4 baseline: `crates/codex-cli/src/fs.rs`, `crates/gemini-cli/src/fs.rs`, and `crates/git-cli/src/util.rs` are removed; callers
-  should consume `nils-common` primitives directly.
+- Current baseline: `crates/codex-cli/src/fs.rs`, `crates/gemini-cli/src/fs.rs`, and `crates/git-cli/src/util.rs` are removed; callers
+  consume `nils-common` primitives directly.
 
 ## Non-goals
 

@@ -7,7 +7,7 @@ user-facing output text, warnings, color behavior, or exit-code contracts.
 
 ## Shared helper policy
 
-Workspace-wide boundary decisions for Sprint 2 extraction lanes are frozen in
+Workspace-wide shared-crate boundary and extraction-lane decisions are documented in
 [`docs/specs/workspace-shared-crate-boundary-v1.md`](../../docs/specs/workspace-shared-crate-boundary-v1.md).
 Workspace-level keep/delete ownership decisions are tracked in
 [`docs/specs/workspace-doc-retention-matrix-v1.md`](../../docs/specs/workspace-doc-retention-matrix-v1.md).
