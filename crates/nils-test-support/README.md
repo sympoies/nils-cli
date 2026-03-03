@@ -34,6 +34,8 @@ stay aligned with production-lane decisions.
 - Command runners
   - `cmd`: run binaries with captured output (`CmdOutput`) and flexible options (`CmdOptions`), including resolved workspace-binary helpers
     (`run_resolved*`)
+  - `CmdOptions::with_env_remove_many`: remove multiple env vars in one call for deterministic harness setup
+  - `cmd::path_with_prepend_excluding_program`: construct a PATH that prepends stubs while filtering one real binary
 - Workspace binaries
   - `bin`: `resolve` finds `CARGO_BIN_EXE_*` or falls back to `target/<profile>/<name>`
 - Git helpers

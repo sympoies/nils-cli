@@ -14,8 +14,7 @@ fn api_websocket_bin() -> PathBuf {
 }
 
 fn run_api_websocket(cwd: &Path, args: &[&str]) -> CmdOutput {
-    let mut options = CmdOptions::default().with_cwd(cwd);
-    for key in [
+    let options = CmdOptions::default().with_cwd(cwd).with_env_remove_many(&[
         "WS_URL",
         "WS_ENV_DEFAULT",
         "WS_TOKEN_NAME",
@@ -25,9 +24,7 @@ fn run_api_websocket(cwd: &Path, args: &[&str]) -> CmdOutput {
         "WS_JWT_VALIDATE_ENABLED",
         "ACCESS_TOKEN",
         "SERVICE_TOKEN",
-    ] {
-        options = options.with_env_remove(key);
-    }
+    ]);
 
     run_with(&api_websocket_bin(), args, &options)
 }
