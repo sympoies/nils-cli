@@ -254,16 +254,9 @@ fn confirm_overwrite(target: &Path) -> io::Result<bool> {
 }
 
 fn write_target_timestamp(target_file: &Path, auth_file: &Path) -> io::Result<()> {
-    let cache_dir = match crate::paths::resolve_secret_cache_dir() {
-        Some(dir) => dir,
-        None => return Ok(()),
+    let Some(timestamp_file) = crate::paths::resolve_secret_timestamp_path(target_file) else {
+        return Ok(());
     };
-
-    let file_name = target_file
-        .file_name()
-        .and_then(|v| v.to_str())
-        .unwrap_or("auth.json");
-    let timestamp_file = cache_dir.join(format!("{file_name}.timestamp"));
     let iso = auth::last_refresh_from_auth_file(auth_file).ok().flatten();
     auth::write_timestamp(&timestamp_file, iso.as_deref())
 }

@@ -1,6 +1,9 @@
 # nils-term Docs Index
 
 > Ownership: Maintained by the `nils-term` crate maintainers. Keep this index updated when docs are added, moved, or removed.
+>
+> Boundary note: `nils-term` owns terminal UX primitives only. Runtime/process/fs/auth persistence helpers belong in `nils-common`
+> (`docs/specs/workspace-shared-crate-boundary-v1.md`).
 
 ## Specs
 

@@ -12,7 +12,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub(crate) const SECRET_FILE_MODE: u32 = crate::fs::SECRET_FILE_MODE;
+pub(crate) const SECRET_FILE_MODE: u32 = nils_common::fs::SECRET_FILE_MODE;
 
 pub fn identity_from_auth_file(path: &Path) -> io::Result<Option<String>> {
     crate::runtime::auth::identity_from_auth_file(path).map_err(core_error_to_io)
@@ -35,11 +35,11 @@ pub fn identity_key_from_auth_file(path: &Path) -> io::Result<Option<String>> {
 }
 
 pub(crate) fn write_atomic(path: &Path, contents: &[u8], mode: u32) -> io::Result<()> {
-    crate::fs::write_atomic(path, contents, mode)
+    nils_common::fs::write_atomic(path, contents, mode).map_err(io_error_from_atomic_write)
 }
 
 pub(crate) fn write_timestamp(path: &Path, iso: Option<&str>) -> io::Result<()> {
-    crate::fs::write_timestamp(path, iso)
+    nils_common::fs::write_timestamp(path, iso).map_err(io_error_from_timestamp_write)
 }
 
 pub(crate) fn normalize_iso(raw: &str) -> String {
@@ -135,6 +135,28 @@ pub(crate) fn temp_file_path(prefix: &str) -> PathBuf {
 
 fn core_error_to_io(err: crate::runtime::CoreError) -> io::Error {
     io::Error::other(err.to_string())
+}
+
+fn io_error_from_atomic_write(err: nils_common::fs::AtomicWriteError) -> io::Error {
+    match err {
+        nils_common::fs::AtomicWriteError::CreateParentDir { source, .. }
+        | nils_common::fs::AtomicWriteError::CreateTempFile { source, .. }
+        | nils_common::fs::AtomicWriteError::WriteTempFile { source, .. }
+        | nils_common::fs::AtomicWriteError::SetPermissions { source, .. }
+        | nils_common::fs::AtomicWriteError::ReplaceFile { source, .. } => source,
+        nils_common::fs::AtomicWriteError::TempPathExhausted { target, .. } => io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("failed to create unique temp file for {}", target.display()),
+        ),
+    }
+}
+
+fn io_error_from_timestamp_write(err: nils_common::fs::TimestampError) -> io::Error {
+    match err {
+        nils_common::fs::TimestampError::CreateParentDir { source, .. }
+        | nils_common::fs::TimestampError::WriteFile { source, .. }
+        | nils_common::fs::TimestampError::RemoveFile { source, .. } => source,
+    }
 }
 
 fn parse_u32(raw: &str) -> Option<u32> {

@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
+use nils_common::fs as shared_fs;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::auth;
-use crate::fs as codex_fs;
 use crate::paths;
 use nils_common::env as shared_env;
 
@@ -68,7 +68,7 @@ pub fn cache_file_for_target(target_file: &Path) -> Result<PathBuf> {
         }
     }
 
-    let hash = codex_fs::sha256_file(target_file)?;
+    let hash = shared_fs::sha256_file(target_file)?;
     Ok(cache_dir.join(format!("auth_{}.kv", hash.to_lowercase())))
 }
 
@@ -187,7 +187,7 @@ pub fn write_starship_cache(
     lines.push(format!("weekly_reset_epoch={weekly_reset_epoch}"));
 
     let data = lines.join("\n");
-    codex_fs::write_atomic(&cache_file, data.as_bytes(), codex_fs::SECRET_FILE_MODE)?;
+    shared_fs::write_atomic(&cache_file, data.as_bytes(), shared_fs::SECRET_FILE_MODE)?;
     Ok(())
 }
 
@@ -348,8 +348,8 @@ mod tests {
         cache_file_for_target, clear_starship_cache, read_cache_entry,
         read_cache_entry_for_cached_mode, secret_name_for_target, write_starship_cache,
     };
-    use crate::fs as codex_fs;
     use chrono::Utc;
+    use nils_common::fs as shared_fs;
     use nils_test_support::{EnvGuard, GlobalStateLock};
     use std::fs;
     use std::path::Path;
@@ -476,7 +476,7 @@ mod tests {
         let target = dir.path().join("auth.json");
         fs::write(&target, "{\"tokens\":{\"access_token\":\"tok\"}}").expect("write auth file");
 
-        let hash = codex_fs::sha256_file(&target).expect("sha256");
+        let hash = shared_fs::sha256_file(&target).expect("sha256");
         let cache_file = cache_file_for_target(&target).expect("cache file");
         assert_eq!(
             cache_file,

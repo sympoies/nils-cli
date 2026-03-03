@@ -8,6 +8,10 @@ It provides small utilities to keep tests deterministic when they need to manipu
 
 ## Shared helper policy
 
+Runtime shared-crate ownership boundaries are tracked in
+[`docs/specs/workspace-shared-crate-boundary-v1.md`](../../docs/specs/workspace-shared-crate-boundary-v1.md) so test-surface extractions
+stay aligned with production-lane decisions.
+
 ### What belongs in `nils-test-support`
 
 - Test-only utilities reused by multiple crates (guards, git helpers, command wrappers, stubs).

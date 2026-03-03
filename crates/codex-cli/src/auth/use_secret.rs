@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use crate::auth;
 use crate::auth::output::{self, AuthUseResult};
-use crate::fs;
 use crate::paths;
+use nils_common::fs;
 
 pub fn run(target: &str) -> Result<i32> {
     run_with_json(target, false)
@@ -216,13 +216,8 @@ fn resolve_by_email(secret_dir: &Path, target: &str) -> ResolveResult {
 }
 
 fn secret_timestamp_path(target_file: &Path) -> Result<PathBuf> {
-    let cache_dir = paths::resolve_secret_cache_dir()
-        .ok_or_else(|| anyhow::anyhow!("CODEX_SECRET_CACHE_DIR not resolved"))?;
-    let name = target_file
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("auth.json");
-    Ok(cache_dir.join(format!("{name}.timestamp")))
+    paths::resolve_secret_timestamp_path(target_file)
+        .ok_or_else(|| anyhow::anyhow!("CODEX_SECRET_CACHE_DIR not resolved"))
 }
 
 fn file_name(path: &Path) -> String {

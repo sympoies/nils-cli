@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use crate::auth;
 use crate::auth::output::{self, AuthAutoRefreshResult, AuthAutoRefreshTargetResult};
-use crate::fs;
 use crate::paths;
+use nils_common::fs;
 
 pub fn run() -> Result<i32> {
     run_with_json(false)

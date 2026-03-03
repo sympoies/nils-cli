@@ -9,5 +9,4 @@ pub mod open;
 pub mod prompt;
 pub mod reset;
 pub mod usage;
-pub mod util;
 pub mod utils;

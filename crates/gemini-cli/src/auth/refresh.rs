@@ -329,8 +329,7 @@ fn run_with_mode(args: &[String], output_mode: RefreshOutputMode) -> i32 {
         return 1;
     }
 
-    if let Some(cache_dir) = crate::paths::resolve_secret_cache_dir() {
-        let timestamp_path = cache_dir.join(format!("{}.timestamp", file_name(&target_file)));
+    if let Some(timestamp_path) = crate::paths::resolve_secret_timestamp_path(&target_file) {
         let _ = auth::write_timestamp(&timestamp_path, Some(&now_iso));
     }
 
@@ -626,6 +625,7 @@ fn env_timeout(key: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
+#[cfg(test)]
 fn file_name(path: &Path) -> String {
     path.file_name()
         .and_then(|name| name.to_str())

@@ -5,10 +5,10 @@ use crate::commit_shared::{
     is_lockfile, parse_name_status_z, trim_trailing_newlines,
 };
 use crate::prompt;
-use crate::util;
 use anyhow::{Result, anyhow};
 use nils_common::env as shared_env;
 use nils_common::git::{self as common_git, GitContextError};
+use nils_common::process;
 use nils_common::shell::{AnsiStripMode, strip_ansi as strip_ansi_impl};
 use std::env;
 use std::io::Write;
@@ -198,7 +198,7 @@ fn git_scope_available() -> bool {
     if env::var("GIT_CLI_FIXTURE_GIT_SCOPE_MODE").ok().as_deref() == Some("missing") {
         return false;
     }
-    util::cmd_exists("git-scope")
+    process::cmd_exists("git-scope")
 }
 
 fn git_scope_output(no_color: bool) -> Result<String> {
@@ -389,7 +389,7 @@ fn file_probe(blob_ref: &str) -> Option<String> {
         return None;
     }
 
-    if !util::cmd_exists("file") {
+    if !process::cmd_exists("file") {
         return None;
     }
 
