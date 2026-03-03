@@ -1,118 +1,143 @@
 # Development Guide
 
-## Setup
+This document is the local development contract for:
 
-- If Rust/cargo (or required cargo tools) are not installed yet, run:
-  - `scripts/setup-rust-tooling.sh`
-- Manual setup fallback:
-  - Install Rust via rustup (stable toolchain).
-  - Ensure `rustfmt` and `clippy` components are installed:
-    - `rustup component add rustfmt clippy`
-- Optional tools for full CLI output fidelity:
-  - `tree` (directory tree rendering)
-  - `file` (binary/text detection)
+- environment setup
+- local test/check execution
+- mandatory pre-commit and pre-delivery gates
 
-## Build and run
+For runtime dependency details and degradation behavior, see `BINARY_DEPENDENCIES.md`.
+
+## 1. Environment setup
+
+### 1.1 Recommended bootstrap
+
+Run once on a new machine:
+
+```bash
+scripts/setup-rust-tooling.sh
+```
+
+This installs/updates:
+
+- rustup + cargo
+- Rust components: `rustfmt`, `clippy`, `llvm-tools-preview`
+- `cargo-nextest`
+- `cargo-llvm-cov`
+
+### 1.2 Minimum tools required for local checks
+
+The required-checks entrypoint depends on:
+
+- `git`
+- `npx`
+- `cargo`
+- `zsh`
+- `rg`
+
+For optional runtime tools used by individual CLIs, see `BINARY_DEPENDENCIES.md`.
+
+## 2. Build and quick smoke checks
 
 - Build workspace: `cargo build`
-- Run CLI template: `cargo run -p nils-cli-template -- --help`
-- Run git-scope: `cargo run -p nils-git-scope -- --help`
+- Example CLI help checks:
+  - `cargo run -p nils-cli-template -- --help`
+  - `cargo run -p nils-git-scope -- --help`
 
-## CLI version policy
+## 3. Canonical local test flows
 
-- Every user-facing CLI must expose a root `-V, --version` flag.
-- For clap-based CLIs, set `#[command(version)]` on the root `Parser`.
-- `--help` output should include `-V, --version` in options/help text (auto-generated or custom).
+Primary local entrypoint:
 
-## Local install (release)
+```bash
+bash scripts/ci/nils-cli-checks-entrypoint.sh
+```
 
-- Build + install all workspace binaries into `~/.local/nils-cli/`:
-  - `./.agents/skills/nils-cli-install-local-release-binaries/scripts/nils-cli-install-local-release-binaries.sh`
+This delegates to `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`.
 
-## Formatting and linting
+### 3.1 Docs-only changes fast path
 
-- Format check: `cargo fmt --all -- --check`
-- Format fix: `cargo fmt --all`
-- Lint: `cargo clippy --all-targets --all-features -- -D warnings`
+If all changed files are documentation-only (`*.md`, `docs/**`, `crates/*/docs/**`, root docs like `README.md` and `DEVELOPMENT.md`):
 
-## Testing
+```bash
+bash scripts/ci/nils-cli-checks-entrypoint.sh --docs-only
+```
 
-### Test conventions
+### 3.2 CI-like required checks (recommended before push)
 
-- In Rust tests, prefer `pretty_assertions::{assert_eq, assert_ne}` (more readable diffs on failure).
+```bash
+NILS_CLI_TEST_RUNNER=nextest bash scripts/ci/nils-cli-checks-entrypoint.sh
+```
 
-## Documentation placement
+Notes:
 
-- Canonical policy: `docs/specs/crate-docs-placement-policy.md`.
-- Workspace retention inventory: `docs/specs/workspace-doc-retention-matrix-v1.md`.
-- Completion obligations: `docs/specs/completion-coverage-matrix-v1.md`.
-- Stale-test lifecycle and reviewer checklist: `docs/runbooks/test-cleanup-governance.md`.
-- When Markdown files change, run: `bash scripts/ci/docs-placement-audit.sh --strict`.
-- Run generic Markdown lint checks: `bash scripts/ci/markdownlint-audit.sh --strict`.
-- For stale references, transient-doc cleanup, and cross-link hygiene, run: `bash scripts/ci/docs-hygiene-audit.sh --strict`.
+- `nextest` mode runs `cargo nextest run --profile ci --workspace`.
+- Doctests are not included in nextest and must still be run separately unless coverage flow is used.
 
-## Completion governance
+### 3.3 Full pre-delivery flow (required for non-docs changes)
 
-- Canonical policy and validation workflow: `docs/runbooks/cli-completion-development-standard.md`.
-- Local shell setup examples are documented in `README.md`.
+Coverage gate is mandatory for non-doc changes (total line coverage must stay `>= 85.00%`):
 
-### Required before committing
+```bash
+NILS_CLI_TEST_RUNNER=nextest \
+  bash scripts/ci/nils-cli-checks-entrypoint.sh --with-coverage
+```
 
-- All commands in **Formatting and linting** must pass.
-- `cargo test --workspace`
-- If completion/alias assets changed, run:
-  - `zsh -f tests/zsh/completion.test.zsh`
-  - `zsh -n completions/zsh/_<cli>`
-  - `bash -n completions/bash/<cli>`
-- `bash scripts/ci/completion-flag-parity-audit.sh --strict`
+`--with-coverage` runs, after required checks:
+
+```bash
+mkdir -p target/coverage
+cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 85
+bash scripts/ci/coverage-summary.sh target/coverage/lcov.info
+cargo test --workspace --doc
+```
+
+To override the threshold locally:
+
+```bash
+NILS_CLI_COVERAGE_FAIL_UNDER_LINES=85 bash scripts/ci/nils-cli-checks-entrypoint.sh --with-coverage
+```
+
+## 4. Required checks included by the entrypoint
+
+`bash scripts/ci/nils-cli-checks-entrypoint.sh` includes:
+
 - `bash scripts/ci/docs-placement-audit.sh --strict`
 - `bash scripts/ci/docs-hygiene-audit.sh --strict`
 - `bash scripts/ci/markdownlint-audit.sh --strict`
 - `bash scripts/ci/test-stale-audit.sh --strict`
 - `bash scripts/ci/third-party-artifacts-audit.sh --strict`
-- Coverage must be **>= 85.00%** total line coverage:
-  - `mkdir -p target/coverage`
-  - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 85`
-  - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
-- Or run the single entrypoint for required checks:
-  `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
-  (includes docs/completion/stale-test/third-party-artifact audits
-  plus fmt/clippy/tests; coverage commands above are still required explicitly)
-- Docs-only fast path: if every changed file is documentation-only (`*.md`, `docs/**`, `crates/*/docs/**`, plus root docs like `README.md`,
-  `DEVELOPMENT.md`), run:
-  - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh --docs-only`
-  - In this mode, docs placement/docs hygiene/markdown lint checks still run; full workspace lint/test/coverage checks may be skipped.
+- `bash scripts/ci/completion-asset-audit.sh --strict`
+- `bash scripts/ci/completion-flag-parity-audit.sh --strict`
+- `zsh -f tests/zsh/completion.test.zsh`
+- `cargo fmt --all -- --check`
+- `cargo clippy --all-targets --all-features -- -D warnings`
+- `cargo test --workspace` (or `cargo nextest run --profile ci --workspace` when `NILS_CLI_TEST_RUNNER=nextest`)
 
-### CI-style test reporting (optional)
+## 5. Additional checks when completion assets change
 
-- If `cargo nextest` is missing, run `scripts/setup-rust-tooling.sh`
-- Run CI-style tests + generate JUnit: `cargo nextest run --profile ci --workspace` (writes `target/nextest/ci/junit.xml`)
-- Note: nextest does not run doctests; run separately: `cargo test --workspace --doc`
+When completion/alias assets are changed, also run:
 
-## Coverage
+- `zsh -n completions/zsh/_<cli>`
+- `bash -n completions/bash/<cli>`
 
-- Policy: total line coverage must be **>= 85.00%** (enforced in CI).
+Canonical completion policy and validation workflow:
 
-- Prereqs:
+- `docs/runbooks/cli-completion-development-standard.md`
 
-  ```bash
-  scripts/setup-rust-tooling.sh
-  ```
+## 6. Test conventions
 
-- Generate coverage artifacts (recommended; matches CI runner):
+- In Rust tests, prefer `pretty_assertions::{assert_eq, assert_ne}` for readable diffs.
 
-  ```bash
-  mkdir -p target/coverage
-  cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info
-  cargo llvm-cov report --html --output-dir target/coverage
-  ```
+## 7. CLI version policy
 
-- Outputs:
-  - `target/coverage/lcov.info`
-  - `target/coverage/html/index.html`
-- Note: doctests are **not included** in coverage initially; still run doctests for correctness: `cargo test --workspace --doc`
+- Every user-facing CLI must expose root `-V, --version`.
+- For clap-based CLIs, set `#[command(version)]` on the root `Parser`.
+- `--help` output should show `-V, --version`.
 
-## Shell completions
+## 8. Local release install helper
 
-- Contributor rules and checks: `docs/runbooks/cli-completion-development-standard.md`.
-- Local setup steps: `README.md` ("Shell wrappers and completions").
+Build and install workspace binaries into `~/.local/nils-cli/`:
+
+```bash
+./.agents/skills/nils-cli-install-local-release-binaries/scripts/nils-cli-install-local-release-binaries.sh
+```
