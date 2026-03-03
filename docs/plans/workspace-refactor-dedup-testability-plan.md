@@ -60,7 +60,8 @@ cheap audits before expensive builds. **Demo/Validation**:
   - `TotalComplexity`: 15
   - `CriticalPathComplexity`: 15
   - `MaxBatchWidth`: 1
-  - `OverlapHotspots`: `.github/workflows/ci.yml`; `.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`; `scripts/ci/`
+  - `OverlapHotspots`: `.github/workflows/ci.yml`;
+    `.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`; `scripts/ci/`
 
 ### Task 1.1: Inventory canonical CI entrypoints and removal criteria
 
@@ -83,7 +84,9 @@ cheap audits before expensive builds. **Demo/Validation**:
   - The inventory and removal criteria are captured in `docs/specs/workspace-ci-entrypoint-inventory-v1.md`.
 - **Validation**:
   - `test -f docs/specs/workspace-ci-entrypoint-inventory-v1.md`
-  - `rg -n 'scripts/ci/|nils-cli-verify-required-checks' .github/workflows/ci.yml .github/workflows/release.yml .github/workflows/publish-crates.yml DEVELOPMENT.md .agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
+  - `rg -n 'scripts/ci/|nils-cli-verify-required-checks' .github/workflows/ci.yml .github/workflows/release.yml`
+  - `rg -n 'scripts/ci/|nils-cli-verify-required-checks' .github/workflows/publish-crates.yml DEVELOPMENT.md`
+  - `rg -n 'scripts/ci/|nils-cli-verify-required-checks' .agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
   - `rg -n 'canonical|delete|keep|workflow' docs/specs/workspace-ci-entrypoint-inventory-v1.md`
 
 ### Task 1.2: Extract cross-platform verification entrypoints
@@ -165,7 +168,8 @@ crate-local UX and parity-sensitive behavior explicit. **Demo/Validation**:
   - `TotalComplexity`: 18
   - `CriticalPathComplexity`: 13
   - `MaxBatchWidth`: 2
-  - `OverlapHotspots`: `crates/nils-common/src/process.rs`; `crates/nils-common/src/env.rs`; `crates/nils-common/src/fs.rs`; `crates/codex-cli/src/auth/`; `crates/gemini-cli/src/auth/`
+  - `OverlapHotspots`: `crates/nils-common/src/process.rs`; `crates/nils-common/src/env.rs`;
+    `crates/nils-common/src/fs.rs`; `crates/codex-cli/src/auth/`; `crates/gemini-cli/src/auth/`
 
 ### Task 2.1: Freeze shared-crate boundaries from audit evidence
 
@@ -306,7 +310,8 @@ highest-overlap crates to avoid cleanup regressions. **Demo/Validation**:
   - `TotalComplexity`: 19
   - `CriticalPathComplexity`: 14
   - `MaxBatchWidth`: 2
-  - `OverlapHotspots`: `crates/nils-test-support/src/lib.rs`; `crates/git-cli/tests/`; `crates/agent-docs/tests/`; `crates/macos-agent/tests/`; `crates/fzf-cli/tests/`; `crates/memo-cli/tests/`
+  - `OverlapHotspots`: `crates/nils-test-support/src/lib.rs`; `crates/git-cli/tests/`; `crates/agent-docs/tests/`;
+    `crates/macos-agent/tests/`; `crates/fzf-cli/tests/`; `crates/memo-cli/tests/`
 
 ### Task 3.1: Freeze stale-test cleanup rules and crate sequencing
 
@@ -431,7 +436,8 @@ full verification and coverage. **Demo/Validation**:
   - `bash scripts/ci/docs-placement-audit.sh --strict`
   - `bash scripts/ci/docs-hygiene-audit.sh --strict`
   - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
-  - `mkdir -p target/coverage && cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 85`
+  - `mkdir -p target/coverage`
+  - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 85`
   - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
 - Verify:
   - Root docs contain only living workspace-level material.
@@ -500,7 +506,8 @@ full verification and coverage. **Demo/Validation**:
   - Shared-helper docs describe the extracted APIs and their non-goals accurately.
 - **Validation**:
   - `bash scripts/ci/docs-hygiene-audit.sh --strict`
-  - `rg -n 'nils-common|nils-test-support|workspace-shared-crate-audit|workspace-test-stale-audit' README.md DEVELOPMENT.md BINARY_DEPENDENCIES.md crates/nils-common/README.md crates/nils-test-support/README.md`
+  - `rg -n 'nils-common|nils-test-support|workspace-shared-crate-audit|workspace-test-stale-audit' README.md DEVELOPMENT.md BINARY_DEPENDENCIES.md`
+  - `rg -n 'nils-common|nils-test-support|workspace-shared-crate-audit|workspace-test-stale-audit' crates/nils-common/README.md crates/nils-test-support/README.md`
 
 ### Task 4.3: Remove obsolete plans, reports, misplaced docs, and compatibility-only text
 
@@ -550,9 +557,14 @@ full verification and coverage. **Demo/Validation**:
   - Required checks and coverage pass on the simplified workspace.
 - **Validation**:
   - `./.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh`
-  - `mkdir -p target/coverage && cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 85`
+  - `mkdir -p target/coverage`
+  - `cargo llvm-cov nextest --profile ci --workspace --lcov \`
+    `--output-path target/coverage/lcov.info --fail-under-lines 85`
   - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
-  - `rg -n --hidden --glob '!.git' 'workspace-ci-entrypoint-inventory-v1|workspace-shared-crate-boundary-v1|workspace-test-cleanup-lane-matrix-v1|workspace-doc-retention-matrix-v1' README.md DEVELOPMENT.md docs crates .github scripts`
+  - `rg -n --hidden --glob '!.git' 'workspace-ci-entrypoint-inventory-v1|workspace-shared-crate-boundary-v1' README.md DEVELOPMENT.md docs crates`
+  - `rg -n --hidden --glob '!.git' 'workspace-test-cleanup-lane-matrix-v1|workspace-doc-retention-matrix-v1' README.md DEVELOPMENT.md docs crates`
+  - `rg -n --hidden --glob '!.git' 'workspace-ci-entrypoint-inventory-v1|workspace-shared-crate-boundary-v1' .github scripts`
+  - `rg -n --hidden --glob '!.git' 'workspace-test-cleanup-lane-matrix-v1|workspace-doc-retention-matrix-v1' .github scripts`
 
 ## Testing Strategy
 
