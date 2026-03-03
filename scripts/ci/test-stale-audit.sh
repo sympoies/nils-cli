@@ -74,11 +74,57 @@ current_orphans="${tmp_dir}/current-orphans.tsv"
 baseline_orphans="${tmp_dir}/baseline-orphans.tsv"
 new_orphans="${tmp_dir}/new-orphans.tsv"
 deprecated_leftovers="${tmp_dir}/deprecated-leftovers.tsv"
+frozen_baseline_allowlist="${tmp_dir}/frozen-baseline-allowlist.tsv"
+invalid_baseline_rows="${tmp_dir}/invalid-baseline-rows.tsv"
+unexpected_baseline_rows="${tmp_dir}/unexpected-baseline-rows.tsv"
 
 cleanup() {
   rm -rf "$tmp_dir"
 }
 trap cleanup EXIT
+
+write_frozen_baseline_allowlist() {
+  cat >"$frozen_baseline_allowlist" <<'EOF'
+agent-docs	crates/agent-docs/tests/common.rs	drop (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_commit_hash_missing_ref_errors (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_commit_hash_outputs_sha_for_head (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_commit_hash_resolves_annotated_tag (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_copy_staged_both_outputs_diff_and_status (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_copy_staged_help_prints_usage (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_copy_staged_no_changes_warns_and_exits_1 (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_copy_staged_rejects_conflicting_modes (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_copy_staged_rejects_unknown_arg (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_copy_staged_stdout_outputs_diff_only (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_root_not_in_repo_errors (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_root_prints_message (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_root_shell_outputs_cd_command (fanout=0)	helper_fanout	remove
+git-cli	crates/git-cli/tests/utils.rs	utils_zip_creates_backup_zip (fanout=0)	helper_fanout	remove
+EOF
+  LC_ALL=C sort -u -o "$frozen_baseline_allowlist" "$frozen_baseline_allowlist"
+}
+
+validate_baseline_file() {
+  local expected_header
+  expected_header=$'crate\tpath\tsymbol_or_test\tsignal\tproposed_action'
+
+  if [[ "$(sed -n '1p' "$baseline_file")" != "$expected_header" ]]; then
+    echo "error: invalid baseline header in $baseline_file" >&2
+    exit 2
+  fi
+
+  awk -F '\t' '
+    NR > 1 && (NF != 5 || $4 != "helper_fanout" || $5 != "remove") {print $0}
+  ' "$baseline_file" | LC_ALL=C sort -u >"$invalid_baseline_rows"
+
+  if [[ -s "$invalid_baseline_rows" ]]; then
+    echo "FAIL: baseline contains unsupported stale-test actions (only helper_fanout/remove rows are allowed)." >&2
+    cat "$invalid_baseline_rows" >&2
+    exit 1
+  fi
+}
+
+write_frozen_baseline_allowlist
+validate_baseline_file
 
 bash scripts/dev/workspace-test-stale-audit.sh --out "$inventory_file" >/dev/null
 
@@ -93,6 +139,13 @@ awk -F '\t' '
     print $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5
   }
 ' "$baseline_file" | LC_ALL=C sort -u >"$baseline_orphans"
+
+comm -23 "$baseline_orphans" "$frozen_baseline_allowlist" >"$unexpected_baseline_rows"
+if [[ -s "$unexpected_baseline_rows" ]]; then
+  echo "FAIL: baseline contains entries outside the frozen S3T1 allowlist; expand rules in docs/runbooks/test-cleanup-governance.md and docs/specs/workspace-test-cleanup-lane-matrix-v1.md before changing baseline." >&2
+  cat "$unexpected_baseline_rows" >&2
+  exit 1
+fi
 
 comm -23 "$current_orphans" "$baseline_orphans" >"$new_orphans"
 
