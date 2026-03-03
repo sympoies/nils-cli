@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::{Result, env_file};
+use nils_common::env as shared_env;
 
 const FALLBACK_CANDIDATES: &[&str] = &[
     "schema.gql",
@@ -29,12 +30,7 @@ pub fn resolve_schema_path(setup_dir: &Path, schema_file_arg: Option<&str>) -> R
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
-        .or_else(|| {
-            std::env::var("GQL_SCHEMA_FILE").ok().and_then(|s| {
-                let s = s.trim().to_string();
-                (!s.is_empty()).then_some(s)
-            })
-        })
+        .or_else(|| shared_env::env_non_empty("GQL_SCHEMA_FILE"))
         .or_else(|| {
             let schema_local = setup_dir.join("schema.local.env");
             let schema_env = setup_dir.join("schema.env");
@@ -69,15 +65,9 @@ pub fn resolve_schema_path(setup_dir: &Path, schema_file_arg: Option<&str>) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nils_test_support::{EnvGuard, GlobalStateLock};
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
-
-    use std::sync::{Mutex, OnceLock};
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
 
     fn write_file(path: &Path, contents: &str) {
         std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
@@ -101,10 +91,8 @@ mod tests {
 
     #[test]
     fn schema_file_env_var_is_used_when_no_arg() {
-        let _guard = env_lock().lock().expect("lock env");
-        let old = std::env::var("GQL_SCHEMA_FILE").ok();
-        // SAFETY: tests mutate process env while guarded by env_lock.
-        unsafe { std::env::set_var("GQL_SCHEMA_FILE", "  schema.gql  ") };
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::set(&lock, "GQL_SCHEMA_FILE", "  schema.gql  ");
 
         let tmp = TempDir::new().expect("tmp");
         let setup_dir = std::fs::canonicalize(tmp.path()).expect("setup abs");
@@ -113,25 +101,12 @@ mod tests {
         let got = resolve_schema_path(&setup_dir, None).expect("path");
         let expected = std::fs::canonicalize(setup_dir.join("schema.gql")).expect("abs");
         assert_eq!(got, expected);
-
-        match old {
-            Some(v) => {
-                // SAFETY: tests restore process env while guarded by env_lock.
-                unsafe { std::env::set_var("GQL_SCHEMA_FILE", v) };
-            }
-            None => {
-                // SAFETY: tests restore process env while guarded by env_lock.
-                unsafe { std::env::remove_var("GQL_SCHEMA_FILE") };
-            }
-        }
     }
 
     #[test]
     fn schema_file_schema_env_is_used_when_no_arg_or_env() {
-        let _guard = env_lock().lock().expect("lock env");
-        let old = std::env::var("GQL_SCHEMA_FILE").ok();
-        // SAFETY: tests mutate process env while guarded by env_lock.
-        unsafe { std::env::remove_var("GQL_SCHEMA_FILE") };
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::remove(&lock, "GQL_SCHEMA_FILE");
 
         let tmp = TempDir::new().expect("tmp");
         let setup_dir = std::fs::canonicalize(tmp.path()).expect("setup abs");
@@ -149,25 +124,12 @@ mod tests {
         let expected =
             std::fs::canonicalize(setup_dir.join("schemas/schema.graphql")).expect("abs");
         assert_eq!(got, expected);
-
-        match old {
-            Some(v) => {
-                // SAFETY: tests restore process env while guarded by env_lock.
-                unsafe { std::env::set_var("GQL_SCHEMA_FILE", v) };
-            }
-            None => {
-                // SAFETY: tests restore process env while guarded by env_lock.
-                unsafe { std::env::remove_var("GQL_SCHEMA_FILE") };
-            }
-        }
     }
 
     #[test]
     fn schema_file_falls_back_to_candidate_filenames() {
-        let _guard = env_lock().lock().expect("lock env");
-        let old = std::env::var("GQL_SCHEMA_FILE").ok();
-        // SAFETY: tests mutate process env while guarded by env_lock.
-        unsafe { std::env::remove_var("GQL_SCHEMA_FILE") };
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::remove(&lock, "GQL_SCHEMA_FILE");
 
         let tmp = TempDir::new().expect("tmp");
         let setup_dir = std::fs::canonicalize(tmp.path()).expect("setup abs");
@@ -177,25 +139,12 @@ mod tests {
         let got = resolve_schema_path(&setup_dir, None).expect("path");
         let expected = std::fs::canonicalize(setup_dir.join("schema.gql")).expect("abs");
         assert_eq!(got, expected);
-
-        match old {
-            Some(v) => {
-                // SAFETY: tests restore process env while guarded by env_lock.
-                unsafe { std::env::set_var("GQL_SCHEMA_FILE", v) };
-            }
-            None => {
-                // SAFETY: tests restore process env while guarded by env_lock.
-                unsafe { std::env::remove_var("GQL_SCHEMA_FILE") };
-            }
-        }
     }
 
     #[test]
     fn schema_file_errors_when_not_configured() {
-        let _guard = env_lock().lock().expect("lock env");
-        let old = std::env::var("GQL_SCHEMA_FILE").ok();
-        // SAFETY: tests mutate process env while guarded by env_lock.
-        unsafe { std::env::remove_var("GQL_SCHEMA_FILE") };
+        let lock = GlobalStateLock::new();
+        let _guard = EnvGuard::remove(&lock, "GQL_SCHEMA_FILE");
 
         let tmp = TempDir::new().expect("tmp");
         let setup_dir = std::fs::canonicalize(tmp.path()).expect("setup abs");
@@ -205,16 +154,5 @@ mod tests {
             err.to_string()
                 .contains("Schema file not configured. Set GQL_SCHEMA_FILE")
         );
-
-        match old {
-            Some(v) => {
-                // SAFETY: tests restore process env while guarded by env_lock.
-                unsafe { std::env::set_var("GQL_SCHEMA_FILE", v) };
-            }
-            None => {
-                // SAFETY: tests restore process env while guarded by env_lock.
-                unsafe { std::env::remove_var("GQL_SCHEMA_FILE") };
-            }
-        }
     }
 }
