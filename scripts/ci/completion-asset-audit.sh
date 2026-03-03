@@ -43,7 +43,7 @@ if [[ -z "$repo_root" || ! -d "$repo_root" ]]; then
 fi
 cd "$repo_root"
 
-matrix_path="docs/reports/completion-coverage-matrix.md"
+matrix_path="docs/specs/completion-coverage-matrix-v1.md"
 workspace_bins_script="scripts/workspace-bins.sh"
 
 if [[ ! -f "$matrix_path" ]]; then

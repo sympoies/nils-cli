@@ -1,4 +1,4 @@
-# Completion Coverage Matrix (Workspace Binaries)
+# Completion Coverage Matrix v1 (Workspace Binaries)
 
 ## Policy notes
 

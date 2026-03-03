@@ -40,10 +40,10 @@ Fixture for auto strategy matrix coverage: complexity pressure, external blocker
 
 ### Task 1.4: Publish rollback and migration notes
 - **Location**:
-  - crates/plan-tooling/docs/runbooks/split-prs-migration.md
+  - crates/plan-tooling/docs/runbooks/split-prs-build-task-spec-cutover.md
 - **Description**: Lightweight docs task depending on external blocker integration.
 - **Dependencies**:
   - Task 1.3
 - **Complexity**: 2
 - **Validation**:
-  - rg -n 'rollback' crates/plan-tooling/docs/runbooks/split-prs-migration.md
+  - rg -n 'Compatibility Contract|Cutover' crates/plan-tooling/docs/runbooks/split-prs-build-task-spec-cutover.md

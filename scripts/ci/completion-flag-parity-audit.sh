@@ -629,7 +629,7 @@ main() {
   script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
   local repo_root
   repo_root="$(cd "$script_dir/../.." && pwd)"
-  local matrix_path="$repo_root/docs/reports/completion-coverage-matrix.md"
+  local matrix_path="$repo_root/docs/specs/completion-coverage-matrix-v1.md"
 
   if [[ ! -f "$matrix_path" ]]; then
     echo "FAIL: missing completion matrix: $matrix_path" >&2

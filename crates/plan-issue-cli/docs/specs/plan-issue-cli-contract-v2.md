@@ -4,13 +4,11 @@
 
 v2 defines the runtime metadata ownership model after split-prs output decoupling.
 
-Key change from v1:
+Current contract boundary:
 
 - `plan-tooling split-prs` provides grouping primitives only (`task_id`, `summary`, `pr_group`).
 - `plan-issue-cli` is the authority that materializes executable runtime metadata
   (`Owner`, `Branch`, `Worktree`, `Notes`) for task-spec artifacts and `Task Decomposition` rows.
-
-`plan-issue-cli-contract-v1.md` remains as a historical reference.
 
 ## Runtime Metadata Materialization (v2)
 

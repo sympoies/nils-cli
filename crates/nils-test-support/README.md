@@ -11,6 +11,8 @@ It provides small utilities to keep tests deterministic when they need to manipu
 Runtime shared-crate ownership boundaries are tracked in
 [`docs/specs/workspace-shared-crate-boundary-v1.md`](../../docs/specs/workspace-shared-crate-boundary-v1.md) so test-surface extractions
 stay aligned with production-lane decisions.
+Stale-test cleanup sequencing is frozen in
+[`docs/specs/workspace-test-cleanup-lane-matrix-v1.md`](../../docs/specs/workspace-test-cleanup-lane-matrix-v1.md).
 
 ### What belongs in `nils-test-support`
 

@@ -78,11 +78,17 @@ Detailed scope, API examples, migration conventions, and non-goals are documente
 Sprint-2 boundary freeze and extraction lane ownership are tracked in
 [docs/specs/workspace-shared-crate-boundary-v1.md](docs/specs/workspace-shared-crate-boundary-v1.md).
 
+Workspace doc retention scope and delete/keep decisions are tracked in
+[docs/specs/workspace-doc-retention-matrix-v1.md](docs/specs/workspace-doc-retention-matrix-v1.md).
+
 ## Shell wrappers and completions
 
 Canonical completion architecture and contributor validation live in
 [docs/runbooks/cli-completion-development-standard.md](docs/runbooks/cli-completion-development-standard.md). Use
 [DEVELOPMENT.md](DEVELOPMENT.md) for required delivery checks.
+
+Completion obligation coverage is tracked in
+[docs/specs/completion-coverage-matrix-v1.md](docs/specs/completion-coverage-matrix-v1.md).
 
 Assets:
 

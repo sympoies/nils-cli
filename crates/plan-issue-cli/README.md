@@ -120,7 +120,6 @@ plan-issue-local build-plan-task-spec \
 ## Specifications
 
 - [CLI contract v2](docs/specs/plan-issue-cli-contract-v2.md)
-- [CLI contract v1](docs/specs/plan-issue-cli-contract-v1.md)
 - [State machine and gate invariants v1](docs/specs/plan-issue-state-machine-v1.md)
 - [Gate matrix v1](docs/specs/plan-issue-gate-matrix-v1.md)
 

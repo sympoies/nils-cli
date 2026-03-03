@@ -76,7 +76,7 @@ Checklist:
 ## completion enforcement metadata (required)
 
 Declare and validate metadata that enforces clap-first behavior and forbids runtime mode switches or alternate completion dispatch paths.
-Values must match the CLI row in `docs/reports/completion-coverage-matrix.md`.
+Values must match the CLI row in `docs/specs/completion-coverage-matrix-v1.md`.
 
 | metadata key                    | required value | declared value | enforcement location | verification method                                                        |
 | ------------------------------- | -------------- | -------------- | -------------------- | -------------------------------------------------------------------------- |
@@ -120,7 +120,7 @@ Record command-level and repository-level checks for this migration.
 
    ```bash
    rg -n "COMPLETION_MODE|completion_mode_toggles|alternate_completion_dispatch|generated_load_failure" \
-     docs/reports/completion-coverage-matrix.md \
+     docs/specs/completion-coverage-matrix-v1.md \
      crates/<crate>/docs/reports/<cli>-completion-migration-contract.md
    ```
 
