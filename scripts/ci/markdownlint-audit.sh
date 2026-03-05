@@ -53,7 +53,10 @@ if [[ ! -f "$config_file" ]]; then
 fi
 
 lint_cmd=(
-  npx --yes markdownlint-cli2@0.21.0
+  npx --yes
+  --package markdownlint-cli2@0.21.0
+  --package katex@0.16.21
+  markdownlint-cli2
   --config "$config_file"
   "README.md"
   "DEVELOPMENT.md"

@@ -163,49 +163,16 @@ fn read_cached_entry(target_file: &Path, ttl_seconds: u64) -> (Option<CacheEntry
 
 fn resolve_ttl_seconds(cli_ttl: Option<&str>) -> Result<u64, ()> {
     if let Some(raw) = cli_ttl {
-        return parse_duration_seconds(raw).ok_or(());
+        return shared_env::parse_duration_seconds(raw).ok_or(());
     }
 
     if let Ok(raw) = std::env::var("GEMINI_STARSHIP_TTL")
-        && let Some(value) = parse_duration_seconds(&raw)
+        && let Some(value) = shared_env::parse_duration_seconds(&raw)
     {
         return Ok(value);
     }
 
     Ok(DEFAULT_TTL_SECONDS)
-}
-
-fn parse_duration_seconds(raw: &str) -> Option<u64> {
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return None;
-    }
-
-    let normalized = raw.to_ascii_lowercase();
-    let (num_part, multiplier) = match normalized.chars().last()? {
-        's' => (&normalized[..normalized.len().saturating_sub(1)], 1u64),
-        'm' => (&normalized[..normalized.len().saturating_sub(1)], 60u64),
-        'h' => (
-            &normalized[..normalized.len().saturating_sub(1)],
-            60u64 * 60u64,
-        ),
-        'd' => (
-            &normalized[..normalized.len().saturating_sub(1)],
-            60u64 * 60u64 * 24u64,
-        ),
-        'w' => (
-            &normalized[..normalized.len().saturating_sub(1)],
-            60u64 * 60u64 * 24u64 * 7u64,
-        ),
-        ch if ch.is_ascii_digit() => (normalized.as_str(), 1u64),
-        _ => return None,
-    };
-
-    let num = num_part.trim().parse::<u64>().ok()?;
-    if num == 0 {
-        return None;
-    }
-    num.checked_mul(multiplier)
 }
 
 fn starship_enabled() -> bool {
