@@ -3,7 +3,7 @@
 This file documents third-party notice-file discovery for Rust crates used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `cb0442a922cd324d507f3941dc69d0d2638e14461a286a97026228d14ff777b2`
+- Cargo.lock SHA256: `180b9db8e4b0392b7e3ccc87108487cad7d72e421379ae89e3735f7b39bebab3`
 - Third-party crates (`source != null`): 443
 
 ## Notice Extraction Policy
@@ -223,7 +223,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### aws-lc-rs 1.16.0
+### aws-lc-rs 1.16.1
 
 - License: `ISC AND (Apache-2.0 OR ISC)`
 - Source: `crates.io`
@@ -231,7 +231,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### aws-lc-sys 0.37.1
+### aws-lc-sys 0.38.0
 
 - License: `ISC AND (Apache-2.0 OR ISC) AND OpenSSL`
 - Source: `crates.io`
@@ -2695,7 +2695,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### toml 1.0.3+spec-1.1.0
+### toml 1.0.4+spec-1.1.0
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -2731,7 +2731,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### toml_edit 0.25.3+spec-1.1.0
+### toml_edit 0.25.4+spec-1.1.0
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
