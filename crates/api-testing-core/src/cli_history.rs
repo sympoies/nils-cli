@@ -3,6 +3,61 @@ use std::path::{Path, PathBuf};
 
 use crate::{Result, cli_util, history};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestCallHistoryAuth<'a> {
+    None,
+    HeaderOnly {
+        key: &'a str,
+        value: &'a str,
+    },
+    HeaderAndFlag {
+        header_key: &'a str,
+        header_value: &'a str,
+        flag_name: &'a str,
+        flag_value: &'a str,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RequestCallHistoryFlag<'a> {
+    pub name: &'a str,
+    pub value: Option<&'a str>,
+    pub quote_value: bool,
+}
+
+impl<'a> RequestCallHistoryFlag<'a> {
+    pub const fn option(name: &'a str, value: &'a str) -> Self {
+        Self {
+            name,
+            value: Some(value),
+            quote_value: true,
+        }
+    }
+
+    pub const fn raw(name: &'a str, value: &'a str) -> Self {
+        Self {
+            name,
+            value: Some(value),
+            quote_value: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RequestCallHistoryRecord<'a> {
+    pub stamp: &'a str,
+    pub exit_code: i32,
+    pub setup_dir: &'a Path,
+    pub invocation_dir: &'a Path,
+    pub command_name: &'a str,
+    pub endpoint_label_used: &'a str,
+    pub endpoint_value_used: &'a str,
+    pub log_url: bool,
+    pub auth: RequestCallHistoryAuth<'a>,
+    pub request_arg: &'a str,
+    pub extra_flags: &'a [RequestCallHistoryFlag<'a>],
+}
+
 pub fn resolve_history_file<F>(
     cwd: &Path,
     config_dir: Option<&Path>,
@@ -72,4 +127,212 @@ pub fn run_history_command(
     }
 
     0
+}
+
+pub fn build_request_call_history_record(spec: RequestCallHistoryRecord<'_>) -> String {
+    let setup_rel = cli_util::maybe_relpath(spec.setup_dir, spec.invocation_dir);
+    let config_rel = cli_util::shell_quote(&setup_rel);
+    let request_rel = relative_cli_arg(spec.request_arg, spec.invocation_dir);
+
+    let mut record = String::new();
+    record.push_str(&format!(
+        "# {} exit={} setup_dir={setup_rel}",
+        spec.stamp, spec.exit_code
+    ));
+
+    if !spec.endpoint_label_used.is_empty() {
+        if spec.endpoint_label_used == "url" && !spec.log_url {
+            record.push_str(" url=<omitted>");
+        } else {
+            record.push_str(&format!(
+                " {}={}",
+                spec.endpoint_label_used, spec.endpoint_value_used
+            ));
+        }
+    }
+
+    match spec.auth {
+        RequestCallHistoryAuth::None => {}
+        RequestCallHistoryAuth::HeaderOnly { key, value } => {
+            if !value.is_empty() {
+                record.push_str(&format!(" {key}={value}"));
+            }
+        }
+        RequestCallHistoryAuth::HeaderAndFlag {
+            header_key,
+            header_value,
+            ..
+        } => {
+            if !header_value.is_empty() {
+                record.push_str(&format!(" {header_key}={header_value}"));
+            }
+        }
+    }
+
+    record.push('\n');
+    record.push_str(&format!("{} call \\\n", spec.command_name));
+    record.push_str(&format!("  --config-dir {config_rel} \\\n"));
+
+    if spec.endpoint_label_used == "env" && !spec.endpoint_value_used.is_empty() {
+        record.push_str(&format!(
+            "  --env {} \\\n",
+            cli_util::shell_quote(spec.endpoint_value_used)
+        ));
+    } else if spec.endpoint_label_used == "url"
+        && !spec.endpoint_value_used.is_empty()
+        && spec.log_url
+    {
+        record.push_str(&format!(
+            "  --url {} \\\n",
+            cli_util::shell_quote(spec.endpoint_value_used)
+        ));
+    }
+
+    if let RequestCallHistoryAuth::HeaderAndFlag {
+        flag_name,
+        flag_value,
+        ..
+    } = spec.auth
+        && !flag_value.is_empty()
+    {
+        record.push_str(&format!(
+            "  --{flag_name} {} \\\n",
+            cli_util::shell_quote(flag_value)
+        ));
+    }
+
+    for flag in spec.extra_flags {
+        match flag.value {
+            Some(value) => {
+                let rendered_value = if flag.quote_value {
+                    cli_util::shell_quote(value)
+                } else {
+                    value.to_string()
+                };
+                record.push_str(&format!("  --{} {} \\\n", flag.name, rendered_value));
+            }
+            None => {
+                record.push_str(&format!("  --{} \\\n", flag.name));
+            }
+        }
+    }
+
+    record.push_str(&format!("  {} \\\n", cli_util::shell_quote(&request_rel)));
+    record.push_str("| jq .\n\n");
+    record
+}
+
+fn relative_cli_arg(arg: &str, invocation_dir: &Path) -> String {
+    let path = Path::new(arg);
+    if path.is_absolute() {
+        cli_util::maybe_relpath(path, invocation_dir)
+    } else {
+        arg.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        RequestCallHistoryAuth, RequestCallHistoryFlag, RequestCallHistoryRecord,
+        build_request_call_history_record,
+    };
+    use pretty_assertions::assert_eq;
+    use std::path::Path;
+
+    #[test]
+    fn request_call_history_renders_env_token_command() {
+        let record = build_request_call_history_record(RequestCallHistoryRecord {
+            stamp: "2026-03-06T10:00:00Z",
+            exit_code: 0,
+            setup_dir: Path::new("/tmp/ws/setup/rest"),
+            invocation_dir: Path::new("/tmp/ws"),
+            command_name: "api-rest",
+            endpoint_label_used: "env",
+            endpoint_value_used: "local",
+            log_url: true,
+            auth: RequestCallHistoryAuth::HeaderAndFlag {
+                header_key: "token",
+                header_value: "default",
+                flag_name: "token",
+                flag_value: "default",
+            },
+            request_arg: "requests/health.request.json",
+            extra_flags: &[],
+        });
+
+        assert_eq!(
+            record,
+            concat!(
+                "# 2026-03-06T10:00:00Z exit=0 setup_dir=setup/rest env=local token=default\n",
+                "api-rest call \\\n",
+                "  --config-dir 'setup/rest' \\\n",
+                "  --env 'local' \\\n",
+                "  --token 'default' \\\n",
+                "  'requests/health.request.json' \\\n",
+                "| jq .\n\n",
+            )
+        );
+    }
+
+    #[test]
+    fn request_call_history_omits_logged_url_and_rewrites_absolute_request_path() {
+        let record = build_request_call_history_record(RequestCallHistoryRecord {
+            stamp: "2026-03-06T10:00:00Z",
+            exit_code: 7,
+            setup_dir: Path::new("/tmp/ws/setup/grpc"),
+            invocation_dir: Path::new("/tmp/ws"),
+            command_name: "api-grpc",
+            endpoint_label_used: "url",
+            endpoint_value_used: "127.0.0.1:50051",
+            log_url: false,
+            auth: RequestCallHistoryAuth::HeaderOnly {
+                key: "auth",
+                value: "ACCESS_TOKEN",
+            },
+            request_arg: "/tmp/ws/requests/health.grpc.json",
+            extra_flags: &[],
+        });
+
+        assert_eq!(
+            record,
+            concat!(
+                "# 2026-03-06T10:00:00Z exit=7 setup_dir=setup/grpc url=<omitted> auth=ACCESS_TOKEN\n",
+                "api-grpc call \\\n",
+                "  --config-dir 'setup/grpc' \\\n",
+                "  'requests/health.grpc.json' \\\n",
+                "| jq .\n\n",
+            )
+        );
+    }
+
+    #[test]
+    fn request_call_history_appends_extra_flags_before_request_arg() {
+        let extra_flags = [RequestCallHistoryFlag::raw("format", "json")];
+        let record = build_request_call_history_record(RequestCallHistoryRecord {
+            stamp: "2026-03-06T10:00:00Z",
+            exit_code: 0,
+            setup_dir: Path::new("/tmp/ws/setup/websocket"),
+            invocation_dir: Path::new("/tmp/ws"),
+            command_name: "api-websocket",
+            endpoint_label_used: "",
+            endpoint_value_used: "",
+            log_url: true,
+            auth: RequestCallHistoryAuth::None,
+            request_arg: "requests/health.ws.json",
+            extra_flags: &extra_flags,
+        });
+
+        assert_eq!(
+            record,
+            concat!(
+                "# 2026-03-06T10:00:00Z exit=0 setup_dir=setup/websocket\n",
+                "api-websocket call \\\n",
+                "  --config-dir 'setup/websocket' \\\n",
+                "  --format json \\\n",
+                "  'requests/health.ws.json' \\\n",
+                "| jq .\n\n",
+            )
+        );
+    }
 }
