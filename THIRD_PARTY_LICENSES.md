@@ -3,7 +3,7 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `cb0442a922cd324d507f3941dc69d0d2638e14461a286a97026228d14ff777b2`
+- Cargo.lock SHA256: `180b9db8e4b0392b7e3ccc87108487cad7d72e421379ae89e3735f7b39bebab3`
 - Third-party crates (`source != null`): 443
 - Workspace crates (`source == null`, excluded below): 25
 
@@ -76,8 +76,8 @@ This file documents third-party Rust crate licenses used by this workspace.
 | async-trait | 0.1.89 | MIT OR Apache-2.0 | crates.io |
 | atomic-waker | 1.1.2 | Apache-2.0 OR MIT | crates.io |
 | autocfg | 1.5.0 | Apache-2.0 OR MIT | crates.io |
-| aws-lc-rs | 1.16.0 | ISC AND (Apache-2.0 OR ISC) | crates.io |
-| aws-lc-sys | 0.37.1 | ISC AND (Apache-2.0 OR ISC) AND OpenSSL | crates.io |
+| aws-lc-rs | 1.16.1 | ISC AND (Apache-2.0 OR ISC) | crates.io |
+| aws-lc-sys | 0.38.0 | ISC AND (Apache-2.0 OR ISC) AND OpenSSL | crates.io |
 | base64 | 0.22.1 | MIT OR Apache-2.0 | crates.io |
 | bitflags | 2.11.0 | MIT OR Apache-2.0 | crates.io |
 | block-buffer | 0.10.4 | MIT OR Apache-2.0 | crates.io |
@@ -362,11 +362,11 @@ This file documents third-party Rust crate licenses used by this workspace.
 | tinyvec_macros | 0.1.1 | MIT OR Apache-2.0 OR Zlib | crates.io |
 | tokio | 1.49.0 | MIT | crates.io |
 | tokio-rustls | 0.26.4 | MIT OR Apache-2.0 | crates.io |
-| toml | 1.0.3+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
+| toml | 1.0.4+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
 | toml_datetime | 0.7.5+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
 | toml_datetime | 1.0.0+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
 | toml_edit | 0.23.10+spec-1.0.0 | MIT OR Apache-2.0 | crates.io |
-| toml_edit | 0.25.3+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
+| toml_edit | 0.25.4+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
 | toml_parser | 1.0.9+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
 | toml_writer | 1.0.6+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
 | tower | 0.5.3 | MIT | crates.io |
