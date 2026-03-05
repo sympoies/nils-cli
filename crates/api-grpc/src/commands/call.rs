@@ -1,13 +1,14 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use api_testing_core::cli_history::{
+    RequestCallHistoryAuth, RequestCallHistoryRecord, build_request_call_history_record,
+};
 use api_testing_core::{Result, auth_env, cli_endpoint, cli_io, cli_util, config, history, jwt};
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 
 use crate::cli::CallArgs;
-use api_testing_core::cli_util::{
-    history_timestamp_now, maybe_relpath, parse_u64_default, shell_quote, trim_non_empty,
-};
+use api_testing_core::cli_util::{history_timestamp_now, parse_u64_default, trim_non_empty};
 
 #[derive(Debug, Clone)]
 pub(crate) struct EndpointSelection {
@@ -332,74 +333,34 @@ fn append_history_best_effort(ctx: &CallHistoryContext, exit_code: i32) {
     }
 
     let history_writer = &ctx.history_writer;
-
     let stamp = history_timestamp_now().unwrap_or_default();
-    let setup_rel = maybe_relpath(&ctx.setup_dir, &ctx.invocation_dir);
-
-    let mut record = String::new();
-    record.push_str(&format!("# {stamp} exit={exit_code} setup_dir={setup_rel}"));
-    if !ctx.endpoint_label_used.is_empty() {
-        if ctx.endpoint_label_used == "url" && !ctx.log_url {
-            record.push_str(" url=<omitted>");
-        } else {
-            record.push_str(&format!(
-                " {}={}",
-                ctx.endpoint_label_used, ctx.endpoint_value_used
-            ));
-        }
-    }
-
-    match &ctx.auth_source_used {
-        AuthSourceUsed::TokenProfile => {
-            if !ctx.token_name_for_log.is_empty() {
-                record.push_str(&format!(" token={}", ctx.token_name_for_log));
-            }
-        }
-        AuthSourceUsed::EnvFallback { env_name } => {
-            if !env_name.is_empty() {
-                record.push_str(&format!(" auth={env_name}"));
-            }
-        }
-        AuthSourceUsed::None => {}
-    }
-
-    record.push('\n');
-
-    let config_rel = maybe_relpath(&ctx.setup_dir, &ctx.invocation_dir);
-    let req_arg_path = Path::new(&ctx.request_arg);
-    let req_rel = if req_arg_path.is_absolute() {
-        maybe_relpath(req_arg_path, &ctx.invocation_dir)
-    } else {
-        ctx.request_arg.clone()
+    let auth = match &ctx.auth_source_used {
+        AuthSourceUsed::TokenProfile => RequestCallHistoryAuth::HeaderAndFlag {
+            header_key: "token",
+            header_value: &ctx.token_name_for_log,
+            flag_name: "token",
+            flag_value: &ctx.token_name_for_log,
+        },
+        AuthSourceUsed::EnvFallback { env_name } => RequestCallHistoryAuth::HeaderOnly {
+            key: "auth",
+            value: env_name,
+        },
+        AuthSourceUsed::None => RequestCallHistoryAuth::None,
     };
 
-    record.push_str("api-grpc call \\\n");
-    record.push_str(&format!("  --config-dir {} \\\n", shell_quote(&config_rel)));
-
-    if ctx.endpoint_label_used == "env" && !ctx.endpoint_value_used.is_empty() {
-        record.push_str(&format!(
-            "  --env {} \\\n",
-            shell_quote(&ctx.endpoint_value_used)
-        ));
-    } else if ctx.endpoint_label_used == "url" && !ctx.endpoint_value_used.is_empty() && ctx.log_url
-    {
-        record.push_str(&format!(
-            "  --url {} \\\n",
-            shell_quote(&ctx.endpoint_value_used)
-        ));
-    }
-
-    if matches!(ctx.auth_source_used, AuthSourceUsed::TokenProfile)
-        && !ctx.token_name_for_log.is_empty()
-    {
-        record.push_str(&format!(
-            "  --token {} \\\n",
-            shell_quote(&ctx.token_name_for_log)
-        ));
-    }
-
-    record.push_str(&format!("  {} \\\n", shell_quote(&req_rel)));
-    record.push_str("| jq .\n\n");
+    let record = build_request_call_history_record(RequestCallHistoryRecord {
+        stamp: &stamp,
+        exit_code,
+        setup_dir: &ctx.setup_dir,
+        invocation_dir: &ctx.invocation_dir,
+        command_name: "api-grpc",
+        endpoint_label_used: &ctx.endpoint_label_used,
+        endpoint_value_used: &ctx.endpoint_value_used,
+        log_url: ctx.log_url,
+        auth,
+        request_arg: &ctx.request_arg,
+        extra_flags: &[],
+    });
 
     let _ = history_writer.append(&record);
 }
