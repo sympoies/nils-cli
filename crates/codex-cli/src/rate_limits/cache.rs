@@ -237,7 +237,7 @@ fn ensure_cache_fresh(target_file: &Path, entry: &CacheEntry) -> Result<()> {
 
 fn cache_ttl_seconds() -> u64 {
     if let Ok(raw) = std::env::var("CODEX_RATE_LIMITS_CACHE_TTL")
-        && let Some(value) = parse_duration_seconds(&raw)
+        && let Some(value) = shared_env::parse_duration_seconds(&raw)
     {
         return value;
     }
@@ -246,36 +246,6 @@ fn cache_ttl_seconds() -> u64 {
 
 fn cache_allow_stale() -> bool {
     shared_env::env_truthy_or("CODEX_RATE_LIMITS_CACHE_ALLOW_STALE", false)
-}
-
-fn parse_duration_seconds(raw: &str) -> Option<u64> {
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return None;
-    }
-
-    let raw = raw.to_ascii_lowercase();
-    let (num_part, multiplier): (&str, u64) = match raw.chars().last()? {
-        's' => (&raw[..raw.len().saturating_sub(1)], 1),
-        'm' => (&raw[..raw.len().saturating_sub(1)], 60),
-        'h' => (&raw[..raw.len().saturating_sub(1)], 60 * 60),
-        'd' => (&raw[..raw.len().saturating_sub(1)], 60 * 60 * 24),
-        'w' => (&raw[..raw.len().saturating_sub(1)], 60 * 60 * 24 * 7),
-        ch if ch.is_ascii_digit() => (raw.as_str(), 1),
-        _ => return None,
-    };
-
-    let num_part = num_part.trim();
-    if num_part.is_empty() {
-        return None;
-    }
-
-    let value = num_part.parse::<u64>().ok()?;
-    if value == 0 {
-        return None;
-    }
-
-    value.checked_mul(multiplier)
 }
 
 fn cache_root() -> Option<PathBuf> {

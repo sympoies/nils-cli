@@ -42,6 +42,36 @@ pub fn env_non_empty(name: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+pub fn parse_duration_seconds(raw: &str) -> Option<u64> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    let raw = raw.to_ascii_lowercase();
+    let (num_part, multiplier): (&str, u64) = match raw.chars().last()? {
+        's' => (&raw[..raw.len().saturating_sub(1)], 1),
+        'm' => (&raw[..raw.len().saturating_sub(1)], 60),
+        'h' => (&raw[..raw.len().saturating_sub(1)], 60 * 60),
+        'd' => (&raw[..raw.len().saturating_sub(1)], 60 * 60 * 24),
+        'w' => (&raw[..raw.len().saturating_sub(1)], 60 * 60 * 24 * 7),
+        ch if ch.is_ascii_digit() => (raw.as_str(), 1),
+        _ => return None,
+    };
+
+    let num_part = num_part.trim();
+    if num_part.is_empty() {
+        return None;
+    }
+
+    let value = num_part.parse::<u64>().ok()?;
+    if value == 0 {
+        return None;
+    }
+
+    value.checked_mul(multiplier)
+}
+
 pub fn no_color_enabled() -> bool {
     env_present("NO_COLOR")
 }
@@ -204,6 +234,29 @@ mod tests {
             env_non_empty("NILS_COMMON_ENV_NON_EMPTY_VALUE_TEST"),
             Some("value".to_string())
         );
+    }
+
+    #[test]
+    fn parse_duration_seconds_accepts_plain_and_suffixed_values() {
+        assert_eq!(parse_duration_seconds("45"), Some(45));
+        assert_eq!(parse_duration_seconds("45s"), Some(45));
+        assert_eq!(parse_duration_seconds("2m"), Some(120));
+        assert_eq!(parse_duration_seconds("3h"), Some(10_800));
+        assert_eq!(parse_duration_seconds("4d"), Some(345_600));
+        assert_eq!(parse_duration_seconds("2w"), Some(1_209_600));
+        assert_eq!(parse_duration_seconds(" 7H "), Some(25_200));
+    }
+
+    #[test]
+    fn parse_duration_seconds_rejects_invalid_inputs() {
+        for value in ["", " ", "0", "0s", "s", "-1", "1x", "ms"] {
+            assert_eq!(parse_duration_seconds(value), None, "value={value}");
+        }
+    }
+
+    #[test]
+    fn parse_duration_seconds_rejects_overflow() {
+        assert_eq!(parse_duration_seconds("18446744073709551615w"), None);
     }
 
     #[test]
