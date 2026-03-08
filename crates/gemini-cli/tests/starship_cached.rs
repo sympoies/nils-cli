@@ -73,12 +73,22 @@ fn set_env(lock: &GlobalStateLock, key: &str, value: impl AsRef<std::ffi::OsStr>
     EnvGuard::set(lock, key, &value)
 }
 
-fn set_fast_fail_refresh_env(lock: &GlobalStateLock) -> (EnvGuard, EnvGuard, EnvGuard) {
+fn set_fast_fail_refresh_env(lock: &GlobalStateLock) -> (EnvGuard, EnvGuard, EnvGuard, EnvGuard) {
     (
         set_env(lock, "CODE_ASSIST_ENDPOINT", "http://127.0.0.1:9/"),
         set_env(lock, "GEMINI_STARSHIP_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
         set_env(lock, "GEMINI_STARSHIP_CURL_MAX_TIME_SECONDS", "1"),
+        set_env(lock, "GEMINI_STARSHIP_EXE", "/usr/bin/false"),
     )
+}
+
+fn lock_dir_for_auth_file(auth_file: &Path) -> PathBuf {
+    let cache_file = rate_limits::cache_file_for_target(auth_file).expect("cache file");
+    let stem = cache_file
+        .file_stem()
+        .expect("cache stem")
+        .to_string_lossy();
+    cache_file.with_file_name(format!("{stem}.refresh.lock"))
 }
 
 #[test]
@@ -129,6 +139,7 @@ fn starship_non_stale_cache_skips_failed_refresh() {
     let _base = set_env(&lock, "CODE_ASSIST_ENDPOINT", "http://127.0.0.1:9/");
     let _connect = set_env(&lock, "GEMINI_STARSHIP_CURL_CONNECT_TIMEOUT_SECONDS", "1");
     let _max_time = set_env(&lock, "GEMINI_STARSHIP_CURL_MAX_TIME_SECONDS", "1");
+    let _exe = set_env(&lock, "GEMINI_STARSHIP_EXE", "/usr/bin/false");
 
     rate_limits::write_starship_cache(
         &auth_file,
@@ -154,7 +165,7 @@ fn starship_non_stale_cache_skips_failed_refresh() {
 }
 
 #[test]
-fn starship_stale_cache_with_failed_refresh_returns_0() {
+fn starship_stale_cache_with_live_refresh_lock_returns_0() {
     let lock = GlobalStateLock::new();
     let dir = TestDir::new("starship-stale-cache-failed-refresh");
     let (auth_file, secrets, cache_root) = write_auth_secret(&dir);
@@ -166,6 +177,7 @@ fn starship_stale_cache_with_failed_refresh_returns_0() {
     let _base = set_env(&lock, "CODE_ASSIST_ENDPOINT", "http://127.0.0.1:9/");
     let _connect = set_env(&lock, "GEMINI_STARSHIP_CURL_CONNECT_TIMEOUT_SECONDS", "1");
     let _max_time = set_env(&lock, "GEMINI_STARSHIP_CURL_MAX_TIME_SECONDS", "1");
+    let _exe = set_env(&lock, "GEMINI_STARSHIP_EXE", "/usr/bin/false");
 
     rate_limits::write_starship_cache(
         &auth_file,
@@ -177,6 +189,9 @@ fn starship_stale_cache_with_failed_refresh_returns_0() {
         Some(1700003600),
     )
     .expect("write cache");
+
+    let lock_dir = lock_dir_for_auth_file(&auth_file);
+    stdfs::create_dir_all(&lock_dir).expect("create live lock");
 
     let options = starship::StarshipOptions {
         ttl: Some("1s".to_string()),
@@ -252,7 +267,7 @@ fn starship_missing_cache_root_is_treated_as_no_cache() {
     let _zdot = set_env(&lock, "ZDOTDIR", "");
     let _cache_root = set_env(&lock, "ZSH_CACHE_DIR", "");
     let _enabled = set_env(&lock, "GEMINI_STARSHIP_ENABLED", "true");
-    let (_base, _connect, _max_time) = set_fast_fail_refresh_env(&lock);
+    let (_base, _connect, _max_time, _exe) = set_fast_fail_refresh_env(&lock);
 
     assert_eq!(starship::run(&starship::StarshipOptions::default()), 0);
 }
@@ -267,7 +282,7 @@ fn starship_invalid_cache_entry_is_ignored() {
     let _secret_dir = set_env(&lock, "GEMINI_SECRET_DIR", &secrets);
     let _cache_root = set_env(&lock, "ZSH_CACHE_DIR", &cache_root);
     let _enabled = set_env(&lock, "GEMINI_STARSHIP_ENABLED", "true");
-    let (_base, _connect, _max_time) = set_fast_fail_refresh_env(&lock);
+    let (_base, _connect, _max_time, _exe) = set_fast_fail_refresh_env(&lock);
 
     let cache_file = rate_limits::cache_file_for_target(&auth_file).expect("cache file");
     if let Some(parent) = cache_file.parent() {
@@ -288,7 +303,7 @@ fn starship_non_positive_fetched_at_is_treated_as_stale() {
     let _secret_dir = set_env(&lock, "GEMINI_SECRET_DIR", &secrets);
     let _cache_root = set_env(&lock, "ZSH_CACHE_DIR", &cache_root);
     let _enabled = set_env(&lock, "GEMINI_STARSHIP_ENABLED", "true");
-    let (_base, _connect, _max_time) = set_fast_fail_refresh_env(&lock);
+    let (_base, _connect, _max_time, _exe) = set_fast_fail_refresh_env(&lock);
 
     rate_limits::write_starship_cache(&auth_file, 0, "5h", 94, 88, 1700600000, Some(1700003600))
         .expect("write cache");
@@ -306,7 +321,7 @@ fn starship_default_time_format_paths_execute() {
     let _secret_dir = set_env(&lock, "GEMINI_SECRET_DIR", &secrets);
     let _cache_root = set_env(&lock, "ZSH_CACHE_DIR", &cache_root);
     let _enabled = set_env(&lock, "GEMINI_STARSHIP_ENABLED", "true");
-    let (_base, _connect, _max_time) = set_fast_fail_refresh_env(&lock);
+    let (_base, _connect, _max_time, _exe) = set_fast_fail_refresh_env(&lock);
 
     rate_limits::write_starship_cache(
         &auth_file,
@@ -343,7 +358,7 @@ fn starship_email_name_source_paths_execute() {
     let _cache_root = set_env(&lock, "ZSH_CACHE_DIR", &cache_root);
     let _enabled = set_env(&lock, "GEMINI_STARSHIP_ENABLED", "true");
     let _source = set_env(&lock, "GEMINI_STARSHIP_NAME_SOURCE", "email");
-    let (_base, _connect, _max_time) = set_fast_fail_refresh_env(&lock);
+    let (_base, _connect, _max_time, _exe) = set_fast_fail_refresh_env(&lock);
 
     write_auth_with_id_token(&auth_file, TOKEN_WITH_EMAIL);
     assert_eq!(starship::run(&starship::StarshipOptions::default()), 0);
@@ -377,7 +392,7 @@ fn starship_secret_name_fallback_paths_execute() {
     let _secret_dir = set_env(&lock, "GEMINI_SECRET_DIR", &secrets);
     let _cache_root = set_env(&lock, "ZSH_CACHE_DIR", &cache_root);
     let _enabled = set_env(&lock, "GEMINI_STARSHIP_ENABLED", "true");
-    let (_base, _connect, _max_time) = set_fast_fail_refresh_env(&lock);
+    let (_base, _connect, _max_time, _exe) = set_fast_fail_refresh_env(&lock);
 
     let _fallback_on = set_env(&lock, "GEMINI_STARSHIP_SHOW_FALLBACK_NAME_ENABLED", "true");
     assert_eq!(starship::run(&starship::StarshipOptions::default()), 0);

@@ -576,6 +576,8 @@ fn rate_limits_async_json_partial_failure_keeps_results_array() {
     assert_eq!(payload["ok"], false);
     let results = payload["results"].as_array().expect("results");
     assert_eq!(results.len(), 2);
+    assert_eq!(results[0]["name"], "alpha");
+    assert_eq!(results[1]["name"], "beta");
 
     let alpha = results
         .iter()

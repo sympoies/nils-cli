@@ -5,9 +5,8 @@ use nils_common::env as shared_env;
 use crate::auth;
 use crate::paths;
 use crate::rate_limits;
-use crate::rate_limits::client::{UsageRequest, fetch_usage};
-use crate::rate_limits::render as rate_render;
 
+mod refresh;
 mod render;
 
 pub use render::CacheEntry;
@@ -67,7 +66,7 @@ pub fn run(options: &StarshipOptions) -> i32 {
     let prefix = resolve_name_prefix(&target_file);
 
     if options.refresh {
-        if let Some(entry) = refresh_blocking(&target_file)
+        if let Some(entry) = refresh::refresh_blocking(&target_file)
             && let Some(line) = render::render_line(&entry, &prefix, show_5h, time_format)
             && !line.trim().is_empty()
         {
@@ -89,52 +88,10 @@ pub fn run(options: &StarshipOptions) -> i32 {
     }
 
     if cached.is_none() || is_stale {
-        let _ = refresh_blocking(&target_file);
+        refresh::enqueue_background_refresh(&target_file);
     }
 
     0
-}
-
-fn refresh_blocking(target_file: &Path) -> Option<render::CacheEntry> {
-    let connect_timeout = env_u64("GEMINI_STARSHIP_CURL_CONNECT_TIMEOUT_SECONDS", 2);
-    let max_time = env_u64("GEMINI_STARSHIP_CURL_MAX_TIME_SECONDS", 8);
-
-    let usage_request = UsageRequest {
-        target_file: target_file.to_path_buf(),
-        refresh_on_401: false,
-        endpoint: code_assist_endpoint(),
-        api_version: code_assist_api_version(),
-        project: code_assist_project(),
-        connect_timeout_seconds: connect_timeout,
-        max_time_seconds: max_time,
-    };
-
-    let usage = fetch_usage(&usage_request).ok()?;
-    let usage_data = rate_render::parse_usage(&usage.body)?;
-    let values = rate_render::render_values(&usage_data);
-    let weekly = rate_render::weekly_values(&values);
-
-    let fetched_at_epoch = now_epoch();
-    if fetched_at_epoch > 0 {
-        let _ = rate_limits::write_starship_cache(
-            target_file,
-            fetched_at_epoch,
-            &weekly.non_weekly_label,
-            weekly.non_weekly_remaining,
-            weekly.weekly_remaining,
-            weekly.weekly_reset_epoch,
-            weekly.non_weekly_reset_epoch,
-        );
-    }
-
-    Some(render::CacheEntry {
-        fetched_at_epoch,
-        non_weekly_label: weekly.non_weekly_label,
-        non_weekly_remaining: weekly.non_weekly_remaining,
-        non_weekly_reset_epoch: weekly.non_weekly_reset_epoch,
-        weekly_remaining: weekly.weekly_remaining,
-        weekly_reset_epoch: weekly.weekly_reset_epoch,
-    })
 }
 
 fn read_cached_entry(target_file: &Path, ttl_seconds: u64) -> (Option<CacheEntry>, bool) {
