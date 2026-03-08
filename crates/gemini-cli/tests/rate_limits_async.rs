@@ -128,6 +128,22 @@ fn rate_limits_async_missing_secret_dir_returns_1() {
 }
 
 #[test]
+fn rate_limits_async_invalid_jobs_value_defaults_without_usage_error() {
+    let lock = GlobalStateLock::new();
+    let dir = TestDir::new("rate-limits-async-invalid-jobs");
+    let missing = dir.join("missing");
+
+    let missing_env = missing.display().to_string();
+    let _secret_dir = EnvGuard::set(&lock, "GEMINI_SECRET_DIR", &missing_env);
+    let options = rate_limits::RateLimitsOptions {
+        async_mode: true,
+        jobs: Some("bogus".to_string()),
+        ..Default::default()
+    };
+    assert_eq!(rate_limits::run(&options), 1);
+}
+
+#[test]
 fn rate_limits_async_cached_success_returns_0() {
     let lock = GlobalStateLock::new();
     let dir = TestDir::new("rate-limits-async-cached-success");

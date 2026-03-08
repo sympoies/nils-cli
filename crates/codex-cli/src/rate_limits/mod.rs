@@ -4,7 +4,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
@@ -284,11 +284,32 @@ fn run_async_json_mode(args: &RateLimitsOptions, _debug_mode: bool) -> Result<i3
         }
     };
 
+    let jobs = resolve_async_jobs(args.jobs.as_deref());
+    let cached_mode = args.cached;
+    let no_refresh_auth = args.no_refresh_auth;
+    let mut results_by_secret = collect_async_items(&secret_files, jobs, None, move |path, _| {
+        collect_json_result_for_secret(&path, cached_mode, no_refresh_auth, true)
+    });
     let mut results = Vec::new();
     let mut rc = 0;
     for secret_file in &secret_files {
-        let result =
-            collect_json_result_for_secret(secret_file, args.cached, args.no_refresh_auth, true);
+        let secret_name = secret_file
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("")
+            .to_string();
+        let result = results_by_secret.remove(&secret_name).unwrap_or_else(|| {
+            json_result_error(
+                secret_file,
+                "network",
+                "request-failed",
+                format!(
+                    "codex-rate-limits: async worker did not return a result for {}",
+                    secret_file.display()
+                ),
+                None,
+            )
+        });
         if !args.cached && !result.ok {
             rc = 1;
         }
@@ -616,17 +637,15 @@ fn is_sensitive_key(key: &str) -> bool {
     )
 }
 
-struct AsyncEvent {
-    secret_name: String,
+struct AsyncFetchResult {
     line: Option<String>,
     rc: i32,
     err: String,
 }
 
-struct AsyncFetchResult {
-    line: Option<String>,
-    rc: i32,
-    err: String,
+struct AsyncCollectedItem<T> {
+    secret_name: String,
+    value: T,
 }
 
 fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
@@ -665,13 +684,7 @@ fn run_async_mode_impl(
         return Ok(64);
     }
 
-    let jobs = args
-        .jobs
-        .as_deref()
-        .and_then(|raw| raw.parse::<i64>().ok())
-        .filter(|value| *value > 0)
-        .map(|value| value as usize)
-        .unwrap_or(5);
+    let jobs = resolve_async_jobs(args.jobs.as_deref());
 
     if args.clear_cache
         && let Err(err) = cache::clear_starship_cache()
@@ -799,73 +812,89 @@ struct AsyncRound {
     stderr_map: std::collections::HashMap<String, String>,
 }
 
-fn collect_async_round(
+fn resolve_async_jobs(jobs: Option<&str>) -> usize {
+    jobs.and_then(|raw| raw.parse::<i64>().ok())
+        .filter(|value| *value > 0)
+        .map(|value| value as usize)
+        .unwrap_or(5)
+}
+
+fn collect_async_items<T, F>(
     secret_files: &[PathBuf],
-    cached_mode: bool,
-    no_refresh_auth: bool,
     jobs: usize,
-) -> AsyncRound {
+    progress_prefix: Option<&str>,
+    worker: F,
+) -> std::collections::HashMap<String, T>
+where
+    T: Send + 'static,
+    F: Fn(PathBuf, String) -> T + Send + Sync + 'static,
+{
     let total = secret_files.len();
+    if total == 0 {
+        return std::collections::HashMap::new();
+    }
+
     let progress = if total > 1 {
-        Some(Progress::new(
-            total as u64,
-            ProgressOptions::default()
-                .with_prefix("codex-rate-limits ")
-                .with_finish(ProgressFinish::Clear),
-        ))
+        progress_prefix.map(|prefix| {
+            Progress::new(
+                total as u64,
+                ProgressOptions::default()
+                    .with_prefix(prefix)
+                    .with_finish(ProgressFinish::Clear),
+            )
+        })
     } else {
         None
     };
 
+    let worker_count = jobs.clamp(1, total);
+    let worker = Arc::new(worker);
     let (tx, rx) = mpsc::channel();
     let mut handles = Vec::new();
     let mut index = 0usize;
-    let worker_count = jobs.min(total);
 
-    let spawn_worker = |path: PathBuf,
-                        cached_mode: bool,
-                        no_refresh_auth: bool,
-                        tx: mpsc::Sender<AsyncEvent>|
-     -> thread::JoinHandle<()> {
-        thread::spawn(move || {
+    while index < total && handles.len() < worker_count {
+        let path = secret_files[index].clone();
+        index += 1;
+        let tx = tx.clone();
+        let worker = Arc::clone(&worker);
+        handles.push(thread::spawn(move || {
             let secret_name = path
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or("")
                 .to_string();
-            let result = async_fetch_one_line(&path, cached_mode, no_refresh_auth, &secret_name);
-            let _ = tx.send(AsyncEvent {
-                secret_name,
-                line: result.line,
-                rc: result.rc,
-                err: result.err,
-            });
-        })
-    };
-
-    while index < total && handles.len() < worker_count {
-        let path = secret_files[index].clone();
-        index += 1;
-        handles.push(spawn_worker(path, cached_mode, no_refresh_auth, tx.clone()));
+            let value = worker(path, secret_name.clone());
+            let _ = tx.send(AsyncCollectedItem { secret_name, value });
+        }));
     }
 
-    let mut events: std::collections::HashMap<String, AsyncEvent> =
-        std::collections::HashMap::new();
-    while events.len() < total {
-        let event = match rx.recv() {
-            Ok(event) => event,
+    let mut items = std::collections::HashMap::new();
+    while items.len() < total {
+        let item = match rx.recv() {
+            Ok(item) => item,
             Err(_) => break,
         };
         if let Some(progress) = &progress {
-            progress.set_message(event.secret_name.clone());
+            progress.set_message(item.secret_name.clone());
             progress.inc(1);
         }
-        events.insert(event.secret_name.clone(), event);
+        items.insert(item.secret_name.clone(), item.value);
 
         if index < total {
             let path = secret_files[index].clone();
             index += 1;
-            handles.push(spawn_worker(path, cached_mode, no_refresh_auth, tx.clone()));
+            let tx = tx.clone();
+            let worker = Arc::clone(&worker);
+            handles.push(thread::spawn(move || {
+                let secret_name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                let value = worker(path, secret_name.clone());
+                let _ = tx.send(AsyncCollectedItem { secret_name, value });
+            }));
         }
     }
 
@@ -877,6 +906,24 @@ fn collect_async_round(
     for handle in handles {
         let _ = handle.join();
     }
+
+    items
+}
+
+fn collect_async_round(
+    secret_files: &[PathBuf],
+    cached_mode: bool,
+    no_refresh_auth: bool,
+    jobs: usize,
+) -> AsyncRound {
+    let mut events = collect_async_items(
+        secret_files,
+        jobs,
+        Some("codex-rate-limits "),
+        move |path, secret_name| {
+            async_fetch_one_line(&path, cached_mode, no_refresh_auth, &secret_name)
+        },
+    );
 
     let mut rc = 0;
     let mut rows: Vec<Row> = Vec::new();
@@ -892,7 +939,7 @@ fn collect_async_round(
             .to_string();
 
         let mut row = Row::empty(secret_name.trim_end_matches(".json").to_string());
-        let event = events.get(&secret_name);
+        let event = events.remove(&secret_name);
         if let Some(event) = event {
             if !event.err.is_empty() {
                 stderr_map.insert(secret_name.clone(), event.err.clone());

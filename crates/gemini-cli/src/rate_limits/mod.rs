@@ -1,5 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::thread;
 
 use nils_common::env as shared_env;
 use nils_common::fs as shared_fs;
@@ -41,6 +43,7 @@ pub struct CacheEntry {
 
 pub const DIAG_SCHEMA_VERSION: &str = "gemini-cli.diag.rate-limits.v1";
 pub const DIAG_COMMAND: &str = "diag rate-limits";
+const DEFAULT_ASYNC_JOBS: usize = 5;
 
 #[derive(Clone, Debug)]
 struct RateLimitSummary {
@@ -71,6 +74,20 @@ struct Row {
     non_weekly_reset_epoch: Option<i64>,
     weekly_remaining: i64,
     weekly_reset_epoch: Option<i64>,
+}
+
+#[derive(Clone, Debug)]
+struct AsyncCollectionOptions {
+    cached_mode: bool,
+    no_refresh_auth: bool,
+    allow_cache_fallback: bool,
+    jobs: usize,
+}
+
+#[derive(Clone, Debug)]
+struct AsyncCollectedItem {
+    item: JsonResultItem,
+    exit_code: i32,
 }
 
 impl Row {
@@ -349,11 +366,7 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool) -> i32 {
 
         match collect_summary_from_network(&target, !args.no_refresh_auth) {
             Ok((summary, _raw)) => {
-                row.window_label = summary.non_weekly_label.clone();
-                row.non_weekly_remaining = summary.non_weekly_remaining;
-                row.non_weekly_reset_epoch = summary.non_weekly_reset_epoch;
-                row.weekly_remaining = summary.weekly_remaining;
-                row.weekly_reset_epoch = Some(summary.weekly_reset_epoch);
+                apply_summary_to_row(&mut row, &summary);
                 window_labels.insert(row.window_label.clone());
             }
             Err(err) => {
@@ -364,70 +377,7 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool) -> i32 {
         rows.push(row);
     }
 
-    println!("\n🚦 Gemini rate limits for all accounts\n");
-
-    let mut non_weekly_header = "Non-weekly".to_string();
-    let multiple_labels = window_labels.len() != 1;
-    if !multiple_labels && let Some(label) = window_labels.iter().next() {
-        non_weekly_header = label.clone();
-    }
-
-    let now_epoch = now_epoch_seconds();
-
-    println!(
-        "{:<15}  {:>8}  {:>7}  {:>8}  {:>7}  {:<18}",
-        "Name", non_weekly_header, "Left", "Weekly", "Left", "Reset"
-    );
-    println!("----------------------------------------------------------------------------");
-
-    rows.sort_by_key(|row| row.sort_key());
-
-    for row in rows {
-        let display_non_weekly = if multiple_labels && !row.window_label.is_empty() {
-            if row.non_weekly_remaining >= 0 {
-                format!("{}:{}%", row.window_label, row.non_weekly_remaining)
-            } else {
-                "-".to_string()
-            }
-        } else if row.non_weekly_remaining >= 0 {
-            format!("{}%", row.non_weekly_remaining)
-        } else {
-            "-".to_string()
-        };
-
-        let non_weekly_left = row
-            .non_weekly_reset_epoch
-            .and_then(|epoch| render::format_until_epoch_compact(epoch, now_epoch))
-            .unwrap_or_else(|| "-".to_string());
-        let weekly_left = row
-            .weekly_reset_epoch
-            .and_then(|epoch| render::format_until_epoch_compact(epoch, now_epoch))
-            .unwrap_or_else(|| "-".to_string());
-        let reset_display = row
-            .weekly_reset_epoch
-            .and_then(render::format_epoch_local_datetime_with_offset)
-            .unwrap_or_else(|| "-".to_string());
-
-        let non_weekly_display = ansi::format_percent_cell(&display_non_weekly, 8, None);
-        let weekly_display = if row.weekly_remaining >= 0 {
-            ansi::format_percent_cell(&format!("{}%", row.weekly_remaining), 8, None)
-        } else {
-            ansi::format_percent_cell("-", 8, None)
-        };
-
-        let is_current = current_name.as_deref() == Some(row.name.as_str());
-        let name_display = ansi::format_name_cell(&row.name, 15, is_current, None);
-
-        println!(
-            "{}  {}  {:>7}  {}  {:>7}  {:<18}",
-            name_display,
-            non_weekly_display,
-            non_weekly_left,
-            weekly_display,
-            weekly_left,
-            reset_display
-        );
-    }
+    print_all_accounts_table(rows, &window_labels, current_name.as_deref());
 
     rc
 }
@@ -537,7 +487,49 @@ fn run_async_mode(args: &RateLimitsOptions) -> i32 {
         eprintln!("{err}");
         return 1;
     }
-    run_all_mode(args, args.cached)
+
+    let secret_files = match collect_secret_files() {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+
+    let current_name = current_secret_basename(&secret_files);
+    let items = collect_async_items(
+        &secret_files,
+        AsyncCollectionOptions {
+            cached_mode: args.cached,
+            no_refresh_auth: args.no_refresh_auth,
+            allow_cache_fallback: false,
+            jobs: resolve_async_jobs(args.jobs.as_deref()),
+        },
+    );
+
+    let mut rc = 0;
+    let mut rows: Vec<Row> = Vec::new();
+    let mut window_labels = std::collections::HashSet::new();
+    for collected in items {
+        let mut row = Row::empty(collected.item.name.clone());
+        if let Some(summary) = &collected.item.summary {
+            apply_summary_to_row(&mut row, summary);
+            window_labels.insert(row.window_label.clone());
+        } else {
+            let message = collected
+                .item
+                .error_message
+                .unwrap_or_else(|| "gemini-rate-limits: unknown async error".to_string());
+            eprintln!("{}: {message}", collected.item.name);
+        }
+        if collected.exit_code != 0 {
+            rc = 1;
+        }
+        rows.push(row);
+    }
+
+    print_all_accounts_table(rows, &window_labels, current_name.as_deref());
+    rc
 }
 
 fn run_async_json_mode(args: &RateLimitsOptions) -> i32 {
@@ -595,12 +587,99 @@ fn run_async_json_mode(args: &RateLimitsOptions) -> i32 {
 
     let mut items: Vec<JsonResultItem> = Vec::new();
     let mut rc = 0;
+    for collected in collect_async_items(
+        &secret_files,
+        AsyncCollectionOptions {
+            cached_mode: false,
+            no_refresh_auth: args.no_refresh_auth,
+            allow_cache_fallback: true,
+            jobs: resolve_async_jobs(args.jobs.as_deref()),
+        },
+    ) {
+        if collected.exit_code != 0 {
+            rc = 1;
+        }
+        items.push(collected.item);
+    }
+    items.sort_by(|a, b| a.name.cmp(&b.name));
+    emit_collection_envelope("async", rc == 0, &items);
+    rc
+}
+
+fn resolve_async_jobs(raw: Option<&str>) -> usize {
+    raw.and_then(|value| value.parse::<i64>().ok())
+        .filter(|value| *value > 0)
+        .map(|value| value as usize)
+        .unwrap_or(DEFAULT_ASYNC_JOBS)
+}
+
+fn collect_async_items(
+    secret_files: &[PathBuf],
+    options: AsyncCollectionOptions,
+) -> Vec<AsyncCollectedItem> {
+    let total = secret_files.len();
+    let worker_count = options.jobs.min(total);
+    let (tx, rx) = mpsc::channel();
+    let mut handles = Vec::new();
+    let mut index = 0usize;
+
+    let spawn_worker = |path: PathBuf,
+                        options: AsyncCollectionOptions,
+                        tx: mpsc::Sender<(PathBuf, AsyncCollectedItem)>|
+     -> thread::JoinHandle<()> {
+        thread::spawn(move || {
+            let item = collect_async_item(&path, &options);
+            let _ = tx.send((path, item));
+        })
+    };
+
+    while index < total && handles.len() < worker_count {
+        let path = secret_files[index].clone();
+        index += 1;
+        handles.push(spawn_worker(path, options.clone(), tx.clone()));
+    }
+
+    let mut collected: std::collections::HashMap<PathBuf, AsyncCollectedItem> =
+        std::collections::HashMap::new();
+    while collected.len() < total {
+        let (path, item) = match rx.recv() {
+            Ok(value) => value,
+            Err(_) => break,
+        };
+        collected.insert(path, item);
+
+        if index < total {
+            let path = secret_files[index].clone();
+            index += 1;
+            handles.push(spawn_worker(path, options.clone(), tx.clone()));
+        }
+    }
+
+    drop(tx);
+    for handle in handles {
+        let _ = handle.join();
+    }
+
+    let mut items = Vec::new();
     for target in secret_files {
-        let name = secret_name_for_target(&target).unwrap_or_else(|| target_file_name(&target));
-        match collect_summary_from_network(&target, !args.no_refresh_auth) {
-            Ok((summary, raw_usage)) => items.push(JsonResultItem {
+        if let Some(item) = collected.remove(target) {
+            items.push(item);
+        }
+    }
+    items
+}
+
+fn collect_async_item(target: &Path, options: &AsyncCollectionOptions) -> AsyncCollectedItem {
+    if options.cached_mode {
+        return collect_async_cached_item(target);
+    }
+
+    let name = secret_name_for_target(target).unwrap_or_else(|| target_file_name(target));
+    match collect_summary_from_network(target, !options.no_refresh_auth) {
+        Ok((summary, raw_usage)) => AsyncCollectedItem {
+            item: JsonResultItem {
                 name,
-                target_file: target_file_name(&target),
+                target_file: target_file_name(target),
                 status: "ok".to_string(),
                 ok: true,
                 source: "network".to_string(),
@@ -608,14 +687,18 @@ fn run_async_json_mode(args: &RateLimitsOptions) -> i32 {
                 raw_usage,
                 error_code: None,
                 error_message: None,
-            }),
-            Err(err) => {
-                if err.code == "missing-access-token"
-                    && let Ok(cached) = read_cache_entry(&target)
-                {
-                    items.push(JsonResultItem {
+            },
+            exit_code: 0,
+        },
+        Err(err) => {
+            if options.allow_cache_fallback
+                && err.code == "missing-access-token"
+                && let Ok(cached) = read_cache_entry(target)
+            {
+                return AsyncCollectedItem {
+                    item: JsonResultItem {
                         name,
-                        target_file: target_file_name(&target),
+                        target_file: target_file_name(target),
                         status: "ok".to_string(),
                         ok: true,
                         source: "cache-fallback".to_string(),
@@ -629,14 +712,15 @@ fn run_async_json_mode(args: &RateLimitsOptions) -> i32 {
                         raw_usage: None,
                         error_code: None,
                         error_message: None,
-                    });
-                    continue;
-                }
+                    },
+                    exit_code: 0,
+                };
+            }
 
-                rc = 1;
-                items.push(JsonResultItem {
+            AsyncCollectedItem {
+                item: JsonResultItem {
                     name,
-                    target_file: target_file_name(&target),
+                    target_file: target_file_name(target),
                     status: "error".to_string(),
                     ok: false,
                     source: "network".to_string(),
@@ -644,13 +728,130 @@ fn run_async_json_mode(args: &RateLimitsOptions) -> i32 {
                     raw_usage: None,
                     error_code: Some(err.code),
                     error_message: Some(err.message),
-                });
+                },
+                exit_code: err.exit_code,
             }
         }
     }
-    items.sort_by(|a, b| a.name.cmp(&b.name));
-    emit_collection_envelope("async", rc == 0, &items);
-    rc
+}
+
+fn collect_async_cached_item(target: &Path) -> AsyncCollectedItem {
+    let name = secret_name_for_target(target).unwrap_or_else(|| target_file_name(target));
+    match read_cache_entry(target) {
+        Ok(summary) => AsyncCollectedItem {
+            item: JsonResultItem {
+                name,
+                target_file: target_file_name(target),
+                status: "ok".to_string(),
+                ok: true,
+                source: "cache".to_string(),
+                summary: Some(RateLimitSummary {
+                    non_weekly_label: summary.non_weekly_label,
+                    non_weekly_remaining: summary.non_weekly_remaining,
+                    non_weekly_reset_epoch: summary.non_weekly_reset_epoch,
+                    weekly_remaining: summary.weekly_remaining,
+                    weekly_reset_epoch: summary.weekly_reset_epoch,
+                }),
+                raw_usage: None,
+                error_code: None,
+                error_message: None,
+            },
+            exit_code: 0,
+        },
+        Err(err) => AsyncCollectedItem {
+            item: JsonResultItem {
+                name,
+                target_file: target_file_name(target),
+                status: "error".to_string(),
+                ok: false,
+                source: "cache".to_string(),
+                summary: None,
+                raw_usage: None,
+                error_code: Some("cache-read-failed".to_string()),
+                error_message: Some(err),
+            },
+            exit_code: 1,
+        },
+    }
+}
+
+fn apply_summary_to_row(row: &mut Row, summary: &RateLimitSummary) {
+    row.window_label = summary.non_weekly_label.clone();
+    row.non_weekly_remaining = summary.non_weekly_remaining;
+    row.non_weekly_reset_epoch = summary.non_weekly_reset_epoch;
+    row.weekly_remaining = summary.weekly_remaining;
+    row.weekly_reset_epoch = Some(summary.weekly_reset_epoch);
+}
+
+fn print_all_accounts_table(
+    mut rows: Vec<Row>,
+    window_labels: &std::collections::HashSet<String>,
+    current_name: Option<&str>,
+) {
+    println!("\n🚦 Gemini rate limits for all accounts\n");
+
+    let mut non_weekly_header = "Non-weekly".to_string();
+    let multiple_labels = window_labels.len() != 1;
+    if !multiple_labels && let Some(label) = window_labels.iter().next() {
+        non_weekly_header = label.clone();
+    }
+
+    let now_epoch = now_epoch_seconds();
+
+    println!(
+        "{:<15}  {:>8}  {:>7}  {:>8}  {:>7}  {:<18}",
+        "Name", non_weekly_header, "Left", "Weekly", "Left", "Reset"
+    );
+    println!("----------------------------------------------------------------------------");
+
+    rows.sort_by_key(|row| row.sort_key());
+
+    for row in rows {
+        let display_non_weekly = if multiple_labels && !row.window_label.is_empty() {
+            if row.non_weekly_remaining >= 0 {
+                format!("{}:{}%", row.window_label, row.non_weekly_remaining)
+            } else {
+                "-".to_string()
+            }
+        } else if row.non_weekly_remaining >= 0 {
+            format!("{}%", row.non_weekly_remaining)
+        } else {
+            "-".to_string()
+        };
+
+        let non_weekly_left = row
+            .non_weekly_reset_epoch
+            .and_then(|epoch| render::format_until_epoch_compact(epoch, now_epoch))
+            .unwrap_or_else(|| "-".to_string());
+        let weekly_left = row
+            .weekly_reset_epoch
+            .and_then(|epoch| render::format_until_epoch_compact(epoch, now_epoch))
+            .unwrap_or_else(|| "-".to_string());
+        let reset_display = row
+            .weekly_reset_epoch
+            .and_then(render::format_epoch_local_datetime_with_offset)
+            .unwrap_or_else(|| "-".to_string());
+
+        let non_weekly_display = ansi::format_percent_cell(&display_non_weekly, 8, None);
+        let weekly_display = if row.weekly_remaining >= 0 {
+            ansi::format_percent_cell(&format!("{}%", row.weekly_remaining), 8, None)
+        } else {
+            ansi::format_percent_cell("-", 8, None)
+        };
+
+        let is_current = current_name == Some(row.name.as_str());
+        let name_display = ansi::format_name_cell(&row.name, 15, is_current, None);
+
+        println!(
+            "{}  {}  {:>7}  {}  {:>7}  {:<18}",
+            name_display,
+            non_weekly_display,
+            non_weekly_left,
+            weekly_display,
+            weekly_left,
+            reset_display
+        );
+    }
 }
 
 pub fn clear_starship_cache() -> Result<(), String> {

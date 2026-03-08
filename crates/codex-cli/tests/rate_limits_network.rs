@@ -4,8 +4,12 @@ use nils_test_support::http::{HttpResponse, LoopbackServer};
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use std::fs;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn codex_cli_bin() -> PathBuf {
     bin::resolve("codex-cli")
@@ -129,6 +133,87 @@ fn cache_kv_path(cache_root: &Path, key: &str) -> PathBuf {
         .join("codex")
         .join("starship-rate-limits")
         .join(format!("{key}.kv"))
+}
+
+fn handle_barrier_connection(
+    stream: &mut TcpStream,
+    response_body: &str,
+    state: &Arc<(Mutex<usize>, Condvar)>,
+    expected_requests: usize,
+) {
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let mut buf = [0u8; 4096];
+    let _ = stream.read(&mut buf);
+
+    let (lock, cv) = &**state;
+    let seen = lock.lock().expect("seen lock");
+    let mut seen = seen;
+    *seen += 1;
+    cv.notify_all();
+    let ready = cv
+        .wait_timeout_while(seen, Duration::from_secs(2), |count| {
+            *count < expected_requests
+        })
+        .expect("barrier wait");
+    let concurrent = *ready.0 >= expected_requests;
+
+    let (status, reason, body) = if concurrent {
+        (200, "OK", response_body.to_string())
+    } else {
+        (
+            504,
+            "Gateway Timeout",
+            r#"{"error":"concurrency barrier not satisfied"}"#.to_string(),
+        )
+    };
+    let response = format!(
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    let _ = stream.write_all(response.as_bytes());
+    let _ = stream.flush();
+}
+
+fn spawn_concurrency_barrier_server(
+    expected_requests: usize,
+) -> (String, thread::JoinHandle<usize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+    listener
+        .set_nonblocking(true)
+        .expect("set listener nonblocking");
+    let addr = listener.local_addr().expect("local addr");
+    let body = wham_usage_ok_body();
+    let state = Arc::new((Mutex::new(0usize), Condvar::new()));
+
+    let handle = thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut accepted = 0usize;
+        let mut handlers = Vec::new();
+        while Instant::now() < deadline && accepted < expected_requests {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    accepted += 1;
+                    let state = Arc::clone(&state);
+                    let body = body.clone();
+                    handlers.push(thread::spawn(move || {
+                        handle_barrier_connection(&mut stream, &body, &state, expected_requests);
+                    }));
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => break,
+            }
+        }
+
+        for handler in handlers {
+            let _ = handler.join();
+        }
+        accepted
+    });
+
+    (format!("http://{addr}"), handle)
 }
 
 #[test]
@@ -443,6 +528,44 @@ fn rate_limits_async_falls_back_to_cache_in_debug_mode() {
     assert!(stdout(&output).contains("+00:00"));
     assert!(stderr(&output).contains("falling back to cache for beta"));
     assert!(stderr(&output).contains("missing access_token"));
+}
+
+#[test]
+fn rate_limits_async_json_jobs_zero_defaults_to_concurrent_workers() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let secrets = dir.path().join("secrets");
+    fs::create_dir_all(&secrets).expect("secrets dir");
+    write_secret(&secrets, "beta.json", Some("tok_b"));
+    write_secret(&secrets, "alpha.json", Some("tok_a"));
+
+    let cache_root = dir.path().join("cache_root");
+    fs::create_dir_all(&cache_root).expect("cache root");
+
+    let (base_url, server) = spawn_concurrency_barrier_server(2);
+
+    let output = run(
+        &["diag", "rate-limits", "--async", "--json", "--jobs", "0"],
+        &[
+            ("CODEX_SECRET_DIR", &secrets),
+            ("ZSH_CACHE_DIR", &cache_root),
+        ],
+        &[
+            ("CODEX_CHATGPT_BASE_URL", &base_url),
+            ("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false"),
+            ("CODEX_RATE_LIMITS_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
+            ("CODEX_RATE_LIMITS_CURL_MAX_TIME_SECONDS", "3"),
+            ("TZ", "UTC"),
+            ("NO_COLOR", "1"),
+        ],
+    );
+    assert_exit(&output, 0);
+
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    let results = payload["results"].as_array().expect("results array");
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0]["name"], "alpha");
+    assert_eq!(results[1]["name"], "beta");
+    assert_eq!(server.join().expect("server join"), 2);
 }
 
 #[test]
