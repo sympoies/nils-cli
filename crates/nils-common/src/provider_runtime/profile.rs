@@ -17,7 +17,7 @@ pub struct ProviderEnvKeys {
     pub secret_dir: &'static str,
     pub auth_file: &'static str,
     pub secret_cache_dir: &'static str,
-    pub starship_enabled: &'static str,
+    pub prompt_segment_enabled: &'static str,
     pub auto_refresh_enabled: &'static str,
     pub auto_refresh_min_days: &'static str,
 }
@@ -26,7 +26,7 @@ pub struct ProviderEnvKeys {
 pub struct ProviderDefaults {
     pub model: &'static str,
     pub reasoning: &'static str,
-    pub starship_enabled: &'static str,
+    pub prompt_segment_enabled: &'static str,
     pub auto_refresh_enabled: &'static str,
     pub auto_refresh_min_days: &'static str,
 }

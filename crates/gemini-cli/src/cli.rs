@@ -21,8 +21,8 @@ pub enum Command {
     Diag(DiagArgs),
     /// Configuration command group
     Config(ConfigArgs),
-    /// Starship integration command group
-    Starship(StarshipArgs),
+    /// Prompt-segment command group
+    PromptSegment(PromptSegmentArgs),
     /// Export shell completion script
     Completion(CompletionArgs),
 }
@@ -172,7 +172,7 @@ pub enum DiagCommand {
 
 #[derive(Args)]
 pub struct RateLimitsArgs {
-    /// Clear starship cache before querying
+    /// Clear prompt-segment cache before querying
     #[arg(short = 'c')]
     pub clear_cache: bool,
     /// Debug output
@@ -221,7 +221,7 @@ pub enum ConfigCommand {
 }
 
 #[derive(Args)]
-pub struct StarshipArgs {
+pub struct PromptSegmentArgs {
     /// Hide the 5h window output
     #[arg(long = "no-5h")]
     pub no_5h: bool,
@@ -237,7 +237,7 @@ pub struct StarshipArgs {
     /// Force a blocking refresh
     #[arg(long = "refresh")]
     pub refresh: bool,
-    /// Exit 0 if starship is enabled
+    /// Exit 0 if prompt-segment output is enabled
     #[arg(long = "is-enabled")]
     pub is_enabled: bool,
 }

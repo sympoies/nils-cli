@@ -58,7 +58,7 @@ fn assert_exit(output: &CmdOutput, code: i32) {
 fn cache_kv_path(cache_root: &Path, key: &str) -> PathBuf {
     cache_root
         .join("codex")
-        .join("starship-rate-limits")
+        .join("prompt-segment-rate-limits")
         .join(format!("{key}.kv"))
 }
 

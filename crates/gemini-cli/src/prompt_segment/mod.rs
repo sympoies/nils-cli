@@ -12,7 +12,7 @@ mod render;
 pub use render::CacheEntry;
 
 #[derive(Clone, Debug, Default)]
-pub struct StarshipOptions {
+pub struct PromptSegmentOptions {
     pub no_5h: bool,
     pub ttl: Option<String>,
     pub time_format: Option<String>,
@@ -28,9 +28,9 @@ const DEFAULT_CODE_ASSIST_ENDPOINT: &str = "https://cloudcode-pa.googleapis.com"
 const DEFAULT_CODE_ASSIST_API_VERSION: &str = "v1internal";
 const DEFAULT_CODE_ASSIST_PROJECT: &str = "projects/default";
 
-pub fn run(options: &StarshipOptions) -> i32 {
+pub fn run(options: &PromptSegmentOptions) -> i32 {
     if options.is_enabled {
-        return if starship_enabled() { 0 } else { 1 };
+        return if prompt_segment_enabled() { 0 } else { 1 };
     }
 
     let ttl_seconds = match resolve_ttl_seconds(options.ttl.as_deref()) {
@@ -41,7 +41,7 @@ pub fn run(options: &StarshipOptions) -> i32 {
         }
     };
 
-    if !starship_enabled() {
+    if !prompt_segment_enabled() {
         return 0;
     }
 
@@ -54,14 +54,14 @@ pub fn run(options: &StarshipOptions) -> i32 {
     }
 
     let show_5h =
-        shared_env::env_truthy_or("GEMINI_STARSHIP_SHOW_5H_ENABLED", true) && !options.no_5h;
+        shared_env::env_truthy_or("GEMINI_PROMPT_SEGMENT_SHOW_5H_ENABLED", true) && !options.no_5h;
     let time_format = match options.time_format.as_deref() {
         Some(value) => value,
         None if options.show_timezone => DEFAULT_TIME_FORMAT_WITH_TIMEZONE,
         None => DEFAULT_TIME_FORMAT,
     };
-    let stale_suffix =
-        std::env::var("GEMINI_STARSHIP_STALE_SUFFIX").unwrap_or_else(|_| " (stale)".to_string());
+    let stale_suffix = std::env::var("GEMINI_PROMPT_SEGMENT_STALE_SUFFIX")
+        .unwrap_or_else(|_| " (stale)".to_string());
 
     let prefix = resolve_name_prefix(&target_file);
 
@@ -123,7 +123,7 @@ fn resolve_ttl_seconds(cli_ttl: Option<&str>) -> Result<u64, ()> {
         return shared_env::parse_duration_seconds(raw).ok_or(());
     }
 
-    if let Ok(raw) = std::env::var("GEMINI_STARSHIP_TTL")
+    if let Ok(raw) = std::env::var("GEMINI_PROMPT_SEGMENT_TTL")
         && let Some(value) = shared_env::parse_duration_seconds(&raw)
     {
         return Ok(value);
@@ -132,14 +132,14 @@ fn resolve_ttl_seconds(cli_ttl: Option<&str>) -> Result<u64, ()> {
     Ok(DEFAULT_TTL_SECONDS)
 }
 
-fn starship_enabled() -> bool {
-    shared_env::env_truthy("GEMINI_STARSHIP_ENABLED")
+fn prompt_segment_enabled() -> bool {
+    shared_env::env_truthy("GEMINI_PROMPT_SEGMENT_ENABLED")
 }
 
 fn print_ttl_usage() {
-    eprintln!("gemini-cli starship: invalid --ttl");
+    eprintln!("gemini-cli prompt-segment: invalid --ttl");
     eprintln!(
-        "usage: gemini-cli starship [--no-5h] [--ttl <duration>] [--time-format <strftime>] [--show-timezone] [--refresh] [--is-enabled]"
+        "usage: gemini-cli prompt-segment [--no-5h] [--ttl <duration>] [--time-format <strftime>] [--show-timezone] [--refresh] [--is-enabled]"
     );
 }
 
@@ -152,12 +152,12 @@ fn resolve_name_prefix(target_file: &Path) -> String {
 }
 
 fn resolve_name(target_file: &Path) -> Option<String> {
-    let source = std::env::var("GEMINI_STARSHIP_NAME_SOURCE")
+    let source = std::env::var("GEMINI_PROMPT_SEGMENT_NAME_SOURCE")
         .ok()
         .map(|value| value.to_ascii_lowercase())
         .unwrap_or_else(|| "secret".to_string());
-    let show_fallback = shared_env::env_truthy("GEMINI_STARSHIP_SHOW_FALLBACK_NAME_ENABLED");
-    let show_full_email = shared_env::env_truthy("GEMINI_STARSHIP_SHOW_FULL_EMAIL_ENABLED");
+    let show_fallback = shared_env::env_truthy("GEMINI_PROMPT_SEGMENT_SHOW_FALLBACK_NAME_ENABLED");
+    let show_full_email = shared_env::env_truthy("GEMINI_PROMPT_SEGMENT_SHOW_FULL_EMAIL_ENABLED");
 
     if source == "email" {
         if let Ok(Some(email)) = auth::email_from_auth_file(target_file) {

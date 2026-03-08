@@ -43,7 +43,7 @@ fn completion_contract_includes_top_level_command_families() {
             "'auth:Authentication command group' \\",
             "'diag:Diagnostics command group' \\",
             "'config:Configuration command group' \\",
-            "'starship:Starship integration command group' \\",
+            "'prompt-segment:Prompt-segment command group' \\",
         ],
     );
 }

@@ -29,14 +29,14 @@ static CODEX_PROFILE: ProviderProfile = ProviderProfile {
         secret_dir: "CODEX_SECRET_DIR",
         auth_file: "CODEX_AUTH_FILE",
         secret_cache_dir: "CODEX_SECRET_CACHE_DIR",
-        starship_enabled: "CODEX_STARSHIP_ENABLED",
+        prompt_segment_enabled: "CODEX_PROMPT_SEGMENT_ENABLED",
         auto_refresh_enabled: "CODEX_AUTO_REFRESH_ENABLED",
         auto_refresh_min_days: "CODEX_AUTO_REFRESH_MIN_DAYS",
     },
     defaults: ProviderDefaults {
         model: "gpt-5.1-codex-mini",
         reasoning: "medium",
-        starship_enabled: "false",
+        prompt_segment_enabled: "false",
         auto_refresh_enabled: "false",
         auto_refresh_min_days: "5",
     },
@@ -66,14 +66,14 @@ static GEMINI_PROFILE: ProviderProfile = ProviderProfile {
         secret_dir: "GEMINI_SECRET_DIR",
         auth_file: "GEMINI_AUTH_FILE",
         secret_cache_dir: "GEMINI_SECRET_CACHE_DIR",
-        starship_enabled: "GEMINI_STARSHIP_ENABLED",
+        prompt_segment_enabled: "GEMINI_PROMPT_SEGMENT_ENABLED",
         auto_refresh_enabled: "GEMINI_AUTO_REFRESH_ENABLED",
         auto_refresh_min_days: "GEMINI_AUTO_REFRESH_MIN_DAYS",
     },
     defaults: ProviderDefaults {
         model: "gemini-2.5-flash",
         reasoning: "medium",
-        starship_enabled: "false",
+        prompt_segment_enabled: "false",
         auto_refresh_enabled: "false",
         auto_refresh_min_days: "5",
     },
@@ -142,13 +142,13 @@ fn provider_runtime_config_snapshot_reads_provider_specific_keys() {
     let _model = EnvGuard::set(&lock, "CODEX_CLI_MODEL", "gpt-test");
     let _reasoning = EnvGuard::set(&lock, "CODEX_CLI_REASONING", "high");
     let _danger = EnvGuard::set(&lock, "CODEX_ALLOW_DANGEROUS_ENABLED", "true");
-    let _starship = EnvGuard::set(&lock, "CODEX_STARSHIP_ENABLED", "true");
+    let _prompt_segment = EnvGuard::set(&lock, "CODEX_PROMPT_SEGMENT_ENABLED", "true");
 
     let snapshot = config::snapshot(&CODEX_PROFILE);
     assert_eq!(snapshot.model, "gpt-test");
     assert_eq!(snapshot.reasoning, "high");
     assert_eq!(snapshot.allow_dangerous_enabled_raw, "true");
-    assert_eq!(snapshot.starship_enabled, "true");
+    assert_eq!(snapshot.prompt_segment_enabled, "true");
 }
 
 #[test]

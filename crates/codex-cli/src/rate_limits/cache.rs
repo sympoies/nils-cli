@@ -21,7 +21,7 @@ const DEFAULT_CACHE_TTL_SECONDS: u64 = 180;
 const CACHE_MISS_HINT: &str =
     "rerun without --cached to refresh, or set CODEX_RATE_LIMITS_CACHE_ALLOW_STALE=true";
 
-pub fn clear_starship_cache() -> Result<()> {
+pub fn clear_prompt_segment_cache() -> Result<()> {
     let root = cache_root().context("cache root")?;
     if !root.is_absolute() {
         anyhow::bail!(
@@ -36,9 +36,9 @@ pub fn clear_starship_cache() -> Result<()> {
         );
     }
 
-    let cache_dir = root.join("codex").join("starship-rate-limits");
+    let cache_dir = root.join("codex").join("prompt-segment-rate-limits");
     let cache_dir_str = cache_dir.to_string_lossy();
-    if !cache_dir_str.ends_with("/codex/starship-rate-limits") {
+    if !cache_dir_str.ends_with("/codex/prompt-segment-rate-limits") {
         anyhow::bail!(
             "codex-rate-limits: refusing to clear unexpected cache dir: {}",
             cache_dir.display()
@@ -53,7 +53,7 @@ pub fn clear_starship_cache() -> Result<()> {
 }
 
 pub fn cache_file_for_target(target_file: &Path) -> Result<PathBuf> {
-    let cache_dir = starship_cache_dir().context("cache dir")?;
+    let cache_dir = prompt_segment_cache_dir().context("cache dir")?;
 
     if let Some(secret_dir) = paths::resolve_secret_dir() {
         if target_file.starts_with(&secret_dir) {
@@ -84,7 +84,7 @@ pub fn read_cache_entry(target_file: &Path) -> Result<CacheEntry> {
     let cache_file = cache_file_for_target(target_file)?;
     if !cache_file.is_file() {
         anyhow::bail!(
-            "codex-rate-limits: cache not found (run codex-rate-limits without --cached, or codex-starship, to populate): {}",
+            "codex-rate-limits: cache not found (run codex-rate-limits without --cached, or codex-cli prompt-segment, to populate): {}",
             cache_file.display()
         );
     }
@@ -162,7 +162,7 @@ pub fn read_cache_entry_for_cached_mode(target_file: &Path) -> Result<CacheEntry
     Ok(entry)
 }
 
-pub fn write_starship_cache(
+pub fn write_prompt_segment_cache(
     target_file: &Path,
     fetched_at_epoch: i64,
     non_weekly_label: &str,
@@ -191,9 +191,9 @@ pub fn write_starship_cache(
     Ok(())
 }
 
-fn starship_cache_dir() -> Result<PathBuf> {
+fn prompt_segment_cache_dir() -> Result<PathBuf> {
     let root = cache_root().context("cache root")?;
-    Ok(root.join("codex").join("starship-rate-limits"))
+    Ok(root.join("codex").join("prompt-segment-rate-limits"))
 }
 
 fn ensure_cache_fresh(target_file: &Path, entry: &CacheEntry) -> Result<()> {
@@ -315,8 +315,8 @@ fn cache_key(name: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        cache_file_for_target, clear_starship_cache, read_cache_entry,
-        read_cache_entry_for_cached_mode, secret_name_for_target, write_starship_cache,
+        cache_file_for_target, clear_prompt_segment_cache, read_cache_entry,
+        read_cache_entry_for_cached_mode, secret_name_for_target, write_prompt_segment_cache,
     };
     use chrono::Utc;
     use nils_common::fs as shared_fs;
@@ -366,29 +366,29 @@ mod tests {
     }
 
     #[test]
-    fn clear_starship_cache_rejects_relative_cache_root() {
+    fn clear_prompt_segment_cache_rejects_relative_cache_root() {
         let lock = GlobalStateLock::new();
         let _cache = EnvGuard::set(&lock, "ZSH_CACHE_DIR", "relative/cache");
 
-        let err = clear_starship_cache().expect_err("relative cache root should fail");
+        let err = clear_prompt_segment_cache().expect_err("relative cache root should fail");
         assert!(err.to_string().contains("non-absolute cache root"));
     }
 
     #[test]
-    fn clear_starship_cache_rejects_root_cache_path() {
+    fn clear_prompt_segment_cache_rejects_root_cache_path() {
         let lock = GlobalStateLock::new();
         let _cache = EnvGuard::set(&lock, "ZSH_CACHE_DIR", "/");
 
-        let err = clear_starship_cache().expect_err("root cache path should fail");
+        let err = clear_prompt_segment_cache().expect_err("root cache path should fail");
         assert!(err.to_string().contains("invalid cache root"));
     }
 
     #[test]
-    fn clear_starship_cache_removes_only_starship_cache_dir() {
+    fn clear_prompt_segment_cache_removes_only_prompt_segment_cache_dir() {
         let lock = GlobalStateLock::new();
         let dir = tempfile::TempDir::new().expect("tempdir");
         let cache_root = dir.path().join("cache-root");
-        let remove_dir = cache_root.join("codex").join("starship-rate-limits");
+        let remove_dir = cache_root.join("codex").join("prompt-segment-rate-limits");
         let keep_dir = cache_root.join("codex").join("secrets");
         fs::create_dir_all(&remove_dir).expect("remove dir");
         fs::create_dir_all(&keep_dir).expect("keep dir");
@@ -404,9 +404,12 @@ mod tests {
             cache_root.to_str().expect("cache root path"),
         );
 
-        clear_starship_cache().expect("clear cache");
+        clear_prompt_segment_cache().expect("clear cache");
 
-        assert!(!remove_dir.exists(), "starship cache dir should be removed");
+        assert!(
+            !remove_dir.exists(),
+            "prompt-segment cache dir should be removed"
+        );
         assert!(keep_dir.is_dir(), "non-target cache dir should remain");
     }
 
@@ -428,7 +431,7 @@ mod tests {
             cache_file,
             cache_root
                 .join("codex")
-                .join("starship-rate-limits")
+                .join("prompt-segment-rate-limits")
                 .join("my_secret_name.kv")
         );
     }
@@ -452,7 +455,7 @@ mod tests {
             cache_file,
             cache_root
                 .join("codex")
-                .join("starship-rate-limits")
+                .join("prompt-segment-rate-limits")
                 .join(format!("auth_{hash}.kv"))
         );
     }
@@ -509,7 +512,7 @@ mod tests {
         let target = secret_dir.join("alpha.json");
         fs::write(&target, "{}").expect("write target");
 
-        write_starship_cache(
+        write_prompt_segment_cache(
             &target,
             1700000000,
             "5h",
@@ -541,7 +544,7 @@ mod tests {
         let target = secret_dir.join("alpha.json");
         fs::write(&target, "{}").expect("write target");
 
-        write_starship_cache(&target, 1700000000, "daily", 45, 9, 1700600000, None)
+        write_prompt_segment_cache(&target, 1700000000, "daily", 45, 9, 1700600000, None)
             .expect("write cache");
 
         let cache_file = cache_file_for_target(&target).expect("cache path");
@@ -613,7 +616,7 @@ mod tests {
 
         let target = secret_dir.join("alpha.json");
         fs::write(&target, "{}").expect("write target");
-        write_starship_cache(&target, 1, "5h", 91, 12, 1_700_600_000, Some(1_700_003_600))
+        write_prompt_segment_cache(&target, 1, "5h", 91, 12, 1_700_600_000, Some(1_700_003_600))
             .expect("write cache");
 
         let err = read_cache_entry_for_cached_mode(&target).expect_err("stale cache should fail");
@@ -635,7 +638,7 @@ mod tests {
         fs::write(&target, "{}").expect("write target");
         let now = Utc::now().timestamp();
         let fetched_at = now.saturating_sub(30 * 60);
-        write_starship_cache(
+        write_prompt_segment_cache(
             &target,
             fetched_at,
             "5h",
@@ -663,7 +666,7 @@ mod tests {
 
         let target = secret_dir.join("alpha.json");
         fs::write(&target, "{}").expect("write target");
-        write_starship_cache(&target, 1, "5h", 91, 12, 1_700_600_000, Some(1_700_003_600))
+        write_prompt_segment_cache(&target, 1, "5h", 91, 12, 1_700_600_000, Some(1_700_003_600))
             .expect("write cache");
 
         let entry = read_cache_entry_for_cached_mode(&target).expect("allow stale");

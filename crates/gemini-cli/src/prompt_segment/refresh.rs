@@ -6,7 +6,7 @@ use crate::rate_limits;
 use crate::rate_limits::client::{UsageRequest, fetch_usage};
 use crate::rate_limits::render as rate_render;
 
-use super::render as starship_render;
+use super::render as prompt_segment_render;
 
 pub(crate) fn enqueue_background_refresh(target_file: &Path) {
     let cache_file = match rate_limits::cache_file_for_target(target_file) {
@@ -18,12 +18,12 @@ pub(crate) fn enqueue_background_refresh(target_file: &Path) {
         None => return,
     };
 
-    let refresh_min_seconds = super::env_u64("GEMINI_STARSHIP_REFRESH_MIN_SECONDS", 30);
+    let refresh_min_seconds = super::env_u64("GEMINI_PROMPT_SEGMENT_REFRESH_MIN_SECONDS", 30);
     if refresh_min_seconds > 0 && is_within_min_interval(&cache_file, refresh_min_seconds) {
         return;
     }
 
-    let lock_stale_seconds = super::env_u64("GEMINI_STARSHIP_LOCK_STALE_SECONDS", 90);
+    let lock_stale_seconds = super::env_u64("GEMINI_PROMPT_SEGMENT_LOCK_STALE_SECONDS", 90);
     if lock_dir.exists() && !is_stale(&lock_dir, lock_stale_seconds) {
         return;
     }
@@ -36,7 +36,7 @@ pub(crate) fn enqueue_background_refresh(target_file: &Path) {
     };
 
     let mut cmd = std::process::Command::new(exe);
-    cmd.arg("starship").arg("--refresh");
+    cmd.arg("prompt-segment").arg("--refresh");
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::null());
     cmd.stderr(Stdio::null());
@@ -44,10 +44,10 @@ pub(crate) fn enqueue_background_refresh(target_file: &Path) {
     let _ = cmd.spawn();
 }
 
-pub(crate) fn refresh_blocking(target_file: &Path) -> Option<starship_render::CacheEntry> {
+pub(crate) fn refresh_blocking(target_file: &Path) -> Option<prompt_segment_render::CacheEntry> {
     let cache_file = rate_limits::cache_file_for_target(target_file).ok()?;
     let lock_dir = lock_dir_for_cache_file(&cache_file)?;
-    let lock_stale_seconds = super::env_u64("GEMINI_STARSHIP_LOCK_STALE_SECONDS", 90);
+    let lock_stale_seconds = super::env_u64("GEMINI_PROMPT_SEGMENT_LOCK_STALE_SECONDS", 90);
 
     let _lock = RefreshLock::acquire(&lock_dir, lock_stale_seconds)?;
 
@@ -56,9 +56,9 @@ pub(crate) fn refresh_blocking(target_file: &Path) -> Option<starship_render::Ca
     Some(entry)
 }
 
-fn fetch_and_write_cache(target_file: &Path) -> anyhow::Result<starship_render::CacheEntry> {
-    let connect_timeout = super::env_u64("GEMINI_STARSHIP_CURL_CONNECT_TIMEOUT_SECONDS", 2);
-    let max_time = super::env_u64("GEMINI_STARSHIP_CURL_MAX_TIME_SECONDS", 8);
+fn fetch_and_write_cache(target_file: &Path) -> anyhow::Result<prompt_segment_render::CacheEntry> {
+    let connect_timeout = super::env_u64("GEMINI_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS", 2);
+    let max_time = super::env_u64("GEMINI_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS", 8);
 
     let usage_request = UsageRequest {
         target_file: target_file.to_path_buf(),
@@ -78,7 +78,7 @@ fn fetch_and_write_cache(target_file: &Path) -> anyhow::Result<starship_render::
 
     let fetched_at_epoch = super::now_epoch();
     if fetched_at_epoch > 0 {
-        let _ = rate_limits::write_starship_cache(
+        let _ = rate_limits::write_prompt_segment_cache(
             target_file,
             fetched_at_epoch,
             &weekly.non_weekly_label,
@@ -89,7 +89,7 @@ fn fetch_and_write_cache(target_file: &Path) -> anyhow::Result<starship_render::
         );
     }
 
-    Ok(starship_render::CacheEntry {
+    Ok(prompt_segment_render::CacheEntry {
         fetched_at_epoch,
         non_weekly_label: weekly.non_weekly_label,
         non_weekly_remaining: weekly.non_weekly_remaining,
@@ -100,7 +100,7 @@ fn fetch_and_write_cache(target_file: &Path) -> anyhow::Result<starship_render::
 }
 
 fn refresh_exe() -> Option<PathBuf> {
-    super::env_non_empty("GEMINI_STARSHIP_EXE")
+    super::env_non_empty("GEMINI_PROMPT_SEGMENT_EXE")
         .map(PathBuf::from)
         .or_else(|| std::env::current_exe().ok())
 }

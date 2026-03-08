@@ -9,7 +9,7 @@ use crate::rate_limits::client::{UsageRequest, fetch_usage};
 use crate::rate_limits::render;
 
 use super::lock;
-use super::render as starship_render;
+use super::render as prompt_segment_render;
 
 pub fn enqueue_background_refresh(target_file: &Path) {
     let cache_file = match cache::cache_file_for_target(target_file) {
@@ -21,12 +21,12 @@ pub fn enqueue_background_refresh(target_file: &Path) {
         None => return,
     };
 
-    let refresh_min_seconds = env_u64("CODEX_STARSHIP_REFRESH_MIN_SECONDS", 30);
+    let refresh_min_seconds = env_u64("CODEX_PROMPT_SEGMENT_REFRESH_MIN_SECONDS", 30);
     if refresh_min_seconds > 0 && is_within_min_interval(&cache_file, refresh_min_seconds) {
         return;
     }
 
-    let lock_stale_seconds = env_u64("CODEX_STARSHIP_LOCK_STALE_SECONDS", 90);
+    let lock_stale_seconds = env_u64("CODEX_PROMPT_SEGMENT_LOCK_STALE_SECONDS", 90);
     if lock_dir.exists() && !lock::is_stale(&lock_dir, lock_stale_seconds) {
         return;
     }
@@ -39,7 +39,7 @@ pub fn enqueue_background_refresh(target_file: &Path) {
     };
 
     let mut cmd = std::process::Command::new(exe);
-    cmd.arg("starship").arg("--refresh");
+    cmd.arg("prompt-segment").arg("--refresh");
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::null());
     cmd.stderr(Stdio::null());
@@ -47,10 +47,10 @@ pub fn enqueue_background_refresh(target_file: &Path) {
     let _ = cmd.spawn();
 }
 
-pub fn refresh_blocking(target_file: &Path) -> Option<starship_render::CacheEntry> {
+pub fn refresh_blocking(target_file: &Path) -> Option<prompt_segment_render::CacheEntry> {
     let cache_file = cache::cache_file_for_target(target_file).ok()?;
     let lock_dir = lock::lock_dir_for_cache_file(&cache_file)?;
-    let lock_stale_seconds = env_u64("CODEX_STARSHIP_LOCK_STALE_SECONDS", 90);
+    let lock_stale_seconds = env_u64("CODEX_PROMPT_SEGMENT_LOCK_STALE_SECONDS", 90);
 
     cleanup_usage_files(&cache_file);
 
@@ -61,11 +61,11 @@ pub fn refresh_blocking(target_file: &Path) -> Option<starship_render::CacheEntr
     Some(entry)
 }
 
-fn fetch_and_write_cache(target_file: &Path) -> anyhow::Result<starship_render::CacheEntry> {
+fn fetch_and_write_cache(target_file: &Path) -> anyhow::Result<prompt_segment_render::CacheEntry> {
     let base_url = std::env::var("CODEX_CHATGPT_BASE_URL")
         .unwrap_or_else(|_| "https://chatgpt.com/backend-api/".to_string());
-    let connect_timeout = env_u64("CODEX_STARSHIP_CURL_CONNECT_TIMEOUT_SECONDS", 2);
-    let max_time = env_u64("CODEX_STARSHIP_CURL_MAX_TIME_SECONDS", 8);
+    let connect_timeout = env_u64("CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS", 2);
+    let max_time = env_u64("CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS", 8);
 
     let usage_request = UsageRequest {
         target_file: target_file.to_path_buf(),
@@ -83,7 +83,7 @@ fn fetch_and_write_cache(target_file: &Path) -> anyhow::Result<starship_render::
 
     let fetched_at_epoch = Utc::now().timestamp();
     if fetched_at_epoch > 0 {
-        let _ = cache::write_starship_cache(
+        let _ = cache::write_prompt_segment_cache(
             target_file,
             fetched_at_epoch,
             &weekly.non_weekly_label,
@@ -94,7 +94,7 @@ fn fetch_and_write_cache(target_file: &Path) -> anyhow::Result<starship_render::
         );
     }
 
-    Ok(starship_render::CacheEntry {
+    Ok(prompt_segment_render::CacheEntry {
         fetched_at_epoch,
         non_weekly_label: weekly.non_weekly_label,
         non_weekly_remaining: weekly.non_weekly_remaining,

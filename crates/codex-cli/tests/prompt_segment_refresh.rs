@@ -13,7 +13,7 @@ fn codex_cli_bin() -> PathBuf {
 
 fn run(args: &[&str], envs: &[(&str, &Path)], vars: &[(&str, &str)]) -> CmdOutput {
     let mut options = CmdOptions::default()
-        // Stabilize output for tests regardless of user shell/starship environment.
+        // Stabilize output for tests regardless of user shell prompt environment.
         .with_env("NO_COLOR", "1")
         .with_env("TZ", "UTC")
         .with_env_remove("STARSHIP_SESSION_KEY")
@@ -95,11 +95,11 @@ fn write_auth_and_secret(dir: &tempfile::TempDir) -> (PathBuf, PathBuf, PathBuf)
 fn cache_file(cache_root: &Path, key: &str) -> PathBuf {
     cache_root
         .join("codex")
-        .join("starship-rate-limits")
+        .join("prompt-segment-rate-limits")
         .join(format!("{key}.kv"))
 }
 
-fn write_starship_cache_kv(cache_root: &Path, key: &str, kv: &str) -> PathBuf {
+fn write_prompt_segment_cache_kv(cache_root: &Path, key: &str, kv: &str) -> PathBuf {
     let path = cache_file(cache_root, key);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("cache dir");
@@ -119,7 +119,7 @@ fn wham_usage_ok_body() -> String {
 }
 
 #[test]
-fn starship_refresh_updates_cache_and_prints() {
+fn prompt_segment_refresh_updates_cache_and_prints() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let (auth_file, secrets, cache_root) = write_auth_and_secret(&dir);
 
@@ -131,17 +131,22 @@ fn starship_refresh_updates_cache_and_prints() {
     );
 
     let output = run(
-        &["starship", "--refresh", "--time-format", "%Y-%m-%dT%H:%MZ"],
+        &[
+            "prompt-segment",
+            "--refresh",
+            "--time-format",
+            "%Y-%m-%dT%H:%MZ",
+        ],
         &[
             ("CODEX_AUTH_FILE", &auth_file),
             ("CODEX_SECRET_DIR", &secrets),
             ("ZSH_CACHE_DIR", &cache_root),
         ],
         &[
-            ("CODEX_STARSHIP_ENABLED", "true"),
+            ("CODEX_PROMPT_SEGMENT_ENABLED", "true"),
             ("CODEX_CHATGPT_BASE_URL", &server.url()),
-            ("CODEX_STARSHIP_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
-            ("CODEX_STARSHIP_CURL_MAX_TIME_SECONDS", "3"),
+            ("CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
+            ("CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS", "3"),
         ],
     );
     assert_exit(&output, 0);
@@ -154,7 +159,7 @@ fn starship_refresh_updates_cache_and_prints() {
 }
 
 #[test]
-fn starship_stale_cache_triggers_background_refresh() {
+fn prompt_segment_stale_cache_triggers_background_refresh() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let (auth_file, secrets, cache_root) = write_auth_and_secret(&dir);
 
@@ -166,7 +171,7 @@ fn starship_stale_cache_triggers_background_refresh() {
     );
 
     let fetched_at = now_epoch().saturating_sub(10).max(1);
-    write_starship_cache_kv(
+    write_prompt_segment_cache_kv(
         &cache_root,
         "alpha",
         &format!(
@@ -176,7 +181,7 @@ fn starship_stale_cache_triggers_background_refresh() {
 
     let output = run(
         &[
-            "starship",
+            "prompt-segment",
             "--ttl",
             "1s",
             "--time-format",
@@ -188,12 +193,12 @@ fn starship_stale_cache_triggers_background_refresh() {
             ("ZSH_CACHE_DIR", &cache_root),
         ],
         &[
-            ("CODEX_STARSHIP_ENABLED", "true"),
+            ("CODEX_PROMPT_SEGMENT_ENABLED", "true"),
             ("CODEX_CHATGPT_BASE_URL", &server.url()),
-            ("CODEX_STARSHIP_STALE_SUFFIX", " (STALE)"),
-            ("CODEX_STARSHIP_REFRESH_MIN_SECONDS", "0"),
-            ("CODEX_STARSHIP_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
-            ("CODEX_STARSHIP_CURL_MAX_TIME_SECONDS", "3"),
+            ("CODEX_PROMPT_SEGMENT_STALE_SUFFIX", " (STALE)"),
+            ("CODEX_PROMPT_SEGMENT_REFRESH_MIN_SECONDS", "0"),
+            ("CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
+            ("CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS", "3"),
         ],
     );
     assert_exit(&output, 0);
@@ -210,7 +215,7 @@ fn starship_stale_cache_triggers_background_refresh() {
 }
 
 #[test]
-fn starship_refresh_recovers_from_stale_lock_dir() {
+fn prompt_segment_refresh_recovers_from_stale_lock_dir() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let (auth_file, secrets, cache_root) = write_auth_and_secret(&dir);
 
@@ -223,23 +228,28 @@ fn starship_refresh_recovers_from_stale_lock_dir() {
 
     let lock_dir = cache_root
         .join("codex")
-        .join("starship-rate-limits")
+        .join("prompt-segment-rate-limits")
         .join("alpha.refresh.lock");
     fs::create_dir_all(&lock_dir).expect("create lock dir");
 
     let output = run(
-        &["starship", "--refresh", "--time-format", "%Y-%m-%dT%H:%MZ"],
+        &[
+            "prompt-segment",
+            "--refresh",
+            "--time-format",
+            "%Y-%m-%dT%H:%MZ",
+        ],
         &[
             ("CODEX_AUTH_FILE", &auth_file),
             ("CODEX_SECRET_DIR", &secrets),
             ("ZSH_CACHE_DIR", &cache_root),
         ],
         &[
-            ("CODEX_STARSHIP_ENABLED", "true"),
+            ("CODEX_PROMPT_SEGMENT_ENABLED", "true"),
             ("CODEX_CHATGPT_BASE_URL", &server.url()),
-            ("CODEX_STARSHIP_LOCK_STALE_SECONDS", "0"),
-            ("CODEX_STARSHIP_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
-            ("CODEX_STARSHIP_CURL_MAX_TIME_SECONDS", "3"),
+            ("CODEX_PROMPT_SEGMENT_LOCK_STALE_SECONDS", "0"),
+            ("CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
+            ("CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS", "3"),
         ],
     );
     assert_exit(&output, 0);
@@ -247,7 +257,7 @@ fn starship_refresh_recovers_from_stale_lock_dir() {
 }
 
 #[test]
-fn starship_refresh_respects_min_interval() {
+fn prompt_segment_refresh_respects_min_interval() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let (auth_file, secrets, cache_root) = write_auth_and_secret(&dir);
 
@@ -260,7 +270,7 @@ fn starship_refresh_respects_min_interval() {
     let base_url = server.url();
 
     let fetched_at = now_epoch().saturating_sub(10).max(1);
-    write_starship_cache_kv(
+    write_prompt_segment_cache_kv(
         &cache_root,
         "alpha",
         &format!(
@@ -269,11 +279,11 @@ fn starship_refresh_respects_min_interval() {
     );
 
     let vars = [
-        ("CODEX_STARSHIP_ENABLED", "true"),
+        ("CODEX_PROMPT_SEGMENT_ENABLED", "true"),
         ("CODEX_CHATGPT_BASE_URL", base_url.as_str()),
-        ("CODEX_STARSHIP_REFRESH_MIN_SECONDS", "9999"),
-        ("CODEX_STARSHIP_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
-        ("CODEX_STARSHIP_CURL_MAX_TIME_SECONDS", "3"),
+        ("CODEX_PROMPT_SEGMENT_REFRESH_MIN_SECONDS", "9999"),
+        ("CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
+        ("CODEX_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS", "3"),
     ];
     let envs = [
         ("CODEX_AUTH_FILE", auth_file.as_path()),
@@ -281,9 +291,9 @@ fn starship_refresh_respects_min_interval() {
         ("ZSH_CACHE_DIR", cache_root.as_path()),
     ];
 
-    let output = run(&["starship", "--ttl", "1s"], &envs, &vars);
+    let output = run(&["prompt-segment", "--ttl", "1s"], &envs, &vars);
     assert_exit(&output, 0);
-    let output = run(&["starship", "--ttl", "1s"], &envs, &vars);
+    let output = run(&["prompt-segment", "--ttl", "1s"], &envs, &vars);
     assert_exit(&output, 0);
 
     thread::sleep(Duration::from_secs(1));

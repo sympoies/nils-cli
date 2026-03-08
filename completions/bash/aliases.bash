@@ -101,7 +101,7 @@ _nils_cli__has_alias cxga || alias cxga='codex-cli agent advice'
 _nils_cli__has_alias cxgk || alias cxgk='codex-cli agent knowledge'
 _nils_cli__has_alias cxgc || alias cxgc='codex-cli agent commit'
 
-_nils_cli__has_alias cxst || alias cxst='codex-cli starship'
+_nils_cli__has_alias cxps || alias cxps='codex-cli prompt-segment'
 
 # ---------------------------------------------------------------------------
 # fzf-cli (fx*)

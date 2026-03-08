@@ -3,7 +3,7 @@
 ## Overview
 
 gemini-cli is a provider-specific Rust CLI for Gemini workflows: Gemini execution wrappers, auth/secret management, diagnostics, config
-output, starship rendering, and completion export. Runtime wiring is owned by `gemini-cli` adapters with shared
+output, prompt-segment rendering, and completion export. Runtime wiring is owned by `gemini-cli` adapters with shared
 `nils-common::provider_runtime` helpers for common primitives.
 
 ## Usage
@@ -11,7 +11,7 @@ output, starship rendering, and completion export. Runtime wiring is owned by `g
 ```text
 Usage:
   gemini-cli <group> <command> [args]
-  gemini-cli starship [options]
+  gemini-cli prompt-segment [options]
   gemini-cli completion <bash|zsh>
 
 Groups:
@@ -19,7 +19,7 @@ Groups:
   auth       login | use | save | remove | refresh | auto-refresh | current | sync
   diag       rate-limits
   config     show | set
-  starship   (options)
+  prompt-segment   (options)
   completion bash | zsh
 
 Help:
@@ -29,13 +29,13 @@ Help:
 
 ## Scope boundary
 
-| Job                                                                                  | Primary owner                                           |
-| ------------------------------------------------------------------------------------ | ------------------------------------------------------- |
-| Shared provider runtime helpers (`auth/path/config/exec/error`)                      | `nils-common::provider_runtime` + `gemini-cli` adapters |
-| Gemini auth, Gemini prompt wrappers, Gemini diagnostics, Starship, completion export | `gemini-cli`                                            |
-| Unsupported commands/groups                                                          | clap usage error (`64`)                                 |
+| Job                                                                                                  | Primary owner                                           |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Shared provider runtime helpers (`auth/path/config/exec/error`)                                      | `nils-common::provider_runtime` + `gemini-cli` adapters |
+| Gemini auth, Gemini prompt wrappers, Gemini diagnostics, prompt-segment rendering, completion export | `gemini-cli`                                            |
+| Unsupported commands/groups                                                                          | clap usage error (`64`)                                 |
 
-- `gemini-cli` owns only provider-specific Gemini operations (`agent`, `auth`, `diag rate-limits`, `config`, `starship`, `completion`).
+- `gemini-cli` owns only provider-specific Gemini operations (`agent`, `auth`, `diag rate-limits`, `config`, `prompt-segment`, `completion`).
 - Existing `gemini-cli` commands stay stable for provider-specific workflows.
 - Unknown groups/subcommands are deterministic usage errors (`64`).
 
@@ -81,10 +81,10 @@ Auth examples:
 - `show`: Print effective configuration values.
 - `set <key> <value>`: Emit a shell snippet for the current shell.
 
-### starship
+### prompt-segment
 
-- `starship [--no-5h] [--ttl <duration>] [--time-format <strftime>] [--show-timezone] [--refresh] [--is-enabled]`: Render or refresh the
-  Starship line. Default reset time uses local time without timezone; `--show-timezone` adds the local offset.
+- `prompt-segment [--no-5h] [--ttl <duration>] [--time-format <strftime>] [--show-timezone] [--refresh] [--is-enabled]`: Render or refresh
+  the prompt segment. Default reset time uses local time without timezone; `--show-timezone` adds the local offset.
 
 ### completion
 
@@ -105,8 +105,8 @@ Auth examples:
 - `GEMINI_SECRET_DIR` controls the secret directory path. When unset, it defaults to `~/.gemini/secrets`.
 - `GEMINI_AUTH_FILE` controls the active auth file path. When unset, it defaults to `~/.gemini/oauth_creds.json`.
 - `GEMINI_SECRET_CACHE_DIR` controls secret cache timestamps.
-- `GEMINI_STARSHIP_ENABLED=true` enables Starship output.
-- `GEMINI_STARSHIP_TTL` overrides the Starship cache TTL.
+- `GEMINI_PROMPT_SEGMENT_ENABLED=true` enables prompt-segment output.
+- `GEMINI_PROMPT_SEGMENT_TTL` overrides the prompt-segment cache TTL.
 - `GEMINI_AUTO_REFRESH_ENABLED` and `GEMINI_AUTO_REFRESH_MIN_DAYS` configure auth auto-refresh behavior.
 
 ## Dependencies

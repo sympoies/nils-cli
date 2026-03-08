@@ -1,4 +1,4 @@
-use gemini_cli::{rate_limits, starship};
+use gemini_cli::{prompt_segment, rate_limits};
 use nils_test_support::{EnvGuard, GlobalStateLock};
 
 use std::fs as stdfs;
@@ -76,9 +76,13 @@ fn set_env(lock: &GlobalStateLock, key: &str, value: impl AsRef<std::ffi::OsStr>
 fn set_fast_fail_refresh_env(lock: &GlobalStateLock) -> (EnvGuard, EnvGuard, EnvGuard, EnvGuard) {
     (
         set_env(lock, "CODE_ASSIST_ENDPOINT", "http://127.0.0.1:9/"),
-        set_env(lock, "GEMINI_STARSHIP_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
-        set_env(lock, "GEMINI_STARSHIP_CURL_MAX_TIME_SECONDS", "1"),
-        set_env(lock, "GEMINI_STARSHIP_EXE", "/usr/bin/false"),
+        set_env(
+            lock,
+            "GEMINI_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS",
+            "1",
+        ),
+        set_env(lock, "GEMINI_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS", "1"),
+        set_env(lock, "GEMINI_PROMPT_SEGMENT_EXE", "/usr/bin/false"),
     )
 }
 
@@ -92,56 +96,60 @@ fn lock_dir_for_auth_file(auth_file: &Path) -> PathBuf {
 }
 
 #[test]
-fn starship_disabled_returns_0() {
+fn prompt_segment_disabled_returns_0() {
     let lock = GlobalStateLock::new();
-    let options = starship::StarshipOptions::default();
-    let _enabled = set_env(&lock, "GEMINI_STARSHIP_ENABLED", "false");
-    assert_eq!(starship::run(&options), 0);
+    let options = prompt_segment::PromptSegmentOptions::default();
+    let _enabled = set_env(&lock, "GEMINI_PROMPT_SEGMENT_ENABLED", "false");
+    assert_eq!(prompt_segment::run(&options), 0);
 }
 
 #[test]
-fn starship_is_enabled_flag_reflects_env() {
+fn prompt_segment_is_enabled_flag_reflects_env() {
     let lock = GlobalStateLock::new();
-    let options = starship::StarshipOptions {
+    let options = prompt_segment::PromptSegmentOptions {
         is_enabled: true,
         ..Default::default()
     };
 
-    let _enabled_false = set_env(&lock, "GEMINI_STARSHIP_ENABLED", "false");
-    assert_eq!(starship::run(&options), 1);
+    let _enabled_false = set_env(&lock, "GEMINI_PROMPT_SEGMENT_ENABLED", "false");
+    assert_eq!(prompt_segment::run(&options), 1);
     drop(_enabled_false);
 
-    let _enabled_true = set_env(&lock, "GEMINI_STARSHIP_ENABLED", "true");
-    assert_eq!(starship::run(&options), 0);
+    let _enabled_true = set_env(&lock, "GEMINI_PROMPT_SEGMENT_ENABLED", "true");
+    assert_eq!(prompt_segment::run(&options), 0);
 }
 
 #[test]
-fn starship_invalid_ttl_returns_2() {
+fn prompt_segment_invalid_ttl_returns_2() {
     let lock = GlobalStateLock::new();
-    let options = starship::StarshipOptions {
+    let options = prompt_segment::PromptSegmentOptions {
         ttl: Some("bogus".to_string()),
         ..Default::default()
     };
-    let _enabled = set_env(&lock, "GEMINI_STARSHIP_ENABLED", "true");
-    assert_eq!(starship::run(&options), 2);
+    let _enabled = set_env(&lock, "GEMINI_PROMPT_SEGMENT_ENABLED", "true");
+    assert_eq!(prompt_segment::run(&options), 2);
 }
 
 #[test]
-fn starship_non_stale_cache_skips_failed_refresh() {
+fn prompt_segment_non_stale_cache_skips_failed_refresh() {
     let lock = GlobalStateLock::new();
-    let dir = TestDir::new("starship-non-stale-cache");
+    let dir = TestDir::new("prompt-segment-non-stale-cache");
     let (auth_file, secrets, cache_root) = write_auth_secret(&dir);
 
     let _auth = set_env(&lock, "GEMINI_AUTH_FILE", &auth_file);
     let _secret_dir = set_env(&lock, "GEMINI_SECRET_DIR", &secrets);
     let _cache_root = set_env(&lock, "ZSH_CACHE_DIR", &cache_root);
-    let _enabled = set_env(&lock, "GEMINI_STARSHIP_ENABLED", "true");
+    let _enabled = set_env(&lock, "GEMINI_PROMPT_SEGMENT_ENABLED", "true");
     let _base = set_env(&lock, "CODE_ASSIST_ENDPOINT", "http://127.0.0.1:9/");
-    let _connect = set_env(&lock, "GEMINI_STARSHIP_CURL_CONNECT_TIMEOUT_SECONDS", "1");
-    let _max_time = set_env(&lock, "GEMINI_STARSHIP_CURL_MAX_TIME_SECONDS", "1");
-    let _exe = set_env(&lock, "GEMINI_STARSHIP_EXE", "/usr/bin/false");
+    let _connect = set_env(
+        &lock,
+        "GEMINI_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS",
+        "1",
+    );
+    let _max_time = set_env(&lock, "GEMINI_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS", "1");
+    let _exe = set_env(&lock, "GEMINI_PROMPT_SEGMENT_EXE", "/usr/bin/false");
 
-    rate_limits::write_starship_cache(
+    rate_limits::write_prompt_segment_cache(
         &auth_file,
         now_epoch().max(1),
         "5h",
@@ -154,32 +162,36 @@ fn starship_non_stale_cache_skips_failed_refresh() {
     let cache_file = rate_limits::cache_file_for_target(&auth_file).expect("cache file");
     let before = stdfs::read_to_string(&cache_file).expect("cache before");
 
-    let options = starship::StarshipOptions {
+    let options = prompt_segment::PromptSegmentOptions {
         time_format: Some("%Y-%m-%dT%H:%MZ".to_string()),
         ..Default::default()
     };
-    assert_eq!(starship::run(&options), 0);
+    assert_eq!(prompt_segment::run(&options), 0);
 
     let after = stdfs::read_to_string(&cache_file).expect("cache after");
     assert_eq!(before, after);
 }
 
 #[test]
-fn starship_stale_cache_with_live_refresh_lock_returns_0() {
+fn prompt_segment_stale_cache_with_live_refresh_lock_returns_0() {
     let lock = GlobalStateLock::new();
-    let dir = TestDir::new("starship-stale-cache-failed-refresh");
+    let dir = TestDir::new("prompt-segment-stale-cache-failed-refresh");
     let (auth_file, secrets, cache_root) = write_auth_secret(&dir);
 
     let _auth = set_env(&lock, "GEMINI_AUTH_FILE", &auth_file);
     let _secret_dir = set_env(&lock, "GEMINI_SECRET_DIR", &secrets);
     let _cache_root = set_env(&lock, "ZSH_CACHE_DIR", &cache_root);
-    let _enabled = set_env(&lock, "GEMINI_STARSHIP_ENABLED", "true");
+    let _enabled = set_env(&lock, "GEMINI_PROMPT_SEGMENT_ENABLED", "true");
     let _base = set_env(&lock, "CODE_ASSIST_ENDPOINT", "http://127.0.0.1:9/");
-    let _connect = set_env(&lock, "GEMINI_STARSHIP_CURL_CONNECT_TIMEOUT_SECONDS", "1");
-    let _max_time = set_env(&lock, "GEMINI_STARSHIP_CURL_MAX_TIME_SECONDS", "1");
-    let _exe = set_env(&lock, "GEMINI_STARSHIP_EXE", "/usr/bin/false");
+    let _connect = set_env(
+        &lock,
+        "GEMINI_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS",
+        "1",
+    );
+    let _max_time = set_env(&lock, "GEMINI_PROMPT_SEGMENT_CURL_MAX_TIME_SECONDS", "1");
+    let _exe = set_env(&lock, "GEMINI_PROMPT_SEGMENT_EXE", "/usr/bin/false");
 
-    rate_limits::write_starship_cache(
+    rate_limits::write_prompt_segment_cache(
         &auth_file,
         now_epoch().saturating_sub(10).max(1),
         "5h",
@@ -193,72 +205,78 @@ fn starship_stale_cache_with_live_refresh_lock_returns_0() {
     let lock_dir = lock_dir_for_auth_file(&auth_file);
     stdfs::create_dir_all(&lock_dir).expect("create live lock");
 
-    let options = starship::StarshipOptions {
+    let options = prompt_segment::PromptSegmentOptions {
         ttl: Some("1s".to_string()),
         time_format: Some("%Y-%m-%dT%H:%MZ".to_string()),
         ..Default::default()
     };
-    assert_eq!(starship::run(&options), 0);
+    assert_eq!(prompt_segment::run(&options), 0);
 }
 
 #[test]
-fn starship_valid_ttl_units_parse_when_disabled() {
+fn prompt_segment_valid_ttl_units_parse_when_disabled() {
     let lock = GlobalStateLock::new();
-    let _enabled = set_env(&lock, "GEMINI_STARSHIP_ENABLED", "false");
+    let _enabled = set_env(&lock, "GEMINI_PROMPT_SEGMENT_ENABLED", "false");
 
     for ttl in ["1s", "2m", "3h", "4d", "1w", "5"] {
-        let options = starship::StarshipOptions {
+        let options = prompt_segment::PromptSegmentOptions {
             ttl: Some(ttl.to_string()),
             ..Default::default()
         };
-        assert_eq!(starship::run(&options), 0, "ttl={ttl}");
+        assert_eq!(prompt_segment::run(&options), 0, "ttl={ttl}");
     }
 }
 
 #[test]
-fn starship_zero_ttl_returns_2() {
+fn prompt_segment_zero_ttl_returns_2() {
     let lock = GlobalStateLock::new();
-    let _enabled = set_env(&lock, "GEMINI_STARSHIP_ENABLED", "false");
-    let options = starship::StarshipOptions {
+    let _enabled = set_env(&lock, "GEMINI_PROMPT_SEGMENT_ENABLED", "false");
+    let options = prompt_segment::PromptSegmentOptions {
         ttl: Some("0".to_string()),
         ..Default::default()
     };
-    assert_eq!(starship::run(&options), 2);
+    assert_eq!(prompt_segment::run(&options), 2);
 }
 
 #[test]
-fn starship_env_ttl_parse_when_cli_absent() {
+fn prompt_segment_env_ttl_parse_when_cli_absent() {
     let lock = GlobalStateLock::new();
-    let _enabled = set_env(&lock, "GEMINI_STARSHIP_ENABLED", "false");
-    let _ttl = set_env(&lock, "GEMINI_STARSHIP_TTL", "2m");
-    let options = starship::StarshipOptions::default();
-    assert_eq!(starship::run(&options), 0);
+    let _enabled = set_env(&lock, "GEMINI_PROMPT_SEGMENT_ENABLED", "false");
+    let _ttl = set_env(&lock, "GEMINI_PROMPT_SEGMENT_TTL", "2m");
+    let options = prompt_segment::PromptSegmentOptions::default();
+    assert_eq!(prompt_segment::run(&options), 0);
 }
 
 #[test]
-fn starship_missing_auth_file_returns_0() {
+fn prompt_segment_missing_auth_file_returns_0() {
     let lock = GlobalStateLock::new();
-    let dir = TestDir::new("starship-missing-auth-file");
+    let dir = TestDir::new("prompt-segment-missing-auth-file");
     let missing = dir.join("missing.json");
 
     let _auth = set_env(&lock, "GEMINI_AUTH_FILE", &missing);
-    let _enabled = set_env(&lock, "GEMINI_STARSHIP_ENABLED", "true");
-    assert_eq!(starship::run(&starship::StarshipOptions::default()), 0);
+    let _enabled = set_env(&lock, "GEMINI_PROMPT_SEGMENT_ENABLED", "true");
+    assert_eq!(
+        prompt_segment::run(&prompt_segment::PromptSegmentOptions::default()),
+        0
+    );
 }
 
 #[test]
-fn starship_unresolvable_auth_path_returns_0() {
+fn prompt_segment_unresolvable_auth_path_returns_0() {
     let lock = GlobalStateLock::new();
     let _auth = set_env(&lock, "GEMINI_AUTH_FILE", "");
     let _home = set_env(&lock, "HOME", "");
-    let _enabled = set_env(&lock, "GEMINI_STARSHIP_ENABLED", "true");
-    assert_eq!(starship::run(&starship::StarshipOptions::default()), 0);
+    let _enabled = set_env(&lock, "GEMINI_PROMPT_SEGMENT_ENABLED", "true");
+    assert_eq!(
+        prompt_segment::run(&prompt_segment::PromptSegmentOptions::default()),
+        0
+    );
 }
 
 #[test]
-fn starship_missing_cache_root_is_treated_as_no_cache() {
+fn prompt_segment_missing_cache_root_is_treated_as_no_cache() {
     let lock = GlobalStateLock::new();
-    let dir = TestDir::new("starship-missing-cache-root");
+    let dir = TestDir::new("prompt-segment-missing-cache-root");
     let (auth_file, secrets, _cache_root) = write_auth_secret(&dir);
 
     let _auth = set_env(&lock, "GEMINI_AUTH_FILE", &auth_file);
@@ -266,22 +284,25 @@ fn starship_missing_cache_root_is_treated_as_no_cache() {
     let _home = set_env(&lock, "HOME", "");
     let _zdot = set_env(&lock, "ZDOTDIR", "");
     let _cache_root = set_env(&lock, "ZSH_CACHE_DIR", "");
-    let _enabled = set_env(&lock, "GEMINI_STARSHIP_ENABLED", "true");
+    let _enabled = set_env(&lock, "GEMINI_PROMPT_SEGMENT_ENABLED", "true");
     let (_base, _connect, _max_time, _exe) = set_fast_fail_refresh_env(&lock);
 
-    assert_eq!(starship::run(&starship::StarshipOptions::default()), 0);
+    assert_eq!(
+        prompt_segment::run(&prompt_segment::PromptSegmentOptions::default()),
+        0
+    );
 }
 
 #[test]
-fn starship_invalid_cache_entry_is_ignored() {
+fn prompt_segment_invalid_cache_entry_is_ignored() {
     let lock = GlobalStateLock::new();
-    let dir = TestDir::new("starship-invalid-cache-entry");
+    let dir = TestDir::new("prompt-segment-invalid-cache-entry");
     let (auth_file, secrets, cache_root) = write_auth_secret(&dir);
 
     let _auth = set_env(&lock, "GEMINI_AUTH_FILE", &auth_file);
     let _secret_dir = set_env(&lock, "GEMINI_SECRET_DIR", &secrets);
     let _cache_root = set_env(&lock, "ZSH_CACHE_DIR", &cache_root);
-    let _enabled = set_env(&lock, "GEMINI_STARSHIP_ENABLED", "true");
+    let _enabled = set_env(&lock, "GEMINI_PROMPT_SEGMENT_ENABLED", "true");
     let (_base, _connect, _max_time, _exe) = set_fast_fail_refresh_env(&lock);
 
     let cache_file = rate_limits::cache_file_for_target(&auth_file).expect("cache file");
@@ -290,40 +311,54 @@ fn starship_invalid_cache_entry_is_ignored() {
     }
     stdfs::write(&cache_file, "not-a-valid-cache").expect("write invalid cache");
 
-    assert_eq!(starship::run(&starship::StarshipOptions::default()), 0);
+    assert_eq!(
+        prompt_segment::run(&prompt_segment::PromptSegmentOptions::default()),
+        0
+    );
 }
 
 #[test]
-fn starship_non_positive_fetched_at_is_treated_as_stale() {
+fn prompt_segment_non_positive_fetched_at_is_treated_as_stale() {
     let lock = GlobalStateLock::new();
-    let dir = TestDir::new("starship-non-positive-fetched-at");
+    let dir = TestDir::new("prompt-segment-non-positive-fetched-at");
     let (auth_file, secrets, cache_root) = write_auth_secret(&dir);
 
     let _auth = set_env(&lock, "GEMINI_AUTH_FILE", &auth_file);
     let _secret_dir = set_env(&lock, "GEMINI_SECRET_DIR", &secrets);
     let _cache_root = set_env(&lock, "ZSH_CACHE_DIR", &cache_root);
-    let _enabled = set_env(&lock, "GEMINI_STARSHIP_ENABLED", "true");
+    let _enabled = set_env(&lock, "GEMINI_PROMPT_SEGMENT_ENABLED", "true");
     let (_base, _connect, _max_time, _exe) = set_fast_fail_refresh_env(&lock);
 
-    rate_limits::write_starship_cache(&auth_file, 0, "5h", 94, 88, 1700600000, Some(1700003600))
-        .expect("write cache");
+    rate_limits::write_prompt_segment_cache(
+        &auth_file,
+        0,
+        "5h",
+        94,
+        88,
+        1700600000,
+        Some(1700003600),
+    )
+    .expect("write cache");
 
-    assert_eq!(starship::run(&starship::StarshipOptions::default()), 0);
+    assert_eq!(
+        prompt_segment::run(&prompt_segment::PromptSegmentOptions::default()),
+        0
+    );
 }
 
 #[test]
-fn starship_default_time_format_paths_execute() {
+fn prompt_segment_default_time_format_paths_execute() {
     let lock = GlobalStateLock::new();
-    let dir = TestDir::new("starship-default-time-format");
+    let dir = TestDir::new("prompt-segment-default-time-format");
     let (auth_file, secrets, cache_root) = write_auth_secret(&dir);
 
     let _auth = set_env(&lock, "GEMINI_AUTH_FILE", &auth_file);
     let _secret_dir = set_env(&lock, "GEMINI_SECRET_DIR", &secrets);
     let _cache_root = set_env(&lock, "ZSH_CACHE_DIR", &cache_root);
-    let _enabled = set_env(&lock, "GEMINI_STARSHIP_ENABLED", "true");
+    let _enabled = set_env(&lock, "GEMINI_PROMPT_SEGMENT_ENABLED", "true");
     let (_base, _connect, _max_time, _exe) = set_fast_fail_refresh_env(&lock);
 
-    rate_limits::write_starship_cache(
+    rate_limits::write_prompt_segment_cache(
         &auth_file,
         now_epoch().max(1),
         "5h",
@@ -334,52 +369,76 @@ fn starship_default_time_format_paths_execute() {
     )
     .expect("write cache");
 
-    let with_timezone = starship::StarshipOptions {
+    let with_timezone = prompt_segment::PromptSegmentOptions {
         show_timezone: true,
         ..Default::default()
     };
-    assert_eq!(starship::run(&with_timezone), 0);
+    assert_eq!(prompt_segment::run(&with_timezone), 0);
 
-    assert_eq!(starship::run(&starship::StarshipOptions::default()), 0);
+    assert_eq!(
+        prompt_segment::run(&prompt_segment::PromptSegmentOptions::default()),
+        0
+    );
 }
 
 #[test]
-fn starship_email_name_source_paths_execute() {
+fn prompt_segment_email_name_source_paths_execute() {
     const TOKEN_WITH_EMAIL: &str =
         "x.eyJlbWFpbCI6ImFsaWNlQGV4YW1wbGUuY29tIiwic3ViIjoiYWxpY2UtaWQifQ.y";
     const TOKEN_WITH_SUB_ONLY: &str = "x.eyJzdWIiOiJhbGljZS1pZCJ9.y";
 
     let lock = GlobalStateLock::new();
-    let dir = TestDir::new("starship-email-name-source");
+    let dir = TestDir::new("prompt-segment-email-name-source");
     let (auth_file, secrets, cache_root) = write_auth_secret(&dir);
 
     let _auth = set_env(&lock, "GEMINI_AUTH_FILE", &auth_file);
     let _secret_dir = set_env(&lock, "GEMINI_SECRET_DIR", &secrets);
     let _cache_root = set_env(&lock, "ZSH_CACHE_DIR", &cache_root);
-    let _enabled = set_env(&lock, "GEMINI_STARSHIP_ENABLED", "true");
-    let _source = set_env(&lock, "GEMINI_STARSHIP_NAME_SOURCE", "email");
+    let _enabled = set_env(&lock, "GEMINI_PROMPT_SEGMENT_ENABLED", "true");
+    let _source = set_env(&lock, "GEMINI_PROMPT_SEGMENT_NAME_SOURCE", "email");
     let (_base, _connect, _max_time, _exe) = set_fast_fail_refresh_env(&lock);
 
     write_auth_with_id_token(&auth_file, TOKEN_WITH_EMAIL);
-    assert_eq!(starship::run(&starship::StarshipOptions::default()), 0);
+    assert_eq!(
+        prompt_segment::run(&prompt_segment::PromptSegmentOptions::default()),
+        0
+    );
 
     write_auth_with_id_token(&auth_file, TOKEN_WITH_SUB_ONLY);
-    let _fallback = set_env(&lock, "GEMINI_STARSHIP_SHOW_FALLBACK_NAME_ENABLED", "true");
-    let _show_full = set_env(&lock, "GEMINI_STARSHIP_SHOW_FULL_EMAIL_ENABLED", "true");
-    assert_eq!(starship::run(&starship::StarshipOptions::default()), 0);
+    let _fallback = set_env(
+        &lock,
+        "GEMINI_PROMPT_SEGMENT_SHOW_FALLBACK_NAME_ENABLED",
+        "true",
+    );
+    let _show_full = set_env(
+        &lock,
+        "GEMINI_PROMPT_SEGMENT_SHOW_FULL_EMAIL_ENABLED",
+        "true",
+    );
+    assert_eq!(
+        prompt_segment::run(&prompt_segment::PromptSegmentOptions::default()),
+        0
+    );
     drop(_show_full);
     drop(_fallback);
 
-    let _fallback_off = set_env(&lock, "GEMINI_STARSHIP_SHOW_FALLBACK_NAME_ENABLED", "false");
-    assert_eq!(starship::run(&starship::StarshipOptions::default()), 0);
+    let _fallback_off = set_env(
+        &lock,
+        "GEMINI_PROMPT_SEGMENT_SHOW_FALLBACK_NAME_ENABLED",
+        "false",
+    );
+    assert_eq!(
+        prompt_segment::run(&prompt_segment::PromptSegmentOptions::default()),
+        0
+    );
 }
 
 #[test]
-fn starship_secret_name_fallback_paths_execute() {
+fn prompt_segment_secret_name_fallback_paths_execute() {
     const TOKEN_WITH_SUB_ONLY: &str = "x.eyJzdWIiOiJhbGljZS1pZCJ9.y";
 
     let lock = GlobalStateLock::new();
-    let dir = TestDir::new("starship-secret-name-fallback");
+    let dir = TestDir::new("prompt-segment-secret-name-fallback");
     let auth_file = dir.join("auth.json");
     write_auth_with_id_token(&auth_file, TOKEN_WITH_SUB_ONLY);
 
@@ -391,13 +450,27 @@ fn starship_secret_name_fallback_paths_execute() {
     let _auth = set_env(&lock, "GEMINI_AUTH_FILE", &auth_file);
     let _secret_dir = set_env(&lock, "GEMINI_SECRET_DIR", &secrets);
     let _cache_root = set_env(&lock, "ZSH_CACHE_DIR", &cache_root);
-    let _enabled = set_env(&lock, "GEMINI_STARSHIP_ENABLED", "true");
+    let _enabled = set_env(&lock, "GEMINI_PROMPT_SEGMENT_ENABLED", "true");
     let (_base, _connect, _max_time, _exe) = set_fast_fail_refresh_env(&lock);
 
-    let _fallback_on = set_env(&lock, "GEMINI_STARSHIP_SHOW_FALLBACK_NAME_ENABLED", "true");
-    assert_eq!(starship::run(&starship::StarshipOptions::default()), 0);
+    let _fallback_on = set_env(
+        &lock,
+        "GEMINI_PROMPT_SEGMENT_SHOW_FALLBACK_NAME_ENABLED",
+        "true",
+    );
+    assert_eq!(
+        prompt_segment::run(&prompt_segment::PromptSegmentOptions::default()),
+        0
+    );
     drop(_fallback_on);
 
-    let _fallback_off = set_env(&lock, "GEMINI_STARSHIP_SHOW_FALLBACK_NAME_ENABLED", "false");
-    assert_eq!(starship::run(&starship::StarshipOptions::default()), 0);
+    let _fallback_off = set_env(
+        &lock,
+        "GEMINI_PROMPT_SEGMENT_SHOW_FALLBACK_NAME_ENABLED",
+        "false",
+    );
+    assert_eq!(
+        prompt_segment::run(&prompt_segment::PromptSegmentOptions::default()),
+        0
+    );
 }

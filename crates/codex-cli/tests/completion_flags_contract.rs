@@ -169,7 +169,7 @@ fn leaf_paths() -> Vec<Vec<&'static str>> {
         vec!["diag", "rate-limits"],
         vec!["config", "show"],
         vec!["config", "set"],
-        vec!["starship"],
+        vec!["prompt-segment"],
         vec!["completion"],
     ]
 }

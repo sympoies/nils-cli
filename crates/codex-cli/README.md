@@ -3,7 +3,7 @@
 ## Overview
 
 codex-cli is a provider-specific Rust CLI for OpenAI/Codex workflows: Codex execution wrappers, auth/secret management, Codex diagnostics,
-config output, and Starship rendering. Runtime wiring is owned by `codex-cli` adapters with shared `nils-common::provider_runtime` helpers
+config output, and prompt-segment rendering. Runtime wiring is owned by `codex-cli` adapters with shared `nils-common::provider_runtime` helpers
 for common primitives.
 
 ## Usage
@@ -11,14 +11,14 @@ for common primitives.
 ```text
 Usage:
   codex-cli <group> <command> [args]
-  codex-cli starship [options]
+  codex-cli prompt-segment [options]
 
 Groups:
   agent    prompt | advice | knowledge | commit
   auth     login | use | save | remove | refresh | auto-refresh | current | sync
   diag     rate-limits
   config   show | set
-  starship (options)
+  prompt-segment (options)
 
 Help:
   codex-cli help
@@ -27,13 +27,13 @@ Help:
 
 ## Scope boundary
 
-| Job                                                                              | Primary owner                                          |
-| -------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| Shared provider runtime helpers (`auth/path/config/exec/error`)                  | `nils-common::provider_runtime` + `codex-cli` adapters |
-| OpenAI/Codex auth, Codex prompt wrappers, Codex rate-limit diagnostics, Starship | `codex-cli`                                            |
-| Unsupported commands/groups                                                      | clap usage error (`64`)                                |
+| Job                                                                                              | Primary owner                                          |
+| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
+| Shared provider runtime helpers (`auth/path/config/exec/error`)                                  | `nils-common::provider_runtime` + `codex-cli` adapters |
+| OpenAI/Codex auth, Codex prompt wrappers, Codex rate-limit diagnostics, prompt-segment rendering | `codex-cli`                                            |
+| Unsupported commands/groups                                                                      | clap usage error (`64`)                                |
 
-- `codex-cli` owns only provider-specific OpenAI/Codex operations (`agent`, `auth`, `diag rate-limits`, `config`, `starship`).
+- `codex-cli` owns only provider-specific OpenAI/Codex operations (`agent`, `auth`, `diag rate-limits`, `config`, `prompt-segment`, `completion`).
 - Existing `codex-cli` commands stay stable for provider-specific workflows.
 - Unknown groups/subcommands are deterministic usage errors (`64`).
 
@@ -81,10 +81,10 @@ Auth examples:
 - `show`: Print effective configuration values.
 - `set <key> <value>`: Emit a shell snippet for the current shell.
 
-### starship
+### prompt-segment
 
-- `starship [--no-5h] [--ttl <duration>] [--time-format <strftime>] [--show-timezone] [--refresh] [--is-enabled]`: Render or refresh the
-  Starship line. Default reset time uses local time without timezone; `--show-timezone` adds the local offset.
+- `prompt-segment [--no-5h] [--ttl <duration>] [--time-format <strftime>] [--show-timezone] [--refresh] [--is-enabled]`: Render or refresh
+  the prompt segment. Default reset time uses local time without timezone; `--show-timezone` adds the local offset.
 
 ## JSON contract (service consumers)
 
@@ -106,8 +106,8 @@ Auth examples:
 - `CODEX_RATE_LIMITS_CACHE_TTL`: `diag rate-limits --cached` TTL (default: `3m`; supports `s|m|h|d|w` suffixes or raw seconds).
 - `CODEX_RATE_LIMITS_CACHE_ALLOW_STALE`: allow stale cache in `--cached` mode (default: `false`).
 - `CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED`: default `diag rate-limits` to `--all` when no target is provided (default: `false`).
-- `CODEX_STARSHIP_ENABLED`: enable Starship output (default: `false`; set `true` to enable).
-- `CODEX_STARSHIP_TTL`: Starship cache TTL override (default: `3m`; supports `s|m|h|d|w` suffixes or raw seconds).
+- `CODEX_PROMPT_SEGMENT_ENABLED`: enable prompt-segment output (default: `false`; set `true` to enable).
+- `CODEX_PROMPT_SEGMENT_TTL`: prompt-segment cache TTL override (default: `3m`; supports `s|m|h|d|w` suffixes or raw seconds).
 - `CODEX_AUTO_REFRESH_ENABLED`: enable `auth auto-refresh` behavior where applicable (default: `false`).
 - `CODEX_AUTO_REFRESH_MIN_DAYS`: `auth auto-refresh` minimum token age threshold (default: `5`).
 

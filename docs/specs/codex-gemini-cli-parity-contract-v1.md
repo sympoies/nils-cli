@@ -13,7 +13,7 @@ Both binaries must expose the same top-level command topology:
 - `auth`
 - `diag`
 - `config`
-- `starship`
+- `prompt-segment`
 - `completion`
 
 Shared help behavior:
@@ -56,7 +56,7 @@ Compatibility rules:
 
 ## Concurrency guardrails
 
-### Gemini starship background-refresh parity
+### Gemini prompt-segment background-refresh parity
 
 - `--refresh` remains the only blocking refresh path in both lanes. The default prompt path must keep printing the cached line first and
   keep appending the lane-specific stale suffix when the cache is stale.
@@ -66,19 +66,19 @@ Compatibility rules:
   path instead of a detached enqueue.
 - When porting Codex semantics to Gemini, preserve these guardrails:
   - Best-effort background spawn via the current executable; `current_exe` or spawn failures stay silent no-ops.
-  - Minimum refresh interval throttling via `*_STARSHIP_REFRESH_MIN_SECONDS`.
+  - Minimum refresh interval throttling via `*_PROMPT_SEGMENT_REFRESH_MIN_SECONDS`.
   - Last-attempt markers are written before `spawn()` so prompt storms still throttle after child-launch failure.
-  - Lock contention stays a no-op for prompt rendering, with stale-lock recovery via `*_STARSHIP_LOCK_STALE_SECONDS`.
+  - Lock contention stays a no-op for prompt rendering, with stale-lock recovery via `*_PROMPT_SEGMENT_LOCK_STALE_SECONDS`.
   - Lock and throttle files stay cache-adjacent (`<cache-stem>.refresh.lock` and `<cache-stem>.refresh.at`).
   - Cache format, stale suffix rendering, and exit codes stay unchanged.
 - Existing Gemini tests that must change when the default path stops refreshing inline:
-  - `crates/gemini-cli/tests/starship_refresh.rs`: `starship_stale_cached_entry_refreshes_on_run`
-  - `crates/gemini-cli/tests/starship_cached.rs`: `starship_stale_cache_with_failed_refresh_returns_0`
-  - `crates/gemini-cli/tests/starship_cached.rs`: `starship_missing_cache_root_is_treated_as_no_cache`
+  - `crates/gemini-cli/tests/prompt_segment_refresh.rs`: `prompt_segment_stale_cached_entry_refreshes_on_run`
+  - `crates/gemini-cli/tests/prompt_segment_cached.rs`: `prompt_segment_stale_cache_with_failed_refresh_returns_0`
+  - `crates/gemini-cli/tests/prompt_segment_cached.rs`: `prompt_segment_missing_cache_root_is_treated_as_no_cache`
 - Coverage still missing after the port:
   - A default missing-cache test that asserts background enqueue instead of inline fetch.
-  - Lock/min-interval/stale-lock recovery coverage that matches the existing `codex-cli` starship contract.
-- `crates/gemini-cli/tests/starship_refresh.rs`: `starship_refresh_updates_cache` remains the blocking-path anchor and should stay
+  - Lock/min-interval/stale-lock recovery coverage that matches the existing `codex-cli` prompt-segment contract.
+- `crates/gemini-cli/tests/prompt_segment_refresh.rs`: `prompt_segment_refresh_updates_cache` remains the blocking-path anchor and should stay
   unchanged by the background-refresh rewrite.
 
 ### Async rate-limits guardrails
@@ -114,9 +114,9 @@ Compatibility rules:
 
 ### Focused concurrency validation
 
-- `cargo test -p nils-gemini-cli --test starship_cached --test starship_refresh`
+- `cargo test -p nils-gemini-cli --test prompt_segment_cached --test prompt_segment_refresh`
 - `cargo test -p nils-gemini-cli --test rate_limits_async --test rate_limits_network`
-- `cargo test -p nils-codex-cli --test starship_cached --test starship_refresh`
+- `cargo test -p nils-codex-cli --test prompt_segment_cached --test prompt_segment_refresh`
 - `cargo test -p nils-codex-cli --test rate_limits_async`
 
 ## Validation anchors

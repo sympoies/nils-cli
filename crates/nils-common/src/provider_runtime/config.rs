@@ -13,7 +13,7 @@ pub struct RuntimeConfig {
     pub secret_dir: Option<PathBuf>,
     pub auth_file: Option<PathBuf>,
     pub secret_cache_dir: Option<PathBuf>,
-    pub starship_enabled: String,
+    pub prompt_segment_enabled: String,
     pub auto_refresh_enabled: String,
     pub auto_refresh_min_days: String,
 }
@@ -27,9 +27,9 @@ pub fn snapshot(profile: &ProviderProfile) -> RuntimeConfig {
         secret_dir: paths::resolve_secret_dir(profile),
         auth_file: paths::resolve_auth_file(profile),
         secret_cache_dir: paths::resolve_secret_cache_dir(profile),
-        starship_enabled: shared_env::env_or_default(
-            profile.env.starship_enabled,
-            profile.defaults.starship_enabled,
+        prompt_segment_enabled: shared_env::env_or_default(
+            profile.env.prompt_segment_enabled,
+            profile.defaults.prompt_segment_enabled,
         ),
         auto_refresh_enabled: shared_env::env_or_default(
             profile.env.auto_refresh_enabled,

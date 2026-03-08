@@ -33,7 +33,7 @@ fn run() -> i32 {
             cli::Command::Auth(args) => handle_auth(&args),
             cli::Command::Diag(args) => handle_diag(&args),
             cli::Command::Config(args) => handle_config(&args),
-            cli::Command::Starship(args) => handle_starship(&args),
+            cli::Command::PromptSegment(args) => handle_prompt_segment(&args),
             cli::Command::Completion(args) => handle_completion(&args),
         },
         None => print_root_help(),
@@ -138,8 +138,8 @@ fn handle_config(args: &cli::ConfigArgs) -> i32 {
     }
 }
 
-fn handle_starship(args: &cli::StarshipArgs) -> i32 {
-    let options = gemini_cli::starship::StarshipOptions {
+fn handle_prompt_segment(args: &cli::PromptSegmentArgs) -> i32 {
+    let options = gemini_cli::prompt_segment::PromptSegmentOptions {
         no_5h: args.no_5h,
         ttl: args.ttl.clone(),
         time_format: args.time_format.clone(),
@@ -147,7 +147,7 @@ fn handle_starship(args: &cli::StarshipArgs) -> i32 {
         refresh: args.refresh,
         is_enabled: args.is_enabled,
     };
-    gemini_cli::starship::run(&options)
+    gemini_cli::prompt_segment::run(&options)
 }
 
 fn handle_completion(args: &cli::CompletionArgs) -> i32 {

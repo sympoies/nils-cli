@@ -156,7 +156,7 @@ pub fn run(args: &RateLimitsOptions) -> i32 {
     }
 
     if args.clear_cache
-        && let Err(err) = clear_starship_cache()
+        && let Err(err) = clear_prompt_segment_cache()
     {
         if output_json {
             emit_error_json("cache-clear-failed", &err, None);
@@ -482,7 +482,7 @@ fn run_async_mode(args: &RateLimitsOptions) -> i32 {
         return 64;
     }
     if args.clear_cache
-        && let Err(err) = clear_starship_cache()
+        && let Err(err) = clear_prompt_segment_cache()
     {
         eprintln!("{err}");
         return 1;
@@ -571,7 +571,7 @@ fn run_async_json_mode(args: &RateLimitsOptions) -> i32 {
         return 64;
     }
     if args.clear_cache
-        && let Err(err) = clear_starship_cache()
+        && let Err(err) = clear_prompt_segment_cache()
     {
         emit_error_json("cache-clear-failed", &err, None);
         return 1;
@@ -854,7 +854,7 @@ fn print_all_accounts_table(
     }
 }
 
-pub fn clear_starship_cache() -> Result<(), String> {
+pub fn clear_prompt_segment_cache() -> Result<(), String> {
     let root =
         cache_root().ok_or_else(|| "gemini-rate-limits: cache root unavailable".to_string())?;
     if !root.is_absolute() {
@@ -870,9 +870,9 @@ pub fn clear_starship_cache() -> Result<(), String> {
         ));
     }
 
-    let cache_dir = root.join("gemini").join("starship-rate-limits");
+    let cache_dir = root.join("gemini").join("prompt-segment-rate-limits");
     let cache_dir_str = cache_dir.to_string_lossy();
-    if !cache_dir_str.ends_with("/gemini/starship-rate-limits") {
+    if !cache_dir_str.ends_with("/gemini/prompt-segment-rate-limits") {
         return Err(format!(
             "gemini-rate-limits: refusing to clear unexpected cache dir: {}",
             cache_dir.display()
@@ -886,7 +886,7 @@ pub fn clear_starship_cache() -> Result<(), String> {
 }
 
 pub fn cache_file_for_target(target_file: &Path) -> Result<PathBuf, String> {
-    let cache_dir = starship_cache_dir()
+    let cache_dir = prompt_segment_cache_dir()
         .ok_or_else(|| "gemini-rate-limits: cache dir unavailable".to_string())?;
 
     if let Some(secret_dir) = paths::resolve_secret_dir() {
@@ -918,7 +918,7 @@ pub fn read_cache_entry(target_file: &Path) -> Result<CacheEntry, String> {
     let cache_file = cache_file_for_target(target_file)?;
     if !cache_file.is_file() {
         return Err(format!(
-            "gemini-rate-limits: cache not found (run gemini-rate-limits without --cached, or gemini-cli starship, to populate): {}",
+            "gemini-rate-limits: cache not found (run gemini-rate-limits without --cached, or gemini-cli prompt-segment, to populate): {}",
             cache_file.display()
         ));
     }
@@ -995,7 +995,7 @@ pub fn read_cache_entry(target_file: &Path) -> Result<CacheEntry, String> {
     })
 }
 
-pub fn write_starship_cache(
+pub fn write_prompt_segment_cache(
     target_file: &Path,
     fetched_at_epoch: i64,
     non_weekly_label: &str,
@@ -1115,7 +1115,7 @@ fn collect_summary_from_network(
 
     let now_epoch = now_epoch_seconds();
     if now_epoch > 0 {
-        let _ = write_starship_cache(
+        let _ = write_prompt_segment_cache(
             target_file,
             now_epoch,
             &summary.non_weekly_label,
@@ -1291,9 +1291,9 @@ fn current_secret_basename(secret_files: &[PathBuf]) -> Option<String> {
     None
 }
 
-fn starship_cache_dir() -> Option<PathBuf> {
+fn prompt_segment_cache_dir() -> Option<PathBuf> {
     let root = cache_root()?;
-    Some(root.join("gemini").join("starship-rate-limits"))
+    Some(root.join("gemini").join("prompt-segment-rate-limits"))
 }
 
 fn cache_root() -> Option<PathBuf> {
@@ -1695,10 +1695,10 @@ mod tests {
     }
 
     #[test]
-    fn clear_starship_cache_rejects_non_absolute_cache_root() {
+    fn clear_prompt_segment_cache_rejects_non_absolute_cache_root() {
         let lock = GlobalStateLock::new();
         let _cache = set_env(&lock, "ZSH_CACHE_DIR", "relative-cache");
-        let err = clear_starship_cache().expect_err("non-absolute should fail");
+        let err = clear_prompt_segment_cache().expect_err("non-absolute should fail");
         assert!(err.contains("non-absolute cache root"));
     }
 

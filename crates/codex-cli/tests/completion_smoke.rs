@@ -85,7 +85,7 @@ fn completion_bash_candidates_remain_context_aware() {
         "auth",
         "diag",
         "config",
-        "starship",
+        "prompt-segment",
         "completion",
         "help",
     ] {
