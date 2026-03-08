@@ -42,6 +42,7 @@ Outputs:
 - Updates README release tag examples (unless `--skip-readme`).
 - Selects check mode in this order: strict CI gate (`--ci-gate-main`) or auto CI gate attempt, then full checks fallback.
 - Refreshes `Cargo.lock` via `cargo generate-lockfile` and then validates via `cargo check --workspace --locked` (CI-gated/skip-check path), or uses the full checks script.
+- Automatically disables an incompatible `RUSTC_WRAPPER` (for example a broken `sccache` wrapper) before running release cargo commands.
 - Regenerates tracked third-party artifacts (`THIRD_PARTY_LICENSES.md`, `THIRD_PARTY_NOTICES.md`) before strict full-check audits and
   again before commit.
 - Runs full release checks through `nils-cli-verify-required-checks.sh` with `NILS_CLI_TEST_RUNNER=nextest` by default (unless overridden).
@@ -73,11 +74,12 @@ Failure modes:
 ## Workflow
 
 - Validate inputs and environment.
+- Probe `RUSTC_WRAPPER` and disable it when it is incompatible with the active `rustc`.
 - Bump workspace + crate versions and update README.
 - Run checks with CI-gate-first logic:
   - `--skip-checks`: refresh `Cargo.lock`; run `cargo check --workspace --locked`.
   - `--ci-gate-main`: require CI gate; then refresh `Cargo.lock`; run `cargo check --workspace --locked`.
-  - default: try CI gate first; if unavailable, regenerate third-party artifacts, then run full checks
+  - default: try CI gate first; if unavailable, refresh `Cargo.lock`, regenerate third-party artifacts, then run full checks
     (`nils-cli-verify-required-checks.sh`).
 - Regenerate tracked third-party artifacts again before commit to keep release/CI artifacts in sync.
 - Commit with `semantic-commit`, tag `vX.Y.Z`, and push to trigger the release workflow.

@@ -31,11 +31,61 @@ note() {
   echo "info: $*" >&2
 }
 
-refresh_lockfile_and_verify_locked() {
+refresh_lockfile() {
   note "refreshing Cargo.lock for release changes"
   cargo generate-lockfile
+}
+
+verify_workspace_locked() {
   note "verifying workspace with cargo check --workspace --locked"
   cargo check --workspace --locked
+}
+
+refresh_lockfile_and_verify_locked() {
+  refresh_lockfile
+  verify_workspace_locked
+}
+
+sanitize_rust_build_env() {
+  local wrapper="${RUSTC_WRAPPER:-}"
+  if [[ -z "$wrapper" ]]; then
+    return 0
+  fi
+
+  local wrapper_bin="$wrapper"
+  if [[ "$wrapper" == */* ]]; then
+    if [[ ! -x "$wrapper" ]]; then
+      note "RUSTC_WRAPPER=${wrapper} is not executable; disabling it for release commands"
+      unset RUSTC_WRAPPER
+      return 0
+    fi
+  else
+    if ! wrapper_bin="$(command -v "$wrapper" 2>/dev/null)"; then
+      note "RUSTC_WRAPPER=${wrapper} is not available on PATH; disabling it for release commands"
+      unset RUSTC_WRAPPER
+      return 0
+    fi
+  fi
+
+  local rustc_bin probe_output="" probe_summary=""
+  rustc_bin="$(command -v rustc 2>/dev/null || true)"
+  [[ -n "$rustc_bin" ]] || die "rustc is not available on PATH"
+
+  if probe_output="$("$wrapper_bin" "$rustc_bin" -vV 2>&1)"; then
+    return 0
+  fi
+
+  probe_summary="${probe_output%%$'\n'*}"
+  note "RUSTC_WRAPPER=${wrapper} is not compatible with the active rustc; disabling it for release commands"
+  if [[ -n "$probe_summary" ]]; then
+    note "wrapper probe: ${probe_summary}"
+  fi
+  unset RUSTC_WRAPPER
+
+  if [[ "$(basename "$wrapper_bin")" == "sccache" ]]; then
+    export SCCACHE_DISABLE=1
+    note "set SCCACHE_DISABLE=1 after disabling incompatible sccache wrapper"
+  fi
 }
 
 refresh_third_party_artifacts_if_present() {
@@ -226,6 +276,8 @@ if [[ ! -f Cargo.toml ]]; then
   die "Cargo.toml not found in repo root"
 fi
 
+sanitize_rust_build_env
+
 current_branch="$(git branch --show-current 2>/dev/null || true)"
 if [[ -n "$current_branch" && "$current_branch" != "main" ]]; then
   note "current branch is '${current_branch}' (release tags are typically on main)"
@@ -377,9 +429,11 @@ patterns = (
     "git tag -a v",
     "git push origin v",
 )
+matched = False
 
 for line in lines:
     if any(pat in line for pat in patterns):
+        matched = True
         new_line = re.sub(r"v\d+\.\d+\.\d+", tag, line)
         if new_line != line:
             updated = True
@@ -392,7 +446,7 @@ if updated:
     if text.endswith("\n"):
         new_text += "\n"
     path.write_text(new_text, "utf-8")
-else:
+elif not matched:
     print("warning: README release tag example not updated (pattern not found)", file=sys.stderr)
 PY
   else
@@ -402,6 +456,7 @@ fi
 
 checks_script="$repo_root/.agents/skills/nils-cli-verify-required-checks/scripts/nils-cli-verify-required-checks.sh"
 if [[ "$skip_checks" -eq 0 ]]; then
+  refresh_lockfile
   # Keep third-party artifacts aligned before strict audits (which include drift checks).
   refresh_third_party_artifacts_if_present
 
