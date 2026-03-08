@@ -39,8 +39,8 @@ pub fn show_with_io(stdout: &mut impl Write) -> i32 {
 
     let _ = writeln!(
         stdout,
-        "GEMINI_STARSHIP_ENABLED={}",
-        snapshot.starship_enabled
+        "GEMINI_PROMPT_SEGMENT_ENABLED={}",
+        snapshot.prompt_segment_enabled
     );
     let _ = writeln!(
         stdout,

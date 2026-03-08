@@ -47,10 +47,10 @@ Workspace-level keep/delete ownership decisions are tracked in
 ```rust
 use nils_common::env;
 
-let starship_enabled = env::env_truthy_or("AGENTS_CLI_STARSHIP", false);
+let prompt_segment_enabled = env::env_truthy_or("AGENTS_CLI_PROMPT_SEGMENT", false);
 let no_color = env::no_color_enabled();
 let maybe_agent_home = env::env_non_empty("AGENT_HOME");
-println!("starship={starship_enabled}, no_color={no_color}");
+println!("prompt_segment={prompt_segment_enabled}, no_color={no_color}");
 ```
 
 `shell`:

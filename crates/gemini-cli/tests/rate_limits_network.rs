@@ -131,7 +131,7 @@ fn wham_usage_ok_body() -> String {
 fn cache_kv_path(cache_root: &Path, key: &str) -> PathBuf {
     cache_root
         .join("gemini")
-        .join("starship-rate-limits")
+        .join("prompt-segment-rate-limits")
         .join(format!("{key}.kv"))
 }
 
@@ -616,14 +616,14 @@ fn rate_limits_async_json_partial_failure_keeps_sorted_results() {
 }
 
 #[test]
-fn rate_limits_clear_cache_removes_old_starship_cache_dir() {
+fn rate_limits_clear_cache_removes_old_prompt_segment_cache_dir() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let secrets = dir.path().join("secrets");
     fs::create_dir_all(&secrets).expect("secrets dir");
     write_secret(&secrets, "alpha.json", Some("tok"));
 
     let cache_root = dir.path().join("cache_root");
-    let old_dir = cache_root.join("gemini").join("starship-rate-limits");
+    let old_dir = cache_root.join("gemini").join("prompt-segment-rate-limits");
     fs::create_dir_all(&old_dir).expect("cache dir");
     let junk = old_dir.join("junk.txt");
     fs::write(&junk, "junk").expect("write junk");

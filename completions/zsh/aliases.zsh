@@ -93,7 +93,7 @@ fi
 (( $+aliases[cxgk] )) || alias cxgk='codex-cli agent knowledge'
 (( $+aliases[cxgc] )) || alias cxgc='codex-cli agent commit'
 
-(( $+aliases[cxst] )) || alias cxst='codex-cli starship'
+(( $+aliases[cxps] )) || alias cxps='codex-cli prompt-segment'
 
 # ---------------------------------------------------------------------------
 # fzf-cli (fx*)

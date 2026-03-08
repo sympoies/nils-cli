@@ -86,7 +86,7 @@ pub fn no_color_requested(explicit_no_color: bool) -> bool {
     explicit_no_color || no_color_enabled()
 }
 
-pub fn starship_color_enabled(explicit_toggle_env: &str) -> bool {
+pub fn prompt_segment_color_enabled(explicit_toggle_env: &str) -> bool {
     use std::io::IsTerminal;
 
     if no_color_enabled() {
@@ -297,46 +297,48 @@ mod tests {
     }
 
     #[test]
-    fn starship_color_enabled_no_color_has_highest_priority() {
+    fn prompt_segment_color_enabled_no_color_has_highest_priority() {
         let lock = GlobalStateLock::new();
         let _no_color = EnvGuard::set(&lock, "NO_COLOR", "1");
-        let _explicit = EnvGuard::set(&lock, "NILS_COMMON_STARSHIP_COLOR_ENABLED", "1");
+        let _explicit = EnvGuard::set(&lock, "NILS_COMMON_PROMPT_SEGMENT_COLOR_ENABLED", "1");
         let _session = EnvGuard::set(&lock, "STARSHIP_SESSION_KEY", "session");
-        assert!(!starship_color_enabled(
-            "NILS_COMMON_STARSHIP_COLOR_ENABLED"
+        assert!(!prompt_segment_color_enabled(
+            "NILS_COMMON_PROMPT_SEGMENT_COLOR_ENABLED"
         ));
     }
 
     #[test]
-    fn starship_color_enabled_honors_explicit_truthy_and_falsey_values() {
+    fn prompt_segment_color_enabled_honors_explicit_truthy_and_falsey_values() {
         let lock = GlobalStateLock::new();
         let _no_color = EnvGuard::remove(&lock, "NO_COLOR");
         let _session = EnvGuard::remove(&lock, "STARSHIP_SESSION_KEY");
         let _shell = EnvGuard::remove(&lock, "STARSHIP_SHELL");
 
         for value in ["1", " true ", "YES", "on"] {
-            let _explicit = EnvGuard::set(&lock, "NILS_COMMON_STARSHIP_COLOR_ENABLED", value);
+            let _explicit = EnvGuard::set(&lock, "NILS_COMMON_PROMPT_SEGMENT_COLOR_ENABLED", value);
             assert!(
-                starship_color_enabled("NILS_COMMON_STARSHIP_COLOR_ENABLED"),
+                prompt_segment_color_enabled("NILS_COMMON_PROMPT_SEGMENT_COLOR_ENABLED"),
                 "expected truthy value: {value}"
             );
         }
 
         for value in ["", " ", "0", "false", "no", "off", "y", "enabled"] {
-            let _explicit = EnvGuard::set(&lock, "NILS_COMMON_STARSHIP_COLOR_ENABLED", value);
+            let _explicit = EnvGuard::set(&lock, "NILS_COMMON_PROMPT_SEGMENT_COLOR_ENABLED", value);
             assert!(
-                !starship_color_enabled("NILS_COMMON_STARSHIP_COLOR_ENABLED"),
+                !prompt_segment_color_enabled("NILS_COMMON_PROMPT_SEGMENT_COLOR_ENABLED"),
                 "expected falsey value: {value}"
             );
         }
     }
 
     #[test]
-    fn starship_color_enabled_uses_starship_markers_when_not_overridden() {
+    fn prompt_segment_color_enabled_uses_prompt_markers_when_not_overridden() {
         let lock = GlobalStateLock::new();
         let _no_color = EnvGuard::remove(&lock, "NO_COLOR");
-        let _explicit = EnvGuard::remove(&lock, "NILS_COMMON_STARSHIP_COLOR_ENABLED");
+        let _explicit = EnvGuard::remove(&lock, "NILS_COMMON_PROMPT_SEGMENT_COLOR_ENABLED");
         let _session = EnvGuard::set(&lock, "STARSHIP_SESSION_KEY", "session");
-        assert!(starship_color_enabled("NILS_COMMON_STARSHIP_COLOR_ENABLED"));
+        assert!(prompt_segment_color_enabled(
+            "NILS_COMMON_PROMPT_SEGMENT_COLOR_ENABLED"
+        ));
     }
 }

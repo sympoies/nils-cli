@@ -1,5 +1,5 @@
 #compdef codex-cli cx \
-#  cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxst cxdr cxdra \
+#  cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxps cxdr cxdra \
 #  cxcs cxct
 
 _nils_cli_codex_cli_source_common_zsh() {
@@ -53,7 +53,7 @@ _nils_cli_codex_cli_apply_alias_rewrite_zsh() {
     cxaa) inject=(auth auto-refresh) ;;
     cxdr) inject=(diag rate-limits) ;;
     cxdra) inject=(diag rate-limits); implied_async='1' ;;
-    cxst) inject=(starship) ;;
+    cxps) inject=(prompt-segment) ;;
     cxgp) inject=(agent prompt) ;;
     cxga) inject=(agent advice) ;;
     cxgk) inject=(agent knowledge) ;;
@@ -130,11 +130,11 @@ _codex-cli() {
 if _nils_cli_codex_cli_source_common_zsh; then
   _nils_cli_completion_common_register_zsh _codex-cli \
     codex-cli cx \
-    cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxst cxdr cxdra \
+    cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxps cxdr cxdra \
     cxcs cxct
 else
   compdef _codex-cli \
     codex-cli cx \
-    cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxst cxdr cxdra \
+    cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxps cxdr cxdra \
     cxcs cxct
 fi

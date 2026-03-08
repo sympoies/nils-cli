@@ -96,7 +96,7 @@ fn runtime_paths_config_contract_snapshot_keeps_default_and_env_overrides() {
     let _model = EnvGuard::set(&lock, "GEMINI_CLI_MODEL", "gemini-test");
     let _reasoning = EnvGuard::set(&lock, "GEMINI_CLI_REASONING", "high");
     let _danger = EnvGuard::set(&lock, "GEMINI_ALLOW_DANGEROUS_ENABLED", "true");
-    let _starship_enabled = EnvGuard::set(&lock, "GEMINI_STARSHIP_ENABLED", "true");
+    let _prompt_segment_enabled = EnvGuard::set(&lock, "GEMINI_PROMPT_SEGMENT_ENABLED", "true");
     let _refresh_enabled = EnvGuard::set(&lock, "GEMINI_AUTO_REFRESH_ENABLED", "true");
     let _refresh_days = EnvGuard::set(&lock, "GEMINI_AUTO_REFRESH_MIN_DAYS", "9");
 
@@ -104,7 +104,7 @@ fn runtime_paths_config_contract_snapshot_keeps_default_and_env_overrides() {
     assert_eq!(snapshot.model, "gemini-test");
     assert_eq!(snapshot.reasoning, "high");
     assert_eq!(snapshot.allow_dangerous_enabled_raw, "true");
-    assert_eq!(snapshot.starship_enabled, "true");
+    assert_eq!(snapshot.prompt_segment_enabled, "true");
     assert_eq!(snapshot.auto_refresh_enabled, "true");
     assert_eq!(snapshot.auto_refresh_min_days, "9");
 }

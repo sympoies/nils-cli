@@ -11,7 +11,7 @@ mod render;
 
 pub use render::CacheEntry;
 
-pub struct StarshipOptions {
+pub struct PromptSegmentOptions {
     pub no_5h: bool,
     pub ttl: Option<String>,
     pub time_format: Option<String>,
@@ -24,9 +24,9 @@ const DEFAULT_TTL_SECONDS: u64 = 180;
 const DEFAULT_TIME_FORMAT: &str = "%m-%d %H:%M";
 const DEFAULT_TIME_FORMAT_WITH_TIMEZONE: &str = "%m-%d %H:%M %:z";
 
-pub fn run(options: &StarshipOptions) -> i32 {
+pub fn run(options: &PromptSegmentOptions) -> i32 {
     if options.is_enabled {
-        return if starship_enabled() { 0 } else { 1 };
+        return if prompt_segment_enabled() { 0 } else { 1 };
     }
 
     let ttl_seconds = match resolve_ttl_seconds(options.ttl.as_deref()) {
@@ -37,7 +37,7 @@ pub fn run(options: &StarshipOptions) -> i32 {
         }
     };
 
-    if !starship_enabled() {
+    if !prompt_segment_enabled() {
         return 0;
     }
 
@@ -47,14 +47,14 @@ pub fn run(options: &StarshipOptions) -> i32 {
     };
 
     let show_5h =
-        shared_env::env_truthy_or("CODEX_STARSHIP_SHOW_5H_ENABLED", true) && !options.no_5h;
+        shared_env::env_truthy_or("CODEX_PROMPT_SEGMENT_SHOW_5H_ENABLED", true) && !options.no_5h;
     let time_format = match options.time_format.as_deref() {
         Some(value) => value,
         None if options.show_timezone => DEFAULT_TIME_FORMAT_WITH_TIMEZONE,
         None => DEFAULT_TIME_FORMAT,
     };
-    let stale_suffix =
-        std::env::var("CODEX_STARSHIP_STALE_SUFFIX").unwrap_or_else(|_| " (stale)".to_string());
+    let stale_suffix = std::env::var("CODEX_PROMPT_SEGMENT_STALE_SUFFIX")
+        .unwrap_or_else(|_| " (stale)".to_string());
 
     let prefix = resolve_name_prefix(&target_file);
 
@@ -87,8 +87,8 @@ pub fn run(options: &StarshipOptions) -> i32 {
     0
 }
 
-fn starship_enabled() -> bool {
-    shared_env::env_truthy("CODEX_STARSHIP_ENABLED")
+fn prompt_segment_enabled() -> bool {
+    shared_env::env_truthy("CODEX_PROMPT_SEGMENT_ENABLED")
 }
 
 fn resolve_ttl_seconds(cli_ttl: Option<&str>) -> Result<u64, ()> {
@@ -96,7 +96,7 @@ fn resolve_ttl_seconds(cli_ttl: Option<&str>) -> Result<u64, ()> {
         return shared_env::parse_duration_seconds(raw).ok_or(());
     }
 
-    if let Ok(raw) = std::env::var("CODEX_STARSHIP_TTL")
+    if let Ok(raw) = std::env::var("CODEX_PROMPT_SEGMENT_TTL")
         && let Some(value) = shared_env::parse_duration_seconds(&raw)
     {
         return Ok(value);
@@ -106,9 +106,9 @@ fn resolve_ttl_seconds(cli_ttl: Option<&str>) -> Result<u64, ()> {
 }
 
 fn print_ttl_usage() {
-    eprintln!("codex-cli starship: invalid --ttl");
+    eprintln!("codex-cli prompt-segment: invalid --ttl");
     eprintln!(
-        "usage: codex-cli starship [--no-5h] [--ttl <duration>] [--time-format <strftime>] [--show-timezone] [--refresh] [--is-enabled]"
+        "usage: codex-cli prompt-segment [--no-5h] [--ttl <duration>] [--time-format <strftime>] [--show-timezone] [--refresh] [--is-enabled]"
     );
 }
 
@@ -145,13 +145,13 @@ fn resolve_name_prefix(target_file: &Path) -> String {
 }
 
 fn resolve_name(target_file: &Path) -> Option<String> {
-    let name_source = std::env::var("CODEX_STARSHIP_NAME_SOURCE")
+    let name_source = std::env::var("CODEX_PROMPT_SEGMENT_NAME_SOURCE")
         .ok()
         .map(|value| value.to_ascii_lowercase())
         .unwrap_or_else(|| "secret".to_string());
 
-    let show_fallback = shared_env::env_truthy("CODEX_STARSHIP_SHOW_FALLBACK_NAME_ENABLED");
-    let show_full_email = shared_env::env_truthy("CODEX_STARSHIP_SHOW_FULL_EMAIL_ENABLED");
+    let show_fallback = shared_env::env_truthy("CODEX_PROMPT_SEGMENT_SHOW_FALLBACK_NAME_ENABLED");
+    let show_full_email = shared_env::env_truthy("CODEX_PROMPT_SEGMENT_SHOW_FULL_EMAIL_ENABLED");
 
     if name_source == "email" {
         if let Ok(Some(email)) = auth::email_from_auth_file(target_file) {

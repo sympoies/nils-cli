@@ -28,7 +28,10 @@ pub fn show() -> i32 {
         println!("CODEX_SECRET_CACHE_DIR=");
     }
 
-    println!("CODEX_STARSHIP_ENABLED={}", snapshot.starship_enabled);
+    println!(
+        "CODEX_PROMPT_SEGMENT_ENABLED={}",
+        snapshot.prompt_segment_enabled
+    );
     println!(
         "CODEX_AUTO_REFRESH_ENABLED={}",
         snapshot.auto_refresh_enabled

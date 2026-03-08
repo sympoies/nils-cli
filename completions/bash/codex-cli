@@ -61,7 +61,7 @@ _nils_cli_codex_cli_complete() {
     cxaa) inject=(auth auto-refresh) ;;
     cxdr) inject=(diag rate-limits) ;;
     cxdra) inject=(diag rate-limits); implied_async='1' ;;
-    cxst) inject=(starship) ;;
+    cxps) inject=(prompt-segment) ;;
     cxgp) inject=(agent prompt) ;;
     cxga) inject=(agent advice) ;;
     cxgk) inject=(agent knowledge) ;;
@@ -103,11 +103,11 @@ _nils_cli_codex_cli_complete() {
 if _nils_cli_codex_cli_source_common_bash; then
   _nils_cli_completion_common_register_bash _nils_cli_codex_cli_complete \
     codex-cli cx \
-    cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxst cxdr cxdra \
+    cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxps cxdr cxdra \
     cxcs cxct
 else
   complete -F _nils_cli_codex_cli_complete \
     codex-cli cx \
-    cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxst cxdr cxdra \
+    cxgp cxga cxgk cxgc cxau cxar cxaa cxac cxas cxps cxdr cxdra \
     cxcs cxct
 fi

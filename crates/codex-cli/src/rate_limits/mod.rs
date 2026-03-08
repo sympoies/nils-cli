@@ -168,7 +168,7 @@ pub fn run(args: &RateLimitsOptions) -> Result<i32> {
     }
 
     if args.clear_cache
-        && let Err(err) = cache::clear_starship_cache()
+        && let Err(err) = cache::clear_prompt_segment_cache()
     {
         if output_json {
             diag_output::emit_error(
@@ -258,7 +258,7 @@ fn run_async_json_mode(args: &RateLimitsOptions, _debug_mode: bool) -> Result<i3
         return Ok(64);
     }
     if args.clear_cache
-        && let Err(err) = cache::clear_starship_cache()
+        && let Err(err) = cache::clear_prompt_segment_cache()
     {
         diag_output::emit_error(
             DIAG_SCHEMA_VERSION,
@@ -460,7 +460,7 @@ fn collect_json_result_for_secret(
                 Some(summary) => {
                     let fetched_at_epoch = Utc::now().timestamp();
                     if fetched_at_epoch > 0 {
-                        let _ = cache::write_starship_cache(
+                        let _ = cache::write_prompt_segment_cache(
                             target_file,
                             fetched_at_epoch,
                             &summary.non_weekly_label,
@@ -687,7 +687,7 @@ fn run_async_mode_impl(
     let jobs = resolve_async_jobs(args.jobs.as_deref());
 
     if args.clear_cache
-        && let Err(err) = cache::clear_starship_cache()
+        && let Err(err) = cache::clear_prompt_segment_cache()
     {
         eprintln!("{err}");
         return Ok(1);
@@ -1300,7 +1300,7 @@ fn fetch_one_line_network(target_file: &Path, no_refresh_auth: bool) -> AsyncFet
 
     let fetched_at_epoch = Utc::now().timestamp();
     if fetched_at_epoch > 0 {
-        let _ = cache::write_starship_cache(
+        let _ = cache::write_prompt_segment_cache(
             target_file,
             fetched_at_epoch,
             &weekly.non_weekly_label,
@@ -1799,7 +1799,7 @@ fn run_single_mode(
 
     let fetched_at_epoch = Utc::now().timestamp();
     if fetched_at_epoch > 0 {
-        let _ = cache::write_starship_cache(
+        let _ = cache::write_prompt_segment_cache(
             &target_file,
             fetched_at_epoch,
             &weekly.non_weekly_label,
@@ -1952,7 +1952,7 @@ fn single_one_line(
     let weekly = render::weekly_values(&values);
     let fetched_at_epoch = Utc::now().timestamp();
     if fetched_at_epoch > 0 {
-        let _ = cache::write_starship_cache(
+        let _ = cache::write_prompt_segment_cache(
             target_file,
             fetched_at_epoch,
             &weekly.non_weekly_label,
@@ -2310,7 +2310,7 @@ mod tests {
             secret_dir.to_str().expect("secret"),
         );
         let _cache = EnvGuard::set(&lock, "ZSH_CACHE_DIR", cache_root.to_str().expect("cache"));
-        cache::write_starship_cache(
+        cache::write_prompt_segment_cache(
             &alpha,
             fresh_fetched_at(),
             "3h",
@@ -2355,7 +2355,7 @@ mod tests {
             secret_dir.to_str().expect("secret"),
         );
         let _cache = EnvGuard::set(&lock, "ZSH_CACHE_DIR", cache_root.to_str().expect("cache"));
-        cache::write_starship_cache(
+        cache::write_prompt_segment_cache(
             &alpha,
             fresh_fetched_at(),
             "3h",
@@ -2393,7 +2393,7 @@ mod tests {
             secret_dir.to_str().expect("secret"),
         );
         let _cache = EnvGuard::set(&lock, "ZSH_CACHE_DIR", cache_root.to_str().expect("cache"));
-        cache::write_starship_cache(
+        cache::write_prompt_segment_cache(
             &missing,
             fresh_fetched_at(),
             "3h",
@@ -2431,7 +2431,7 @@ mod tests {
             secret_dir.to_str().expect("secret"),
         );
         let _cache = EnvGuard::set(&lock, "ZSH_CACHE_DIR", cache_root.to_str().expect("cache"));
-        cache::write_starship_cache(
+        cache::write_prompt_segment_cache(
             &alpha,
             fresh_fetched_at(),
             "3h",

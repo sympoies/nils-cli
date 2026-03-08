@@ -93,7 +93,7 @@ pub fn render_line(
 }
 
 fn should_color() -> bool {
-    shared_env::starship_color_enabled("GEMINI_STARSHIP_COLOR_ENABLED")
+    shared_env::prompt_segment_color_enabled("GEMINI_PROMPT_SEGMENT_COLOR_ENABLED")
 }
 
 #[cfg(test)]
@@ -105,7 +105,7 @@ mod tests {
     fn should_color_no_color_has_highest_priority() {
         let lock = GlobalStateLock::new();
         let _no_color = EnvGuard::set(&lock, "NO_COLOR", "1");
-        let _explicit = EnvGuard::set(&lock, "GEMINI_STARSHIP_COLOR_ENABLED", "true");
+        let _explicit = EnvGuard::set(&lock, "GEMINI_PROMPT_SEGMENT_COLOR_ENABLED", "true");
         let _session = EnvGuard::set(&lock, "STARSHIP_SESSION_KEY", "session");
         assert!(!should_color());
     }
@@ -118,21 +118,21 @@ mod tests {
         let _shell = EnvGuard::remove(&lock, "STARSHIP_SHELL");
 
         for value in ["1", " true ", "YES", "on"] {
-            let _explicit = EnvGuard::set(&lock, "GEMINI_STARSHIP_COLOR_ENABLED", value);
+            let _explicit = EnvGuard::set(&lock, "GEMINI_PROMPT_SEGMENT_COLOR_ENABLED", value);
             assert!(should_color(), "expected truthy value: {value}");
         }
 
         for value in ["", " ", "0", "false", "no", "off", "y", "enabled"] {
-            let _explicit = EnvGuard::set(&lock, "GEMINI_STARSHIP_COLOR_ENABLED", value);
+            let _explicit = EnvGuard::set(&lock, "GEMINI_PROMPT_SEGMENT_COLOR_ENABLED", value);
             assert!(!should_color(), "expected falsey value: {value}");
         }
     }
 
     #[test]
-    fn should_color_falls_back_to_starship_markers_when_not_overridden() {
+    fn should_color_falls_back_to_prompt_markers_when_not_overridden() {
         let lock = GlobalStateLock::new();
         let _no_color = EnvGuard::remove(&lock, "NO_COLOR");
-        let _explicit = EnvGuard::remove(&lock, "GEMINI_STARSHIP_COLOR_ENABLED");
+        let _explicit = EnvGuard::remove(&lock, "GEMINI_PROMPT_SEGMENT_COLOR_ENABLED");
         let _session = EnvGuard::set(&lock, "STARSHIP_SESSION_KEY", "session");
         assert!(should_color());
     }
