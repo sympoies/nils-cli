@@ -3,7 +3,7 @@
 This file documents third-party notice-file discovery for Rust crates used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `fd664de1c874da987dcc27a197aed343da7f9499fe2f0d4e28bcd3666a4b7784`
+- Cargo.lock SHA256: `200d2f7745d38c74d2263f549b2ac5416c417fe7494afca417bf85dc48f32911`
 - Third-party crates (`source != null`): 439
 
 ## Notice Extraction Policy
@@ -2476,7 +2476,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### socket2 0.6.2
+### socket2 0.6.3
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -2702,7 +2702,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### toml 1.0.4+spec-1.1.0
+### toml 1.0.6+spec-1.1.0
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -3031,7 +3031,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### uuid 1.21.0
+### uuid 1.22.0
 
 - License: `Apache-2.0 OR MIT`
 - Source: `crates.io`
@@ -3558,7 +3558,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `license-mit`
   - `license-apache-2.0`
 
-### winnow 0.7.14
+### winnow 0.7.15
 
 - License: `MIT`
 - Source: `crates.io`
