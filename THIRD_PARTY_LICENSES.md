@@ -3,7 +3,7 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `7e5b12bab0ede6506aa1e31b50a8b3c895e723e1f8114afa66cd10ffc7d9b4dc`
+- Cargo.lock SHA256: `e172b1a3cb9629780986c31472ff8cc5a064ff84e14a29b813036ae2b9d15e17`
 - Third-party crates (`source != null`): 439
 - Workspace crates (`source == null`, excluded below): 25
 
@@ -280,7 +280,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | pxfm | 0.1.28 | BSD-3-Clause OR Apache-2.0 | crates.io |
 | quick-error | 2.0.1 | MIT/Apache-2.0 | crates.io |
 | quinn | 0.11.9 | MIT OR Apache-2.0 | crates.io |
-| quinn-proto | 0.11.13 | MIT OR Apache-2.0 | crates.io |
+| quinn-proto | 0.11.14 | MIT OR Apache-2.0 | crates.io |
 | quinn-udp | 0.5.14 | MIT OR Apache-2.0 | crates.io |
 | quote | 1.0.45 | MIT OR Apache-2.0 | crates.io |
 | r-efi | 5.3.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later | crates.io |
