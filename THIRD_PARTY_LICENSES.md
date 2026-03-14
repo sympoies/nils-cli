@@ -3,7 +3,7 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `f726d8d47eb771217ef52c080a8473c05f1ce6be0eb5cf18a90382d66e5d3e0d`
+- Cargo.lock SHA256: `b3d21ed525ed1c02d8db603481cf5491af901b64a020733cbb93800cbfb50a1b`
 - Third-party crates (`source != null`): 439
 - Workspace crates (`source == null`, excluded below): 25
 
@@ -209,7 +209,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | kurbo | 0.13.0 | Apache-2.0 OR MIT | crates.io |
 | lazy_static | 1.5.0 | MIT OR Apache-2.0 | crates.io |
 | leb128fmt | 0.1.0 | MIT OR Apache-2.0 | crates.io |
-| libc | 0.2.182 | MIT OR Apache-2.0 | crates.io |
+| libc | 0.2.183 | MIT OR Apache-2.0 | crates.io |
 | libm | 0.2.16 | MIT | crates.io |
 | libredox | 0.1.14 | MIT | crates.io |
 | libsqlite3-sys | 0.36.0 | MIT | crates.io |
