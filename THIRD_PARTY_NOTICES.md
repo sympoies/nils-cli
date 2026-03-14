@@ -3,7 +3,7 @@
 This file documents third-party notice-file discovery for Rust crates used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `0457661cecabf483295a725c19f92b0f5dbffb4e246314555e22e592145ce1f8`
+- Cargo.lock SHA256: `8a89057587ecbf973ec41bd98dab703338f552413e63c1e89eb3cdd4a038ea1a`
 - Third-party crates (`source != null`): 439
 
 ## Notice Extraction Policy
@@ -1179,7 +1179,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### image 0.25.9
+### image 0.25.10
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -1258,7 +1258,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### jaq-core 3.0.0-beta
+### jaq-core 3.0.0-gamma
 
 - License: `MIT`
 - Source: `crates.io`
@@ -1382,7 +1382,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### libc 0.2.182
+### libc 0.2.183
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -1523,7 +1523,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### moxcms 0.7.11
+### moxcms 0.8.1
 
 - License: `BSD-3-Clause OR Apache-2.0`
 - Source: `crates.io`
