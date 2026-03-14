@@ -3,7 +3,7 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `200d2f7745d38c74d2263f549b2ac5416c417fe7494afca417bf85dc48f32911`
+- Cargo.lock SHA256: `7e5b12bab0ede6506aa1e31b50a8b3c895e723e1f8114afa66cd10ffc7d9b4dc`
 - Third-party crates (`source != null`): 439
 - Workspace crates (`source == null`, excluded below): 25
 
@@ -186,7 +186,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | id-arena | 2.3.0 | MIT/Apache-2.0 | crates.io |
 | idna | 1.1.0 | MIT OR Apache-2.0 | crates.io |
 | idna_adapter | 1.2.1 | Apache-2.0 OR MIT | crates.io |
-| image | 0.25.9 | MIT OR Apache-2.0 | crates.io |
+| image | 0.25.10 | MIT OR Apache-2.0 | crates.io |
 | image-webp | 0.2.4 | MIT OR Apache-2.0 | crates.io |
 | imagesize | 0.14.0 | MIT | crates.io |
 | indexmap | 2.13.0 | Apache-2.0 OR MIT | crates.io |
@@ -225,7 +225,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | mime_guess | 2.0.5 | MIT | crates.io |
 | miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 | crates.io |
 | mio | 1.1.1 | MIT | crates.io |
-| moxcms | 0.7.11 | BSD-3-Clause OR Apache-2.0 | crates.io |
+| moxcms | 0.8.1 | BSD-3-Clause OR Apache-2.0 | crates.io |
 | nix | 0.31.2 | MIT | crates.io |
 | nu-ansi-term | 0.50.3 | MIT | crates.io |
 | num-bigint | 0.4.6 | MIT OR Apache-2.0 | crates.io |
