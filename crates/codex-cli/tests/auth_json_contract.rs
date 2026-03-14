@@ -172,6 +172,11 @@ fn auth_json_contract_refresh_invalid_name_is_structured() {
     assert_eq!(payload["command"], "auth refresh");
     assert_eq!(payload["ok"], false);
     assert_eq!(payload["error"]["code"], "invalid-secret-file-name");
+    assert_eq!(
+        payload["error"]["message"],
+        "codex-refresh: invalid secret file name"
+    );
+    assert!(payload["error"]["details"]["secret"].is_null());
 }
 
 #[test]

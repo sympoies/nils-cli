@@ -286,10 +286,8 @@ fn resolve_target(args: &[String], output_json: bool) -> Result<Option<PathBuf>>
             output::emit_error(
                 "auth refresh",
                 "invalid-secret-file-name",
-                format!("codex-refresh: invalid secret file name: {secret_name}"),
-                Some(serde_json::json!({
-                    "secret": secret_name,
-                })),
+                "codex-refresh: invalid secret file name".to_string(),
+                None,
             )?;
         } else {
             eprintln!("codex-refresh: invalid secret file name");
@@ -465,7 +463,7 @@ mod tests {
         for secret in ["", "a/b", "a..b", "../x"] {
             let args = vec![secret.to_string()];
             let target = resolve_target(&args, false).unwrap();
-            assert!(target.is_none(), "expected None for secret={secret:?}");
+            assert!(target.is_none(), "expected None for invalid secret input");
         }
     }
 

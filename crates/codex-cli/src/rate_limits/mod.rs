@@ -1874,7 +1874,7 @@ fn single_one_line(
 ) -> Result<Option<String>> {
     if !target_file.is_file() {
         if debug_mode {
-            eprintln!("codex-rate-limits: {} not found", target_file.display());
+            eprintln!("codex-rate-limits: target file not found");
         }
         return Ok(None);
     }
