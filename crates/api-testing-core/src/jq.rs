@@ -23,7 +23,10 @@ fn compile_filter<'s>(
     expr: &'s str,
     global_vars: impl IntoIterator<Item = &'s str>,
 ) -> Result<jaq_core::compile::Filter<jaq_core::Native<data::JustLut<Val>>>> {
-    let loader = Loader::new(jaq_std::defs().chain(jaq_json::defs()));
+    let defs = jaq_core::defs()
+        .chain(jaq_std::defs())
+        .chain(jaq_json::defs());
+    let loader = Loader::new(defs);
     let arena = Arena::default();
     let modules = loader
         .load(
@@ -36,8 +39,11 @@ fn compile_filter<'s>(
         .map_err(|errs| anyhow::anyhow!("{errs:?}"))
         .with_context(|| format!("jq parse failed: {expr:?}"))?;
 
+    let funs = jaq_core::funs()
+        .chain(jaq_std::funs())
+        .chain(jaq_json::funs());
     let compiler = jaq_core::Compiler::default()
-        .with_funs(jaq_std::funs().chain(jaq_json::funs()))
+        .with_funs(funs)
         .with_global_vars(global_vars);
 
     compiler
