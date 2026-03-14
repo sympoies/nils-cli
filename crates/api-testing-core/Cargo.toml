@@ -15,7 +15,7 @@ anyhow = { workspace = true }
 base64 = "0.22"
 jaq-core = "3.0.0-gamma"
 jaq-json = { version = "2.0.0-beta", features = ["serde"] }
-jaq-std = "3.0.0-beta"
+jaq-std = "3.0.0-gamma"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "multipart", "rustls"] }
 shell-words = "1"
 serde = { workspace = true }
