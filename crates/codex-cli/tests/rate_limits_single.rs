@@ -166,7 +166,7 @@ fn rate_limits_single_cached_success_reads_cache() {
         ],
     );
     assert_exit(&output, 0);
-    assert_eq!(stdout(&output), "alpha 5h:94% W:88% 11-21 20:53\n");
+    assert_eq!(stdout(&output), "5h:94% W:88% 11-21 20:53\n");
 }
 
 #[test]

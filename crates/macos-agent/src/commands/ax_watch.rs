@@ -14,6 +14,8 @@ use crate::run::{
     ActionPolicy, action_policy_result, build_action_meta_with_attempts, next_action_id,
 };
 
+const REDACTED_SESSION_ID: &str = "redacted";
+
 pub fn run_start(
     format: OutputFormat,
     args: &AxWatchStartArgs,
@@ -153,7 +155,7 @@ fn print_start(format: OutputFormat, result: AxWatchStartCommandResult) -> Resul
             println!(
                 "ax.watch.start\twatch_id={}\tsession_id={}\tstarted={}\tevents={}\tmax_buffer={}\taction_id={}\telapsed_ms={}",
                 result.detail.watch_id,
-                result.detail.session_id,
+                REDACTED_SESSION_ID,
                 result.detail.started,
                 result.detail.events.join(","),
                 result.detail.max_buffer,

@@ -15,6 +15,8 @@ use crate::run::{
     ActionPolicy, action_policy_result, build_action_meta_with_attempts, next_action_id,
 };
 
+const REDACTED_SESSION_ID: &str = "redacted";
+
 pub fn run_start(
     format: OutputFormat,
     args: &AxSessionStartArgs,
@@ -88,7 +90,7 @@ pub fn run_list(
                 for session in result.sessions {
                     println!(
                         "ax.session.list\tsession_id={}\tapp={}\tbundle_id={}\tpid={}\tcreated_at_ms={}",
-                        session.session_id,
+                        REDACTED_SESSION_ID,
                         session.app.unwrap_or_default(),
                         session.bundle_id.unwrap_or_default(),
                         session.pid.unwrap_or_default(),
@@ -150,7 +152,7 @@ fn print_start(format: OutputFormat, result: AxSessionStartCommandResult) -> Res
         OutputFormat::Text => {
             println!(
                 "ax.session.start\tsession_id={}\tapp={}\tbundle_id={}\tpid={}\tcreated={}\tcreated_at_ms={}\taction_id={}\telapsed_ms={}",
-                result.detail.session.session_id,
+                REDACTED_SESSION_ID,
                 result.detail.session.app.unwrap_or_default(),
                 result.detail.session.bundle_id.unwrap_or_default(),
                 result.detail.session.pid.unwrap_or_default(),
@@ -176,7 +178,7 @@ fn print_stop(format: OutputFormat, result: AxSessionStopCommandResult) -> Resul
         OutputFormat::Text => {
             println!(
                 "ax.session.stop\tsession_id={}\tremoved={}\taction_id={}\telapsed_ms={}",
-                result.detail.session_id,
+                REDACTED_SESSION_ID,
                 result.detail.removed,
                 result.meta.action_id,
                 result.meta.elapsed_ms,

@@ -670,10 +670,8 @@ fn run_async_mode_impl(
         return Ok(64);
     }
     if let Some(secret) = args.secret.as_deref() {
-        eprintln!(
-            "codex-rate-limits: --async does not accept positional args: {}",
-            secret
-        );
+        let _ = secret;
+        eprintln!("codex-rate-limits: --async does not accept positional args");
         eprintln!(
             "codex-rate-limits: hint: async always queries all secrets under CODEX_SECRET_DIR"
         );
@@ -1107,7 +1105,8 @@ fn emit_async_debug(
                 eprintln!();
                 eprintln!("codex-rate-limits-async: per-account stderr (captured):");
             }
-            eprintln!("---- {} ----", secret_name);
+            let _ = secret_name;
+            eprintln!("---- account stderr ----");
             eprintln!("{err}");
         }
     }
@@ -1189,9 +1188,10 @@ fn async_fetch_one_line(
                 .unwrap_or(false)
         {
             if result.rc != 0 {
+                let _ = secret_name;
                 errors.push(format!(
-                    "codex-rate-limits-async: falling back to cache for {} (rc={})",
-                    secret_name, result.rc
+                    "codex-rate-limits-async: falling back to cache (rc={})",
+                    result.rc
                 ));
             }
             result = AsyncFetchResult {
@@ -1352,15 +1352,13 @@ fn format_one_line_output(
     weekly_remaining: i64,
     weekly_reset_epoch: i64,
 ) -> String {
-    let prefix = cache::secret_name_for_target(target_file)
-        .map(|name| format!("{name} "))
-        .unwrap_or_default();
+    let _ = target_file;
     let weekly_reset_iso =
         render::format_epoch_local_datetime(weekly_reset_epoch).unwrap_or_else(|| "?".to_string());
 
     format!(
-        "{}{}:{}% W:{}% {}",
-        prefix, non_weekly_label, non_weekly_remaining, weekly_remaining, weekly_reset_iso
+        "{}:{}% W:{}% {}",
+        non_weekly_label, non_weekly_remaining, weekly_remaining, weekly_reset_iso
     )
 }
 
@@ -1662,12 +1660,8 @@ fn run_single_mode(
                 let weekly_reset_iso =
                     render::format_epoch_local_datetime(entry.weekly_reset_epoch)
                         .unwrap_or_else(|| "?".to_string());
-                let prefix = cache::secret_name_for_target(&target_file)
-                    .map(|name| format!("{name} "))
-                    .unwrap_or_default();
                 println!(
-                    "{}{}:{}% W:{}% {}",
-                    prefix,
+                    "{}:{}% W:{}% {}",
                     entry.non_weekly_label,
                     entry.non_weekly_remaining,
                     entry.weekly_remaining,
@@ -1841,15 +1835,11 @@ fn run_single_mode(
     }
 
     if one_line {
-        let prefix = cache::secret_name_for_target(&target_file)
-            .map(|name| format!("{name} "))
-            .unwrap_or_default();
         let weekly_reset_iso = render::format_epoch_local_datetime(weekly.weekly_reset_epoch)
             .unwrap_or_else(|| "?".to_string());
 
         println!(
-            "{}{}:{}% W:{}% {}",
-            prefix,
+            "{}:{}% W:{}% {}",
             weekly.non_weekly_label,
             weekly.non_weekly_remaining,
             weekly.weekly_remaining,
@@ -1895,12 +1885,8 @@ fn single_one_line(
                 let weekly_reset_iso =
                     render::format_epoch_local_datetime(entry.weekly_reset_epoch)
                         .unwrap_or_else(|| "?".to_string());
-                let prefix = cache::secret_name_for_target(target_file)
-                    .map(|name| format!("{name} "))
-                    .unwrap_or_default();
                 Ok(Some(format!(
-                    "{}{}:{}% W:{}% {}",
-                    prefix,
+                    "{}:{}% W:{}% {}",
                     entry.non_weekly_label,
                     entry.non_weekly_remaining,
                     entry.weekly_remaining,
@@ -1962,15 +1948,11 @@ fn single_one_line(
             weekly.non_weekly_reset_epoch,
         );
     }
-    let prefix = cache::secret_name_for_target(target_file)
-        .map(|name| format!("{name} "))
-        .unwrap_or_default();
     let weekly_reset_iso = render::format_epoch_local_datetime(weekly.weekly_reset_epoch)
         .unwrap_or_else(|| "?".to_string());
 
     Ok(Some(format!(
-        "{}{}:{}% W:{}% {}",
-        prefix,
+        "{}:{}% W:{}% {}",
         weekly.non_weekly_label,
         weekly.non_weekly_remaining,
         weekly.weekly_remaining,
@@ -1981,7 +1963,7 @@ fn single_one_line(
 fn resolve_target(secret: Option<&str>) -> std::result::Result<PathBuf, i32> {
     if let Some(secret_name) = secret {
         if secret_name.is_empty() || secret_name.contains('/') || secret_name.contains("..") {
-            eprintln!("codex-rate-limits: invalid secret file name: {secret_name}");
+            eprintln!("codex-rate-limits: invalid secret file name");
             return Err(64);
         }
         let secret_dir = crate::paths::resolve_secret_dir().unwrap_or_default();

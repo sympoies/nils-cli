@@ -25,7 +25,7 @@ pub fn run_with_json(target: &str, yes: bool, output_json: bool) -> i32 {
                 Some(output::obj(vec![("target", output::s(target))])),
             );
         } else {
-            eprintln!("gemini-save: invalid secret file name: {target}");
+            eprintln!("gemini-save: invalid secret file name");
         }
         return 64;
     }
@@ -240,11 +240,8 @@ fn interactive_io_available() -> bool {
     io::stdin().is_terminal() && io::stdout().is_terminal()
 }
 
-fn confirm_overwrite(target: &Path) -> io::Result<bool> {
-    eprint!(
-        "gemini-save: {} exists. overwrite? [y/N]: ",
-        target.display()
-    );
+fn confirm_overwrite(_target: &Path) -> io::Result<bool> {
+    eprint!("gemini-save: target file exists. overwrite? [y/N]: ");
     io::stderr().flush()?;
 
     let mut line = String::new();

@@ -143,7 +143,7 @@ fn apply_secret(
     let source_file = secret_dir.join(secret_name);
     if !source_file.is_file() {
         if !output_json {
-            eprintln!("codex: secret file {secret_name} not found");
+            eprintln!("codex: requested secret file not found");
         }
         return Ok((1, None));
     }
@@ -171,7 +171,7 @@ fn apply_secret(
     fs::write_timestamp(&timestamp_path, iso.as_deref())?;
 
     if !output_json {
-        println!("codex: applied {secret_name} to {}", auth_file.display());
+        println!("codex: applied stored secret to {}", auth_file.display());
     }
     Ok((0, Some(auth_file.display().to_string())))
 }

@@ -288,7 +288,7 @@ fn rate_limits_single_one_line_writes_cache_and_metadata() {
         ],
     );
     assert_exit(&output, 0);
-    assert_eq!(stdout(&output), "alpha 5h:94% W:88% 11-21 20:53\n");
+    assert_eq!(stdout(&output), "5h:94% W:88% 11-21 20:53\n");
 
     let secret_json: Value =
         serde_json::from_str(&fs::read_to_string(&secret_path).expect("read secret"))
@@ -526,7 +526,7 @@ fn rate_limits_async_falls_back_to_cache_in_debug_mode() {
 
     assert!(stdout(&output).contains("🚦 Codex rate limits for all accounts"));
     assert!(stdout(&output).contains("+00:00"));
-    assert!(stderr(&output).contains("falling back to cache for beta"));
+    assert!(stderr(&output).contains("falling back to cache"));
     assert!(stderr(&output).contains("missing access_token"));
 }
 

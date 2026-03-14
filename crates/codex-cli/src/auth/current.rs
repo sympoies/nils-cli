@@ -172,13 +172,12 @@ pub fn run_with_json(output_json: bool) -> Result<i32> {
         } else {
             match mode {
                 MatchMode::Exact => {
-                    println!("codex: {} matches {}", auth_file.display(), secret_name);
+                    println!("codex: {} matches a stored secret", auth_file.display());
                 }
                 MatchMode::Identity => {
                     println!(
-                        "codex: {} matches {} (identity; secret differs)",
-                        auth_file.display(),
-                        secret_name
+                        "codex: {} matches a stored secret (identity match; file contents differ)",
+                        auth_file.display()
                     );
                 }
             }

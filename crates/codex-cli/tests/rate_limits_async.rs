@@ -376,7 +376,7 @@ fn rate_limits_async_rejects_positional_secret_arg() {
     let output = run(&["diag", "rate-limits", "--async", "alpha.json"], &[], &[]);
     assert_exit(&output, 64);
     let err = stderr(&output);
-    assert!(err.contains("--async does not accept positional args: alpha.json"));
+    assert!(err.contains("--async does not accept positional args"));
     assert!(err.contains("hint: async always queries all secrets under CODEX_SECRET_DIR"));
 }
 

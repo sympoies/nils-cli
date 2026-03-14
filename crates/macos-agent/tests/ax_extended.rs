@@ -222,6 +222,63 @@ fn ax_session_start_list_stop_json_contracts() {
 }
 
 #[test]
+fn ax_session_text_output_redacts_session_ids() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let options = harness
+        .cmd_options(cwd.path())
+        .with_env(
+            "AGENTS_MACOS_AGENT_AX_SESSION_START_JSON",
+            r#"{"session_id":"axs-demo","app":"Arc","bundle_id":"company.thebrowser.Browser","pid":2001,"window_title_contains":"Inbox","created_at_ms":1700000001111,"created":true}"#,
+        )
+        .with_env(
+            "AGENTS_MACOS_AGENT_AX_SESSION_LIST_JSON",
+            r#"{"sessions":[{"session_id":"axs-demo","app":"Arc","bundle_id":"company.thebrowser.Browser","pid":2001,"window_title_contains":"Inbox","created_at_ms":1700000001111}]}"#,
+        )
+        .with_env(
+            "AGENTS_MACOS_AGENT_AX_SESSION_STOP_JSON",
+            r#"{"session_id":"axs-demo","removed":true}"#,
+        );
+
+    let start_out = harness.run_with_options(
+        cwd.path(),
+        &[
+            "ax",
+            "session",
+            "start",
+            "--app",
+            "Arc",
+            "--session-id",
+            "axs-demo",
+            "--window-title-contains",
+            "Inbox",
+        ],
+        options.clone(),
+    );
+    assert_eq!(start_out.code, 0, "stderr: {}", start_out.stderr_text());
+    assert!(start_out.stdout_text().contains("ax.session.start"));
+    assert!(start_out.stdout_text().contains("session_id=redacted"));
+    assert!(!start_out.stdout_text().contains("axs-demo"));
+
+    let list_out =
+        harness.run_with_options(cwd.path(), &["ax", "session", "list"], options.clone());
+    assert_eq!(list_out.code, 0, "stderr: {}", list_out.stderr_text());
+    assert!(list_out.stdout_text().contains("ax.session.list"));
+    assert!(list_out.stdout_text().contains("session_id=redacted"));
+    assert!(!list_out.stdout_text().contains("axs-demo"));
+
+    let stop_out = harness.run_with_options(
+        cwd.path(),
+        &["ax", "session", "stop", "--session-id", "axs-demo"],
+        options,
+    );
+    assert_eq!(stop_out.code, 0, "stderr: {}", stop_out.stderr_text());
+    assert!(stop_out.stdout_text().contains("ax.session.stop"));
+    assert!(stop_out.stdout_text().contains("session_id=redacted"));
+    assert!(!stop_out.stdout_text().contains("axs-demo"));
+}
+
+#[test]
 fn ax_watch_start_poll_stop_json_contracts() {
     let harness = common::MacosAgentHarness::new();
     let cwd = TempDir::new().expect("tempdir");
@@ -308,6 +365,38 @@ fn ax_watch_start_poll_stop_json_contracts() {
         serde_json::from_str(&stop_out.stdout_text()).expect("stdout json");
     assert_eq!(stop_payload["command"], json!("ax.watch.stop"));
     assert_eq!(stop_payload["result"]["drained"], json!(1));
+}
+
+#[test]
+fn ax_watch_start_text_output_redacts_session_id() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("tempdir");
+    let options = harness.cmd_options(cwd.path()).with_env(
+        "AGENTS_MACOS_AGENT_AX_WATCH_START_JSON",
+        r#"{"watch_id":"axw-demo","session_id":"axs-demo","events":["AXTitleChanged","AXFocusedUIElementChanged"],"max_buffer":64,"started":true}"#,
+    );
+
+    let start_out = harness.run_with_options(
+        cwd.path(),
+        &[
+            "ax",
+            "watch",
+            "start",
+            "--session-id",
+            "axs-demo",
+            "--watch-id",
+            "axw-demo",
+            "--events",
+            "AXTitleChanged,AXFocusedUIElementChanged",
+            "--max-buffer",
+            "64",
+        ],
+        options,
+    );
+    assert_eq!(start_out.code, 0, "stderr: {}", start_out.stderr_text());
+    assert!(start_out.stdout_text().contains("ax.watch.start"));
+    assert!(start_out.stdout_text().contains("session_id=redacted"));
+    assert!(!start_out.stdout_text().contains("axs-demo"));
 }
 
 #[test]

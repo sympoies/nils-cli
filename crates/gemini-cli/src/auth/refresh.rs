@@ -481,7 +481,7 @@ fn resolve_target(args: &[String], output_json: bool) -> Option<PathBuf> {
                 Some(output::obj(vec![("secret", output::s(secret_name))])),
             );
         } else {
-            eprintln!("gemini-refresh: invalid secret file name: {secret_name}");
+            eprintln!("gemini-refresh: invalid secret file name");
         }
         return None;
     }

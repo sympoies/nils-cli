@@ -98,7 +98,8 @@ fn auth_use_email_resolution() {
 
     assert_exit(&output, 0);
     let out = stdout(&output);
-    assert!(out.contains("applied alpha.json"));
+    assert!(out.contains("applied stored secret"));
+    assert!(!out.contains("alpha.json"));
 
     let applied = fs::read_to_string(&auth_file).expect("read auth file");
     assert_eq!(applied, content);

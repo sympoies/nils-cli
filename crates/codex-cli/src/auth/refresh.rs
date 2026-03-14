@@ -292,7 +292,7 @@ fn resolve_target(args: &[String], output_json: bool) -> Result<Option<PathBuf>>
                 })),
             )?;
         } else {
-            eprintln!("codex-refresh: invalid secret file name: {secret_name}");
+            eprintln!("codex-refresh: invalid secret file name");
         }
         return Ok(None);
     }

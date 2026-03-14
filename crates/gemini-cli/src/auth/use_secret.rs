@@ -131,7 +131,7 @@ fn apply_secret(secret_dir: &Path, secret_name: &str, output_json: bool) -> (i32
     let source_file = secret_dir.join(secret_name);
     if !source_file.is_file() {
         if !output_json {
-            eprintln!("gemini: secret file {secret_name} not found");
+            eprintln!("gemini: requested secret file not found");
         }
         return (1, None);
     }
@@ -166,7 +166,7 @@ fn apply_secret(secret_dir: &Path, secret_name: &str, output_json: bool) -> (i32
     }
 
     if !output_json {
-        println!("gemini: applied {secret_name} to {}", auth_file.display());
+        println!("gemini: applied stored secret to {}", auth_file.display());
     }
     (0, Some(auth_file.display().to_string()))
 }

@@ -178,7 +178,8 @@ fn interactive_io_available() -> bool {
 }
 
 fn confirm_remove(target: &Path) -> Result<bool> {
-    eprint!("codex-remove: remove {}? [y/N]: ", target.display());
+    let _ = target;
+    eprint!("codex-remove: remove target file? [y/N]: ");
     io::stderr().flush()?;
 
     let mut line = String::new();

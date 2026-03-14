@@ -234,10 +234,8 @@ fn interactive_io_available() -> bool {
 }
 
 fn confirm_overwrite(target: &Path) -> Result<bool> {
-    eprint!(
-        "codex-save: {} exists. overwrite? [y/N]: ",
-        target.display()
-    );
+    let _ = target;
+    eprint!("codex-save: target file exists. overwrite? [y/N]: ");
     io::stderr().flush()?;
 
     let mut line = String::new();

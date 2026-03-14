@@ -176,13 +176,12 @@ pub fn run_with_json(output_json: bool) -> i32 {
         } else {
             match mode {
                 MatchMode::Exact => {
-                    println!("gemini: {} matches {}", auth_file.display(), secret_name);
+                    println!("gemini: {} matches a stored secret", auth_file.display());
                 }
                 MatchMode::Identity => {
                     println!(
-                        "gemini: {} matches {} (identity; secret differs)",
-                        auth_file.display(),
-                        secret_name
+                        "gemini: {} matches a stored secret (identity; secret differs)",
+                        auth_file.display()
                     );
                 }
             }

@@ -356,7 +356,8 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool) -> i32 {
                     window_labels.insert(row.window_label.clone());
                 }
                 Err(err) => {
-                    eprintln!("{name}: {err}");
+                    let _ = name;
+                    eprintln!("account: {err}");
                     rc = 1;
                 }
             }
@@ -370,7 +371,8 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool) -> i32 {
                 window_labels.insert(row.window_label.clone());
             }
             Err(err) => {
-                eprintln!("{name}: {}", err.message);
+                let _ = name;
+                eprintln!("account: {}", err.message);
                 rc = 1;
             }
         }
@@ -472,8 +474,8 @@ fn run_async_mode(args: &RateLimitsOptions) -> i32 {
         eprintln!("gemini-rate-limits: --async does not support --one-line");
         return 64;
     }
-    if let Some(secret) = args.secret.as_deref() {
-        eprintln!("gemini-rate-limits: --async does not accept positional args: {secret}");
+    if args.secret.is_some() {
+        eprintln!("gemini-rate-limits: --async does not accept positional args");
         eprintln!("hint: async always queries all secrets under GEMINI_SECRET_DIR");
         return 64;
     }
@@ -1307,7 +1309,7 @@ fn cache_root() -> Option<PathBuf> {
 }
 
 fn render_line_for_summary(
-    name: &str,
+    _name: &str,
     summary: &RateLimitSummary,
     one_line: bool,
     time_format: &str,
@@ -1321,7 +1323,7 @@ fn render_line_for_summary(
     let token_weekly = format!("W:{}%", summary.weekly_remaining);
 
     if one_line {
-        return format!("{name} {token_5h} {token_weekly} {reset}");
+        return format!("{token_5h} {token_weekly} {reset}");
     }
     format!("{token_5h} {token_weekly} {reset}")
 }
@@ -1607,7 +1609,7 @@ mod tests {
         );
         assert_eq!(
             render_line_for_summary("alpha", &summary, true, "%m-%d %H:%M"),
-            "alpha 5h:94% W:88% 11-21 20:53"
+            "5h:94% W:88% 11-21 20:53"
         );
     }
 

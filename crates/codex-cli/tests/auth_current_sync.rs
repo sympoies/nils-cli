@@ -77,7 +77,8 @@ fn auth_current_exact_match() {
 
     assert_exit(&output, 0);
     let out = stdout(&output);
-    assert!(out.contains("matches alpha.json"));
+    assert!(out.contains("matches a stored secret"));
+    assert!(!out.contains("alpha.json"));
     assert!(!out.contains("identity; secret differs"));
 }
 
@@ -115,8 +116,9 @@ fn auth_current_identity_differs() {
 
     assert_exit(&output, 0);
     let out = stdout(&output);
-    assert!(out.contains("matches alpha.json"));
-    assert!(out.contains("identity; secret differs"));
+    assert!(out.contains("matches a stored secret"));
+    assert!(!out.contains("alpha.json"));
+    assert!(out.contains("identity match; file contents differ"));
 }
 
 #[test]

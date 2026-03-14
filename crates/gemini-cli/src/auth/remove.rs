@@ -25,7 +25,7 @@ pub fn run_with_json(target: &str, yes: bool, output_json: bool) -> i32 {
                 Some(output::obj(vec![("target", output::s(target))])),
             );
         } else {
-            eprintln!("gemini-remove: invalid secret file name: {target}");
+            eprintln!("gemini-remove: invalid secret file name");
         }
         return 64;
     }
@@ -186,8 +186,8 @@ fn interactive_io_available() -> bool {
     io::stdin().is_terminal() && io::stdout().is_terminal()
 }
 
-fn confirm_remove(target: &Path) -> io::Result<bool> {
-    eprint!("gemini-remove: remove {}? [y/N]: ", target.display());
+fn confirm_remove(_target: &Path) -> io::Result<bool> {
+    eprint!("gemini-remove: remove target file? [y/N]: ");
     io::stderr().flush()?;
 
     let mut line = String::new();

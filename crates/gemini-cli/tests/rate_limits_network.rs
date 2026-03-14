@@ -288,7 +288,7 @@ fn rate_limits_single_one_line_writes_cache() {
         ],
     );
     assert_exit(&output, 0);
-    assert_eq!(stdout(&output), "alpha 5h:94% W:88% 11-21 20:53\n");
+    assert_eq!(stdout(&output), "5h:94% W:88% 11-21 20:53\n");
 
     let kv_path = cache_kv_path(&cache_root, "alpha");
     let kv = fs::read_to_string(&kv_path).expect("read kv");
