@@ -3,7 +3,7 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `8a89057587ecbf973ec41bd98dab703338f552413e63c1e89eb3cdd4a038ea1a`
+- Cargo.lock SHA256: `be498d92a52814a84b79ca6c46464c1b52fe2fe3e3bfbd55675f22dd43df417d`
 - Third-party crates (`source != null`): 439
 - Workspace crates (`source == null`, excluded below): 25
 
@@ -166,7 +166,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | heck | 0.5.0 | MIT OR Apache-2.0 | crates.io |
 | hermit-abi | 0.5.2 | MIT OR Apache-2.0 | crates.io |
 | hex | 0.4.3 | MIT OR Apache-2.0 | crates.io |
-| hifijson | 0.4.0 | MIT | crates.io |
+| hifijson | 0.5.0 | MIT | crates.io |
 | http | 1.4.0 | MIT OR Apache-2.0 | crates.io |
 | http-body | 1.0.1 | MIT | crates.io |
 | http-body-util | 0.1.3 | MIT | crates.io |
@@ -196,7 +196,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | is_terminal_polyfill | 1.70.2 | MIT OR Apache-2.0 | crates.io |
 | itoa | 1.0.17 | MIT OR Apache-2.0 | crates.io |
 | jaq-core | 3.0.0-gamma | MIT | crates.io |
-| jaq-json | 2.0.0-beta | MIT | crates.io |
+| jaq-json | 2.0.0-gamma | MIT | crates.io |
 | jaq-std | 3.0.0-beta | MIT | crates.io |
 | jiff | 0.2.23 | Unlicense OR MIT | crates.io |
 | jiff-static | 0.2.23 | Unlicense OR MIT | crates.io |
