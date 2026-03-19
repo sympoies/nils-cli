@@ -166,7 +166,7 @@ jobs:
 
       - name: PR comment (sticky coverage summary)
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false && hashFiles('target/coverage/lcov.info') != ''
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: coverage
           path: target/coverage/coverage-summary.md
