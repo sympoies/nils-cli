@@ -1,10 +1,12 @@
 use std::io::Write;
 use std::path::PathBuf;
 
+use nils_common::env as shared_env;
 use nils_common::provider_runtime;
 
 use crate::provider_profile::CODEX_PROVIDER_PROFILE;
 
+pub use nils_common::provider_runtime::ExecOptions;
 pub use nils_common::provider_runtime::{
     CoreError, CoreErrorCategory, ProviderCategoryHint, auth, json, jwt,
 };
@@ -50,5 +52,23 @@ pub fn check_allow_dangerous(caller: Option<&str>) -> Result<(), CoreError> {
 }
 
 pub fn exec_dangerous(prompt: &str, caller: &str, stderr: &mut impl Write) -> i32 {
-    provider_runtime::exec::exec_dangerous(&CODEX_PROVIDER_PROFILE, prompt, caller, stderr)
+    exec_dangerous_with_options(prompt, caller, stderr, ExecOptions::default())
+}
+
+pub fn exec_dangerous_with_options(
+    prompt: &str,
+    caller: &str,
+    stderr: &mut impl Write,
+    options: ExecOptions,
+) -> i32 {
+    let effective_options = ExecOptions {
+        ephemeral: options.ephemeral || shared_env::env_truthy("CODEX_CLI_EPHEMERAL_ENABLED"),
+    };
+    provider_runtime::exec::exec_dangerous_with_options(
+        &CODEX_PROVIDER_PROFILE,
+        prompt,
+        caller,
+        stderr,
+        effective_options,
+    )
 }

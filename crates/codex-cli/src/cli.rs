@@ -37,16 +37,25 @@ pub struct AgentArgs {
 pub enum AgentCommand {
     /// Run a raw prompt
     Prompt {
+        /// Run without persisting Codex session files to disk
+        #[arg(long = "ephemeral")]
+        ephemeral: bool,
         #[arg(value_name = "prompt", num_args = 0..)]
         prompt: Vec<String>,
     },
     /// Get actionable engineering advice
     Advice {
+        /// Run without persisting Codex session files to disk
+        #[arg(long = "ephemeral")]
+        ephemeral: bool,
         #[arg(value_name = "question", num_args = 0..)]
         question: Vec<String>,
     },
     /// Get an explanation for a concept
     Knowledge {
+        /// Run without persisting Codex session files to disk
+        #[arg(long = "ephemeral")]
+        ephemeral: bool,
         #[arg(value_name = "concept", num_args = 0..)]
         concept: Vec<String>,
     },
@@ -58,6 +67,9 @@ pub enum AgentCommand {
         /// Autostage changes before committing
         #[arg(short = 'a', long = "auto-stage")]
         auto_stage: bool,
+        /// Run without persisting Codex session files to disk
+        #[arg(long = "ephemeral")]
+        ephemeral: bool,
         /// Extra prompt text
         #[arg(value_name = "extra", num_args = 0..)]
         extra: Vec<String>,

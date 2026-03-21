@@ -54,17 +54,37 @@ fn run() -> i32 {
 
 fn handle_agent(args: &cli::AgentArgs) -> i32 {
     match &args.command {
-        Some(cli::AgentCommand::Prompt { prompt }) => agent::prompt(prompt),
-        Some(cli::AgentCommand::Advice { question }) => agent::advice(question),
-        Some(cli::AgentCommand::Knowledge { concept }) => agent::knowledge(concept),
+        Some(cli::AgentCommand::Prompt { prompt, ephemeral }) => agent::prompt_with_options(
+            prompt,
+            agent::exec::ExecOptions {
+                ephemeral: *ephemeral,
+            },
+        ),
+        Some(cli::AgentCommand::Advice {
+            question,
+            ephemeral,
+        }) => agent::advice_with_options(
+            question,
+            agent::exec::ExecOptions {
+                ephemeral: *ephemeral,
+            },
+        ),
+        Some(cli::AgentCommand::Knowledge { concept, ephemeral }) => agent::knowledge_with_options(
+            concept,
+            agent::exec::ExecOptions {
+                ephemeral: *ephemeral,
+            },
+        ),
         Some(cli::AgentCommand::Commit {
             push,
             auto_stage,
+            ephemeral,
             extra,
         }) => {
             let options = agent::commit::CommitOptions {
                 push: *push,
                 auto_stage: *auto_stage,
+                ephemeral: *ephemeral,
                 extra: extra.clone(),
             };
             agent::commit::run(&options).unwrap_or(1)

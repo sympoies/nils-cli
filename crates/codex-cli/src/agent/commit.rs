@@ -11,6 +11,7 @@ use super::exec;
 pub struct CommitOptions {
     pub push: bool,
     pub auto_stage: bool,
+    pub ephemeral: bool,
     pub extra: Vec<String>,
 }
 
@@ -83,10 +84,13 @@ pub fn run(options: &CommitOptions) -> Result<i32> {
 
     let stderr = io::stderr();
     let mut stderr = stderr.lock();
-    Ok(exec::exec_dangerous(
+    Ok(exec::exec_dangerous_with_options(
         &prompt,
         "codex-commit-with-scope",
         &mut stderr,
+        exec::ExecOptions {
+            ephemeral: options.ephemeral,
+        },
     ))
 }
 

@@ -103,6 +103,38 @@ fn agent_advice_substitutes_arguments() {
 }
 
 #[test]
+fn agent_advice_ephemeral_flag_forwards_to_codex_exec() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let zdotdir = dir.path().join("zdotdir");
+    let prompts = zdotdir.join("prompts");
+    fs::create_dir_all(&prompts).expect("prompts dir");
+    fs::write(prompts.join("actionable-advice.md"), "Advice: $ARGUMENTS\n").expect("template");
+
+    let zdotdir_str = zdotdir.to_string_lossy().to_string();
+
+    let stub_dir = dir.path().join("bin");
+    let out_dir = dir.path().join("out");
+    write_stub_codex(&stub_dir, &out_dir);
+
+    let out_dir_str = out_dir.to_string_lossy().to_string();
+    let output = run_with_path_prepend(
+        &["agent", "advice", "--ephemeral", "hello", "world"],
+        &[
+            ("CODEX_ALLOW_DANGEROUS_ENABLED", "true"),
+            ("ZDOTDIR", &zdotdir_str),
+            ("CODEX_STUB_OUT_DIR", &out_dir_str),
+        ],
+        &stub_dir,
+    );
+    assert_exit(&output, 0);
+
+    let ephemeral_arg = fs::read_to_string(out_dir.join("arg-8")).expect("ephemeral arg");
+    assert_eq!(ephemeral_arg, "--ephemeral");
+    let prompt_arg = fs::read_to_string(out_dir.join("arg-10")).expect("prompt arg");
+    assert_eq!(prompt_arg, "Advice: hello world\n");
+}
+
+#[test]
 fn agent_knowledge_missing_template_prints_error_prefix() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let zdotdir = dir.path().join("zdotdir");

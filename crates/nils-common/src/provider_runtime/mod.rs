@@ -9,6 +9,7 @@ pub mod persistence;
 pub mod profile;
 
 pub use error::{CoreError, CoreErrorCategory, ProviderCategoryHint};
+pub use exec::ExecOptions;
 pub use profile::{
     ExecInvocation, ExecProfile, HomePathSelection, PathsProfile, ProviderDefaults,
     ProviderEnvKeys, ProviderProfile,

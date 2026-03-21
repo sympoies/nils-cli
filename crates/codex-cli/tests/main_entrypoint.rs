@@ -115,6 +115,24 @@ fn main_help_includes_json_output_modes_for_diag_and_auth() {
 }
 
 #[test]
+fn main_help_includes_ephemeral_flag_for_agent_commands() {
+    for path in [
+        ["agent", "prompt", "--help"],
+        ["agent", "advice", "--help"],
+        ["agent", "knowledge", "--help"],
+        ["agent", "commit", "--help"],
+    ] {
+        let output = run(&path);
+        assert_exit(&output, 0);
+        let help = stdout(&output);
+        assert!(
+            help.contains("--ephemeral"),
+            "missing --ephemeral in help:\n{help}"
+        );
+    }
+}
+
+#[test]
 fn main_help_includes_completion_export_entrypoint() {
     let output = run(&["--help"]);
     assert_exit(&output, 0);

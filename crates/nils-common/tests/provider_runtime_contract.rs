@@ -3,7 +3,7 @@ use nils_common::provider_runtime::config;
 use nils_common::provider_runtime::exec;
 use nils_common::provider_runtime::jwt;
 use nils_common::provider_runtime::{
-    ExecInvocation, ExecProfile, HomePathSelection, PathsProfile, ProviderDefaults,
+    ExecInvocation, ExecOptions, ExecProfile, HomePathSelection, PathsProfile, ProviderDefaults,
     ProviderEnvKeys, ProviderProfile,
 };
 use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
@@ -240,6 +240,70 @@ done
             "gpt-test",
             "-c",
             "model_reasoning_effort=\"high\"",
+            "--",
+            "hello world",
+        ]
+        .into_iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn provider_runtime_exec_codex_ephemeral_command_shape_is_stable() {
+    let lock = GlobalStateLock::new();
+    let stub = StubBinDir::new();
+    let args_log = tempfile::NamedTempFile::new().expect("args log");
+    let args_log_path = args_log.path().to_string_lossy().to_string();
+
+    stub.write_exe(
+        "codex",
+        r#"#!/bin/bash
+set -euo pipefail
+out="${CODEX_TEST_ARGV_LOG:?missing CODEX_TEST_ARGV_LOG}"
+: > "$out"
+for a in "$@"; do
+  echo "$a" >> "$out"
+done
+"#,
+    );
+
+    let _path = prepend_path(&lock, stub.path());
+    let _danger = EnvGuard::set(&lock, "CODEX_ALLOW_DANGEROUS_ENABLED", "true");
+    let _model = EnvGuard::set(&lock, "CODEX_CLI_MODEL", "gpt-test");
+    let _reason = EnvGuard::set(&lock, "CODEX_CLI_REASONING", "high");
+    let _argv_log = EnvGuard::set(&lock, "CODEX_TEST_ARGV_LOG", &args_log_path);
+
+    let mut stderr = Vec::new();
+    let code = exec::exec_dangerous_with_options(
+        &CODEX_PROFILE,
+        "hello world",
+        "caller",
+        &mut stderr,
+        ExecOptions { ephemeral: true },
+    );
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let args = fs::read_to_string(args_log.path())
+        .expect("read args")
+        .lines()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        args,
+        vec![
+            "exec",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "-s",
+            "workspace-write",
+            "-m",
+            "gpt-test",
+            "-c",
+            "model_reasoning_effort=\"high\"",
+            "--ephemeral",
             "--",
             "hello world",
         ]

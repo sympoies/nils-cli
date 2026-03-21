@@ -41,6 +41,7 @@ fn config_show_prints_effective_values() {
         &[
             ("CODEX_CLI_MODEL", "m1"),
             ("CODEX_CLI_REASONING", "low"),
+            ("CODEX_CLI_EPHEMERAL_ENABLED", "true"),
             ("CODEX_ALLOW_DANGEROUS_ENABLED", "true"),
             ("CODEX_SECRET_DIR", "/tmp/secrets"),
             ("CODEX_AUTH_FILE", "/tmp/auth.json"),
@@ -54,6 +55,7 @@ fn config_show_prints_effective_values() {
     let out = stdout(&output);
     assert!(out.contains("CODEX_CLI_MODEL=m1\n"));
     assert!(out.contains("CODEX_CLI_REASONING=low\n"));
+    assert!(out.contains("CODEX_CLI_EPHEMERAL_ENABLED=true\n"));
     assert!(out.contains("CODEX_ALLOW_DANGEROUS_ENABLED=true\n"));
     assert!(out.contains("CODEX_SECRET_DIR=/tmp/secrets\n"));
     assert!(out.contains("CODEX_AUTH_FILE=/tmp/auth.json\n"));
@@ -109,6 +111,13 @@ fn config_set_dangerous_prints_export_for_true() {
 }
 
 #[test]
+fn config_set_ephemeral_prints_export_for_true() {
+    let output = run(&["config", "set", "ephemeral", "true"], &[]);
+    assert_exit(&output, 0);
+    assert_eq!(stdout(&output), "export CODEX_CLI_EPHEMERAL_ENABLED=true\n");
+}
+
+#[test]
 fn config_set_unknown_key_exits_64() {
     let output = run(&["config", "set", "wat", "x"], &[]);
     assert_exit(&output, 64);
@@ -134,4 +143,11 @@ fn config_set_dangerous_rejects_invalid_values() {
     let output = run(&["config", "set", "dangerous", "maybe"], &[]);
     assert_exit(&output, 64);
     assert!(stderr(&output).contains("dangerous must be true|false"));
+}
+
+#[test]
+fn config_set_ephemeral_rejects_invalid_values() {
+    let output = run(&["config", "set", "ephemeral", "maybe"], &[]);
+    assert_exit(&output, 64);
+    assert!(stderr(&output).contains("ephemeral must be true|false"));
 }
