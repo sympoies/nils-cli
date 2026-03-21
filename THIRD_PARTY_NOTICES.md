@@ -3,7 +3,7 @@
 This file documents third-party notice-file discovery for Rust crates used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `bcaeaa198e219a1e0f1a2e41ac10475a928447ec81f33e169d27d707838b76a3`
+- Cargo.lock SHA256: `a94fe4077d995b0cbe9ac55aa279e75689fc999c16d2dad8a375f5c18c8486f0`
 - Third-party crates (`source != null`): 439
 
 ## Notice Extraction Policy
@@ -1407,7 +1407,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### libsqlite3-sys 0.36.0
+### libsqlite3-sys 0.37.0
 
 - License: `MIT`
 - Source: `crates.io`
@@ -2149,7 +2149,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - Notice files: No explicit NOTICE file discovered.
 - License file reference: none declared
 
-### rusqlite 0.38.0
+### rusqlite 0.39.0
 
 - License: `MIT`
 - Source: `crates.io`
@@ -2222,7 +2222,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - Notice files: No explicit NOTICE file discovered.
 - License file reference: none declared
 
-### rustls-webpki 0.103.9
+### rustls-webpki 0.103.10
 
 - License: `ISC`
 - Source: `crates.io`
@@ -2711,7 +2711,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### toml_datetime 1.0.0+spec-1.1.0
+### toml_datetime 1.0.1+spec-1.1.0
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -2720,7 +2720,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### toml_edit 0.25.4+spec-1.1.0
+### toml_edit 0.25.5+spec-1.1.0
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -2729,7 +2729,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### toml_parser 1.0.9+spec-1.1.0
+### toml_parser 1.0.10+spec-1.1.0
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -2738,7 +2738,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### toml_writer 1.0.6+spec-1.1.0
+### toml_writer 1.0.7+spec-1.1.0
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -2836,7 +2836,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### tungstenite 0.28.0
+### tungstenite 0.29.0
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -2998,15 +2998,6 @@ This file documents third-party notice-file discovery for Rust crates used by th
 ### usvg 0.47.0
 
 - License: `Apache-2.0 OR MIT`
-- Source: `crates.io`
-- Notice files: No explicit NOTICE file discovered.
-- License file references:
-  - `LICENSE-APACHE`
-  - `LICENSE-MIT`
-
-### utf-8 0.7.6
-
-- License: `MIT OR Apache-2.0`
 - Source: `crates.io`
 - Notice files: No explicit NOTICE file discovered.
 - License file references:
@@ -3559,6 +3550,14 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `license-apache-2.0`
 
 ### winnow 0.7.15
+
+- License: `MIT`
+- Source: `crates.io`
+- Notice files: No explicit NOTICE file discovered.
+- License file references:
+  - `LICENSE-MIT`
+
+### winnow 1.0.0
 
 - License: `MIT`
 - Source: `crates.io`
