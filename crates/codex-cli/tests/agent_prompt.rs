@@ -45,7 +45,13 @@ fn agent_prompt_requires_dangerous_mode() {
     let mut stdin = BufReader::new(Cursor::new(""));
     let mut stdout: Vec<u8> = Vec::new();
     let mut stderr: Vec<u8> = Vec::new();
-    let code = agent::prompt_with_io(&["hello".into()], &mut stdin, &mut stdout, &mut stderr);
+    let code = agent::prompt_with_io(
+        &["hello".into()],
+        agent::exec::ExecOptions::default(),
+        &mut stdin,
+        &mut stdout,
+        &mut stderr,
+    );
     assert_eq!(code, 1);
     assert!(
         String::from_utf8_lossy(&stderr)
@@ -72,6 +78,7 @@ fn agent_prompt_execs_codex_with_expected_args() {
     let mut stderr: Vec<u8> = Vec::new();
     let code = agent::prompt_with_io(
         &["hello".into(), "world".into()],
+        agent::exec::ExecOptions::default(),
         &mut stdin,
         &mut stdout,
         &mut stderr,
@@ -100,6 +107,53 @@ fn agent_prompt_execs_codex_with_expected_args() {
 }
 
 #[test]
+fn agent_prompt_execs_codex_with_ephemeral_arg_when_requested() {
+    let lock = GlobalStateLock::new();
+    let stub = StubBinDir::new();
+    let args_log = write_codex_stub(&stub);
+    let _path = prepend_path(&lock, stub.path());
+
+    let _danger = EnvGuard::set(&lock, "CODEX_ALLOW_DANGEROUS_ENABLED", "true");
+    let _model = EnvGuard::set(&lock, "CODEX_CLI_MODEL", "gpt-test");
+    let _reasoning = EnvGuard::set(&lock, "CODEX_CLI_REASONING", "high");
+    let args_log_path = args_log.path().to_string_lossy().to_string();
+    let _argv_log = EnvGuard::set(&lock, "CODEX_TEST_ARGV_LOG", &args_log_path);
+
+    let mut stdin = BufReader::new(Cursor::new(""));
+    let mut stdout: Vec<u8> = Vec::new();
+    let mut stderr: Vec<u8> = Vec::new();
+    let code = agent::prompt_with_io(
+        &["hello".into(), "world".into()],
+        agent::exec::ExecOptions { ephemeral: true },
+        &mut stdin,
+        &mut stdout,
+        &mut stderr,
+    );
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    assert_eq!(
+        read_args(&args_log),
+        vec![
+            "exec",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "-s",
+            "workspace-write",
+            "-m",
+            "gpt-test",
+            "-c",
+            "model_reasoning_effort=\"high\"",
+            "--ephemeral",
+            "--",
+            "hello world",
+        ]
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn agent_prompt_reads_stdin_when_no_args() {
     let lock = GlobalStateLock::new();
     let stub = StubBinDir::new();
@@ -115,7 +169,13 @@ fn agent_prompt_reads_stdin_when_no_args() {
     let mut stdin = BufReader::new(Cursor::new("from stdin\n"));
     let mut stdout: Vec<u8> = Vec::new();
     let mut stderr: Vec<u8> = Vec::new();
-    let code = agent::prompt_with_io(&[], &mut stdin, &mut stdout, &mut stderr);
+    let code = agent::prompt_with_io(
+        &[],
+        agent::exec::ExecOptions::default(),
+        &mut stdin,
+        &mut stdout,
+        &mut stderr,
+    );
     assert_eq!(code, 0);
     assert_eq!(String::from_utf8_lossy(&stdout), "Prompt: ");
     assert!(stderr.is_empty());
@@ -134,7 +194,13 @@ fn agent_prompt_empty_stdin_exits_1_without_exec() {
     let mut stdin = BufReader::new(Cursor::new(""));
     let mut stdout: Vec<u8> = Vec::new();
     let mut stderr: Vec<u8> = Vec::new();
-    let code = agent::prompt_with_io(&[], &mut stdin, &mut stdout, &mut stderr);
+    let code = agent::prompt_with_io(
+        &[],
+        agent::exec::ExecOptions::default(),
+        &mut stdin,
+        &mut stdout,
+        &mut stderr,
+    );
     assert_eq!(code, 1);
     assert_eq!(String::from_utf8_lossy(&stdout), "Prompt: ");
     assert!(read_args(&args_log).is_empty());
@@ -150,7 +216,13 @@ fn agent_prompt_blank_line_exits_1_with_missing_prompt_message() {
     let mut stdin = BufReader::new(Cursor::new("\n"));
     let mut stdout: Vec<u8> = Vec::new();
     let mut stderr: Vec<u8> = Vec::new();
-    let code = agent::prompt_with_io(&[], &mut stdin, &mut stdout, &mut stderr);
+    let code = agent::prompt_with_io(
+        &[],
+        agent::exec::ExecOptions::default(),
+        &mut stdin,
+        &mut stdout,
+        &mut stderr,
+    );
     assert_eq!(code, 1);
     assert_eq!(String::from_utf8_lossy(&stdout), "Prompt: ");
     assert!(String::from_utf8_lossy(&stderr).contains("codex-tools: missing prompt"));

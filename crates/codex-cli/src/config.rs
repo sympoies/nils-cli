@@ -6,6 +6,10 @@ pub fn show() -> i32 {
     println!("CODEX_CLI_MODEL={}", snapshot.model);
     println!("CODEX_CLI_REASONING={}", snapshot.reasoning);
     println!(
+        "CODEX_CLI_EPHEMERAL_ENABLED={}",
+        std::env::var("CODEX_CLI_EPHEMERAL_ENABLED").unwrap_or_default()
+    );
+    println!(
         "CODEX_ALLOW_DANGEROUS_ENABLED={}",
         snapshot.allow_dangerous_enabled_raw
     );
@@ -60,6 +64,18 @@ pub fn set(key: &str, value: &str) -> i32 {
             );
             0
         }
+        "ephemeral" | "CODEX_CLI_EPHEMERAL_ENABLED" => {
+            let lowered = value.trim().to_ascii_lowercase();
+            if lowered != "true" && lowered != "false" {
+                eprintln!(
+                    "codex-cli config: ephemeral must be true|false (got: {})",
+                    value
+                );
+                return 64;
+            }
+            println!("export CODEX_CLI_EPHEMERAL_ENABLED={}", lowered);
+            0
+        }
         "dangerous" | "allow-dangerous" | "CODEX_ALLOW_DANGEROUS_ENABLED" => {
             let lowered = value.trim().to_ascii_lowercase();
             if lowered != "true" && lowered != "false" {
@@ -74,7 +90,7 @@ pub fn set(key: &str, value: &str) -> i32 {
         }
         _ => {
             eprintln!("codex-cli config: unknown key: {key}");
-            eprintln!("codex-cli config: keys: model|reasoning|dangerous");
+            eprintln!("codex-cli config: keys: model|reasoning|ephemeral|dangerous");
             64
         }
     }

@@ -41,10 +41,14 @@ Help:
 
 ### agent
 
-- `prompt [PROMPT...]`: Run a raw prompt through `codex exec`.
-- `advice [QUESTION...]`: Request actionable engineering advice.
-- `knowledge [CONCEPT...]`: Request a concept explanation.
-- `commit [-p|--push] [-a|--auto-stage] [EXTRA...]`: Run the semantic-commit workflow.
+- `prompt [--ephemeral] [PROMPT...]`: Run a raw prompt through `codex exec`.
+- `advice [--ephemeral] [QUESTION...]`: Request actionable engineering advice.
+- `knowledge [--ephemeral] [CONCEPT...]`: Request a concept explanation.
+- `commit [--ephemeral] [-p|--push] [-a|--auto-stage] [EXTRA...]`: Run the semantic-commit workflow.
+
+Agent flag notes:
+
+- `--ephemeral`: Forward `codex exec --ephemeral` so Codex does not persist session files for that run.
 
 ### auth
 
@@ -99,6 +103,7 @@ Auth examples:
 - `CODEX_ALLOW_DANGEROUS_ENABLED`: gate for `agent` commands (default: `false`).
 - `CODEX_CLI_MODEL`: `codex exec` default model (default: `gpt-5.1-codex-mini`).
 - `CODEX_CLI_REASONING`: `codex exec` default reasoning level (default: `medium`).
+- `CODEX_CLI_EPHEMERAL_ENABLED`: append `--ephemeral` to `codex exec` for agent commands (default: `false`).
 - `CODEX_SECRET_DIR`: secret directory path (default: `~/.config/codex_secrets`).
 - `CODEX_AUTH_FILE`: active auth file path (default: `~/.agents/auth.json`).
 - `CODEX_SECRET_CACHE_DIR`: secret timestamp cache directory. If unset, resolver order is:

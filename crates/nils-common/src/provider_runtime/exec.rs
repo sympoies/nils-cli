@@ -6,6 +6,11 @@ use std::sync::atomic::Ordering;
 use super::error::CoreError;
 use super::profile::{ExecInvocation, ProviderProfile};
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ExecOptions {
+    pub ephemeral: bool,
+}
+
 pub fn require_allow_dangerous(
     profile: &ProviderProfile,
     caller: Option<&str>,
@@ -63,6 +68,16 @@ pub fn exec_dangerous(
     caller: &str,
     stderr: &mut impl Write,
 ) -> i32 {
+    exec_dangerous_with_options(profile, prompt, caller, stderr, ExecOptions::default())
+}
+
+pub fn exec_dangerous_with_options(
+    profile: &ProviderProfile,
+    prompt: &str,
+    caller: &str,
+    stderr: &mut impl Write,
+    options: ExecOptions,
+) -> i32 {
     if prompt.is_empty() {
         let _ = writeln!(
             stderr,
@@ -77,7 +92,7 @@ pub fn exec_dangerous(
     }
 
     match profile.exec.invocation {
-        ExecInvocation::CodexStyle => exec_dangerous_codex_style(profile, prompt, stderr),
+        ExecInvocation::CodexStyle => exec_dangerous_codex_style(profile, prompt, stderr, options),
         ExecInvocation::GeminiStyle => exec_dangerous_gemini_style(profile, prompt, stderr),
     }
 }
@@ -86,24 +101,29 @@ fn exec_dangerous_codex_style(
     profile: &ProviderProfile,
     prompt: &str,
     stderr: &mut impl Write,
+    options: ExecOptions,
 ) -> i32 {
     let model = shared_env::env_or_default(profile.env.model, profile.defaults.model);
     let reasoning = shared_env::env_or_default(profile.env.reasoning, profile.defaults.reasoning);
     let reasoning_arg = format!("model_reasoning_effort=\"{}\"", reasoning);
-    let args = [
-        "exec",
-        "--dangerously-bypass-approvals-and-sandbox",
-        "-s",
-        "workspace-write",
-        "-m",
-        model.as_str(),
-        "-c",
-        reasoning_arg.as_str(),
-        "--",
-        prompt,
+    let mut args = vec![
+        "exec".to_string(),
+        "--dangerously-bypass-approvals-and-sandbox".to_string(),
+        "-s".to_string(),
+        "workspace-write".to_string(),
+        "-m".to_string(),
+        model,
+        "-c".to_string(),
+        reasoning_arg,
     ];
+    if options.ephemeral {
+        args.push("--ephemeral".to_string());
+    }
+    args.push("--".to_string());
+    args.push(prompt.to_string());
 
-    run_exec(profile, &args, stderr)
+    let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+    run_exec(profile, &arg_refs, stderr)
 }
 
 fn exec_dangerous_gemini_style(

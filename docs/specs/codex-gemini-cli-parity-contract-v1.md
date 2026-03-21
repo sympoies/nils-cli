@@ -51,8 +51,10 @@ Compatibility rules:
 
 1. Provider-specific env key names, default model values, path precedence, and dangerous-exec command shape are configured via provider
    profiles.
-2. Shared runtime primitives (`auth/json/jwt/error/path/config/exec` logic) stay in `nils-common::provider_runtime`.
-3. Human output text and exit semantics stay stable for existing commands.
+2. Provider-specific exec flags may diverge when the upstream provider CLI capabilities differ (for example Codex supports optional
+   `--ephemeral`; Gemini currently has no equivalent).
+3. Shared runtime primitives (`auth/json/jwt/error/path/config/exec` logic) stay in `nils-common::provider_runtime`.
+4. Human output text and exit semantics stay stable for existing commands.
 
 ## Concurrency guardrails
 

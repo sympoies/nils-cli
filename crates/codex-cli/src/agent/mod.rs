@@ -4,17 +4,28 @@ pub mod commit;
 pub mod exec;
 
 pub fn prompt(prompt_args: &[String]) -> i32 {
+    prompt_with_options(prompt_args, exec::ExecOptions::default())
+}
+
+pub fn prompt_with_options(prompt_args: &[String], exec_options: exec::ExecOptions) -> i32 {
     let stdin = io::stdin();
     let mut stdin = stdin.lock();
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
     let stderr = io::stderr();
     let mut stderr = stderr.lock();
-    prompt_with_io(prompt_args, &mut stdin, &mut stdout, &mut stderr)
+    prompt_with_io(
+        prompt_args,
+        exec_options,
+        &mut stdin,
+        &mut stdout,
+        &mut stderr,
+    )
 }
 
 pub fn prompt_with_io<R: BufRead, WOut: Write, WErr: Write>(
     prompt_args: &[String],
+    exec_options: exec::ExecOptions,
     stdin: &mut R,
     stdout: &mut WOut,
     stderr: &mut WErr,
@@ -44,10 +55,14 @@ pub fn prompt_with_io<R: BufRead, WOut: Write, WErr: Write>(
         return 1;
     }
 
-    exec::exec_dangerous(&user_prompt, "codex-tools:prompt", stderr)
+    exec::exec_dangerous_with_options(&user_prompt, "codex-tools:prompt", stderr, exec_options)
 }
 
 pub fn advice(question_args: &[String]) -> i32 {
+    advice_with_options(question_args, exec::ExecOptions::default())
+}
+
+pub fn advice_with_options(question_args: &[String], exec_options: exec::ExecOptions) -> i32 {
     let stdin = io::stdin();
     let mut stdin = stdin.lock();
     let stdout = io::stdout();
@@ -57,6 +72,7 @@ pub fn advice(question_args: &[String]) -> i32 {
     run_template_with_io(
         "actionable-advice",
         question_args,
+        exec_options,
         &mut stdin,
         &mut stdout,
         &mut stderr,
@@ -64,6 +80,10 @@ pub fn advice(question_args: &[String]) -> i32 {
 }
 
 pub fn knowledge(concept_args: &[String]) -> i32 {
+    knowledge_with_options(concept_args, exec::ExecOptions::default())
+}
+
+pub fn knowledge_with_options(concept_args: &[String], exec_options: exec::ExecOptions) -> i32 {
     let stdin = io::stdin();
     let mut stdin = stdin.lock();
     let stdout = io::stdout();
@@ -73,6 +93,7 @@ pub fn knowledge(concept_args: &[String]) -> i32 {
     run_template_with_io(
         "actionable-knowledge",
         concept_args,
+        exec_options,
         &mut stdin,
         &mut stdout,
         &mut stderr,
@@ -82,6 +103,7 @@ pub fn knowledge(concept_args: &[String]) -> i32 {
 fn run_template_with_io<R: BufRead, WOut: Write, WErr: Write>(
     template_name: &str,
     args: &[String],
+    exec_options: exec::ExecOptions,
     stdin: &mut R,
     stdout: &mut WOut,
     stderr: &mut WErr,
@@ -132,9 +154,10 @@ fn run_template_with_io<R: BufRead, WOut: Write, WErr: Write>(
     };
 
     let final_prompt = template_content.replace("$ARGUMENTS", &user_query);
-    exec::exec_dangerous(
+    exec::exec_dangerous_with_options(
         &final_prompt,
         &format!("codex-tools:{template_name}"),
         stderr,
+        exec_options,
     )
 }

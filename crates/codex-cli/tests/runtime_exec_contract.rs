@@ -98,3 +98,62 @@ done
         .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn runtime_exec_contract_env_ephemeral_adds_exec_flag() {
+    let lock = GlobalStateLock::new();
+    let stub = StubBinDir::new();
+    let args_log = tempfile::NamedTempFile::new().expect("args log");
+    let args_log_path = args_log.path().to_string_lossy().to_string();
+
+    stub.write_exe(
+        "codex",
+        r#"#!/bin/bash
+set -euo pipefail
+out="${CODEX_TEST_ARGV_LOG:?missing CODEX_TEST_ARGV_LOG}"
+: > "$out"
+for a in "$@"; do
+  echo "$a" >> "$out"
+done
+"#,
+    );
+
+    let _path = prepend_path(&lock, stub.path());
+    let _danger = EnvGuard::set(&lock, "CODEX_ALLOW_DANGEROUS_ENABLED", "true");
+    let _model = EnvGuard::set(&lock, "CODEX_CLI_MODEL", "gpt-test");
+    let _reason = EnvGuard::set(&lock, "CODEX_CLI_REASONING", "high");
+    let _ephemeral = EnvGuard::set(&lock, "CODEX_CLI_EPHEMERAL_ENABLED", "true");
+    let _argv_log = EnvGuard::set(&lock, "CODEX_TEST_ARGV_LOG", &args_log_path);
+
+    let mut stderr = Vec::new();
+    let code = runtime::exec_dangerous("hello world", "caller", &mut stderr);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let args = std::fs::read_to_string(args_log.path())
+        .expect("read args")
+        .lines()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        args,
+        vec![
+            "exec",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "-s",
+            "workspace-write",
+            "-m",
+            "gpt-test",
+            "-c",
+            "model_reasoning_effort=\"high\"",
+            "--ephemeral",
+            "--",
+            "hello world",
+        ]
+        .into_iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+    );
+}

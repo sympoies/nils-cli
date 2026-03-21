@@ -148,6 +148,7 @@ fn agent_commit_semantic_mode_executes_codex_with_template_and_push_note() {
         &[
             "agent",
             "commit",
+            "--ephemeral",
             "--push",
             "--auto-stage",
             "extra",
@@ -157,7 +158,9 @@ fn agent_commit_semantic_mode_executes_codex_with_template_and_push_note() {
     );
     assert_exit(&output, 0);
 
-    let prompt = fs::read_to_string(out_dir.join("arg-9")).expect("prompt");
+    let ephemeral = fs::read_to_string(out_dir.join("arg-8")).expect("ephemeral");
+    assert_eq!(ephemeral, "--ephemeral");
+    let prompt = fs::read_to_string(out_dir.join("arg-10")).expect("prompt");
     assert!(prompt.contains("SEMANTIC_AUTOSTAGE"));
     assert!(prompt.contains("Furthermore, please push the committed changes"));
     assert!(prompt.contains("Additional instructions from user:"));
