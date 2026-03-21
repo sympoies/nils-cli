@@ -239,9 +239,9 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.16.1"
+version = "1.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94bffc006df10ac2a68c83692d734a465f8ee6c5b384d8545a636f81d858f4bf"
+checksum = "a054912289d18629dc78375ba2c3726a3afe3ff71b4edba9dedfca0e3446d1fc"
 dependencies = [
  "aws-lc-sys",
  "zeroize",
@@ -249,9 +249,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.38.0"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4321e568ed89bb5a7d291a7f37997c2c0df89809d7b6d12062c81ddb54aa782e"
+checksum = "1fa7e52a4c5c547c741610a2c6f123f3881e409b714cd27e6798ef020c514f0a"
 dependencies = [
  "cc",
  "cmake",
@@ -705,9 +705,9 @@ dependencies = [
 
 [[package]]
 name = "euclid"
-version = "0.22.13"
+version = "0.22.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df61bf483e837f88d5c2291dcf55c67be7e676b3a51acc48db3a7b163b91ed63"
+checksum = "f1a05365e3b1c6d1650318537c7460c6923f1abdd272ad6842baa2b509957a06"
 dependencies = [
  "num-traits",
 ]
@@ -1340,9 +1340,9 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 
 [[package]]
 name = "itoa"
-version = "1.0.17"
+version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
+checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jaq-core"
@@ -1636,7 +1636,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-docs"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -1653,7 +1653,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-gql"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -1668,7 +1668,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-grpc"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "anyhow",
  "base64",
@@ -1684,7 +1684,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-rest"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "anyhow",
  "base64",
@@ -1700,7 +1700,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-test"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -1716,7 +1716,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-testing-core"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "anyhow",
  "base64",
@@ -1739,7 +1739,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-websocket"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -1755,7 +1755,7 @@ dependencies = [
 
 [[package]]
 name = "nils-cli-template"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -1769,7 +1769,7 @@ dependencies = [
 
 [[package]]
 name = "nils-codex-cli"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1788,7 +1788,7 @@ dependencies = [
 
 [[package]]
 name = "nils-common"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "base64",
  "nils-test-support",
@@ -1800,7 +1800,7 @@ dependencies = [
 
 [[package]]
 name = "nils-fzf-cli"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -1817,7 +1817,7 @@ dependencies = [
 
 [[package]]
 name = "nils-gemini-cli"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -1832,7 +1832,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-cli"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -1848,7 +1848,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-lock"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1863,7 +1863,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-scope"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -1876,7 +1876,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-summary"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1891,7 +1891,7 @@ dependencies = [
 
 [[package]]
 name = "nils-image-processing"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1915,7 +1915,7 @@ dependencies = [
 
 [[package]]
 name = "nils-macos-agent"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "clap",
  "clap_complete",
@@ -1932,7 +1932,7 @@ dependencies = [
 
 [[package]]
 name = "nils-memo-cli"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1950,7 +1950,7 @@ dependencies = [
 
 [[package]]
 name = "nils-plan-issue-cli"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "clap",
  "clap_complete",
@@ -1965,7 +1965,7 @@ dependencies = [
 
 [[package]]
 name = "nils-plan-tooling"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -1981,7 +1981,7 @@ dependencies = [
 
 [[package]]
 name = "nils-screen-record"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "block2",
  "chrono",
@@ -2008,7 +2008,7 @@ dependencies = [
 
 [[package]]
 name = "nils-semantic-commit"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -2024,7 +2024,7 @@ dependencies = [
 
 [[package]]
 name = "nils-term"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "indicatif",
  "pretty_assertions",
@@ -2032,7 +2032,7 @@ dependencies = [
 
 [[package]]
 name = "nils-test-support"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "pretty_assertions",
  "serde",
@@ -2477,9 +2477,9 @@ checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
 
 [[package]]
 name = "portable-atomic-util"
-version = "0.2.5"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a9db96d7fa8782dd8c15ce32ffe8680bbd1e978a43bf51a34d39483540495f5"
+checksum = "091397be61a01d4be58e7841595bd4bfedb15f1cd54977d79b8271e94ed799a3"
 dependencies = [
  "portable-atomic",
 ]
@@ -3401,9 +3401,9 @@ dependencies = [
 
 [[package]]
 name = "tinyvec"
-version = "1.10.0"
+version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfa5fdc3bce6191a1dbc8c02d5c8bffcf557bafa17c124c5264a458f1b0613fa"
+checksum = "3e61e67053d25a4e82c844e8424039d9745781b3fc4f32b8d55ed50f5f667ef3"
 dependencies = [
  "tinyvec_macros",
 ]
@@ -3440,9 +3440,9 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "1.0.6+spec-1.1.0"
+version = "1.0.7+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "399b1124a3c9e16766831c6bba21e50192572cdd98706ea114f9502509686ffc"
+checksum = "dd28d57d8a6f6e458bc0b8784f8fdcc4b99a437936056fa122cb234f18656a96"
 dependencies = [
  "indexmap",
  "serde_core",
@@ -3450,7 +3450,7 @@ dependencies = [
  "toml_datetime",
  "toml_parser",
  "toml_writer",
- "winnow 0.7.15",
+ "winnow 1.0.0",
 ]
 
 [[package]]
@@ -3644,9 +3644,9 @@ checksum = "562d481066bde0658276a35467c4af00bdc6ee726305698a55b86e61d7ad82bb"
 
 [[package]]
 name = "uds_windows"
-version = "1.2.0"
+version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51b70b87d15e91f553711b40df3048faf27a7a04e01e0ddc0cf9309f0af7c2ca"
+checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
@@ -4519,18 +4519,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.42"
+version = "0.8.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2578b716f8a7a858b7f02d5bd870c14bf4ddbbcf3a4c05414ba6503640505e3"
+checksum = "efbb2a062be311f2ba113ce66f697a4dc589f85e78a4aea276200804cea0ed87"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.42"
+version = "0.8.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e6cc098ea4d3bd6246687de65af3f920c430e236bee1e3bf2e441463f08a02f"
+checksum = "0e8bc7269b54418e7aeeef514aa68f8690b8c0489a06b0136e5f57c4c5ccab89"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4611,9 +4611,9 @@ checksum = "cb8a0807f7c01457d0379ba880ba6322660448ddebc890ce29bb64da71fb40f9"
 
 [[package]]
 name = "zune-jpeg"
-version = "0.5.13"
+version = "0.5.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec5f41c76397b7da451efd19915684f727d7e1d516384ca6bd0ec43ec94de23c"
+checksum = "0b7a1c0af6e5d8d1363f4994b7a091ccf963d8b694f7da5b0b9cceb82da2c0a6"
 dependencies = [
  "zune-core",
 ]
