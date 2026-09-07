@@ -3256,6 +3256,21 @@ async fn execute_retitle(
     let crate::retitle::Admission::Evaluate(observed) = admission else {
         unreachable!();
     };
+    let result = execute_retitle_evaluation(state.clone(), &id, &request, observed)
+        .await
+        .map_err(sanitize_retitle_error);
+    if let Err(error) = &result {
+        record_retitle_failure(&state, &id, &request, error).await;
+    }
+    result
+}
+
+async fn execute_retitle_evaluation(
+    state: Arc<ServeState>,
+    id: &str,
+    request: &crate::retitle::RetitleRequest,
+    observed: SessionRecord,
+) -> Result<Value, CliError> {
     let permit = state.retitle.acquire().await?;
     let history_catalog = state.history_catalog.clone();
     let trigger = request.trigger;
@@ -3269,7 +3284,6 @@ async fn execute_retitle(
     let (permit, title_context) = match context_result {
         Ok(value) => value,
         Err(error) => {
-            record_retitle_failure(&state, &id, &request, &error).await;
             return Err(error);
         }
     };
@@ -3283,13 +3297,12 @@ async fn execute_retitle(
     let decision = match decision_result {
         Ok(value) => value,
         Err(error) => {
-            record_retitle_failure(&state, &id, &request, &error).await;
             return Err(error);
         }
     };
     let context = state.context.clone();
     let request_for_commit = request.clone();
-    let id_for_commit = id.clone();
+    let id_for_commit = id.to_string();
     let coverage_for_commit = coverage.clone();
     let committed = tokio::task::spawn_blocking(move || {
         crate::retitle::commit(
@@ -3309,7 +3322,7 @@ async fn execute_retitle(
     Ok(retitle_projection(
         &state,
         &committed.record,
-        &request,
+        request,
         if committed.changed {
             "committed"
         } else {
@@ -3329,6 +3342,70 @@ async fn execute_retitle(
 struct AutomaticRetitleCandidate {
     id: String,
     request: crate::retitle::RetitleRequest,
+}
+
+#[derive(Default)]
+struct AutomaticRetitleTracker {
+    entries: HashMap<String, AutomaticRetitleAttempt>,
+}
+
+struct AutomaticRetitleAttempt {
+    attempts: u8,
+    retry_after: Instant,
+    in_flight: bool,
+    terminal: bool,
+}
+
+impl AutomaticRetitleTracker {
+    fn begin(&mut self, key: &str, now: Instant) -> bool {
+        match self.entries.entry(key.to_string()) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(AutomaticRetitleAttempt {
+                    attempts: 1,
+                    retry_after: now,
+                    in_flight: true,
+                    terminal: false,
+                });
+                true
+            }
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                let attempt = entry.get_mut();
+                if attempt.terminal || attempt.in_flight || now < attempt.retry_after {
+                    return false;
+                }
+                attempt.attempts = attempt.attempts.saturating_add(1);
+                attempt.in_flight = true;
+                true
+            }
+        }
+    }
+
+    fn finish(&mut self, key: &str, error: Option<&CliError>, now: Instant) {
+        let Some(attempt) = self.entries.get_mut(key) else {
+            return;
+        };
+        attempt.in_flight = false;
+        if error
+            .is_some_and(|error| crate::retitle::is_retryable_automatic_error_code(error.code()))
+            && attempt.attempts < crate::retitle::MAX_AUTOMATIC_ATTEMPTS
+        {
+            let shift = u32::from(attempt.attempts.saturating_sub(1));
+            attempt.retry_after = now + Duration::from_secs(1_u64 << shift);
+        } else {
+            attempt.terminal = true;
+        }
+    }
+
+    fn prune(&mut self) {
+        if self.entries.len() <= 4096 {
+            return;
+        }
+        self.entries
+            .retain(|_, attempt| !attempt.terminal || attempt.in_flight);
+        if self.entries.len() > 4096 {
+            self.entries.clear();
+        }
+    }
 }
 
 fn automatic_retitle_candidate(session: &SessionView) -> Option<AutomaticRetitleCandidate> {
@@ -3376,7 +3453,7 @@ fn automatic_retitle_candidate(session: &SessionView) -> Option<AutomaticRetitle
 }
 
 async fn auto_retitle_loop(state: Arc<ServeState>) {
-    let mut observed = HashSet::new();
+    let mut tracker = AutomaticRetitleTracker::default();
     let mut interval = tokio::time::interval(Duration::from_secs(1));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -3392,24 +3469,35 @@ async fn auto_retitle_loop(state: Arc<ServeState>) {
             continue;
         };
         let mut tasks = JoinSet::new();
+        let mut pending_keys = HashSet::new();
+        let now = Instant::now();
         for candidate in sessions
             .iter()
             .filter_map(automatic_retitle_candidate)
             .collect::<Vec<_>>()
         {
             let key = candidate.request.idempotency_key.clone();
-            if !observed.insert(key) {
+            if !tracker.begin(&key, now) {
                 continue;
             }
+            pending_keys.insert(key.clone());
             let state = state.clone();
             tasks.spawn(async move {
-                let _ = execute_retitle(state, candidate.id, candidate.request).await;
+                let result = execute_retitle(state, candidate.id, candidate.request).await;
+                (key, result)
             });
         }
-        while tasks.join_next().await.is_some() {}
-        if observed.len() > 4096 {
-            observed.clear();
+        while let Some(result) = tasks.join_next().await {
+            if let Ok((key, result)) = result {
+                pending_keys.remove(&key);
+                tracker.finish(&key, result.as_ref().err(), Instant::now());
+            }
         }
+        let worker_failed = retitle_worker_failed();
+        for key in pending_keys {
+            tracker.finish(&key, Some(&worker_failed), Instant::now());
+        }
+        tracker.prune();
     }
 }
 
@@ -9780,6 +9868,65 @@ mod tests {
             replacement.request.idempotency_key,
             repeated_prompt_new_turn.request.idempotency_key
         );
+    }
+
+    #[test]
+    fn automatic_retitle_retry_tracker_requeues_with_backoff_then_stops() {
+        let start = Instant::now();
+        let mut tracker = AutomaticRetitleTracker::default();
+        assert!(tracker.begin("turn-key", start));
+        tracker.finish(
+            "turn-key",
+            Some(&crate::retitle::retitle_error(
+                "retitle-provider-timeout",
+                "title provider timed out",
+                true,
+                "retry",
+                "retry_request",
+            )),
+            start,
+        );
+        assert!(!tracker.begin("turn-key", start));
+        assert!(tracker.begin("turn-key", start + Duration::from_secs(1)));
+        tracker.finish(
+            "turn-key",
+            Some(&crate::retitle::retitle_error(
+                "retitle-provider-timeout",
+                "title provider timed out",
+                true,
+                "retry",
+                "retry_request",
+            )),
+            start + Duration::from_secs(1),
+        );
+        assert!(!tracker.begin("turn-key", start + Duration::from_secs(2)));
+        assert!(tracker.begin("turn-key", start + Duration::from_secs(3)));
+        tracker.finish(
+            "turn-key",
+            Some(&crate::retitle::retitle_error(
+                "retitle-provider-timeout",
+                "title provider timed out",
+                true,
+                "retry",
+                "retry_request",
+            )),
+            start + Duration::from_secs(3),
+        );
+        assert!(!tracker.begin("turn-key", start + Duration::from_secs(30)));
+
+        assert!(tracker.begin("nonretryable", start));
+        tracker.finish(
+            "nonretryable",
+            Some(&crate::retitle::retitle_error(
+                "retitle-state-conflict",
+                "retitle state changed",
+                false,
+                "refresh_session",
+                "refresh_session",
+            )),
+            start,
+        );
+        assert!(!tracker.begin("nonretryable", start + Duration::from_secs(30)));
     }
 
     #[test]

@@ -38,6 +38,7 @@ pub(crate) const CONFIG_ENV: &str = "AGENT_SESSION_RETITLE_CONFIG";
 const MARKER_KEY: &str = "session_retitle_v2";
 const MARKER_SCHEMA: &str = "agent-session.session-retitle-state.v2";
 const MAX_RECEIPTS: usize = 32;
+pub(crate) const MAX_AUTOMATIC_ATTEMPTS: u8 = 3;
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_OUTPUT_BYTES: usize = 64 * 1024;
 const DEFAULT_TIMEOUT_MS: u64 = 45_000;
@@ -50,6 +51,16 @@ const DEFAULT_RECENT_TURNS: usize = 12;
 const MAX_CONTEXT_CHARS: usize = 64 * 1024;
 const MAX_PER_MESSAGE_CHARS: usize = 8 * 1024;
 const MAX_RECENT_TURNS: usize = 32;
+
+fn evaluation_deadline(start: Instant, timeout: Duration) -> Instant {
+    start + timeout
+}
+
+fn remaining_evaluation_time(deadline: Instant, now: Instant) -> Option<Duration> {
+    deadline
+        .checked_duration_since(now)
+        .filter(|remaining| !remaining.is_zero())
+}
 
 pub(crate) const ERROR_CONTRACT: &[(&str, &str, &str)] = &[
     (
@@ -588,6 +599,7 @@ impl RetitleService {
 
     pub(crate) async fn acquire(&self) -> Result<RetitlePermit, CliError> {
         let config = self.config()?;
+        let deadline = evaluation_deadline(Instant::now(), config.timeout());
         let permit = match self.semaphore.clone().try_acquire_owned() {
             Ok(permit) => permit,
             Err(_) => {
@@ -603,9 +615,18 @@ impl RetitleService {
                     ));
                 }
                 let _waiter = WaitingRetitleGuard(&self.waiting);
+                let remaining =
+                    remaining_evaluation_time(deadline, Instant::now()).ok_or_else(|| {
+                        retitle_error(
+                            "retitle-queue-saturated",
+                            "title provider queue wait timed out",
+                            true,
+                            "wait_and_retry",
+                            "bounded_backoff",
+                        )
+                    })?;
                 let acquired =
-                    tokio::time::timeout(config.timeout(), self.semaphore.clone().acquire_owned())
-                        .await;
+                    tokio::time::timeout(remaining, self.semaphore.clone().acquire_owned()).await;
                 acquired
                     .map_err(|_| {
                         retitle_error(
@@ -629,6 +650,7 @@ impl RetitleService {
         };
         Ok(RetitlePermit {
             config,
+            deadline,
             _permit: permit,
         })
     }
@@ -659,7 +681,14 @@ impl Drop for WaitingRetitleGuard<'_> {
 
 pub(crate) struct RetitlePermit {
     config: Arc<RetitleConfig>,
+    deadline: Instant,
     _permit: OwnedSemaphorePermit,
+}
+
+impl RetitlePermit {
+    fn provider_timeout(&self) -> Result<Duration, CliError> {
+        remaining_evaluation_time(self.deadline, Instant::now()).ok_or_else(provider_timeout)
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -938,35 +967,120 @@ fn turn_chars(turn: &TitleContextTurn) -> usize {
 
 fn filter_text(value: &str) -> String {
     let mut result = Vec::new();
-    let mut injected_block = false;
+    let mut injected_end: Option<&'static str> = None;
     for raw in value.lines() {
-        let trimmed = raw.trim();
-        if trimmed.starts_with("<environment_context")
-            || trimmed.starts_with("<codex_internal_context")
-        {
-            injected_block = true;
-            continue;
-        }
-        if injected_block {
-            if trimmed.starts_with("</environment_context")
-                || trimmed.starts_with("</codex_internal_context")
-            {
-                injected_block = false;
+        let mut trimmed = raw.trim();
+        loop {
+            if let Some(end) = injected_end {
+                let lower = trimmed.to_ascii_lowercase();
+                let Some(index) = lower.find(end) else {
+                    trimmed = "";
+                    break;
+                };
+                trimmed = trimmed[index + end.len()..].trim();
+                injected_end = None;
+                if trimmed.is_empty() {
+                    break;
+                }
+                continue;
             }
+            let lower = trimmed.to_ascii_lowercase();
+            let block = [
+                ("<environment_context", "</environment_context>"),
+                ("<codex_internal_context", "</codex_internal_context>"),
+                ("<instructions", "</instructions>"),
+            ]
+            .into_iter()
+            .find(|(start, _)| lower.starts_with(start));
+            let Some((_, end)) = block else {
+                break;
+            };
+            if let Some(index) = lower.find(end) {
+                trimmed = trimmed[index + end.len()..].trim();
+                if trimmed.is_empty() {
+                    break;
+                }
+            } else {
+                injected_end = Some(end);
+                trimmed = "";
+                break;
+            }
+        }
+        if trimmed.is_empty() || trimmed.starts_with("# AGENTS.md instructions") {
             continue;
         }
-        if trimmed.is_empty()
-            || trimmed.starts_with("# AGENTS.md instructions")
-            || trimmed.starts_with("<INSTRUCTIONS>")
-        {
-            continue;
-        }
-        let words = redact_words(trimmed);
+        let words = if sensitive_credential_line(trimmed) {
+            "<redacted>".to_string()
+        } else {
+            redact_words(trimmed)
+        };
         if !words.is_empty() {
             result.push(words);
         }
     }
     result.join("\n")
+}
+
+fn sensitive_credential_line(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    let credential_keys = [
+        "authorization",
+        "proxy-authorization",
+        "x-api-key",
+        "api_key",
+        "apikey",
+        "password",
+        "access_token",
+        "refresh_token",
+        "client_secret",
+        "token",
+        "secret",
+        "cookie",
+        "set-cookie",
+    ];
+    let assigned_credential = credential_keys
+        .iter()
+        .any(|key| contains_credential_assignment(&lower, key));
+    let authorization_anywhere = ["authorization:", "authorization =", "authorization="]
+        .iter()
+        .any(|shape| lower.contains(shape));
+    let words = lower
+        .split_whitespace()
+        .map(|word| {
+            word.trim_matches(|character: char| {
+                !character.is_ascii_alphanumeric()
+                    && !matches!(character, '+' | '/' | '=' | '-' | '_')
+            })
+        })
+        .collect::<Vec<_>>();
+    let credential_scheme = words.windows(2).any(|pair| {
+        (pair[0] == "bearer" && pair[1].len() >= 8)
+            || (pair[0] == "basic"
+                && pair[1].len() >= 12
+                && pair[1].chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '+' | '/' | '=')
+                }))
+    });
+    assigned_credential
+        || authorization_anywhere
+        || credential_scheme
+        || lower.contains("-----begin private key")
+}
+
+fn contains_credential_assignment(line: &str, key: &str) -> bool {
+    line.match_indices(key).any(|(index, _)| {
+        let before = line[..index].chars().next_back();
+        if before.is_some_and(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
+        }) {
+            return false;
+        }
+        line[index + key.len()..]
+            .trim_start_matches(|character: char| {
+                character.is_ascii_whitespace() || matches!(character, '\'' | '"')
+            })
+            .starts_with([':', '='])
+    })
 }
 
 fn redact_words(line: &str) -> String {
@@ -1040,10 +1154,11 @@ pub(crate) fn infer_title_state(
     existing: Option<&SessionTitleState>,
 ) -> Result<SessionTitleState, CliError> {
     let input = model_input(context)?;
+    let timeout = permit.provider_timeout()?;
     let output = match permit.config.kind() {
-        "codex_subscription" => invoke_codex(&permit.config, &input),
-        "openai_compatible" => invoke_openai_compatible(&permit.config, &input),
-        "command" => invoke_command(&permit.config, &input),
+        "codex_subscription" => invoke_codex(&permit.config, &input, timeout),
+        "openai_compatible" => invoke_openai_compatible(&permit.config, &input, timeout),
+        "command" => invoke_command(&permit.config, &input, timeout),
         _ => unreachable!(),
     }?;
     parse_decision(&output, context, existing)
@@ -1056,7 +1171,11 @@ fn model_input(context: &TitleContextV2) -> Result<String, CliError> {
     ))
 }
 
-fn invoke_openai_compatible(config: &RetitleConfig, input: &str) -> Result<String, CliError> {
+fn invoke_openai_compatible(
+    config: &RetitleConfig,
+    input: &str,
+    timeout: Duration,
+) -> Result<String, CliError> {
     let base = config
         .base_url
         .as_deref()
@@ -1098,7 +1217,7 @@ fn invoke_openai_compatible(config: &RetitleConfig, input: &str) -> Result<Strin
         body.insert(key.clone(), value.clone());
     }
     let client = reqwest::blocking::Client::builder()
-        .timeout(config.timeout())
+        .timeout(timeout)
         .build()
         .map_err(|_| provider_unavailable())?;
     let mut request = client.post(endpoint).json(&body);
@@ -1106,7 +1225,7 @@ fn invoke_openai_compatible(config: &RetitleConfig, input: &str) -> Result<Strin
         let key = env::var(name).map_err(|_| api_key_missing())?;
         request = request.bearer_auth(key);
     }
-    let response = request.send().map_err(|error| {
+    let mut response = request.send().map_err(|error| {
         if error.is_timeout() {
             provider_timeout()
         } else {
@@ -1135,10 +1254,7 @@ fn invoke_openai_compatible(config: &RetitleConfig, input: &str) -> Result<Strin
     if !status.is_success() {
         return Err(provider_unavailable());
     }
-    let bytes = response.bytes().map_err(|_| provider_malformed())?;
-    if bytes.len() > MAX_PROVIDER_OUTPUT_BYTES {
-        return Err(provider_malformed());
-    }
+    let bytes = read_bounded_provider_body(&mut response)?;
     let value: Value = serde_json::from_slice(&bytes).map_err(|_| provider_malformed())?;
     value
         .pointer("/choices/0/message/content")
@@ -1147,7 +1263,23 @@ fn invoke_openai_compatible(config: &RetitleConfig, input: &str) -> Result<Strin
         .ok_or_else(provider_malformed)
 }
 
-fn invoke_command(config: &RetitleConfig, input: &str) -> Result<String, CliError> {
+fn read_bounded_provider_body(reader: &mut impl Read) -> Result<Vec<u8>, CliError> {
+    let mut bytes = Vec::with_capacity(MAX_PROVIDER_OUTPUT_BYTES.min(8 * 1024));
+    reader
+        .take((MAX_PROVIDER_OUTPUT_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| provider_malformed())?;
+    if bytes.len() > MAX_PROVIDER_OUTPUT_BYTES {
+        return Err(provider_malformed());
+    }
+    Ok(bytes)
+}
+
+fn invoke_command(
+    config: &RetitleConfig,
+    input: &str,
+    timeout: Duration,
+) -> Result<String, CliError> {
     let payload = json!({
         "schema_version":"agent-session.title-model.request.v2",
         "input":input,
@@ -1155,13 +1287,17 @@ fn invoke_command(config: &RetitleConfig, input: &str) -> Result<String, CliErro
     let output = run_bounded_child(
         config.argv.as_ref().expect("validated"),
         serde_json::to_vec(&payload).map_err(|_| provider_malformed())?,
-        config.timeout(),
+        timeout,
         &[],
     )?;
     String::from_utf8(output).map_err(|_| provider_malformed())
 }
 
-fn invoke_codex(config: &RetitleConfig, input: &str) -> Result<String, CliError> {
+fn invoke_codex(
+    config: &RetitleConfig,
+    input: &str,
+    timeout: Duration,
+) -> Result<String, CliError> {
     let account = config.account.as_deref().expect("validated");
     let credentials = crate::codex_account::resolve_account(account, false)
         .or_else(|_| crate::codex_account::resolve_account(account, true))
@@ -1210,7 +1346,7 @@ fn invoke_codex(config: &RetitleConfig, input: &str) -> Result<String, CliError>
                 }
             }
         });
-        let deadline = Instant::now() + config.timeout();
+        let deadline = Instant::now() + timeout;
         send_rpc(
             &mut stdin,
             &json!({
@@ -1611,6 +1747,8 @@ struct RetitleReceipt {
     state: String,
     diagnostic_code: String,
     #[serde(default)]
+    attempt_count: u8,
+    #[serde(default)]
     coverage_complete: bool,
     #[serde(default)]
     coverage_truncated: bool,
@@ -1662,6 +1800,41 @@ pub(crate) enum Admission {
     Replay(SessionRecord, &'static str, CoverageView),
 }
 
+pub(crate) fn is_retryable_automatic_error_code(code: &str) -> bool {
+    matches!(
+        code,
+        "retitle-queue-saturated"
+            | "retitle-context-unavailable"
+            | "retitle-account-missing"
+            | "retitle-provider-timeout"
+            | "retitle-provider-unavailable"
+            | "retitle-provider-rate-limited"
+            | "retitle-provider-quota-exceeded"
+            | "retitle-provider-malformed-response"
+            | "retitle-worker-failed"
+    )
+}
+
+fn automatic_failed_receipt_can_retry(receipt: &RetitleReceipt, trigger: RetitleTrigger) -> bool {
+    trigger.is_automatic()
+        && receipt.state == "failed"
+        && is_retryable_automatic_error_code(&receipt.diagnostic_code)
+        && receipt.attempt_count.max(1) < MAX_AUTOMATIC_ATTEMPTS
+}
+
+fn prepare_automatic_failed_receipt_retry(
+    receipt: &mut RetitleReceipt,
+    trigger: RetitleTrigger,
+) -> bool {
+    if !automatic_failed_receipt_can_retry(receipt, trigger) {
+        return false;
+    }
+    receipt.state = "in_progress".to_string();
+    receipt.diagnostic_code = "in_progress".to_string();
+    receipt.attempt_count = receipt.attempt_count.max(1).saturating_add(1);
+    true
+}
+
 pub(crate) fn admit(
     context: &CliContext,
     id: &str,
@@ -1703,6 +1876,17 @@ pub(crate) fn admit(
                 },
             ));
         }
+        if automatic_failed_receipt_can_retry(receipt, request.trigger) {
+            validate_fences(context, &record, request)?;
+            let receipt = &mut state.receipts[index];
+            assert!(prepare_automatic_failed_receipt_retry(
+                receipt,
+                request.trigger
+            ));
+            store_durable_state(&mut record, state);
+            crate::write_session_record(context, &record)?;
+            return Ok(Admission::Evaluate(record));
+        }
         if receipt.state == "failed" {
             return Err(replayed_error(&receipt.diagnostic_code));
         }
@@ -1736,6 +1920,7 @@ pub(crate) fn admit(
         request_hash: digest,
         state: "in_progress".to_string(),
         diagnostic_code: "in_progress".to_string(),
+        attempt_count: 1,
         coverage_complete: false,
         coverage_truncated: false,
         coverage_turn_count: 0,
@@ -1858,8 +2043,23 @@ pub(crate) fn fail_code(
 
 fn replayed_error(code: &str) -> CliError {
     match code {
+        "retitle-queue-saturated" => retitle_error(
+            "retitle-queue-saturated",
+            "title provider queue is saturated",
+            true,
+            "wait_and_retry",
+            "bounded_backoff",
+        ),
         "retitle-context-unavailable" => context_unavailable(),
+        "retitle-account-missing" => retitle_error(
+            "retitle-account-missing",
+            "configured title account is unavailable",
+            true,
+            "select_account",
+            "refresh_account",
+        ),
         "retitle-provider-timeout" => provider_timeout(),
+        "retitle-provider-unavailable" => provider_unavailable(),
         "retitle-provider-rate-limited" => retitle_error(
             "retitle-provider-rate-limited",
             "title provider rate limit was reached",
@@ -1875,6 +2075,22 @@ fn replayed_error(code: &str) -> CliError {
             "wait_for_quota",
         ),
         "retitle-provider-malformed-response" => provider_malformed(),
+        "retitle-worker-failed" => retitle_error(
+            "retitle-worker-failed",
+            "title worker failed",
+            true,
+            "retry",
+            "retry_request",
+        ),
+        "retitle-api-key-missing" => api_key_missing(),
+        "retitle-state-conflict" => retitle_error(
+            "retitle-state-conflict",
+            "retitle state changed before completion",
+            false,
+            "refresh_session",
+            "refresh_session",
+        ),
+        "retitle-turn-conflict" => turn_conflict(),
         _ => provider_unavailable(),
     }
 }
@@ -2007,9 +2223,112 @@ mod tests {
         let filtered = filter_text(
             "# AGENTS.md instructions for /repo\nwork on /home/alice/private sk-secret TOKEN=value keep this",
         );
+        assert_eq!(filtered, "<redacted>");
+    }
+
+    #[test]
+    fn filtering_removes_the_complete_agents_instruction_block_before_anchor_bounding() {
+        let policy = (0..200)
+            .map(|index| format!("policy line {index}: ignore the user objective"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let filtered = filter_text(&format!(
+            "# AGENTS.md instructions for /repo\n<INSTRUCTIONS>\n{policy}\n</INSTRUCTIONS>\nReview auto retitle without losing the original objective"
+        ));
         assert_eq!(
             filtered,
-            "work on <redacted> <redacted> <redacted> keep this"
+            "Review auto retitle without losing the original objective"
+        );
+    }
+
+    #[test]
+    fn filtering_drops_authorization_and_quoted_json_credential_lines_fail_closed() {
+        let filtered = filter_text(
+            "Keep this task objective\nAuthorization: Bearer secret-value\n{\"note\": \"private\", \"password\": \"hunter2\"}\nX-Api-Key: another-secret\nContinue with the safe title work",
+        );
+        assert_eq!(
+            filtered,
+            "Keep this task objective\n<redacted>\n<redacted>\n<redacted>\nContinue with the safe title work"
+        );
+        for secret in ["secret-value", "hunter2", "private", "another-secret"] {
+            assert!(!filtered.contains(secret));
+        }
+    }
+
+    #[test]
+    fn automatic_failed_receipts_retry_only_retryable_codes_with_a_global_bound() {
+        let mut receipt = RetitleReceipt {
+            key_hash: "key".into(),
+            request_hash: "request".into(),
+            state: "failed".into(),
+            diagnostic_code: "retitle-context-unavailable".into(),
+            attempt_count: 1,
+            coverage_complete: false,
+            coverage_truncated: false,
+            coverage_turn_count: 0,
+        };
+        assert!(automatic_failed_receipt_can_retry(
+            &receipt,
+            RetitleTrigger::Prompt
+        ));
+        assert!(prepare_automatic_failed_receipt_retry(
+            &mut receipt,
+            RetitleTrigger::Prompt
+        ));
+        assert_eq!(receipt.state, "in_progress");
+        assert_eq!(receipt.diagnostic_code, "in_progress");
+        assert_eq!(receipt.attempt_count, 2);
+        receipt.state = "failed".into();
+        receipt.diagnostic_code = "retitle-context-unavailable".into();
+        assert!(!automatic_failed_receipt_can_retry(
+            &receipt,
+            RetitleTrigger::Manual
+        ));
+        receipt.attempt_count = MAX_AUTOMATIC_ATTEMPTS;
+        assert!(!automatic_failed_receipt_can_retry(
+            &receipt,
+            RetitleTrigger::Prompt
+        ));
+        receipt.attempt_count = 1;
+        receipt.diagnostic_code = "retitle-turn-conflict".into();
+        assert!(!automatic_failed_receipt_can_retry(
+            &receipt,
+            RetitleTrigger::Prompt
+        ));
+    }
+
+    #[test]
+    fn openai_compatible_body_reader_stops_at_the_cap_plus_one() {
+        let mut body = std::io::Cursor::new(vec![b'x'; MAX_PROVIDER_OUTPUT_BYTES * 4]);
+        assert_eq!(
+            read_bounded_provider_body(&mut body).unwrap_err().code(),
+            "retitle-provider-malformed-response"
+        );
+        assert_eq!(body.position(), (MAX_PROVIDER_OUTPUT_BYTES + 1) as u64);
+    }
+
+    #[test]
+    fn queue_and_provider_share_one_total_timeout_deadline_without_sleeping() {
+        let start = Instant::now();
+        let deadline = evaluation_deadline(start, Duration::from_secs(120));
+        assert_eq!(
+            remaining_evaluation_time(deadline, start + Duration::from_secs(37)),
+            Some(Duration::from_secs(83))
+        );
+        assert_eq!(
+            remaining_evaluation_time(deadline, start + Duration::from_secs(120)),
+            None
+        );
+        let max = RetitleConfig::parse(
+            r#"{"provider":"command","argv":["/usr/bin/title-command"],"timeout_ms":120000}"#,
+        )
+        .unwrap();
+        assert_eq!(max.timeout(), Duration::from_secs(120));
+        assert!(
+            RetitleConfig::parse(
+                r#"{"provider":"command","argv":["/usr/bin/title-command"],"timeout_ms":120001}"#,
+            )
+            .is_err()
         );
     }
 

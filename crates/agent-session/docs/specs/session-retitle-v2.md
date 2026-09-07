@@ -65,12 +65,20 @@ incarnation, provider turn ID, and trigger. Receipts and the last processed turn
 hash live in the session record, so restart, resume, reload, and multiple clients
 converge without duplicate provider decisions. An orphaned `in_progress`
 receipt is recoverable only after the replacement daemon has acquired its
-process-local per-session gate.
+process-local per-session gate. Retryable automatic failures use one- and
+two-second process-local backoff and a durable maximum of three provider
+attempts per deterministic key. Terminal success, non-retryable failure, and
+attempt exhaustion remain suppressed for the daemon lifetime; restart cannot
+reset the durable provider-attempt bound.
 
 Commit always reloads and rechecks every fence. User-owned topics are immutable
 to retitling. A manual retitle can repair an automatic topic. References are
 kept only when they occur in authoritative user prompts, title components are
 limited to 120 characters, and equal topic/activity text is deduplicated.
+Complete injected `AGENTS.md` instruction regions and provider context blocks
+are omitted before per-message bounds are applied. Authorization headers,
+credential-shaped JSON lines, private-key markers, paths, and token-shaped
+values are removed before any provider request is constructed.
 
 ## Provider configuration
 
@@ -78,7 +86,10 @@ Set one JSON object in `AGENT_SESSION_RETITLE_CONFIG`. Changes take effect when
 the daemon restarts. Common bounds are `timeout_ms` 1000–120000,
 `max_output_tokens` 1–4096, `max_concurrency` 1–8, `queue_size` 0–64, and
 `context.max_chars` 1000–65536, `per_message_chars` 128–8192,
-`recent_turns` 1–32.
+`recent_turns` 1–32. One `timeout_ms` deadline is shared by semaphore queue wait,
+context preparation, and provider execution; a queued request does not receive
+a second full provider timeout. The 120-second maximum stays inside Agent
+Console's 125-second mutation transport deadline.
 
 Codex subscription uses the existing account broker and the supported Codex
 app-server protocol. It supplies broker credentials through external auth in a
@@ -101,7 +112,9 @@ Codex account and does not call undocumented ChatGPT HTTP endpoints.
 OpenAI-compatible configuration works with DeepSeek and local servers. The
 daemon appends `/chat/completions` to `base_url` (or `/v1/chat/completions` when
 the supplied base ends in `/v1`). `api_key_env` names an environment variable;
-the key itself is not stored in JSON.
+the key itself is not stored in JSON. Response bodies are streamed into a
+fixed cap-plus-one reader and rejected before an oversized response can be
+buffered in full.
 
 ```json
 {
