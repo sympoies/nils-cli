@@ -102,13 +102,15 @@ pub(crate) struct HistoryPage {
     pub(crate) truncated: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct HistoryMessage {
     pub(crate) id: String,
     pub(crate) role: String,
     pub(crate) text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) timestamp: Option<String>,
+    #[serde(skip)]
+    pub(crate) human_prompt: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -1061,7 +1063,6 @@ fn read_messages(
         .map_err(|_| HistoryError::InvalidCursor)?;
     let mut messages = Vec::new();
     let mut line = Vec::new();
-    let mut ordinal = 0usize;
     let mut scanned = 0usize;
     let deadline = Instant::now() + MESSAGE_SCAN_MAX_DURATION;
     while messages.len() < limit {
@@ -1074,6 +1075,7 @@ fn read_messages(
             });
         }
         line.clear();
+        let line_offset = reader.stream_position().map_err(|_| HistoryError::Io)?;
         let bounded = read_bounded_line(&mut reader, &mut line).map_err(|_| HistoryError::Io)?;
         if bounded == BoundedLine::Eof {
             return Ok(HistoryMessagesPage {
@@ -1089,18 +1091,23 @@ fn read_messages(
         let Ok(value) = serde_json::from_slice::<Value>(&line) else {
             continue;
         };
-        let Some((role, text, timestamp)) = normalize_message(&session.provider, &value) else {
+        let Some((role, text, timestamp, human_prompt)) = normalize_message(
+            &session.provider,
+            &session.provider_session_id,
+            &line,
+            &value,
+        ) else {
             continue;
         };
         if text.trim().is_empty() {
             continue;
         }
-        ordinal += 1;
         messages.push(HistoryMessage {
-            id: format!("{}-{offset}-{ordinal}", session.id),
+            id: format!("{}-{line_offset}", session.id),
             role,
             text: truncate_chars(text.trim(), MAX_MESSAGE_CHARS),
             timestamp,
+            human_prompt,
         });
     }
     let next = reader.stream_position().map_err(|_| HistoryError::Io)?;
@@ -1301,7 +1308,12 @@ fn push_reverse_message(
     let Ok(value) = serde_json::from_slice::<Value>(line) else {
         return;
     };
-    let Some((role, text, timestamp)) = normalize_message(&session.provider, &value) else {
+    let Some((role, text, timestamp, human_prompt)) = normalize_message(
+        &session.provider,
+        &session.provider_session_id,
+        line,
+        &value,
+    ) else {
         return;
     };
     if text.trim().is_empty() {
@@ -1312,10 +1324,16 @@ fn push_reverse_message(
         role,
         text: truncate_chars(text.trim(), MAX_MESSAGE_CHARS),
         timestamp,
+        human_prompt,
     });
 }
 
-fn normalize_message(provider: &str, value: &Value) -> Option<(String, String, Option<String>)> {
+fn normalize_message(
+    provider: &str,
+    provider_session_id: &str,
+    raw_line: &[u8],
+    value: &Value,
+) -> Option<(String, String, Option<String>, bool)> {
     let timestamp = value
         .get("timestamp")
         .and_then(Value::as_str)
@@ -1333,8 +1351,15 @@ fn normalize_message(provider: &str, value: &Value) -> Option<(String, String, O
             if !matches!(role, "user" | "assistant") {
                 return None;
             }
+            let human_prompt = role == "user"
+                && parse_history_user_prompt(
+                    provider,
+                    provider_session_id,
+                    std::str::from_utf8(raw_line).ok()?,
+                )
+                .is_some();
             let text = content_text(payload.get("content")?);
-            Some((role.to_string(), text, timestamp))
+            Some((role.to_string(), text, timestamp, human_prompt))
         }
         "claude" => {
             let role = value.get("type")?.as_str()?;
@@ -1349,7 +1374,14 @@ fn normalize_message(provider: &str, value: &Value) -> Option<(String, String, O
             } else {
                 content_text(message.get("content")?)
             };
-            Some((role.to_string(), text, timestamp))
+            let human_prompt = role == "user"
+                && parse_history_user_prompt(
+                    provider,
+                    provider_session_id,
+                    std::str::from_utf8(raw_line).ok()?,
+                )
+                .is_some();
+            Some((role.to_string(), text, timestamp, human_prompt))
         }
         _ => None,
     }
@@ -1904,6 +1936,16 @@ mod tests {
         assert_eq!(second.messages[0].role, "assistant");
         assert_eq!(second.messages[0].text, "second");
         assert_ne!(first.messages[0].id, second.messages[0].id);
+        let latest = messages(
+            &sources,
+            &history_id,
+            None,
+            2,
+            HistoryMessageDirection::Latest,
+        )
+        .unwrap();
+        assert_eq!(first.messages[0].id, latest.messages[0].id);
+        assert_eq!(second.messages[0].id, latest.messages[1].id);
     }
 
     #[test]

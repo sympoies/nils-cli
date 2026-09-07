@@ -12,6 +12,7 @@ mod maintenance;
 mod orchestration;
 mod provider_history;
 mod provider_prompt;
+mod retitle;
 mod serve;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};

@@ -42,6 +42,7 @@ tokio-tungstenite = "0.29"
 libc = "0.2"
 notify = "8"
 tempfile = "3"
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
 
 [dev-dependencies]
 nils-test-support = { version = "1.28.4", path = "../nils-test-support" }

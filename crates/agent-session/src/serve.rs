@@ -10,7 +10,7 @@
 //! Every response carries the daemon's `machine` identity so the edge can
 //! aggregate multiple machines. Literal keystroke text is never echoed.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::convert::Infallible;
 use std::ffi::CString;
 use std::fmt;
@@ -189,6 +189,7 @@ struct ServeState {
     session_collector: SessionCollector,
     launch_profiles: AgentLaunchProfiles,
     history_catalog: Arc<HistoryCatalog>,
+    retitle: Arc<crate::retitle::RetitleService>,
     managed_history_titles: Arc<StdMutex<ManagedHistoryTitleCache>>,
     coordination_wait_workers: Arc<tokio::sync::Semaphore>,
     coordination_notification_wake: Arc<tokio::sync::Notify>,
@@ -782,6 +783,7 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
             session_collector,
             launch_profiles,
             history_catalog,
+            retitle: Arc::new(crate::retitle::RetitleService::from_environment()),
             managed_history_titles: Arc::new(StdMutex::new(ManagedHistoryTitleCache::default())),
             coordination_wait_workers: Arc::new(tokio::sync::Semaphore::new(
                 COORDINATION_WAIT_WORKER_LIMIT,
@@ -802,6 +804,7 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
         let app = router(state.clone());
         let codex_control_task = tokio::spawn(codex_control_loop(state.clone()));
         let auto_resume_task = tokio::spawn(auto_resume_loop(state.clone()));
+        let auto_retitle_task = tokio::spawn(auto_retitle_loop(state.clone()));
         let coordination_notification_task =
             tokio::spawn(coordination_notification_loop(state.clone()));
         let result = axum::serve(listener, app)
@@ -809,6 +812,8 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
             .await;
         auto_resume_task.abort();
         let _ = auto_resume_task.await;
+        auto_retitle_task.abort();
+        let _ = auto_retitle_task.await;
         coordination_notification_task.abort();
         let _ = coordination_notification_task.await;
         codex_control_task.abort();
@@ -835,6 +840,8 @@ fn router(state: Arc<ServeState>) -> Router {
         )
         .route("/history/sessions/{id}/star", post(history_star_handler))
         .route("/codex/accounts", get(codex_accounts_handler))
+        .route("/retitle/readiness", get(retitle_readiness_handler))
+        .route("/sessions/{id}/retitle", post(session_retitle_handler))
         .route("/activity/events", get(activity_events_handler))
         .route("/usage", get(usage_handler))
         .route("/workdirs", get(workdirs_handler))
@@ -2092,8 +2099,8 @@ fn envelope_err(err: CliError) -> Response {
     let status = match data.code.as_str() {
         "session-not-found" | "message-not-found" => StatusCode::NOT_FOUND,
         "coordination-unauthorized" => StatusCode::UNAUTHORIZED,
-        "rate-limited" => StatusCode::TOO_MANY_REQUESTS,
-        "wait-timeout" => StatusCode::REQUEST_TIMEOUT,
+        "rate-limited" | "retitle-provider-rate-limited" => StatusCode::TOO_MANY_REQUESTS,
+        "wait-timeout" | "retitle-provider-timeout" => StatusCode::REQUEST_TIMEOUT,
         "session-exists"
         | "title-revision-conflict"
         | "title-state-conflict"
@@ -2106,6 +2113,9 @@ fn envelope_err(err: CliError) -> Response {
         | "activity-revision-conflict"
         | "message-revision-conflict"
         | "idempotency-conflict"
+        | "idempotency-key-reused"
+        | "retitle-turn-conflict"
+        | "retitle-state-conflict"
         | "codex-account-session-incarnation-conflict"
         | "codex-account-session-busy" => StatusCode::CONFLICT,
         _ => match data.exit_code {
@@ -3171,6 +3181,387 @@ async fn healthz(State(state): State<Arc<ServeState>>) -> Response {
     }))
 }
 
+async fn retitle_readiness_handler(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let service = state.retitle.clone();
+    match tokio::task::spawn_blocking(move || service.readiness()).await {
+        Ok(readiness) => envelope_ok(json!({
+            "machine": state.machine,
+            "retitle": readiness,
+        })),
+        Err(_) => join_err(),
+    }
+}
+
+async fn session_retitle_handler(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+    body: Result<Json<crate::retitle::RetitleRequest>, JsonRejection>,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let Json(request) = match body {
+        Ok(body) => body,
+        Err(_) => {
+            return envelope_err(CliError::usage(
+                "invalid-json-body",
+                "retitle request body is invalid",
+                None,
+            ));
+        }
+    };
+    match execute_retitle(state.clone(), id, request).await {
+        Ok(retitle) => envelope_ok(json!({
+            "machine": state.machine,
+            "retitle": retitle,
+        })),
+        Err(error) => envelope_err(error),
+    }
+}
+
+async fn execute_retitle(
+    state: Arc<ServeState>,
+    id: String,
+    request: crate::retitle::RetitleRequest,
+) -> Result<Value, CliError> {
+    let _session_guard = state.retitle.lock_session(&id).await;
+    let context = state.context.clone();
+    let request_for_admission = request.clone();
+    let id_for_admission = id.clone();
+    let admission = tokio::task::spawn_blocking(move || {
+        crate::retitle::admit(&context, &id_for_admission, &request_for_admission)
+    })
+    .await
+    .map_err(|_| retitle_worker_failed())?
+    .map_err(sanitize_retitle_error)?;
+
+    if let crate::retitle::Admission::Replay(record, diagnostic_code, coverage) = admission {
+        return Ok(retitle_projection(
+            &state,
+            &record,
+            &request,
+            "replayed",
+            false,
+            diagnostic_code,
+            coverage,
+        ));
+    }
+    let crate::retitle::Admission::Evaluate(observed) = admission else {
+        unreachable!();
+    };
+    let result = execute_retitle_evaluation(state.clone(), &id, &request, observed)
+        .await
+        .map_err(sanitize_retitle_error);
+    if let Err(error) = &result {
+        record_retitle_failure(&state, &id, &request, error).await;
+    }
+    result
+}
+
+async fn execute_retitle_evaluation(
+    state: Arc<ServeState>,
+    id: &str,
+    request: &crate::retitle::RetitleRequest,
+    observed: SessionRecord,
+) -> Result<Value, CliError> {
+    let permit = state.retitle.acquire().await?;
+    let history_catalog = state.history_catalog.clone();
+    let trigger = request.trigger;
+    let observed_for_context = observed.clone();
+    let context_result = tokio::task::spawn_blocking(move || {
+        crate::retitle::build_context(&history_catalog, &observed_for_context, trigger, &permit)
+            .map(|title_context| (permit, title_context))
+    })
+    .await
+    .map_err(|_| retitle_worker_failed())?;
+    let (permit, title_context) = match context_result {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(error);
+        }
+    };
+    let coverage = title_context.coverage_view();
+    let existing = observed.title_state.clone();
+    let decision_result = tokio::task::spawn_blocking(move || {
+        crate::retitle::infer_title_state(&permit, &title_context, existing.as_ref())
+    })
+    .await
+    .map_err(|_| retitle_worker_failed())?;
+    let decision = match decision_result {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(error);
+        }
+    };
+    let context = state.context.clone();
+    let request_for_commit = request.clone();
+    let id_for_commit = id.to_string();
+    let coverage_for_commit = coverage.clone();
+    let committed = tokio::task::spawn_blocking(move || {
+        crate::retitle::commit(
+            &context,
+            &id_for_commit,
+            &request_for_commit,
+            decision,
+            &coverage_for_commit,
+        )
+    })
+    .await
+    .map_err(|_| retitle_worker_failed())?
+    .map_err(sanitize_retitle_error)?;
+    if committed.changed {
+        invalidate_managed_history_titles(&state.managed_history_titles);
+    }
+    Ok(retitle_projection(
+        &state,
+        &committed.record,
+        request,
+        if committed.changed {
+            "committed"
+        } else {
+            "unchanged"
+        },
+        committed.changed,
+        if committed.changed {
+            "committed"
+        } else {
+            "no_change"
+        },
+        coverage,
+    ))
+}
+
+#[derive(Clone)]
+struct AutomaticRetitleCandidate {
+    id: String,
+    request: crate::retitle::RetitleRequest,
+}
+
+#[derive(Default)]
+struct AutomaticRetitleTracker {
+    entries: HashMap<String, AutomaticRetitleAttempt>,
+}
+
+struct AutomaticRetitleAttempt {
+    attempts: u8,
+    retry_after: Instant,
+    in_flight: bool,
+    terminal: bool,
+}
+
+impl AutomaticRetitleTracker {
+    fn begin(&mut self, key: &str, now: Instant) -> bool {
+        match self.entries.entry(key.to_string()) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(AutomaticRetitleAttempt {
+                    attempts: 1,
+                    retry_after: now,
+                    in_flight: true,
+                    terminal: false,
+                });
+                true
+            }
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                let attempt = entry.get_mut();
+                if attempt.terminal || attempt.in_flight || now < attempt.retry_after {
+                    return false;
+                }
+                attempt.attempts = attempt.attempts.saturating_add(1);
+                attempt.in_flight = true;
+                true
+            }
+        }
+    }
+
+    fn finish(&mut self, key: &str, error: Option<&CliError>, now: Instant) {
+        let Some(attempt) = self.entries.get_mut(key) else {
+            return;
+        };
+        attempt.in_flight = false;
+        if error
+            .is_some_and(|error| crate::retitle::is_retryable_automatic_error_code(error.code()))
+            && attempt.attempts < crate::retitle::MAX_AUTOMATIC_ATTEMPTS
+        {
+            let shift = u32::from(attempt.attempts.saturating_sub(1));
+            attempt.retry_after = now + Duration::from_secs(1_u64 << shift);
+        } else {
+            attempt.terminal = true;
+        }
+    }
+
+    fn prune(&mut self) {
+        if self.entries.len() <= 4096 {
+            return;
+        }
+        self.entries
+            .retain(|_, attempt| !attempt.terminal || attempt.in_flight);
+        if self.entries.len() > 4096 {
+            self.entries.clear();
+        }
+    }
+}
+
+fn automatic_retitle_candidate(session: &SessionView) -> Option<AutomaticRetitleCandidate> {
+    if session.status != "running" || session.provider_resume.is_none() {
+        return None;
+    }
+    let incarnation = session.session_incarnation.as_deref()?;
+    let state = session.turn_state.as_ref()?;
+    let (turn_id, trigger) = if let Some(turn_id) = state
+        .current_turn
+        .as_ref()
+        .and_then(|turn| turn.provider_turn_id.as_deref())
+    {
+        let trigger = if session.title_revision == 0 && session.title.is_none() {
+            crate::retitle::RetitleTrigger::Initial
+        } else {
+            crate::retitle::RetitleTrigger::Prompt
+        };
+        (turn_id, trigger)
+    } else {
+        (
+            state
+                .last_turn
+                .as_ref()
+                .and_then(|turn| turn.provider_turn_id.as_deref())?,
+            crate::retitle::RetitleTrigger::CompletionRecovery,
+        )
+    };
+    let identity = format!("{incarnation}\0{turn_id}\0{trigger:?}");
+    Some(AutomaticRetitleCandidate {
+        id: session.id.clone(),
+        request: crate::retitle::RetitleRequest {
+            schema_version: crate::retitle::REQUEST_SCHEMA.to_string(),
+            trigger,
+            idempotency_key: format!(
+                "auto-{}",
+                crate::retitle::hash_identity(&identity).trim_start_matches("sha256:")
+            ),
+            expected_session_incarnation: incarnation.to_string(),
+            expected_title_revision: session.title_revision,
+            expected_activity_revision: Some(state.revision),
+            expected_provider_turn_id: Some(turn_id.to_string()),
+        },
+    })
+}
+
+async fn auto_retitle_loop(state: Arc<ServeState>) {
+    let mut tracker = AutomaticRetitleTracker::default();
+    let mut interval = tokio::time::interval(Duration::from_secs(1));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        interval.tick().await;
+        if state.retitle.configured_provider_kind().is_none() {
+            continue;
+        }
+        let context = state.context.clone();
+        let tmux = state.tmux_bin.clone();
+        let collect = state.session_collector.clone();
+        let Ok(Ok(sessions)) = tokio::task::spawn_blocking(move || collect(&context, &tmux)).await
+        else {
+            continue;
+        };
+        let mut tasks = JoinSet::new();
+        let mut pending_keys = HashSet::new();
+        let now = Instant::now();
+        for candidate in sessions
+            .iter()
+            .filter_map(automatic_retitle_candidate)
+            .collect::<Vec<_>>()
+        {
+            let key = candidate.request.idempotency_key.clone();
+            if !tracker.begin(&key, now) {
+                continue;
+            }
+            pending_keys.insert(key.clone());
+            let state = state.clone();
+            tasks.spawn(async move {
+                let result = execute_retitle(state, candidate.id, candidate.request).await;
+                (key, result)
+            });
+        }
+        while let Some(result) = tasks.join_next().await {
+            if let Ok((key, result)) = result {
+                pending_keys.remove(&key);
+                tracker.finish(&key, result.as_ref().err(), Instant::now());
+            }
+        }
+        let worker_failed = retitle_worker_failed();
+        for key in pending_keys {
+            tracker.finish(&key, Some(&worker_failed), Instant::now());
+        }
+        tracker.prune();
+    }
+}
+
+async fn record_retitle_failure(
+    state: &ServeState,
+    id: &str,
+    request: &crate::retitle::RetitleRequest,
+    error: &CliError,
+) {
+    let context = state.context.clone();
+    let id = id.to_string();
+    let request = request.clone();
+    let code = error.code().to_string();
+    let _ = tokio::task::spawn_blocking(move || {
+        crate::retitle::fail_code(&context, &id, &request, &code)
+    })
+    .await;
+}
+
+fn retitle_projection(
+    state: &ServeState,
+    record: &SessionRecord,
+    request: &crate::retitle::RetitleRequest,
+    outcome: &'static str,
+    changed: bool,
+    diagnostic_code: &'static str,
+    coverage: crate::retitle::CoverageView,
+) -> Value {
+    json!({
+        "schema_version": crate::retitle::RESPONSE_SCHEMA,
+        "outcome": outcome,
+        "changed": changed,
+        "trigger": request.trigger,
+        "provider_kind": state.retitle.configured_provider_kind().unwrap_or("command"),
+        "processed_turn_id_hash": request.expected_provider_turn_id.as_deref().map(crate::retitle::hash_identity),
+        "diagnostic_code": diagnostic_code,
+        "coverage": coverage,
+        "session": {
+            "title": record.title,
+            "title_state": crate::effective_session_title_state(record),
+            "title_revision": record.title_revision,
+            "session_incarnation": crate::coordination::incarnation(record).ok(),
+        },
+    })
+}
+
+fn retitle_worker_failed() -> CliError {
+    crate::retitle::retitle_error(
+        "retitle-worker-failed",
+        "title worker failed",
+        true,
+        "retry",
+        "retry_request",
+    )
+}
+
+fn sanitize_retitle_error(error: CliError) -> CliError {
+    if crate::retitle::is_public_error_code(error.code()) {
+        error
+    } else {
+        retitle_worker_failed()
+    }
+}
+
 async fn list_handler(State(state): State<Arc<ServeState>>) -> Response {
     let context = state.context.clone();
     let tmux = state.tmux_bin.clone();
@@ -3241,6 +3632,7 @@ async fn list_handler(State(state): State<Arc<ServeState>>) -> Response {
                     "group_archive": true,
                     "history_star": true,
                     "managed_account_handoff": crate::codex_app_server::MANAGED_ACCOUNT_HANDOFF_CAPABILITY,
+                    "session_retitle_v2": true,
                 },
             }))
         }
@@ -9223,6 +9615,320 @@ mod tests {
     const MACHINE: &str = "test-machine";
     const TOKEN: &str = "s3cr3t-token";
 
+    #[tokio::test]
+    async fn session_retitle_readiness_is_an_authenticated_sanitized_contract() {
+        let lock = GlobalStateLock::new();
+        let _config = EnvGuard::set(&lock, "AGENT_SESSION_RETITLE_CONFIG", "");
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let app = router(state(
+            &tmp.path().join("state"),
+            Some(TOKEN),
+            minimal_tmux(tmp.path()),
+        ));
+
+        let (status, body) = call(app, get_auth("/retitle/readiness", Some(TOKEN))).await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["data"]["machine"], MACHINE);
+        assert_eq!(
+            body["data"]["retitle"]["schema_version"],
+            "agent-session.session-retitle.readiness.v2"
+        );
+        assert_eq!(
+            body["data"]["retitle"]["capability"],
+            "agent-session.session-retitle.v2"
+        );
+        assert_eq!(body["data"]["retitle"]["status"], "unavailable");
+        assert_eq!(
+            body["data"]["retitle"]["reason_code"],
+            "provider_not_configured"
+        );
+        assert_eq!(body["data"]["retitle"]["next_action"], "configure_provider");
+        let rendered = body.to_string();
+        assert!(!rendered.contains(tmp.path().to_string_lossy().as_ref()));
+        assert!(!rendered.contains("s3cr3t-token"));
+    }
+
+    #[tokio::test]
+    async fn manual_retitle_mutates_once_and_replays_without_provider_content() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let provider_calls = tmp.path().join("provider.calls");
+        let provider = executable(
+            &tmp.path().join("title-provider"),
+            &format!(
+                "#!/bin/sh\nprintf x >> {}\nsleep 0.1\nprintf '%s\\n' '{{\"topic_action\":\"set\",\"topic\":\"Retitle Redesign\",\"activity\":\"Validate daemon\",\"references\":[\"#449\"]}}'\n",
+                shell_words::quote(&provider_calls.to_string_lossy())
+            ),
+        );
+        let config = json!({
+            "provider":"command",
+            "argv":[provider],
+            "timeout_ms":5000,
+            "context":{"max_chars":4000,"per_message_chars":1000,"recent_turns":8}
+        })
+        .to_string();
+        let _config = EnvGuard::set(&lock, "AGENT_SESSION_RETITLE_CONFIG", &config);
+        let codex_home = tmp.path().join("codex-home");
+        let transcript_dir = codex_home.join("sessions/2026/09/07");
+        std::fs::create_dir_all(&transcript_dir).unwrap();
+        std::fs::write(
+            transcript_dir.join("rollout.jsonl"),
+            concat!(
+                "{\"timestamp\":\"2026-09-07T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"provider-retitle\",\"cwd\":\"/tmp\",\"source\":\"cli\",\"timestamp\":\"2026-09-07T00:00:00Z\"}}\n",
+                "{\"timestamp\":\"2026-09-07T00:00:01Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Implement issue #449 without leaking /private/path\"}],\"internal_chat_message_metadata_passthrough\":{\"turn_id\":\"turn-a\",\"content_item_kinds\":[\"user.text\"]}}}\n"
+            ),
+        )
+        .unwrap();
+        let _codex_home = EnvGuard::set(&lock, "CODEX_HOME", codex_home.to_string_lossy().as_ref());
+        seed_session_with_runtime(tmp.path(), "retitle", "codex", "hs-codex-retitle");
+        let record_path = tmp.path().join("sessions/retitle/session.json");
+        let mut record: Value =
+            serde_json::from_slice(&std::fs::read(&record_path).unwrap()).unwrap();
+        record["provider_resume"] = json!({
+            "provider":"codex",
+            "session_id":"provider-retitle",
+            "captured_at":"2026-09-07T00:00:02Z",
+            "capture_method":"fixture",
+            "resume_args":[]
+        });
+        std::fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+        let app = router(state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path())));
+        let request = json!({
+            "schema_version":"agent-session.session-retitle.request.v2",
+            "trigger":"manual",
+            "idempotency_key":"manual-retitle-0001",
+            "expected_session_incarnation":"launch-retitle",
+            "expected_title_revision":0
+        });
+
+        let first_request = call(
+            app.clone(),
+            post_json("/sessions/retitle/retitle", Some(TOKEN), request.clone()),
+        );
+        let second_request = call(
+            app.clone(),
+            post_json("/sessions/retitle/retitle", Some(TOKEN), request.clone()),
+        );
+        let ((first_status, first), (second_status, second)) =
+            tokio::join!(first_request, second_request);
+        assert_eq!(first_status, StatusCode::OK, "body={first}");
+        assert_eq!(second_status, StatusCode::OK, "body={second}");
+        let mut outcomes = [
+            first["data"]["retitle"]["outcome"].as_str().unwrap(),
+            second["data"]["retitle"]["outcome"].as_str().unwrap(),
+        ];
+        outcomes.sort_unstable();
+        assert_eq!(outcomes, ["committed", "replayed"]);
+        let committed = if first["data"]["retitle"]["outcome"] == "committed" {
+            &first
+        } else {
+            &second
+        };
+        assert_eq!(committed["data"]["retitle"]["session"]["title_revision"], 1);
+        assert_eq!(
+            committed["data"]["retitle"]["session"]["title_state"]["topic"],
+            "Retitle Redesign"
+        );
+        assert_eq!(
+            committed["data"]["retitle"]["session"]["title_state"]["references"][0],
+            "#449"
+        );
+        assert!(!committed.to_string().contains("/private/path"));
+        assert_eq!(std::fs::read_to_string(&provider_calls).unwrap(), "x");
+
+        let mut replay = request;
+        replay["expected_title_revision"] = json!(1);
+        // The key is bound to its complete original request, so a changed fence
+        // is rejected instead of reusing the provider result ambiguously.
+        let (status, conflict) = call(
+            app.clone(),
+            post_json("/sessions/retitle/retitle", Some(TOKEN), replay),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "body={conflict}");
+        assert_eq!(conflict["error"]["code"], "idempotency-key-reused");
+
+        // An identical retry replays the committed receipt even though its
+        // original title fence is now behind the committed revision.
+        let restarted_app = router(state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path())));
+        let (status, replayed) = call(
+            restarted_app,
+            post_json(
+                "/sessions/retitle/retitle",
+                Some(TOKEN),
+                json!({
+                    "schema_version":"agent-session.session-retitle.request.v2",
+                    "trigger":"manual",
+                    "idempotency_key":"manual-retitle-0001",
+                    "expected_session_incarnation":"launch-retitle",
+                    "expected_title_revision":0
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body={replayed}");
+        assert_eq!(replayed["data"]["retitle"]["outcome"], "replayed");
+        assert_eq!(
+            replayed["data"]["retitle"]["diagnostic_code"],
+            "idempotency_replay"
+        );
+    }
+
+    #[test]
+    fn automatic_retitle_candidates_fence_turn_phase_and_incarnation() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let tmux = minimal_tmux(tmp.path());
+        seed_session_with_runtime(tmp.path(), "automatic", "codex", "hs-codex-automatic");
+        let record_path = tmp.path().join("sessions/automatic/session.json");
+        let mut record: Value =
+            serde_json::from_slice(&std::fs::read(&record_path).unwrap()).unwrap();
+        record["provider_resume"] = json!({
+            "provider":"codex",
+            "session_id":"provider-automatic",
+            "captured_at":"2026-09-07T00:00:00Z",
+            "capture_method":"fixture",
+            "resume_args":[]
+        });
+        std::fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+        let activity_path = tmp.path().join("sessions/automatic/activity.json");
+        let write_activity = |runtime_id: &str,
+                              revision: u64,
+                              current: Option<&str>,
+                              last: Option<&str>| {
+            std::fs::write(
+                &activity_path,
+                serde_json::to_vec_pretty(&json!({
+                    "schema_version":"agent-session.activity.v1",
+                    "runtime_id":runtime_id,
+                    "runtime_generation":1,
+                    "state":{
+                        "schema_version":"agent-session.turn-state.v1",
+                        "phase":if current.is_some() { "working" } else { "waiting" },
+                        "phase_changed_at":"2026-09-07T00:00:00Z",
+                        "revision":revision,
+                        "source":{"kind":"provider_hook","provider":"codex","confidence":"authoritative"},
+                        "current_turn":current.map(|id| json!({"provider_turn_id":id,"started_at":"2026-09-07T00:00:00Z"})),
+                        "last_turn":last.map(|id| json!({"provider_turn_id":id,"completed_at":"2026-09-07T00:00:01Z","outcome":"completed"}))
+                    }
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        };
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        let candidate = |runtime_id: &str| {
+            let record = crate::load_session_record(&context, "automatic").unwrap();
+            let view = crate::session_view(&context, &record, Some("running".into()), Some(&tmux));
+            let candidate = automatic_retitle_candidate(&view).unwrap();
+            assert_eq!(candidate.request.expected_session_incarnation, runtime_id);
+            candidate
+        };
+
+        write_activity("launch-automatic", 1, Some("turn-a"), None);
+        let first = candidate("launch-automatic");
+        assert_eq!(
+            first.request.trigger,
+            crate::retitle::RetitleTrigger::Initial
+        );
+        write_activity("launch-automatic", 2, Some("turn-b"), Some("turn-a"));
+        let repeated_prompt_new_turn = candidate("launch-automatic");
+        assert_ne!(
+            first.request.idempotency_key,
+            repeated_prompt_new_turn.request.idempotency_key
+        );
+        assert_eq!(
+            repeated_prompt_new_turn
+                .request
+                .expected_provider_turn_id
+                .as_deref(),
+            Some("turn-b")
+        );
+        write_activity("launch-automatic", 3, None, Some("turn-b"));
+        let recovery = candidate("launch-automatic");
+        assert_eq!(
+            recovery.request.trigger,
+            crate::retitle::RetitleTrigger::CompletionRecovery
+        );
+        assert_ne!(
+            repeated_prompt_new_turn.request.idempotency_key,
+            recovery.request.idempotency_key
+        );
+
+        let mut recreated: Value =
+            serde_json::from_slice(&std::fs::read(&record_path).unwrap()).unwrap();
+        recreated["runtime"]["launch_id"] = json!("launch-automatic-v2");
+        std::fs::write(&record_path, serde_json::to_vec_pretty(&recreated).unwrap()).unwrap();
+        write_activity("launch-automatic-v2", 1, Some("turn-b"), None);
+        let replacement = candidate("launch-automatic-v2");
+        assert_ne!(
+            replacement.request.idempotency_key,
+            repeated_prompt_new_turn.request.idempotency_key
+        );
+    }
+
+    #[test]
+    fn automatic_retitle_retry_tracker_requeues_with_backoff_then_stops() {
+        let start = Instant::now();
+        let mut tracker = AutomaticRetitleTracker::default();
+        assert!(tracker.begin("turn-key", start));
+        tracker.finish(
+            "turn-key",
+            Some(&crate::retitle::retitle_error(
+                "retitle-provider-timeout",
+                "title provider timed out",
+                true,
+                "retry",
+                "retry_request",
+            )),
+            start,
+        );
+        assert!(!tracker.begin("turn-key", start));
+        assert!(tracker.begin("turn-key", start + Duration::from_secs(1)));
+        tracker.finish(
+            "turn-key",
+            Some(&crate::retitle::retitle_error(
+                "retitle-provider-timeout",
+                "title provider timed out",
+                true,
+                "retry",
+                "retry_request",
+            )),
+            start + Duration::from_secs(1),
+        );
+        assert!(!tracker.begin("turn-key", start + Duration::from_secs(2)));
+        assert!(tracker.begin("turn-key", start + Duration::from_secs(3)));
+        tracker.finish(
+            "turn-key",
+            Some(&crate::retitle::retitle_error(
+                "retitle-provider-timeout",
+                "title provider timed out",
+                true,
+                "retry",
+                "retry_request",
+            )),
+            start + Duration::from_secs(3),
+        );
+        assert!(!tracker.begin("turn-key", start + Duration::from_secs(30)));
+
+        assert!(tracker.begin("nonretryable", start));
+        tracker.finish(
+            "nonretryable",
+            Some(&crate::retitle::retitle_error(
+                "retitle-state-conflict",
+                "retitle state changed",
+                false,
+                "refresh_session",
+                "refresh_session",
+            )),
+            start,
+        );
+        assert!(!tracker.begin("nonretryable", start + Duration::from_secs(30)));
+    }
+
     #[test]
     fn attachment_limit_environment_is_bounded() {
         let lock = GlobalStateLock::new();
@@ -11631,6 +12337,7 @@ mod tests {
             session_collector,
             launch_profiles,
             history_catalog,
+            retitle: Arc::new(crate::retitle::RetitleService::from_environment()),
             managed_history_titles: Arc::new(StdMutex::new(ManagedHistoryTitleCache::default())),
             coordination_wait_workers: Arc::new(tokio::sync::Semaphore::new(
                 COORDINATION_WAIT_WORKER_LIMIT,

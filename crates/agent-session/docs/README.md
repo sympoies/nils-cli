@@ -18,6 +18,8 @@ or integrating a specific subsystem.
 
 - [Serve API v1](specs/serve-api-v1.md): HTTP and WebSocket endpoints,
   response/authentication rules, launch profiles, and session survival.
+- [Session retitle v2](specs/session-retitle-v2.md): bounded title context,
+  automatic scheduling, mutation fences, provider configuration, and privacy.
 - [Session coordination v1](specs/session-coordination-v1.md): normative
   schemas, state machines, authorization, routes, limits, and failure codes.
 - [Turn-state contract](turn-state-contract.md): runtime-bound activity state,
