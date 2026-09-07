@@ -24,6 +24,7 @@ prompt, then return a short tmux attach command for the user to continue from Te
   [Serve daemon operations](docs/runbooks/serve-daemon.md).
 - Integrate stable schemas and state machines:
   [Serve API v1](docs/specs/serve-api-v1.md),
+  [Session Retitle v2](docs/specs/session-retitle-v2.md),
   [Session coordination v1](docs/specs/session-coordination-v1.md),
   [Main Agent orchestration v1](docs/specs/main-agent-orchestration-v1.md),
   [turn-state contract](docs/turn-state-contract.md), and
