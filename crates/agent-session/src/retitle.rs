@@ -1390,14 +1390,7 @@ fn invoke_codex(
             .and_then(Value::as_str)
             .map(str::to_string)
             .ok_or_else(provider_malformed)?;
-        send_rpc(
-            &mut stdin,
-            &json!({
-            "id":4,
-            "method":"turn/start",
-            "params":{"threadId":thread,"input":[{"type":"text","text":input,"text_elements":[]}]}
-            }),
-        )?;
+        send_rpc(&mut stdin, &codex_turn_start_request(&thread, input))?;
         recv_rpc_response(&rx, 4, deadline)?;
         let mut answer = None;
         loop {
@@ -1425,6 +1418,32 @@ fn invoke_codex(
     terminate_child(&mut child);
     argv.clear();
     result
+}
+
+fn codex_turn_start_request(thread: &str, input: &str) -> Value {
+    json!({
+        "id": 4,
+        "method": "turn/start",
+        "params": {
+            "threadId": thread,
+            "input": [{"type": "text", "text": input, "text_elements": []}],
+            "outputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["topic_action", "topic", "activity", "references"],
+                "properties": {
+                    "topic_action": {"type": "string", "enum": ["keep", "set", "clear"]},
+                    "topic": {"type": ["string", "null"], "maxLength": 120},
+                    "activity": {"type": ["string", "null"], "maxLength": 120},
+                    "references": {
+                        "type": "array",
+                        "maxItems": 2,
+                        "items": {"type": "string", "pattern": r"^#[1-9][0-9]{0,9}$"}
+                    }
+                }
+            }
+        }
+    })
 }
 
 fn send_rpc(stdin: &mut impl Write, value: &Value) -> Result<(), CliError> {
@@ -2592,6 +2611,29 @@ mod tests {
         automatic.expected_activity_revision = Some(4);
         automatic.expected_provider_turn_id = Some("turn-4".into());
         assert!(automatic.validate().is_ok());
+    }
+
+    #[test]
+    fn codex_turn_request_constrains_the_final_message_to_the_decision_schema() {
+        let request = codex_turn_start_request("thread-1", "classify this session");
+        let schema = request
+            .pointer("/params/outputSchema")
+            .expect("turn/start must carry an output schema");
+
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["additionalProperties"], false);
+        assert_eq!(
+            schema["required"],
+            json!(["topic_action", "topic", "activity", "references"])
+        );
+        assert_eq!(
+            schema.pointer("/properties/topic_action/enum"),
+            Some(&json!(["keep", "set", "clear"]))
+        );
+        assert_eq!(
+            schema.pointer("/properties/references/items/pattern"),
+            Some(&json!(r"^#[1-9][0-9]{0,9}$"))
+        );
     }
 
     #[test]
