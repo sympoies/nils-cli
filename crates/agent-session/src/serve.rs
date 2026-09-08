@@ -6672,6 +6672,7 @@ async fn codex_control_loop(state: Arc<ServeState>) {
         if let Ok(mut controls) = state.codex_controls.lock() {
             controls.retain(|id, entry| live.contains(&(id.clone(), entry.launch_id.clone())));
         }
+        let mut pending_account_handles = Vec::new();
         for record in records {
             let Some(launch_id) = record
                 .runtime
@@ -6691,7 +6692,7 @@ async fn codex_control_loop(state: Arc<ServeState>) {
                     crate::codex_account::pending_next_apply(&record),
                     Ok(Some(_))
                 ) {
-                    let _ = handle.apply_next().await;
+                    pending_account_handles.push(handle);
                 }
                 continue;
             }
@@ -6744,8 +6745,19 @@ async fn codex_control_loop(state: Arc<ServeState>) {
                 }
             });
         }
+        apply_pending_codex_accounts(pending_account_handles).await;
         tokio::time::sleep(RECONCILE_INTERVAL).await;
     }
+}
+
+async fn apply_pending_codex_accounts(handles: Vec<ControlHandle>) {
+    let mut tasks = JoinSet::new();
+    for handle in handles {
+        tasks.spawn(async move {
+            let _ = handle.apply_next().await;
+        });
+    }
+    while tasks.join_next().await.is_some() {}
 }
 
 fn fence_codex_controls_before_listen(context: &CliContext, tmux: &Path) -> Result<(), CliError> {
@@ -15946,6 +15958,31 @@ esac
         responder.await.unwrap();
         scheduler.abort();
         let _ = scheduler.await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn codex_account_reconcile_does_not_serialize_independent_control_timeouts() {
+        let (slow_handle, _slow_commands) = codex_app_server::control_channel();
+        let (fast_handle, mut fast_commands) = codex_app_server::control_channel();
+        let (seen, observed) = tokio::sync::oneshot::channel();
+        let responder = tokio::spawn(async move {
+            let Some(codex_app_server::ControlCommand::ApplyNext { response }) =
+                fast_commands.recv().await
+            else {
+                panic!("fast control did not receive an account reconcile request");
+            };
+            let _ = seen.send(());
+            let _ = response.send(Ok(()));
+        });
+        let reconcile = tokio::spawn(apply_pending_codex_accounts(vec![slow_handle, fast_handle]));
+
+        tokio::time::timeout(Duration::from_millis(1), observed)
+            .await
+            .expect("fast account reconcile waited behind the slow control")
+            .unwrap();
+        responder.await.unwrap();
+        reconcile.abort();
+        let _ = reconcile.await;
     }
 
     #[tokio::test]

@@ -1760,14 +1760,32 @@ pub(crate) fn latest_turn_request(id: u64, thread_id: &str) -> Value {
 }
 
 fn latest_in_progress_turn_id(result: &Value) -> Option<&str> {
-    let turn = result.get("data")?.as_array()?.first()?;
-    (turn.get("status").and_then(Value::as_str) == Some("inProgress"))
-        .then(|| {
-            turn.get("id")
-                .and_then(Value::as_str)
-                .filter(|id| protocol_id_is_valid(id))
-        })
-        .flatten()
+    match latest_turn_state(result)? {
+        LatestTurnState::InProgress(turn_id) => Some(turn_id),
+        LatestTurnState::Idle => None,
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum LatestTurnState<'a> {
+    Idle,
+    InProgress(&'a str),
+}
+
+fn latest_turn_state(result: &Value) -> Option<LatestTurnState<'_>> {
+    let turns = result.get("data")?.as_array()?;
+    let Some(turn) = turns.first() else {
+        return Some(LatestTurnState::Idle);
+    };
+    let turn_id = turn
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| protocol_id_is_valid(id))?;
+    match turn.get("status").and_then(Value::as_str)? {
+        "inProgress" => Some(LatestTurnState::InProgress(turn_id)),
+        "completed" | "failed" | "interrupted" => Some(LatestTurnState::Idle),
+        _ => None,
+    }
 }
 
 pub(crate) fn loaded_thread_ids(result: &Value) -> Option<Vec<String>> {
@@ -2078,8 +2096,9 @@ async fn apply_account_binding(
 /// prompt: transition it to `applying`, drive the app-server login, and record
 /// success (which flips the applied binding and clears the intent) or failure
 /// (which marks the intent failed and keeps the prompt fenced). Returns the
-/// account now applied to the live runtime, if it changed.
-async fn apply_pending_next_account(
+/// account now applied to the live runtime, if it changed. The control owner
+/// must verify the bound thread is idle immediately before calling this.
+async fn apply_pending_next_account_at_idle(
     websocket: &mut tokio_tungstenite::WebSocketStream<UnixStream>,
     context: &CliContext,
     record: &SessionRecord,
@@ -2089,34 +2108,6 @@ async fn apply_pending_next_account(
         .runtime
         .as_ref()
         .map(|runtime| runtime.launch_id.clone())?;
-    // Only drain while the turn is authoritatively idle.
-    let idle_context = context.clone();
-    let idle_id = record.id.clone();
-    let idle_launch = launch_id.clone();
-    let idle = tokio::task::spawn_blocking(move || {
-        let current = crate::load_session_record(&idle_context, &idle_id).ok()?;
-        if current
-            .runtime
-            .as_ref()
-            .is_none_or(|runtime| runtime.launch_id != idle_launch)
-        {
-            return None;
-        }
-        if !matches!(
-            crate::codex_account::pending_next_apply(&current),
-            Ok(Some(_))
-        ) {
-            return None;
-        }
-        crate::activity::state_for_view(&idle_context, &current).map(|state| state.phase)
-    })
-    .await
-    .ok()
-    .flatten();
-    if idle != Some(crate::activity::TurnPhase::Waiting) {
-        return None;
-    }
-
     let begin_context = context.clone();
     let begin_id = record.id.clone();
     let begin_launch = launch_id.clone();
@@ -2693,10 +2684,53 @@ pub(crate) async fn run_control(
                         let _ = response.send(result);
                     }
                     ControlCommand::ApplyNext { response } => {
-                        if let Some(applied) = apply_pending_next_account(
-                            &mut websocket, &context, &record, &mut request_id,
+                        if reducer.active_turn_id.is_some() {
+                            let _ = response.send(Ok(()));
+                            continue;
+                        }
+                        request_id = request_id.saturating_add(1);
+                        if let Err(error) = send_json(
+                            &mut websocket,
+                            latest_turn_request(request_id, &thread_id),
                         )
                         .await
+                        {
+                            let _ = response.send(Err(error));
+                            return Err("Codex idle-boundary read failed".to_string());
+                        }
+                        let latest = receive_response_with_timeout(
+                            &mut websocket,
+                            request_id,
+                            Some((&context, &record, &mut reducer)),
+                            external_auth_account
+                                .as_deref()
+                                .map(|account| (&context, &record, account)),
+                            CONTROL_RESPONSE_TIMEOUT,
+                        )
+                        .await;
+                        let idle = match latest {
+                            Ok(_) if reducer.active_turn_id.is_some() => false,
+                            Ok(result) => match latest_turn_state(&result) {
+                                Some(LatestTurnState::Idle) => true,
+                                Some(LatestTurnState::InProgress(turn_id)) => {
+                                    reducer.note_started(turn_id);
+                                    false
+                                }
+                                None => false,
+                            },
+                            Err(error) => {
+                                let _ = response.send(Err(error));
+                                continue;
+                            }
+                        };
+                        if idle
+                            && let Some(applied) = apply_pending_next_account_at_idle(
+                                &mut websocket,
+                                &context,
+                                &record,
+                                &mut request_id,
+                            )
+                            .await
                         {
                             external_auth_account = Some(applied);
                         }
@@ -4845,6 +4879,36 @@ mod tests {
             latest_in_progress_turn_id(&json!({
                 "data": [{"id": "raw-completed-turn", "status": "completed", "items": []}],
                 "nextCursor": null
+            })),
+            None
+        );
+        assert_eq!(
+            latest_turn_state(&json!({
+                "data": [{"id": "raw-active-turn", "status": "inProgress", "items": []}],
+                "nextCursor": null
+            })),
+            Some(LatestTurnState::InProgress("raw-active-turn"))
+        );
+        assert_eq!(
+            latest_turn_state(&json!({
+                "data": [{"id": "raw-completed-turn", "status": "completed", "items": []}],
+                "nextCursor": null
+            })),
+            Some(LatestTurnState::Idle)
+        );
+        assert_eq!(
+            latest_turn_state(&json!({"data": []})),
+            Some(LatestTurnState::Idle)
+        );
+        assert_eq!(
+            latest_turn_state(&json!({
+                "data": [{"id": "raw-future-turn", "status": "future", "items": []}]
+            })),
+            None
+        );
+        assert_eq!(
+            latest_turn_state(&json!({
+                "data": [{"id": "", "status": "completed", "items": []}]
             })),
             None
         );
@@ -9030,6 +9094,9 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
         crate::activity::ingest_event(&context, &record.id, turn_started).unwrap();
         bind_thread(&record, "raw-thread-apply-next").unwrap();
 
+        let (complete_turn, complete_turn_rx) = tokio::sync::oneshot::channel();
+        let (stale_probe_seen, mut stale_probe_seen_rx) = tokio::sync::oneshot::channel();
+        let (complete_racing_turn, complete_racing_turn_rx) = tokio::sync::oneshot::channel();
         let server = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
@@ -9056,9 +9123,26 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             let resume = receive_json(&mut socket).await;
             assert_eq!(resume["method"], "thread/resume");
             respond(&mut socket, &resume, json!({})).await;
-            for _ in 0..2 {
+            for request_index in 0..2 {
                 let usage = receive_json(&mut socket).await;
                 assert_eq!(usage["method"], "account/rateLimits/read");
+                if request_index == 1 {
+                    send_json(
+                        &mut socket,
+                        json!({
+                            "method": "turn/started",
+                            "params": {
+                                "threadId": "raw-thread-apply-next",
+                                "turn": {
+                                    "id": "turn-apply-next",
+                                    "status": "inProgress"
+                                }
+                            }
+                        }),
+                    )
+                    .await
+                    .unwrap();
+                }
                 respond(
                     &mut socket,
                     &usage,
@@ -9066,6 +9150,85 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
                 )
                 .await;
             }
+            complete_turn_rx.await.unwrap();
+            send_json(
+                &mut socket,
+                json!({
+                    "method": "turn/completed",
+                    "params": {
+                        "threadId": "raw-thread-apply-next",
+                        "turn": {
+                            "id": "turn-apply-next",
+                            "status": "completed"
+                        }
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+            let latest_turn = receive_json(&mut socket).await;
+            assert_eq!(latest_turn["method"], "thread/turns/list");
+            assert_eq!(latest_turn["params"]["threadId"], "raw-thread-apply-next");
+            send_json(
+                &mut socket,
+                json!({
+                    "method": "turn/started",
+                    "params": {
+                        "threadId": "raw-thread-apply-next",
+                        "turn": {
+                            "id": "racing-turn",
+                            "status": "inProgress"
+                        }
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+            respond(
+                &mut socket,
+                &latest_turn,
+                json!({
+                    "data": [{
+                        "id": "turn-apply-next",
+                        "status": "completed",
+                        "items": []
+                    }],
+                    "nextCursor": null
+                }),
+            )
+            .await;
+            stale_probe_seen.send(()).unwrap();
+            complete_racing_turn_rx.await.unwrap();
+            send_json(
+                &mut socket,
+                json!({
+                    "method": "turn/completed",
+                    "params": {
+                        "threadId": "raw-thread-apply-next",
+                        "turn": {
+                            "id": "racing-turn",
+                            "status": "completed"
+                        }
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+            let latest_turn = receive_json(&mut socket).await;
+            assert_eq!(latest_turn["method"], "thread/turns/list");
+            respond(
+                &mut socket,
+                &latest_turn,
+                json!({
+                    "data": [{
+                        "id": "racing-turn",
+                        "status": "completed",
+                        "items": []
+                    }],
+                    "nextCursor": null
+                }),
+            )
+            .await;
             let next_login = receive_json(&mut socket).await;
             assert_eq!(next_login["method"], "account/login/start");
             assert_eq!(next_login["params"]["accessToken"], "token-sym");
@@ -9083,18 +9246,23 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
         assert!(handle.usage().await.unwrap().authoritative);
         crate::codex_account::queue_next_account(&context, &record.id, "runtime-apply-next", "sym")
             .unwrap();
-        let turn_completed = serde_json::from_value(json!({
-            "schema_version": crate::activity::TURN_EVENT_VERSION,
-            "event_id": "apply-next-turn-completed",
-            "runtime_id": "runtime-apply-next",
-            "provider": "codex",
-            "provider_session_id": "raw-thread-apply-next",
-            "provider_turn_id": "turn-apply-next",
-            "kind": "turn_completed",
-            "confidence": "authoritative"
-        }))
-        .unwrap();
-        crate::activity::ingest_event(&context, &record.id, turn_completed).unwrap();
+        handle.apply_next().await.unwrap();
+        let active_view = crate::codex_account::view_for_record(
+            &crate::load_session_record(&context, &record.id).unwrap(),
+        );
+        assert_eq!(
+            active_view.next.as_ref().map(|next| next.state),
+            Some("queued")
+        );
+        complete_turn.send(()).unwrap();
+        assert_eq!(
+            crate::activity::activity_status(&context, &record.id)
+                .unwrap()
+                .turn_state
+                .phase,
+            crate::activity::TurnPhase::Working,
+            "the regression requires live idle while durable activity is stale-working"
+        );
 
         let readiness = ensure_turn_start_account_ready(&context, &record);
         tokio::pin!(readiness);
@@ -9104,7 +9272,47 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
                 .is_err(),
             "turn/start must remain held while the long-lived control owner has not applied the queued account"
         );
-        handle.apply_next().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                handle.apply_next().await.unwrap();
+                if tokio::time::timeout(Duration::from_millis(10), &mut stale_probe_seen_rx)
+                    .await
+                    .is_ok()
+                {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("live idle probe must observe the completed turn");
+        let raced_view = crate::codex_account::view_for_record(
+            &crate::load_session_record(&context, &record.id).unwrap(),
+        );
+        assert_eq!(
+            raced_view.next.as_ref().map(|next| next.state),
+            Some("queued"),
+            "an interleaved live turn/start must override a stale idle list response"
+        );
+        complete_racing_turn.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                handle.apply_next().await.unwrap();
+                let view = crate::codex_account::view_for_record(
+                    &crate::load_session_record(&context, &record.id).unwrap(),
+                );
+                if view.next.is_none() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("live idle must drain the queued account despite stale activity");
+        let applied_view = crate::codex_account::view_for_record(
+            &crate::load_session_record(&context, &record.id).unwrap(),
+        );
+        assert_eq!(applied_view.selected_account.as_deref(), Some("sym"));
+        assert!(applied_view.next.is_none());
         assert!(
             readiness.await,
             "turn/start must become ready only after the control owner durably applies the account"
@@ -9122,6 +9330,18 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             Some("raw-thread-apply-next"),
             "managed account binding must retain the exact provider thread"
         );
+        let turn_completed = serde_json::from_value(json!({
+            "schema_version": crate::activity::TURN_EVENT_VERSION,
+            "event_id": "apply-next-turn-completed",
+            "runtime_id": "runtime-apply-next",
+            "provider": "codex",
+            "provider_session_id": "raw-thread-apply-next",
+            "provider_turn_id": "turn-apply-next",
+            "kind": "turn_completed",
+            "confidence": "authoritative"
+        }))
+        .unwrap();
+        crate::activity::ingest_event(&context, &record.id, turn_completed).unwrap();
         assert!(
             crate::auto_resume::arm_usage_exhaustion(
                 &context,
