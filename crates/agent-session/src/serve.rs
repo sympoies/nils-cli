@@ -12693,6 +12693,54 @@ esac
         launch_id
     }
 
+    #[test]
+    fn reconnect_fence_accepts_historical_binding_without_tmux_server() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let state_dir = tmp.path().join("state");
+        seed_codex_app_server_session(&state_dir, "historical-binding");
+        let record_path = state_dir.join("sessions/historical-binding/session.json");
+        let mut record: Value =
+            serde_json::from_slice(&std::fs::read(&record_path).unwrap()).unwrap();
+        record["codex_account_binding"] = json!({"retained": true});
+        std::fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+        let tmux = executable(
+            &tmp.path().join("tmux-missing"),
+            "#!/bin/sh\nprintf '%s\n' 'error connecting to /tmp/tmux-1000/default (No such file or directory)' >&2\nexit 1\n",
+        );
+        let context = CliContext {
+            state_dir,
+            host: None,
+        };
+
+        fence_codex_controls_before_listen(&context, &tmux)
+            .expect("there are no live controls to fence");
+    }
+
+    #[test]
+    fn reconnect_fence_keeps_unknown_tmux_failure_unavailable() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let state_dir = tmp.path().join("state");
+        seed_codex_app_server_session(&state_dir, "historical-binding");
+        let record_path = state_dir.join("sessions/historical-binding/session.json");
+        let mut record: Value =
+            serde_json::from_slice(&std::fs::read(&record_path).unwrap()).unwrap();
+        record["codex_account_binding"] = json!({"retained": true});
+        std::fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+        let tmux = executable(
+            &tmp.path().join("tmux-failed"),
+            "#!/bin/sh\nprintf '%s\n' 'permission denied' >&2\nexit 1\n",
+        );
+        let context = CliContext {
+            state_dir,
+            host: None,
+        };
+
+        let error = fence_codex_controls_before_listen(&context, &tmux)
+            .expect_err("unknown tmux failure must stay fail-closed");
+
+        assert_eq!(error.code(), "codex-account-reconnect-fence-unavailable");
+    }
+
     fn seed_resumable_session(
         state_dir: &Path,
         id: &str,
