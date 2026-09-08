@@ -7,7 +7,9 @@ server must be treated as an authoritative empty live-session set during the
 Codex account reconnect fence, while genuine tmux inspection failures remain
 fail-closed. Also make the already supported incarnation-fenced structured
 prompt route the documented recovery path when raw terminal submission reaches
-the local Codex proxy but is rejected as transiently busy.
+the local Codex proxy, is reported as transiently busy, and observation
+establishes that no provider turn accepted the continuation or remains in
+progress.
 
 ## Evidence
 
@@ -32,19 +34,23 @@ the local Codex proxy but is rejected as transiently busy.
 - [I1] The startup outage and the stuck input were separate local control-plane
   failures. The first needs a semantic empty-snapshot fix; the second needs a
   deterministic operator recovery path, not blind raw-input retries.
+- [I2] The local `-32001` response is not by itself proof of non-delivery. The
+  recovery path is safe only after provider-visible state establishes that no
+  turn accepted the continuation or remains in progress.
 
 ## Required behavior
 
 1. The Codex reconnect fence starts successfully when tmux authoritatively
    reports that no server or sessions exist, even if historical bound Codex
    records remain on disk.
-2. Other tmux execution, protocol, or parsing failures remain unavailable and
-   keep the reconnect fence fail-closed.
+2. Other tmux execution failures and unrecognized non-success diagnostics
+   remain unavailable and keep the reconnect fence fail-closed.
 3. Focused regression coverage distinguishes the empty-server case from a real
    inspection failure.
 4. The serve API and operator runbook describe the exact, incarnation-fenced
    structured prompt recovery for a resumed Codex TUI whose raw submission is
-   rejected as locally busy.
+   reported as locally busy, but only after observation establishes that the
+   continuation was not accepted and no provider turn remains in progress.
 5. Recovery guidance warns against repeated blind raw-input retries and against
    bypassing the session incarnation fence.
 6. Existing session records, account bindings, tmux panes, and API wire shapes

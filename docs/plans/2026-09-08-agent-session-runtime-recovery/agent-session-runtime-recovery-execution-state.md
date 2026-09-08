@@ -12,7 +12,7 @@
 - Branch: `fix/agent-session-runtime-recovery`
 - Worktree: managed by `git-cli worktree`
 - Active task: 2.1
-- Last checkpoint: Sprint 1 implementation and focused validation complete
+- Last checkpoint: Pre-merge review findings repaired and follow-up review passed
 
 ## Task Ledger
 
@@ -21,11 +21,16 @@
 | 1.1 | done | Empty-tmux regression | Retained test-first red | Missing server returned unavailable before the fix. |
 | 1.2 | done | Empty-state classification | Focused unit and reconnect-fence tests pass | Unknown failures remain unavailable. |
 | 1.3 | done | Busy-input recovery docs | API contract and runbook updated | `prompt/v2` remains exact-incarnation fenced. |
-| 2.1 | in-progress | Validate, review, merge | Focused validation passes | Finish-line gate pending. |
+| 2.1 | in-progress | Validate, review, merge | Local-fast, provider checks, and focused review pass | Merge pending. |
 | 2.2 | pending | Release, deploy, live verify | none | Blocked by provider merge. |
 
 ## Scope decisions
 
 - The startup defect is owned by `nils-agent-session`, not Agent Console UI.
 - Busy-input recovery remains explicit because raw terminal submission can have an ambiguous outcome.
+- The local busy response alone is not evidence of non-delivery; recovery first
+  requires provider-visible confirmation that no turn accepted the continuation
+  or remains in progress.
+- Successful malformed tmux output retains its pre-existing parser semantics;
+  the new fail-closed guarantee is limited to unrecognized non-success results.
 - Provider-visible evidence excludes private hostnames, local paths, session identifiers, prompt content, and credentials.

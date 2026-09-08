@@ -433,13 +433,20 @@ recorded in `sympoies/nils-cli#1409`.
   `session_incarnation`, while the provider turn id remains private. These mutations never send multiline text through
   terminal keys; unsupported or not-yet-ready sessions fail closed.
   For an already resumed Codex runtime whose terminal path reports local
-  JSON-RPC `-32001` busy before provider acceptance, `prompt/v2` is also the
-  explicit recovery surface: the client refreshes `GET /sessions`, binds the
-  request to that exact `session_incarnation`, and submits once. Clients MUST
-  NOT automatically replay an arbitrary failed terminal send through this
-  route because a transport failure can leave provider-delivery outcome
-  unknown. Incarnation conflict and outcome-unknown handling retain the rules
-  above.
+  JSON-RPC `-32001` busy, the error alone does not prove rejection before
+  provider acceptance: the same response can be emitted while an earlier
+  request is already pending. A client MUST first refresh `GET /sessions` and
+  inspect provider-visible activity/output. While a turn is in progress, the
+  continuation appears accepted, or non-delivery cannot be established, the
+  client waits and MUST NOT submit it again. Only after establishing that no
+  provider turn remains in progress and the continuation was not accepted may
+  the client bind one explicit recovery request to the exact current
+  `session_incarnation` and submit through `prompt/v2`. The incarnation fence
+  prevents submission to a replacement runtime; it does not deduplicate two
+  submissions within one incarnation. Clients MUST NOT automatically replay an
+  arbitrary failed terminal send through this route because transport and busy
+  failures can leave provider-delivery outcome unknown. Incarnation conflict
+  and outcome-unknown handling retain the rules above.
 - `PUT /sessions/{id}/account` accepts
   `{ "account": "nickname", "expected_session_incarnation": "launch-id" }`
   only for a serve-managed Codex app-server runtime. At the authoritative

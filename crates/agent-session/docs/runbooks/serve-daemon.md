@@ -178,9 +178,17 @@ rejected by the local app-server proxy with JSON-RPC code `-32001` and
 the same terminal bytes does not repair that control state and can make prompt
 delivery ambiguous.
 
-Use the authenticated edge or another trusted loopback client to read the
-session's current `session_incarnation`, then submit the continuation through
-the fenced route exactly once:
+The busy response alone does not prove that the continuation was rejected
+before provider delivery: the proxy can return the same response while an
+earlier request is already pending. First refresh the session and inspect its
+provider-visible activity/output. If a turn is in progress, the continuation
+appears accepted, or non-delivery cannot be established, wait and observe; do
+not send the continuation again.
+
+Only after confirming that the continuation was not accepted and no provider
+turn remains in progress, use the authenticated edge or another trusted
+loopback client to read the session's current `session_incarnation`, then
+submit the continuation through the fenced route exactly once:
 
 ```json
 {
@@ -194,8 +202,10 @@ Send that body to `POST /sessions/SESSION_ID/prompt/v2`. Success returns
 session-incarnation-conflict` means the runtime was replaced; refresh the
 session list and decide against the new incarnation instead of removing the
 fence. Any outcome-unknown transport failure requires observation before a
-retry. This procedure is for a provider-ready Codex control channel; it does
-not turn an unsupported raw TUI into a structured-prompt target.
+retry. The incarnation fence prevents submission to a replacement runtime; it
+does not deduplicate two submissions within the same incarnation. This
+procedure is for a provider-ready Codex control channel; it does not turn an
+unsupported raw TUI into a structured-prompt target.
 
 For work coordination, consult [Work coordination](work-coordination.md).
 High-level self-targeting CLI operations such as `work-context set` do not have
@@ -221,8 +231,8 @@ At startup, historical session records may remain even when tmux has no server
 or live sessions. A recognized tmux missing-server diagnostic is an
 authoritative empty live-session snapshot, so the Codex account reconnect fence
 does not block the HTTP listener. Executable failures, permission errors,
-unrecognized diagnostics, and malformed output remain unavailable and keep the
-fence fail-closed.
+and unrecognized non-success diagnostics remain unavailable and keep the fence
+fail-closed.
 
 ## Optional integrations
 

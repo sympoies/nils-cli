@@ -31,7 +31,8 @@ the live service without destroying existing tmux panes.
 
 1. Tmux's bounded diagnostic for an absent server can be classified separately
    from generic command failure without starting or mutating a tmux server.
-2. `prompt/v2` is the correct existing recovery primitive because it requires
+2. After observation establishes non-delivery and no in-progress provider turn,
+   `prompt/v2` is the correct existing recovery primitive because it requires
    the exact session incarnation and returns provider acknowledgement.
 3. Automatic fallback from raw terminal input is unsafe: the caller cannot
    always prove whether input reached the provider, so recovery stays explicit.
@@ -86,9 +87,10 @@ an exact, repeatable operator recovery path for locally busy Codex input.
 - **Location**:
   - `crates/agent-session/docs/runbooks/serve-daemon.md`
   - `crates/agent-session/docs/specs/serve-api-v1.md`
-- **Description**: Add a bounded recovery procedure using `prompt/v2` with the
-  exact current session incarnation, and explain why blind raw-input retries or
-  an unfenced fallback are unsafe.
+- **Description**: Add a bounded recovery procedure that first establishes
+  non-delivery and no in-progress provider turn, then uses `prompt/v2` with the
+  exact current session incarnation; explain why blind raw-input retries or an
+  unfenced fallback are unsafe.
 - **Dependencies**:
   - Task 1.2
 - **Complexity**: 2
@@ -166,7 +168,9 @@ an exact, repeatable operator recovery path for locally busy Codex input.
 - Treating every exit status 1 as empty would hide permission, socket, or binary
   failures and is explicitly forbidden.
 - Raw terminal submission has an ambiguous delivery boundary. Never
-  automatically resubmit through `prompt/v2` after a generic transport failure.
+  automatically resubmit through `prompt/v2` after a busy or generic transport
+  failure; first establish that the continuation was not accepted and no turn
+  remains in progress.
 - Restart validation must preserve live panes and compare privacy-safe counts;
   do not kill or recreate operator sessions to manufacture an empty state.
 
