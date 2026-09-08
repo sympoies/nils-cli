@@ -125,6 +125,124 @@ struct FileIdentity {
     inode: u64,
 }
 
+/// Compact only string-valued image_url fields while framing a JSON line.
+/// Keep escapes and non-ASCII bytes for serde_json to validate; discard only
+/// ordinary ASCII string content. Text fields and structural bytes stay exact.
+/// State survives read boundaries, so inline images do not consume the line
+/// buffer while the existing per-poll I/O budget still bounds scanning work.
+#[derive(Debug, Default)]
+struct ImageUrlElision {
+    string_start: Option<usize>,
+    escaped: bool,
+    unicode_remaining: u8,
+    image_key: bool,
+    image_value: bool,
+    eliding: bool,
+}
+
+impl ImageUrlElision {
+    fn skip(&mut self, byte: u8, partial: &[u8]) -> bool {
+        if let Some(start) = self.string_start {
+            if self.unicode_remaining > 0 {
+                self.unicode_remaining -= 1;
+            } else if self.escaped {
+                self.escaped = false;
+                if byte == b'u' {
+                    self.unicode_remaining = 4;
+                }
+            } else if byte == b'\\' {
+                self.escaped = true;
+            } else if byte == b'"' {
+                self.string_start = None;
+                self.image_key = !self.eliding && &partial[start..] == b"\"image_url";
+                self.eliding = false;
+            } else if self.eliding && (b' '..=b'~').contains(&byte) {
+                return true;
+            }
+        } else if byte == b'"' {
+            self.string_start = Some(partial.len());
+            self.eliding = self.image_value;
+            self.image_value = false;
+            self.image_key = false;
+        } else if !byte.is_ascii_whitespace() {
+            self.image_value = byte == b':' && self.image_key;
+            self.image_key = false;
+        }
+        false
+    }
+}
+
+fn compact_prompt_line(line: &[u8]) -> Option<Vec<u8>> {
+    let mut elision = ImageUrlElision::default();
+    let mut partial = Vec::new();
+    for &byte in line {
+        if elision.skip(byte, &partial) {
+            continue;
+        }
+        if partial.len() >= MAX_PROVIDER_LINE_BYTES {
+            return None;
+        }
+        partial.push(byte);
+    }
+    Some(partial)
+}
+
+/// Goal updates belong only to the list preview, not prompt submission or
+/// broker acknowledgement. Track identity/objective across ordinary messages
+/// and recovery so usage and status updates cannot resurrect an older goal.
+#[derive(Debug, Default)]
+struct GoalPreviewState {
+    previous: Option<(u64, [u8; 32])>,
+    unknown_baseline: bool,
+}
+
+impl GoalPreviewState {
+    fn observe(&mut self, value: &Value, session_id: &str) -> Option<ParsedPrompt> {
+        let payload = value.get("payload")?;
+        if value.get("type")?.as_str()? != "event_msg"
+            || payload.get("type")?.as_str()? != "thread_goal_updated"
+            || payload.get("threadId")?.as_str()? != session_id
+        {
+            return None;
+        }
+        let goal = payload.get("goal")?;
+        if goal.is_null() {
+            self.previous = None;
+            self.unknown_baseline = false;
+            return None;
+        }
+        if goal.get("threadId")?.as_str()? != session_id {
+            return None;
+        }
+        let objective = goal.get("objective")?.as_str()?.trim();
+        let created_at = goal.get("createdAt")?.as_u64()?;
+        let status = goal.get("status")?.as_str()?;
+        let bounded = bounded_prompt(objective)?;
+        // Compare a fixed-size digest, not a truncated prefix: objective edits
+        // beyond the displayed prefix still represent a new instruction.
+        use sha2::{Digest, Sha256};
+        let identity = (created_at, Sha256::digest(objective.as_bytes()).into());
+        // A tail window may start after this Goal was created. Its first
+        // snapshot establishes a baseline, unless its timestamp identifies a
+        // creation in this window; usage/status alone is not a new instruction.
+        let created_now = provider_timestamp(value)
+            .and_then(|timestamp| timestamp.parse::<jiff::Timestamp>().ok())
+            .and_then(|timestamp| u64::try_from(timestamp.as_second()).ok())
+            == Some(created_at);
+        let changed =
+            self.previous.as_ref() != Some(&identity) && (!self.unknown_baseline || created_now);
+        self.unknown_baseline = false;
+        self.previous = Some(identity);
+        if !changed || status != "active" {
+            return None;
+        }
+        let mut prompt = bounded_prompt(&format!("Goal: {}", bounded.prompt))?;
+        prompt.truncated |= bounded.truncated;
+        prompt.submitted_at = provider_timestamp(value);
+        Some(prompt)
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct ProviderPromptTail {
     source: ProviderPromptSource,
@@ -132,6 +250,9 @@ pub(crate) struct ProviderPromptTail {
     offset: u64,
     continuity: Vec<u8>,
     partial: Vec<u8>,
+    image_elision: ImageUrlElision,
+    goal: GoalPreviewState,
+    preview: Option<LastPrompt>,
     discarding_oversized_line: bool,
     pending_claude: VecDeque<PendingClaudePrompt>,
     claude_fallback_delay: Duration,
@@ -141,6 +262,7 @@ pub(crate) struct ProviderPromptTail {
 #[derive(Debug)]
 struct ProviderPromptPoll {
     events: Vec<ProviderPromptEvent>,
+    preview: Option<LastPrompt>,
     caught_up: bool,
     invalidated: bool,
 }
@@ -194,6 +316,9 @@ impl ProviderPromptTail {
             offset,
             continuity: read_continuity(&mut file, offset)?,
             partial: Vec::new(),
+            image_elision: ImageUrlElision::default(),
+            goal: GoalPreviewState::default(),
+            preview: None,
             discarding_oversized_line: false,
             pending_claude: VecDeque::new(),
             claude_fallback_delay,
@@ -232,6 +357,7 @@ impl ProviderPromptTail {
         if self.disabled {
             return Ok(ProviderPromptPoll {
                 events: Vec::new(),
+                preview: None,
                 caught_up: false,
                 invalidated: true,
             });
@@ -251,11 +377,13 @@ impl ProviderPromptTail {
             }
             return Ok(ProviderPromptPoll {
                 events: Vec::new(),
+                preview: None,
                 caught_up: false,
                 invalidated: true,
             });
         }
 
+        self.preview = None;
         let available = metadata.len().saturating_sub(self.offset);
         let read_len = usize::try_from(available)
             .unwrap_or(usize::MAX)
@@ -272,8 +400,14 @@ impl ProviderPromptTail {
 
         if self.source.provider == ProviderKind::Claude {
             self.drain_ready_claude(&mut events);
+            self.preview = events.last().map(|event| LastPrompt {
+                text: event.prompt.clone(),
+                submitted_at: Some(event.submitted_at.clone()),
+                truncated: event.truncated,
+            });
         }
         Ok(ProviderPromptPoll {
+            preview: self.preview.take(),
             events,
             caught_up: self.offset >= metadata.len(),
             invalidated: false,
@@ -290,6 +424,12 @@ impl ProviderPromptTail {
         self.offset = metadata.len();
         self.continuity = read_continuity(file, self.offset)?;
         self.partial.clear();
+        self.image_elision = ImageUrlElision::default();
+        self.goal = GoalPreviewState {
+            unknown_baseline: true,
+            ..Default::default()
+        };
+        self.preview = None;
         self.discarding_oversized_line = false;
         self.pending_claude.clear();
         Ok(())
@@ -307,10 +447,14 @@ impl ProviderPromptTail {
                     }
                 }
                 self.partial.clear();
+                self.image_elision = ImageUrlElision::default();
                 self.discarding_oversized_line = false;
                 continue;
             }
             if self.discarding_oversized_line {
+                continue;
+            }
+            if self.image_elision.skip(byte, &self.partial) {
                 continue;
             }
             if self.partial.len() >= MAX_PROVIDER_LINE_BYTES {
@@ -325,8 +469,14 @@ impl ProviderPromptTail {
     fn consume_line(&mut self, line: String, events: &mut Vec<ProviderPromptEvent>) {
         match self.source.provider {
             ProviderKind::Codex => {
-                if let Some(prompt) = parse_codex_prompt(&line) {
+                let Ok(value) = serde_json::from_str::<Value>(&line) else {
+                    return;
+                };
+                if let Some(prompt) = parse_codex_prompt_value(&value) {
+                    self.preview = Some(LastPrompt::from(prompt.clone()));
                     events.push(provider_event(prompt));
+                } else if let Some(prompt) = self.goal.observe(&value, &self.source.session_id) {
+                    self.preview = Some(LastPrompt::from(prompt));
                 }
             }
             ProviderKind::Claude => {
@@ -388,14 +538,15 @@ impl ProviderLastPromptTracker {
     ) -> Option<Self> {
         // Establish the append offset before the cold read. Any bytes written
         // during recovery remain after this offset and are consumed by refresh.
-        let tail = ProviderPromptTail::open_source(
+        let mut tail = ProviderPromptTail::open_source(
             source.clone(),
             CLAUDE_FALLBACK_DELAY,
             true,
             validate_source_identity,
         )
         .ok()?;
-        let last_prompt = read_last_prompt(&source, MAX_LAST_PROMPT_RECOVERY_BYTES);
+        let (last_prompt, goal) = read_preview(&source, MAX_LAST_PROMPT_RECOVERY_BYTES);
+        tail.goal = goal;
         if validate_source_identity
             && (!source_still_matches(&source)
                 || !opened_file_still_current(&source.path, tail.identity))
@@ -432,12 +583,8 @@ impl ProviderLastPromptTracker {
                 self.last_prompt = None;
                 return ProviderLastPromptRefresh::Invalidated;
             }
-            for event in status.events {
-                self.last_prompt = Some(LastPrompt {
-                    text: event.prompt,
-                    submitted_at: Some(event.submitted_at),
-                    truncated: event.truncated,
-                });
+            if let Some(preview) = status.preview {
+                self.last_prompt = Some(preview);
             }
             caught_up = status.caught_up;
             if caught_up {
@@ -489,6 +636,10 @@ fn provider_event(prompt: ParsedPrompt) -> ProviderPromptEvent {
 
 fn parse_codex_prompt(line: &str) -> Option<ParsedPrompt> {
     let value: Value = serde_json::from_str(line).ok()?;
+    parse_codex_prompt_value(&value)
+}
+
+fn parse_codex_prompt_value(value: &Value) -> Option<ParsedPrompt> {
     match value.get("type").and_then(Value::as_str) {
         Some("event_msg") => {
             let payload = value.get("payload")?;
@@ -496,10 +647,10 @@ fn parse_codex_prompt(line: &str) -> Option<ParsedPrompt> {
                 return None;
             }
             let mut prompt = bounded_prompt(payload.get("message").and_then(Value::as_str)?)?;
-            prompt.submitted_at = provider_timestamp(&value);
+            prompt.submitted_at = provider_timestamp(value);
             Some(prompt)
         }
-        Some("response_item") => parse_codex_response_item_prompt(&value),
+        Some("response_item") => parse_codex_response_item_prompt(value),
         _ => None,
     }
 }
@@ -696,11 +847,25 @@ fn bounded_prompt(prompt: &str) -> Option<ParsedPrompt> {
 /// autonomous sessions whose lone prompt scrolled out of the window — do we fall
 /// back to the historical "last matching line (marker or user record) wins"
 /// behavior, so no session regresses.
+#[cfg(test)]
 fn extract_last_prompt(
     buffer: &[u8],
     provider: ProviderKind,
     session_id: &str,
 ) -> Option<ParsedPrompt> {
+    extract_preview(buffer, provider, session_id, true).0
+}
+
+fn extract_preview(
+    buffer: &[u8],
+    provider: ProviderKind,
+    session_id: &str,
+    starts_at_beginning: bool,
+) -> (Option<ParsedPrompt>, GoalPreviewState) {
+    let mut goal = GoalPreviewState {
+        unknown_baseline: !starts_at_beginning,
+        ..Default::default()
+    };
     let mut human: Option<ParsedPrompt> = None;
     let mut fallback: Option<ParsedPrompt> = None;
     for raw_line in buffer.split(|&byte| byte == b'\n') {
@@ -708,7 +873,10 @@ fn extract_last_prompt(
             Some(b'\r') => &raw_line[..raw_line.len() - 1],
             _ => raw_line,
         };
-        let Ok(line) = std::str::from_utf8(raw_line) else {
+        let Some(compacted) = compact_prompt_line(raw_line) else {
+            continue;
+        };
+        let Ok(line) = std::str::from_utf8(&compacted) else {
             continue;
         };
         if line.is_empty() {
@@ -716,7 +884,12 @@ fn extract_last_prompt(
         }
         match provider {
             ProviderKind::Codex => {
-                if let Some(prompt) = parse_codex_prompt(line) {
+                let Ok(value) = serde_json::from_str::<Value>(line) else {
+                    continue;
+                };
+                if let Some(prompt) =
+                    parse_codex_prompt_value(&value).or_else(|| goal.observe(&value, session_id))
+                {
                     fallback = Some(prompt);
                 }
             }
@@ -737,14 +910,10 @@ fn extract_last_prompt(
             }
         }
     }
-    human.or(fallback)
+    (human.or(fallback), goal)
 }
 
 /// Read up to `max_bytes` from the tail of a regular transcript file.
-fn read_tail_window(path: &Path, max_bytes: usize) -> io::Result<Vec<u8>> {
-    read_tail_window_with_start(path, max_bytes).map(|(buffer, _)| buffer)
-}
-
 fn read_tail_window_with_start(path: &Path, max_bytes: usize) -> io::Result<(Vec<u8>, u64)> {
     let (mut file, metadata) = open_regular_file(path)?;
     let start = metadata.len().saturating_sub(max_bytes as u64);
@@ -825,13 +994,34 @@ pub(crate) fn read_last_prompt(
     source: &ProviderPromptSource,
     max_bytes: usize,
 ) -> Option<LastPrompt> {
-    let buffer = read_tail_window(&source.path, max_bytes).ok()?;
-    let parsed = extract_last_prompt(&buffer, source.provider, &source.session_id)?;
-    Some(LastPrompt {
-        text: parsed.prompt,
-        submitted_at: parsed.submitted_at,
-        truncated: parsed.truncated,
-    })
+    read_preview(source, max_bytes).0
+}
+
+fn read_preview(
+    source: &ProviderPromptSource,
+    max_bytes: usize,
+) -> (Option<LastPrompt>, GoalPreviewState) {
+    let Ok((buffer, start)) = read_tail_window_with_start(&source.path, max_bytes) else {
+        return (
+            None,
+            GoalPreviewState {
+                unknown_baseline: true,
+                ..Default::default()
+            },
+        );
+    };
+    let (parsed, goal) = extract_preview(&buffer, source.provider, &source.session_id, start == 0);
+    (parsed.map(LastPrompt::from), goal)
+}
+
+impl From<ParsedPrompt> for LastPrompt {
+    fn from(parsed: ParsedPrompt) -> Self {
+        Self {
+            text: parsed.prompt,
+            submitted_at: parsed.submitted_at,
+            truncated: parsed.truncated,
+        }
+    }
 }
 
 fn resolve_provider_prompt_source(record: &SessionRecord) -> Option<ProviderPromptSource> {
@@ -1080,6 +1270,326 @@ mod tests {
         assert_eq!(events[0].prompt, "same prompt");
         assert_eq!(events[1].prompt, "same prompt");
         assert_ne!(events[0].id, events[1].id);
+    }
+
+    fn image_prompt_line() -> String {
+        format!(
+            "{}\n",
+            json!({
+                "type": "response_item", "timestamp": "2099-01-01T00:00:01Z",
+                "payload": { "type": "message", "role": "user",
+                    "internal_chat_message_metadata_passthrough": {"content_item_kinds": ["user.text", "user.image"]},
+                    "content": [
+                        {"type": "input_text", "text": "Before image"},
+                        {"type": "input_image", "image_url": format!("data:image/png;base64,{}", "A".repeat(600_000))},
+                        {"type": "input_text", "text": "After image"}
+                    ]
+                }
+            })
+        )
+    }
+
+    fn goal_line(objective: &str, status: &str, created_at: u64) -> String {
+        format!(
+            "{}\n",
+            json!({"type": "event_msg", "timestamp": "2099-01-01T00:00:02Z",
+                "payload": {"type": "thread_goal_updated", "threadId": "codex-id",
+                    "goal": {"threadId": "codex-id", "objective": objective, "status": status,
+                        "createdAt": created_at, "updatedAt": 99, "tokensUsed": 100}}
+            })
+        )
+    }
+
+    fn current_preview(tracker: &mut ProviderLastPromptTracker) -> Option<LastPrompt> {
+        for _ in 0..32 {
+            if let ProviderLastPromptRefresh::Current(prompt) = tracker.refresh() {
+                return prompt;
+            }
+        }
+        panic!("tracker did not catch up");
+    }
+
+    #[test]
+    fn preview_large_image_keeps_text_in_live_and_cold_reads() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("codex.jsonl");
+        fs::write(&path, codex_line("old prompt")).unwrap();
+        let mut tracker = ProviderLastPromptTracker::open_path(
+            ProviderKind::Codex,
+            "codex-id",
+            path.clone(),
+            Duration::ZERO,
+        )
+        .unwrap();
+        let mut tail = ProviderPromptTail::open_path(
+            ProviderKind::Codex,
+            "codex-id",
+            path.clone(),
+            Duration::ZERO,
+        )
+        .unwrap();
+        let initial_offset = tail.offset;
+        let image = image_prompt_line();
+        append(&path, &image.as_bytes()[..300_000]);
+        assert!(tail.poll().unwrap().is_empty());
+        assert_eq!(tail.offset - initial_offset, MAX_PROVIDER_READ_BYTES as u64);
+        assert!(tail.partial.len() <= MAX_PROVIDER_LINE_BYTES);
+        assert_eq!(current_preview(&mut tracker).unwrap().text, "old prompt");
+        append(&path, &image.as_bytes()[300_000..]);
+        assert_eq!(
+            current_preview(&mut tracker).unwrap().text,
+            "Before image\nAfter image"
+        );
+        let mut recovered = ProviderLastPromptTracker::open_path(
+            ProviderKind::Codex,
+            "codex-id",
+            path.clone(),
+            Duration::ZERO,
+        )
+        .unwrap();
+        assert_eq!(
+            current_preview(&mut recovered),
+            current_preview(&mut tracker)
+        );
+        append(&path, codex_line("next prompt").as_bytes());
+        assert_eq!(current_preview(&mut tracker).unwrap().text, "next prompt");
+    }
+
+    #[test]
+    fn preview_goal_changes_compete_with_prompts_without_submission_events() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("codex.jsonl");
+        fs::write(&path, codex_line("old prompt")).unwrap();
+        let mut tracker = ProviderLastPromptTracker::open_path(
+            ProviderKind::Codex,
+            "codex-id",
+            path.clone(),
+            Duration::ZERO,
+        )
+        .unwrap();
+        let mut tail = ProviderPromptTail::open_path(
+            ProviderKind::Codex,
+            "codex-id",
+            path.clone(),
+            Duration::ZERO,
+        )
+        .unwrap();
+        append(
+            &path,
+            goal_line("Verify the screen", "active", 1).as_bytes(),
+        );
+        assert_eq!(
+            current_preview(&mut tracker).unwrap().text,
+            "Goal: Verify the screen"
+        );
+        assert!(
+            tail.poll().unwrap().is_empty(),
+            "a Goal is not a submitted terminal prompt"
+        );
+        append(&path, codex_line("newer user message").as_bytes());
+        append(
+            &path,
+            goal_line("Verify the screen", "active", 1).as_bytes(),
+        );
+        append(
+            &path,
+            goal_line("Verify the screen", "complete", 1).as_bytes(),
+        );
+        assert_eq!(
+            current_preview(&mut tracker).unwrap().text,
+            "newer user message"
+        );
+        let mut recovered = ProviderLastPromptTracker::open_path(
+            ProviderKind::Codex,
+            "codex-id",
+            path.clone(),
+            Duration::ZERO,
+        )
+        .unwrap();
+        append(
+            &path,
+            goal_line("Verify the screen", "active", 1).as_bytes(),
+        );
+        assert_eq!(
+            current_preview(&mut recovered).unwrap().text,
+            "newer user message"
+        );
+        append(
+            &path,
+            goal_line("Verify the next screen", "active", 1).as_bytes(),
+        );
+        assert_eq!(
+            current_preview(&mut tracker).unwrap().text,
+            "Goal: Verify the next screen"
+        );
+        assert_eq!(
+            current_preview(&mut recovered),
+            current_preview(&mut tracker)
+        );
+        append(&path, codex_line("after objective change").as_bytes());
+        append(
+            &path,
+            goal_line("Verify the next screen", "active", 2).as_bytes(),
+        );
+        assert_eq!(
+            current_preview(&mut tracker).unwrap().text,
+            "Goal: Verify the next screen"
+        );
+    }
+
+    #[test]
+    fn preview_image_elision_keeps_text_and_rejects_malformed_json() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("codex.jsonl");
+        fs::write(&path, "").unwrap();
+        let mut tail =
+            ProviderPromptTail::open_path(ProviderKind::Codex, "codex-id", path, Duration::ZERO)
+                .unwrap();
+        let valid = image_prompt_line().replace(
+            "Before image",
+            "Describe \\\"image_url\\\": data:image/png;base64,AAAA",
+        );
+        let mut events = Vec::new();
+        for chunk in valid.as_bytes().chunks(7) {
+            tail.consume(chunk, &mut events);
+            assert!(tail.partial.len() <= MAX_PROVIDER_LINE_BYTES);
+        }
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].prompt,
+            "Describe \"image_url\": data:image/png;base64,AAAA\nAfter image"
+        );
+        for bad in [r#"\q"#, r#"\uZZZZ"#, "\u{0001}"] {
+            let malformed = image_prompt_line().replace("data:image/png;base64,", bad);
+            tail.consume(malformed.as_bytes(), &mut events);
+            assert_eq!(
+                events.len(),
+                1,
+                "invalid image strings must not become valid JSON"
+            );
+            assert!(
+                extract_last_prompt(malformed.as_bytes(), ProviderKind::Codex, "codex-id")
+                    .is_none()
+            );
+        }
+        let escaped = image_prompt_line().replace("data:image/png;base64,", r#"\uD83D\uDE00\/\""#);
+        tail.consume(escaped.as_bytes(), &mut events);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[1].prompt, "Before image\nAfter image");
+    }
+
+    #[test]
+    fn preview_truncated_recovery_does_not_revive_an_unproven_goal() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("codex.jsonl");
+        let first = goal_line("Old goal", "active", 1);
+        let suffix = format!(
+            "{}{}",
+            codex_line("new user instruction"),
+            goal_line("Old goal", "active", 1)
+        );
+        fs::write(&path, format!("{first}{}{suffix}", " \n".repeat(1_000))).unwrap();
+        let source = ProviderPromptSource::test_path(ProviderKind::Codex, "codex-id", path);
+        let (preview, mut goal) = read_preview(&source, suffix.len() + 10);
+        assert_eq!(preview.unwrap().text, "new user instruction");
+        let unchanged: Value = serde_json::from_str(&goal_line("Old goal", "active", 1)).unwrap();
+        assert!(goal.observe(&unchanged, "codex-id").is_none());
+        let edited: Value = serde_json::from_str(&goal_line("Edited goal", "active", 1)).unwrap();
+        assert_eq!(
+            goal.observe(&edited, "codex-id").unwrap().prompt,
+            "Goal: Edited goal"
+        );
+    }
+
+    #[test]
+    fn preview_truncated_recovery_accepts_a_new_goal_creation() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("codex.jsonl");
+        let created_at = "2099-01-01T00:00:02Z"
+            .parse::<jiff::Timestamp>()
+            .unwrap()
+            .as_second() as u64;
+        let suffix = format!(
+            "{}{}",
+            codex_line("before new goal"),
+            goal_line("New goal", "active", created_at)
+        );
+        fs::write(&path, format!("{}{suffix}", " \n".repeat(1_000))).unwrap();
+        let source = ProviderPromptSource::test_path(ProviderKind::Codex, "codex-id", path);
+        assert_eq!(
+            read_preview(&source, suffix.len() + 10).0.unwrap().text,
+            "Goal: New goal"
+        );
+    }
+
+    #[test]
+    fn preview_goal_does_not_acknowledge_broker_input() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("codex.jsonl");
+        fs::write(
+            &path,
+            format!(
+                "{}{}{}",
+                codex_meta("codex-id", "/repo"),
+                codex_line("prior user prompt"),
+                goal_line("Expected broker input", "active", 1)
+            ),
+        )
+        .unwrap();
+        let source = ProviderPromptSource::test_path(ProviderKind::Codex, "codex-id", path);
+        let attempted_at = "2099-01-01T00:00:01Z".parse::<jiff::Timestamp>().unwrap();
+        for expected in ["Expected broker input", "Goal: Expected broker input"] {
+            assert_eq!(
+                prompt_observed_after(&source, expected, &attempted_at),
+                Some(false)
+            );
+        }
+    }
+
+    #[test]
+    fn preview_goal_ignores_foreign_and_internal_events_and_handles_clear() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("codex.jsonl");
+        fs::write(&path, goal_line("First goal", "active", 1)).unwrap();
+        let mut tracker = ProviderLastPromptTracker::open_path(
+            ProviderKind::Codex,
+            "codex-id",
+            path.clone(),
+            Duration::ZERO,
+        )
+        .unwrap();
+        assert_eq!(
+            current_preview(&mut tracker).unwrap().text,
+            "Goal: First goal"
+        );
+        append(&path, codex_line("new user instruction").as_bytes());
+        append(
+            &path,
+            goal_line("Foreign goal", "active", 2)
+                .replace("codex-id", "foreign-id")
+                .as_bytes(),
+        );
+        let internal = format!(
+            "{}\n",
+            json!({"type":"response_item","payload":{"type":"message","role":"user",
+            "content":[{"type":"input_text","text":"Internal Goal continuation"}],
+            "internal_chat_message_metadata_passthrough":{"content_item_kinds":["goal.internal_context"]}}})
+        );
+        append(&path, internal.as_bytes());
+        assert_eq!(
+            current_preview(&mut tracker).unwrap().text,
+            "new user instruction"
+        );
+        append(&path, b"{\"type\":\"event_msg\",\"payload\":{\"type\":\"thread_goal_updated\",\"threadId\":\"codex-id\",\"goal\":null}}\n");
+        assert_eq!(
+            current_preview(&mut tracker).unwrap().text,
+            "new user instruction"
+        );
+        append(&path, goal_line("First goal", "active", 1).as_bytes());
+        assert_eq!(
+            current_preview(&mut tracker).unwrap().text,
+            "Goal: First goal"
+        );
     }
 
     #[test]
