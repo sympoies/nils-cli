@@ -2,9 +2,9 @@
 
 Session retitling is owned by the `agent-session serve` daemon. It observes the
 authoritative provider turn state, reads bounded provider transcript history,
-asks one configured title provider for a strict decision, and commits that
-decision behind session-incarnation, title-revision, activity-revision, and
-provider-turn fences.
+asks a configured primary title provider (or one bounded fallback) for a strict
+decision, and commits that decision behind session-incarnation, title-revision,
+activity-revision, and provider-turn fences.
 
 ## Capability and routes
 
@@ -26,10 +26,11 @@ and `plan`, plus `context_capabilities`. Provider kinds are
 
 Stable readiness reasons are `ready`, `provider_not_configured`,
 `config_invalid`, `account_broker_unavailable`, `account_missing`,
-`api_key_missing`, `provider_command_unavailable`, and
+`api_key_missing`, `provider_command_unavailable`, `fallback_ready`, and
 `legacy_command_provider`. Stable readiness actions are `none`,
 `configure_provider`, `configure_account_broker`, `select_account`,
-`set_api_key`, `install_provider_command`, and `migrate_provider`.
+`set_api_key`, `install_provider_command`, `restore_primary`, and
+`migrate_provider`.
 
 ## Mutation request and response
 
@@ -55,7 +56,11 @@ The response reports `outcome` (`committed`, `unchanged`, or `replayed`),
 `changed`, `trigger`, `provider_kind`, optional `processed_turn_id_hash`, a
 content-free `diagnostic_code`, bounded transcript `coverage`, and a `session`
 projection containing `title`, `title_state`, `title_revision`, and
-`session_incarnation`. It never returns a prompt, transcript excerpt, raw
+`session_incarnation`. For decisions committed by this version,
+`provider_kind` identifies the provider that produced the decision and is
+retained for idempotent replays. An earlier receipt without provider attribution
+uses the currently configured provider kind for response compatibility. It
+never returns a prompt, transcript excerpt, raw
 provider turn ID, provider model output, credential, or private path.
 
 The daemon schedules the newest provider-confirmed current turn. If its prompt
@@ -94,6 +99,27 @@ context preparation, and provider execution; a queued request does not receive
 a second full provider timeout. The 120-second maximum stays inside Agent
 Console's 125-second mutation transport deadline.
 
+Automatic admission binds a minimum observed activity revision and provider
+turn. Later progress within that same current turn (or its completed last-turn
+projection when no newer turn exists) is accepted at admission and commit;
+older revisions and newer provider turns fail closed. Automatic retry
+identities remain stable per turn while request idempotency also binds the
+refreshed revision, including both activity and title revisions, so a same-turn
+conflict can recover without allowing concurrent progress events to fan out
+into duplicate requests.
+
+The primary object may contain one `fallback` provider object. Fallbacks cannot
+nest or contain root-owned `max_concurrency`, `queue_size`, or `context` fields,
+and the primary plus fallback `timeout_ms` values must total at most 120000. The
+single total deadline covers queueing, context construction, account-broker
+resolution, provider setup, the primary, and the fallback. A fallback is
+attempted only for account, API-key, provider timeout,
+availability, rate-limit, quota, or malformed-response failures. Queue,
+context, session-incarnation, title-revision, activity-revision, provider-turn,
+and durable-state failures remain fail-closed. If the primary is statically
+unavailable but the fallback is configured and ready, readiness reports the
+fallback provider with `degraded`, `fallback_ready`, and `restore_primary`.
+
 Codex subscription uses the existing account broker and the supported Codex
 app-server protocol. It supplies broker credentials through external auth in a
 temporary `CODEX_HOME`; it never switches or rewrites the operator's global
@@ -104,11 +130,18 @@ Codex account and does not call undocumented ChatGPT HTTP endpoints.
   "provider": "codex_subscription",
   "account": "sym",
   "codex_bin": "/absolute/path/to/codex",
-  "model": "optional-supported-model",
-  "timeout_ms": 45000,
+  "model": "gpt-5.6-luna",
+  "timeout_ms": 20000,
   "max_concurrency": 1,
   "queue_size": 8,
-  "context": {"max_chars": 12000, "per_message_chars": 2000, "recent_turns": 12}
+  "context": {"max_chars": 12000, "per_message_chars": 2000, "recent_turns": 12},
+  "fallback": {
+    "provider": "openai_compatible",
+    "base_url": "http://127.0.0.1:1237/v1",
+    "model": "qwen3.6-apex-compact",
+    "timeout_ms": 100000,
+    "json_response": true
+  }
 }
 ```
 
