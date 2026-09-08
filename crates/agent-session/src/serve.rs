@@ -3242,11 +3242,22 @@ async fn execute_retitle(
     .map_err(|_| retitle_worker_failed())?
     .map_err(sanitize_retitle_error)?;
 
-    if let crate::retitle::Admission::Replay(record, diagnostic_code, coverage) = admission {
+    if let crate::retitle::Admission::Replay(
+        record,
+        diagnostic_code,
+        coverage,
+        replayed_provider_kind,
+    ) = admission
+    {
         return Ok(retitle_projection(
-            &state,
             &record,
             &request,
+            replayed_provider_kind.as_deref().unwrap_or_else(|| {
+                state
+                    .retitle
+                    .configured_provider_kind()
+                    .unwrap_or("command")
+            }),
             "replayed",
             false,
             diagnostic_code,
@@ -3294,12 +3305,14 @@ async fn execute_retitle_evaluation(
     })
     .await
     .map_err(|_| retitle_worker_failed())?;
-    let decision = match decision_result {
+    let inferred = match decision_result {
         Ok(value) => value,
         Err(error) => {
             return Err(error);
         }
     };
+    let provider_kind = inferred.provider_kind;
+    let decision = inferred.state;
     let context = state.context.clone();
     let request_for_commit = request.clone();
     let id_for_commit = id.to_string();
@@ -3311,6 +3324,7 @@ async fn execute_retitle_evaluation(
             &request_for_commit,
             decision,
             &coverage_for_commit,
+            provider_kind,
         )
     })
     .await
@@ -3320,9 +3334,9 @@ async fn execute_retitle_evaluation(
         invalidate_managed_history_titles(&state.managed_history_titles);
     }
     Ok(retitle_projection(
-        &state,
         &committed.record,
         request,
+        provider_kind,
         if committed.changed {
             "committed"
         } else {
@@ -3341,6 +3355,7 @@ async fn execute_retitle_evaluation(
 #[derive(Clone)]
 struct AutomaticRetitleCandidate {
     id: String,
+    tracking_key: String,
     request: crate::retitle::RetitleRequest,
 }
 
@@ -3434,15 +3449,23 @@ fn automatic_retitle_candidate(session: &SessionView) -> Option<AutomaticRetitle
             crate::retitle::RetitleTrigger::CompletionRecovery,
         )
     };
-    let identity = format!("{incarnation}\0{turn_id}\0{trigger:?}");
+    let tracking_identity = format!("{incarnation}\0{turn_id}\0{trigger:?}");
+    let request_identity = format!(
+        "{tracking_identity}\0{}\0{}",
+        state.revision, session.title_revision
+    );
     Some(AutomaticRetitleCandidate {
         id: session.id.clone(),
+        tracking_key: format!(
+            "auto-track-{}",
+            crate::retitle::hash_identity(&tracking_identity).trim_start_matches("sha256:")
+        ),
         request: crate::retitle::RetitleRequest {
             schema_version: crate::retitle::REQUEST_SCHEMA.to_string(),
             trigger,
             idempotency_key: format!(
                 "auto-{}",
-                crate::retitle::hash_identity(&identity).trim_start_matches("sha256:")
+                crate::retitle::hash_identity(&request_identity).trim_start_matches("sha256:")
             ),
             expected_session_incarnation: incarnation.to_string(),
             expected_title_revision: session.title_revision,
@@ -3476,7 +3499,7 @@ async fn auto_retitle_loop(state: Arc<ServeState>) {
             .filter_map(automatic_retitle_candidate)
             .collect::<Vec<_>>()
         {
-            let key = candidate.request.idempotency_key.clone();
+            let key = candidate.tracking_key.clone();
             if !tracker.begin(&key, now) {
                 continue;
             }
@@ -3518,9 +3541,9 @@ async fn record_retitle_failure(
 }
 
 fn retitle_projection(
-    state: &ServeState,
     record: &SessionRecord,
     request: &crate::retitle::RetitleRequest,
+    provider_kind: &str,
     outcome: &'static str,
     changed: bool,
     diagnostic_code: &'static str,
@@ -3531,7 +3554,7 @@ fn retitle_projection(
         "outcome": outcome,
         "changed": changed,
         "trigger": request.trigger,
-        "provider_kind": state.retitle.configured_provider_kind().unwrap_or("command"),
+        "provider_kind": provider_kind,
         "processed_turn_id_hash": request.expected_provider_turn_id.as_deref().map(crate::retitle::hash_identity),
         "diagnostic_code": diagnostic_code,
         "coverage": coverage,
@@ -9674,9 +9697,15 @@ mod tests {
             ),
         );
         let config = json!({
-            "provider":"command",
-            "argv":[provider],
-            "timeout_ms":5000,
+            "provider":"openai_compatible",
+            "base_url":"http://127.0.0.1:9/v1",
+            "model":"unavailable-primary",
+            "timeout_ms":1000,
+            "fallback": {
+                "provider":"command",
+                "argv":[provider],
+                "timeout_ms":5000
+            },
             "context":{"max_chars":4000,"per_message_chars":1000,"recent_turns":8}
         })
         .to_string();
@@ -9737,6 +9766,7 @@ mod tests {
         } else {
             &second
         };
+        assert_eq!(committed["data"]["retitle"]["provider_kind"], "command");
         assert_eq!(committed["data"]["retitle"]["session"]["title_revision"], 1);
         assert_eq!(
             committed["data"]["retitle"]["session"]["title_state"]["topic"],
@@ -9781,10 +9811,185 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "body={replayed}");
         assert_eq!(replayed["data"]["retitle"]["outcome"], "replayed");
+        assert_eq!(replayed["data"]["retitle"]["provider_kind"], "command");
         assert_eq!(
             replayed["data"]["retitle"]["diagnostic_code"],
             "idempotency_replay"
         );
+    }
+
+    #[tokio::test]
+    async fn stale_manual_retitle_fails_before_primary_or_fallback_invocation() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let primary_calls = tmp.path().join("primary.calls");
+        let fallback_calls = tmp.path().join("fallback.calls");
+        let primary = executable(
+            &tmp.path().join("primary-provider"),
+            &format!(
+                "#!/bin/sh\nprintf x >> {}\nprintf '%s\\n' '{{\"topic_action\":\"set\",\"topic\":\"Primary\",\"activity\":null,\"references\":[]}}'\n",
+                shell_words::quote(&primary_calls.to_string_lossy())
+            ),
+        );
+        let fallback = executable(
+            &tmp.path().join("fallback-provider"),
+            &format!(
+                "#!/bin/sh\nprintf x >> {}\nprintf '%s\\n' '{{\"topic_action\":\"set\",\"topic\":\"Fallback\",\"activity\":null,\"references\":[]}}'\n",
+                shell_words::quote(&fallback_calls.to_string_lossy())
+            ),
+        );
+        let config = json!({
+            "provider":"command",
+            "argv":[primary],
+            "timeout_ms":1000,
+            "fallback":{"provider":"command","argv":[fallback],"timeout_ms":1000}
+        })
+        .to_string();
+        let _config = EnvGuard::set(&lock, "AGENT_SESSION_RETITLE_CONFIG", &config);
+        seed_session_with_runtime(tmp.path(), "retitle-fence", "codex", "hs-retitle-fence");
+        let app = router(state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path())));
+
+        let (status, body) = call(
+            app,
+            post_json(
+                "/sessions/retitle-fence/retitle",
+                Some(TOKEN),
+                json!({
+                    "schema_version":"agent-session.session-retitle.request.v2",
+                    "trigger":"manual",
+                    "idempotency_key":"manual-retitle-stale-fence",
+                    "expected_session_incarnation":"launch-retitle-fence",
+                    "expected_title_revision":99
+                }),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::CONFLICT, "body={body}");
+        assert_eq!(body["error"]["code"], "title-revision-conflict");
+        assert!(!primary_calls.exists());
+        assert!(!fallback_calls.exists());
+    }
+
+    #[tokio::test]
+    async fn automatic_retitle_commit_accepts_same_turn_progress_and_rejects_a_newer_turn() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let provider = executable(
+            &tmp.path().join("retitle-provider"),
+            &format!(
+                "#!/bin/sh\nstate_dir={}\ncalls=\"$state_dir/provider.calls\"\ncount=0\n[ ! -f \"$calls\" ] || count=$(cat \"$calls\")\ncount=$((count + 1))\nprintf '%s' \"$count\" > \"$calls\"\n: > \"$state_dir/provider-started-$count\"\nwhile [ ! -f \"$state_dir/provider-release-$count\" ]; do sleep 0.01; done\nprintf '%s\\n' '{{\"topic_action\":\"set\",\"topic\":\"Automatic title\",\"activity\":null,\"references\":[]}}'\n",
+                shell_words::quote(&tmp.path().to_string_lossy())
+            ),
+        );
+        let config = json!({
+            "provider":"command",
+            "argv":[provider],
+            "timeout_ms":5000,
+            "context":{"max_chars":4000,"per_message_chars":1000,"recent_turns":8}
+        })
+        .to_string();
+        let _config = EnvGuard::set(&lock, "AGENT_SESSION_RETITLE_CONFIG", &config);
+        let codex_home = tmp.path().join("codex-home");
+        let transcript_dir = codex_home.join("sessions/2026/09/07");
+        std::fs::create_dir_all(&transcript_dir).unwrap();
+        std::fs::write(
+            transcript_dir.join("rollout.jsonl"),
+            concat!(
+                "{\"timestamp\":\"2026-09-07T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"provider-automatic-fence\",\"cwd\":\"/tmp\",\"source\":\"cli\",\"timestamp\":\"2026-09-07T00:00:00Z\"}}\n",
+                "{\"timestamp\":\"2026-09-07T00:00:01Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Keep the original objective\"}],\"internal_chat_message_metadata_passthrough\":{\"turn_id\":\"turn-a\",\"content_item_kinds\":[\"user.text\"]}}}\n"
+            ),
+        )
+        .unwrap();
+        let _codex_home = EnvGuard::set(&lock, "CODEX_HOME", codex_home.to_string_lossy().as_ref());
+        let tmux = minimal_tmux(tmp.path());
+
+        let seed_automatic = |id: &str, turn_id: &str| {
+            seed_session_with_runtime(tmp.path(), id, "codex", &format!("hs-{id}"));
+            let record_path = tmp.path().join(format!("sessions/{id}/session.json"));
+            let mut record: Value =
+                serde_json::from_slice(&std::fs::read(&record_path).unwrap()).unwrap();
+            record["provider_resume"] = json!({
+                "provider":"codex",
+                "session_id":"provider-automatic-fence",
+                "captured_at":"2026-09-07T00:00:02Z",
+                "capture_method":"fixture",
+                "resume_args":[]
+            });
+            std::fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+            write_automatic_activity(tmp.path(), id, 1, Some(turn_id), None);
+        };
+        let automatic_request = |id: &str| {
+            let context = CliContext {
+                state_dir: tmp.path().to_path_buf(),
+                host: None,
+            };
+            let record = crate::load_session_record(&context, id).unwrap();
+            let view = crate::session_view(&context, &record, Some("running".into()), Some(&tmux));
+            serde_json::to_value(automatic_retitle_candidate(&view).unwrap().request).unwrap()
+        };
+
+        seed_automatic("same-turn", "turn-a");
+        let app = router(state(tmp.path(), Some(TOKEN), tmux.clone()));
+        let same_turn = tokio::spawn(call(
+            app.clone(),
+            post_json(
+                "/sessions/same-turn/retitle",
+                Some(TOKEN),
+                automatic_request("same-turn"),
+            ),
+        ));
+        wait_for_test_path(&tmp.path().join("provider-started-1")).await;
+        write_automatic_activity(tmp.path(), "same-turn", 2, Some("turn-a"), None);
+        std::fs::write(tmp.path().join("provider-release-1"), "release").unwrap();
+        let (status, body) = same_turn.await.unwrap();
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(
+            body["data"]["retitle"]["session"]["title"],
+            "Automatic title"
+        );
+
+        seed_automatic("newer-turn", "turn-a");
+        let newer_turn = tokio::spawn(call(
+            app.clone(),
+            post_json(
+                "/sessions/newer-turn/retitle",
+                Some(TOKEN),
+                automatic_request("newer-turn"),
+            ),
+        ));
+        wait_for_test_path(&tmp.path().join("provider-started-2")).await;
+        write_automatic_activity(tmp.path(), "newer-turn", 2, Some("turn-b"), Some("turn-a"));
+        std::fs::write(tmp.path().join("provider-release-2"), "release").unwrap();
+        let (status, body) = newer_turn.await.unwrap();
+        assert_eq!(status, StatusCode::CONFLICT, "body={body}");
+        assert_eq!(body["error"]["code"], "retitle-turn-conflict");
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        let record = crate::load_session_record(&context, "newer-turn").unwrap();
+        assert_eq!(record.title, None);
+        assert_eq!(record.title_revision, 0);
+
+        seed_automatic("older-revision", "turn-a");
+        let older_revision = tokio::spawn(call(
+            app,
+            post_json(
+                "/sessions/older-revision/retitle",
+                Some(TOKEN),
+                automatic_request("older-revision"),
+            ),
+        ));
+        wait_for_test_path(&tmp.path().join("provider-started-3")).await;
+        write_automatic_activity(tmp.path(), "older-revision", 0, Some("turn-a"), None);
+        std::fs::write(tmp.path().join("provider-release-3"), "release").unwrap();
+        let (status, body) = older_revision.await.unwrap();
+        assert_eq!(status, StatusCode::CONFLICT, "body={body}");
+        assert_eq!(body["error"]["code"], "retitle-turn-conflict");
+        let record = crate::load_session_record(&context, "older-revision").unwrap();
+        assert_eq!(record.title, None);
+        assert_eq!(record.title_revision, 0);
     }
 
     #[test]
@@ -9846,8 +10051,48 @@ mod tests {
             first.request.trigger,
             crate::retitle::RetitleTrigger::Initial
         );
+        write_activity("launch-automatic", 2, Some("turn-a"), None);
+        let progressed_same_turn = candidate("launch-automatic");
+        assert_eq!(first.tracking_key, progressed_same_turn.tracking_key);
+        assert_ne!(
+            first.request.idempotency_key,
+            progressed_same_turn.request.idempotency_key
+        );
+        assert_eq!(
+            progressed_same_turn.request.expected_activity_revision,
+            Some(2)
+        );
+
+        let mut titled_record: Value =
+            serde_json::from_slice(&std::fs::read(&record_path).unwrap()).unwrap();
+        titled_record["title"] = json!("Existing title");
+        titled_record["title_revision"] = json!(1);
+        std::fs::write(
+            &record_path,
+            serde_json::to_vec_pretty(&titled_record).unwrap(),
+        )
+        .unwrap();
+        let titled_before_manual_change = candidate("launch-automatic");
+        titled_record["title"] = json!("Manual title");
+        titled_record["title_revision"] = json!(2);
+        std::fs::write(
+            &record_path,
+            serde_json::to_vec_pretty(&titled_record).unwrap(),
+        )
+        .unwrap();
+        let titled_after_manual_change = candidate("launch-automatic");
+        assert_eq!(
+            titled_before_manual_change.tracking_key,
+            titled_after_manual_change.tracking_key
+        );
+        assert_ne!(
+            titled_before_manual_change.request.idempotency_key,
+            titled_after_manual_change.request.idempotency_key
+        );
+
         write_activity("launch-automatic", 2, Some("turn-b"), Some("turn-a"));
         let repeated_prompt_new_turn = candidate("launch-automatic");
+        assert_ne!(first.tracking_key, repeated_prompt_new_turn.tracking_key);
         assert_ne!(
             first.request.idempotency_key,
             repeated_prompt_new_turn.request.idempotency_key
@@ -9880,6 +10125,55 @@ mod tests {
             replacement.request.idempotency_key,
             repeated_prompt_new_turn.request.idempotency_key
         );
+    }
+
+    #[test]
+    fn automatic_retitle_new_revision_bypasses_a_failed_prior_receipt() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let tmux = minimal_tmux(tmp.path());
+        seed_session_with_runtime(tmp.path(), "automatic-retry", "codex", "hs-automatic-retry");
+        let record_path = tmp.path().join("sessions/automatic-retry/session.json");
+        let mut record: Value =
+            serde_json::from_slice(&std::fs::read(&record_path).unwrap()).unwrap();
+        record["provider_resume"] = json!({
+            "provider":"codex",
+            "session_id":"provider-automatic-retry",
+            "captured_at":"2026-09-07T00:00:00Z",
+            "capture_method":"fixture",
+            "resume_args":[]
+        });
+        std::fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        let candidate = || {
+            let record = crate::load_session_record(&context, "automatic-retry").unwrap();
+            let view = crate::session_view(&context, &record, Some("running".into()), Some(&tmux));
+            automatic_retitle_candidate(&view).unwrap()
+        };
+
+        write_automatic_activity(tmp.path(), "automatic-retry", 1, Some("turn-a"), None);
+        let first = candidate();
+        assert!(matches!(
+            crate::retitle::admit(&context, "automatic-retry", &first.request).unwrap(),
+            crate::retitle::Admission::Evaluate(_)
+        ));
+        crate::retitle::fail_code(
+            &context,
+            "automatic-retry",
+            &first.request,
+            "retitle-turn-conflict",
+        );
+
+        write_automatic_activity(tmp.path(), "automatic-retry", 2, Some("turn-a"), None);
+        let retry = candidate();
+        assert_eq!(first.tracking_key, retry.tracking_key);
+        assert_ne!(first.request.idempotency_key, retry.request.idempotency_key);
+        assert!(matches!(
+            crate::retitle::admit(&context, "automatic-retry", &retry.request).unwrap(),
+            crate::retitle::Admission::Evaluate(_)
+        ));
     }
 
     #[test]
@@ -9925,6 +10219,21 @@ mod tests {
             start + Duration::from_secs(3),
         );
         assert!(!tracker.begin("turn-key", start + Duration::from_secs(30)));
+
+        assert!(tracker.begin("turn-conflict", start));
+        tracker.finish(
+            "turn-conflict",
+            Some(&crate::retitle::retitle_error(
+                "retitle-turn-conflict",
+                "provider turn changed before retitle",
+                false,
+                "refresh_session",
+                "process_newest_turn",
+            )),
+            start,
+        );
+        assert!(!tracker.begin("turn-conflict", start));
+        assert!(tracker.begin("turn-conflict", start + Duration::from_secs(1)));
 
         assert!(tracker.begin("nonretryable", start));
         tracker.finish(
@@ -12278,6 +12587,53 @@ mod tests {
             .await
             .expect("provider watcher must stop when its writer queue closes")
             .expect("provider watcher task");
+    }
+
+    fn write_automatic_activity(
+        state_dir: &Path,
+        id: &str,
+        revision: u64,
+        current: Option<&str>,
+        last: Option<&str>,
+    ) {
+        let runtime_id = format!("launch-{id}");
+        let activity_path = state_dir.join(format!("sessions/{id}/activity.json"));
+        std::fs::write(
+            activity_path,
+            serde_json::to_vec_pretty(&json!({
+                "schema_version":"agent-session.activity.v1",
+                "runtime_id":runtime_id,
+                "runtime_generation":1,
+                "state":{
+                    "schema_version":"agent-session.turn-state.v1",
+                    "phase":if current.is_some() { "working" } else { "waiting" },
+                    "phase_changed_at":"2026-09-07T00:00:00Z",
+                    "revision":revision,
+                    "source":{"kind":"provider_hook","provider":"codex","confidence":"authoritative"},
+                    "current_turn":current.map(|turn_id| json!({
+                        "provider_turn_id":turn_id,
+                        "started_at":"2026-09-07T00:00:00Z"
+                    })),
+                    "last_turn":last.map(|turn_id| json!({
+                        "provider_turn_id":turn_id,
+                        "completed_at":"2026-09-07T00:00:01Z",
+                        "outcome":"completed"
+                    }))
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+
+    async fn wait_for_test_path(path: &Path) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !path.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("test provider did not reach its barrier");
     }
 
     fn state(state_dir: &Path, token: Option<&str>, tmux_bin: PathBuf) -> Arc<ServeState> {

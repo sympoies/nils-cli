@@ -276,6 +276,8 @@ fn default_recent_turns() -> usize {
 struct RetitleConfig {
     provider: String,
     #[serde(default)]
+    fallback: Option<Box<RetitleConfig>>,
+    #[serde(default)]
     account: Option<String>,
     #[serde(default)]
     model: Option<String>,
@@ -323,50 +325,78 @@ impl RetitleConfig {
         if raw.len() > MAX_CONFIG_BYTES {
             return Err("config_invalid");
         }
+        let value: Value = serde_json::from_str(raw).map_err(|_| "config_invalid")?;
+        if value
+            .get("fallback")
+            .and_then(Value::as_object)
+            .is_some_and(|fallback| {
+                ["fallback", "max_concurrency", "queue_size", "context"]
+                    .iter()
+                    .any(|key| fallback.contains_key(*key))
+            })
+        {
+            return Err("config_invalid");
+        }
         let config: Self = serde_json::from_str(raw).map_err(|_| "config_invalid")?;
-        if !(1_000..=120_000).contains(&config.timeout_ms)
-            || !(1..=4_096).contains(&config.max_output_tokens)
-            || !(1..=8).contains(&config.max_concurrency)
-            || config.queue_size > 64
-            || !(1_000..=MAX_CONTEXT_CHARS).contains(&config.context.max_chars)
-            || !(128..=MAX_PER_MESSAGE_CHARS).contains(&config.context.per_message_chars)
-            || !(1..=MAX_RECENT_TURNS).contains(&config.context.recent_turns)
-            || config
+        config.validate(true)?;
+        Ok(config)
+    }
+
+    fn validate(&self, allow_fallback: bool) -> Result<(), &'static str> {
+        if !(1_000..=120_000).contains(&self.timeout_ms)
+            || !(1..=4_096).contains(&self.max_output_tokens)
+            || !(1..=8).contains(&self.max_concurrency)
+            || self.queue_size > 64
+            || !(1_000..=MAX_CONTEXT_CHARS).contains(&self.context.max_chars)
+            || !(128..=MAX_PER_MESSAGE_CHARS).contains(&self.context.per_message_chars)
+            || !(1..=MAX_RECENT_TURNS).contains(&self.context.recent_turns)
+            || self
                 .model
                 .as_deref()
                 .is_some_and(|value| !safe_label(value, 128))
         {
             return Err("config_invalid");
         }
-        match config.provider.as_str() {
+        match self.provider.as_str() {
             "codex_subscription"
-                if config
+                if self
                     .account
                     .as_deref()
                     .is_some_and(|value| safe_label(value, 64))
-                    && config.codex_bin.as_deref().is_some_and(Path::is_absolute)
-                    && config.base_url.is_none()
-                    && config.api_key_env.is_none()
-                    && config.argv.is_none() => {}
+                    && self.codex_bin.as_deref().is_some_and(Path::is_absolute)
+                    && self.base_url.is_none()
+                    && self.api_key_env.is_none()
+                    && self.argv.is_none() => {}
             "openai_compatible"
-                if config.base_url.as_deref().is_some_and(valid_http_base_url)
-                    && config
+                if self.base_url.as_deref().is_some_and(valid_http_base_url)
+                    && self
                         .model
                         .as_deref()
                         .is_some_and(|value| safe_label(value, 128))
-                    && config.account.is_none()
-                    && config.codex_bin.is_none()
-                    && config.argv.is_none()
-                    && config.api_key_env.as_deref().is_none_or(valid_env_name) => {}
+                    && self.account.is_none()
+                    && self.codex_bin.is_none()
+                    && self.argv.is_none()
+                    && self.api_key_env.as_deref().is_none_or(valid_env_name) => {}
             "command"
-                if config.argv.as_ref().is_some_and(|argv| valid_argv(argv))
-                    && config.account.is_none()
-                    && config.codex_bin.is_none()
-                    && config.base_url.is_none()
-                    && config.api_key_env.is_none() => {}
+                if self.argv.as_ref().is_some_and(|argv| valid_argv(argv))
+                    && self.account.is_none()
+                    && self.codex_bin.is_none()
+                    && self.base_url.is_none()
+                    && self.api_key_env.is_none() => {}
             _ => return Err("config_invalid"),
         }
-        Ok(config)
+        if let Some(fallback) = self.fallback.as_deref() {
+            if !allow_fallback
+                || self
+                    .timeout_ms
+                    .checked_add(fallback.timeout_ms)
+                    .is_none_or(|total| total > 120_000)
+            {
+                return Err("config_invalid");
+            }
+            fallback.validate(false)?;
+        }
+        Ok(())
     }
 
     fn kind(&self) -> &'static str {
@@ -379,6 +409,14 @@ impl RetitleConfig {
 
     fn timeout(&self) -> Duration {
         Duration::from_millis(self.timeout_ms)
+    }
+
+    fn total_timeout(&self) -> Duration {
+        self.timeout()
+            + self
+                .fallback
+                .as_deref()
+                .map_or(Duration::ZERO, RetitleConfig::timeout)
     }
 }
 
@@ -499,74 +537,20 @@ impl RetitleService {
             }
             Err(_) => return RetitleReadiness::unavailable("config_invalid", "configure_provider"),
         };
-        let mut readiness = RetitleReadiness {
-            schema_version: READINESS_SCHEMA,
-            capability: CAPABILITY,
-            status: "ready",
-            reason_code: "ready",
-            next_action: "none",
-            provider_kind: Some(config.kind()),
-            model_label: config.model.clone(),
-            account: None,
-            plan: None,
-            context_capabilities: context_capabilities(),
-        };
-        match config.kind() {
-            "codex_subscription" => {
-                if !crate::codex_account::broker_is_configured() {
-                    return RetitleReadiness::unavailable(
-                        "account_broker_unavailable",
-                        "configure_account_broker",
-                    );
-                }
-                let Some(account) = config.account.as_deref() else {
-                    return RetitleReadiness::unavailable("account_missing", "select_account");
-                };
-                let accounts = match crate::codex_account::list_accounts() {
-                    Ok(accounts) => accounts,
-                    Err(_) => {
-                        return RetitleReadiness::unavailable(
-                            "account_broker_unavailable",
-                            "configure_account_broker",
-                        );
-                    }
-                };
-                let Some(summary) = accounts.into_iter().find(|item| item.account == account)
-                else {
-                    return RetitleReadiness::unavailable("account_missing", "select_account");
-                };
-                if !executable(config.codex_bin.as_deref().expect("validated")) {
-                    return RetitleReadiness::unavailable(
-                        "provider_command_unavailable",
-                        "install_provider_command",
-                    );
-                }
-                readiness.account = Some(summary.account);
-                readiness.plan = summary.plan;
-            }
-            "openai_compatible" => {
-                if let Some(name) = config.api_key_env.as_deref()
-                    && env::var(name)
-                        .ok()
-                        .is_none_or(|value| value.trim().is_empty())
-                {
-                    return RetitleReadiness::unavailable("api_key_missing", "set_api_key");
-                }
-            }
-            "command" => {
-                if !command_executable(config.argv.as_ref().expect("validated")) {
-                    return RetitleReadiness::unavailable(
-                        "provider_command_unavailable",
-                        "install_provider_command",
-                    );
-                }
-                readiness.status = "degraded";
-                readiness.reason_code = "legacy_command_provider";
-                readiness.next_action = "migrate_provider";
-            }
-            _ => unreachable!(),
+        let primary = provider_readiness(config);
+        if primary.status != "unavailable" {
+            return primary;
         }
-        readiness
+        if let Some(fallback) = config.fallback.as_deref() {
+            let mut readiness = provider_readiness(fallback);
+            if readiness.status != "unavailable" {
+                readiness.status = "degraded";
+                readiness.reason_code = "fallback_ready";
+                readiness.next_action = "restore_primary";
+                return readiness;
+            }
+        }
+        primary
     }
 
     pub(crate) fn configured_provider_kind(&self) -> Option<&'static str> {
@@ -599,7 +583,8 @@ impl RetitleService {
 
     pub(crate) async fn acquire(&self) -> Result<RetitlePermit, CliError> {
         let config = self.config()?;
-        let deadline = evaluation_deadline(Instant::now(), config.timeout());
+        let started = Instant::now();
+        let deadline = evaluation_deadline(started, config.total_timeout());
         let permit = match self.semaphore.clone().try_acquire_owned() {
             Ok(permit) => permit,
             Err(_) => {
@@ -671,6 +656,76 @@ impl RetitleService {
     }
 }
 
+fn provider_readiness(config: &RetitleConfig) -> RetitleReadiness {
+    let mut readiness = RetitleReadiness {
+        schema_version: READINESS_SCHEMA,
+        capability: CAPABILITY,
+        status: "ready",
+        reason_code: "ready",
+        next_action: "none",
+        provider_kind: Some(config.kind()),
+        model_label: config.model.clone(),
+        account: None,
+        plan: None,
+        context_capabilities: context_capabilities(),
+    };
+    match config.kind() {
+        "codex_subscription" => {
+            if !crate::codex_account::broker_is_configured() {
+                return RetitleReadiness::unavailable(
+                    "account_broker_unavailable",
+                    "configure_account_broker",
+                );
+            }
+            let Some(account) = config.account.as_deref() else {
+                return RetitleReadiness::unavailable("account_missing", "select_account");
+            };
+            let accounts = match crate::codex_account::list_accounts() {
+                Ok(accounts) => accounts,
+                Err(_) => {
+                    return RetitleReadiness::unavailable(
+                        "account_broker_unavailable",
+                        "configure_account_broker",
+                    );
+                }
+            };
+            let Some(summary) = accounts.into_iter().find(|item| item.account == account) else {
+                return RetitleReadiness::unavailable("account_missing", "select_account");
+            };
+            if !executable(config.codex_bin.as_deref().expect("validated")) {
+                return RetitleReadiness::unavailable(
+                    "provider_command_unavailable",
+                    "install_provider_command",
+                );
+            }
+            readiness.account = Some(summary.account);
+            readiness.plan = summary.plan;
+        }
+        "openai_compatible" => {
+            if let Some(name) = config.api_key_env.as_deref()
+                && env::var(name)
+                    .ok()
+                    .is_none_or(|value| value.trim().is_empty())
+            {
+                return RetitleReadiness::unavailable("api_key_missing", "set_api_key");
+            }
+        }
+        "command" => {
+            if !command_executable(config.argv.as_ref().expect("validated")) {
+                return RetitleReadiness::unavailable(
+                    "provider_command_unavailable",
+                    "install_provider_command",
+                );
+            }
+            readiness.status = "degraded";
+            readiness.reason_code = "legacy_command_provider";
+            readiness.next_action = "migrate_provider";
+        }
+        _ => unreachable!(),
+    }
+    readiness
+}
+
 struct WaitingRetitleGuard<'a>(&'a AtomicUsize);
 
 impl Drop for WaitingRetitleGuard<'_> {
@@ -686,8 +741,10 @@ pub(crate) struct RetitlePermit {
 }
 
 impl RetitlePermit {
-    fn provider_timeout(&self) -> Result<Duration, CliError> {
-        remaining_evaluation_time(self.deadline, Instant::now()).ok_or_else(provider_timeout)
+    fn provider_timeout(&self, configured: Duration) -> Result<Duration, CliError> {
+        remaining_evaluation_time(self.deadline, Instant::now())
+            .map(|remaining| remaining.min(configured))
+            .ok_or_else(provider_timeout)
     }
 }
 
@@ -1148,20 +1205,64 @@ struct RawDecision {
     references: Vec<String>,
 }
 
+pub(crate) struct InferredTitleState {
+    pub(crate) state: SessionTitleState,
+    pub(crate) provider_kind: &'static str,
+}
+
 pub(crate) fn infer_title_state(
     permit: &RetitlePermit,
     context: &TitleContextV2,
     existing: Option<&SessionTitleState>,
-) -> Result<SessionTitleState, CliError> {
+) -> Result<InferredTitleState, CliError> {
     let input = model_input(context)?;
-    let timeout = permit.provider_timeout()?;
-    let output = match permit.config.kind() {
-        "codex_subscription" => invoke_codex(&permit.config, &input, timeout),
-        "openai_compatible" => invoke_openai_compatible(&permit.config, &input, timeout),
-        "command" => invoke_command(&permit.config, &input, timeout),
+    let timeout = permit.provider_timeout(permit.config.timeout())?;
+    match infer_with_provider(&permit.config, &input, context, existing, timeout) {
+        Ok(state) => Ok(InferredTitleState {
+            state,
+            provider_kind: permit.config.kind(),
+        }),
+        Err(error) if fallback_eligible(error.code()) && permit.config.fallback.is_some() => {
+            let fallback = permit.config.fallback.as_deref().expect("checked");
+            let timeout = permit.provider_timeout(fallback.timeout())?;
+            infer_with_provider(fallback, &input, context, existing, timeout).map(|state| {
+                InferredTitleState {
+                    state,
+                    provider_kind: fallback.kind(),
+                }
+            })
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn infer_with_provider(
+    config: &RetitleConfig,
+    input: &str,
+    context: &TitleContextV2,
+    existing: Option<&SessionTitleState>,
+    timeout: Duration,
+) -> Result<SessionTitleState, CliError> {
+    let output = match config.kind() {
+        "codex_subscription" => invoke_codex(config, input, timeout),
+        "openai_compatible" => invoke_openai_compatible(config, input, timeout),
+        "command" => invoke_command(config, input, timeout),
         _ => unreachable!(),
     }?;
     parse_decision(&output, context, existing)
+}
+
+fn fallback_eligible(code: &str) -> bool {
+    matches!(
+        code,
+        "retitle-account-missing"
+            | "retitle-api-key-missing"
+            | "retitle-provider-timeout"
+            | "retitle-provider-unavailable"
+            | "retitle-provider-rate-limited"
+            | "retitle-provider-quota-exceeded"
+            | "retitle-provider-malformed-response"
+    )
 }
 
 fn model_input(context: &TitleContextV2) -> Result<String, CliError> {
@@ -1298,6 +1399,7 @@ fn invoke_codex(
     input: &str,
     timeout: Duration,
 ) -> Result<String, CliError> {
+    let deadline = evaluation_deadline(Instant::now(), timeout);
     let account = config.account.as_deref().expect("validated");
     let credentials = crate::codex_account::resolve_account(account, false)
         .or_else(|_| crate::codex_account::resolve_account(account, true))
@@ -1310,6 +1412,7 @@ fn invoke_codex(
                 "refresh_account",
             )
         })?;
+    remaining_evaluation_time(deadline, Instant::now()).ok_or_else(provider_timeout)?;
     let isolated = tempfile::TempDir::new().map_err(|_| provider_unavailable())?;
     let mut argv = vec![
         config
@@ -1346,7 +1449,6 @@ fn invoke_codex(
                 }
             }
         });
-        let deadline = Instant::now() + timeout;
         send_rpc(
             &mut stdin,
             &json!({
@@ -1765,6 +1867,8 @@ struct RetitleReceipt {
     request_hash: String,
     state: String,
     diagnostic_code: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    provider_kind: Option<String>,
     #[serde(default)]
     attempt_count: u8,
     #[serde(default)]
@@ -1782,6 +1886,8 @@ struct DurableRetitleState {
     receipts: Vec<RetitleReceipt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_processed_turn_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_processed_provider_kind: Option<String>,
     #[serde(default)]
     last_coverage_complete: bool,
     #[serde(default)]
@@ -1803,6 +1909,13 @@ fn durable_state(record: &SessionRecord) -> DurableRetitleState {
         })
 }
 
+fn normalized_provider_kind(value: Option<&str>) -> Option<String> {
+    match value {
+        Some("codex_subscription" | "openai_compatible" | "command") => value.map(str::to_string),
+        _ => None,
+    }
+}
+
 fn store_durable_state(record: &mut SessionRecord, state: DurableRetitleState) {
     record.extra.insert(
         MARKER_KEY.to_string(),
@@ -1816,7 +1929,7 @@ pub(crate) fn request_hash(request: &RetitleRequest) -> String {
 
 pub(crate) enum Admission {
     Evaluate(SessionRecord),
-    Replay(SessionRecord, &'static str, CoverageView),
+    Replay(SessionRecord, &'static str, CoverageView, Option<String>),
 }
 
 pub(crate) fn is_retryable_automatic_error_code(code: &str) -> bool {
@@ -1830,6 +1943,7 @@ pub(crate) fn is_retryable_automatic_error_code(code: &str) -> bool {
             | "retitle-provider-rate-limited"
             | "retitle-provider-quota-exceeded"
             | "retitle-provider-malformed-response"
+            | "retitle-turn-conflict"
             | "retitle-worker-failed"
     )
 }
@@ -1893,6 +2007,7 @@ pub(crate) fn admit(
                     truncated: receipt.coverage_truncated,
                     turn_count: receipt.coverage_turn_count,
                 },
+                normalized_provider_kind(receipt.provider_kind.as_deref()),
             ));
         }
         if automatic_failed_receipt_can_retry(receipt, request.trigger) {
@@ -1931,6 +2046,7 @@ pub(crate) fn admit(
                 truncated: state.last_coverage_truncated,
                 turn_count: state.last_coverage_turn_count,
             },
+            normalized_provider_kind(state.last_processed_provider_kind.as_deref()),
         ));
     }
     validate_fences(context, &record, request)?;
@@ -1939,6 +2055,7 @@ pub(crate) fn admit(
         request_hash: digest,
         state: "in_progress".to_string(),
         diagnostic_code: "in_progress".to_string(),
+        provider_kind: None,
         attempt_count: 1,
         coverage_complete: false,
         coverage_truncated: false,
@@ -1958,19 +2075,7 @@ fn validate_fences(
     request: &RetitleRequest,
 ) -> Result<(), CliError> {
     validate_incarnation(record, request)?;
-    if record.title_revision != request.expected_title_revision {
-        return Err(CliError::data(
-            "title-revision-conflict",
-            "session title changed before retitle",
-            Some(json!({
-                "expected_title_revision":request.expected_title_revision,
-                "actual_title_revision":record.title_revision,
-                "retryable":false,
-                "next_action":"refresh_session",
-                "recovery":{"strategy":"refresh_session", "safe_to_retry":false}
-            })),
-        ));
-    }
+    validate_title_revision(record, request)?;
     if request.trigger.is_automatic() {
         let state = activity::state_for_view(context, record).ok_or_else(turn_conflict)?;
         if state.revision
@@ -1989,6 +2094,26 @@ fn validate_fences(
         }
     }
     Ok(())
+}
+
+fn validate_title_revision(
+    record: &SessionRecord,
+    request: &RetitleRequest,
+) -> Result<(), CliError> {
+    if record.title_revision == request.expected_title_revision {
+        return Ok(());
+    }
+    Err(CliError::data(
+        "title-revision-conflict",
+        "session title changed before retitle",
+        Some(json!({
+            "expected_title_revision":request.expected_title_revision,
+            "actual_title_revision":record.title_revision,
+            "retryable":false,
+            "next_action":"refresh_session",
+            "recovery":{"strategy":"refresh_session", "safe_to_retry":false}
+        })),
+    ))
 }
 
 fn validate_incarnation(record: &SessionRecord, request: &RetitleRequest) -> Result<(), CliError> {
@@ -2128,6 +2253,7 @@ pub(crate) fn commit(
     request: &RetitleRequest,
     state: SessionTitleState,
     coverage: &CoverageView,
+    provider_kind: &str,
 ) -> Result<CommitResult, CliError> {
     let (title, state) = canonicalize_structured_title_pair(None, false, state)?;
     let state = state.expect("structured state");
@@ -2178,6 +2304,7 @@ pub(crate) fn commit(
             }
             receipt.state = "complete".to_string();
             receipt.diagnostic_code = if changed { "committed" } else { "no_change" }.to_string();
+            receipt.provider_kind = Some(provider_kind.to_string());
             receipt.coverage_complete = coverage.complete;
             receipt.coverage_truncated = coverage.truncated;
             receipt.coverage_turn_count = coverage.turn_count;
@@ -2186,6 +2313,7 @@ pub(crate) fn commit(
                     .expected_provider_turn_id
                     .as_deref()
                     .map(hash_identity);
+                durable.last_processed_provider_kind = Some(provider_kind.to_string());
                 durable.last_coverage_complete = coverage.complete;
                 durable.last_coverage_truncated = coverage.truncated;
                 durable.last_coverage_turn_count = coverage.turn_count;
@@ -2284,6 +2412,7 @@ mod tests {
             request_hash: "request".into(),
             state: "failed".into(),
             diagnostic_code: "retitle-context-unavailable".into(),
+            provider_kind: None,
             attempt_count: 1,
             coverage_complete: false,
             coverage_truncated: false,
@@ -2313,7 +2442,7 @@ mod tests {
         ));
         receipt.attempt_count = 1;
         receipt.diagnostic_code = "retitle-turn-conflict".into();
-        assert!(!automatic_failed_receipt_can_retry(
+        assert!(automatic_failed_receipt_can_retry(
             &receipt,
             RetitleTrigger::Prompt
         ));
@@ -2352,6 +2481,74 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn fallback_chain_uses_one_end_to_end_deadline() {
+        let config = RetitleConfig::parse(
+            r#"{"provider":"command","argv":["/bin/true"],"timeout_ms":20000,"fallback":{"provider":"command","argv":["/bin/true"],"timeout_ms":100000}}"#,
+        )
+        .unwrap();
+        assert_eq!(config.total_timeout(), Duration::from_secs(120));
+
+        let started = Instant::now();
+        let deadline = evaluation_deadline(started, config.total_timeout());
+        assert_eq!(
+            remaining_evaluation_time(deadline, started + Duration::from_secs(25)),
+            Some(Duration::from_secs(95))
+        );
+    }
+
+    #[tokio::test]
+    async fn fallback_queue_wait_uses_the_total_chain_deadline() {
+        let lock = nils_test_support::GlobalStateLock::new();
+        let config = json!({
+            "provider":"command",
+            "argv":["/bin/true"],
+            "timeout_ms":1000,
+            "max_concurrency":1,
+            "queue_size":1,
+            "fallback":{
+                "provider":"command",
+                "argv":["/bin/true"],
+                "timeout_ms":1000
+            }
+        })
+        .to_string();
+        let _config =
+            nils_test_support::EnvGuard::set(&lock, "AGENT_SESSION_RETITLE_CONFIG", &config);
+        let service = Arc::new(RetitleService::from_environment());
+        let first = service.acquire().await.unwrap();
+        let queued_service = service.clone();
+        let queued = tokio::spawn(async move { queued_service.acquire().await });
+
+        tokio::time::sleep(Duration::from_millis(1_100)).await;
+        drop(first);
+
+        let second = queued.await.unwrap();
+        assert!(
+            second.is_ok(),
+            "fallback budget must remain available after the primary timeout"
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_timeout_preserves_each_chain_member_cap() {
+        let config = Arc::new(
+            RetitleConfig::parse(
+                r#"{"provider":"command","argv":["/bin/true"],"timeout_ms":1000,"fallback":{"provider":"command","argv":["/bin/true"],"timeout_ms":2000}}"#,
+            )
+            .unwrap(),
+        );
+        let semaphore = Arc::new(Semaphore::new(1));
+        let permit = RetitlePermit {
+            deadline: evaluation_deadline(Instant::now(), config.total_timeout()),
+            config,
+            _permit: semaphore.acquire_owned().await.unwrap(),
+        };
+
+        assert!(permit.provider_timeout(Duration::from_secs(1)).unwrap() <= Duration::from_secs(1));
+        assert!(permit.provider_timeout(Duration::from_secs(2)).unwrap() <= Duration::from_secs(2));
     }
 
     #[test]
@@ -2591,6 +2788,135 @@ mod tests {
             RetitleConfig::parse(r#"{"provider":"openai_compatible","base_url":"file:///tmp/socket","model":"unsafe"}"#).unwrap_err(),
             "config_invalid"
         );
+    }
+
+    #[test]
+    fn provider_config_accepts_a_bounded_local_fallback_after_codex_luna() {
+        let config = RetitleConfig::parse(
+            r#"{"provider":"codex_subscription","account":"sym","codex_bin":"/usr/bin/codex","model":"gpt-5.6-luna","timeout_ms":20000,"fallback":{"provider":"openai_compatible","base_url":"http://127.0.0.1:1237/v1","model":"qwen3.6-apex-compact","timeout_ms":100000,"max_output_tokens":160,"temperature":0,"json_response":true}}"#,
+        );
+        assert!(config.is_ok());
+
+        let over_budget = RetitleConfig::parse(
+            r#"{"provider":"codex_subscription","account":"sym","codex_bin":"/usr/bin/codex","model":"gpt-5.6-luna","timeout_ms":45000,"fallback":{"provider":"openai_compatible","base_url":"http://127.0.0.1:1237/v1","model":"qwen3.6-apex-compact","timeout_ms":120000}}"#,
+        );
+        assert_eq!(over_budget.unwrap_err(), "config_invalid");
+
+        let nested = RetitleConfig::parse(
+            r#"{"provider":"command","argv":["/bin/true"],"timeout_ms":1000,"fallback":{"provider":"command","argv":["/bin/true"],"timeout_ms":1000,"fallback":{"provider":"command","argv":["/bin/true"],"timeout_ms":1000}}}"#,
+        );
+        assert_eq!(nested.unwrap_err(), "config_invalid");
+
+        let fallback_with_root_context = RetitleConfig::parse(
+            r#"{"provider":"command","argv":["/bin/true"],"timeout_ms":1000,"fallback":{"provider":"command","argv":["/bin/true"],"timeout_ms":1000,"context":{"max_chars":12000,"per_message_chars":2000,"recent_turns":12}}}"#,
+        );
+        assert_eq!(fallback_with_root_context.unwrap_err(), "config_invalid");
+    }
+
+    #[test]
+    fn fallback_error_vocabulary_is_provider_only() {
+        for code in [
+            "retitle-account-missing",
+            "retitle-api-key-missing",
+            "retitle-provider-timeout",
+            "retitle-provider-unavailable",
+            "retitle-provider-rate-limited",
+            "retitle-provider-quota-exceeded",
+            "retitle-provider-malformed-response",
+        ] {
+            assert!(fallback_eligible(code), "expected eligible code {code}");
+        }
+        for code in [
+            "retitle-queue-saturated",
+            "retitle-context-unavailable",
+            "session-incarnation-conflict",
+            "title-revision-conflict",
+            "retitle-turn-conflict",
+            "retitle-state-conflict",
+        ] {
+            assert!(!fallback_eligible(code), "unexpected eligible code {code}");
+        }
+    }
+
+    #[test]
+    fn durable_provider_attribution_accepts_only_contract_kinds() {
+        assert_eq!(
+            normalized_provider_kind(Some("openai_compatible")).as_deref(),
+            Some("openai_compatible")
+        );
+        assert_eq!(normalized_provider_kind(Some("invalid-provider")), None);
+        assert_eq!(normalized_provider_kind(None), None);
+    }
+
+    #[test]
+    fn readiness_projects_the_available_fallback_when_the_primary_is_unavailable() {
+        let lock = nils_test_support::GlobalStateLock::new();
+        let config = json!({
+            "provider":"openai_compatible",
+            "base_url":"http://127.0.0.1:9/v1",
+            "model":"primary",
+            "api_key_env":"AGENT_SESSION_RETITLE_TEST_MISSING_KEY",
+            "timeout_ms":1000,
+            "fallback": {
+                "provider":"openai_compatible",
+                "base_url":"http://127.0.0.1:1237/v1",
+                "model":"qwen3.6-apex-compact",
+                "timeout_ms":1000
+            }
+        })
+        .to_string();
+        let _config =
+            nils_test_support::EnvGuard::set(&lock, "AGENT_SESSION_RETITLE_CONFIG", &config);
+
+        let readiness = RetitleService::from_environment().readiness();
+
+        assert_eq!(readiness.status, "degraded");
+        assert_eq!(readiness.reason_code, "fallback_ready");
+        assert_eq!(readiness.next_action, "restore_primary");
+        assert_eq!(readiness.provider_kind, Some("openai_compatible"));
+        assert_eq!(
+            readiness.model_label.as_deref(),
+            Some("qwen3.6-apex-compact")
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_failure_uses_the_configured_fallback_and_reports_its_kind() {
+        let lock = nils_test_support::GlobalStateLock::new();
+        let config = json!({
+            "provider":"command",
+            "argv":["/bin/sh", "-c", "exit 1"],
+            "timeout_ms":1000,
+            "fallback": {
+                "provider":"command",
+                "argv":["/bin/sh", "-c", "printf '%s\\n' '{\"topic_action\":\"set\",\"topic\":\"Fallback title\",\"activity\":null,\"references\":[]}'"],
+                "timeout_ms":1000
+            }
+        })
+        .to_string();
+        let _config =
+            nils_test_support::EnvGuard::set(&lock, "AGENT_SESSION_RETITLE_CONFIG", &config);
+        let service = RetitleService::from_environment();
+        let permit = service.acquire().await.unwrap();
+        let context = TitleContextV2 {
+            schema_version: "agent-session.title-context.v2",
+            session: TitleContextSession {
+                agent: "codex".into(),
+                repo_name: None,
+                title_state: None,
+            },
+            turns: vec![turn(1, "Retitle this session")],
+            coverage: TitleContextCoverage {
+                source: "provider_transcript",
+                complete: true,
+                truncated: false,
+            },
+            trigger: RetitleTrigger::Manual,
+        };
+
+        let inferred = infer_title_state(&permit, &context, None).unwrap();
+        assert_eq!(inferred.provider_kind, "command");
+        assert_eq!(inferred.state.topic.as_deref(), Some("Fallback title"));
     }
 
     #[test]
