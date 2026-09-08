@@ -12019,6 +12019,7 @@ fn session_list_runtime_snapshot(
 fn tmux_session_snapshots(tmux_bin: &Path) -> Option<TmuxSessionSnapshots> {
     let started_at = Timestamp::now();
     let output = ProcessCommand::new(tmux_bin)
+        .env("LC_ALL", "C")
         .arg("list-windows")
         .arg("-a")
         .arg("-F")
@@ -12026,6 +12027,12 @@ fn tmux_session_snapshots(tmux_bin: &Path) -> Option<TmuxSessionSnapshots> {
         .output()
         .ok()?;
     if !output.status.success() {
+        if tmux_snapshot_output_reports_empty(&output) {
+            return Some(TmuxSessionSnapshots {
+                started_at,
+                sessions: BTreeMap::new(),
+            });
+        }
         return None;
     }
     let raw = String::from_utf8_lossy(&output.stdout);
@@ -16205,6 +16212,18 @@ fn tmux_output_reports_absent(output: &std::process::Output) -> bool {
     }
     let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
     stderr.contains("can't find session:") || stderr.contains("no server running on")
+}
+
+fn tmux_snapshot_output_reports_empty(output: &std::process::Output) -> bool {
+    if tmux_output_reports_absent(output) {
+        return true;
+    }
+    if output.status.code() != Some(1) {
+        return false;
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
+    (stderr.contains("error connecting to ") && stderr.contains("(no such file or directory)"))
+        || stderr.contains("failed to connect to server: no such file or directory")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22941,6 +22960,54 @@ fi
             views[0].last_terminal_activity_at.as_deref(),
             Some("1970-01-01T00:01:40Z")
         );
+    }
+
+    #[test]
+    fn tmux_session_snapshots_treats_missing_server_as_empty() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let tmux = tmp.path().join("tmux");
+        fs::write(
+            &tmux,
+            "#!/bin/sh\nprintf '%s\n' 'no server running on /tmp/tmux-1000/default' >&2\nexit 1\n",
+        )
+        .unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let snapshots = super::tmux_session_snapshots(&tmux)
+            .expect("an absent tmux server is an authoritative empty snapshot");
+
+        assert_eq!(snapshots.sessions.len(), 0);
+    }
+
+    #[test]
+    fn tmux_session_snapshots_accepts_current_missing_socket_diagnostic() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let tmux = tmp.path().join("tmux");
+        fs::write(
+            &tmux,
+            "#!/bin/sh\nprintf '%s\n' 'error connecting to /tmp/tmux-1000/default (No such file or directory)' >&2\nexit 1\n",
+        )
+        .unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let snapshots = super::tmux_session_snapshots(&tmux)
+            .expect("a missing tmux socket is an authoritative empty snapshot");
+
+        assert_eq!(snapshots.sessions.len(), 0);
+    }
+
+    #[test]
+    fn tmux_session_snapshots_keeps_unknown_failure_unavailable() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let tmux = tmp.path().join("tmux");
+        fs::write(
+            &tmux,
+            "#!/bin/sh\nprintf '%s\n' 'permission denied' >&2\nexit 1\n",
+        )
+        .unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+
+        assert!(super::tmux_session_snapshots(&tmux).is_none());
     }
 
     #[test]

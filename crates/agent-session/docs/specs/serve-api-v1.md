@@ -432,6 +432,21 @@ recorded in `sympoies/nils-cli#1409`.
   `session-incarnation-conflict` without submitting. Success returns `submitted: true` plus the locked
   `session_incarnation`, while the provider turn id remains private. These mutations never send multiline text through
   terminal keys; unsupported or not-yet-ready sessions fail closed.
+  For an already resumed Codex runtime whose terminal path reports local
+  JSON-RPC `-32001` busy, the error alone does not prove rejection before
+  provider acceptance: the same response can be emitted while an earlier
+  request is already pending. A client MUST first refresh `GET /sessions` and
+  inspect provider-visible activity/output. While a turn is in progress, the
+  continuation appears accepted, or non-delivery cannot be established, the
+  client waits and MUST NOT submit it again. Only after establishing that no
+  provider turn remains in progress and the continuation was not accepted may
+  the client bind one explicit recovery request to the exact current
+  `session_incarnation` and submit through `prompt/v2`. The incarnation fence
+  prevents submission to a replacement runtime; it does not deduplicate two
+  submissions within one incarnation. Clients MUST NOT automatically replay an
+  arbitrary failed terminal send through this route because transport and busy
+  failures can leave provider-delivery outcome unknown. Incarnation conflict
+  and outcome-unknown handling retain the rules above.
 - `PUT /sessions/{id}/account` accepts
   `{ "account": "nickname", "expected_session_incarnation": "launch-id" }`
   only for a serve-managed Codex app-server runtime. At the authoritative
@@ -731,3 +746,11 @@ systemd user scope (`systemd-run --user --scope`) so it lands in its own cgroup 
 sessions survive a daemon restart or even an explicit cgroup-wide kill. It is opt-in (the serve launcher sets it) and only
 engages when a systemd `--user` manager is reachable; on any other host (no user manager, missing `systemd-run`, non-Linux)
 it falls back to launching tmux directly. Pairs with `KillMode=process` on the serve unit for defense in depth.
+
+Before binding the listener, the daemon fences reconnect for historical Codex
+records that carry account bindings. Tmux exit status 1 plus a recognized
+missing-server or missing-socket diagnostic is an authoritative empty snapshot:
+there are no live runtimes to fence, so startup continues. Other non-success
+outcomes remain unavailable and fail startup with
+`codex-account-reconnect-fence-unavailable`; the daemon never treats an
+unclassified inspection failure as an empty session universe.
