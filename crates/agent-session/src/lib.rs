@@ -7972,6 +7972,9 @@ fn start_interactive_tmux(
     begin_held_runtime(&mut command, state_dir, record)?;
 
     if provider_stop_canary_armed(record) {
+        // Keep the supervisor as tmux's direct child for the canary identity
+        // contract. The supervisor launches the real provider separately and
+        // removes NO_COLOR from that child at the ProcessCommand boundary.
         let supervisor_bin = current_runtime_helper()?;
         command
             .arg("exec")
