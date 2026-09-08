@@ -71,10 +71,13 @@ attempts per deterministic key. Terminal success, non-retryable failure, and
 attempt exhaustion remain suppressed for the daemon lifetime; restart cannot
 reset the durable provider-attempt bound.
 
-Commit always reloads and rechecks every fence. User-owned topics are immutable
-to retitling. A manual retitle can repair an automatic topic. References are
-kept only when they occur in authoritative user prompts, title components are
-limited to 120 characters, and equal topic/activity text is deduplicated.
+Commit always reloads and rechecks every fence. A later activity revision is
+accepted while the expected provider turn remains current, or after that turn
+becomes the latest completed turn with no newer current turn. A different
+current turn invalidates the decision. User-owned topics are immutable to
+retitling. A manual retitle can repair an automatic topic. References are kept
+only when they occur in authoritative user prompts, title components are limited
+to 120 characters, and equal topic/activity text is deduplicated.
 Complete injected `AGENTS.md` instruction regions and provider context blocks
 are omitted before per-message bounds are applied. Authorization headers,
 credential-shaped JSON lines, private-key markers, paths, and token-shaped
