@@ -1624,6 +1624,12 @@ fn activity_events_are_runtime_bound_private_and_deterministic() {
             .any(|pair| { pair == ["-e", &format!("PATH={inherited_path}")] }),
         "new tmux sessions must receive the daemon PATH instead of inheriting a stale tmux-server PATH: {new_session:?}"
     );
+    assert!(
+        new_session
+            .iter()
+            .any(|arg| arg == "unset NO_COLOR; exec \"$@\""),
+        "interactive agent panes must not inherit a controller-only NO_COLOR flag: {new_session:?}"
+    );
     let launching_helper = nils_test_support::bin::resolve("agent-session");
     assert!(
         new_session.windows(2).any(|pair| {
@@ -4472,6 +4478,10 @@ fn start_creates_session_state_without_printing_prompt() {
             runtime_id.to_string(),
             "1".to_string(),
             agent_session_bin,
+            "sh".to_string(),
+            "-c".to_string(),
+            "unset NO_COLOR; exec \"$@\"".to_string(),
+            "agent-session-interactive".to_string(),
             codex_arg.clone(),
             "--cd".to_string(),
             cwd_arg.clone(),
@@ -9832,6 +9842,10 @@ fn resume_recreates_tmux_runtime_from_exact_provider_identity() {
             runtime_id.to_string(),
             "2".to_string(),
             agent_session_bin,
+            "sh".to_string(),
+            "-c".to_string(),
+            "unset NO_COLOR; exec \"$@\"".to_string(),
+            "agent-session-interactive".to_string(),
             codex_arg.clone(),
             "resume".to_string(),
             "resume-session-id".to_string(),
@@ -10617,6 +10631,12 @@ fn resume_recovers_provider_identity_from_durable_sidecar() {
     assert!(
         new_session.contains(&codex_arg),
         "resume should use sidecar agent_bin: {new_session:?}"
+    );
+    assert!(
+        new_session
+            .iter()
+            .any(|arg| arg == "unset NO_COLOR; exec \"$@\""),
+        "resumed interactive panes must restore provider colour output: {new_session:?}"
     );
     assert!(
         new_session.contains(&"sidecar-model".to_string()),

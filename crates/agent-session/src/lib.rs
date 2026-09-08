@@ -7196,6 +7196,7 @@ fn run_provider_stop_canary_guardian(
             .arg(&record.cwd)
             .arg("--no-alt-screen")
             .args(&record.agent_args)
+            .env_remove("NO_COLOR")
             .env_remove("DBUS_SESSION_BUS_ADDRESS")
             .env_remove("SSH_AUTH_SOCK")
             .env_remove("XDG_RUNTIME_DIR")
@@ -7933,6 +7934,20 @@ pub(crate) fn provider_stop_canary_release_identity_matches(
         })
 }
 
+fn add_interactive_agent_environment(command: &mut ProcessCommand) {
+    // The daemon is often launched from an automation/controller process that
+    // deliberately sets NO_COLOR for machine-readable logs. A tmux server keeps
+    // that environment and otherwise passes it into every later interactive
+    // provider, causing Claude and other TUIs to suppress all ANSI colour. Scope
+    // the removal to the interactive child; one-shot runs and controller output
+    // retain their existing environment contract.
+    command
+        .arg("sh")
+        .arg("-c")
+        .arg("unset NO_COLOR; exec \"$@\"")
+        .arg("agent-session-interactive");
+}
+
 fn start_interactive_tmux(
     tmux_bin: &Path,
     agent_bin: &Path,
@@ -7968,6 +7983,8 @@ fn start_interactive_tmux(
             .arg(&record.id);
         return run_tmux_new_session(command, tmux_bin, record);
     }
+
+    add_interactive_agent_environment(&mut command);
 
     if agent == AgentKind::Codex && codex_app_server::runtime_is_supported(record) {
         let socket = codex_app_server::socket_path(record).ok_or_else(|| {
@@ -10085,6 +10102,7 @@ fn start_resume_tmux(
         .arg(&record.cwd);
     add_runtime_tmux_environment(&mut command, state_dir, record)?;
     begin_held_runtime(&mut command, state_dir, record)?;
+    add_interactive_agent_environment(&mut command);
     command
         .arg(agent_bin)
         .args(resume_args)
