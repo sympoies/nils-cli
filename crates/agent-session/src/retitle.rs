@@ -1973,7 +1973,10 @@ fn validate_fences(
     }
     if request.trigger.is_automatic() {
         let state = activity::state_for_view(context, record).ok_or_else(turn_conflict)?;
-        if Some(state.revision) != request.expected_activity_revision
+        if state.revision
+            < request
+                .expected_activity_revision
+                .expect("automatic request was validated")
             || !turn_matches(
                 &state,
                 request
@@ -2005,16 +2008,16 @@ fn validate_incarnation(record: &SessionRecord, request: &RetitleRequest) -> Res
 }
 
 fn turn_matches(state: &activity::TurnState, expected: &str) -> bool {
-    state
-        .current_turn
-        .as_ref()
-        .and_then(|turn| turn.provider_turn_id.as_deref())
-        == Some(expected)
-        || state
-            .last_turn
-            .as_ref()
-            .and_then(|turn| turn.provider_turn_id.as_deref())
-            == Some(expected)
+    match state.current_turn.as_ref() {
+        Some(turn) => turn.provider_turn_id.as_deref() == Some(expected),
+        None => {
+            state
+                .last_turn
+                .as_ref()
+                .and_then(|turn| turn.provider_turn_id.as_deref())
+                == Some(expected)
+        }
+    }
 }
 
 fn turn_conflict() -> CliError {
@@ -2611,6 +2614,103 @@ mod tests {
         automatic.expected_activity_revision = Some(4);
         automatic.expected_provider_turn_id = Some("turn-4".into());
         assert!(automatic.validate().is_ok());
+    }
+
+    #[test]
+    fn automatic_turn_fence_allows_progress_revision_but_rejects_a_new_turn() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let session_dir = tmp.path().join("sessions/retitle-progress");
+        std::fs::create_dir_all(&session_dir).expect("session dir");
+        std::fs::write(
+            session_dir.join("session.json"),
+            serde_json::to_vec_pretty(&json!({
+                "schema_version":"agent-session.session.v1",
+                "id":"retitle-progress",
+                "agent":"codex",
+                "mode":"interactive",
+                "title":null,
+                "title_state":{"topic":null,"topic_source":"none","references":[],"activity":null},
+                "title_revision":0,
+                "cwd":"/tmp",
+                "tmux_session":"hs-codex-retitle-progress",
+                "prompt_file":null,
+                "log_file":null,
+                "created_at":"2026-09-09T00:00:00Z",
+                "updated_at":"2026-09-09T00:00:00Z",
+                "runtime":{
+                    "kind":"tmux",
+                    "tmux_session":"hs-codex-retitle-progress",
+                    "generation":1,
+                    "started_at":"2026-09-09T00:00:00Z",
+                    "launch_id":"launch-retitle-progress"
+                }
+            }))
+            .expect("session json"),
+        )
+        .expect("session record");
+        let activity_path = session_dir.join("activity.json");
+        let write_activity = |revision: u64, current: Option<&str>, last: Option<&str>| {
+            std::fs::write(
+                &activity_path,
+                serde_json::to_vec_pretty(&json!({
+                    "schema_version":"agent-session.activity.v1",
+                    "runtime_id":"launch-retitle-progress",
+                    "runtime_generation":1,
+                    "state":{
+                        "schema_version":"agent-session.turn-state.v1",
+                        "phase":"working",
+                        "phase_changed_at":"2026-09-09T00:00:01Z",
+                        "revision":revision,
+                        "source":{"kind":"provider_hook","provider":"codex","confidence":"observed"},
+                        "semantic_event":{"kind":"progress","observed_at":"2026-09-09T00:00:02Z"},
+                        "current_turn":current.map(|turn_id| json!({
+                            "provider_turn_id":turn_id,
+                            "started_at":"2026-09-09T00:00:01Z",
+                            "last_progress_at":"2026-09-09T00:00:02Z"
+                        })),
+                        "last_turn":last.map(|turn_id| json!({
+                            "provider_turn_id":turn_id,
+                            "completed_at":"2026-09-09T00:00:01Z",
+                            "outcome":"completed"
+                        }))
+                    }
+                }))
+                .expect("activity json"),
+            )
+            .expect("activity state");
+        };
+        write_activity(1, Some("turn-a"), None);
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        let record = load_session_record(&context, "retitle-progress").expect("session record");
+        let request = RetitleRequest {
+            schema_version: REQUEST_SCHEMA.into(),
+            trigger: RetitleTrigger::Initial,
+            idempotency_key: "automatic-progress-revision".into(),
+            expected_session_incarnation: "launch-retitle-progress".into(),
+            expected_title_revision: 0,
+            expected_activity_revision: Some(1),
+            expected_provider_turn_id: Some("turn-a".into()),
+        };
+
+        validate_fences(&context, &record, &request).expect("initial fence");
+        write_activity(2, Some("turn-a"), None);
+        validate_fences(&context, &record, &request)
+            .expect("progress in the same provider turn must remain current");
+
+        write_activity(3, None, Some("turn-a"));
+        validate_fences(&context, &record, &request)
+            .expect("the latest completed provider turn must remain current");
+
+        write_activity(4, Some("turn-b"), Some("turn-a"));
+        assert_eq!(
+            validate_fences(&context, &record, &request)
+                .expect_err("a newer provider turn must invalidate the decision")
+                .code(),
+            "retitle-turn-conflict"
+        );
     }
 
     #[test]
