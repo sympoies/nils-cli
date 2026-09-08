@@ -200,7 +200,23 @@ recorded in `sympoies/nils-cli#1409`.
   `data.capabilities.last_prompt` advertises the list `last_prompt` preview: the
   most recent user prompt for a running Codex/Claude session, resolved from the
   exact provider transcript so it reflects prompts submitted through any input
-  path (web console, SSH/Termius, or raw `tmux attach`). On first discovery the
+  path (web console, SSH/Termius, or raw `tmux attach`). Codex Goal creation
+  and objective edits also update this preview as `Goal: <objective>` in
+  transcript order; later user messages replace it. Goal status/usage updates
+  and internal continuation context do not revive an older instruction. Goal
+  observation is preview-only and never emits `prompt_submitted` or acknowledges
+  a broker input delivery. Inline string-valued `image_url` content is elided
+  before the 256 KiB line-buffer bound, preserving surrounding user text without
+  retaining image payloads in that buffer. For Codex records containing an actual
+  image, paired image name/path wrapper lines are removed from the list preview
+  so they cannot hide the user question; submission-event text stays unchanged. If cold recovery starts mid-history, the first
+  existing Goal snapshot establishes its comparison baseline without replacing
+  a newer prompt, unless its event timestamp identifies a new Goal creation.
+  An objective edit cannot be inferred from an isolated existing snapshot;
+  subsequent objective changes are observed normally.
+  The 64 KiB per-read and 16-read catch-up budgets
+  remain in force; oversized non-image records still fail closed.
+  On first discovery the
   daemon opens an append tail and queues one at-most-64-MiB cold recovery outside
   the list-response path. Cold recovery and append catch-up are single-flight per
   session and share a daemon-wide concurrency bound. Eligible running
