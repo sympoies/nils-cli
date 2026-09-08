@@ -68,6 +68,7 @@ pub(crate) enum ProviderLastPromptRefresh {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ParsedPrompt {
     prompt: String,
+    has_images: bool,
     truncated: bool,
     submitted_at: Option<String>,
     turn_id: Option<String>,
@@ -667,9 +668,8 @@ fn parse_codex_response_item_prompt(value: &Value) -> Option<ParsedPrompt> {
     if !kinds.iter().any(|kind| kind.as_str() == Some("user.text")) {
         return None;
     }
-    let text = payload
-        .get("content")?
-        .as_array()?
+    let content = payload.get("content")?.as_array()?;
+    let text = content
         .iter()
         .filter(|item| item.get("type").and_then(Value::as_str) == Some("input_text"))
         .filter_map(|item| item.get("text").and_then(Value::as_str))
@@ -677,6 +677,9 @@ fn parse_codex_response_item_prompt(value: &Value) -> Option<ParsedPrompt> {
         .collect::<Vec<_>>()
         .join("\n");
     let mut prompt = bounded_prompt(&text)?;
+    prompt.has_images = content
+        .iter()
+        .any(|item| item.get("type").and_then(Value::as_str) == Some("input_image"));
     prompt.submitted_at = provider_timestamp(value);
     prompt.turn_id = metadata
         .get("turn_id")
@@ -815,6 +818,7 @@ fn bounded_prompt(prompt: &str) -> Option<ParsedPrompt> {
     }
     if prompt.len() <= MAX_PROVIDER_PROMPT_BYTES {
         return Some(ParsedPrompt {
+            has_images: false,
             prompt: prompt.to_string(),
             truncated: false,
             submitted_at: None,
@@ -826,6 +830,7 @@ fn bounded_prompt(prompt: &str) -> Option<ParsedPrompt> {
         end = end.saturating_sub(1);
     }
     Some(ParsedPrompt {
+        has_images: false,
         prompt: prompt[..end].to_string(),
         truncated: true,
         submitted_at: None,
@@ -1014,10 +1019,39 @@ fn read_preview(
     (parsed.map(LastPrompt::from), goal)
 }
 
+/// Codex surrounds an actual image with separate header/closing text items.
+/// After joining input_text those become adjacent lines. Remove only that
+/// paired scaffold for the card; submission events keep their original text.
+fn image_preview_text(prompt: &str) -> String {
+    let mut lines = prompt.lines().peekable();
+    let mut text = Vec::new();
+    while let Some(line) = lines.next() {
+        let header = line
+            .trim()
+            .strip_prefix("<image name=[Image #")
+            .and_then(|rest| rest.split_once("] path=\""))
+            .is_some_and(|(number, path)| {
+                !number.is_empty()
+                    && number.bytes().all(|byte| byte.is_ascii_digit())
+                    && path.ends_with("\">")
+            });
+        if header && lines.peek().is_some_and(|next| next.trim() == "</image>") {
+            lines.next();
+        } else {
+            text.push(line);
+        }
+    }
+    text.join("\n")
+}
+
 impl From<ParsedPrompt> for LastPrompt {
     fn from(parsed: ParsedPrompt) -> Self {
         Self {
-            text: parsed.prompt,
+            text: if parsed.has_images {
+                image_preview_text(&parsed.prompt)
+            } else {
+                parsed.prompt
+            },
             submitted_at: parsed.submitted_at,
             truncated: parsed.truncated,
         }
@@ -1434,6 +1468,69 @@ mod tests {
         assert_eq!(
             current_preview(&mut tracker).unwrap().text,
             "Goal: Verify the next screen"
+        );
+    }
+
+    #[test]
+    fn preview_image_wrapper_does_not_hide_question_or_change_submission() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("codex.jsonl");
+        fs::write(&path, "").unwrap();
+        let mut tracker = ProviderLastPromptTracker::open_path(
+            ProviderKind::Codex,
+            "codex-id",
+            path.clone(),
+            Duration::ZERO,
+        )
+        .unwrap();
+        let mut tail = ProviderPromptTail::open_path(
+            ProviderKind::Codex,
+            "codex-id",
+            path.clone(),
+            Duration::ZERO,
+        )
+        .unwrap();
+        let mut value: Value = serde_json::from_str(&image_prompt_line()).unwrap();
+        let header = "<image name=[Image #1] path=\"/attachments/screen.png\">";
+        value["payload"]["content"] = json!([
+            {"type": "input_text", "text": header},
+            value["payload"]["content"][1].clone(),
+            {"type": "input_text", "text": "</image>"},
+            {"type": "input_text", "text": "[Image #1] Is this ready to accept?"}
+        ]);
+        append(&path, format!("{value}\n").as_bytes());
+        assert_eq!(
+            current_preview(&mut tracker).unwrap().text,
+            "[Image #1] Is this ready to accept?"
+        );
+        let mut recovered = ProviderLastPromptTracker::open_path(
+            ProviderKind::Codex,
+            "codex-id",
+            path,
+            Duration::ZERO,
+        )
+        .unwrap();
+        assert_eq!(
+            current_preview(&mut recovered),
+            current_preview(&mut tracker)
+        );
+        let mut events = Vec::new();
+        for _ in 0..32 {
+            events.extend(tail.poll().unwrap());
+        }
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].prompt,
+            format!("{header}\n</image>\n[Image #1] Is this ready to accept?")
+        );
+        // Plain user text about image markup is not an attachment wrapper.
+        value["payload"]["content"]
+            .as_array_mut()
+            .unwrap()
+            .remove(1);
+        assert_eq!(
+            LastPrompt::from(parse_codex_prompt(&value.to_string()).unwrap()).text,
+            format!("{header}\n</image>\n[Image #1] Is this ready to accept?")
         );
     }
 

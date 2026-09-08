@@ -207,7 +207,9 @@ recorded in `sympoies/nils-cli#1409`.
   observation is preview-only and never emits `prompt_submitted` or acknowledges
   a broker input delivery. Inline string-valued `image_url` content is elided
   before the 256 KiB line-buffer bound, preserving surrounding user text without
-  buffering image payloads. If cold recovery starts mid-history, the first
+  retaining image payloads in that buffer. For Codex records containing an actual
+  image, paired image name/path wrapper lines are removed from the list preview
+  so they cannot hide the user question; submission-event text stays unchanged. If cold recovery starts mid-history, the first
   existing Goal snapshot establishes its comparison baseline without replacing
   a newer prompt, unless its event timestamp identifies a new Goal creation.
   An objective edit cannot be inferred from an isolated existing snapshot;
