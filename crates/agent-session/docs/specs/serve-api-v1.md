@@ -448,9 +448,13 @@ recorded in `sympoies/nils-cli#1409`.
   reason. A successful mutation response also echoes the current
   `session_incarnation`, allowing an intermediary to verify an unbound queued
   outcome against the request fence without exposing credential metadata.
-  The control loop drains a queued intent when the turn becomes `waiting`,
-  resolves credentials through the host broker, and sends Codex
-  `account/login/start` with `chatgptAuthTokens`. Success flips the durable
+  The control loop drains a queued intent after the live app-server reports no
+  in-progress turn for the bound thread, even when the hook-derived activity
+  projection has not yet caught up to `waiting`. The TUI proxy serializes
+  account mutation with every forwarded `turn/start` until its matching
+  provider response, so an accepted-but-not-yet-observed turn cannot cross
+  that idle boundary. It resolves credentials through the host broker and
+  sends Codex `account/login/start` with `chatgptAuthTokens`. Success flips the durable
   binding and clears `next`; failure preserves the applied binding and marks
   the intent failed. Prompt, terminal-input, and auto-resume submission paths
   fail closed while a selected binding is `pending` or `failed`, or while

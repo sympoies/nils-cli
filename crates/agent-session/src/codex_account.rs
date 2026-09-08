@@ -584,6 +584,7 @@ pub(crate) fn begin_switch_binding(
 ) -> Result<u64, CliError> {
     validate_account(account)?;
     let _lock = acquire_session_record_lock(context, id)?;
+    let _account_gate = crate::codex_app_server::acquire_account_mutation_gate(context, id)?;
     let mut record = load_session_record(context, id)?;
     ensure_runtime(&record, expected_launch_id).map_err(|_| {
         CliError::data(
@@ -809,6 +810,7 @@ fn queue_next_account_inner(
 ) -> Result<CodexAccountView, CliError> {
     validate_account(account)?;
     let _lock = acquire_session_record_lock(context, id)?;
+    let _account_gate = crate::codex_app_server::acquire_account_mutation_gate(context, id)?;
     let mut record = load_session_record(context, id)?;
     ensure_runtime(&record, expected_launch_id).map_err(|_| {
         CliError::data(
@@ -986,8 +988,12 @@ pub(crate) fn begin_next_apply(
     expected_launch_id: &str,
 ) -> Result<Option<NextAccountIdentity>, CliError> {
     let _lock = acquire_session_record_lock(context, id)?;
+    let _account_gate = crate::codex_app_server::acquire_account_mutation_gate(context, id)?;
     let mut record = load_session_record(context, id)?;
     ensure_runtime(&record, expected_launch_id)?;
+    if crate::activity::runtime_is_unhealthy(context, &record) {
+        return Ok(None);
+    }
     if !broker_is_configured() || !crate::codex_app_server::runtime_is_supported(&record) {
         return Ok(None);
     }

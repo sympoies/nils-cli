@@ -858,7 +858,11 @@ fn manual_input_section_path(context: &CliContext, record: &SessionRecord) -> Pa
 }
 
 fn manual_input_gate_path(context: &CliContext, record: &SessionRecord) -> PathBuf {
-    crate::session_dir(context, &record.id).join(MANUAL_INPUT_GATE_FILE)
+    account_mutation_gate_path(context, &record.id)
+}
+
+fn account_mutation_gate_path(context: &CliContext, id: &str) -> PathBuf {
+    crate::session_dir(context, id).join(MANUAL_INPUT_GATE_FILE)
 }
 
 fn manual_input_ack_path(record: &SessionRecord) -> Option<PathBuf> {
@@ -1132,9 +1136,9 @@ fn manual_input_request_matches_bound_thread(
     true
 }
 
-struct ManualInputGate {
+pub(crate) struct ManualInputGate {
     gate_file: fs::File,
-    _owner_file: fs::File,
+    _owner_file: Option<fs::File>,
 }
 
 impl Drop for ManualInputGate {
@@ -1178,6 +1182,7 @@ fn marker_has_live_shared_lock(file: &fs::File) -> bool {
     std::io::Error::last_os_error().kind() == std::io::ErrorKind::WouldBlock
 }
 
+#[cfg(test)]
 fn acquire_manual_input_gate(
     context: &CliContext,
     record: &SessionRecord,
@@ -1218,7 +1223,128 @@ fn acquire_manual_input_gate(
         .ok()?;
     Some(ManualInputGate {
         gate_file,
-        _owner_file: owner_file,
+        _owner_file: Some(owner_file),
+    })
+}
+
+/// Serialize a provider `turn/start` with account mutation. The proxy takes
+/// this gate before forwarding and retains it through the matching JSON-RPC
+/// response, closing the accepted-but-not-yet-observed turn window. A manual
+/// sender marker, when present, is revalidated under the same lock.
+fn acquire_turn_start_gate(
+    context: &CliContext,
+    record: &SessionRecord,
+    value: &Value,
+) -> Option<ManualInputGate> {
+    if value.get("method").and_then(Value::as_str) != Some("turn/start")
+        || value.get("id").and_then(json_id_key).is_none()
+        || !value.pointer("/params/input").is_some_and(Value::is_array)
+        || !value
+            .pointer("/params/threadId")
+            .and_then(Value::as_str)
+            .is_some_and(protocol_id_is_valid)
+    {
+        return None;
+    }
+    let gate_file = open_manual_input_gate_file(&manual_input_gate_path(context, record))?;
+    // A proxy never waits here: a manual sender may already own the session
+    // record lock, and a competing account mutation drops that record lock
+    // when its own non-blocking gate attempt loses.
+    // SAFETY: `flock` observes the valid descriptor borrowed for this call.
+    if unsafe { libc::flock(gate_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        return None;
+    }
+
+    let marker_path = manual_input_section_path(context, record);
+    let Ok(mut owner_file) = fs::File::open(&marker_path) else {
+        return Some(ManualInputGate {
+            gate_file,
+            _owner_file: None,
+        });
+    };
+    if !marker_has_live_shared_lock(&owner_file) {
+        return Some(ManualInputGate {
+            gate_file,
+            _owner_file: None,
+        });
+    }
+    if !manual_input_request_matches_bound_thread(context, record, value) {
+        return None;
+    }
+    let own = owner_file.metadata().ok()?;
+    let current = fs::metadata(&marker_path).ok()?;
+    if own.dev() != current.dev() || own.ino() != current.ino() {
+        return None;
+    }
+    let marker = read_runtime_process_marker_file(&mut owner_file)?;
+    if !valid_runtime_process_marker(
+        &marker,
+        record,
+        MANUAL_INPUT_SECTION_VERSION,
+        MANUAL_INPUT_SECTION_TTL,
+    ) {
+        return None;
+    }
+    UnixDatagram::unbound()
+        .ok()?
+        .send_to(&[1], manual_input_ack_path(record)?)
+        .ok()?;
+    Some(ManualInputGate {
+        gate_file,
+        _owner_file: Some(owner_file),
+    })
+}
+
+/// Hold account mutation behind every provider `turn/start` that has been
+/// forwarded but has not received its matching response yet.
+pub(crate) fn acquire_account_mutation_gate(
+    context: &CliContext,
+    id: &str,
+) -> Result<ManualInputGate, CliError> {
+    crate::validate_id(id)?;
+    let path = account_mutation_gate_path(context, id);
+    let gate_file = open_manual_input_gate_file(&path).ok_or_else(|| {
+        CliError::runtime(
+            "codex-account-mutation-gate-unavailable",
+            "Codex account mutation gate is unavailable",
+            Some(json!({ "id": id })),
+        )
+    })?;
+    // The caller already owns the session-record lock. Never wait here: the
+    // proxy acquires this gate before that lock, so a losing account mutation
+    // must release the record promptly instead of inverting the order.
+    // SAFETY: `flock` observes the valid descriptor borrowed for this call.
+    if unsafe { libc::flock(gate_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        return Err(CliError::runtime(
+            "codex-account-session-busy",
+            "Codex account mutation is waiting for an in-flight turn submission",
+            Some(json!({ "id": id })),
+        ));
+    }
+    let own = gate_file.metadata().map_err(|_| {
+        CliError::runtime(
+            "codex-account-mutation-gate-unavailable",
+            "Codex account mutation gate is unavailable",
+            Some(json!({ "id": id })),
+        )
+    })?;
+    let current = fs::metadata(&path).map_err(|_| {
+        CliError::runtime(
+            "codex-account-mutation-gate-unavailable",
+            "Codex account mutation gate is unavailable",
+            Some(json!({ "id": id })),
+        )
+    })?;
+    if own.dev() != current.dev() || own.ino() != current.ino() {
+        return Err(CliError::runtime(
+            "codex-account-mutation-gate-replaced",
+            "Codex account mutation gate changed during authorization",
+            Some(json!({ "id": id })),
+        ));
+    }
+    Ok(ManualInputGate {
+        gate_file,
+        _owner_file: None,
     })
 }
 
@@ -1760,14 +1886,32 @@ pub(crate) fn latest_turn_request(id: u64, thread_id: &str) -> Value {
 }
 
 fn latest_in_progress_turn_id(result: &Value) -> Option<&str> {
-    let turn = result.get("data")?.as_array()?.first()?;
-    (turn.get("status").and_then(Value::as_str) == Some("inProgress"))
-        .then(|| {
-            turn.get("id")
-                .and_then(Value::as_str)
-                .filter(|id| protocol_id_is_valid(id))
-        })
-        .flatten()
+    match latest_turn_state(result)? {
+        LatestTurnState::InProgress(turn_id) => Some(turn_id),
+        LatestTurnState::Idle => None,
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum LatestTurnState<'a> {
+    Idle,
+    InProgress(&'a str),
+}
+
+fn latest_turn_state(result: &Value) -> Option<LatestTurnState<'_>> {
+    let turns = result.get("data")?.as_array()?;
+    let Some(turn) = turns.first() else {
+        return Some(LatestTurnState::Idle);
+    };
+    let turn_id = turn
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| protocol_id_is_valid(id))?;
+    match turn.get("status").and_then(Value::as_str)? {
+        "inProgress" => Some(LatestTurnState::InProgress(turn_id)),
+        "completed" | "failed" | "interrupted" => Some(LatestTurnState::Idle),
+        _ => None,
+    }
 }
 
 pub(crate) fn loaded_thread_ids(result: &Value) -> Option<Vec<String>> {
@@ -2078,8 +2222,9 @@ async fn apply_account_binding(
 /// prompt: transition it to `applying`, drive the app-server login, and record
 /// success (which flips the applied binding and clears the intent) or failure
 /// (which marks the intent failed and keeps the prompt fenced). Returns the
-/// account now applied to the live runtime, if it changed.
-async fn apply_pending_next_account(
+/// account now applied to the live runtime, if it changed. The control owner
+/// must verify the bound thread is idle immediately before calling this.
+async fn apply_pending_next_account_at_idle(
     websocket: &mut tokio_tungstenite::WebSocketStream<UnixStream>,
     context: &CliContext,
     record: &SessionRecord,
@@ -2089,34 +2234,6 @@ async fn apply_pending_next_account(
         .runtime
         .as_ref()
         .map(|runtime| runtime.launch_id.clone())?;
-    // Only drain while the turn is authoritatively idle.
-    let idle_context = context.clone();
-    let idle_id = record.id.clone();
-    let idle_launch = launch_id.clone();
-    let idle = tokio::task::spawn_blocking(move || {
-        let current = crate::load_session_record(&idle_context, &idle_id).ok()?;
-        if current
-            .runtime
-            .as_ref()
-            .is_none_or(|runtime| runtime.launch_id != idle_launch)
-        {
-            return None;
-        }
-        if !matches!(
-            crate::codex_account::pending_next_apply(&current),
-            Ok(Some(_))
-        ) {
-            return None;
-        }
-        crate::activity::state_for_view(&idle_context, &current).map(|state| state.phase)
-    })
-    .await
-    .ok()
-    .flatten();
-    if idle != Some(crate::activity::TurnPhase::Waiting) {
-        return None;
-    }
-
     let begin_context = context.clone();
     let begin_id = record.id.clone();
     let begin_launch = launch_id.clone();
@@ -2693,10 +2810,53 @@ pub(crate) async fn run_control(
                         let _ = response.send(result);
                     }
                     ControlCommand::ApplyNext { response } => {
-                        if let Some(applied) = apply_pending_next_account(
-                            &mut websocket, &context, &record, &mut request_id,
+                        if reducer.active_turn_id.is_some() {
+                            let _ = response.send(Ok(()));
+                            continue;
+                        }
+                        request_id = request_id.saturating_add(1);
+                        if let Err(error) = send_json(
+                            &mut websocket,
+                            latest_turn_request(request_id, &thread_id),
                         )
                         .await
+                        {
+                            let _ = response.send(Err(error));
+                            return Err("Codex idle-boundary read failed".to_string());
+                        }
+                        let latest = receive_response_with_timeout(
+                            &mut websocket,
+                            request_id,
+                            Some((&context, &record, &mut reducer)),
+                            external_auth_account
+                                .as_deref()
+                                .map(|account| (&context, &record, account)),
+                            CONTROL_RESPONSE_TIMEOUT,
+                        )
+                        .await;
+                        let idle = match latest {
+                            Ok(_) if reducer.active_turn_id.is_some() => false,
+                            Ok(result) => match latest_turn_state(&result) {
+                                Some(LatestTurnState::Idle) => true,
+                                Some(LatestTurnState::InProgress(turn_id)) => {
+                                    reducer.note_started(turn_id);
+                                    false
+                                }
+                                None => false,
+                            },
+                            Err(error) => {
+                                let _ = response.send(Err(error));
+                                continue;
+                            }
+                        };
+                        if idle
+                            && let Some(applied) = apply_pending_next_account_at_idle(
+                                &mut websocket,
+                                &context,
+                                &record,
+                                &mut request_id,
+                            )
+                            .await
                         {
                             external_auth_account = Some(applied);
                         }
@@ -3246,6 +3406,18 @@ fn json_id_key(value: &Value) -> Option<String> {
         Value::Number(_) => Some(value.to_string()),
         _ => None,
     }
+}
+
+fn json_rpc_response_id_key(value: &Value) -> Option<String> {
+    if value.get("method").is_some() {
+        return None;
+    }
+    let has_result = value.get("result").is_some();
+    let has_error = value.get("error").is_some();
+    if has_result == has_error {
+        return None;
+    }
+    value.get("id").and_then(json_id_key)
 }
 
 fn attention_request_id_key(value: &Value) -> Option<String> {
@@ -3966,7 +4138,7 @@ impl FreshBootstrap {
 
 struct MutationAuthorization {
     _bootstrap_gate: Option<CreateBootstrapGate>,
-    _manual_input_gate: Option<ManualInputGate>,
+    _turn_start_gate: Option<ManualInputGate>,
     _account_authority: Option<crate::LockedSessionAuthority>,
 }
 
@@ -4053,11 +4225,28 @@ async fn cancel_before_tui_mutation(
     if !matches!(method, Some("thread/start" | "turn/start")) {
         return Some(MutationAuthorization {
             _bootstrap_gate: None,
-            _manual_input_gate: None,
+            _turn_start_gate: None,
             _account_authority: None,
         });
     }
     if method == Some("turn/start") && !ensure_turn_start_account_ready(context, record).await {
+        bootstrap.close();
+        return None;
+    }
+    let turn_start_gate = if method == Some("turn/start") {
+        let gate_context = context.clone();
+        let gate_record = record.clone();
+        let gate_value = value.clone();
+        tokio::task::spawn_blocking(move || {
+            acquire_turn_start_gate(&gate_context, &gate_record, &gate_value)
+        })
+        .await
+        .ok()
+        .flatten()
+    } else {
+        None
+    };
+    if method == Some("turn/start") && turn_start_gate.is_none() {
         bootstrap.close();
         return None;
     }
@@ -4084,26 +4273,16 @@ async fn cancel_before_tui_mutation(
             .ok()
             .flatten()
     };
-    let manual_input_gate = if method == Some("turn/start") {
-        let gate_context = context.clone();
-        let gate_record = record.clone();
-        let gate_value = value.clone();
-        tokio::task::spawn_blocking(move || {
-            acquire_manual_input_gate(&gate_context, &gate_record, &gate_value)
-        })
-        .await
-        .ok()
-        .flatten()
-    } else {
-        None
-    };
     let cancellation_context = context.clone();
     let id = record.id.clone();
     let launch_id = record
         .runtime
         .as_ref()
         .map(|runtime| runtime.launch_id.clone())?;
-    let wait_for_transient_lock = bootstrap_gate.is_none() && manual_input_gate.is_none();
+    let sender_owns_record_authority = turn_start_gate
+        .as_ref()
+        .is_some_and(|gate| gate._owner_file.is_some());
+    let wait_for_transient_lock = bootstrap_gate.is_none() && !sender_owns_record_authority;
     let cancellation = tokio::task::spawn_blocking(move || {
         let now = Timestamp::now().to_string();
         if wait_for_transient_lock {
@@ -4128,13 +4307,13 @@ async fn cancel_before_tui_mutation(
     // Either gate proves that the outer sender still owns the matching
     // record/lifecycle authority. Reacquiring the record lock while holding
     // the gate would invert marker teardown's lock order.
-    let sender_owns_record_authority = bootstrap_gate.is_some() || manual_input_gate.is_some();
+    let sender_owns_record_authority = bootstrap_gate.is_some() || sender_owns_record_authority;
     let mut authorization = match cancellation {
         Some(crate::auto_resume::ManualInputCancelOutcome::Ready) => {
             bootstrap.close();
             Some(MutationAuthorization {
                 _bootstrap_gate: bootstrap_gate,
-                _manual_input_gate: manual_input_gate,
+                _turn_start_gate: turn_start_gate,
                 _account_authority: None,
             })
         }
@@ -4144,15 +4323,19 @@ async fn cancel_before_tui_mutation(
         {
             Some(MutationAuthorization {
                 _bootstrap_gate: bootstrap_gate,
-                _manual_input_gate: manual_input_gate,
+                _turn_start_gate: turn_start_gate,
                 _account_authority: None,
             })
         }
-        Some(crate::auto_resume::ManualInputCancelOutcome::Busy) if manual_input_gate.is_some() => {
+        Some(crate::auto_resume::ManualInputCancelOutcome::Busy)
+            if turn_start_gate
+                .as_ref()
+                .is_some_and(|gate| gate._owner_file.is_some()) =>
+        {
             bootstrap.close();
             Some(MutationAuthorization {
                 _bootstrap_gate: bootstrap_gate,
-                _manual_input_gate: manual_input_gate,
+                _turn_start_gate: turn_start_gate,
                 _account_authority: None,
             })
         }
@@ -4247,14 +4430,49 @@ async fn run_proxy_session(
     );
     let mut projection = ProxyProjection::new(context.clone(), record.clone());
     let mut bootstrap = FreshBootstrap::for_runtime(&context, &record);
-    let result = async {
+    let mut pending_turn_authorizations = BTreeMap::<String, MutationAuthorization>::new();
+    let mut pending_turn_authorization_deadline = None;
+    let mut result = async {
         loop {
             tokio::select! {
+            _ = async {
+                match pending_turn_authorization_deadline {
+                    Some(deadline) => tokio::time::sleep_until(deadline).await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                return Err("Codex turn/start response timed out".to_string());
+            }
             message = tui.next() => {
                 let message = message
                     .ok_or_else(|| "remote TUI closed the proxy".to_string())?
                     .map_err(|err| format!("remote TUI read failed: {err}"))?;
-                let authorization = if let Some(value) = message_value(&message)? {
+                let (authorization, turn_start_key) = if let Some(value) = message_value(&message)? {
+                    let turn_start_key = (value.get("method").and_then(Value::as_str)
+                        == Some("turn/start"))
+                        .then(|| value.get("id").and_then(json_id_key))
+                        .flatten();
+                    if turn_start_key.as_ref().is_some_and(|key| {
+                        pending_turn_authorizations.contains_key(key)
+                            || pending_turn_authorizations.len() >= MAX_REDUCER_PENDING_TURNS
+                    }) {
+                        if let Some(id) = value.get("id") {
+                            tui.send(Message::Text(
+                                json!({
+                                    "id": id,
+                                    "error": {
+                                        "code": -32001,
+                                        "message": "agent-session state is busy; retry the request"
+                                    }
+                                })
+                                .to_string()
+                                .into(),
+                            ))
+                            .await
+                            .map_err(|err| format!("remote TUI write failed: {err}"))?;
+                        }
+                        continue;
+                    }
                     let Some(authorization) = cancel_before_tui_mutation(
                         &context,
                         &record,
@@ -4282,17 +4500,23 @@ async fn run_proxy_session(
                         continue;
                     };
                     projection.observe_client(&value);
-                    authorization
+                    (authorization, turn_start_key)
                 } else {
-                    MutationAuthorization {
+                    (MutationAuthorization {
                         _bootstrap_gate: None,
-                        _manual_input_gate: None,
+                        _turn_start_gate: None,
                         _account_authority: None,
-                    }
+                    }, None)
                 };
                 let closed = matches!(message, Message::Close(_));
                 send_proxy_upstream(&mut upstream, message, CONTROL_RESPONSE_TIMEOUT).await?;
-                drop(authorization);
+                if let Some(key) = turn_start_key {
+                    pending_turn_authorizations.insert(key, authorization);
+                    pending_turn_authorization_deadline =
+                        Some(tokio::time::Instant::now() + CONTROL_SUBMISSION_TIMEOUT);
+                } else {
+                    drop(authorization);
+                }
                 if closed {
                     return Ok(());
                 }
@@ -4304,6 +4528,12 @@ async fn run_proxy_session(
                 let observed = message.clone();
                 let closed = matches!(message, Message::Close(_));
                 if let Some(value) = message_value(&observed)? {
+                    if let Some(key) = json_rpc_response_id_key(&value) {
+                        pending_turn_authorizations.remove(&key);
+                        if pending_turn_authorizations.is_empty() {
+                            pending_turn_authorization_deadline = None;
+                        }
+                    }
                     bootstrap.observe_server(&value);
                     projection.observe_server_before_forward(&value).await?;
                 }
@@ -4317,11 +4547,44 @@ async fn run_proxy_session(
         }
     }
     .await;
+    let pending_turn_uncertain = !pending_turn_authorizations.is_empty();
+    if pending_turn_uncertain {
+        let unhealthy_context = context.clone();
+        let unhealthy_id = record.id.clone();
+        let unhealthy_launch_id = record
+            .runtime
+            .as_ref()
+            .map(|runtime| runtime.launch_id.clone())
+            .ok_or_else(|| "Codex runtime identity is missing".to_string())?;
+        let unhealthy_result = tokio::task::spawn_blocking(move || {
+            crate::activity::mark_runtime_unhealthy(
+                &unhealthy_context,
+                &unhealthy_id,
+                &unhealthy_launch_id,
+                "codex_turn_start_outcome_uncertain",
+            )
+        })
+        .await;
+        if let Err(error) = unhealthy_result
+            .map_err(|_| "Codex runtime health update task failed".to_string())
+            .and_then(|result| {
+                result.map_err(|err| {
+                    format!(
+                        "failed to mark uncertain Codex turn admission: {}",
+                        err.code()
+                    )
+                })
+            })
+        {
+            result = Err(error);
+        }
+    }
+    pending_turn_authorizations.clear();
     drop(listener);
     drop(_guard);
     drop(upstream);
     drop(tui);
-    if result.is_err() {
+    if result.is_err() || pending_turn_uncertain {
         projection.finish_fail_close().await;
     } else {
         projection.finish().await;
@@ -4845,6 +5108,36 @@ mod tests {
             latest_in_progress_turn_id(&json!({
                 "data": [{"id": "raw-completed-turn", "status": "completed", "items": []}],
                 "nextCursor": null
+            })),
+            None
+        );
+        assert_eq!(
+            latest_turn_state(&json!({
+                "data": [{"id": "raw-active-turn", "status": "inProgress", "items": []}],
+                "nextCursor": null
+            })),
+            Some(LatestTurnState::InProgress("raw-active-turn"))
+        );
+        assert_eq!(
+            latest_turn_state(&json!({
+                "data": [{"id": "raw-completed-turn", "status": "completed", "items": []}],
+                "nextCursor": null
+            })),
+            Some(LatestTurnState::Idle)
+        );
+        assert_eq!(
+            latest_turn_state(&json!({"data": []})),
+            Some(LatestTurnState::Idle)
+        );
+        assert_eq!(
+            latest_turn_state(&json!({
+                "data": [{"id": "raw-future-turn", "status": "future", "items": []}]
+            })),
+            None
+        );
+        assert_eq!(
+            latest_turn_state(&json!({
+                "data": [{"id": "", "status": "completed", "items": []}]
             })),
             None
         );
@@ -8792,6 +9085,241 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
     }
 
     #[tokio::test]
+    async fn proxy_holds_account_queue_until_in_flight_turn_start_is_acknowledged() {
+        let env_lock = GlobalStateLock::new();
+        let _broker = EnvGuard::set(
+            &env_lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            r#"["/configured/broker"]"#,
+        );
+        let tmp = tempfile::TempDir::new().unwrap();
+        let upstream = tmp.path().join("in-flight-turn.sock");
+        let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let record = record_with_runtime("in-flight-turn", &upstream);
+        fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        bind_thread(&record, "thread-a").unwrap();
+
+        let (forwarded_tx, forwarded_rx) = tokio::sync::oneshot::channel();
+        let (collision_tx, collision_rx) = tokio::sync::oneshot::channel();
+        let (collision_seen_tx, collision_seen_rx) = tokio::sync::oneshot::channel();
+        let (acknowledge_tx, acknowledge_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let request = receive_json(&mut socket).await;
+            assert_eq!(request["method"], "turn/start");
+            forwarded_tx.send(()).unwrap();
+            collision_rx.await.unwrap();
+            send_json(
+                &mut socket,
+                json!({
+                    "id": 1,
+                    "method": "server/ping",
+                    "params": {}
+                }),
+            )
+            .await
+            .unwrap();
+            collision_seen_tx.send(()).unwrap();
+            acknowledge_rx.await.unwrap();
+            send_json(
+                &mut socket,
+                json!({
+                    "method": "turn/started",
+                    "params": {
+                        "threadId": "thread-a",
+                        "turn": { "id": "in-flight-turn", "status": "inProgress" }
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+            respond(
+                &mut socket,
+                &request,
+                json!({ "turn": { "id": "in-flight-turn", "status": "inProgress" } }),
+            )
+            .await;
+            let request = receive_json(&mut socket).await;
+            assert_eq!(request["method"], "thread/read");
+            respond(&mut socket, &request, json!({ "ok": true })).await;
+            socket.close(None).await.unwrap();
+        });
+        let proxy_args = crate::cli::CodexAppServerProxyArgs {
+            id: record.id.clone(),
+            upstream: upstream.clone(),
+            listen: upstream.with_extension("proxy"),
+        };
+        let proxy_context = context.clone();
+        let proxy = tokio::spawn(async move { run_proxy_session(proxy_context, proxy_args).await });
+        let proxy_stream = connect_socket(&upstream.with_extension("proxy"))
+            .await
+            .unwrap();
+        let (mut tui, _) = tokio_tungstenite::client_async("ws://localhost", proxy_stream)
+            .await
+            .unwrap();
+        tui.send(Message::Text(
+            json!({
+                "id": 1,
+                "method": "turn/start",
+                "params": { "threadId": "thread-a", "input": [] }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+        forwarded_rx.await.unwrap();
+
+        let queue_context = context.clone();
+        let queue_id = record.id.clone();
+        let queue_launch_id = record.runtime.as_ref().unwrap().launch_id.clone();
+        let (queued_tx, queued_rx) = std::sync::mpsc::channel();
+        let queue = std::thread::spawn(move || {
+            queued_tx
+                .send(crate::codex_account::queue_next_account_with_unbound(
+                    &queue_context,
+                    &queue_id,
+                    &queue_launch_id,
+                    "sym",
+                ))
+                .unwrap();
+        });
+        assert!(
+            queued_rx.recv_timeout(Duration::from_millis(100)).is_err(),
+            "account selection must not become durable before the forwarded turn/start is acknowledged"
+        );
+        assert!(
+            crate::codex_account::view_for_record(
+                &crate::load_session_record(&context, &record.id).unwrap()
+            )
+            .next
+            .is_none()
+        );
+
+        collision_tx.send(()).unwrap();
+        collision_seen_rx.await.unwrap();
+        assert!(
+            queued_rx.recv_timeout(Duration::from_millis(100)).is_err(),
+            "a colliding server request id must not release the turn/start fence"
+        );
+        acknowledge_tx.send(()).unwrap();
+        loop {
+            let value = receive_json(&mut tui).await;
+            if value["id"] == 1 && value.get("method").is_none() {
+                assert_eq!(value["result"]["turn"]["id"], "in-flight-turn");
+                break;
+            }
+        }
+        let queued = queued_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("account selection should proceed after the provider response")
+            .unwrap();
+        assert_eq!(
+            queued
+                .next
+                .as_ref()
+                .and_then(|next| next.account.as_deref()),
+            Some("sym")
+        );
+        queue.join().unwrap();
+        tui.send(Message::Text(
+            json!({ "id": 2, "method": "thread/read", "params": {} })
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+        assert_eq!(receive_json(&mut tui).await["id"], 2);
+        server.await.unwrap();
+        proxy.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn proxy_times_out_unanswered_turn_and_releases_account_gate() {
+        let env_lock = GlobalStateLock::new();
+        let _broker = EnvGuard::set(
+            &env_lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            r#"["/configured/broker"]"#,
+        );
+        let tmp = tempfile::TempDir::new().unwrap();
+        let upstream = tmp.path().join("unanswered-turn.sock");
+        let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let record = record_with_runtime("unanswered-turn", &upstream);
+        fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        crate::activity::activate_runtime(&context, &record).unwrap();
+        bind_thread(&record, "thread-a").unwrap();
+
+        let (forwarded_tx, forwarded_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let request = receive_json(&mut socket).await;
+            assert_eq!(request["method"], "turn/start");
+            forwarded_tx.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        let proxy_args = crate::cli::CodexAppServerProxyArgs {
+            id: record.id.clone(),
+            upstream: upstream.clone(),
+            listen: upstream.with_extension("proxy"),
+        };
+        let proxy_context = context.clone();
+        let proxy = tokio::spawn(async move { run_proxy_session(proxy_context, proxy_args).await });
+        let proxy_stream = connect_socket(&upstream.with_extension("proxy"))
+            .await
+            .unwrap();
+        let (mut tui, _) = tokio_tungstenite::client_async("ws://localhost", proxy_stream)
+            .await
+            .unwrap();
+        tui.send(Message::Text(
+            json!({
+                "id": 1,
+                "method": "turn/start",
+                "params": { "threadId": "thread-a", "input": [] }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+        forwarded_rx.await.unwrap();
+        tokio::time::advance(CONTROL_SUBMISSION_TIMEOUT + Duration::from_secs(1)).await;
+        let error = proxy.await.unwrap().unwrap_err();
+        assert_eq!(error, "Codex turn/start response timed out");
+
+        {
+            let _record_lock = crate::acquire_session_record_lock(&context, &record.id).unwrap();
+            let _gate = acquire_account_mutation_gate(&context, &record.id)
+                .expect("proxy timeout must release the account mutation gate");
+        }
+        let launch_id = &record.runtime.as_ref().unwrap().launch_id;
+        crate::codex_account::queue_next_account_with_unbound(
+            &context, &record.id, launch_id, "sym",
+        )
+        .expect("the account selection may remain queued while the runtime is unhealthy");
+        assert!(
+            crate::codex_account::begin_next_apply(&context, &record.id, launch_id)
+                .unwrap()
+                .is_none(),
+            "a timed-out turn/start must keep the old runtime from applying queued credentials"
+        );
+        server.abort();
+        let _ = server.await;
+    }
+
+    #[tokio::test]
     async fn proxy_rejects_failed_account_apply_without_upstream_forwarding() {
         let env_lock = GlobalStateLock::new();
         let _broker = EnvGuard::set(
@@ -9030,6 +9558,9 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
         crate::activity::ingest_event(&context, &record.id, turn_started).unwrap();
         bind_thread(&record, "raw-thread-apply-next").unwrap();
 
+        let (complete_turn, complete_turn_rx) = tokio::sync::oneshot::channel();
+        let (stale_probe_seen, mut stale_probe_seen_rx) = tokio::sync::oneshot::channel();
+        let (complete_racing_turn, complete_racing_turn_rx) = tokio::sync::oneshot::channel();
         let server = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
@@ -9056,9 +9587,26 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             let resume = receive_json(&mut socket).await;
             assert_eq!(resume["method"], "thread/resume");
             respond(&mut socket, &resume, json!({})).await;
-            for _ in 0..2 {
+            for request_index in 0..2 {
                 let usage = receive_json(&mut socket).await;
                 assert_eq!(usage["method"], "account/rateLimits/read");
+                if request_index == 1 {
+                    send_json(
+                        &mut socket,
+                        json!({
+                            "method": "turn/started",
+                            "params": {
+                                "threadId": "raw-thread-apply-next",
+                                "turn": {
+                                    "id": "turn-apply-next",
+                                    "status": "inProgress"
+                                }
+                            }
+                        }),
+                    )
+                    .await
+                    .unwrap();
+                }
                 respond(
                     &mut socket,
                     &usage,
@@ -9066,6 +9614,85 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
                 )
                 .await;
             }
+            complete_turn_rx.await.unwrap();
+            send_json(
+                &mut socket,
+                json!({
+                    "method": "turn/completed",
+                    "params": {
+                        "threadId": "raw-thread-apply-next",
+                        "turn": {
+                            "id": "turn-apply-next",
+                            "status": "completed"
+                        }
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+            let latest_turn = receive_json(&mut socket).await;
+            assert_eq!(latest_turn["method"], "thread/turns/list");
+            assert_eq!(latest_turn["params"]["threadId"], "raw-thread-apply-next");
+            send_json(
+                &mut socket,
+                json!({
+                    "method": "turn/started",
+                    "params": {
+                        "threadId": "raw-thread-apply-next",
+                        "turn": {
+                            "id": "racing-turn",
+                            "status": "inProgress"
+                        }
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+            respond(
+                &mut socket,
+                &latest_turn,
+                json!({
+                    "data": [{
+                        "id": "turn-apply-next",
+                        "status": "completed",
+                        "items": []
+                    }],
+                    "nextCursor": null
+                }),
+            )
+            .await;
+            stale_probe_seen.send(()).unwrap();
+            complete_racing_turn_rx.await.unwrap();
+            send_json(
+                &mut socket,
+                json!({
+                    "method": "turn/completed",
+                    "params": {
+                        "threadId": "raw-thread-apply-next",
+                        "turn": {
+                            "id": "racing-turn",
+                            "status": "completed"
+                        }
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+            let latest_turn = receive_json(&mut socket).await;
+            assert_eq!(latest_turn["method"], "thread/turns/list");
+            respond(
+                &mut socket,
+                &latest_turn,
+                json!({
+                    "data": [{
+                        "id": "racing-turn",
+                        "status": "completed",
+                        "items": []
+                    }],
+                    "nextCursor": null
+                }),
+            )
+            .await;
             let next_login = receive_json(&mut socket).await;
             assert_eq!(next_login["method"], "account/login/start");
             assert_eq!(next_login["params"]["accessToken"], "token-sym");
@@ -9083,18 +9710,23 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
         assert!(handle.usage().await.unwrap().authoritative);
         crate::codex_account::queue_next_account(&context, &record.id, "runtime-apply-next", "sym")
             .unwrap();
-        let turn_completed = serde_json::from_value(json!({
-            "schema_version": crate::activity::TURN_EVENT_VERSION,
-            "event_id": "apply-next-turn-completed",
-            "runtime_id": "runtime-apply-next",
-            "provider": "codex",
-            "provider_session_id": "raw-thread-apply-next",
-            "provider_turn_id": "turn-apply-next",
-            "kind": "turn_completed",
-            "confidence": "authoritative"
-        }))
-        .unwrap();
-        crate::activity::ingest_event(&context, &record.id, turn_completed).unwrap();
+        handle.apply_next().await.unwrap();
+        let active_view = crate::codex_account::view_for_record(
+            &crate::load_session_record(&context, &record.id).unwrap(),
+        );
+        assert_eq!(
+            active_view.next.as_ref().map(|next| next.state),
+            Some("queued")
+        );
+        complete_turn.send(()).unwrap();
+        assert_eq!(
+            crate::activity::activity_status(&context, &record.id)
+                .unwrap()
+                .turn_state
+                .phase,
+            crate::activity::TurnPhase::Working,
+            "the regression requires live idle while durable activity is stale-working"
+        );
 
         let readiness = ensure_turn_start_account_ready(&context, &record);
         tokio::pin!(readiness);
@@ -9104,7 +9736,47 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
                 .is_err(),
             "turn/start must remain held while the long-lived control owner has not applied the queued account"
         );
-        handle.apply_next().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                handle.apply_next().await.unwrap();
+                if tokio::time::timeout(Duration::from_millis(10), &mut stale_probe_seen_rx)
+                    .await
+                    .is_ok()
+                {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("live idle probe must observe the completed turn");
+        let raced_view = crate::codex_account::view_for_record(
+            &crate::load_session_record(&context, &record.id).unwrap(),
+        );
+        assert_eq!(
+            raced_view.next.as_ref().map(|next| next.state),
+            Some("queued"),
+            "an interleaved live turn/start must override a stale idle list response"
+        );
+        complete_racing_turn.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                handle.apply_next().await.unwrap();
+                let view = crate::codex_account::view_for_record(
+                    &crate::load_session_record(&context, &record.id).unwrap(),
+                );
+                if view.next.is_none() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("live idle must drain the queued account despite stale activity");
+        let applied_view = crate::codex_account::view_for_record(
+            &crate::load_session_record(&context, &record.id).unwrap(),
+        );
+        assert_eq!(applied_view.selected_account.as_deref(), Some("sym"));
+        assert!(applied_view.next.is_none());
         assert!(
             readiness.await,
             "turn/start must become ready only after the control owner durably applies the account"
@@ -9122,6 +9794,18 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             Some("raw-thread-apply-next"),
             "managed account binding must retain the exact provider thread"
         );
+        let turn_completed = serde_json::from_value(json!({
+            "schema_version": crate::activity::TURN_EVENT_VERSION,
+            "event_id": "apply-next-turn-completed",
+            "runtime_id": "runtime-apply-next",
+            "provider": "codex",
+            "provider_session_id": "raw-thread-apply-next",
+            "provider_turn_id": "turn-apply-next",
+            "kind": "turn_completed",
+            "confidence": "authoritative"
+        }))
+        .unwrap();
+        crate::activity::ingest_event(&context, &record.id, turn_completed).unwrap();
         assert!(
             crate::auto_resume::arm_usage_exhaustion(
                 &context,
@@ -10727,7 +11411,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
         let bootstrap_guard = begin_create_bootstrap(&record).unwrap().unwrap();
         let authorization = MutationAuthorization {
             _bootstrap_gate: acquire_create_bootstrap_gate(&record),
-            _manual_input_gate: None,
+            _turn_start_gate: None,
             _account_authority: None,
         };
         assert!(authorization._bootstrap_gate.is_some());
