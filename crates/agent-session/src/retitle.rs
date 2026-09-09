@@ -563,6 +563,10 @@ impl RetitleService {
             .map(|config| config.kind())
     }
 
+    pub(crate) fn is_available(&self) -> bool {
+        self.readiness().status != "unavailable"
+    }
+
     fn config(&self) -> Result<Arc<RetitleConfig>, CliError> {
         match &self.config {
             Ok(Some(config)) => Ok(config.clone()),
@@ -846,14 +850,18 @@ pub(crate) struct RetitleContextObservation {
     pub(crate) provider_input_chars: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub(crate) struct ProviderAttemptObservation {
     pub(crate) provider_kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) model_label: Option<String>,
     pub(crate) outcome: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) failure_class: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) failure_stage: Option<String>,
+    pub(crate) started_at: String,
+    pub(crate) finished_at: String,
     pub(crate) duration_bucket: String,
 }
 
@@ -1118,7 +1126,7 @@ fn turn_chars(turn: &TitleContextTurn) -> usize {
             .map_or(0, |value| value.chars().count())
 }
 
-fn filter_text(value: &str) -> String {
+pub(crate) fn filter_text(value: &str) -> String {
     let mut result = Vec::new();
     let mut injected_end: Option<&'static str> = None;
     for raw in value.lines() {
@@ -1371,16 +1379,131 @@ pub(crate) fn infer_title_state_observed(
             let timeout = match permit.provider_timeout(fallback.timeout()) {
                 Ok(timeout) => timeout,
                 Err(error) => {
+                    let observed_at = jiff::Timestamp::now().to_string();
                     providers.push(provider_attempt_observation(
                         fallback,
                         "deadline_exhausted",
                         Some("provider_budget"),
+                        &observed_at,
                         Duration::ZERO,
                     ));
                     return Err(ObservedInferenceError { error, providers });
                 }
             };
             match infer_with_provider_observed(fallback, &input, context, existing, timeout) {
+                Ok((state, observation)) => {
+                    providers.push(observation);
+                    Ok(ObservedInference {
+                        inferred: InferredTitleState {
+                            state,
+                            provider_kind: fallback.kind(),
+                        },
+                        providers,
+                    })
+                }
+                Err(failure) => {
+                    let ProviderAttemptFailure { error, observation } = *failure;
+                    providers.push(observation);
+                    Err(ObservedInferenceError { error, providers })
+                }
+            }
+        }
+        Err(failure) => {
+            let ProviderAttemptFailure { error, observation } = *failure;
+            providers.push(observation);
+            Err(ObservedInferenceError { error, providers })
+        }
+    }
+}
+
+/// Reuses the existing provider/configuration boundary while replacing raw
+/// transcript context with the daemon's bounded v3 semantic-memory projection.
+pub(crate) fn infer_semantic_memory_observed(
+    permit: &RetitlePermit,
+    semantic_memory: &str,
+    existing: Option<&SessionTitleState>,
+    trigger: &str,
+) -> Result<ObservedInference, ObservedInferenceError> {
+    let _: Value = serde_json::from_str(semantic_memory).map_err(|_| ObservedInferenceError {
+        error: retitle_error(
+            "retitle-context-unavailable",
+            "semantic memory is unavailable",
+            false,
+            "refresh_session",
+            "refresh_session",
+        ),
+        providers: Vec::new(),
+    })?;
+    let trigger = if trigger == "automatic" {
+        RetitleTrigger::CompletionRecovery
+    } else {
+        RetitleTrigger::Manual
+    };
+    let context = TitleContextV2 {
+        schema_version: "agent-session.title-context.v2",
+        session: TitleContextSession {
+            agent: "session".to_string(),
+            repo_name: None,
+            title_state: existing.map(TitleContextTitleState::from),
+        },
+        turns: vec![TitleContextTurn {
+            id: "semantic-memory".to_string(),
+            user_prompt: semantic_memory.to_string(),
+            assistant_excerpt: None,
+        }],
+        coverage: TitleContextCoverage {
+            source: "semantic_memory",
+            complete: true,
+            truncated: false,
+        },
+        trigger,
+    };
+    let input = format!(
+        "Return only one JSON object with keys topic_action (keep|set|clear), topic (string|null), activity (string|null), references (array of #number strings). Use the bounded semantic-memory fields including origin, active_objective, current_activity, milestones, decisions, blockers, and journey. Preserve origin; change an automatic topic only for an explicit human_objective journey entry. Never invent references. Do not use tools. Semantic memory:\n{semantic_memory}"
+    );
+    if input.len() >= crate::retitle_v3::MAX_PROVIDER_INPUT_BYTES {
+        return Err(ObservedInferenceError {
+            error: retitle_error(
+                "retitle-context-unavailable",
+                "semantic memory provider input exceeds its bound",
+                false,
+                "refresh_session",
+                "compact_memory",
+            ),
+            providers: Vec::new(),
+        });
+    }
+    let timeout = permit
+        .provider_timeout(permit.config.timeout())
+        .map_err(|error| ObservedInferenceError {
+            error,
+            providers: Vec::new(),
+        })?;
+    let mut providers = Vec::with_capacity(MAX_PROVIDER_ATTEMPT_OBSERVATIONS);
+    match infer_with_provider_observed(&permit.config, &input, &context, existing, timeout) {
+        Ok((state, observation)) => {
+            providers.push(observation);
+            Ok(ObservedInference {
+                inferred: InferredTitleState {
+                    state,
+                    provider_kind: permit.config.kind(),
+                },
+                providers,
+            })
+        }
+        Err(failure)
+            if fallback_eligible(failure.error.code()) && permit.config.fallback.is_some() =>
+        {
+            let ProviderAttemptFailure { observation, .. } = *failure;
+            providers.push(observation);
+            let fallback = permit.config.fallback.as_deref().expect("checked");
+            let timeout = permit
+                .provider_timeout(fallback.timeout())
+                .map_err(|error| ObservedInferenceError {
+                    error,
+                    providers: providers.clone(),
+                })?;
+            match infer_with_provider_observed(fallback, &input, &context, existing, timeout) {
                 Ok((state, observation)) => {
                     providers.push(observation);
                     Ok(ObservedInference {
@@ -1413,6 +1536,7 @@ fn infer_with_provider_observed(
     existing: Option<&SessionTitleState>,
     timeout: Duration,
 ) -> Result<(SessionTitleState, ProviderAttemptObservation), Box<ProviderAttemptFailure>> {
+    let started_at = jiff::Timestamp::now().to_string();
     let started = Instant::now();
     let output = match config.kind() {
         "codex_subscription" => invoke_codex(config, input, timeout),
@@ -1423,27 +1547,31 @@ fn infer_with_provider_observed(
     let output = match output {
         Ok(output) => output,
         Err(error) => {
-            let observation = provider_attempt_observation(
+            let mut observation = provider_attempt_observation(
                 config,
                 provider_outcome(error.code()),
                 Some(provider_failure_stage(error.code(), false)),
+                &started_at,
                 started.elapsed(),
             );
+            observation.failure_class = Some(provider_failure_class(&error));
             return Err(Box::new(ProviderAttemptFailure { error, observation }));
         }
     };
     match parse_decision(&output, context, existing) {
         Ok(state) => Ok((
             state,
-            provider_attempt_observation(config, "success", None, started.elapsed()),
+            provider_attempt_observation(config, "success", None, &started_at, started.elapsed()),
         )),
         Err(error) => {
-            let observation = provider_attempt_observation(
+            let mut observation = provider_attempt_observation(
                 config,
                 provider_outcome(error.code()),
                 Some(provider_failure_stage(error.code(), true)),
+                &started_at,
                 started.elapsed(),
             );
+            observation.failure_class = Some(provider_failure_class(&error));
             Err(Box::new(ProviderAttemptFailure { error, observation }))
         }
     }
@@ -1453,13 +1581,20 @@ fn provider_attempt_observation(
     config: &RetitleConfig,
     outcome: &str,
     failure_stage: Option<&str>,
+    started_at: &str,
     elapsed: Duration,
 ) -> ProviderAttemptObservation {
+    // Wall-clock endpoints are retained for attempt ordering while the
+    // monotonic elapsed duration remains authoritative for latency buckets.
+    let finished_at = jiff::Timestamp::now().to_string();
     ProviderAttemptObservation {
         provider_kind: config.kind().to_string(),
         model_label: observable_model_label_for_provider(config),
         outcome: outcome.to_string(),
+        failure_class: (outcome != "success").then(|| outcome.to_string()),
         failure_stage: failure_stage.map(str::to_string),
+        started_at: started_at.to_string(),
+        finished_at,
         duration_bucket: duration_bucket(elapsed).to_string(),
     }
 }
@@ -1607,7 +1742,10 @@ fn invoke_openai_compatible(
         ),
     ]);
     if config.json_response {
-        body.insert("response_format".to_string(), json!({"type":"json_object"}));
+        body.insert(
+            "response_format".to_string(),
+            openai_compatible_response_format(),
+        );
     }
     for (key, value) in &config.extra_body {
         if matches!(key.as_str(), "model" | "messages" | "stream") {
@@ -1660,12 +1798,20 @@ fn invoke_openai_compatible(
         return Err(provider_unavailable());
     }
     let bytes = read_bounded_provider_body(&mut response)?;
-    let value: Value = serde_json::from_slice(&bytes).map_err(|_| provider_malformed())?;
+    let value: Value =
+        serde_json::from_slice(&bytes).map_err(|_| provider_malformed_class("json_parse"))?;
     value
         .pointer("/choices/0/message/content")
         .and_then(Value::as_str)
         .map(str::to_string)
-        .ok_or_else(provider_malformed)
+        .ok_or_else(|| provider_malformed_class("missing_message"))
+}
+
+fn openai_compatible_response_format() -> Value {
+    // `json_response` predates retitle v3 and means the broadly supported
+    // OpenAI-compatible JSON-object mode. Do not silently upgrade existing v2
+    // providers to structured-output schemas that they may not implement.
+    json!({"type":"json_object"})
 }
 
 fn read_bounded_provider_body(reader: &mut impl Read) -> Result<Vec<u8>, CliError> {
@@ -1673,9 +1819,9 @@ fn read_bounded_provider_body(reader: &mut impl Read) -> Result<Vec<u8>, CliErro
     reader
         .take((MAX_PROVIDER_OUTPUT_BYTES + 1) as u64)
         .read_to_end(&mut bytes)
-        .map_err(|_| provider_malformed())?;
+        .map_err(|_| provider_malformed_class("response_read"))?;
     if bytes.len() > MAX_PROVIDER_OUTPUT_BYTES {
-        return Err(provider_malformed());
+        return Err(provider_malformed_class("schema_validation"));
     }
     Ok(bytes)
 }
@@ -1695,7 +1841,7 @@ fn invoke_command(
         timeout,
         &[],
     )?;
-    String::from_utf8(output).map_err(|_| provider_malformed())
+    String::from_utf8(output).map_err(|_| provider_malformed_class("response_encoding"))
 }
 
 fn invoke_codex(
@@ -1819,7 +1965,7 @@ fn invoke_codex(
                 break;
             }
         }
-        answer.ok_or_else(provider_malformed)
+        answer.ok_or_else(|| provider_malformed_class("missing_message"))
     })();
     terminate_child(&mut child);
     argv.clear();
@@ -1833,20 +1979,24 @@ fn codex_turn_start_request(thread: &str, input: &str) -> Value {
         "params": {
             "threadId": thread,
             "input": [{"type": "text", "text": input, "text_elements": []}],
-            "outputSchema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["topic_action", "topic", "activity", "references"],
-                "properties": {
-                    "topic_action": {"type": "string", "enum": ["keep", "set", "clear"]},
-                    "topic": {"type": ["string", "null"], "maxLength": 120},
-                    "activity": {"type": ["string", "null"], "maxLength": 120},
-                    "references": {
-                        "type": "array",
-                        "maxItems": 2,
-                        "items": {"type": "string", "pattern": r"^#[1-9][0-9]{0,9}$"}
-                    }
-                }
+            "outputSchema": title_output_schema()
+        }
+    })
+}
+
+fn title_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["topic_action", "topic", "activity", "references"],
+        "properties": {
+            "topic_action": {"type": "string", "enum": ["keep", "set", "clear"]},
+            "topic": {"type": ["string", "null"], "maxLength": 120},
+            "activity": {"type": ["string", "null"], "maxLength": 120},
+            "references": {
+                "type": "array",
+                "maxItems": 2,
+                "items": {"type": "string", "pattern": r"^#[1-9][0-9]{0,9}$"}
             }
         }
     })
@@ -1888,7 +2038,7 @@ fn recv_rpc(
             std::sync::mpsc::RecvTimeoutError::Timeout => provider_timeout(),
             std::sync::mpsc::RecvTimeoutError::Disconnected => provider_unavailable(),
         })?;
-    serde_json::from_str(&line).map_err(|_| provider_malformed())
+    serde_json::from_str(&line).map_err(|_| provider_malformed_class("json_parse"))
 }
 
 fn parse_decision(
@@ -1902,8 +2052,10 @@ fn parse_decision(
         .and_then(|value| value.strip_suffix("```"))
         .map(str::trim)
         .unwrap_or(trimmed);
+    let value: Value =
+        serde_json::from_str(json_text).map_err(|_| provider_malformed_class("json_parse"))?;
     let decision: RawDecision =
-        serde_json::from_str(json_text).map_err(|_| provider_malformed())?;
+        serde_json::from_value(value).map_err(|_| provider_malformed_class("schema_validation"))?;
     if decision
         .topic
         .as_deref()
@@ -1914,7 +2066,7 @@ fn parse_decision(
             .is_some_and(|value| value.chars().count() > 120)
         || decision.references.len() > 2
     {
-        return Err(provider_malformed());
+        return Err(provider_malformed_class("schema_validation"));
     }
     let existing = existing.cloned().unwrap_or(SessionTitleState {
         topic: None,
@@ -1934,7 +2086,7 @@ fn parse_decision(
                 .topic
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty())
-                .ok_or_else(provider_malformed)?;
+                .ok_or_else(|| provider_malformed_class("schema_validation"))?;
             let allowed = approved_references(context);
             let references = decision
                 .references
@@ -2114,13 +2266,31 @@ fn provider_unavailable() -> CliError {
 }
 
 fn provider_malformed() -> CliError {
-    retitle_error(
+    provider_malformed_class("malformed_response")
+}
+
+fn provider_malformed_class(failure_class: &'static str) -> CliError {
+    CliError::unavailable(
         "retitle-provider-malformed-response",
         "title provider returned an invalid decision",
-        true,
-        "inspect_provider",
-        "repair_provider_output",
+        Some(json!({
+            "retryable": true,
+            "next_action": "retry",
+            "recovery": {"strategy":"retry_request", "safe_to_retry":true},
+            "failure_class": failure_class,
+        })),
     )
+}
+
+pub(crate) fn provider_failure_class(error: &CliError) -> String {
+    error
+        .0
+        .details
+        .as_ref()
+        .and_then(|details| details.get("failure_class"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| provider_outcome(error.code()).to_string())
 }
 
 fn api_key_missing() -> CliError {
@@ -2607,22 +2777,6 @@ fn turn_conflict() -> CliError {
     )
 }
 
-#[cfg(test)]
-pub(crate) fn fail_code(
-    context: &CliContext,
-    id: &str,
-    request: &RetitleRequest,
-    diagnostic_code: &str,
-) {
-    let evidence = RetitleAttemptEvidence {
-        context: None,
-        providers: Vec::new(),
-        elapsed: Duration::ZERO,
-        started: None,
-    };
-    let _ = fail_attempt(context, id, request, diagnostic_code, "unknown", &evidence);
-}
-
 pub(crate) fn fail_attempt(
     context: &CliContext,
     id: &str,
@@ -2994,7 +3148,10 @@ mod tests {
             provider_kind: "codex_subscription".into(),
             model_label: Some("gpt-5.6-luna".into()),
             outcome: "malformed_response".into(),
+            failure_class: Some("schema_validation".into()),
             failure_stage: Some("provider_parse".into()),
+            started_at: "2026-09-09T00:00:00Z".into(),
+            finished_at: "2026-09-09T00:00:02Z".into(),
             duration_bucket: "1_4_s".into(),
         }];
         let mut observation = new_attempt_observation(&request, "sha256:correlation".into(), 2);
@@ -3627,6 +3784,76 @@ mod tests {
     }
 
     #[test]
+    fn malformed_provider_failure_classes_preserve_v2_retry_contract() {
+        for class in [
+            "missing_message",
+            "json_parse",
+            "schema_validation",
+            "response_read",
+            "response_encoding",
+        ] {
+            let error = provider_malformed_class(class);
+            assert_eq!(provider_failure_class(&error), class);
+            let details = error.0.details.as_ref().unwrap();
+            assert_eq!(details["retryable"], true);
+            assert_eq!(details["recovery"]["safe_to_retry"], true);
+            assert!(is_retryable_automatic_error_code(error.code()));
+        }
+    }
+
+    #[test]
+    fn openai_compatible_json_response_preserves_v2_json_object_mode() {
+        assert_eq!(
+            openai_compatible_response_format(),
+            json!({"type":"json_object"})
+        );
+    }
+
+    #[test]
+    fn provider_failure_outcomes_and_stages_are_stable_for_v3_receipts() {
+        for (code, outcome, stage) in [
+            (
+                "retitle-account-missing",
+                "account_missing",
+                "provider_setup",
+            ),
+            (
+                "retitle-api-key-missing",
+                "api_key_missing",
+                "provider_setup",
+            ),
+            ("retitle-provider-timeout", "timeout", "provider_call"),
+            (
+                "retitle-provider-unavailable",
+                "unavailable",
+                "provider_call",
+            ),
+            (
+                "retitle-provider-rate-limited",
+                "rate_limited",
+                "provider_call",
+            ),
+            (
+                "retitle-provider-quota-exceeded",
+                "quota_exceeded",
+                "provider_call",
+            ),
+            (
+                "retitle-provider-malformed-response",
+                "malformed_response",
+                "provider_response",
+            ),
+        ] {
+            assert_eq!(provider_outcome(code), outcome);
+            assert_eq!(provider_failure_stage(code, false), stage);
+        }
+        assert_eq!(
+            provider_failure_stage("retitle-provider-malformed-response", true),
+            "provider_parse"
+        );
+    }
+
+    #[test]
     fn provider_config_accepts_subscription_deepseek_local_and_command_shapes() {
         for (raw, kind) in [
             (
@@ -3781,6 +4008,52 @@ mod tests {
         let inferred = infer_title_state(&permit, &context, None).unwrap();
         assert_eq!(inferred.provider_kind, "command");
         assert_eq!(inferred.state.topic.as_deref(), Some("Fallback title"));
+
+        let observed = infer_semantic_memory_observed(
+            &permit,
+            r#"{"origin":{"text":"objective: retitle"},"active_objective":{"text":"objective: retitle"}}"#,
+            None,
+            "automatic",
+        )
+        .unwrap_or_else(|failure| panic!("v3 fallback failed: {}", failure.error.code()));
+        assert_eq!(observed.providers.len(), 2);
+        assert_eq!(observed.providers[0].provider_kind, "command");
+        assert_eq!(observed.providers[0].outcome, "unavailable");
+        assert_eq!(
+            observed.providers[0].failure_stage.as_deref(),
+            Some("provider_call")
+        );
+        assert_eq!(
+            observed.providers[0].failure_class.as_deref(),
+            Some("unavailable")
+        );
+        assert_eq!(observed.providers[1].outcome, "success");
+        assert!(observed.providers.iter().all(|attempt| {
+            attempt.started_at.parse::<jiff::Timestamp>().is_ok()
+                && attempt.finished_at.parse::<jiff::Timestamp>().is_ok()
+                && matches!(
+                    attempt.duration_bucket.as_str(),
+                    "under_10_ms"
+                        | "10_49_ms"
+                        | "50_249_ms"
+                        | "250_999_ms"
+                        | "1_4_s"
+                        | "5_29_s"
+                        | "30_119_s"
+                        | "120_s_plus"
+                )
+        }));
+        assert!(observed.providers.iter().all(|attempt| {
+            let started = attempt.started_at.parse::<jiff::Timestamp>().unwrap();
+            let finished = attempt.finished_at.parse::<jiff::Timestamp>().unwrap();
+            started <= finished
+        }));
+        assert!(
+            observed
+                .providers
+                .iter()
+                .any(|attempt| attempt.started_at != attempt.finished_at)
+        );
     }
 
     #[test]

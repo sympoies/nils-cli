@@ -1,9 +1,11 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
@@ -31,6 +33,9 @@ const LATEST_PREVIEW_SESSION_MAX_BYTES: usize = 1024 * 1024;
 const LATEST_PREVIEW_CACHE_MAX_ENTRIES: usize = 1024;
 const REVERSE_MESSAGE_MAX_BYTES: u64 = 16 * 1024 * 1024;
 const REVERSE_MESSAGE_CHUNK_BYTES: usize = 64 * 1024;
+const INCREMENTAL_CONTINUITY_BYTES: u64 = 256;
+const INCREMENTAL_OVERLAP_SEARCH_BYTES: u64 = 4 * 1024 * 1024;
+const INCREMENTAL_INTEGRITY_BLOCK_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct HistorySource {
@@ -92,6 +97,8 @@ pub(crate) struct HistorySession {
     pub(crate) resumable: bool,
     #[serde(skip)]
     transcript_path: PathBuf,
+    #[serde(skip)]
+    incremental_catalog_stamp: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -120,6 +127,78 @@ pub(crate) struct HistoryMessagesPage {
     pub(crate) next_cursor: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) older_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub(crate) struct IncrementalHistoryCursor {
+    pub(crate) source_id: String,
+    pub(crate) segment_id: String,
+    pub(crate) offset: u64,
+    pub(crate) continuity_hash: String,
+    #[serde(default)]
+    pub(crate) discarding_oversized_line: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    prefix_integrity: Option<IncrementalPrefixIntegrity>,
+}
+
+/// Constant-size integrity state for all bytes before an incremental cursor.
+///
+/// Complete fixed-size blocks are folded into `completed_hash`; the final
+/// partial block is represented by `tail_hash`. Same-length/inode-changing
+/// generations validate the entire prefix with bounded memory. A growing file
+/// uses the continuity tail plus one previously committed rotating block, then
+/// extends the fold from at most one prior block. This keeps ordinary appends
+/// O(new bytes) while sampling older-prefix mutation without growing the cursor.
+/// An append combined with a rewrite outside the committed tail/anchor is not
+/// immediately distinguishable from a pure append; the next non-append
+/// generation performs the exact full-prefix validation.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+struct IncrementalPrefixIntegrity {
+    block_bytes: u32,
+    completed_hash: String,
+    tail_hash: String,
+    generation: String,
+    file_identity: String,
+    observed_len: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verification_block: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verification_hash: Option<String>,
+}
+
+#[derive(Debug)]
+struct IncrementalFileGeneration {
+    digest: String,
+    file_identity: String,
+    len: u64,
+}
+
+#[cfg(test)]
+impl IncrementalHistoryCursor {
+    pub(crate) fn without_prefix_integrity(
+        source_id: String,
+        segment_id: String,
+        offset: u64,
+        continuity_hash: String,
+        discarding_oversized_line: bool,
+    ) -> Self {
+        Self {
+            source_id,
+            segment_id,
+            offset,
+            continuity_hash,
+            discarding_oversized_line,
+            prefix_integrity: None,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct IncrementalHistoryPage {
+    pub(crate) messages: Vec<HistoryMessage>,
+    pub(crate) cursor: IncrementalHistoryCursor,
+    pub(crate) caught_up: bool,
+    pub(crate) discontinuity: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -176,13 +255,14 @@ impl Drop for PendingArchive {
 #[derive(Clone, Debug)]
 struct CatalogSnapshot {
     sessions: Vec<HistorySession>,
+    incremental_segments: BTreeMap<String, Vec<HistorySession>>,
     truncated: bool,
 }
 
 #[derive(Debug, Default)]
 struct CatalogCache {
     refreshed_at: Option<Instant>,
-    snapshot: Option<CatalogSnapshot>,
+    snapshot: Option<Arc<CatalogSnapshot>>,
     latest_prompt_previews: HashMap<PathBuf, LatestPromptCacheEntry>,
 }
 
@@ -200,6 +280,8 @@ pub(crate) struct HistoryCatalog {
     archives_root: PathBuf,
     stars_root: PathBuf,
     cache: Mutex<CatalogCache>,
+    #[cfg(test)]
+    snapshot_accesses: AtomicUsize,
 }
 
 impl HistoryCatalog {
@@ -213,6 +295,8 @@ impl HistoryCatalog {
             archives_root,
             stars_root,
             cache: Mutex::new(CatalogCache::default()),
+            #[cfg(test)]
+            snapshot_accesses: AtomicUsize::new(0),
         }
     }
 
@@ -245,7 +329,7 @@ impl HistoryCatalog {
         limit: usize,
         managed_titles: &BTreeMap<String, String>,
     ) -> Result<HistoryPage, HistoryError> {
-        let mut snapshot = self.snapshot();
+        let mut snapshot = (*self.snapshot()).clone();
         apply_title_overrides(&mut snapshot.sessions, managed_titles);
         let mut page = paginate_snapshot(snapshot, machine, query, provider, cursor, limit)?;
         let mut prompt_cache = {
@@ -337,7 +421,180 @@ impl HistoryCatalog {
         }
     }
 
-    fn snapshot(&self) -> CatalogSnapshot {
+    #[cfg(test)]
+    pub(crate) fn incremental_messages(
+        &self,
+        history_id: &str,
+        cursor: Option<&IncrementalHistoryCursor>,
+        max_bytes: usize,
+    ) -> Result<IncrementalHistoryPage, HistoryError> {
+        self.incremental_messages_with_applied_ids(history_id, cursor, &[], max_bytes)
+    }
+
+    #[cfg(test)]
+    fn incremental_messages_with_applied_ids(
+        &self,
+        history_id: &str,
+        cursor: Option<&IncrementalHistoryCursor>,
+        applied_message_ids: &[String],
+        max_bytes: usize,
+    ) -> Result<IncrementalHistoryPage, HistoryError> {
+        let snapshot = self.snapshot();
+        self.incremental_messages_from_snapshot(
+            snapshot,
+            history_id,
+            cursor,
+            applied_message_ids,
+            max_bytes,
+        )
+    }
+
+    fn incremental_messages_from_snapshot(
+        &self,
+        mut snapshot: Arc<CatalogSnapshot>,
+        history_id: &str,
+        cursor: Option<&IncrementalHistoryCursor>,
+        applied_message_ids: &[String],
+        max_bytes: usize,
+    ) -> Result<IncrementalHistoryPage, HistoryError> {
+        if max_bytes == 0 {
+            return Err(HistoryError::InvalidCursor);
+        }
+        if snapshot
+            .incremental_segments
+            .get(history_id)
+            .is_some_and(|segments| incremental_catalog_generation_changed(segments))
+        {
+            // Creating, removing or renaming a provider segment changes an
+            // ancestor directory, while ordinary appends do not. Refresh on
+            // that generation change so the general 30-second history-list
+            // cache cannot hide a just-created resume/rotation segment.
+            self.invalidate();
+            snapshot = self.snapshot();
+        }
+        let segments = snapshot
+            .incremental_segments
+            .get(history_id)
+            .ok_or(HistoryError::NotFound)?;
+        let source_id = incremental_source_id(&segments[0]);
+        let resolved = resolve_incremental_segment(segments, cursor, &source_id)?;
+        let session = &segments[resolved.index];
+        let mut file =
+            fs::File::open(&session.transcript_path).map_err(|_| HistoryError::NotFound)?;
+        let file_len = file.metadata().map_err(|_| HistoryError::Io)?.len();
+        let page = read_messages_incremental_from_reader(
+            session,
+            &mut file,
+            file_len,
+            resolved.offset,
+            max_bytes,
+            resolved.discarding_oversized_line,
+        )?;
+        let continuity_hash = incremental_continuity_hash(&mut file, page.next_offset)?;
+        let generation = incremental_file_generation(&file, file_len)?;
+        let prefix_integrity = extend_or_compute_prefix_integrity(
+            &mut file,
+            cursor,
+            &resolved,
+            page.next_offset,
+            &generation,
+        )?;
+        let applied = applied_message_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
+        let mut emitted = HashSet::new();
+        let messages = page
+            .messages
+            .into_iter()
+            .filter(|message| {
+                !applied.contains(message.id.as_str()) && emitted.insert(message.id.clone())
+            })
+            .collect();
+        Ok(IncrementalHistoryPage {
+            messages,
+            cursor: IncrementalHistoryCursor {
+                source_id,
+                segment_id: resolved.segment_id,
+                offset: page.next_offset,
+                continuity_hash,
+                discarding_oversized_line: page.discarding_oversized_line,
+                prefix_integrity: Some(prefix_integrity),
+            },
+            caught_up: page.next_offset == file_len && resolved.index + 1 == segments.len(),
+            discontinuity: resolved.discontinuity,
+        })
+    }
+
+    /// Compatibility lookup for callers that predate profile-aware identity.
+    /// Ambiguous provider/session pairs fail closed.
+    #[allow(dead_code)]
+    pub(crate) fn incremental_messages_for_provider_session(
+        &self,
+        provider: &str,
+        provider_session_id: &str,
+        cursor: Option<&IncrementalHistoryCursor>,
+        applied_message_ids: &[String],
+        max_bytes: usize,
+    ) -> Result<IncrementalHistoryPage, HistoryError> {
+        let snapshot = self.snapshot();
+        let matching_ids = self
+            .sources
+            .iter()
+            .filter(|source| source.provider == provider)
+            .map(|source| {
+                stable_history_id(
+                    provider,
+                    source.agent_profile.as_deref(),
+                    provider_session_id,
+                )
+            })
+            .filter(|history_id| snapshot.incremental_segments.contains_key(history_id))
+            .collect::<HashSet<_>>();
+        let mut matching_ids = matching_ids.into_iter();
+        let history_id = matching_ids.next().ok_or(HistoryError::NotFound)?;
+        if matching_ids.next().is_some() {
+            // Provider session ids are not globally unique across configured
+            // agent profiles. Compatibility callers without a profile must
+            // fail closed instead of attaching semantic memory to whichever
+            // source happened to sort first.
+            return Err(HistoryError::NotFound);
+        }
+        self.incremental_messages_from_snapshot(
+            snapshot,
+            &history_id,
+            cursor,
+            applied_message_ids,
+            max_bytes,
+        )
+    }
+
+    pub(crate) fn incremental_messages_for_provider_session_identity(
+        &self,
+        provider: &str,
+        agent_profile: Option<&str>,
+        provider_session_id: &str,
+        cursor: Option<&IncrementalHistoryCursor>,
+        applied_message_ids: &[String],
+        max_bytes: usize,
+    ) -> Result<IncrementalHistoryPage, HistoryError> {
+        let snapshot = self.snapshot();
+        let history_id = stable_history_id(provider, agent_profile, provider_session_id);
+        if !snapshot.incremental_segments.contains_key(&history_id) {
+            return Err(HistoryError::NotFound);
+        }
+        self.incremental_messages_from_snapshot(
+            snapshot,
+            &history_id,
+            cursor,
+            applied_message_ids,
+            max_bytes,
+        )
+    }
+
+    fn snapshot(&self) -> Arc<CatalogSnapshot> {
+        #[cfg(test)]
+        self.snapshot_accesses.fetch_add(1, Ordering::Relaxed);
         let mut cache = self
             .cache
             .lock()
@@ -345,12 +602,16 @@ impl HistoryCatalog {
         let fresh = cache
             .refreshed_at
             .is_some_and(|refreshed_at| refreshed_at.elapsed() < CATALOG_TTL);
-        if fresh && let Some(snapshot) = cache.snapshot.clone() {
-            return snapshot;
+        if fresh && let Some(snapshot) = cache.snapshot.as_ref() {
+            return Arc::clone(snapshot);
         }
-        let snapshot = scan_catalog(&self.sources, &self.archives_root, &self.stars_root);
+        let snapshot = Arc::new(scan_catalog(
+            &self.sources,
+            &self.archives_root,
+            &self.stars_root,
+        ));
         cache.refreshed_at = Some(Instant::now());
-        cache.snapshot = Some(snapshot.clone());
+        cache.snapshot = Some(Arc::clone(&snapshot));
         snapshot
     }
 }
@@ -685,7 +946,9 @@ fn scan_catalog(
     let stars = read_stars(stars_root, deadline, &mut truncated);
     let mut visited = 0usize;
     let mut sessions = Vec::new();
+    let mut incremental_segments = BTreeMap::<String, Vec<HistorySession>>::new();
     let mut seen = HashSet::new();
+    let mut catalog_stamps = IncrementalCatalogStampCache::default();
 
     for source in sources {
         let mut paths = Vec::new();
@@ -698,12 +961,15 @@ fn scan_catalog(
             deadline,
             &mut truncated,
         );
+        paths.sort();
         for path in paths {
             if Instant::now() >= deadline {
                 truncated = true;
                 break;
             }
-            let Some(mut session) = inspect_history_file(source, &path, deadline) else {
+            let Some(mut session) =
+                inspect_history_file(source, &path, deadline, &mut catalog_stamps, &mut truncated)
+            else {
                 continue;
             };
             let archive = archives.get(&session.id);
@@ -716,6 +982,10 @@ fn scan_catalog(
                 session.archived_at = Some(archive.archived_at.clone());
             }
             session.starred_at = stars.get(&session.id).cloned();
+            incremental_segments
+                .entry(session.id.clone())
+                .or_default()
+                .push(session.clone());
             if !seen.insert(session.id.clone()) {
                 continue;
             }
@@ -730,8 +1000,18 @@ fn scan_catalog(
         }
     }
 
+    for segments in incremental_segments.values_mut() {
+        segments.sort_by(|left, right| {
+            left.created_at
+                .cmp(&right.created_at)
+                .then_with(|| left.transcript_path.cmp(&right.transcript_path))
+        });
+        segments.dedup_by(|left, right| left.transcript_path == right.transcript_path);
+    }
+
     CatalogSnapshot {
         sessions,
+        incremental_segments,
         truncated,
     }
 }
@@ -784,6 +1064,7 @@ fn find_session(sources: &[HistorySource], history_id: &str) -> Option<HistorySe
     let deadline = Instant::now() + SCAN_MAX_DURATION;
     let mut visited = 0;
     let mut truncated = false;
+    let mut catalog_stamps = IncrementalCatalogStampCache::default();
     for source in sources {
         let mut paths = Vec::new();
         collect_jsonl(
@@ -800,7 +1081,9 @@ fn find_session(sources: &[HistorySource], history_id: &str) -> Option<HistorySe
                 truncated = true;
                 break;
             }
-            let Some(session) = inspect_history_file(source, &path, deadline) else {
+            let Some(session) =
+                inspect_history_file(source, &path, deadline, &mut catalog_stamps, &mut truncated)
+            else {
                 continue;
             };
             if session.id == history_id {
@@ -860,6 +1143,8 @@ fn inspect_history_file(
     source: &HistorySource,
     path: &Path,
     deadline: Instant,
+    catalog_stamps: &mut IncrementalCatalogStampCache,
+    truncated: &mut bool,
 ) -> Option<HistorySession> {
     if Instant::now() >= deadline {
         return None;
@@ -906,6 +1191,12 @@ fn inspect_history_file(
         starred_at: None,
         resumable: true,
         transcript_path: path.to_path_buf(),
+        incremental_catalog_stamp: incremental_catalog_stamp(
+            path,
+            catalog_stamps,
+            deadline,
+            truncated,
+        ),
     })
 }
 
@@ -1116,6 +1407,760 @@ fn read_messages(
         next_cursor: Some(next.to_string()),
         older_cursor: None,
     })
+}
+
+struct IncrementalReaderPage {
+    messages: Vec<HistoryMessage>,
+    next_offset: u64,
+    discarding_oversized_line: bool,
+}
+
+struct ResolvedIncrementalSegment {
+    index: usize,
+    offset: u64,
+    segment_id: String,
+    discontinuity: bool,
+    discarding_oversized_line: bool,
+    prefix_integrity_verified: bool,
+}
+
+fn resolve_incremental_segment(
+    segments: &[HistorySession],
+    cursor: Option<&IncrementalHistoryCursor>,
+    source_id: &str,
+) -> Result<ResolvedIncrementalSegment, HistoryError> {
+    let segment_ids = segments
+        .iter()
+        .map(incremental_segment_id)
+        .collect::<Vec<_>>();
+    let Some(cursor) = cursor else {
+        return Ok(ResolvedIncrementalSegment {
+            index: 0,
+            offset: 0,
+            segment_id: segment_ids[0].clone(),
+            discontinuity: false,
+            discarding_oversized_line: false,
+            prefix_integrity_verified: false,
+        });
+    };
+
+    if cursor.source_id == source_id
+        && let Some(index) = segment_ids
+            .iter()
+            .position(|segment_id| segment_id == &cursor.segment_id)
+    {
+        let mut file =
+            fs::File::open(&segments[index].transcript_path).map_err(|_| HistoryError::NotFound)?;
+        let file_len = file.metadata().map_err(|_| HistoryError::Io)?.len();
+        let generation = incremental_file_generation(&file, file_len)?;
+        if cursor.offset <= file_len && incremental_cursor_matches(&mut file, cursor, &generation)?
+        {
+            if cursor.offset == file_len && index + 1 < segments.len() {
+                return resolve_incremental_transition(segments, &segment_ids, index + 1, cursor);
+            }
+            return Ok(ResolvedIncrementalSegment {
+                index,
+                offset: cursor.offset,
+                segment_id: cursor.segment_id.clone(),
+                discontinuity: false,
+                discarding_oversized_line: cursor.discarding_oversized_line,
+                prefix_integrity_verified: cursor.prefix_integrity.is_some(),
+            });
+        }
+
+        let resumed = find_incremental_continuity(&mut file, file_len, cursor)?;
+        return Ok(ResolvedIncrementalSegment {
+            index,
+            offset: resumed.unwrap_or(0),
+            segment_id: compacted_segment_id(&segment_ids[index], cursor, file_len),
+            discontinuity: true,
+            discarding_oversized_line: resumed.is_some() && cursor.discarding_oversized_line,
+            prefix_integrity_verified: false,
+        });
+    }
+
+    if cursor.source_id == source_id {
+        // A compaction generation deliberately gets a new segment id. On the
+        // next page, continuity is the authoritative way to re-associate that
+        // generation with its still-live path without persisting private paths.
+        for (index, session) in segments.iter().enumerate() {
+            let mut file = match fs::File::open(&session.transcript_path) {
+                Ok(file) => file,
+                Err(_) => continue,
+            };
+            let file_len = file.metadata().map_err(|_| HistoryError::Io)?.len();
+            let generation = incremental_file_generation(&file, file_len)?;
+            if cursor.offset <= file_len
+                && incremental_cursor_matches(&mut file, cursor, &generation)?
+            {
+                if cursor.offset == file_len && index + 1 < segments.len() {
+                    return resolve_incremental_transition(
+                        segments,
+                        &segment_ids,
+                        index + 1,
+                        cursor,
+                    );
+                }
+                return Ok(ResolvedIncrementalSegment {
+                    index,
+                    offset: cursor.offset,
+                    segment_id: cursor.segment_id.clone(),
+                    discontinuity: false,
+                    discarding_oversized_line: cursor.discarding_oversized_line,
+                    prefix_integrity_verified: cursor.prefix_integrity.is_some(),
+                });
+            }
+        }
+
+        // The prior path may have been removed after rotation. Search only
+        // bounded overlap windows in ordered surviving segments. A matching
+        // continuity token advances past the retained prefix/tail instead of
+        // replaying it; otherwise start at the oldest surviving boundary so
+        // semantic history is not silently skipped.
+        for (index, session) in segments.iter().enumerate() {
+            let mut file = match fs::File::open(&session.transcript_path) {
+                Ok(file) => file,
+                Err(_) => continue,
+            };
+            let file_len = file.metadata().map_err(|_| HistoryError::Io)?.len();
+            if let Some(offset) = find_incremental_continuity(&mut file, file_len, cursor)? {
+                return Ok(ResolvedIncrementalSegment {
+                    index,
+                    offset,
+                    segment_id: segment_ids[index].clone(),
+                    discontinuity: true,
+                    discarding_oversized_line: cursor.discarding_oversized_line,
+                    prefix_integrity_verified: false,
+                });
+            }
+        }
+    }
+
+    Ok(ResolvedIncrementalSegment {
+        index: 0,
+        offset: 0,
+        segment_id: segment_ids[0].clone(),
+        discontinuity: cursor.source_id != source_id || cursor.offset != 0,
+        discarding_oversized_line: false,
+        prefix_integrity_verified: false,
+    })
+}
+
+fn resolve_incremental_transition(
+    segments: &[HistorySession],
+    segment_ids: &[String],
+    index: usize,
+    cursor: &IncrementalHistoryCursor,
+) -> Result<ResolvedIncrementalSegment, HistoryError> {
+    let mut file =
+        fs::File::open(&segments[index].transcript_path).map_err(|_| HistoryError::NotFound)?;
+    let file_len = file.metadata().map_err(|_| HistoryError::Io)?.len();
+    let resumed = find_incremental_continuity(&mut file, file_len, cursor)?;
+    Ok(ResolvedIncrementalSegment {
+        index,
+        offset: resumed.unwrap_or(0),
+        segment_id: segment_ids[index].clone(),
+        discontinuity: true,
+        discarding_oversized_line: resumed.is_some() && cursor.discarding_oversized_line,
+        prefix_integrity_verified: false,
+    })
+}
+
+fn read_messages_incremental_from_reader<R: Read + Seek>(
+    session: &HistorySession,
+    reader: &mut R,
+    file_len: u64,
+    offset: u64,
+    max_bytes: usize,
+    discarding_oversized_line: bool,
+) -> Result<IncrementalReaderPage, HistoryError> {
+    if offset > file_len || max_bytes == 0 {
+        return Err(HistoryError::InvalidCursor);
+    }
+    if offset == file_len {
+        return Ok(IncrementalReaderPage {
+            messages: Vec::new(),
+            next_offset: offset,
+            discarding_oversized_line: false,
+        });
+    }
+    let requested = u64::try_from(max_bytes)
+        .unwrap_or(u64::MAX)
+        .min(file_len.saturating_sub(offset));
+    let requested = usize::try_from(requested).map_err(|_| HistoryError::Io)?;
+    reader
+        .seek(SeekFrom::Start(offset))
+        .map_err(|_| HistoryError::Io)?;
+    let mut bytes = vec![0; requested];
+    reader
+        .read_exact(&mut bytes)
+        .map_err(|_| HistoryError::Io)?;
+    let complete = bytes
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |index| index + 1);
+    if complete == 0 {
+        let oversized = discarding_oversized_line || bytes.len() > MAX_LINE_BYTES;
+        return Ok(IncrementalReaderPage {
+            messages: Vec::new(),
+            next_offset: if oversized {
+                offset.saturating_add(bytes.len() as u64)
+            } else {
+                offset
+            },
+            discarding_oversized_line: oversized,
+        });
+    }
+    let mut messages = Vec::new();
+    let mut lines = bytes[..complete].split_inclusive(|byte| *byte == b'\n');
+    if discarding_oversized_line {
+        let _ = lines.next();
+    }
+    for raw_line in lines {
+        let line = raw_line.strip_suffix(b"\n").unwrap_or(raw_line);
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line.is_empty() || line.len() > MAX_LINE_BYTES {
+            continue;
+        }
+        let Ok(value) = serde_json::from_slice::<Value>(line) else {
+            continue;
+        };
+        let Some((role, text, timestamp, human_prompt)) = normalize_message(
+            &session.provider,
+            &session.provider_session_id,
+            line,
+            &value,
+        ) else {
+            continue;
+        };
+        if text.trim().is_empty() {
+            continue;
+        }
+        messages.push(HistoryMessage {
+            id: incremental_message_id(
+                session,
+                &value,
+                &role,
+                text.trim(),
+                timestamp.as_deref(),
+                human_prompt,
+            ),
+            role,
+            text: truncate_chars(text.trim(), MAX_MESSAGE_CHARS),
+            timestamp,
+            human_prompt,
+        });
+    }
+    Ok(IncrementalReaderPage {
+        messages,
+        next_offset: offset.saturating_add(complete as u64),
+        discarding_oversized_line: false,
+    })
+}
+
+fn incremental_source_id(session: &HistorySession) -> String {
+    digest_parts(&[
+        session.provider.as_bytes(),
+        session
+            .agent_profile
+            .as_deref()
+            .unwrap_or_default()
+            .as_bytes(),
+        session.provider_session_id.as_bytes(),
+    ])
+}
+
+#[derive(Debug, Default)]
+struct IncrementalCatalogStampCache {
+    ancestors: HashMap<PathBuf, String>,
+    #[cfg(test)]
+    enumerated_directories: usize,
+}
+
+fn incremental_catalog_generation_changed(segments: &[HistorySession]) -> bool {
+    let deadline = Instant::now() + SCAN_MAX_DURATION;
+    let mut truncated = false;
+    let mut cache = IncrementalCatalogStampCache::default();
+    let changed = segments.iter().any(|session| {
+        session.incremental_catalog_stamp
+            != incremental_catalog_stamp(
+                &session.transcript_path,
+                &mut cache,
+                deadline,
+                &mut truncated,
+            )
+    });
+    changed || truncated
+}
+
+fn incremental_catalog_stamp(
+    path: &Path,
+    cache: &mut IncrementalCatalogStampCache,
+    deadline: Instant,
+    truncated: &mut bool,
+) -> String {
+    let mut stamp = String::new();
+    for ancestor in path.ancestors().skip(1).take(4) {
+        let ancestor = ancestor.to_path_buf();
+        let ancestor_stamp = if let Some(stamp) = cache.ancestors.get(&ancestor) {
+            stamp.clone()
+        } else {
+            let stamp =
+                directory_generation_stamp(&ancestor, deadline, truncated, cache_counter(cache));
+            cache.ancestors.insert(ancestor, stamp.clone());
+            stamp
+        };
+        stamp.push_str(&ancestor_stamp);
+        stamp.push('\0');
+    }
+    digest_parts(&[stamp.as_bytes()])
+}
+
+#[cfg(test)]
+fn cache_counter(cache: &mut IncrementalCatalogStampCache) -> Option<&mut usize> {
+    Some(&mut cache.enumerated_directories)
+}
+
+#[cfg(not(test))]
+fn cache_counter(_cache: &mut IncrementalCatalogStampCache) -> Option<&mut usize> {
+    None
+}
+
+fn directory_generation_stamp(
+    directory: &Path,
+    deadline: Instant,
+    truncated: &mut bool,
+    enumerated_directories: Option<&mut usize>,
+) -> String {
+    if let Some(count) = enumerated_directories {
+        *count += 1;
+    }
+    let mut stamp = directory.to_string_lossy().into_owned();
+    if Instant::now() >= deadline {
+        *truncated = true;
+        stamp.push_str("|deadline");
+        return digest_parts(&[stamp.as_bytes()]);
+    }
+    if let Ok(metadata) = fs::metadata(directory) {
+        stamp.push('|');
+        stamp.push_str(&metadata.len().to_string());
+        if let Ok(modified) = metadata.modified()
+            && let Ok(elapsed) = modified.duration_since(SystemTime::UNIX_EPOCH)
+        {
+            stamp.push('|');
+            stamp.push_str(&elapsed.as_secs().to_string());
+            stamp.push('|');
+            stamp.push_str(&elapsed.subsec_nanos().to_string());
+        }
+    }
+    if let Ok(entries) = fs::read_dir(directory) {
+        let mut names = Vec::new();
+        for entry in entries {
+            if names.len() > SCAN_MAX_ENTRIES || Instant::now() >= deadline {
+                *truncated = true;
+                break;
+            }
+            let Ok(entry) = entry else {
+                continue;
+            };
+            names.push(entry.file_name().to_string_lossy().into_owned());
+        }
+        let entries_truncated = names.len() > SCAN_MAX_ENTRIES;
+        if entries_truncated {
+            *truncated = true;
+            names.truncate(SCAN_MAX_ENTRIES);
+        }
+        names.sort_unstable();
+        stamp.push('|');
+        stamp.push_str(if entries_truncated || *truncated {
+            "entries-truncated"
+        } else {
+            "entries"
+        });
+        for name in names {
+            stamp.push('|');
+            stamp.push_str(&name);
+        }
+    }
+    digest_parts(&[stamp.as_bytes()])
+}
+
+fn incremental_segment_id(session: &HistorySession) -> String {
+    let source_id = incremental_source_id(session);
+    digest_parts(&[
+        source_id.as_bytes(),
+        session.transcript_path.to_string_lossy().as_bytes(),
+    ])
+}
+
+fn compacted_segment_id(
+    base_segment_id: &str,
+    cursor: &IncrementalHistoryCursor,
+    file_len: u64,
+) -> String {
+    digest_parts(&[
+        base_segment_id.as_bytes(),
+        cursor.segment_id.as_bytes(),
+        cursor.continuity_hash.as_bytes(),
+        file_len.to_string().as_bytes(),
+    ])
+}
+
+fn incremental_continuity_matches<R: Read + Seek>(
+    reader: &mut R,
+    cursor: &IncrementalHistoryCursor,
+) -> Result<bool, HistoryError> {
+    Ok(incremental_continuity_hash(reader, cursor.offset)? == cursor.continuity_hash)
+}
+
+fn incremental_cursor_matches<R: Read + Seek>(
+    reader: &mut R,
+    cursor: &IncrementalHistoryCursor,
+    generation: &IncrementalFileGeneration,
+) -> Result<bool, HistoryError> {
+    if !incremental_continuity_matches(reader, cursor)? {
+        return Ok(false);
+    }
+    let Some(expected) = cursor.prefix_integrity.as_ref() else {
+        // Cursors written before prefix integrity was introduced retain their
+        // prior tail-continuity behavior and are upgraded on the next page.
+        return Ok(true);
+    };
+    if expected.block_bytes as usize != INCREMENTAL_INTEGRITY_BLOCK_BYTES {
+        return Ok(false);
+    }
+    if !incremental_integrity_tail_matches(reader, cursor.offset, expected)?
+        || !incremental_verification_anchor_matches(reader, expected)?
+    {
+        return Ok(false);
+    }
+    if expected.generation == generation.digest
+        || (expected.file_identity == generation.file_identity
+            && generation.len > expected.observed_len)
+    {
+        // A pure append changes length, mtime, and ctime. Treating that common
+        // case as a full generation rewrite would rescan the entire transcript
+        // on every live chunk. The continuity tail and one rotating completed
+        // block are checked on every call; the anchor advances with each new
+        // cursor. The committed anchor detects changes since the preceding
+        // cursor without making an append O(total history).
+        return Ok(true);
+    }
+    let observed = compute_prefix_integrity(reader, cursor.offset, generation)?;
+    Ok(observed.completed_hash == expected.completed_hash
+        && observed.tail_hash == expected.tail_hash)
+}
+
+fn incremental_continuity_hash<R: Read + Seek>(
+    reader: &mut R,
+    offset: u64,
+) -> Result<String, HistoryError> {
+    let start = offset.saturating_sub(INCREMENTAL_CONTINUITY_BYTES);
+    let len = usize::try_from(offset.saturating_sub(start)).map_err(|_| HistoryError::Io)?;
+    reader
+        .seek(SeekFrom::Start(start))
+        .map_err(|_| HistoryError::Io)?;
+    let mut tail = vec![0; len];
+    reader.read_exact(&mut tail).map_err(|_| HistoryError::Io)?;
+    Ok(digest_parts(&[&tail]))
+}
+
+fn incremental_file_generation(
+    file: &fs::File,
+    file_len: u64,
+) -> Result<IncrementalFileGeneration, HistoryError> {
+    let metadata = file.metadata().map_err(|_| HistoryError::Io)?;
+    let file_identity = digest_parts(&[
+        metadata.dev().to_string().as_bytes(),
+        metadata.ino().to_string().as_bytes(),
+    ]);
+    let digest = digest_parts(&[
+        file_identity.as_bytes(),
+        file_len.to_string().as_bytes(),
+        metadata.mtime().to_string().as_bytes(),
+        metadata.mtime_nsec().to_string().as_bytes(),
+        metadata.ctime().to_string().as_bytes(),
+        metadata.ctime_nsec().to_string().as_bytes(),
+    ]);
+    Ok(IncrementalFileGeneration {
+        digest,
+        file_identity,
+        len: file_len,
+    })
+}
+
+fn incremental_integrity_seed() -> String {
+    digest_parts(&[b"agent-session.incremental-prefix-integrity.v1"])
+}
+
+fn fold_incremental_integrity_block(chain: &str, block_index: u64, block: &[u8]) -> String {
+    digest_parts(&[chain.as_bytes(), &block_index.to_le_bytes(), block])
+}
+
+fn compute_prefix_integrity<R: Read + Seek>(
+    reader: &mut R,
+    offset: u64,
+    generation: &IncrementalFileGeneration,
+) -> Result<IncrementalPrefixIntegrity, HistoryError> {
+    reader
+        .seek(SeekFrom::Start(0))
+        .map_err(|_| HistoryError::Io)?;
+    let complete_blocks = offset / INCREMENTAL_INTEGRITY_BLOCK_BYTES as u64;
+    let mut completed_hash = incremental_integrity_seed();
+    let mut verification_hash = None;
+    let mut block = vec![0; INCREMENTAL_INTEGRITY_BLOCK_BYTES];
+    for block_index in 0..complete_blocks {
+        reader
+            .read_exact(&mut block)
+            .map_err(|_| HistoryError::Io)?;
+        completed_hash = fold_incremental_integrity_block(&completed_hash, block_index, &block);
+        if block_index == 0 {
+            verification_hash = Some(digest_parts(&[&block]));
+        }
+    }
+    let tail_len = usize::try_from(offset % INCREMENTAL_INTEGRITY_BLOCK_BYTES as u64)
+        .map_err(|_| HistoryError::Io)?;
+    let mut tail = vec![0; tail_len];
+    reader.read_exact(&mut tail).map_err(|_| HistoryError::Io)?;
+    Ok(IncrementalPrefixIntegrity {
+        block_bytes: INCREMENTAL_INTEGRITY_BLOCK_BYTES as u32,
+        completed_hash,
+        tail_hash: digest_parts(&[&tail]),
+        generation: generation.digest.clone(),
+        file_identity: generation.file_identity.clone(),
+        observed_len: generation.len,
+        verification_block: (complete_blocks > 0).then_some(0),
+        verification_hash,
+    })
+}
+
+fn incremental_integrity_tail_matches<R: Read + Seek>(
+    reader: &mut R,
+    offset: u64,
+    expected: &IncrementalPrefixIntegrity,
+) -> Result<bool, HistoryError> {
+    let tail_len = offset % INCREMENTAL_INTEGRITY_BLOCK_BYTES as u64;
+    reader
+        .seek(SeekFrom::Start(offset.saturating_sub(tail_len)))
+        .map_err(|_| HistoryError::Io)?;
+    let mut tail = vec![0; usize::try_from(tail_len).map_err(|_| HistoryError::Io)?];
+    reader.read_exact(&mut tail).map_err(|_| HistoryError::Io)?;
+    Ok(digest_parts(&[&tail]) == expected.tail_hash)
+}
+
+fn incremental_verification_anchor_matches<R: Read + Seek>(
+    reader: &mut R,
+    expected: &IncrementalPrefixIntegrity,
+) -> Result<bool, HistoryError> {
+    let Some((block_index, expected_hash)) = expected
+        .verification_block
+        .zip(expected.verification_hash.as_deref())
+    else {
+        return Ok(expected.verification_block.is_none() && expected.verification_hash.is_none());
+    };
+    Ok(read_incremental_verification_anchor(reader, block_index)? == expected_hash)
+}
+
+fn read_incremental_verification_anchor<R: Read + Seek>(
+    reader: &mut R,
+    block_index: u64,
+) -> Result<String, HistoryError> {
+    reader
+        .seek(SeekFrom::Start(
+            block_index.saturating_mul(INCREMENTAL_INTEGRITY_BLOCK_BYTES as u64),
+        ))
+        .map_err(|_| HistoryError::Io)?;
+    let mut block = vec![0; INCREMENTAL_INTEGRITY_BLOCK_BYTES];
+    reader
+        .read_exact(&mut block)
+        .map_err(|_| HistoryError::Io)?;
+    Ok(digest_parts(&[&block]))
+}
+
+fn extend_or_compute_prefix_integrity<R: Read + Seek>(
+    reader: &mut R,
+    cursor: Option<&IncrementalHistoryCursor>,
+    resolved: &ResolvedIncrementalSegment,
+    next_offset: u64,
+    generation: &IncrementalFileGeneration,
+) -> Result<IncrementalPrefixIntegrity, HistoryError> {
+    let Some((cursor, prior)) =
+        cursor.zip(cursor.and_then(|cursor| cursor.prefix_integrity.as_ref()))
+    else {
+        return compute_prefix_integrity(reader, next_offset, generation);
+    };
+    if !resolved.prefix_integrity_verified
+        || resolved.offset != cursor.offset
+        || next_offset < cursor.offset
+        || prior.block_bytes as usize != INCREMENTAL_INTEGRITY_BLOCK_BYTES
+    {
+        return compute_prefix_integrity(reader, next_offset, generation);
+    }
+    if next_offset == cursor.offset {
+        // Read-only freshness/fence probes must be byte-for-byte cursor stable.
+        // In particular, do not rotate the verification anchor until history
+        // actually advances.
+        return Ok(prior.clone());
+    }
+
+    let block_bytes = INCREMENTAL_INTEGRITY_BLOCK_BYTES as u64;
+    let block_start = cursor.offset / block_bytes * block_bytes;
+    let length =
+        usize::try_from(next_offset.saturating_sub(block_start)).map_err(|_| HistoryError::Io)?;
+    reader
+        .seek(SeekFrom::Start(block_start))
+        .map_err(|_| HistoryError::Io)?;
+    let mut bytes = vec![0; length];
+    reader
+        .read_exact(&mut bytes)
+        .map_err(|_| HistoryError::Io)?;
+    let prior_tail_len =
+        usize::try_from(cursor.offset.saturating_sub(block_start)).map_err(|_| HistoryError::Io)?;
+    if digest_parts(&[&bytes[..prior_tail_len]]) != prior.tail_hash {
+        return compute_prefix_integrity(reader, next_offset, generation);
+    }
+
+    let mut completed_hash = prior.completed_hash.clone();
+    let first_block_index = block_start / block_bytes;
+    let completed_bytes =
+        bytes.len() / INCREMENTAL_INTEGRITY_BLOCK_BYTES * INCREMENTAL_INTEGRITY_BLOCK_BYTES;
+    for (relative_index, block) in bytes[..completed_bytes]
+        .chunks(INCREMENTAL_INTEGRITY_BLOCK_BYTES)
+        .enumerate()
+    {
+        let block_index = first_block_index.saturating_add(relative_index as u64);
+        completed_hash = fold_incremental_integrity_block(&completed_hash, block_index, block);
+    }
+    let complete_blocks = next_offset / block_bytes;
+    let verification_block = (complete_blocks > 0).then(|| {
+        prior
+            .verification_block
+            .map_or(0, |block| (block + 1) % complete_blocks)
+    });
+    let verification_hash = verification_block
+        .map(|block| read_incremental_verification_anchor(reader, block))
+        .transpose()?;
+    Ok(IncrementalPrefixIntegrity {
+        block_bytes: INCREMENTAL_INTEGRITY_BLOCK_BYTES as u32,
+        completed_hash,
+        tail_hash: digest_parts(&[&bytes[completed_bytes..]]),
+        generation: generation.digest.clone(),
+        file_identity: generation.file_identity.clone(),
+        observed_len: generation.len,
+        verification_block,
+        verification_hash,
+    })
+}
+
+fn find_incremental_continuity<R: Read + Seek>(
+    reader: &mut R,
+    file_len: u64,
+    cursor: &IncrementalHistoryCursor,
+) -> Result<Option<u64>, HistoryError> {
+    if cursor.offset <= file_len && incremental_continuity_matches(reader, cursor)? {
+        return Ok(Some(cursor.offset));
+    }
+    if cursor.offset == 0 {
+        return Ok((cursor.continuity_hash == digest_parts(&[&[]])).then_some(0));
+    }
+
+    let prefix_end = file_len.min(INCREMENTAL_OVERLAP_SEARCH_BYTES);
+    let mut found =
+        search_incremental_continuity_range(reader, 0, prefix_end, &cursor.continuity_hash)?;
+    let tail_start = file_len.saturating_sub(INCREMENTAL_OVERLAP_SEARCH_BYTES);
+    if tail_start > 0 {
+        found = search_incremental_continuity_range(
+            reader,
+            tail_start,
+            file_len,
+            &cursor.continuity_hash,
+        )?
+        .or(found);
+    }
+    Ok(found)
+}
+
+fn search_incremental_continuity_range<R: Read + Seek>(
+    reader: &mut R,
+    start: u64,
+    end: u64,
+    expected: &str,
+) -> Result<Option<u64>, HistoryError> {
+    if start >= end {
+        return Ok(None);
+    }
+    let context_start = start.saturating_sub(INCREMENTAL_CONTINUITY_BYTES);
+    let length =
+        usize::try_from(end.saturating_sub(context_start)).map_err(|_| HistoryError::Io)?;
+    reader
+        .seek(SeekFrom::Start(context_start))
+        .map_err(|_| HistoryError::Io)?;
+    let mut bytes = vec![0; length];
+    reader
+        .read_exact(&mut bytes)
+        .map_err(|_| HistoryError::Io)?;
+    let mut found = None;
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte != b'\n' {
+            continue;
+        }
+        let relative_end = index + 1;
+        let offset = context_start.saturating_add(relative_end as u64);
+        if offset < start || offset > end {
+            continue;
+        }
+        let relative_start = relative_end.saturating_sub(INCREMENTAL_CONTINUITY_BYTES as usize);
+        if digest_parts(&[&bytes[relative_start..relative_end]]) == expected {
+            found = Some(offset);
+        }
+    }
+    Ok(found)
+}
+
+fn incremental_message_id(
+    session: &HistorySession,
+    value: &Value,
+    role: &str,
+    text: &str,
+    timestamp: Option<&str>,
+    human_prompt: bool,
+) -> String {
+    let provider_event_id = match session.provider.as_str() {
+        "codex" => value
+            .pointer("/payload/internal_chat_message_metadata_passthrough/turn_id")
+            .and_then(Value::as_str)
+            .or_else(|| value.pointer("/payload/id").and_then(Value::as_str))
+            .or_else(|| value.get("id").and_then(Value::as_str)),
+        "claude" => value
+            .get("uuid")
+            .and_then(Value::as_str)
+            .or_else(|| value.pointer("/message/id").and_then(Value::as_str)),
+        _ => None,
+    }
+    .unwrap_or_default();
+    digest_parts(&[
+        session.provider.as_bytes(),
+        session.provider_session_id.as_bytes(),
+        provider_event_id.as_bytes(),
+        role.as_bytes(),
+        timestamp.unwrap_or_default().as_bytes(),
+        text.as_bytes(),
+        if human_prompt { b"human" } else { b"activity" },
+    ])
+}
+
+fn digest_parts(parts: &[&[u8]]) -> String {
+    let mut digest = Sha256::new();
+    for part in parts {
+        digest.update(part);
+        digest.update([0]);
+    }
+    let bytes = digest.finalize();
+    let hex = bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("sha256:{hex}")
 }
 
 fn read_messages_reverse(
@@ -1638,7 +2683,20 @@ mod tests {
             starred_at: None,
             resumable: true,
             transcript_path: PathBuf::new(),
+            incremental_catalog_stamp: String::new(),
         }
+    }
+
+    fn codex_meta(session_id: &str, timestamp: &str) -> String {
+        format!(
+            "{{\"timestamp\":\"{timestamp}\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{session_id}\",\"cwd\":\"/work\",\"source\":\"cli\",\"timestamp\":\"{timestamp}\"}}}}\n"
+        )
+    }
+
+    fn codex_user_row(timestamp: &str, turn_id: &str, text: &str) -> String {
+        format!(
+            "{{\"timestamp\":\"{timestamp}\",\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"user\",\"content\":[{{\"type\":\"input_text\",\"text\":\"{text}\"}}],\"internal_chat_message_metadata_passthrough\":{{\"turn_id\":\"{turn_id}\",\"content_item_kinds\":[\"user.text\"]}}}}}}\n"
+        )
     }
 
     #[test]
@@ -1650,6 +2708,7 @@ mod tests {
         let recent = history_session("h-recent", "2026-08-31T00:00:00Z");
         let snapshot = CatalogSnapshot {
             sessions: vec![recent, older_star, newer_star],
+            incremental_segments: BTreeMap::new(),
             truncated: false,
         };
 
@@ -1673,6 +2732,7 @@ mod tests {
         let older = history_session("h-older", "2026-07-01T00:00:00Z");
         let snapshot = CatalogSnapshot {
             sessions: vec![recent, starred, older],
+            incremental_segments: BTreeMap::new(),
             truncated: false,
         };
 
@@ -1981,8 +3041,759 @@ mod tests {
     }
 
     #[test]
+    fn generated_200_mib_incremental_v3_projection_recovers_the_semantic_turn() {
+        const RECORDS: u64 = 44_000;
+        const ROW_BYTES: usize = 4_767;
+        const SEMANTIC_RECORD: u64 = 39_000;
+        let session = history_session("long-session-v3", "2026-09-09T00:00:00Z");
+        let generated = GeneratedLongHistoryReader::new(ROW_BYTES, RECORDS, SEMANTIC_RECORD);
+        let file_len = generated.len();
+        let mut reader = CountingReader {
+            inner: generated,
+            bytes_read: 0,
+        };
+        let mut cursor = 0;
+        let mut recovered = None;
+
+        while cursor < file_len {
+            let page = read_messages_incremental_from_reader(
+                &session,
+                &mut reader,
+                file_len,
+                cursor,
+                256 * 1024,
+                false,
+            )
+            .unwrap();
+            recovered = recovered.or_else(|| {
+                page.messages
+                    .iter()
+                    .find(|message| message.human_prompt)
+                    .map(|message| message.text.clone())
+            });
+            assert!(page.next_offset > cursor);
+            cursor = page.next_offset;
+        }
+
+        assert_eq!(
+            recovered.as_deref(),
+            Some("redesign retitle observability before semantic memory")
+        );
+        assert_eq!(cursor, file_len);
+        let page_count = file_len.div_ceil(256 * 1024) as usize;
+        assert!(reader.bytes_read <= file_len as usize + page_count * ROW_BYTES * 2);
+        assert!(
+            recovered
+                .as_deref()
+                .is_some_and(|message| message.len() <= MAX_MESSAGE_CHARS)
+        );
+    }
+
+    #[test]
+    fn incremental_cursor_waits_for_a_complete_line() {
+        let session = history_session("partial", "2026-09-09T00:00:00Z");
+        let first = br#"{"timestamp":"2026-09-09T00:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"origin"}],"internal_chat_message_metadata_passthrough":{"turn_id":"one","content_item_kinds":["user.text"]}}}
+"#;
+        let second = br#"{"timestamp":"2026-09-09T00:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"pivot"}],"internal_chat_message_metadata_passthrough":{"turn_id":"two","content_item_kinds":["user.text"]}}}
+"#;
+        let mut bytes = first.to_vec();
+        bytes.extend_from_slice(second);
+        let partial_len = (first.len() + second.len() / 2) as u64;
+        let mut reader = Cursor::new(bytes);
+        let page = read_messages_incremental_from_reader(
+            &session,
+            &mut reader,
+            partial_len,
+            0,
+            64 * 1024,
+            false,
+        )
+        .unwrap();
+        assert_eq!(page.next_offset, first.len() as u64);
+        assert_eq!(page.messages.len(), 1);
+
+        let full_len = reader.get_ref().len() as u64;
+        let page = read_messages_incremental_from_reader(
+            &session,
+            &mut reader,
+            full_len,
+            page.next_offset,
+            64 * 1024,
+            false,
+        )
+        .unwrap();
+        assert_eq!(page.next_offset, full_len);
+        assert_eq!(page.messages[0].text, "pivot");
+    }
+
+    #[test]
+    fn incremental_cursor_discards_an_oversized_line_across_bounded_pages() {
+        let session = history_session("oversized", "2026-09-09T00:00:00Z");
+        let mut bytes = vec![b'x'; MAX_LINE_BYTES * 2 + 17];
+        bytes.extend_from_slice(b"\n");
+        bytes.extend_from_slice(
+            br#"{"timestamp":"2026-09-09T00:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"after oversized"}],"internal_chat_message_metadata_passthrough":{"turn_id":"after","content_item_kinds":["user.text"]}}}"#,
+        );
+        bytes.push(b'\n');
+        let file_len = bytes.len() as u64;
+        let mut reader = Cursor::new(bytes);
+        let first = read_messages_incremental_from_reader(
+            &session,
+            &mut reader,
+            file_len,
+            0,
+            MAX_LINE_BYTES + 1,
+            false,
+        )
+        .unwrap();
+        assert!(first.discarding_oversized_line);
+        assert!(first.next_offset > 0);
+        let mut next_offset = first.next_offset;
+        let mut discarding = first.discarding_oversized_line;
+        let mut recovered = Vec::new();
+        while next_offset < file_len {
+            let page = read_messages_incremental_from_reader(
+                &session,
+                &mut reader,
+                file_len,
+                next_offset,
+                MAX_LINE_BYTES + 1,
+                discarding,
+            )
+            .unwrap();
+            assert!(page.next_offset > next_offset);
+            assert!(page.next_offset - next_offset <= (MAX_LINE_BYTES + 1) as u64);
+            next_offset = page.next_offset;
+            discarding = page.discarding_oversized_line;
+            recovered.extend(page.messages);
+        }
+        assert!(!discarding);
+        assert_eq!(next_offset, file_len);
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].text, "after oversized");
+    }
+
+    #[test]
+    fn incremental_identity_detects_rotation_and_compaction() {
+        let mut session = history_session("identity", "2026-09-09T00:00:00Z");
+        session.transcript_path = PathBuf::from("/history/segment-one.jsonl");
+        let mut rotated = session.clone();
+        rotated.transcript_path = PathBuf::from("/history/segment-two.jsonl");
+        let original = b"first line\nsecond line\n".to_vec();
+        let mut reader = Cursor::new(original.clone());
+        let source = incremental_source_id(&session);
+        let cursor = IncrementalHistoryCursor {
+            source_id: source.clone(),
+            segment_id: incremental_segment_id(&session),
+            offset: original.len() as u64,
+            continuity_hash: incremental_continuity_hash(&mut reader, original.len() as u64)
+                .unwrap(),
+            discarding_oversized_line: false,
+            prefix_integrity: None,
+        };
+        assert!(incremental_continuity_matches(&mut reader, &cursor).unwrap());
+
+        let mut rewritten = Cursor::new(b"FIRST line\nsecond line\n".to_vec());
+        assert!(!incremental_continuity_matches(&mut rewritten, &cursor).unwrap());
+        let compacted = Cursor::new(b"replacement\n".to_vec());
+        assert!(cursor.offset > compacted.get_ref().len() as u64);
+        assert_eq!(incremental_source_id(&session), cursor.source_id);
+        assert_ne!(
+            incremental_segment_id(&session),
+            incremental_segment_id(&rotated)
+        );
+    }
+
+    #[test]
+    fn incremental_catalog_restarts_at_a_new_segment_after_compaction() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("sessions/2026/09/09");
+        fs::create_dir_all(&root).unwrap();
+        let transcript = root.join("rollout.jsonl");
+        let row = |text: &str| {
+            format!(
+                "{{\"timestamp\":\"2026-09-09T00:00:00Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"user\",\"content\":[{{\"type\":\"input_text\",\"text\":\"{text}\"}}],\"internal_chat_message_metadata_passthrough\":{{\"turn_id\":\"turn\",\"content_item_kinds\":[\"user.text\"]}}}}}}\n"
+            )
+        };
+        fs::write(
+            &transcript,
+            format!(
+                "{{\"timestamp\":\"2026-09-09T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"compact-id\",\"cwd\":\"/work\",\"source\":\"cli\",\"timestamp\":\"2026-09-09T00:00:00Z\"}}}}\n{}",
+                row("original objective")
+            ),
+        )
+        .unwrap();
+        let catalog = HistoryCatalog::new(
+            vec![HistorySource {
+                provider: "codex".into(),
+                agent_profile: None,
+                root: tmp.path().join("sessions"),
+            }],
+            tmp.path().join("archives"),
+            tmp.path().join("stars"),
+        );
+        let history_id = stable_history_id("codex", None, "compact-id");
+        let first = catalog
+            .incremental_messages(&history_id, None, 64 * 1024)
+            .unwrap();
+        assert!(first.caught_up);
+
+        fs::write(
+            &transcript,
+            format!(
+                "{{\"timestamp\":\"2026-09-09T00:01:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"compact-id\",\"cwd\":\"/work\",\"source\":\"cli\",\"timestamp\":\"2026-09-09T00:01:00Z\"}}}}\n{}",
+                row("post compaction pivot")
+            ),
+        )
+        .unwrap();
+        let second = catalog
+            .incremental_messages(&history_id, Some(&first.cursor), 64 * 1024)
+            .unwrap();
+        assert!(second.discontinuity);
+        assert!(second.caught_up);
+        assert_ne!(second.cursor.segment_id, first.cursor.segment_id);
+        assert_eq!(
+            second
+                .messages
+                .iter()
+                .find(|message| message.human_prompt)
+                .map(|message| message.text.as_str()),
+            Some("post compaction pivot")
+        );
+    }
+
+    #[test]
+    fn incremental_cursor_detects_a_rewrite_before_its_continuity_tail() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("sessions/2026/09/09");
+        fs::create_dir_all(&root).unwrap();
+        let transcript = root.join("rollout.jsonl");
+        let mut original = codex_meta("rewrite-id", "2026-09-09T00:00:00Z");
+        for index in 0..8 {
+            original.push_str(&codex_user_row(
+                "2026-09-09T00:00:01Z",
+                &format!("turn-{index}"),
+                &format!("objective {index}"),
+            ));
+        }
+        fs::write(&transcript, &original).unwrap();
+        let catalog = HistoryCatalog::new(
+            vec![HistorySource {
+                provider: "codex".into(),
+                agent_profile: None,
+                root: tmp.path().join("sessions"),
+            }],
+            tmp.path().join("archives"),
+            tmp.path().join("stars"),
+        );
+        let history_id = stable_history_id("codex", None, "rewrite-id");
+        let first = catalog
+            .incremental_messages(&history_id, None, 64 * 1024)
+            .unwrap();
+        assert!(first.caught_up);
+        assert!(first.cursor.prefix_integrity.is_some());
+
+        let mut rewritten = original.into_bytes();
+        let rewritten_index = rewritten
+            .windows(b"/work".len())
+            .position(|window| window == b"/work")
+            .unwrap();
+        rewritten[rewritten_index + 1] = b'W';
+        assert!(
+            rewritten_index as u64 + INCREMENTAL_CONTINUITY_BYTES < first.cursor.offset,
+            "the mutation must be outside the prior continuity tail"
+        );
+        rewritten.extend_from_slice(
+            codex_user_row(
+                "2026-09-09T00:01:00Z",
+                "turn-after-rewrite",
+                "after prefix rewrite",
+            )
+            .as_bytes(),
+        );
+        fs::write(&transcript, rewritten).unwrap();
+
+        let second = catalog
+            .incremental_messages(&history_id, Some(&first.cursor), 64 * 1024)
+            .unwrap();
+
+        assert!(second.discontinuity);
+        assert!(second.caught_up);
+        assert_ne!(second.cursor.segment_id, first.cursor.segment_id);
+        assert!(
+            second
+                .messages
+                .iter()
+                .any(|message| message.text == "after prefix rewrite")
+        );
+    }
+
+    #[test]
+    fn provider_session_lookup_rejects_profile_ambiguity_and_exact_lookup_is_single_snapshot() {
+        let tmp = tempfile::tempdir().unwrap();
+        let profile_a = tmp.path().join("profile-a/2026/09/09");
+        let profile_b = tmp.path().join("profile-b/2026/09/09");
+        fs::create_dir_all(&profile_a).unwrap();
+        fs::create_dir_all(&profile_b).unwrap();
+        fs::write(
+            profile_a.join("rollout.jsonl"),
+            format!(
+                "{}{}",
+                codex_meta("shared-id", "2026-09-09T00:00:00Z"),
+                codex_user_row("2026-09-09T00:00:01Z", "a", "profile a")
+            ),
+        )
+        .unwrap();
+        fs::write(
+            profile_b.join("rollout.jsonl"),
+            format!(
+                "{}{}",
+                codex_meta("shared-id", "2026-09-09T00:00:00Z"),
+                codex_user_row("2026-09-09T00:00:01Z", "b", "profile b")
+            ),
+        )
+        .unwrap();
+        let catalog = HistoryCatalog::new(
+            vec![
+                HistorySource {
+                    provider: "codex".into(),
+                    agent_profile: Some("profile-a".into()),
+                    root: tmp.path().join("profile-a"),
+                },
+                HistorySource {
+                    provider: "codex".into(),
+                    agent_profile: Some("profile-b".into()),
+                    root: tmp.path().join("profile-b"),
+                },
+            ],
+            tmp.path().join("archives"),
+            tmp.path().join("stars"),
+        );
+
+        assert!(matches!(
+            catalog.incremental_messages_for_provider_session(
+                "codex",
+                "shared-id",
+                None,
+                &[],
+                64 * 1024,
+            ),
+            Err(HistoryError::NotFound)
+        ));
+        catalog.snapshot_accesses.store(0, Ordering::Relaxed);
+        let exact = catalog
+            .incremental_messages_for_provider_session_identity(
+                "codex",
+                Some("profile-b"),
+                "shared-id",
+                None,
+                &[],
+                64 * 1024,
+            )
+            .unwrap();
+
+        assert_eq!(catalog.snapshot_accesses.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            exact
+                .messages
+                .iter()
+                .map(|message| message.text.as_str())
+                .collect::<Vec<_>>(),
+            ["profile b"]
+        );
+    }
+
+    #[test]
+    fn incremental_catalog_stamps_enumerate_each_shared_ancestor_once_and_obey_deadline() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shared = tmp.path().join("sessions/2026/09/09");
+        fs::create_dir_all(&shared).unwrap();
+        for index in 0..64 {
+            fs::write(shared.join(format!("rollout-{index}.jsonl")), "").unwrap();
+        }
+        let mut cache = IncrementalCatalogStampCache::default();
+        let mut truncated = false;
+        for index in 0..64 {
+            let _ = incremental_catalog_stamp(
+                &shared.join(format!("rollout-{index}.jsonl")),
+                &mut cache,
+                Instant::now() + SCAN_MAX_DURATION,
+                &mut truncated,
+            );
+        }
+
+        assert!(!truncated);
+        assert_eq!(cache.enumerated_directories, cache.ancestors.len());
+        assert_eq!(cache.enumerated_directories, 4);
+
+        let mut expired_cache = IncrementalCatalogStampCache::default();
+        let mut expired = false;
+        let _ = incremental_catalog_stamp(
+            &shared.join("rollout-0.jsonl"),
+            &mut expired_cache,
+            Instant::now(),
+            &mut expired,
+        );
+        assert!(expired);
+        assert_eq!(
+            expired_cache.enumerated_directories,
+            expired_cache.ancestors.len()
+        );
+    }
+
+    #[test]
+    fn incremental_catalog_orders_segments_and_suppresses_retained_overlap() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("sessions/2026/09/09");
+        fs::create_dir_all(&root).unwrap();
+        let first_path = root.join("rollout-2026-09-09T00-00-00-shared.jsonl");
+        let second_path = root.join("rollout-2026-09-09T01-00-00-shared.jsonl");
+        let origin = codex_user_row("2026-09-09T00:00:01Z", "origin", "origin objective");
+        let overlap = codex_user_row("2026-09-09T00:00:02Z", "shared", "shared milestone");
+        let pivot = codex_user_row("2026-09-09T01:00:01Z", "pivot", "new segment pivot");
+        fs::write(
+            &first_path,
+            format!(
+                "{}{}{}",
+                codex_meta("shared-id", "2026-09-09T00:00:00Z"),
+                origin,
+                overlap
+            ),
+        )
+        .unwrap();
+        let catalog = HistoryCatalog::new(
+            vec![HistorySource {
+                provider: "codex".into(),
+                agent_profile: None,
+                root: tmp.path().join("sessions"),
+            }],
+            tmp.path().join("archives"),
+            tmp.path().join("stars"),
+        );
+        let history_id = stable_history_id("codex", None, "shared-id");
+        let first = catalog
+            .incremental_messages(&history_id, None, 64 * 1024)
+            .unwrap();
+        assert!(
+            first.caught_up,
+            "the initial segment is current before rotation"
+        );
+        assert_eq!(
+            first
+                .messages
+                .iter()
+                .map(|message| message.text.as_str())
+                .collect::<Vec<_>>(),
+            ["origin objective", "shared milestone"]
+        );
+        fs::write(
+            &second_path,
+            format!(
+                "{}{}{}",
+                codex_meta("shared-id", "2026-09-09T01:00:00Z"),
+                overlap,
+                pivot
+            ),
+        )
+        .unwrap();
+        let applied = first
+            .messages
+            .iter()
+            .map(|message| message.id.clone())
+            .collect::<Vec<_>>();
+
+        let second = catalog
+            .incremental_messages_with_applied_ids(
+                &history_id,
+                Some(&first.cursor),
+                &applied,
+                64 * 1024,
+            )
+            .unwrap();
+
+        assert!(second.discontinuity);
+        assert!(second.caught_up);
+        assert_ne!(second.cursor.segment_id, first.cursor.segment_id);
+        assert_eq!(
+            second
+                .messages
+                .iter()
+                .map(|message| message.text.as_str())
+                .collect::<Vec<_>>(),
+            ["new segment pivot"]
+        );
+    }
+
+    #[test]
+    fn incremental_message_ids_are_stable_across_segment_offsets_and_content_free() {
+        let row = codex_user_row("2026-09-09T00:00:01Z", "stable-turn", "private objective");
+        let mut first_session = history_session("stable-id", "2026-09-09T00:00:00Z");
+        first_session.provider_session_id = "provider-id".to_string();
+        first_session.transcript_path = PathBuf::from("/history/first.jsonl");
+        let mut second_session = first_session.clone();
+        second_session.transcript_path = PathBuf::from("/history/second.jsonl");
+        let mut first_reader = Cursor::new(row.as_bytes());
+        let mut prefixed = b"{\"type\":\"turn_context\"}\n".to_vec();
+        prefixed.extend_from_slice(row.as_bytes());
+        let mut second_reader = Cursor::new(prefixed);
+        let first_len = first_reader.get_ref().len() as u64;
+        let second_len = second_reader.get_ref().len() as u64;
+
+        let first = read_messages_incremental_from_reader(
+            &first_session,
+            &mut first_reader,
+            first_len,
+            0,
+            64 * 1024,
+            false,
+        )
+        .unwrap();
+        let second = read_messages_incremental_from_reader(
+            &second_session,
+            &mut second_reader,
+            second_len,
+            0,
+            64 * 1024,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(first.messages[0].id, second.messages[0].id);
+        assert_eq!(first.messages[0].id.len(), "sha256:".len() + 64);
+        assert!(first.messages[0].id.starts_with("sha256:"));
+        assert!(!first.messages[0].id.contains("private objective"));
+    }
+
+    #[test]
+    fn incremental_cursor_json_round_trip_is_stable_and_path_free() {
+        let cursor = IncrementalHistoryCursor {
+            source_id: digest_parts(&[b"source"]),
+            segment_id: digest_parts(&[b"segment"]),
+            offset: 42,
+            continuity_hash: digest_parts(&[b"continuity"]),
+            discarding_oversized_line: true,
+            prefix_integrity: None,
+        };
+
+        let encoded = serde_json::to_string(&cursor).unwrap();
+        let decoded = serde_json::from_str::<IncrementalHistoryCursor>(&encoded).unwrap();
+
+        assert_eq!(decoded, cursor);
+        assert_eq!(
+            encoded,
+            format!(
+                "{{\"source_id\":\"{}\",\"segment_id\":\"{}\",\"offset\":42,\"continuity_hash\":\"{}\",\"discarding_oversized_line\":true}}",
+                cursor.source_id, cursor.segment_id, cursor.continuity_hash
+            )
+        );
+        assert!(!encoded.contains("/history/"));
+    }
+
+    #[test]
+    fn incremental_prefix_integrity_extends_from_one_bounded_prior_block() {
+        let bytes = (0..INCREMENTAL_INTEGRITY_BLOCK_BYTES * 4 + 137)
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        let first_offset = (INCREMENTAL_INTEGRITY_BLOCK_BYTES + 71) as u64;
+        let next_offset = bytes.len() as u64;
+        let generation = IncrementalFileGeneration {
+            digest: digest_parts(&[b"generation"]),
+            file_identity: digest_parts(&[b"file"]),
+            len: next_offset,
+        };
+        let mut initial_reader = Cursor::new(bytes.as_slice());
+        let initial =
+            compute_prefix_integrity(&mut initial_reader, first_offset, &generation).unwrap();
+        let cursor = IncrementalHistoryCursor {
+            source_id: digest_parts(&[b"source"]),
+            segment_id: digest_parts(&[b"segment"]),
+            offset: first_offset,
+            continuity_hash: incremental_continuity_hash(&mut initial_reader, first_offset)
+                .unwrap(),
+            discarding_oversized_line: false,
+            prefix_integrity: Some(initial),
+        };
+        let resolved = ResolvedIncrementalSegment {
+            index: 0,
+            offset: first_offset,
+            segment_id: cursor.segment_id.clone(),
+            discontinuity: false,
+            discarding_oversized_line: false,
+            prefix_integrity_verified: true,
+        };
+        let mut extending_reader = CountingReader {
+            inner: Cursor::new(bytes.as_slice()),
+            bytes_read: 0,
+        };
+
+        let extended = extend_or_compute_prefix_integrity(
+            &mut extending_reader,
+            Some(&cursor),
+            &resolved,
+            next_offset,
+            &generation,
+        )
+        .unwrap();
+        let mut full_reader = Cursor::new(bytes.as_slice());
+        let expected =
+            compute_prefix_integrity(&mut full_reader, next_offset, &generation).unwrap();
+
+        assert_eq!(extended.completed_hash, expected.completed_hash);
+        assert_eq!(extended.tail_hash, expected.tail_hash);
+        assert_eq!(extended.generation, expected.generation);
+        assert_eq!(extended.file_identity, expected.file_identity);
+        assert_eq!(extended.observed_len, expected.observed_len);
+        assert!(
+            extending_reader.bytes_read
+                <= usize::try_from(next_offset - first_offset).unwrap()
+                    + INCREMENTAL_INTEGRITY_BLOCK_BYTES * 2
+        );
+        assert!(serde_json::to_vec(&extended).unwrap().len() < 1024);
+    }
+
+    #[test]
+    fn append_after_a_200_mib_prefix_keeps_integrity_io_bounded() {
+        const RECORDS: u64 = 44_000;
+        const ROW_BYTES: usize = 4_767;
+        const SEMANTIC_RECORD: u64 = 39_000;
+        let old_len = RECORDS * ROW_BYTES as u64;
+        let new_len = (RECORDS + 1) * ROW_BYTES as u64;
+        let file_identity = digest_parts(&[b"same-file"]);
+        let old_generation = IncrementalFileGeneration {
+            digest: digest_parts(&[b"old-generation"]),
+            file_identity: file_identity.clone(),
+            len: old_len,
+        };
+        let new_generation = IncrementalFileGeneration {
+            digest: digest_parts(&[b"append-generation"]),
+            file_identity,
+            len: new_len,
+        };
+        let mut old_reader = GeneratedLongHistoryReader::new(ROW_BYTES, RECORDS, SEMANTIC_RECORD);
+        let integrity =
+            compute_prefix_integrity(&mut old_reader, old_len, &old_generation).unwrap();
+        let cursor = IncrementalHistoryCursor {
+            source_id: digest_parts(&[b"source"]),
+            segment_id: digest_parts(&[b"segment"]),
+            offset: old_len,
+            continuity_hash: incremental_continuity_hash(&mut old_reader, old_len).unwrap(),
+            discarding_oversized_line: false,
+            prefix_integrity: Some(integrity),
+        };
+        let mut matching_reader = CountingReader {
+            inner: GeneratedLongHistoryReader::new(ROW_BYTES, RECORDS + 1, SEMANTIC_RECORD),
+            bytes_read: 0,
+        };
+
+        assert!(
+            incremental_cursor_matches(&mut matching_reader, &cursor, &new_generation).unwrap()
+        );
+        assert!(
+            matching_reader.bytes_read
+                <= INCREMENTAL_CONTINUITY_BYTES as usize + INCREMENTAL_INTEGRITY_BLOCK_BYTES * 2,
+            "an ordinary append must not re-read the 200 MiB prefix"
+        );
+
+        let resolved = ResolvedIncrementalSegment {
+            index: 0,
+            offset: old_len,
+            segment_id: cursor.segment_id.clone(),
+            discontinuity: false,
+            discarding_oversized_line: false,
+            prefix_integrity_verified: true,
+        };
+        let mut extending_reader = CountingReader {
+            inner: GeneratedLongHistoryReader::new(ROW_BYTES, RECORDS + 1, SEMANTIC_RECORD),
+            bytes_read: 0,
+        };
+        let extended = extend_or_compute_prefix_integrity(
+            &mut extending_reader,
+            Some(&cursor),
+            &resolved,
+            new_len,
+            &new_generation,
+        )
+        .unwrap();
+
+        assert_eq!(extended.observed_len, new_len);
+        assert!(
+            extending_reader.bytes_read <= ROW_BYTES + INCREMENTAL_INTEGRITY_BLOCK_BYTES * 2,
+            "extending integrity after an append is bounded by new bytes plus two blocks"
+        );
+    }
+
+    #[test]
+    fn read_only_incremental_probe_keeps_prefix_integrity_stable() {
+        let bytes = vec![b'x'; INCREMENTAL_INTEGRITY_BLOCK_BYTES * 2];
+        let offset = bytes.len() as u64;
+        let generation = IncrementalFileGeneration {
+            digest: digest_parts(&[b"generation"]),
+            file_identity: digest_parts(&[b"file"]),
+            len: offset,
+        };
+        let mut initial_reader = Cursor::new(bytes.as_slice());
+        let integrity = compute_prefix_integrity(&mut initial_reader, offset, &generation).unwrap();
+        let cursor = IncrementalHistoryCursor {
+            source_id: digest_parts(&[b"source"]),
+            segment_id: digest_parts(&[b"segment"]),
+            offset,
+            continuity_hash: incremental_continuity_hash(&mut initial_reader, offset).unwrap(),
+            discarding_oversized_line: false,
+            prefix_integrity: Some(integrity.clone()),
+        };
+        let resolved = ResolvedIncrementalSegment {
+            index: 0,
+            offset,
+            segment_id: cursor.segment_id.clone(),
+            discontinuity: false,
+            discarding_oversized_line: false,
+            prefix_integrity_verified: true,
+        };
+        let mut reader = CountingReader {
+            inner: Cursor::new(bytes),
+            bytes_read: 0,
+        };
+
+        let observed = extend_or_compute_prefix_integrity(
+            &mut reader,
+            Some(&cursor),
+            &resolved,
+            offset,
+            &generation,
+        )
+        .unwrap();
+
+        assert_eq!(observed, integrity);
+        assert_eq!(reader.bytes_read, 0);
+    }
+
+    #[test]
+    fn incremental_overlap_search_resumes_after_a_copied_prefix() {
+        let old = b"first line\nsecond line\n";
+        let mut old_reader = Cursor::new(old.as_slice());
+        let cursor = IncrementalHistoryCursor {
+            source_id: digest_parts(&[b"source"]),
+            segment_id: digest_parts(&[b"old-segment"]),
+            offset: old.len() as u64,
+            continuity_hash: incremental_continuity_hash(&mut old_reader, old.len() as u64)
+                .unwrap(),
+            discarding_oversized_line: false,
+            prefix_integrity: None,
+        };
+        let mut next = old.to_vec();
+        next.extend_from_slice(b"third line\n");
+        let mut next_reader = Cursor::new(next);
+        let next_len = next_reader.get_ref().len() as u64;
+
+        assert_eq!(
+            find_incremental_continuity(&mut next_reader, next_len, &cursor).unwrap(),
+            Some(old.len() as u64)
+        );
+    }
+
+    #[test]
     #[ignore = "explicit virtual 1 GiB stress surface"]
-    fn generated_1_gib_sparse_semantic_tail_keeps_production_read_and_allocation_bounds() {
+    fn generated_1_gib_incremental_v3_recovers_semantics_with_constant_fixture_allocation() {
         const RECORDS: u64 = 225_245;
         const ROW_BYTES: usize = 4_767;
         const SEMANTIC_RECORD: u64 = 220_000;
@@ -2003,22 +3814,60 @@ mod tests {
             bytes_read: 0,
         };
 
-        let page = read_messages_reverse_from_reader(
+        let mut cursor = 0;
+        let mut recovered = None;
+        while cursor < file_len {
+            let page = read_messages_incremental_from_reader(
+                &session,
+                &mut reader,
+                file_len,
+                cursor,
+                1024 * 1024 + 1,
+                false,
+            )
+            .unwrap();
+            recovered = recovered.or_else(|| {
+                page.messages
+                    .iter()
+                    .find(|message| message.human_prompt)
+                    .map(|message| message.text.clone())
+            });
+            assert!(page.next_offset > cursor);
+            cursor = page.next_offset;
+        }
+        assert_eq!(
+            recovered.as_deref(),
+            Some("redesign retitle observability before semantic memory")
+        );
+        assert_eq!(cursor, file_len);
+        let page_count = file_len.div_ceil((1024 * 1024 + 1) as u64) as usize;
+        assert!(reader.bytes_read <= file_len as usize + page_count * ROW_BYTES * 2);
+
+        let mut cached_reader = CountingReader {
+            inner: GeneratedLongHistoryReader::new(ROW_BYTES, RECORDS, SEMANTIC_RECORD),
+            bytes_read: 0,
+        };
+        let continuity = incremental_continuity_hash(&mut cached_reader, file_len).unwrap();
+        assert_eq!(
+            cached_reader.bytes_read,
+            INCREMENTAL_CONTINUITY_BYTES as usize
+        );
+        let cached = read_messages_incremental_from_reader(
             &session,
-            &mut reader,
+            &mut cached_reader,
             file_len,
-            None,
-            100,
-            Instant::now() + Duration::from_secs(60),
+            file_len,
+            1024 * 1024 + 1,
+            false,
         )
         .unwrap();
-
-        assert!(page.messages.is_empty());
-        assert!(page.older_cursor.is_some());
-        assert!(reader.bytes_read >= REVERSE_MESSAGE_MAX_BYTES as usize);
-        assert!(
-            reader.bytes_read <= REVERSE_MESSAGE_MAX_BYTES as usize + REVERSE_MESSAGE_CHUNK_BYTES
+        assert!(cached.messages.is_empty());
+        assert_eq!(cached.next_offset, file_len);
+        assert_eq!(
+            cached_reader.bytes_read,
+            INCREMENTAL_CONTINUITY_BYTES as usize
         );
+        assert_eq!(continuity.len(), "sha256:".len() + 64);
     }
 
     #[test]
@@ -2267,6 +4116,7 @@ mod tests {
                 history_session("b", "2026-08-31T02:00:00Z"),
                 history_session("c", "2026-08-31T01:00:00Z"),
             ],
+            incremental_segments: BTreeMap::new(),
             truncated: false,
         };
         let first = paginate_snapshot(original, "test", None, None, None, 2).unwrap();
@@ -2286,6 +4136,7 @@ mod tests {
                 history_session("b", "2026-08-31T02:00:00Z"),
                 history_session("c", "2026-08-31T01:00:00Z"),
             ],
+            incremental_segments: BTreeMap::new(),
             truncated: false,
         };
         let second = paginate_snapshot(
@@ -2328,7 +4179,9 @@ mod tests {
                 starred_at: None,
                 resumable: true,
                 transcript_path: PathBuf::new(),
+                incremental_catalog_stamp: String::new(),
             }],
+            incremental_segments: BTreeMap::new(),
             truncated: false,
         };
         apply_title_overrides(
