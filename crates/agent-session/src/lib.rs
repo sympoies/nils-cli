@@ -9866,15 +9866,12 @@ fn resume_session_locked(
                 .map_err(|reason| {
                 session_termination_error(&record, reason, SessionTerminationOperation::Resume)
             })?;
+            // The sub-step above was given this budget, so it may have spent
+            // it. The verification below now probes once regardless, which is
+            // what decides the verdict; failing here instead reported a
+            // termination that was never checked.
             let remaining =
                 DELETE_TERMINATION_VERIFY_TIMEOUT.saturating_sub(verification_started.elapsed());
-            if remaining.is_zero() {
-                return Err(session_termination_error(
-                    &record,
-                    SessionTerminationFailure::VerificationFailed,
-                    SessionTerminationOperation::Resume,
-                ));
-            }
             verify_stopped_tmux_runtime(tmux_bin, &identity, remaining).map_err(|reason| {
                 session_termination_error(&record, reason, SessionTerminationOperation::Resume)
             })?;
@@ -13066,10 +13063,8 @@ fn terminate_verified_process_runtime_transaction(
         terminate_captured_process_runtime(identity, &mut pinned_runtime, verify_timeout);
     release_process_runtime(Some(pinned_runtime));
     terminated?;
+    // See above: the verification probes rather than judging on the clock.
     let remaining = verify_timeout.saturating_sub(verification_started.elapsed());
-    if remaining.is_zero() {
-        return Err(SessionTerminationFailure::VerificationFailed);
-    }
     let tmux_bin = match mode {
         VerifiedRuntimeTerminationMode::LiveTmux { tmux_bin, .. }
         | VerifiedRuntimeTerminationMode::AlreadyStopped { tmux_bin } => tmux_bin,
@@ -13153,9 +13148,6 @@ fn terminate_tmux_session_with_timeouts(
                 let verification_started = Instant::now();
                 verify_stopped_process_runtimes(&prior_identities, verify_timeout)?;
                 let remaining = verify_timeout.saturating_sub(verification_started.elapsed());
-                if remaining.is_zero() {
-                    return Err(SessionTerminationFailure::VerificationFailed);
-                }
                 verify_stopped_tmux_runtime(tmux_bin, &identity, remaining)?;
                 match persisted_tmux_termination_state(record)? {
                     Some(TmuxTerminationState::FreezePending { .. }) => {
@@ -13215,9 +13207,6 @@ fn terminate_tmux_session_with_timeouts(
                     .map_err(|_| SessionTerminationFailure::RuntimeIdentityUnavailable)?;
                 let verification_started = Instant::now();
                 let remaining = verify_timeout.saturating_sub(verification_started.elapsed());
-                if remaining.is_zero() {
-                    return Err(SessionTerminationFailure::VerificationFailed);
-                }
                 verify_stopped_tmux_runtime(tmux_bin, &identity, remaining)?;
                 record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
                 write_session_record(context, record)
@@ -16136,20 +16125,20 @@ fn verify_stopped_tmux_runtime(
     let mut observed_tmux_stopped = false;
     let mut observed_process_running = false;
     loop {
+        // Probe before consulting the clock. The caller's budget may already be
+        // spent by an earlier sub-step, and judging an unobserved session on a
+        // clock reading reported a cleanly terminated runtime as one that did
+        // not terminate. One probe is bounded by the probe timeout, so the
+        // window still cannot run away.
         let remaining = verify_timeout.saturating_sub(started_at.elapsed());
-        if remaining.is_zero() {
-            return Err(if observed_tmux_running {
-                SessionTerminationFailure::StillRunning
-            } else if observed_tmux_stopped && observed_process_running {
-                SessionTerminationFailure::ProcessStillRunning
-            } else {
-                SessionTerminationFailure::VerificationFailed
-            });
-        }
         let tmux_status = verified_tmux_status_with_timeout(
             tmux_bin,
             &identity.session_id,
-            remaining.min(DELETE_TERMINATION_PROBE_TIMEOUT),
+            if remaining.is_zero() {
+                DELETE_TERMINATION_PROBE_TIMEOUT
+            } else {
+                remaining.min(DELETE_TERMINATION_PROBE_TIMEOUT)
+            },
         );
         let process_status = process_runtime_status(identity);
         if tmux_status == "stopped" && process_status == ProcessGroupStatus::Stopped {
@@ -19967,6 +19956,98 @@ exit 97
             "a live same-session descendant must dominate the stopped leader group"
         );
         process.stop();
+    }
+
+    /// An exhausted verification window must still observe before it judges.
+    ///
+    /// The termination transaction hands a sub-step the whole verify budget and
+    /// then computes what is left, so a sub-step that legitimately uses the
+    /// budget it was given left nothing for the tmux check. Returning
+    /// `VerificationFailed` there reports "the session did not terminate" on the
+    /// strength of a clock reading, without having looked at the session even
+    /// once. A stopped session must still verify as stopped.
+    #[test]
+    fn an_exhausted_verify_window_still_observes_before_it_judges() {
+        let stub = nils_test_support::StubBinDir::new();
+        // `has-session` for an absent session: exit 1 with the message tmux
+        // itself produces.
+        stub.write_exe(
+            "tmux",
+            r#"#!/bin/bash
+echo "can't find session: $3" >&2
+exit 1
+"#,
+        );
+        let tmux_bin = stub.path().join("tmux");
+
+        let identity = TmuxRuntimeIdentity {
+            launch_id: Some("exhausted-window".to_string()),
+            session_id: "$gone".to_string(),
+            pane_id: "%gone".to_string(),
+            pane_pid: 0,
+            pane_start_time: None,
+            process_group_id: None,
+            process_session_id: None,
+            process_session_members: Vec::new(),
+            control_group: None,
+            control_group_members: Vec::new(),
+            cgroup_mount: None,
+            pid_namespace: None,
+        };
+
+        let started = Instant::now();
+        assert!(
+            super::verify_stopped_tmux_runtime(&tmux_bin, &identity, Duration::ZERO).is_ok(),
+            "an exhausted window must probe once and confirm the stopped session"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the probe is bounded by the probe timeout"
+        );
+    }
+
+    /// A window that is exhausted while the session is genuinely still there
+    /// must still say so, so the single probe cannot become a rubber stamp.
+    #[test]
+    fn an_exhausted_verify_window_still_reports_a_live_session() {
+        let stub = nils_test_support::StubBinDir::new();
+        stub.write_exe(
+            "tmux",
+            r#"#!/bin/bash
+exit 0
+"#,
+        );
+        let tmux_bin = stub.path().join("tmux");
+
+        let identity = TmuxRuntimeIdentity {
+            launch_id: Some("exhausted-window-live".to_string()),
+            session_id: "$live".to_string(),
+            pane_id: "%live".to_string(),
+            pane_pid: 0,
+            pane_start_time: None,
+            process_group_id: None,
+            process_session_id: None,
+            process_session_members: Vec::new(),
+            control_group: None,
+            control_group_members: Vec::new(),
+            cgroup_mount: None,
+            pid_namespace: None,
+        };
+
+        // The exhaustion verdict sits after the observations are recorded, so a
+        // live or inconclusive probe returns rather than looping. Bounding the
+        // elapsed time pins that: without the exit this call would not return.
+        let started = Instant::now();
+        let verdict = super::verify_stopped_tmux_runtime(&tmux_bin, &identity, Duration::ZERO);
+        assert_eq!(
+            verdict,
+            Err(super::SessionTerminationFailure::StillRunning),
+            "a live session is still reported as live"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "an exhausted window returns after one probe rather than looping"
+        );
     }
 
     #[cfg(target_os = "linux")]
