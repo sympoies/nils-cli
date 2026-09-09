@@ -250,7 +250,8 @@ Mandatory local repository validation:
 - full CI freshness check:
   - `bash scripts/ci/completion-freshness-audit.sh --strict`
 - for non-doc changes, GitHub required checks enforce full workspace tests and
-  coverage `>= 85.00%` per `DEVELOPMENT.md`
+  coverage `>= 85.00%` per
+  `docs/runbooks/workspace-maintenance-reference.md`
 
 Completion changes are not merge-ready until local validation and GitHub
 required checks are green.

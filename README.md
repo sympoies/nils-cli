@@ -212,9 +212,10 @@ assets, follow the same setup flow from
 
 ## Development and maintainer workflows
 
-Use [DEVELOPMENT.md](DEVELOPMENT.md) as the canonical contributor checklist for
-local setup, validation commands, generated artifacts, release maintenance, and
-crates.io publishing.
+Use [DEVELOPMENT.md](DEVELOPMENT.md) for maintenance principles and the routine
+workflow. Detailed setup, validation lanes, generated artifacts, release
+maintenance, and crates.io publishing live in the
+[workspace maintenance reference](docs/runbooks/workspace-maintenance-reference.md).
 
 New CLI crate onboarding is documented in
 [docs/runbooks/new-cli-crate-development-standard.md](docs/runbooks/new-cli-crate-development-standard.md).

@@ -94,8 +94,9 @@ assert_contains .github/workflows/ci.yml "needs.changes.outputs.release_only != 
 assert_contains .agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh \
   "node scripts/ci/tests/release-ci-gate.test.cjs" \
   "release gate unit tests are in the required suite"
-assert_contains DEVELOPMENT.md "bash scripts/ci/tests/detect-release-only.test.sh" \
-  "development contract lists the release classifier tests"
+assert_contains docs/runbooks/workspace-maintenance-reference.md \
+  "bash scripts/ci/tests/detect-release-only.test.sh" \
+  "workspace maintenance reference lists the release classifier tests"
 assert_contains docs/specs/workspace-ci-entrypoint-inventory-v1.md \
   "release_candidate" \
   "CI inventory records the semantic release candidate output"

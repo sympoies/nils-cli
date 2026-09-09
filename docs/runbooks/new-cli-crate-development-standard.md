@@ -172,7 +172,7 @@ bash scripts/ci/docs-placement-audit.sh --strict
 ```
 
 For exact command sets, optional full local parity, and the CI coverage
-threshold, follow `DEVELOPMENT.md`.
+threshold, follow `docs/runbooks/workspace-maintenance-reference.md`.
 
 ## Publish Readiness Checklist
 

@@ -31,6 +31,14 @@ when = "always"
 notes = "On-demand crate documentation placement policy; read when adding, moving, or reclassifying documentation."
 
 [[document]]
+context = "project-dev"
+scope = "project"
+path = "docs/runbooks/workspace-maintenance-reference.md"
+required = false
+when = "always"
+notes = "On-demand setup, validation-lane, coverage, generated-artifact, and release/publish command reference."
+
+[[document]]
 context = "session-coordination"
 scope = "project"
 path = "crates/agent-session/docs/README.md"

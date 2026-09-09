@@ -117,8 +117,9 @@ Contributors SHOULD:
 
 ## Enforcement Reference
 
-`DEVELOPMENT.md` validation flows reference this policy. Future automation and
-CI checks MUST enforce the same placement rules.
+`DEVELOPMENT.md` routes contributors to this policy, and
+`docs/runbooks/workspace-maintenance-reference.md` lists its validation flow.
+Future automation and CI checks MUST enforce the same placement rules.
 
 Recommended CI companions:
 
