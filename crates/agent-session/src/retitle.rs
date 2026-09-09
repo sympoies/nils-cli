@@ -4,7 +4,7 @@
 //! only hashes, request state, and stable diagnostic codes so it never becomes
 //! a second transcript or a title-model log.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::env;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
@@ -666,7 +666,7 @@ fn provider_readiness(config: &RetitleConfig) -> RetitleReadiness {
         reason_code: "ready",
         next_action: "none",
         provider_kind: Some(config.kind()),
-        model_label: config.model.clone(),
+        model_label: observable_model_label_for_provider(config),
         account: None,
         plan: None,
         context_capabilities: context_capabilities(),
@@ -893,6 +893,15 @@ pub(crate) struct RetitleAttemptEvidence {
     pub(crate) context: Option<RetitleContextObservation>,
     pub(crate) providers: Vec<ProviderAttemptObservation>,
     pub(crate) elapsed: Duration,
+    pub(crate) started: Option<Instant>,
+}
+
+impl RetitleAttemptEvidence {
+    fn elapsed_at(&self, finished: Instant) -> Duration {
+        self.started
+            .and_then(|started| finished.checked_duration_since(started))
+            .unwrap_or(self.elapsed)
+    }
 }
 
 struct RetitleAttemptTerminal<'a> {
@@ -1448,15 +1457,22 @@ fn provider_attempt_observation(
 ) -> ProviderAttemptObservation {
     ProviderAttemptObservation {
         provider_kind: config.kind().to_string(),
-        model_label: config
-            .model
-            .as_deref()
-            .filter(|label| observable_model_label(label))
-            .map(str::to_string),
+        model_label: observable_model_label_for_provider(config),
         outcome: outcome.to_string(),
         failure_stage: failure_stage.map(str::to_string),
         duration_bucket: duration_bucket(elapsed).to_string(),
     }
+}
+
+fn observable_model_label_for_provider(config: &RetitleConfig) -> Option<String> {
+    if config.kind() == "command" {
+        return None;
+    }
+    config
+        .model
+        .as_deref()
+        .filter(|label| observable_model_label(label))
+        .map(str::to_string)
 }
 
 fn observable_model_label(label: &str) -> bool {
@@ -1471,6 +1487,49 @@ fn observable_model_label(label: &str) -> bool {
         ]
         .iter()
         .any(|forbidden| lower.contains(forbidden))
+        && !credential_shaped_label(label)
+}
+
+fn credential_shaped_label(label: &str) -> bool {
+    let lower = label.to_ascii_lowercase();
+    if ["ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"]
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+    {
+        return true;
+    }
+    if label.starts_with("AKIA")
+        && label.len() >= 20
+        && label
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+    {
+        return true;
+    }
+    let jwt_segments = label.split('.').collect::<Vec<_>>();
+    if jwt_segments.len() == 3
+        && label.len() >= 40
+        && jwt_segments.iter().all(|segment| {
+            segment.len() >= 8
+                && segment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        })
+    {
+        return true;
+    }
+    if label.len() < 32
+        || !label
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return false;
+    }
+    let has_lower = label.bytes().any(|byte| byte.is_ascii_lowercase());
+    let has_upper = label.bytes().any(|byte| byte.is_ascii_uppercase());
+    let has_digit = label.bytes().any(|byte| byte.is_ascii_digit());
+    let unique = label.bytes().collect::<HashSet<_>>().len();
+    unique >= 16 && usize::from(has_lower) + usize::from(has_upper) + usize::from(has_digit) >= 2
 }
 
 fn provider_outcome(code: &str) -> &str {
@@ -2154,6 +2213,15 @@ fn finish_attempt_observation(
     evidence: &RetitleAttemptEvidence,
     terminal: RetitleAttemptTerminal<'_>,
 ) {
+    finish_attempt_observation_at(observation, evidence, terminal, Instant::now());
+}
+
+fn finish_attempt_observation_at(
+    observation: &mut RetitleAttemptObservation,
+    evidence: &RetitleAttemptEvidence,
+    terminal: RetitleAttemptTerminal<'_>,
+    finished: Instant,
+) {
     let Some(attempt) = observation.attempts.last_mut() else {
         return;
     };
@@ -2167,7 +2235,7 @@ fn finish_attempt_observation(
         .take(MAX_PROVIDER_ATTEMPT_OBSERVATIONS)
         .cloned()
         .collect();
-    attempt.duration_bucket = Some(duration_bucket(evidence.elapsed).to_string());
+    attempt.duration_bucket = Some(duration_bucket(evidence.elapsed_at(finished)).to_string());
     attempt.outcome = Some(terminal.outcome.to_string());
     attempt.diagnostic_code = terminal.diagnostic_code.to_string();
     observation.terminal_outcome = Some(terminal.outcome.to_string());
@@ -2192,6 +2260,8 @@ struct RetitleReceipt {
     coverage_turn_count: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     observation: Option<RetitleAttemptObservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    processed_turn_hash: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -2296,6 +2366,41 @@ fn prepare_automatic_failed_receipt_retry(
     true
 }
 
+fn prepare_interrupted_receipt_recovery(receipt: &mut RetitleReceipt) {
+    receipt.state = "in_progress".to_string();
+    receipt.diagnostic_code = "in_progress".to_string();
+    receipt.attempt_count = receipt.attempt_count.max(1).saturating_add(1);
+    if let Some(observation) = receipt.observation.as_mut() {
+        if let Some(interrupted) = observation.attempts.last_mut() {
+            interrupted.finished_at = Some(jiff::Timestamp::now().to_string());
+            interrupted.stage = "interrupted".to_string();
+            interrupted.failure_stage = Some("worker_interrupted".to_string());
+            interrupted.outcome = Some("interrupted".to_string());
+            interrupted.diagnostic_code = "retitle-worker-interrupted".to_string();
+        }
+        observation
+            .attempts
+            .push(new_attempt_span(receipt.attempt_count));
+        observation.terminal_outcome = None;
+        observation.diagnostic_code = "in_progress".to_string();
+    }
+}
+
+fn processed_turn_observation(
+    state: &DurableRetitleState,
+    processed_turn_hash: &str,
+) -> Option<RetitleAttemptObservation> {
+    state
+        .receipts
+        .iter()
+        .rev()
+        .find(|receipt| {
+            receipt.state == "complete"
+                && receipt.processed_turn_hash.as_deref() == Some(processed_turn_hash)
+        })
+        .and_then(|receipt| receipt.observation.clone())
+}
+
 pub(crate) fn admit(
     context: &CliContext,
     id: &str,
@@ -2356,8 +2461,13 @@ pub(crate) fn admit(
         }
         // Every in-process caller holds the per-session async gate before
         // admission. An in-progress receipt that remains here therefore came
-        // from a terminated daemon and is safe to recover in this incarnation.
-        state.receipts.remove(index);
+        // from a terminated daemon. Preserve its attempt chain and resume it
+        // in place under the current incarnation's fences.
+        validate_fences(context, &record, request)?;
+        prepare_interrupted_receipt_recovery(&mut state.receipts[index]);
+        store_durable_state(&mut record, state);
+        crate::write_session_record(context, &record)?;
+        return Ok(Admission::Evaluate(record));
     }
     if request.trigger.is_automatic()
         && request
@@ -2367,6 +2477,10 @@ pub(crate) fn admit(
             .as_ref()
             == state.last_processed_turn_hash.as_ref()
     {
+        let observation = state
+            .last_processed_turn_hash
+            .as_deref()
+            .and_then(|turn_hash| processed_turn_observation(&state, turn_hash));
         return Ok(Admission::Replay(
             record,
             "already_processed",
@@ -2377,10 +2491,7 @@ pub(crate) fn admit(
                 turn_count: state.last_coverage_turn_count,
             },
             normalized_provider_kind(state.last_processed_provider_kind.as_deref()),
-            state
-                .receipts
-                .last()
-                .and_then(|receipt| receipt.observation.clone()),
+            observation,
         ));
     }
     validate_fences(context, &record, request)?;
@@ -2395,6 +2506,10 @@ pub(crate) fn admit(
         coverage_complete: false,
         coverage_truncated: false,
         coverage_turn_count: 0,
+        processed_turn_hash: request
+            .expected_provider_turn_id
+            .as_deref()
+            .map(hash_identity),
     });
     if state.receipts.len() > MAX_RECEIPTS {
         state.receipts.remove(0);
@@ -2503,6 +2618,7 @@ pub(crate) fn fail_code(
         context: None,
         providers: Vec::new(),
         elapsed: Duration::ZERO,
+        started: None,
     };
     let _ = fail_attempt(context, id, request, diagnostic_code, "unknown", &evidence);
 }
@@ -2550,7 +2666,9 @@ pub(crate) fn fail_attempt(
             persisted = Some(observation.clone());
         }
         store_durable_state(&mut record, state);
-        let _ = crate::write_session_record(context, &record);
+        if crate::write_session_record(context, &record).is_err() {
+            return None;
+        }
     }
     persisted
 }
@@ -2558,10 +2676,20 @@ pub(crate) fn fail_attempt(
 pub(crate) fn latest_attempt_observation(
     record: &SessionRecord,
 ) -> Option<RetitleAttemptObservation> {
-    durable_state(record)
-        .receipts
-        .last()
-        .and_then(|receipt| receipt.observation.clone())
+    latest_attempt_observation_from_marker(record.extra.get(MARKER_KEY)?)
+}
+
+fn latest_attempt_observation_from_marker(marker: &Value) -> Option<RetitleAttemptObservation> {
+    if marker.get("schema_version")?.as_str()? != MARKER_SCHEMA {
+        return None;
+    }
+    marker
+        .get("receipts")?
+        .as_array()?
+        .last()?
+        .get("observation")
+        .cloned()
+        .and_then(|observation| serde_json::from_value(observation).ok())
 }
 
 fn replayed_error(code: &str) -> CliError {
@@ -2709,6 +2837,7 @@ pub(crate) fn commit(
                 durable.last_coverage_complete = coverage.complete;
                 durable.last_coverage_truncated = coverage.truncated;
                 durable.last_coverage_turn_count = coverage.turn_count;
+                receipt.processed_turn_hash = durable.last_processed_turn_hash.clone();
             }
             store_durable_state(record, durable);
             Ok((record.clone(), changed, observation))
@@ -2833,6 +2962,7 @@ mod tests {
             context: Some(context),
             providers,
             elapsed: Duration::from_secs(2),
+            started: None,
         };
         finish_attempt_observation(
             &mut observation,
@@ -2855,6 +2985,7 @@ mod tests {
             coverage_truncated: true,
             coverage_turn_count: 4,
             observation: Some(observation),
+            processed_turn_hash: None,
         };
 
         let encoded = serde_json::to_value(receipt).unwrap();
@@ -2894,6 +3025,173 @@ mod tests {
         ] {
             assert!(!rendered.contains(forbidden));
         }
+    }
+
+    #[test]
+    fn model_observation_omits_command_and_credential_shaped_labels() {
+        for label in [
+            "ghp_0123456789abcdefghijklmnopqrstuvwxyz",
+            "github_pat_0123456789abcdefghijklmnopqrstuvwxyz",
+            "AKIAIOSFODNN7EXAMPLE",
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signatureABC123",
+            "aB3dE5fG7hJ9kL2mN4pQ6rS8tU0vW1xY",
+        ] {
+            assert!(
+                !observable_model_label(label),
+                "credential-shaped label must be omitted: {label}"
+            );
+        }
+        assert!(observable_model_label("gpt-5.6-luna"));
+
+        let command = RetitleConfig::parse(
+            r#"{"provider":"command","model":"gpt-5.6-luna","argv":["/bin/true"]}"#,
+        )
+        .unwrap();
+        assert_eq!(observable_model_label_for_provider(&command), None);
+    }
+
+    #[test]
+    fn attempt_duration_uses_the_terminal_boundary() {
+        let request = RetitleRequest {
+            schema_version: REQUEST_SCHEMA.into(),
+            trigger: RetitleTrigger::Manual,
+            idempotency_key: "manual-duration-boundary".into(),
+            expected_session_incarnation: "launch".into(),
+            expected_title_revision: 0,
+            expected_activity_revision: None,
+            expected_provider_turn_id: None,
+        };
+        let started = Instant::now();
+        let evidence = RetitleAttemptEvidence {
+            context: None,
+            providers: Vec::new(),
+            elapsed: Duration::ZERO,
+            started: Some(started),
+        };
+        let mut observation = new_attempt_observation(&request, "sha256:duration".into(), 1);
+        finish_attempt_observation_at(
+            &mut observation,
+            &evidence,
+            RetitleAttemptTerminal {
+                stage: "complete",
+                failure_stage: None,
+                outcome: "committed",
+                diagnostic_code: "committed",
+            },
+            started + Duration::from_millis(250),
+        );
+
+        assert_eq!(
+            observation.attempts[0].duration_bucket.as_deref(),
+            Some("250_999_ms")
+        );
+    }
+
+    #[test]
+    fn interrupted_recovery_preserves_the_attempt_chain() {
+        let request = RetitleRequest {
+            schema_version: REQUEST_SCHEMA.into(),
+            trigger: RetitleTrigger::Manual,
+            idempotency_key: "manual-interrupted-recovery".into(),
+            expected_session_incarnation: "launch".into(),
+            expected_title_revision: 0,
+            expected_activity_revision: None,
+            expected_provider_turn_id: None,
+        };
+        let mut receipt = RetitleReceipt {
+            key_hash: hash_identity(&request.idempotency_key),
+            request_hash: request_hash(&request),
+            state: "in_progress".into(),
+            diagnostic_code: "in_progress".into(),
+            provider_kind: None,
+            attempt_count: 1,
+            coverage_complete: false,
+            coverage_truncated: false,
+            coverage_turn_count: 0,
+            observation: Some(new_attempt_observation(
+                &request,
+                hash_identity(&request.idempotency_key),
+                1,
+            )),
+            processed_turn_hash: None,
+        };
+
+        prepare_interrupted_receipt_recovery(&mut receipt);
+
+        assert_eq!(receipt.attempt_count, 2);
+        let attempts = &receipt.observation.as_ref().unwrap().attempts;
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0].stage, "interrupted");
+        assert_eq!(
+            attempts[0].failure_stage.as_deref(),
+            Some("worker_interrupted")
+        );
+        assert_eq!(attempts[0].outcome.as_deref(), Some("interrupted"));
+        assert_eq!(attempts[1].number, 2);
+        assert_eq!(attempts[1].stage, "admission");
+    }
+
+    #[test]
+    fn processed_turn_and_latest_projection_decode_only_the_exact_observation() {
+        let request = RetitleRequest {
+            schema_version: REQUEST_SCHEMA.into(),
+            trigger: RetitleTrigger::Prompt,
+            idempotency_key: "automatic-exact-observation".into(),
+            expected_session_incarnation: "launch".into(),
+            expected_title_revision: 0,
+            expected_activity_revision: Some(1),
+            expected_provider_turn_id: Some("turn-a".into()),
+        };
+        let automatic = new_attempt_observation(&request, "sha256:automatic".into(), 1);
+        let mut manual_request = request.clone();
+        manual_request.trigger = RetitleTrigger::Manual;
+        manual_request.expected_activity_revision = None;
+        manual_request.expected_provider_turn_id = None;
+        let manual = new_attempt_observation(&manual_request, "sha256:manual".into(), 1);
+        let receipt = |observation: RetitleAttemptObservation,
+                       processed_turn_hash: Option<String>| RetitleReceipt {
+            key_hash: observation.correlation_id.clone(),
+            request_hash: "sha256:request".into(),
+            state: "complete".into(),
+            diagnostic_code: "committed".into(),
+            provider_kind: Some("command".into()),
+            attempt_count: 1,
+            coverage_complete: true,
+            coverage_truncated: false,
+            coverage_turn_count: 1,
+            observation: Some(observation),
+            processed_turn_hash,
+        };
+        let state = DurableRetitleState {
+            schema_version: MARKER_SCHEMA.into(),
+            receipts: vec![
+                receipt(automatic.clone(), Some(hash_identity("turn-a"))),
+                receipt(manual.clone(), None),
+            ],
+            last_processed_turn_hash: Some(hash_identity("turn-a")),
+            ..DurableRetitleState::default()
+        };
+        assert_eq!(
+            processed_turn_observation(&state, &hash_identity("turn-a"))
+                .unwrap()
+                .correlation_id,
+            automatic.correlation_id
+        );
+
+        let mut receipts = (0..31)
+            .map(|_| json!({"invalid": true}))
+            .collect::<Vec<_>>();
+        receipts.push(json!({"observation": manual}));
+        let marker = json!({
+            "schema_version": MARKER_SCHEMA,
+            "receipts": receipts,
+        });
+        assert_eq!(
+            latest_attempt_observation_from_marker(&marker)
+                .unwrap()
+                .correlation_id,
+            "sha256:manual"
+        );
     }
 
     #[test]
@@ -2939,6 +3237,7 @@ mod tests {
             coverage_truncated: false,
             coverage_turn_count: 0,
             observation: Some(new_attempt_observation(&request, "sha256:key".into(), 1)),
+            processed_turn_hash: Some(hash_identity("turn-1")),
         };
         assert!(automatic_failed_receipt_can_retry(
             &receipt,

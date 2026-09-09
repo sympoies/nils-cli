@@ -77,6 +77,13 @@ plus one fallback provider attempt. Provider attempts contain only provider
 kind, validated model label when configured, outcome class, failure stage, and
 coarse duration bucket.
 
+Model labels are omitted for command providers and whenever their shape could
+be a credential (including common GitHub, AWS access-key, JWT, or opaque
+high-entropy forms). The omission applies consistently to readiness, durable
+receipts, HTTP responses and session lists, and structured logs. Stable failure
+stages are restricted to the queue, context, provider, and commit families;
+unknown internal stages are collapsed to `unknown` or `provider`.
+
 The serve daemon writes the same terminal observation as one structured JSON
 stderr event named `agent_session_retitle_attempt`, suitable for journald
 correlation. Neither the durable receipt, HTTP projections, nor this event may
@@ -92,11 +99,15 @@ incarnation, provider turn ID, and trigger. Receipts and the last processed turn
 hash live in the session record, so restart, resume, reload, and multiple clients
 converge without duplicate provider decisions. An orphaned `in_progress`
 receipt is recoverable only after the replacement daemon has acquired its
-process-local per-session gate. Retryable automatic failures use one- and
-two-second process-local backoff and a durable maximum of three provider
-attempts per deterministic key. Terminal success, non-retryable failure, and
-attempt exhaustion remain suppressed for the daemon lifetime; restart cannot
-reset the durable provider-attempt bound.
+process-local per-session gate. Recovery retains that receipt, marks the prior
+span interrupted, and appends the incremented attempt to the same chain.
+Already-processed turn replay includes attempt metadata only when a completed
+receipt is correlated to that exact turn; otherwise it omits the optional
+field. Retryable automatic failures use one- and two-second process-local
+backoff and a durable maximum of three provider attempts per deterministic key.
+Terminal success, non-retryable failure, and attempt exhaustion remain
+suppressed for the daemon lifetime; restart cannot reset the durable
+provider-attempt bound.
 
 Commit always reloads and rechecks every fence. A later activity revision is
 accepted while the expected provider turn remains current, or after that turn
@@ -180,7 +191,11 @@ volume. Its meaningful intermediate human turn is more than 16 MiB behind an
 event-dense tail. The v2 characterization intentionally proves that the
 bounded latest-message selector returns no semantic messages while reading no
 more than its configured reverse-scan byte budget; retitle v3 owns recovery of
-that semantic journey.
+that semantic journey. This 200 MiB case is the deterministic production-bound
+substitute: it reaches the production reverse-scan byte cap without depending
+on wall-clock speed. A separately ignored virtual 1 GiB stress case retains
+constant fixture allocation and verifies the same read bound when explicitly
+requested.
 
 ```json
 {

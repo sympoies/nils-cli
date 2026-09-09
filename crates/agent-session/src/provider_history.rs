@@ -1981,6 +1981,47 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "explicit virtual 1 GiB stress surface"]
+    fn generated_1_gib_sparse_semantic_tail_keeps_production_read_and_allocation_bounds() {
+        const RECORDS: u64 = 225_245;
+        const ROW_BYTES: usize = 4_767;
+        const SEMANTIC_RECORD: u64 = 220_000;
+        let session = history_session("one-gib-session", "2026-09-09T00:00:00Z");
+        let generated = GeneratedLongHistoryReader::new(ROW_BYTES, RECORDS, SEMANTIC_RECORD);
+        let file_len = generated.len();
+        assert!(
+            generated.ordinary_row.len() + generated.semantic_row.len() < 16 * 1024,
+            "the virtual stress fixture must retain constant allocation"
+        );
+        assert!((1023 * 1024 * 1024..=1025 * 1024 * 1024).contains(&file_len));
+        assert!(
+            (RECORDS - SEMANTIC_RECORD) * ROW_BYTES as u64 > REVERSE_MESSAGE_MAX_BYTES,
+            "the meaningful turn must sit outside the bounded production tail"
+        );
+        let mut reader = CountingReader {
+            inner: generated,
+            bytes_read: 0,
+        };
+
+        let page = read_messages_reverse_from_reader(
+            &session,
+            &mut reader,
+            file_len,
+            None,
+            100,
+            Instant::now() + Duration::from_secs(60),
+        )
+        .unwrap();
+
+        assert!(page.messages.is_empty());
+        assert!(page.older_cursor.is_some());
+        assert!(reader.bytes_read >= REVERSE_MESSAGE_MAX_BYTES as usize);
+        assert!(
+            reader.bytes_read <= REVERSE_MESSAGE_MAX_BYTES as usize + REVERSE_MESSAGE_CHUNK_BYTES
+        );
+    }
+
+    #[test]
     fn empty_bounded_reverse_page_keeps_a_cursor_to_older_conversation() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("sessions/2026/08/31");
