@@ -6717,6 +6717,19 @@ fn parse_linux_process_record(bytes: &[u8]) -> Option<ProcessRecord> {
     Some(ProcessRecord::new(pid, parent, generation, bytes.len()))
 }
 
+/// Whether a `/proc` failure means the process simply went away.
+///
+/// The scan walks short-lived descendants, so a process departing mid-walk is
+/// expected rather than exceptional. `openat` reports a departed process as
+/// `ENOENT`, which Rust maps to `NotFound`. A process that exits between the
+/// open and the read instead reports `ESRCH` on the read, and Rust maps that to
+/// `Uncategorized`, so it cannot be recognized by `ErrorKind`. Both mean the
+/// same thing: there is nothing left to scan, and neither is a resource limit.
+#[cfg(target_os = "linux")]
+fn is_departed_process_error(error: &io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(libc::ESRCH) | Some(libc::ENOENT))
+}
+
 #[cfg(target_os = "linux")]
 fn read_linux_metadata(path: &Path, byte_limit: usize) -> Result<Option<Vec<u8>>> {
     let file = match OpenOptions::new()
@@ -6725,13 +6738,22 @@ fn read_linux_metadata(path: &Path, byte_limit: usize) -> Result<Option<Vec<u8>>
         .open(path)
     {
         Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if is_departed_process_error(&error) => return Ok(None),
         Err(_) => return Err(process_scan_resource_error()),
     };
+    read_open_linux_metadata(file, byte_limit)
+}
+
+/// Read one already-opened `/proc` entry, treating a process that departed
+/// after the open as absent rather than as a resource failure.
+#[cfg(target_os = "linux")]
+fn read_open_linux_metadata(file: File, byte_limit: usize) -> Result<Option<Vec<u8>>> {
     let mut bytes = Vec::with_capacity(256.min(byte_limit));
-    file.take((byte_limit + 1) as u64)
-        .read_to_end(&mut bytes)
-        .map_err(|_| process_scan_resource_error())?;
+    match file.take((byte_limit + 1) as u64).read_to_end(&mut bytes) {
+        Ok(_) => {}
+        Err(error) if is_departed_process_error(&error) => return Ok(None),
+        Err(_) => return Err(process_scan_resource_error()),
+    }
     if bytes.len() > byte_limit {
         return Err(process_scan_resource_error());
     }
@@ -14422,5 +14444,73 @@ mod tests {
             !same_metadata(&before, &after),
             "ctime-only drift must invalidate metadata equality"
         );
+    }
+
+    /// A `/proc` entry whose process departs after the open must read as
+    /// absent, not as a resource failure.
+    ///
+    /// The descendant-cleanup scan walks short-lived grandchildren, so this
+    /// race is routine. `openat` reports a departed process as `ENOENT`, but a
+    /// process that exits between the open and the read reports `ESRCH` on the
+    /// read, which Rust maps to `Uncategorized` rather than `NotFound`. That
+    /// turned a benign liveness race into `dirty-checkout-resource-unavailable`
+    /// and failed the whole snapshot, with the diagnostic only on stdout.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_proc_entry_read_after_its_process_exits_is_absent_not_a_resource_failure() {
+        use std::process::{Command, Stdio};
+
+        let mut child = Command::new("/bin/sh")
+            .arg("-c")
+            .arg("exec sleep 30")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn a short-lived process to scan");
+        let path = PathBuf::from(format!("/proc/{}/stat", child.id()));
+
+        // Open while the process is alive, so the open cannot be the failure.
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+            .open(&path)
+            .expect("open the live process entry");
+
+        // Retire and reap it, which is what makes the held descriptor report
+        // ESRCH deterministically instead of racing the exit.
+        child.kill().expect("retire the scanned process");
+        child.wait().expect("reap the scanned process");
+
+        let read = read_open_linux_metadata(file, 4096);
+        assert!(
+            matches!(read, Ok(None)),
+            "a departed process must read as absent, got {read:?}"
+        );
+
+        // The same departure seen at open time keeps its existing verdict.
+        assert!(
+            matches!(read_linux_metadata(&path, 4096), Ok(None)),
+            "a process gone before the open must also read as absent"
+        );
+    }
+
+    /// Only a departure is excused. A permission or descriptor-exhaustion
+    /// failure must still surface as a resource failure.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn only_a_departed_process_errno_is_excused_by_the_proc_scan() {
+        for excused in [libc::ESRCH, libc::ENOENT] {
+            assert!(
+                is_departed_process_error(&io::Error::from_raw_os_error(excused)),
+                "errno {excused} means the process is gone"
+            );
+        }
+        for refused in [libc::EACCES, libc::EMFILE, libc::ENFILE, libc::EIO] {
+            assert!(
+                !is_departed_process_error(&io::Error::from_raw_os_error(refused)),
+                "errno {refused} is not a departure and must stay a failure"
+            );
+        }
     }
 }
