@@ -151,7 +151,11 @@ exit 0
         &envs,
         Some("y\n"),
     );
-    assert_eq!(out.code, 0);
+    assert_eq!(
+        out.code, 0,
+        "stdout: {}\nstderr: {}",
+        out.stdout, out.stderr
+    );
     let log = fs::read_to_string(&vi_log).unwrap();
     assert!(log.contains("--"));
     assert!(log.contains("snapshot contents"));

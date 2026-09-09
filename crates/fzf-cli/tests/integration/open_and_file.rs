@@ -34,7 +34,11 @@ exit 0
     ];
 
     let output = run_fzf_cli_with_stub_path(temp.path(), stub.path(), &["file"], &envs, None);
-    assert_eq!(output.code, 0);
+    assert_eq!(
+        output.code, 0,
+        "stdout: {}\nstderr: {}",
+        output.stdout, output.stderr
+    );
 
     let code_args = fs::read_to_string(&code_log).unwrap();
     assert!(code_args.contains("--goto"));
@@ -83,7 +87,11 @@ exit 0
     ];
 
     let output = run_fzf_cli_with_stub_path(temp.path(), stub.path(), &["file"], &envs, None);
-    assert_eq!(output.code, 0);
+    assert_eq!(
+        output.code, 0,
+        "stdout: {}\nstderr: {}",
+        output.stdout, output.stderr
+    );
 
     let vi_args = fs::read_to_string(&vi_log).unwrap();
     assert!(vi_args.contains("--"));
