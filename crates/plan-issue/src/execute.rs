@@ -9298,12 +9298,21 @@ fn ensure_private_temp_markdown_dir(dir: &Path) -> Result<TempMarkdownDir, Strin
             ));
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            fs::create_dir(dir).map_err(|err| {
-                format!(
-                    "failed to create temporary markdown directory {}: {err}",
-                    dir.display()
-                )
-            })?;
+            // Losing a creation race against a concurrent delivery on the same
+            // host is benign: what makes this directory safe to write into is
+            // the `O_DIRECTORY | O_NOFOLLOW` open below plus the `fchmod`, not
+            // the check above. Treating EEXIST as an error made two concurrent
+            // closeouts fail with `record-close-comment-write-failed`.
+            match fs::create_dir(dir) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(err) => {
+                    return Err(format!(
+                        "failed to create temporary markdown directory {}: {err}",
+                        dir.display()
+                    ));
+                }
+            }
         }
         Err(err) => {
             return Err(format!(
@@ -13132,6 +13141,47 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[test]
+    fn temp_markdown_directory_setup_tolerates_a_concurrent_creator() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        // Setup used to check for the directory and then create it, so two
+        // concurrent deliveries on one host raced: the loser's `create_dir`
+        // returned EEXIST and the whole closeout failed with
+        // `record-close-comment-write-failed`. The directory's safety is proven
+        // by the O_DIRECTORY|O_NOFOLLOW open that follows, not by the
+        // pre-check, so losing that race is benign and must not fail.
+        let parent = TempDir::new().expect("delivery parent");
+        let dir_path = parent.path().join("tmp");
+
+        let barrier = Arc::new(Barrier::new(4));
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            let barrier = Arc::clone(&barrier);
+            let dir_path = dir_path.clone();
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                ensure_private_temp_markdown_dir(&dir_path).map(|dir| dir.path.clone())
+            }));
+        }
+
+        for handle in handles {
+            let outcome = handle.join().expect("setup thread");
+            let path = outcome.expect("a concurrent creator must not fail setup");
+            assert_eq!(path, dir_path);
+        }
+
+        let metadata = fs::symlink_metadata(&dir_path).expect("temp directory");
+        assert!(metadata.file_type().is_dir());
+        assert_eq!(
+            metadata.permissions().mode() & 0o777,
+            0o700,
+            "the directory stays private whichever caller created it"
+        );
+    }
+
     #[test]
     fn temp_markdown_rejects_symlinked_delivery_directory() {
         let lock = GlobalStateLock::new();
