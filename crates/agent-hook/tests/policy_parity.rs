@@ -138,3 +138,96 @@ fn canonical_spec_names_the_strict_dsh_ingress_and_policy_contracts() {
     assert!(specification.contains("native allow/block admission"));
     assert!(specification.contains("bounded model"));
 }
+
+/// Marker that introduces the documented `runtime-kit.handler.v1` allowlist in
+/// `agent-hook-v1.md`.
+const ALLOWLIST_MARKER: &str = "The v1 allowlist is:";
+
+/// Collect the handler IDs the spec documents, reading the backticked entries
+/// of the single paragraph that follows the allowlist marker.
+///
+/// The parse keys on the marker line and the paragraph break, so the prose
+/// around the list can be reworded freely while a missing or extra ID still
+/// fails. Changing the marker itself, or splitting the list across a blank
+/// line, fails loudly here rather than silently passing.
+fn documented_runtime_handler_ids(spec: &str) -> Vec<String> {
+    let after_marker = spec
+        .split_once(ALLOWLIST_MARKER)
+        .expect("agent-hook-v1.md documents the v1 allowlist")
+        .1;
+
+    let mut paragraph = String::new();
+    for line in after_marker.lines() {
+        if line.trim().is_empty() {
+            if paragraph.is_empty() {
+                continue;
+            }
+            break;
+        }
+        paragraph.push_str(line);
+        paragraph.push(' ');
+    }
+    assert!(
+        !paragraph.is_empty(),
+        "the allowlist marker is followed by a documented paragraph"
+    );
+
+    let mut ids = Vec::new();
+    let mut rest = paragraph.as_str();
+    while let Some((_, tail)) = rest.split_once('`') {
+        let (id, tail) = tail
+            .split_once('`')
+            .expect("each documented allowlist entry closes its backticks");
+        ids.push(id.to_string());
+        rest = tail;
+    }
+    ids
+}
+
+#[test]
+fn documented_runtime_handler_allowlist_matches_the_compiled_map() {
+    let documented = documented_runtime_handler_ids(include_str!("../docs/specs/agent-hook-v1.md"));
+    let compiled = agent_hook::policy_parity::runtime_handler_ids();
+
+    let mut documented_sorted = documented.clone();
+    documented_sorted.sort();
+    let mut compiled_sorted = compiled
+        .iter()
+        .map(|id| (*id).to_string())
+        .collect::<Vec<_>>();
+    compiled_sorted.sort();
+
+    assert_eq!(
+        documented_sorted, compiled_sorted,
+        "the documented v1 allowlist and the compiled handler map disagree; \
+         update both `agent-hook-v1.md` and `RUNTIME_HANDLERS` together"
+    );
+}
+
+#[test]
+fn documented_runtime_handler_allowlist_has_no_duplicate_entries() {
+    let documented = documented_runtime_handler_ids(include_str!("../docs/specs/agent-hook-v1.md"));
+    let mut unique = documented.clone();
+    unique.sort();
+    unique.dedup();
+
+    assert_eq!(
+        unique.len(),
+        documented.len(),
+        "the documented v1 allowlist lists each handler ID once"
+    );
+}
+
+#[test]
+fn compiled_runtime_handler_allowlist_is_sorted_and_unique() {
+    let compiled = agent_hook::policy_parity::runtime_handler_ids();
+    let mut expected = compiled.clone();
+    expected.sort();
+    expected.dedup();
+
+    assert_eq!(
+        compiled, expected,
+        "`RUNTIME_HANDLERS` stays sorted with one entry per handler ID so the \
+         table can be diffed against the spec"
+    );
+}

@@ -251,3 +251,17 @@ impl DshTier {
         }
     }
 }
+
+/// Every handler ID the compiled `runtime-kit.handler.v1` allowlist admits, in
+/// the order the enforcing table declares them.
+///
+/// The allowlist is what a consumer repository reads `agent-hook-v1.md` to
+/// learn, so a stale spec is a wrong answer that only surfaces later as a
+/// `handler-id-unsupported` dispatch failure downstream. Exposing the enforcing
+/// set lets a test compare the two directly.
+pub fn runtime_handler_ids() -> Vec<&'static str> {
+    crate::contract::RUNTIME_HANDLERS
+        .iter()
+        .map(|(id, _)| *id)
+        .collect()
+}

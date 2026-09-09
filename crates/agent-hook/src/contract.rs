@@ -861,33 +861,59 @@ pub fn matcher_expression_matches(expression: &str, candidate: &str) -> bool {
     expression.split('|').any(|atom| atom == candidate)
 }
 
+/// The complete `runtime-kit.handler.v1` allowlist: each admitted handler ID
+/// paired with the exact runtime-kit-owned basename it resolves to.
+///
+/// This table is the single enforcing source. `agent-hook-v1.md` documents the
+/// same IDs in prose, and `tests/policy_parity.rs` fails when the two disagree
+/// in either direction, so the spec cannot silently drift from what the binary
+/// admits.
+pub const RUNTIME_HANDLERS: &[(&str, &str)] = &[
+    ("agent-scope-lock-guard", "agent-scope-lock-guard.py"),
+    (
+        "block-agent-artifact-routing",
+        "block-agent-artifact-routing.py",
+    ),
+    (
+        "block-claude-coauthor-trailer",
+        "block-claude-coauthor-trailer.py",
+    ),
+    ("block-direct-git-commit", "block-direct-git-commit.py"),
+    ("block-direct-git-worktree", "block-direct-git-worktree.py"),
+    ("block-direct-pr-create", "block-direct-pr-create.py"),
+    ("block-direct-python", "block-direct-python.py"),
+    (
+        "block-project-memory-write",
+        "block-project-memory-write.py",
+    ),
+    (
+        "block-unsafe-default-delivery",
+        "block-unsafe-default-delivery.py",
+    ),
+    ("checkout-lease-guard", "checkout-lease-guard.py"),
+    ("finish-line-record", "finish-line-record.py"),
+    ("forge-label-reminder", "forge-label-reminder.py"),
+    ("mcp-secret-scan", "mcp-secret-scan.py"),
+    (
+        "memory-write-principle-reminder",
+        "memory-write-principle-reminder.py",
+    ),
+    ("portable-paths-scan", "portable-paths-scan.py"),
+    ("pre-edit-intent-gate", "pre-edit-intent-gate.py"),
+    ("semantic-commit-body-gate", "semantic-commit-body-gate.py"),
+    ("session-start-healthcheck", "session-start-healthcheck.sh"),
+    ("skill-usage-reminder", "skill-usage-reminder.py"),
+    ("stop-finish-line-gate", "stop-finish-line-gate.py"),
+    ("stop-pre-pr-reminder", "stop-pre-pr-reminder.sh"),
+    ("user-prompt-agent-docs", "user-prompt-agent-docs.sh"),
+    ("user-prompt-agent-memory", "user-prompt-agent-memory.sh"),
+];
+
 pub fn runtime_handler_filename(id: &str) -> Option<&'static str> {
-    Some(match id {
-        "agent-scope-lock-guard" => "agent-scope-lock-guard.py",
-        "block-agent-artifact-routing" => "block-agent-artifact-routing.py",
-        "block-claude-coauthor-trailer" => "block-claude-coauthor-trailer.py",
-        "block-direct-git-commit" => "block-direct-git-commit.py",
-        "block-direct-git-worktree" => "block-direct-git-worktree.py",
-        "block-direct-pr-create" => "block-direct-pr-create.py",
-        "block-direct-python" => "block-direct-python.py",
-        "block-project-memory-write" => "block-project-memory-write.py",
-        "block-unsafe-default-delivery" => "block-unsafe-default-delivery.py",
-        "checkout-lease-guard" => "checkout-lease-guard.py",
-        "finish-line-record" => "finish-line-record.py",
-        "forge-label-reminder" => "forge-label-reminder.py",
-        "mcp-secret-scan" => "mcp-secret-scan.py",
-        "memory-write-principle-reminder" => "memory-write-principle-reminder.py",
-        "portable-paths-scan" => "portable-paths-scan.py",
-        "pre-edit-intent-gate" => "pre-edit-intent-gate.py",
-        "semantic-commit-body-gate" => "semantic-commit-body-gate.py",
-        "session-start-healthcheck" => "session-start-healthcheck.sh",
-        "skill-usage-reminder" => "skill-usage-reminder.py",
-        "stop-finish-line-gate" => "stop-finish-line-gate.py",
-        "stop-pre-pr-reminder" => "stop-pre-pr-reminder.sh",
-        "user-prompt-agent-docs" => "user-prompt-agent-docs.sh",
-        "user-prompt-agent-memory" => "user-prompt-agent-memory.sh",
-        _ => return None,
-    })
+    RUNTIME_HANDLERS
+        .iter()
+        .find(|(handler_id, _)| *handler_id == id)
+        .map(|(_, filename)| *filename)
 }
 
 fn validate_id(label: &str, value: &str) -> Result<(), HookError> {
