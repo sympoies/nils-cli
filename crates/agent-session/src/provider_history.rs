@@ -2022,8 +2022,12 @@ fn extend_or_compute_prefix_integrity<R: Read + Seek>(
 
     let mut completed_hash = prior.completed_hash.clone();
     let first_block_index = block_start / block_bytes;
-    let mut chunks = bytes.chunks_exact(INCREMENTAL_INTEGRITY_BLOCK_BYTES);
-    for (relative_index, block) in (&mut chunks).enumerate() {
+    let completed_bytes =
+        bytes.len() / INCREMENTAL_INTEGRITY_BLOCK_BYTES * INCREMENTAL_INTEGRITY_BLOCK_BYTES;
+    for (relative_index, block) in bytes[..completed_bytes]
+        .chunks(INCREMENTAL_INTEGRITY_BLOCK_BYTES)
+        .enumerate()
+    {
         let block_index = first_block_index.saturating_add(relative_index as u64);
         completed_hash = fold_incremental_integrity_block(&completed_hash, block_index, block);
     }
@@ -2039,7 +2043,7 @@ fn extend_or_compute_prefix_integrity<R: Read + Seek>(
     Ok(IncrementalPrefixIntegrity {
         block_bytes: INCREMENTAL_INTEGRITY_BLOCK_BYTES as u32,
         completed_hash,
-        tail_hash: digest_parts(&[chunks.remainder()]),
+        tail_hash: digest_parts(&[&bytes[completed_bytes..]]),
         generation: generation.digest.clone(),
         file_identity: generation.file_identity.clone(),
         observed_len: generation.len,
