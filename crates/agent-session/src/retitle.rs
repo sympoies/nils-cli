@@ -1268,7 +1268,7 @@ fn fallback_eligible(code: &str) -> bool {
 fn model_input(context: &TitleContextV2) -> Result<String, CliError> {
     let context = serde_json::to_string(context).map_err(|_| provider_malformed())?;
     Ok(format!(
-        "Return only one JSON object with keys topic_action (keep|set|clear), topic (string|null), activity (string|null), references (array of #number strings). Preserve the durable first user objective through routine follow-ups; change an automatic topic only for a clear user-directed objective change. Never invent references. Do not use tools. Context:\n{context}"
+        "Return only one JSON object with keys topic_action (keep|set|clear), topic (string|null), activity (string|null), references (array of at most two distinct #number strings). Preserve the durable first user objective through routine follow-ups; change an automatic topic only for a clear user-directed objective change. Never invent references. Do not use tools. Context:\n{context}"
     ))
 }
 
@@ -1335,22 +1335,10 @@ fn invoke_openai_compatible(
     })?;
     let status = response.status();
     if status.as_u16() == 429 {
-        return Err(retitle_error(
-            "retitle-provider-rate-limited",
-            "title provider rate limit was reached",
-            true,
-            "wait_and_retry",
-            "bounded_backoff",
-        ));
+        return Err(provider_rate_limited());
     }
     if status.as_u16() == 402 || status.as_u16() == 403 {
-        return Err(retitle_error(
-            "retitle-provider-quota-exceeded",
-            "title provider quota is unavailable",
-            true,
-            "wait_and_retry",
-            "wait_for_quota",
-        ));
+        return Err(provider_quota_exceeded());
     }
     if !status.is_success() {
         return Err(provider_unavailable());
@@ -1495,8 +1483,10 @@ fn invoke_codex(
         send_rpc(&mut stdin, &codex_turn_start_request(&thread, input))?;
         recv_rpc_response(&rx, 4, deadline)?;
         let mut answer = None;
+        let mut failure_reducer = crate::codex_app_server::FailureReducer::new(thread.clone());
         loop {
             let value = recv_rpc(&rx, deadline)?;
+            let structured_failure = failure_reducer.ingest(&value).map(|failure| failure.kind);
             if value.get("method").and_then(Value::as_str) == Some("item/completed")
                 && value.pointer("/params/threadId").and_then(Value::as_str)
                     == Some(thread.as_str())
@@ -1512,6 +1502,9 @@ fn invoke_codex(
                 && value.pointer("/params/threadId").and_then(Value::as_str)
                     == Some(thread.as_str())
             {
+                if let Some(error) = codex_turn_completion_error(&value, structured_failure) {
+                    return Err(error);
+                }
                 break;
             }
         }
@@ -1520,6 +1513,25 @@ fn invoke_codex(
     terminate_child(&mut child);
     argv.clear();
     result
+}
+
+fn codex_turn_completion_error(
+    value: &Value,
+    structured_failure: Option<crate::codex_app_server::StructuredFailureKind>,
+) -> Option<CliError> {
+    match value.pointer("/params/turn/status").and_then(Value::as_str) {
+        Some("completed") => None,
+        Some("failed") => Some(match structured_failure {
+            Some(crate::codex_app_server::StructuredFailureKind::UsageExhausted) => {
+                provider_quota_exceeded()
+            }
+            Some(crate::codex_app_server::StructuredFailureKind::ProviderCapacity) | None => {
+                provider_unavailable()
+            }
+        }),
+        Some("interrupted") => Some(provider_unavailable()),
+        _ => Some(provider_malformed()),
+    }
 }
 
 fn codex_turn_start_request(thread: &str, input: &str) -> Value {
@@ -1608,7 +1620,6 @@ fn parse_decision(
             .activity
             .as_deref()
             .is_some_and(|value| value.chars().count() > 120)
-        || decision.references.len() > 2
     {
         return Err(provider_malformed());
     }
@@ -1806,6 +1817,26 @@ fn provider_unavailable() -> CliError {
         true,
         "retry",
         "retry_request",
+    )
+}
+
+fn provider_rate_limited() -> CliError {
+    retitle_error(
+        "retitle-provider-rate-limited",
+        "title provider rate limit was reached",
+        true,
+        "wait_and_retry",
+        "bounded_backoff",
+    )
+}
+
+fn provider_quota_exceeded() -> CliError {
+    retitle_error(
+        "retitle-provider-quota-exceeded",
+        "title provider quota is unavailable",
+        true,
+        "wait_and_retry",
+        "wait_for_quota",
     )
 }
 
@@ -2207,20 +2238,8 @@ fn replayed_error(code: &str) -> CliError {
         ),
         "retitle-provider-timeout" => provider_timeout(),
         "retitle-provider-unavailable" => provider_unavailable(),
-        "retitle-provider-rate-limited" => retitle_error(
-            "retitle-provider-rate-limited",
-            "title provider rate limit was reached",
-            true,
-            "wait_and_retry",
-            "bounded_backoff",
-        ),
-        "retitle-provider-quota-exceeded" => retitle_error(
-            "retitle-provider-quota-exceeded",
-            "title provider quota is unavailable",
-            true,
-            "wait_and_retry",
-            "wait_for_quota",
-        ),
+        "retitle-provider-rate-limited" => provider_rate_limited(),
+        "retitle-provider-quota-exceeded" => provider_quota_exceeded(),
         "retitle-provider-malformed-response" => provider_malformed(),
         "retitle-worker-failed" => retitle_error(
             "retitle-worker-failed",
@@ -2584,6 +2603,114 @@ mod tests {
         assert_eq!(result.topic.as_deref(), Some("User title"));
         assert_eq!(result.references, vec!["#449"]);
         assert_eq!(result.activity.as_deref(), Some("Review"));
+    }
+
+    #[test]
+    fn model_instruction_and_parser_bound_valid_references_to_two() {
+        let context = TitleContextV2 {
+            schema_version: "agent-session.title-context.v2",
+            session: TitleContextSession {
+                agent: "claude".to_string(),
+                repo_name: Some("console".to_string()),
+                title_state: None,
+            },
+            turns: vec![turn(
+                1,
+                "Review #101 #102 #103 #104 #105 #106 #107 without inventing references",
+            )],
+            coverage: TitleContextCoverage {
+                source: "provider_transcript",
+                complete: true,
+                truncated: false,
+            },
+            trigger: RetitleTrigger::Initial,
+        };
+
+        assert!(model_input(&context).unwrap().contains("at most two"));
+        let state = parse_decision(
+            r##"{"topic_action":"set","topic":"Retitle recovery","activity":"Reviewing failures","references":["#101","#102","#103","#104","#105","#106","#107"]}"##,
+            &context,
+            None,
+        )
+        .unwrap();
+        assert_eq!(state.references, vec!["#101", "#102"]);
+    }
+
+    #[test]
+    fn codex_turn_completion_preserves_structured_provider_failures() {
+        let quota_completion = json!({
+            "method": "turn/completed",
+            "params": {
+                "threadId": "thread-a",
+                "turn": {
+                    "id": "turn-a",
+                    "status": "failed",
+                    "error": {"codexErrorInfo": "usageLimitExceeded"}
+                }
+            }
+        });
+        let mut quota_reducer = crate::codex_app_server::FailureReducer::new("thread-a");
+        let quota_failure = quota_reducer
+            .ingest(&quota_completion)
+            .map(|failure| failure.kind);
+        let quota = codex_turn_completion_error(&quota_completion, quota_failure).unwrap();
+        assert_eq!(quota.code(), "retitle-provider-quota-exceeded");
+
+        let overloaded_completion = json!({
+            "method": "turn/completed",
+            "params": {
+                "threadId": "thread-a",
+                "turn": {
+                    "id": "turn-a",
+                    "status": "failed",
+                    "error": {"codexErrorInfo": "serverOverloaded"}
+                }
+            }
+        });
+        let mut overloaded_reducer = crate::codex_app_server::FailureReducer::new("thread-a");
+        let overloaded_failure = overloaded_reducer
+            .ingest(&overloaded_completion)
+            .map(|failure| failure.kind);
+        let overloaded =
+            codex_turn_completion_error(&overloaded_completion, overloaded_failure).unwrap();
+        assert_eq!(overloaded.code(), "retitle-provider-unavailable");
+
+        let completed = codex_turn_completion_error(
+            &json!({
+                "method": "turn/completed",
+                "params": {"turn": {"status": "completed"}}
+            }),
+            None,
+        );
+        assert!(completed.is_none());
+    }
+
+    #[test]
+    fn codex_turn_completion_joins_a_separate_quota_error_notification() {
+        let mut reducer = crate::codex_app_server::FailureReducer::new("thread-a");
+        assert!(
+            reducer
+                .ingest(&json!({
+                    "method": "error",
+                    "params": {
+                        "threadId": "thread-a",
+                        "turnId": "turn-a",
+                        "willRetry": false,
+                        "error": {"codexErrorInfo": "usageLimitExceeded"}
+                    }
+                }))
+                .is_none()
+        );
+        let completion = json!({
+            "method": "turn/completed",
+            "params": {
+                "threadId": "thread-a",
+                "turn": {"id": "turn-a", "status": "failed", "error": null}
+            }
+        });
+        let structured_failure = reducer.ingest(&completion).map(|failure| failure.kind);
+        let error = codex_turn_completion_error(&completion, structured_failure).unwrap();
+        assert_eq!(error.code(), "retitle-provider-quota-exceeded");
     }
 
     #[test]
