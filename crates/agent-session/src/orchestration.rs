@@ -895,11 +895,12 @@ thread_local! {
 
 #[cfg(test)]
 fn replace_private_read_path_for_test(path: &Path) {
-    PRIVATE_READ_REPLACEMENT_HOOK.with(|slot| {
-        if let Some(hook) = slot.borrow_mut().take() {
-            hook(path);
-        }
-    });
+    // Take the hook out before invoking it so the cell is not borrowed during
+    // the call, which lets a hook re-arm itself to cover repeated attempts.
+    let hook = PRIVATE_READ_REPLACEMENT_HOOK.with(|slot| slot.borrow_mut().take());
+    if let Some(hook) = hook {
+        hook(path);
+    }
 }
 
 pub(crate) const REGISTRY_SCHEMA: &str = "agent-session.orchestration-registry.v3";
@@ -4885,6 +4886,30 @@ fn read_private_bounded_file(
     )
 }
 
+/// One outcome of a single read attempt.
+///
+/// `Superseded` means a writer committed a new version over the path while this
+/// attempt held the previous inode. The snapshot in hand is consistent but
+/// stale, so looking again is the correct response. The read itself is boxed
+/// through `Option` on the settled arm to keep the enum small.
+enum PrivateReadAttempt {
+    /// Settled: the path is absent (`None`) or was read (`Some`).
+    Settled(Option<Box<PrivateBoundedFile>>),
+    Superseded,
+}
+
+/// How many times a read re-opens after a writer superseded it.
+///
+/// Writers commit by renaming a fresh file over the path, which leaves a
+/// reader's descriptor pinned to the previous inode. Failing there made an
+/// ordinary read fail whenever any writer committed, and the caller has no
+/// retry: `orchestration-store-invalid` is excluded from the store retry codes,
+/// and the recovery commands that read this store own their own deadline and
+/// bypass the retry facade entirely. Writers hold the exclusive lock for a
+/// bounded window, so a small bounded retry converges deterministically.
+const PRIVATE_READ_SUPERSEDED_ATTEMPTS: u32 = 4;
+const PRIVATE_READ_SUPERSEDED_BACKOFF: Duration = Duration::from_millis(5);
+
 fn read_private_bounded_file_with_limit(
     path: &Path,
     max_bytes: u64,
@@ -4892,13 +4917,45 @@ fn read_private_bounded_file_with_limit(
     oversized_message: &'static str,
     changed_message: &'static str,
 ) -> Result<Option<PrivateBoundedFile>, CliError> {
+    for attempt in 0..PRIVATE_READ_SUPERSEDED_ATTEMPTS {
+        match read_private_bounded_file_once(
+            path,
+            max_bytes,
+            unsafe_message,
+            oversized_message,
+            changed_message,
+        )? {
+            PrivateReadAttempt::Settled(settled) => {
+                return Ok(settled.map(|read| *read));
+            }
+            PrivateReadAttempt::Superseded => {
+                if attempt + 1 < PRIVATE_READ_SUPERSEDED_ATTEMPTS {
+                    thread::sleep(PRIVATE_READ_SUPERSEDED_BACKOFF);
+                }
+            }
+        }
+    }
+    // A path that keeps moving under every attempt is no longer just a
+    // commit this read lost a race with.
+    Err(store_invalid(changed_message))
+}
+
+fn read_private_bounded_file_once(
+    path: &Path,
+    max_bytes: u64,
+    unsafe_message: &'static str,
+    oversized_message: &'static str,
+    changed_message: &'static str,
+) -> Result<PrivateReadAttempt, CliError> {
     let mut file = match OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
         .open(path)
     {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(PrivateReadAttempt::Settled(None));
+        }
         Err(error) if error.raw_os_error() == Some(libc::ELOOP) => {
             return Err(store_invalid(unsafe_message));
         }
@@ -4920,19 +4977,40 @@ fn read_private_bounded_file_with_limit(
         return Err(store_invalid(oversized_message));
     }
     let after = file.metadata().map_err(|_| store_unavailable())?;
-    if !same_private_file_snapshot(&before, &after) || bytes.len() as u64 != after.len() {
+    if !same_private_file_read_content(&before, &after) || bytes.len() as u64 != after.len() {
         return Err(store_invalid(changed_message));
     }
-    let path_metadata = fs::symlink_metadata(path).map_err(|_| store_invalid(changed_message))?;
-    validate_private_file(&path_metadata)?;
+    if private_file_metadata_moved(&before, &after) {
+        // The bytes are intact, but something replaced or re-permissioned the
+        // entry. Re-validate what the descriptor now is, then look again so the
+        // caller receives the current version rather than a rejection.
+        validate_private_file(&after)?;
+        return Ok(PrivateReadAttempt::Superseded);
+    }
+    // The path resolving elsewhere means a writer committed a newer version,
+    // not that this read is inconsistent: the checks above already proved the
+    // bytes match the descriptor's own snapshot. Look again rather than
+    // rejecting a read that never saw a torn value.
+    let path_metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(PrivateReadAttempt::Superseded);
+        }
+        Err(_) => return Err(store_invalid(changed_message)),
+    };
     if after.dev() != path_metadata.dev() || after.ino() != path_metadata.ino() {
-        return Err(store_invalid(changed_message));
+        return Ok(PrivateReadAttempt::Superseded);
     }
-    Ok(Some(PrivateBoundedFile {
-        file,
-        bytes,
-        snapshot: after,
-    }))
+    // Only a path that still resolves to this exact descriptor is validated
+    // here; a superseded one is validated by the next attempt's own open.
+    validate_private_file(&path_metadata)?;
+    Ok(PrivateReadAttempt::Settled(Some(Box::new(
+        PrivateBoundedFile {
+            file,
+            bytes,
+            snapshot: after,
+        },
+    ))))
 }
 
 fn same_private_file_snapshot(before: &fs::Metadata, after: &fs::Metadata) -> bool {
@@ -4943,6 +5021,30 @@ fn same_private_file_snapshot(before: &fs::Metadata, after: &fs::Metadata) -> bo
         && before.mtime_nsec() == after.mtime_nsec()
         && before.ctime() == after.ctime()
         && before.ctime_nsec() == after.ctime_nsec()
+}
+
+/// Whether the bytes just read still describe the file the descriptor opened.
+///
+/// Used only on the read path, and deliberately excluding `ctime`. A writer's
+/// atomic commit renames a fresh file over the path, which drops the previous
+/// inode's link count and so moves its `ctime` without touching a single byte
+/// the reader already holds. Comparing `ctime` there rejected consistent reads
+/// on every ordinary commit. The content is pinned by `dev`, `ino`, `len` and
+/// `mtime`; a metadata-only change is handled separately as a superseded read.
+/// Every other caller keeps the stricter `same_private_file_snapshot`, which
+/// they use to prove a file they wrote has not moved at all.
+fn same_private_file_read_content(before: &fs::Metadata, after: &fs::Metadata) -> bool {
+    before.dev() == after.dev()
+        && before.ino() == after.ino()
+        && before.len() == after.len()
+        && before.mtime() == after.mtime()
+        && before.mtime_nsec() == after.mtime_nsec()
+}
+
+/// Whether only the descriptor's metadata moved, which is what a replaced
+/// directory entry looks like from the inside.
+fn private_file_metadata_moved(before: &fs::Metadata, after: &fs::Metadata) -> bool {
+    before.ctime() != after.ctime() || before.ctime_nsec() != after.ctime_nsec()
 }
 
 fn decode_registry_bytes(bytes: &[u8]) -> Result<(Registry, String), CliError> {
@@ -7518,6 +7620,90 @@ mod tests {
                 "state": "idle",
             }))
             .is_err()
+        );
+    }
+
+    /// A writer committing a new version by rename must not fail a concurrent
+    /// read.
+    ///
+    /// Writers commit through `write_atomic`, which renames a fresh file over
+    /// the path. That leaves a reader's descriptor pinned to the previous
+    /// inode, so the path/descriptor comparison fired on every ordinary commit
+    /// that overlapped any read and surfaced as
+    /// `orchestration registry changed while it was being read`. The reader has
+    /// a consistent snapshot in that situation and only needs to look again.
+    #[test]
+    fn a_concurrent_atomic_commit_is_retried_rather_than_rejected() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let path = tmp.path().join("registry.json");
+        fs::write(&path, b"{\"first\":true}").expect("seed private target");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("seed mode");
+
+        let committed = path.clone();
+        PRIVATE_READ_REPLACEMENT_HOOK.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move |_| {
+                // Exactly what a writer's atomic commit does.
+                nils_common::fs::write_atomic(&committed, b"{\"second\":true}", 0o600)
+                    .expect("atomic commit");
+            }));
+        });
+
+        let read = read_private_bounded_file_with_limit(
+            &path,
+            4096,
+            "unsafe private target",
+            "oversized private target",
+            "private target changed while it was being read",
+        )
+        .expect("a concurrent commit is not a read failure")
+        .expect("the private target is present");
+
+        assert_eq!(
+            read.bytes,
+            b"{\"second\":true}".to_vec(),
+            "the retry observes the committed version"
+        );
+    }
+
+    /// A path that keeps moving under every attempt is still rejected, so the
+    /// retry cannot loop forever or admit an unreadable target.
+    #[test]
+    fn a_path_that_never_settles_still_fails_closed() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let path = tmp.path().join("registry.json");
+        fs::write(&path, b"{}").expect("seed private target");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("seed mode");
+
+        // Replace the target on every attempt, not just the first, by rearming
+        // the one-shot hook from inside itself.
+        fn rearm(path: PathBuf, remaining: u32) {
+            if remaining == 0 {
+                return;
+            }
+            PRIVATE_READ_REPLACEMENT_HOOK.with(|slot| {
+                *slot.borrow_mut() = Some(Box::new(move |target| {
+                    nils_common::fs::write_atomic(target, b"{}", 0o600).expect("recommit");
+                    rearm(path.clone(), remaining - 1);
+                }));
+            });
+        }
+        rearm(path.clone(), PRIVATE_READ_SUPERSEDED_ATTEMPTS + 2);
+
+        let started = Instant::now();
+        let error = read_private_bounded_file_with_limit(
+            &path,
+            4096,
+            "unsafe private target",
+            "oversized private target",
+            "private target changed while it was being read",
+        )
+        .map(|_| ())
+        .expect_err("an unsettled path must fail closed");
+
+        assert_eq!(error.code(), "orchestration-store-invalid");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "the bounded retry must not stall the caller"
         );
     }
 
