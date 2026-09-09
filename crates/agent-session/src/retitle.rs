@@ -4,7 +4,7 @@
 //! only hashes, request state, and stable diagnostic codes so it never becomes
 //! a second transcript or a title-model log.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::env;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
@@ -51,6 +51,8 @@ const DEFAULT_RECENT_TURNS: usize = 12;
 const MAX_CONTEXT_CHARS: usize = 64 * 1024;
 const MAX_PER_MESSAGE_CHARS: usize = 8 * 1024;
 const MAX_RECENT_TURNS: usize = 32;
+const ATTEMPT_OBSERVATION_SCHEMA: &str = "agent-session.session-retitle-attempt.v1";
+const MAX_PROVIDER_ATTEMPT_OBSERVATIONS: usize = 2;
 
 fn evaluation_deadline(start: Instant, timeout: Duration) -> Instant {
     start + timeout
@@ -561,6 +563,10 @@ impl RetitleService {
             .map(|config| config.kind())
     }
 
+    pub(crate) fn is_available(&self) -> bool {
+        self.readiness().status != "unavailable"
+    }
+
     fn config(&self) -> Result<Arc<RetitleConfig>, CliError> {
         match &self.config {
             Ok(Some(config)) => Ok(config.clone()),
@@ -664,7 +670,7 @@ fn provider_readiness(config: &RetitleConfig) -> RetitleReadiness {
         reason_code: "ready",
         next_action: "none",
         provider_kind: Some(config.kind()),
-        model_label: config.model.clone(),
+        model_label: observable_model_label_for_provider(config),
         account: None,
         plan: None,
         context_capabilities: context_capabilities(),
@@ -833,6 +839,86 @@ pub(crate) struct CoverageView {
     pub(crate) turn_count: usize,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct RetitleContextObservation {
+    pub(crate) source: String,
+    pub(crate) freshness: String,
+    pub(crate) complete: bool,
+    pub(crate) truncated: bool,
+    pub(crate) turn_count: usize,
+    pub(crate) context_chars: usize,
+    pub(crate) provider_input_chars: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub(crate) struct ProviderAttemptObservation {
+    pub(crate) provider_kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) model_label: Option<String>,
+    pub(crate) outcome: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) failure_class: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) failure_stage: Option<String>,
+    pub(crate) started_at: String,
+    pub(crate) finished_at: String,
+    pub(crate) duration_bucket: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct RetitleAttemptSpan {
+    number: u8,
+    started_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    finished_at: Option<String>,
+    stage: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    failure_stage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context: Option<RetitleContextObservation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    providers: Vec<ProviderAttemptObservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    duration_bucket: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    outcome: Option<String>,
+    diagnostic_code: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct RetitleAttemptObservation {
+    schema_version: String,
+    correlation_id: String,
+    trigger: RetitleTrigger,
+    attempts: Vec<RetitleAttemptSpan>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    terminal_outcome: Option<String>,
+    diagnostic_code: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RetitleAttemptEvidence {
+    pub(crate) context: Option<RetitleContextObservation>,
+    pub(crate) providers: Vec<ProviderAttemptObservation>,
+    pub(crate) elapsed: Duration,
+    pub(crate) started: Option<Instant>,
+}
+
+impl RetitleAttemptEvidence {
+    fn elapsed_at(&self, finished: Instant) -> Duration {
+        self.started
+            .and_then(|started| finished.checked_duration_since(started))
+            .unwrap_or(self.elapsed)
+    }
+}
+
+struct RetitleAttemptTerminal<'a> {
+    stage: &'a str,
+    failure_stage: Option<&'a str>,
+    outcome: &'a str,
+    diagnostic_code: &'a str,
+}
+
 impl TitleContextV2 {
     pub(crate) fn coverage_view(&self) -> CoverageView {
         CoverageView {
@@ -840,6 +926,24 @@ impl TitleContextV2 {
             complete: self.coverage.complete,
             truncated: self.coverage.truncated,
             turn_count: self.turns.len(),
+        }
+    }
+
+    pub(crate) fn observation(&self) -> RetitleContextObservation {
+        let context_chars = serde_json::to_string(self)
+            .map(|value| value.chars().count())
+            .unwrap_or_default();
+        let provider_input_chars = model_input(self)
+            .map(|value| value.chars().count())
+            .unwrap_or_default();
+        RetitleContextObservation {
+            source: self.coverage.source.to_string(),
+            freshness: "current".to_string(),
+            complete: self.coverage.complete,
+            truncated: self.coverage.truncated,
+            turn_count: self.turns.len(),
+            context_chars,
+            provider_input_chars,
         }
     }
 }
@@ -1022,7 +1126,7 @@ fn turn_chars(turn: &TitleContextTurn) -> usize {
             .map_or(0, |value| value.chars().count())
 }
 
-fn filter_text(value: &str) -> String {
+pub(crate) fn filter_text(value: &str) -> String {
     let mut result = Vec::new();
     let mut injected_end: Option<&'static str> = None;
     for raw in value.lines() {
@@ -1210,46 +1314,381 @@ pub(crate) struct InferredTitleState {
     pub(crate) provider_kind: &'static str,
 }
 
+pub(crate) struct ObservedInference {
+    pub(crate) inferred: InferredTitleState,
+    pub(crate) providers: Vec<ProviderAttemptObservation>,
+}
+
+pub(crate) struct ObservedInferenceError {
+    pub(crate) error: CliError,
+    pub(crate) providers: Vec<ProviderAttemptObservation>,
+}
+
+struct ProviderAttemptFailure {
+    error: CliError,
+    observation: ProviderAttemptObservation,
+}
+
+#[cfg(test)]
 pub(crate) fn infer_title_state(
     permit: &RetitlePermit,
     context: &TitleContextV2,
     existing: Option<&SessionTitleState>,
 ) -> Result<InferredTitleState, CliError> {
-    let input = model_input(context)?;
-    let timeout = permit.provider_timeout(permit.config.timeout())?;
-    match infer_with_provider(&permit.config, &input, context, existing, timeout) {
-        Ok(state) => Ok(InferredTitleState {
-            state,
-            provider_kind: permit.config.kind(),
-        }),
-        Err(error) if fallback_eligible(error.code()) && permit.config.fallback.is_some() => {
-            let fallback = permit.config.fallback.as_deref().expect("checked");
-            let timeout = permit.provider_timeout(fallback.timeout())?;
-            infer_with_provider(fallback, &input, context, existing, timeout).map(|state| {
-                InferredTitleState {
+    infer_title_state_observed(permit, context, existing)
+        .map(|observed| observed.inferred)
+        .map_err(|observed| observed.error)
+}
+
+pub(crate) fn infer_title_state_observed(
+    permit: &RetitlePermit,
+    context: &TitleContextV2,
+    existing: Option<&SessionTitleState>,
+) -> Result<ObservedInference, ObservedInferenceError> {
+    let input = model_input(context).map_err(|error| ObservedInferenceError {
+        error,
+        providers: Vec::new(),
+    })?;
+    let timeout = permit
+        .provider_timeout(permit.config.timeout())
+        .map_err(|error| ObservedInferenceError {
+            error,
+            providers: Vec::new(),
+        })?;
+    let mut providers = Vec::with_capacity(MAX_PROVIDER_ATTEMPT_OBSERVATIONS);
+    match infer_with_provider_observed(&permit.config, &input, context, existing, timeout) {
+        Ok((state, observation)) => {
+            providers.push(observation);
+            Ok(ObservedInference {
+                inferred: InferredTitleState {
                     state,
-                    provider_kind: fallback.kind(),
-                }
+                    provider_kind: permit.config.kind(),
+                },
+                providers,
             })
         }
-        Err(error) => Err(error),
+        Err(failure)
+            if fallback_eligible(failure.error.code()) && permit.config.fallback.is_some() =>
+        {
+            let ProviderAttemptFailure {
+                error: _,
+                observation,
+            } = *failure;
+            providers.push(observation);
+            let fallback = permit.config.fallback.as_deref().expect("checked");
+            let timeout = match permit.provider_timeout(fallback.timeout()) {
+                Ok(timeout) => timeout,
+                Err(error) => {
+                    let observed_at = jiff::Timestamp::now().to_string();
+                    providers.push(provider_attempt_observation(
+                        fallback,
+                        "deadline_exhausted",
+                        Some("provider_budget"),
+                        &observed_at,
+                        Duration::ZERO,
+                    ));
+                    return Err(ObservedInferenceError { error, providers });
+                }
+            };
+            match infer_with_provider_observed(fallback, &input, context, existing, timeout) {
+                Ok((state, observation)) => {
+                    providers.push(observation);
+                    Ok(ObservedInference {
+                        inferred: InferredTitleState {
+                            state,
+                            provider_kind: fallback.kind(),
+                        },
+                        providers,
+                    })
+                }
+                Err(failure) => {
+                    let ProviderAttemptFailure { error, observation } = *failure;
+                    providers.push(observation);
+                    Err(ObservedInferenceError { error, providers })
+                }
+            }
+        }
+        Err(failure) => {
+            let ProviderAttemptFailure { error, observation } = *failure;
+            providers.push(observation);
+            Err(ObservedInferenceError { error, providers })
+        }
     }
 }
 
-fn infer_with_provider(
+/// Reuses the existing provider/configuration boundary while replacing raw
+/// transcript context with the daemon's bounded v3 semantic-memory projection.
+pub(crate) fn infer_semantic_memory_observed(
+    permit: &RetitlePermit,
+    semantic_memory: &str,
+    existing: Option<&SessionTitleState>,
+    trigger: &str,
+) -> Result<ObservedInference, ObservedInferenceError> {
+    let _: Value = serde_json::from_str(semantic_memory).map_err(|_| ObservedInferenceError {
+        error: retitle_error(
+            "retitle-context-unavailable",
+            "semantic memory is unavailable",
+            false,
+            "refresh_session",
+            "refresh_session",
+        ),
+        providers: Vec::new(),
+    })?;
+    let trigger = if trigger == "automatic" {
+        RetitleTrigger::CompletionRecovery
+    } else {
+        RetitleTrigger::Manual
+    };
+    let context = TitleContextV2 {
+        schema_version: "agent-session.title-context.v2",
+        session: TitleContextSession {
+            agent: "session".to_string(),
+            repo_name: None,
+            title_state: existing.map(TitleContextTitleState::from),
+        },
+        turns: vec![TitleContextTurn {
+            id: "semantic-memory".to_string(),
+            user_prompt: semantic_memory.to_string(),
+            assistant_excerpt: None,
+        }],
+        coverage: TitleContextCoverage {
+            source: "semantic_memory",
+            complete: true,
+            truncated: false,
+        },
+        trigger,
+    };
+    let input = format!(
+        "Return only one JSON object with keys topic_action (keep|set|clear), topic (string|null), activity (string|null), references (array of #number strings). Use the bounded semantic-memory fields including origin, active_objective, current_activity, milestones, decisions, blockers, and journey. Preserve origin; change an automatic topic only for an explicit human_objective journey entry. Never invent references. Do not use tools. Semantic memory:\n{semantic_memory}"
+    );
+    if input.len() >= crate::retitle_v3::MAX_PROVIDER_INPUT_BYTES {
+        return Err(ObservedInferenceError {
+            error: retitle_error(
+                "retitle-context-unavailable",
+                "semantic memory provider input exceeds its bound",
+                false,
+                "refresh_session",
+                "compact_memory",
+            ),
+            providers: Vec::new(),
+        });
+    }
+    let timeout = permit
+        .provider_timeout(permit.config.timeout())
+        .map_err(|error| ObservedInferenceError {
+            error,
+            providers: Vec::new(),
+        })?;
+    let mut providers = Vec::with_capacity(MAX_PROVIDER_ATTEMPT_OBSERVATIONS);
+    match infer_with_provider_observed(&permit.config, &input, &context, existing, timeout) {
+        Ok((state, observation)) => {
+            providers.push(observation);
+            Ok(ObservedInference {
+                inferred: InferredTitleState {
+                    state,
+                    provider_kind: permit.config.kind(),
+                },
+                providers,
+            })
+        }
+        Err(failure)
+            if fallback_eligible(failure.error.code()) && permit.config.fallback.is_some() =>
+        {
+            let ProviderAttemptFailure { observation, .. } = *failure;
+            providers.push(observation);
+            let fallback = permit.config.fallback.as_deref().expect("checked");
+            let timeout = permit
+                .provider_timeout(fallback.timeout())
+                .map_err(|error| ObservedInferenceError {
+                    error,
+                    providers: providers.clone(),
+                })?;
+            match infer_with_provider_observed(fallback, &input, &context, existing, timeout) {
+                Ok((state, observation)) => {
+                    providers.push(observation);
+                    Ok(ObservedInference {
+                        inferred: InferredTitleState {
+                            state,
+                            provider_kind: fallback.kind(),
+                        },
+                        providers,
+                    })
+                }
+                Err(failure) => {
+                    let ProviderAttemptFailure { error, observation } = *failure;
+                    providers.push(observation);
+                    Err(ObservedInferenceError { error, providers })
+                }
+            }
+        }
+        Err(failure) => {
+            let ProviderAttemptFailure { error, observation } = *failure;
+            providers.push(observation);
+            Err(ObservedInferenceError { error, providers })
+        }
+    }
+}
+
+fn infer_with_provider_observed(
     config: &RetitleConfig,
     input: &str,
     context: &TitleContextV2,
     existing: Option<&SessionTitleState>,
     timeout: Duration,
-) -> Result<SessionTitleState, CliError> {
+) -> Result<(SessionTitleState, ProviderAttemptObservation), Box<ProviderAttemptFailure>> {
+    let started_at = jiff::Timestamp::now().to_string();
+    let started = Instant::now();
     let output = match config.kind() {
         "codex_subscription" => invoke_codex(config, input, timeout),
         "openai_compatible" => invoke_openai_compatible(config, input, timeout),
         "command" => invoke_command(config, input, timeout),
         _ => unreachable!(),
-    }?;
-    parse_decision(&output, context, existing)
+    };
+    let output = match output {
+        Ok(output) => output,
+        Err(error) => {
+            let mut observation = provider_attempt_observation(
+                config,
+                provider_outcome(error.code()),
+                Some(provider_failure_stage(error.code(), false)),
+                &started_at,
+                started.elapsed(),
+            );
+            observation.failure_class = Some(provider_failure_class(&error));
+            return Err(Box::new(ProviderAttemptFailure { error, observation }));
+        }
+    };
+    match parse_decision(&output, context, existing) {
+        Ok(state) => Ok((
+            state,
+            provider_attempt_observation(config, "success", None, &started_at, started.elapsed()),
+        )),
+        Err(error) => {
+            let mut observation = provider_attempt_observation(
+                config,
+                provider_outcome(error.code()),
+                Some(provider_failure_stage(error.code(), true)),
+                &started_at,
+                started.elapsed(),
+            );
+            observation.failure_class = Some(provider_failure_class(&error));
+            Err(Box::new(ProviderAttemptFailure { error, observation }))
+        }
+    }
+}
+
+fn provider_attempt_observation(
+    config: &RetitleConfig,
+    outcome: &str,
+    failure_stage: Option<&str>,
+    started_at: &str,
+    elapsed: Duration,
+) -> ProviderAttemptObservation {
+    // Wall-clock endpoints are retained for attempt ordering while the
+    // monotonic elapsed duration remains authoritative for latency buckets.
+    let finished_at = jiff::Timestamp::now().to_string();
+    ProviderAttemptObservation {
+        provider_kind: config.kind().to_string(),
+        model_label: observable_model_label_for_provider(config),
+        outcome: outcome.to_string(),
+        failure_class: (outcome != "success").then(|| outcome.to_string()),
+        failure_stage: failure_stage.map(str::to_string),
+        started_at: started_at.to_string(),
+        finished_at,
+        duration_bucket: duration_bucket(elapsed).to_string(),
+    }
+}
+
+fn observable_model_label_for_provider(config: &RetitleConfig) -> Option<String> {
+    if config.kind() == "command" {
+        return None;
+    }
+    config
+        .model
+        .as_deref()
+        .filter(|label| observable_model_label(label))
+        .map(str::to_string)
+}
+
+fn observable_model_label(label: &str) -> bool {
+    let lower = label.to_ascii_lowercase();
+    !label.is_empty()
+        && label.len() <= 128
+        && label
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':'))
+        && ![
+            "sk-", "bearer", "api_key", "apikey", "password", "token", "secret",
+        ]
+        .iter()
+        .any(|forbidden| lower.contains(forbidden))
+        && !credential_shaped_label(label)
+}
+
+fn credential_shaped_label(label: &str) -> bool {
+    let lower = label.to_ascii_lowercase();
+    if ["ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"]
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+    {
+        return true;
+    }
+    if label.starts_with("AKIA")
+        && label.len() >= 20
+        && label
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+    {
+        return true;
+    }
+    let jwt_segments = label.split('.').collect::<Vec<_>>();
+    if jwt_segments.len() == 3
+        && label.len() >= 40
+        && jwt_segments.iter().all(|segment| {
+            segment.len() >= 8
+                && segment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        })
+    {
+        return true;
+    }
+    if label.len() < 32
+        || !label
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return false;
+    }
+    let has_lower = label.bytes().any(|byte| byte.is_ascii_lowercase());
+    let has_upper = label.bytes().any(|byte| byte.is_ascii_uppercase());
+    let has_digit = label.bytes().any(|byte| byte.is_ascii_digit());
+    let unique = label.bytes().collect::<HashSet<_>>().len();
+    unique >= 16 && usize::from(has_lower) + usize::from(has_upper) + usize::from(has_digit) >= 2
+}
+
+fn provider_outcome(code: &str) -> &str {
+    match code {
+        "retitle-account-missing" => "account_missing",
+        "retitle-api-key-missing" => "api_key_missing",
+        "retitle-provider-timeout" => "timeout",
+        "retitle-provider-unavailable" => "unavailable",
+        "retitle-provider-rate-limited" => "rate_limited",
+        "retitle-provider-quota-exceeded" => "quota_exceeded",
+        "retitle-provider-malformed-response" => "malformed_response",
+        _ => "failed",
+    }
+}
+
+fn provider_failure_stage(code: &str, decision_parse: bool) -> &str {
+    if decision_parse {
+        return "provider_parse";
+    }
+    match code {
+        "retitle-account-missing" | "retitle-api-key-missing" => "provider_setup",
+        "retitle-provider-malformed-response" => "provider_response",
+        _ => "provider_call",
+    }
 }
 
 fn fallback_eligible(code: &str) -> bool {
@@ -1303,7 +1742,10 @@ fn invoke_openai_compatible(
         ),
     ]);
     if config.json_response {
-        body.insert("response_format".to_string(), json!({"type":"json_object"}));
+        body.insert(
+            "response_format".to_string(),
+            openai_compatible_response_format(),
+        );
     }
     for (key, value) in &config.extra_body {
         if matches!(key.as_str(), "model" | "messages" | "stream") {
@@ -1344,12 +1786,20 @@ fn invoke_openai_compatible(
         return Err(provider_unavailable());
     }
     let bytes = read_bounded_provider_body(&mut response)?;
-    let value: Value = serde_json::from_slice(&bytes).map_err(|_| provider_malformed())?;
+    let value: Value =
+        serde_json::from_slice(&bytes).map_err(|_| provider_malformed_class("json_parse"))?;
     value
         .pointer("/choices/0/message/content")
         .and_then(Value::as_str)
         .map(str::to_string)
-        .ok_or_else(provider_malformed)
+        .ok_or_else(|| provider_malformed_class("missing_message"))
+}
+
+fn openai_compatible_response_format() -> Value {
+    // `json_response` predates retitle v3 and means the broadly supported
+    // OpenAI-compatible JSON-object mode. Do not silently upgrade existing v2
+    // providers to structured-output schemas that they may not implement.
+    json!({"type":"json_object"})
 }
 
 fn read_bounded_provider_body(reader: &mut impl Read) -> Result<Vec<u8>, CliError> {
@@ -1357,9 +1807,9 @@ fn read_bounded_provider_body(reader: &mut impl Read) -> Result<Vec<u8>, CliErro
     reader
         .take((MAX_PROVIDER_OUTPUT_BYTES + 1) as u64)
         .read_to_end(&mut bytes)
-        .map_err(|_| provider_malformed())?;
+        .map_err(|_| provider_malformed_class("response_read"))?;
     if bytes.len() > MAX_PROVIDER_OUTPUT_BYTES {
-        return Err(provider_malformed());
+        return Err(provider_malformed_class("schema_validation"));
     }
     Ok(bytes)
 }
@@ -1379,7 +1829,7 @@ fn invoke_command(
         timeout,
         &[],
     )?;
-    String::from_utf8(output).map_err(|_| provider_malformed())
+    String::from_utf8(output).map_err(|_| provider_malformed_class("response_encoding"))
 }
 
 fn invoke_codex(
@@ -1508,7 +1958,7 @@ fn invoke_codex(
                 break;
             }
         }
-        answer.ok_or_else(provider_malformed)
+        answer.ok_or_else(|| provider_malformed_class("missing_message"))
     })();
     terminate_child(&mut child);
     argv.clear();
@@ -1541,20 +1991,24 @@ fn codex_turn_start_request(thread: &str, input: &str) -> Value {
         "params": {
             "threadId": thread,
             "input": [{"type": "text", "text": input, "text_elements": []}],
-            "outputSchema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["topic_action", "topic", "activity", "references"],
-                "properties": {
-                    "topic_action": {"type": "string", "enum": ["keep", "set", "clear"]},
-                    "topic": {"type": ["string", "null"], "maxLength": 120},
-                    "activity": {"type": ["string", "null"], "maxLength": 120},
-                    "references": {
-                        "type": "array",
-                        "maxItems": 2,
-                        "items": {"type": "string", "pattern": r"^#[1-9][0-9]{0,9}$"}
-                    }
-                }
+            "outputSchema": title_output_schema()
+        }
+    })
+}
+
+fn title_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["topic_action", "topic", "activity", "references"],
+        "properties": {
+            "topic_action": {"type": "string", "enum": ["keep", "set", "clear"]},
+            "topic": {"type": ["string", "null"], "maxLength": 120},
+            "activity": {"type": ["string", "null"], "maxLength": 120},
+            "references": {
+                "type": "array",
+                "maxItems": 2,
+                "items": {"type": "string", "pattern": r"^#[1-9][0-9]{0,9}$"}
             }
         }
     })
@@ -1596,7 +2050,7 @@ fn recv_rpc(
             std::sync::mpsc::RecvTimeoutError::Timeout => provider_timeout(),
             std::sync::mpsc::RecvTimeoutError::Disconnected => provider_unavailable(),
         })?;
-    serde_json::from_str(&line).map_err(|_| provider_malformed())
+    serde_json::from_str(&line).map_err(|_| provider_malformed_class("json_parse"))
 }
 
 fn parse_decision(
@@ -1610,8 +2064,10 @@ fn parse_decision(
         .and_then(|value| value.strip_suffix("```"))
         .map(str::trim)
         .unwrap_or(trimmed);
+    let value: Value =
+        serde_json::from_str(json_text).map_err(|_| provider_malformed_class("json_parse"))?;
     let decision: RawDecision =
-        serde_json::from_str(json_text).map_err(|_| provider_malformed())?;
+        serde_json::from_value(value).map_err(|_| provider_malformed_class("schema_validation"))?;
     if decision
         .topic
         .as_deref()
@@ -1621,7 +2077,7 @@ fn parse_decision(
             .as_deref()
             .is_some_and(|value| value.chars().count() > 120)
     {
-        return Err(provider_malformed());
+        return Err(provider_malformed_class("schema_validation"));
     }
     let existing = existing.cloned().unwrap_or(SessionTitleState {
         topic: None,
@@ -1641,7 +2097,7 @@ fn parse_decision(
                 .topic
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty())
-                .ok_or_else(provider_malformed)?;
+                .ok_or_else(|| provider_malformed_class("schema_validation"))?;
             let allowed = approved_references(context);
             let references = decision
                 .references
@@ -1841,13 +2297,31 @@ fn provider_quota_exceeded() -> CliError {
 }
 
 fn provider_malformed() -> CliError {
-    retitle_error(
+    provider_malformed_class("malformed_response")
+}
+
+fn provider_malformed_class(failure_class: &'static str) -> CliError {
+    CliError::unavailable(
         "retitle-provider-malformed-response",
         "title provider returned an invalid decision",
-        true,
-        "inspect_provider",
-        "repair_provider_output",
+        Some(json!({
+            "retryable": true,
+            "next_action": "retry",
+            "recovery": {"strategy":"retry_request", "safe_to_retry":true},
+            "failure_class": failure_class,
+        })),
     )
+}
+
+pub(crate) fn provider_failure_class(error: &CliError) -> String {
+    error
+        .0
+        .details
+        .as_ref()
+        .and_then(|details| details.get("failure_class"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| provider_outcome(error.code()).to_string())
 }
 
 fn api_key_missing() -> CliError {
@@ -1892,6 +2366,83 @@ pub(crate) fn hash_identity(value: &str) -> String {
     )
 }
 
+fn duration_bucket(elapsed: Duration) -> &'static str {
+    match elapsed.as_millis() {
+        0..=9 => "under_10_ms",
+        10..=49 => "10_49_ms",
+        50..=249 => "50_249_ms",
+        250..=999 => "250_999_ms",
+        1_000..=4_999 => "1_4_s",
+        5_000..=29_999 => "5_29_s",
+        30_000..=119_999 => "30_119_s",
+        _ => "120_s_plus",
+    }
+}
+
+fn new_attempt_span(number: u8) -> RetitleAttemptSpan {
+    RetitleAttemptSpan {
+        number,
+        started_at: jiff::Timestamp::now().to_string(),
+        finished_at: None,
+        stage: "admission".to_string(),
+        failure_stage: None,
+        context: None,
+        providers: Vec::new(),
+        duration_bucket: None,
+        outcome: None,
+        diagnostic_code: "in_progress".to_string(),
+    }
+}
+
+fn new_attempt_observation(
+    request: &RetitleRequest,
+    correlation_id: String,
+    attempt_number: u8,
+) -> RetitleAttemptObservation {
+    RetitleAttemptObservation {
+        schema_version: ATTEMPT_OBSERVATION_SCHEMA.to_string(),
+        correlation_id,
+        trigger: request.trigger,
+        attempts: vec![new_attempt_span(attempt_number)],
+        terminal_outcome: None,
+        diagnostic_code: "in_progress".to_string(),
+    }
+}
+
+fn finish_attempt_observation(
+    observation: &mut RetitleAttemptObservation,
+    evidence: &RetitleAttemptEvidence,
+    terminal: RetitleAttemptTerminal<'_>,
+) {
+    finish_attempt_observation_at(observation, evidence, terminal, Instant::now());
+}
+
+fn finish_attempt_observation_at(
+    observation: &mut RetitleAttemptObservation,
+    evidence: &RetitleAttemptEvidence,
+    terminal: RetitleAttemptTerminal<'_>,
+    finished: Instant,
+) {
+    let Some(attempt) = observation.attempts.last_mut() else {
+        return;
+    };
+    attempt.finished_at = Some(jiff::Timestamp::now().to_string());
+    attempt.stage = terminal.stage.to_string();
+    attempt.failure_stage = terminal.failure_stage.map(str::to_string);
+    attempt.context = evidence.context.clone();
+    attempt.providers = evidence
+        .providers
+        .iter()
+        .take(MAX_PROVIDER_ATTEMPT_OBSERVATIONS)
+        .cloned()
+        .collect();
+    attempt.duration_bucket = Some(duration_bucket(evidence.elapsed_at(finished)).to_string());
+    attempt.outcome = Some(terminal.outcome.to_string());
+    attempt.diagnostic_code = terminal.diagnostic_code.to_string();
+    observation.terminal_outcome = Some(terminal.outcome.to_string());
+    observation.diagnostic_code = terminal.diagnostic_code.to_string();
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct RetitleReceipt {
     key_hash: String,
@@ -1908,6 +2459,10 @@ struct RetitleReceipt {
     coverage_truncated: bool,
     #[serde(default)]
     coverage_turn_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    observation: Option<RetitleAttemptObservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    processed_turn_hash: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -1960,7 +2515,13 @@ pub(crate) fn request_hash(request: &RetitleRequest) -> String {
 
 pub(crate) enum Admission {
     Evaluate(SessionRecord),
-    Replay(SessionRecord, &'static str, CoverageView, Option<String>),
+    Replay(
+        SessionRecord,
+        &'static str,
+        CoverageView,
+        Option<String>,
+        Option<RetitleAttemptObservation>,
+    ),
 }
 
 pub(crate) fn is_retryable_automatic_error_code(code: &str) -> bool {
@@ -1996,7 +2557,49 @@ fn prepare_automatic_failed_receipt_retry(
     receipt.state = "in_progress".to_string();
     receipt.diagnostic_code = "in_progress".to_string();
     receipt.attempt_count = receipt.attempt_count.max(1).saturating_add(1);
+    if let Some(observation) = receipt.observation.as_mut() {
+        observation
+            .attempts
+            .push(new_attempt_span(receipt.attempt_count));
+        observation.terminal_outcome = None;
+        observation.diagnostic_code = "in_progress".to_string();
+    }
     true
+}
+
+fn prepare_interrupted_receipt_recovery(receipt: &mut RetitleReceipt) {
+    receipt.state = "in_progress".to_string();
+    receipt.diagnostic_code = "in_progress".to_string();
+    receipt.attempt_count = receipt.attempt_count.max(1).saturating_add(1);
+    if let Some(observation) = receipt.observation.as_mut() {
+        if let Some(interrupted) = observation.attempts.last_mut() {
+            interrupted.finished_at = Some(jiff::Timestamp::now().to_string());
+            interrupted.stage = "interrupted".to_string();
+            interrupted.failure_stage = Some("worker_interrupted".to_string());
+            interrupted.outcome = Some("interrupted".to_string());
+            interrupted.diagnostic_code = "retitle-worker-interrupted".to_string();
+        }
+        observation
+            .attempts
+            .push(new_attempt_span(receipt.attempt_count));
+        observation.terminal_outcome = None;
+        observation.diagnostic_code = "in_progress".to_string();
+    }
+}
+
+fn processed_turn_observation(
+    state: &DurableRetitleState,
+    processed_turn_hash: &str,
+) -> Option<RetitleAttemptObservation> {
+    state
+        .receipts
+        .iter()
+        .rev()
+        .find(|receipt| {
+            receipt.state == "complete"
+                && receipt.processed_turn_hash.as_deref() == Some(processed_turn_hash)
+        })
+        .and_then(|receipt| receipt.observation.clone())
 }
 
 pub(crate) fn admit(
@@ -2029,6 +2632,7 @@ pub(crate) fn admit(
             ));
         }
         if receipt.state == "complete" {
+            let observation = receipt.observation.clone();
             return Ok(Admission::Replay(
                 record,
                 "idempotency_replay",
@@ -2039,6 +2643,7 @@ pub(crate) fn admit(
                     turn_count: receipt.coverage_turn_count,
                 },
                 normalized_provider_kind(receipt.provider_kind.as_deref()),
+                observation,
             ));
         }
         if automatic_failed_receipt_can_retry(receipt, request.trigger) {
@@ -2057,8 +2662,13 @@ pub(crate) fn admit(
         }
         // Every in-process caller holds the per-session async gate before
         // admission. An in-progress receipt that remains here therefore came
-        // from a terminated daemon and is safe to recover in this incarnation.
-        state.receipts.remove(index);
+        // from a terminated daemon. Preserve its attempt chain and resume it
+        // in place under the current incarnation's fences.
+        validate_fences(context, &record, request)?;
+        prepare_interrupted_receipt_recovery(&mut state.receipts[index]);
+        store_durable_state(&mut record, state);
+        crate::write_session_record(context, &record)?;
+        return Ok(Admission::Evaluate(record));
     }
     if request.trigger.is_automatic()
         && request
@@ -2068,6 +2678,10 @@ pub(crate) fn admit(
             .as_ref()
             == state.last_processed_turn_hash.as_ref()
     {
+        let observation = state
+            .last_processed_turn_hash
+            .as_deref()
+            .and_then(|turn_hash| processed_turn_observation(&state, turn_hash));
         return Ok(Admission::Replay(
             record,
             "already_processed",
@@ -2078,10 +2692,12 @@ pub(crate) fn admit(
                 turn_count: state.last_coverage_turn_count,
             },
             normalized_provider_kind(state.last_processed_provider_kind.as_deref()),
+            observation,
         ));
     }
     validate_fences(context, &record, request)?;
     state.receipts.push(RetitleReceipt {
+        observation: Some(new_attempt_observation(request, key_hash.clone(), 1)),
         key_hash,
         request_hash: digest,
         state: "in_progress".to_string(),
@@ -2091,6 +2707,10 @@ pub(crate) fn admit(
         coverage_complete: false,
         coverage_truncated: false,
         coverage_turn_count: 0,
+        processed_turn_hash: request
+            .expected_provider_turn_id
+            .as_deref()
+            .map(hash_identity),
     });
     if state.receipts.len() > MAX_RECEIPTS {
         state.receipts.remove(0);
@@ -2188,35 +2808,76 @@ fn turn_conflict() -> CliError {
     )
 }
 
-pub(crate) fn fail_code(
+pub(crate) fn fail_attempt(
     context: &CliContext,
     id: &str,
     request: &RetitleRequest,
     diagnostic_code: &str,
-) {
+    failure_stage: &str,
+    evidence: &RetitleAttemptEvidence,
+) -> Option<RetitleAttemptObservation> {
     let Ok(_lock) = crate::acquire_session_record_lock(context, id) else {
-        return;
+        return None;
     };
     let Ok(mut record) = load_session_record(context, id) else {
-        return;
+        return None;
     };
     if crate::coordination::incarnation(&record).ok().as_deref()
         != Some(request.expected_session_incarnation.as_str())
     {
-        return;
+        return None;
     }
     let key_hash = hash_identity(&request.idempotency_key);
     let mut state = durable_state(&record);
+    let mut persisted = None;
     if let Some(receipt) = state
         .receipts
         .iter_mut()
         .find(|receipt| receipt.key_hash == key_hash)
     {
+        if receipt.state == "complete" {
+            return None;
+        }
         receipt.state = "failed".to_string();
         receipt.diagnostic_code = diagnostic_code.to_string();
+        if let Some(observation) = receipt.observation.as_mut() {
+            finish_attempt_observation(
+                observation,
+                evidence,
+                RetitleAttemptTerminal {
+                    stage: "failed",
+                    failure_stage: Some(failure_stage),
+                    outcome: "failed",
+                    diagnostic_code,
+                },
+            );
+            persisted = Some(observation.clone());
+        }
         store_durable_state(&mut record, state);
-        let _ = crate::write_session_record(context, &record);
+        if crate::write_session_record(context, &record).is_err() {
+            return None;
+        }
     }
+    persisted
+}
+
+pub(crate) fn latest_attempt_observation(
+    record: &SessionRecord,
+) -> Option<RetitleAttemptObservation> {
+    latest_attempt_observation_from_marker(record.extra.get(MARKER_KEY)?)
+}
+
+fn latest_attempt_observation_from_marker(marker: &Value) -> Option<RetitleAttemptObservation> {
+    if marker.get("schema_version")?.as_str()? != MARKER_SCHEMA {
+        return None;
+    }
+    marker
+        .get("receipts")?
+        .as_array()?
+        .last()?
+        .get("observation")
+        .cloned()
+        .and_then(|observation| serde_json::from_value(observation).ok())
 }
 
 fn replayed_error(code: &str) -> CliError {
@@ -2264,6 +2925,7 @@ fn replayed_error(code: &str) -> CliError {
 pub(crate) struct CommitResult {
     pub(crate) record: SessionRecord,
     pub(crate) changed: bool,
+    pub(crate) observation: Option<RetitleAttemptObservation>,
 }
 
 pub(crate) fn commit(
@@ -2273,19 +2935,24 @@ pub(crate) fn commit(
     state: SessionTitleState,
     coverage: &CoverageView,
     provider_kind: &str,
+    evidence: &RetitleAttemptEvidence,
 ) -> Result<CommitResult, CliError> {
     let (title, state) = canonicalize_structured_title_pair(None, false, state)?;
     let state = state.expect("structured state");
     let key_hash = hash_identity(&request.idempotency_key);
     let request_digest = request_hash(request);
-    let (record, changed) =
-        crate::mutate_session_record_for_title(context, id, None, None, |record| {
+    let (record, changed, observation) = crate::mutate_session_record_for_title_after_persist(
+        context,
+        id,
+        None,
+        None,
+        |record| {
             validate_fences(context, record, request)?;
             let mut durable = durable_state(record);
-            let receipt = durable
+            let receipt_index = durable
                 .receipts
-                .iter_mut()
-                .find(|receipt| {
+                .iter()
+                .position(|receipt| {
                     receipt.key_hash == key_hash && receipt.request_hash == request_digest
                 })
                 .ok_or_else(|| {
@@ -2297,6 +2964,7 @@ pub(crate) fn commit(
                         "refresh_session",
                     )
                 })?;
+            let receipt = &mut durable.receipts[receipt_index];
             if receipt.state != "in_progress" {
                 return Err(retitle_error(
                     "retitle-state-conflict",
@@ -2321,12 +2989,13 @@ pub(crate) fn commit(
                 })?;
                 record.updated_at = jiff::Timestamp::now().to_string();
             }
-            receipt.state = "complete".to_string();
-            receipt.diagnostic_code = if changed { "committed" } else { "no_change" }.to_string();
             receipt.provider_kind = Some(provider_kind.to_string());
             receipt.coverage_complete = coverage.complete;
             receipt.coverage_truncated = coverage.truncated;
             receipt.coverage_turn_count = coverage.turn_count;
+            receipt.state = "complete".to_string();
+            receipt.diagnostic_code = if changed { "committed" } else { "no_change" }.to_string();
+            let observation = receipt.observation.take();
             if request.trigger.is_automatic() {
                 durable.last_processed_turn_hash = request
                     .expected_provider_turn_id
@@ -2336,11 +3005,61 @@ pub(crate) fn commit(
                 durable.last_coverage_complete = coverage.complete;
                 durable.last_coverage_truncated = coverage.truncated;
                 durable.last_coverage_turn_count = coverage.turn_count;
+                durable.receipts[receipt_index].processed_turn_hash =
+                    durable.last_processed_turn_hash.clone();
             }
             store_durable_state(record, durable);
-            Ok((record.clone(), changed))
-        })?;
-    Ok(CommitResult { record, changed })
+            Ok((changed, observation))
+        },
+        |record, (changed, mut observation)| {
+            let mut durable = durable_state(record);
+            let receipt = durable
+                .receipts
+                .iter_mut()
+                .find(|receipt| {
+                    receipt.key_hash == key_hash && receipt.request_hash == request_digest
+                })
+                .ok_or_else(|| {
+                    retitle_error(
+                        "retitle-state-conflict",
+                        "retitle admission state is unavailable",
+                        false,
+                        "refresh_session",
+                        "refresh_session",
+                    )
+                })?;
+            if receipt.state != "complete" || receipt.observation.is_some() {
+                return Err(retitle_error(
+                    "retitle-state-conflict",
+                    "retitle admission state changed before completion",
+                    false,
+                    "refresh_session",
+                    "refresh_session",
+                ));
+            }
+            let diagnostic_code = if changed { "committed" } else { "no_change" };
+            if let Some(observation) = observation.as_mut() {
+                finish_attempt_observation(
+                    observation,
+                    evidence,
+                    RetitleAttemptTerminal {
+                        stage: "complete",
+                        failure_stage: None,
+                        outcome: if changed { "committed" } else { "unchanged" },
+                        diagnostic_code,
+                    },
+                );
+            }
+            receipt.observation = observation.clone();
+            store_durable_state(record, durable);
+            Ok((record.clone(), changed, observation))
+        },
+    )?;
+    Ok(CommitResult {
+        record,
+        changed,
+        observation,
+    })
 }
 
 #[cfg(test)]
@@ -2425,7 +3144,304 @@ mod tests {
     }
 
     #[test]
+    fn durable_receipt_exposes_content_free_attempt_observability() {
+        let request = RetitleRequest {
+            schema_version: REQUEST_SCHEMA.into(),
+            trigger: RetitleTrigger::Manual,
+            idempotency_key: "manual-observation".into(),
+            expected_session_incarnation: "launch".into(),
+            expected_title_revision: 0,
+            expected_activity_revision: None,
+            expected_provider_turn_id: None,
+        };
+        let context = RetitleContextObservation {
+            source: "provider_transcript".into(),
+            freshness: "current".into(),
+            complete: true,
+            truncated: true,
+            turn_count: 4,
+            context_chars: 8_192,
+            provider_input_chars: 8_512,
+        };
+        let providers = vec![ProviderAttemptObservation {
+            provider_kind: "codex_subscription".into(),
+            model_label: Some("gpt-5.6-luna".into()),
+            outcome: "malformed_response".into(),
+            failure_class: Some("schema_validation".into()),
+            failure_stage: Some("provider_parse".into()),
+            started_at: "2026-09-09T00:00:00Z".into(),
+            finished_at: "2026-09-09T00:00:02Z".into(),
+            duration_bucket: "1_4_s".into(),
+        }];
+        let mut observation = new_attempt_observation(&request, "sha256:correlation".into(), 2);
+        let evidence = RetitleAttemptEvidence {
+            context: Some(context),
+            providers,
+            elapsed: Duration::from_secs(2),
+            started: None,
+        };
+        finish_attempt_observation(
+            &mut observation,
+            &evidence,
+            RetitleAttemptTerminal {
+                stage: "failed",
+                failure_stage: Some("provider_parse"),
+                outcome: "failed",
+                diagnostic_code: "retitle-provider-malformed-response",
+            },
+        );
+        let receipt = RetitleReceipt {
+            key_hash: "sha256:correlation".into(),
+            request_hash: "sha256:request".into(),
+            state: "failed".into(),
+            diagnostic_code: "retitle-provider-malformed-response".into(),
+            provider_kind: Some("codex_subscription".into()),
+            attempt_count: 2,
+            coverage_complete: true,
+            coverage_truncated: true,
+            coverage_turn_count: 4,
+            observation: Some(observation),
+            processed_turn_hash: None,
+        };
+
+        let encoded = serde_json::to_value(receipt).unwrap();
+        assert_eq!(encoded["observation"]["trigger"], "manual");
+        assert_eq!(
+            encoded["observation"]["attempts"][0]["failure_stage"],
+            "provider_parse"
+        );
+        assert_eq!(
+            encoded["observation"]["attempts"][0]["context"]["source"],
+            "provider_transcript"
+        );
+        assert_eq!(
+            encoded["observation"]["attempts"][0]["context"]["freshness"],
+            "current"
+        );
+        assert_eq!(
+            encoded["observation"]["attempts"][0]["providers"][0]["provider_kind"],
+            "codex_subscription"
+        );
+        assert_eq!(
+            encoded["observation"]["attempts"][0]["providers"][0]["model_label"],
+            "gpt-5.6-luna"
+        );
+        assert_eq!(
+            encoded["observation"]["attempts"][0]["providers"][0]["outcome"],
+            "malformed_response"
+        );
+        assert_eq!(encoded["observation"]["terminal_outcome"], "failed");
+        assert!(encoded["observation"]["attempts"][0]["duration_bucket"].is_string());
+        let rendered = encoded.to_string();
+        for forbidden in [
+            "user prompt canary",
+            "provider output canary",
+            "/private/session/path",
+            "sk-secret-canary",
+        ] {
+            assert!(!rendered.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn model_observation_omits_command_and_credential_shaped_labels() {
+        for label in [
+            "ghp_0123456789abcdefghijklmnopqrstuvwxyz",
+            "github_pat_0123456789abcdefghijklmnopqrstuvwxyz",
+            "AKIAIOSFODNN7EXAMPLE",
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signatureABC123",
+            "aB3dE5fG7hJ9kL2mN4pQ6rS8tU0vW1xY",
+        ] {
+            assert!(
+                !observable_model_label(label),
+                "credential-shaped label must be omitted: {label}"
+            );
+        }
+        assert!(observable_model_label("gpt-5.6-luna"));
+
+        let command = RetitleConfig::parse(
+            r#"{"provider":"command","model":"gpt-5.6-luna","argv":["/bin/true"]}"#,
+        )
+        .unwrap();
+        assert_eq!(observable_model_label_for_provider(&command), None);
+    }
+
+    #[test]
+    fn attempt_duration_uses_the_terminal_boundary() {
+        let request = RetitleRequest {
+            schema_version: REQUEST_SCHEMA.into(),
+            trigger: RetitleTrigger::Manual,
+            idempotency_key: "manual-duration-boundary".into(),
+            expected_session_incarnation: "launch".into(),
+            expected_title_revision: 0,
+            expected_activity_revision: None,
+            expected_provider_turn_id: None,
+        };
+        let started = Instant::now();
+        let evidence = RetitleAttemptEvidence {
+            context: None,
+            providers: Vec::new(),
+            elapsed: Duration::ZERO,
+            started: Some(started),
+        };
+        let mut observation = new_attempt_observation(&request, "sha256:duration".into(), 1);
+        finish_attempt_observation_at(
+            &mut observation,
+            &evidence,
+            RetitleAttemptTerminal {
+                stage: "complete",
+                failure_stage: None,
+                outcome: "committed",
+                diagnostic_code: "committed",
+            },
+            started + Duration::from_millis(250),
+        );
+
+        assert_eq!(
+            observation.attempts[0].duration_bucket.as_deref(),
+            Some("250_999_ms")
+        );
+    }
+
+    #[test]
+    fn interrupted_recovery_preserves_the_attempt_chain() {
+        let request = RetitleRequest {
+            schema_version: REQUEST_SCHEMA.into(),
+            trigger: RetitleTrigger::Manual,
+            idempotency_key: "manual-interrupted-recovery".into(),
+            expected_session_incarnation: "launch".into(),
+            expected_title_revision: 0,
+            expected_activity_revision: None,
+            expected_provider_turn_id: None,
+        };
+        let mut receipt = RetitleReceipt {
+            key_hash: hash_identity(&request.idempotency_key),
+            request_hash: request_hash(&request),
+            state: "in_progress".into(),
+            diagnostic_code: "in_progress".into(),
+            provider_kind: None,
+            attempt_count: 1,
+            coverage_complete: false,
+            coverage_truncated: false,
+            coverage_turn_count: 0,
+            observation: Some(new_attempt_observation(
+                &request,
+                hash_identity(&request.idempotency_key),
+                1,
+            )),
+            processed_turn_hash: None,
+        };
+
+        prepare_interrupted_receipt_recovery(&mut receipt);
+
+        assert_eq!(receipt.attempt_count, 2);
+        let attempts = &receipt.observation.as_ref().unwrap().attempts;
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0].stage, "interrupted");
+        assert_eq!(
+            attempts[0].failure_stage.as_deref(),
+            Some("worker_interrupted")
+        );
+        assert_eq!(attempts[0].outcome.as_deref(), Some("interrupted"));
+        assert_eq!(attempts[1].number, 2);
+        assert_eq!(attempts[1].stage, "admission");
+    }
+
+    #[test]
+    fn processed_turn_and_latest_projection_decode_only_the_exact_observation() {
+        let request = RetitleRequest {
+            schema_version: REQUEST_SCHEMA.into(),
+            trigger: RetitleTrigger::Prompt,
+            idempotency_key: "automatic-exact-observation".into(),
+            expected_session_incarnation: "launch".into(),
+            expected_title_revision: 0,
+            expected_activity_revision: Some(1),
+            expected_provider_turn_id: Some("turn-a".into()),
+        };
+        let automatic = new_attempt_observation(&request, "sha256:automatic".into(), 1);
+        let mut manual_request = request.clone();
+        manual_request.trigger = RetitleTrigger::Manual;
+        manual_request.expected_activity_revision = None;
+        manual_request.expected_provider_turn_id = None;
+        let manual = new_attempt_observation(&manual_request, "sha256:manual".into(), 1);
+        let receipt = |observation: RetitleAttemptObservation,
+                       processed_turn_hash: Option<String>| RetitleReceipt {
+            key_hash: observation.correlation_id.clone(),
+            request_hash: "sha256:request".into(),
+            state: "complete".into(),
+            diagnostic_code: "committed".into(),
+            provider_kind: Some("command".into()),
+            attempt_count: 1,
+            coverage_complete: true,
+            coverage_truncated: false,
+            coverage_turn_count: 1,
+            observation: Some(observation),
+            processed_turn_hash,
+        };
+        let state = DurableRetitleState {
+            schema_version: MARKER_SCHEMA.into(),
+            receipts: vec![
+                receipt(automatic.clone(), Some(hash_identity("turn-a"))),
+                receipt(manual.clone(), None),
+            ],
+            last_processed_turn_hash: Some(hash_identity("turn-a")),
+            ..DurableRetitleState::default()
+        };
+        assert_eq!(
+            processed_turn_observation(&state, &hash_identity("turn-a"))
+                .unwrap()
+                .correlation_id,
+            automatic.correlation_id
+        );
+
+        let mut receipts = (0..31)
+            .map(|_| json!({"invalid": true}))
+            .collect::<Vec<_>>();
+        receipts.push(json!({"observation": manual}));
+        let marker = json!({
+            "schema_version": MARKER_SCHEMA,
+            "receipts": receipts,
+        });
+        assert_eq!(
+            latest_attempt_observation_from_marker(&marker)
+                .unwrap()
+                .correlation_id,
+            "sha256:manual"
+        );
+    }
+
+    #[test]
+    fn pre_observation_v2_receipt_remains_readable() {
+        let state: DurableRetitleState = serde_json::from_value(json!({
+            "schema_version": MARKER_SCHEMA,
+            "receipts": [{
+                "key_hash": "sha256:key",
+                "request_hash": "sha256:request",
+                "state": "failed",
+                "diagnostic_code": "retitle-context-unavailable",
+                "attempt_count": 1,
+                "coverage_complete": false,
+                "coverage_truncated": true,
+                "coverage_turn_count": 0
+            }]
+        }))
+        .unwrap();
+
+        assert_eq!(state.receipts.len(), 1);
+        assert!(state.receipts[0].observation.is_none());
+    }
+
+    #[test]
     fn automatic_failed_receipts_retry_only_retryable_codes_with_a_global_bound() {
+        let request = RetitleRequest {
+            schema_version: REQUEST_SCHEMA.into(),
+            trigger: RetitleTrigger::Prompt,
+            idempotency_key: "automatic-observation".into(),
+            expected_session_incarnation: "launch".into(),
+            expected_title_revision: 0,
+            expected_activity_revision: Some(1),
+            expected_provider_turn_id: Some("turn-1".into()),
+        };
         let mut receipt = RetitleReceipt {
             key_hash: "key".into(),
             request_hash: "request".into(),
@@ -2436,6 +3452,8 @@ mod tests {
             coverage_complete: false,
             coverage_truncated: false,
             coverage_turn_count: 0,
+            observation: Some(new_attempt_observation(&request, "sha256:key".into(), 1)),
+            processed_turn_hash: Some(hash_identity("turn-1")),
         };
         assert!(automatic_failed_receipt_can_retry(
             &receipt,
@@ -2448,6 +3466,9 @@ mod tests {
         assert_eq!(receipt.state, "in_progress");
         assert_eq!(receipt.diagnostic_code, "in_progress");
         assert_eq!(receipt.attempt_count, 2);
+        let observation = receipt.observation.as_ref().unwrap();
+        assert_eq!(observation.attempts.len(), 2);
+        assert_eq!(observation.attempts[1].number, 2);
         receipt.state = "failed".into();
         receipt.diagnostic_code = "retitle-context-unavailable".into();
         assert!(!automatic_failed_receipt_can_retry(
@@ -2890,6 +3911,76 @@ mod tests {
     }
 
     #[test]
+    fn malformed_provider_failure_classes_preserve_v2_retry_contract() {
+        for class in [
+            "missing_message",
+            "json_parse",
+            "schema_validation",
+            "response_read",
+            "response_encoding",
+        ] {
+            let error = provider_malformed_class(class);
+            assert_eq!(provider_failure_class(&error), class);
+            let details = error.0.details.as_ref().unwrap();
+            assert_eq!(details["retryable"], true);
+            assert_eq!(details["recovery"]["safe_to_retry"], true);
+            assert!(is_retryable_automatic_error_code(error.code()));
+        }
+    }
+
+    #[test]
+    fn openai_compatible_json_response_preserves_v2_json_object_mode() {
+        assert_eq!(
+            openai_compatible_response_format(),
+            json!({"type":"json_object"})
+        );
+    }
+
+    #[test]
+    fn provider_failure_outcomes_and_stages_are_stable_for_v3_receipts() {
+        for (code, outcome, stage) in [
+            (
+                "retitle-account-missing",
+                "account_missing",
+                "provider_setup",
+            ),
+            (
+                "retitle-api-key-missing",
+                "api_key_missing",
+                "provider_setup",
+            ),
+            ("retitle-provider-timeout", "timeout", "provider_call"),
+            (
+                "retitle-provider-unavailable",
+                "unavailable",
+                "provider_call",
+            ),
+            (
+                "retitle-provider-rate-limited",
+                "rate_limited",
+                "provider_call",
+            ),
+            (
+                "retitle-provider-quota-exceeded",
+                "quota_exceeded",
+                "provider_call",
+            ),
+            (
+                "retitle-provider-malformed-response",
+                "malformed_response",
+                "provider_response",
+            ),
+        ] {
+            assert_eq!(provider_outcome(code), outcome);
+            assert_eq!(provider_failure_stage(code, false), stage);
+        }
+        assert_eq!(
+            provider_failure_stage("retitle-provider-malformed-response", true),
+            "provider_parse"
+        );
+    }
+
+    #[test]
     fn provider_config_accepts_subscription_deepseek_local_and_command_shapes() {
         for (raw, kind) in [
             (
@@ -3044,6 +4135,52 @@ mod tests {
         let inferred = infer_title_state(&permit, &context, None).unwrap();
         assert_eq!(inferred.provider_kind, "command");
         assert_eq!(inferred.state.topic.as_deref(), Some("Fallback title"));
+
+        let observed = infer_semantic_memory_observed(
+            &permit,
+            r#"{"origin":{"text":"objective: retitle"},"active_objective":{"text":"objective: retitle"}}"#,
+            None,
+            "automatic",
+        )
+        .unwrap_or_else(|failure| panic!("v3 fallback failed: {}", failure.error.code()));
+        assert_eq!(observed.providers.len(), 2);
+        assert_eq!(observed.providers[0].provider_kind, "command");
+        assert_eq!(observed.providers[0].outcome, "unavailable");
+        assert_eq!(
+            observed.providers[0].failure_stage.as_deref(),
+            Some("provider_call")
+        );
+        assert_eq!(
+            observed.providers[0].failure_class.as_deref(),
+            Some("unavailable")
+        );
+        assert_eq!(observed.providers[1].outcome, "success");
+        assert!(observed.providers.iter().all(|attempt| {
+            attempt.started_at.parse::<jiff::Timestamp>().is_ok()
+                && attempt.finished_at.parse::<jiff::Timestamp>().is_ok()
+                && matches!(
+                    attempt.duration_bucket.as_str(),
+                    "under_10_ms"
+                        | "10_49_ms"
+                        | "50_249_ms"
+                        | "250_999_ms"
+                        | "1_4_s"
+                        | "5_29_s"
+                        | "30_119_s"
+                        | "120_s_plus"
+                )
+        }));
+        assert!(observed.providers.iter().all(|attempt| {
+            let started = attempt.started_at.parse::<jiff::Timestamp>().unwrap();
+            let finished = attempt.finished_at.parse::<jiff::Timestamp>().unwrap();
+            started <= finished
+        }));
+        assert!(
+            observed
+                .providers
+                .iter()
+                .any(|attempt| attempt.started_at != attempt.finished_at)
+        );
     }
 
     #[test]

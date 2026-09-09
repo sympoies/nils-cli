@@ -13,8 +13,11 @@ mod orchestration;
 mod provider_history;
 mod provider_prompt;
 mod retitle;
+mod retitle_v3;
 mod serve;
 
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::env;
 use std::ffi::OsString;
@@ -77,6 +80,39 @@ use cli::{AgentKind, Cli, Command, SpecialKey};
 const SESSION_DOCUMENT_VERSION: &str = "agent-session.session.v1";
 const SESSION_RESUME_DOCUMENT_VERSION: &str = "agent-session.resume.v1";
 const STARTUP_PROJECTION_VERSION: &str = "agent-session.startup.v1";
+
+#[cfg(test)]
+thread_local! {
+    static SESSION_RECORD_WRITE_DELAY_ONCE: Cell<Option<Duration>> = const { Cell::new(None) };
+    static SESSION_RECORD_WRITE_FAILURE_COUNTDOWN: Cell<Option<usize>> = const { Cell::new(None) };
+    static SESSION_DOCUMENT_WRITE_COUNT: Cell<usize> = const { Cell::new(0) };
+    static SESSION_RESUME_WRITE_COUNT: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn delay_next_session_record_write(duration: Duration) {
+    SESSION_RECORD_WRITE_DELAY_ONCE.with(|delay| delay.set(Some(duration)));
+}
+
+#[cfg(test)]
+pub(crate) fn fail_session_record_write_on_nth_call(call: usize) {
+    assert!(call > 0);
+    SESSION_RECORD_WRITE_FAILURE_COUNTDOWN.with(|countdown| countdown.set(Some(call)));
+}
+
+#[cfg(test)]
+pub(crate) fn reset_session_record_write_counts() {
+    SESSION_DOCUMENT_WRITE_COUNT.with(|count| count.set(0));
+    SESSION_RESUME_WRITE_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn session_record_write_counts() -> (usize, usize) {
+    (
+        SESSION_DOCUMENT_WRITE_COUNT.with(Cell::get),
+        SESSION_RESUME_WRITE_COUNT.with(Cell::get),
+    )
+}
 const STARTUP_EXTRA_KEY: &str = "startup";
 const AGENT_PROFILE_RUNTIME_KEY: &str = "agent_profile";
 const AGENT_PROFILE_PROVIDER_CONFIG_DIR_RUNTIME_KEY: &str = "agent_profile_provider_config_dir";
@@ -1490,6 +1526,10 @@ struct SessionView {
     title_state: Option<SessionTitleStateView>,
     title_state_supported: bool,
     title_revision: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retitle_attempt: Option<retitle::RetitleAttemptObservation>,
+    #[serde(skip)]
+    retitle_v3_memory_revision: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     session_incarnation: Option<String>,
     cwd: String,
@@ -11512,6 +11552,56 @@ fn mutate_session_record_for_title<T, F>(
 where
     F: FnOnce(&mut SessionRecord) -> Result<T, CliError>,
 {
+    with_locked_session_record_for_title(
+        context,
+        id,
+        expected_session_created_at,
+        expected_session_incarnation,
+        |record| {
+            let result = mutate(record)?;
+            write_session_record(context, record)?;
+            Ok(result)
+        },
+    )
+}
+
+pub(crate) fn mutate_session_record_for_title_after_persist<U, T, F, P>(
+    context: &CliContext,
+    id: &str,
+    expected_session_created_at: Option<&str>,
+    expected_session_incarnation: Option<&str>,
+    mutate: F,
+    after_persist: P,
+) -> Result<T, CliError>
+where
+    F: FnOnce(&mut SessionRecord) -> Result<U, CliError>,
+    P: FnOnce(&mut SessionRecord, U) -> Result<T, CliError>,
+{
+    with_locked_session_record_for_title(
+        context,
+        id,
+        expected_session_created_at,
+        expected_session_incarnation,
+        |record| {
+            let persisted = mutate(record)?;
+            write_session_document(context, record)?;
+            let result = after_persist(record, persisted)?;
+            write_session_document(context, record)?;
+            Ok(result)
+        },
+    )
+}
+
+fn with_locked_session_record_for_title<T, F>(
+    context: &CliContext,
+    id: &str,
+    expected_session_created_at: Option<&str>,
+    expected_session_incarnation: Option<&str>,
+    operation: F,
+) -> Result<T, CliError>
+where
+    F: FnOnce(&mut SessionRecord) -> Result<T, CliError>,
+{
     let observed = load_session_record(context, id)?;
     let canonical_id = observed.id.clone();
     let _lock = acquire_session_record_lock(context, &canonical_id)?;
@@ -11546,25 +11636,74 @@ where
         }
     }
     ensure_same_session_identity(&observed, &record)?;
-    let result = mutate(&mut record)?;
-    write_session_record(context, &record)?;
-    Ok(result)
+    operation(&mut record)
 }
 
 pub(crate) fn write_session_record(
     context: &CliContext,
     record: &SessionRecord,
 ) -> Result<(), CliError> {
-    let bytes = serde_json::to_vec_pretty(record).map_err(|err| {
+    let bytes = render_session_document_for_write(record)?;
+    #[cfg(test)]
+    SESSION_RESUME_WRITE_COUNT.with(|count| count.set(count.get() + 1));
+    write_resume_sidecar(context, record)?;
+    write_rendered_session_document(context, record, &bytes)
+}
+
+pub(crate) fn write_session_document(
+    context: &CliContext,
+    record: &SessionRecord,
+) -> Result<(), CliError> {
+    let bytes = render_session_document_for_write(record)?;
+    write_rendered_session_document(context, record, &bytes)
+}
+
+fn render_session_document_for_write(record: &SessionRecord) -> Result<Vec<u8>, CliError> {
+    #[cfg(test)]
+    let injected_failure = SESSION_RECORD_WRITE_FAILURE_COUNTDOWN.with(|countdown| {
+        let Some(remaining) = countdown.get() else {
+            return false;
+        };
+        if remaining == 1 {
+            countdown.set(None);
+            true
+        } else {
+            countdown.set(Some(remaining - 1));
+            false
+        }
+    });
+    #[cfg(test)]
+    if injected_failure {
+        return Err(CliError::runtime(
+            "session-write-injected",
+            "injected session-record write failure",
+            None,
+        ));
+    }
+    #[cfg(test)]
+    SESSION_RECORD_WRITE_DELAY_ONCE.with(|delay| {
+        if let Some(duration) = delay.take() {
+            thread::sleep(duration);
+        }
+    });
+    serde_json::to_vec_pretty(record).map_err(|err| {
         CliError::runtime(
             "session-render-failed",
             format!("failed to render session json: {err}"),
             None,
         )
-    })?;
+    })
+}
+
+fn write_rendered_session_document(
+    context: &CliContext,
+    record: &SessionRecord,
+    bytes: &[u8],
+) -> Result<(), CliError> {
     let path = session_dir(context, &record.id).join("session.json");
-    write_resume_sidecar(context, record)?;
-    write_private_file(&path, &bytes)
+    #[cfg(test)]
+    SESSION_DOCUMENT_WRITE_COUNT.with(|count| count.set(count.get() + 1));
+    write_private_file(&path, bytes)
 }
 
 fn merge_resume_sidecar(path: &Path, record: &mut SessionRecord) -> Result<(), CliError> {
@@ -11779,6 +11918,8 @@ fn session_view_from_parts(
         title_state: effective_session_title_state(record),
         title_state_supported: true,
         title_revision: record.title_revision,
+        retitle_attempt: retitle::latest_attempt_observation(record),
+        retitle_v3_memory_revision: retitle_v3::memory_revision(record),
         session_incarnation: record
             .runtime
             .as_ref()

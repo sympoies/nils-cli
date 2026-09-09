@@ -63,6 +63,44 @@ uses the currently configured provider kind for response compatibility. It
 never returns a prompt, transcript excerpt, raw
 provider turn ID, provider model output, credential, or private path.
 
+Newly admitted attempts also retain a bounded, additive
+`agent-session.session-retitle-attempt.v1` observation. A completed Retitle
+response exposes it as `data.retitle.attempt`, and the ordinary session
+projection exposes the latest observation as `retitle_attempt`; older receipts
+without the field remain valid and omit the projection. The observation uses a
+hashed correlation identity and records the trigger, durable retry spans,
+start/finish timestamps, terminal outcome, and diagnostic code. Each span
+records a stable failure stage, a coarse duration bucket, content-free context
+metrics (`source`, `freshness`, coverage flags, turn count, serialized context
+characters, and provider-input characters), and at most the configured primary
+plus one fallback provider attempt. Provider attempts contain only provider
+kind, validated model label when configured, outcome class, failure stage, and
+coarse duration bucket.
+
+Model labels are omitted for command providers and whenever their shape could
+be a credential (including common GitHub, AWS access-key, JWT, or opaque
+high-entropy forms). The omission applies consistently to readiness, durable
+receipts, HTTP responses and session lists, and structured logs. Stable failure
+stages are restricted to the queue, context, provider, and commit families;
+unknown internal stages are collapsed to `unknown` or `provider`.
+
+The serve daemon writes the same terminal observation as one structured JSON
+stderr event named `agent_session_retitle_attempt`, suitable for journald
+correlation. Neither the durable receipt, HTTP projections, nor this event may
+contain an idempotency key, prompt, transcript excerpt, provider output, raw
+provider turn ID, credential, command, or private path. Duration buckets are
+`under_10_ms`, `10_49_ms`, `50_249_ms`, `250_999_ms`, `1_4_s`, `5_29_s`,
+`30_119_s`, and `120_s_plus`.
+
+Successful duration is sampled after the fenced title mutation has completed
+its durable session-record write. The terminal observation is then persisted
+under the same record lock and is returned or logged only after that second
+write succeeds, so a storage failure cannot be projected as durable success.
+Both phases update only the session document because admission already
+persisted the unchanged resume sidecar. If the observation write fails after
+the first phase, failure recording cannot downgrade the complete receipt and an
+identical request replays the committed title without another provider decision.
+
 The daemon schedules the newest provider-confirmed current turn. If its prompt
 observation races transcript persistence, the matching completion can schedule
 one `completion_recovery` attempt. The deterministic key includes session
@@ -70,11 +108,15 @@ incarnation, provider turn ID, and trigger. Receipts and the last processed turn
 hash live in the session record, so restart, resume, reload, and multiple clients
 converge without duplicate provider decisions. An orphaned `in_progress`
 receipt is recoverable only after the replacement daemon has acquired its
-process-local per-session gate. Retryable automatic failures use one- and
-two-second process-local backoff and a durable maximum of three provider
-attempts per deterministic key. Terminal success, non-retryable failure, and
-attempt exhaustion remain suppressed for the daemon lifetime; restart cannot
-reset the durable provider-attempt bound.
+process-local per-session gate. Recovery retains that receipt, marks the prior
+span interrupted, and appends the incremented attempt to the same chain.
+Already-processed turn replay includes attempt metadata only when a completed
+receipt is correlated to that exact turn; otherwise it omits the optional
+field. Retryable automatic failures use one- and two-second process-local
+backoff and a durable maximum of three provider attempts per deterministic key.
+Terminal success, non-retryable failure, and attempt exhaustion remain
+suppressed for the daemon lifetime; restart cannot reset the durable
+provider-attempt bound.
 
 Commit always reloads and rechecks every fence. A later activity revision is
 accepted while the expected provider turn remains current, or after that turn
@@ -151,6 +193,18 @@ the supplied base ends in `/v1`). `api_key_env` names an environment variable;
 the key itself is not stored in JSON. Response bodies are streamed into a
 fixed cap-plus-one reader and rejected before an oversized response can be
 buffered in full.
+
+The deterministic provider-history regression models a 44,000-record,
+approximately 200 MiB transcript without allocating or committing that byte
+volume. Its meaningful intermediate human turn is more than 16 MiB behind an
+event-dense tail. The v2 characterization intentionally proves that the
+bounded latest-message selector returns no semantic messages while reading no
+more than its configured reverse-scan byte budget; retitle v3 owns recovery of
+that semantic journey. This 200 MiB case is the deterministic production-bound
+substitute: it reaches the production reverse-scan byte cap without depending
+on wall-clock speed. A separately ignored virtual 1 GiB stress case retains
+constant fixture allocation and verifies the same read bound when explicitly
+requested.
 
 ```json
 {
