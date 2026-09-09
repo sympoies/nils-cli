@@ -20,6 +20,9 @@ or integrating a specific subsystem.
   response/authentication rules, launch profiles, and session survival.
 - [Session retitle v2](specs/session-retitle-v2.md): bounded title context,
   automatic scheduling, mutation fences, provider configuration, and privacy.
+- [Session retitle v3](specs/session-retitle-v3.md): bounded semantic memory,
+  incremental history projection, asynchronous operations, freshness, and
+  long-session privacy/fencing guarantees.
 - [Session coordination v1](specs/session-coordination-v1.md): normative
   schemas, state machines, authorization, routes, limits, and failure codes.
 - [Turn-state contract](turn-state-contract.md): runtime-bound activity state,

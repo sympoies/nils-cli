@@ -13,6 +13,7 @@ mod orchestration;
 mod provider_history;
 mod provider_prompt;
 mod retitle;
+mod retitle_v3;
 mod serve;
 
 #[cfg(test)]
@@ -1527,6 +1528,8 @@ struct SessionView {
     title_revision: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     retitle_attempt: Option<retitle::RetitleAttemptObservation>,
+    #[serde(skip)]
+    retitle_v3_memory_revision: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     session_incarnation: Option<String>,
     cwd: String,
@@ -11647,7 +11650,10 @@ pub(crate) fn write_session_record(
     write_rendered_session_document(context, record, &bytes)
 }
 
-fn write_session_document(context: &CliContext, record: &SessionRecord) -> Result<(), CliError> {
+pub(crate) fn write_session_document(
+    context: &CliContext,
+    record: &SessionRecord,
+) -> Result<(), CliError> {
     let bytes = render_session_document_for_write(record)?;
     write_rendered_session_document(context, record, &bytes)
 }
@@ -11913,6 +11919,7 @@ fn session_view_from_parts(
         title_state_supported: true,
         title_revision: record.title_revision,
         retitle_attempt: retitle::latest_attempt_observation(record),
+        retitle_v3_memory_revision: retitle_v3::memory_revision(record),
         session_incarnation: record
             .runtime
             .as_ref()
