@@ -43,7 +43,11 @@ fn open_changed_files_dry_run_groups_by_git_workspace() {
         None,
     );
 
-    assert_eq!(out.code, 0);
+    assert_eq!(
+        out.code, 0,
+        "stdout: {}\nstderr: {}",
+        out.stdout, out.stderr
+    );
     assert!(out.stderr.is_empty(), "unexpected stderr: {}", out.stderr);
     let invocations: Vec<&str> = out.stdout.lines().collect();
     assert_eq!(invocations.len(), 2, "stdout was:\n{}", out.stdout);
@@ -69,7 +73,11 @@ fn open_changed_files_code_disabled_is_silent_noop() {
         None,
     );
 
-    assert_eq!(out.code, 0);
+    assert_eq!(
+        out.code, 0,
+        "stdout: {}\nstderr: {}",
+        out.stdout, out.stderr
+    );
     assert_eq!(out.stdout, "");
     assert_eq!(out.stderr, "");
 }
@@ -90,7 +98,11 @@ fn open_changed_files_invalid_code_override_logs_when_verbose() {
         None,
     );
 
-    assert_eq!(out.code, 0);
+    assert_eq!(
+        out.code, 0,
+        "stdout: {}\nstderr: {}",
+        out.stdout, out.stderr
+    );
     assert_eq!(out.stdout, "");
     assert!(
         out.stderr.contains("no-op: code override not found:"),
@@ -141,7 +153,11 @@ printf '%s\n' "$*" >> "${CODE_LOG:?}"
         None,
     );
 
-    assert_eq!(out.code, 0);
+    assert_eq!(
+        out.code, 0,
+        "stdout: {}\nstderr: {}",
+        out.stdout, out.stderr
+    );
     assert_eq!(out.stdout, "");
     assert_eq!(out.stderr, "");
     let log = fs::read_to_string(&code_log).unwrap();
@@ -207,7 +223,11 @@ esac
         None,
     );
 
-    assert_eq!(out.code, 0);
+    assert_eq!(
+        out.code, 0,
+        "stdout: {}\nstderr: {}",
+        out.stdout, out.stderr
+    );
     assert!(out.stderr.is_empty(), "unexpected stderr: {}", out.stderr);
     assert!(out.stdout.contains(&staged.to_string_lossy().to_string()));
     assert!(out.stdout.contains(&unstaged.to_string_lossy().to_string()));

@@ -79,7 +79,11 @@ fn history_parsing_strips_icon_prefix() {
 
     let out =
         common::run_fzf_cli_with_stub_path(dir.path(), stub.path(), &["history"], &envs, None);
-    assert_eq!(out.code, 0);
+    assert_eq!(
+        out.code, 0,
+        "stdout: {}\nstderr: {}",
+        out.stdout, out.stderr
+    );
     assert_eq!(out.stdout.trim(), "echo hi");
 }
 
@@ -102,7 +106,11 @@ fn directory_ctrl_d_emits_cd_command() {
 
     let out =
         common::run_fzf_cli_with_stub_path(dir.path(), stub.path(), &["directory"], &envs, None);
-    assert_eq!(out.code, 0);
+    assert_eq!(
+        out.code, 0,
+        "stdout: {}\nstderr: {}",
+        out.stdout, out.stderr
+    );
     assert!(
         out.stdout.contains("cd "),
         "expected cd output, got: {}",
@@ -158,7 +166,11 @@ echo "$@" >> "${KILL_LOG:?}"
         &envs,
         None,
     );
-    assert_eq!(out.code, 0);
+    assert_eq!(
+        out.code, 0,
+        "stdout: {}\nstderr: {}",
+        out.stdout, out.stderr
+    );
     assert!(
         out.stdout.contains("SIGTERM"),
         "expected SIGTERM output, got: {}",
@@ -247,7 +259,11 @@ echo "tcp4 0 0 127.0.0.1.1234 *.* LISTEN"
 
     let out =
         common::run_fzf_cli_with_stub_only_path(dir.path(), stub.path(), &["port"], &envs, None);
-    assert_eq!(out.code, 0);
+    assert_eq!(
+        out.code, 0,
+        "stdout: {}\nstderr: {}",
+        out.stdout, out.stderr
+    );
 }
 
 #[test]
@@ -293,7 +309,11 @@ echo "$@" >> "${KILL_LOG:?}"
         &envs,
         None,
     );
-    assert_eq!(out.code, 0);
+    assert_eq!(
+        out.code, 0,
+        "stdout: {}\nstderr: {}",
+        out.stdout, out.stderr
+    );
     let log = fs::read_to_string(&kill_log).unwrap();
     assert!(log.contains("999"), "kill log missing pid: {log}");
 }

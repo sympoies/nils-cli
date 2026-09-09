@@ -55,7 +55,11 @@ exit 0
         &envs,
         Some("y\n"),
     );
-    assert_eq!(out.code, 0);
+    assert_eq!(
+        out.code, 0,
+        "stdout: {}\nstderr: {}",
+        out.stdout, out.stderr
+    );
     assert!(out.stdout.contains("✅ Checked out to main"));
     let log = fs::read_to_string(&git_log).unwrap();
     assert!(log.contains("checkout main"));
@@ -116,7 +120,11 @@ exit 0
         &envs,
         Some("y\n"),
     );
-    assert_eq!(out.code, 0);
+    assert_eq!(
+        out.code, 0,
+        "stdout: {}\nstderr: {}",
+        out.stdout, out.stderr
+    );
     assert!(
         out.stdout
             .contains("✅ Checked out to tag v1.0.0 (commit abc123)")
@@ -201,7 +209,11 @@ exit 0
         &envs,
         Some("y\ny\n"),
     );
-    assert_eq!(out.code, 0);
+    assert_eq!(
+        out.code, 0,
+        "stdout: {}\nstderr: {}",
+        out.stdout, out.stderr
+    );
     assert!(out.stdout.contains("📦 Changes stashed"));
     assert!(out.stdout.contains("✅ Checked out to abc123"));
 }
@@ -239,7 +251,11 @@ exit 0
 
     let out =
         common::run_fzf_cli_with_stub_path(temp.path(), stub.path(), &["git-status"], &envs, None);
-    assert_eq!(out.code, 0);
+    assert_eq!(
+        out.code, 0,
+        "stdout: {}\nstderr: {}",
+        out.stdout, out.stderr
+    );
 }
 
 #[test]
@@ -315,7 +331,11 @@ exit 0
 
     let out =
         common::run_fzf_cli_with_stub_path(temp.path(), stub.path(), &["git-commit"], &envs, None);
-    assert_eq!(out.code, 0);
+    assert_eq!(
+        out.code, 0,
+        "stdout: {}\nstderr: {}",
+        out.stdout, out.stderr
+    );
     let log = fs::read_to_string(&vi_log).unwrap();
     assert!(log.contains("file.txt"));
 }

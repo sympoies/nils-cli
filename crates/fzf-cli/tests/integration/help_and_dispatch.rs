@@ -5,7 +5,11 @@ use pretty_assertions::assert_eq;
 fn help_prints_usage_and_commands() {
     let temp = tempfile::TempDir::new().unwrap();
     let out = common::run_fzf_cli(temp.path(), &["help"], &[], None);
-    assert_eq!(out.code, 0);
+    assert_eq!(
+        out.code, 0,
+        "stdout: {}\nstderr: {}",
+        out.stdout, out.stderr
+    );
     assert!(
         out.stdout.contains("Usage: fzf-cli <command> [args]"),
         "missing usage: {}",
