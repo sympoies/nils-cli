@@ -10418,15 +10418,122 @@ mod tests {
         );
     }
 
-    #[test]
-    fn retitle_terminal_success_is_not_returned_when_observation_persistence_fails() {
+    #[tokio::test]
+    async fn retitle_terminal_success_is_not_returned_when_observation_persistence_fails() {
         let tmp = tempfile::TempDir::new().expect("tempdir");
-        seed_session_with_runtime(
-            tmp.path(),
-            "retitle-terminal-write-failure",
-            "codex",
-            "hs-retitle-terminal-write-failure",
-        );
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        let serve_state = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+
+        for (id, trigger) in [
+            (
+                "manual-terminal-write-failure",
+                crate::retitle::RetitleTrigger::Manual,
+            ),
+            (
+                "automatic-terminal-write-failure",
+                crate::retitle::RetitleTrigger::Initial,
+            ),
+        ] {
+            seed_session_with_runtime(tmp.path(), id, "codex", &format!("hs-{id}"));
+            let automatic = trigger.is_automatic();
+            if automatic {
+                write_automatic_activity(tmp.path(), id, 1, Some("turn-a"), None);
+            }
+            let request = crate::retitle::RetitleRequest {
+                schema_version: crate::retitle::REQUEST_SCHEMA.into(),
+                trigger,
+                idempotency_key: format!("{id}-key"),
+                expected_session_incarnation: format!("launch-{id}"),
+                expected_title_revision: 0,
+                expected_activity_revision: automatic.then_some(1),
+                expected_provider_turn_id: automatic.then(|| "turn-a".to_string()),
+            };
+            assert!(matches!(
+                crate::retitle::admit(&context, id, &request).unwrap(),
+                crate::retitle::Admission::Evaluate(_)
+            ));
+            let desired: SessionTitleState = serde_json::from_value(json!({
+                "topic": "Terminal write failure",
+                "topic_source": "auto",
+                "references": [],
+                "activity": null
+            }))
+            .unwrap();
+            let started = Instant::now();
+            crate::fail_session_record_write_on_nth_call(2);
+            let error = match crate::retitle::commit(
+                &context,
+                id,
+                &request,
+                desired,
+                &crate::retitle::CoverageView {
+                    source: "provider_transcript",
+                    complete: true,
+                    truncated: false,
+                    turn_count: 1,
+                },
+                "command",
+                &crate::retitle::RetitleAttemptEvidence {
+                    context: None,
+                    providers: Vec::new(),
+                    elapsed: Duration::ZERO,
+                    started: Some(started),
+                },
+            ) {
+                Ok(_) => panic!("terminal observation write should fail"),
+                Err(error) => error,
+            };
+            let failure = RetitleEvaluationFailure {
+                error,
+                failure_stage: "commit",
+                context: None,
+                providers: Vec::new(),
+                started,
+            };
+
+            assert!(
+                record_retitle_failure(&serve_state, id, &request, &failure)
+                    .await
+                    .is_none()
+            );
+            assert!(matches!(
+                crate::retitle::admit(&context, id, &request).unwrap(),
+                crate::retitle::Admission::Replay(..)
+            ));
+            let stored = crate::load_session_record(&context, id).unwrap();
+            assert_eq!(stored.title.as_deref(), Some("Terminal write failure"));
+            assert!(crate::retitle::latest_attempt_observation(&stored).is_none());
+            let stored = serde_json::to_value(stored).unwrap();
+            assert_eq!(
+                stored["session_retitle_v2"]["receipts"][0]["state"],
+                "complete"
+            );
+            assert!(
+                stored["session_retitle_v2"]["receipts"][0]
+                    .get("observation")
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn retitle_two_phase_commit_does_not_rewrite_resume_sidecar() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        seed_session_with_runtime(tmp.path(), "retitle-write-count", "codex", "hs-write-count");
+        let record_path = tmp.path().join("sessions/retitle-write-count/session.json");
+        let mut record: Value =
+            serde_json::from_slice(&std::fs::read(&record_path).unwrap()).unwrap();
+        record["provider_resume"] = json!({
+            "provider":"codex",
+            "session_id":"provider-write-count",
+            "captured_at":"2026-09-09T00:00:00Z",
+            "capture_method":"fixture",
+            "resume_args":[]
+        });
+        std::fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
         let context = CliContext {
             state_dir: tmp.path().to_path_buf(),
             host: None,
@@ -10434,30 +10541,29 @@ mod tests {
         let request = crate::retitle::RetitleRequest {
             schema_version: crate::retitle::REQUEST_SCHEMA.into(),
             trigger: crate::retitle::RetitleTrigger::Manual,
-            idempotency_key: "manual-terminal-write-failure".into(),
-            expected_session_incarnation: "launch-retitle-terminal-write-failure".into(),
+            idempotency_key: "manual-write-count".into(),
+            expected_session_incarnation: "launch-retitle-write-count".into(),
             expected_title_revision: 0,
             expected_activity_revision: None,
             expected_provider_turn_id: None,
         };
         assert!(matches!(
-            crate::retitle::admit(&context, "retitle-terminal-write-failure", &request).unwrap(),
+            crate::retitle::admit(&context, "retitle-write-count", &request).unwrap(),
             crate::retitle::Admission::Evaluate(_)
         ));
-        let desired: SessionTitleState = serde_json::from_value(json!({
-            "topic": "Terminal write failure",
-            "topic_source": "auto",
-            "references": [],
-            "activity": null
-        }))
-        .unwrap();
-        crate::fail_session_record_write_on_nth_call(2);
+        crate::reset_session_record_write_counts();
 
-        let result = crate::retitle::commit(
+        crate::retitle::commit(
             &context,
-            "retitle-terminal-write-failure",
+            "retitle-write-count",
             &request,
-            desired,
+            serde_json::from_value(json!({
+                "topic": "No duplicate sidecar write",
+                "topic_source": "auto",
+                "references": [],
+                "activity": null
+            }))
+            .unwrap(),
             &crate::retitle::CoverageView {
                 source: "provider_transcript",
                 complete: true,
@@ -10471,23 +10577,10 @@ mod tests {
                 elapsed: Duration::ZERO,
                 started: Some(Instant::now()),
             },
-        );
+        )
+        .unwrap();
 
-        assert!(result.is_err());
-        let stored =
-            crate::load_session_record(&context, "retitle-terminal-write-failure").unwrap();
-        assert_eq!(stored.title.as_deref(), Some("Terminal write failure"));
-        assert!(crate::retitle::latest_attempt_observation(&stored).is_none());
-        let stored = serde_json::to_value(stored).unwrap();
-        assert_eq!(
-            stored["session_retitle_v2"]["receipts"][0]["state"],
-            "complete"
-        );
-        assert!(
-            stored["session_retitle_v2"]["receipts"][0]
-                .get("observation")
-                .is_none()
-        );
+        assert_eq!(crate::session_record_write_counts(), (2, 0));
     }
 
     #[tokio::test]

@@ -2650,6 +2650,9 @@ pub(crate) fn fail_attempt(
         .iter_mut()
         .find(|receipt| receipt.key_hash == key_hash)
     {
+        if receipt.state == "complete" {
+            return None;
+        }
         receipt.state = "failed".to_string();
         receipt.diagnostic_code = diagnostic_code.to_string();
         if let Some(observation) = receipt.observation.as_mut() {

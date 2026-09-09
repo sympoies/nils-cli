@@ -96,6 +96,10 @@ Successful duration is sampled after the fenced title mutation has completed
 its durable session-record write. The terminal observation is then persisted
 under the same record lock and is returned or logged only after that second
 write succeeds, so a storage failure cannot be projected as durable success.
+Both phases update only the session document because admission already
+persisted the unchanged resume sidecar. If the observation write fails after
+the first phase, failure recording cannot downgrade the complete receipt and an
+identical request replays the committed title without another provider decision.
 
 The daemon schedules the newest provider-confirmed current turn. If its prompt
 observation races transcript persistence, the matching completion can schedule
