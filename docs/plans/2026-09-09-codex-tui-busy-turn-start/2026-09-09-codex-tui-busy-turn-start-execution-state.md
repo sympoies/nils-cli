@@ -11,8 +11,8 @@
 - Tracking issue: <https://github.com/sympoies/nils-cli/issues/1644>
 - Branch: `fix/codex-tui-busy-turn-start`
 - Worktree: managed by `git-cli worktree`
-- Active task: 1.1
-- Last checkpoint: live reproduction complete
+- Active task: 2.1
+- Last checkpoint: pre-merge review findings recorded on PR #1646
 - Current task: 2.1
 - Next task: validate, review, and merge
 
@@ -38,5 +38,5 @@
 
 ## Handoff
 
-Continue at Task 1.1 in the managed worktree and retain privacy-safe live
-evidence for final acceptance.
+Continue at Task 2.1 in the managed worktree. Repair the finite pre-merge
+finding set, then retain privacy-safe release and live acceptance evidence.

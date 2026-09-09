@@ -1233,6 +1233,7 @@ fn acquire_manual_input_gate(
 /// sender marker, when present, is revalidated under the same lock.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TuiMutationRejection {
+    TurnAlreadyPending,
     AccountMutationForbidden,
     AccountNotReady,
     TurnRequestInvalid,
@@ -1251,6 +1252,7 @@ enum TuiMutationRejection {
 impl TuiMutationRejection {
     fn code(self) -> &'static str {
         match self {
+            Self::TurnAlreadyPending => "turn_already_pending",
             Self::AccountMutationForbidden => "account_mutation_forbidden",
             Self::AccountNotReady => "account_not_ready",
             Self::TurnRequestInvalid => "turn_request_invalid",
@@ -4220,9 +4222,7 @@ async fn ensure_turn_start_account_ready(context: &CliContext, record: &SessionR
         if crate::codex_account::ensure_proxy_input_allowed(&current).is_ok() {
             return true;
         }
-        let pending = crate::codex_account::view_for_record(&current)
-            .next
-            .is_some_and(|next| matches!(next.state, "queued" | "applying"));
+        let pending = crate::codex_account::proxy_next_account_is_pending(&current);
         if !pending || Instant::now() >= deadline {
             return false;
         }
@@ -4420,14 +4420,14 @@ fn proxy_websocket_config() -> WebSocketConfig {
         .max_frame_size(Some(MAX_PROXY_FRAME_BYTES))
 }
 
-fn tui_busy_response(id: &Value, reason: &'static str) -> Message {
+fn tui_busy_response(id: &Value, rejection: TuiMutationRejection) -> Message {
     Message::Text(
         json!({
             "id": id,
             "error": {
                 "code": -32001,
                 "message": "agent-session state is busy; retry the request",
-                "data": { "reason": reason }
+                "data": { "reason": rejection.code() }
             }
         })
         .to_string()
@@ -4533,7 +4533,10 @@ async fn run_proxy_session(
                             || pending_turn_authorizations.len() >= MAX_REDUCER_PENDING_TURNS
                     }) {
                         if let Some(id) = value.get("id") {
-                            tui.send(tui_busy_response(id, "turn_already_pending"))
+                            tui.send(tui_busy_response(
+                                id,
+                                TuiMutationRejection::TurnAlreadyPending,
+                            ))
                             .await
                             .map_err(|err| format!("remote TUI write failed: {err}"))?;
                         }
@@ -4551,7 +4554,7 @@ async fn run_proxy_session(
                                 .get("id")
                                 .filter(|id| json_id_key(id).is_some())
                             {
-                                tui.send(tui_busy_response(id, rejection.code()))
+                                tui.send(tui_busy_response(id, rejection))
                                 .await
                                 .map_err(|err| format!("remote TUI write failed: {err}"))?;
                             }
@@ -5119,6 +5122,68 @@ mod tests {
                 }
             })
         );
+    }
+
+    #[test]
+    fn tui_busy_response_preserves_stable_contract_for_every_rejection() {
+        for (rejection, reason) in [
+            (
+                TuiMutationRejection::TurnAlreadyPending,
+                "turn_already_pending",
+            ),
+            (
+                TuiMutationRejection::AccountMutationForbidden,
+                "account_mutation_forbidden",
+            ),
+            (TuiMutationRejection::AccountNotReady, "account_not_ready"),
+            (
+                TuiMutationRejection::TurnRequestInvalid,
+                "turn_request_invalid",
+            ),
+            (
+                TuiMutationRejection::TurnGateOpenFailed,
+                "turn_gate_open_failed",
+            ),
+            (TuiMutationRejection::TurnGateBusy, "turn_gate_busy"),
+            (
+                TuiMutationRejection::ManualMarkerThreadMismatch,
+                "manual_marker_thread_mismatch",
+            ),
+            (
+                TuiMutationRejection::ManualMarkerReplaced,
+                "manual_marker_replaced",
+            ),
+            (
+                TuiMutationRejection::ManualMarkerInvalid,
+                "manual_marker_invalid",
+            ),
+            (TuiMutationRejection::ManualAckFailed, "manual_ack_failed"),
+            (
+                TuiMutationRejection::RuntimeIdentityMissing,
+                "runtime_identity_missing",
+            ),
+            (
+                TuiMutationRejection::ManualCancellationBusy,
+                "manual_cancellation_busy",
+            ),
+            (TuiMutationRejection::RuntimeChanged, "runtime_changed"),
+            (
+                TuiMutationRejection::AccountAuthorityUnavailable,
+                "account_authority_unavailable",
+            ),
+        ] {
+            let Message::Text(text) = tui_busy_response(&json!(7), rejection) else {
+                panic!("busy response must be text");
+            };
+            let response: Value = serde_json::from_str(text.as_str()).unwrap();
+            assert_eq!(response["id"], 7);
+            assert_eq!(response["error"]["code"], -32001);
+            assert_eq!(
+                response["error"]["message"],
+                "agent-session state is busy; retry the request"
+            );
+            assert_eq!(response["error"]["data"]["reason"], reason);
+        }
     }
 
     #[test]
@@ -9034,7 +9099,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
     #[tokio::test]
     async fn proxy_holds_queued_account_turn_until_apply_then_forwards_once() {
         let env_lock = GlobalStateLock::new();
-        let _broker = EnvGuard::set(
+        let broker = EnvGuard::set(
             &env_lock,
             "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
             r#"["/configured/broker"]"#,
@@ -9057,6 +9122,9 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
             "sym",
         )
         .unwrap();
+        drop(broker);
+        let without_proxy_broker =
+            EnvGuard::remove(&env_lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
 
         let (held_tx, held_rx) = tokio::sync::oneshot::channel();
         let server = tokio::spawn(async move {
@@ -9113,6 +9181,12 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         .unwrap();
         held_rx.await.unwrap();
 
+        drop(without_proxy_broker);
+        let _daemon_broker = EnvGuard::set(
+            &env_lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            r#"["/configured/broker"]"#,
+        );
         let launch_id = &record.runtime.as_ref().unwrap().launch_id;
         let applying = crate::codex_account::begin_next_apply(&context, &record.id, launch_id)
             .unwrap()
@@ -10361,6 +10435,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             .unwrap()
             .expect("managed Codex input must publish sender authority");
         drop(broker);
+        let _without_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
         let mut bootstrap = FreshBootstrap::Closed;
         let authorization = cancel_before_tui_mutation(
             &context,
@@ -10955,7 +11030,13 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
     }
 
     #[tokio::test]
-    async fn fresh_tui_thread_start_bypasses_the_create_lifecycle_lock() {
+    async fn managed_account_fresh_proxy_authorizes_first_turn_without_broker_environment() {
+        let env_lock = GlobalStateLock::new();
+        let broker = EnvGuard::set(
+            &env_lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            r#"["/configured/broker"]"#,
+        );
         let tmp = tempfile::TempDir::new().unwrap();
         let upstream = tmp.path().join("fresh-start.sock");
         let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
@@ -10963,10 +11044,22 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             state_dir: tmp.path().join("state"),
             host: None,
         };
-        let record = record_with_runtime("fresh-start", &upstream);
+        let mut record = record_with_runtime("fresh-start", &upstream);
+        crate::codex_account::set_initial_binding(&mut record, Some("gamania")).unwrap();
         fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
         crate::write_session_record(&context, &record).unwrap();
         crate::activity::activate_runtime(&context, &record).unwrap();
+        crate::codex_account::finish_binding(
+            &context,
+            &record.id,
+            &record.runtime.as_ref().unwrap().launch_id,
+            "gamania",
+            1,
+            Ok(()),
+        )
+        .unwrap();
+        drop(broker);
+        let _without_broker = EnvGuard::remove(&env_lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
         write_create_bootstrap_marker(&record);
         let proxy_args = crate::cli::CodexAppServerProxyArgs {
             id: record.id.clone(),

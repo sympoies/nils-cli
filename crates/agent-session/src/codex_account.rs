@@ -507,6 +507,19 @@ pub(crate) fn ensure_proxy_input_allowed(record: &SessionRecord) -> Result<(), C
     ensure_applied_runtime_input_allowed(record, false)
 }
 
+/// Report whether the durable next-account intent is still being applied.
+///
+/// Unlike the public account view, this predicate intentionally does not
+/// require the daemon-only broker environment. Detached proxies use it only to
+/// decide whether to hold a turn while the daemon control connection drains
+/// the intent; they never apply or mutate the account themselves.
+pub(crate) fn proxy_next_account_is_pending(record: &SessionRecord) -> bool {
+    matches!(
+        decode_next(record),
+        DecodedNext::Valid(next) if matches!(next.state.as_str(), "queued" | "applying")
+    )
+}
+
 /// Validate the account currently bound to the live runtime without treating a
 /// queued next-account intent as a reason to reject terminal input. The
 /// app-server proxy remains the structured boundary that fences `turn/start`;

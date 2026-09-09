@@ -11,7 +11,7 @@
 - Tracking issue: <https://github.com/sympoies/nils-cli/issues/1631>
 - Branch: `fix/agent-session-runtime-recovery`
 - Worktree: managed by `git-cli worktree`
-- Active task: 2.1
+- Active task: complete
 - Last checkpoint: Pre-merge review findings repaired and follow-up review passed
 - Current task: complete
 - Next task: none

@@ -453,7 +453,15 @@ recorded in `sympoies/nils-cli#1409`.
   provider acceptance: the same response can be emitted while an earlier
   request is already pending. Current proxies add `error.data.reason` from a
   closed vocabulary without user-controlled or identifying values while
-  preserving the stable code and message. A durably bound exact-runtime account
+  preserving the stable code and message. The current values are
+  `turn_already_pending`, `account_mutation_forbidden`, `account_not_ready`,
+  `turn_request_invalid`, `turn_gate_open_failed`, `turn_gate_busy`,
+  `manual_marker_thread_mismatch`, `manual_marker_replaced`,
+  `manual_marker_invalid`, `manual_ack_failed`, `runtime_identity_missing`,
+  `manual_cancellation_busy`, `runtime_changed`, and
+  `account_authority_unavailable`. Older proxies may omit `data.reason`, and
+  clients MUST tolerate an absent or unknown reason while retaining the stable
+  code/message fallback. A durably bound exact-runtime account
   remains valid in a detached tmux scope without inheriting the daemon's broker
   command; the broker is still mandatory for binding and account mutation. A
   client MUST first refresh `GET /sessions` and
