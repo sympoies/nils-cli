@@ -415,6 +415,19 @@ fn write_response(stream: &mut TcpStream, response: HttpResponse) -> io::Result<
     let body = response.body;
     let mut headers = response.headers;
     headers.push(("Content-Length".to_string(), body.len().to_string()));
+    // The accept loop serves exactly one request per connection and then drops
+    // the socket, so the response has to say so. Without this header an
+    // HTTP/1.1 client is entitled to treat the connection as persistent and
+    // return it to its idle pool, and its next request then races the server's
+    // FIN: a write that lands on the already-closed socket surfaces as a
+    // transport error the caller cannot distinguish from a refused connection.
+    // A handler that sets its own `Connection` header keeps it.
+    if !headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("Connection"))
+    {
+        headers.push(("Connection".to_string(), "close".to_string()));
+    }
 
     let mut out = String::new();
     out.push_str(&format!("HTTP/1.1 {} {}\r\n", response.status, status_text));
@@ -427,4 +440,85 @@ fn write_response(stream: &mut TcpStream, response: HttpResponse) -> io::Result<
     stream.write_all(out.as_bytes())?;
     stream.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{BufRead, BufReader};
+    use std::net::TcpStream;
+
+    fn raw_get(url: &str, path: &str) -> Vec<String> {
+        let authority = url.trim_start_matches("http://");
+        let mut stream = TcpStream::connect(authority).expect("connect to the stub server");
+        stream
+            .write_all(format!("GET {path} HTTP/1.1\r\nHost: {authority}\r\n\r\n").as_bytes())
+            .expect("send request");
+        stream.flush().expect("flush request");
+
+        let mut reader = BufReader::new(stream);
+        let mut headers = Vec::new();
+        loop {
+            let mut line = String::new();
+            let read = reader.read_line(&mut line).expect("read response line");
+            if read == 0 || line == "\r\n" {
+                break;
+            }
+            headers.push(line.trim_end().to_string());
+        }
+        headers
+    }
+
+    /// The accept loop serves one request per connection and then drops the
+    /// socket, so every response must say `Connection: close`.
+    ///
+    /// Without it an HTTP/1.1 client may pool the connection, and its next
+    /// request races the server's FIN. That write lands on a dead socket and
+    /// surfaces as a transport error indistinguishable from a refused
+    /// connection, which is how three `forgejo_http` tests flaked 14 times in
+    /// one week of CI while passing in isolation.
+    #[test]
+    fn a_single_request_response_declares_that_it_closes_the_connection() {
+        let server = TestServer::new(|_| HttpResponse {
+            status: 200,
+            headers: Vec::new(),
+            body: "{}".to_string(),
+        })
+        .expect("start the stub server");
+
+        let headers = raw_get(&server.url(), "/first");
+        assert!(
+            headers
+                .iter()
+                .any(|header| header.eq_ignore_ascii_case("Connection: close")),
+            "a one-shot response must not invite connection reuse: {headers:?}"
+        );
+    }
+
+    /// A handler that chooses its own `Connection` header keeps it, so the
+    /// redirect fixtures that already set one are unaffected.
+    #[test]
+    fn a_handler_supplied_connection_header_is_preserved() {
+        let server = TestServer::new(|_| HttpResponse {
+            status: 200,
+            headers: vec![("Connection".to_string(), "keep-alive".to_string())],
+            body: "{}".to_string(),
+        })
+        .expect("start the stub server");
+
+        let headers = raw_get(&server.url(), "/kept");
+        let connection = headers
+            .iter()
+            .filter(|header| header.to_ascii_lowercase().starts_with("connection:"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            connection.len(),
+            1,
+            "exactly one Connection header survives: {headers:?}"
+        );
+        assert!(
+            connection[0].eq_ignore_ascii_case("Connection: keep-alive"),
+            "the handler's own choice is preserved: {headers:?}"
+        );
+    }
 }
