@@ -15,8 +15,6 @@ const TOKEN: &str = "retitle-v3-test-bearer";
 const SESSION_ID: &str = "retitle-v3-black-box";
 const PROVIDER_SESSION_ID: &str = "provider-retitle-v3-black-box";
 const INCARNATION: &str = "launch-retitle-v3-black-box";
-const OPERATION_HASH: &str =
-    "sha256:1111111111111111111111111111111111111111111111111111111111111111";
 const ASSISTANT_CANARY: &str = "assistant-private-output-canary";
 const PATH_CANARY: &str = "/private/retitle-v3-canary";
 const CREDENTIAL_CANARY: &str = "sk-test-private-retitle-v3-canary";
@@ -183,32 +181,6 @@ impl Fixture {
     ) -> HttpResponse {
         request_json(self.address, method, path, token, body)
     }
-
-    fn seed_pending_receipt(&self) {
-        let mut record: Value = serde_json::from_slice(
-            &fs::read(&self.record_path).expect("read session record for pending seed"),
-        )
-        .expect("session record JSON");
-        record["session_retitle_v3"] = json!({
-            "schema_version": "agent-session.session-retitle-state.v3",
-            "revision": 0,
-            "readiness": "catching_up",
-            "receipts": [{
-                "operation_hash": OPERATION_HASH,
-                "idempotency_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-                "trigger": "manual",
-                "state": "pending",
-                "admitted_incarnation": INCARNATION,
-                "admitted_title_revision": 0,
-                "admitted_memory_revision": 0,
-                "created_at": "2026-09-09T00:00:00Z",
-                "updated_at": "2026-09-09T00:00:00Z",
-                "duration_bucket": "under_10_ms",
-                "memory_revision": 0
-            }]
-        });
-        write_private_json(&self.record_path, &record);
-    }
 }
 
 #[test]
@@ -335,6 +307,22 @@ fn retitle_v3_routes_are_authenticated_strict_private_and_additive() {
         operation_hash
     );
 
+    let replay_with_changed_fence = fixture.request(
+        "POST",
+        "/sessions/retitle-v3-black-box/retitle-v3",
+        Some(TOKEN),
+        Some(&manual_request("manual-contract-check", 1, 1)),
+    );
+    assert_eq!(
+        replay_with_changed_fence.status, 409,
+        "body={}",
+        replay_with_changed_fence.body
+    );
+    assert_eq!(
+        replay_with_changed_fence.body["error"]["code"],
+        "retitle-v3-idempotency-conflict"
+    );
+
     let sessions = fixture.request("GET", "/sessions", Some(TOKEN), None);
     assert_eq!(sessions.status, 200, "body={}", sessions.body);
     assert_eq!(
@@ -399,32 +387,92 @@ fn retitle_v3_routes_are_authenticated_strict_private_and_additive() {
 }
 
 #[test]
-fn retitle_v3_pending_operation_is_adopted_after_daemon_restart() {
+fn retitle_v3_claimed_operation_is_reconciled_after_a_real_daemon_restart() {
     let fixture = Fixture::new();
-    fixture.seed_pending_receipt();
-    {
-        let _first_daemon = ServeProcess::spawn(&fixture);
-        let seeded = fs::read_to_string(&fixture.record_path).expect("seeded pending receipt");
-        assert!(seeded.contains(OPERATION_HASH));
-        assert!(seeded.contains("\"state\": \"pending\""));
-    }
+    let provider_started = fixture.root.join("provider.started");
+    write_executable(
+        &fixture.provider_bin,
+        &format!(
+            "#!/bin/sh\nprintf 'called\\n' >> {}\n: > {}\nparent=$PPID\nwhile kill -0 \"$parent\" 2>/dev/null; do sleep 0.01; done\nexit 143\n",
+            shell_words::quote(&fixture.provider_calls.to_string_lossy()),
+            shell_words::quote(&provider_started.to_string_lossy()),
+        ),
+    );
+    let mut record: Value = serde_json::from_slice(
+        &fs::read(&fixture.record_path).expect("read session record before admission"),
+    )
+    .expect("session record JSON");
+    record["title"] = json!("Existing restart-safe title");
+    record["title_revision"] = json!(1);
+    write_private_json(&fixture.record_path, &record);
+    seed_automatic_activity(&fixture.state_dir, "restart-turn", 1);
+
+    let mut first_daemon = ServeProcess::spawn(&fixture);
+    let admitted = fixture.request(
+        "POST",
+        "/sessions/retitle-v3-black-box/retitle-v3",
+        Some(TOKEN),
+        Some(&automatic_request(
+            "automatic-restart",
+            1,
+            0,
+            1,
+            "restart-turn",
+        )),
+    );
+    assert_eq!(admitted.status, 202, "body={}", admitted.body);
+    let operation_hash = admitted.body["data"]["retitle"]["operation_hash"]
+        .as_str()
+        .expect("admitted operation hash")
+        .to_string();
+    wait_for_path(&provider_started);
+    first_daemon.stop();
+
+    let mut persisted: Value = serde_json::from_slice(
+        &fs::read(&fixture.record_path).expect("read claimed operation after daemon stop"),
+    )
+    .expect("claimed operation JSON");
+    let receipt = persisted["session_retitle_v3"]["receipts"]
+        .as_array_mut()
+        .expect("v3 receipts")
+        .iter_mut()
+        .find(|receipt| receipt["operation_hash"] == operation_hash)
+        .expect("claimed operation receipt");
+    assert!(receipt["execution_claim"].is_object());
+    // Advance the durable lease boundary without sleeping 150 seconds. The
+    // second daemon must reconcile the uncertain attempt, not invoke it again.
+    receipt["execution_claim"]["expires_at_second"] = json!(0);
+    write_private_json(&fixture.record_path, &persisted);
 
     let _second_daemon = ServeProcess::spawn(&fixture);
     let first = fixture.request(
         "GET",
-        &format!("/sessions/retitle-v3-black-box/retitle-v3/operations/{OPERATION_HASH}"),
+        &format!("/sessions/retitle-v3-black-box/retitle-v3/operations/{operation_hash}"),
         Some(TOKEN),
         None,
     );
     assert_eq!(first.status, 200, "body={}", first.body);
-    assert_eq!(first.body["data"]["retitle"]["status"], "accepted");
-    assert_operation_contract(&first.body["data"]["retitle"], false);
-
-    let terminal = poll_terminal(&fixture, OPERATION_HASH);
+    let terminal = if first.body["data"]["retitle"]["status"] == "terminal" {
+        first
+    } else {
+        poll_terminal(&fixture, &operation_hash)
+    };
     assert_eq!(terminal.body["data"]["retitle"]["status"], "terminal");
     assert_eq!(
         terminal.body["data"]["retitle"]["operation_hash"],
-        OPERATION_HASH
+        operation_hash
+    );
+    assert_eq!(
+        terminal.body["data"]["retitle"]["outcome"],
+        "degraded_cached"
+    );
+    assert_eq!(
+        terminal.body["data"]["retitle"]["failure_class"],
+        "uncertain_execution"
+    );
+    assert_eq!(
+        terminal.body["data"]["retitle"]["title"],
+        "Existing restart-safe title"
     );
     assert_operation_contract(&terminal.body["data"]["retitle"], true);
     let stored: Value = serde_json::from_slice(
@@ -435,16 +483,21 @@ fn retitle_v3_pending_operation_is_adopted_after_daemon_restart() {
         .as_array()
         .expect("v3 receipts")
         .iter()
-        .find(|receipt| receipt["operation_hash"] == OPERATION_HASH)
+        .find(|receipt| receipt["operation_hash"] == operation_hash)
         .expect("adopted receipt");
-    assert!(matches!(
-        receipt["state"].as_str(),
-        Some("completed" | "degraded_cached" | "failed")
-    ));
+    assert_eq!(receipt["state"], "degraded_cached");
+    assert_eq!(receipt["execution_claim"], Value::Null);
+    assert_eq!(
+        fs::read_to_string(&fixture.provider_calls)
+            .expect("one provider call before restart")
+            .lines()
+            .count(),
+        1
+    );
 }
 
 #[test]
-fn retitle_v3_fresh_manual_cache_stays_fast_without_provider_calls() {
+fn retitle_v3_fresh_manual_cache_avoids_provider_calls_and_reports_transport_latency() {
     let fixture = Fixture::new();
     let _server = ServeProcess::spawn(&fixture);
     let first = fixture.request(
@@ -501,10 +554,10 @@ fn retitle_v3_fresh_manual_cache_stays_fast_without_provider_calls() {
         elapsed.len(),
         p95.as_millis()
     );
-    assert!(
-        p95 <= Duration::from_millis(250),
-        "fresh-memory HTTP p95 exceeded the daemon target: {p95:?}"
-    );
+    // The loopback request includes process scheduling and TCP setup/teardown,
+    // so its wall clock is diagnostic rather than a deterministic correctness
+    // gate. The in-process latency regression owns the 250 ms service budget;
+    // this black-box lane proves that the provider boundary stays unused.
     assert!(
         !fixture.provider_calls.exists(),
         "fresh manual operations invoked the configured provider"
@@ -541,6 +594,68 @@ fn manual_request(key: &str, title_revision: u64, memory_revision: u64) -> Value
             "memory_revision": memory_revision
         }
     })
+}
+
+fn automatic_request(
+    key: &str,
+    title_revision: u64,
+    memory_revision: u64,
+    activity_revision: u64,
+    provider_turn_id: &str,
+) -> Value {
+    json!({
+        "schema_version": "agent-session.session-retitle.request.v3",
+        "trigger": "automatic",
+        "idempotency_key": key,
+        "expected": {
+            "session_incarnation": INCARNATION,
+            "title_revision": title_revision,
+            "memory_revision": memory_revision,
+            "activity_revision": activity_revision,
+            "provider_turn_id": provider_turn_id
+        }
+    })
+}
+
+fn seed_automatic_activity(state_dir: &Path, provider_turn_id: &str, revision: u64) {
+    let activity_path = state_dir
+        .join("sessions")
+        .join(SESSION_ID)
+        .join("activity.json");
+    write_private_json(
+        &activity_path,
+        &json!({
+            "schema_version": "agent-session.activity.v1",
+            "runtime_id": INCARNATION,
+            "runtime_generation": 1,
+            "state": {
+                "schema_version": "agent-session.turn-state.v1",
+                "phase": "working",
+                "phase_changed_at": "2026-09-09T00:00:03Z",
+                "revision": revision,
+                "source": {
+                    "kind": "provider_hook",
+                    "provider": "codex",
+                    "confidence": "authoritative"
+                },
+                "current_turn": {
+                    "provider_turn_id": provider_turn_id,
+                    "started_at": "2026-09-09T00:00:03Z"
+                }
+            }
+        }),
+    );
+}
+
+fn wait_for_path(path: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !path.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "provider did not reach deterministic restart barrier"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn assert_outer_retitle_envelope(body: &Value) {

@@ -191,6 +191,7 @@ struct ServeState {
     history_catalog: Arc<HistoryCatalog>,
     retitle: Arc<crate::retitle::RetitleService>,
     retitle_v3_manual_waiters: Arc<StdMutex<HashMap<String, usize>>>,
+    retitle_v3_continuations: Arc<StdMutex<HashSet<String>>>,
     managed_history_titles: Arc<StdMutex<ManagedHistoryTitleCache>>,
     coordination_wait_workers: Arc<tokio::sync::Semaphore>,
     coordination_notification_wake: Arc<tokio::sync::Notify>,
@@ -786,6 +787,7 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
             history_catalog,
             retitle: Arc::new(crate::retitle::RetitleService::from_environment()),
             retitle_v3_manual_waiters: Arc::new(StdMutex::new(HashMap::new())),
+            retitle_v3_continuations: Arc::new(StdMutex::new(HashSet::new())),
             managed_history_titles: Arc::new(StdMutex::new(ManagedHistoryTitleCache::default())),
             coordination_wait_workers: Arc::new(tokio::sync::Semaphore::new(
                 COORDINATION_WAIT_WORKER_LIMIT,
@@ -807,7 +809,8 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
         let codex_control_task = tokio::spawn(codex_control_loop(state.clone()));
         let auto_resume_task = tokio::spawn(auto_resume_loop(state.clone()));
         let auto_retitle_task = tokio::spawn(auto_retitle_loop(state.clone()));
-        let retitle_v3_recovery_task = tokio::spawn(retitle_v3_recovery_loop(state.clone()));
+        let retitle_v3_recovery_task =
+            tokio::spawn(recover_retitle_v3_operations_once(state.clone()));
         let coordination_notification_task =
             tokio::spawn(coordination_notification_loop(state.clone()));
         let result = axum::serve(listener, app)
@@ -3319,10 +3322,7 @@ async fn session_retitle_v3_operation_handler(
     {
         Ok(Ok(Some(retitle))) => {
             if retitle.status == "accepted" {
-                let continuation = state.clone();
-                tokio::spawn(async move {
-                    continue_retitle_v3_operation(continuation, id, operation_hash).await;
-                });
+                spawn_retitle_v3_continuation(state.clone(), id, operation_hash);
             }
             envelope_ok(json!({
                 "machine": state.machine,
@@ -3354,7 +3354,12 @@ async fn session_retitle_v3_handler(
             ));
         }
     };
-    match execute_retitle_v3(state.clone(), id, request).await {
+    let manual = request.trigger == "manual";
+    let result = execute_retitle_v3(state.clone(), id.clone(), request).await;
+    if manual {
+        spawn_selected_retitle_v3_continuation(state.clone(), id).await;
+    }
+    match result {
         Ok((status, retitle)) => envelope_status(
             status,
             json!({
@@ -3432,9 +3437,13 @@ async fn execute_retitle_v3(
         let _session_guard = state.retitle.lock_session(&id).await;
         let context = state.context.clone();
         let id_for_replay = id.clone();
-        let operation_for_replay = operation_hash.clone();
+        let request_for_replay = request.clone();
         tokio::task::spawn_blocking(move || {
-            crate::retitle_v3::operation_response(&context, &id_for_replay, &operation_for_replay)
+            crate::retitle_v3::operation_response_for_request(
+                &context,
+                &id_for_replay,
+                &request_for_replay,
+            )
         })
         .await
         .map_err(|_| retitle_worker_failed())??
@@ -3446,11 +3455,7 @@ async fn execute_retitle_v3(
         if response.readiness == crate::retitle_v3::MemoryReadiness::Ready {
             return evaluate_retitle_v3(state, id, operation_hash).await;
         }
-        let continuation = state.clone();
-        let continuation_id = id.clone();
-        tokio::spawn(async move {
-            continue_retitle_v3(continuation, continuation_id, request).await;
-        });
+        spawn_retitle_v3_continuation(state.clone(), id, operation_hash);
         return Ok((StatusCode::ACCEPTED, response));
     }
     let refreshed = {
@@ -3470,66 +3475,41 @@ async fn execute_retitle_v3(
         .await
         .map_err(|_| retitle_worker_failed())??
     };
+    if request.trigger == "manual"
+        && refreshed.readiness == crate::retitle_v3::MemoryReadiness::Ready
+    {
+        return evaluate_retitle_v3(state, id, operation_hash).await;
+    }
     if refreshed.status == "accepted" {
-        let continuation = state.clone();
-        let continuation_id = id.clone();
-        tokio::spawn(async move {
-            continue_retitle_v3(continuation, continuation_id, request).await;
-        });
+        spawn_retitle_v3_continuation(state.clone(), id, operation_hash);
         return Ok((StatusCode::ACCEPTED, refreshed));
     }
     Ok((StatusCode::OK, refreshed))
 }
 
-async fn continue_retitle_v3(
+async fn continue_retitle_v3_operation(
     state: Arc<ServeState>,
     id: String,
-    request: crate::retitle_v3::RetitleV3Request,
-) {
-    let operation_hash = crate::retitle_v3::request_operation_hash(&id, &request);
+    operation_hash: String,
+) -> bool {
     let mut last_revision = None;
     for _ in 0..4096 {
         if retitle_v3_manual_waiting(&state, &id) {
-            return;
-        }
-        let _session_guard = state.retitle.lock_session(&id).await;
-        let context = state.context.clone();
-        let catalog = state.history_catalog.clone();
-        let id_for_refresh = id.clone();
-        let request_for_refresh = request.clone();
-        let refreshed = tokio::task::spawn_blocking(move || {
-            crate::retitle_v3::refresh_once(
-                &context,
-                &catalog,
-                &id_for_refresh,
-                &request_for_refresh,
-            )
-        })
-        .await;
-        drop(_session_guard);
-        match refreshed {
-            Ok(Ok(response)) if response.status == "terminal" => return,
-            Ok(Ok(response)) if response.readiness == crate::retitle_v3::MemoryReadiness::Ready => {
-                let _ =
-                    evaluate_retitle_v3(state.clone(), id.clone(), operation_hash.clone()).await;
-                return;
+            let context = state.context.clone();
+            let id_for_trigger = id.clone();
+            let operation_for_trigger = operation_hash.clone();
+            let trigger = tokio::task::spawn_blocking(move || {
+                crate::retitle_v3::operation_trigger(
+                    &context,
+                    &id_for_trigger,
+                    &operation_for_trigger,
+                )
+            })
+            .await;
+            if matches!(trigger, Ok(Ok(Some(trigger))) if trigger == "automatic") {
+                return false;
             }
-            Ok(Ok(response)) if response.status == "accepted" => {
-                if last_revision == Some(response.memory_revision) {
-                    return;
-                }
-                last_revision = Some(response.memory_revision);
-                tokio::task::yield_now().await;
-            }
-            Ok(Ok(_)) => return,
-            _ => return,
         }
-    }
-}
-
-async fn continue_retitle_v3_operation(state: Arc<ServeState>, id: String, operation_hash: String) {
-    let mut last_revision = None;
-    for _ in 0..4096 {
         let _session_guard = state.retitle.lock_session(&id).await;
         let context = state.context.clone();
         let catalog = state.history_catalog.clone();
@@ -3546,56 +3526,102 @@ async fn continue_retitle_v3_operation(state: Arc<ServeState>, id: String, opera
         .await;
         drop(_session_guard);
         match refreshed {
-            Ok(Ok(response)) if response.status == "terminal" => return,
+            Ok(Ok(response)) if response.status == "terminal" => return true,
             Ok(Ok(response)) if response.readiness == crate::retitle_v3::MemoryReadiness::Ready => {
-                let _ =
-                    evaluate_retitle_v3(state.clone(), id.clone(), operation_hash.clone()).await;
-                return;
+                return evaluate_retitle_v3(state.clone(), id.clone(), operation_hash.clone())
+                    .await
+                    .is_ok_and(|(_, response)| response.status == "terminal");
             }
             Ok(Ok(response)) if response.status == "accepted" => {
                 if last_revision == Some(response.memory_revision) {
-                    return;
+                    return false;
                 }
                 last_revision = Some(response.memory_revision);
                 tokio::task::yield_now().await;
             }
-            Ok(Ok(_)) => return,
-            _ => return,
+            Ok(Ok(_)) => return false,
+            _ => return false,
         }
+    }
+    false
+}
+
+struct RetitleV3ContinuationGuard {
+    running: Arc<StdMutex<HashSet<String>>>,
+    operation_hash: String,
+}
+
+impl RetitleV3ContinuationGuard {
+    fn register(running: Arc<StdMutex<HashSet<String>>>, operation_hash: &str) -> Option<Self> {
+        let mut operations = running
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !operations.insert(operation_hash.to_string()) {
+            return None;
+        }
+        drop(operations);
+        Some(Self {
+            running,
+            operation_hash: operation_hash.to_string(),
+        })
     }
 }
 
-async fn retitle_v3_recovery_loop(state: Arc<ServeState>) {
-    let mut interval = tokio::time::interval(Duration::from_secs(1));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    loop {
-        interval.tick().await;
-        let context = state.context.clone();
-        let tmux = state.tmux_bin.clone();
-        let collect = state.session_collector.clone();
-        let Ok(Ok(sessions)) = tokio::task::spawn_blocking(move || collect(&context, &tmux)).await
-        else {
-            continue;
-        };
-        for session in sessions {
-            let context = state.context.clone();
-            let id = session.id.clone();
-            let operation_hash = tokio::task::spawn_blocking(move || {
-                load_session_record(&context, &id)
-                    .ok()
-                    .and_then(|record| crate::retitle_v3::selected_pending_operation_hash(&record))
-            })
-            .await
-            .ok()
-            .flatten();
-            if let Some(operation_hash) = operation_hash {
-                let continuation = state.clone();
-                let id = session.id;
-                tokio::spawn(async move {
-                    continue_retitle_v3_operation(continuation, id, operation_hash).await;
-                });
-            }
+impl Drop for RetitleV3ContinuationGuard {
+    fn drop(&mut self) {
+        self.running
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&self.operation_hash);
+    }
+}
+
+fn spawn_retitle_v3_continuation(state: Arc<ServeState>, id: String, operation_hash: String) {
+    let Some(guard) = RetitleV3ContinuationGuard::register(
+        state.retitle_v3_continuations.clone(),
+        &operation_hash,
+    ) else {
+        return;
+    };
+    tokio::spawn(async move {
+        let completed =
+            continue_retitle_v3_operation(state.clone(), id.clone(), operation_hash).await;
+        drop(guard);
+        if completed {
+            spawn_selected_retitle_v3_continuation(state, id).await;
         }
+    });
+}
+
+async fn spawn_selected_retitle_v3_continuation(state: Arc<ServeState>, id: String) {
+    let context = state.context.clone();
+    let id_for_lookup = id.clone();
+    let operation_hash = tokio::task::spawn_blocking(move || {
+        load_session_record(&context, &id_for_lookup)
+            .ok()
+            .and_then(|record| crate::retitle_v3::selected_pending_operation_hash(&record))
+    })
+    .await
+    .ok()
+    .flatten();
+    if let Some(operation_hash) = operation_hash {
+        spawn_retitle_v3_continuation(state, id, operation_hash);
+    }
+}
+
+async fn recover_retitle_v3_operations_once(state: Arc<ServeState>) {
+    // Every accepted POST/GET schedules its continuation directly. A daemon
+    // restart needs one cold adoption pass; a perpetual one-second catalog
+    // scan would make idle cost proportional to the entire session fleet.
+    let context = state.context.clone();
+    let tmux = state.tmux_bin.clone();
+    let collect = state.session_collector.clone();
+    let Ok(Ok(sessions)) = tokio::task::spawn_blocking(move || collect(&context, &tmux)).await
+    else {
+        return;
+    };
+    for session in sessions {
+        spawn_selected_retitle_v3_continuation(state.clone(), session.id).await;
     }
 }
 
@@ -3664,44 +3690,29 @@ async fn evaluate_retitle_v3(
     if inference.trigger == "automatic" && retitle_v3_manual_waiting(&state, &id) {
         let context = state.context.clone();
         let id_for_response = id.clone();
-        let operation_for_response = operation_hash.clone();
+        let inference_for_release = inference.clone();
         let response = tokio::task::spawn_blocking(move || {
-            crate::retitle_v3::operation_response(
+            crate::retitle_v3::release_unused_automatic_claim(
                 &context,
                 &id_for_response,
-                &operation_for_response,
+                &inference_for_release,
             )
         })
         .await
-        .map_err(|_| retitle_worker_failed())??
-        .ok_or_else(retitle_worker_failed)?;
+        .map_err(|_| retitle_worker_failed())??;
         return Ok((StatusCode::ACCEPTED, response));
     }
     let permit = match state.retitle.acquire().await {
         Ok(permit) => permit,
         Err(error) => {
             let failure_class = crate::retitle::provider_failure_class(&error);
-            let observed_at = jiff::Timestamp::now().to_string();
             let response = complete_retitle_v3_failure(
                 &state,
                 &id,
                 &inference,
                 &failure_class,
                 "provider_admission",
-                &[crate::retitle::ProviderAttemptObservation {
-                    provider_kind: state
-                        .retitle
-                        .configured_provider_kind()
-                        .unwrap_or("unavailable")
-                        .to_string(),
-                    model_label: None,
-                    outcome: failure_class.clone(),
-                    failure_class: Some(failure_class.clone()),
-                    failure_stage: Some("provider_admission".to_string()),
-                    started_at: observed_at.clone(),
-                    finished_at: observed_at,
-                    duration_bucket: "under_10_ms".to_string(),
-                }],
+                &[],
             )
             .await?;
             return Ok((StatusCode::OK, response));
@@ -3717,23 +3728,13 @@ async fn evaluate_retitle_v3(
     {
         Ok(evaluated) => evaluated,
         Err(_) => {
-            let observed_at = jiff::Timestamp::now().to_string();
             let response = complete_retitle_v3_failure(
                 &state,
                 &id,
                 &inference,
                 "worker_failed",
                 "provider_worker",
-                &[crate::retitle::ProviderAttemptObservation {
-                    provider_kind: "worker".to_string(),
-                    model_label: None,
-                    outcome: "worker_failed".to_string(),
-                    failure_class: Some("worker_failed".to_string()),
-                    failure_stage: Some("provider_worker".to_string()),
-                    started_at: observed_at.clone(),
-                    finished_at: observed_at,
-                    duration_bucket: "unknown".to_string(),
-                }],
+                &[],
             )
             .await?;
             return Ok((StatusCode::OK, response));
@@ -3819,24 +3820,54 @@ async fn complete_retitle_v3_failure(
 ) -> Result<crate::retitle_v3::RetitleV3Response, CliError> {
     let context = state.context.clone();
     let catalog = state.history_catalog.clone();
-    let id = id.to_string();
-    let inference = inference.clone();
+    let completion_id = id.to_string();
+    let conflict_id = id.to_string();
+    let inference_for_completion = inference.clone();
     let failure_class = failure_class.to_string();
     let failure_stage = failure_stage.to_string();
-    let provider_attempts = provider_attempts.to_vec();
-    tokio::task::spawn_blocking(move || {
+    let attempts_for_completion = provider_attempts.to_vec();
+    let attempts_for_conflict = provider_attempts.to_vec();
+    let completion = tokio::task::spawn_blocking(move || {
         crate::retitle_v3::complete_provider_failure(
             &context,
             &catalog,
-            &id,
-            &inference,
+            &completion_id,
+            &inference_for_completion,
             &failure_class,
             &failure_stage,
-            &provider_attempts,
+            &attempts_for_completion,
         )
     })
     .await
-    .map_err(|_| retitle_worker_failed())?
+    .map_err(|_| retitle_worker_failed())?;
+    match completion {
+        Ok(response) => Ok(response),
+        Err(error)
+            if matches!(
+                error.code(),
+                "retitle-v3-state-conflict"
+                    | "retitle-v3-turn-conflict"
+                    | "retitle-v3-history-conflict"
+                    | "retitle-v3-history-stale"
+            ) =>
+        {
+            let context = state.context.clone();
+            let inference = inference.clone();
+            let failure_class = error.code().to_string();
+            tokio::task::spawn_blocking(move || {
+                crate::retitle_v3::complete_inference_conflict(
+                    &context,
+                    &conflict_id,
+                    &inference,
+                    &failure_class,
+                    &attempts_for_conflict,
+                )
+            })
+            .await
+            .map_err(|_| retitle_worker_failed())?
+        }
+        Err(error) => Err(error),
+    }
 }
 
 async fn execute_retitle(
@@ -10490,6 +10521,40 @@ mod tests {
         assert!(!rendered.contains(TOKEN));
     }
 
+    #[test]
+    fn retitle_v3_continuation_registry_is_single_flight_and_releases() {
+        let running = Arc::new(StdMutex::new(HashSet::new()));
+        let operation_hash =
+            "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+
+        let first = RetitleV3ContinuationGuard::register(running.clone(), operation_hash)
+            .expect("first continuation owns the operation");
+        assert!(RetitleV3ContinuationGuard::register(running.clone(), operation_hash).is_none());
+        drop(first);
+        assert!(RetitleV3ContinuationGuard::register(running, operation_hash).is_some());
+    }
+
+    #[tokio::test]
+    async fn retitle_v3_cold_recovery_scans_the_session_catalog_once() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed_calls = calls.clone();
+        let collector: SessionCollector = Arc::new(move |_, _| {
+            observed_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Vec::new())
+        });
+        let state = state_with_session_collector(
+            tmp.path(),
+            Some(TOKEN),
+            minimal_tmux(tmp.path()),
+            collector,
+        );
+
+        recover_retitle_v3_operations_once(state).await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
     #[tokio::test]
     async fn pre_observation_retitle_replay_omits_the_additive_attempt_field() {
         let lock = GlobalStateLock::new();
@@ -11410,7 +11475,7 @@ mod tests {
             .as_str()
             .unwrap();
         let body = wait_for_retitle_v3_operation(&app, "newer-turn", operation_hash).await;
-        assert_eq!(body["data"]["retitle"]["outcome"], "terminal_failure");
+        assert_eq!(body["data"]["retitle"]["outcome"], "degraded_cached");
         assert_eq!(
             body["data"]["retitle"]["failure_class"],
             "retitle-v3-turn-conflict"
@@ -11437,7 +11502,7 @@ mod tests {
             .as_str()
             .unwrap();
         let body = wait_for_retitle_v3_operation(&app, "older-revision", operation_hash).await;
-        assert_eq!(body["data"]["retitle"]["outcome"], "terminal_failure");
+        assert_eq!(body["data"]["retitle"]["outcome"], "degraded_cached");
         assert_eq!(
             body["data"]["retitle"]["failure_class"],
             "retitle-v3-turn-conflict"
@@ -14342,6 +14407,7 @@ mod tests {
             history_catalog,
             retitle: Arc::new(crate::retitle::RetitleService::from_environment()),
             retitle_v3_manual_waiters: Arc::new(StdMutex::new(HashMap::new())),
+            retitle_v3_continuations: Arc::new(StdMutex::new(HashSet::new())),
             managed_history_titles: Arc::new(StdMutex::new(ManagedHistoryTitleCache::default())),
             coordination_wait_workers: Arc::new(tokio::sync::Semaphore::new(
                 COORDINATION_WAIT_WORKER_LIMIT,

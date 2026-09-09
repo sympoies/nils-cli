@@ -1379,10 +1379,12 @@ pub(crate) fn infer_title_state_observed(
             let timeout = match permit.provider_timeout(fallback.timeout()) {
                 Ok(timeout) => timeout,
                 Err(error) => {
+                    let observed_at = jiff::Timestamp::now().to_string();
                     providers.push(provider_attempt_observation(
                         fallback,
                         "deadline_exhausted",
                         Some("provider_budget"),
+                        &observed_at,
                         Duration::ZERO,
                     ));
                     return Err(ObservedInferenceError { error, providers });
@@ -1534,6 +1536,7 @@ fn infer_with_provider_observed(
     existing: Option<&SessionTitleState>,
     timeout: Duration,
 ) -> Result<(SessionTitleState, ProviderAttemptObservation), Box<ProviderAttemptFailure>> {
+    let started_at = jiff::Timestamp::now().to_string();
     let started = Instant::now();
     let output = match config.kind() {
         "codex_subscription" => invoke_codex(config, input, timeout),
@@ -1548,6 +1551,7 @@ fn infer_with_provider_observed(
                 config,
                 provider_outcome(error.code()),
                 Some(provider_failure_stage(error.code(), false)),
+                &started_at,
                 started.elapsed(),
             );
             observation.failure_class = Some(provider_failure_class(&error));
@@ -1557,13 +1561,14 @@ fn infer_with_provider_observed(
     match parse_decision(&output, context, existing) {
         Ok(state) => Ok((
             state,
-            provider_attempt_observation(config, "success", None, started.elapsed()),
+            provider_attempt_observation(config, "success", None, &started_at, started.elapsed()),
         )),
         Err(error) => {
             let mut observation = provider_attempt_observation(
                 config,
                 provider_outcome(error.code()),
                 Some(provider_failure_stage(error.code(), true)),
+                &started_at,
                 started.elapsed(),
             );
             observation.failure_class = Some(provider_failure_class(&error));
@@ -1576,19 +1581,20 @@ fn provider_attempt_observation(
     config: &RetitleConfig,
     outcome: &str,
     failure_stage: Option<&str>,
+    started_at: &str,
     elapsed: Duration,
 ) -> ProviderAttemptObservation {
     // Wall-clock endpoints are retained for attempt ordering while the
     // monotonic elapsed duration remains authoritative for latency buckets.
-    let observed_at = jiff::Timestamp::now().to_string();
+    let finished_at = jiff::Timestamp::now().to_string();
     ProviderAttemptObservation {
         provider_kind: config.kind().to_string(),
         model_label: observable_model_label_for_provider(config),
         outcome: outcome.to_string(),
         failure_class: (outcome != "success").then(|| outcome.to_string()),
         failure_stage: failure_stage.map(str::to_string),
-        started_at: observed_at.clone(),
-        finished_at: observed_at,
+        started_at: started_at.to_string(),
+        finished_at,
         duration_bucket: duration_bucket(elapsed).to_string(),
     }
 }
@@ -1738,14 +1744,7 @@ fn invoke_openai_compatible(
     if config.json_response {
         body.insert(
             "response_format".to_string(),
-            json!({
-                "type":"json_schema",
-                "json_schema":{
-                    "name":"session_title_decision",
-                    "strict":true,
-                    "schema":title_output_schema(),
-                }
-            }),
+            openai_compatible_response_format(),
         );
     }
     for (key, value) in &config.extra_body {
@@ -1806,6 +1805,13 @@ fn invoke_openai_compatible(
         .and_then(Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| provider_malformed_class("missing_message"))
+}
+
+fn openai_compatible_response_format() -> Value {
+    // `json_response` predates retitle v3 and means the broadly supported
+    // OpenAI-compatible JSON-object mode. Do not silently upgrade existing v2
+    // providers to structured-output schemas that they may not implement.
+    json!({"type":"json_object"})
 }
 
 fn read_bounded_provider_body(reader: &mut impl Read) -> Result<Vec<u8>, CliError> {
@@ -2268,9 +2274,9 @@ fn provider_malformed_class(failure_class: &'static str) -> CliError {
         "retitle-provider-malformed-response",
         "title provider returned an invalid decision",
         Some(json!({
-            "retryable": false,
-            "next_action": "inspect_provider",
-            "recovery": {"strategy":"repair_provider_output", "safe_to_retry":false},
+            "retryable": true,
+            "next_action": "retry",
+            "recovery": {"strategy":"retry_request", "safe_to_retry":true},
             "failure_class": failure_class,
         })),
     )
@@ -3778,7 +3784,7 @@ mod tests {
     }
 
     #[test]
-    fn malformed_provider_failure_classes_are_distinct_and_non_retryable() {
+    fn malformed_provider_failure_classes_preserve_v2_retry_contract() {
         for class in [
             "missing_message",
             "json_parse",
@@ -3789,9 +3795,18 @@ mod tests {
             let error = provider_malformed_class(class);
             assert_eq!(provider_failure_class(&error), class);
             let details = error.0.details.as_ref().unwrap();
-            assert_eq!(details["retryable"], false);
-            assert_eq!(details["recovery"]["safe_to_retry"], false);
+            assert_eq!(details["retryable"], true);
+            assert_eq!(details["recovery"]["safe_to_retry"], true);
+            assert!(is_retryable_automatic_error_code(error.code()));
         }
+    }
+
+    #[test]
+    fn openai_compatible_json_response_preserves_v2_json_object_mode() {
+        assert_eq!(
+            openai_compatible_response_format(),
+            json!({"type":"json_object"})
+        );
     }
 
     #[test]
@@ -4028,6 +4043,17 @@ mod tests {
                         | "120_s_plus"
                 )
         }));
+        assert!(observed.providers.iter().all(|attempt| {
+            let started = attempt.started_at.parse::<jiff::Timestamp>().unwrap();
+            let finished = attempt.finished_at.parse::<jiff::Timestamp>().unwrap();
+            started <= finished
+        }));
+        assert!(
+            observed
+                .providers
+                .iter()
+                .any(|attempt| attempt.started_at != attempt.finished_at)
+        );
     }
 
     #[test]
