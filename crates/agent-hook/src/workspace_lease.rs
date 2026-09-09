@@ -23,8 +23,6 @@ use crate::dsh_policy::{GitLayout, checkout_dirty, git_layout};
 use crate::error::HookError;
 use crate::path_binding::resolve_target_bindings;
 
-const PROTOCOL_VERSION: u64 = 1;
-const PROTOCOL_VERSION_V2: u64 = 2;
 const STATE_SCHEMA: &str = "agent-hook.workspace-lease.state.v1";
 const BIND_SCHEMA: &str = "agent-hook.workspace-lease.bind.v1";
 const BEGIN_SCHEMA: &str = "agent-hook.workspace-lease.begin.v1";
@@ -48,6 +46,105 @@ const BEGIN_RESULT_SCHEMA_V2: &str = "agent-hook.workspace-lease.begin-result.v2
 const COMPLETE_RESULT_SCHEMA_V2: &str = "agent-hook.workspace-lease.complete-result.v2";
 const RENEW_RESULT_SCHEMA_V2: &str = "agent-hook.workspace-lease.renew-result.v2";
 const RELEASE_RESULT_SCHEMA_V2: &str = "agent-hook.workspace-lease.release-result.v2";
+/// One WorkspaceLease protocol generation.
+///
+/// Named `ProtocolGeneration` because `generation` already means the opaque
+/// binding-lease epoch token elsewhere in this module, and the two are
+/// unrelated.
+///
+/// Behaviour used to be selected from an untyped `version: u64` whose every
+/// `else` branch was v1, so a new protocol generation silently inherited v1
+/// result schemas and v1 semantics at any site the author forgot to update.
+/// Each such decision is now an exhaustive `match` on this enum with no
+/// catch-all arm, so adding a variant fails to compile at exactly the sites
+/// that must be reconsidered. The wire schema dispatch in `run` stays a string
+/// match with a fail-closed catch-all: an unrouted new schema is rejected as
+/// `workspace-wire-invalid` rather than reinterpreted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProtocolGeneration {
+    V1,
+    V2,
+}
+
+impl ProtocolGeneration {
+    /// The wire `version` a request of this generation must declare.
+    const fn wire_version(self) -> u64 {
+        match self {
+            Self::V1 => 1,
+            Self::V2 => 2,
+        }
+    }
+
+    const fn bind_result_schema(self) -> &'static str {
+        match self {
+            Self::V1 => BIND_RESULT_SCHEMA,
+            Self::V2 => BIND_RESULT_SCHEMA_V2,
+        }
+    }
+
+    const fn begin_result_schema(self) -> &'static str {
+        match self {
+            Self::V1 => BEGIN_RESULT_SCHEMA,
+            Self::V2 => BEGIN_RESULT_SCHEMA_V2,
+        }
+    }
+
+    const fn complete_result_schema(self) -> &'static str {
+        match self {
+            Self::V1 => COMPLETE_RESULT_SCHEMA,
+            Self::V2 => COMPLETE_RESULT_SCHEMA_V2,
+        }
+    }
+
+    const fn renew_result_schema(self) -> &'static str {
+        match self {
+            Self::V1 => RENEW_RESULT_SCHEMA,
+            Self::V2 => RENEW_RESULT_SCHEMA_V2,
+        }
+    }
+
+    const fn release_result_schema(self) -> &'static str {
+        match self {
+            Self::V1 => RELEASE_RESULT_SCHEMA,
+            Self::V2 => RELEASE_RESULT_SCHEMA_V2,
+        }
+    }
+
+    /// Whether `bind` accepts an explicit repository target instead of
+    /// deriving the workspace from a session anchor.
+    const fn admits_bind_target(self) -> bool {
+        match self {
+            Self::V1 => false,
+            Self::V2 => true,
+        }
+    }
+
+    /// Whether a `bind` whose target owns no repository returns `not-required`
+    /// rather than minting unmanaged durable state.
+    const fn requires_managed_bind_target(self) -> bool {
+        match self {
+            Self::V1 => false,
+            Self::V2 => true,
+        }
+    }
+
+    /// Whether a read-only tool is admitted without a mutation fence.
+    const fn suppresses_read_only_fence(self) -> bool {
+        match self {
+            Self::V1 => true,
+            Self::V2 => false,
+        }
+    }
+
+    /// Whether a `bound` result names the exact repository target it owns.
+    const fn projects_bound_target(self) -> bool {
+        match self {
+            Self::V1 => false,
+            Self::V2 => true,
+        }
+    }
+}
+
 const MAX_RESOLVE_TARGETS: usize = 16;
 const MAX_TARGET_PATH_BYTES: usize = 4096;
 const REQUEST_MAX_BYTES: u64 = 256 * 1024;
@@ -356,27 +453,33 @@ pub(crate) fn run(state_root: &Path, operation: Operation) -> Result<Outcome, Ho
         .to_string();
     match (operation, schema.as_str()) {
         (Operation::Resolve, RESOLVE_SCHEMA_V2) => resolve(state_root, typed(request)?),
-        (Operation::Bind, BIND_SCHEMA) => bind(state_root, typed(request)?, PROTOCOL_VERSION),
-        (Operation::Bind, BIND_SCHEMA_V2) => bind(state_root, typed(request)?, PROTOCOL_VERSION_V2),
-        (Operation::Begin, BEGIN_SCHEMA) => begin(state_root, typed(request)?, PROTOCOL_VERSION),
+        (Operation::Bind, BIND_SCHEMA) => bind(state_root, typed(request)?, ProtocolGeneration::V1),
+        (Operation::Bind, BIND_SCHEMA_V2) => {
+            bind(state_root, typed(request)?, ProtocolGeneration::V2)
+        }
+        (Operation::Begin, BEGIN_SCHEMA) => {
+            begin(state_root, typed(request)?, ProtocolGeneration::V1)
+        }
         (Operation::Begin, BEGIN_SCHEMA_V2) => {
-            begin(state_root, typed(request)?, PROTOCOL_VERSION_V2)
+            begin(state_root, typed(request)?, ProtocolGeneration::V2)
         }
         (Operation::Complete, COMPLETE_SCHEMA) => {
-            complete(state_root, typed(request)?, PROTOCOL_VERSION)
+            complete(state_root, typed(request)?, ProtocolGeneration::V1)
         }
         (Operation::Complete, COMPLETE_SCHEMA_V2) => {
-            complete(state_root, typed(request)?, PROTOCOL_VERSION_V2)
+            complete(state_root, typed(request)?, ProtocolGeneration::V2)
         }
-        (Operation::Renew, RENEW_SCHEMA) => renew(state_root, typed(request)?, PROTOCOL_VERSION),
+        (Operation::Renew, RENEW_SCHEMA) => {
+            renew(state_root, typed(request)?, ProtocolGeneration::V1)
+        }
         (Operation::Renew, RENEW_SCHEMA_V2) => {
-            renew(state_root, typed(request)?, PROTOCOL_VERSION_V2)
+            renew(state_root, typed(request)?, ProtocolGeneration::V2)
         }
         (Operation::Release, RELEASE_SCHEMA) => {
-            release(state_root, typed(request)?, PROTOCOL_VERSION)
+            release(state_root, typed(request)?, ProtocolGeneration::V1)
         }
         (Operation::Release, RELEASE_SCHEMA_V2) => {
-            release(state_root, typed(request)?, PROTOCOL_VERSION_V2)
+            release(state_root, typed(request)?, ProtocolGeneration::V2)
         }
         _ => Err(wire_invalid()),
     }
@@ -393,7 +496,7 @@ pub(crate) fn run(state_root: &Path, operation: Operation) -> Result<Outcome, Ho
 fn resolve(state_root: &Path, request: ResolveRequest) -> Result<Outcome, HookError> {
     validate_common(
         request.version,
-        PROTOCOL_VERSION_V2,
+        ProtocolGeneration::V2,
         &request.request_id,
         &request.session_id,
         request.parent_session_id.as_deref(),
@@ -587,55 +690,19 @@ fn require_target_identity(state: &State, target: &TargetRef) -> Result<(), Hook
     Ok(())
 }
 
-fn bind_result_schema(version: u64) -> &'static str {
-    if version == PROTOCOL_VERSION_V2 {
-        BIND_RESULT_SCHEMA_V2
-    } else {
-        BIND_RESULT_SCHEMA
-    }
-}
-
-fn begin_result_schema(version: u64) -> &'static str {
-    if version == PROTOCOL_VERSION_V2 {
-        BEGIN_RESULT_SCHEMA_V2
-    } else {
-        BEGIN_RESULT_SCHEMA
-    }
-}
-
-fn complete_result_schema(version: u64) -> &'static str {
-    if version == PROTOCOL_VERSION_V2 {
-        COMPLETE_RESULT_SCHEMA_V2
-    } else {
-        COMPLETE_RESULT_SCHEMA
-    }
-}
-
-fn renew_result_schema(version: u64) -> &'static str {
-    if version == PROTOCOL_VERSION_V2 {
-        RENEW_RESULT_SCHEMA_V2
-    } else {
-        RENEW_RESULT_SCHEMA
-    }
-}
-
-fn release_result_schema(version: u64) -> &'static str {
-    if version == PROTOCOL_VERSION_V2 {
-        RELEASE_RESULT_SCHEMA_V2
-    } else {
-        RELEASE_RESULT_SCHEMA
-    }
-}
-
-fn bind(state_root: &Path, request: BindRequest, version: u64) -> Result<Outcome, HookError> {
+fn bind(
+    state_root: &Path,
+    request: BindRequest,
+    protocol: ProtocolGeneration,
+) -> Result<Outcome, HookError> {
     validate_common(
         request.version,
-        version,
+        protocol,
         &request.request_id,
         &request.session_id,
         request.parent_session_id.as_deref(),
     )?;
-    if request.target.is_some() && (version == PROTOCOL_VERSION || request.cwd.is_some()) {
+    if request.target.is_some() && (!protocol.admits_bind_target() || request.cwd.is_some()) {
         return Err(wire_invalid());
     }
     let session_digest = digest(request.session_id.as_bytes());
@@ -653,10 +720,10 @@ fn bind(state_root: &Path, request: BindRequest, version: u64) -> Result<Outcome
     };
     // Under v2 a session anchor is context, not authority. A non-repository or
     // absent anchor owns no repository lease and must not mint unmanaged state.
-    if version == PROTOCOL_VERSION_V2 && !managed {
+    if protocol.requires_managed_bind_target() && !managed {
         return Ok(Outcome {
             data: json!({
-                "schema_version": BIND_RESULT_SCHEMA_V2,
+                "schema_version": protocol.bind_result_schema(),
                 "kind": "not-required",
             }),
             text: "workspace lease: target requires no repository binding\n".to_string(),
@@ -696,7 +763,7 @@ fn bind(state_root: &Path, request: BindRequest, version: u64) -> Result<Outcome
             if existing.binding.status == BindingStatus::Active
                 && existing.binding.expires_at_epoch > now
             {
-                return Ok(bound(existing, version));
+                return Ok(bound(existing, protocol));
             }
         }
     }
@@ -707,7 +774,7 @@ fn bind(state_root: &Path, request: BindRequest, version: u64) -> Result<Outcome
             && existing.binding.expires_at_epoch > now
         {
             return Ok(denied(
-                bind_result_schema(version),
+                protocol.bind_result_schema(),
                 "foreign-active",
                 "WORKSPACE_FOREIGN_ACTIVE",
                 "another live session owns this workspace",
@@ -721,7 +788,7 @@ fn bind(state_root: &Path, request: BindRequest, version: u64) -> Result<Outcome
             })
         {
             return Ok(denied(
-                bind_result_schema(version),
+                protocol.bind_result_schema(),
                 "uncertain",
                 "WORKSPACE_OPERATION_UNCERTAIN",
                 "an expired workspace operation has no durable terminal outcome",
@@ -730,7 +797,7 @@ fn bind(state_root: &Path, request: BindRequest, version: u64) -> Result<Outcome
         let identity = managed_identity(&identity)?;
         if !same_principal_recovery && dirty(identity)? {
             return Ok(denied(
-                bind_result_schema(version),
+                protocol.bind_result_schema(),
                 "dirty",
                 "WORKSPACE_DIRTY",
                 "the workspace has uncommitted state and cannot be reassigned safely",
@@ -778,13 +845,17 @@ fn bind(state_root: &Path, request: BindRequest, version: u64) -> Result<Outcome
         tombstones,
     };
     write_state(&locked, &state)?;
-    Ok(bound(&state, version))
+    Ok(bound(&state, protocol))
 }
 
-fn begin(state_root: &Path, request: BeginRequest, version: u64) -> Result<Outcome, HookError> {
+fn begin(
+    state_root: &Path,
+    request: BeginRequest,
+    protocol: ProtocolGeneration,
+) -> Result<Outcome, HookError> {
     validate_common(
         request.version,
-        version,
+        protocol,
         &request.request_id,
         &request.session_id,
         request.parent_session_id.as_deref(),
@@ -810,15 +881,17 @@ fn begin(state_root: &Path, request: BeginRequest, version: u64) -> Result<Outco
         &request.generation,
         &request.session_id,
         request.parent_session_id.as_deref(),
-        version,
+        protocol,
     ) {
         return Ok(denial);
     }
     revalidate_managed_identity(&state)?;
-    match (version, request.target.as_ref()) {
-        (PROTOCOL_VERSION_V2, Some(target)) => require_target_identity(&state, target)?,
-        (PROTOCOL_VERSION_V2, None) | (_, Some(_)) => return Err(wire_invalid()),
-        _ => {}
+    match (protocol, request.target.as_ref()) {
+        (ProtocolGeneration::V2, Some(target)) => require_target_identity(&state, target)?,
+        (ProtocolGeneration::V2, None) | (ProtocolGeneration::V1, Some(_)) => {
+            return Err(wire_invalid());
+        }
+        (ProtocolGeneration::V1, None) => {}
     }
     if request.binding_state != state.binding.mode {
         return Err(HookError::data(
@@ -827,11 +900,11 @@ fn begin(state_root: &Path, request: BeginRequest, version: u64) -> Result<Outco
         ));
     }
     if state.binding.mode == BindingMode::Unmanaged
-        || (version == PROTOCOL_VERSION && tool_is_read_only(&request))
+        || (protocol.suppresses_read_only_fence() && tool_is_read_only(&request))
     {
         return Ok(Outcome {
             data: json!({
-                "schema_version": begin_result_schema(version),
+                "schema_version": protocol.begin_result_schema(),
                 "kind": "not-required",
             }),
             text: "workspace lease: operation does not require a mutation fence\n".to_string(),
@@ -839,7 +912,7 @@ fn begin(state_root: &Path, request: BeginRequest, version: u64) -> Result<Outco
     }
     let now = now_epoch()?;
     if state.binding.expires_at_epoch <= now {
-        return expired_denial(&state, version);
+        return expired_denial(&state, protocol);
     }
     let execution_digest = execution_digest(&request)?;
     let request_digest = digest_value(
@@ -861,13 +934,13 @@ fn begin(state_root: &Path, request: BeginRequest, version: u64) -> Result<Outco
         }
         if existing.status != OperationStatus::Active {
             return Ok(denied(
-                begin_result_schema(version),
+                protocol.begin_result_schema(),
                 "uncertain",
                 "WORKSPACE_OPERATION_REPLAYED",
                 "the operation identity already reached a terminal state",
             ));
         }
-        return Ok(granted(existing, version));
+        return Ok(granted(existing, protocol));
     }
     if state.operations.len() >= MAX_OPERATIONS {
         compact_operations(&mut state.operations);
@@ -902,7 +975,7 @@ fn begin(state_root: &Path, request: BeginRequest, version: u64) -> Result<Outco
     let outcome = state
         .operations
         .last()
-        .map(|operation| granted(operation, version))
+        .map(|operation| granted(operation, protocol))
         .ok_or_else(state_invalid)?;
     write_state(&locked, &state)?;
     Ok(outcome)
@@ -911,11 +984,11 @@ fn begin(state_root: &Path, request: BeginRequest, version: u64) -> Result<Outco
 fn complete(
     state_root: &Path,
     request: CompleteRequest,
-    version: u64,
+    protocol: ProtocolGeneration,
 ) -> Result<Outcome, HookError> {
     validate_common(
         request.version,
-        version,
+        protocol,
         &request.request_id,
         &request.session_id,
         request.parent_session_id.as_deref(),
@@ -990,7 +1063,7 @@ fn complete(
     if operation.status != OperationStatus::Active {
         if operation.completion_digest.as_deref() == Some(completion_digest.as_str()) {
             return Ok(ack(
-                complete_result_schema(version),
+                protocol.complete_result_schema(),
                 "duplicate",
                 "completion already recorded",
             ));
@@ -1005,16 +1078,20 @@ fn complete(
     operation.completion_digest = Some(completion_digest);
     write_state(&locked, &state)?;
     Ok(ack(
-        complete_result_schema(version),
+        protocol.complete_result_schema(),
         "completed",
         "operation completed",
     ))
 }
 
-fn renew(state_root: &Path, request: RenewRequest, version: u64) -> Result<Outcome, HookError> {
+fn renew(
+    state_root: &Path,
+    request: RenewRequest,
+    protocol: ProtocolGeneration,
+) -> Result<Outcome, HookError> {
     validate_common(
         request.version,
-        version,
+        protocol,
         &request.request_id,
         &request.session_id,
         request.parent_session_id.as_deref(),
@@ -1030,21 +1107,24 @@ fn renew(state_root: &Path, request: RenewRequest, version: u64) -> Result<Outco
         &request.generation,
         &request.session_id,
         request.parent_session_id.as_deref(),
-        version,
+        protocol,
     ) {
-        return Ok(lost_from_denial(denial, version));
+        return Ok(lost_from_denial(denial, protocol));
     }
     revalidate_managed_identity(&state)?;
     let now = now_epoch()?;
     if state.binding.expires_at_epoch <= now {
-        return Ok(lost_from_denial(expired_denial(&state, version)?, version));
+        return Ok(lost_from_denial(
+            expired_denial(&state, protocol)?,
+            protocol,
+        ));
     }
     state.binding.refreshed_at_epoch = now;
     state.binding.expires_at_epoch = now.saturating_add(LEASE_TTL_SECONDS);
     write_state(&locked, &state)?;
     Ok(Outcome {
         data: json!({
-            "schema_version": renew_result_schema(version),
+            "schema_version": protocol.renew_result_schema(),
             "kind": "renewed",
             "renew_after_ms": RENEW_AFTER_MS,
         }),
@@ -1052,10 +1132,14 @@ fn renew(state_root: &Path, request: RenewRequest, version: u64) -> Result<Outco
     })
 }
 
-fn release(state_root: &Path, request: ReleaseRequest, version: u64) -> Result<Outcome, HookError> {
+fn release(
+    state_root: &Path,
+    request: ReleaseRequest,
+    protocol: ProtocolGeneration,
+) -> Result<Outcome, HookError> {
     validate_common(
         request.version,
-        version,
+        protocol,
         &request.request_id,
         &request.session_id,
         request.parent_session_id.as_deref(),
@@ -1082,7 +1166,7 @@ fn release(state_root: &Path, request: ReleaseRequest, version: u64) -> Result<O
                 && tombstone.workspace_id == request.workspace_id
         }) {
             return Ok(ack(
-                release_result_schema(version),
+                protocol.release_result_schema(),
                 "duplicate",
                 "binding already released",
             ));
@@ -1112,7 +1196,7 @@ fn release(state_root: &Path, request: ReleaseRequest, version: u64) -> Result<O
     state.binding.expires_at_epoch = now_epoch()?;
     write_state(&locked, &state)?;
     Ok(ack(
-        release_result_schema(version),
+        protocol.release_result_schema(),
         "released",
         "binding released",
     ))
@@ -1139,12 +1223,12 @@ fn typed<T: DeserializeOwned>(value: Value) -> Result<T, HookError> {
 /// rejected rather than silently reinterpreted.
 fn validate_common(
     version: u64,
-    expected: u64,
+    expected: ProtocolGeneration,
     request_id: &str,
     session_id: &str,
     parent_session_id: Option<&str>,
 ) -> Result<(), HookError> {
-    if version != expected {
+    if version != expected.wire_version() {
         return Err(HookError::data(
             "workspace-protocol-unsupported",
             "workspace lease protocol version is unsupported",
@@ -1591,9 +1675,9 @@ fn absolute_state_path(value: &str) -> bool {
         && Path::new(value).is_absolute()
 }
 
-fn bound(state: &State, version: u64) -> Outcome {
+fn bound(state: &State, protocol: ProtocolGeneration) -> Outcome {
     let mut data = json!({
-        "schema_version": bind_result_schema(version),
+        "schema_version": protocol.bind_result_schema(),
         "kind": "bound",
         "binding_id": state.binding.binding_id,
         "workspace_id": state.workspace_id,
@@ -1603,7 +1687,7 @@ fn bound(state: &State, version: u64) -> Outcome {
     });
     // A v2 binding names the exact repository target it owns, so the runtime
     // can key one authority set by canonical workspace instead of by session.
-    if version == PROTOCOL_VERSION_V2
+    if protocol.projects_bound_target()
         && let WorkspaceIdentity::Managed { identity } = &state.identity
         && let Some(object) = data.as_object_mut()
     {
@@ -1621,10 +1705,10 @@ fn bound(state: &State, version: u64) -> Outcome {
     }
 }
 
-fn granted(operation: &OperationRecord, version: u64) -> Outcome {
+fn granted(operation: &OperationRecord, protocol: ProtocolGeneration) -> Outcome {
     Outcome {
         data: json!({
-            "schema_version": begin_result_schema(version),
+            "schema_version": protocol.begin_result_schema(),
             "kind": "granted",
             "operation_id": operation.operation_id,
             "fence": operation.fence,
@@ -1660,7 +1744,7 @@ fn binding_denial(
     generation: &str,
     session_id: &str,
     parent_session_id: Option<&str>,
-    version: u64,
+    protocol: ProtocolGeneration,
 ) -> Option<Outcome> {
     let session_digest = digest(session_id.as_bytes());
     let exact = exact_binding(
@@ -1677,14 +1761,14 @@ fn binding_denial(
     }
     Some(if state.binding.status == BindingStatus::Active {
         denied(
-            begin_result_schema(version),
+            protocol.begin_result_schema(),
             "foreign-active",
             "WORKSPACE_BINDING_STALE",
             "workspace binding generation no longer owns this workspace",
         )
     } else {
         denied(
-            begin_result_schema(version),
+            protocol.begin_result_schema(),
             "stale-clean",
             "WORKSPACE_BINDING_RELEASED",
             "workspace binding generation was released and must be rebound",
@@ -1734,14 +1818,14 @@ fn require_binding(
     Ok(())
 }
 
-fn expired_denial(state: &State, version: u64) -> Result<Outcome, HookError> {
+fn expired_denial(state: &State, protocol: ProtocolGeneration) -> Result<Outcome, HookError> {
     if state
         .operations
         .iter()
         .any(|operation| operation.status == OperationStatus::Active)
     {
         return Ok(denied(
-            begin_result_schema(version),
+            protocol.begin_result_schema(),
             "uncertain",
             "WORKSPACE_OPERATION_UNCERTAIN",
             "workspace lease expired with an operation lacking a terminal outcome",
@@ -1749,25 +1833,25 @@ fn expired_denial(state: &State, version: u64) -> Result<Outcome, HookError> {
     }
     if state.binding.mode == BindingMode::Owned && dirty(managed_identity(&state.identity)?)? {
         return Ok(denied(
-            begin_result_schema(version),
+            protocol.begin_result_schema(),
             "dirty",
             "WORKSPACE_DIRTY",
             "workspace lease expired while the workspace remained dirty",
         ));
     }
     Ok(denied(
-        begin_result_schema(version),
+        protocol.begin_result_schema(),
         "stale-clean",
         "WORKSPACE_LEASE_EXPIRED",
         "workspace lease generation expired and must be rebound",
     ))
 }
 
-fn lost_from_denial(mut outcome: Outcome, version: u64) -> Outcome {
+fn lost_from_denial(mut outcome: Outcome, protocol: ProtocolGeneration) -> Outcome {
     if let Some(object) = outcome.data.as_object_mut() {
         object.insert(
             "schema_version".to_string(),
-            json!(renew_result_schema(version)),
+            json!(protocol.renew_result_schema()),
         );
         object.insert("kind".to_string(), json!("lost"));
     }
