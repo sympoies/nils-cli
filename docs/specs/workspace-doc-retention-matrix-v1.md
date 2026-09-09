@@ -16,7 +16,7 @@ Decision fields:
 | Path | Scope | Lifecycle | Decision | Rationale |
 | --- | --- | --- | --- | --- |
 | `README.md` | `workspace-level` | `canonical` | `keep` | Workspace overview and contributor entrypoint. |
-| `DEVELOPMENT.md` | `workspace-level` | `canonical` | `keep` | Required checks and contributor workflow contract. |
+| `DEVELOPMENT.md` | `workspace-level` | `canonical` | `keep` | Maintenance principles, routine workflow, and canonical reference routing. |
 | `AGENTS.md` | `workspace-level` | `canonical` | `keep` | Agent execution policy for this repository. |
 | `BINARY_DEPENDENCIES.md` | `workspace-level` | `canonical` | `keep` | Shared runtime/tooling dependency contract. |
 | `docs/runbooks/cli-completion-development-standard.md` | `workspace-level` | `canonical` | `keep` | Canonical completion architecture and checks. |
@@ -26,6 +26,7 @@ Decision fields:
 | `docs/runbooks/new-cli-crate-development-standard.md` | `workspace-level` | `canonical` | `keep` | New CLI crate standards. |
 | `docs/runbooks/review-specialists-primitive.md` | `workspace-level` | `canonical` | `keep` | Shared specialist-review evidence contract. |
 | `docs/runbooks/test-cleanup-governance.md` | `workspace-level` | `canonical` | `keep` | Stale-test lifecycle and CI guardrails. |
+| `docs/runbooks/workspace-maintenance-reference.md` | `workspace-level` | `canonical` | `keep` | Detailed setup, validation, coverage, artifact, and publishing reference. |
 | `docs/specs/cli-output-contract-v1.md` | `workspace-level` | `canonical` | `keep` | Workspace CLI output envelope and exit-code contract. |
 | `docs/specs/cli-service-json-contract-guideline-v1.md` | `workspace-level` | `canonical` | `keep` | Service-consumed CLI JSON contract guidance. |
 | `docs/specs/codex-gemini-cli-parity-contract-v1.md` | `workspace-level` | `canonical` | `keep` | Shared Codex/Gemini parity contract. |

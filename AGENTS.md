@@ -13,7 +13,9 @@
 
 Open only the references relevant to the requested change:
 
-- Development contract: `DEVELOPMENT.md`
+- Maintenance principles and routine workflow: `DEVELOPMENT.md`
+- Detailed setup, validation, coverage, and publishing reference:
+  `docs/runbooks/workspace-maintenance-reference.md`
 - Runtime dependency and degradation reference: `BINARY_DEPENDENCIES.md`
 - CLI completion policy: `docs/runbooks/cli-completion-development-standard.md`
 - New CLI crate standard: `docs/runbooks/new-cli-crate-development-standard.md`
@@ -21,7 +23,8 @@ Open only the references relevant to the requested change:
 
 ## Required Local Check Entrypoints
 
-- Exact check contents and tool prerequisites are defined in `DEVELOPMENT.md`.
+- Exact check contents and tool prerequisites are defined in
+  `docs/runbooks/workspace-maintenance-reference.md`.
 - Default local development and pre-PR check:
   `bash scripts/ci/nils-cli-checks-entrypoint.sh --local-fast`
 - Docs-only changes:
