@@ -3323,13 +3323,13 @@ async fn execute_retitle_evaluation(
     id: &str,
     request: &crate::retitle::RetitleRequest,
     observed: SessionRecord,
-) -> Result<Value, RetitleEvaluationFailure> {
+) -> Result<Value, Box<RetitleEvaluationFailure>> {
     let started = Instant::now();
     let permit = state
         .retitle
         .acquire()
         .await
-        .map_err(|error| RetitleEvaluationFailure::new(error, "queue", started))?;
+        .map_err(|error| Box::new(RetitleEvaluationFailure::new(error, "queue", started)))?;
     let history_catalog = state.history_catalog.clone();
     let trigger = request.trigger;
     let observed_for_context = observed.clone();
@@ -3339,7 +3339,11 @@ async fn execute_retitle_evaluation(
     })
     .await
     .map_err(|_| {
-        RetitleEvaluationFailure::new(retitle_worker_failed(), "context_worker", started)
+        Box::new(RetitleEvaluationFailure::new(
+            retitle_worker_failed(),
+            "context_worker",
+            started,
+        ))
     })?;
     let (permit, title_context) = match context_result {
         Ok(value) => value,
@@ -3354,7 +3358,7 @@ async fn execute_retitle_evaluation(
                 context_chars: 0,
                 provider_input_chars: 0,
             });
-            return Err(failure);
+            return Err(Box::new(failure));
         }
     };
     let coverage = title_context.coverage_view();
@@ -3368,19 +3372,19 @@ async fn execute_retitle_evaluation(
         let mut failure =
             RetitleEvaluationFailure::new(retitle_worker_failed(), "provider_worker", started);
         failure.context = Some(context_observation.clone());
-        failure
+        Box::new(failure)
     })?;
     let inference = match decision_result {
         Ok(value) => value,
         Err(observed_error) => {
             let failure_stage = observed_provider_failure_stage(&observed_error.providers);
-            return Err(RetitleEvaluationFailure {
+            return Err(Box::new(RetitleEvaluationFailure {
                 error: observed_error.error,
                 failure_stage,
                 context: Some(context_observation),
                 providers: observed_error.providers,
                 started,
-            });
+            }));
         }
     };
     let inferred = inference.inferred;
@@ -3414,14 +3418,16 @@ async fn execute_retitle_evaluation(
             RetitleEvaluationFailure::new(retitle_worker_failed(), "commit_worker", started);
         failure.context = Some(context_observation.clone());
         failure.providers = provider_attempts.clone();
-        failure
+        Box::new(failure)
     })?
-    .map_err(|error| RetitleEvaluationFailure {
-        error,
-        failure_stage: "commit",
-        context: Some(context_observation),
-        providers: provider_attempts,
-        started,
+    .map_err(|error| {
+        Box::new(RetitleEvaluationFailure {
+            error,
+            failure_stage: "commit",
+            context: Some(context_observation),
+            providers: provider_attempts,
+            started,
+        })
     })?;
     if committed.changed {
         invalidate_managed_history_titles(&state.managed_history_titles);
