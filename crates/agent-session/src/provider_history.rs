@@ -1522,6 +1522,90 @@ mod tests {
         bytes_read: usize,
     }
 
+    struct GeneratedLongHistoryReader {
+        ordinary_row: Vec<u8>,
+        semantic_row: Vec<u8>,
+        semantic_index: u64,
+        records: u64,
+        position: u64,
+    }
+
+    impl GeneratedLongHistoryReader {
+        fn new(row_bytes: usize, records: u64, semantic_index: u64) -> Self {
+            fn padded_row(payload: &str, row_bytes: usize) -> Vec<u8> {
+                assert!(payload.len() < row_bytes);
+                let mut row = Vec::with_capacity(row_bytes);
+                row.extend_from_slice(payload.as_bytes());
+                row.resize(row_bytes - 1, b' ');
+                row.push(b'\n');
+                row
+            }
+
+            Self {
+                ordinary_row: padded_row(
+                    r#"{"timestamp":"2026-09-09T00:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{}}}}"#,
+                    row_bytes,
+                ),
+                semantic_row: padded_row(
+                    r#"{"timestamp":"2026-09-09T00:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"redesign retitle observability before semantic memory"}],"internal_chat_message_metadata_passthrough":{"turn_id":"turn-semantic","content_item_kinds":["user.text"]}}}"#,
+                    row_bytes,
+                ),
+                semantic_index,
+                records,
+                position: 0,
+            }
+        }
+
+        fn len(&self) -> u64 {
+            self.records * self.ordinary_row.len() as u64
+        }
+    }
+
+    impl Read for GeneratedLongHistoryReader {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if self.position >= self.len() || buffer.is_empty() {
+                return Ok(0);
+            }
+            let row_bytes = self.ordinary_row.len() as u64;
+            let available = self.len().saturating_sub(self.position);
+            let target = buffer.len().min(available as usize);
+            let mut written = 0usize;
+            while written < target {
+                let row_index = self.position / row_bytes;
+                let row_offset = (self.position % row_bytes) as usize;
+                let row = if row_index == self.semantic_index {
+                    &self.semantic_row
+                } else {
+                    &self.ordinary_row
+                };
+                let count = (target - written).min(row.len() - row_offset);
+                buffer[written..written + count]
+                    .copy_from_slice(&row[row_offset..row_offset + count]);
+                written += count;
+                self.position += count as u64;
+            }
+            Ok(written)
+        }
+    }
+
+    impl Seek for GeneratedLongHistoryReader {
+        fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+            let next = match position {
+                SeekFrom::Start(offset) => i128::from(offset),
+                SeekFrom::End(offset) => i128::from(self.len()) + i128::from(offset),
+                SeekFrom::Current(offset) => i128::from(self.position) + i128::from(offset),
+            };
+            if !(0..=i128::from(self.len())).contains(&next) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "seek outside generated transcript",
+                ));
+            }
+            self.position = next as u64;
+            Ok(self.position)
+        }
+    }
+
     impl<R: Read> Read for CountingReader<R> {
         fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
             let read = self.inner.read(buffer)?;
@@ -1851,6 +1935,46 @@ mod tests {
 
         assert_eq!(page.messages.len(), 50);
         assert!(reader.bytes_read <= REVERSE_MESSAGE_CHUNK_BYTES);
+    }
+
+    #[test]
+    fn generated_200_mib_sparse_semantic_tail_characterizes_v2_starvation() {
+        const RECORDS: u64 = 44_000;
+        const ROW_BYTES: usize = 4_767;
+        const SEMANTIC_RECORD: u64 = 39_000;
+        let session = history_session("long-session", "2026-09-09T00:00:00Z");
+        let generated = GeneratedLongHistoryReader::new(ROW_BYTES, RECORDS, SEMANTIC_RECORD);
+        let file_len = generated.len();
+        assert!(
+            generated.ordinary_row.len() + generated.semantic_row.len() < 16 * 1024,
+            "the generated fixture must not allocate the represented transcript"
+        );
+        assert!((199 * 1024 * 1024..=201 * 1024 * 1024).contains(&file_len));
+        assert!(
+            (RECORDS - SEMANTIC_RECORD) * ROW_BYTES as u64 > REVERSE_MESSAGE_MAX_BYTES,
+            "the meaningful turn must sit outside the bounded v2 tail"
+        );
+        let mut reader = CountingReader {
+            inner: generated,
+            bytes_read: 0,
+        };
+
+        let page = read_messages_reverse_from_reader(
+            &session,
+            &mut reader,
+            file_len,
+            None,
+            100,
+            Instant::now() + MESSAGE_SCAN_MAX_DURATION,
+        )
+        .unwrap();
+
+        assert!(
+            page.messages.is_empty(),
+            "v2 scans a byte-bounded event-dense tail and loses the intermediate semantic turn"
+        );
+        assert!(page.older_cursor.is_some());
+        assert!(reader.bytes_read <= REVERSE_MESSAGE_MAX_BYTES as usize);
     }
 
     #[test]

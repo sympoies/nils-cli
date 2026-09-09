@@ -3267,13 +3267,33 @@ async fn execute_retitle(
     let crate::retitle::Admission::Evaluate(observed) = admission else {
         unreachable!();
     };
-    let result = execute_retitle_evaluation(state.clone(), &id, &request, observed)
-        .await
-        .map_err(sanitize_retitle_error);
-    if let Err(error) = &result {
-        record_retitle_failure(&state, &id, &request, error).await;
+    match execute_retitle_evaluation(state.clone(), &id, &request, observed).await {
+        Ok(result) => Ok(result),
+        Err(failure) => {
+            record_retitle_failure(&state, &id, &request, &failure).await;
+            Err(sanitize_retitle_error(failure.error))
+        }
     }
-    result
+}
+
+struct RetitleEvaluationFailure {
+    error: CliError,
+    failure_stage: &'static str,
+    context: Option<crate::retitle::RetitleContextObservation>,
+    providers: Vec<crate::retitle::ProviderAttemptObservation>,
+    elapsed: Duration,
+}
+
+impl RetitleEvaluationFailure {
+    fn new(error: CliError, failure_stage: &'static str, started: Instant) -> Self {
+        Self {
+            error,
+            failure_stage,
+            context: None,
+            providers: Vec::new(),
+            elapsed: started.elapsed(),
+        }
+    }
 }
 
 async fn execute_retitle_evaluation(
@@ -3281,8 +3301,13 @@ async fn execute_retitle_evaluation(
     id: &str,
     request: &crate::retitle::RetitleRequest,
     observed: SessionRecord,
-) -> Result<Value, CliError> {
-    let permit = state.retitle.acquire().await?;
+) -> Result<Value, RetitleEvaluationFailure> {
+    let started = Instant::now();
+    let permit = state
+        .retitle
+        .acquire()
+        .await
+        .map_err(|error| RetitleEvaluationFailure::new(error, "queue", started))?;
     let history_catalog = state.history_catalog.clone();
     let trigger = request.trigger;
     let observed_for_context = observed.clone();
@@ -3291,32 +3316,76 @@ async fn execute_retitle_evaluation(
             .map(|title_context| (permit, title_context))
     })
     .await
-    .map_err(|_| retitle_worker_failed())?;
+    .map_err(|_| {
+        RetitleEvaluationFailure::new(retitle_worker_failed(), "context_worker", started)
+    })?;
     let (permit, title_context) = match context_result {
         Ok(value) => value,
         Err(error) => {
-            return Err(error);
+            let mut failure = RetitleEvaluationFailure::new(error, "context_read", started);
+            failure.context = Some(crate::retitle::RetitleContextObservation {
+                source: "provider_transcript".to_string(),
+                freshness: "unavailable".to_string(),
+                complete: false,
+                truncated: false,
+                turn_count: 0,
+                context_chars: 0,
+                provider_input_chars: 0,
+            });
+            return Err(failure);
         }
     };
     let coverage = title_context.coverage_view();
+    let context_observation = title_context.observation();
     let existing = observed.title_state.clone();
     let decision_result = tokio::task::spawn_blocking(move || {
-        crate::retitle::infer_title_state(&permit, &title_context, existing.as_ref())
+        crate::retitle::infer_title_state_observed(&permit, &title_context, existing.as_ref())
     })
     .await
-    .map_err(|_| retitle_worker_failed())?;
-    let inferred = match decision_result {
+    .map_err(|_| {
+        let mut failure =
+            RetitleEvaluationFailure::new(retitle_worker_failed(), "provider_worker", started);
+        failure.context = Some(context_observation.clone());
+        failure
+    })?;
+    let inference = match decision_result {
         Ok(value) => value,
-        Err(error) => {
-            return Err(error);
+        Err(observed_error) => {
+            let failure_stage = observed_error
+                .providers
+                .last()
+                .and_then(|attempt| attempt.failure_stage.as_deref())
+                .map(|stage| match stage {
+                    "provider_setup" => "provider_setup",
+                    "provider_call" => "provider_call",
+                    "provider_response" => "provider_response",
+                    "provider_parse" => "provider_parse",
+                    "provider_budget" => "provider_budget",
+                    _ => "provider",
+                })
+                .unwrap_or("provider");
+            return Err(RetitleEvaluationFailure {
+                error: observed_error.error,
+                failure_stage,
+                context: Some(context_observation),
+                providers: observed_error.providers,
+                elapsed: started.elapsed(),
+            });
         }
     };
+    let inferred = inference.inferred;
+    let provider_attempts = inference.providers;
     let provider_kind = inferred.provider_kind;
     let decision = inferred.state;
     let context = state.context.clone();
     let request_for_commit = request.clone();
     let id_for_commit = id.to_string();
     let coverage_for_commit = coverage.clone();
+    let evidence_for_commit = crate::retitle::RetitleAttemptEvidence {
+        context: Some(context_observation.clone()),
+        providers: provider_attempts.clone(),
+        elapsed: started.elapsed(),
+    };
     let committed = tokio::task::spawn_blocking(move || {
         crate::retitle::commit(
             &context,
@@ -3325,13 +3394,29 @@ async fn execute_retitle_evaluation(
             decision,
             &coverage_for_commit,
             provider_kind,
+            &evidence_for_commit,
         )
     })
     .await
-    .map_err(|_| retitle_worker_failed())?
-    .map_err(sanitize_retitle_error)?;
+    .map_err(|_| {
+        let mut failure =
+            RetitleEvaluationFailure::new(retitle_worker_failed(), "commit_worker", started);
+        failure.context = Some(context_observation.clone());
+        failure.providers = provider_attempts.clone();
+        failure
+    })?
+    .map_err(|error| RetitleEvaluationFailure {
+        error,
+        failure_stage: "commit",
+        context: Some(context_observation),
+        providers: provider_attempts,
+        elapsed: started.elapsed(),
+    })?;
     if committed.changed {
         invalidate_managed_history_titles(&state.managed_history_titles);
+    }
+    if let Some(observation) = committed.observation.as_ref() {
+        emit_retitle_observation(observation);
     }
     Ok(retitle_projection(
         &committed.record,
@@ -3528,16 +3613,46 @@ async fn record_retitle_failure(
     state: &ServeState,
     id: &str,
     request: &crate::retitle::RetitleRequest,
-    error: &CliError,
+    failure: &RetitleEvaluationFailure,
 ) {
     let context = state.context.clone();
     let id = id.to_string();
     let request = request.clone();
-    let code = error.code().to_string();
-    let _ = tokio::task::spawn_blocking(move || {
-        crate::retitle::fail_code(&context, &id, &request, &code)
+    let code = if crate::retitle::is_public_error_code(failure.error.code()) {
+        failure.error.code()
+    } else {
+        "retitle-worker-failed"
+    }
+    .to_string();
+    let failure_stage = failure.failure_stage.to_string();
+    let context_observation = failure.context.clone();
+    let providers = failure.providers.clone();
+    let elapsed = failure.elapsed;
+    let observation = tokio::task::spawn_blocking(move || {
+        let evidence = crate::retitle::RetitleAttemptEvidence {
+            context: context_observation,
+            providers,
+            elapsed,
+        };
+        crate::retitle::fail_attempt(&context, &id, &request, &code, &failure_stage, &evidence)
     })
-    .await;
+    .await
+    .ok()
+    .flatten();
+    if let Some(observation) = observation.as_ref() {
+        emit_retitle_observation(observation);
+    }
+}
+
+fn emit_retitle_observation(observation: &crate::retitle::RetitleAttemptObservation) {
+    eprintln!("{}", retitle_observation_log(observation));
+}
+
+fn retitle_observation_log(observation: &crate::retitle::RetitleAttemptObservation) -> Value {
+    json!({
+        "event": "agent_session_retitle_attempt",
+        "retitle": observation,
+    })
 }
 
 fn retitle_projection(
@@ -3558,6 +3673,7 @@ fn retitle_projection(
         "processed_turn_id_hash": request.expected_provider_turn_id.as_deref().map(crate::retitle::hash_identity),
         "diagnostic_code": diagnostic_code,
         "coverage": coverage,
+        "attempt": crate::retitle::latest_attempt_observation(record),
         "session": {
             "title": record.title,
             "title_state": crate::effective_session_title_state(record),
@@ -9767,6 +9883,25 @@ mod tests {
             &second
         };
         assert_eq!(committed["data"]["retitle"]["provider_kind"], "command");
+        assert_eq!(
+            committed["data"]["retitle"]["attempt"]["schema_version"],
+            "agent-session.session-retitle-attempt.v1"
+        );
+        assert_eq!(committed["data"]["retitle"]["attempt"]["trigger"], "manual");
+        assert_eq!(
+            committed["data"]["retitle"]["attempt"]["attempts"][0]["providers"][0]["outcome"],
+            "unavailable"
+        );
+        assert_eq!(
+            committed["data"]["retitle"]["attempt"]["attempts"][0]["providers"][1]["outcome"],
+            "success"
+        );
+        assert!(
+            committed["data"]["retitle"]["attempt"]["attempts"][0]["context"]
+                ["provider_input_chars"]
+                .as_u64()
+                .is_some_and(|size| size > 0)
+        );
         assert_eq!(committed["data"]["retitle"]["session"]["title_revision"], 1);
         assert_eq!(
             committed["data"]["retitle"]["session"]["title_state"]["topic"],
@@ -9777,7 +9912,15 @@ mod tests {
             "#449"
         );
         assert!(!committed.to_string().contains("/private/path"));
+        assert!(!committed.to_string().contains("manual-retitle-0001"));
         assert_eq!(std::fs::read_to_string(&provider_calls).unwrap(), "x");
+
+        let (status, listed) = call(app.clone(), get_auth("/sessions", Some(TOKEN))).await;
+        assert_eq!(status, StatusCode::OK, "body={listed}");
+        assert_eq!(
+            listed["data"]["sessions"][0]["retitle_attempt"],
+            committed["data"]["retitle"]["attempt"]
+        );
 
         let mut replay = request;
         replay["expected_title_revision"] = json!(1);
@@ -9815,6 +9958,132 @@ mod tests {
         assert_eq!(
             replayed["data"]["retitle"]["diagnostic_code"],
             "idempotency_replay"
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_provider_failure_persists_stage_chain_without_content() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let config = json!({
+            "provider":"command",
+            "argv":[
+                "/bin/sh",
+                "-c",
+                "printf '%s\\n' '{\"unexpected\":\"provider output canary /private/session/path sk-secret-canary\"}'"
+            ],
+            "timeout_ms":5000,
+            "context":{"max_chars":4000,"per_message_chars":1000,"recent_turns":8}
+        })
+        .to_string();
+        let _config = EnvGuard::set(&lock, "AGENT_SESSION_RETITLE_CONFIG", &config);
+        let codex_home = tmp.path().join("codex-home");
+        let transcript_dir = codex_home.join("sessions/2026/09/09");
+        std::fs::create_dir_all(&transcript_dir).unwrap();
+        std::fs::write(
+            transcript_dir.join("rollout.jsonl"),
+            concat!(
+                "{\"timestamp\":\"2026-09-09T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"provider-observation\",\"cwd\":\"/work/example\",\"source\":\"cli\",\"timestamp\":\"2026-09-09T00:00:00Z\"}}\n",
+                "{\"timestamp\":\"2026-09-09T00:00:01Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"user prompt canary /private/session/path sk-secret-canary\"}],\"internal_chat_message_metadata_passthrough\":{\"turn_id\":\"turn-observation\",\"content_item_kinds\":[\"user.text\"]}}}\n"
+            ),
+        )
+        .unwrap();
+        let _codex_home = EnvGuard::set(&lock, "CODEX_HOME", codex_home.to_string_lossy().as_ref());
+        seed_session_with_runtime(
+            tmp.path(),
+            "retitle-observation",
+            "codex",
+            "hs-codex-retitle-observation",
+        );
+        let record_path = tmp.path().join("sessions/retitle-observation/session.json");
+        let mut record: Value =
+            serde_json::from_slice(&std::fs::read(&record_path).unwrap()).unwrap();
+        record["provider_resume"] = json!({
+            "provider":"codex",
+            "session_id":"provider-observation",
+            "captured_at":"2026-09-09T00:00:02Z",
+            "capture_method":"fixture",
+            "resume_args":[]
+        });
+        std::fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+        let app = router(state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path())));
+
+        let (status, body) = call(
+            app.clone(),
+            post_json(
+                "/sessions/retitle-observation/retitle",
+                Some(TOKEN),
+                json!({
+                    "schema_version":"agent-session.session-retitle.request.v2",
+                    "trigger":"manual",
+                    "idempotency_key":"manual-observation-failure",
+                    "expected_session_incarnation":"launch-retitle-observation",
+                    "expected_title_revision":0
+                }),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "body={body}");
+        assert_eq!(body["error"]["code"], "retitle-provider-malformed-response");
+        assert!(!body.to_string().contains("provider output canary"));
+        assert!(!body.to_string().contains("/private/session/path"));
+        let stored: Value = serde_json::from_slice(&std::fs::read(&record_path).unwrap()).unwrap();
+        let observation = &stored["session_retitle_v2"]["receipts"][0]["observation"];
+        assert_eq!(observation["trigger"], "manual");
+        assert_eq!(observation["terminal_outcome"], "failed");
+        assert_eq!(
+            observation["attempts"][0]["failure_stage"],
+            "provider_parse"
+        );
+        assert_eq!(
+            observation["attempts"][0]["providers"][0]["outcome"],
+            "malformed_response"
+        );
+        assert_eq!(
+            observation["attempts"][0]["providers"][0]["provider_kind"],
+            "command"
+        );
+        assert!(observation["attempts"][0]["duration_bucket"].is_string());
+        assert!(observation["attempts"][0]["context"]["provider_input_chars"].is_number());
+        let rendered = observation.to_string();
+        for forbidden in [
+            "user prompt canary",
+            "provider output canary",
+            "/private/session/path",
+            "sk-secret-canary",
+            "manual-observation-failure",
+        ] {
+            assert!(!rendered.contains(forbidden));
+        }
+        let log = retitle_observation_log(
+            &crate::retitle::latest_attempt_observation(
+                &crate::load_session_record(
+                    &CliContext {
+                        state_dir: tmp.path().to_path_buf(),
+                        host: None,
+                    },
+                    "retitle-observation",
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+        );
+        assert_eq!(log["event"], "agent_session_retitle_attempt");
+        for forbidden in [
+            "user prompt canary",
+            "provider output canary",
+            "/private/session/path",
+            "sk-secret-canary",
+        ] {
+            assert!(!log.to_string().contains(forbidden));
+        }
+
+        let (status, listed) = call(app, get_auth("/sessions", Some(TOKEN))).await;
+        assert_eq!(status, StatusCode::OK, "body={listed}");
+        assert_eq!(
+            listed["data"]["sessions"][0]["retitle_attempt"],
+            observation.clone()
         );
     }
 

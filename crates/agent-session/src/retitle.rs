@@ -51,6 +51,8 @@ const DEFAULT_RECENT_TURNS: usize = 12;
 const MAX_CONTEXT_CHARS: usize = 64 * 1024;
 const MAX_PER_MESSAGE_CHARS: usize = 8 * 1024;
 const MAX_RECENT_TURNS: usize = 32;
+const ATTEMPT_OBSERVATION_SCHEMA: &str = "agent-session.session-retitle-attempt.v1";
+const MAX_PROVIDER_ATTEMPT_OBSERVATIONS: usize = 2;
 
 fn evaluation_deadline(start: Instant, timeout: Duration) -> Instant {
     start + timeout
@@ -833,6 +835,73 @@ pub(crate) struct CoverageView {
     pub(crate) turn_count: usize,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct RetitleContextObservation {
+    pub(crate) source: String,
+    pub(crate) freshness: String,
+    pub(crate) complete: bool,
+    pub(crate) truncated: bool,
+    pub(crate) turn_count: usize,
+    pub(crate) context_chars: usize,
+    pub(crate) provider_input_chars: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct ProviderAttemptObservation {
+    pub(crate) provider_kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) model_label: Option<String>,
+    pub(crate) outcome: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) failure_stage: Option<String>,
+    pub(crate) duration_bucket: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct RetitleAttemptSpan {
+    number: u8,
+    started_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    finished_at: Option<String>,
+    stage: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    failure_stage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context: Option<RetitleContextObservation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    providers: Vec<ProviderAttemptObservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    duration_bucket: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    outcome: Option<String>,
+    diagnostic_code: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct RetitleAttemptObservation {
+    schema_version: String,
+    correlation_id: String,
+    trigger: RetitleTrigger,
+    attempts: Vec<RetitleAttemptSpan>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    terminal_outcome: Option<String>,
+    diagnostic_code: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RetitleAttemptEvidence {
+    pub(crate) context: Option<RetitleContextObservation>,
+    pub(crate) providers: Vec<ProviderAttemptObservation>,
+    pub(crate) elapsed: Duration,
+}
+
+struct RetitleAttemptTerminal<'a> {
+    stage: &'a str,
+    failure_stage: Option<&'a str>,
+    outcome: &'a str,
+    diagnostic_code: &'a str,
+}
+
 impl TitleContextV2 {
     pub(crate) fn coverage_view(&self) -> CoverageView {
         CoverageView {
@@ -840,6 +909,24 @@ impl TitleContextV2 {
             complete: self.coverage.complete,
             truncated: self.coverage.truncated,
             turn_count: self.turns.len(),
+        }
+    }
+
+    pub(crate) fn observation(&self) -> RetitleContextObservation {
+        let context_chars = serde_json::to_string(self)
+            .map(|value| value.chars().count())
+            .unwrap_or_default();
+        let provider_input_chars = model_input(self)
+            .map(|value| value.chars().count())
+            .unwrap_or_default();
+        RetitleContextObservation {
+            source: self.coverage.source.to_string(),
+            freshness: "current".to_string(),
+            complete: self.coverage.complete,
+            truncated: self.coverage.truncated,
+            turn_count: self.turns.len(),
+            context_chars,
+            provider_input_chars,
         }
     }
 }
@@ -1210,46 +1297,200 @@ pub(crate) struct InferredTitleState {
     pub(crate) provider_kind: &'static str,
 }
 
+pub(crate) struct ObservedInference {
+    pub(crate) inferred: InferredTitleState,
+    pub(crate) providers: Vec<ProviderAttemptObservation>,
+}
+
+pub(crate) struct ObservedInferenceError {
+    pub(crate) error: CliError,
+    pub(crate) providers: Vec<ProviderAttemptObservation>,
+}
+
+struct ProviderAttemptFailure {
+    error: CliError,
+    observation: ProviderAttemptObservation,
+}
+
+#[cfg(test)]
 pub(crate) fn infer_title_state(
     permit: &RetitlePermit,
     context: &TitleContextV2,
     existing: Option<&SessionTitleState>,
 ) -> Result<InferredTitleState, CliError> {
-    let input = model_input(context)?;
-    let timeout = permit.provider_timeout(permit.config.timeout())?;
-    match infer_with_provider(&permit.config, &input, context, existing, timeout) {
-        Ok(state) => Ok(InferredTitleState {
-            state,
-            provider_kind: permit.config.kind(),
-        }),
-        Err(error) if fallback_eligible(error.code()) && permit.config.fallback.is_some() => {
-            let fallback = permit.config.fallback.as_deref().expect("checked");
-            let timeout = permit.provider_timeout(fallback.timeout())?;
-            infer_with_provider(fallback, &input, context, existing, timeout).map(|state| {
-                InferredTitleState {
+    infer_title_state_observed(permit, context, existing)
+        .map(|observed| observed.inferred)
+        .map_err(|observed| observed.error)
+}
+
+pub(crate) fn infer_title_state_observed(
+    permit: &RetitlePermit,
+    context: &TitleContextV2,
+    existing: Option<&SessionTitleState>,
+) -> Result<ObservedInference, ObservedInferenceError> {
+    let input = model_input(context).map_err(|error| ObservedInferenceError {
+        error,
+        providers: Vec::new(),
+    })?;
+    let timeout = permit
+        .provider_timeout(permit.config.timeout())
+        .map_err(|error| ObservedInferenceError {
+            error,
+            providers: Vec::new(),
+        })?;
+    let mut providers = Vec::with_capacity(MAX_PROVIDER_ATTEMPT_OBSERVATIONS);
+    match infer_with_provider_observed(&permit.config, &input, context, existing, timeout) {
+        Ok((state, observation)) => {
+            providers.push(observation);
+            Ok(ObservedInference {
+                inferred: InferredTitleState {
                     state,
-                    provider_kind: fallback.kind(),
-                }
+                    provider_kind: permit.config.kind(),
+                },
+                providers,
             })
         }
-        Err(error) => Err(error),
+        Err(failure)
+            if fallback_eligible(failure.error.code()) && permit.config.fallback.is_some() =>
+        {
+            let ProviderAttemptFailure {
+                error: _,
+                observation,
+            } = *failure;
+            providers.push(observation);
+            let fallback = permit.config.fallback.as_deref().expect("checked");
+            let timeout = match permit.provider_timeout(fallback.timeout()) {
+                Ok(timeout) => timeout,
+                Err(error) => {
+                    providers.push(provider_attempt_observation(
+                        fallback,
+                        "deadline_exhausted",
+                        Some("provider_budget"),
+                        Duration::ZERO,
+                    ));
+                    return Err(ObservedInferenceError { error, providers });
+                }
+            };
+            match infer_with_provider_observed(fallback, &input, context, existing, timeout) {
+                Ok((state, observation)) => {
+                    providers.push(observation);
+                    Ok(ObservedInference {
+                        inferred: InferredTitleState {
+                            state,
+                            provider_kind: fallback.kind(),
+                        },
+                        providers,
+                    })
+                }
+                Err(failure) => {
+                    let ProviderAttemptFailure { error, observation } = *failure;
+                    providers.push(observation);
+                    Err(ObservedInferenceError { error, providers })
+                }
+            }
+        }
+        Err(failure) => {
+            let ProviderAttemptFailure { error, observation } = *failure;
+            providers.push(observation);
+            Err(ObservedInferenceError { error, providers })
+        }
     }
 }
 
-fn infer_with_provider(
+fn infer_with_provider_observed(
     config: &RetitleConfig,
     input: &str,
     context: &TitleContextV2,
     existing: Option<&SessionTitleState>,
     timeout: Duration,
-) -> Result<SessionTitleState, CliError> {
+) -> Result<(SessionTitleState, ProviderAttemptObservation), Box<ProviderAttemptFailure>> {
+    let started = Instant::now();
     let output = match config.kind() {
         "codex_subscription" => invoke_codex(config, input, timeout),
         "openai_compatible" => invoke_openai_compatible(config, input, timeout),
         "command" => invoke_command(config, input, timeout),
         _ => unreachable!(),
-    }?;
-    parse_decision(&output, context, existing)
+    };
+    let output = match output {
+        Ok(output) => output,
+        Err(error) => {
+            let observation = provider_attempt_observation(
+                config,
+                provider_outcome(error.code()),
+                Some(provider_failure_stage(error.code(), false)),
+                started.elapsed(),
+            );
+            return Err(Box::new(ProviderAttemptFailure { error, observation }));
+        }
+    };
+    match parse_decision(&output, context, existing) {
+        Ok(state) => Ok((
+            state,
+            provider_attempt_observation(config, "success", None, started.elapsed()),
+        )),
+        Err(error) => {
+            let observation = provider_attempt_observation(
+                config,
+                provider_outcome(error.code()),
+                Some(provider_failure_stage(error.code(), true)),
+                started.elapsed(),
+            );
+            Err(Box::new(ProviderAttemptFailure { error, observation }))
+        }
+    }
+}
+
+fn provider_attempt_observation(
+    config: &RetitleConfig,
+    outcome: &str,
+    failure_stage: Option<&str>,
+    elapsed: Duration,
+) -> ProviderAttemptObservation {
+    ProviderAttemptObservation {
+        provider_kind: config.kind().to_string(),
+        model_label: config
+            .model
+            .as_deref()
+            .filter(|label| observable_model_label(label))
+            .map(str::to_string),
+        outcome: outcome.to_string(),
+        failure_stage: failure_stage.map(str::to_string),
+        duration_bucket: duration_bucket(elapsed).to_string(),
+    }
+}
+
+fn observable_model_label(label: &str) -> bool {
+    let lower = label.to_ascii_lowercase();
+    !lower.starts_with("sk-")
+        && !lower.starts_with("bearer")
+        && !lower.contains("api_key")
+        && !lower.contains("apikey")
+        && !lower.contains("password")
+        && !lower.contains("token=")
+}
+
+fn provider_outcome(code: &str) -> &str {
+    match code {
+        "retitle-account-missing" => "account_missing",
+        "retitle-api-key-missing" => "api_key_missing",
+        "retitle-provider-timeout" => "timeout",
+        "retitle-provider-unavailable" => "unavailable",
+        "retitle-provider-rate-limited" => "rate_limited",
+        "retitle-provider-quota-exceeded" => "quota_exceeded",
+        "retitle-provider-malformed-response" => "malformed_response",
+        _ => "failed",
+    }
+}
+
+fn provider_failure_stage(code: &str, decision_parse: bool) -> &str {
+    if decision_parse {
+        return "provider_parse";
+    }
+    match code {
+        "retitle-account-missing" | "retitle-api-key-missing" => "provider_setup",
+        "retitle-provider-malformed-response" => "provider_response",
+        _ => "provider_call",
+    }
 }
 
 fn fallback_eligible(code: &str) -> bool {
@@ -1861,6 +2102,74 @@ pub(crate) fn hash_identity(value: &str) -> String {
     )
 }
 
+fn duration_bucket(elapsed: Duration) -> &'static str {
+    match elapsed.as_millis() {
+        0..=9 => "under_10_ms",
+        10..=49 => "10_49_ms",
+        50..=249 => "50_249_ms",
+        250..=999 => "250_999_ms",
+        1_000..=4_999 => "1_4_s",
+        5_000..=29_999 => "5_29_s",
+        30_000..=119_999 => "30_119_s",
+        _ => "120_s_plus",
+    }
+}
+
+fn new_attempt_span(number: u8) -> RetitleAttemptSpan {
+    RetitleAttemptSpan {
+        number,
+        started_at: jiff::Timestamp::now().to_string(),
+        finished_at: None,
+        stage: "admission".to_string(),
+        failure_stage: None,
+        context: None,
+        providers: Vec::new(),
+        duration_bucket: None,
+        outcome: None,
+        diagnostic_code: "in_progress".to_string(),
+    }
+}
+
+fn new_attempt_observation(
+    request: &RetitleRequest,
+    correlation_id: String,
+    attempt_number: u8,
+) -> RetitleAttemptObservation {
+    RetitleAttemptObservation {
+        schema_version: ATTEMPT_OBSERVATION_SCHEMA.to_string(),
+        correlation_id,
+        trigger: request.trigger,
+        attempts: vec![new_attempt_span(attempt_number)],
+        terminal_outcome: None,
+        diagnostic_code: "in_progress".to_string(),
+    }
+}
+
+fn finish_attempt_observation(
+    observation: &mut RetitleAttemptObservation,
+    evidence: &RetitleAttemptEvidence,
+    terminal: RetitleAttemptTerminal<'_>,
+) {
+    let Some(attempt) = observation.attempts.last_mut() else {
+        return;
+    };
+    attempt.finished_at = Some(jiff::Timestamp::now().to_string());
+    attempt.stage = terminal.stage.to_string();
+    attempt.failure_stage = terminal.failure_stage.map(str::to_string);
+    attempt.context = evidence.context.clone();
+    attempt.providers = evidence
+        .providers
+        .iter()
+        .take(MAX_PROVIDER_ATTEMPT_OBSERVATIONS)
+        .cloned()
+        .collect();
+    attempt.duration_bucket = Some(duration_bucket(evidence.elapsed).to_string());
+    attempt.outcome = Some(terminal.outcome.to_string());
+    attempt.diagnostic_code = terminal.diagnostic_code.to_string();
+    observation.terminal_outcome = Some(terminal.outcome.to_string());
+    observation.diagnostic_code = terminal.diagnostic_code.to_string();
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct RetitleReceipt {
     key_hash: String,
@@ -1877,6 +2186,8 @@ struct RetitleReceipt {
     coverage_truncated: bool,
     #[serde(default)]
     coverage_turn_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    observation: Option<RetitleAttemptObservation>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -1965,6 +2276,13 @@ fn prepare_automatic_failed_receipt_retry(
     receipt.state = "in_progress".to_string();
     receipt.diagnostic_code = "in_progress".to_string();
     receipt.attempt_count = receipt.attempt_count.max(1).saturating_add(1);
+    if let Some(observation) = receipt.observation.as_mut() {
+        observation
+            .attempts
+            .push(new_attempt_span(receipt.attempt_count));
+        observation.terminal_outcome = None;
+        observation.diagnostic_code = "in_progress".to_string();
+    }
     true
 }
 
@@ -2051,6 +2369,7 @@ pub(crate) fn admit(
     }
     validate_fences(context, &record, request)?;
     state.receipts.push(RetitleReceipt {
+        observation: Some(new_attempt_observation(request, key_hash.clone(), 1)),
         key_hash,
         request_hash: digest,
         state: "in_progress".to_string(),
@@ -2157,25 +2476,43 @@ fn turn_conflict() -> CliError {
     )
 }
 
+#[cfg(test)]
 pub(crate) fn fail_code(
     context: &CliContext,
     id: &str,
     request: &RetitleRequest,
     diagnostic_code: &str,
 ) {
+    let evidence = RetitleAttemptEvidence {
+        context: None,
+        providers: Vec::new(),
+        elapsed: Duration::ZERO,
+    };
+    let _ = fail_attempt(context, id, request, diagnostic_code, "unknown", &evidence);
+}
+
+pub(crate) fn fail_attempt(
+    context: &CliContext,
+    id: &str,
+    request: &RetitleRequest,
+    diagnostic_code: &str,
+    failure_stage: &str,
+    evidence: &RetitleAttemptEvidence,
+) -> Option<RetitleAttemptObservation> {
     let Ok(_lock) = crate::acquire_session_record_lock(context, id) else {
-        return;
+        return None;
     };
     let Ok(mut record) = load_session_record(context, id) else {
-        return;
+        return None;
     };
     if crate::coordination::incarnation(&record).ok().as_deref()
         != Some(request.expected_session_incarnation.as_str())
     {
-        return;
+        return None;
     }
     let key_hash = hash_identity(&request.idempotency_key);
     let mut state = durable_state(&record);
+    let mut persisted = None;
     if let Some(receipt) = state
         .receipts
         .iter_mut()
@@ -2183,9 +2520,32 @@ pub(crate) fn fail_code(
     {
         receipt.state = "failed".to_string();
         receipt.diagnostic_code = diagnostic_code.to_string();
+        if let Some(observation) = receipt.observation.as_mut() {
+            finish_attempt_observation(
+                observation,
+                evidence,
+                RetitleAttemptTerminal {
+                    stage: "failed",
+                    failure_stage: Some(failure_stage),
+                    outcome: "failed",
+                    diagnostic_code,
+                },
+            );
+            persisted = Some(observation.clone());
+        }
         store_durable_state(&mut record, state);
         let _ = crate::write_session_record(context, &record);
     }
+    persisted
+}
+
+pub(crate) fn latest_attempt_observation(
+    record: &SessionRecord,
+) -> Option<RetitleAttemptObservation> {
+    durable_state(record)
+        .receipts
+        .last()
+        .and_then(|receipt| receipt.observation.clone())
 }
 
 fn replayed_error(code: &str) -> CliError {
@@ -2245,6 +2605,7 @@ fn replayed_error(code: &str) -> CliError {
 pub(crate) struct CommitResult {
     pub(crate) record: SessionRecord,
     pub(crate) changed: bool,
+    pub(crate) observation: Option<RetitleAttemptObservation>,
 }
 
 pub(crate) fn commit(
@@ -2254,12 +2615,13 @@ pub(crate) fn commit(
     state: SessionTitleState,
     coverage: &CoverageView,
     provider_kind: &str,
+    evidence: &RetitleAttemptEvidence,
 ) -> Result<CommitResult, CliError> {
     let (title, state) = canonicalize_structured_title_pair(None, false, state)?;
     let state = state.expect("structured state");
     let key_hash = hash_identity(&request.idempotency_key);
     let request_digest = request_hash(request);
-    let (record, changed) =
+    let (record, changed, observation) =
         crate::mutate_session_record_for_title(context, id, None, None, |record| {
             validate_fences(context, record, request)?;
             let mut durable = durable_state(record);
@@ -2308,6 +2670,20 @@ pub(crate) fn commit(
             receipt.coverage_complete = coverage.complete;
             receipt.coverage_truncated = coverage.truncated;
             receipt.coverage_turn_count = coverage.turn_count;
+            let diagnostic_code = if changed { "committed" } else { "no_change" };
+            if let Some(observation) = receipt.observation.as_mut() {
+                finish_attempt_observation(
+                    observation,
+                    evidence,
+                    RetitleAttemptTerminal {
+                        stage: "complete",
+                        failure_stage: None,
+                        outcome: if changed { "committed" } else { "unchanged" },
+                        diagnostic_code,
+                    },
+                );
+            }
+            let observation = receipt.observation.clone();
             if request.trigger.is_automatic() {
                 durable.last_processed_turn_hash = request
                     .expected_provider_turn_id
@@ -2319,9 +2695,13 @@ pub(crate) fn commit(
                 durable.last_coverage_turn_count = coverage.turn_count;
             }
             store_durable_state(record, durable);
-            Ok((record.clone(), changed))
+            Ok((record.clone(), changed, observation))
         })?;
-    Ok(CommitResult { record, changed })
+    Ok(CommitResult {
+        record,
+        changed,
+        observation,
+    })
 }
 
 #[cfg(test)]
@@ -2406,7 +2786,132 @@ mod tests {
     }
 
     #[test]
+    fn durable_receipt_exposes_content_free_attempt_observability() {
+        let request = RetitleRequest {
+            schema_version: REQUEST_SCHEMA.into(),
+            trigger: RetitleTrigger::Manual,
+            idempotency_key: "manual-observation".into(),
+            expected_session_incarnation: "launch".into(),
+            expected_title_revision: 0,
+            expected_activity_revision: None,
+            expected_provider_turn_id: None,
+        };
+        let context = RetitleContextObservation {
+            source: "provider_transcript".into(),
+            freshness: "current".into(),
+            complete: true,
+            truncated: true,
+            turn_count: 4,
+            context_chars: 8_192,
+            provider_input_chars: 8_512,
+        };
+        let providers = vec![ProviderAttemptObservation {
+            provider_kind: "codex_subscription".into(),
+            model_label: Some("gpt-5.6-luna".into()),
+            outcome: "malformed_response".into(),
+            failure_stage: Some("provider_parse".into()),
+            duration_bucket: "1_4_s".into(),
+        }];
+        let mut observation = new_attempt_observation(&request, "sha256:correlation".into(), 2);
+        let evidence = RetitleAttemptEvidence {
+            context: Some(context),
+            providers,
+            elapsed: Duration::from_secs(2),
+        };
+        finish_attempt_observation(
+            &mut observation,
+            &evidence,
+            RetitleAttemptTerminal {
+                stage: "failed",
+                failure_stage: Some("provider_parse"),
+                outcome: "failed",
+                diagnostic_code: "retitle-provider-malformed-response",
+            },
+        );
+        let receipt = RetitleReceipt {
+            key_hash: "sha256:correlation".into(),
+            request_hash: "sha256:request".into(),
+            state: "failed".into(),
+            diagnostic_code: "retitle-provider-malformed-response".into(),
+            provider_kind: Some("codex_subscription".into()),
+            attempt_count: 2,
+            coverage_complete: true,
+            coverage_truncated: true,
+            coverage_turn_count: 4,
+            observation: Some(observation),
+        };
+
+        let encoded = serde_json::to_value(receipt).unwrap();
+        assert_eq!(encoded["observation"]["trigger"], "manual");
+        assert_eq!(
+            encoded["observation"]["attempts"][0]["failure_stage"],
+            "provider_parse"
+        );
+        assert_eq!(
+            encoded["observation"]["attempts"][0]["context"]["source"],
+            "provider_transcript"
+        );
+        assert_eq!(
+            encoded["observation"]["attempts"][0]["context"]["freshness"],
+            "current"
+        );
+        assert_eq!(
+            encoded["observation"]["attempts"][0]["providers"][0]["provider_kind"],
+            "codex_subscription"
+        );
+        assert_eq!(
+            encoded["observation"]["attempts"][0]["providers"][0]["model_label"],
+            "gpt-5.6-luna"
+        );
+        assert_eq!(
+            encoded["observation"]["attempts"][0]["providers"][0]["outcome"],
+            "malformed_response"
+        );
+        assert_eq!(encoded["observation"]["terminal_outcome"], "failed");
+        assert!(encoded["observation"]["attempts"][0]["duration_bucket"].is_string());
+        let rendered = encoded.to_string();
+        for forbidden in [
+            "user prompt canary",
+            "provider output canary",
+            "/private/session/path",
+            "sk-secret-canary",
+        ] {
+            assert!(!rendered.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn pre_observation_v2_receipt_remains_readable() {
+        let state: DurableRetitleState = serde_json::from_value(json!({
+            "schema_version": MARKER_SCHEMA,
+            "receipts": [{
+                "key_hash": "sha256:key",
+                "request_hash": "sha256:request",
+                "state": "failed",
+                "diagnostic_code": "retitle-context-unavailable",
+                "attempt_count": 1,
+                "coverage_complete": false,
+                "coverage_truncated": true,
+                "coverage_turn_count": 0
+            }]
+        }))
+        .unwrap();
+
+        assert_eq!(state.receipts.len(), 1);
+        assert!(state.receipts[0].observation.is_none());
+    }
+
+    #[test]
     fn automatic_failed_receipts_retry_only_retryable_codes_with_a_global_bound() {
+        let request = RetitleRequest {
+            schema_version: REQUEST_SCHEMA.into(),
+            trigger: RetitleTrigger::Prompt,
+            idempotency_key: "automatic-observation".into(),
+            expected_session_incarnation: "launch".into(),
+            expected_title_revision: 0,
+            expected_activity_revision: Some(1),
+            expected_provider_turn_id: Some("turn-1".into()),
+        };
         let mut receipt = RetitleReceipt {
             key_hash: "key".into(),
             request_hash: "request".into(),
@@ -2417,6 +2922,7 @@ mod tests {
             coverage_complete: false,
             coverage_truncated: false,
             coverage_turn_count: 0,
+            observation: Some(new_attempt_observation(&request, "sha256:key".into(), 1)),
         };
         assert!(automatic_failed_receipt_can_retry(
             &receipt,
@@ -2429,6 +2935,9 @@ mod tests {
         assert_eq!(receipt.state, "in_progress");
         assert_eq!(receipt.diagnostic_code, "in_progress");
         assert_eq!(receipt.attempt_count, 2);
+        let observation = receipt.observation.as_ref().unwrap();
+        assert_eq!(observation.attempts.len(), 2);
+        assert_eq!(observation.attempts[1].number, 2);
         receipt.state = "failed".into();
         receipt.diagnostic_code = "retitle-context-unavailable".into();
         assert!(!automatic_failed_receipt_can_retry(

@@ -63,6 +63,28 @@ uses the currently configured provider kind for response compatibility. It
 never returns a prompt, transcript excerpt, raw
 provider turn ID, provider model output, credential, or private path.
 
+Newly admitted attempts also retain a bounded, additive
+`agent-session.session-retitle-attempt.v1` observation. A completed Retitle
+response exposes it as `data.retitle.attempt`, and the ordinary session
+projection exposes the latest observation as `retitle_attempt`; older receipts
+without the field remain valid and omit the projection. The observation uses a
+hashed correlation identity and records the trigger, durable retry spans,
+start/finish timestamps, terminal outcome, and diagnostic code. Each span
+records a stable failure stage, a coarse duration bucket, content-free context
+metrics (`source`, `freshness`, coverage flags, turn count, serialized context
+characters, and provider-input characters), and at most the configured primary
+plus one fallback provider attempt. Provider attempts contain only provider
+kind, validated model label when configured, outcome class, failure stage, and
+coarse duration bucket.
+
+The serve daemon writes the same terminal observation as one structured JSON
+stderr event named `agent_session_retitle_attempt`, suitable for journald
+correlation. Neither the durable receipt, HTTP projections, nor this event may
+contain an idempotency key, prompt, transcript excerpt, provider output, raw
+provider turn ID, credential, command, or private path. Duration buckets are
+`under_10_ms`, `10_49_ms`, `50_249_ms`, `250_999_ms`, `1_4_s`, `5_29_s`,
+`30_119_s`, and `120_s_plus`.
+
 The daemon schedules the newest provider-confirmed current turn. If its prompt
 observation races transcript persistence, the matching completion can schedule
 one `completion_recovery` attempt. The deterministic key includes session
@@ -151,6 +173,14 @@ the supplied base ends in `/v1`). `api_key_env` names an environment variable;
 the key itself is not stored in JSON. Response bodies are streamed into a
 fixed cap-plus-one reader and rejected before an oversized response can be
 buffered in full.
+
+The deterministic provider-history regression models a 44,000-record,
+approximately 200 MiB transcript without allocating or committing that byte
+volume. Its meaningful intermediate human turn is more than 16 MiB behind an
+event-dense tail. The v2 characterization intentionally proves that the
+bounded latest-message selector returns no semantic messages while reading no
+more than its configured reverse-scan byte budget; retitle v3 owns recovery of
+that semantic journey.
 
 ```json
 {
