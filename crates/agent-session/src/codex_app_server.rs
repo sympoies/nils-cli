@@ -1231,11 +1231,48 @@ fn acquire_manual_input_gate(
 /// this gate before forwarding and retains it through the matching JSON-RPC
 /// response, closing the accepted-but-not-yet-observed turn window. A manual
 /// sender marker, when present, is revalidated under the same lock.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TuiMutationRejection {
+    AccountMutationForbidden,
+    AccountNotReady,
+    TurnRequestInvalid,
+    TurnGateOpenFailed,
+    TurnGateBusy,
+    ManualMarkerThreadMismatch,
+    ManualMarkerReplaced,
+    ManualMarkerInvalid,
+    ManualAckFailed,
+    RuntimeIdentityMissing,
+    ManualCancellationBusy,
+    RuntimeChanged,
+    AccountAuthorityUnavailable,
+}
+
+impl TuiMutationRejection {
+    fn code(self) -> &'static str {
+        match self {
+            Self::AccountMutationForbidden => "account_mutation_forbidden",
+            Self::AccountNotReady => "account_not_ready",
+            Self::TurnRequestInvalid => "turn_request_invalid",
+            Self::TurnGateOpenFailed => "turn_gate_open_failed",
+            Self::TurnGateBusy => "turn_gate_busy",
+            Self::ManualMarkerThreadMismatch => "manual_marker_thread_mismatch",
+            Self::ManualMarkerReplaced => "manual_marker_replaced",
+            Self::ManualMarkerInvalid => "manual_marker_invalid",
+            Self::ManualAckFailed => "manual_ack_failed",
+            Self::RuntimeIdentityMissing => "runtime_identity_missing",
+            Self::ManualCancellationBusy => "manual_cancellation_busy",
+            Self::RuntimeChanged => "runtime_changed",
+            Self::AccountAuthorityUnavailable => "account_authority_unavailable",
+        }
+    }
+}
+
 fn acquire_turn_start_gate(
     context: &CliContext,
     record: &SessionRecord,
     value: &Value,
-) -> Option<ManualInputGate> {
+) -> Result<ManualInputGate, TuiMutationRejection> {
     if value.get("method").and_then(Value::as_str) != Some("turn/start")
         || value.get("id").and_then(json_id_key).is_none()
         || !value.pointer("/params/input").is_some_and(Value::is_array)
@@ -1244,52 +1281,60 @@ fn acquire_turn_start_gate(
             .and_then(Value::as_str)
             .is_some_and(protocol_id_is_valid)
     {
-        return None;
+        return Err(TuiMutationRejection::TurnRequestInvalid);
     }
-    let gate_file = open_manual_input_gate_file(&manual_input_gate_path(context, record))?;
+    let gate_file = open_manual_input_gate_file(&manual_input_gate_path(context, record))
+        .ok_or(TuiMutationRejection::TurnGateOpenFailed)?;
     // A proxy never waits here: a manual sender may already own the session
     // record lock, and a competing account mutation drops that record lock
     // when its own non-blocking gate attempt loses.
     // SAFETY: `flock` observes the valid descriptor borrowed for this call.
     if unsafe { libc::flock(gate_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        return None;
+        return Err(TuiMutationRejection::TurnGateBusy);
     }
 
     let marker_path = manual_input_section_path(context, record);
     let Ok(mut owner_file) = fs::File::open(&marker_path) else {
-        return Some(ManualInputGate {
+        return Ok(ManualInputGate {
             gate_file,
             _owner_file: None,
         });
     };
     if !marker_has_live_shared_lock(&owner_file) {
-        return Some(ManualInputGate {
+        return Ok(ManualInputGate {
             gate_file,
             _owner_file: None,
         });
     }
     if !manual_input_request_matches_bound_thread(context, record, value) {
-        return None;
+        return Err(TuiMutationRejection::ManualMarkerThreadMismatch);
     }
-    let own = owner_file.metadata().ok()?;
-    let current = fs::metadata(&marker_path).ok()?;
+    let own = owner_file
+        .metadata()
+        .map_err(|_| TuiMutationRejection::ManualMarkerReplaced)?;
+    let current =
+        fs::metadata(&marker_path).map_err(|_| TuiMutationRejection::ManualMarkerReplaced)?;
     if own.dev() != current.dev() || own.ino() != current.ino() {
-        return None;
+        return Err(TuiMutationRejection::ManualMarkerReplaced);
     }
-    let marker = read_runtime_process_marker_file(&mut owner_file)?;
+    let marker = read_runtime_process_marker_file(&mut owner_file)
+        .ok_or(TuiMutationRejection::ManualMarkerInvalid)?;
     if !valid_runtime_process_marker(
         &marker,
         record,
         MANUAL_INPUT_SECTION_VERSION,
         MANUAL_INPUT_SECTION_TTL,
     ) {
-        return None;
+        return Err(TuiMutationRejection::ManualMarkerInvalid);
     }
     UnixDatagram::unbound()
-        .ok()?
-        .send_to(&[1], manual_input_ack_path(record)?)
-        .ok()?;
-    Some(ManualInputGate {
+        .map_err(|_| TuiMutationRejection::ManualAckFailed)?
+        .send_to(
+            &[1],
+            manual_input_ack_path(record).ok_or(TuiMutationRejection::ManualAckFailed)?,
+        )
+        .map_err(|_| TuiMutationRejection::ManualAckFailed)?;
+    Ok(ManualInputGate {
         gate_file,
         _owner_file: Some(owner_file),
     })
@@ -4172,7 +4217,7 @@ async fn ensure_turn_start_account_ready(context: &CliContext, record: &SessionR
         if crate::ensure_same_session_identity(record, &current).is_err() {
             return false;
         }
-        if crate::codex_account::ensure_input_allowed(&current).is_ok() {
+        if crate::codex_account::ensure_proxy_input_allowed(&current).is_ok() {
             return true;
         }
         let pending = crate::codex_account::view_for_record(&current)
@@ -4201,16 +4246,16 @@ async fn lock_turn_start_account_authority(
     .flatten()
     .filter(|authority| {
         crate::ensure_same_session_identity(&expected, &authority.record).is_ok()
-            && crate::codex_account::ensure_input_allowed(&authority.record).is_ok()
+            && crate::codex_account::ensure_proxy_input_allowed(&authority.record).is_ok()
     })
 }
 
-async fn cancel_before_tui_mutation(
+async fn cancel_before_tui_mutation_detailed(
     context: &CliContext,
     record: &SessionRecord,
     bootstrap: &mut FreshBootstrap,
     value: &Value,
-) -> Option<MutationAuthorization> {
+) -> Result<MutationAuthorization, TuiMutationRejection> {
     let method = value.get("method").and_then(Value::as_str);
     if (crate::codex_account::binding_is_present(record)
         || crate::codex_account::view_for_record(record).supported)
@@ -4220,10 +4265,10 @@ async fn cancel_before_tui_mutation(
         )
     {
         bootstrap.close();
-        return None;
+        return Err(TuiMutationRejection::AccountMutationForbidden);
     }
     if !matches!(method, Some("thread/start" | "turn/start")) {
-        return Some(MutationAuthorization {
+        return Ok(MutationAuthorization {
             _bootstrap_gate: None,
             _turn_start_gate: None,
             _account_authority: None,
@@ -4231,7 +4276,7 @@ async fn cancel_before_tui_mutation(
     }
     if method == Some("turn/start") && !ensure_turn_start_account_ready(context, record).await {
         bootstrap.close();
-        return None;
+        return Err(TuiMutationRejection::AccountNotReady);
     }
     let turn_start_gate = if method == Some("turn/start") {
         let gate_context = context.clone();
@@ -4241,15 +4286,11 @@ async fn cancel_before_tui_mutation(
             acquire_turn_start_gate(&gate_context, &gate_record, &gate_value)
         })
         .await
-        .ok()
-        .flatten()
+        .map_err(|_| TuiMutationRejection::TurnGateOpenFailed)??
+        .into()
     } else {
         None
     };
-    if method == Some("turn/start") && turn_start_gate.is_none() {
-        bootstrap.close();
-        return None;
-    }
     // A fresh Codex TUI emits `thread/start`, then the initial prompt emits
     // `turn/start`, while the parent create path still owns the lifecycle lock.
     // The create-owned marker and exact healthy idle auto-resume state are
@@ -4278,7 +4319,8 @@ async fn cancel_before_tui_mutation(
     let launch_id = record
         .runtime
         .as_ref()
-        .map(|runtime| runtime.launch_id.clone())?;
+        .map(|runtime| runtime.launch_id.clone())
+        .ok_or(TuiMutationRejection::RuntimeIdentityMissing)?;
     let sender_owns_record_authority = turn_start_gate
         .as_ref()
         .is_some_and(|gate| gate._owner_file.is_some());
@@ -4311,7 +4353,7 @@ async fn cancel_before_tui_mutation(
     let mut authorization = match cancellation {
         Some(crate::auto_resume::ManualInputCancelOutcome::Ready) => {
             bootstrap.close();
-            Some(MutationAuthorization {
+            Ok(MutationAuthorization {
                 _bootstrap_gate: bootstrap_gate,
                 _turn_start_gate: turn_start_gate,
                 _account_authority: None,
@@ -4321,7 +4363,7 @@ async fn cancel_before_tui_mutation(
             if bootstrap_gate.is_some()
                 && bootstrap.bypasses_create_lock(context, record, value) =>
         {
-            Some(MutationAuthorization {
+            Ok(MutationAuthorization {
                 _bootstrap_gate: bootstrap_gate,
                 _turn_start_gate: turn_start_gate,
                 _account_authority: None,
@@ -4333,30 +4375,64 @@ async fn cancel_before_tui_mutation(
                 .is_some_and(|gate| gate._owner_file.is_some()) =>
         {
             bootstrap.close();
-            Some(MutationAuthorization {
+            Ok(MutationAuthorization {
                 _bootstrap_gate: bootstrap_gate,
                 _turn_start_gate: turn_start_gate,
                 _account_authority: None,
             })
         }
-        Some(crate::auto_resume::ManualInputCancelOutcome::Busy) => None,
+        Some(crate::auto_resume::ManualInputCancelOutcome::Busy) => {
+            Err(TuiMutationRejection::ManualCancellationBusy)
+        }
         Some(crate::auto_resume::ManualInputCancelOutcome::RuntimeChanged) | None => {
             bootstrap.close();
-            None
+            Err(TuiMutationRejection::RuntimeChanged)
         }
     };
     if method == Some("turn/start") && !sender_owns_record_authority {
-        let authorization = authorization.as_mut()?;
-        let authority = lock_turn_start_account_authority(context, record).await?;
+        let authorization = match authorization.as_mut() {
+            Ok(authorization) => authorization,
+            Err(rejection) => return Err(*rejection),
+        };
+        let authority = lock_turn_start_account_authority(context, record)
+            .await
+            .ok_or(TuiMutationRejection::AccountAuthorityUnavailable)?;
         authorization._account_authority = Some(authority);
     }
     authorization
+}
+
+#[cfg(test)]
+async fn cancel_before_tui_mutation(
+    context: &CliContext,
+    record: &SessionRecord,
+    bootstrap: &mut FreshBootstrap,
+    value: &Value,
+) -> Option<MutationAuthorization> {
+    cancel_before_tui_mutation_detailed(context, record, bootstrap, value)
+        .await
+        .ok()
 }
 
 fn proxy_websocket_config() -> WebSocketConfig {
     WebSocketConfig::default()
         .max_message_size(Some(MAX_PROXY_MESSAGE_BYTES))
         .max_frame_size(Some(MAX_PROXY_FRAME_BYTES))
+}
+
+fn tui_busy_response(id: &Value, reason: &'static str) -> Message {
+    Message::Text(
+        json!({
+            "id": id,
+            "error": {
+                "code": -32001,
+                "message": "agent-session state is busy; retry the request",
+                "data": { "reason": reason }
+            }
+        })
+        .to_string()
+        .into(),
+    )
 }
 
 async fn send_proxy_upstream<S>(
@@ -4457,47 +4533,30 @@ async fn run_proxy_session(
                             || pending_turn_authorizations.len() >= MAX_REDUCER_PENDING_TURNS
                     }) {
                         if let Some(id) = value.get("id") {
-                            tui.send(Message::Text(
-                                json!({
-                                    "id": id,
-                                    "error": {
-                                        "code": -32001,
-                                        "message": "agent-session state is busy; retry the request"
-                                    }
-                                })
-                                .to_string()
-                                .into(),
-                            ))
+                            tui.send(tui_busy_response(id, "turn_already_pending"))
                             .await
                             .map_err(|err| format!("remote TUI write failed: {err}"))?;
                         }
                         continue;
                     }
-                    let Some(authorization) = cancel_before_tui_mutation(
+                    let authorization = match cancel_before_tui_mutation_detailed(
                         &context,
                         &record,
                         &mut bootstrap,
                         &value,
-                    ).await else {
-                        if let Some(id) = value
-                            .get("id")
-                            .filter(|id| json_id_key(id).is_some())
-                        {
-                            tui.send(Message::Text(
-                                json!({
-                                    "id": id,
-                                    "error": {
-                                        "code": -32001,
-                                        "message": "agent-session state is busy; retry the request"
-                                    }
-                                })
-                                .to_string()
-                                .into(),
-                            ))
-                            .await
-                            .map_err(|err| format!("remote TUI write failed: {err}"))?;
+                    ).await {
+                        Ok(authorization) => authorization,
+                        Err(rejection) => {
+                            if let Some(id) = value
+                                .get("id")
+                                .filter(|id| json_id_key(id).is_some())
+                            {
+                                tui.send(tui_busy_response(id, rejection.code()))
+                                .await
+                                .map_err(|err| format!("remote TUI write failed: {err}"))?;
+                            }
+                            continue;
                         }
-                        continue;
                     };
                     projection.observe_client(&value);
                     (authorization, turn_start_key)
@@ -10267,6 +10326,63 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
     }
 
     #[tokio::test]
+    async fn managed_account_proxy_authorizes_tui_turn_without_broker_environment() {
+        let lock = GlobalStateLock::new();
+        let broker = EnvGuard::set(
+            &lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            r#"["/configured/broker"]"#,
+        );
+        let tmp = tempfile::TempDir::new().unwrap();
+        let upstream = tmp.path().join("managed-manual.sock");
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let mut proxy_record = record_with_runtime("managed-manual", &upstream);
+        crate::codex_account::set_initial_binding(&mut proxy_record, Some("gamania")).unwrap();
+        fs::create_dir_all(crate::session_dir(&context, &proxy_record.id)).unwrap();
+        crate::write_session_record(&context, &proxy_record).unwrap();
+        crate::activity::activate_runtime(&context, &proxy_record).unwrap();
+        crate::codex_account::finish_binding(
+            &context,
+            &proxy_record.id,
+            &proxy_record.runtime.as_ref().unwrap().launch_id,
+            "gamania",
+            1,
+            Ok(()),
+        )
+        .unwrap();
+        bind_thread(&proxy_record, "managed-thread").unwrap();
+        let _capability = begin_proxy_capability(&context, &proxy_record).unwrap();
+        let record_lock = crate::acquire_session_record_lock(&context, &proxy_record.id).unwrap();
+        let current = crate::load_session_record(&context, &proxy_record.id).unwrap();
+        let marker = begin_manual_input_section(&context, &current)
+            .unwrap()
+            .expect("managed Codex input must publish sender authority");
+        drop(broker);
+        let mut bootstrap = FreshBootstrap::Closed;
+        let authorization = cancel_before_tui_mutation(
+            &context,
+            &proxy_record,
+            &mut bootstrap,
+            &json!({
+                "id": 10,
+                "method": "turn/start",
+                "params": { "threadId": "managed-thread", "input": [] }
+            }),
+        )
+        .await
+        .is_some();
+        marker.finish(|| drop(record_lock));
+
+        assert!(
+            authorization,
+            "valid managed-account input must be authorized"
+        );
+    }
+
+    #[tokio::test]
     async fn busy_manual_cancellation_rejects_only_the_turn_and_keeps_proxy_alive() {
         let tmp = tempfile::TempDir::new().unwrap();
         let upstream = tmp.path().join("busy.sock");
@@ -10315,6 +10431,10 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
         let rejected = receive_json(&mut tui).await;
         assert_eq!(rejected["id"], 1);
         assert_eq!(rejected["error"]["code"], -32001);
+        assert_eq!(
+            rejected["error"]["data"]["reason"],
+            "manual_cancellation_busy"
+        );
         drop(lock);
         tui.send(Message::Text(
             json!({ "id": 2, "method": "thread/read", "params": {} })

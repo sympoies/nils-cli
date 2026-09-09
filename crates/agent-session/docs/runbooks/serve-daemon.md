@@ -174,9 +174,21 @@ returns `409 session-incarnation-conflict` before provider dispatch.
 
 A resumed Codex TUI can remain visible while ordinary terminal submission is
 rejected by the local app-server proxy with JSON-RPC code `-32001` and
-`agent-session state is busy; retry the request`. Repeating Enter or replaying
-the same terminal bytes does not repair that control state and can make prompt
-delivery ambiguous.
+`agent-session state is busy; retry the request`. Current proxies preserve that
+stable code and message and add `error.data.reason`, a closed-vocabulary reason
+that contains no prompt, account, path, thread, session, or credential values.
+For example, `account_not_ready` means the proxy could not validate the durable
+binding for its exact runtime; `turn_gate_busy` and `turn_already_pending` mean
+serialization is still occupied; `manual_marker_*` reasons identify a stale or
+mismatched Agent Console sender authority. Repeating Enter or replaying the same
+terminal bytes does not repair that control state and can make prompt delivery
+ambiguous.
+
+A managed account that is already durably `bound` to the exact runtime remains
+valid inside a detached tmux scope even though that scope intentionally does
+not inherit the daemon's credential-broker command. The broker remains required
+for binding and account mutation; it is not required to re-authorize each TUI
+turn after the binding has been applied.
 
 The busy response alone does not prove that the continuation was rejected
 before provider delivery: the proxy can return the same response while an

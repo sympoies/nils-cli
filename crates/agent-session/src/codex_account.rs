@@ -491,11 +491,34 @@ pub(crate) fn ensure_input_allowed(record: &SessionRecord) -> Result<(), CliErro
     ensure_terminal_input_allowed(record)
 }
 
+/// Validate a TUI turn inside the already-running app-server proxy.
+///
+/// The daemon-owned broker is required to create or mutate a binding, but the
+/// detached tmux scope intentionally receives only an allowlisted runtime
+/// environment. Once a binding is durably `bound` to this exact runtime, the
+/// proxy can authorize input from that immutable evidence without inheriting
+/// the credential-broker command. A queued next-account intent still fences the
+/// next turn and is applied only by the daemon's control connection.
+pub(crate) fn ensure_proxy_input_allowed(record: &SessionRecord) -> Result<(), CliError> {
+    match decode_next(record) {
+        DecodedNext::Absent => {}
+        DecodedNext::Valid(_) | DecodedNext::Invalid => return Err(next_pending_error(record)),
+    }
+    ensure_applied_runtime_input_allowed(record, false)
+}
+
 /// Validate the account currently bound to the live runtime without treating a
 /// queued next-account intent as a reason to reject terminal input. The
 /// app-server proxy remains the structured boundary that fences `turn/start`;
 /// this lets an active turn continue to receive `turn/steer`.
 pub(crate) fn ensure_terminal_input_allowed(record: &SessionRecord) -> Result<(), CliError> {
+    ensure_applied_runtime_input_allowed(record, true)
+}
+
+fn ensure_applied_runtime_input_allowed(
+    record: &SessionRecord,
+    require_broker: bool,
+) -> Result<(), CliError> {
     let binding = match decode_binding(record) {
         DecodedBinding::Absent => return Ok(()),
         DecodedBinding::Invalid => return Err(not_bound_error(record, None)),
@@ -508,7 +531,7 @@ pub(crate) fn ensure_terminal_input_allowed(record: &SessionRecord) -> Result<()
         .unwrap_or_default();
     if binding.state == "bound"
         && binding.applied_runtime_id.as_deref() == Some(launch_id)
-        && broker_is_configured()
+        && (!require_broker || broker_is_configured())
         && crate::codex_app_server::runtime_is_supported(record)
     {
         return Ok(());
@@ -1591,6 +1614,43 @@ mod tests {
                 .unwrap_err()
                 .code(),
             "codex-account-not-bound"
+        );
+    }
+
+    #[test]
+    fn proxy_input_uses_exact_applied_binding_without_broker_mutation_authority() {
+        let lock = GlobalStateLock::new();
+        let _broker = EnvGuard::set(&lock, BROKER_ENV, "");
+        let record = record_with_binding_value(valid_binding("bound"));
+
+        assert!(ensure_proxy_input_allowed(&record).is_ok());
+        assert_eq!(
+            ensure_input_allowed(&record).unwrap_err().code(),
+            "codex-account-not-bound"
+        );
+
+        let mut replaced = record.clone();
+        replaced.runtime.as_mut().unwrap().launch_id = "replacement-runtime".to_string();
+        assert_eq!(
+            ensure_proxy_input_allowed(&replaced).unwrap_err().code(),
+            "codex-account-not-bound"
+        );
+
+        let mut queued = record;
+        queued.extra.insert(
+            NEXT_KEY.to_string(),
+            json!({
+                "schema_version": NEXT_SCHEMA_VERSION,
+                "account": "sym",
+                "revision": 8,
+                "intent_id": "intent-queued",
+                "state": "queued",
+                "updated_at": "2030-01-01T00:00:01Z"
+            }),
+        );
+        assert_eq!(
+            ensure_proxy_input_allowed(&queued).unwrap_err().code(),
+            "codex-account-next-pending"
         );
     }
 
