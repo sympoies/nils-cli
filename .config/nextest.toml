@@ -11,9 +11,10 @@
 # full-workspace parallelism; without retries a single such flake spuriously
 # reds the `test` / `test_macos` gate and blocks merge.
 #
-# A retried pass is recorded as `<flakyFailure>` in `junit.xml` and printed as
-# `FLAKY n/m` in the job log, but the published JUnit check does not surface it
-# while `flaky_summary` stays at its default, so a masked flake is easy to miss.
+# A retried pass is recorded as `<flakyFailure>` in `junit.xml`, printed as
+# `FLAKY n/m` in the job log, and listed in the published JUnit check summary,
+# which sets `flaky_summary: true`. A masked flake is therefore visible in the
+# check people read, not only in the raw log or the uploaded artifact.
 #
 # This is mitigation. Root-causing the masked flakes and lowering `retries` is
 # tracked in #1524 (the follow-up #934 planned but did not open).
