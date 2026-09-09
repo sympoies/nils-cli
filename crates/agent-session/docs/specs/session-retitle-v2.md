@@ -92,6 +92,11 @@ provider turn ID, credential, command, or private path. Duration buckets are
 `under_10_ms`, `10_49_ms`, `50_249_ms`, `250_999_ms`, `1_4_s`, `5_29_s`,
 `30_119_s`, and `120_s_plus`.
 
+Successful duration is sampled after the fenced title mutation has completed
+its durable session-record write. The terminal observation is then persisted
+under the same record lock and is returned or logged only after that second
+write succeeds, so a storage failure cannot be projected as durable success.
+
 The daemon schedules the newest provider-confirmed current turn. If its prompt
 observation races transcript persistence, the matching completion can schedule
 one `completion_recovery` attempt. The deterministic key includes session

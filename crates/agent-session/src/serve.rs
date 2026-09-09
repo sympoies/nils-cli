@@ -10351,6 +10351,145 @@ mod tests {
         assert_eq!(stored["attempts"][0]["stage"], "admission");
     }
 
+    #[test]
+    fn retitle_success_duration_includes_the_durable_commit_write() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        seed_session_with_runtime(
+            tmp.path(),
+            "retitle-commit-duration",
+            "codex",
+            "hs-retitle-commit-duration",
+        );
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        let request = crate::retitle::RetitleRequest {
+            schema_version: crate::retitle::REQUEST_SCHEMA.into(),
+            trigger: crate::retitle::RetitleTrigger::Manual,
+            idempotency_key: "manual-commit-duration".into(),
+            expected_session_incarnation: "launch-retitle-commit-duration".into(),
+            expected_title_revision: 0,
+            expected_activity_revision: None,
+            expected_provider_turn_id: None,
+        };
+        assert!(matches!(
+            crate::retitle::admit(&context, "retitle-commit-duration", &request).unwrap(),
+            crate::retitle::Admission::Evaluate(_)
+        ));
+        let desired: SessionTitleState = serde_json::from_value(json!({
+            "topic": "Durable commit timing",
+            "topic_source": "auto",
+            "references": [],
+            "activity": null
+        }))
+        .unwrap();
+        let started = Instant::now();
+        crate::delay_next_session_record_write(Duration::from_millis(275));
+
+        let committed = crate::retitle::commit(
+            &context,
+            "retitle-commit-duration",
+            &request,
+            desired,
+            &crate::retitle::CoverageView {
+                source: "provider_transcript",
+                complete: true,
+                truncated: false,
+                turn_count: 1,
+            },
+            "command",
+            &crate::retitle::RetitleAttemptEvidence {
+                context: None,
+                providers: Vec::new(),
+                elapsed: Duration::ZERO,
+                started: Some(started),
+            },
+        )
+        .unwrap();
+
+        let observation = serde_json::to_value(committed.observation.unwrap()).unwrap();
+        assert_eq!(observation["attempts"][0]["duration_bucket"], "250_999_ms");
+        let stored = crate::load_session_record(&context, "retitle-commit-duration").unwrap();
+        assert_eq!(
+            serde_json::to_value(crate::retitle::latest_attempt_observation(&stored).unwrap())
+                .unwrap(),
+            observation
+        );
+    }
+
+    #[test]
+    fn retitle_terminal_success_is_not_returned_when_observation_persistence_fails() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        seed_session_with_runtime(
+            tmp.path(),
+            "retitle-terminal-write-failure",
+            "codex",
+            "hs-retitle-terminal-write-failure",
+        );
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        let request = crate::retitle::RetitleRequest {
+            schema_version: crate::retitle::REQUEST_SCHEMA.into(),
+            trigger: crate::retitle::RetitleTrigger::Manual,
+            idempotency_key: "manual-terminal-write-failure".into(),
+            expected_session_incarnation: "launch-retitle-terminal-write-failure".into(),
+            expected_title_revision: 0,
+            expected_activity_revision: None,
+            expected_provider_turn_id: None,
+        };
+        assert!(matches!(
+            crate::retitle::admit(&context, "retitle-terminal-write-failure", &request).unwrap(),
+            crate::retitle::Admission::Evaluate(_)
+        ));
+        let desired: SessionTitleState = serde_json::from_value(json!({
+            "topic": "Terminal write failure",
+            "topic_source": "auto",
+            "references": [],
+            "activity": null
+        }))
+        .unwrap();
+        crate::fail_session_record_write_on_nth_call(2);
+
+        let result = crate::retitle::commit(
+            &context,
+            "retitle-terminal-write-failure",
+            &request,
+            desired,
+            &crate::retitle::CoverageView {
+                source: "provider_transcript",
+                complete: true,
+                truncated: false,
+                turn_count: 1,
+            },
+            "command",
+            &crate::retitle::RetitleAttemptEvidence {
+                context: None,
+                providers: Vec::new(),
+                elapsed: Duration::ZERO,
+                started: Some(Instant::now()),
+            },
+        );
+
+        assert!(result.is_err());
+        let stored =
+            crate::load_session_record(&context, "retitle-terminal-write-failure").unwrap();
+        assert_eq!(stored.title.as_deref(), Some("Terminal write failure"));
+        assert!(crate::retitle::latest_attempt_observation(&stored).is_none());
+        let stored = serde_json::to_value(stored).unwrap();
+        assert_eq!(
+            stored["session_retitle_v2"]["receipts"][0]["state"],
+            "complete"
+        );
+        assert!(
+            stored["session_retitle_v2"]["receipts"][0]
+                .get("observation")
+                .is_none()
+        );
+    }
+
     #[tokio::test]
     async fn stale_manual_retitle_fails_before_primary_or_fallback_invocation() {
         let lock = GlobalStateLock::new();

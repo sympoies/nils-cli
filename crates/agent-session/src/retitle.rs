@@ -2765,14 +2765,18 @@ pub(crate) fn commit(
     let state = state.expect("structured state");
     let key_hash = hash_identity(&request.idempotency_key);
     let request_digest = request_hash(request);
-    let (record, changed, observation) =
-        crate::mutate_session_record_for_title(context, id, None, None, |record| {
+    let (record, changed, observation) = crate::mutate_session_record_for_title_after_persist(
+        context,
+        id,
+        None,
+        None,
+        |record| {
             validate_fences(context, record, request)?;
             let mut durable = durable_state(record);
-            let receipt = durable
+            let receipt_index = durable
                 .receipts
-                .iter_mut()
-                .find(|receipt| {
+                .iter()
+                .position(|receipt| {
                     receipt.key_hash == key_hash && receipt.request_hash == request_digest
                 })
                 .ok_or_else(|| {
@@ -2784,6 +2788,7 @@ pub(crate) fn commit(
                         "refresh_session",
                     )
                 })?;
+            let receipt = &mut durable.receipts[receipt_index];
             if receipt.state != "in_progress" {
                 return Err(retitle_error(
                     "retitle-state-conflict",
@@ -2808,14 +2813,56 @@ pub(crate) fn commit(
                 })?;
                 record.updated_at = jiff::Timestamp::now().to_string();
             }
-            receipt.state = "complete".to_string();
-            receipt.diagnostic_code = if changed { "committed" } else { "no_change" }.to_string();
             receipt.provider_kind = Some(provider_kind.to_string());
             receipt.coverage_complete = coverage.complete;
             receipt.coverage_truncated = coverage.truncated;
             receipt.coverage_turn_count = coverage.turn_count;
+            receipt.state = "complete".to_string();
+            receipt.diagnostic_code = if changed { "committed" } else { "no_change" }.to_string();
+            let observation = receipt.observation.take();
+            if request.trigger.is_automatic() {
+                durable.last_processed_turn_hash = request
+                    .expected_provider_turn_id
+                    .as_deref()
+                    .map(hash_identity);
+                durable.last_processed_provider_kind = Some(provider_kind.to_string());
+                durable.last_coverage_complete = coverage.complete;
+                durable.last_coverage_truncated = coverage.truncated;
+                durable.last_coverage_turn_count = coverage.turn_count;
+                durable.receipts[receipt_index].processed_turn_hash =
+                    durable.last_processed_turn_hash.clone();
+            }
+            store_durable_state(record, durable);
+            Ok((changed, observation))
+        },
+        |record, (changed, mut observation)| {
+            let mut durable = durable_state(record);
+            let receipt = durable
+                .receipts
+                .iter_mut()
+                .find(|receipt| {
+                    receipt.key_hash == key_hash && receipt.request_hash == request_digest
+                })
+                .ok_or_else(|| {
+                    retitle_error(
+                        "retitle-state-conflict",
+                        "retitle admission state is unavailable",
+                        false,
+                        "refresh_session",
+                        "refresh_session",
+                    )
+                })?;
+            if receipt.state != "complete" || receipt.observation.is_some() {
+                return Err(retitle_error(
+                    "retitle-state-conflict",
+                    "retitle admission state changed before completion",
+                    false,
+                    "refresh_session",
+                    "refresh_session",
+                ));
+            }
             let diagnostic_code = if changed { "committed" } else { "no_change" };
-            if let Some(observation) = receipt.observation.as_mut() {
+            if let Some(observation) = observation.as_mut() {
                 finish_attempt_observation(
                     observation,
                     evidence,
@@ -2827,21 +2874,11 @@ pub(crate) fn commit(
                     },
                 );
             }
-            let observation = receipt.observation.clone();
-            if request.trigger.is_automatic() {
-                durable.last_processed_turn_hash = request
-                    .expected_provider_turn_id
-                    .as_deref()
-                    .map(hash_identity);
-                durable.last_processed_provider_kind = Some(provider_kind.to_string());
-                durable.last_coverage_complete = coverage.complete;
-                durable.last_coverage_truncated = coverage.truncated;
-                durable.last_coverage_turn_count = coverage.turn_count;
-                receipt.processed_turn_hash = durable.last_processed_turn_hash.clone();
-            }
+            receipt.observation = observation.clone();
             store_durable_state(record, durable);
             Ok((record.clone(), changed, observation))
-        })?;
+        },
+    )?;
     Ok(CommitResult {
         record,
         changed,
