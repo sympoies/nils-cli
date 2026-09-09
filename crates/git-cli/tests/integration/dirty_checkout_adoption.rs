@@ -125,7 +125,13 @@ fn assert_help_contract(args: &[&str], expected_usage: &str) -> String {
 
     let output = harness.run(repo.path(), args);
 
-    assert_eq!(output.code, 0, "stderr: {}", output.stderr_text());
+    assert_eq!(
+        output.code,
+        0,
+        "stdout: {}\nstderr: {}",
+        output.stdout_text(),
+        output.stderr_text()
+    );
     assert_eq!(output.stderr_text(), "");
     let stdout = output.stdout_text();
     assert!(
@@ -325,7 +331,8 @@ fn real_cli_worker_lifecycle_supports_a_non_utf8_checkout_root() {
     assert_eq!(
         snapshot_output.code,
         0,
-        "stderr: {}",
+        "stdout: {}\nstderr: {}",
+        snapshot_output.stdout_text(),
         snapshot_output.stderr_text()
     );
     let snapshot_json: serde_json::Value =
@@ -378,7 +385,13 @@ fn real_cli_worker_lifecycle_supports_a_non_utf8_checkout_root() {
             "--format=json",
         ],
     );
-    assert_eq!(adopted.code, 0, "stderr: {}", adopted.stderr_text());
+    assert_eq!(
+        adopted.code,
+        0,
+        "stdout: {}\nstderr: {}",
+        adopted.stdout_text(),
+        adopted.stderr_text()
+    );
     let adopted_json: serde_json::Value =
         serde_json::from_str(adopted.stdout_text().trim()).expect("CLI adoption JSON");
     let receipt_id = adopted_json["data"]["receipt_id"]
@@ -407,7 +420,13 @@ fn real_cli_worker_lifecycle_supports_a_non_utf8_checkout_root() {
             "--format=json",
         ],
     );
-    assert_eq!(revoked.code, 0, "stderr: {}", revoked.stderr_text());
+    assert_eq!(
+        revoked.code,
+        0,
+        "stdout: {}\nstderr: {}",
+        revoked.stdout_text(),
+        revoked.stderr_text()
+    );
     assert_eq!(
         git(
             &checkout,
@@ -497,7 +516,13 @@ fn snapshot_cli_does_not_resolve_git_from_an_injected_path_entry() {
         &options,
     );
 
-    assert_eq!(output.code, 0, "stderr: {}", output.stderr_text());
+    assert_eq!(
+        output.code,
+        0,
+        "stdout: {}\nstderr: {}",
+        output.stdout_text(),
+        output.stderr_text()
+    );
     assert!(
         !marker.exists(),
         "snapshot executed a PATH-injected Git binary"
@@ -1384,7 +1409,13 @@ fn governed_cli_enforces_gate_and_returns_private_json_contracts() {
             "--format=json",
         ],
     );
-    assert_eq!(adopted.code, 0, "stderr: {}", adopted.stderr_text());
+    assert_eq!(
+        adopted.code,
+        0,
+        "stdout: {}\nstderr: {}",
+        adopted.stdout_text(),
+        adopted.stderr_text()
+    );
     assert_eq!(adopted.stderr_text(), "");
     let adopted_text = adopted.stdout_text();
     assert!(!adopted_text.contains(CHALLENGE_TOKEN));
@@ -1429,7 +1460,13 @@ fn governed_cli_enforces_gate_and_returns_private_json_contracts() {
             "--format=json",
         ],
     );
-    assert_eq!(revoked.code, 0, "stderr: {}", revoked.stderr_text());
+    assert_eq!(
+        revoked.code,
+        0,
+        "stdout: {}\nstderr: {}",
+        revoked.stdout_text(),
+        revoked.stderr_text()
+    );
     let revoked_json: serde_json::Value =
         serde_json::from_str(revoked.stdout_text().trim()).expect("revocation JSON envelope");
     assert_exact_json_keys(
@@ -1465,7 +1502,13 @@ fn dirty_snapshot_json_omits_raw_checkout_paths() {
         &["worktree", "dirty-snapshot", "--format=json"],
     );
 
-    assert_eq!(output.code, 0, "stderr: {}", output.stderr_text());
+    assert_eq!(
+        output.code,
+        0,
+        "stdout: {}\nstderr: {}",
+        output.stdout_text(),
+        output.stderr_text()
+    );
     let text = output.stdout_text();
     assert!(!text.contains(&repo.path().to_string_lossy().to_string()));
     let value: serde_json::Value =
