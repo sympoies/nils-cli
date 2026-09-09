@@ -1461,12 +1461,16 @@ fn provider_attempt_observation(
 
 fn observable_model_label(label: &str) -> bool {
     let lower = label.to_ascii_lowercase();
-    !lower.starts_with("sk-")
-        && !lower.starts_with("bearer")
-        && !lower.contains("api_key")
-        && !lower.contains("apikey")
-        && !lower.contains("password")
-        && !lower.contains("token=")
+    !label.is_empty()
+        && label.len() <= 128
+        && label
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':'))
+        && ![
+            "sk-", "bearer", "api_key", "apikey", "password", "token", "secret",
+        ]
+        .iter()
+        .any(|forbidden| lower.contains(forbidden))
 }
 
 fn provider_outcome(code: &str) -> &str {
@@ -2240,7 +2244,13 @@ pub(crate) fn request_hash(request: &RetitleRequest) -> String {
 
 pub(crate) enum Admission {
     Evaluate(SessionRecord),
-    Replay(SessionRecord, &'static str, CoverageView, Option<String>),
+    Replay(
+        SessionRecord,
+        &'static str,
+        CoverageView,
+        Option<String>,
+        Option<RetitleAttemptObservation>,
+    ),
 }
 
 pub(crate) fn is_retryable_automatic_error_code(code: &str) -> bool {
@@ -2316,6 +2326,7 @@ pub(crate) fn admit(
             ));
         }
         if receipt.state == "complete" {
+            let observation = receipt.observation.clone();
             return Ok(Admission::Replay(
                 record,
                 "idempotency_replay",
@@ -2326,6 +2337,7 @@ pub(crate) fn admit(
                     turn_count: receipt.coverage_turn_count,
                 },
                 normalized_provider_kind(receipt.provider_kind.as_deref()),
+                observation,
             ));
         }
         if automatic_failed_receipt_can_retry(receipt, request.trigger) {
@@ -2365,6 +2377,10 @@ pub(crate) fn admit(
                 turn_count: state.last_coverage_turn_count,
             },
             normalized_provider_kind(state.last_processed_provider_kind.as_deref()),
+            state
+                .receipts
+                .last()
+                .and_then(|receipt| receipt.observation.clone()),
         ));
     }
     validate_fences(context, &record, request)?;

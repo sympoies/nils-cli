@@ -1965,7 +1965,7 @@ mod tests {
             file_len,
             None,
             100,
-            Instant::now() + MESSAGE_SCAN_MAX_DURATION,
+            Instant::now() + Duration::from_secs(60),
         )
         .unwrap();
 
@@ -1974,7 +1974,10 @@ mod tests {
             "v2 scans a byte-bounded event-dense tail and loses the intermediate semantic turn"
         );
         assert!(page.older_cursor.is_some());
-        assert!(reader.bytes_read <= REVERSE_MESSAGE_MAX_BYTES as usize);
+        assert!(reader.bytes_read >= REVERSE_MESSAGE_MAX_BYTES as usize);
+        assert!(
+            reader.bytes_read <= REVERSE_MESSAGE_MAX_BYTES as usize + REVERSE_MESSAGE_CHUNK_BYTES
+        );
     }
 
     #[test]

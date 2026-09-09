@@ -3247,21 +3247,25 @@ async fn execute_retitle(
         diagnostic_code,
         coverage,
         replayed_provider_kind,
+        replayed_observation,
     ) = admission
     {
         return Ok(retitle_projection(
             &record,
             &request,
-            replayed_provider_kind.as_deref().unwrap_or_else(|| {
-                state
-                    .retitle
-                    .configured_provider_kind()
-                    .unwrap_or("command")
-            }),
-            "replayed",
-            false,
-            diagnostic_code,
-            coverage,
+            RetitleResponseProjection {
+                provider_kind: replayed_provider_kind.as_deref().unwrap_or_else(|| {
+                    state
+                        .retitle
+                        .configured_provider_kind()
+                        .unwrap_or("command")
+                }),
+                outcome: "replayed",
+                changed: false,
+                diagnostic_code,
+                coverage,
+                attempt: replayed_observation.as_ref(),
+            },
         ));
     }
     let crate::retitle::Admission::Evaluate(observed) = admission else {
@@ -3421,19 +3425,22 @@ async fn execute_retitle_evaluation(
     Ok(retitle_projection(
         &committed.record,
         request,
-        provider_kind,
-        if committed.changed {
-            "committed"
-        } else {
-            "unchanged"
+        RetitleResponseProjection {
+            provider_kind,
+            outcome: if committed.changed {
+                "committed"
+            } else {
+                "unchanged"
+            },
+            changed: committed.changed,
+            diagnostic_code: if committed.changed {
+                "committed"
+            } else {
+                "no_change"
+            },
+            coverage,
+            attempt: committed.observation.as_ref(),
         },
-        committed.changed,
-        if committed.changed {
-            "committed"
-        } else {
-            "no_change"
-        },
-        coverage,
     ))
 }
 
@@ -3655,25 +3662,30 @@ fn retitle_observation_log(observation: &crate::retitle::RetitleAttemptObservati
     })
 }
 
-fn retitle_projection(
-    record: &SessionRecord,
-    request: &crate::retitle::RetitleRequest,
-    provider_kind: &str,
+struct RetitleResponseProjection<'a> {
+    provider_kind: &'a str,
     outcome: &'static str,
     changed: bool,
     diagnostic_code: &'static str,
     coverage: crate::retitle::CoverageView,
+    attempt: Option<&'a crate::retitle::RetitleAttemptObservation>,
+}
+
+fn retitle_projection(
+    record: &SessionRecord,
+    request: &crate::retitle::RetitleRequest,
+    projection: RetitleResponseProjection<'_>,
 ) -> Value {
     json!({
         "schema_version": crate::retitle::RESPONSE_SCHEMA,
-        "outcome": outcome,
-        "changed": changed,
+        "outcome": projection.outcome,
+        "changed": projection.changed,
         "trigger": request.trigger,
-        "provider_kind": provider_kind,
+        "provider_kind": projection.provider_kind,
         "processed_turn_id_hash": request.expected_provider_turn_id.as_deref().map(crate::retitle::hash_identity),
-        "diagnostic_code": diagnostic_code,
-        "coverage": coverage,
-        "attempt": crate::retitle::latest_attempt_observation(record),
+        "diagnostic_code": projection.diagnostic_code,
+        "coverage": projection.coverage,
+        "attempt": projection.attempt,
         "session": {
             "title": record.title,
             "title_state": crate::effective_session_title_state(record),
@@ -9934,8 +9946,38 @@ mod tests {
         assert_eq!(status, StatusCode::CONFLICT, "body={conflict}");
         assert_eq!(conflict["error"]["code"], "idempotency-key-reused");
 
+        let first_attempt = committed["data"]["retitle"]["attempt"].clone();
+        let (status, second) = call(
+            app.clone(),
+            post_json(
+                "/sessions/retitle/retitle",
+                Some(TOKEN),
+                json!({
+                    "schema_version":"agent-session.session-retitle.request.v2",
+                    "trigger":"manual",
+                    "idempotency_key":"manual-retitle-0002",
+                    "expected_session_incarnation":"launch-retitle",
+                    "expected_title_revision":1
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body={second}");
+        assert_eq!(second["data"]["retitle"]["outcome"], "unchanged");
+        assert_ne!(second["data"]["retitle"]["attempt"], first_attempt);
+        assert_eq!(std::fs::read_to_string(&provider_calls).unwrap(), "xx");
+
+        let (status, listed) = call(app.clone(), get_auth("/sessions", Some(TOKEN))).await;
+        assert_eq!(status, StatusCode::OK, "body={listed}");
+        assert_eq!(
+            listed["data"]["sessions"][0]["retitle_attempt"],
+            second["data"]["retitle"]["attempt"]
+        );
+
         // An identical retry replays the committed receipt even though its
-        // original title fence is now behind the committed revision.
+        // original title fence is now behind the committed revision. Its
+        // attempt telemetry must come from the matched receipt, not the newer
+        // receipt projected by the session list.
         let restarted_app = router(state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path())));
         let (status, replayed) = call(
             restarted_app,
@@ -9959,6 +10001,11 @@ mod tests {
             replayed["data"]["retitle"]["diagnostic_code"],
             "idempotency_replay"
         );
+        assert_eq!(replayed["data"]["retitle"]["attempt"], first_attempt);
+        assert_ne!(
+            replayed["data"]["retitle"]["attempt"],
+            second["data"]["retitle"]["attempt"]
+        );
     }
 
     #[tokio::test]
@@ -9967,6 +10014,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().expect("tempdir");
         let config = json!({
             "provider":"command",
+            "model":"model sk-secret-canary",
             "argv":[
                 "/bin/sh",
                 "-c",
@@ -10052,6 +10100,7 @@ mod tests {
             "provider output canary",
             "/private/session/path",
             "sk-secret-canary",
+            "model sk-secret-canary",
             "manual-observation-failure",
         ] {
             assert!(!rendered.contains(forbidden));
@@ -10075,6 +10124,7 @@ mod tests {
             "provider output canary",
             "/private/session/path",
             "sk-secret-canary",
+            "model sk-secret-canary",
         ] {
             assert!(!log.to_string().contains(forbidden));
         }
