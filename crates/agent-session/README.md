@@ -42,6 +42,8 @@ agent-session list
 agent-session glance <id> --tail 40
 agent-session send <id> --text yes --key enter
 agent-session send <id> --key c-c
+agent-session send <id> --key down --key enter   # answer a dialog while blocked
+agent-session send <id> --text "custom answer" --allow-blocked
 agent-session resume <id>
 agent-session activity status <id> --format json
 agent-session activity doctor --format json
@@ -396,6 +398,15 @@ can diagnose and migrate older installations. Existing `activity hook` and
 `activity notify` ingestion paths
 also remain as fail-open runtime compatibility while `agent-hook` becomes the
 single provider-registration owner.
+
+Turn state also gates input. While a session is `needs_input` its pane belongs
+to a provider approval or question dialog, not to a prompt box, so `send`
+refuses input carrying literal text with `agent-blocked` before anything reaches
+the terminal, and `prompt` refuses outright. Special keys stay admitted — that
+is how the dialog gets answered — and `send --allow-blocked` is the deliberate
+opt-in for typing into the dialog's own field. See the
+[serve API contract](docs/specs/serve-api-v1.md) for the exact codes and
+details.
 
 Use the [turn-state contract](docs/turn-state-contract.md) for persistence,
 privacy, registration ownership, setup, repair, migration, and provider

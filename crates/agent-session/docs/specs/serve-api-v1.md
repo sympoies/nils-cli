@@ -599,6 +599,22 @@ recorded in `sympoies/nils-cli#1409`.
   allocation from the request. Every accepted name resolves to one of the nine
   canonical `SpecialKey` values, so the bound is far above any real caller. An
   unknown name still fails the whole request with `400 invalid-key`.
+- Blocked-input contract. While a session's turn phase is `needs_input` — reached
+  only through a provider `attention_requested` event, never a terminal
+  heuristic — the pane belongs to an approval or question dialog rather than to a
+  prompt box. `POST /sessions/{id}/send` therefore refuses a request that carries
+  literal `text` with `409 agent-blocked` and a `{ id, phase, remedy }` detail,
+  before anything reaches the terminal. Keys are always admitted, including the
+  `enter` that confirms a highlighted choice, because answering the dialog is
+  what a blocked session is still addressable for; `text` that is only a newline
+  is delivered as that Enter keypress and is likewise admitted. A caller that
+  deliberately means to type into the dialog's own field sets
+  `allow_blocked: true` (CLI: `--allow-blocked`).
+  `POST /sessions/{id}/prompt` and `/prompt/v2` are prompts by definition and
+  refuse unconditionally under the same code with no opt-in; a caller that needs
+  to type into the dialog uses `send` with `allow_blocked`. Coordination
+  notifications never reach this refusal: their dispatcher already requires a
+  `waiting` recipient before it builds a prompt.
 - Attachment upload uses a raw binary request body (not multipart). The daemon
   streams it into a private same-directory temporary file, enforces the declared
   and observed byte ceiling, syncs it, and publishes it without replacing an

@@ -2149,7 +2149,8 @@ fn envelope_err(err: CliError) -> Response {
         | "retitle-v3-history-stale"
         | "retitle-v3-idempotency-conflict"
         | "codex-account-session-incarnation-conflict"
-        | "codex-account-session-busy" => StatusCode::CONFLICT,
+        | "codex-account-session-busy"
+        | "agent-blocked" => StatusCode::CONFLICT,
         "retitle-v3-memory-not-ready" => StatusCode::UNPROCESSABLE_ENTITY,
         "retitle-v3-history-unavailable" | "retitle-v3-history-degraded" => {
             StatusCode::SERVICE_UNAVAILABLE
@@ -2974,6 +2975,10 @@ struct SendBody {
     text: Option<String>,
     #[serde(default)]
     keys: Vec<String>,
+    /// Opt in to typing literal text while the agent is blocked on an approval
+    /// or question. Keys are always admitted, so answering never needs this.
+    #[serde(default)]
+    allow_blocked: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -6201,6 +6206,7 @@ async fn send_handler(
         text: body.text,
         text_stdin: false,
         keys,
+        allow_blocked: body.allow_blocked,
         tmux_bin: Some(state.tmux_bin.clone()),
         format: nils_common::cli_contract::OutputFormat::Json,
     };
@@ -6306,6 +6312,20 @@ async fn submit_structured_prompt_handler_with_fence(
             Ok(record) => record,
             Err(response) => return response,
         };
+    // A structured prompt is a prompt by definition, so it always carries the
+    // hazard `send` only carries when it types text: submitted into a pane that
+    // is showing an approval dialog, it answers that dialog instead. There is
+    // no opt-in here on purpose — a caller that means to type into the dialog
+    // wants `send --allow-blocked`, which addresses the terminal directly.
+    // Coordination notifications never reach this: their dispatcher requires
+    // `Waiting` before it builds a prompt at all.
+    if let Err(err) = crate::activity::refuse_blocked_literal_input(
+        &state.context,
+        &record,
+        "answer the dialog through send with --key, then resubmit the prompt",
+    ) {
+        return envelope_err(err);
+    }
     let Some(launch_id) = record
         .runtime
         .as_ref()
@@ -20050,6 +20070,180 @@ esac
                 .map(Vec::len)
                 .unwrap_or_default(),
             MAX_SEND_KEYS
+        );
+    }
+
+    /// `minimal_tmux` plus an invocation journal. A blocked-input refusal is
+    /// only worth anything if it happens *before* the daemon writes to the live
+    /// pane, so these tests assert the absence of a terminal write rather than
+    /// trusting the response code alone.
+    fn recording_tmux(dir: &Path) -> (PathBuf, PathBuf) {
+        let bin = dir.join("recording-tmux");
+        let journal = dir.join("tmux-invocations");
+        let pane_stub = live_pane_stub_prelude(dir);
+        std::fs::write(
+            &bin,
+            format!(
+                "#!/usr/bin/env sh\n{pane_stub}\nprintf '%s\\n' \"$1\" >> '{journal}'\ncase \"$1\" in\n  has-session) exit 0 ;;\n  capture-pane) printf 'pane\\n'; exit 0 ;;\n  show-buffer) printf 'buffered selection\\n'; exit 0 ;;\n  *) exit 0 ;;\nesac\n",
+                journal = journal.display()
+            ),
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&bin).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&bin, perms).unwrap();
+        (bin, journal)
+    }
+
+    fn tmux_wrote_to_the_pane(journal: &Path) -> bool {
+        let Ok(log) = std::fs::read_to_string(journal) else {
+            return false;
+        };
+        log.lines()
+            .any(|verb| matches!(verb, "send-keys" | "load-buffer" | "paste-buffer"))
+    }
+
+    /// Drive a seeded session into `NeedsInput` the only way the daemon ever
+    /// reaches it: a provider `attention_requested` lifecycle event.
+    fn block_on_provider_attention(state: &Arc<ServeState>, id: &str) {
+        let record = load_session_record(&state.context, id).unwrap();
+        crate::activity::activate_runtime(&state.context, &record).unwrap();
+        let event = serde_json::from_value(json!({
+            "schema_version": crate::activity::TURN_EVENT_VERSION,
+            "event_id": format!("{id}-attention"),
+            "runtime_id": format!("launch-{id}"),
+            "provider": "codex",
+            "kind": "attention_requested",
+            "confidence": "authoritative",
+            "attention_id": format!("{id}-approval"),
+            "attention_kind": "approval"
+        }))
+        .expect("attention event");
+        crate::activity::ingest_event(&state.context, id, event).expect("ingest attention");
+        let phase = crate::activity::activity_status(&state.context, id)
+            .expect("activity status")
+            .turn_state
+            .phase;
+        assert_eq!(
+            phase,
+            crate::activity::TurnPhase::NeedsInput,
+            "fixture must actually be blocked"
+        );
+    }
+
+    /// Typing literal text into a pane that is showing an approval or question
+    /// dialog is the exact hazard this contract exists to stop: the characters
+    /// land in the dialog, not in a prompt box. Refuse before touching the pane
+    /// and tell the caller what to do instead.
+    #[tokio::test]
+    async fn send_refuses_literal_text_while_the_agent_is_blocked() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (tmux, journal) = recording_tmux(tmp.path());
+        seed_session_with_runtime(tmp.path(), "blocked", "codex", "hs-codex-blocked");
+        let st = state(tmp.path(), Some(TOKEN), tmux);
+        block_on_provider_attention(&st, "blocked");
+
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(
+                "/sessions/blocked/send",
+                Some(TOKEN),
+                json!({ "text": "run the migration", "keys": ["enter"] }),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::CONFLICT, "body={body}");
+        assert_eq!(body["error"]["code"], "agent-blocked");
+        assert_eq!(body["error"]["details"]["phase"], "needs_input");
+        assert!(
+            !tmux_wrote_to_the_pane(&journal),
+            "a refused send must not reach the pane"
+        );
+    }
+
+    /// Answering the dialog is the whole point of leaving the session usable
+    /// while it is blocked, and answering means special keys — including the
+    /// Enter that confirms a highlighted choice. Those must stay admitted.
+    #[tokio::test]
+    async fn send_admits_special_keys_while_the_agent_is_blocked() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (tmux, journal) = recording_tmux(tmp.path());
+        seed_session_with_runtime(tmp.path(), "blocked", "codex", "hs-codex-blocked");
+        let st = state(tmp.path(), Some(TOKEN), tmux);
+        block_on_provider_attention(&st, "blocked");
+
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(
+                "/sessions/blocked/send",
+                Some(TOKEN),
+                json!({ "keys": ["down", "enter"] }),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(body["data"]["sent"]["sent_text"], false);
+        assert!(
+            tmux_wrote_to_the_pane(&journal),
+            "answering the dialog must still reach the pane"
+        );
+    }
+
+    /// A caller that genuinely means to type into the dialog's own text field
+    /// keeps an explicit opt-in. The guard is a default, not a wall.
+    #[tokio::test]
+    async fn send_admits_literal_text_while_blocked_when_the_caller_opts_in() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (tmux, journal) = recording_tmux(tmp.path());
+        seed_session_with_runtime(tmp.path(), "blocked", "codex", "hs-codex-blocked");
+        let st = state(tmp.path(), Some(TOKEN), tmux);
+        block_on_provider_attention(&st, "blocked");
+
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(
+                "/sessions/blocked/send",
+                Some(TOKEN),
+                json!({ "text": "custom answer", "allow_blocked": true }),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(body["data"]["sent"]["sent_text"], true);
+        assert!(
+            tmux_wrote_to_the_pane(&journal),
+            "an opted-in send must still reach the pane"
+        );
+    }
+
+    /// A structured prompt is a prompt by definition, so it carries the hazard
+    /// unconditionally and is refused whatever keys would have accompanied it.
+    #[tokio::test]
+    async fn structured_prompt_refuses_while_the_agent_is_blocked() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (tmux, journal) = recording_tmux(tmp.path());
+        seed_session_with_runtime(tmp.path(), "blocked", "codex", "hs-codex-blocked");
+        let st = state(tmp.path(), Some(TOKEN), tmux);
+        block_on_provider_attention(&st, "blocked");
+
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(
+                "/sessions/blocked/prompt",
+                Some(TOKEN),
+                json!({ "text": "please continue" }),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::CONFLICT, "body={body}");
+        assert_eq!(body["error"]["code"], "agent-blocked");
+        assert!(
+            !tmux_wrote_to_the_pane(&journal),
+            "a refused prompt must not reach the pane"
         );
     }
 

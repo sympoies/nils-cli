@@ -1831,6 +1831,45 @@ fn replay_matches_document(dir: &Path, document: &ActivityDocument) -> bool {
     .is_ok()
 }
 
+/// Refuse literal input while a provider-raised approval or question dialog
+/// owns the pane.
+///
+/// A blocked session's pane is not a prompt box. Characters typed into it land
+/// in the dialog, where a highlighted option is one keystroke from being
+/// chosen, so delivering an automated caller's text there can approve something
+/// nobody agreed to. `NeedsInput` is only ever reached through a provider
+/// `attention_requested` lifecycle event, never a terminal heuristic, so
+/// refusing on it is a decision about observed provider state rather than a
+/// guess about pixels.
+///
+/// Special keys stay admitted on purpose: answering the dialog is the reason a
+/// blocked session remains addressable at all, and an answer is exactly an
+/// `escape`, an arrow, or the `enter` that confirms a highlighted choice.
+pub(crate) fn refuse_blocked_literal_input(
+    context: &CliContext,
+    record: &SessionRecord,
+    remedy: &str,
+) -> Result<(), CliError> {
+    let Some(turn) = state_for_view(context, record) else {
+        return Ok(());
+    };
+    if turn.phase != TurnPhase::NeedsInput {
+        return Ok(());
+    }
+    Err(CliError::runtime(
+        "agent-blocked",
+        format!(
+            "session is waiting on a provider approval or question: {}",
+            record.id
+        ),
+        Some(json!({
+            "id": record.id,
+            "phase": "needs_input",
+            "remedy": remedy,
+        })),
+    ))
+}
+
 pub(crate) fn state_for_view(context: &CliContext, record: &SessionRecord) -> Option<TurnState> {
     // A plugin-owned dsh lane reports its turn through the liveness sidecar
     // instead of this store's activity document, and its unhealthy markers

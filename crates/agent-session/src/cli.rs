@@ -838,6 +838,12 @@ pub struct SendArgs {
     #[arg(long = "key", value_enum, value_name = "KEY")]
     pub keys: Vec<SpecialKey>,
 
+    /// Type the literal text even while the agent is waiting on an approval or
+    /// question. Without this, text is refused so it cannot land in the dialog;
+    /// special keys are always allowed so the dialog can still be answered.
+    #[arg(long = "allow-blocked")]
+    pub allow_blocked: bool,
+
     /// tmux binary override.
     #[arg(long = "tmux-bin", value_name = "PATH", value_hint = ValueHint::FilePath)]
     pub tmux_bin: Option<PathBuf>,

@@ -8890,6 +8890,15 @@ fn ensure_not_external_runtime(record: &SessionRecord, surface: &str) -> Result<
     Ok(())
 }
 
+/// Does this input type characters, as opposed to pressing keys?
+///
+/// `send_input_unlocked` turns a bare newline into an Enter keypress rather than
+/// pasted characters, so text that is only a newline is an answer to whatever
+/// the pane is showing, not a prompt typed into it.
+fn carries_literal_text(text: Option<&str>) -> bool {
+    text.is_some_and(|text| !matches!(text, "\r" | "\n" | "\r\n"))
+}
+
 fn send_to_session(context: &CliContext, args: cli::SendArgs) -> Result<SendResult, CliError> {
     let text = read_send_text(&args.text, args.text_stdin)?;
     if text.is_none() && args.keys.is_empty() {
@@ -8912,6 +8921,13 @@ fn send_to_session(context: &CliContext, args: cli::SendArgs) -> Result<SendResu
             format!("session is not running: {}", record.id),
             Some(json!({ "id": record.id })),
         ));
+    }
+    if carries_literal_text(text.as_deref()) && !args.allow_blocked {
+        activity::refuse_blocked_literal_input(
+            context,
+            &record,
+            "answer the dialog with --key, or repeat with --allow-blocked to type into it",
+        )?;
     }
     let submits = codex_app_server::input_contains_submission(text.as_deref(), &args.keys);
     if submits {

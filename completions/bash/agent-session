@@ -1733,7 +1733,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__send)
-            opts="-h --text --text-stdin --key --tmux-bin --format --state-dir --host --help"
+            opts="-h --text --text-stdin --key --allow-blocked --tmux-bin --format --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
