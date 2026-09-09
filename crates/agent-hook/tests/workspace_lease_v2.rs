@@ -143,13 +143,21 @@ fn anchor_bind_request(session: &str, request_id: &str, cwd: &Path, source: &str
     })
 }
 
+/// The execution a `begin` declares: the call `resolve` classified, plus the
+/// token it minted for the target being fenced.
+struct BeginCall<'a> {
+    tool: &'a str,
+    arguments: Value,
+    anchor: Option<&'a Path>,
+    token: &'a Value,
+}
+
 fn begin_request(
     session: &str,
     request_id: &str,
     binding: &Value,
     target: &Value,
-    tool: &str,
-    arguments: Value,
+    call: BeginCall<'_>,
 ) -> Value {
     json!({
         "schema_version": "agent-hook.workspace-lease.begin.v2",
@@ -162,10 +170,12 @@ fn begin_request(
         "binding_state": binding["state"],
         "call_id": format!("call:{request_id}"),
         "root_call_id": format!("root:{request_id}"),
-        "tool_name": tool,
-        "arguments": arguments,
+        "tool_name": call.tool,
+        "arguments": call.arguments,
         "nested": false,
-        "target": target
+        "anchor_cwd": call.anchor,
+        "target": target,
+        "target_token": call.token
     })
 }
 
@@ -176,6 +186,16 @@ fn begin(
     binding: &Value,
     target: &Value,
 ) -> Value {
+    let arguments = write_arguments(target);
+    let token = token_for(
+        fixture,
+        session,
+        request_id,
+        "write",
+        arguments.clone(),
+        None,
+        &target["workspace_key"],
+    );
     ok(
         fixture,
         "begin",
@@ -184,10 +204,21 @@ fn begin(
             request_id,
             binding,
             target,
-            "write",
-            json!({"file_path": "tracked.txt", "content": "next"}),
+            BeginCall {
+                tool: "write",
+                arguments,
+                anchor: None,
+                token: &token,
+            },
         ),
     )
+}
+
+/// A write whose declared path proves the target repository, so `resolve`
+/// classifies the same workspace the `begin` names.
+fn write_arguments(target: &Value) -> Value {
+    let root = Path::new(target["root"].as_str().expect("target root"));
+    json!({"file_path": root.join("tracked.txt"), "content": "next"})
 }
 
 fn complete(
@@ -252,11 +283,54 @@ fn renew_request(session: &str, request_id: &str, binding: &Value) -> Value {
     })
 }
 
-fn only_target(data: &Value) -> Value {
+fn only_resolved(data: &Value) -> Value {
     assert_eq!(data["kind"], "targets", "data={data}");
     let targets = data["targets"].as_array().expect("target array");
     assert_eq!(targets.len(), 1, "data={data}");
     targets[0].clone()
+}
+
+/// The target reference `bind` and `begin` accept, without the resolve token.
+fn only_target(data: &Value) -> Value {
+    let resolved = only_resolved(data);
+    json!({
+        "workspace_key": resolved["workspace_key"],
+        "root": resolved["root"],
+    })
+}
+
+/// The token `resolve` minted for the sole target of this classification.
+fn only_token(data: &Value) -> Value {
+    let resolved = only_resolved(data);
+    let token = resolved["token"].clone();
+    assert!(
+        token.as_str().is_some_and(|value| value.len() == 64),
+        "resolved={resolved}"
+    );
+    token
+}
+
+/// Mint the resolve token for exactly the call facts a `begin` will present.
+///
+/// A correct runtime resolves and begins the same tool call, so the token it
+/// passes back is keyed over these same facts. Reproducing that here is what
+/// makes the fence testable without letting `begin` reclassify anything.
+fn token_for(
+    fixture: &Fixture,
+    session: &str,
+    request_id: &str,
+    tool: &str,
+    arguments: Value,
+    anchor: Option<&Path>,
+    workspace_key: &Value,
+) -> Value {
+    let data = resolve(fixture, session, request_id, anchor, tool, arguments);
+    let targets = data["targets"].as_array().expect("target array");
+    let matched = targets
+        .iter()
+        .find(|entry| &entry["workspace_key"] == workspace_key)
+        .unwrap_or_else(|| panic!("classified target for {workspace_key}: data={data}"));
+    matched["token"].clone()
 }
 
 #[test]
@@ -389,7 +463,19 @@ fn distinct_repositories_bind_independently_for_one_session() {
     assert_ne!(binding_a["binding_id"], binding_b["binding_id"]);
     assert_ne!(binding_a["workspace_id"], binding_b["workspace_id"]);
 
-    // A binding for A grants no authority over B and vice versa.
+    // A binding for A grants no authority over B and vice versa. Identity is
+    // authenticated before the call binding, so this stays target-invalid even
+    // with an honest token for B.
+    let cross_arguments = write_arguments(&target_b);
+    let cross_token = token_for(
+        &fixture,
+        "session-a",
+        "x-cross",
+        "write",
+        cross_arguments.clone(),
+        None,
+        &target_b["workspace_key"],
+    );
     let (code, envelope) = invoke(
         &fixture,
         "begin",
@@ -398,8 +484,12 @@ fn distinct_repositories_bind_independently_for_one_session() {
             "x-cross",
             &binding_a,
             &target_b,
-            "write",
-            json!({"file_path": "tracked.txt", "content": "next"}),
+            BeginCall {
+                tool: "write",
+                arguments: cross_arguments,
+                anchor: None,
+                token: &cross_token,
+            },
         ),
     );
     assert_ne!(code, 0, "envelope={envelope}");
@@ -697,16 +787,45 @@ fn mixed_protocol_generations_are_rejected_rather_than_reinterpreted() {
     assert_ne!(code, 0, "envelope={envelope}");
     assert_eq!(envelope["error"]["code"], "workspace-wire-invalid");
 
+    // A v1 begin must reject the v2-only token as firmly as it rejects a v2
+    // target: the field rides on the shared request shape, so ignoring it
+    // would widen the otherwise strict v1 wire contract.
+    let v1_begin = json!({
+        "schema_version": "agent-hook.workspace-lease.begin.v1",
+        "version": 1,
+        "request_id": "g-v1-token",
+        "session_id": "session-a",
+        "binding_id": binding["binding_id"],
+        "workspace_id": binding["workspace_id"],
+        "generation": binding["generation"],
+        "binding_state": binding["state"],
+        "call_id": "call:g-v1-token",
+        "root_call_id": "root:g-v1-token",
+        "tool_name": "write",
+        "arguments": {"file_path": root.join("tracked.txt"), "content": "next"},
+        "nested": false,
+        "target_token": "0".repeat(64)
+    });
+    let (code, envelope) = invoke(&fixture, "begin", v1_begin);
+    assert_ne!(code, 0, "envelope={envelope}");
+    assert_eq!(envelope["error"]["code"], "workspace-wire-invalid");
+
     // A v2 begin without an exact target owns no honest coverage claim.
     let mut untargeted = begin_request(
         "session-a",
         "g-untargeted",
         &binding,
         &target,
-        "write",
-        json!({"file_path": "tracked.txt", "content": "next"}),
+        BeginCall {
+            tool: "write",
+            arguments: write_arguments(&target),
+            anchor: None,
+            token: &Value::Null,
+        },
     );
-    untargeted.as_object_mut().expect("object").remove("target");
+    let fields = untargeted.as_object_mut().expect("object");
+    fields.remove("target");
+    fields.remove("target_token");
     let (code, envelope) = invoke(&fixture, "begin", untargeted);
     assert_ne!(code, 0, "envelope={envelope}");
     assert_eq!(envelope["error"]["code"], "workspace-wire-invalid");
@@ -725,20 +844,16 @@ fn a_v2_mutation_target_always_receives_a_fence() {
     let binding = bind(&fixture, "session-a", "b-a", &target);
 
     // v1 reclassified read-only tool names inside begin. v2 classification is
-    // owned by resolve, so an admitted v2 target is always fenced.
-    let granted = ok(
-        &fixture,
-        "begin",
-        begin_request(
-            "session-a",
-            "g-read",
-            &binding,
-            &target,
-            "read",
-            json!({"file_path": "tracked.txt"}),
-        ),
-    );
+    // owned by resolve, so a write this boundary classified is fenced on the
+    // exact workspace resolve named, whatever the tool is called.
+    let granted = begin(&fixture, "session-a", "g-write", &binding, &target);
     assert_eq!(granted["kind"], "granted");
+
+    // begin still never reclassifies the tool name; it requires proof that
+    // resolve produced this target for this call. A read-only call is
+    // classified `not-required`, so no token exists for it and a begin that
+    // names a target anyway fails closed instead of fencing an operation the
+    // classifier already excused.
     assert_eq!(
         resolve(
             &fixture,
@@ -750,6 +865,24 @@ fn a_v2_mutation_target_always_receives_a_fence() {
         )["kind"],
         "not-required"
     );
+    let (code, envelope) = invoke(
+        &fixture,
+        "begin",
+        begin_request(
+            "session-a",
+            "g-read",
+            &binding,
+            &target,
+            BeginCall {
+                tool: "read",
+                arguments: json!({"file_path": root.join("tracked.txt")}),
+                anchor: None,
+                token: &Value::Null,
+            },
+        ),
+    );
+    assert_ne!(code, 0, "envelope={envelope}");
+    assert_eq!(envelope["error"]["code"], "workspace-target-call-mismatch");
 }
 
 #[test]
@@ -813,8 +946,20 @@ fn v2_operation_replay_and_release_ordering_stay_fenced() {
             "g-released",
             &binding,
             &target,
-            "write",
-            json!({"file_path": "tracked.txt", "content": "next"}),
+            BeginCall {
+                tool: "write",
+                arguments: write_arguments(&target),
+                anchor: None,
+                token: &token_for(
+                    &fixture,
+                    "session-a",
+                    "g-released",
+                    "write",
+                    write_arguments(&target),
+                    None,
+                    &target["workspace_key"],
+                ),
+            },
         ),
     );
     assert_eq!(code, 0, "envelope={envelope}");
@@ -1188,4 +1333,353 @@ fn concurrent_first_use_resolution_never_distrusts_the_state_directory() {
             assert_eq!(envelope["data"]["kind"], "targets", "index={index}");
         }
     });
+}
+
+#[test]
+fn a_v2_begin_is_bound_to_the_call_its_target_was_classified_from() {
+    let fixture = Fixture::new(POLICY);
+    let root_a = repo(&fixture.root.join("repo-a"));
+    let root_b = repo(&fixture.root.join("repo-b"));
+
+    let resolved_a = write_targets(&fixture, "session-a", "r-a", &root_a.join("tracked.txt"));
+    let target_a = only_target(&resolved_a);
+    let token_a = only_token(&resolved_a);
+    let target_b = only_target(&write_targets(
+        &fixture,
+        "session-a",
+        "r-b",
+        &root_b.join("tracked.txt"),
+    ));
+    assert_ne!(target_a["workspace_key"], target_b["workspace_key"]);
+
+    let binding_a = bind(&fixture, "session-a", "b-a", &target_a);
+    assert_eq!(binding_a["kind"], "bound");
+
+    // The attack this closes: fence the repository the caller legitimately
+    // holds while the call's own arguments mutate a different one. Repository A
+    // is named and bound; the execution writes into repository B.
+    let against_b = json!({"file_path": root_b.join("tracked.txt"), "content": "next"});
+    let honest_b_token = token_for(
+        &fixture,
+        "session-a",
+        "g-cross-call",
+        "write",
+        against_b.clone(),
+        None,
+        &target_b["workspace_key"],
+    );
+    let (code, envelope) = invoke(
+        &fixture,
+        "begin",
+        begin_request(
+            "session-a",
+            "g-cross-call",
+            &binding_a,
+            &target_a,
+            BeginCall {
+                tool: "write",
+                arguments: against_b.clone(),
+                anchor: None,
+                token: &honest_b_token,
+            },
+        ),
+    );
+    assert_ne!(code, 0, "envelope={envelope}");
+    assert_eq!(
+        envelope["error"]["code"], "workspace-target-call-mismatch",
+        "envelope={envelope}"
+    );
+
+    // The rejection is not the identity verdict: repository A is exactly the
+    // workspace the binding owns, so the two failures stay distinguishable.
+    assert_ne!(envelope["error"]["code"], "workspace-target-invalid");
+
+    // A token minted for repository A cannot launder a call that writes into
+    // repository B either: the token is keyed over the call facts too.
+    let (code, envelope) = invoke(
+        &fixture,
+        "begin",
+        begin_request(
+            "session-a",
+            "g-cross-token",
+            &binding_a,
+            &target_a,
+            BeginCall {
+                tool: "write",
+                arguments: against_b,
+                anchor: None,
+                token: &token_a,
+            },
+        ),
+    );
+    assert_ne!(code, 0, "envelope={envelope}");
+    assert_eq!(
+        envelope["error"]["code"], "workspace-target-call-mismatch",
+        "envelope={envelope}"
+    );
+
+    // The honest execution against repository A is still granted.
+    assert_eq!(
+        begin(&fixture, "session-a", "g-a", &binding_a, &target_a)["kind"],
+        "granted"
+    );
+}
+
+#[test]
+fn a_v2_begin_rejects_a_missing_forged_or_replayed_target_token() {
+    let fixture = Fixture::new(POLICY);
+    let root = repo(&fixture.root.join("repo-a"));
+    let target = only_target(&write_targets(
+        &fixture,
+        "session-a",
+        "r-a",
+        &root.join("tracked.txt"),
+    ));
+    let binding = bind(&fixture, "session-a", "b-a", &target);
+    let arguments = write_arguments(&target);
+
+    // A token minted for a different call of the same tool against the same
+    // repository is still the wrong token: the call facts differ.
+    let other_call_token = token_for(
+        &fixture,
+        "session-a",
+        "r-other",
+        "write",
+        arguments.clone(),
+        None,
+        &target["workspace_key"],
+    );
+
+    // So is a token minted for a different tool that classifies to the same
+    // repository, because the tool name is part of the call facts.
+    let other_tool_token = token_for(
+        &fixture,
+        "session-a",
+        "g-token",
+        "edit",
+        arguments.clone(),
+        None,
+        &target["workspace_key"],
+    );
+
+    for (label, token) in [
+        ("missing", Value::Null),
+        ("empty", json!("")),
+        ("malformed", json!("not-a-digest")),
+        ("wrong-length", json!("abcdef")),
+        ("forged", json!("0".repeat(64))),
+        ("other-call", other_call_token),
+        ("other-tool", other_tool_token),
+    ] {
+        let (code, envelope) = invoke(
+            &fixture,
+            "begin",
+            begin_request(
+                "session-a",
+                "g-token",
+                &binding,
+                &target,
+                BeginCall {
+                    tool: "write",
+                    arguments: arguments.clone(),
+                    anchor: None,
+                    token: &token,
+                },
+            ),
+        );
+        assert_ne!(code, 0, "label={label} envelope={envelope}");
+        assert_eq!(
+            envelope["error"]["code"], "workspace-target-call-mismatch",
+            "label={label} envelope={envelope}"
+        );
+    }
+}
+
+#[test]
+fn a_v2_bind_needs_no_target_token() {
+    let fixture = Fixture::new(POLICY);
+    let root = repo(&fixture.root.join("repo-a"));
+    let resolved = write_targets(&fixture, "session-a", "r-a", &root.join("tracked.txt"));
+    let target = only_target(&resolved);
+
+    // bind authenticates identity by rederiving the workspace digest from the
+    // live layout, so it depends on no call facts and accepts no token.
+    let binding = bind(&fixture, "session-a", "b-a", &target);
+    assert_eq!(binding["kind"], "bound");
+    assert_eq!(binding["target"], target);
+
+    let mut tokened = bind_request("session-a", "b-token", &target);
+    tokened["target"]["token"] = only_token(&resolved);
+    let (code, envelope) = invoke(&fixture, "bind", tokened);
+    assert_ne!(code, 0, "envelope={envelope}");
+    assert_eq!(envelope["error"]["code"], "workspace-wire-invalid");
+}
+
+#[test]
+fn a_v2_begin_token_binds_the_anchor_the_target_was_derived_from() {
+    let fixture = Fixture::new(POLICY);
+    let root_a = repo(&fixture.root.join("repo-a"));
+    let root_b = repo(&fixture.root.join("repo-b"));
+
+    // A governed commit names no path at all: its target is derived entirely
+    // from the classification anchor. One set of call facts therefore resolves
+    // to a different repository under a different anchor, so a token that did
+    // not bind the anchor would authenticate either target for the same call.
+    let commit_arguments = json!({});
+    let resolved_a = resolve(
+        &fixture,
+        "session-a",
+        "r-anchor",
+        Some(&root_a),
+        "runtime_kit_governed_commit",
+        commit_arguments.clone(),
+    );
+    let target_a = only_target(&resolved_a);
+    let token_a = only_token(&resolved_a);
+    let resolved_b = resolve(
+        &fixture,
+        "session-a",
+        "r-anchor",
+        Some(&root_b),
+        "runtime_kit_governed_commit",
+        commit_arguments.clone(),
+    );
+    let target_b = only_target(&resolved_b);
+    let token_b = only_token(&resolved_b);
+    assert_ne!(target_a["workspace_key"], target_b["workspace_key"]);
+    assert_ne!(token_a, token_b);
+
+    let binding_a = bind(&fixture, "session-a", "b-a", &target_a);
+    assert_eq!(binding_a["kind"], "bound");
+
+    // Repository A is named and bound, and the call facts are identical, but
+    // the execution's own anchor is repository B.
+    let (code, envelope) = invoke(
+        &fixture,
+        "begin",
+        begin_request(
+            "session-a",
+            "r-anchor",
+            &binding_a,
+            &target_a,
+            BeginCall {
+                tool: "runtime_kit_governed_commit",
+                arguments: commit_arguments.clone(),
+                anchor: Some(&root_b),
+                token: &token_a,
+            },
+        ),
+    );
+    assert_ne!(code, 0, "envelope={envelope}");
+    assert_eq!(
+        envelope["error"]["code"], "workspace-target-call-mismatch",
+        "envelope={envelope}"
+    );
+
+    // Repository B's honest token does not authenticate repository A either.
+    let (code, envelope) = invoke(
+        &fixture,
+        "begin",
+        begin_request(
+            "session-a",
+            "r-anchor",
+            &binding_a,
+            &target_a,
+            BeginCall {
+                tool: "runtime_kit_governed_commit",
+                arguments: commit_arguments.clone(),
+                anchor: Some(&root_b),
+                token: &token_b,
+            },
+        ),
+    );
+    assert_ne!(code, 0, "envelope={envelope}");
+    assert_eq!(
+        envelope["error"]["code"], "workspace-target-call-mismatch",
+        "envelope={envelope}"
+    );
+
+    // Omitting the anchor entirely is a different classification too.
+    let (code, envelope) = invoke(
+        &fixture,
+        "begin",
+        begin_request(
+            "session-a",
+            "r-anchor",
+            &binding_a,
+            &target_a,
+            BeginCall {
+                tool: "runtime_kit_governed_commit",
+                arguments: commit_arguments.clone(),
+                anchor: None,
+                token: &token_a,
+            },
+        ),
+    );
+    assert_ne!(code, 0, "envelope={envelope}");
+    assert_eq!(
+        envelope["error"]["code"], "workspace-target-call-mismatch",
+        "envelope={envelope}"
+    );
+
+    // The honest execution against the anchor it was classified from is
+    // granted.
+    let granted = ok(
+        &fixture,
+        "begin",
+        begin_request(
+            "session-a",
+            "r-anchor",
+            &binding_a,
+            &target_a,
+            BeginCall {
+                tool: "runtime_kit_governed_commit",
+                arguments: commit_arguments,
+                anchor: Some(&root_a),
+                token: &token_a,
+            },
+        ),
+    );
+    assert_eq!(granted["kind"], "granted", "granted={granted}");
+}
+
+#[test]
+fn a_v2_begin_token_ignores_argument_key_order() {
+    let fixture = Fixture::new(POLICY);
+    let root = repo(&fixture.root.join("repo-a"));
+    let tracked = root.join("tracked.txt");
+
+    // The runtime resolves and begins in separate process invocations, so the
+    // adapter may reserialize `arguments` between them. Under a workspace build
+    // serde_json preserves insertion order, so an order-sensitive token would
+    // deny every fenced mutation rather than merely miss an idempotency match.
+    let resolved = resolve(
+        &fixture,
+        "session-a",
+        "r-order",
+        None,
+        "write",
+        json!({"content": "next", "file_path": tracked}),
+    );
+    let target = only_target(&resolved);
+    let token = only_token(&resolved);
+    let binding = bind(&fixture, "session-a", "b-a", &target);
+
+    let granted = ok(
+        &fixture,
+        "begin",
+        begin_request(
+            "session-a",
+            "r-order",
+            &binding,
+            &target,
+            BeginCall {
+                tool: "write",
+                arguments: json!({"file_path": tracked, "content": "next"}),
+                anchor: None,
+                token: &token,
+            },
+        ),
+    );
+    assert_eq!(granted["kind"], "granted", "granted={granted}");
 }

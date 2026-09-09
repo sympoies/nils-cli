@@ -236,8 +236,20 @@ struct BeginRequest {
     tool_name: String,
     arguments: Value,
     nested: bool,
+    /// The same classification anchor `resolve` was given. Some targets are
+    /// derived entirely from it — a governed commit names no path, and a
+    /// relative `file_path` resolves against it — so the token has to bind it
+    /// or one set of call facts would authenticate a target under any anchor.
+    #[serde(default)]
+    anchor_cwd: Option<PathBuf>,
     #[serde(default)]
     target: Option<TargetRef>,
+    /// The token `resolve` minted for this exact target and these exact call
+    /// facts. The runtime passes it back unmodified; it is carried beside the
+    /// target rather than inside `TargetRef` so `bind`, which authenticates
+    /// identity from the live layout and needs no call facts, is unaffected.
+    #[serde(default)]
+    target_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -531,6 +543,14 @@ fn resolve(state_root: &Path, request: ResolveRequest) -> Result<Outcome, HookEr
     }
     let bindings = resolve_target_bindings(&paths)?;
     let fingerprint_key = workspace_fingerprint_key(state_root, true)?;
+    let call_digest = call_facts_digest(
+        &request.call_id,
+        &request.root_call_id,
+        &request.tool_name,
+        &request.arguments,
+        anchor,
+        request.nested,
+    )?;
     let mut targets = BTreeMap::<String, String>::new();
     for binding in &bindings {
         let Some(layout) = git_layout(&binding.binding_root) else {
@@ -545,10 +565,15 @@ fn resolve(state_root: &Path, request: ResolveRequest) -> Result<Outcome, HookEr
     if targets.is_empty() {
         return Ok(resolve_not_required());
     }
-    let projected = targets
-        .into_iter()
-        .map(|(workspace_key, root)| json!({"workspace_key": workspace_key, "root": root}))
-        .collect::<Vec<_>>();
+    let mut projected = Vec::with_capacity(targets.len());
+    for (workspace_key, root) in targets {
+        let token = target_call_token(&fingerprint_key, &workspace_key, &call_digest)?;
+        projected.push(json!({
+            "workspace_key": workspace_key,
+            "root": root,
+            "token": token,
+        }));
+    }
     let count = projected.len();
     Ok(Outcome {
         data: json!({
@@ -688,6 +713,142 @@ fn require_target_identity(state: &State, target: &TargetRef) -> Result<(), Hook
         return Err(target_invalid());
     }
     Ok(())
+}
+
+/// Digest the exact call facts `resolve` classified.
+///
+/// The arguments are digested rather than carried whole so the token's keyed
+/// input stays bounded while still changing with any argument the classifier
+/// read.
+fn call_facts_digest(
+    call_id: &str,
+    root_call_id: &str,
+    tool_name: &str,
+    arguments: &Value,
+    anchor: Option<&Path>,
+    nested: bool,
+) -> Result<String, HookError> {
+    let anchor_text = match anchor {
+        Some(path) => Some(path_text(path)?),
+        None => None,
+    };
+    digest_value(
+        "workspace-call-facts",
+        &json!({
+            "call_id": call_id,
+            "root_call_id": root_call_id,
+            "tool_name": tool_name,
+            "arguments_digest": digest_value("workspace-arguments", &canonical_value(arguments))?,
+            "anchor_cwd": anchor_text,
+            "nested": nested,
+        }),
+    )
+}
+
+/// Project a caller-supplied value so its digest depends on the value the
+/// classifier read rather than on the key order the runtime happened to send.
+///
+/// `serde_json` is built with `preserve_order` in workspace-scoped builds, so a
+/// map serializes in insertion order. Without this, an adapter that reserialized
+/// `arguments` between its `resolve` and its `begin` would produce a different
+/// digest and be denied every fenced mutation.
+fn canonical_value(value: &Value) -> Value {
+    match value {
+        Value::Object(fields) => {
+            let sorted = fields
+                .iter()
+                .map(|(key, nested)| (key.clone(), canonical_value(nested)))
+                .collect::<BTreeMap<_, _>>();
+            let mut projected = serde_json::Map::with_capacity(sorted.len());
+            for (key, nested) in sorted {
+                projected.insert(key, nested);
+            }
+            Value::Object(projected)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(canonical_value).collect()),
+        other => other.clone(),
+    }
+}
+
+/// Bind one classified repository target to the exact call it was classified
+/// from.
+///
+/// `resolve` mints this token per returned target, keyed over the host
+/// fingerprint so only this boundary can produce one. `begin` recomputes it
+/// from the target it was handed and its own call facts.
+fn target_call_token(
+    fingerprint_key: &str,
+    workspace_key: &str,
+    call_digest: &str,
+) -> Result<String, HookError> {
+    keyed_value(
+        fingerprint_key,
+        "workspace-target-call",
+        &json!({
+            "workspace_key": workspace_key,
+            "call_digest": call_digest,
+        }),
+    )
+}
+
+/// Prove the target this `begin` names is the one its own call facts resolved
+/// to.
+///
+/// `require_target_identity` proves only that the named target is the workspace
+/// the durable binding owns. Without this check a caller that names a
+/// repository it legitimately holds, while its arguments mutate a different
+/// one, is admitted and fenced on the workspace it named rather than the one it
+/// writes. The token cannot be forged without the host fingerprint key, and
+/// `begin` deliberately never reclassifies the tool name to derive the target
+/// itself.
+fn require_target_call_binding(
+    state_root: &Path,
+    target: &TargetRef,
+    request: &BeginRequest,
+) -> Result<(), HookError> {
+    let presented = request
+        .target_token
+        .as_deref()
+        .ok_or_else(target_call_mismatch)?;
+    if !is_hex_digest(presented) {
+        return Err(target_call_mismatch());
+    }
+    // The key exists already: the binding this begin fences was minted by a
+    // bind that resolved it. Never create one here.
+    let fingerprint_key = workspace_fingerprint_key(state_root, false)?;
+    let anchor = match request.anchor_cwd.as_deref() {
+        Some(path) if !path.is_absolute() => {
+            return Err(HookError::data(
+                "workspace-cwd-invalid",
+                "workspace anchor cwd must be an absolute path",
+            ));
+        }
+        other => other,
+    };
+    let call_digest = call_facts_digest(
+        &request.call_id,
+        &request.root_call_id,
+        &request.tool_name,
+        &request.arguments,
+        anchor,
+        request.nested,
+    )?;
+    let expected = target_call_token(&fingerprint_key, &target.workspace_key, &call_digest)?;
+    if !constant_time_eq(presented, &expected) {
+        return Err(target_call_mismatch());
+    }
+    Ok(())
+}
+
+fn constant_time_eq(left: &str, right: &str) -> bool {
+    let (left, right) = (left.as_bytes(), right.as_bytes());
+    if left.len() != right.len() {
+        return false;
+    }
+    left.iter()
+        .zip(right)
+        .fold(0u8, |difference, (a, b)| difference | (a ^ b))
+        == 0
 }
 
 fn bind(
@@ -887,11 +1048,21 @@ fn begin(
     }
     revalidate_managed_identity(&state)?;
     match (protocol, request.target.as_ref()) {
-        (ProtocolGeneration::V2, Some(target)) => require_target_identity(&state, target)?,
+        (ProtocolGeneration::V2, Some(target)) => {
+            require_target_identity(&state, target)?;
+            require_target_call_binding(state_root, target, &request)?;
+        }
         (ProtocolGeneration::V2, None) | (ProtocolGeneration::V1, Some(_)) => {
             return Err(wire_invalid());
         }
-        (ProtocolGeneration::V1, None) => {}
+        // The token rides on the shared request shape, so v1 has to reject it
+        // explicitly. Silently ignoring it would widen the v1 wire contract,
+        // which is otherwise strict about unknown and v2-only fields.
+        (ProtocolGeneration::V1, None) => {
+            if request.target_token.is_some() || request.anchor_cwd.is_some() {
+                return Err(wire_invalid());
+            }
+        }
     }
     if request.binding_state != state.binding.mode {
         return Err(HookError::data(
@@ -2063,6 +2234,13 @@ fn target_invalid() -> HookError {
     )
 }
 
+fn target_call_mismatch() -> HookError {
+    HookError::data(
+        "workspace-target-call-mismatch",
+        "workspace lease target is not bound to this operation's call facts",
+    )
+}
+
 fn target_unresolvable() -> HookError {
     HookError::data(
         "workspace-target-unresolvable",
@@ -2075,4 +2253,47 @@ fn idempotency_reused() -> HookError {
         "workspace-idempotency-key-reused",
         "workspace request id is already bound to different facts",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_ne;
+
+    /// The whole fence rests on the token being unforgeable without the host
+    /// fingerprint key. Every end-to-end test derives the expected token by
+    /// calling `resolve` in the same fixture, so resolve and begin agree by
+    /// construction and would still agree if the keying were dropped for a
+    /// plain digest. An unkeyed token is computable by any caller, because the
+    /// workspace key is published in the resolve result and the call facts are
+    /// the caller's own, which would reopen exactly the wrong-workspace fence
+    /// this boundary closes.
+    #[test]
+    fn a_target_call_token_depends_on_the_host_fingerprint_key() {
+        let workspace_key = "a".repeat(64);
+        let call_digest = "b".repeat(64);
+        let first = target_call_token(&"1".repeat(64), &workspace_key, &call_digest)
+            .expect("token under the first host key");
+        let second = target_call_token(&"2".repeat(64), &workspace_key, &call_digest)
+            .expect("token under the second host key");
+        assert_ne!(
+            first, second,
+            "the target-call token must be keyed over the host fingerprint"
+        );
+    }
+
+    /// Canonicalization must not collapse distinct argument values, only their
+    /// wire key order.
+    #[test]
+    fn canonicalization_ignores_key_order_but_not_content() {
+        let ordered = json!({"content": "next", "file_path": "/repo/tracked.txt"});
+        let reordered = json!({"file_path": "/repo/tracked.txt", "content": "next"});
+        let different = json!({"content": "other", "file_path": "/repo/tracked.txt"});
+        let nested = json!({"outer": {"b": 1, "a": [{"y": 2, "x": 1}]}});
+        let nested_reordered = json!({"outer": {"a": [{"x": 1, "y": 2}], "b": 1}});
+
+        assert_eq!(canonical_value(&ordered), canonical_value(&reordered));
+        assert_eq!(canonical_value(&nested), canonical_value(&nested_reordered));
+        assert_ne!(canonical_value(&ordered), canonical_value(&different));
+    }
 }

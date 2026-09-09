@@ -459,25 +459,47 @@ the same workspace as the durable binding. Classification already happened in
 `resolve`, so `begin` never reclassifies a tool name and every admitted v2
 operation carries a fence.
 
-That fence is on the workspace the caller **names**, and `begin` does not prove
-that the named target is the one this call's own tool and arguments would
-resolve to: it authenticates `target` against the durable binding, while the
-tool name and arguments enter only the execution digest used for idempotency
-and replay. A caller that names a target it holds while executing against a
-different repository is therefore fenced on the wrong workspace. That caller is
-the trusted same-host runtime, which also supplies `anchor_cwd` to `resolve`
-and can reach any repository through the deliberately unfenced shell path, so
-this is a coordination boundary between cooperating sessions rather than a
-sandbox against a hostile local process. Binding the target to the exact call
-facts -- an authenticated resolve token the runtime passes back through
-`begin` -- is tracked separately, because it needs a matching runtime change. `complete`, `renew`, and `release` keep their v1
-fields, fencing, idempotency, and terminal-outcome rules.
+That fence is on the workspace this call was classified to, not merely the one
+the caller names. `begin` proves both: `require_target_identity` authenticates
+`target` against the durable binding, and the `target_token` the request
+carries beside the target proves `resolve` produced that target for these exact
+call facts. `resolve` mints one token per returned target, keyed over the host
+fingerprint, the target's workspace key, and a digest of `call_id`,
+`root_call_id`, `tool_name`, `arguments`, `anchor_cwd`, and `nested`. `begin`
+recomputes it and rejects a mismatch with `workspace-target-call-mismatch`,
+which stays distinguishable from the `workspace-target-invalid` identity
+verdict.
+
+The anchor is part of the binding because some targets are derived entirely
+from it: a governed commit names no path, and a relative `file_path` resolves
+against the anchor. One set of call facts therefore classifies to a different
+repository under a different anchor, so a token that omitted it would
+authenticate either target for the same call. A v2 `begin` carries the same
+`anchor_cwd` it gave `resolve`, and a v1 `begin` rejects both the token and the
+anchor as v2-only fields. The `arguments` digest is taken over a key-ordered
+projection, so an adapter that reserializes them between its `resolve` and its
+`begin` is not denied for a difference that carries no meaning. A caller
+that names a repository it legitimately holds while its arguments mutate a
+different one therefore fails closed instead of being fenced on the wrong
+workspace, and the token cannot be forged without the host fingerprint key.
+`begin` still never derives the target from the tool name and arguments itself,
+so the classifier stays in one place.
+
+Two consequences follow. A call `resolve` classified as `not-required` has no
+token, so a `begin` that names a target for it fails closed rather than fencing
+an operation the classifier already excused. And `bind` is unaffected: it
+authenticates identity by rederiving the workspace digest from the live layout,
+depends on no call facts, and accepts no token. `complete`, `renew`, and
+`release` keep their v1 fields, fencing, idempotency, and terminal-outcome
+rules.
 
 A v2 `resolve` or target result carries the canonical repository root of the
 caller's own exact operation targets. That is the one deliberate exception to
 the projection rule below: it reveals nothing the trusted same-host caller did
 not already supply, and the runtime-kit adapter must not project it into
-model-facing tool output.
+model-facing tool output. Each resolved target's `token` is opaque keyed
+material the runtime passes back through `begin` unmodified; the adapter must
+not project it either, and must not reuse a token across calls.
 
 Provider-visible results contain opaque IDs, renewal timing, and stable
 `owned`, `unmanaged`, `foreign-active`, `stale-clean`, `dirty`, or `uncertain`
