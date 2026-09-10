@@ -1217,9 +1217,14 @@ pub(crate) fn complete_manual_locally(
         return Ok(None);
     };
     // The stored projection is a comparison key, not prose. Without readable
-    // objective text this operation defers to provider inference rather than
-    // publishing internal semantic memory as the session title.
-    let Some(topic) = objective.display.clone() else {
+    // objective text — or when the prose itself reads as a projection, which a
+    // human prompt is free to do — this operation defers to provider inference
+    // rather than publishing internal semantic memory as the session title.
+    let Some(topic) = objective
+        .display
+        .clone()
+        .filter(|topic| !crate::retitle::topic_is_internal_projection(topic))
+    else {
         return Ok(None);
     };
     let state = SessionTitleState {
@@ -1242,7 +1247,8 @@ pub(crate) fn commit_inference(
     state: SessionTitleState,
     provider_attempts: &[crate::retitle::ProviderAttemptObservation],
 ) -> Result<RetitleV3Response, CliError> {
-    if title_state_contains_sensitive_material(&state) || title_state_is_internal_projection(&state)
+    if title_state_contains_sensitive_material(&state)
+        || title_state_is_internal_projection(&state, inference.existing.as_ref())
     {
         return complete_provider_failure(
             context,
@@ -2032,12 +2038,7 @@ fn semantic_label(kind: &str, value: &str, max_chars: usize) -> String {
     ];
     let mut concepts = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    let preview = crate::provider_prompt::image_preview_text(value);
-    let preview = preview
-        .lines()
-        .map(strip_image_reference_prefix)
-        .collect::<Vec<_>>()
-        .join("\n");
+    let preview = strip_image_reference_markers(&crate::provider_prompt::image_preview_text(value));
     let redacted = redact_credential_material(&preview);
     for token in redacted.split(|character: char| {
         character.is_whitespace()
@@ -2077,27 +2078,37 @@ fn semantic_label(kind: &str, value: &str, max_chars: usize) -> String {
 /// title, so a redacted objective yields nothing and the operation falls back to
 /// provider inference instead of publishing `<redacted>`.
 fn objective_display(value: &str) -> Option<String> {
-    let stripped = crate::provider_prompt::image_preview_text(value)
-        .lines()
-        .map(strip_image_reference_prefix)
-        .collect::<Vec<_>>()
-        .join("\n");
+    let stripped =
+        strip_image_reference_markers(&crate::provider_prompt::image_preview_text(value));
     sanitize_text(&stripped, MAX_OBJECTIVE_DISPLAY_CHARS)
         .filter(|display| !display.contains("<redacted>"))
 }
 
-fn strip_image_reference_prefix(line: &str) -> &str {
-    let trimmed = line.trim_start();
-    let Some(rest) = trimmed.strip_prefix("[Image #") else {
-        return line;
-    };
-    let Some((number, text)) = rest.split_once(']') else {
-        return line;
-    };
-    if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
-        return line;
+/// Removes every `[Image #<n>]` reference marker. A prompt carrying several
+/// images repeats the marker inline, so stripping only a leading one leaves
+/// scaffolding in text that both the projection and a title would inherit.
+fn strip_image_reference_markers(value: &str) -> String {
+    const MARKER: &str = "[Image #";
+    let mut output = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(index) = rest.find(MARKER) {
+        let (before, candidate) = rest.split_at(index);
+        output.push_str(before);
+        let tail = &candidate[MARKER.len()..];
+        match tail.split_once(']') {
+            Some((number, remainder))
+                if !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit()) =>
+            {
+                rest = remainder;
+            }
+            _ => {
+                output.push_str(MARKER);
+                rest = tail;
+            }
+        }
     }
-    text.trim_start()
+    output.push_str(rest);
+    output
 }
 
 pub(crate) fn render_provider_input(memory: &SemanticMemory) -> Result<String, CliError> {
@@ -2457,13 +2468,27 @@ fn title_state_contains_sensitive_material(state: &SessionTitleState) -> bool {
 /// Enforces at the single commit boundary that private semantic memory never
 /// reaches a published title, so a future local or provider path cannot
 /// reintroduce the leak by construction.
-fn title_state_is_internal_projection(state: &SessionTitleState) -> bool {
-    state
-        .topic
-        .as_deref()
-        .into_iter()
-        .chain(state.activity.as_deref())
-        .any(crate::retitle::topic_is_internal_projection)
+///
+/// Only newly produced values are inspected. A user-owned or kept title is
+/// carried through this commit verbatim, and a human is free to name a session
+/// `auth · api refactor`; rejecting that would fail every later retitle instead
+/// of preserving the title the user chose.
+fn title_state_is_internal_projection(
+    state: &SessionTitleState,
+    existing: Option<&SessionTitleState>,
+) -> bool {
+    let leaks = |value: Option<&str>, carried: Option<&str>| {
+        value.is_some_and(|value| {
+            carried != Some(value) && crate::retitle::topic_is_internal_projection(value)
+        })
+    };
+    leaks(
+        state.topic.as_deref(),
+        existing.and_then(|existing| existing.topic.as_deref()),
+    ) || leaks(
+        state.activity.as_deref(),
+        existing.and_then(|existing| existing.activity.as_deref()),
+    )
 }
 
 fn public_title(value: Option<&str>) -> Option<String> {
@@ -3295,6 +3320,10 @@ mod tests {
             memory.active_objective.as_ref().unwrap().text,
             "objective: implement · semantic · memory"
         );
+        assert_eq!(
+            memory.active_objective.as_ref().unwrap().display.as_deref(),
+            Some("now implement semantic memory")
+        );
     }
 
     #[test]
@@ -3904,12 +3933,12 @@ mod tests {
             origin: Some(MemoryFact {
                 turn_id: hash_value("origin"),
                 text: truncate_chars(&text, MAX_TEXT_CHARS),
-                display: None,
+                display: Some(truncate_chars(&text, MAX_OBJECTIVE_DISPLAY_CHARS)),
             }),
             active_objective: Some(MemoryFact {
                 turn_id: hash_value("objective"),
                 text: truncate_chars(&text, MAX_TEXT_CHARS),
-                display: None,
+                display: Some(truncate_chars(&text, MAX_OBJECTIVE_DISPLAY_CHARS)),
             }),
             current_activity: Some(MemoryFact {
                 turn_id: hash_value("activity"),
@@ -3944,6 +3973,16 @@ mod tests {
         };
         compact_memory(&mut memory);
         assert!(serde_json::to_vec(&memory).unwrap().len() <= MAX_MARKER_BYTES);
+        for fact in [memory.origin.as_ref(), memory.active_objective.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            // Compaction may shorten a live objective, but must never drop the
+            // readable text a local title renders from.
+            let display = fact.display.as_deref().expect("live objective survives");
+            assert!(!display.is_empty());
+            assert!(display.chars().count() <= MAX_OBJECTIVE_DISPLAY_CHARS);
+        }
         assert_eq!(memory.receipts.len(), MAX_RECEIPTS);
         assert!(
             memory
@@ -4155,6 +4194,209 @@ mod tests {
             "a redacted objective must reach provider inference instead of a local title",
         );
         assert_eq!(load_session_record(&context, id).unwrap().title, None);
+    }
+
+    #[test]
+    fn projection_shaped_objective_defers_the_local_title_to_provider_inference() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "projection-shaped-objective";
+        let (context, catalog, _) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row("user", "blocker: ci is red", "turn-one"),
+        );
+        let accepted = refresh_once(&context, &catalog, id, &request(id, 0, 0)).unwrap();
+
+        assert!(
+            complete_manual_locally(&context, &catalog, id, &accepted.operation_hash)
+                .unwrap()
+                .is_none(),
+            "a human objective that reads as a projection must reach provider inference",
+        );
+        assert_eq!(load_session_record(&context, id).unwrap().title, None);
+    }
+
+    #[test]
+    fn a_carried_forward_user_title_is_never_rejected_as_an_internal_projection() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "user-owned-separator-title";
+        let (context, catalog, _) = fixture(
+            tmp.path(),
+            id,
+            Some("auth · api refactor"),
+            &codex_row("user", "keep the user title", "turn-one"),
+        );
+        let mut record = load_session_record(&context, id).unwrap();
+        record.title_state.as_mut().unwrap().topic_source = crate::SessionTitleTopicSource::User;
+        crate::write_session_record(&context, &record).unwrap();
+
+        let accepted = refresh_once(&context, &catalog, id, &request(id, 1, 0)).unwrap();
+        let inference = match claim_provider_inference(
+            &context,
+            id,
+            &accepted.operation_hash,
+            "provider-claim",
+        )
+        .unwrap()
+        {
+            ProviderClaim::Claimed(inference) => inference,
+            _ => panic!("provider inference must be claimed"),
+        };
+
+        // A user-owned topic is carried through the commit verbatim. The guard
+        // must not read the user's own separator as private semantic memory.
+        let completed = commit_inference(
+            &context,
+            &catalog,
+            id,
+            &inference,
+            SessionTitleState {
+                topic: Some("auth · api refactor".to_string()),
+                topic_source: crate::SessionTitleTopicSource::User,
+                references: Vec::new(),
+                activity: None,
+                extra: BTreeMap::new(),
+            },
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(completed.outcome.as_deref(), Some("unchanged"));
+        assert_eq!(
+            load_session_record(&context, id).unwrap().title.as_deref(),
+            Some("auth · api refactor")
+        );
+    }
+
+    #[test]
+    fn readable_objective_elides_every_image_reference_marker() {
+        let mut memory = SemanticMemory::default();
+        reduce_messages(
+            &mut memory,
+            &[message(
+                "turn-images",
+                "user",
+                concat!(
+                    "<image name=[Image #1] path=\"/home/terry/private/one.png\">\n",
+                    "</image>\n",
+                    "<image name=[Image #2] path=\"/home/terry/private/two.png\">\n",
+                    "</image>\n",
+                    "[Image #1] [Image #2] 現在 retitle 的結果這樣是正常的嗎",
+                ),
+                true,
+            )],
+        );
+
+        let origin = memory.origin.as_ref().unwrap();
+        assert_eq!(
+            origin.display.as_deref(),
+            Some("現在 retitle 的結果這樣是正常的嗎")
+        );
+        for forbidden in ["Image", "image", "#1", "#2", "one", "two"] {
+            assert!(
+                !origin.text.contains(forbidden),
+                "projection kept image scaffolding {forbidden}: {}",
+                origin.text
+            );
+        }
+    }
+
+    #[test]
+    fn a_multi_image_prompt_still_commits_a_readable_local_title() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "multi-image-manual-title";
+        let (context, catalog, _) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row(
+                "user",
+                concat!(
+                    "<image name=[Image #1] path=\"/synthetic/one.png\">\n",
+                    "</image>\n",
+                    "<image name=[Image #2] path=\"/synthetic/two.png\">\n",
+                    "</image>\n",
+                    "[Image #1] [Image #2] 現在 retitle 的結果這樣是正常的嗎",
+                ),
+                "turn-one",
+            ),
+        );
+        let accepted = refresh_once(&context, &catalog, id, &request(id, 0, 0)).unwrap();
+        let terminal = complete_manual_locally(&context, &catalog, id, &accepted.operation_hash)
+            .unwrap()
+            .expect("manual memory-first result");
+
+        assert_eq!(terminal.outcome.as_deref(), Some("committed"));
+        assert_eq!(
+            terminal.title.as_deref(),
+            Some("現在 retitle 的結果這樣是正常的嗎")
+        );
+    }
+
+    #[test]
+    fn a_display_less_prior_projection_is_rebuilt_before_a_local_manual_title() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "prior-display-less-projection";
+        let (context, catalog, _) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row("user", "升級這個，直接做完 pr 交付完成", "turn-one"),
+        );
+        let mut record = load_session_record(&context, id).unwrap();
+        let mut prior = memory_from_record(&record).unwrap();
+        // The released projection version. Every session that predates readable
+        // objective text stores facts without it, so this literal pins the
+        // version bump: without it the marker is never rebuilt and those
+        // sessions lose the memory-first local title permanently.
+        prior.projection_version = 1;
+        prior.revision = 5;
+        prior.readiness = MemoryReadiness::Ready;
+        let leaked = MemoryFact {
+            turn_id: hash_value("turn-one"),
+            text: "objective: 升級這個 · 直接做完 · pr · 交付完成".to_string(),
+            display: None,
+        };
+        prior.origin = Some(leaked.clone());
+        prior.active_objective = Some(leaked);
+        store_memory(&mut record, &prior).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+
+        let upgrading = refresh_once(&context, &catalog, id, &request(id, 0, 5)).unwrap();
+        assert_eq!(upgrading.readiness, MemoryReadiness::CatchingUp);
+        let rebuilt =
+            refresh_operation_once(&context, &catalog, id, &upgrading.operation_hash).unwrap();
+        assert_eq!(rebuilt.readiness, MemoryReadiness::Ready);
+
+        let terminal = complete_manual_locally(&context, &catalog, id, &upgrading.operation_hash)
+            .unwrap()
+            .expect("a rebuilt projection renders a local title without a provider");
+        assert_eq!(
+            terminal.title.as_deref(),
+            Some("升級這個，直接做完 pr 交付完成")
+        );
+        assert!(terminal.provider_attempts.is_empty());
+    }
+
+    #[test]
+    fn a_manual_title_after_a_human_pivot_uses_the_pivoted_objective() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "pivoted-manual-title";
+        let rows = format!(
+            "{}{}",
+            codex_row("user", "investigate long retitle failures", "turn-one"),
+            codex_row("user", "現在改成先修 retitle 標題", "turn-two"),
+        );
+        let (context, catalog, _) = fixture(tmp.path(), id, None, &rows);
+        let accepted = refresh_once(&context, &catalog, id, &request(id, 0, 0)).unwrap();
+        let terminal = complete_manual_locally(&context, &catalog, id, &accepted.operation_hash)
+            .unwrap()
+            .expect("manual memory-first result");
+
+        // The origin is retained for memory, but the title follows the objective
+        // the human actually pivoted to.
+        assert_eq!(terminal.title.as_deref(), Some("現在改成先修 retitle 標題"));
     }
 
     #[test]
