@@ -1022,7 +1022,7 @@ fn read_preview(
 /// Codex surrounds an actual image with separate header/closing text items.
 /// After joining input_text those become adjacent lines. Remove only that
 /// paired scaffold for the card; submission events keep their original text.
-fn image_preview_text(prompt: &str) -> String {
+pub(crate) fn image_preview_text(prompt: &str) -> String {
     let mut lines = prompt.lines().peekable();
     let mut text = Vec::new();
     while let Some(line) = lines.next() {

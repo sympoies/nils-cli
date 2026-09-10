@@ -25,6 +25,7 @@ pub(crate) const RESPONSE_SCHEMA: &str = "agent-session.session-retitle.v3";
 pub(crate) const READINESS_SCHEMA: &str = "agent-session.session-retitle.readiness.v3";
 const MARKER_KEY: &str = "session_retitle_v3";
 const MARKER_SCHEMA: &str = "agent-session.session-retitle-state.v3";
+const SEMANTIC_PROJECTION_VERSION: u8 = 1;
 const MAX_MARKER_BYTES: usize = 16 * 1024;
 pub(crate) const MAX_PROVIDER_INPUT_BYTES: usize = 16 * 1024;
 const MAX_SEMANTIC_PROJECTION_BYTES: usize = 12 * 1024;
@@ -130,6 +131,8 @@ pub(crate) struct OperationReceipt {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub(crate) struct SemanticMemory {
     schema_version: String,
+    #[serde(default)]
+    projection_version: u8,
     revision: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     origin: Option<MemoryFact>,
@@ -164,6 +167,7 @@ impl Default for SemanticMemory {
     fn default() -> Self {
         Self {
             schema_version: MARKER_SCHEMA.to_string(),
+            projection_version: SEMANTIC_PROJECTION_VERSION,
             revision: 0,
             origin: None,
             active_objective: None,
@@ -286,6 +290,7 @@ pub(crate) struct InferenceContext {
     attempt_generation: u8,
     pub(crate) trigger: String,
     operation_hash: String,
+    initial_automatic_objective: Option<MemoryFact>,
 }
 
 pub(crate) enum ProviderClaim {
@@ -645,6 +650,21 @@ fn refresh_admitted_once(
             return Ok(response_from_receipt(&observed, &memory, receipt));
         }
         if receipt.execution_claim.is_some() {
+            if memory.projection_version < SEMANTIC_PROJECTION_VERSION {
+                return match claim_provider_inference(
+                    context,
+                    id,
+                    operation_hash,
+                    "prior-projection-recovery",
+                )? {
+                    ProviderClaim::Waiting(response)
+                    | ProviderClaim::RecoveredTerminal(response) => Ok(response),
+                    ProviderClaim::Claimed(_) => Err(v3_error(
+                        "retitle-v3-state-conflict",
+                        "prior semantic projection claim changed during recovery",
+                    )),
+                };
+            }
             return Ok(response_from_receipt(&observed, &memory, receipt));
         }
     } else if let Some(expected) = expected {
@@ -656,10 +676,24 @@ fn refresh_admitted_once(
     }
     let admission = admission_snapshot(existing_receipt.as_ref(), expected);
     validate_admission_activity_fence(context, &observed, &admission)?;
+    if memory.projection_version < SEMANTIC_PROJECTION_VERSION {
+        return reset_prior_semantic_projection(
+            context,
+            id,
+            &observed,
+            memory,
+            &AdmittedOperation {
+                operation_hash,
+                idempotency_hash,
+                trigger,
+                admission: &admission,
+            },
+        );
+    }
     let resume = match observed.provider_resume.as_ref() {
         Some(resume) => resume,
-        None if has_usable_cached_title(&observed, &memory) => {
-            return complete_cached_history_failure(
+        None if existing_receipt.is_some() || has_usable_cached_title(&observed, &memory) => {
+            return complete_history_failure(
                 context,
                 id,
                 &observed,
@@ -688,8 +722,11 @@ fn refresh_admitted_once(
         REFRESH_CHUNK_BYTES,
     ) {
         Ok(page) => page,
-        Err(error) if has_usable_cached_title(&observed, &memory) => {
-            return complete_cached_history_failure(
+        Err(error)
+            if has_usable_cached_title(&observed, &memory)
+                || (existing_receipt.is_some() && matches!(error, HistoryError::NotFound)) =>
+        {
+            return complete_history_failure(
                 context,
                 id,
                 &observed,
@@ -850,6 +887,94 @@ fn refresh_admitted_once(
     Ok(response_from_receipt(&current, &current_memory, receipt))
 }
 
+fn reset_prior_semantic_projection(
+    context: &CliContext,
+    id: &str,
+    observed: &SessionRecord,
+    mut memory: SemanticMemory,
+    operation: &AdmittedOperation<'_>,
+) -> Result<RetitleV3Response, CliError> {
+    let mut authority = lock_exact_session_authority(context, id)?
+        .ok_or_else(|| v3_error("session-not-found", "session does not exist"))?;
+    let current = memory_from_record(&authority.record)?;
+    if authority.record.id != observed.id
+        || authority.record.created_at != observed.created_at
+        || incarnation(&authority.record) != incarnation(observed)
+        || authority.record.title_revision != observed.title_revision
+        || current != memory
+    {
+        return Err(v3_error(
+            "retitle-v3-state-conflict",
+            "session state changed before semantic projection upgrade",
+        ));
+    }
+    memory.projection_version = SEMANTIC_PROJECTION_VERSION;
+    memory.revision = memory.revision.checked_add(1).ok_or_else(|| {
+        v3_error(
+            "memory-revision-overflow",
+            "semantic memory revision overflow",
+        )
+    })?;
+    memory.origin = None;
+    memory.active_objective = None;
+    memory.current_activity = None;
+    memory.milestones.clear();
+    memory.decisions.clear();
+    memory.blockers.clear();
+    memory.journey.clear();
+    memory.segments.clear();
+    memory.cursor = None;
+    memory.last_turn_id = None;
+    memory.last_delta_hash = None;
+    memory.applied_message_ids.clear();
+    memory.readiness = MemoryReadiness::CatchingUp;
+    let next_receipt = OperationReceipt {
+        operation_hash: operation.operation_hash.to_string(),
+        idempotency_hash: operation.idempotency_hash.to_string(),
+        trigger: operation.trigger.to_string(),
+        state: "pending".to_string(),
+        outcome: None,
+        changed: None,
+        failure_class: None,
+        failure_stage: None,
+        provider_attempts: Vec::new(),
+        admitted_incarnation: operation.admission.incarnation.clone(),
+        admitted_title_revision: operation.admission.title_revision,
+        admitted_memory_revision: operation.admission.memory_revision,
+        activity_revision: operation.admission.activity_revision,
+        provider_turn_id_hash: operation.admission.provider_turn_id_hash.clone(),
+        result_incarnation: None,
+        result_title_revision: None,
+        result_memory_revision: None,
+        created_at: operation.admission.created_at.clone(),
+        updated_at: jiff::Timestamp::now().to_string(),
+        duration_bucket: default_duration_bucket(),
+        attempt_generation: operation.admission.attempt_generation,
+        execution_claim: None,
+        memory_revision: memory.revision,
+    };
+    terminalize_superseded_operations(&mut memory, &next_receipt, observed);
+    if let Some(receipt) = memory
+        .receipts
+        .iter_mut()
+        .find(|receipt| receipt.operation_hash == operation.operation_hash)
+    {
+        *receipt = next_receipt;
+    } else {
+        push_receipt_bounded(&mut memory.receipts, next_receipt)?;
+    }
+    compact_memory(&mut memory);
+    store_memory(&mut authority.record, &memory)?;
+    authority.record.updated_at = jiff::Timestamp::now().to_string();
+    write_session_document(context, &authority.record)?;
+    let receipt = memory
+        .receipts
+        .iter()
+        .find(|receipt| receipt.operation_hash == operation.operation_hash)
+        .ok_or_else(operation_not_found)?;
+    Ok(response_from_receipt(&authority.record, &memory, receipt))
+}
+
 pub(crate) fn inference_context(
     context: &CliContext,
     id: &str,
@@ -898,6 +1023,11 @@ pub(crate) fn inference_context(
         attempt_generation: receipt.attempt_generation,
         trigger: receipt.trigger.clone(),
         operation_hash: operation_hash.to_string(),
+        initial_automatic_objective: (receipt.trigger == "automatic"
+            && record.title_revision == 0
+            && record.title.is_none())
+        .then(|| memory.active_objective.clone().or(memory.origin.clone()))
+        .flatten(),
     })
 }
 
@@ -1067,7 +1197,7 @@ pub(crate) fn complete_manual_locally(
 ) -> Result<Option<RetitleV3Response>, CliError> {
     let inference = inference_context(context, id, operation_hash)?;
     let record = load_session_record(context, id)?;
-    if inference.trigger != "manual" && record.title.is_some() {
+    if inference.trigger != "manual" {
         return Ok(None);
     }
     let memory = memory_from_record(&record)?;
@@ -1110,12 +1240,14 @@ pub(crate) fn commit_inference(
     let mut authority = lock_exact_session_authority(context, id)?
         .ok_or_else(|| v3_error("session-not-found", "session does not exist"))?;
     let mut memory = memory_from_record(&authority.record)?;
-    if memory.revision != inference.memory_revision
+    let initial_automatic_commit =
+        initial_automatic_fence_matches(&authority.record, &memory, inference);
+    if (!initial_automatic_commit && memory.revision != inference.memory_revision)
         || authority.record.title_revision != inference.title_revision
         || incarnation(&authority.record) != inference.incarnation
-        || memory.cursor != inference.cursor
-        || memory.last_turn_id != inference.last_turn_id
-        || memory.last_delta_hash != inference.last_delta_hash
+        || (!initial_automatic_commit && memory.cursor != inference.cursor)
+        || (!initial_automatic_commit && memory.last_turn_id != inference.last_turn_id)
+        || (!initial_automatic_commit && memory.last_delta_hash != inference.last_delta_hash)
         || !memory.receipts.iter().any(|receipt| {
             receipt.operation_hash == inference.operation_hash
                 && receipt.state == "ready"
@@ -1132,7 +1264,9 @@ pub(crate) fn commit_inference(
             "session state changed before retitle v3 provider commit",
         ));
     }
-    validate_history_fence(catalog, &authority.record, &memory)?;
+    if !initial_automatic_commit {
+        validate_history_fence(catalog, &authority.record, &memory)?;
+    }
     validate_activity_fence(context, &authority.record, inference)?;
     let changed =
         authority.record.title != title || authority.record.title_state.as_ref() != Some(&state);
@@ -1194,12 +1328,14 @@ pub(crate) fn complete_provider_failure(
     let mut authority = lock_exact_session_authority(context, id)?
         .ok_or_else(|| v3_error("session-not-found", "session does not exist"))?;
     let mut memory = memory_from_record(&authority.record)?;
-    if memory.revision != inference.memory_revision
+    let initial_automatic_failure =
+        initial_automatic_fence_matches(&authority.record, &memory, inference);
+    if (!initial_automatic_failure && memory.revision != inference.memory_revision)
         || authority.record.title_revision != inference.title_revision
         || incarnation(&authority.record) != inference.incarnation
-        || memory.cursor != inference.cursor
-        || memory.last_turn_id != inference.last_turn_id
-        || memory.last_delta_hash != inference.last_delta_hash
+        || (!initial_automatic_failure && memory.cursor != inference.cursor)
+        || (!initial_automatic_failure && memory.last_turn_id != inference.last_turn_id)
+        || (!initial_automatic_failure && memory.last_delta_hash != inference.last_delta_hash)
         || !memory.receipts.iter().any(|receipt| {
             receipt.operation_hash == inference.operation_hash
                 && receipt.state == "ready"
@@ -1216,24 +1352,37 @@ pub(crate) fn complete_provider_failure(
             "session state changed before retitle v3 failure commit",
         ));
     }
-    validate_history_fence(catalog, &authority.record, &memory)?;
+    if !initial_automatic_failure {
+        validate_history_fence(catalog, &authority.record, &memory)?;
+    }
     validate_activity_fence(context, &authority.record, inference)?;
     let usable = has_usable_cached_title(&authority.record, &memory);
+    let retryable = !usable
+        && inference.trigger == "automatic"
+        && inference.attempt_generation < crate::retitle::MAX_AUTOMATIC_ATTEMPTS
+        && retryable_automatic_provider_failure(failure_class);
     if let Some(receipt) = memory
         .receipts
         .iter_mut()
         .find(|receipt| receipt.operation_hash == inference.operation_hash)
     {
-        receipt.state = if usable { "degraded_cached" } else { "failed" }.to_string();
-        receipt.outcome = Some(
+        receipt.state = if retryable {
+            "ready"
+        } else if usable {
+            "degraded_cached"
+        } else {
+            "failed"
+        }
+        .to_string();
+        receipt.outcome = (!retryable).then(|| {
             if usable {
                 "degraded_cached"
             } else {
                 "terminal_failure"
             }
-            .to_string(),
-        );
-        receipt.changed = Some(false);
+            .to_string()
+        });
+        receipt.changed = (!retryable).then_some(false);
         receipt.failure_class = Some(stable_failure_class(failure_class).to_string());
         receipt.failure_stage = Some(stable_failure_stage(failure_stage).to_string());
         receipt.provider_attempts = provider_attempts
@@ -1246,13 +1395,17 @@ pub(crate) fn complete_provider_failure(
             .last()
             .map(|attempt| attempt.duration_bucket.clone())
             .unwrap_or_else(default_duration_bucket);
-        receipt.result_incarnation = incarnation(&authority.record);
-        receipt.result_title_revision = Some(authority.record.title_revision);
-        receipt.result_memory_revision = Some(memory.revision);
+        receipt.result_incarnation = (!retryable)
+            .then(|| incarnation(&authority.record))
+            .flatten();
+        receipt.result_title_revision = (!retryable).then_some(authority.record.title_revision);
+        receipt.result_memory_revision = (!retryable).then_some(memory.revision);
         receipt.execution_claim = None;
         receipt.updated_at = jiff::Timestamp::now().to_string();
     }
-    memory.readiness = if usable {
+    memory.readiness = if retryable {
+        MemoryReadiness::Ready
+    } else if usable {
         MemoryReadiness::Degraded
     } else {
         MemoryReadiness::Unavailable
@@ -1267,6 +1420,36 @@ pub(crate) fn complete_provider_failure(
         .find(|receipt| receipt.operation_hash == inference.operation_hash)
         .expect("failure receipt exists");
     Ok(response_from_receipt(&authority.record, &memory, receipt))
+}
+
+fn initial_automatic_fence_matches(
+    record: &SessionRecord,
+    memory: &SemanticMemory,
+    inference: &InferenceContext,
+) -> bool {
+    inference.initial_automatic_objective.is_some()
+        && record.title_revision == 0
+        && record.title.is_none()
+        && memory.active_objective.as_ref().or(memory.origin.as_ref())
+            == inference.initial_automatic_objective.as_ref()
+}
+
+fn retryable_automatic_provider_failure(failure_class: &str) -> bool {
+    matches!(
+        failure_class,
+        "timeout"
+            | "unavailable"
+            | "rate_limited"
+            | "quota_exceeded"
+            | "deadline_exhausted"
+            | "malformed_response"
+            | "worker_failed"
+            | "missing_message"
+            | "json_parse"
+            | "schema_validation"
+            | "response_read"
+            | "response_encoding"
+    )
 }
 
 /// Terminalizes an inference whose admission fence became stale while the
@@ -1440,7 +1623,7 @@ fn admission_snapshot(
     }
 }
 
-fn complete_cached_history_failure(
+fn complete_history_failure(
     context: &CliContext,
     id: &str,
     observed: &SessionRecord,
@@ -1478,17 +1661,25 @@ fn complete_cached_history_failure(
     {
         return Err(v3_error(
             "retitle-v3-state-conflict",
-            "session state changed before cached history failure commit",
+            "session state changed before history failure commit",
         ));
     }
     validate_admission_activity_fence(context, &authority.record, operation.admission)?;
+    let usable = has_usable_cached_title(&authority.record, &memory);
     let now = jiff::Timestamp::now().to_string();
     let next_receipt = OperationReceipt {
         operation_hash: operation.operation_hash.to_string(),
         idempotency_hash: operation.idempotency_hash.to_string(),
         trigger: operation.trigger.to_string(),
-        state: "degraded_cached".to_string(),
-        outcome: Some("degraded_cached".to_string()),
+        state: if usable { "degraded_cached" } else { "failed" }.to_string(),
+        outcome: Some(
+            if usable {
+                "degraded_cached"
+            } else {
+                "terminal_failure"
+            }
+            .to_string(),
+        ),
         changed: Some(false),
         failure_class: Some(history_failure_class(error).to_string()),
         failure_stage: Some("provider".to_string()),
@@ -1518,7 +1709,11 @@ fn complete_cached_history_failure(
     } else {
         push_receipt_bounded(&mut memory.receipts, next_receipt)?;
     }
-    memory.readiness = MemoryReadiness::Degraded;
+    memory.readiness = if usable {
+        MemoryReadiness::Degraded
+    } else {
+        MemoryReadiness::Unavailable
+    };
     compact_memory(&mut memory);
     store_memory(&mut authority.record, &memory)?;
     authority.record.updated_at = jiff::Timestamp::now().to_string();
@@ -1527,7 +1722,7 @@ fn complete_cached_history_failure(
         .receipts
         .iter()
         .find(|receipt| receipt.operation_hash == operation.operation_hash)
-        .expect("cached history failure receipt exists");
+        .expect("history failure receipt exists");
     Ok(response_from_receipt(&authority.record, &memory, receipt))
 }
 
@@ -1700,8 +1895,13 @@ fn reduce_messages(memory: &mut SemanticMemory, messages: &[HistoryMessage]) {
         if memory.applied_message_ids.contains(&message.id) {
             continue;
         }
+        let source_text = if message.human_prompt && message.role == "user" {
+            crate::provider_prompt::image_preview_text(&message.text)
+        } else {
+            message.text.clone()
+        };
         let Some(text) = sanitize_text(
-            &message.text,
+            &source_text,
             if message.human_prompt {
                 MAX_TEXT_CHARS
             } else {
@@ -1809,10 +2009,19 @@ fn semantic_label(kind: &str, value: &str, max_chars: usize) -> String {
         "on", "please", "status", "that", "the", "this", "to", "we", "will", "with", "would",
         "yes", "you", "your", "redacted",
     ];
-    let mut concepts = std::collections::BTreeSet::new();
-    let redacted = redact_credential_material(value);
+    let mut concepts = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let preview = crate::provider_prompt::image_preview_text(value);
+    let preview = preview
+        .lines()
+        .map(strip_image_reference_prefix)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let redacted = redact_credential_material(&preview);
     for token in redacted.split(|character: char| {
-        character.is_whitespace() || (character.is_ascii_punctuation() && character != '#')
+        character.is_whitespace()
+            || character.is_ascii_punctuation()
+            || matches!(character, '，' | '。' | '！' | '？' | '：' | '；' | '、')
     }) {
         let token = token.trim().to_lowercase();
         if token.is_empty()
@@ -1821,14 +2030,12 @@ fn semantic_label(kind: &str, value: &str, max_chars: usize) -> String {
             || credential_assignment(&token)
             || token.contains('@')
             || token.starts_with("http")
-            || token.len() > 48
+            || token.chars().count() > 48
         {
             continue;
         }
-        if token.is_ascii() {
-            concepts.insert(token);
-        } else {
-            concepts.extend(token.chars().map(|character| character.to_string()));
+        if seen.insert(token.clone()) {
+            concepts.push(token);
         }
     }
     let joined = concepts
@@ -1842,6 +2049,20 @@ fn semantic_label(kind: &str, value: &str, max_chars: usize) -> String {
         format!("{kind}: {joined}")
     };
     truncate_chars(&label, max_chars)
+}
+
+fn strip_image_reference_prefix(line: &str) -> &str {
+    let trimmed = line.trim_start();
+    let Some(rest) = trimmed.strip_prefix("[Image #") else {
+        return line;
+    };
+    let Some((number, text)) = rest.split_once(']') else {
+        return line;
+    };
+    if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
+        return line;
+    }
+    text.trim_start()
 }
 
 pub(crate) fn render_provider_input(memory: &SemanticMemory) -> Result<String, CliError> {
@@ -2207,6 +2428,15 @@ fn memory_from_record(record: &SessionRecord) -> Result<SemanticMemory, CliError
             "retitle-v3-memory-version-unsupported",
             "semantic memory marker version is unsupported",
         ));
+    }
+    if memory.projection_version > SEMANTIC_PROJECTION_VERSION {
+        return Err(v3_error(
+            "retitle-v3-memory-version-unsupported",
+            "semantic projection version is unsupported",
+        ));
+    }
+    if memory.projection_version < SEMANTIC_PROJECTION_VERSION {
+        memory.readiness = MemoryReadiness::CatchingUp;
     }
     sanitize_memory_in_place(&mut memory);
     Ok(memory)
@@ -2591,6 +2821,7 @@ fn request_fingerprint(request: &RetitleV3Request) -> String {
         json!({
             "schema_version": request.schema_version,
             "trigger": request.trigger,
+            "projection_version": SEMANTIC_PROJECTION_VERSION,
             "session_incarnation": &request.expected.session_incarnation,
             "provider_turn_id": request.expected.provider_turn_id.as_deref(),
         })
@@ -2939,12 +3170,12 @@ mod tests {
         );
         assert_eq!(
             memory.origin.as_ref().unwrap().text,
-            "objective: failures · investigate · long · retitle"
+            "objective: investigate · long · retitle · failures"
         );
         assert_eq!(memory.active_objective, memory.origin);
         assert_eq!(
             memory.current_activity.as_ref().unwrap().text,
-            "decision: decided · origin · retain"
+            "decision: decided · retain · origin"
         );
         let durable = serde_json::to_string(&memory).unwrap();
         let provider = render_provider_input(&memory).unwrap();
@@ -2977,11 +3208,347 @@ mod tests {
         );
         assert_eq!(
             memory.origin.as_ref().unwrap().text,
-            "objective: failures · investigate · long · retitle"
+            "objective: investigate · long · retitle · failures"
         );
         assert_eq!(
             memory.active_objective.as_ref().unwrap().text,
-            "objective: implement · memory · semantic"
+            "objective: implement · semantic · memory"
+        );
+    }
+
+    #[test]
+    fn multilingual_objective_projection_preserves_order_and_elides_image_scaffolding() {
+        let mut memory = SemanticMemory::default();
+        reduce_messages(
+            &mut memory,
+            &[message(
+                "turn-image",
+                "user",
+                concat!(
+                    "<image name=[Image #1] path=\"/home/terry/private/screenshot.png\">\n",
+                    "</image>\n",
+                    "[Image #1] 現在 auto retitle 會變成這樣也不對",
+                ),
+                true,
+            )],
+        );
+
+        let objective = &memory.origin.as_ref().unwrap().text;
+        assert_eq!(
+            objective,
+            "objective: 現在 · auto · retitle · 會變成這樣也不對"
+        );
+        assert!(!objective.contains("Image"));
+        assert!(!objective.contains("#1"));
+        assert!(!objective.contains("home"));
+        assert!(!objective.contains("screenshot"));
+        assert!(!objective.contains("現 · 在"));
+    }
+
+    #[test]
+    fn automatic_initial_title_requires_provider_inference() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "automatic-provider-title";
+        let (context, catalog, _) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row("user", "Fix the automatic session title", "turn-one"),
+        );
+        let mut automatic = request(id, 0, 0);
+        automatic.trigger = "automatic".to_string();
+        automatic.expected.activity_revision = Some(1);
+        automatic.expected.provider_turn_id = Some("turn-one".to_string());
+        write_automatic_activity(&context, id, 1, Some("turn-one"), None);
+        let accepted = refresh_once(&context, &catalog, id, &automatic).unwrap();
+
+        assert!(
+            complete_manual_locally(&context, &catalog, id, &accepted.operation_hash)
+                .unwrap()
+                .is_none(),
+            "an internal objective projection must never become a public automatic title",
+        );
+        assert_eq!(load_session_record(&context, id).unwrap().title, None);
+    }
+
+    #[test]
+    fn initial_history_unavailable_preserves_the_typed_admission_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "initial-history-unavailable";
+        let (context, catalog, _) = fixture(tmp.path(), id, None, "");
+        let mut record = load_session_record(&context, id).unwrap();
+        record.provider_resume = None;
+        crate::write_session_record(&context, &record).unwrap();
+        let request = request(id, 0, 0);
+
+        let error = refresh_once(&context, &catalog, id, &request).unwrap_err();
+
+        assert_eq!(error.code(), "retitle-v3-history-unavailable");
+        assert!(
+            operation_response_for_request(&context, id, &request)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn initial_missing_resume_with_cache_preserves_degraded_title() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "initial-missing-resume-with-cache";
+        let (context, catalog, _) = fixture(tmp.path(), id, Some("Cached title"), "");
+        let memory = SemanticMemory {
+            revision: 4,
+            origin: Some(MemoryFact {
+                turn_id: hash_value("origin"),
+                text: "objective: cached · title".to_string(),
+            }),
+            active_objective: Some(MemoryFact {
+                turn_id: hash_value("origin"),
+                text: "objective: cached · title".to_string(),
+            }),
+            readiness: MemoryReadiness::Ready,
+            ..SemanticMemory::default()
+        };
+        store_fixture_memory(&context, id, &memory);
+        let mut record = load_session_record(&context, id).unwrap();
+        record.provider_resume = None;
+        crate::write_session_record(&context, &record).unwrap();
+        let request = request(id, 1, 4);
+
+        let response = refresh_once(&context, &catalog, id, &request).unwrap();
+
+        assert_eq!(response.status, "terminal");
+        assert_eq!(response.outcome.as_deref(), Some("degraded_cached"));
+        assert_eq!(response.title.as_deref(), Some("Cached title"));
+        assert_eq!(response.failure_class.as_deref(), Some("history_not_found"));
+    }
+
+    #[test]
+    fn stale_history_failure_cannot_clear_a_newer_provider_claim() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "history-failure-claim-fence";
+        let (context, catalog, _) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row("user", "Fix the automatic session title", "turn-one"),
+        );
+        let mut automatic = request(id, 0, 0);
+        automatic.trigger = "automatic".to_string();
+        automatic.expected.activity_revision = Some(1);
+        automatic.expected.provider_turn_id = Some("turn-one".to_string());
+        write_automatic_activity(&context, id, 1, Some("turn-one"), None);
+        let accepted = refresh_once(&context, &catalog, id, &automatic).unwrap();
+        let observed = load_session_record(&context, id).unwrap();
+        let observed_memory = memory_from_record(&observed).unwrap();
+        let observed_receipt = observed_memory
+            .receipts
+            .iter()
+            .find(|receipt| receipt.operation_hash == accepted.operation_hash)
+            .unwrap()
+            .clone();
+        let admission = admission_snapshot(Some(&observed_receipt), None);
+        let operation = AdmittedOperation {
+            operation_hash: &observed_receipt.operation_hash,
+            idempotency_hash: &observed_receipt.idempotency_hash,
+            trigger: &observed_receipt.trigger,
+            admission: &admission,
+        };
+        assert!(matches!(
+            claim_provider_inference(&context, id, &accepted.operation_hash, "newer-claim")
+                .unwrap(),
+            ProviderClaim::Claimed(_)
+        ));
+
+        let error =
+            complete_history_failure(&context, id, &observed, &operation, HistoryError::NotFound)
+                .unwrap_err();
+
+        assert_eq!(error.code(), "retitle-v3-state-conflict");
+        let current = memory_from_record(&load_session_record(&context, id).unwrap()).unwrap();
+        let receipt = current
+            .receipts
+            .iter()
+            .find(|receipt| receipt.operation_hash == accepted.operation_hash)
+            .unwrap();
+        assert_eq!(receipt.state, "ready");
+        assert!(receipt.execution_claim.is_some());
+    }
+
+    #[test]
+    fn prior_image_projection_is_rebuilt_before_automatic_provider_inference() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "prior-image-projection";
+        let (context, catalog, _) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row(
+                "user",
+                concat!(
+                    "<image name=[Image #1] path=\"/home/alice/private/screenshot.png\">\n",
+                    "</image>\n",
+                    "[Image #1] Fix automatic session titles",
+                ),
+                "turn-one",
+            ),
+        );
+        let mut record = load_session_record(&context, id).unwrap();
+        let mut prior = memory_from_record(&record).unwrap();
+        prior.projection_version = 0;
+        prior.revision = 7;
+        prior.readiness = MemoryReadiness::Ready;
+        let leaked = MemoryFact {
+            turn_id: hash_value("turn-one"),
+            text: "objective: 1 · alice · home · image · path · private · screenshot · png"
+                .to_string(),
+        };
+        prior.origin = Some(leaked.clone());
+        prior.active_objective = Some(leaked);
+        store_memory(&mut record, &prior).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+
+        let mut automatic = request(id, 0, 7);
+        automatic.trigger = "automatic".to_string();
+        automatic.expected.activity_revision = Some(1);
+        automatic.expected.provider_turn_id = Some("turn-one".to_string());
+        write_automatic_activity(&context, id, 1, Some("turn-one"), None);
+        let upgrading = refresh_once(&context, &catalog, id, &automatic).unwrap();
+        assert_eq!(upgrading.status, "accepted");
+        assert_eq!(upgrading.readiness, MemoryReadiness::CatchingUp);
+        assert!(
+            operation_response_for_request(&context, id, &automatic)
+                .unwrap()
+                .is_some()
+        );
+        let rebuilding =
+            refresh_operation_once(&context, &catalog, id, &upgrading.operation_hash).unwrap();
+        assert_eq!(rebuilding.readiness, MemoryReadiness::Ready);
+        let inference = inference_context(&context, id, &upgrading.operation_hash).unwrap();
+        for forbidden in [
+            "alice",
+            "home",
+            "image",
+            "path",
+            "private",
+            "screenshot",
+            "png",
+        ] {
+            assert!(!inference.input.to_ascii_lowercase().contains(forbidden));
+        }
+        assert!(inference.input.contains("fix"));
+        assert!(inference.input.contains("automatic"));
+        assert!(inference.input.contains("session"));
+        assert!(inference.input.contains("titles"));
+    }
+
+    #[test]
+    fn expired_prior_projection_claim_terminalizes_instead_of_stalling_recovery() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "prior-expired-claim";
+        let (context, catalog, _) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row("user", "Fix automatic titles", "turn-one"),
+        );
+        let mut record = load_session_record(&context, id).unwrap();
+        let mut prior = SemanticMemory {
+            projection_version: 0,
+            revision: 7,
+            readiness: MemoryReadiness::Ready,
+            origin: Some(MemoryFact {
+                turn_id: hash_value("turn-one"),
+                text: "objective: leaked · image · path".to_string(),
+            }),
+            ..SemanticMemory::default()
+        };
+        prior.active_objective = prior.origin.clone();
+        let mut operation = receipt(
+            "prior-expired-operation",
+            "automatic",
+            "ready",
+            "2026-09-09T00:00:00Z",
+        );
+        operation.execution_claim = Some(ExecutionClaim {
+            token_hash: hash_value("dead-provider"),
+            generation: 1,
+            acquired_at: "2026-09-09T00:00:00Z".to_string(),
+            expires_at_second: 0,
+        });
+        operation.attempt_generation = 1;
+        let operation_hash = operation.operation_hash.clone();
+        prior.receipts.push(operation);
+        store_memory(&mut record, &prior).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+
+        let recovered = refresh_operation_once(&context, &catalog, id, &operation_hash).unwrap();
+        assert_eq!(recovered.status, "terminal");
+        assert_eq!(recovered.outcome.as_deref(), Some("terminal_failure"));
+        assert_eq!(
+            recovered.failure_class.as_deref(),
+            Some("uncertain_execution")
+        );
+    }
+
+    #[test]
+    fn automatic_initial_provider_title_survives_same_objective_progress() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "automatic-progress";
+        let (context, catalog, _) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row("user", "Fix the automatic session title", "turn-one"),
+        );
+        let mut automatic = request(id, 0, 0);
+        automatic.trigger = "automatic".to_string();
+        automatic.expected.activity_revision = Some(1);
+        automatic.expected.provider_turn_id = Some("turn-one".to_string());
+        write_automatic_activity(&context, id, 1, Some("turn-one"), None);
+        let accepted = refresh_once(&context, &catalog, id, &automatic).unwrap();
+        let inference = match claim_provider_inference(
+            &context,
+            id,
+            &accepted.operation_hash,
+            "provider-claim",
+        )
+        .unwrap()
+        {
+            ProviderClaim::Claimed(inference) => inference,
+            _ => panic!("initial provider inference must be claimed"),
+        };
+
+        let mut record = load_session_record(&context, id).unwrap();
+        let mut memory = memory_from_record(&record).unwrap();
+        memory.revision += 1;
+        memory.current_activity = Some(MemoryFact {
+            turn_id: hash_value("assistant-progress"),
+            text: "progress: running · focused · tests".to_string(),
+        });
+        store_memory(&mut record, &memory).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+
+        let completed = commit_inference(
+            &context,
+            &catalog,
+            id,
+            &inference,
+            SessionTitleState {
+                topic: Some("Fix automatic session titles".to_string()),
+                topic_source: crate::SessionTitleTopicSource::Auto,
+                references: Vec::new(),
+                activity: None,
+                extra: BTreeMap::new(),
+            },
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(completed.outcome.as_deref(), Some("committed"));
+        assert_eq!(
+            completed.title.as_deref(),
+            Some("Fix automatic session titles")
         );
     }
 
@@ -3336,7 +3903,7 @@ mod tests {
         assert_eq!(terminal.outcome.as_deref(), Some("committed"));
         assert_eq!(
             terminal.title.as_deref(),
-            Some("objective: long · make · reliable · retitle")
+            Some("objective: make · long · retitle · reliable")
         );
         let replay = operation_response(&context, id, &accepted.operation_hash)
             .unwrap()
@@ -3709,11 +4276,11 @@ mod tests {
         assert_eq!(uninterrupted, resumed);
         assert_eq!(
             resumed.origin.as_ref().unwrap().text,
-            "objective: 0 · objective"
+            "objective: objective · 0"
         );
         assert_eq!(
             resumed.active_objective.as_ref().unwrap().text,
-            "objective: 975 · objective"
+            "objective: objective · 975"
         );
     }
 
@@ -3827,7 +4394,7 @@ mod tests {
         let reloaded_memory = memory_from_record(&reloaded_record).unwrap();
         assert_eq!(
             reloaded_memory.origin.as_ref().unwrap().text,
-            "objective: before · memory · observability · redesign · retitle · semantic"
+            "objective: redesign · retitle · observability · before · semantic · memory"
         );
         assert!(serde_json::to_vec(&reloaded_memory).unwrap().len() <= MAX_MARKER_BYTES);
         assert!(render_provider_input(&reloaded_memory).unwrap().len() < MAX_PROVIDER_INPUT_BYTES);
@@ -4156,7 +4723,7 @@ mod tests {
         assert_eq!(memory.revision, 1);
         assert_eq!(
             memory.origin.as_ref().unwrap().text,
-            "objective: origin · preserve"
+            "objective: preserve · origin"
         );
         assert_eq!(memory.journey.len(), 1);
     }

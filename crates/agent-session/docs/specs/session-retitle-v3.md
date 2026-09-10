@@ -252,6 +252,14 @@ rendered from already accepted memory. A current-memory manual request MUST NOT
 invoke a provider merely to reproduce its existing title. Primary and fallback
 execution follow the bounded taxonomy below.
 
+The first automatic title MUST be provider-authored. The daemon MUST NOT expose
+its private deterministic `objective:` projection as the session title. Image
+transport scaffolding and image-reference markers are excluded from the
+semantic projection supplied to that provider. A first automatic result MUST
+set a non-empty topic and MUST reject internal projection prefixes,
+separator-list output, and image-reference markers as malformed provider
+output before commit or fallback selection.
+
 When refresh or provider evaluation fails and usable memory plus a prior title
 exist, the daemon preserves both and terminates as `degraded_cached`. The
 provider failure MUST NOT turn that case into an HTTP error or a generic UI
@@ -268,6 +276,9 @@ growth MUST NOT fail merely because the transcript grew.
 
 The marker contains:
 
+- a semantic projection version. A daemon that changes prompt sanitization MUST
+  rebuild an older projection from provider history before sending it across a
+  title-provider boundary; operation receipts survive that rebuild;
 - monotonic `revision`;
 - immutable `origin`, set from the first eligible sanitized human prompt;
 - `active_objective`, initially the origin and replaceable only by an explicit
@@ -346,6 +357,10 @@ A title/result commit additionally rechecks the complete current history
 cursor, source segment, semantic delta hash, activity revision, and provider
 turn. Any newer history delta, different current turn, incarnation change,
 title change, or memory change rejects the old result before title mutation.
+The one exception is a missing first title produced by an automatic operation:
+assistant progress from the same provider turn MAY advance memory while the
+provider runs, but the session incarnation, zero title revision, execution
+claim, provider turn, and original active objective MUST still match.
 
 Cursor advance, reduced memory, receipts, readiness, and any deterministic
 title change MUST be written atomically under the existing session-record lock.
@@ -374,6 +389,11 @@ session. Its queue and durable receipts obey these rules:
 - Receipt stage, timestamps, fence, and attempt state are durable. After daemon
   restart, a non-terminal operation is adopted under the same per-session gate
   and resumes from its last proven safe state.
+- An `accepted` response is non-terminal and remains scheduled for bounded
+  reconciliation; polling it does not consume a provider-failure attempt.
+- A non-retryable continuation failure MUST atomically terminalize its durable
+  receipt before releasing the operation gate, so later scheduling or restart
+  adoption cannot recreate the same failed work.
 - Recovery never advances an unverified cursor, repeats a completed title
   commit, or retries a non-transient provider failure against unchanged input.
 
@@ -382,7 +402,12 @@ input. Backoff retries are reserved for explicitly transient timeout,
 unavailable, rate-limit, or quota classes and retain a durable attempt bound.
 Malformed output, missing content, JSON parse, and schema validation are
 terminal for that provider/input; the daemon may proceed once to a distinct
-configured fallback.
+configured fallback. If an automatic operation has no usable title to preserve,
+these provider failures keep the durable operation non-terminal and MAY retry
+the provider chain under the same operation hash up to the global automatic
+attempt bound. Exhaustion is terminal. This initial-title exception prevents a
+single transient or malformed response from permanently leaving only the
+session-ID fallback visible.
 
 ## Provider attempt observations
 
