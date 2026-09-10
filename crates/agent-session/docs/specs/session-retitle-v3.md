@@ -242,6 +242,12 @@ A manual Retitle with current, usable memory MUST complete from a deterministic
 local render without invoking a title provider. It may commit a changed title
 or return `unchanged`. Its work is independent of total transcript size.
 
+That local render MUST use the stored readable objective, never the private
+`objective:` projection. When no readable objective survives sanitization, or
+when the readable objective itself carries an internal projection shape — a
+human prompt may legitimately begin `blocker:` or contain the separator — the
+operation MUST defer to provider inference instead of failing the request.
+
 If memory is stale, the daemon performs one bounded incremental refresh. It MAY
 complete synchronously when that refresh reaches a safe commit point within
 the request budget. Otherwise it durably admits the operation and returns HTTP
@@ -258,7 +264,12 @@ transport scaffolding and image-reference markers are excluded from the
 semantic projection supplied to that provider. A first automatic result MUST
 set a non-empty topic and MUST reject internal projection prefixes,
 separator-list output, and image-reference markers as malformed provider
-output before commit or fallback selection.
+output before commit or fallback selection. Every v3 title commit, local or
+provider-authored, MUST apply that same rejection to each newly produced topic
+and activity before it mutates the title. A value carried through the commit
+unchanged — a user-owned title, or one the provider elected to keep — is not
+newly produced and MUST NOT be rejected, so a session a human named
+`auth · api refactor` keeps retitling normally.
 
 When refresh or provider evaluation fails and usable memory plus a prior title
 exist, the daemon preserves both and terminates as `degraded_cached`. The
@@ -283,6 +294,13 @@ The marker contains:
 - immutable `origin`, set from the first eligible sanitized human prompt;
 - `active_objective`, initially the origin and replaceable only by an explicit
   sanitized human objective pivot;
+- a readable objective stored beside `origin` and `active_objective`. It is set
+  only from a sanitized human prompt, is capped at the public session-title
+  bound, excludes image transport scaffolding and every image-reference marker
+  wherever it appears rather than only a leading one, is
+  absent when sanitization redacted any of its material, is never set from
+  assistant text, and is excluded from the provider projection. It exists so a
+  local title render never has to publish the `objective:` projection;
 - `current_activity`, which assistant progress may update;
 - bounded `milestones`, `decisions`, `blockers`, and `journey` ledgers;
 - bounded source `segments` and the current incremental `cursor`;
@@ -303,8 +321,9 @@ output can update neither `origin` nor `active_objective`. Assistant text MAY
 update activity or a bounded ledger after sanitization.
 
 The provider input is a deterministic JSON projection of the accepted memory
-and MUST be strictly smaller than 16 KiB. It excludes cursor, segment, receipt,
-timestamp, path, credential, environment, and raw provider identity fields.
+and MUST be strictly smaller than 16 KiB. It excludes readable objective text,
+cursor, segment, receipt, timestamp, path, credential, environment, and raw
+provider identity fields.
 Repeated rendering of the same memory revision MUST produce identical bytes.
 
 ## Incremental history and discontinuity

@@ -387,6 +387,50 @@ fn retitle_v3_routes_are_authenticated_strict_private_and_additive() {
 }
 
 #[test]
+fn retitle_v3_manual_title_is_readable_prose_and_never_the_internal_projection() {
+    let fixture = Fixture::new();
+    let _server = ServeProcess::spawn(&fixture);
+
+    let admitted = fixture.request(
+        "POST",
+        "/sessions/retitle-v3-black-box/retitle-v3",
+        Some(TOKEN),
+        Some(&manual_request("manual-readable-title", 0, 0)),
+    );
+    assert!(
+        matches!(admitted.status, 200 | 202),
+        "body={}",
+        admitted.body
+    );
+    let operation_hash = admitted.body["data"]["retitle"]["operation_hash"]
+        .as_str()
+        .expect("operation hash")
+        .to_string();
+    let terminal = poll_terminal(&fixture, &operation_hash);
+    let retitle = &terminal.body["data"]["retitle"];
+    assert_eq!(retitle["status"], "terminal");
+    assert_eq!(retitle["outcome"], "committed");
+
+    let title = retitle["title"].as_str().expect("committed title");
+    assert_eq!(
+        title,
+        "Make long session retitle reliable with bounded semantic memory"
+    );
+    assert!(
+        !title.to_ascii_lowercase().starts_with("objective:") && !title.contains(" · "),
+        "manual retitle published an internal projection: {title}"
+    );
+
+    let persisted: Value =
+        serde_json::from_slice(&fs::read(&fixture.record_path).expect("persisted session record"))
+            .expect("persisted session record JSON");
+    assert_eq!(persisted["title"], json!(title));
+    assert!(
+        !fixture.provider_calls.exists(),
+        "a memory-first manual retitle must not invoke the title provider"
+    );
+}
+#[test]
 fn retitle_v3_claimed_operation_is_reconciled_after_a_real_daemon_restart() {
     let fixture = Fixture::new();
     let provider_started = fixture.root.join("provider.started");
