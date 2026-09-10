@@ -2155,17 +2155,23 @@ fn parse_decision(
 }
 
 fn usable_initial_automatic_topic(topic: Option<&str>) -> bool {
-    let Some(topic) = topic.map(str::trim).filter(|topic| !topic.is_empty()) else {
-        return false;
-    };
+    topic
+        .map(str::trim)
+        .filter(|topic| !topic.is_empty())
+        .is_some_and(|topic| !topic_is_internal_projection(topic))
+}
+
+/// Detects the daemon's private semantic-projection shapes. No inferred title
+/// may publish one, whichever path produced it.
+pub(crate) fn topic_is_internal_projection(topic: &str) -> bool {
     let lower = topic.to_ascii_lowercase();
-    !lower.starts_with("objective:")
-        && !lower.starts_with("progress:")
-        && !lower.starts_with("decision:")
-        && !lower.starts_with("blocker:")
-        && !lower.contains("[image #")
-        && !lower.contains("<image ")
-        && !topic.contains(" · ")
+    lower.starts_with("objective:")
+        || lower.starts_with("progress:")
+        || lower.starts_with("decision:")
+        || lower.starts_with("blocker:")
+        || lower.contains("[image #")
+        || lower.contains("<image ")
+        || topic.contains(" · ")
 }
 
 fn approved_references(context: &TitleContextV2) -> BTreeSet<String> {

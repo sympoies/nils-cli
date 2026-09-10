@@ -25,12 +25,15 @@ pub(crate) const RESPONSE_SCHEMA: &str = "agent-session.session-retitle.v3";
 pub(crate) const READINESS_SCHEMA: &str = "agent-session.session-retitle.readiness.v3";
 const MARKER_KEY: &str = "session_retitle_v3";
 const MARKER_SCHEMA: &str = "agent-session.session-retitle-state.v3";
-const SEMANTIC_PROJECTION_VERSION: u8 = 1;
+const SEMANTIC_PROJECTION_VERSION: u8 = 2;
 const MAX_MARKER_BYTES: usize = 16 * 1024;
 pub(crate) const MAX_PROVIDER_INPUT_BYTES: usize = 16 * 1024;
 const MAX_SEMANTIC_PROJECTION_BYTES: usize = 12 * 1024;
 pub(crate) const REFRESH_CHUNK_BYTES: usize = 1024 * 1024 + 1;
 const MAX_TEXT_CHARS: usize = 320;
+/// A readable objective must already fit the public session-title bound so a
+/// local commit can never fail title normalization on a long first prompt.
+const MAX_OBJECTIVE_DISPLAY_CHARS: usize = crate::SESSION_TITLE_MAX_CHARS;
 const MAX_ACTIVITY_CHARS: usize = 320;
 const MAX_LEDGER_ENTRIES: usize = 6;
 const MAX_SEGMENTS: usize = 8;
@@ -57,6 +60,11 @@ pub(crate) enum MemoryReadiness {
 pub(crate) struct MemoryFact {
     turn_id: String,
     text: String,
+    /// Readable objective prose kept beside the comparison projection. The
+    /// projection is a token bag built for memory equality; only this field
+    /// may reach a public session title.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    display: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -294,7 +302,9 @@ pub(crate) struct InferenceContext {
 }
 
 pub(crate) enum ProviderClaim {
-    Claimed(InferenceContext),
+    // Boxed so one claimed inference does not set the size of every claim
+    // outcome.
+    Claimed(Box<InferenceContext>),
     Waiting(RetitleV3Response),
     RecoveredTerminal(RetitleV3Response),
 }
@@ -1125,7 +1135,9 @@ pub(crate) fn claim_provider_inference(
     authority.record.updated_at = jiff::Timestamp::now().to_string();
     write_session_document(context, &authority.record)?;
     drop(authority);
-    inference_context(context, id, operation_hash).map(ProviderClaim::Claimed)
+    inference_context(context, id, operation_hash)
+        .map(Box::new)
+        .map(ProviderClaim::Claimed)
 }
 
 /// Releases an automatic provider claim that has not crossed the provider
@@ -1204,8 +1216,14 @@ pub(crate) fn complete_manual_locally(
     let Some(objective) = memory.active_objective.as_ref().or(memory.origin.as_ref()) else {
         return Ok(None);
     };
+    // The stored projection is a comparison key, not prose. Without readable
+    // objective text this operation defers to provider inference rather than
+    // publishing internal semantic memory as the session title.
+    let Some(topic) = objective.display.clone() else {
+        return Ok(None);
+    };
     let state = SessionTitleState {
-        topic: Some(objective.text.clone()),
+        topic: Some(topic),
         topic_source: SessionTitleTopicSource::Auto,
         references: Vec::new(),
         // Activity is private semantic context. A deterministic local title
@@ -1224,7 +1242,8 @@ pub(crate) fn commit_inference(
     state: SessionTitleState,
     provider_attempts: &[crate::retitle::ProviderAttemptObservation],
 ) -> Result<RetitleV3Response, CliError> {
-    if title_state_contains_sensitive_material(&state) {
+    if title_state_contains_sensitive_material(&state) || title_state_is_internal_projection(&state)
+    {
         return complete_provider_failure(
             context,
             catalog,
@@ -1915,6 +1934,7 @@ fn reduce_messages(memory: &mut SemanticMemory, messages: &[HistoryMessage]) {
             let fact = MemoryFact {
                 turn_id: message.id.clone(),
                 text: projected.clone(),
+                display: objective_display(&source_text),
             };
             if memory.origin.is_none() {
                 memory.origin = Some(fact.clone());
@@ -1937,6 +1957,7 @@ fn reduce_messages(memory: &mut SemanticMemory, messages: &[HistoryMessage]) {
             let fact = MemoryFact {
                 turn_id: message.id.clone(),
                 text: projected.clone(),
+                display: None,
             };
             memory.current_activity = Some(fact.clone());
             let target = match kind {
@@ -2051,6 +2072,20 @@ fn semantic_label(kind: &str, value: &str, max_chars: usize) -> String {
     truncate_chars(&label, max_chars)
 }
 
+/// Projects a human objective into readable title prose. `semantic_label`
+/// stays authoritative for memory equality; this value only ever feeds a public
+/// title, so a redacted objective yields nothing and the operation falls back to
+/// provider inference instead of publishing `<redacted>`.
+fn objective_display(value: &str) -> Option<String> {
+    let stripped = crate::provider_prompt::image_preview_text(value)
+        .lines()
+        .map(strip_image_reference_prefix)
+        .collect::<Vec<_>>()
+        .join("\n");
+    sanitize_text(&stripped, MAX_OBJECTIVE_DISPLAY_CHARS)
+        .filter(|display| !display.contains("<redacted>"))
+}
+
 fn strip_image_reference_prefix(line: &str) -> &str {
     let trimmed = line.trim_start();
     let Some(rest) = trimmed.strip_prefix("[Image #") else {
@@ -2068,6 +2103,18 @@ fn strip_image_reference_prefix(line: &str) -> &str {
 pub(crate) fn render_provider_input(memory: &SemanticMemory) -> Result<String, CliError> {
     let mut memory = memory.clone();
     sanitize_memory_in_place(&mut memory);
+    // Readable objective prose exists for the local title only; provider input
+    // stays the bounded projection.
+    for fact in [
+        memory.origin.as_mut(),
+        memory.active_objective.as_mut(),
+        memory.current_activity.as_mut(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        fact.display = None;
+    }
     let value = json!({
         "schema_version": CAPABILITY,
         "origin": memory.origin,
@@ -2355,6 +2402,11 @@ fn sanitize_memory_in_place(memory: &mut SemanticMemory) {
     {
         fact.text =
             sanitize_text(&fact.text, MAX_TEXT_CHARS).unwrap_or_else(|| "<redacted>".to_string());
+        fact.display = fact
+            .display
+            .as_deref()
+            .and_then(|display| sanitize_text(display, MAX_OBJECTIVE_DISPLAY_CHARS))
+            .filter(|display| !display.contains("<redacted>"));
     }
     for entry in memory
         .milestones
@@ -2400,6 +2452,18 @@ fn title_state_contains_sensitive_material(state: &SessionTitleState) -> bool {
         || serde_json::to_string(&state.extra)
             .ok()
             .is_some_and(|value| redact_credential_material(&value) != value)
+}
+
+/// Enforces at the single commit boundary that private semantic memory never
+/// reaches a published title, so a future local or provider path cannot
+/// reintroduce the leak by construction.
+fn title_state_is_internal_projection(state: &SessionTitleState) -> bool {
+    state
+        .topic
+        .as_deref()
+        .into_iter()
+        .chain(state.activity.as_deref())
+        .any(crate::retitle::topic_is_internal_projection)
 }
 
 fn public_title(value: Option<&str>) -> Option<String> {
@@ -2544,6 +2608,10 @@ fn compact_memory(memory: &mut SemanticMemory) {
                 .flatten()
                 {
                     fact.text = truncate_chars(&fact.text, 64);
+                    fact.display = fact
+                        .display
+                        .as_deref()
+                        .map(|display| truncate_chars(display, 64));
                 }
                 for entry in memory
                     .milestones
@@ -3179,12 +3247,25 @@ mod tests {
         );
         let durable = serde_json::to_string(&memory).unwrap();
         let provider = render_provider_input(&memory).unwrap();
+        // The sanitized human objective is durable so a local title renders
+        // prose instead of the projection. Assistant text stays projection-only
+        // in the marker, and provider input carries neither verbatim.
+        assert_eq!(
+            memory.origin.as_ref().unwrap().display.as_deref(),
+            Some("investigate long retitle failures")
+        );
+        assert!(durable.contains("investigate long retitle failures"));
+        for raw in [
+            "Implementing bounded cursor",
+            "Decided to retain the origin",
+        ] {
+            assert!(!durable.contains(raw));
+        }
         for raw in [
             "investigate long retitle failures",
             "Implementing bounded cursor",
             "Decided to retain the origin",
         ] {
-            assert!(!durable.contains(raw));
             assert!(!provider.contains(raw));
         }
         for concept in ["investigate", "retitle", "failures", "decision"] {
@@ -3301,10 +3382,12 @@ mod tests {
             origin: Some(MemoryFact {
                 turn_id: hash_value("origin"),
                 text: "objective: cached · title".to_string(),
+                display: None,
             }),
             active_objective: Some(MemoryFact {
                 turn_id: hash_value("origin"),
                 text: "objective: cached · title".to_string(),
+                display: None,
             }),
             readiness: MemoryReadiness::Ready,
             ..SemanticMemory::default()
@@ -3402,6 +3485,7 @@ mod tests {
             turn_id: hash_value("turn-one"),
             text: "objective: 1 · alice · home · image · path · private · screenshot · png"
                 .to_string(),
+            display: None,
         };
         prior.origin = Some(leaked.clone());
         prior.active_objective = Some(leaked);
@@ -3460,6 +3544,7 @@ mod tests {
             origin: Some(MemoryFact {
                 turn_id: hash_value("turn-one"),
                 text: "objective: leaked · image · path".to_string(),
+                display: None,
             }),
             ..SemanticMemory::default()
         };
@@ -3525,6 +3610,7 @@ mod tests {
         memory.current_activity = Some(MemoryFact {
             turn_id: hash_value("assistant-progress"),
             text: "progress: running · focused · tests".to_string(),
+            display: None,
         });
         store_memory(&mut record, &memory).unwrap();
         crate::write_session_record(&context, &record).unwrap();
@@ -3550,6 +3636,53 @@ mod tests {
             completed.title.as_deref(),
             Some("Fix automatic session titles")
         );
+    }
+
+    #[test]
+    fn commit_rejects_an_inferred_title_that_carries_an_internal_projection() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "projection-commit-guard";
+        let (context, catalog, _) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row("user", "guard the commit boundary", "turn-one"),
+        );
+        let accepted = refresh_once(&context, &catalog, id, &request(id, 0, 0)).unwrap();
+        let inference = match claim_provider_inference(
+            &context,
+            id,
+            &accepted.operation_hash,
+            "provider-claim",
+        )
+        .unwrap()
+        {
+            ProviderClaim::Claimed(inference) => inference,
+            _ => panic!("provider inference must be claimed"),
+        };
+
+        let completed = commit_inference(
+            &context,
+            &catalog,
+            id,
+            &inference,
+            SessionTitleState {
+                topic: Some("objective: guard · commit · boundary".to_string()),
+                topic_source: crate::SessionTitleTopicSource::Auto,
+                references: Vec::new(),
+                activity: None,
+                extra: BTreeMap::new(),
+            },
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(completed.outcome.as_deref(), Some("terminal_failure"));
+        assert_eq!(
+            completed.failure_class.as_deref(),
+            Some("schema_validation")
+        );
+        assert_eq!(load_session_record(&context, id).unwrap().title, None);
     }
 
     #[test]
@@ -3692,10 +3825,12 @@ mod tests {
             origin: Some(MemoryFact {
                 turn_id: hash_value("origin"),
                 text: "objective: cached · title".to_string(),
+                display: None,
             }),
             active_objective: Some(MemoryFact {
                 turn_id: hash_value("origin"),
                 text: "objective: cached · title".to_string(),
+                display: None,
             }),
             readiness: MemoryReadiness::Ready,
             ..SemanticMemory::default()
@@ -3734,6 +3869,7 @@ mod tests {
             origin: Some(MemoryFact {
                 turn_id: hash_value("origin"),
                 text: "objective: cached".to_string(),
+                display: None,
             }),
             readiness: MemoryReadiness::Ready,
             ..SemanticMemory::default()
@@ -3768,14 +3904,17 @@ mod tests {
             origin: Some(MemoryFact {
                 turn_id: hash_value("origin"),
                 text: truncate_chars(&text, MAX_TEXT_CHARS),
+                display: None,
             }),
             active_objective: Some(MemoryFact {
                 turn_id: hash_value("objective"),
                 text: truncate_chars(&text, MAX_TEXT_CHARS),
+                display: None,
             }),
             current_activity: Some(MemoryFact {
                 turn_id: hash_value("activity"),
                 text: truncate_chars(&text, MAX_TEXT_CHARS),
+                display: None,
             }),
             milestones: (0..MAX_LEDGER_ENTRIES).map(entry).collect(),
             decisions: (10..10 + MAX_LEDGER_ENTRIES).map(entry).collect(),
@@ -3903,13 +4042,147 @@ mod tests {
         assert_eq!(terminal.outcome.as_deref(), Some("committed"));
         assert_eq!(
             terminal.title.as_deref(),
-            Some("objective: make · long · retitle · reliable")
+            Some("make long retitle reliable")
         );
         let replay = operation_response(&context, id, &accepted.operation_hash)
             .unwrap()
             .unwrap();
         assert_eq!(replay.result_fence.as_ref().unwrap().title_revision, 1);
         assert!(replay.finished_at.is_some());
+    }
+
+    #[test]
+    fn manual_local_title_publishes_readable_objective_not_the_internal_projection() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "readable-manual-title";
+        let (context, catalog, _) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row("user", "升級這個，直接做完 pr 交付完成", "turn-one"),
+        );
+        let accepted = refresh_once(&context, &catalog, id, &request(id, 0, 0)).unwrap();
+        let terminal = complete_manual_locally(&context, &catalog, id, &accepted.operation_hash)
+            .unwrap()
+            .expect("manual memory-first result");
+
+        let title = terminal.title.as_deref().expect("committed title");
+        assert_eq!(title, "升級這個，直接做完 pr 交付完成");
+        assert!(
+            !title.starts_with("objective:") && !title.contains(" · "),
+            "an internal objective projection must never become a public title: {title}",
+        );
+    }
+
+    #[test]
+    fn readable_objective_elides_image_scaffolding_and_keeps_the_projection_private() {
+        let mut memory = SemanticMemory::default();
+        reduce_messages(
+            &mut memory,
+            &[message(
+                "turn-image",
+                "user",
+                concat!(
+                    "<image name=[Image #1] path=\"/home/terry/private/screenshot.png\">\n",
+                    "</image>\n",
+                    "[Image #1] 現在 auto retitle 會變成這樣也不對",
+                ),
+                true,
+            )],
+        );
+
+        let origin = memory.origin.as_ref().unwrap();
+        assert_eq!(
+            origin.display.as_deref(),
+            Some("現在 auto retitle 會變成這樣也不對")
+        );
+        assert_eq!(
+            origin.text,
+            "objective: 現在 · auto · retitle · 會變成這樣也不對"
+        );
+    }
+
+    #[test]
+    fn assistant_progress_never_carries_readable_title_text() {
+        let mut memory = SemanticMemory::default();
+        reduce_messages(
+            &mut memory,
+            &[
+                message("turn-one", "user", "ship the readable title", true),
+                message("turn-two", "assistant", "running the focused tests", false),
+            ],
+        );
+
+        assert!(memory.current_activity.as_ref().unwrap().display.is_none());
+    }
+
+    #[test]
+    fn provider_input_never_carries_the_readable_objective() {
+        let mut memory = SemanticMemory::default();
+        reduce_messages(
+            &mut memory,
+            &[message(
+                "turn-one",
+                "user",
+                "Please Fix The Retitle Title",
+                true,
+            )],
+        );
+
+        let rendered = render_provider_input(&memory).unwrap();
+
+        assert!(!rendered.contains("\"display\""));
+        assert!(!rendered.contains("Please Fix The Retitle Title"));
+        assert!(rendered.contains("objective: fix"));
+    }
+
+    #[test]
+    fn redacted_objective_defers_the_local_title_to_provider_inference() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "redacted-manual-title";
+        let (context, catalog, _) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row("user", "fix /home/alice/private/notes.rs", "turn-one"),
+        );
+        let accepted = refresh_once(&context, &catalog, id, &request(id, 0, 0)).unwrap();
+
+        assert!(
+            complete_manual_locally(&context, &catalog, id, &accepted.operation_hash)
+                .unwrap()
+                .is_none(),
+            "a redacted objective must reach provider inference instead of a local title",
+        );
+        assert_eq!(load_session_record(&context, id).unwrap().title, None);
+    }
+
+    #[test]
+    fn long_objective_commits_within_the_public_title_bound() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "long-manual-title";
+        let prompt = (0..20)
+            .map(|index| format!("distinctobjective{index:02}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let (context, catalog, _) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row("user", &prompt, "turn-one"),
+        );
+        let accepted = refresh_once(&context, &catalog, id, &request(id, 0, 0)).unwrap();
+        let terminal = complete_manual_locally(&context, &catalog, id, &accepted.operation_hash)
+            .unwrap()
+            .expect("manual memory-first result");
+
+        let title = terminal.title.as_deref().expect("committed title");
+        assert!(
+            title.chars().count() <= crate::SESSION_TITLE_MAX_CHARS,
+            "title exceeded the public bound: {} chars",
+            title.chars().count()
+        );
+        assert!(title.starts_with("distinctobjective00 distinctobjective01"));
     }
 
     #[test]
@@ -3929,10 +4202,12 @@ mod tests {
             origin: Some(MemoryFact {
                 turn_id: hash_value("turn-one"),
                 text: "claim exactly once".to_string(),
+                display: None,
             }),
             active_objective: Some(MemoryFact {
                 turn_id: hash_value("turn-one"),
                 text: "claim exactly once".to_string(),
+                display: None,
             }),
             ..SemanticMemory::default()
         };
@@ -4162,10 +4437,12 @@ mod tests {
             origin: Some(MemoryFact {
                 turn_id: hash_value("origin"),
                 text: "cached objective".to_string(),
+                display: None,
             }),
             active_objective: Some(MemoryFact {
                 turn_id: hash_value("origin"),
                 text: "cached objective".to_string(),
+                display: None,
             }),
             ..SemanticMemory::default()
         };
@@ -4543,6 +4820,7 @@ mod tests {
             origin: Some(MemoryFact {
                 turn_id: hash_value("origin"),
                 text: "objective: cached".to_string(),
+                display: None,
             }),
             readiness: MemoryReadiness::Ready,
             ..SemanticMemory::default()
