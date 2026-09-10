@@ -46,7 +46,10 @@ repo-retro report --repo . --from 2026-05-11 --to 2026-05-17 \
 
 ## Specs
 
-- None yet. Add documents under `docs/specs/` and register them here.
+- [Test-first evidence mutation receipt v1](specs/test-first-evidence-mutation-receipt-v1.md):
+  compact default JSON receipts and the explicit full-record compatibility mode.
+- [Mutation receipt JSON Schema](specs/test-first-evidence-mutation-receipt-v1.schema.json):
+  machine-readable validation for the three compact v3 envelopes.
 
 ## Runbooks
 

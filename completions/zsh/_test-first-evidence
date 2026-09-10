@@ -56,6 +56,7 @@ _arguments "${_arguments_options[@]}" : \
 '--observed-failure=[Failure actually observed in the before-fix run]:TEXT:_default' \
 '--test-name=[Optional test name or scenario identifier]:TEXT:_default' \
 '*--artifact=[Optional evidence artifact path. Repeat for multiple artifacts]:PATH:_files' \
+'--full-record[Return the complete evidence record in JSON instead of a compact mutation receipt]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -99,6 +100,7 @@ _arguments "${_arguments_options[@]}" : \
 '--scope=[Risk scope proven by this validation]:SCOPE:(focused affected-suite contract-consumer full manual)' \
 '--summary=[Optional final validation summary]:TEXT:_default' \
 '*--artifact=[Optional validation artifact path. Repeat for multiple artifacts]:PATH:_files' \
+'--full-record[Return the complete evidence record in JSON instead of a compact mutation receipt]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -133,6 +135,7 @@ _arguments "${_arguments_options[@]}" : \
 '--project-path=[Git repository whose baseline or delivery subject is being bound]:DIR:_files -/' \
 '--remote=[Git remote used for provider repository identity when available]:NAME:_default' \
 '--repository-id=[Stable repository identity override for provider/local targets without a usable remote]:ID:_default' \
+'--full-record[Return the complete evidence record in JSON instead of a compact mutation receipt]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
