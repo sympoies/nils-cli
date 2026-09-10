@@ -171,6 +171,15 @@ struct BrokerResolveResponse {
     plan: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct BrokerSelectResponse {
+    schema_version: String,
+    #[serde(alias = "nickname")]
+    account: String,
+    #[serde(default, alias = "chatgpt_plan_type")]
+    plan: Option<String>,
+}
+
 pub(crate) fn broker_is_configured() -> bool {
     matches!(broker_argv(), Ok(Some(_)))
 }
@@ -1209,18 +1218,32 @@ pub(crate) fn resolve_account(
     account: &str,
     force_refresh: bool,
 ) -> Result<CodexAccountCredentials, CliError> {
+    let timeout = if force_refresh {
+        BROKER_REFRESH_TIMEOUT
+    } else {
+        BROKER_TIMEOUT
+    };
+    resolve_account_with_timeout(account, force_refresh, timeout)
+}
+
+pub(crate) fn resolve_account_with_timeout(
+    account: &str,
+    force_refresh: bool,
+    timeout: Duration,
+) -> Result<CodexAccountCredentials, CliError> {
     validate_account(account)?;
     let mut args = vec!["resolve", "--account", account];
     if force_refresh {
         args.push("--force-refresh");
     }
     args.extend(["--format", "json"]);
-    let timeout = if force_refresh {
+    let broker_timeout = if force_refresh {
         BROKER_REFRESH_TIMEOUT
     } else {
         BROKER_TIMEOUT
-    };
-    let value = run_broker(&args, timeout)?;
+    }
+    .min(timeout);
+    let value = run_broker(&args, broker_timeout)?;
     let response: BrokerResolveResponse = serde_json::from_value(value).map_err(|_| {
         broker_error(
             "codex-account-broker-invalid-response",
@@ -1245,6 +1268,45 @@ pub(crate) fn resolve_account(
         access_token: response.access_token,
         chatgpt_account_id: response.chatgpt_account_id,
         chatgpt_plan_type: response.plan.filter(|value| !value.trim().is_empty()),
+    })
+}
+
+pub(crate) fn select_account(strategy: &str) -> Result<CodexAccountSummary, CliError> {
+    select_account_with_timeout(strategy, BROKER_TIMEOUT)
+}
+
+pub(crate) fn select_account_with_timeout(
+    strategy: &str,
+    timeout: Duration,
+) -> Result<CodexAccountSummary, CliError> {
+    if strategy != "default_with_capacity" {
+        return Err(broker_error(
+            "codex-account-broker-invalid-config",
+            "Codex account selection strategy is unsupported",
+        ));
+    }
+    let value = run_broker(
+        &["select", "--strategy", strategy, "--format", "json"],
+        BROKER_TIMEOUT.min(timeout),
+    )?;
+    let response: BrokerSelectResponse = serde_json::from_value(value).map_err(|_| {
+        broker_error(
+            "codex-account-broker-invalid-response",
+            "Codex account broker returned an invalid account selection",
+        )
+    })?;
+    ensure_schema(&response.schema_version)?;
+    if validate_account(&response.account).is_err() {
+        return Err(broker_error(
+            "codex-account-broker-invalid-response",
+            "Codex account broker returned an invalid account selection",
+        ));
+    }
+    validate_optional_public_string(&response.plan, MAX_PLAN_BYTES)?;
+    Ok(CodexAccountSummary {
+        account: response.account,
+        label: None,
+        plan: response.plan.filter(|value| !value.trim().is_empty()),
     })
 }
 
@@ -1826,6 +1888,9 @@ case "$1" in
   resolve)
     printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"gamania","access_token":"fixture-token","chatgpt_account_id":"workspace-fixture","plan":"team"}'
     ;;
+  select)
+    printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"gamania","plan":"team"}'
+    ;;
   *) exit 2 ;;
 esac
 "#,
@@ -1853,6 +1918,14 @@ esac
         assert_eq!(credentials.chatgpt_plan_type.as_deref(), Some("team"));
         let refreshed = resolve_account("gamania", true).unwrap();
         assert_eq!(refreshed.chatgpt_account_id, "workspace-fixture");
+        assert_eq!(
+            select_account("default_with_capacity").unwrap(),
+            CodexAccountSummary {
+                account: "gamania".to_string(),
+                label: None,
+                plan: Some("team".to_string()),
+            }
+        );
 
         assert_eq!(
             fs::read_to_string(calls)
@@ -1863,6 +1936,7 @@ esac
                 "list --format json",
                 "resolve --account gamania --format json",
                 "resolve --account gamania --force-refresh --format json",
+                "select --strategy default_with_capacity --format json",
             ]
         );
     }
@@ -1886,6 +1960,9 @@ case "$mode" in
     ;;
   mismatch-resolve)
     printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"poies","access_token":"fixture-token","chatgpt_account_id":"workspace-fixture"}'
+    ;;
+  invalid-select)
+    printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"../auth.json"}'
     ;;
   oversized)
     dd if=/dev/zero bs=1048577 count=1 2>/dev/null | tr '\000' x
@@ -1941,6 +2018,18 @@ esac
             Err(error) => error,
         };
         assert_eq!(error.code(), "codex-account-broker-invalid-response");
+        drop(_broker);
+
+        let invalid_select_argv = serde_json::to_string(&vec![
+            script.to_string_lossy().into_owned(),
+            "invalid-select".to_string(),
+        ])
+        .unwrap();
+        let _broker = EnvGuard::set(&lock, BROKER_ENV, &invalid_select_argv);
+        assert_eq!(
+            select_account("default_with_capacity").unwrap_err().code(),
+            "codex-account-broker-invalid-response"
+        );
     }
 
     #[test]

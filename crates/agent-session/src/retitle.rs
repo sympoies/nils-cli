@@ -282,6 +282,8 @@ struct RetitleConfig {
     #[serde(default)]
     account: Option<String>,
     #[serde(default)]
+    account_selection: Option<String>,
+    #[serde(default)]
     model: Option<String>,
     #[serde(default)]
     reasoning_effort: Option<String>,
@@ -367,10 +369,13 @@ impl RetitleConfig {
         }
         match self.provider.as_str() {
             "codex_subscription"
-                if self
+                if ((self
                     .account
                     .as_deref()
-                    .is_some_and(|value| safe_label(value, 64))
+                    .is_some_and(|account| safe_label(account, 64))
+                    && self.account_selection.is_none())
+                    || (self.account.is_none()
+                        && self.account_selection.as_deref() == Some("default_with_capacity")))
                     && self.codex_bin.as_deref().is_some_and(Path::is_absolute)
                     && self.base_url.is_none()
                     && self.api_key_env.is_none()
@@ -382,6 +387,7 @@ impl RetitleConfig {
                         .as_deref()
                         .is_some_and(|value| safe_label(value, 128))
                     && self.account.is_none()
+                    && self.account_selection.is_none()
                     && self.codex_bin.is_none()
                     && self.argv.is_none()
                     && self.reasoning_effort.is_none()
@@ -389,6 +395,7 @@ impl RetitleConfig {
             "command"
                 if self.argv.as_ref().is_some_and(|argv| valid_argv(argv))
                     && self.account.is_none()
+                    && self.account_selection.is_none()
                     && self.codex_bin.is_none()
                     && self.base_url.is_none()
                     && self.reasoning_effort.is_none()
@@ -691,27 +698,36 @@ fn provider_readiness(config: &RetitleConfig) -> RetitleReadiness {
                     "configure_account_broker",
                 );
             }
-            let Some(account) = config.account.as_deref() else {
-                return RetitleReadiness::unavailable("account_missing", "select_account");
-            };
-            let accounts = match crate::codex_account::list_accounts() {
-                Ok(accounts) => accounts,
-                Err(_) => {
-                    return RetitleReadiness::unavailable(
-                        "account_broker_unavailable",
-                        "configure_account_broker",
-                    );
-                }
-            };
-            let Some(summary) = accounts.into_iter().find(|item| item.account == account) else {
-                return RetitleReadiness::unavailable("account_missing", "select_account");
-            };
             if !executable(config.codex_bin.as_deref().expect("validated")) {
                 return RetitleReadiness::unavailable(
                     "provider_command_unavailable",
                     "install_provider_command",
                 );
             }
+            let summary = if let Some(account) = config.account.as_deref() {
+                let accounts = match crate::codex_account::list_accounts() {
+                    Ok(accounts) => accounts,
+                    Err(_) => {
+                        return RetitleReadiness::unavailable(
+                            "account_broker_unavailable",
+                            "configure_account_broker",
+                        );
+                    }
+                };
+                let Some(summary) = accounts.into_iter().find(|item| item.account == account)
+                else {
+                    return RetitleReadiness::unavailable("account_missing", "select_account");
+                };
+                summary
+            } else {
+                let strategy = config.account_selection.as_deref().expect("validated");
+                match crate::codex_account::select_account(strategy) {
+                    Ok(summary) => summary,
+                    Err(_) => {
+                        return RetitleReadiness::unavailable("account_missing", "select_account");
+                    }
+                }
+            };
             readiness.account = Some(summary.account);
             readiness.plan = summary.plan;
         }
@@ -1846,18 +1862,23 @@ fn invoke_codex(
     timeout: Duration,
 ) -> Result<String, CliError> {
     let deadline = evaluation_deadline(Instant::now(), timeout);
-    let account = config.account.as_deref().expect("validated");
-    let credentials = crate::codex_account::resolve_account(account, false)
-        .or_else(|_| crate::codex_account::resolve_account(account, true))
-        .map_err(|_| {
-            retitle_error(
-                "retitle-account-missing",
-                "configured title account is unavailable",
-                true,
-                "select_account",
-                "refresh_account",
-            )
-        })?;
+    let account = if let Some(account) = config.account.as_deref() {
+        account.to_string()
+    } else {
+        let remaining =
+            remaining_evaluation_time(deadline, Instant::now()).ok_or_else(provider_timeout)?;
+        crate::codex_account::select_account_with_timeout(
+            config.account_selection.as_deref().expect("validated"),
+            remaining,
+        )
+        .map(|summary| summary.account)
+        .map_err(|error| {
+            map_account_broker_error(error, "no title account has confirmed capacity")
+        })?
+    };
+    let credentials = resolve_codex_credentials_with(deadline, |force_refresh, timeout| {
+        crate::codex_account::resolve_account_with_timeout(&account, force_refresh, timeout)
+    })?;
     remaining_evaluation_time(deadline, Instant::now()).ok_or_else(provider_timeout)?;
     let isolated = tempfile::TempDir::new().map_err(|_| provider_unavailable())?;
     let mut argv = vec![
@@ -1957,6 +1978,41 @@ fn invoke_codex(
     terminate_child(&mut child);
     argv.clear();
     result
+}
+
+fn resolve_codex_credentials_with<F>(
+    deadline: Instant,
+    mut resolve: F,
+) -> Result<crate::codex_account::CodexAccountCredentials, CliError>
+where
+    F: FnMut(bool, Duration) -> Result<crate::codex_account::CodexAccountCredentials, CliError>,
+{
+    let remaining =
+        remaining_evaluation_time(deadline, Instant::now()).ok_or_else(provider_timeout)?;
+    match resolve(false, remaining) {
+        Ok(credentials) => Ok(credentials),
+        Err(_) => {
+            let remaining =
+                remaining_evaluation_time(deadline, Instant::now()).ok_or_else(provider_timeout)?;
+            resolve(true, remaining).map_err(|error| {
+                map_account_broker_error(error, "configured title account is unavailable")
+            })
+        }
+    }
+}
+
+fn map_account_broker_error(error: CliError, message: &'static str) -> CliError {
+    if error.code() == "codex-account-broker-timeout" {
+        provider_timeout()
+    } else {
+        retitle_error(
+            "retitle-account-missing",
+            message,
+            true,
+            "select_account",
+            "refresh_account",
+        )
+    }
 }
 
 fn codex_thread_start_params(config: &RetitleConfig, cwd: &Path) -> Value {
@@ -4108,6 +4164,22 @@ mod tests {
     }
 
     #[test]
+    fn provider_config_accepts_dynamic_default_capacity_account_selection() {
+        let dynamic = RetitleConfig::parse(
+            r#"{"provider":"codex_subscription","account_selection":"default_with_capacity","codex_bin":"/usr/bin/codex","model":"gpt-5.6-luna","reasoning_effort":"low"}"#,
+        );
+        assert!(dynamic.is_ok());
+
+        for invalid in [
+            r#"{"provider":"codex_subscription","account":"sym","account_selection":"default_with_capacity","codex_bin":"/usr/bin/codex"}"#,
+            r#"{"provider":"codex_subscription","account_selection":"unknown","codex_bin":"/usr/bin/codex"}"#,
+            r#"{"provider":"codex_subscription","codex_bin":"/usr/bin/codex"}"#,
+        ] {
+            assert_eq!(RetitleConfig::parse(invalid).unwrap_err(), "config_invalid");
+        }
+    }
+
+    #[test]
     fn provider_config_accepts_a_bounded_local_fallback_after_codex_luna() {
         let config = RetitleConfig::parse(
             r#"{"provider":"codex_subscription","account":"sym","codex_bin":"/usr/bin/codex","model":"gpt-5.6-luna","reasoning_effort":"low","timeout_ms":20000,"fallback":{"provider":"openai_compatible","base_url":"http://127.0.0.1:1237/v1","model":"qwen3.6-apex-compact","timeout_ms":100000,"max_output_tokens":160,"temperature":0,"json_response":true}}"#,
@@ -4195,6 +4267,123 @@ mod tests {
             readiness.model_label.as_deref(),
             Some("qwen3.6-apex-compact")
         );
+    }
+
+    #[test]
+    fn readiness_projects_the_account_selected_at_request_time() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let lock = nils_test_support::GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let broker = tmp.path().join("broker");
+        std::fs::write(
+            &broker,
+            "#!/bin/sh\nprintf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"account\":\"gamania\",\"plan\":\"team\"}'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&broker, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let broker_argv = serde_json::to_string(&vec![broker.to_string_lossy()]).unwrap();
+        let _broker = nils_test_support::EnvGuard::set(
+            &lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            &broker_argv,
+        );
+        let config = json!({
+            "provider": "codex_subscription",
+            "account_selection": "default_with_capacity",
+            "codex_bin": broker,
+            "model": "gpt-5.6-luna",
+        })
+        .to_string();
+        let _config = nils_test_support::EnvGuard::set(&lock, CONFIG_ENV, config.as_str());
+
+        let readiness = RetitleService::from_environment().readiness();
+        assert_eq!(readiness.status, "ready");
+        assert_eq!(readiness.account.as_deref(), Some("gamania"));
+        assert_eq!(readiness.plan.as_deref(), Some("team"));
+    }
+
+    #[test]
+    fn dynamic_account_broker_work_obeys_the_provider_deadline() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let lock = nils_test_support::GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let stage = tmp.path().join("slow-stage");
+        let broker = tmp.path().join("broker");
+        std::fs::write(
+            &broker,
+            r#"#!/bin/sh
+stage=$(cat "$1")
+shift
+if [ "$stage" = "$1" ]; then sleep 3; fi
+case "$1" in
+  select)
+    printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"gamania","plan":"team"}'
+    ;;
+  resolve)
+    printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"gamania","access_token":"fixture-token","chatgpt_account_id":"workspace-fixture","plan":"team"}'
+    ;;
+  *) exit 2 ;;
+esac
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&broker, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let broker_argv = serde_json::to_string(&vec![
+            broker.to_string_lossy().into_owned(),
+            stage.to_string_lossy().into_owned(),
+        ])
+        .unwrap();
+        let _broker = nils_test_support::EnvGuard::set(
+            &lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            &broker_argv,
+        );
+        let config = RetitleConfig::parse(
+            r#"{"provider":"codex_subscription","account_selection":"default_with_capacity","codex_bin":"/bin/true","model":"gpt-5.6-luna"}"#,
+        )
+        .unwrap();
+
+        for slow_stage in ["select", "resolve"] {
+            std::fs::write(&stage, slow_stage).unwrap();
+            let started = Instant::now();
+            let error = invoke_codex(&config, "Retitle this session", Duration::from_millis(150))
+                .unwrap_err();
+            assert_eq!(error.code(), "retitle-provider-timeout");
+            assert!(
+                started.elapsed() < Duration::from_secs(1),
+                "{slow_stage} exceeded the shared provider deadline"
+            );
+        }
+    }
+
+    #[test]
+    fn credential_timeout_retries_refresh_within_the_shared_deadline() {
+        let mut force_refresh_calls = Vec::new();
+        let credentials = resolve_codex_credentials_with(
+            Instant::now() + Duration::from_secs(1),
+            |force_refresh, _| {
+                force_refresh_calls.push(force_refresh);
+                if force_refresh {
+                    Ok(crate::codex_account::CodexAccountCredentials {
+                        access_token: "fixture-token".to_string(),
+                        chatgpt_account_id: "workspace-fixture".to_string(),
+                        chatgpt_plan_type: Some("team".to_string()),
+                    })
+                } else {
+                    Err(CliError::runtime(
+                        "codex-account-broker-timeout",
+                        "fixture broker timed out",
+                        None,
+                    ))
+                }
+            },
+        )
+        .unwrap();
+
+        assert_eq!(force_refresh_calls, vec![false, true]);
+        assert_eq!(credentials.access_token, "fixture-token");
     }
 
     #[tokio::test]
