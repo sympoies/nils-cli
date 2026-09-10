@@ -3,6 +3,7 @@ use std::path::Path;
 
 use nils_test_support::cmd::{CmdOutput, run_resolved_in_dir};
 use pretty_assertions::assert_eq;
+use serde_json::json;
 
 fn run(dir: &Path, args: &[&str]) -> CmdOutput {
     run_resolved_in_dir("test-first-evidence", dir, args, &[], None)
@@ -28,6 +29,184 @@ fn help_includes_version_flag_and_examples() {
         "missing version flag: {stdout}"
     );
     assert!(stdout.contains("EXAMPLES:"), "missing examples: {stdout}");
+
+    for command in ["record-failing", "record-final", "bind-delivery"] {
+        let output = run(tmp.path(), &[command, "--help"]);
+        assert_eq!(
+            output.code,
+            0,
+            "command={command} stderr={}",
+            output.stderr_text()
+        );
+        assert!(
+            output.stdout_text().contains("--full-record"),
+            "missing full-record flag for {command}: {}",
+            output.stdout_text()
+        );
+    }
+}
+
+#[test]
+fn json_evidence_mutations_default_to_compact_receipts_and_offer_full_record() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let out_dir = tmp.path().join("mutation-receipts");
+    let out_arg = out_arg(&out_dir);
+
+    let init = run(
+        tmp.path(),
+        &[
+            "init",
+            "--out",
+            &out_arg,
+            "--classification",
+            "behavior-change",
+            "--changed-behavior",
+            "compact mutation receipts",
+        ],
+    );
+    assert_eq!(init.code, 0, "stderr={}", init.stderr_text());
+
+    let impact = run(
+        tmp.path(),
+        &[
+            "record-impact",
+            "--out",
+            &out_arg,
+            "--none",
+            "--reason",
+            "fixture has no previous owner test",
+        ],
+    );
+    assert_eq!(impact.code, 0, "stderr={}", impact.stderr_text());
+
+    let failing = run(
+        tmp.path(),
+        &[
+            "record-failing",
+            "--out",
+            &out_arg,
+            "--command",
+            "cargo test mutation_receipt",
+            "--exit-code",
+            "101",
+            "--summary",
+            "receipt is still the full record",
+            "--expected-failure",
+            "a compact receipt",
+            "--observed-failure",
+            "the historical arrays were returned",
+            "--test-name",
+            "mutation_receipt",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(failing.code, 0, "stderr={}", failing.stderr_text());
+    assert_eq!(
+        failing.stdout_json(),
+        json!({
+            "schema_version": "cli.test-first-evidence.record-failing.v3",
+            "command": "test-first-evidence record-failing",
+            "ok": true,
+            "result": {
+                "record_file": out_dir.join("test-first-evidence.json").to_string_lossy(),
+                "complete": false,
+                "mutation": {
+                    "effect": "appended",
+                    "item": {
+                        "command": "cargo test mutation_receipt",
+                        "exit_code": 101,
+                        "summary": "receipt is still the full record",
+                        "expected_failure": "a compact receipt",
+                        "observed_failure": "the historical arrays were returned",
+                        "test_name": "mutation_receipt"
+                    }
+                }
+            }
+        })
+    );
+
+    let failed_validation = run(
+        tmp.path(),
+        &[
+            "record-final",
+            "--out",
+            &out_arg,
+            "--command",
+            "cargo test mutation_receipt",
+            "--status",
+            "fail",
+            "--scope",
+            "focused",
+            "--summary",
+            "red assertion",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(
+        failed_validation.code,
+        0,
+        "stderr={}",
+        failed_validation.stderr_text()
+    );
+    assert_eq!(
+        failed_validation.stdout_json(),
+        json!({
+            "schema_version": "cli.test-first-evidence.record-final.v3",
+            "command": "test-first-evidence record-final",
+            "ok": true,
+            "result": {
+                "record_file": out_dir.join("test-first-evidence.json").to_string_lossy(),
+                "complete": false,
+                "mutation": {
+                    "effect": "appended",
+                    "item": {
+                        "command": "cargo test mutation_receipt",
+                        "status": "fail",
+                        "scope": "focused",
+                        "attempt": 1,
+                        "summary": "red assertion"
+                    }
+                }
+            }
+        })
+    );
+
+    let full = run(
+        tmp.path(),
+        &[
+            "record-final",
+            "--out",
+            &out_arg,
+            "--command",
+            "cargo test mutation_receipt",
+            "--status",
+            "pass",
+            "--scope",
+            "focused",
+            "--summary",
+            "green assertion",
+            "--format",
+            "json",
+            "--full-record",
+        ],
+    );
+    assert_eq!(full.code, 0, "stderr={}", full.stderr_text());
+    let full_json = full.stdout_json();
+    assert_eq!(
+        full_json["schema_version"],
+        "cli.test-first-evidence.record-final.v2"
+    );
+    assert_eq!(full_json["result"]["complete"], false);
+    assert_eq!(
+        full_json["result"]["record"]["final_validations"]
+            .as_array()
+            .expect("full final validation history")
+            .len(),
+        2
+    );
+    assert!(full_json["result"].get("mutation").is_none());
 }
 
 #[test]

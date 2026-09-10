@@ -14,9 +14,10 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use cli::{
-    ChangeClassification, CheckArgs, CheckPhase, Cli, Command, CommonArgs, InitArgs, OutputFormat,
-    RecordFailingArgs, RecordFinalArgs, RecordGapArgs, RecordImpactArgs, RecordWaiverArgs,
-    SubjectArgs, TestDisposition, ValidationScope, ValidationStatus, VerifyArgs, WaiverKind,
+    BindDeliveryArgs, ChangeClassification, CheckArgs, CheckPhase, Cli, Command, CommonArgs,
+    InitArgs, OutputFormat, RecordFailingArgs, RecordFinalArgs, RecordGapArgs, RecordImpactArgs,
+    RecordWaiverArgs, SubjectArgs, TestDisposition, ValidationScope, ValidationStatus, VerifyArgs,
+    WaiverKind,
 };
 use nils_common::cli_contract::exit;
 use nils_common::fs::{display_path, normalize_path};
@@ -33,12 +34,15 @@ const RECORD_FILE_NAME: &str = "test-first-evidence.json";
 
 const INIT_SCHEMA_VERSION: &str = "cli.test-first-evidence.init.v2";
 const RECORD_FAILING_SCHEMA_VERSION: &str = "cli.test-first-evidence.record-failing.v2";
+const RECORD_FAILING_RECEIPT_SCHEMA_VERSION: &str = "cli.test-first-evidence.record-failing.v3";
 const RECORD_IMPACT_SCHEMA_VERSION: &str = "cli.test-first-evidence.record-impact.v2";
 const RECORD_WAIVER_SCHEMA_VERSION: &str = "cli.test-first-evidence.record-waiver.v2";
 const RECORD_FINAL_SCHEMA_VERSION: &str = "cli.test-first-evidence.record-final.v2";
+const RECORD_FINAL_RECEIPT_SCHEMA_VERSION: &str = "cli.test-first-evidence.record-final.v3";
 const RECORD_GAP_SCHEMA_VERSION: &str = "cli.test-first-evidence.record-gap.v2";
 const BIND_BASELINE_SCHEMA_VERSION: &str = "cli.test-first-evidence.bind-baseline.v2";
 const BIND_DELIVERY_SCHEMA_VERSION: &str = "cli.test-first-evidence.bind-delivery.v2";
+const BIND_DELIVERY_RECEIPT_SCHEMA_VERSION: &str = "cli.test-first-evidence.bind-delivery.v3";
 const VERIFY_SCHEMA_VERSION: &str = "cli.test-first-evidence.verify.v2";
 const SHOW_SCHEMA_VERSION: &str = "cli.test-first-evidence.show.v2";
 const CHECK_SCHEMA_VERSION: &str = "cli.test-first-evidence.check.v2";
@@ -259,7 +263,8 @@ fn run_init(args: InitArgs) -> i32 {
 
 fn run_record_failing(args: RecordFailingArgs) -> i32 {
     let format = args.common.format;
-    match update_record(args.common.out_dir.as_path(), |record| {
+    let full_record = args.output.full_record;
+    match update_record_with_item(args.common.out_dir.as_path(), |record| {
         let command = required_text(Some(&args.command), "--command", "missing-failing-command")?;
         let summary = required_text(Some(&args.summary), "--summary", "missing-failing-summary")?;
         let expected_failure = required_text(
@@ -297,20 +302,27 @@ fn run_record_failing(args: RecordFailingArgs) -> i32 {
                 None,
             ));
         }
-        record.failing_tests.push(evidence);
+        record.failing_tests.push(evidence.clone());
         record.failing_tests.sort_by(|left, right| {
             (&left.test_name, &left.command).cmp(&(&right.test_name, &right.command))
         });
-        Ok(())
+        Ok(evidence)
     }) {
-        Ok(result) => render_record_success(
+        Ok((result, item)) => render_mutation_success(
+            RECORD_FAILING_RECEIPT_SCHEMA_VERSION,
             RECORD_FAILING_SCHEMA_VERSION,
             RECORD_FAILING_COMMAND,
             format,
+            full_record,
             &result,
+            &item,
         ),
         Err(err) => render_error(
-            RECORD_FAILING_SCHEMA_VERSION,
+            mutation_schema_version(
+                full_record,
+                RECORD_FAILING_RECEIPT_SCHEMA_VERSION,
+                RECORD_FAILING_SCHEMA_VERSION,
+            ),
             RECORD_FAILING_COMMAND,
             format,
             err,
@@ -497,7 +509,8 @@ fn run_record_waiver(args: RecordWaiverArgs) -> i32 {
 
 fn run_record_final(args: RecordFinalArgs) -> i32 {
     let format = args.common.format;
-    match update_record(args.common.out_dir.as_path(), |record| {
+    let full_record = args.output.full_record;
+    match update_record_with_item(args.common.out_dir.as_path(), |record| {
         let command = required_text(Some(&args.command), "--command", "missing-final-command")?;
         let command = redact_text(command).value;
         let next_attempt = record
@@ -542,7 +555,7 @@ fn run_record_final(args: RecordFinalArgs) -> i32 {
                 None,
             ));
         }
-        record.final_validations.push(validation);
+        record.final_validations.push(validation.clone());
         record.final_validations.sort_by(|left, right| {
             (left.scope, left.command.trim(), left.attempt).cmp(&(
                 right.scope,
@@ -550,16 +563,23 @@ fn run_record_final(args: RecordFinalArgs) -> i32 {
                 right.attempt,
             ))
         });
-        Ok(())
+        Ok(validation)
     }) {
-        Ok(result) => render_record_success(
+        Ok((result, item)) => render_mutation_success(
+            RECORD_FINAL_RECEIPT_SCHEMA_VERSION,
             RECORD_FINAL_SCHEMA_VERSION,
             RECORD_FINAL_COMMAND,
             format,
+            full_record,
             &result,
+            &item,
         ),
         Err(err) => render_error(
-            RECORD_FINAL_SCHEMA_VERSION,
+            mutation_schema_version(
+                full_record,
+                RECORD_FINAL_RECEIPT_SCHEMA_VERSION,
+                RECORD_FINAL_SCHEMA_VERSION,
+            ),
             RECORD_FINAL_COMMAND,
             format,
             err,
@@ -667,9 +687,10 @@ fn run_bind_baseline(args: SubjectArgs) -> i32 {
     }
 }
 
-fn run_bind_delivery(args: SubjectArgs) -> i32 {
-    let format = args.common.format;
-    let result = update_record(args.common.out_dir.as_path(), |record| {
+fn run_bind_delivery(args: BindDeliveryArgs) -> i32 {
+    let format = args.subject.common.format;
+    let full_record = args.output.full_record;
+    let result = update_record_with_item(args.subject.common.out_dir.as_path(), |record| {
         let subject = record.subject.as_mut().ok_or_else(|| {
             CliError::data(
                 "unbound-subject",
@@ -678,14 +699,14 @@ fn run_bind_delivery(args: SubjectArgs) -> i32 {
             )
         })?;
         let repository = repository_identity(
-            &args.project_path,
-            &args.remote,
-            args.repository_id.as_deref(),
+            &args.subject.project_path,
+            &args.subject.remote,
+            args.subject.repository_id.as_deref(),
         )?;
         if !repository_matches(
             &repository,
             &subject.repository,
-            args.repository_id.is_some(),
+            args.subject.repository_id.is_some(),
         ) {
             return Err(CliError::data(
                 "subject-mismatch",
@@ -708,7 +729,7 @@ fn run_bind_delivery(args: SubjectArgs) -> i32 {
                 )
             })?;
         let delivery = capture_delivery_subject(
-            &args.project_path,
+            &args.subject.project_path,
             &subject.baseline.commit,
             attempt,
             "HEAD",
@@ -724,18 +745,25 @@ fn run_bind_delivery(args: SubjectArgs) -> i32 {
                 None,
             ));
         }
-        subject.deliveries.push(delivery);
-        Ok(())
+        subject.deliveries.push(delivery.clone());
+        Ok(delivery)
     });
     match result {
-        Ok(result) => render_record_success(
+        Ok((result, item)) => render_mutation_success(
+            BIND_DELIVERY_RECEIPT_SCHEMA_VERSION,
             BIND_DELIVERY_SCHEMA_VERSION,
             BIND_DELIVERY_COMMAND,
             format,
+            full_record,
             &result,
+            &item,
         ),
         Err(err) => render_error(
-            BIND_DELIVERY_SCHEMA_VERSION,
+            mutation_schema_version(
+                full_record,
+                BIND_DELIVERY_RECEIPT_SCHEMA_VERSION,
+                BIND_DELIVERY_SCHEMA_VERSION,
+            ),
             BIND_DELIVERY_COMMAND,
             format,
             err,
@@ -860,14 +888,21 @@ fn update_record<F>(out_dir: &Path, update: F) -> Result<RecordResult, CliError>
 where
     F: FnOnce(&mut EvidenceRecord) -> Result<(), CliError>,
 {
+    update_record_with_item(out_dir, update).map(|(result, ())| result)
+}
+
+fn update_record_with_item<F, T>(out_dir: &Path, update: F) -> Result<(RecordResult, T), CliError>
+where
+    F: FnOnce(&mut EvidenceRecord) -> Result<T, CliError>,
+{
     let record_file = record_file_path(out_dir)?;
     let mut record = read_record(&record_file)?;
     if record.schema_version == V1_RECORD_SCHEMA_VERSION {
         return Err(v1_record_error(None));
     }
-    update(&mut record)?;
+    let item = update(&mut record)?;
     write_record(&record_file, &record)?;
-    Ok(record_result(record_file, record))
+    Ok((record_result(record_file, record), item))
 }
 
 fn verify_record(args: &CommonArgs) -> Result<VerifyResult, CliError> {
@@ -1679,6 +1714,52 @@ fn render_record_success(
     }
 }
 
+fn mutation_schema_version(
+    full_record: bool,
+    receipt_schema_version: &'static str,
+    full_record_schema_version: &'static str,
+) -> &'static str {
+    if full_record {
+        full_record_schema_version
+    } else {
+        receipt_schema_version
+    }
+}
+
+fn render_mutation_success<T: Serialize>(
+    receipt_schema_version: &'static str,
+    full_record_schema_version: &'static str,
+    command: &'static str,
+    format: OutputFormat,
+    full_record: bool,
+    result: &RecordResult,
+    item: &T,
+) -> i32 {
+    if format == OutputFormat::Text || full_record {
+        return render_record_success(full_record_schema_version, command, format, result);
+    }
+
+    let receipt = MutationReceipt {
+        record_file: &result.record_file,
+        complete: result.complete,
+        mutation: MutationResult {
+            effect: "appended",
+            item,
+        },
+        subject: result
+            .record
+            .subject
+            .as_ref()
+            .map(|subject| CurrentSubject {
+                repository: &subject.repository,
+                baseline: &subject.baseline,
+                delivery: subject.deliveries.last(),
+            }),
+    };
+    print_json_success(receipt_schema_version, command, &receipt)
+        .unwrap_or_else(render_json_failure)
+}
+
 fn render_verify_success(format: OutputFormat, result: &VerifyResult) -> i32 {
     match format {
         OutputFormat::Json => print_json_success(VERIFY_SCHEMA_VERSION, VERIFY_COMMAND, result)
@@ -1967,7 +2048,7 @@ pub struct TestImpact {
     pub validation_scopes: Vec<ValidationScope>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FailingEvidence {
     pub command: String,
     pub exit_code: i32,
@@ -1997,7 +2078,7 @@ pub struct WaiverEvidence {
     pub expires: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FinalValidation {
     pub command: String,
     pub status: ValidationStatus,
@@ -2040,6 +2121,29 @@ pub struct RecordResult {
     pub record_file: String,
     pub complete: bool,
     pub record: EvidenceRecord,
+}
+
+#[derive(Debug, Serialize)]
+struct MutationReceipt<'a, T: Serialize> {
+    record_file: &'a str,
+    complete: bool,
+    mutation: MutationResult<'a, T>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    subject: Option<CurrentSubject<'a>>,
+}
+
+#[derive(Debug, Serialize)]
+struct MutationResult<'a, T: Serialize> {
+    effect: &'static str,
+    item: &'a T,
+}
+
+#[derive(Debug, Serialize)]
+struct CurrentSubject<'a> {
+    repository: &'a RepositoryIdentity,
+    baseline: &'a BaselineSubject,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    delivery: Option<&'a DeliverySubject>,
 }
 
 #[derive(Debug, Serialize)]

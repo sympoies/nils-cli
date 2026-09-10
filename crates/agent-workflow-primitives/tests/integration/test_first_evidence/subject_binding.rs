@@ -178,14 +178,39 @@ fn baseline_is_immutable_and_delivery_reattestation_preserves_history() {
     );
     assert_eq!(first.code, 0, "stderr={}", first.stderr_text());
     assert_eq!(
-        first.stdout_json()["result"]["record"]["subject"]["deliveries"][0]["head"],
+        first.stdout_json()["schema_version"],
+        "cli.test-first-evidence.bind-delivery.v3"
+    );
+    assert_eq!(
+        first.stdout_json()["result"]["mutation"]["effect"],
+        "appended"
+    );
+    assert_eq!(
+        first.stdout_json()["result"]["mutation"]["item"]["head"],
         first_head
     );
-    let first_digest =
-        first.stdout_json()["result"]["record"]["subject"]["deliveries"][0]["diff_digest"]
-            .as_str()
-            .expect("diff digest")
-            .to_string();
+    assert_eq!(
+        first.stdout_json()["result"]["subject"]["repository"]["id"],
+        "github.com/acme/widget"
+    );
+    assert_eq!(
+        first.stdout_json()["result"]["subject"]["baseline"]["commit"],
+        baseline_commit
+    );
+    assert_eq!(
+        first.stdout_json()["result"]["subject"]["delivery"]["head"],
+        first_head
+    );
+    assert!(
+        first.stdout_json()["result"]["subject"]
+            .get("deliveries")
+            .is_none()
+    );
+    assert!(first.stdout_json()["result"].get("record").is_none());
+    let first_digest = first.stdout_json()["result"]["mutation"]["item"]["diff_digest"]
+        .as_str()
+        .expect("diff digest")
+        .to_string();
     git(&repo, &["config", "diff.noprefix", "true"]);
     let config_independent = run(
         tmp.path(),
@@ -241,10 +266,15 @@ fn baseline_is_immutable_and_delivery_reattestation_preserves_history() {
             repo_arg.as_ref(),
             "--format",
             "json",
+            "--full-record",
         ],
     );
     assert_eq!(second.code, 0, "stderr={}", second.stderr_text());
     let second_json = second.stdout_json();
+    assert_eq!(
+        second_json["schema_version"],
+        "cli.test-first-evidence.bind-delivery.v2"
+    );
     assert_eq!(
         second_json["result"]["record"]["subject"]["baseline"]["commit"],
         baseline_commit
@@ -295,15 +325,24 @@ fn baseline_is_immutable_and_delivery_reattestation_preserves_history() {
     );
     assert_eq!(third.code, 0, "stderr={}", third.stderr_text());
     assert_eq!(
-        third.stdout_json()["result"]["record"]["subject"]["deliveries"]
-            .as_array()
-            .expect("deliveries")
-            .len(),
+        third.stdout_json()["result"]["mutation"]["item"]["attempt"],
         3
     );
     assert_eq!(
-        third.stdout_json()["result"]["record"]["subject"]["baseline"]["commit"],
+        third.stdout_json()["result"]["subject"]["baseline"]["commit"],
         baseline_commit
+    );
+
+    let stored: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(evidence.join("test-first-evidence.json")).expect("stored record"),
+    )
+    .expect("stored record json");
+    assert_eq!(
+        stored["subject"]["deliveries"]
+            .as_array()
+            .expect("stored delivery history")
+            .len(),
+        3
     );
 
     let verify = run(

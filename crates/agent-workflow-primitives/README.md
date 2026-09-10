@@ -271,18 +271,26 @@ skill-usage show --out <dir> --format json
 ## `test-first-evidence` flow
 
 `test-first-evidence` records one JSON file under the caller's artifact
-directory. New records use `test-first-evidence.record.v2` and
-`cli.test-first-evidence.*.v2`: they carry contract delta, materially affected
-test targets, meaningful failing evidence, scoped final validation, waivers,
-an explicit residual-gap declaration, and optional repository/change subject
-metadata. Record v1 remains readable by
-`show`, but strict `verify` and the forge delivery gate require deliberate v2
-re-recording because the missing maintenance facts cannot be inferred safely.
+directory. New records use `test-first-evidence.record.v2`; they carry contract
+delta, materially affected test targets, meaningful failing evidence, scoped
+final validation, waivers, an explicit residual-gap declaration, and optional
+repository/change subject metadata. Record v1 remains readable by `show`, but
+strict `verify` and the forge delivery gate require deliberate v2 re-recording
+because the missing maintenance facts cannot be inferred safely.
 Classification is a closed set:
 `behavior-change|bug-fix|feature|docs-only|config-only|generated-only|refactor-only`.
 The first three are testable and must declare at least one changed, added, or
 removed behavior. Feature/bug forge delivery accepts only those testable
 classifications.
+
+JSON responses from `record-failing`, `record-final`, and `bind-delivery`
+default to compact `cli.test-first-evidence.<command>.v3` mutation receipts.
+Each receipt contains the affected item, record path, completion state, and
+the current bound subject when present, without historical arrays. Add
+`--full-record` to one of those commands to return its prior v2 full-record
+response for diagnostics or compatibility-sensitive automation. Text output
+and the durable record file are unchanged. The normative contract and JSON
+Schema are linked from the [crate docs index](docs/README.md).
 
 ```bash
 test-first-evidence init \
@@ -309,12 +317,14 @@ test-first-evidence record-failing \
   --summary "bug reproduced before fix" \
   --test-name bug_repro \
   --expected-failure "new parser contract is not implemented" \
-  --observed-failure "assertion reported the v1 value"
+  --observed-failure "assertion reported the v1 value" \
+  --format json
 test-first-evidence record-final \
   --out "$AGENT_HOME/out/projects/acme__app/test-first" \
   --command "cargo test bug_repro" \
   --status pass \
-  --scope focused
+  --scope focused \
+  --format json
 test-first-evidence record-final \
   --out "$AGENT_HOME/out/projects/acme__app/test-first" \
   --command "cargo test parser" \
@@ -326,7 +336,10 @@ test-first-evidence record-gap \
 # Commit the delivered change before attesting its head and diff.
 test-first-evidence bind-delivery \
   --out "$AGENT_HOME/out/projects/acme__app/test-first" \
-  --project-path .
+  --project-path . \
+  --format json
+# Add --full-record to any of the three JSON mutations above when the complete
+# accumulated evidence record is required.
 test-first-evidence verify \
   --out "$AGENT_HOME/out/projects/acme__app/test-first" \
   --project-path . \

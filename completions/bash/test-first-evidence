@@ -113,7 +113,7 @@ _test__first__evidence() {
             return 0
             ;;
         test__first__evidence__bind__delivery)
-            opts="-h --out --format --project-path --remote --repository-id --help"
+            opts="-h --out --format --project-path --remote --repository-id --full-record --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -264,7 +264,7 @@ _test__first__evidence() {
             return 0
             ;;
         test__first__evidence__record__failing)
-            opts="-h --out --format --command --exit-code --summary --expected-failure --observed-failure --test-name --artifact --help"
+            opts="-h --out --format --full-record --command --exit-code --summary --expected-failure --observed-failure --test-name --artifact --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -317,7 +317,7 @@ _test__first__evidence() {
             return 0
             ;;
         test__first__evidence__record__final)
-            opts="-h --out --format --command --status --scope --summary --artifact --help"
+            opts="-h --out --format --full-record --command --status --scope --summary --artifact --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

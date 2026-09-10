@@ -1,0 +1,300 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/sympoies/nils-cli/blob/main/crates/agent-workflow-primitives/docs/specs/test-first-evidence-mutation-receipt-v1.schema.json",
+  "title": "test-first-evidence compact mutation receipt v1",
+  "description": "Default successful JSON output for record-failing, record-final, and bind-delivery. Passing --full-record selects the command's previous v2 full-record envelope instead.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/record_failing_envelope"
+    },
+    {
+      "$ref": "#/$defs/record_final_envelope"
+    },
+    {
+      "$ref": "#/$defs/bind_delivery_envelope"
+    }
+  ],
+  "$defs": {
+    "record_failing_envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "command", "ok", "result"],
+      "properties": {
+        "schema_version": {
+          "const": "cli.test-first-evidence.record-failing.v3"
+        },
+        "command": {
+          "const": "test-first-evidence record-failing"
+        },
+        "ok": {
+          "const": true
+        },
+        "result": {
+          "$ref": "#/$defs/failing_receipt"
+        }
+      }
+    },
+    "record_final_envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "command", "ok", "result"],
+      "properties": {
+        "schema_version": {
+          "const": "cli.test-first-evidence.record-final.v3"
+        },
+        "command": {
+          "const": "test-first-evidence record-final"
+        },
+        "ok": {
+          "const": true
+        },
+        "result": {
+          "$ref": "#/$defs/final_receipt"
+        }
+      }
+    },
+    "bind_delivery_envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "command", "ok", "result"],
+      "properties": {
+        "schema_version": {
+          "const": "cli.test-first-evidence.bind-delivery.v3"
+        },
+        "command": {
+          "const": "test-first-evidence bind-delivery"
+        },
+        "ok": {
+          "const": true
+        },
+        "result": {
+          "$ref": "#/$defs/delivery_receipt"
+        }
+      }
+    },
+    "failing_receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["record_file", "complete", "mutation"],
+      "properties": {
+        "record_file": {
+          "type": "string"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "mutation": {
+          "$ref": "#/$defs/failing_mutation"
+        },
+        "subject": {
+          "$ref": "#/$defs/current_subject"
+        }
+      }
+    },
+    "final_receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["record_file", "complete", "mutation"],
+      "properties": {
+        "record_file": {
+          "type": "string"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "mutation": {
+          "$ref": "#/$defs/final_mutation"
+        },
+        "subject": {
+          "$ref": "#/$defs/current_subject"
+        }
+      }
+    },
+    "delivery_receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["record_file", "complete", "mutation", "subject"],
+      "properties": {
+        "record_file": {
+          "type": "string"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "mutation": {
+          "$ref": "#/$defs/delivery_mutation"
+        },
+        "subject": {
+          "$ref": "#/$defs/current_subject"
+        }
+      }
+    },
+    "failing_mutation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["effect", "item"],
+      "properties": {
+        "effect": {
+          "const": "appended"
+        },
+        "item": {
+          "$ref": "#/$defs/failing_evidence"
+        }
+      }
+    },
+    "final_mutation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["effect", "item"],
+      "properties": {
+        "effect": {
+          "const": "appended"
+        },
+        "item": {
+          "$ref": "#/$defs/final_validation"
+        }
+      }
+    },
+    "delivery_mutation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["effect", "item"],
+      "properties": {
+        "effect": {
+          "const": "appended"
+        },
+        "item": {
+          "$ref": "#/$defs/delivery"
+        }
+      }
+    },
+    "failing_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "exit_code",
+        "summary",
+        "expected_failure",
+        "observed_failure"
+      ],
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "expected_failure": {
+          "type": "string"
+        },
+        "observed_failure": {
+          "type": "string"
+        },
+        "test_name": {
+          "type": "string"
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "final_validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "status", "scope", "attempt"],
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "status": {
+          "enum": ["pass", "fail"]
+        },
+        "scope": {
+          "enum": ["focused", "affected-suite", "contract-consumer", "full", "manual"]
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "summary": {
+          "type": "string"
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "current_subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "baseline"],
+      "properties": {
+        "repository": {
+          "$ref": "#/$defs/repository"
+        },
+        "baseline": {
+          "$ref": "#/$defs/baseline"
+        },
+        "delivery": {
+          "$ref": "#/$defs/delivery"
+        }
+      }
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {
+          "enum": ["provider", "local-history", "explicit"]
+        },
+        "id": {
+          "type": "string"
+        }
+      }
+    },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "tree"],
+      "properties": {
+        "commit": {
+          "type": "string"
+        },
+        "tree": {
+          "type": "string"
+        }
+      }
+    },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["head", "tree", "diff_digest", "attempt"],
+      "properties": {
+        "head": {
+          "type": "string"
+        },
+        "tree": {
+          "type": "string"
+        },
+        "diff_digest": {
+          "type": "string"
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}
