@@ -2086,6 +2086,11 @@ fn parse_decision(
         activity: None,
         extra: BTreeMap::new(),
     });
+    let initial_automatic = context.trigger.is_automatic()
+        && existing
+            .topic
+            .as_deref()
+            .is_none_or(|topic| topic.trim().is_empty());
     let user_owned = existing.topic_source == SessionTitleTopicSource::User;
     let (topic, topic_source, references) =
         if user_owned || decision.topic_action == TopicAction::Keep {
@@ -2125,9 +2130,26 @@ fn parse_decision(
         activity,
         extra: existing.extra,
     };
+    if initial_automatic && !usable_initial_automatic_topic(state.topic.as_deref()) {
+        return Err(provider_malformed_class("schema_validation"));
+    }
     canonicalize_structured_title_pair(None, false, state.clone())
         .map(|(_, state)| state.expect("structured title state"))
         .map_err(|_| provider_malformed())
+}
+
+fn usable_initial_automatic_topic(topic: Option<&str>) -> bool {
+    let Some(topic) = topic.map(str::trim).filter(|topic| !topic.is_empty()) else {
+        return false;
+    };
+    let lower = topic.to_ascii_lowercase();
+    !lower.starts_with("objective:")
+        && !lower.starts_with("progress:")
+        && !lower.starts_with("decision:")
+        && !lower.starts_with("blocker:")
+        && !lower.contains("[image #")
+        && !lower.contains("<image ")
+        && !topic.contains(" · ")
 }
 
 fn approved_references(context: &TitleContextV2) -> BTreeSet<String> {
@@ -2537,6 +2559,12 @@ pub(crate) fn is_retryable_automatic_error_code(code: &str) -> bool {
             | "retitle-provider-malformed-response"
             | "retitle-turn-conflict"
             | "retitle-worker-failed"
+            | "retitle-v3-state-conflict"
+            | "retitle-v3-turn-conflict"
+            | "retitle-v3-history-conflict"
+            | "retitle-v3-history-stale"
+            | "retitle-v3-history-degraded"
+            | "retitle-v3-memory-not-ready"
     )
 }
 
@@ -3885,6 +3913,47 @@ mod tests {
     }
 
     #[test]
+    fn initial_automatic_decision_requires_a_public_natural_language_topic() {
+        let context = TitleContextV2 {
+            schema_version: "agent-session.title-context.v2",
+            session: TitleContextSession {
+                agent: "session".into(),
+                repo_name: None,
+                title_state: None,
+            },
+            turns: vec![turn(1, "Fix automatic session titles")],
+            coverage: TitleContextCoverage {
+                source: "semantic_memory",
+                complete: true,
+                truncated: false,
+            },
+            trigger: RetitleTrigger::Initial,
+        };
+        for output in [
+            r#"{"topic_action":"keep","topic":null,"activity":null,"references":[]}"#,
+            r#"{"topic_action":"clear","topic":null,"activity":null,"references":[]}"#,
+            r#"{"topic_action":"set","topic":"objective: automatic · session · titles","activity":null,"references":[]}"#,
+            r#"{"topic_action":"set","topic":"[Image #1] Session title bug","activity":null,"references":[]}"#,
+        ] {
+            assert_eq!(
+                parse_decision(output, &context, None).unwrap_err().code(),
+                "retitle-provider-malformed-response"
+            );
+        }
+        assert_eq!(
+            parse_decision(
+                r#"{"topic_action":"set","topic":"Fix automatic session titles","activity":null,"references":[]}"#,
+                &context,
+                None,
+            )
+            .unwrap()
+            .topic
+            .as_deref(),
+            Some("Fix automatic session titles")
+        );
+    }
+
+    #[test]
     fn overlong_decision_is_rejected_without_partial_title() {
         let context = TitleContextV2 {
             schema_version: "agent-session.title-context.v2",
@@ -3925,6 +3994,20 @@ mod tests {
             assert_eq!(details["retryable"], true);
             assert_eq!(details["recovery"]["safe_to_retry"], true);
             assert!(is_retryable_automatic_error_code(error.code()));
+        }
+    }
+
+    #[test]
+    fn automatic_v3_observation_conflicts_are_retryable() {
+        for code in [
+            "retitle-v3-state-conflict",
+            "retitle-v3-turn-conflict",
+            "retitle-v3-history-conflict",
+            "retitle-v3-history-stale",
+            "retitle-v3-history-degraded",
+            "retitle-v3-memory-not-ready",
+        ] {
+            assert!(is_retryable_automatic_error_code(code), "{code}");
         }
     }
 
@@ -4181,6 +4264,42 @@ mod tests {
                 .iter()
                 .any(|attempt| attempt.started_at != attempt.finished_at)
         );
+    }
+
+    #[tokio::test]
+    async fn invalid_initial_automatic_topic_falls_back_to_a_usable_title() {
+        let lock = nils_test_support::GlobalStateLock::new();
+        let config = json!({
+            "provider":"command",
+            "argv":["/bin/sh", "-c", "printf '%s\\n' '{\"topic_action\":\"set\",\"topic\":\"objective: automatic · session · titles\",\"activity\":null,\"references\":[]}'"],
+            "timeout_ms":1000,
+            "fallback": {
+                "provider":"command",
+                "argv":["/bin/sh", "-c", "printf '%s\\n' '{\"topic_action\":\"set\",\"topic\":\"Fix automatic session titles\",\"activity\":null,\"references\":[]}'"],
+                "timeout_ms":1000
+            }
+        })
+        .to_string();
+        let _config =
+            nils_test_support::EnvGuard::set(&lock, "AGENT_SESSION_RETITLE_CONFIG", &config);
+        let service = RetitleService::from_environment();
+        let permit = service.acquire().await.unwrap();
+
+        let observed = infer_semantic_memory_observed(
+            &permit,
+            r#"{"origin":{"text":"objective: automatic · session · titles"},"active_objective":{"text":"objective: automatic · session · titles"}}"#,
+            None,
+            "automatic",
+        )
+        .unwrap_or_else(|failure| panic!("v3 fallback failed: {}", failure.error.code()));
+
+        assert_eq!(
+            observed.inferred.state.topic.as_deref(),
+            Some("Fix automatic session titles")
+        );
+        assert_eq!(observed.providers.len(), 2);
+        assert_eq!(observed.providers[0].outcome, "malformed_response");
+        assert_eq!(observed.providers[1].outcome, "success");
     }
 
     #[test]
