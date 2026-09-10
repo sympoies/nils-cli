@@ -791,8 +791,40 @@ fn cli_canonicalizes_duplicate_identities() {
     );
     assert_eq!(duplicate.code, 65);
     assert_eq!(
+        duplicate.stdout_json()["schema_version"],
+        "cli.test-first-evidence.record-failing.v2"
+    );
+    assert_eq!(
         duplicate.stdout_json()["error"]["code"],
         "duplicate-failing-evidence"
+    );
+    let duplicate_full = run(
+        tmp.path(),
+        &[
+            "record-failing",
+            "--out",
+            &out_arg,
+            "--command",
+            "cargo test contract",
+            "--exit-code",
+            "101",
+            "--summary",
+            "red",
+            "--expected-failure",
+            "missing behavior",
+            "--observed-failure",
+            "assertion mismatch",
+            "--test-name",
+            "contract",
+            "--format",
+            "json",
+            "--full-record",
+        ],
+    );
+    assert_eq!(duplicate_full.code, 65);
+    assert_eq!(
+        duplicate_full.stdout_json()["schema_version"],
+        "cli.test-first-evidence.record-failing.v2"
     );
 
     let first = run(
@@ -829,6 +861,10 @@ fn cli_canonicalizes_duplicate_identities() {
         ],
     );
     assert_eq!(duplicate.code, 65);
+    assert_eq!(
+        duplicate.stdout_json()["schema_version"],
+        "cli.test-first-evidence.record-final.v2"
+    );
     assert_eq!(
         duplicate.stdout_json()["error"]["code"],
         "duplicate-final-validation"

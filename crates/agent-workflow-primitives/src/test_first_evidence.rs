@@ -318,11 +318,7 @@ fn run_record_failing(args: RecordFailingArgs) -> i32 {
             &item,
         ),
         Err(err) => render_error(
-            mutation_schema_version(
-                full_record,
-                RECORD_FAILING_RECEIPT_SCHEMA_VERSION,
-                RECORD_FAILING_SCHEMA_VERSION,
-            ),
+            RECORD_FAILING_SCHEMA_VERSION,
             RECORD_FAILING_COMMAND,
             format,
             err,
@@ -575,11 +571,7 @@ fn run_record_final(args: RecordFinalArgs) -> i32 {
             &item,
         ),
         Err(err) => render_error(
-            mutation_schema_version(
-                full_record,
-                RECORD_FINAL_RECEIPT_SCHEMA_VERSION,
-                RECORD_FINAL_SCHEMA_VERSION,
-            ),
+            RECORD_FINAL_SCHEMA_VERSION,
             RECORD_FINAL_COMMAND,
             format,
             err,
@@ -759,11 +751,7 @@ fn run_bind_delivery(args: BindDeliveryArgs) -> i32 {
             &item,
         ),
         Err(err) => render_error(
-            mutation_schema_version(
-                full_record,
-                BIND_DELIVERY_RECEIPT_SCHEMA_VERSION,
-                BIND_DELIVERY_SCHEMA_VERSION,
-            ),
+            BIND_DELIVERY_SCHEMA_VERSION,
             BIND_DELIVERY_COMMAND,
             format,
             err,
@@ -1711,18 +1699,6 @@ fn render_record_success(
             print_record_text(&result.record, result.complete);
             EXIT_OK
         }
-    }
-}
-
-fn mutation_schema_version(
-    full_record: bool,
-    receipt_schema_version: &'static str,
-    full_record_schema_version: &'static str,
-) -> &'static str {
-    if full_record {
-        full_record_schema_version
-    } else {
-        receipt_schema_version
     }
 }
 

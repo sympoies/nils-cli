@@ -211,6 +211,30 @@ fn baseline_is_immutable_and_delivery_reattestation_preserves_history() {
         .as_str()
         .expect("diff digest")
         .to_string();
+    for full_record in [false, true] {
+        let mut args = vec![
+            "bind-delivery",
+            "--out",
+            evidence_arg.as_ref(),
+            "--project-path",
+            repo_arg.as_ref(),
+            "--format",
+            "json",
+        ];
+        if full_record {
+            args.push("--full-record");
+        }
+        let duplicate = run(tmp.path(), &args);
+        assert_eq!(duplicate.code, 65);
+        assert_eq!(
+            duplicate.stdout_json()["schema_version"],
+            "cli.test-first-evidence.bind-delivery.v2"
+        );
+        assert_eq!(
+            duplicate.stdout_json()["error"]["code"],
+            "duplicate-delivery-subject"
+        );
+    }
     git(&repo, &["config", "diff.noprefix", "true"]);
     let config_independent = run(
         tmp.path(),
