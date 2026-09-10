@@ -284,6 +284,8 @@ struct RetitleConfig {
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
+    reasoning_effort: Option<String>,
+    #[serde(default)]
     codex_bin: Option<PathBuf>,
     #[serde(default)]
     base_url: Option<String>,
@@ -356,6 +358,10 @@ impl RetitleConfig {
                 .model
                 .as_deref()
                 .is_some_and(|value| !safe_label(value, 128))
+            || self
+                .reasoning_effort
+                .as_deref()
+                .is_some_and(|value| !safe_label(value, 32))
         {
             return Err("config_invalid");
         }
@@ -378,12 +384,14 @@ impl RetitleConfig {
                     && self.account.is_none()
                     && self.codex_bin.is_none()
                     && self.argv.is_none()
+                    && self.reasoning_effort.is_none()
                     && self.api_key_env.as_deref().is_none_or(valid_env_name) => {}
             "command"
                 if self.argv.as_ref().is_some_and(|argv| valid_argv(argv))
                     && self.account.is_none()
                     && self.codex_bin.is_none()
                     && self.base_url.is_none()
+                    && self.reasoning_effort.is_none()
                     && self.api_key_env.is_none() => {}
             _ => return Err("config_invalid"),
         }
@@ -1906,21 +1914,7 @@ fn invoke_codex(
             }),
         )?;
         recv_rpc_response(&rx, 2, deadline)?;
-        let mut params = json!({
-        "cwd":isolated.path(),
-        "ephemeral":true,
-        "threadSource":"system",
-        "approvalPolicy":"never",
-        "sandbox":"read-only",
-        "dynamicTools":[],
-        "environments":[],
-        "runtimeWorkspaceRoots":[isolated.path()],
-        "baseInstructions":"Answer directly without tools. Return strict JSON only.",
-        "developerInstructions":"Never use tools, shell, filesystem, network tools, skills, or external context. Classify only the supplied title context."
-        });
-        if let Some(model) = config.model.as_deref() {
-            params["model"] = json!(model);
-        }
+        let params = codex_thread_start_params(config, isolated.path());
         send_rpc(
             &mut stdin,
             &json!({"id":3,"method":"thread/start","params":params}),
@@ -1963,6 +1957,28 @@ fn invoke_codex(
     terminate_child(&mut child);
     argv.clear();
     result
+}
+
+fn codex_thread_start_params(config: &RetitleConfig, cwd: &Path) -> Value {
+    let mut params = json!({
+        "cwd": cwd,
+        "ephemeral": true,
+        "threadSource": "system",
+        "approvalPolicy": "never",
+        "sandbox": "read-only",
+        "dynamicTools": [],
+        "environments": [],
+        "runtimeWorkspaceRoots": [cwd],
+        "baseInstructions": "Answer directly without tools. Return strict JSON only.",
+        "developerInstructions": "Never use tools, shell, filesystem, network tools, skills, or external context. Classify only the supplied title context."
+    });
+    if let Some(model) = config.model.as_deref() {
+        params["model"] = json!(model);
+    }
+    if let Some(reasoning_effort) = config.reasoning_effort.as_deref() {
+        params["config"] = json!({"model_reasoning_effort": reasoning_effort});
+    }
+    params
 }
 
 fn codex_turn_completion_error(
@@ -4094,7 +4110,7 @@ mod tests {
     #[test]
     fn provider_config_accepts_a_bounded_local_fallback_after_codex_luna() {
         let config = RetitleConfig::parse(
-            r#"{"provider":"codex_subscription","account":"sym","codex_bin":"/usr/bin/codex","model":"gpt-5.6-luna","timeout_ms":20000,"fallback":{"provider":"openai_compatible","base_url":"http://127.0.0.1:1237/v1","model":"qwen3.6-apex-compact","timeout_ms":100000,"max_output_tokens":160,"temperature":0,"json_response":true}}"#,
+            r#"{"provider":"codex_subscription","account":"sym","codex_bin":"/usr/bin/codex","model":"gpt-5.6-luna","reasoning_effort":"low","timeout_ms":20000,"fallback":{"provider":"openai_compatible","base_url":"http://127.0.0.1:1237/v1","model":"qwen3.6-apex-compact","timeout_ms":100000,"max_output_tokens":160,"temperature":0,"json_response":true}}"#,
         );
         assert!(config.is_ok());
 
@@ -4443,6 +4459,18 @@ mod tests {
             schema.pointer("/properties/references/items/pattern"),
             Some(&json!(r"^#[1-9][0-9]{0,9}$"))
         );
+    }
+
+    #[test]
+    fn codex_thread_start_applies_the_configured_reasoning_effort() {
+        let config = RetitleConfig::parse(
+            r#"{"provider":"codex_subscription","account":"sym","codex_bin":"/usr/bin/codex","model":"gpt-5.6-luna","reasoning_effort":"low"}"#,
+        )
+        .unwrap();
+        let params = codex_thread_start_params(&config, Path::new("/tmp/retitle"));
+
+        assert_eq!(params["model"], "gpt-5.6-luna");
+        assert_eq!(params["config"]["model_reasoning_effort"], "low");
     }
 
     #[test]
