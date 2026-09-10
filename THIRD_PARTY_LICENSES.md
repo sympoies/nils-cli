@@ -3,7 +3,7 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `8600ac980647a0c550701e825ce5e540352b59e4a11498e9c16804731923c469`
+- Cargo.lock SHA256: `b6d3f9ca770cb9f64bea736b2470d1508c3aa06cca93de95f9eab26a4f70fc21`
 - Third-party crates (`source != null`): 496
 - Workspace crates (`source == null`, excluded below): 46
 
@@ -171,13 +171,13 @@ This file documents third-party Rust crate licenses used by this workspace.
 | fs_extra | 1.3.0 | MIT | crates.io |
 | fsevent-sys | 4.1.0 | MIT | crates.io |
 | futures-channel | 0.3.32 | MIT OR Apache-2.0 | crates.io |
-| futures-core | 0.3.32 | MIT OR Apache-2.0 | crates.io |
-| futures-io | 0.3.32 | MIT OR Apache-2.0 | crates.io |
+| futures-core | 0.3.34 | MIT OR Apache-2.0 | crates.io |
+| futures-io | 0.3.34 | MIT OR Apache-2.0 | crates.io |
 | futures-lite | 2.6.1 | Apache-2.0 OR MIT | crates.io |
-| futures-macro | 0.3.32 | MIT OR Apache-2.0 | crates.io |
-| futures-sink | 0.3.32 | MIT OR Apache-2.0 | crates.io |
-| futures-task | 0.3.32 | MIT OR Apache-2.0 | crates.io |
-| futures-util | 0.3.32 | MIT OR Apache-2.0 | crates.io |
+| futures-macro | 0.3.34 | MIT OR Apache-2.0 | crates.io |
+| futures-sink | 0.3.34 | MIT OR Apache-2.0 | crates.io |
+| futures-task | 0.3.34 | MIT OR Apache-2.0 | crates.io |
+| futures-util | 0.3.34 | MIT OR Apache-2.0 | crates.io |
 | generic-array | 0.14.7 | MIT | crates.io |
 | gethostname | 1.1.0 | Apache-2.0 | crates.io |
 | getopts | 0.2.24 | MIT OR Apache-2.0 | crates.io |
@@ -217,7 +217,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | image | 0.25.10 | MIT OR Apache-2.0 | crates.io |
 | image-webp | 0.2.4 | MIT OR Apache-2.0 | crates.io |
 | imagesize | 0.15.0 | MIT | crates.io |
-| indexmap | 2.14.1 | Apache-2.0 OR MIT | crates.io |
+| indexmap | 2.14.2 | Apache-2.0 OR MIT | crates.io |
 | indicatif | 0.18.6 | MIT | crates.io |
 | inotify | 0.11.4 | ISC | crates.io |
 | inotify-sys | 0.1.8 | ISC | crates.io |
