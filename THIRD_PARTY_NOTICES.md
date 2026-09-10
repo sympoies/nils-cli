@@ -3,7 +3,7 @@
 This file documents third-party notice-file discovery for Rust crates used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `8600ac980647a0c550701e825ce5e540352b59e4a11498e9c16804731923c469`
+- Cargo.lock SHA256: `b6d3f9ca770cb9f64bea736b2470d1508c3aa06cca93de95f9eab26a4f70fc21`
 - Third-party crates (`source != null`): 496
 
 ## Notice Extraction Policy
@@ -1032,7 +1032,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### futures-core 0.3.32
+### futures-core 0.3.34
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -1041,7 +1041,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### futures-io 0.3.32
+### futures-io 0.3.34
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -1060,7 +1060,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-MIT`
   - `LICENSE-THIRD-PARTY`
 
-### futures-macro 0.3.32
+### futures-macro 0.3.34
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -1069,7 +1069,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### futures-sink 0.3.32
+### futures-sink 0.3.34
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -1078,7 +1078,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### futures-task 0.3.32
+### futures-task 0.3.34
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -1087,7 +1087,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### futures-util 0.3.32
+### futures-util 0.3.34
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -1431,7 +1431,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### indexmap 2.14.1
+### indexmap 2.14.2
 
 - License: `Apache-2.0 OR MIT`
 - Source: `crates.io`
