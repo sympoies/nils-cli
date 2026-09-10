@@ -163,17 +163,22 @@ unavailable but the fallback is configured and ready, readiness reports the
 fallback provider with `degraded`, `fallback_ready`, and `restore_primary`.
 
 Codex subscription uses the existing account broker and the supported Codex
-app-server protocol. It supplies broker credentials through external auth in a
-temporary `CODEX_HOME`; it never switches or rewrites the operator's global
-Codex account and does not call undocumented ChatGPT HTTP endpoints. Optional
-`reasoning_effort` is passed as the app-server thread's
+app-server protocol. A fixed `account` remains supported. Alternatively,
+`account_selection: default_with_capacity` asks the broker before every
+inference for the live global default with confirmed quota capacity. Only a
+confirmed exhausted default may roll to the next configured account with
+confirmed capacity; unknown quota data fails closed so the configured provider
+fallback can run. The broker selection never switches or rewrites the global
+default. Credentials are supplied through external auth in a temporary
+`CODEX_HOME`, and the daemon does not call undocumented ChatGPT HTTP endpoints.
+Optional `reasoning_effort` is passed as the app-server thread's
 `model_reasoning_effort` override so title classification can use a bounded
 effort independently of interactive sessions.
 
 ```json
 {
   "provider": "codex_subscription",
-  "account": "sym",
+  "account_selection": "default_with_capacity",
   "codex_bin": "/absolute/path/to/codex",
   "model": "gpt-5.6-luna",
   "reasoning_effort": "low",
