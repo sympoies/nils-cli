@@ -148,6 +148,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
 '--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
 '--text-stdin[Read the literal text to type from stdin (secret-safe; never echoed)]' \
+'--allow-blocked[Type the literal text even while the agent is waiting on an approval or question. Without this, text is refused so it cannot land in the dialog; special keys are always allowed, so answering a dialog never needs it]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 ':id -- Session id:_default' \

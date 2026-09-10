@@ -599,6 +599,46 @@ recorded in `sympoies/nils-cli#1409`.
   allocation from the request. Every accepted name resolves to one of the nine
   canonical `SpecialKey` values, so the bound is far above any real caller. An
   unknown name still fails the whole request with `400 invalid-key`.
+- Blocked-input contract. While a session's turn phase is `needs_input` — reached
+  only through a provider `attention_requested` event, never a terminal
+  heuristic — the pane belongs to an approval or question dialog rather than to a
+  prompt box, so text delivered into it answers that dialog instead. The refusal
+  is therefore scoped to routes that **write to the pane**, and reports
+  `409 agent-blocked` with a `{ id, phase, remedy }` detail before anything
+  reaches the terminal:
+
+  | Route | While `needs_input` |
+  | --- | --- |
+  | `POST /sessions/{id}/send` carrying literal `text` | refused, unless `allow_blocked: true` (CLI `--allow-blocked`) |
+  | `POST /sessions/{id}/send` with keys only | admitted — answering the dialog is what a blocked session stays addressable for, including the `enter` that confirms a highlighted choice |
+  | `POST /sessions/{id}/send` whose `text` is only a newline | admitted; it is delivered as that Enter keypress rather than typed characters |
+  | `POST /sessions/{id}/prompt`, `/prompt/v2` on a pane-delivered (Claude) runtime | refused, no opt-in; use `send` with `allow_blocked` to type into the dialog |
+  | `POST /sessions/{id}/prompt`, `/prompt/v2` on a Codex app-server runtime | admitted — it submits over the control channel and never touches the pane |
+  | `PATCH /sessions/{id}` title rename projection | suppressed; the title still persists and the pane-side name updates after the dialog is answered |
+  | `GET /sessions/{id}/attach` input frames | admitted — see the exemption below |
+
+  Every phase other than `needs_input` is admitted, as is an absent or degraded
+  turn state: blockedness is unknowable without valid provider evidence, and
+  failing closed there would strand providers with no turn tracking.
+
+  The pane-delivered prompt is checked twice — once as an early reject, then
+  authoritatively inside the record lock that also fences the write — so an
+  `attention_requested` ingest arriving mid-request cannot slip a paste through.
+
+  Coordination notifications never reach this refusal, but not because they
+  always require a `waiting` recipient: the dispatcher routes a supported Codex
+  runtime whose phase is `working` or `needs_input` with authoritative confidence
+  to its fenced in-turn checkpoint, and only otherwise requires `waiting`.
+  Neither path goes through `/send` or `/prompt`.
+
+  **This is a safety default, not an authorization boundary.** The attach socket
+  is an interactive terminal and accepts text frames under the same bearer token,
+  so any caller that `agent-blocked` refuses can perform the same pane write over
+  `/attach`. The refusal stops an automated caller from typing into a dialog by
+  accident; it does not stop one that means to. A consumer whose HTTP `/send`
+  call carries human keystrokes — an interactive terminal falling back from a
+  closed WebSocket, for example — should send `allow_blocked: true`, because that
+  input is deliberate by construction.
 - Attachment upload uses a raw binary request body (not multipart). The daemon
   streams it into a private same-directory temporary file, enforces the declared
   and observed byte ceiling, syncs it, and publishes it without replacing an
