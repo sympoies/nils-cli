@@ -391,6 +391,10 @@ session. Its queue and durable receipts obey these rules:
   and resumes from its last proven safe state.
 - An `accepted` response is non-terminal and remains scheduled for bounded
   reconciliation; polling it does not consume a provider-failure attempt.
+- Automatic scheduling treats a temporarily unavailable provider-history
+  source as retryable within the global attempt bound. This covers the narrow
+  interval after a fresh turn is observed but before its transcript source is
+  discoverable; manual requests retain their typed failure response.
 - A non-retryable continuation failure MUST atomically terminalize its durable
   receipt before releasing the operation gate, so later scheduling or restart
   adoption cannot recreate the same failed work.

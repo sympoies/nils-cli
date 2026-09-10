@@ -4205,6 +4205,11 @@ struct AutomaticRetitleAttempt {
     terminal: bool,
 }
 
+fn automatic_retitle_scanner_error_is_retryable(code: &str) -> bool {
+    code == "retitle-v3-history-unavailable"
+        || crate::retitle::is_retryable_automatic_error_code(code)
+}
+
 impl AutomaticRetitleTracker {
     fn begin(&mut self, key: &str, now: Instant) -> bool {
         match self.entries.entry(key.to_string()) {
@@ -4243,7 +4248,7 @@ impl AutomaticRetitleTracker {
                 attempt.retry_after = now + Duration::from_secs(1);
             }
             Err(error)
-                if crate::retitle::is_retryable_automatic_error_code(error.code())
+                if automatic_retitle_scanner_error_is_retryable(error.code())
                     && attempt.attempts < crate::retitle::MAX_AUTOMATIC_ATTEMPTS =>
             {
                 let shift = u32::from(attempt.attempts.saturating_sub(1));
@@ -12233,6 +12238,24 @@ mod tests {
         );
         assert!(!tracker.begin("turn-conflict", start));
         assert!(tracker.begin("turn-conflict", start + Duration::from_secs(1)));
+
+        assert!(tracker.begin("history-unavailable", start));
+        assert!(!crate::retitle::is_retryable_automatic_error_code(
+            "retitle-v3-history-unavailable"
+        ));
+        tracker.finish(
+            "history-unavailable",
+            Err(&crate::retitle::retitle_error(
+                "retitle-v3-history-unavailable",
+                "provider history is not yet available",
+                false,
+                "retry",
+                "retry_request",
+            )),
+            start,
+        );
+        assert!(!tracker.begin("history-unavailable", start));
+        assert!(tracker.begin("history-unavailable", start + Duration::from_secs(1)));
 
         assert!(tracker.begin("nonretryable", start));
         tracker.finish(
