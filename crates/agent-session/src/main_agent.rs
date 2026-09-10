@@ -26173,6 +26173,7 @@ mod tests {
                 launch_id: incarnation.to_string(),
                 extra: std::collections::BTreeMap::new(),
             }),
+            public_metadata: None,
             agent_args: Vec::new(),
             agent_bin: None,
             extra: std::collections::BTreeMap::new(),

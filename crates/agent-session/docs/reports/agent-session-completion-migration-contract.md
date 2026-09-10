@@ -36,6 +36,9 @@
 | `agent-session activity setup` | `crates/agent-session/src/cli.rs` | provider enum, setup mode flags, digest and path values, format enum | preview/apply/repair/remove lifecycle setup |
 | `agent-session activity hook` | `crates/agent-session/src/cli.rs` | provider enum and optional hidden free-form event name; payload is read from stdin implicitly | hidden provider hook bridge |
 | `agent-session activity notify` | `crates/agent-session/src/cli.rs` | provider enum and notifier argv values | hidden provider notification bridge |
+| `agent-session metadata` | `crates/agent-session/src/cli.rs` | nested public metadata commands | bounded managed-session metadata group |
+| `agent-session metadata attach` | `crates/agent-session/src/cli.rs` | exact session id, owner-private request path, revision, idempotency key, format enum | revision-fenced idempotent label attachment |
+| `agent-session metadata show` | `crates/agent-session/src/cli.rs` | exact session id, optional label, format enum | bounded public read-back projection |
 | `agent-session work-context` | `crates/agent-session/src/cli.rs` | nested advisory and enforce commands | managed coordination group |
 | `agent-session work-context status` | `crates/agent-session/src/cli.rs` | format enum | self-targeting presence/context read |
 | `agent-session work-context set` | `crates/agent-session/src/cli.rs` | tier, repository, path, issue/PR, plan reference, and format flags | self-targeting context replacement |
