@@ -840,7 +840,7 @@ pub struct SendArgs {
 
     /// Type the literal text even while the agent is waiting on an approval or
     /// question. Without this, text is refused so it cannot land in the dialog;
-    /// special keys are always allowed so the dialog can still be answered.
+    /// special keys are always allowed, so answering a dialog never needs it.
     #[arg(long = "allow-blocked")]
     pub allow_blocked: bool,
 

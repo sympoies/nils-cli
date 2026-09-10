@@ -1831,21 +1831,21 @@ fn replay_matches_document(dir: &Path, document: &ActivityDocument) -> bool {
     .is_ok()
 }
 
-/// Refuse literal input while a provider-raised approval or question dialog
-/// owns the pane.
+/// Refuse when a provider-raised approval or question dialog owns the pane.
 ///
-/// A blocked session's pane is not a prompt box. Characters typed into it land
-/// in the dialog, where a highlighted option is one keystroke from being
-/// chosen, so delivering an automated caller's text there can approve something
-/// nobody agreed to. `NeedsInput` is only ever reached through a provider
-/// `attention_requested` lifecycle event, never a terminal heuristic, so
-/// refusing on it is a decision about observed provider state rather than a
-/// guess about pixels.
+/// This decides one thing only: is the session blocked? It inspects neither
+/// text nor keys. Each caller decides *which* of its input is hazardous enough
+/// to gate — `send_to_session` gates only input that types characters, while
+/// the pane-delivered prompt paths gate unconditionally — so do not assume from
+/// this signature that any input shape is already exempt.
 ///
-/// Special keys stay admitted on purpose: answering the dialog is the reason a
-/// blocked session remains addressable at all, and an answer is exactly an
-/// `escape`, an arrow, or the `enter` that confirms a highlighted choice.
-pub(crate) fn refuse_blocked_literal_input(
+/// `NeedsInput` is only ever reached through a provider `attention_requested`
+/// lifecycle event, never a terminal heuristic, so refusing on it is a decision
+/// about observed provider state rather than a guess about pixels. An absent or
+/// degraded turn state admits the input: blockedness is unknowable without
+/// valid provider evidence, and failing closed there would strand every
+/// provider with no turn tracking.
+pub(crate) fn refuse_if_blocked(
     context: &CliContext,
     record: &SessionRecord,
     remedy: &str,

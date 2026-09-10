@@ -8892,11 +8892,21 @@ fn ensure_not_external_runtime(record: &SessionRecord, surface: &str) -> Result<
 
 /// Does this input type characters, as opposed to pressing keys?
 ///
-/// `send_input_unlocked` turns a bare newline into an Enter keypress rather than
-/// pasted characters, so text that is only a newline is an answer to whatever
-/// the pane is showing, not a prompt typed into it.
+/// The single owner of "this text is really an Enter keypress".
+///
+/// `send_input_unlocked` delivers exactly these values as a keypress instead of
+/// pasted characters, and `carries_literal_text` inverts it to decide whether
+/// the blocked-input guard applies. Both must agree: if the keypress set widened
+/// here without the guard following, the guard would refuse input that never
+/// reaches the pane as characters; if it narrowed, the guard would admit pasted
+/// characters into a dialog. One definition removes the possibility.
+pub(crate) fn text_is_bare_newline(text: &str) -> bool {
+    matches!(text, "\r" | "\n" | "\r\n")
+}
+
+/// Does this input type characters, as opposed to pressing keys?
 fn carries_literal_text(text: Option<&str>) -> bool {
-    text.is_some_and(|text| !matches!(text, "\r" | "\n" | "\r\n"))
+    text.is_some_and(|text| !text_is_bare_newline(text))
 }
 
 fn send_to_session(context: &CliContext, args: cli::SendArgs) -> Result<SendResult, CliError> {
@@ -8922,11 +8932,17 @@ fn send_to_session(context: &CliContext, args: cli::SendArgs) -> Result<SendResu
             Some(json!({ "id": record.id })),
         ));
     }
+    // Only input that types characters is gated. Special keys — including the
+    // `enter` that confirms a highlighted choice — stay admitted, because
+    // answering the dialog is the reason a blocked session remains addressable.
+    // The check sits inside the record lock and the lock is held through the
+    // pane write below, so the phase it refuses on is the phase the write would
+    // have landed in.
     if carries_literal_text(text.as_deref()) && !args.allow_blocked {
-        activity::refuse_blocked_literal_input(
+        activity::refuse_if_blocked(
             context,
             &record,
-            "answer the dialog with --key, or repeat with --allow-blocked to type into it",
+            "answer the dialog with a special key, or resend with allow_blocked to type into it",
         )?;
     }
     let submits = codex_app_server::input_contains_submission(text.as_deref(), &args.keys);
@@ -9007,6 +9023,16 @@ pub(crate) fn deliver_claude_structured_prompt_locked(
             Some(json!({ "id": record.id })),
         ));
     }
+    // The authoritative blocked check for a pane-delivered prompt. The caller's
+    // early reject runs before this lock is taken, so an `attention_requested`
+    // ingest landing in that gap would otherwise let the prompt paste into the
+    // dialog. Re-checking here puts the decision under the same lock that
+    // fences the launch id, liveness, and the write itself.
+    activity::refuse_if_blocked(
+        context,
+        &record,
+        "answer the dialog with send --key, then resubmit the prompt",
+    )?;
     codex_account::ensure_input_allowed(&record)?;
     auto_resume::cancel_for_manual_input_locked(
         context,
@@ -9308,7 +9334,7 @@ fn send_input_unlocked(
     let target = format!("{}:0.0", record.tmux_session);
     let mut pasted_literal_text = false;
     if let Some(text) = text {
-        if matches!(text, "\r" | "\n" | "\r\n") {
+        if text_is_bare_newline(text) {
             if let Some(section) = manual_input.as_deref_mut() {
                 section.arm(context, record)?;
             }
@@ -9711,6 +9737,19 @@ fn rename_live_claude_session(
     title: &str,
     tmux_bin: &Path,
 ) -> Result<(), CliError> {
+    // This projection pastes caller-controlled text plus Enter into the pane,
+    // so it carries the same hazard as `send`. It is reachable with an ordinary
+    // token through `PATCH /sessions/{id}` and fires unattended from the
+    // auto-retitle loop, which makes it the one route that could answer an
+    // approval dialog without anyone asking for input at all. Refusing costs
+    // nothing here: the caller already treats the projection as best-effort, so
+    // the persisted title still advances and only the prompt-bar name stays
+    // stale until the dialog is answered.
+    activity::refuse_if_blocked(
+        context,
+        record,
+        "the title is saved; the pane name updates after the dialog is answered",
+    )?;
     let single_line = title.replace(['\n', '\r'], " ");
     let command = format!("/rename {single_line}");
     send_title_rename_serialized(

@@ -997,8 +997,7 @@ pub(crate) fn input_contains_submission(
     text: Option<&str>,
     keys: &[crate::cli::SpecialKey],
 ) -> bool {
-    text.is_some_and(|text| matches!(text, "\r" | "\n" | "\r\n"))
-        || keys.contains(&crate::cli::SpecialKey::Enter)
+    text.is_some_and(crate::text_is_bare_newline) || keys.contains(&crate::cli::SpecialKey::Enter)
 }
 
 pub(crate) fn ensure_manual_input_capability(

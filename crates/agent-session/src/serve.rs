@@ -6312,20 +6312,6 @@ async fn submit_structured_prompt_handler_with_fence(
             Ok(record) => record,
             Err(response) => return response,
         };
-    // A structured prompt is a prompt by definition, so it always carries the
-    // hazard `send` only carries when it types text: submitted into a pane that
-    // is showing an approval dialog, it answers that dialog instead. There is
-    // no opt-in here on purpose — a caller that means to type into the dialog
-    // wants `send --allow-blocked`, which addresses the terminal directly.
-    // Coordination notifications never reach this: their dispatcher requires
-    // `Waiting` before it builds a prompt at all.
-    if let Err(err) = crate::activity::refuse_blocked_literal_input(
-        &state.context,
-        &record,
-        "answer the dialog through send with --key, then resubmit the prompt",
-    ) {
-        return envelope_err(err);
-    }
     let Some(launch_id) = record
         .runtime
         .as_ref()
@@ -6341,6 +6327,21 @@ async fn submit_structured_prompt_handler_with_fence(
     // turn state, so a fenced request stays Codex-only until that fence has a
     // Claude equivalent.
     if notification_fence.is_none() && crate::claude_structured_prompt_supported(&record) {
+        // Only this branch pastes the prompt into the pane, so only this branch
+        // carries the blocked-input hazard. The Codex branch below submits over
+        // the app-server control channel and never touches the terminal, which
+        // is why it is not refused here — the daemon's own in-turn coordination
+        // checkpoint deliberately delivers to a `NeedsInput` Codex session over
+        // that same channel. This is an early reject only; the authoritative
+        // check lives inside `deliver_claude_structured_prompt_locked`, under
+        // the record lock that also fences the write.
+        if let Err(err) = crate::activity::refuse_if_blocked(
+            &state.context,
+            &record,
+            "answer the dialog with send --key, then resubmit the prompt",
+        ) {
+            return envelope_err(err);
+        }
         return submit_claude_structured_prompt(
             &state,
             &record,
@@ -20073,10 +20074,16 @@ esac
         );
     }
 
-    /// `minimal_tmux` plus an invocation journal. A blocked-input refusal is
-    /// only worth anything if it happens *before* the daemon writes to the live
-    /// pane, so these tests assert the absence of a terminal write rather than
-    /// trusting the response code alone.
+    /// A liveness-plus-journal tmux stub for the blocked-input tests. It answers
+    /// `has-session`, `capture-pane` and `show-buffer` and records every verb it
+    /// is called with; it deliberately does *not* implement `minimal_tmux`'s
+    /// `new-session` heartbeat or `display-message` pane identity, so a flow
+    /// needing session creation must use `minimal_tmux` instead of this.
+    ///
+    /// The journal exists because a blocked-input refusal is only worth anything
+    /// if it happens *before* the daemon writes to the live pane, so these tests
+    /// assert the absence of a terminal write rather than trusting the response
+    /// code alone.
     fn recording_tmux(dir: &Path) -> (PathBuf, PathBuf) {
         let bin = dir.join("recording-tmux");
         let journal = dir.join("tmux-invocations");
@@ -20095,24 +20102,34 @@ esac
         (bin, journal)
     }
 
+    /// Whether the stub observed a pane write. `expect`s the journal rather than
+    /// treating its absence as "no write": a missing file means the stub never
+    /// ran at all, which would silently satisfy every negative assertion and
+    /// leave a test passing for the wrong reason.
     fn tmux_wrote_to_the_pane(journal: &Path) -> bool {
-        let Ok(log) = std::fs::read_to_string(journal) else {
-            return false;
-        };
+        let log = std::fs::read_to_string(journal)
+            .expect("tmux journal: the recording stub was never invoked");
         log.lines()
             .any(|verb| matches!(verb, "send-keys" | "load-buffer" | "paste-buffer"))
     }
 
+    /// The stronger claim: tmux was not invoked at all. A refusal that lands
+    /// before the daemon reaches for the terminal leaves no journal, and saying
+    /// so explicitly keeps that distinct from "ran and wrote nothing".
+    fn tmux_never_ran(journal: &Path) -> bool {
+        !journal.exists()
+    }
+
     /// Drive a seeded session into `NeedsInput` the only way the daemon ever
     /// reaches it: a provider `attention_requested` lifecycle event.
-    fn block_on_provider_attention(state: &Arc<ServeState>, id: &str) {
+    fn block_on_provider_attention(state: &Arc<ServeState>, id: &str, provider: &str) {
         let record = load_session_record(&state.context, id).unwrap();
         crate::activity::activate_runtime(&state.context, &record).unwrap();
         let event = serde_json::from_value(json!({
             "schema_version": crate::activity::TURN_EVENT_VERSION,
             "event_id": format!("{id}-attention"),
             "runtime_id": format!("launch-{id}"),
-            "provider": "codex",
+            "provider": provider,
             "kind": "attention_requested",
             "confidence": "authoritative",
             "attention_id": format!("{id}-approval"),
@@ -20141,7 +20158,7 @@ esac
         let (tmux, journal) = recording_tmux(tmp.path());
         seed_session_with_runtime(tmp.path(), "blocked", "codex", "hs-codex-blocked");
         let st = state(tmp.path(), Some(TOKEN), tmux);
-        block_on_provider_attention(&st, "blocked");
+        block_on_provider_attention(&st, "blocked", "codex");
 
         let (status, body) = call(
             router(st.clone()),
@@ -20171,7 +20188,7 @@ esac
         let (tmux, journal) = recording_tmux(tmp.path());
         seed_session_with_runtime(tmp.path(), "blocked", "codex", "hs-codex-blocked");
         let st = state(tmp.path(), Some(TOKEN), tmux);
-        block_on_provider_attention(&st, "blocked");
+        block_on_provider_attention(&st, "blocked", "codex");
 
         let (status, body) = call(
             router(st.clone()),
@@ -20199,7 +20216,7 @@ esac
         let (tmux, journal) = recording_tmux(tmp.path());
         seed_session_with_runtime(tmp.path(), "blocked", "codex", "hs-codex-blocked");
         let st = state(tmp.path(), Some(TOKEN), tmux);
-        block_on_provider_attention(&st, "blocked");
+        block_on_provider_attention(&st, "blocked", "codex");
 
         let (status, body) = call(
             router(st.clone()),
@@ -20219,15 +20236,17 @@ esac
         );
     }
 
-    /// A structured prompt is a prompt by definition, so it carries the hazard
-    /// unconditionally and is refused whatever keys would have accompanied it.
+    /// The Claude prompt route pastes into the pane, so it carries the hazard
+    /// and is refused. This fixture is the one that would actually deliver: with
+    /// the guard removed the prompt reaches `load-buffer`/`paste-buffer`, so the
+    /// journal assertion has real signal.
     #[tokio::test]
-    async fn structured_prompt_refuses_while_the_agent_is_blocked() {
+    async fn structured_prompt_refuses_while_a_claude_pane_is_blocked() {
         let tmp = tempfile::TempDir::new().unwrap();
         let (tmux, journal) = recording_tmux(tmp.path());
-        seed_session_with_runtime(tmp.path(), "blocked", "codex", "hs-codex-blocked");
+        seed_claude_prompt_session(tmp.path(), "blocked");
         let st = state(tmp.path(), Some(TOKEN), tmux);
-        block_on_provider_attention(&st, "blocked");
+        block_on_provider_attention(&st, "blocked", "claude");
 
         let (status, body) = call(
             router(st.clone()),
@@ -20242,8 +20261,165 @@ esac
         assert_eq!(status, StatusCode::CONFLICT, "body={body}");
         assert_eq!(body["error"]["code"], "agent-blocked");
         assert!(
+            tmux_never_ran(&journal),
+            "a refused prompt must be rejected before the daemon reaches for tmux"
+        );
+    }
+
+    /// The Codex app-server route submits over the control channel and never
+    /// touches the pane, so the blocked-input hazard does not exist there and
+    /// the prompt must not be refused. The daemon's own in-turn coordination
+    /// checkpoint delivers to a `NeedsInput` Codex session over the same
+    /// channel; refusing callers for that would contradict it.
+    #[tokio::test]
+    async fn structured_prompt_admits_a_blocked_codex_app_server_session() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let launch_id = seed_codex_app_server_session(tmp.path(), "blocked");
+        let st = state(
+            tmp.path(),
+            Some(TOKEN),
+            PathBuf::from("/terminal-transport-must-not-run"),
+        );
+        block_on_provider_attention(&st, "blocked", "codex");
+        let (handle, mut commands) = codex_app_server::control_channel();
+        st.codex_controls.lock().unwrap().insert(
+            "blocked".to_string(),
+            CodexControlEntry {
+                launch_id: launch_id.clone(),
+                handle,
+            },
+        );
+        let responder = tokio::spawn(async move {
+            let Some(codex_app_server::ControlCommand::Prompt { response, .. }) =
+                commands.recv().await
+            else {
+                panic!("the prompt did not reach the Codex control plane");
+            };
+            response.send(Ok("turn-blocked".to_string())).unwrap();
+        });
+
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(
+                "/sessions/blocked/prompt",
+                Some(TOKEN),
+                json!({ "text": "please continue" }),
+            ),
+        )
+        .await;
+
+        responder.await.unwrap();
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_ne!(body["error"]["code"], "agent-blocked");
+    }
+
+    /// The guard must fire on `needs_input` and nothing else. Every other send
+    /// test seeds a session with no activity document at all, so without this
+    /// case a regression that refused whenever a turn state exists would break
+    /// ordinary steering in production while the suite stayed green.
+    #[tokio::test]
+    async fn send_admits_literal_text_while_the_agent_is_working() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (tmux, journal) = recording_tmux(tmp.path());
+        seed_claude_prompt_session(tmp.path(), "busy");
+        let st = state(tmp.path(), Some(TOKEN), tmux);
+        let record = load_session_record(&st.context, "busy").unwrap();
+        crate::activity::activate_runtime(&st.context, &record).unwrap();
+        crate::activity::ingest_event(
+            &st.context,
+            "busy",
+            claude_turn_started_event("launch-busy", "busy-started", "turn-busy"),
+        )
+        .expect("ingest turn start");
+        assert_eq!(
+            crate::activity::activity_status(&st.context, "busy")
+                .expect("activity status")
+                .turn_state
+                .phase,
+            crate::activity::TurnPhase::Working,
+            "fixture must have a live non-blocked turn state"
+        );
+
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(
+                "/sessions/busy/send",
+                Some(TOKEN),
+                json!({ "text": "keep going", "keys": ["enter"] }),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert!(
+            tmux_wrote_to_the_pane(&journal),
+            "a working session must still accept typed input"
+        );
+    }
+
+    /// `send_input_unlocked` delivers a bare newline as an Enter keypress rather
+    /// than pasted characters, so the contract admits it while blocked. Without
+    /// this case, tightening the predicate to "any text" would silently remove a
+    /// documented way to answer a dialog.
+    #[tokio::test]
+    async fn send_admits_a_bare_newline_while_the_agent_is_blocked() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (tmux, journal) = recording_tmux(tmp.path());
+        seed_session_with_runtime(tmp.path(), "blocked", "codex", "hs-codex-blocked");
+        let st = state(tmp.path(), Some(TOKEN), tmux);
+        block_on_provider_attention(&st, "blocked", "codex");
+
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(
+                "/sessions/blocked/send",
+                Some(TOKEN),
+                json!({ "text": "\n" }),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert!(
+            tmux_wrote_to_the_pane(&journal),
+            "a bare newline is an Enter keypress and must still answer the dialog"
+        );
+    }
+
+    /// The Claude title rename projects `/rename <title>` plus Enter into the
+    /// pane, so it carries the same hazard as `send` and is refused while
+    /// blocked. The persisted title still advances: only the pane-side
+    /// projection is suppressed.
+    #[tokio::test]
+    async fn title_update_does_not_project_into_a_blocked_claude_pane() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (tmux, journal) = recording_tmux(tmp.path());
+        seed_claude_prompt_session(tmp.path(), "blocked");
+        let st = state(tmp.path(), Some(TOKEN), tmux);
+        block_on_provider_attention(&st, "blocked", "claude");
+
+        let (status, body) = call(
+            router(st.clone()),
+            patch_json(
+                "/sessions/blocked",
+                Some(TOKEN),
+                json!({ "title": "renamed while blocked" }),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert!(
             !tmux_wrote_to_the_pane(&journal),
-            "a refused prompt must not reach the pane"
+            "the rename projection must not type into a blocked pane"
+        );
+        assert_eq!(
+            load_session_record(&st.context, "blocked")
+                .unwrap()
+                .title
+                .as_deref(),
+            Some("renamed while blocked"),
+            "the persisted title must still advance"
         );
     }
 
