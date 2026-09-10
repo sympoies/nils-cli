@@ -165,7 +165,10 @@ fallback provider with `degraded`, `fallback_ready`, and `restore_primary`.
 Codex subscription uses the existing account broker and the supported Codex
 app-server protocol. It supplies broker credentials through external auth in a
 temporary `CODEX_HOME`; it never switches or rewrites the operator's global
-Codex account and does not call undocumented ChatGPT HTTP endpoints.
+Codex account and does not call undocumented ChatGPT HTTP endpoints. Optional
+`reasoning_effort` is passed as the app-server thread's
+`model_reasoning_effort` override so title classification can use a bounded
+effort independently of interactive sessions.
 
 ```json
 {
@@ -173,6 +176,7 @@ Codex account and does not call undocumented ChatGPT HTTP endpoints.
   "account": "sym",
   "codex_bin": "/absolute/path/to/codex",
   "model": "gpt-5.6-luna",
+  "reasoning_effort": "low",
   "timeout_ms": 20000,
   "max_concurrency": 1,
   "queue_size": 8,
