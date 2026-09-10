@@ -5,6 +5,14 @@ description: Fix a dependabot bump PR whose CI fails because THIRD_PARTY_LICENSE
 
 # Nils CLI Deliver Dependabot Bump PR
 
+`.github/workflows/dependabot-third-party-artifacts.yml` and
+`.github/workflows/dependabot-third-party-apply.yml` normally do this in CI
+already. Use this skill when that pair is unavailable (the apply workflow's
+`BOT_APP_ID` / `BOT_APP_PRIVATE_KEY` secrets are unset), when it failed, or when
+the bump needs review before merging. Check the PR for a
+`fix(ci): refresh third-party artifacts for dependabot bump` commit first: if it
+is already there, the artifacts are current and only the merge is outstanding.
+
 ## Contract
 
 Prereqs:

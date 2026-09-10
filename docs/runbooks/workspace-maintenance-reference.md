@@ -345,6 +345,39 @@ bash scripts/generate-third-party-artifacts.sh --check
 The artifact contract is documented in
 `docs/specs/third-party-artifacts-contract-v1.md`.
 
+### 6.1 Dependabot bumps
+
+Every Dependabot cargo bump rewrites `Cargo.lock`, which drifts both artifacts
+and fails the strict third-party audit. Two workflows handle that
+automatically, split so that the privileged half never touches pull-request
+content:
+
+- `.github/workflows/dependabot-third-party-artifacts.yml` runs unprivileged on
+  `pull_request` — no secrets, read-only token. It is the only place that
+  executes anything from the bump, and it publishes the regenerated files as
+  the `third-party-refresh` artifact.
+- `.github/workflows/dependabot-third-party-apply.yml` runs privileged on
+  `workflow_run`. It checks out nothing, commits the two artifact paths onto the
+  Dependabot branch through the Git Data API, and squash merges
+  `dependabot/cargo/cargo-minor-patch-*` once the `CI` workflow concludes
+  success on that exact commit. Major-version and security bumps are refreshed
+  but never auto-merged.
+
+The artifact is untrusted input, so the applying workflow never executes it: it
+writes only the two known paths, only onto the branch the run belongs to, and
+only while that branch head still matches the commit the refresh was generated
+for. CI then re-runs the strict audit on the resulting commit, and the merge
+gate requires that run to pass.
+
+The applying workflow requires two repository secrets, `BOT_APP_ID` and
+`BOT_APP_PRIVATE_KEY`, for a GitHub App installed on this repository with
+`Contents: read and write`, `Pull requests: read and write`, and
+`Actions: read`. The App token is mandatory rather than a convenience: a commit
+made with the default `GITHUB_TOKEN` does not start a new workflow run, so the
+refreshed commit would carry no CI results and could never be shown green.
+Without the secrets the applying workflow fails fast with that instruction, and
+`.agents/skills/project-deliver-dependabot-bump-pr` remains the manual path.
+
 ## 7. Test conventions
 
 - In Rust tests, prefer `pretty_assertions::{assert_eq, assert_ne}` for readable diffs.
