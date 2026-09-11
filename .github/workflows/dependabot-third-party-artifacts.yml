@@ -26,8 +26,13 @@ concurrency:
 jobs:
   generate:
     name: Generate third-party artifacts
+    # TEST BRANCH ONLY - DO NOT MERGE. The maintainer-authored branch below is
+    # the only way to exercise this automation before a real bump arrives; the
+    # privileged half on main is untouched and still refuses to commit onto a
+    # pull request that Dependabot did not author.
     if: >-
-      github.event.pull_request.user.login == 'dependabot[bot]'
+      (github.event.pull_request.user.login == 'dependabot[bot]'
+      || github.event.pull_request.head.ref == 'dependabot/cargo/e2e-third-party-apply')
       && github.event.pull_request.head.repo.full_name == github.repository
       && startsWith(github.event.pull_request.head.ref, 'dependabot/cargo/')
     runs-on: ubuntu-24.04
