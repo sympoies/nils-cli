@@ -25,6 +25,8 @@ or integrating a specific subsystem.
   long-session privacy/fencing guarantees.
 - [Session coordination v1](specs/session-coordination-v1.md): normative
   schemas, state machines, authorization, routes, limits, and failure codes.
+- [Session public metadata v1](specs/session-public-metadata-v1.md): bounded
+  revision-fenced attachment requests, replay receipts, and read-back privacy.
 - [Turn-state contract](turn-state-contract.md): runtime-bound activity state,
   privacy projection, replay, and provider setup behavior.
 - [Activity stream v1](specs/activity-stream-v1.md): SSE stream, replay,

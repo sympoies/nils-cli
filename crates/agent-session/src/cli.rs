@@ -43,7 +43,7 @@ impl CoordinationMode {
     about = "Start and manage tmux-backed Codex, Claude Code, and Hermes sessions.",
     long_about = "Start and manage tmux-backed Codex, Claude Code, and Hermes sessions for mobile handoff workflows.",
     disable_help_subcommand = true,
-    after_help = "EXAMPLES:\n  agent-session start --agent codex --cwd ~/Project/app --prompt-file prompt.md\n  agent-session start --agent hermes --cwd ~\n  agent-session list\n  agent-session glance <id> --tail 40\n  agent-session send <id> --text yes --key enter\n  agent-session send <id> --key c-c\n  agent-session resume <id>\n  agent-session command <id>\n  agent-session attach <id>\n  agent-session delete <id>\n\nENVIRONMENT:\n  AGENT_SESSION_HOST       Hostname used in generated ssh attach commands.\n  AGENT_SESSION_STATE_DIR  Default state directory override.\n  AGENT_SESSION_TMUX_BIN   tmux binary override.\n  AGENT_SESSION_CODEX_BIN  codex binary override.\n  AGENT_SESSION_CLAUDE_BIN claude binary override.\n  AGENT_SESSION_HERMES_BIN hermes binary override.\n\nEXIT CODES:\n  0   success\n  1   runtime error\n  64  command-line usage error"
+    after_help = "EXAMPLES:\n  agent-session start --agent codex --cwd ~/Project/app --prompt-file prompt.md\n  agent-session start --agent hermes --cwd ~\n  agent-session list\n  agent-session glance <id> --tail 40\n  agent-session send <id> --text yes --key enter\n  agent-session send <id> --key c-c\n  agent-session resume <id>\n  agent-session metadata attach <id> --request-file metadata.json --if-revision 0 --idempotency-key attach-001 --format json\n  agent-session metadata show <id> --label acceptance.synthetic --format json\n  agent-session command <id>\n  agent-session attach <id>\n  agent-session delete <id>\n\nENVIRONMENT:\n  AGENT_SESSION_HOST       Hostname used in generated ssh attach commands.\n  AGENT_SESSION_STATE_DIR  Default state directory override.\n  AGENT_SESSION_TMUX_BIN   tmux binary override.\n  AGENT_SESSION_CODEX_BIN  codex binary override.\n  AGENT_SESSION_CLAUDE_BIN claude binary override.\n  AGENT_SESSION_HERMES_BIN hermes binary override.\n\nEXIT CODES:\n  0   success\n  1   runtime error\n  64  command-line usage error"
 )]
 pub struct Cli {
     /// State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session.
@@ -90,6 +90,8 @@ pub enum Command {
     Broker(BrokerArgs),
     /// Exchange bounded private coordination mailbox messages.
     Message(MessageArgs),
+    /// Attach and inspect bounded public metadata for one managed session.
+    Metadata(MetadataArgs),
     /// Serve the control plane (HTTP) and PTY attach (WebSocket) over loopback.
     Serve(ServeArgs),
     /// Internal metadata-only bridge for a managed Codex remote TUI.
@@ -758,6 +760,58 @@ pub struct MessageWaitArgs {
     pub timeout: String,
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     pub capability_file: Option<PathBuf>,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Args)]
+pub struct MetadataArgs {
+    #[command(subcommand)]
+    pub command: MetadataCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MetadataCommand {
+    /// Attach one revision-fenced, idempotent public label.
+    Attach(MetadataAttachArgs),
+    /// Read the bounded public metadata projection for one session.
+    Show(MetadataShowArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct MetadataAttachArgs {
+    /// Exact canonical session id.
+    #[arg(value_name = "ID")]
+    pub id: String,
+
+    /// Owner-private agent-session.metadata-attachment.request.v1 JSON file.
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    pub request_file: PathBuf,
+
+    /// Expected current public metadata revision.
+    #[arg(long)]
+    pub if_revision: u64,
+
+    /// Caller-selected replay key, retained only as a digest.
+    #[arg(long)]
+    pub idempotency_key: String,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Args)]
+pub struct MetadataShowArgs {
+    /// Exact canonical session id.
+    #[arg(value_name = "ID")]
+    pub id: String,
+
+    /// Return only the exact public metadata label.
+    #[arg(long, value_name = "LABEL")]
+    pub label: Option<String>,
+
+    /// Output format.
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
 }

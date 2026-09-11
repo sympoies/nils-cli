@@ -2413,6 +2413,7 @@ mod tests {
                 extra: BTreeMap::new(),
             }),
             runtime: None,
+            public_metadata: None,
             agent_args: Vec::new(),
             agent_bin: None,
             extra: BTreeMap::new(),

@@ -1132,6 +1132,7 @@ mod tests {
                 launch_id: "runtime-1".to_string(),
                 extra: BTreeMap::new(),
             }),
+            public_metadata: None,
             agent_args: Vec::new(),
             agent_bin: None,
             extra: BTreeMap::new(),

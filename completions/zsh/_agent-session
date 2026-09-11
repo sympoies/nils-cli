@@ -689,6 +689,52 @@ json\:"Single-record JSON envelope (snake_case)"))' \
     ;;
 esac
 ;;
+(metadata)
+_arguments "${_arguments_options[@]}" : \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_agent-session__subcmd__metadata_commands" \
+"*::: :->metadata" \
+&& ret=0
+
+    case $state in
+    (metadata)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:agent-session-metadata-command-$line[1]:"
+        case $line[1] in
+            (attach)
+_arguments "${_arguments_options[@]}" : \
+'--request-file=[Owner-private agent-session.metadata-attachment.request.v1 JSON file]:PATH:_files' \
+'--if-revision=[Expected current public metadata revision]:IF_REVISION:_default' \
+'--idempotency-key=[Caller-selected replay key, retained only as a digest]:IDEMPOTENCY_KEY:_default' \
+'--format=[Output format]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':id -- Exact canonical session id:_default' \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+'--label=[Return only the exact public metadata label]:LABEL:_default' \
+'--format=[Output format]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':id -- Exact canonical session id:_default' \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
 (serve)
 _arguments "${_arguments_options[@]}" : \
 '--bind=[Versioned work-context (\`work-context/v1\`) and mailbox (\`messages/v1\`) routes share the same loopback control plane and library contracts. Address to bind. Defaults to loopback; a non-loopback address is refused unless --allow-non-loopback is passed (it exposes a remote shell)]:ADDR:_default' \
@@ -779,6 +825,7 @@ _agent-session_commands() {
 'work-context:Manage authenticated structured work context and mutation leases' \
 'broker:Inspect or recover the per-session coordination broker' \
 'message:Exchange bounded private coordination mailbox messages' \
+'metadata:Attach and inspect bounded public metadata for one managed session' \
 'serve:Serve the control plane (HTTP) and PTY attach (WebSocket) over loopback' \
 'codex-app-server-proxy:Internal metadata-only bridge for a managed Codex remote TUI' \
 'provider-stop-canary-supervisor:Internal exact-child supervisor for an explicitly armed Main Agent canary' \
@@ -952,6 +999,24 @@ _agent-session__subcmd__message__subcmd__show_commands() {
 _agent-session__subcmd__message__subcmd__wait_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session message wait commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__metadata_commands] )) ||
+_agent-session__subcmd__metadata_commands() {
+    local commands; commands=(
+'attach:Attach one revision-fenced, idempotent public label' \
+'show:Read the bounded public metadata projection for one session' \
+    )
+    _describe -t commands 'agent-session metadata commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__metadata__subcmd__attach_commands] )) ||
+_agent-session__subcmd__metadata__subcmd__attach_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session metadata attach commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__metadata__subcmd__show_commands] )) ||
+_agent-session__subcmd__metadata__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session metadata show commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__provider-stop-canary-guardian_commands] )) ||
 _agent-session__subcmd__provider-stop-canary-guardian_commands() {

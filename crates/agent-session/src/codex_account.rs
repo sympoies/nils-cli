@@ -1613,6 +1613,7 @@ mod tests {
                     ),
                 ]),
             }),
+            public_metadata: None,
             agent_args: Vec::new(),
             agent_bin: None,
             extra: BTreeMap::from([(BINDING_KEY.to_string(), value)]),

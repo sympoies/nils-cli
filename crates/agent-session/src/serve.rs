@@ -32570,6 +32570,7 @@ esac
             updated_at: "2000-01-01T00:00:00Z".to_string(),
             provider_resume: None,
             runtime: None,
+            public_metadata: None,
             agent_args: Vec::new(),
             agent_bin: None,
             extra: std::collections::BTreeMap::new(),

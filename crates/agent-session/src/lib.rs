@@ -9,6 +9,7 @@ mod diagnose;
 mod dsh_external;
 mod main_agent;
 mod maintenance;
+mod metadata;
 mod orchestration;
 mod provider_history;
 mod provider_prompt;
@@ -294,6 +295,7 @@ fn dispatch(cli: Cli) -> i32 {
         Command::WorkContext(args) => coordination::run_work_context(&context, args),
         Command::Broker(args) => coordination::run_broker(&context, args),
         Command::Message(args) => coordination::run_message(&context, args),
+        Command::Metadata(args) => metadata::run_metadata(&context, args),
         Command::Serve(args) => serve::run_serve(&context, args),
         Command::CodexAppServerProxy(args) => codex_app_server::run_proxy(&context, args),
         Command::ProviderStopCanarySupervisor(args) => {
@@ -339,6 +341,10 @@ fn coordination_command_name(command: &Command) -> Option<&'static str> {
             cli::MessageCommand::Reply(_) => "message-reply",
             cli::MessageCommand::Wait(_) => "message-wait",
         }),
+        Command::Metadata(args) => Some(match &args.command {
+            cli::MetadataCommand::Attach(_) => "metadata-attach",
+            cli::MetadataCommand::Show(_) => "metadata-show",
+        }),
         _ => None,
     }
 }
@@ -371,6 +377,8 @@ fn coordination_leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
             ("message", "ack") => Some("message-ack"),
             ("message", "reply") => Some("message-reply"),
             ("message", "wait") => Some("message-wait"),
+            ("metadata", "attach") => Some("metadata-attach"),
+            ("metadata", "show") => Some("metadata-show"),
             _ => None,
         }
     })
@@ -422,6 +430,10 @@ fn command_format(command: &Command) -> OutputFormat {
             cli::MessageCommand::Ack(args) => args.format,
             cli::MessageCommand::Reply(args) => args.format,
             cli::MessageCommand::Wait(args) => args.format,
+        },
+        Command::Metadata(args) => match &args.command {
+            cli::MetadataCommand::Attach(args) => args.format,
+            cli::MetadataCommand::Show(args) => args.format,
         },
         Command::Delete(args) => args.format,
         Command::Attach(_)
@@ -896,6 +908,8 @@ struct SessionRecord {
     provider_resume: Option<ProviderResume>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     runtime: Option<RuntimeInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    public_metadata: Option<metadata::SessionMetadataState>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     agent_args: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2906,6 +2920,7 @@ fn create_record_with_guard(
                 BTreeMap::new()
             },
         }),
+        public_metadata: None,
         agent_args: request.agent_args,
         agent_bin: request.agent_bin,
         extra: BTreeMap::new(),

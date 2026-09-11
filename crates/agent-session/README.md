@@ -26,6 +26,7 @@ prompt, then return a short tmux attach command for the user to continue from Te
   [Serve API v1](docs/specs/serve-api-v1.md),
   [Session Retitle v2](docs/specs/session-retitle-v2.md),
   [Session Retitle v3](docs/specs/session-retitle-v3.md),
+  [Session public metadata v1](docs/specs/session-public-metadata-v1.md),
   [Session coordination v1](docs/specs/session-coordination-v1.md),
   [Main Agent orchestration v1](docs/specs/main-agent-orchestration-v1.md),
   [turn-state contract](docs/turn-state-contract.md), and
@@ -50,6 +51,8 @@ agent-session activity doctor --format json
 agent-session activity setup --agent codex --dry-run
 agent-session activity setup --agent codex --repair --dry-run
 agent-session activity setup --agent codex --repair --expected-preview-digest sha256:<reviewed-plan-digest>
+agent-session metadata attach <id> --request-file metadata.json --if-revision 0 --idempotency-key attach-001 --format json
+agent-session metadata show <id> --label acceptance.synthetic --format json
 agent-session work-context status --format json
 agent-session work-context set --tier L2 --issue 123 --summary "Implement the tracked fix"
 agent-session work-context advise --format json
@@ -121,6 +124,16 @@ The top-level relationship and lifecycle commands are `collaborate`, `borrow`,
 `handoff`, `adopt`, `close`, and `closeout`; `packet-schema` prints a valid
 objective-packet example for `init`. Use `completion <bash|zsh>` on either
 binary to generate its shell completion script.
+
+`metadata attach` is a bounded state-owner primitive, not an approval system or
+an arbitrary session-record editor. It accepts one owner-private
+`agent-session.metadata-attachment.request.v1` file, compares the caller's
+expected public-metadata revision, and binds an idempotency-key digest to the
+validated label/value payload. `metadata show` returns only that public
+projection; raw metadata values, prompts, logs, provider credentials, runtime
+identities, request paths, and raw idempotency keys are excluded. See the
+[Session public metadata v1 contract](docs/specs/session-public-metadata-v1.md)
+for the exact limits, replay semantics, and stable error codes.
 
 In particular, fresh worker launch first validates that `launch.cwd` is an existing canonical
 directory. Fresh Codex launch also requires explicit trust for that exact
