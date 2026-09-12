@@ -24,6 +24,8 @@ const RETRY_DELAYS_SECONDS: [i64; 5] = [30, 60, 120, 300, 600];
 // continuation or the user/session state cancels the claim.
 const UNKNOWN_RESET_PROBE_DELAYS_SECONDS: [i64; 4] = [300, 900, 1_800, 3_600];
 const PROTOCOL_STATE_LOCK_TIMEOUT: Duration = Duration::from_secs(1);
+pub(crate) const WAIT_FOR_RESET_POLICY: &str = "wait_for_reset";
+pub(crate) const NEXT_ACCOUNT_THEN_RESUME_POLICY: &str = "next_account_then_resume";
 
 pub(crate) const CONTINUATION_MESSAGE: &str = "Continue the interrupted task from where you stopped. First inspect the current session and repository state, then continue toward the existing objective. Do not repeat completed work.";
 
@@ -31,6 +33,8 @@ pub(crate) const CONTINUATION_MESSAGE: &str = "Continue the interrupted task fro
 struct DurableAutoResume {
     schema_version: String,
     enabled: bool,
+    #[serde(default = "default_recovery_policy")]
+    recovery_policy: String,
     state: String,
     updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -53,6 +57,8 @@ struct DurableAutoResume {
     // reset does not probe more often than the bounded cadence above.
     #[serde(default)]
     fallback_schedules: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    attempted_accounts: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -60,6 +66,7 @@ pub(crate) struct AutoResumeView {
     pub(crate) schema_version: &'static str,
     pub(crate) supported: bool,
     pub(crate) enabled: bool,
+    pub(crate) recovery_policy: String,
     pub(crate) state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) scheduled_at: Option<String>,
@@ -96,6 +103,28 @@ pub(crate) enum TickOutcome {
     Resumed,
     Retrying,
     TerminalFailure,
+    AccountSwitchQueued,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FailoverSelectionRequest {
+    pub(crate) after: String,
+    pub(crate) excluded: Vec<String>,
+}
+
+pub(crate) struct RuntimeBindingTick<'a> {
+    pub(crate) binding: &'a crate::codex_account::BindingSnapshot,
+    pub(crate) failover_account: Option<&'a str>,
+}
+
+struct TickFences<'a> {
+    launch_id: Option<&'a str>,
+    binding: Option<&'a crate::codex_account::BindingSnapshot>,
+    failover_account: Option<&'a str>,
+}
+
+fn default_recovery_policy() -> String {
+    WAIT_FOR_RESET_POLICY.to_string()
 }
 
 fn supported(record: &SessionRecord) -> bool {
@@ -111,6 +140,7 @@ fn default_state(now: &str) -> DurableAutoResume {
     DurableAutoResume {
         schema_version: AUTO_RESUME_SCHEMA_VERSION.to_string(),
         enabled: false,
+        recovery_policy: default_recovery_policy(),
         state: "disabled".to_string(),
         updated_at: now.to_string(),
         scheduled_at: None,
@@ -121,6 +151,7 @@ fn default_state(now: &str) -> DurableAutoResume {
         attempt: 0,
         ever_scheduled: false,
         fallback_schedules: 0,
+        attempted_accounts: Vec::new(),
     }
 }
 
@@ -155,6 +186,16 @@ fn read_state(context: &CliContext, id: &str, now: &str) -> Result<DurableAutoRe
             Some(json!({ "id": id })),
         ));
     }
+    if !matches!(
+        state.recovery_policy.as_str(),
+        WAIT_FOR_RESET_POLICY | NEXT_ACCOUNT_THEN_RESUME_POLICY
+    ) {
+        return Err(CliError::data(
+            "auto-resume-state-invalid",
+            "durable auto-resume state has an invalid recovery policy",
+            Some(json!({ "id": id })),
+        ));
+    }
     Ok(state)
 }
 
@@ -180,6 +221,7 @@ fn view(record: &SessionRecord, state: DurableAutoResume) -> AutoResumeView {
         schema_version: AUTO_RESUME_SCHEMA_VERSION,
         supported: supported(record),
         enabled: state.enabled,
+        recovery_policy: state.recovery_policy,
         state: state.state,
         scheduled_at: state.scheduled_at,
         failure_reason: state.failure_reason,
@@ -197,6 +239,7 @@ pub(crate) fn view_for_record(context: &CliContext, record: &SessionRecord) -> A
             schema_version: AUTO_RESUME_SCHEMA_VERSION,
             supported: supported(record),
             enabled: false,
+            recovery_policy: default_recovery_policy(),
             state: "terminal_failure".to_string(),
             scheduled_at: None,
             failure_reason: Some("state_unavailable".to_string()),
@@ -209,6 +252,7 @@ pub(crate) fn view_for_record(context: &CliContext, record: &SessionRecord) -> A
             schema_version: AUTO_RESUME_SCHEMA_VERSION,
             supported: supported(record),
             enabled: false,
+            recovery_policy: default_recovery_policy(),
             state: "terminal_failure".to_string(),
             scheduled_at: None,
             failure_reason: Some("state_unavailable".to_string()),
@@ -216,12 +260,33 @@ pub(crate) fn view_for_record(context: &CliContext, record: &SessionRecord) -> A
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn set_enabled(
     context: &CliContext,
     id: &str,
     enabled: bool,
     now: &str,
 ) -> Result<AutoResumeView, CliError> {
+    set_enabled_with_policy(context, id, enabled, WAIT_FOR_RESET_POLICY, now)
+}
+
+pub(crate) fn set_enabled_with_policy(
+    context: &CliContext,
+    id: &str,
+    enabled: bool,
+    recovery_policy: &str,
+    now: &str,
+) -> Result<AutoResumeView, CliError> {
+    if !matches!(
+        recovery_policy,
+        WAIT_FOR_RESET_POLICY | NEXT_ACCOUNT_THEN_RESUME_POLICY
+    ) {
+        return Err(CliError::usage(
+            "auto-resume-recovery-policy-invalid",
+            "auto-resume recovery policy is invalid",
+            None,
+        ));
+    }
     let observed = load_session_record(context, id)?;
     let canonical_id = observed.id.clone();
     let _lock = acquire_session_record_lock(context, &canonical_id)?;
@@ -241,6 +306,18 @@ pub(crate) fn set_enabled(
             Some(json!({ "id": record.id, "provider": record.agent })),
         ));
     }
+    if enabled
+        && recovery_policy == NEXT_ACCOUNT_THEN_RESUME_POLICY
+        && (record.agent != "codex"
+            || !crate::codex_account::broker_is_configured()
+            || crate::codex_account::selected_account(&record).is_none())
+    {
+        return Err(CliError::data(
+            "auto-resume-account-failover-unsupported",
+            "account failover requires a bound Codex account",
+            Some(json!({ "id": record.id })),
+        ));
+    }
     let mut state = read_state(context, &record.id, now)?;
     if projection_unavailable(&state) {
         if enabled {
@@ -253,6 +330,7 @@ pub(crate) fn set_enabled(
         return Ok(view(&record, state));
     }
     state.enabled = enabled;
+    state.recovery_policy = recovery_policy.to_string();
     state.state = if enabled { "enabled" } else { "disabled" }.to_string();
     state.updated_at = now.to_string();
     state.scheduled_at = None;
@@ -263,6 +341,7 @@ pub(crate) fn set_enabled(
     state.attempt = 0;
     state.ever_scheduled = false;
     state.fallback_schedules = 0;
+    state.attempted_accounts.clear();
     write_state(context, &record.id, &state)?;
     Ok(view(&record, state))
 }
@@ -325,6 +404,7 @@ pub(crate) fn rearm_usage_exhaustion_for_runtime(
     state.attempt = 0;
     state.ever_scheduled = false;
     state.fallback_schedules = 0;
+    state.attempted_accounts.clear();
     write_state(context, &record.id, &state)?;
     Ok(())
 }
@@ -389,7 +469,7 @@ fn cancel_active_locked(
     if !state.enabled
         || !matches!(
             state.state.as_str(),
-            "armed" | "scheduled" | "checking" | "transient_failure"
+            "armed" | "scheduled" | "checking" | "transient_failure" | "switching_account"
         )
     {
         return Ok(());
@@ -483,7 +563,12 @@ pub(crate) fn fail_closed_projection_for_runtime(
     if !state.enabled
         || !matches!(
             state.state.as_str(),
-            "enabled" | "armed" | "scheduled" | "checking" | "transient_failure"
+            "enabled"
+                | "armed"
+                | "scheduled"
+                | "checking"
+                | "transient_failure"
+                | "switching_account"
         )
     {
         return Ok(());
@@ -520,7 +605,7 @@ pub(crate) fn arm_usage_exhaustion(
     if state.blocked_turn_id.as_deref() == Some(blocked_turn_id.as_str())
         && matches!(
             state.state.as_str(),
-            "armed" | "scheduled" | "checking" | "resumed"
+            "armed" | "scheduled" | "checking" | "resumed" | "switching_account"
         )
     {
         return Ok(false);
@@ -534,6 +619,7 @@ pub(crate) fn arm_usage_exhaustion(
     state.blocked_revision = Some(blocked_revision);
     state.attempt = 0;
     state.ever_scheduled = false;
+    state.attempted_accounts.clear();
     write_state(context, &record.id, &state)?;
     Ok(true)
 }
@@ -589,6 +675,7 @@ pub(crate) fn pending_sessions(
         }
         match state.state.as_str() {
             "checking" => pending.recovery_ids.push(id),
+            "switching_account" => pending.usage_ids.push(id),
             "armed" => pending.usage_ids.push(id),
             "scheduled"
                 if state
@@ -666,7 +753,7 @@ fn record_scheduler_error_inner(
     if !state.enabled
         || !matches!(
             state.state.as_str(),
-            "armed" | "scheduled" | "transient_failure"
+            "armed" | "scheduled" | "transient_failure" | "switching_account"
         )
     {
         return Ok(TickOutcome::Unchanged);
@@ -731,6 +818,47 @@ fn wake_scheduled_if_usage_open_inner(
     Ok(true)
 }
 
+pub(crate) fn failover_selection_request(
+    context: &CliContext,
+    id: &str,
+    expected_launch_id: &str,
+    expected_binding: &crate::codex_account::BindingSnapshot,
+) -> Result<Option<FailoverSelectionRequest>, CliError> {
+    let observed = load_session_record(context, id)?;
+    let canonical_id = observed.id.clone();
+    let _lock = acquire_session_record_lock(context, &canonical_id)?;
+    let record = load_session_record(context, &canonical_id)?;
+    crate::ensure_same_session_identity(&observed, &record)?;
+    if !runtime_matches(&record, Some(expected_launch_id))
+        || crate::codex_account::binding_snapshot(&record) != *expected_binding
+    {
+        return Ok(None);
+    }
+    let state = read_state(context, &record.id, &Timestamp::now().to_string())?;
+    if !state.enabled
+        || state.recovery_policy != NEXT_ACCOUNT_THEN_RESUME_POLICY
+        || !matches!(
+            state.state.as_str(),
+            "armed" | "scheduled" | "transient_failure" | "switching_account"
+        )
+    {
+        return Ok(None);
+    }
+    if crate::codex_account::next_transition_state(&record)
+        != crate::codex_account::NextTransitionState::Absent
+    {
+        return Ok(None);
+    }
+    let Some(after) = crate::codex_account::selected_account(&record) else {
+        return Ok(None);
+    };
+    let mut excluded = state.attempted_accounts;
+    if !excluded.contains(&after) {
+        excluded.push(after.clone());
+    }
+    Ok(Some(FailoverSelectionRequest { after, excluded }))
+}
+
 pub(crate) fn tick<F>(
     context: &CliContext,
     id: &str,
@@ -741,7 +869,18 @@ pub(crate) fn tick<F>(
 where
     F: FnMut(&SessionRecord) -> Result<(), CliError>,
 {
-    tick_inner(context, id, None, None, now_epoch, usage, submit)
+    tick_inner(
+        context,
+        id,
+        TickFences {
+            launch_id: None,
+            binding: None,
+            failover_account: None,
+        },
+        now_epoch,
+        usage,
+        submit,
+    )
 }
 
 #[cfg(test)]
@@ -759,8 +898,11 @@ where
     tick_inner(
         context,
         id,
-        Some(expected_launch_id),
-        None,
+        TickFences {
+            launch_id: Some(expected_launch_id),
+            binding: None,
+            failover_account: None,
+        },
         now_epoch,
         usage,
         submit,
@@ -771,7 +913,7 @@ pub(crate) fn tick_for_runtime_and_binding<F>(
     context: &CliContext,
     id: &str,
     expected_launch_id: &str,
-    expected_binding: &crate::codex_account::BindingSnapshot,
+    runtime_binding: RuntimeBindingTick<'_>,
     now_epoch: i64,
     usage: &UsageSnapshot,
     submit: F,
@@ -782,8 +924,11 @@ where
     tick_inner(
         context,
         id,
-        Some(expected_launch_id),
-        Some(expected_binding),
+        TickFences {
+            launch_id: Some(expected_launch_id),
+            binding: Some(runtime_binding.binding),
+            failover_account: runtime_binding.failover_account,
+        },
         now_epoch,
         usage,
         submit,
@@ -793,8 +938,7 @@ where
 fn tick_inner<F>(
     context: &CliContext,
     id: &str,
-    expected_launch_id: Option<&str>,
-    expected_binding: Option<&crate::codex_account::BindingSnapshot>,
+    fences: TickFences<'_>,
     now_epoch: i64,
     usage: &UsageSnapshot,
     mut submit: F,
@@ -808,10 +952,11 @@ where
     let _lock = acquire_session_record_lock(context, &canonical_id)?;
     let mut record = load_session_record(context, &canonical_id)?;
     crate::ensure_same_session_identity(&observed, &record)?;
-    if !runtime_matches(&record, expected_launch_id) {
+    if !runtime_matches(&record, fences.launch_id) {
         return Ok(TickOutcome::Unchanged);
     }
-    if expected_binding
+    if fences
+        .binding
         .is_some_and(|expected| crate::codex_account::binding_snapshot(&record) != *expected)
     {
         return Ok(TickOutcome::Unchanged);
@@ -861,7 +1006,7 @@ where
     if !state.enabled
         || !matches!(
             state.state.as_str(),
-            "armed" | "scheduled" | "transient_failure"
+            "armed" | "scheduled" | "transient_failure" | "switching_account"
         )
     {
         return Ok(TickOutcome::Unchanged);
@@ -881,7 +1026,50 @@ where
         return record_retry(context, &record, state, now_epoch, "usage_unavailable");
     }
 
+    if state.state == "switching_account" {
+        match crate::codex_account::next_transition_state(&record) {
+            crate::codex_account::NextTransitionState::Pending => {
+                return Ok(TickOutcome::Unchanged);
+            }
+            crate::codex_account::NextTransitionState::Failed
+            | crate::codex_account::NextTransitionState::Invalid => {
+                state.enabled = false;
+                state.state = "terminal_failure".to_string();
+                state.updated_at = now;
+                state.failure_reason = Some("account_switch_failed".to_string());
+                write_state(context, &record.id, &state)?;
+                return Ok(TickOutcome::TerminalFailure);
+            }
+            crate::codex_account::NextTransitionState::Absent => {}
+        }
+    }
+
     if usage.has_exhausted_windows {
+        if state.recovery_policy == NEXT_ACCOUNT_THEN_RESUME_POLICY
+            && record.agent == "codex"
+            && let Some(account) = fences.failover_account
+        {
+            let current = crate::codex_account::selected_account(&record);
+            if current.as_deref() != Some(account)
+                && !state.attempted_accounts.iter().any(|item| item == account)
+            {
+                if let Some(current) = current
+                    && !state.attempted_accounts.contains(&current)
+                {
+                    state.attempted_accounts.push(current);
+                }
+                state.attempted_accounts.push(account.to_string());
+                state.state = "switching_account".to_string();
+                state.updated_at = now.clone();
+                state.scheduled_at = None;
+                state.next_check_at = None;
+                state.failure_reason = None;
+                state.ever_scheduled = true;
+                write_state(context, &record.id, &state)?;
+                crate::codex_account::queue_auto_failover_locked(context, &mut record, account)?;
+                return Ok(TickOutcome::AccountSwitchQueued);
+            }
+        }
         let Some(latest_reset) = usage.exhausted_reset_epochs.iter().copied().max() else {
             return record_retry(
                 context,
@@ -897,7 +1085,8 @@ where
         state.updated_at = now;
         state.scheduled_at = Some(epoch_string(wake_epoch)?);
         state.next_check_at = None;
-        state.failure_reason = None;
+        state.failure_reason = (state.recovery_policy == NEXT_ACCOUNT_THEN_RESUME_POLICY)
+            .then(|| "no_account_available".to_string());
         state.ever_scheduled = true;
         // A real percentage-window exhaustion drove this schedule, so the
         // authoritative-arming fallback below is no longer in play; clear its
@@ -1092,6 +1281,7 @@ fn epoch_from_string(value: &str) -> Option<i64> {
 mod tests {
     use super::*;
     use crate::{RuntimeInfo, activity};
+    use nils_test_support::{EnvGuard, GlobalStateLock};
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use std::collections::BTreeMap;
@@ -1153,6 +1343,272 @@ mod tests {
         );
 
         assert!(!supported(&record));
+    }
+
+    fn seed_bound_codex_auto_resume(tmp: &tempfile::TempDir) -> (CliContext, SessionRecord, u64) {
+        let (context, mut record) = seed_session(tmp);
+        record.agent = "codex".to_string();
+        let runtime = record.runtime.as_mut().unwrap();
+        runtime.kind = crate::codex_app_server::RUNTIME_KIND.to_string();
+        runtime.extra.extend(BTreeMap::from([
+            (
+                crate::codex_app_server::PROTOCOL_KEY.to_string(),
+                json!(crate::codex_app_server::PROTOCOL_VERSION),
+            ),
+            (
+                crate::codex_app_server::SOCKET_KEY.to_string(),
+                json!("/run/codex.sock"),
+            ),
+            (
+                crate::codex_app_server::PROXY_KEY.to_string(),
+                json!("/run/codex.proxy"),
+            ),
+            (
+                crate::codex_app_server::THREAD_HANDOFF_KEY.to_string(),
+                json!("/run/codex.thread"),
+            ),
+            (
+                crate::codex_app_server::THREAD_ATTACHED_KEY.to_string(),
+                json!("/run/codex.attached"),
+            ),
+        ]));
+        crate::codex_account::set_initial_binding_with_source(
+            &mut record,
+            Some("account-a"),
+            Some("default_at_launch"),
+        )
+        .unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        crate::codex_account::finish_binding(
+            &context,
+            &record.id,
+            "runtime-1",
+            "account-a",
+            1,
+            Ok(()),
+        )
+        .unwrap();
+        for (event_id, kind) in [
+            ("codex-start", "turn_started"),
+            ("codex-done", "turn_completed"),
+        ] {
+            activity::ingest_event(
+                &context,
+                &record.id,
+                serde_json::from_value(json!({
+                    "schema_version": crate::activity::TURN_EVENT_VERSION,
+                    "event_id": event_id,
+                    "runtime_id": "runtime-1",
+                    "provider": "codex",
+                    "provider_turn_id": "turn-1",
+                    "kind": kind,
+                    "confidence": "authoritative"
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        }
+        let record = crate::load_session_record(&context, &record.id).unwrap();
+        let revision = activity::state_for_view(&context, &record)
+            .unwrap()
+            .revision;
+        (context, record, revision)
+    }
+
+    #[test]
+    fn account_failover_policy_is_durable_and_projected() {
+        let lock = GlobalStateLock::new();
+        let _broker = EnvGuard::set(
+            &lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            r#"["/configured/broker"]"#,
+        );
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record, blocked_revision) = seed_bound_codex_auto_resume(&tmp);
+
+        let view = set_enabled_with_policy(
+            &context,
+            &record.id,
+            true,
+            "next_account_then_resume",
+            "2030-01-01T00:00:00Z",
+        )
+        .unwrap();
+
+        assert_eq!(view.recovery_policy, "next_account_then_resume");
+        assert_eq!(
+            read_state(&context, &record.id, "2030-01-01T00:00:01Z")
+                .unwrap()
+                .recovery_policy,
+            "next_account_then_resume"
+        );
+
+        arm_usage_exhaustion(
+            &context,
+            &record.id,
+            "turn-1".to_string(),
+            blocked_revision,
+            "2030-01-01T00:00:01Z",
+        )
+        .unwrap();
+        let bound = crate::load_session_record(&context, &record.id).unwrap();
+        let binding = crate::codex_account::binding_snapshot(&bound);
+        let outcome = tick_for_runtime_and_binding(
+            &context,
+            &record.id,
+            "runtime-1",
+            RuntimeBindingTick {
+                binding: &binding,
+                failover_account: Some("account-b"),
+            },
+            1_893_456_000,
+            &UsageSnapshot {
+                authoritative: true,
+                has_exhausted_windows: true,
+                exhausted_reset_epochs: vec![1_893_456_600],
+                soonest_reset_epoch: None,
+            },
+            |_| panic!("continuation must wait for the account switch"),
+        )
+        .unwrap();
+        assert_eq!(outcome, TickOutcome::AccountSwitchQueued);
+        assert_eq!(view_for_record(&context, &bound).state, "switching_account");
+        assert_eq!(
+            crate::codex_account::view_for_record(
+                &crate::load_session_record(&context, &record.id).unwrap()
+            )
+            .next
+            .and_then(|next| next.account)
+            .as_deref(),
+            Some("account-b")
+        );
+        let applying = crate::codex_account::begin_next_apply(&context, &record.id, "runtime-1")
+            .unwrap()
+            .expect("automatic account switch must become drainable");
+        let intent_id = applying.intent_id.as_deref().expect("automatic intent id");
+        crate::codex_account::finish_next_apply(
+            &context,
+            &record.id,
+            "runtime-1",
+            "account-b",
+            applying.revision,
+            intent_id,
+            Ok(()),
+        )
+        .unwrap();
+        let switched = crate::load_session_record(&context, &record.id).unwrap();
+        let switched_view = crate::codex_account::view_for_record(&switched);
+        assert_eq!(
+            switched_view.effective_account.as_deref(),
+            Some("account-b")
+        );
+        assert_eq!(
+            switched_view.selection_source.as_deref(),
+            Some("auto_failover")
+        );
+        let switched_binding = crate::codex_account::binding_snapshot(&switched);
+        let healthy = UsageSnapshot {
+            authoritative: true,
+            has_exhausted_windows: false,
+            exhausted_reset_epochs: Vec::new(),
+            soonest_reset_epoch: None,
+        };
+        let mut submissions = 0;
+        let resumed = tick_for_runtime_and_binding(
+            &context,
+            &record.id,
+            "runtime-1",
+            RuntimeBindingTick {
+                binding: &switched_binding,
+                failover_account: None,
+            },
+            1_893_456_001,
+            &healthy,
+            |_| {
+                submissions += 1;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(resumed, TickOutcome::Resumed);
+        assert_eq!(submissions, 1);
+        assert_eq!(
+            tick_for_runtime_and_binding(
+                &context,
+                &record.id,
+                "runtime-1",
+                RuntimeBindingTick {
+                    binding: &switched_binding,
+                    failover_account: None,
+                },
+                1_893_456_002,
+                &healthy,
+                |_| {
+                    submissions += 1;
+                    Ok(())
+                },
+            )
+            .unwrap(),
+            TickOutcome::Unchanged
+        );
+        assert_eq!(submissions, 1);
+    }
+
+    #[test]
+    fn account_failover_without_a_candidate_waits_for_the_confirmed_reset() {
+        let lock = GlobalStateLock::new();
+        let _broker = EnvGuard::set(
+            &lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            r#"["/configured/broker"]"#,
+        );
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record, blocked_revision) = seed_bound_codex_auto_resume(&tmp);
+        set_enabled_with_policy(
+            &context,
+            &record.id,
+            true,
+            NEXT_ACCOUNT_THEN_RESUME_POLICY,
+            "2030-01-01T00:00:00Z",
+        )
+        .unwrap();
+        arm_usage_exhaustion(
+            &context,
+            &record.id,
+            "turn-1".to_string(),
+            blocked_revision,
+            "2030-01-01T00:00:01Z",
+        )
+        .unwrap();
+        let binding = crate::codex_account::binding_snapshot(&record);
+        let base = 1_893_456_000;
+        let outcome = tick_for_runtime_and_binding(
+            &context,
+            &record.id,
+            "runtime-1",
+            RuntimeBindingTick {
+                binding: &binding,
+                failover_account: None,
+            },
+            base,
+            &UsageSnapshot {
+                authoritative: true,
+                has_exhausted_windows: true,
+                exhausted_reset_epochs: vec![base + 600],
+                soonest_reset_epoch: None,
+            },
+            |_| panic!("no candidate must not submit a continuation"),
+        )
+        .unwrap();
+        assert_eq!(outcome, TickOutcome::Scheduled);
+        let state = read_state(&context, &record.id, "ignored").unwrap();
+        assert!(state.enabled);
+        assert_eq!(state.state, "scheduled");
+        assert_eq!(
+            state.failure_reason.as_deref(),
+            Some("no_account_available")
+        );
+        assert!(epoch_from_string(state.scheduled_at.as_deref().unwrap()).unwrap() >= base + 600);
     }
 
     #[test]

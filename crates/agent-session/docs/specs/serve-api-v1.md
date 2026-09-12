@@ -330,8 +330,16 @@ recorded in `sympoies/nils-cli#1409`.
   outcome.
 - Every session view additively includes `auto_resume` using
   `agent-session.auto-resume.v1`. `GET /sessions/{id}/auto-resume` reads that
-  status and is open on loopback; `PUT` with `{ "enabled": true|false }` opts a
-  supported session in or out, and `DELETE` durably cancels pending work. Both
+  status and is open on loopback; `PUT` with `{ "enabled": true|false,
+  "recovery_policy": "wait_for_reset"|"next_account_then_resume" }` opts a
+  supported session in or out, and `DELETE` durably cancels pending work. The
+  policy defaults to `wait_for_reset`. Account failover is accepted only for a
+  bound, broker-backed Codex session. It selects the next configured account
+  with fresh confirmed capacity, applies that account through external auth,
+  and only then enters the existing exactly-once continuation claim. Exhausted
+  and already-attempted accounts are not revisited in the same recovery chain;
+  when no candidate is trustworthy, the daemon waits for the current confirmed
+  reset instead. Both
   mutations require the bearer token. Claude Code is supported through its
   authoritative structured
   `StopFailure.error == "rate_limit"` signal. Fresh interactive Codex sessions
@@ -343,15 +351,17 @@ recorded in `sympoies/nils-cli#1409`.
   imported Codex conversations, and resumed pre-app-server Codex sessions remain
   unsupported. Terminal text and assistant output are never treated as
   authority.
-  The response object is `{ schema_version, supported, enabled, state,
+  The response object is `{ schema_version, supported, enabled, recovery_policy,
+  state,
   scheduled_at?, failure_reason? }`. `scheduled_at`, when present, is an
   RFC 3339 timestamp. The v1 `state` values are `disabled`, `enabled`, `armed`,
-  `scheduled`, `checking`, `resumed`, `cancelled`, `transient_failure`, and
+  `scheduled`, `switching_account`, `checking`, `resumed`, `cancelled`, `transient_failure`, and
   `terminal_failure`. The allowlisted `failure_reason` values are
   `state_unavailable`, `manual_input`, `usage_unavailable`,
   `usage_window_not_exhausted`, `exhausted_reset_unavailable`,
   `session_state_changed`, `submission_outcome_unknown`, `provider_unsupported`,
-  and `scheduler_error`. Consumers must preserve
+  `account_switch`, `no_account_available`, `account_switch_failed`, and
+  `scheduler_error`. Consumers must preserve
   the object but render unknown future state or reason values as a safe generic
   unavailable/failure condition; they must not infer permission to submit from
   an unknown value. `scheduled_at` is present only while the daemon has a next
@@ -571,7 +581,12 @@ recorded in `sympoies/nils-cli#1409`.
   validate and remove the app-server socket, bridge socket, and marker paths.
   A selected account is persisted only as nickname, revision, public state
   (`unsupported`, `unbound`, `pending`, `bound`, or `failed`), and applied
-  launch id. On daemon reconnect or stopped-session resume, the new control
+  launch id. New default-account sessions resolve and bind the current global
+  default before their first prompt, then project the nickname as both
+  `selected_account` and `effective_account` with
+  `selection_source: "default_at_launch"`. Explicit and automatic selections
+  use `explicit` and `auto_failover`; historical unbound records remain honestly
+  unknown rather than being inferred from the current global default. On daemon reconnect or stopped-session resume, the new control
   connection re-applies that nickname before accepting input. Codex
   `account/chatgptAuthTokens/refresh` with reason `unauthorized` triggers one
   forced broker refresh and the same durable pending/bound transition; failure
@@ -748,11 +763,18 @@ Codex account switching is enabled by
 `AGENT_SESSION_CODEX_ACCOUNT_BROKER`, whose value is a JSON argv array rather
 than a shell command, for example
 `["/opt/agent-console/bin/codex-account-broker"]`. The daemon invokes that argv
-with either `list --format json`, `resolve --account <nickname> --format json`,
-or `resolve --account <nickname> --force-refresh --format json`. Broker output
+with `list`, `resolve`, or a bounded `select` request. `select --strategy
+current_default` returns the configured nickname matched by the live default;
+`select --strategy next_with_capacity --after <nickname> [--exclude
+<nickname>]...` walks configured order once and returns only a fresh,
+network-confirmed usable account. Broker output
 uses `agent-session.codex-auth-broker.v1`: list returns public `accounts`, while
 resolve returns the exact nickname plus `access_token`, `chatgpt_account_id`,
-and optional `plan`. Broker execution is process-group and time bounded with
+and optional `plan`. The additive list field `selection_strategies` advertises
+these selectors. A daemon paired with an older broker that omits the field
+preserves default creation as unbound instead of invoking an unsupported
+selector; genuine failures remain closed after capability is advertised.
+Broker execution is process-group and time bounded with
 bounded output. Credential values remain in memory only and are never added to
 session documents or HTTP projections. Invalid configuration, malformed output,
 duplicate or unsafe nicknames, timeout, and non-zero exit all fail closed.
