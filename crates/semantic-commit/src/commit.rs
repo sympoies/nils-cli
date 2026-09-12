@@ -1557,6 +1557,7 @@ fn validate_commit_message_with_width(path: &Path, max_header_width: usize) -> R
 
         let mut prev_was_body_line = false;
         let mut trailer_mode = false;
+        let mut trailer_started = false;
         for (idx, line) in lines.iter().enumerate().skip(2) {
             let line_no = idx + 1;
             if line.is_empty() {
@@ -1577,15 +1578,22 @@ fn validate_commit_message_with_width(path: &Path, max_header_width: usize) -> R
 
             if trailer_mode {
                 if !is_valid_trailer_line(line) {
+                    if !trailer_started {
+                        return fail_validation(&format!(
+                            "commit body line {line_no} must start with '- ' followed by uppercase letter, a trailer, or '  ' to continue the previous bullet"
+                        ));
+                    }
                     return fail_validation(&format!(
                         "commit trailer line {line_no} must use 'Token: value' or 'Token=value'"
                     ));
                 }
+                trailer_started = true;
                 continue;
             }
 
             if !prev_was_body_line && is_valid_trailer_line(line) {
                 trailer_mode = true;
+                trailer_started = true;
                 continue;
             }
 

@@ -344,6 +344,56 @@ fn commit_validate_only_invalid_message_returns_4() {
 }
 
 #[test]
+fn commit_validate_only_reports_prose_after_body_bullet_as_body_error() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let output = common::run_semantic_commit_output(
+        dir.path(),
+        &[
+            "commit",
+            "--validate-only",
+            "--message",
+            "fix(cli): reproduce body classification\n\n- Preserve the valid first bullet.\n\nThis prose paragraph violates the bullets-only body rule.\n\nRefs: #1697",
+        ],
+        &[],
+        None,
+    );
+
+    assert_eq!(output.status.code(), Some(4));
+    let stderr = as_str(&output.stderr);
+    assert!(
+        stderr.contains("commit body line 5 must start with '- ' followed by uppercase letter"),
+        "stderr was: {stderr}"
+    );
+    assert!(
+        !stderr.contains("commit trailer line"),
+        "stderr was: {stderr}"
+    );
+}
+
+#[test]
+fn commit_validate_only_keeps_malformed_line_after_trailer_as_trailer_error() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let output = common::run_semantic_commit_output(
+        dir.path(),
+        &[
+            "commit",
+            "--validate-only",
+            "--message",
+            "fix(cli): preserve trailer classification\n\n- Preserve the valid first bullet.\n\nRefs: #1697\nMalformed trailer line",
+        ],
+        &[],
+        None,
+    );
+
+    assert_eq!(output.status.code(), Some(4));
+    let stderr = as_str(&output.stderr);
+    assert!(
+        stderr.contains("commit trailer line 6 must use 'Token: value' or 'Token=value'"),
+        "stderr was: {stderr}"
+    );
+}
+
+#[test]
 fn commit_validate_only_rejects_claude_coauthor_trailer_in_message() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let output = common::run_semantic_commit_output(
