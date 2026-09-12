@@ -64,7 +64,9 @@ fn parity_oracle_topology_matches_codex() {
     assert_eq!(codex.code, 0, "stderr={}", codex.stderr_text());
 
     let gemini_commands = extract_commands(&gemini.stdout_text());
-    let codex_commands = extract_commands(&codex.stdout_text());
+    let mut codex_commands = extract_commands(&codex.stdout_text());
+    assert!(codex_commands.iter().any(|command| command == "account"));
+    codex_commands.retain(|command| command != "account");
     assert_eq!(gemini_commands, codex_commands);
 }
 

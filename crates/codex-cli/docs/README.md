@@ -5,6 +5,7 @@
 ## Specs
 
 - [codex-cli-diag-rate-limits-and-auth-json-contract-v1.md](specs/codex-cli-diag-rate-limits-and-auth-json-contract-v1.md)
+- [codex-cli-account-reset-rate-limits-json-contract-v1.md](specs/codex-cli-account-reset-rate-limits-json-contract-v1.md)
 - [execution-capsule-v1.md](specs/execution-capsule-v1.md)
 - [execution-capsule-receipt-v1.schema.json](specs/execution-capsule-receipt-v1.schema.json)
 - [execution-capsule-error-v1.schema.json](specs/execution-capsule-error-v1.schema.json)

@@ -93,6 +93,7 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/claude-cli/docs/runbooks/usage-consumer.md`
 - `crates/claude-cli/docs/specs/claude-cli-json-contract-v1.md`
 - `crates/codex-cli/docs/runbooks/json-consumers.md`
+- `crates/codex-cli/docs/specs/codex-cli-account-reset-rate-limits-json-contract-v1.md`
 - `crates/codex-cli/docs/specs/codex-cli-diag-rate-limits-and-auth-json-contract-v1.md`
 - `crates/codex-cli/docs/specs/execution-capsule-v1.md`
 - `crates/forge-cli/docs/runbooks/pr-head-repair-loop.md`

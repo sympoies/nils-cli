@@ -32,6 +32,7 @@ nils-term = { version = "1.28.20", path = "../nils-term", package = "nils-term" 
 nils-common = { version = "1.28.20", path = "../nils-common", package = "nils-common" }
 nils-provider-resume = { version = "1.28.20", path = "../nils-provider-resume", package = "nils-provider-resume" }
 tempfile = "3"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 jsonschema = { version = "0.49", default-features = false }

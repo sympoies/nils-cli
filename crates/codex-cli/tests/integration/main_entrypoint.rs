@@ -50,6 +50,25 @@ fn main_agent_and_config_without_subcommand_print_help() {
 }
 
 #[test]
+fn main_account_help_exposes_guarded_reset_contract() {
+    let group = run(&["account"]);
+    assert_exit(&group, 0);
+    assert!(stdout(&group).contains("reset-rate-limits"));
+
+    let command = run(&["account", "reset-rate-limits", "--help"]);
+    assert_exit(&command, 0);
+    let help = stdout(&command);
+    for token in [
+        "--yes",
+        "--idempotency-key",
+        "--format",
+        "--no-refresh-auth",
+    ] {
+        assert!(help.contains(token), "missing {token} in help:\n{help}");
+    }
+}
+
+#[test]
 fn main_agent_prompt_is_gated_and_config_show_exits_zero() {
     let options = CmdOptions::default().with_env("CODEX_ALLOW_DANGEROUS_ENABLED", "false");
     let bin = codex_cli_bin();

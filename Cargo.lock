@@ -2451,6 +2451,7 @@ dependencies = [
  "shell-words",
  "tempfile",
  "toml",
+ "uuid",
 ]
 
 [[package]]

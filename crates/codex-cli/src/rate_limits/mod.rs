@@ -72,6 +72,11 @@ struct RateLimitWindow {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct ResetCredits {
+    available_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct RateLimitJsonResult {
     provider: String,
     name: String,
@@ -85,6 +90,8 @@ struct RateLimitJsonResult {
     summary: Option<RateLimitSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     windows: Option<Vec<RateLimitWindow>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reset_credits: Option<ResetCredits>,
     #[serde(skip_serializing_if = "Option::is_none")]
     raw_usage: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -560,6 +567,7 @@ fn collect_json_result_for_secret(
                         reason_code: None,
                         summary: Some(summary),
                         windows: Some(windows),
+                        reset_credits: reset_credits_from_usage(&usage.json),
                         raw_usage: Some(project_safe_usage_json(&usage.json)),
                         error: None,
                     }
@@ -572,13 +580,14 @@ fn collect_json_result_for_secret(
                         cache_fallback,
                         CacheFallbackPolicy::NoWindow | CacheFallbackPolicy::AnyFailure
                     ) {
-                        let fallback =
+                        let mut fallback =
                             collect_json_from_cache(target_file, "cache-fallback", false);
                         if fallback.ok {
+                            fallback.reset_credits = reset_credits_from_usage(&usage.json);
                             return fallback;
                         }
                     }
-                    json_result_no_window(target_file)
+                    json_result_no_window(target_file, reset_credits_from_usage(&usage.json))
                 }
                 None => json_result_error(
                     target_file,
@@ -638,6 +647,7 @@ fn collect_json_from_cache(
             reason_code: None,
             summary: Some(summary_from_cache(&entry)),
             windows: Some(windows_from_cache(&entry)),
+            reset_credits: None,
             raw_usage: None,
             error: None,
         },
@@ -679,6 +689,7 @@ fn json_result_error_with_reason(
         reason_code,
         summary: None,
         windows: None,
+        reset_credits: None,
         raw_usage: None,
         error: Some(diag_output::ErrorEnvelope {
             code: code.to_string(),
@@ -690,7 +701,10 @@ fn json_result_error_with_reason(
 
 /// Benign "no active rate-limit window" result for a `rate_limit: null` payload
 /// with no cache to fall back to. Reported as a success, not an error.
-fn json_result_no_window(target_file: &Path) -> RateLimitJsonResult {
+fn json_result_no_window(
+    target_file: &Path,
+    reset_credits: Option<ResetCredits>,
+) -> RateLimitJsonResult {
     RateLimitJsonResult {
         provider: "codex".to_string(),
         name: secret_display_name(target_file),
@@ -701,12 +715,13 @@ fn json_result_no_window(target_file: &Path) -> RateLimitJsonResult {
         reason_code: None,
         summary: None,
         windows: Some(Vec::new()),
+        reset_credits,
         raw_usage: None,
         error: None,
     }
 }
 
-fn secret_display_name(target_file: &Path) -> String {
+pub(crate) fn secret_display_name(target_file: &Path) -> String {
     cache::secret_name_for_target(target_file).unwrap_or_else(|| {
         target_file
             .file_name()
@@ -717,12 +732,25 @@ fn secret_display_name(target_file: &Path) -> String {
     })
 }
 
-fn target_file_name(target_file: &Path) -> String {
+pub(crate) fn target_file_name(target_file: &Path) -> String {
     target_file
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or_default()
         .to_string()
+}
+
+pub(crate) fn reset_credits_available_count(usage_json: &Value) -> Option<i64> {
+    usage_json
+        .get("rate_limit_reset_credits")?
+        .get("available_count")?
+        .as_i64()
+        .filter(|value| *value >= 0)
+}
+
+fn reset_credits_from_usage(usage_json: &Value) -> Option<ResetCredits> {
+    reset_credits_available_count(usage_json)
+        .map(|available_count| ResetCredits { available_count })
 }
 
 fn summary_and_windows_from_usage(
@@ -900,6 +928,7 @@ struct AsyncFetchResult {
     line: Option<String>,
     rc: i32,
     err: String,
+    reset_credits_available: Option<i64>,
     /// The line was served from cache past its freshness TTL.
     stale: bool,
     /// The live fetch succeeded but the backend reported no active rate-limit
@@ -1209,6 +1238,7 @@ fn collect_async_round(
         let mut benign_no_window = false;
         let event = events.remove(&secret_name);
         if let Some(event) = event {
+            row.reset_credits_available = event.reset_credits_available;
             if !event.err.is_empty() {
                 stderr_map.insert(secret_name.clone(), event.err.clone());
             }
@@ -1300,74 +1330,103 @@ fn render_all_accounts_table(
         non_weekly_header = label.clone();
     }
 
-    let now_epoch = Utc::now().timestamp();
-
-    println!(
-        "{:<15}  {:>8}  {:>7}  {:>8}  {:>7}  {:<18}",
-        "Name", non_weekly_header, "Left", "Weekly", "Left", "Reset"
-    );
-    println!("----------------------------------------------------------------------------");
-
     rows.sort_by_key(|row| row.sort_key());
+    let now_epoch = Utc::now().timestamp();
+    let display_rows: Vec<_> = rows
+        .into_iter()
+        .map(|row| {
+            // A null window reports "n/a"; a stale fallback keeps its values but is
+            // marked so the reader knows they are not live.
+            let no_window = row.state == RowState::NoWindow;
 
-    for row in rows {
-        // A null window reports "n/a"; a stale fallback keeps its values but is
-        // marked so the reader knows they are not live.
-        let no_window = row.state == RowState::NoWindow;
-
-        let display_non_weekly = if no_window {
-            "n/a".to_string()
-        } else if multiple_labels && !row.window_label.is_empty() {
-            if row.non_weekly_remaining >= 0 {
-                format!("{}:{}%", row.window_label, row.non_weekly_remaining)
+            let display_non_weekly = if no_window {
+                "n/a".to_string()
+            } else if multiple_labels && !row.window_label.is_empty() {
+                if row.non_weekly_remaining >= 0 {
+                    format!("{}:{}%", row.window_label, row.non_weekly_remaining)
+                } else {
+                    "-".to_string()
+                }
+            } else if row.non_weekly_remaining >= 0 {
+                format!("{}%", row.non_weekly_remaining)
             } else {
                 "-".to_string()
+            };
+
+            let non_weekly_left = row
+                .non_weekly_reset_epoch
+                .and_then(|epoch| render::format_until_epoch_compact(epoch, now_epoch))
+                .unwrap_or_else(|| "-".to_string());
+            let weekly_left = row
+                .weekly_reset_epoch
+                .and_then(|epoch| render::format_until_epoch_compact(epoch, now_epoch))
+                .unwrap_or_else(|| "-".to_string());
+            let mut reset_display = if no_window {
+                "n/a".to_string()
+            } else {
+                row.weekly_reset_epoch
+                    .and_then(render::format_epoch_local_datetime_with_offset)
+                    .unwrap_or_else(|| "-".to_string())
+            };
+            if row.state == RowState::Stale {
+                reset_display.push_str(" (stale)");
             }
-        } else if row.non_weekly_remaining >= 0 {
-            format!("{}%", row.non_weekly_remaining)
-        } else {
-            "-".to_string()
-        };
 
-        let non_weekly_left = row
-            .non_weekly_reset_epoch
-            .and_then(|epoch| render::format_until_epoch_compact(epoch, now_epoch))
-            .unwrap_or_else(|| "-".to_string());
-        let weekly_left = row
-            .weekly_reset_epoch
-            .and_then(|epoch| render::format_until_epoch_compact(epoch, now_epoch))
-            .unwrap_or_else(|| "-".to_string());
-        let mut reset_display = if no_window {
-            "n/a".to_string()
-        } else {
-            row.weekly_reset_epoch
-                .and_then(render::format_epoch_local_datetime_with_offset)
-                .unwrap_or_else(|| "-".to_string())
-        };
-        if row.state == RowState::Stale {
-            reset_display.push_str(" (stale)");
-        }
+            let weekly_display = if no_window {
+                "n/a".to_string()
+            } else if row.weekly_remaining >= 0 {
+                format!("{}%", row.weekly_remaining)
+            } else {
+                "-".to_string()
+            };
 
-        let non_weekly_display = ansi::format_percent_cell(&display_non_weekly, 8, None);
-        let weekly_display = if no_window {
-            ansi::format_percent_cell("n/a", 8, None)
-        } else if row.weekly_remaining >= 0 {
-            ansi::format_percent_cell(&format!("{}%", row.weekly_remaining), 8, None)
-        } else {
-            ansi::format_percent_cell("-", 8, None)
-        };
+            TableDisplayRow {
+                is_current: current_name == Some(row.name.as_str()),
+                name: row.name,
+                non_weekly: display_non_weekly,
+                non_weekly_left,
+                weekly: weekly_display,
+                weekly_left,
+                reset: reset_display,
+                resets: row
+                    .reset_credits_available
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+            }
+        })
+        .collect();
 
-        let is_current = current_name == Some(row.name.as_str());
-        let name_display = ansi::format_name_cell(&row.name, 15, is_current, None);
+    let mut name_width = 15usize;
+    let mut non_weekly_width = non_weekly_header.chars().count().max(8);
+    let mut non_weekly_left_width = 7usize;
+    let mut weekly_width = 8usize;
+    let mut weekly_left_width = 7usize;
+    let mut reset_width = 20usize;
+    let mut resets_width = 6usize;
+    for row in &display_rows {
+        name_width = name_width.max(row.name.chars().count());
+        non_weekly_width = non_weekly_width.max(row.non_weekly.chars().count());
+        non_weekly_left_width = non_weekly_left_width.max(row.non_weekly_left.chars().count());
+        weekly_width = weekly_width.max(row.weekly.chars().count());
+        weekly_left_width = weekly_left_width.max(row.weekly_left.chars().count());
+        reset_width = reset_width.max(row.reset.chars().count());
+        resets_width = resets_width.max(row.resets.chars().count());
+    }
 
+    let header = format!(
+        "{:<name_width$}  {:>non_weekly_width$}  {:>non_weekly_left_width$}  {:>weekly_width$}  {:>weekly_left_width$}  {:<reset_width$}  {:>resets_width$}",
+        "Name", non_weekly_header, "Left", "Weekly", "Left", "Reset", "Resets"
+    );
+    println!("{header}");
+    println!("{}", "-".repeat(header.chars().count()));
+
+    for row in display_rows {
+        let name = ansi::format_name_cell(&row.name, name_width, row.is_current, None);
+        let non_weekly = ansi::format_percent_cell(&row.non_weekly, non_weekly_width, None);
+        let weekly = ansi::format_percent_cell(&row.weekly, weekly_width, None);
         println!(
-            "{}  {}  {:>7}  {}  {:>7}  {:<18}",
-            name_display,
-            non_weekly_display,
-            non_weekly_left,
-            weekly_display,
-            weekly_left,
-            reset_display
+            "{}  {}  {:>non_weekly_left_width$}  {}  {:>weekly_left_width$}  {:<reset_width$}  {:>resets_width$}",
+            name, non_weekly, row.non_weekly_left, weekly, row.weekly_left, row.reset, row.resets,
         );
     }
 
@@ -1375,6 +1434,17 @@ fn render_all_accounts_table(
         println!();
         println!("Last update: {update_time}");
     }
+}
+
+struct TableDisplayRow {
+    is_current: bool,
+    name: String,
+    non_weekly: String,
+    non_weekly_left: String,
+    weekly: String,
+    weekly_left: String,
+    reset: String,
+    resets: String,
 }
 
 fn emit_async_debug(
@@ -1470,6 +1540,7 @@ fn async_fetch_one_line(
     // current window. Degrade to the last-known cached values (marked stale)
     // rather than surfacing it as a failure.
     let no_window_live = result.rc == RC_NO_RATE_LIMIT_WINDOW;
+    let live_reset_credits = result.reset_credits_available;
 
     let missing_line = result
         .line
@@ -1501,6 +1572,7 @@ fn async_fetch_one_line(
             result = AsyncFetchResult {
                 line: cached.line,
                 stale: cached.stale,
+                reset_credits_available: live_reset_credits,
                 ..Default::default()
             };
         } else if no_window_live {
@@ -1508,6 +1580,7 @@ fn async_fetch_one_line(
             result = AsyncFetchResult {
                 rc: RC_NO_RATE_LIMIT_WINDOW,
                 no_window: true,
+                reset_credits_available: live_reset_credits,
                 ..Default::default()
             };
         }
@@ -1521,6 +1594,7 @@ fn async_fetch_one_line(
         err,
         stale: result.stale,
         no_window: result.no_window,
+        reset_credits_available: result.reset_credits_available,
     }
 }
 
@@ -1611,6 +1685,7 @@ fn fetch_one_line_network(target_file: &Path, no_refresh_auth: bool) -> AsyncFet
             if render::rate_limit_has_no_windows(&usage.json) {
                 return AsyncFetchResult {
                     rc: RC_NO_RATE_LIMIT_WINDOW,
+                    reset_credits_available: reset_credits_available_count(&usage.json),
                     ..Default::default()
                 };
             }
@@ -1629,6 +1704,7 @@ fn fetch_one_line_network(target_file: &Path, no_refresh_auth: bool) -> AsyncFet
         return AsyncFetchResult {
             rc: RC_NO_RATE_LIMIT_WINDOW,
             no_window: true,
+            reset_credits_available: reset_credits_available_count(&usage.json),
             ..Default::default()
         };
     }
@@ -1649,6 +1725,7 @@ fn fetch_one_line_network(target_file: &Path, no_refresh_auth: bool) -> AsyncFet
             weekly.weekly.as_ref().map(|window| window.reset_epoch),
         ),
         rc: 0,
+        reset_credits_available: reset_credits_available_count(&usage.json),
         ..Default::default()
     }
 }
@@ -1826,11 +1903,15 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
         let mut row = Row::empty(secret_name.trim_end_matches(".json").to_string());
         let one_line = single_one_line(&secret_file, cached_mode, args.no_refresh_auth, debug_mode)
             .unwrap_or_default();
+        row.reset_credits_available = one_line.reset_credits_available;
         let output = one_line.line.unwrap_or_default();
 
         if output.is_empty() {
             if !cached_mode && !one_line.no_window {
                 rc = 1;
+            }
+            if one_line.no_window {
+                row.state = RowState::NoWindow;
             }
             rows.push(row);
             continue;
@@ -1881,70 +1962,7 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
         progress.finish_and_clear();
     }
 
-    println!("\n🚦 Codex rate limits for all accounts\n");
-
-    let mut non_weekly_header = "Non-weekly".to_string();
-    let multiple_labels = window_labels.len() != 1;
-    if !multiple_labels && let Some(label) = window_labels.iter().next() {
-        non_weekly_header = label.clone();
-    }
-
-    let now_epoch = Utc::now().timestamp();
-
-    println!(
-        "{:<15}  {:>8}  {:>7}  {:>8}  {:>7}  {:<18}",
-        "Name", non_weekly_header, "Left", "Weekly", "Left", "Reset"
-    );
-    println!("----------------------------------------------------------------------------");
-
-    rows.sort_by_key(|row| row.sort_key());
-
-    for row in rows {
-        let display_non_weekly = if multiple_labels && !row.window_label.is_empty() {
-            if row.non_weekly_remaining >= 0 {
-                format!("{}:{}%", row.window_label, row.non_weekly_remaining)
-            } else {
-                "-".to_string()
-            }
-        } else if row.non_weekly_remaining >= 0 {
-            format!("{}%", row.non_weekly_remaining)
-        } else {
-            "-".to_string()
-        };
-
-        let non_weekly_left = row
-            .non_weekly_reset_epoch
-            .and_then(|epoch| render::format_until_epoch_compact(epoch, now_epoch))
-            .unwrap_or_else(|| "-".to_string());
-        let weekly_left = row
-            .weekly_reset_epoch
-            .and_then(|epoch| render::format_until_epoch_compact(epoch, now_epoch))
-            .unwrap_or_else(|| "-".to_string());
-        let reset_display = row
-            .weekly_reset_epoch
-            .and_then(render::format_epoch_local_datetime_with_offset)
-            .unwrap_or_else(|| "-".to_string());
-
-        let non_weekly_display = ansi::format_percent_cell(&display_non_weekly, 8, None);
-        let weekly_display = if row.weekly_remaining >= 0 {
-            ansi::format_percent_cell(&format!("{}%", row.weekly_remaining), 8, None)
-        } else {
-            ansi::format_percent_cell("-", 8, None)
-        };
-
-        let is_current = current_name.as_deref() == Some(row.name.as_str());
-        let name_display = ansi::format_name_cell(&row.name, 15, is_current, None);
-
-        println!(
-            "{}  {}  {:>7}  {}  {:>7}  {:<18}",
-            name_display,
-            non_weekly_display,
-            non_weekly_left,
-            weekly_display,
-            weekly_left,
-            reset_display
-        );
-    }
+    render_all_accounts_table(rows, &window_labels, current_name.as_deref(), None);
 
     Ok(rc)
 }
@@ -2132,7 +2150,12 @@ fn run_single_mode(
         Some(value) => value,
         None => {
             if render::rate_limit_has_no_windows(&usage.json) {
-                return emit_single_no_window(&target_file, output_json, one_line);
+                return emit_single_no_window(
+                    &target_file,
+                    output_json,
+                    one_line,
+                    reset_credits_from_usage(&usage.json),
+                );
             }
             if output_json {
                 diag_output::emit_error(
@@ -2155,7 +2178,12 @@ fn run_single_mode(
     let values = render::render_values(&usage_data);
     let weekly = render::weekly_values(&values);
     if weekly.weekly.is_none() && weekly.non_weekly.is_none() {
-        return emit_single_no_window(&target_file, output_json, one_line);
+        return emit_single_no_window(
+            &target_file,
+            output_json,
+            one_line,
+            reset_credits_from_usage(&usage.json),
+        );
     }
 
     let fetched_at_epoch = Utc::now().timestamp();
@@ -2175,6 +2203,7 @@ fn run_single_mode(
             reason_code: None,
             summary: Some(summary_from_weekly_values(&weekly)),
             windows: Some(windows),
+            reset_credits: reset_credits_from_usage(&usage.json),
             raw_usage: Some(project_safe_usage_json(&usage.json)),
             error: None,
         };
@@ -2209,6 +2238,9 @@ fn run_single_mode(
             .unwrap_or_else(|| "?".to_string());
         println!("{} {}% • {}", window.label, window.remaining, reset);
     }
+    if let Some(count) = reset_credits_available_count(&usage.json) {
+        println!("Earned resets available: {count}");
+    }
 
     Ok(0)
 }
@@ -2216,10 +2248,16 @@ fn run_single_mode(
 /// Renders a benign `rate_limit: null` response in single mode: serve the
 /// last-known cached values (marked stale) when available, otherwise report
 /// "no active rate-limit window" as a success rather than a malformed payload.
-fn emit_single_no_window(target_file: &Path, output_json: bool, one_line: bool) -> Result<i32> {
+fn emit_single_no_window(
+    target_file: &Path,
+    output_json: bool,
+    one_line: bool,
+    reset_credits: Option<ResetCredits>,
+) -> Result<i32> {
     if let Ok(read) = cache::read_cache_entry_allow_stale(target_file) {
         if output_json {
-            let result = collect_json_from_cache(target_file, "cache-fallback", false);
+            let mut result = collect_json_from_cache(target_file, "cache-fallback", false);
+            result.reset_credits = reset_credits.clone();
             let ok = result.ok;
             diag_output::emit_json(&RateLimitSingleEnvelope {
                 schema_version: DIAG_SCHEMA_VERSION.to_string(),
@@ -2263,11 +2301,14 @@ fn emit_single_no_window(target_file: &Path, output_json: bool, one_line: bool) 
                 render::format_epoch_local_datetime(reset_epoch).unwrap_or_else(|| "?".to_string());
             println!("Weekly {remaining}% • {reset}");
         }
+        if let Some(reset_credits) = reset_credits {
+            println!("Earned resets available: {}", reset_credits.available_count);
+        }
         return Ok(0);
     }
 
     if output_json {
-        let result = json_result_no_window(target_file);
+        let result = json_result_no_window(target_file, reset_credits);
         diag_output::emit_json(&RateLimitSingleEnvelope {
             schema_version: DIAG_SCHEMA_VERSION.to_string(),
             command: DIAG_COMMAND.to_string(),
@@ -2279,6 +2320,9 @@ fn emit_single_no_window(target_file: &Path, output_json: bool, one_line: bool) 
     }
 
     println!("No active rate-limit window");
+    if let Some(reset_credits) = reset_credits {
+        println!("Earned resets available: {}", reset_credits.available_count);
+    }
     Ok(0)
 }
 
@@ -2286,6 +2330,7 @@ fn emit_single_no_window(target_file: &Path, output_json: bool, one_line: bool) 
 struct SingleOneLineResult {
     line: Option<String>,
     no_window: bool,
+    reset_credits_available: Option<i64>,
 }
 
 fn single_one_line(
@@ -2311,6 +2356,7 @@ fn single_one_line(
                     entry.weekly_reset_epoch,
                 ),
                 no_window: false,
+                reset_credits_available: None,
             }),
             Err(err) => {
                 if debug_mode {
@@ -2355,14 +2401,20 @@ fn single_one_line(
     let usage_data = match render::parse_usage(&usage.json) {
         Some(value) => value,
         None if render::rate_limit_has_no_windows(&usage.json) => {
-            return Ok(single_one_line_no_window(target_file));
+            return Ok(single_one_line_no_window(
+                target_file,
+                reset_credits_available_count(&usage.json),
+            ));
         }
         None => return Ok(SingleOneLineResult::default()),
     };
     let values = render::render_values(&usage_data);
     let weekly = render::weekly_values(&values);
     if weekly.weekly.is_none() && weekly.non_weekly.is_none() {
-        return Ok(single_one_line_no_window(target_file));
+        return Ok(single_one_line_no_window(
+            target_file,
+            reset_credits_available_count(&usage.json),
+        ));
     }
     let fetched_at_epoch = Utc::now().timestamp();
     if fetched_at_epoch > 0 {
@@ -2379,10 +2431,14 @@ fn single_one_line(
             weekly.weekly.as_ref().map(|window| window.reset_epoch),
         ),
         no_window: false,
+        reset_credits_available: reset_credits_available_count(&usage.json),
     })
 }
 
-fn single_one_line_no_window(target_file: &Path) -> SingleOneLineResult {
+fn single_one_line_no_window(
+    target_file: &Path,
+    reset_credits_available: Option<i64>,
+) -> SingleOneLineResult {
     let line = cache::read_cache_entry_allow_stale(target_file)
         .ok()
         .and_then(|read| {
@@ -2396,10 +2452,11 @@ fn single_one_line_no_window(target_file: &Path) -> SingleOneLineResult {
     SingleOneLineResult {
         line,
         no_window: true,
+        reset_credits_available,
     }
 }
 
-fn resolve_target(secret: Option<&str>) -> std::result::Result<PathBuf, i32> {
+pub(crate) fn resolve_target(secret: Option<&str>) -> std::result::Result<PathBuf, i32> {
     if let Some(secret_name) = secret {
         if secret_name.is_empty() || secret_name.contains('/') || secret_name.contains("..") {
             eprintln!("codex-rate-limits: invalid secret file name");
@@ -2458,6 +2515,7 @@ struct Row {
     weekly_remaining: i64,
     weekly_reset_epoch: Option<i64>,
     weekly_reset_iso: String,
+    reset_credits_available: Option<i64>,
     state: RowState,
 }
 
@@ -2471,6 +2529,7 @@ impl Row {
             weekly_remaining: -1,
             weekly_reset_epoch: None,
             weekly_reset_iso: String::new(),
+            reset_credits_available: None,
             state: RowState::Missing,
         }
     }

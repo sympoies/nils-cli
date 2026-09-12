@@ -3,6 +3,8 @@
 // links one integration test binary instead of many. This keeps the
 // dev-loop link phase O(crates) instead of O(test-files).
 
+#[path = "integration/account_reset_rate_limits.rs"]
+mod account_reset_rate_limits;
 #[path = "integration/agent_commit.rs"]
 mod agent_commit;
 #[path = "integration/agent_exec.rs"]

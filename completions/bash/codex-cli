@@ -16,6 +16,9 @@ _codex__cli() {
             ",$1")
                 cmd="codex__cli"
                 ;;
+            codex__cli,account)
+                cmd="codex__cli__account"
+                ;;
             codex__cli,agent)
                 cmd="codex__cli__agent"
                 ;;
@@ -36,6 +39,18 @@ _codex__cli() {
                 ;;
             codex__cli,prompt-segment)
                 cmd="codex__cli__prompt__segment"
+                ;;
+            codex__cli__account,help)
+                cmd="codex__cli__account__help"
+                ;;
+            codex__cli__account,reset-rate-limits)
+                cmd="codex__cli__account__reset__rate__limits"
+                ;;
+            codex__cli__account__help,help)
+                cmd="codex__cli__account__help__help"
+                ;;
+            codex__cli__account__help,reset-rate-limits)
+                cmd="codex__cli__account__help__reset__rate__limits"
                 ;;
             codex__cli__agent,advice)
                 cmd="codex__cli__agent__advice"
@@ -202,6 +217,9 @@ _codex__cli() {
             codex__cli__diag__help,rate-limits)
                 cmd="codex__cli__diag__help__rate__limits"
                 ;;
+            codex__cli__help,account)
+                cmd="codex__cli__help__account"
+                ;;
             codex__cli__help,agent)
                 cmd="codex__cli__help__agent"
                 ;;
@@ -222,6 +240,9 @@ _codex__cli() {
                 ;;
             codex__cli__help,prompt-segment)
                 cmd="codex__cli__help__prompt__segment"
+                ;;
+            codex__cli__help__account,reset-rate-limits)
+                cmd="codex__cli__help__account__reset__rate__limits"
                 ;;
             codex__cli__help__agent,advice)
                 cmd="codex__cli__help__agent__advice"
@@ -320,12 +341,90 @@ _codex__cli() {
 
     case "${cmd}" in
         codex__cli)
-            opts="-h -V --help --version agent auth diag config prompt-segment completion help"
+            opts="-h -V --help --version agent account auth diag config prompt-segment completion help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        codex__cli__account)
+            opts="-h --help reset-rate-limits help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        codex__cli__account__help)
+            opts="reset-rate-limits help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        codex__cli__account__help__help)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        codex__cli__account__help__reset__rate__limits)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        codex__cli__account__reset__rate__limits)
+            opts="-y -h --yes --idempotency-key --no-refresh-auth --format --json --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --idempotency-key)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
                 *)
                     COMPREPLY=()
                     ;;
@@ -1287,8 +1386,36 @@ _codex__cli() {
             return 0
             ;;
         codex__cli__help)
-            opts="agent auth diag config prompt-segment completion help"
+            opts="agent account auth diag config prompt-segment completion help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        codex__cli__help__account)
+            opts="reset-rate-limits"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        codex__cli__help__account__reset__rate__limits)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi

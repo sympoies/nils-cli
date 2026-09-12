@@ -174,6 +174,61 @@ esac
     ;;
 esac
 ;;
+(account)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_codex-cli__subcmd__account_commands" \
+"*::: :->account" \
+&& ret=0
+
+    case $state in
+    (account)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:codex-cli-account-command-$line[1]:"
+        case $line[1] in
+            (reset-rate-limits)
+_arguments "${_arguments_options[@]}" : \
+'--idempotency-key=[Stable UUID for this logical redemption attempt]:uuid:_default' \
+'--format=[Output format (\`text\` or \`json\`)]:format:(text json)' \
+'-y[Confirm consumption without an interactive prompt]' \
+'--yes[Confirm consumption without an interactive prompt]' \
+'--no-refresh-auth[Disable refresh-on-401 behavior even when CODEX_AUTO_REFRESH_ENABLED=true]' \
+'(--format)--json[Hidden alias for \`--format json\` (kept for backwards compatibility)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::secret -- Optional configured account secret filename:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_codex-cli__subcmd__account__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:codex-cli-account-help-command-$line[1]:"
+        case $line[1] in
+            (reset-rate-limits)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
 (auth)
 _arguments "${_arguments_options[@]}" : \
 '-h[Print help]' \
@@ -677,6 +732,26 @@ _arguments "${_arguments_options[@]}" : \
     ;;
 esac
 ;;
+(account)
+_arguments "${_arguments_options[@]}" : \
+":: :_codex-cli__subcmd__help__subcmd__account_commands" \
+"*::: :->account" \
+&& ret=0
+
+    case $state in
+    (account)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:codex-cli-help-account-command-$line[1]:"
+        case $line[1] in
+            (reset-rate-limits)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
 (auth)
 _arguments "${_arguments_options[@]}" : \
 ":: :_codex-cli__subcmd__help__subcmd__auth_commands" \
@@ -842,6 +917,7 @@ esac
 _codex-cli_commands() {
     local commands; commands=(
 'agent:Agent command group' \
+'account:Account command group' \
 'auth:Authentication command group' \
 'diag:Diagnostics command group' \
 'config:Configuration command group' \
@@ -850,6 +926,37 @@ _codex-cli_commands() {
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'codex-cli commands' commands "$@"
+}
+(( $+functions[_codex-cli__subcmd__account_commands] )) ||
+_codex-cli__subcmd__account_commands() {
+    local commands; commands=(
+'reset-rate-limits:Consume one earned Codex rate-limit reset' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'codex-cli account commands' commands "$@"
+}
+(( $+functions[_codex-cli__subcmd__account__subcmd__help_commands] )) ||
+_codex-cli__subcmd__account__subcmd__help_commands() {
+    local commands; commands=(
+'reset-rate-limits:Consume one earned Codex rate-limit reset' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'codex-cli account help commands' commands "$@"
+}
+(( $+functions[_codex-cli__subcmd__account__subcmd__help__subcmd__help_commands] )) ||
+_codex-cli__subcmd__account__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'codex-cli account help help commands' commands "$@"
+}
+(( $+functions[_codex-cli__subcmd__account__subcmd__help__subcmd__reset-rate-limits_commands] )) ||
+_codex-cli__subcmd__account__subcmd__help__subcmd__reset-rate-limits_commands() {
+    local commands; commands=()
+    _describe -t commands 'codex-cli account help reset-rate-limits commands' commands "$@"
+}
+(( $+functions[_codex-cli__subcmd__account__subcmd__reset-rate-limits_commands] )) ||
+_codex-cli__subcmd__account__subcmd__reset-rate-limits_commands() {
+    local commands; commands=()
+    _describe -t commands 'codex-cli account reset-rate-limits commands' commands "$@"
 }
 (( $+functions[_codex-cli__subcmd__agent_commands] )) ||
 _codex-cli__subcmd__agent_commands() {
@@ -1221,6 +1328,7 @@ _codex-cli__subcmd__diag__subcmd__rate-limits_commands() {
 _codex-cli__subcmd__help_commands() {
     local commands; commands=(
 'agent:Agent command group' \
+'account:Account command group' \
 'auth:Authentication command group' \
 'diag:Diagnostics command group' \
 'config:Configuration command group' \
@@ -1229,6 +1337,18 @@ _codex-cli__subcmd__help_commands() {
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'codex-cli help commands' commands "$@"
+}
+(( $+functions[_codex-cli__subcmd__help__subcmd__account_commands] )) ||
+_codex-cli__subcmd__help__subcmd__account_commands() {
+    local commands; commands=(
+'reset-rate-limits:Consume one earned Codex rate-limit reset' \
+    )
+    _describe -t commands 'codex-cli help account commands' commands "$@"
+}
+(( $+functions[_codex-cli__subcmd__help__subcmd__account__subcmd__reset-rate-limits_commands] )) ||
+_codex-cli__subcmd__help__subcmd__account__subcmd__reset-rate-limits_commands() {
+    local commands; commands=()
+    _describe -t commands 'codex-cli help account reset-rate-limits commands' commands "$@"
 }
 (( $+functions[_codex-cli__subcmd__help__subcmd__agent_commands] )) ||
 _codex-cli__subcmd__help__subcmd__agent_commands() {
