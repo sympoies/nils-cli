@@ -305,6 +305,14 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
     workdir: &std::path::Path,
     settings: ResolvedMergeSettings<'_>,
 ) -> Result<PrMergePayload, ForgeError> {
+    if global.dry_run {
+        return Err(ForgeError::software(
+            schema_err(),
+            "merge compute invoked with --dry-run; caller must use the preview path",
+            None,
+        ));
+    }
+
     // Rule 4 — clean worktree.
     worktree_clean(workdir, git_status_porcelain)?;
 
@@ -919,8 +927,17 @@ struct PrView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::ProviderFlag;
     use crate::provider::DetectionSource;
     use pretty_assertions::assert_eq;
+
+    struct ForbiddenRunner;
+
+    impl BackendRunner for ForbiddenRunner {
+        fn run(&self, _call: &BackendCall) -> Result<BackendSuccess, ForgeError> {
+            panic!("dry-run reached the provider backend")
+        }
+    }
 
     fn ctx(provider: Provider) -> ProviderContext {
         ProviderContext {
@@ -940,6 +957,44 @@ mod tests {
             default_branch: default.into(),
             merge_methods_allowed: methods,
         }
+    }
+
+    #[test]
+    fn merge_compute_refuses_dry_run_before_provider_calls() {
+        let repo = nils_test_support::git::init_repo_main_with_initial_commit();
+        let global = GlobalFlags {
+            format: None,
+            remote: "origin".into(),
+            provider: Some(ProviderFlag::Github),
+            host: None,
+            repo: Some("acme/widgets".into()),
+            store_root: None,
+            dry_run: true,
+        };
+        let args = PrMergeArgs {
+            id: 7,
+            expected_head_sha: None,
+            expected_base: None,
+            method: None,
+            keep_branch: false,
+            allow_non_default_base: false,
+            allow_unresolved_threads: false,
+            allow_unresolved_threads_reason: None,
+            review_convergence: None,
+            allow_unchecked_tasks: false,
+            allow_unchecked_tasks_reason: None,
+            allow_no_checks: false,
+            allow_no_checks_reason: None,
+        };
+
+        let err = compute(&ForbiddenRunner, &global, &args, repo.path())
+            .expect_err("dry-run must fail closed at the live merge boundary");
+
+        assert_eq!(err.kind(), "software_error");
+        assert_eq!(
+            err.to_string(),
+            "merge compute invoked with --dry-run; caller must use the preview path"
+        );
     }
 
     #[test]
