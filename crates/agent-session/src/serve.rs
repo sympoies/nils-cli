@@ -58,7 +58,7 @@ use crate::codex_app_server::{self, ControlHandle};
 use crate::coordination::server as coordination_server;
 use crate::maintenance::{self, MaintenanceActionRequest, MaintenanceOperation};
 use crate::provider_history::{
-    self, HistoryCatalog, HistoryError, HistoryMessageDirection, HistorySource,
+    self, DshHistorySource, HistoryCatalog, HistoryError, HistoryMessageDirection, HistorySource,
 };
 use crate::provider_prompt::{
     LastPrompt, MAX_PROVIDER_PROMPT_BYTES, PROVIDER_PROMPT_CAPABILITY, ProviderKind,
@@ -315,6 +315,20 @@ struct AgentLaunchProfile {
     auto_resume_supported: bool,
     graceful_shutdown: Option<AgentLaunchProfileGracefulShutdown>,
     codex_usage_account: Option<String>,
+    dsh_history: Option<DshHistoryAdapterConfig>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DshHistoryAdapterConfig {
+    command: PathBuf,
+    root: PathBuf,
+    #[serde(default = "default_dsh_history_compression")]
+    compression: String,
+}
+
+fn default_dsh_history_compression() -> String {
+    "zstd".to_string()
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -350,6 +364,8 @@ struct AgentLaunchProfileConfig {
     /// unchanged (auto-resume keys off native Claude usage).
     #[serde(default)]
     codex_usage_account: Option<String>,
+    #[serde(default)]
+    dsh_history: Option<DshHistoryAdapterConfig>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -435,6 +451,16 @@ impl AgentLaunchProfiles {
                     "launch profile codex_usage_account must be a non-empty nickname",
                 ));
             }
+            if let Some(history) = config.dsh_history.as_ref()
+                && (!matches!(agent, AgentKind::Hermes)
+                    || !history.command.is_absolute()
+                    || !history.root.is_absolute()
+                    || !matches!(history.compression.as_str(), "zstd" | "none"))
+            {
+                return Err(invalid_agent_launch_profiles(
+                    "dsh_history requires a Hermes profile, absolute command/root paths, and zstd or none compression",
+                ));
+            }
             entries.push(AgentLaunchProfile {
                 id: config.id,
                 label: label.to_string(),
@@ -447,6 +473,7 @@ impl AgentLaunchProfiles {
                 codex_usage_account: config
                     .codex_usage_account
                     .map(|nick| nick.trim().to_string()),
+                dsh_history: config.dsh_history,
             });
         }
         Ok(Self {
@@ -502,6 +529,23 @@ impl AgentLaunchProfiles {
             });
         }
         sources
+    }
+
+    fn dsh_history_sources(&self) -> Vec<DshHistorySource> {
+        self.entries
+            .iter()
+            .filter_map(|profile| {
+                profile
+                    .dsh_history
+                    .as_ref()
+                    .map(|history| DshHistorySource {
+                        agent_profile: profile.id.clone(),
+                        command: history.command.clone(),
+                        root: history.root.clone(),
+                        compression: history.compression.clone(),
+                    })
+            })
+            .collect()
     }
 
     fn ready_summaries(&self) -> Vec<AgentLaunchProfileSummary> {
@@ -766,11 +810,14 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
             session_collector.clone(),
         )
         .await;
-        let history_catalog = Arc::new(HistoryCatalog::new(
-            launch_profiles.history_sources(),
-            provider_history::archive_root(&context.state_dir),
-            provider_history::star_root(&context.state_dir),
-        ));
+        let history_catalog = Arc::new(
+            HistoryCatalog::new(
+                launch_profiles.history_sources(),
+                provider_history::archive_root(&context.state_dir),
+                provider_history::star_root(&context.state_dir),
+            )
+            .with_dsh_sources(launch_profiles.dsh_history_sources()),
+        );
         let state = Arc::new(ServeState {
             context: context.clone(),
             machine,
@@ -12425,6 +12472,57 @@ mod tests {
         .expect("the fixed graceful-shutdown mode is valid server-owned profile metadata");
 
         assert_eq!(profiles.entries.len(), 1);
+    }
+
+    #[test]
+    fn launch_profiles_project_a_valid_dsh_history_adapter_source() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let launcher = executable(&tmp.path().join("dsh-launcher"), "#!/bin/sh\nexit 0\n");
+        let adapter = executable(&tmp.path().join("dsh-history"), "#!/bin/sh\nexit 0\n");
+        let sessions = tmp.path().join("sessions");
+        fs::create_dir(&sessions).unwrap();
+        let profiles = AgentLaunchProfiles::from_json(
+            &json!([{
+                "id": "dsh-tui",
+                "label": "DSH TUI",
+                "agent": "hermes",
+                "agent_bin": launcher,
+                "dsh_history": {
+                    "command": adapter,
+                    "root": sessions,
+                    "compression": "zstd"
+                }
+            }])
+            .to_string(),
+        )
+        .unwrap();
+
+        let sources = profiles.dsh_history_sources();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].agent_profile, "dsh-tui");
+        assert_eq!(sources[0].compression, "zstd");
+    }
+
+    #[test]
+    fn unavailable_dsh_history_does_not_block_the_launch_profile() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let launcher = executable(&tmp.path().join("dsh-launcher"), "#!/bin/sh\nexit 0\n");
+        let profiles = AgentLaunchProfiles::from_json(
+            &json!([{
+                "id": "dsh-tui",
+                "label": "DSH TUI",
+                "agent": "hermes",
+                "agent_bin": launcher,
+                "dsh_history": {
+                    "command": tmp.path().join("missing-history-adapter"),
+                    "root": tmp.path().join("missing-sessions")
+                }
+            }])
+            .to_string(),
+        )
+        .unwrap();
+
+        assert!(profiles.entries[0].is_ready());
     }
 
     #[test]
