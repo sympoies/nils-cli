@@ -60,11 +60,14 @@ is no second state model.
 
 `GET /history/sessions` returns a bounded, cursor-paged catalog of Codex,
 Claude, and DSH provider sessions. DSH entries are read-only and always carry
-`resumable: false`. Optional `q` searches only the returned
-metadata fields: exact archived/managed title, bounded first-user-prompt
-preview, provider session id, provider, launch-profile id, cwd/repository
-label, machine, and timestamps. It never searches arbitrary conversation
-text or the latest-user-prompt preview. Optional `provider`, `cursor`, and
+`resumable: false`. Optional `q` searches only metadata already present in the
+catalog snapshot: exact archived/managed title, bounded first-user-prompt
+preview when the provider scan supplies one, provider session id, provider,
+launch-profile id, cwd/repository label, machine, and timestamps. DSH's
+provider-generated title and prompt previews are selected-page enrichments and
+are not query inputs, which preserves the header-only catalog scan. The query
+never searches arbitrary conversation text or the latest-user-prompt preview.
+Optional `provider`, `cursor`, and
 `limit` further bound the result. Each item may add
 `first_user_prompt_preview` and `last_user_prompt_preview`; both are bounded
 response-only text and may be absent when provider-aware parsing cannot

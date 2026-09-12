@@ -3072,6 +3072,20 @@ esac
         assert_eq!(session.updated_at, "2026-09-12T02:00:00.000Z");
         assert!(!session.resumable);
 
+        let queried = catalog
+            .list("test", Some("/work/dsh"), Some("dsh"), None, 10)
+            .unwrap();
+        assert_eq!(queried.sessions.len(), 1);
+        assert_eq!(queried.sessions[0].provider_session_id, "dsh-one");
+        assert!(
+            catalog
+                .list("test", Some("DSH title"), Some("dsh"), None, 10)
+                .unwrap()
+                .sessions
+                .is_empty(),
+            "provider title enrichment must not trigger a full-catalog transcript scan"
+        );
+
         let messages = catalog
             .messages(&session.id, None, 50, HistoryMessageDirection::Latest)
             .unwrap();
