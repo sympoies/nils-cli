@@ -253,7 +253,10 @@ fail-closed.
   session documents or HTTP responses.
 - `AGENT_SESSION_LAUNCH_PROFILES`: JSON array of server-owned launch profiles.
   Only profiles whose executable, optional provider root, and readiness probe
-  pass are advertised.
+  pass are advertised. A Hermes-backed DSH profile may add an absolute
+  `dsh_history.command`, absolute `dsh_history.root`, and `zstd` or `none`
+  compression. Adapter availability affects history reads only, never profile
+  readiness.
 - `AGENT_SESSION_CODEX_RUNTIME=raw|app-server`: force the Codex runtime choice.
   The default probes the installed CLI and degrades to raw TUI when the audited
   app-server capability is unavailable.

@@ -58,8 +58,9 @@ is no second state model.
 
 ### Provider session history
 
-`GET /history/sessions` returns a bounded, cursor-paged catalog of resumable
-Codex and Claude provider sessions. Optional `q` searches only the returned
+`GET /history/sessions` returns a bounded, cursor-paged catalog of Codex,
+Claude, and DSH provider sessions. DSH entries are read-only and always carry
+`resumable: false`. Optional `q` searches only the returned
 metadata fields: exact archived/managed title, bounded first-user-prompt
 preview, provider session id, provider, launch-profile id, cwd/repository
 label, machine, and timestamps. It never searches arbitrary conversation
@@ -85,6 +86,15 @@ Latest-prompt enrichment is limited to the returned catalog page, uses at most
 1 MiB per transcript and 16 MiB across one page, and is cached in process by
 transcript path, size, and modification time. It never adds a full-catalog
 transcript-body scan.
+
+DSH history is supplied by a launch-profile-owned external adapter. Catalog
+scans invoke its header-only `list` command; only the selected page is passed to
+`summaries`, and message reads pass one exact provider session id to `messages`.
+The adapter is invoked directly without a shell in a separate process group,
+with bounded output and a ten-second deadline. A missing, timed-out, non-zero,
+or malformed adapter degrades that history read and does not affect launch
+profile readiness or live DSH sessions. The daemon never exposes the adapter
+command, session root, native event records, or transcript paths.
 
 `GET /history/sessions/{history_id}/messages` resolves the opaque history id
 inside the daemon and returns normalized `user`/`assistant` text messages in
@@ -789,6 +799,13 @@ Because standalone resume cannot enforce the live registry, the daemon does not
 advertise it as a managed copy action. Set
 `auto_resume_supported` only when the profile has authoritative usage semantics
 for its provider; the default is fail-closed `false`.
+
+A Hermes-backed DSH profile may add
+`"dsh_history":{"command":"/absolute/dsh-runtime-kit-history","root":"/absolute/dsh-sessions","compression":"zstd"}`.
+`command` and `root` must be absolute and `compression` is `zstd` (the default)
+or `none`. This optional read adapter is not a launch readiness prerequisite:
+if it is unavailable, DSH launch and readiness keep their existing behavior and
+the history endpoints return only the remaining valid catalog data.
 
 ## Trust model
 

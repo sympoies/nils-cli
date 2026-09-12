@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -36,12 +38,23 @@ const REVERSE_MESSAGE_CHUNK_BYTES: usize = 64 * 1024;
 const INCREMENTAL_CONTINUITY_BYTES: u64 = 256;
 const INCREMENTAL_OVERLAP_SEARCH_BYTES: u64 = 4 * 1024 * 1024;
 const INCREMENTAL_INTEGRITY_BLOCK_BYTES: usize = 64 * 1024;
+const DSH_ADAPTER_OUTPUT_MAX_BYTES: u64 = 16 * 1024 * 1024;
+const DSH_ADAPTER_LIST_TIMEOUT: Duration = Duration::from_secs(10);
+const DSH_ADAPTER_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct HistorySource {
     pub(crate) provider: String,
     pub(crate) agent_profile: Option<String>,
     pub(crate) root: PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DshHistorySource {
+    pub(crate) agent_profile: String,
+    pub(crate) command: PathBuf,
+    pub(crate) root: PathBuf,
+    pub(crate) compression: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -109,7 +122,7 @@ pub(crate) struct HistoryPage {
     pub(crate) truncated: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct HistoryMessage {
     pub(crate) id: String,
     pub(crate) role: String,
@@ -277,6 +290,7 @@ struct LatestPromptCacheEntry {
 #[derive(Debug)]
 pub(crate) struct HistoryCatalog {
     sources: Vec<HistorySource>,
+    dsh_sources: Vec<DshHistorySource>,
     archives_root: PathBuf,
     stars_root: PathBuf,
     cache: Mutex<CatalogCache>,
@@ -292,12 +306,18 @@ impl HistoryCatalog {
     ) -> Self {
         Self {
             sources,
+            dsh_sources: Vec::new(),
             archives_root,
             stars_root,
             cache: Mutex::new(CatalogCache::default()),
             #[cfg(test)]
             snapshot_accesses: AtomicUsize::new(0),
         }
+    }
+
+    pub(crate) fn with_dsh_sources(mut self, sources: Vec<DshHistorySource>) -> Self {
+        self.dsh_sources = sources;
+        self
     }
 
     pub(crate) fn invalidate(&self) {
@@ -343,6 +363,9 @@ impl HistoryCatalog {
             cache.latest_prompt_previews.clone()
         };
         enrich_latest_prompt_previews(&mut page.sessions, &mut prompt_cache);
+        if enrich_dsh_session_summaries(&self.dsh_sources, &mut page.sessions).is_err() {
+            page.truncated = true;
+        }
         let mut cache = self
             .cache
             .lock()
@@ -403,6 +426,20 @@ impl HistoryCatalog {
             .iter()
             .find(|session| session.id == history_id)
             .ok_or(HistoryError::NotFound)?;
+        if session.provider == "dsh" {
+            let source = self
+                .dsh_sources
+                .iter()
+                .find(|source| session.agent_profile.as_deref() == Some(&source.agent_profile))
+                .ok_or(HistoryError::NotFound)?;
+            return read_dsh_messages(
+                source,
+                &session.provider_session_id,
+                cursor,
+                limit,
+                direction,
+            );
+        }
         match direction {
             HistoryMessageDirection::Forward => {
                 read_messages(session, parse_message_cursor(cursor)?, limit.clamp(1, 100))
@@ -607,6 +644,7 @@ impl HistoryCatalog {
         }
         let snapshot = Arc::new(scan_catalog(
             &self.sources,
+            &self.dsh_sources,
             &self.archives_root,
             &self.stars_root,
         ));
@@ -806,7 +844,7 @@ pub(crate) fn list(
     limit: usize,
 ) -> Result<HistoryPage, HistoryError> {
     let mut page = paginate_snapshot(
-        scan_catalog(sources, roots.archives, roots.stars),
+        scan_catalog(sources, &[], roots.archives, roots.stars),
         machine,
         query,
         provider,
@@ -937,6 +975,7 @@ fn session_is_after_cursor(session: &HistorySession, cursor: &ListCursor) -> boo
 
 fn scan_catalog(
     sources: &[HistorySource],
+    dsh_sources: &[DshHistorySource],
     archives_root: &Path,
     stars_root: &Path,
 ) -> CatalogSnapshot {
@@ -1000,6 +1039,56 @@ fn scan_catalog(
         }
     }
 
+    for source in dsh_sources {
+        let remaining = SCAN_MAX_ENTRIES.saturating_sub(visited);
+        if remaining == 0 || Instant::now() >= deadline {
+            truncated = true;
+            break;
+        }
+        let Ok(mut listed) = list_dsh_sessions(source) else {
+            truncated = true;
+            continue;
+        };
+        if listed.len() > remaining {
+            listed.truncate(remaining);
+            truncated = true;
+        }
+        visited += listed.len();
+        for item in listed {
+            if !valid_dsh_catalog_item(&item) {
+                truncated = true;
+                continue;
+            }
+            let id = stable_history_id(
+                "dsh",
+                Some(&source.agent_profile),
+                &item.provider_session_id,
+            );
+            if !seen.insert(id.clone()) {
+                continue;
+            }
+            sessions.push(HistorySession {
+                id: id.clone(),
+                provider: "dsh".to_string(),
+                provider_session_id: item.provider_session_id,
+                agent_profile: Some(source.agent_profile.clone()),
+                title: None,
+                prompt_preview: None,
+                first_user_prompt_preview: None,
+                last_user_prompt_preview: None,
+                repo_name: repo_name(&item.cwd),
+                cwd: item.cwd,
+                created_at: item.created_at,
+                updated_at: item.updated_at,
+                archived_at: archives.get(&id).map(|archive| archive.archived_at.clone()),
+                starred_at: stars.get(&id).cloned(),
+                resumable: false,
+                transcript_path: source.root.clone(),
+                incremental_catalog_stamp: item.revision,
+            });
+        }
+    }
+
     for segments in incremental_segments.values_mut() {
         segments.sort_by(|left, right| {
             left.created_at
@@ -1014,6 +1103,252 @@ fn scan_catalog(
         incremental_segments,
         truncated,
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct DshAdapterEnvelope<T> {
+    schema_version: String,
+    data: T,
+}
+
+#[derive(Debug, Deserialize)]
+struct DshCatalogItem {
+    provider_session_id: String,
+    cwd: String,
+    created_at: String,
+    updated_at: String,
+    revision: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DshSessionSummary {
+    provider_session_id: String,
+    title: Option<String>,
+    first_user_prompt_preview: Option<String>,
+    last_user_prompt_preview: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DshMessagesPage {
+    messages: Vec<HistoryMessage>,
+    next_cursor: Option<String>,
+    older_cursor: Option<String>,
+}
+
+fn valid_dsh_text(value: &str, max: usize) -> bool {
+    !value.is_empty() && value.len() <= max && !value.contains('\0')
+}
+
+fn valid_dsh_timestamp(value: &str) -> bool {
+    valid_dsh_text(value, 64) && value.parse::<jiff::Timestamp>().is_ok()
+}
+
+fn valid_dsh_cursor(value: &str) -> bool {
+    value.len() <= 20 && value.parse::<u64>().is_ok()
+}
+
+fn valid_dsh_catalog_item(item: &DshCatalogItem) -> bool {
+    valid_dsh_text(&item.provider_session_id, 256)
+        && valid_dsh_text(&item.cwd, 16 * 1024)
+        && valid_dsh_timestamp(&item.created_at)
+        && valid_dsh_timestamp(&item.updated_at)
+        && valid_dsh_text(&item.revision, 1024)
+}
+
+fn run_dsh_adapter(
+    source: &DshHistorySource,
+    command: &str,
+    extra_args: &[String],
+    timeout: Duration,
+) -> Result<Vec<u8>, HistoryError> {
+    let mut process = Command::new(&source.command);
+    process
+        .arg(command)
+        .arg("--root")
+        .arg(&source.root)
+        .arg("--compression")
+        .arg(&source.compression)
+        .args(extra_args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .process_group(0);
+    let mut child = process.spawn().map_err(|_| HistoryError::Io)?;
+    let stdout = child.stdout.take().ok_or(HistoryError::Io)?;
+    let reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout
+            .take(DSH_ADAPTER_OUTPUT_MAX_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map(|_| bytes)
+    });
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() < timeout => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Ok(None) | Err(_) => {
+                // SAFETY: the adapter is the leader of a dedicated process group.
+                unsafe {
+                    let _ = libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return Err(HistoryError::Io);
+            }
+        }
+    };
+    let output = reader
+        .join()
+        .map_err(|_| HistoryError::Io)?
+        .map_err(|_| HistoryError::Io)?;
+    if !status.success() || output.len() as u64 > DSH_ADAPTER_OUTPUT_MAX_BYTES {
+        return Err(HistoryError::Io);
+    }
+    Ok(output)
+}
+
+fn decode_dsh_adapter<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, HistoryError> {
+    let envelope: DshAdapterEnvelope<T> =
+        serde_json::from_slice(bytes).map_err(|_| HistoryError::Io)?;
+    if envelope.schema_version != "dsh-runtime-kit.history.v1" {
+        return Err(HistoryError::Io);
+    }
+    Ok(envelope.data)
+}
+
+fn list_dsh_sessions(source: &DshHistorySource) -> Result<Vec<DshCatalogItem>, HistoryError> {
+    decode_dsh_adapter(&run_dsh_adapter(
+        source,
+        "list",
+        &[],
+        DSH_ADAPTER_LIST_TIMEOUT,
+    )?)
+}
+
+fn enrich_dsh_session_summaries(
+    sources: &[DshHistorySource],
+    sessions: &mut [HistorySession],
+) -> Result<(), HistoryError> {
+    for source in sources {
+        let targets = sessions
+            .iter()
+            .filter(|session| {
+                session.provider == "dsh"
+                    && session.agent_profile.as_deref() == Some(&source.agent_profile)
+            })
+            .map(|session| session.provider_session_id.clone())
+            .collect::<Vec<_>>();
+        if targets.is_empty() {
+            continue;
+        }
+        let args = targets
+            .iter()
+            .flat_map(|id| ["--session-id".to_string(), id.clone()])
+            .collect::<Vec<_>>();
+        let summaries: Vec<DshSessionSummary> = decode_dsh_adapter(&run_dsh_adapter(
+            source,
+            "summaries",
+            &args,
+            DSH_ADAPTER_READ_TIMEOUT,
+        )?)?;
+        let summaries = summaries
+            .into_iter()
+            .map(|summary| (summary.provider_session_id.clone(), summary))
+            .collect::<HashMap<_, _>>();
+        for session in sessions.iter_mut().filter(|session| {
+            session.provider == "dsh"
+                && session.agent_profile.as_deref() == Some(&source.agent_profile)
+        }) {
+            let Some(summary) = summaries.get(&session.provider_session_id) else {
+                continue;
+            };
+            session.title = summary
+                .title
+                .clone()
+                .filter(|value| valid_dsh_text(value, 1024));
+            session.first_user_prompt_preview = summary
+                .first_user_prompt_preview
+                .clone()
+                .filter(|value| valid_dsh_text(value, MAX_PREVIEW_CHARS * 4));
+            session.last_user_prompt_preview = summary
+                .last_user_prompt_preview
+                .clone()
+                .filter(|value| valid_dsh_text(value, MAX_PREVIEW_CHARS * 4));
+            session.prompt_preview = session.first_user_prompt_preview.clone();
+        }
+    }
+    Ok(())
+}
+
+fn read_dsh_messages(
+    source: &DshHistorySource,
+    provider_session_id: &str,
+    cursor: Option<&str>,
+    limit: usize,
+    direction: HistoryMessageDirection,
+) -> Result<HistoryMessagesPage, HistoryError> {
+    if cursor.is_some_and(|value| value.parse::<u64>().is_err())
+        || matches!(direction, HistoryMessageDirection::Latest) && cursor.is_some()
+        || matches!(direction, HistoryMessageDirection::Older) && cursor.is_none()
+    {
+        return Err(HistoryError::InvalidCursor);
+    }
+    let direction = match direction {
+        HistoryMessageDirection::Forward => "forward",
+        HistoryMessageDirection::Latest => "latest",
+        HistoryMessageDirection::Older => "older",
+    };
+    let mut args = vec![
+        "--session-id".to_string(),
+        provider_session_id.to_string(),
+        "--direction".to_string(),
+        direction.to_string(),
+        "--limit".to_string(),
+        limit.clamp(1, 100).to_string(),
+    ];
+    if let Some(cursor) = cursor {
+        args.extend(["--cursor".to_string(), cursor.to_string()]);
+    }
+    let page: DshMessagesPage = decode_dsh_adapter(&run_dsh_adapter(
+        source,
+        "messages",
+        &args,
+        DSH_ADAPTER_READ_TIMEOUT,
+    )?)?;
+    if page.messages.iter().any(|message| {
+        !matches!(message.role.as_str(), "user" | "assistant")
+            || !valid_dsh_text(&message.id, 512)
+            || message
+                .id
+                .strip_prefix("dsh:")
+                .is_none_or(|seq| !valid_dsh_cursor(seq))
+            || message.text.len() > MAX_MESSAGE_CHARS * 4
+            || message
+                .timestamp
+                .as_deref()
+                .is_some_and(|value| !valid_dsh_timestamp(value))
+    }) || page
+        .next_cursor
+        .as_deref()
+        .is_some_and(|value| !valid_dsh_cursor(value))
+        || page
+            .older_cursor
+            .as_deref()
+            .is_some_and(|value| !valid_dsh_cursor(value))
+        || (direction == "forward" && page.older_cursor.is_some())
+        || (direction != "forward" && page.next_cursor.is_some())
+    {
+        return Err(HistoryError::Io);
+    }
+    Ok(HistoryMessagesPage {
+        messages: page.messages,
+        next_cursor: page.next_cursor,
+        older_cursor: page.older_cursor,
+    })
 }
 
 #[cfg(test)]
@@ -2685,6 +3020,64 @@ mod tests {
             transcript_path: PathBuf::new(),
             incremental_catalog_stamp: String::new(),
         }
+    }
+
+    #[test]
+    fn dsh_adapter_sessions_are_listed_enriched_and_paged_without_resume() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let adapter = tmp.path().join("dsh-history-adapter");
+        fs::write(
+            &adapter,
+            r##"#!/bin/sh
+case "$1" in
+  list) printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[{"provider_session_id":"dsh-one","cwd":"/work/dsh","created_at":"2026-09-12T01:00:00.000Z","updated_at":"2026-09-12T02:00:00.000Z","revision":"rev-1"}]}' ;;
+  summaries) printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[{"provider_session_id":"dsh-one","title":"DSH title","first_user_prompt_preview":"first","last_user_prompt_preview":"last","updated_at":"2026-09-12T02:01:00.000Z"}]}' ;;
+  messages) printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":{"messages":[{"id":"dsh:3","role":"user","text":"hello","timestamp":"2026-09-12T01:00:01.000Z"}],"older_cursor":"3"}}' ;;
+  *) exit 64 ;;
+esac
+"##,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&adapter).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&adapter, permissions).unwrap();
+        let root = tmp.path().join("sessions");
+        fs::create_dir(&root).unwrap();
+        let catalog =
+            HistoryCatalog::new(Vec::new(), archive_root(tmp.path()), star_root(tmp.path()))
+                .with_dsh_sources(vec![
+                    DshHistorySource {
+                        agent_profile: "unavailable-dsh".to_string(),
+                        command: tmp.path().join("missing-adapter"),
+                        root: tmp.path().join("missing-sessions"),
+                        compression: "zstd".to_string(),
+                    },
+                    DshHistorySource {
+                        agent_profile: "dsh-tui".to_string(),
+                        command: adapter,
+                        root,
+                        compression: "zstd".to_string(),
+                    },
+                ]);
+
+        let page = catalog.list("test", None, Some("dsh"), None, 10).unwrap();
+        assert_eq!(page.sessions.len(), 1);
+        assert!(page.truncated);
+        let session = &page.sessions[0];
+        assert_eq!(session.provider, "dsh");
+        assert_eq!(session.agent_profile.as_deref(), Some("dsh-tui"));
+        assert_eq!(session.title.as_deref(), Some("DSH title"));
+        assert_eq!(session.first_user_prompt_preview.as_deref(), Some("first"));
+        assert_eq!(session.last_user_prompt_preview.as_deref(), Some("last"));
+        assert_eq!(session.updated_at, "2026-09-12T02:00:00.000Z");
+        assert!(!session.resumable);
+
+        let messages = catalog
+            .messages(&session.id, None, 50, HistoryMessageDirection::Latest)
+            .unwrap();
+        assert_eq!(messages.messages.len(), 1);
+        assert_eq!(messages.messages[0].text, "hello");
+        assert_eq!(messages.older_cursor.as_deref(), Some("3"));
     }
 
     fn codex_meta(session_id: &str, timestamp: &str) -> String {
