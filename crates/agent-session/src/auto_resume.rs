@@ -459,7 +459,7 @@ fn cancel_for_manual_input_for_runtime(
     if !runtime_matches(&record, Some(expected_launch_id)) {
         return Ok(ManualInputCancelOutcome::RuntimeChanged);
     }
-    crate::codex_account::authorize_input_locked(context, &mut record)?;
+    crate::codex_account::authorize_proxy_input_locked(context, &mut record)?;
     cancel_for_manual_input_locked(context, &record.id, now)?;
     Ok(ManualInputCancelOutcome::Ready)
 }
