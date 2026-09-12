@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -1155,6 +1156,15 @@ fn valid_dsh_catalog_item(item: &DshCatalogItem) -> bool {
         && valid_dsh_text(&item.revision, 1024)
 }
 
+fn terminate_dsh_adapter(child: &mut std::process::Child) {
+    // SAFETY: the adapter is the leader of a dedicated process group.
+    unsafe {
+        let _ = libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 fn run_dsh_adapter(
     source: &DshHistorySource,
     command: &str,
@@ -1174,37 +1184,61 @@ fn run_dsh_adapter(
         .stderr(Stdio::null())
         .process_group(0);
     let mut child = process.spawn().map_err(|_| HistoryError::Io)?;
-    let stdout = child.stdout.take().ok_or(HistoryError::Io)?;
-    let reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stdout
-            .take(DSH_ADAPTER_OUTPUT_MAX_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .map(|_| bytes)
-    });
+    let mut stdout = child.stdout.take().ok_or(HistoryError::Io)?;
+    let stdout_fd = stdout.as_raw_fd();
+    // SAFETY: stdout_fd remains owned by `stdout` for the duration of this call.
+    let flags = unsafe { libc::fcntl(stdout_fd, libc::F_GETFL) };
+    if flags < 0 || unsafe { libc::fcntl(stdout_fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        terminate_dsh_adapter(&mut child);
+        return Err(HistoryError::Io);
+    }
     let started = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if started.elapsed() < timeout => {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            Ok(None) | Err(_) => {
-                // SAFETY: the adapter is the leader of a dedicated process group.
-                unsafe {
-                    let _ = libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+    let mut output = Vec::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    let mut status = None;
+    let mut stdout_closed = false;
+    loop {
+        while !stdout_closed && output.len() as u64 <= DSH_ADAPTER_OUTPUT_MAX_BYTES {
+            let remaining = (DSH_ADAPTER_OUTPUT_MAX_BYTES + 1 - output.len() as u64) as usize;
+            let read_len = remaining.min(buffer.len());
+            match stdout.read(&mut buffer[..read_len]) {
+                Ok(0) => stdout_closed = true,
+                Ok(read) => output.extend_from_slice(&buffer[..read]),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => {
+                    terminate_dsh_adapter(&mut child);
+                    return Err(HistoryError::Io);
                 }
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = reader.join();
-                return Err(HistoryError::Io);
             }
         }
-    };
-    let output = reader
-        .join()
-        .map_err(|_| HistoryError::Io)?
-        .map_err(|_| HistoryError::Io)?;
+        if output.len() as u64 > DSH_ADAPTER_OUTPUT_MAX_BYTES {
+            terminate_dsh_adapter(&mut child);
+            return Err(HistoryError::Io);
+        }
+        if status.is_none() {
+            match child.try_wait() {
+                Ok(next) => status = next,
+                Err(_) => {
+                    terminate_dsh_adapter(&mut child);
+                    return Err(HistoryError::Io);
+                }
+            }
+        }
+        if status.is_some_and(|value| !value.success()) {
+            terminate_dsh_adapter(&mut child);
+            return Err(HistoryError::Io);
+        }
+        if status.is_some() && stdout_closed {
+            break;
+        }
+        if started.elapsed() >= timeout {
+            terminate_dsh_adapter(&mut child);
+            return Err(HistoryError::Io);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let status = status.ok_or(HistoryError::Io)?;
     if !status.success() || output.len() as u64 > DSH_ADAPTER_OUTPUT_MAX_BYTES {
         return Err(HistoryError::Io);
     }
@@ -3092,6 +3126,40 @@ esac
         assert_eq!(messages.messages.len(), 1);
         assert_eq!(messages.messages[0].text, "hello");
         assert_eq!(messages.older_cursor.as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn dsh_adapter_stdout_drain_respects_deadline_after_parent_exit() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let adapter = tmp.path().join("dsh-history-adapter-holds-stdout");
+        fs::write(
+            &adapter,
+            r##"#!/bin/sh
+(sleep 1) &
+printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
+"##,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&adapter).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&adapter, permissions).unwrap();
+        let root = tmp.path().join("sessions");
+        fs::create_dir(&root).unwrap();
+        let source = DshHistorySource {
+            agent_profile: "dsh-tui".to_string(),
+            command: adapter,
+            root,
+            compression: "zstd".to_string(),
+        };
+
+        let started = Instant::now();
+        let result = run_dsh_adapter(&source, "list", &[], Duration::from_millis(50));
+
+        assert!(matches!(result, Err(HistoryError::Io)));
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "stdout draining must remain inside the adapter deadline"
+        );
     }
 
     fn codex_meta(session_id: &str, timestamp: &str) -> String {
