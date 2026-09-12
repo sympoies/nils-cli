@@ -40,6 +40,7 @@ fn completion_contract_includes_top_level_command_families() {
         script,
         &[
             "'agent:Agent command group' \\",
+            "'account:Account command group' \\",
             "'auth:Authentication command group' \\",
             "'diag:Diagnostics command group' \\",
             "'config:Configuration command group' \\",
@@ -55,10 +56,12 @@ fn completion_contract_is_context_aware_across_command_families() {
         script,
         &[
             "curcontext=\"${curcontext%:*:*}:codex-cli-agent-command-$line[1]:\"",
+            "curcontext=\"${curcontext%:*:*}:codex-cli-account-command-$line[1]:\"",
             "curcontext=\"${curcontext%:*:*}:codex-cli-auth-command-$line[1]:\"",
             "curcontext=\"${curcontext%:*:*}:codex-cli-diag-command-$line[1]:\"",
             "curcontext=\"${curcontext%:*:*}:codex-cli-config-command-$line[1]:\"",
             "'--api-key[Use API key login flow]' \\",
+            "'--idempotency-key=[Stable UUID for this logical redemption attempt]:uuid:_default' \\",
             "'--cached[Cached mode (no network)]' \\",
             "':key:_default' \\",
             "':value:_default' \\",

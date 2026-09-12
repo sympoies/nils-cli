@@ -212,10 +212,206 @@ fn rate_limits_all_json_outputs_results() {
 }
 
 #[test]
+fn rate_limits_all_exposes_reset_credits_and_aligns_the_complete_table() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let secrets = dir.path().join("secrets");
+    fs::create_dir_all(&secrets).expect("secret dir");
+    fs::write(
+        secrets.join("alpha.json"),
+        r#"{"tokens":{"access_token":"tok-alpha","account_id":"acct_001"}}"#,
+    )
+    .expect("secret");
+    let reset_at = Utc::now().timestamp().saturating_add(604_800);
+    let response = serde_json::json!({
+        "rate_limit": {
+            "primary_window": { "limit_window_seconds": 18_000, "used_percent": 6, "reset_at": reset_at - 500_000 },
+            "secondary_window": { "limit_window_seconds": 604_800, "used_percent": 12, "reset_at": reset_at }
+        },
+        "rate_limit_reset_credits": { "available_count": 3 }
+    });
+    let server = LoopbackServer::new().expect("server");
+    server.add_route(
+        "GET",
+        "/wham/usage",
+        HttpResponse::new(200, response.to_string()),
+    );
+
+    let json_output = run(
+        &[
+            "diag",
+            "rate-limits",
+            "--all",
+            "--format",
+            "json",
+            "--no-refresh-auth",
+        ],
+        &[("CODEX_SECRET_DIR", &secrets)],
+        &[
+            ("CODEX_CHATGPT_BASE_URL", &server.url()),
+            ("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false"),
+        ],
+    );
+    assert_exit(&json_output, 0);
+    let payload: Value = serde_json::from_str(&stdout(&json_output)).expect("json");
+    assert_eq!(payload["results"][0]["reset_credits"]["available_count"], 3);
+    assert!(
+        payload["results"][0]["raw_usage"]
+            .get("rate_limit_reset_credits")
+            .is_none()
+    );
+
+    let text_output = run(
+        &["diag", "rate-limits", "--all", "--no-refresh-auth"],
+        &[("CODEX_SECRET_DIR", &secrets)],
+        &[
+            ("CODEX_CHATGPT_BASE_URL", &server.url()),
+            ("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false"),
+            ("NO_COLOR", "1"),
+        ],
+    );
+    assert_exit(&text_output, 0);
+    let text = stdout(&text_output);
+    let lines: Vec<&str> = text.lines().collect();
+    let header_index = lines
+        .iter()
+        .position(|line| line.starts_with("Name"))
+        .expect("header");
+    let header = lines[header_index];
+    let separator = lines[header_index + 1];
+    let row = lines[header_index + 2];
+    assert!(header.ends_with("Reset                 Resets"), "{header}");
+    assert_eq!(separator.len(), header.len());
+    assert!(separator.chars().all(|character| character == '-'));
+    assert_eq!(row.len(), header.len());
+    assert!(row.ends_with("     3"), "{row}");
+}
+
+#[test]
+fn rate_limits_all_omits_invalid_reset_metadata_without_losing_valid_windows() {
+    for invalid in [
+        serde_json::json!({"available_count": -1}),
+        serde_json::json!({"available_count": 1.5}),
+        serde_json::json!({"available_count": "2"}),
+        serde_json::json!({}),
+        Value::Null,
+    ] {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let secrets = dir.path().join("secrets");
+        fs::create_dir_all(&secrets).expect("secret dir");
+        fs::write(
+            secrets.join("alpha.json"),
+            r#"{"tokens":{"access_token":"tok-alpha","account_id":"acct_001"}}"#,
+        )
+        .expect("secret");
+        let server = LoopbackServer::new().expect("server");
+        server.add_route(
+            "GET",
+            "/wham/usage",
+            HttpResponse::new(
+                200,
+                serde_json::json!({
+                    "rate_limit": {
+                        "primary_window": { "limit_window_seconds": 18_000, "used_percent": 6, "reset_at": 2_000_000_000 },
+                        "secondary_window": { "limit_window_seconds": 604_800, "used_percent": 12, "reset_at": 2_000_500_000 }
+                    },
+                    "rate_limit_reset_credits": invalid
+                })
+                .to_string(),
+            ),
+        );
+        let output = run(
+            &[
+                "diag",
+                "rate-limits",
+                "--all",
+                "--format",
+                "json",
+                "--no-refresh-auth",
+            ],
+            &[("CODEX_SECRET_DIR", &secrets)],
+            &[
+                ("CODEX_CHATGPT_BASE_URL", &server.url()),
+                ("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false"),
+            ],
+        );
+        assert_exit(&output, 0);
+        let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+        assert!(payload["results"][0].get("reset_credits").is_none());
+        assert_eq!(
+            payload["results"][0]["windows"].as_array().map(Vec::len),
+            Some(2)
+        );
+    }
+}
+
+#[test]
+fn rate_limits_single_and_async_json_preserve_a_known_zero_reset_count() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let secrets = dir.path().join("secrets");
+    fs::create_dir_all(&secrets).expect("secret dir");
+    fs::write(
+        secrets.join("alpha.json"),
+        r#"{"tokens":{"access_token":"tok-alpha","account_id":"acct_001"}}"#,
+    )
+    .expect("secret");
+    let server = LoopbackServer::new().expect("server");
+    server.add_route(
+        "GET",
+        "/wham/usage",
+        HttpResponse::new(
+            200,
+            r#"{
+  "rate_limit": {
+    "primary_window": { "limit_window_seconds": 18000, "used_percent": 6, "reset_at": 2000000000 },
+    "secondary_window": { "limit_window_seconds": 604800, "used_percent": 12, "reset_at": 2000500000 }
+  },
+  "rate_limit_reset_credits": { "available_count": 0 }
+}"#,
+        ),
+    );
+
+    for args in [
+        vec![
+            "diag",
+            "rate-limits",
+            "--format",
+            "json",
+            "--no-refresh-auth",
+            "alpha.json",
+        ],
+        vec![
+            "diag",
+            "rate-limits",
+            "--async",
+            "--format",
+            "json",
+            "--no-refresh-auth",
+        ],
+    ] {
+        let output = run(
+            &args,
+            &[("CODEX_SECRET_DIR", &secrets)],
+            &[
+                ("CODEX_CHATGPT_BASE_URL", &server.url()),
+                ("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false"),
+            ],
+        );
+        assert_exit(&output, 0);
+        let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+        let result = if payload["mode"] == "single" {
+            &payload["result"]
+        } else {
+            &payload["results"][0]
+        };
+        assert_eq!(result["reset_credits"]["available_count"], 0);
+    }
+}
+
+#[test]
 fn rate_limits_all_json_no_window_payloads_serve_preserved_cache() {
     let responses = [
-        r#"{"plan_type":"pro","rate_limit":null}"#,
-        r#"{"plan_type":"pro","rate_limit":{"primary_window":null,"secondary_window":null}}"#,
+        r#"{"plan_type":"pro","rate_limit":null,"rate_limit_reset_credits":{"available_count":4}}"#,
+        r#"{"plan_type":"pro","rate_limit":{"primary_window":null,"secondary_window":null},"rate_limit_reset_credits":{"available_count":4}}"#,
     ];
 
     for response in responses {
@@ -238,26 +434,32 @@ fn rate_limits_all_json_no_window_payloads_serve_preserved_cache() {
         let server = LoopbackServer::new().expect("server");
         server.add_route("GET", "/wham/usage", HttpResponse::new(200, response));
 
-        let output = run(
-            &["diag", "rate-limits", "--all", "--format", "json"],
-            &[
-                ("CODEX_SECRET_DIR", &secrets),
-                ("ZSH_CACHE_DIR", &cache_root),
-            ],
-            &[
-                ("CODEX_CHATGPT_BASE_URL", &server.url()),
-                ("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false"),
-            ],
-        );
+        for args in [
+            vec!["diag", "rate-limits", "--all", "--format", "json"],
+            vec!["diag", "rate-limits", "--async", "--format", "json"],
+        ] {
+            let output = run(
+                &args,
+                &[
+                    ("CODEX_SECRET_DIR", &secrets),
+                    ("ZSH_CACHE_DIR", &cache_root),
+                ],
+                &[
+                    ("CODEX_CHATGPT_BASE_URL", &server.url()),
+                    ("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false"),
+                ],
+            );
 
-        assert_exit(&output, 0);
-        let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
-        let result = &payload["results"][0];
-        assert_eq!(result["status"], "ok");
-        assert_eq!(result["source"], "cache-fallback");
-        assert_eq!(result["summary"]["non_weekly_remaining"], 91);
-        assert_eq!(result["summary"]["weekly_remaining"], 70);
-        assert_eq!(result["windows"].as_array().expect("windows").len(), 2);
+            assert_exit(&output, 0);
+            let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+            let result = &payload["results"][0];
+            assert_eq!(result["status"], "ok");
+            assert_eq!(result["source"], "cache-fallback");
+            assert_eq!(result["summary"]["non_weekly_remaining"], 91);
+            assert_eq!(result["summary"]["weekly_remaining"], 70);
+            assert_eq!(result["windows"].as_array().expect("windows").len(), 2);
+            assert_eq!(result["reset_credits"]["available_count"], 4);
+        }
         assert_eq!(fs::read_to_string(&secret_file).expect("secret"), secret);
         assert_eq!(fs::read_to_string(&kv_path).expect("cache"), cache);
     }

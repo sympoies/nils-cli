@@ -3,7 +3,7 @@ mod completion;
 
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
-use codex_cli::{agent, auth, config};
+use codex_cli::{account, agent, auth, config};
 use nils_common::cli_contract::exit;
 
 fn main() {
@@ -36,6 +36,7 @@ fn run() -> i32 {
     match cli.command {
         Some(command) => match command {
             cli::Command::Agent(args) => handle_agent(&args),
+            cli::Command::Account(args) => handle_account(&args),
             cli::Command::Auth(args) => handle_auth(&args),
             cli::Command::Diag(args) => handle_diag(&args),
             cli::Command::Config(args) => handle_config(&args),
@@ -50,6 +51,28 @@ fn run() -> i32 {
             }
             1
         }
+    }
+}
+
+fn handle_account(args: &cli::AccountArgs) -> i32 {
+    match &args.command {
+        Some(cli::AccountCommand::ResetRateLimits {
+            yes,
+            idempotency_key,
+            no_refresh_auth,
+            output,
+            secret,
+        }) => {
+            account::reset_rate_limits::run(&account::reset_rate_limits::ResetRateLimitsOptions {
+                yes: *yes,
+                idempotency_key: idempotency_key.clone(),
+                output_json: output.is_json(),
+                no_refresh_auth: *no_refresh_auth,
+                secret: secret.clone(),
+            })
+            .unwrap_or(1)
+        }
+        None => print_subcommand_help("account"),
     }
 }
 

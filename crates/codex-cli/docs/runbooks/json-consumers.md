@@ -5,6 +5,7 @@
 This runbook covers service consumption of `codex-cli` JSON output for:
 
 - `diag rate-limits` (single/all/async)
+- `account reset-rate-limits`
 - `auth login|use|save|remove|refresh|auto-refresh|status|current|sync|remote pull`
 - `prompt-segment status`
 - `agent run`
@@ -16,10 +17,13 @@ Shared baseline guidance:
 Codex-specific contract source:
 
 - `crates/codex-cli/docs/specs/codex-cli-diag-rate-limits-and-auth-json-contract-v1.md`
+- `crates/codex-cli/docs/specs/codex-cli-account-reset-rate-limits-json-contract-v1.md`
 
 ## Provider-specific schema routing
 
 - `diag rate-limits` => `schema_version=codex-cli.diag.rate-limits.v1`
+- `account reset-rate-limits` =>
+  `schema_version=codex-cli.account.reset-rate-limits.v1`
 - `auth *` => `schema_version=codex-cli.auth.v1`
 - `prompt-segment status` => `schema_version=codex-cli.prompt-segment.v1`
 - `agent run` success/post-preflight result =>
@@ -67,6 +71,13 @@ Codex-specific contract source:
   and is an explicit operator decision.
 - `agent run` writes supervisor progress and the inherited-mode notice to
   stderr only. JSON stdout stays a single envelope; do not parse stderr as JSON.
+- `diag rate-limits` may include optional live-only
+  `reset_credits.available_count`. Do not infer zero when the field is absent;
+  cached and malformed upstream metadata deliberately omit it.
+- `account reset-rate-limits` is a mutation. Non-interactive callers must pass
+  `--yes` and a canonical lowercase UUID as `--idempotency-key`, then retain
+  that UUID for retries of the same logical action. Never generate a new key for
+  a retry whose result is unknown.
 
 ## Consumer checklist
 
@@ -80,6 +91,7 @@ Example commands:
 ```bash
 codex-cli diag rate-limits --format json alpha.json
 codex-cli diag rate-limits --all --format json
+codex-cli account reset-rate-limits --yes --idempotency-key 8ae96ff3-3425-4f4c-8772-b6fd61502868 --format json alpha.json
 codex-cli auth login --format json
 codex-cli auth login --format json --device-code
 codex-cli auth login --format json --api-key

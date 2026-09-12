@@ -16,6 +16,7 @@ Usage:
 
 Groups:
   agent           prompt | advice | knowledge | commit | resume | run | doctor
+  account         reset-rate-limits
   auth            login | use | save | remove | refresh | auto-refresh | status | current | sync | remote pull
   diag            rate-limits
   config          show | set
@@ -35,7 +36,9 @@ Help:
 | OpenAI/Codex auth, Codex prompt wrappers, Codex rate-limit diagnostics, prompt-segment rendering | `codex-cli`                                            |
 | Unsupported commands/groups                                                                      | clap usage error (`64`)                                |
 
-- `codex-cli` owns only provider-specific OpenAI/Codex operations (`agent`, `auth`, `diag rate-limits`, `config`, `prompt-segment`, `completion`).
+- `codex-cli` owns only provider-specific OpenAI/Codex operations (`agent`,
+  `account`, `auth`, `diag rate-limits`, `config`, `prompt-segment`,
+  `completion`).
 - Existing `codex-cli` commands stay stable for provider-specific workflows.
 - Unknown groups/subcommands are deterministic usage errors (`64`).
 
@@ -155,6 +158,17 @@ Auth examples:
 - Configure a replica to delegate default active-auth refresh to `g14`:
   `eval "$(codex-cli config set remote-ssh g14)" && eval "$(codex-cli config set remote-name team)"`
 
+### account
+
+- `reset-rate-limits [--yes] [--idempotency-key <uuid>] [--no-refresh-auth]
+  [--format <text|json>] [secret.json]`: Consume one earned reset credit for
+  one ChatGPT-authenticated account. Automation must pass both `--yes` and a
+  canonical lowercase UUID. Interactive use shows the current earned-credit
+  count and defaults the confirmation prompt to no.
+- The command reports only the stable outcome
+  `reset|nothing_to_reset|no_credit|already_redeemed`; provider credit IDs,
+  tokens, account IDs, absolute paths, and raw provider bodies are never emitted.
+
 ### diag
 
 - `rate-limits [options] [secret.json]`: Rate-limit diagnostics. Options: `-c/--clear-cache`, `-d/--debug`, `--cached`,
@@ -168,6 +182,10 @@ Auth examples:
   skew; a timestamp further ahead fails closed. Cache/auth files are retained,
   and prompt refresh/retry continues without rendering expired percentages.
 - `--watch` refreshes output every 60 seconds until interrupted and requires `--async`.
+- Live responses expose earned reset credits as optional JSON
+  `reset_credits.available_count`. The all-account text table shows `Resets` as
+  the rightmost, right-aligned column. Cached results omit reset credits because
+  this mutable capability is never persisted.
 
 ### config
 
@@ -190,9 +208,10 @@ Auth examples:
 
 - Human-readable text is the default output mode.
 - Machine-readable JSON mode is explicit: use `--format json` (preferred) or `--json` where supported for compatibility.
-- Contract spec: `docs/specs/codex-cli-diag-rate-limits-and-auth-json-contract-v1.md`
+- Contract specs: `docs/specs/codex-cli-diag-rate-limits-and-auth-json-contract-v1.md`
+  and `docs/specs/codex-cli-account-reset-rate-limits-json-contract-v1.md`
 - Consumer runbook: `docs/runbooks/json-consumers.md`
-- Covered surfaces: `agent run`, `diag rate-limits` (single/all/async),
+- Covered surfaces: `agent run`, `account reset-rate-limits`, `diag rate-limits` (single/all/async),
   `auth login|use|save|remove|refresh|auto-refresh|status|current|sync|remote pull`, and `prompt-segment status`.
 
 ## Environment

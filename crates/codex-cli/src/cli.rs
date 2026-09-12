@@ -5,6 +5,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum, ValueHint};
 const ROOT_AFTER_HELP: &str = "\
 EXAMPLES:
   codex-cli agent prompt 'Summarize this diff'
+  codex-cli account reset-rate-limits --yes --idempotency-key <uuid> team.json
   codex-cli auth status --format json
   codex-cli prompt-segment status
   codex-cli completion zsh
@@ -48,6 +49,8 @@ pub struct Cli {
 pub enum Command {
     /// Agent command group
     Agent(AgentArgs),
+    /// Account command group
+    Account(AccountArgs),
     /// Authentication command group
     Auth(AuthArgs),
     /// Diagnostics command group
@@ -58,6 +61,33 @@ pub enum Command {
     PromptSegment(PromptSegmentArgs),
     /// Export shell completion script
     Completion(CompletionArgs),
+}
+
+#[derive(Args)]
+pub struct AccountArgs {
+    #[command(subcommand)]
+    pub command: Option<AccountCommand>,
+}
+
+#[derive(Subcommand)]
+pub enum AccountCommand {
+    /// Consume one earned Codex rate-limit reset
+    ResetRateLimits {
+        /// Confirm consumption without an interactive prompt
+        #[arg(short = 'y', long = "yes")]
+        yes: bool,
+        /// Stable UUID for this logical redemption attempt
+        #[arg(long = "idempotency-key", value_name = "uuid")]
+        idempotency_key: Option<String>,
+        /// Disable refresh-on-401 behavior even when CODEX_AUTO_REFRESH_ENABLED=true
+        #[arg(long = "no-refresh-auth")]
+        no_refresh_auth: bool,
+        #[command(flatten)]
+        output: OutputModeArgs,
+        /// Optional configured account secret filename
+        #[arg(value_name = "secret.json")]
+        secret: Option<String>,
+    },
 }
 
 #[derive(Args)]

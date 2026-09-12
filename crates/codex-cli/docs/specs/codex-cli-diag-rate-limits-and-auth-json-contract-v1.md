@@ -90,6 +90,8 @@ Stable (safe for strict parsing):
     `summary.weekly_remaining`, `summary.weekly_reset_epoch`,
     `summary.non_weekly_reset_epoch`
   - `results[*].provider` (`codex`)
+  - optional `result.reset_credits.available_count` and
+    `results[*].reset_credits.available_count` (non-negative integer)
   - `results[*].windows[*].label`, `used_percent`, `remaining_percent`,
     optional `reset_at_epoch`
 - Auth:
@@ -127,6 +129,12 @@ Informational (do not hard-depend for schema validation):
 - `raw_usage` (allowlisted upstream usage projection; shape may evolve)
 - Optional additive metadata (`source`, timestamps, debugging hints)
 - Human-display-oriented strings inside `error.details`
+
+`reset_credits` is live capability metadata. It is emitted only when the
+upstream object contains a non-negative integer `available_count`; absent,
+negative, fractional, string, null, or malformed values are omitted without
+discarding otherwise valid windows. Cached results omit it and consumers must
+not interpret absence as zero.
 
 Provider usage failures may carry additive `reason_code` on a per-account
 `result`. Command-level errors carry the same value under
@@ -181,6 +189,9 @@ the error message.
         "reset_at_epoch": 1700600000
       }
     ],
+    "reset_credits": {
+      "available_count": 3
+    },
     "raw_usage": {
       "rate_limit": {}
     }
