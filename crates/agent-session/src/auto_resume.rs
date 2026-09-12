@@ -415,8 +415,16 @@ pub(crate) fn try_cancel_for_manual_input_for_runtime(
     id: &str,
     expected_launch_id: &str,
     now: &str,
+    record_turn_fence: bool,
 ) -> Result<ManualInputCancelOutcome, CliError> {
-    cancel_for_manual_input_for_runtime(context, id, expected_launch_id, now, None)
+    cancel_for_manual_input_for_runtime(
+        context,
+        id,
+        expected_launch_id,
+        now,
+        record_turn_fence,
+        None,
+    )
 }
 
 pub(crate) fn cancel_for_manual_input_for_runtime_with_timeout(
@@ -424,12 +432,14 @@ pub(crate) fn cancel_for_manual_input_for_runtime_with_timeout(
     id: &str,
     expected_launch_id: &str,
     now: &str,
+    record_turn_fence: bool,
 ) -> Result<ManualInputCancelOutcome, CliError> {
     cancel_for_manual_input_for_runtime(
         context,
         id,
         expected_launch_id,
         now,
+        record_turn_fence,
         Some(PROTOCOL_STATE_LOCK_TIMEOUT),
     )
 }
@@ -439,6 +449,7 @@ fn cancel_for_manual_input_for_runtime(
     id: &str,
     expected_launch_id: &str,
     now: &str,
+    record_turn_fence: bool,
     timeout: Option<Duration>,
 ) -> Result<ManualInputCancelOutcome, CliError> {
     let observed = load_session_record(context, id)?;
@@ -459,7 +470,7 @@ fn cancel_for_manual_input_for_runtime(
     if !runtime_matches(&record, Some(expected_launch_id)) {
         return Ok(ManualInputCancelOutcome::RuntimeChanged);
     }
-    crate::codex_account::authorize_input_locked(context, &mut record)?;
+    crate::codex_account::authorize_proxy_input_locked(context, &mut record, record_turn_fence)?;
     cancel_for_manual_input_locked(context, &record.id, now)?;
     Ok(ManualInputCancelOutcome::Ready)
 }

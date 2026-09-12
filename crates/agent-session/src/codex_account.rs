@@ -570,6 +570,27 @@ pub(crate) fn authorize_input_locked(
     authorize_input_locked_with(context, record, false)
 }
 
+/// Record provider input authorization for a detached app-server proxy.
+///
+/// A bound proxy proves its exact applied runtime from durable state and must
+/// not inherit the daemon-only credential broker. Turn input also writes the
+/// durable fence that closes the accepted-but-not-yet-observed window;
+/// thread creation only needs the binding validation.
+pub(crate) fn authorize_proxy_input_locked(
+    context: &CliContext,
+    record: &mut SessionRecord,
+    record_turn_fence: bool,
+) -> Result<(), CliError> {
+    if record.agent != "codex" || !binding_is_present(record) {
+        return Ok(());
+    }
+    ensure_proxy_input_allowed(record)?;
+    if record_turn_fence {
+        record_input_fence_locked(context, record)?;
+    }
+    Ok(())
+}
+
 /// Record authorization for terminal input while allowing the currently bound
 /// runtime to receive input during a queued next-account transition.
 pub(crate) fn authorize_terminal_input_locked(
@@ -599,6 +620,13 @@ fn authorize_input_locked_with(
         return Ok(());
     }
     ensure_allowed(record)?;
+    record_input_fence_locked(context, record)
+}
+
+fn record_input_fence_locked(
+    context: &CliContext,
+    record: &mut SessionRecord,
+) -> Result<(), CliError> {
     let launch_id = record
         .runtime
         .as_ref()
@@ -1727,6 +1755,25 @@ mod tests {
         assert_eq!(
             ensure_proxy_input_allowed(&queued).unwrap_err().code(),
             "codex-account-next-pending"
+        );
+    }
+
+    #[test]
+    fn proxy_locked_authorization_fences_account_switch_without_broker_authority() {
+        let lock = GlobalStateLock::new();
+        let without_broker = EnvGuard::set(&lock, BROKER_ENV, "");
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, mut record) = persist_record(&tmp, valid_binding("bound"));
+
+        authorize_proxy_input_locked(&context, &mut record, true).unwrap();
+        drop(without_broker);
+        let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
+
+        assert_eq!(
+            begin_switch_binding(&context, &record.id, "runtime-binding-fixture", "poies",)
+                .unwrap_err()
+                .code(),
+            "codex-account-session-busy"
         );
     }
 

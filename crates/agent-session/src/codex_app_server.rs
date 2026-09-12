@@ -4324,6 +4324,7 @@ async fn cancel_before_tui_mutation_detailed(
         .as_ref()
         .is_some_and(|gate| gate._owner_file.is_some());
     let wait_for_transient_lock = bootstrap_gate.is_none() && !sender_owns_record_authority;
+    let record_turn_fence = method == Some("turn/start");
     let cancellation = tokio::task::spawn_blocking(move || {
         let now = Timestamp::now().to_string();
         if wait_for_transient_lock {
@@ -4332,6 +4333,7 @@ async fn cancel_before_tui_mutation_detailed(
                 &id,
                 &launch_id,
                 &now,
+                record_turn_fence,
             )
         } else {
             crate::auto_resume::try_cancel_for_manual_input_for_runtime(
@@ -4339,18 +4341,19 @@ async fn cancel_before_tui_mutation_detailed(
                 &id,
                 &launch_id,
                 &now,
+                record_turn_fence,
             )
         }
     })
     .await
-    .ok()
-    .and_then(Result::ok);
+    .map_err(|_| TuiMutationRejection::AccountAuthorityUnavailable)?
+    .map_err(|_| TuiMutationRejection::AccountAuthorityUnavailable)?;
     // Either gate proves that the outer sender still owns the matching
     // record/lifecycle authority. Reacquiring the record lock while holding
     // the gate would invert marker teardown's lock order.
     let sender_owns_record_authority = bootstrap_gate.is_some() || sender_owns_record_authority;
     let mut authorization = match cancellation {
-        Some(crate::auto_resume::ManualInputCancelOutcome::Ready) => {
+        crate::auto_resume::ManualInputCancelOutcome::Ready => {
             bootstrap.close();
             Ok(MutationAuthorization {
                 _bootstrap_gate: bootstrap_gate,
@@ -4358,7 +4361,7 @@ async fn cancel_before_tui_mutation_detailed(
                 _account_authority: None,
             })
         }
-        Some(crate::auto_resume::ManualInputCancelOutcome::Busy)
+        crate::auto_resume::ManualInputCancelOutcome::Busy
             if bootstrap_gate.is_some()
                 && bootstrap.bypasses_create_lock(context, record, value) =>
         {
@@ -4368,7 +4371,7 @@ async fn cancel_before_tui_mutation_detailed(
                 _account_authority: None,
             })
         }
-        Some(crate::auto_resume::ManualInputCancelOutcome::Busy)
+        crate::auto_resume::ManualInputCancelOutcome::Busy
             if turn_start_gate
                 .as_ref()
                 .is_some_and(|gate| gate._owner_file.is_some()) =>
@@ -4380,10 +4383,10 @@ async fn cancel_before_tui_mutation_detailed(
                 _account_authority: None,
             })
         }
-        Some(crate::auto_resume::ManualInputCancelOutcome::Busy) => {
+        crate::auto_resume::ManualInputCancelOutcome::Busy => {
             Err(TuiMutationRejection::ManualCancellationBusy)
         }
-        Some(crate::auto_resume::ManualInputCancelOutcome::RuntimeChanged) | None => {
+        crate::auto_resume::ManualInputCancelOutcome::RuntimeChanged => {
             bootstrap.close();
             Err(TuiMutationRejection::RuntimeChanged)
         }
@@ -10455,6 +10458,193 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             authorization,
             "valid managed-account input must be authorized"
         );
+    }
+
+    #[tokio::test]
+    async fn managed_account_proxy_authorizes_raw_tui_turn_without_broker_environment() {
+        let env_lock = GlobalStateLock::new();
+        let broker = EnvGuard::set(
+            &env_lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            r#"["/configured/broker"]"#,
+        );
+        let tmp = tempfile::TempDir::new().unwrap();
+        let upstream = tmp.path().join("managed-raw.sock");
+        let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let mut record = record_with_runtime("managed-raw", &upstream);
+        crate::codex_account::set_initial_binding(&mut record, Some("gamania")).unwrap();
+        fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        crate::activity::activate_runtime(&context, &record).unwrap();
+        crate::codex_account::finish_binding(
+            &context,
+            &record.id,
+            &record.runtime.as_ref().unwrap().launch_id,
+            "gamania",
+            1,
+            Ok(()),
+        )
+        .unwrap();
+        bind_thread(&record, "managed-thread").unwrap();
+        drop(broker);
+        let _without_broker = EnvGuard::remove(&env_lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
+
+        let proxy_args = crate::cli::CodexAppServerProxyArgs {
+            id: record.id.clone(),
+            upstream: upstream.clone(),
+            listen: upstream.with_extension("proxy"),
+        };
+        let proxy_context = context.clone();
+        let proxy = tokio::spawn(async move { run_proxy_session(proxy_context, proxy_args).await });
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let request = receive_json(&mut socket).await;
+            assert_eq!(request["method"], "turn/start");
+            respond(
+                &mut socket,
+                &request,
+                json!({ "turn": { "id": "post-switch-turn", "status": "inProgress" } }),
+            )
+            .await;
+            socket.close(None).await.unwrap();
+        });
+        let proxy_stream = connect_socket(&upstream.with_extension("proxy"))
+            .await
+            .unwrap();
+        let (mut tui, _) = tokio_tungstenite::client_async("ws://localhost", proxy_stream)
+            .await
+            .unwrap();
+        tui.send(Message::Text(
+            json!({
+                "id": 11,
+                "method": "turn/start",
+                "params": { "threadId": "managed-thread", "input": [] }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+
+        let response = receive_json(&mut tui).await;
+        assert_eq!(response["id"], 11);
+        assert_eq!(response["result"]["turn"]["id"], "post-switch-turn");
+        server.await.unwrap();
+        proxy.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn managed_account_proxy_thread_start_does_not_persist_turn_fence() {
+        let env_lock = GlobalStateLock::new();
+        let broker = EnvGuard::set(
+            &env_lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            r#"["/configured/broker"]"#,
+        );
+        let tmp = tempfile::TempDir::new().unwrap();
+        let upstream = tmp.path().join("managed-thread-only.sock");
+        let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let mut record = record_with_runtime("managed-thread-only", &upstream);
+        crate::codex_account::set_initial_binding(&mut record, Some("gamania")).unwrap();
+        fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        crate::activity::activate_runtime(&context, &record).unwrap();
+        crate::codex_account::finish_binding(
+            &context,
+            &record.id,
+            &record.runtime.as_ref().unwrap().launch_id,
+            "gamania",
+            1,
+            Ok(()),
+        )
+        .unwrap();
+        let turn_started = serde_json::from_value(json!({
+            "schema_version": crate::activity::TURN_EVENT_VERSION,
+            "event_id": "thread-only-prior-turn-start",
+            "runtime_id": record.runtime.as_ref().unwrap().launch_id,
+            "provider": "codex",
+            "provider_turn_id": "thread-only-prior-turn",
+            "kind": "turn_started",
+            "confidence": "authoritative"
+        }))
+        .unwrap();
+        crate::activity::ingest_event(&context, &record.id, turn_started).unwrap();
+        let turn_completed = serde_json::from_value(json!({
+            "schema_version": crate::activity::TURN_EVENT_VERSION,
+            "event_id": "thread-only-prior-turn-complete",
+            "runtime_id": record.runtime.as_ref().unwrap().launch_id,
+            "provider": "codex",
+            "provider_turn_id": "thread-only-prior-turn",
+            "kind": "turn_completed",
+            "confidence": "authoritative"
+        }))
+        .unwrap();
+        crate::activity::ingest_event(&context, &record.id, turn_completed).unwrap();
+        drop(broker);
+        let _without_broker = EnvGuard::remove(&env_lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
+
+        let proxy_args = crate::cli::CodexAppServerProxyArgs {
+            id: record.id.clone(),
+            upstream: upstream.clone(),
+            listen: upstream.with_extension("proxy"),
+        };
+        let proxy_context = context.clone();
+        let proxy = tokio::spawn(async move { run_proxy_session(proxy_context, proxy_args).await });
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let request = receive_json(&mut socket).await;
+            assert_eq!(request["method"], "thread/start");
+            respond(
+                &mut socket,
+                &request,
+                json!({ "thread": { "id": "idle-thread" } }),
+            )
+            .await;
+            socket.close(None).await.unwrap();
+        });
+        let proxy_stream = connect_socket(&upstream.with_extension("proxy"))
+            .await
+            .unwrap();
+        let (mut tui, _) = tokio_tungstenite::client_async("ws://localhost", proxy_stream)
+            .await
+            .unwrap();
+        tui.send(Message::Text(
+            json!({ "id": 12, "method": "thread/start", "params": {} })
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+
+        let response = receive_json(&mut tui).await;
+        assert_eq!(response["id"], 12);
+        assert_eq!(response["result"]["thread"]["id"], "idle-thread");
+        server.await.unwrap();
+        proxy.await.unwrap().unwrap();
+        drop(_without_broker);
+        let _broker = EnvGuard::set(
+            &env_lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            r#"["/configured/broker"]"#,
+        );
+
+        crate::codex_account::begin_switch_binding(
+            &context,
+            &record.id,
+            &record.runtime.as_ref().unwrap().launch_id,
+            "poies",
+        )
+        .unwrap();
     }
 
     #[tokio::test]
