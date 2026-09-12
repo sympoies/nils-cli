@@ -573,18 +573,22 @@ pub(crate) fn authorize_input_locked(
 /// Record provider input authorization for a detached app-server proxy.
 ///
 /// A bound proxy proves its exact applied runtime from durable state and must
-/// not inherit the daemon-only credential broker. It still writes the input
-/// fence so an account switch cannot enter the accepted-but-not-yet-observed
-/// turn window.
+/// not inherit the daemon-only credential broker. Turn input also writes the
+/// durable fence that closes the accepted-but-not-yet-observed window;
+/// thread creation only needs the binding validation.
 pub(crate) fn authorize_proxy_input_locked(
     context: &CliContext,
     record: &mut SessionRecord,
+    record_turn_fence: bool,
 ) -> Result<(), CliError> {
     if record.agent != "codex" || !binding_is_present(record) {
         return Ok(());
     }
     ensure_proxy_input_allowed(record)?;
-    record_input_fence_locked(context, record)
+    if record_turn_fence {
+        record_input_fence_locked(context, record)?;
+    }
+    Ok(())
 }
 
 /// Record authorization for terminal input while allowing the currently bound
@@ -1761,7 +1765,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, mut record) = persist_record(&tmp, valid_binding("bound"));
 
-        authorize_proxy_input_locked(&context, &mut record).unwrap();
+        authorize_proxy_input_locked(&context, &mut record, true).unwrap();
         drop(without_broker);
         let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
 
