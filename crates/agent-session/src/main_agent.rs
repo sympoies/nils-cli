@@ -4280,6 +4280,7 @@ fn run_worker_start_single_input(
                     .as_ref()
                     .map(|_| assignment_id.clone()),
                 initial_codex_account: None,
+                initial_codex_account_source: None,
                 initial_title_state: None,
                 initial_agent_profile: None,
                 initial_provider_config_dir: launch_provider_config_dir.clone(),

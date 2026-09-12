@@ -50,6 +50,8 @@ pub(crate) struct CodexAccountCredentials {
 struct DurableBinding {
     schema_version: String,
     selected_account: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    selection_source: Option<String>,
     revision: u64,
     state: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -73,6 +75,8 @@ struct DurableInputFence {
 struct DurableNextAccount {
     schema_version: String,
     account: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    selection_source: Option<String>,
     revision: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     intent_id: Option<String>,
@@ -103,6 +107,14 @@ pub(crate) struct NextAccountIdentity {
     pub(crate) intent_id: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NextTransitionState {
+    Absent,
+    Pending,
+    Failed,
+    Invalid,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum BindingSnapshot {
     Unbound,
@@ -117,6 +129,10 @@ pub(crate) struct CodexAccountView {
     pub(crate) state: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) selected_account: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) effective_account: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) selection_source: Option<String>,
     pub(crate) revision: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) applied_runtime_id: Option<String>,
@@ -158,6 +174,8 @@ pub(crate) struct CodexAccountSummary {
 struct BrokerListResponse {
     schema_version: String,
     accounts: Vec<CodexAccountSummary>,
+    #[serde(default)]
+    selection_strategies: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -175,7 +193,7 @@ struct BrokerResolveResponse {
 struct BrokerSelectResponse {
     schema_version: String,
     #[serde(alias = "nickname")]
-    account: String,
+    account: Option<String>,
     #[serde(default, alias = "chatgpt_plan_type")]
     plan: Option<String>,
 }
@@ -198,6 +216,14 @@ pub(crate) fn view_for_record(record: &SessionRecord) -> CodexAccountView {
                 DecodedBinding::Valid(binding) => Some(binding.selected_account.clone()),
                 DecodedBinding::Absent | DecodedBinding::Invalid => None,
             },
+            effective_account: match &decoded {
+                DecodedBinding::Valid(binding) => Some(binding.selected_account.clone()),
+                DecodedBinding::Absent | DecodedBinding::Invalid => None,
+            },
+            selection_source: match &decoded {
+                DecodedBinding::Valid(binding) => binding.selection_source.clone(),
+                DecodedBinding::Absent | DecodedBinding::Invalid => None,
+            },
             revision: match &decoded {
                 DecodedBinding::Valid(binding) => binding.revision,
                 DecodedBinding::Absent | DecodedBinding::Invalid => 0,
@@ -214,6 +240,8 @@ pub(crate) fn view_for_record(record: &SessionRecord) -> CodexAccountView {
                 supported: true,
                 state: "unbound",
                 selected_account: None,
+                effective_account: None,
+                selection_source: None,
                 revision: 0,
                 applied_runtime_id: None,
                 failure_reason: None,
@@ -226,6 +254,8 @@ pub(crate) fn view_for_record(record: &SessionRecord) -> CodexAccountView {
                 supported: true,
                 state: "failed",
                 selected_account: None,
+                effective_account: None,
+                selection_source: None,
                 revision: 0,
                 applied_runtime_id: None,
                 failure_reason: Some("binding_invalid".to_string()),
@@ -240,11 +270,14 @@ pub(crate) fn view_for_record(record: &SessionRecord) -> CodexAccountView {
         "failed" => "failed",
         _ => "failed",
     };
+    let effective_account = (state == "bound").then(|| binding.selected_account.clone());
     CodexAccountView {
         schema_version: VIEW_SCHEMA_VERSION,
         supported: true,
         state,
-        selected_account: Some(binding.selected_account),
+        selected_account: Some(binding.selected_account.clone()),
+        effective_account,
+        selection_source: binding.selection_source,
         revision: binding.revision,
         applied_runtime_id: binding.applied_runtime_id,
         failure_reason: binding.failure_reason,
@@ -298,14 +331,24 @@ pub(crate) fn account_for_control_rebind(
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn set_initial_binding(
     record: &mut SessionRecord,
     account: Option<&str>,
+) -> Result<(), CliError> {
+    set_initial_binding_with_source(record, account, account.map(|_| "explicit"))
+}
+
+pub(crate) fn set_initial_binding_with_source(
+    record: &mut SessionRecord,
+    account: Option<&str>,
+    selection_source: Option<&str>,
 ) -> Result<(), CliError> {
     let Some(account) = account else {
         return Ok(());
     };
     validate_account(account)?;
+    validate_selection_source(selection_source)?;
     if record.agent != "codex" {
         return Err(CliError::usage(
             "codex-account-agent-conflict",
@@ -325,6 +368,7 @@ pub(crate) fn set_initial_binding(
         &DurableBinding {
             schema_version: BINDING_SCHEMA_VERSION.to_string(),
             selected_account: account.to_string(),
+            selection_source: selection_source.map(str::to_string),
             revision: 1,
             state: "pending".to_string(),
             applied_runtime_id: None,
@@ -428,6 +472,7 @@ pub(crate) fn begin_binding(
         &DurableBinding {
             schema_version: BINDING_SCHEMA_VERSION.to_string(),
             selected_account: account.to_string(),
+            selection_source: prior.selection_source,
             revision,
             state: "pending".to_string(),
             applied_runtime_id: None,
@@ -478,6 +523,7 @@ pub(crate) fn finish_binding(
         &DurableBinding {
             schema_version: BINDING_SCHEMA_VERSION.to_string(),
             selected_account: account.to_string(),
+            selection_source: current.selection_source,
             revision,
             state: state.to_string(),
             applied_runtime_id,
@@ -706,6 +752,7 @@ pub(crate) fn begin_switch_binding(
         &DurableBinding {
             schema_version: BINDING_SCHEMA_VERSION.to_string(),
             selected_account: account.to_string(),
+            selection_source: Some("explicit".to_string()),
             revision,
             state: "pending".to_string(),
             applied_runtime_id: None,
@@ -727,6 +774,7 @@ fn decode_next(record: &SessionRecord) -> DecodedNext {
         Ok(next)
             if next.schema_version == NEXT_SCHEMA_VERSION
                 && validate_account(&next.account).is_ok()
+                && validate_selection_source(next.selection_source.as_deref()).is_ok()
                 && next.revision > 0
                 && next
                     .intent_id
@@ -825,6 +873,61 @@ pub(crate) fn next_account_identity(
             intent_id: next.intent_id,
         })),
     }
+}
+
+pub(crate) fn next_transition_state(record: &SessionRecord) -> NextTransitionState {
+    match decode_next(record) {
+        DecodedNext::Absent => NextTransitionState::Absent,
+        DecodedNext::Valid(next) if matches!(next.state.as_str(), "queued" | "applying") => {
+            NextTransitionState::Pending
+        }
+        DecodedNext::Valid(_) => NextTransitionState::Failed,
+        DecodedNext::Invalid => NextTransitionState::Invalid,
+    }
+}
+
+pub(crate) fn queue_auto_failover_locked(
+    context: &CliContext,
+    record: &mut SessionRecord,
+    account: &str,
+) -> Result<(), CliError> {
+    validate_account(account)?;
+    let current = match decode_binding(record) {
+        DecodedBinding::Valid(binding) if binding.state == "bound" => binding,
+        DecodedBinding::Valid(_) | DecodedBinding::Absent | DecodedBinding::Invalid => {
+            return Err(not_bound_error(record, None));
+        }
+    };
+    if current.selected_account == account {
+        return Err(CliError::data(
+            "codex-account-failover-same-account",
+            "automatic failover must select a different account",
+            Some(json!({ "id": record.id })),
+        ));
+    }
+    if next_transition_state(record) != NextTransitionState::Absent {
+        return Err(CliError::runtime(
+            "codex-account-next-superseded",
+            "a Codex account transition is already pending",
+            Some(json!({ "id": record.id })),
+        ));
+    }
+    store_next(
+        record,
+        &DurableNextAccount {
+            schema_version: NEXT_SCHEMA_VERSION.to_string(),
+            account: account.to_string(),
+            selection_source: Some("auto_failover".to_string()),
+            revision: 1,
+            intent_id: Some(uuid::Uuid::new_v4().simple().to_string()),
+            state: "queued".to_string(),
+            applying_runtime_id: None,
+            failure_reason: None,
+            updated_at: jiff::Timestamp::now().to_string(),
+        },
+    )?;
+    record.updated_at = jiff::Timestamp::now().to_string();
+    write_session_record(context, record)
 }
 
 /// Queue a durable next-account intent for an already-bound session.
@@ -946,6 +1049,7 @@ fn queue_next_account_inner(
         &DurableNextAccount {
             schema_version: NEXT_SCHEMA_VERSION.to_string(),
             account: account.to_string(),
+            selection_source: Some("explicit".to_string()),
             revision,
             intent_id: Some(intent_id),
             state: "queued".to_string(),
@@ -1141,6 +1245,7 @@ pub(crate) fn finish_next_apply(
                 &DurableBinding {
                     schema_version: BINDING_SCHEMA_VERSION.to_string(),
                     selected_account: account.to_string(),
+                    selection_source: next.selection_source.clone(),
                     revision: prior_revision.saturating_add(1).max(1),
                     state: "bound".to_string(),
                     applied_runtime_id: Some(expected_launch_id.to_string()),
@@ -1215,14 +1320,7 @@ fn not_bound_error(record: &SessionRecord, binding: Option<&DurableBinding>) -> 
 }
 
 pub(crate) fn list_accounts() -> Result<Vec<CodexAccountSummary>, CliError> {
-    let value = run_broker(&["list", "--format", "json"], BROKER_TIMEOUT)?;
-    let response: BrokerListResponse = serde_json::from_value(value).map_err(|_| {
-        broker_error(
-            "codex-account-broker-invalid-response",
-            "Codex account broker returned an invalid account list",
-        )
-    })?;
-    ensure_schema(&response.schema_version)?;
+    let response = broker_list()?;
     let mut seen = BTreeSet::new();
     let mut accounts = Vec::with_capacity(response.accounts.len());
     for mut account in response.accounts {
@@ -1240,6 +1338,34 @@ pub(crate) fn list_accounts() -> Result<Vec<CodexAccountSummary>, CliError> {
         accounts.push(account);
     }
     Ok(accounts)
+}
+
+pub(crate) fn broker_advertises_selection_strategy(strategy: &str) -> Result<bool, CliError> {
+    if !matches!(
+        strategy,
+        "current_default" | "default_with_capacity" | "next_with_capacity"
+    ) {
+        return Err(broker_error(
+            "codex-account-broker-invalid-config",
+            "Codex account selection strategy is unsupported",
+        ));
+    }
+    Ok(broker_list()?
+        .selection_strategies
+        .iter()
+        .any(|candidate| candidate == strategy))
+}
+
+fn broker_list() -> Result<BrokerListResponse, CliError> {
+    let value = run_broker(&["list", "--format", "json"], BROKER_TIMEOUT)?;
+    let response: BrokerListResponse = serde_json::from_value(value).map_err(|_| {
+        broker_error(
+            "codex-account-broker-invalid-response",
+            "Codex account broker returned an invalid account list",
+        )
+    })?;
+    ensure_schema(&response.schema_version)?;
+    Ok(response)
 }
 
 pub(crate) fn resolve_account(
@@ -1307,7 +1433,7 @@ pub(crate) fn select_account_with_timeout(
     strategy: &str,
     timeout: Duration,
 ) -> Result<CodexAccountSummary, CliError> {
-    if strategy != "default_with_capacity" {
+    if !matches!(strategy, "default_with_capacity" | "current_default") {
         return Err(broker_error(
             "codex-account-broker-invalid-config",
             "Codex account selection strategy is unsupported",
@@ -1324,7 +1450,13 @@ pub(crate) fn select_account_with_timeout(
         )
     })?;
     ensure_schema(&response.schema_version)?;
-    if validate_account(&response.account).is_err() {
+    let Some(account) = response.account else {
+        return Err(broker_error(
+            "codex-account-broker-invalid-response",
+            "Codex account broker returned an invalid account selection",
+        ));
+    };
+    if validate_account(&account).is_err() {
         return Err(broker_error(
             "codex-account-broker-invalid-response",
             "Codex account broker returned an invalid account selection",
@@ -1332,10 +1464,56 @@ pub(crate) fn select_account_with_timeout(
     }
     validate_optional_public_string(&response.plan, MAX_PLAN_BYTES)?;
     Ok(CodexAccountSummary {
-        account: response.account,
+        account,
         label: None,
         plan: response.plan.filter(|value| !value.trim().is_empty()),
     })
+}
+
+pub(crate) fn select_next_account(
+    after: &str,
+    excluded: &[String],
+) -> Result<Option<CodexAccountSummary>, CliError> {
+    validate_account(after)?;
+    let mut args = vec![
+        "select",
+        "--strategy",
+        "next_with_capacity",
+        "--after",
+        after,
+    ];
+    for account in excluded {
+        validate_account(account)?;
+        args.extend(["--exclude", account.as_str()]);
+    }
+    args.extend(["--format", "json"]);
+    let value = match run_broker(&args, BROKER_TIMEOUT) {
+        Ok(value) => value,
+        Err(error) if error.code() == "codex-account-broker-rejected" => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let response: BrokerSelectResponse = serde_json::from_value(value).map_err(|_| {
+        broker_error(
+            "codex-account-broker-invalid-response",
+            "Codex account broker returned an invalid account selection",
+        )
+    })?;
+    ensure_schema(&response.schema_version)?;
+    let Some(account) = response.account else {
+        return Ok(None);
+    };
+    validate_account(&account).map_err(|_| {
+        broker_error(
+            "codex-account-broker-invalid-response",
+            "Codex account broker returned an invalid account selection",
+        )
+    })?;
+    validate_optional_public_string(&response.plan, MAX_PLAN_BYTES)?;
+    Ok(Some(CodexAccountSummary {
+        account,
+        label: None,
+        plan: response.plan.filter(|value| !value.trim().is_empty()),
+    }))
 }
 
 fn decode_binding(record: &SessionRecord) -> DecodedBinding {
@@ -1347,6 +1525,7 @@ fn decode_binding(record: &SessionRecord) -> DecodedBinding {
         Ok(binding)
             if binding.schema_version == BINDING_SCHEMA_VERSION
                 && validate_account(&binding.selected_account).is_ok()
+                && validate_selection_source(binding.selection_source.as_deref()).is_ok()
                 && binding.revision > 0
                 && matches!(binding.state.as_str(), "pending" | "bound" | "failed") =>
         {
@@ -1407,6 +1586,19 @@ pub(crate) fn validate_account(account: &str) -> Result<(), CliError> {
         ));
     }
     Ok(())
+}
+
+fn validate_selection_source(source: Option<&str>) -> Result<(), CliError> {
+    if source
+        .is_none_or(|source| matches!(source, "default_at_launch" | "explicit" | "auto_failover"))
+    {
+        return Ok(());
+    }
+    Err(CliError::data(
+        "codex-account-selection-source-invalid",
+        "Codex account selection source is invalid",
+        None,
+    ))
 }
 
 fn validate_optional_public_string(value: &Option<String>, max: usize) -> Result<(), CliError> {
@@ -1986,6 +2178,102 @@ esac
                 "resolve --account gamania --force-refresh --format json",
                 "select --strategy default_with_capacity --format json",
             ]
+        );
+    }
+
+    #[test]
+    fn default_launch_binding_projects_actual_account_and_source() {
+        let lock = GlobalStateLock::new();
+        let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
+        let mut record = record_with_binding_value(Value::Null);
+        record.extra.remove(BINDING_KEY);
+
+        set_initial_binding_with_source(&mut record, Some("account-a"), Some("default_at_launch"))
+            .unwrap();
+
+        let view = view_for_record(&record);
+        assert_eq!(view.selected_account.as_deref(), Some("account-a"));
+        assert_eq!(view.effective_account, None);
+        assert_eq!(view.selection_source.as_deref(), Some("default_at_launch"));
+    }
+
+    #[test]
+    fn broker_supports_current_default_and_excluded_next_selection() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let script = tmp.path().join("broker");
+        let calls = tmp.path().join("calls");
+        fs::write(
+            &script,
+            r#"#!/bin/sh
+calls=$1
+shift
+printf '%s\n' "$*" >> "$calls"
+printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"account-b"}'
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+        let argv = serde_json::to_string(&vec![
+            script.to_string_lossy().into_owned(),
+            calls.to_string_lossy().into_owned(),
+        ])
+        .unwrap();
+        let _broker = EnvGuard::set(&lock, BROKER_ENV, &argv);
+
+        assert_eq!(
+            select_account("current_default").unwrap().account,
+            "account-b"
+        );
+        assert_eq!(
+            select_next_account("account-a", &["account-c".to_string()])
+                .unwrap()
+                .unwrap()
+                .account,
+            "account-b"
+        );
+        assert_eq!(
+            fs::read_to_string(calls)
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            vec![
+                "select --strategy current_default --format json",
+                "select --strategy next_with_capacity --after account-a --exclude account-c --format json",
+            ]
+        );
+    }
+
+    #[test]
+    fn automatic_failover_queues_a_source_tagged_next_account() {
+        let lock = GlobalStateLock::new();
+        let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
+        let tmp = tempfile::TempDir::new().unwrap();
+        let binding = json!({
+            "schema_version": BINDING_SCHEMA_VERSION,
+            "selected_account": "account-a",
+            "selection_source": "default_at_launch",
+            "revision": 1,
+            "state": "bound",
+            "applied_runtime_id": "runtime-binding-fixture",
+            "updated_at": "2030-01-01T00:00:00Z"
+        });
+        let (context, record) = persist_record(&tmp, binding);
+        let _guard = acquire_session_record_lock(&context, &record.id).unwrap();
+        let mut current = load_session_record(&context, &record.id).unwrap();
+
+        queue_auto_failover_locked(&context, &mut current, "account-b").unwrap();
+
+        let persisted = load_session_record(&context, &record.id).unwrap();
+        let next = decode_next(&persisted);
+        let DecodedNext::Valid(next) = next else {
+            panic!("automatic failover did not persist a valid next account");
+        };
+        assert_eq!(next.account, "account-b");
+        assert_eq!(next.selection_source.as_deref(), Some("auto_failover"));
+        assert_eq!(
+            view_for_record(&persisted).selected_account.as_deref(),
+            Some("account-a")
         );
     }
 
@@ -2785,6 +3073,7 @@ wait "$child"
                 &DurableNextAccount {
                     schema_version: NEXT_SCHEMA_VERSION.to_string(),
                     account: "poies".to_string(),
+                    selection_source: Some("explicit".to_string()),
                     revision: 1,
                     intent_id: Some("replacement-intent".to_string()),
                     state: "applying".to_string(),
@@ -2831,6 +3120,7 @@ wait "$child"
             &DurableNextAccount {
                 schema_version: NEXT_SCHEMA_VERSION.to_string(),
                 account: "poies".to_string(),
+                selection_source: None,
                 revision: 1,
                 intent_id: None,
                 state: "queued".to_string(),

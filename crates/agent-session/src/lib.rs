@@ -1963,9 +1963,10 @@ fn start_session_with_create_guard(
         args.initial_profile_graceful_shutdown.as_deref(),
         args.initial_codex_usage_account.as_deref(),
     )?;
-    if let Err(err) = codex_account::set_initial_binding(
+    if let Err(err) = codex_account::set_initial_binding_with_source(
         &mut created.record,
         args.initial_codex_account.as_deref(),
+        args.initial_codex_account_source.as_deref(),
     ) {
         cleanup_created_record(context, &created);
         return Err(err);

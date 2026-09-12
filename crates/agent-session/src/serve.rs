@@ -3044,6 +3044,8 @@ struct FencedStructuredPromptBody {
 #[derive(Debug, Deserialize)]
 struct AutoResumeBody {
     enabled: bool,
+    #[serde(default)]
+    recovery_policy: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -5738,7 +5740,16 @@ async fn create_handler(
             Err(_) => join_err(),
         };
     }
-    let selected_account = body.codex_account;
+    let explicit_account = body.codex_account;
+    let (selected_account, selection_source) = match tokio::task::spawn_blocking(move || {
+        resolve_initial_codex_account(agent, explicit_account)
+    })
+    .await
+    {
+        Ok(Ok(selection)) => selection,
+        Ok(Err(error)) => return envelope_err(error),
+        Err(_) => return join_err(),
+    };
     let prompt = body.prompt;
     let deferred_prompt = if selected_account.is_some() {
         prompt.clone()
@@ -5750,6 +5761,7 @@ async fn create_handler(
         provider_stop_canary: false,
         provider_stop_canary_assignment_id: None,
         initial_codex_account: selected_account.clone(),
+        initial_codex_account_source: selection_source,
         initial_title_state: title_state,
         initial_agent_profile: launch_profile.as_ref().map(|profile| profile.id.clone()),
         initial_provider_config_dir: launch_profile
@@ -5860,6 +5872,28 @@ async fn create_handler(
         Ok(Err(err)) => envelope_err(err),
         Err(_) => join_err(),
     }
+}
+
+fn resolve_initial_codex_account(
+    agent: AgentKind,
+    explicit_account: Option<String>,
+) -> Result<(Option<String>, Option<String>), CliError> {
+    if let Some(account) = explicit_account {
+        return Ok((Some(account), Some("explicit".to_string())));
+    }
+    if agent != AgentKind::Codex || !crate::codex_account::broker_is_configured() {
+        return Ok((None, None));
+    }
+    if !crate::codex_account::broker_advertises_selection_strategy("current_default")
+        .unwrap_or(false)
+    {
+        return Ok((None, None));
+    }
+    let selected = crate::codex_account::select_account("current_default")?;
+    Ok((
+        Some(selected.account),
+        Some("default_at_launch".to_string()),
+    ))
 }
 
 async fn wait_for_codex_control(
@@ -6668,7 +6702,15 @@ async fn auto_resume_set_handler(
     let context = state.context.clone();
     let now = jiff::Timestamp::now().to_string();
     match tokio::task::spawn_blocking(move || {
-        auto_resume::set_enabled(&context, &id, body.enabled, &now)
+        auto_resume::set_enabled_with_policy(
+            &context,
+            &id,
+            body.enabled,
+            body.recovery_policy
+                .as_deref()
+                .unwrap_or(auto_resume::WAIT_FOR_RESET_POLICY),
+            &now,
+        )
     })
     .await
     {
@@ -7596,11 +7638,33 @@ async fn process_codex_auto_resume_id(state: Arc<ServeState>, target: CodexAutoR
     let id = target.id;
     tokio::task::spawn_blocking(move || {
         let now_epoch = jiff::Timestamp::now().as_second();
+        let failover_account = usage
+            .has_exhausted_windows
+            .then(|| {
+                auto_resume::failover_selection_request(
+                    &context,
+                    &id,
+                    &expected_launch_id,
+                    &target.binding,
+                )
+                .ok()
+                .flatten()
+                .and_then(|request| {
+                    crate::codex_account::select_next_account(&request.after, &request.excluded)
+                        .ok()
+                        .flatten()
+                })
+                .map(|account| account.account)
+            })
+            .flatten();
         if let Err(err) = auto_resume::tick_for_runtime_and_binding(
             &context,
             &id,
             &expected_launch_id,
-            &target.binding,
+            auto_resume::RuntimeBindingTick {
+                binding: &target.binding,
+                failover_account: failover_account.as_deref(),
+            },
             now_epoch,
             &usage,
             |_| {
@@ -18369,6 +18433,40 @@ esac
         assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
+    #[test]
+    fn default_codex_launch_resolves_and_records_the_current_account() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let broker = executable(
+            &tmp.path().join("broker"),
+            "#!/usr/bin/env sh\ncase \"$1\" in\n  list) printf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"accounts\":[],\"selection_strategies\":[\"current_default\"]}' ;;\n  select) printf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"account\":\"account-a\"}' ;;\n  *) exit 1 ;;\nesac\n",
+        );
+        let broker_argv =
+            serde_json::to_string(&vec![broker.to_string_lossy().into_owned()]).unwrap();
+        let _broker = EnvGuard::set(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER", &broker_argv);
+
+        let resolved = resolve_initial_codex_account(AgentKind::Codex, None).unwrap();
+        assert_eq!(resolved.0.as_deref(), Some("account-a"));
+        assert_eq!(resolved.1.as_deref(), Some("default_at_launch"));
+
+        let explicit =
+            resolve_initial_codex_account(AgentKind::Codex, Some("account-b".to_string())).unwrap();
+        assert_eq!(explicit.0.as_deref(), Some("account-b"));
+        assert_eq!(explicit.1.as_deref(), Some("explicit"));
+
+        let old_broker = executable(
+            &tmp.path().join("old-broker"),
+            "#!/usr/bin/env sh\nprintf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"accounts\":[]}'\n",
+        );
+        let old_argv =
+            serde_json::to_string(&vec![old_broker.to_string_lossy().into_owned()]).unwrap();
+        let _old = EnvGuard::set(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER", &old_argv);
+        assert_eq!(
+            resolve_initial_codex_account(AgentKind::Codex, None).unwrap(),
+            (None, None)
+        );
+    }
+
     #[tokio::test]
     async fn auto_resume_control_is_authenticated_durable_and_projected() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -18423,6 +18521,55 @@ esac
                 .expect("durable auto-resume state");
         assert!(!persisted.contains("prompt"));
         assert!(!persisted.contains("transcript"));
+    }
+
+    #[tokio::test]
+    async fn codex_auto_resume_projects_the_account_failover_policy() {
+        let lock = GlobalStateLock::new();
+        let _broker = EnvGuard::set(
+            &lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            r#"["/configured/broker"]"#,
+        );
+        let tmp = tempfile::TempDir::new().unwrap();
+        let launch_id = seed_codex_app_server_session(tmp.path(), "codex-failover-policy");
+        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        let mut record = load_session_record(&st.context, "codex-failover-policy").unwrap();
+        crate::codex_account::set_initial_binding_with_source(
+            &mut record,
+            Some("account-a"),
+            Some("default_at_launch"),
+        )
+        .unwrap();
+        crate::write_session_record(&st.context, &record).unwrap();
+        crate::codex_account::finish_binding(
+            &st.context,
+            &record.id,
+            &launch_id,
+            "account-a",
+            1,
+            Ok(()),
+        )
+        .unwrap();
+
+        let (status, body) = call(
+            router(st),
+            put_json(
+                "/sessions/codex-failover-policy/auto-resume",
+                Some(TOKEN),
+                json!({
+                    "enabled": true,
+                    "recovery_policy": "next_account_then_resume"
+                }),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(
+            body["data"]["auto_resume"]["recovery_policy"],
+            "next_account_then_resume"
+        );
     }
 
     #[tokio::test]
@@ -21525,7 +21672,9 @@ esac
                     schema_version: crate::codex_account::VIEW_SCHEMA_VERSION,
                     supported: true,
                     state: "bound",
-                    selected_account: Some(account),
+                    selected_account: Some(account.clone()),
+                    effective_account: Some(account),
+                    selection_source: Some("explicit".to_string()),
                     revision: 1,
                     applied_runtime_id: Some(responder_launch_id),
                     failure_reason: None,
@@ -21785,7 +21934,9 @@ esac
                 schema_version: crate::codex_account::VIEW_SCHEMA_VERSION,
                 supported: true,
                 state: "bound",
-                selected_account: Some(first_account),
+                selected_account: Some(first_account.clone()),
+                effective_account: Some(first_account),
+                selection_source: Some("explicit".to_string()),
                 revision: first_revision,
                 applied_runtime_id: Some(launch_id.clone()),
                 failure_reason: None,
@@ -21811,7 +21962,9 @@ esac
                 schema_version: crate::codex_account::VIEW_SCHEMA_VERSION,
                 supported: true,
                 state: "bound",
-                selected_account: Some(second_account),
+                selected_account: Some(second_account.clone()),
+                effective_account: Some(second_account),
+                selection_source: Some("explicit".to_string()),
                 revision: second_revision,
                 applied_runtime_id: Some(launch_id),
                 failure_reason: None,
@@ -21967,7 +22120,10 @@ esac
             &context,
             &record.id,
             &launch_id,
-            &account_a,
+            auto_resume::RuntimeBindingTick {
+                binding: &account_a,
+                failover_account: None,
+            },
             1_893_456_000,
             &UsageSnapshot {
                 authoritative: true,

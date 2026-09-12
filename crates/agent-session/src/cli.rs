@@ -157,6 +157,10 @@ pub struct StartArgs {
     #[arg(skip)]
     pub initial_codex_account: Option<String>,
 
+    /// Internal: provenance for the daemon-selected initial Codex account.
+    #[arg(skip)]
+    pub initial_codex_account_source: Option<String>,
+
     /// Internal: structured title provenance supplied by the serve daemon.
     #[arg(skip)]
     pub initial_title_state: Option<SessionTitleState>,
