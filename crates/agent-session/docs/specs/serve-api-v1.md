@@ -358,7 +358,10 @@ recorded in `sympoies/nils-cli#1409`.
   an explicit account switch wins the race with the rejected turn, the input
   fence identifies the older account and binding revision, and the daemon may
   continue once a different newly bound account reports authoritative open
-  usage without first invoking the broker again. When no candidate is
+  usage without first invoking the broker again. Pre-upgrade recovery state that
+  lacks either part of that input-binding identity fails closed with bounded
+  `state_unavailable` retries: it does not invoke the broker, queue an account
+  switch, or submit a continuation. When no candidate is
   trustworthy, a current exhausted percentage
   window waits for its confirmed reset; an open current window reports
   `no_account_available` after bounded discovery retries instead of mislabeling

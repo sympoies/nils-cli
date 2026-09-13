@@ -18594,6 +18594,7 @@ esac
         .unwrap();
         record = load_session_record(&st.context, &record.id).unwrap();
         crate::activity::activate_runtime(&st.context, &record).unwrap();
+        crate::codex_account::authorize_input_locked(&st.context, &mut record).unwrap();
         auto_resume::set_enabled_with_policy(
             &st.context,
             &record.id,

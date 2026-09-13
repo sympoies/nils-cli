@@ -904,6 +904,9 @@ pub(crate) fn failover_selection_request(
     {
         return Ok(None);
     }
+    if !blocked_account_identity_available(&state) {
+        return Ok(None);
+    }
     if !current_usage_exhausted && current_account_changed(&record, &state) {
         return Ok(None);
     }
@@ -915,6 +918,13 @@ pub(crate) fn failover_selection_request(
         excluded.push(after.clone());
     }
     Ok(Some(FailoverSelectionRequest { after, excluded }))
+}
+
+fn blocked_account_identity_available(state: &DurableAutoResume) -> bool {
+    matches!(
+        (state.blocked_account.as_deref(), state.blocked_account_revision),
+        (Some(account), Some(revision)) if !account.is_empty() && revision > 0
+    )
 }
 
 fn current_account_changed(record: &SessionRecord, state: &DurableAutoResume) -> bool {
@@ -1099,6 +1109,13 @@ where
         return record_retry(context, &record, state, now_epoch, "usage_unavailable");
     }
 
+    if state.recovery_policy == NEXT_ACCOUNT_THEN_RESUME_POLICY
+        && record.agent == "codex"
+        && !blocked_account_identity_available(&state)
+    {
+        return record_retry(context, &record, state, now_epoch, "state_unavailable");
+    }
+
     let current_account_changed = current_account_changed(&record, &state);
 
     if state.state == "switching_account" {
@@ -1132,14 +1149,6 @@ where
         if current.as_deref() != Some(account)
             && !state.attempted_accounts.iter().any(|item| item == account)
         {
-            if state.blocked_account.is_none()
-                && state.blocked_account_revision.is_none()
-                && let crate::codex_account::BindingSnapshot::Bound { account, revision } =
-                    crate::codex_account::binding_snapshot(&record)
-            {
-                state.blocked_account = Some(account);
-                state.blocked_account_revision = Some(revision);
-            }
             if let Some(current) = current
                 && !state.attempted_accounts.contains(&current)
             {
@@ -1479,6 +1488,8 @@ mod tests {
             Ok(()),
         )
         .unwrap();
+        let mut record = crate::load_session_record(&context, &record.id).unwrap();
+        crate::codex_account::authorize_input_locked(&context, &mut record).unwrap();
         for (event_id, kind) in [
             ("codex-start", "turn_started"),
             ("codex-done", "turn_completed"),
@@ -1915,6 +1926,85 @@ mod tests {
                 .failure_reason
                 .as_deref(),
             Some("no_account_available")
+        );
+    }
+
+    #[test]
+    fn pre_upgrade_missing_binding_identity_never_switches_or_resumes() {
+        let lock = GlobalStateLock::new();
+        let _broker = EnvGuard::set(
+            &lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            r#"["/configured/broker"]"#,
+        );
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record, blocked_revision) = seed_bound_codex_auto_resume(&tmp);
+        set_enabled_with_policy(
+            &context,
+            &record.id,
+            true,
+            NEXT_ACCOUNT_THEN_RESUME_POLICY,
+            "2030-01-01T00:00:00Z",
+        )
+        .unwrap();
+        arm_usage_exhaustion(
+            &context,
+            &record.id,
+            "turn-1".to_string(),
+            blocked_revision,
+            "2030-01-01T00:00:01Z",
+        )
+        .unwrap();
+        let mut pre_upgrade = read_state(&context, &record.id, "ignored").unwrap();
+        pre_upgrade.blocked_account = None;
+        pre_upgrade.blocked_account_revision = None;
+        write_state(&context, &record.id, &pre_upgrade).unwrap();
+        let binding = crate::codex_account::binding_snapshot(&record);
+
+        assert!(
+            failover_selection_request(&context, &record.id, "runtime-1", &binding, false)
+                .unwrap()
+                .is_none(),
+            "missing input-binding identity must skip broker discovery"
+        );
+        let mut submissions = 0;
+        let outcome = tick_for_runtime_and_binding(
+            &context,
+            &record.id,
+            "runtime-1",
+            RuntimeBindingTick {
+                binding: &binding,
+                failover_account: Some("account-b"),
+            },
+            1_893_456_000,
+            &UsageSnapshot {
+                authoritative: true,
+                has_exhausted_windows: false,
+                exhausted_reset_epochs: Vec::new(),
+                soonest_reset_epoch: None,
+            },
+            |_| {
+                submissions += 1;
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(outcome, TickOutcome::Retrying);
+        assert_eq!(submissions, 0);
+        assert!(
+            crate::codex_account::view_for_record(
+                &crate::load_session_record(&context, &record.id).unwrap()
+            )
+            .next
+            .is_none()
+        );
+        assert_eq!(
+            read_state(&context, &record.id, "ignored")
+                .unwrap()
+                .failure_reason
+                .as_deref(),
+            Some("state_unavailable")
         );
     }
 
