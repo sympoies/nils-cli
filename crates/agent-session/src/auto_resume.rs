@@ -1309,6 +1309,24 @@ fn blocked_claim_is_eligible(
         })
 }
 
+pub(crate) fn has_authoritative_usage_exhaustion_idle(
+    context: &CliContext,
+    record: &SessionRecord,
+) -> bool {
+    let Ok(state) = read_state(context, &record.id, &Timestamp::now().to_string()) else {
+        return false;
+    };
+    let eligible = blocked_claim_is_eligible(context, record, &state);
+    state.enabled
+        && state.recovery_policy == NEXT_ACCOUNT_THEN_RESUME_POLICY
+        && blocked_account_identity_available(&state)
+        && matches!(
+            state.state.as_str(),
+            "armed" | "scheduled" | "transient_failure" | "switching_account"
+        )
+        && eligible
+}
+
 fn runtime_matches(record: &SessionRecord, expected_launch_id: Option<&str>) -> bool {
     expected_launch_id.is_none_or(|expected| {
         record
@@ -1956,6 +1974,7 @@ mod tests {
         )
         .unwrap();
         let mut pre_upgrade = read_state(&context, &record.id, "ignored").unwrap();
+        pre_upgrade.state = "switching_account".to_string();
         pre_upgrade.blocked_account = None;
         pre_upgrade.blocked_account_revision = None;
         write_state(&context, &record.id, &pre_upgrade).unwrap();
@@ -1966,6 +1985,32 @@ mod tests {
                 .unwrap()
                 .is_none(),
             "missing input-binding identity must skip broker discovery"
+        );
+        {
+            let _guard = acquire_session_record_lock(&context, &record.id).unwrap();
+            let mut current = load_session_record(&context, &record.id).unwrap();
+            crate::codex_account::queue_auto_failover_locked(&context, &mut current, "account-b")
+                .unwrap();
+        }
+        let expected = crate::codex_account::pending_auto_failover_apply(
+            &load_session_record(&context, &record.id).unwrap(),
+        )
+        .unwrap()
+        .expect("pre-upgrade automatic intent");
+        assert!(
+            !has_authoritative_usage_exhaustion_idle(&context, &record),
+            "pre-upgrade state without blocked account identity cannot authorize an idle bypass"
+        );
+        assert!(
+            crate::codex_account::begin_next_apply_if_unchanged(
+                &context,
+                &record.id,
+                "runtime-1",
+                &expected,
+            )
+            .unwrap()
+            .is_none(),
+            "restart recovery must not apply a pre-upgrade automatic intent without binding identity"
         );
         let mut submissions = 0;
         let outcome = tick_for_runtime_and_binding(
@@ -1992,13 +2037,18 @@ mod tests {
 
         assert_eq!(outcome, TickOutcome::Retrying);
         assert_eq!(submissions, 0);
-        assert!(
-            crate::codex_account::view_for_record(
-                &crate::load_session_record(&context, &record.id).unwrap()
-            )
-            .next
-            .is_none()
+        let account = crate::codex_account::view_for_record(
+            &crate::load_session_record(&context, &record.id).unwrap(),
         );
+        assert_eq!(account.selected_account.as_deref(), Some("account-a"));
+        assert_eq!(
+            account
+                .next
+                .as_ref()
+                .and_then(|next| next.account.as_deref()),
+            Some("account-b")
+        );
+        assert_eq!(account.next.as_ref().map(|next| next.state), Some("queued"));
         assert_eq!(
             read_state(&context, &record.id, "ignored")
                 .unwrap()
