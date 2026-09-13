@@ -353,10 +353,13 @@ recorded in `sympoies/nils-cli#1409`.
   structured rejection remains authoritative when the current percentage
   windows are still open, because workspace-credit exhaustion is independent
   from those windows. Exhausted and already-attempted accounts are not revisited
-  in the same recovery chain. When an explicit account switch wins the race
-  with the rejected turn, the input fence identifies the older binding and the
-  daemon may continue once the newly bound account reports authoritative open
-  usage. When no candidate is trustworthy, a current exhausted percentage
+  in the same recovery chain, including when a failed automatic continuation
+  produces a new provider turn; a later manual input starts a fresh chain. When
+  an explicit account switch wins the race with the rejected turn, the input
+  fence identifies the older account and binding revision, and the daemon may
+  continue once a different newly bound account reports authoritative open
+  usage without first invoking the broker again. When no candidate is
+  trustworthy, a current exhausted percentage
   window waits for its confirmed reset; an open current window reports
   `no_account_available` after bounded discovery retries instead of mislabeling
   the provider rejection as `usage_window_not_exhausted`. Both

@@ -7643,6 +7643,7 @@ async fn process_codex_auto_resume_id(state: Arc<ServeState>, target: CodexAutoR
             &id,
             &expected_launch_id,
             &target.binding,
+            usage.has_exhausted_windows,
         )
         .ok()
         .flatten()
