@@ -33,7 +33,8 @@ and same-turn fixes with no future debugging or decision value.
   conversations, provider payloads, personal identifiers, internal hostnames,
   private topology, or machine-local paths. Reference identifiers, never
   values.
-- Search past entries with `scripts/devlog-search.sh <term> [YYYY-MM]`.
+- Search past entries with `devlog search <term> [--month YYYY-MM]`, and check
+  structural integrity with `devlog check`.
 - When an entry is committed separately, use
   `docs(devlog): <YYYY-MM> - <subject>`.
 

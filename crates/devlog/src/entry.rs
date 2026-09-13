@@ -54,10 +54,10 @@ impl Entry {
             _ = writeln!(out, "### {label}");
             _ = writeln!(out);
             if bullets.is_empty() {
-                _ = writeln!(out, "- TODO");
+                _ = writeln!(out, "{}", render_bullet("TODO"));
             } else {
                 for bullet in bullets {
-                    _ = writeln!(out, "- {}", bullet.trim());
+                    _ = writeln!(out, "{}", render_bullet(bullet));
                 }
             }
         }
@@ -134,4 +134,44 @@ pub fn insert(devlog: &Devlog, entry: &Entry, date: EntryDate) -> Result<Inserti
         date,
         created_month_file: created,
     })
+}
+
+/// Column at which bullet text wraps.
+///
+/// The workspace Markdown lint caps lines at 140 characters (`MD013`), and the
+/// existing entries wrap well inside that. Emitting unwrapped bullets would
+/// make every generated entry fail the docs lane, which defeats the purpose of
+/// generating them.
+const WRAP_COLUMN: usize = 79;
+
+/// Render one bullet as `- text` with two-space continuation lines, wrapped at
+/// [`WRAP_COLUMN`].
+///
+/// Wrapping is whitespace-only: a single token longer than the budget (a long
+/// URL, say) is emitted intact and allowed to overrun rather than being broken
+/// into something that no longer resolves.
+fn render_bullet(text: &str) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::from("- ");
+    let mut has_word = false;
+
+    for word in text.split_whitespace() {
+        let indent = if lines.is_empty() { "- " } else { "  " };
+        if has_word && current.chars().count() + 1 + word.chars().count() > WRAP_COLUMN {
+            lines.push(current);
+            current = format!("  {word}");
+            continue;
+        }
+        if has_word {
+            current.push(' ');
+        } else {
+            current = indent.to_string();
+        }
+        current.push_str(word);
+        has_word = true;
+    }
+    if has_word || lines.is_empty() {
+        lines.push(current);
+    }
+    lines.join("\n")
 }

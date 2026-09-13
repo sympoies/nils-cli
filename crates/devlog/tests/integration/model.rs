@@ -118,3 +118,53 @@ fn render_months_sorts_newest_first() {
         "- [2026-12](2026-12.md)\n- [2026-06](2026-06.md)\n- [2026-01](2026-01.md)"
     );
 }
+
+#[test]
+fn bullets_wrap_so_generated_entries_pass_the_markdown_line_limit() {
+    // Regression: the first implementation emitted each bullet on one line,
+    // so a normal-length bullet produced a 200+ character line and failed
+    // MD013 in the workspace lint baseline. A generator whose output fails
+    // the repository's own docs lane is worse than writing entries by hand.
+    let long = "Enabled the development log and backfilled eighty-eight entries \
+                covering January through September, written from the full commit \
+                history on the default branch and weighted by milestone rather \
+                than by month.";
+    let entry = Entry {
+        title: "Long bullet".to_string(),
+        result: vec![long.to_string()],
+        why: vec!["short".to_string()],
+        evidence: vec!["short".to_string()],
+        links: vec!["short".to_string()],
+        ..Entry::default()
+    };
+    let date: EntryDate = "2026-09-14".parse().expect("valid date");
+    let rendered = entry.render(date);
+
+    for line in rendered.lines() {
+        assert!(
+            line.chars().count() <= 140,
+            "line exceeds the MD013 limit: {line}"
+        );
+    }
+    // Continuation lines align under the bullet text.
+    assert!(
+        rendered.contains("\n  "),
+        "expected wrapped continuation lines"
+    );
+}
+
+#[test]
+fn a_single_unbreakable_token_is_emitted_intact() {
+    // A long URL has no whitespace to wrap at. Emitting it intact and letting
+    // it overrun is correct; breaking it would produce a link that no longer
+    // resolves.
+    let url = format!("https://example.com/{}", "x".repeat(120));
+    let entry = Entry {
+        title: "Link".to_string(),
+        result: vec![url.clone()],
+        ..Entry::default()
+    };
+    let date: EntryDate = "2026-09-14".parse().expect("valid date");
+    let rendered = entry.render(date);
+    assert!(rendered.contains(&url), "the token must not be broken");
+}
