@@ -349,10 +349,17 @@ recorded in `sympoies/nils-cli#1409`.
   policy defaults to `wait_for_reset`. Account failover is accepted only for a
   bound, broker-backed Codex session. It selects the next configured account
   with fresh confirmed capacity, applies that account through external auth,
-  and only then enters the existing exactly-once continuation claim. Exhausted
-  and already-attempted accounts are not revisited in the same recovery chain;
-  when no candidate is trustworthy, the daemon waits for the current confirmed
-  reset instead. Both
+  and only then enters the existing exactly-once continuation claim. The
+  structured rejection remains authoritative when the current percentage
+  windows are still open, because workspace-credit exhaustion is independent
+  from those windows. Exhausted and already-attempted accounts are not revisited
+  in the same recovery chain. When an explicit account switch wins the race
+  with the rejected turn, the input fence identifies the older binding and the
+  daemon may continue once the newly bound account reports authoritative open
+  usage. When no candidate is trustworthy, a current exhausted percentage
+  window waits for its confirmed reset; an open current window reports
+  `no_account_available` after bounded discovery retries instead of mislabeling
+  the provider rejection as `usage_window_not_exhausted`. Both
   mutations require the bearer token. Claude Code is supported through its
   authoritative structured
   `StopFailure.error == "rate_limit"` signal. Fresh interactive Codex sessions
