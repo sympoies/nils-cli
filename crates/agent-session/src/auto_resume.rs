@@ -47,6 +47,10 @@ struct DurableAutoResume {
     blocked_turn_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     blocked_revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    blocked_account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    blocked_account_revision: Option<u64>,
     #[serde(default)]
     attempt: u32,
     #[serde(default)]
@@ -148,6 +152,8 @@ fn default_state(now: &str) -> DurableAutoResume {
         failure_reason: None,
         blocked_turn_id: None,
         blocked_revision: None,
+        blocked_account: None,
+        blocked_account_revision: None,
         attempt: 0,
         ever_scheduled: false,
         fallback_schedules: 0,
@@ -338,6 +344,8 @@ pub(crate) fn set_enabled_with_policy(
     state.failure_reason = None;
     state.blocked_turn_id = None;
     state.blocked_revision = None;
+    state.blocked_account = None;
+    state.blocked_account_revision = None;
     state.attempt = 0;
     state.ever_scheduled = false;
     state.fallback_schedules = 0;
@@ -401,6 +409,11 @@ pub(crate) fn rearm_usage_exhaustion_for_runtime(
     state.failure_reason = None;
     state.blocked_turn_id = Some(blocked_turn_id);
     state.blocked_revision = Some(blocked_revision);
+    let blocked_account = crate::codex_account::input_binding_identity(&record)?;
+    state.blocked_account = blocked_account
+        .as_ref()
+        .map(|(account, _)| account.to_string());
+    state.blocked_account_revision = blocked_account.map(|(_, revision)| revision);
     state.attempt = 0;
     state.ever_scheduled = false;
     state.fallback_schedules = 0;
@@ -448,6 +461,26 @@ pub(crate) fn cancel_for_manual_input_locked(
     id: &str,
     now: &str,
 ) -> Result<(), CliError> {
+    let mut state = read_state(context, id, now)?;
+    if state.enabled && state.state == "resumed" {
+        // The prior automatic continuation has already been submitted. A new
+        // manual input begins a distinct recovery chain, so it must not inherit
+        // the accounts or retry budget consumed by the earlier failure.
+        state.state = "enabled".to_string();
+        state.updated_at = now.to_string();
+        state.scheduled_at = None;
+        state.next_check_at = None;
+        state.failure_reason = None;
+        state.blocked_turn_id = None;
+        state.blocked_revision = None;
+        state.blocked_account = None;
+        state.blocked_account_revision = None;
+        state.attempt = 0;
+        state.ever_scheduled = false;
+        state.fallback_schedules = 0;
+        state.attempted_accounts.clear();
+        return write_state(context, id, &state);
+    }
     cancel_active_locked(context, id, now, "manual_input")
 }
 
@@ -621,6 +654,9 @@ pub(crate) fn arm_usage_exhaustion(
     {
         return Ok(false);
     }
+    let preserve_recovery_chain = state.recovery_policy == NEXT_ACCOUNT_THEN_RESUME_POLICY
+        && record.agent == "codex"
+        && state.state == "resumed";
     state.state = "armed".to_string();
     state.updated_at = now.to_string();
     state.scheduled_at = None;
@@ -628,9 +664,16 @@ pub(crate) fn arm_usage_exhaustion(
     state.failure_reason = None;
     state.blocked_turn_id = Some(blocked_turn_id);
     state.blocked_revision = Some(blocked_revision);
-    state.attempt = 0;
-    state.ever_scheduled = false;
-    state.attempted_accounts.clear();
+    let blocked_account = crate::codex_account::input_binding_identity(&record)?;
+    state.blocked_account = blocked_account
+        .as_ref()
+        .map(|(account, _)| account.to_string());
+    state.blocked_account_revision = blocked_account.map(|(_, revision)| revision);
+    if !preserve_recovery_chain {
+        state.attempt = 0;
+        state.ever_scheduled = false;
+        state.attempted_accounts.clear();
+    }
     write_state(context, &record.id, &state)?;
     Ok(true)
 }
@@ -834,6 +877,7 @@ pub(crate) fn failover_selection_request(
     id: &str,
     expected_launch_id: &str,
     expected_binding: &crate::codex_account::BindingSnapshot,
+    current_usage_exhausted: bool,
 ) -> Result<Option<FailoverSelectionRequest>, CliError> {
     let observed = load_session_record(context, id)?;
     let canonical_id = observed.id.clone();
@@ -860,6 +904,12 @@ pub(crate) fn failover_selection_request(
     {
         return Ok(None);
     }
+    if !blocked_account_identity_available(&state) {
+        return Ok(None);
+    }
+    if !current_usage_exhausted && current_account_changed(&record, &state) {
+        return Ok(None);
+    }
     let Some(after) = crate::codex_account::selected_account(&record) else {
         return Ok(None);
     };
@@ -868,6 +918,28 @@ pub(crate) fn failover_selection_request(
         excluded.push(after.clone());
     }
     Ok(Some(FailoverSelectionRequest { after, excluded }))
+}
+
+fn blocked_account_identity_available(state: &DurableAutoResume) -> bool {
+    matches!(
+        (state.blocked_account.as_deref(), state.blocked_account_revision),
+        (Some(account), Some(revision)) if !account.is_empty() && revision > 0
+    )
+}
+
+fn current_account_changed(record: &SessionRecord, state: &DurableAutoResume) -> bool {
+    match (
+        state.blocked_account.as_deref(),
+        state.blocked_account_revision,
+        crate::codex_account::binding_snapshot(record),
+    ) {
+        (
+            Some(blocked_account),
+            Some(blocked_revision),
+            crate::codex_account::BindingSnapshot::Bound { account, revision },
+        ) => account != blocked_account && revision != blocked_revision,
+        _ => false,
+    }
 }
 
 pub(crate) fn tick<F>(
@@ -1037,6 +1109,15 @@ where
         return record_retry(context, &record, state, now_epoch, "usage_unavailable");
     }
 
+    if state.recovery_policy == NEXT_ACCOUNT_THEN_RESUME_POLICY
+        && record.agent == "codex"
+        && !blocked_account_identity_available(&state)
+    {
+        return record_retry(context, &record, state, now_epoch, "state_unavailable");
+    }
+
+    let current_account_changed = current_account_changed(&record, &state);
+
     if state.state == "switching_account" {
         match crate::codex_account::next_transition_state(&record) {
             crate::codex_account::NextTransitionState::Pending => {
@@ -1055,32 +1136,38 @@ where
         }
     }
 
-    if usage.has_exhausted_windows {
-        if state.recovery_policy == NEXT_ACCOUNT_THEN_RESUME_POLICY
-            && record.agent == "codex"
-            && let Some(account) = fences.failover_account
+    // The structured provider rejection is authoritative evidence that the
+    // bound account cannot accept this turn. Its percentage windows may still
+    // be open when a distinct workspace-credit pool is exhausted, so a fresh
+    // broker-confirmed alternative is sufficient to authorize failover.
+    if state.recovery_policy == NEXT_ACCOUNT_THEN_RESUME_POLICY
+        && record.agent == "codex"
+        && (!current_account_changed || usage.has_exhausted_windows)
+        && let Some(account) = fences.failover_account
+    {
+        let current = crate::codex_account::selected_account(&record);
+        if current.as_deref() != Some(account)
+            && !state.attempted_accounts.iter().any(|item| item == account)
         {
-            let current = crate::codex_account::selected_account(&record);
-            if current.as_deref() != Some(account)
-                && !state.attempted_accounts.iter().any(|item| item == account)
+            if let Some(current) = current
+                && !state.attempted_accounts.contains(&current)
             {
-                if let Some(current) = current
-                    && !state.attempted_accounts.contains(&current)
-                {
-                    state.attempted_accounts.push(current);
-                }
-                state.attempted_accounts.push(account.to_string());
-                state.state = "switching_account".to_string();
-                state.updated_at = now.clone();
-                state.scheduled_at = None;
-                state.next_check_at = None;
-                state.failure_reason = None;
-                state.ever_scheduled = true;
-                write_state(context, &record.id, &state)?;
-                crate::codex_account::queue_auto_failover_locked(context, &mut record, account)?;
-                return Ok(TickOutcome::AccountSwitchQueued);
+                state.attempted_accounts.push(current);
             }
+            state.attempted_accounts.push(account.to_string());
+            state.state = "switching_account".to_string();
+            state.updated_at = now.clone();
+            state.scheduled_at = None;
+            state.next_check_at = None;
+            state.failure_reason = None;
+            state.ever_scheduled = true;
+            write_state(context, &record.id, &state)?;
+            crate::codex_account::queue_auto_failover_locked(context, &mut record, account)?;
+            return Ok(TickOutcome::AccountSwitchQueued);
         }
+    }
+
+    if usage.has_exhausted_windows {
         let Some(latest_reset) = usage.exhausted_reset_epochs.iter().copied().max() else {
             return record_retry(
                 context,
@@ -1107,17 +1194,19 @@ where
         return Ok(TickOutcome::Scheduled);
     }
 
-    if !state.ever_scheduled {
+    if state.recovery_policy == NEXT_ACCOUNT_THEN_RESUME_POLICY
+        && record.agent == "codex"
+        && !current_account_changed
+    {
+        return record_retry(context, &record, state, now_epoch, "no_account_available");
+    }
+
+    if !state.ever_scheduled && !current_account_changed {
         // The session was armed by an authoritative provider rate-limit signal
         // (see `arm_usage_exhaustion`), yet no usage window reports
-        // `used_percent >= 100`. This is the Claude "session limit" case: the
-        // provider throttles the session while its percentage windows stay
-        // below 100%, and the stop hook exposes no structured reset time. Trust
-        // the authoritative arming and schedule a fallback wake at the soonest
-        // usage-window reset, re-verifying eligibility at wake before
-        // submitting. When no future reset timestamp is available, keep the
-        // claim alive with a low-frequency continuation probe; a repeated
-        // structured rate-limit re-arms the same durable flow.
+        // `used_percent >= 100`. Claude can expose this as a session limit, so
+        // it schedules from the nearest window or uses a bounded unknown-reset
+        // probe.
         let fallback_reset = match usage.soonest_reset_epoch.filter(|reset| *reset > now_epoch) {
             Some(reset) => reset,
             None if record.agent == "claude" => now_epoch
@@ -1399,6 +1488,8 @@ mod tests {
             Ok(()),
         )
         .unwrap();
+        let mut record = crate::load_session_record(&context, &record.id).unwrap();
+        crate::codex_account::authorize_input_locked(&context, &mut record).unwrap();
         for (event_id, kind) in [
             ("codex-start", "turn_started"),
             ("codex-done", "turn_completed"),
@@ -1563,6 +1654,579 @@ mod tests {
             TickOutcome::Unchanged
         );
         assert_eq!(submissions, 1);
+    }
+
+    #[test]
+    fn account_failover_uses_the_structured_rejection_when_percentage_usage_is_open() {
+        let lock = GlobalStateLock::new();
+        let _broker = EnvGuard::set(
+            &lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            r#"["/configured/broker"]"#,
+        );
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record, blocked_revision) = seed_bound_codex_auto_resume(&tmp);
+        set_enabled_with_policy(
+            &context,
+            &record.id,
+            true,
+            NEXT_ACCOUNT_THEN_RESUME_POLICY,
+            "2030-01-01T00:00:00Z",
+        )
+        .unwrap();
+        arm_usage_exhaustion(
+            &context,
+            &record.id,
+            "turn-1".to_string(),
+            blocked_revision,
+            "2030-01-01T00:00:01Z",
+        )
+        .unwrap();
+        let binding = crate::codex_account::binding_snapshot(&record);
+
+        let outcome = tick_for_runtime_and_binding(
+            &context,
+            &record.id,
+            "runtime-1",
+            RuntimeBindingTick {
+                binding: &binding,
+                failover_account: Some("account-b"),
+            },
+            1_893_456_000,
+            &UsageSnapshot {
+                authoritative: true,
+                has_exhausted_windows: false,
+                exhausted_reset_epochs: Vec::new(),
+                soonest_reset_epoch: None,
+            },
+            |_| panic!("continuation must wait for the account switch"),
+        )
+        .unwrap();
+
+        assert_eq!(outcome, TickOutcome::AccountSwitchQueued);
+        assert_eq!(
+            view_for_record(&context, &record).state,
+            "switching_account"
+        );
+        assert_eq!(
+            crate::codex_account::view_for_record(
+                &crate::load_session_record(&context, &record.id).unwrap()
+            )
+            .next
+            .and_then(|next| next.account)
+            .as_deref(),
+            Some("account-b")
+        );
+    }
+
+    #[test]
+    fn account_switch_that_wins_the_failure_race_resumes_on_the_new_open_binding() {
+        let lock = GlobalStateLock::new();
+        let _broker = EnvGuard::set(
+            &lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            r#"["/configured/broker"]"#,
+        );
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, mut record, _) = seed_bound_codex_auto_resume(&tmp);
+        set_enabled_with_policy(
+            &context,
+            &record.id,
+            true,
+            NEXT_ACCOUNT_THEN_RESUME_POLICY,
+            "2030-01-01T00:00:00Z",
+        )
+        .unwrap();
+        crate::codex_account::authorize_input_locked(&context, &mut record).unwrap();
+        for (event_id, kind) in [
+            ("codex-next-start", "turn_started"),
+            ("codex-next-failed", "turn_failed"),
+        ] {
+            activity::ingest_event(
+                &context,
+                &record.id,
+                serde_json::from_value(json!({
+                    "schema_version": crate::activity::TURN_EVENT_VERSION,
+                    "event_id": event_id,
+                    "runtime_id": "runtime-1",
+                    "provider": "codex",
+                    "provider_turn_id": "turn-2",
+                    "kind": kind,
+                    "confidence": "authoritative"
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        }
+        let blocked_revision = activity::state_for_view(&context, &record)
+            .unwrap()
+            .revision;
+        let revision = crate::codex_account::begin_switch_binding(
+            &context,
+            &record.id,
+            "runtime-1",
+            "account-b",
+        )
+        .unwrap();
+        crate::codex_account::finish_binding(
+            &context,
+            &record.id,
+            "runtime-1",
+            "account-b",
+            revision,
+            Ok(()),
+        )
+        .unwrap();
+        arm_usage_exhaustion(
+            &context,
+            &record.id,
+            "turn-2".to_string(),
+            blocked_revision,
+            "2030-01-01T00:00:01Z",
+        )
+        .unwrap();
+        let switched = crate::load_session_record(&context, &record.id).unwrap();
+        let binding = crate::codex_account::binding_snapshot(&switched);
+        assert!(
+            failover_selection_request(&context, &record.id, "runtime-1", &binding, false)
+                .unwrap()
+                .is_none(),
+            "an open, newly selected binding must bypass broker discovery"
+        );
+        let mut submissions = 0;
+
+        let outcome = tick_for_runtime_and_binding(
+            &context,
+            &record.id,
+            "runtime-1",
+            RuntimeBindingTick {
+                binding: &binding,
+                failover_account: Some("account-c"),
+            },
+            1_893_456_000,
+            &UsageSnapshot {
+                authoritative: true,
+                has_exhausted_windows: false,
+                exhausted_reset_epochs: Vec::new(),
+                soonest_reset_epoch: None,
+            },
+            |_| {
+                submissions += 1;
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(outcome, TickOutcome::Resumed);
+        assert_eq!(submissions, 1);
+        let account = crate::codex_account::view_for_record(
+            &crate::load_session_record(&context, &record.id).unwrap(),
+        );
+        assert_eq!(account.effective_account.as_deref(), Some("account-b"));
+        assert!(account.next.is_none());
+    }
+
+    #[test]
+    fn same_account_rebind_does_not_authorize_continuation_after_rejection() {
+        let lock = GlobalStateLock::new();
+        let _broker = EnvGuard::set(
+            &lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            r#"["/configured/broker"]"#,
+        );
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, mut record, _) = seed_bound_codex_auto_resume(&tmp);
+        set_enabled_with_policy(
+            &context,
+            &record.id,
+            true,
+            NEXT_ACCOUNT_THEN_RESUME_POLICY,
+            "2030-01-01T00:00:00Z",
+        )
+        .unwrap();
+        crate::codex_account::authorize_input_locked(&context, &mut record).unwrap();
+        for (event_id, kind) in [
+            ("same-account-start", "turn_started"),
+            ("same-account-failed", "turn_failed"),
+        ] {
+            activity::ingest_event(
+                &context,
+                &record.id,
+                serde_json::from_value(json!({
+                    "schema_version": crate::activity::TURN_EVENT_VERSION,
+                    "event_id": event_id,
+                    "runtime_id": "runtime-1",
+                    "provider": "codex",
+                    "provider_turn_id": "turn-same-account",
+                    "kind": kind,
+                    "confidence": "authoritative"
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        }
+        let blocked_revision = activity::state_for_view(&context, &record)
+            .unwrap()
+            .revision;
+        let revision = crate::codex_account::begin_switch_binding(
+            &context,
+            &record.id,
+            "runtime-1",
+            "account-a",
+        )
+        .unwrap();
+        crate::codex_account::finish_binding(
+            &context,
+            &record.id,
+            "runtime-1",
+            "account-a",
+            revision,
+            Ok(()),
+        )
+        .unwrap();
+        arm_usage_exhaustion(
+            &context,
+            &record.id,
+            "turn-same-account".to_string(),
+            blocked_revision,
+            "2030-01-01T00:00:01Z",
+        )
+        .unwrap();
+        let rebound = crate::load_session_record(&context, &record.id).unwrap();
+        let binding = crate::codex_account::binding_snapshot(&rebound);
+        let mut submissions = 0;
+
+        let outcome = tick_for_runtime_and_binding(
+            &context,
+            &record.id,
+            "runtime-1",
+            RuntimeBindingTick {
+                binding: &binding,
+                failover_account: None,
+            },
+            1_893_456_000,
+            &UsageSnapshot {
+                authoritative: true,
+                has_exhausted_windows: false,
+                exhausted_reset_epochs: Vec::new(),
+                soonest_reset_epoch: None,
+            },
+            |_| {
+                submissions += 1;
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(outcome, TickOutcome::Retrying);
+        assert_eq!(submissions, 0);
+        assert_eq!(
+            read_state(&context, &record.id, "ignored")
+                .unwrap()
+                .failure_reason
+                .as_deref(),
+            Some("no_account_available")
+        );
+    }
+
+    #[test]
+    fn pre_upgrade_missing_binding_identity_never_switches_or_resumes() {
+        let lock = GlobalStateLock::new();
+        let _broker = EnvGuard::set(
+            &lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            r#"["/configured/broker"]"#,
+        );
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record, blocked_revision) = seed_bound_codex_auto_resume(&tmp);
+        set_enabled_with_policy(
+            &context,
+            &record.id,
+            true,
+            NEXT_ACCOUNT_THEN_RESUME_POLICY,
+            "2030-01-01T00:00:00Z",
+        )
+        .unwrap();
+        arm_usage_exhaustion(
+            &context,
+            &record.id,
+            "turn-1".to_string(),
+            blocked_revision,
+            "2030-01-01T00:00:01Z",
+        )
+        .unwrap();
+        let mut pre_upgrade = read_state(&context, &record.id, "ignored").unwrap();
+        pre_upgrade.blocked_account = None;
+        pre_upgrade.blocked_account_revision = None;
+        write_state(&context, &record.id, &pre_upgrade).unwrap();
+        let binding = crate::codex_account::binding_snapshot(&record);
+
+        assert!(
+            failover_selection_request(&context, &record.id, "runtime-1", &binding, false)
+                .unwrap()
+                .is_none(),
+            "missing input-binding identity must skip broker discovery"
+        );
+        let mut submissions = 0;
+        let outcome = tick_for_runtime_and_binding(
+            &context,
+            &record.id,
+            "runtime-1",
+            RuntimeBindingTick {
+                binding: &binding,
+                failover_account: Some("account-b"),
+            },
+            1_893_456_000,
+            &UsageSnapshot {
+                authoritative: true,
+                has_exhausted_windows: false,
+                exhausted_reset_epochs: Vec::new(),
+                soonest_reset_epoch: None,
+            },
+            |_| {
+                submissions += 1;
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(outcome, TickOutcome::Retrying);
+        assert_eq!(submissions, 0);
+        assert!(
+            crate::codex_account::view_for_record(
+                &crate::load_session_record(&context, &record.id).unwrap()
+            )
+            .next
+            .is_none()
+        );
+        assert_eq!(
+            read_state(&context, &record.id, "ignored")
+                .unwrap()
+                .failure_reason
+                .as_deref(),
+            Some("state_unavailable")
+        );
+    }
+
+    #[test]
+    fn open_window_without_a_candidate_retries_before_its_future_reset() {
+        let lock = GlobalStateLock::new();
+        let _broker = EnvGuard::set(
+            &lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            r#"["/configured/broker"]"#,
+        );
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record, blocked_revision) = seed_bound_codex_auto_resume(&tmp);
+        set_enabled_with_policy(
+            &context,
+            &record.id,
+            true,
+            NEXT_ACCOUNT_THEN_RESUME_POLICY,
+            "2030-01-01T00:00:00Z",
+        )
+        .unwrap();
+        arm_usage_exhaustion(
+            &context,
+            &record.id,
+            "turn-1".to_string(),
+            blocked_revision,
+            "2030-01-01T00:00:01Z",
+        )
+        .unwrap();
+        let binding = crate::codex_account::binding_snapshot(&record);
+        let base = 1_893_456_000;
+
+        let outcome = tick_for_runtime_and_binding(
+            &context,
+            &record.id,
+            "runtime-1",
+            RuntimeBindingTick {
+                binding: &binding,
+                failover_account: None,
+            },
+            base,
+            &UsageSnapshot {
+                authoritative: true,
+                has_exhausted_windows: false,
+                exhausted_reset_epochs: Vec::new(),
+                soonest_reset_epoch: Some(base + 5 * 24 * 60 * 60),
+            },
+            |_| panic!("no candidate must not submit a continuation"),
+        )
+        .unwrap();
+
+        assert_eq!(outcome, TickOutcome::Retrying);
+        let state = read_state(&context, &record.id, "ignored").unwrap();
+        assert_eq!(state.state, "transient_failure");
+        assert_eq!(
+            state.failure_reason.as_deref(),
+            Some("no_account_available")
+        );
+        assert_eq!(
+            state.next_check_at.as_deref().and_then(epoch_from_string),
+            Some(base + RETRY_DELAYS_SECONDS[0])
+        );
+    }
+
+    #[test]
+    fn rejected_auto_continuation_preserves_the_failover_chain() {
+        let lock = GlobalStateLock::new();
+        let _broker = EnvGuard::set(
+            &lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            r#"["/configured/broker"]"#,
+        );
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record, blocked_revision) = seed_bound_codex_auto_resume(&tmp);
+        set_enabled_with_policy(
+            &context,
+            &record.id,
+            true,
+            NEXT_ACCOUNT_THEN_RESUME_POLICY,
+            "2030-01-01T00:00:00Z",
+        )
+        .unwrap();
+        arm_usage_exhaustion(
+            &context,
+            &record.id,
+            "turn-1".to_string(),
+            blocked_revision,
+            "2030-01-01T00:00:01Z",
+        )
+        .unwrap();
+        let binding = crate::codex_account::binding_snapshot(&record);
+        assert_eq!(
+            tick_for_runtime_and_binding(
+                &context,
+                &record.id,
+                "runtime-1",
+                RuntimeBindingTick {
+                    binding: &binding,
+                    failover_account: Some("account-b"),
+                },
+                1_893_456_000,
+                &UsageSnapshot {
+                    authoritative: true,
+                    has_exhausted_windows: false,
+                    exhausted_reset_epochs: Vec::new(),
+                    soonest_reset_epoch: None,
+                },
+                |_| panic!("continuation must wait for the account switch"),
+            )
+            .unwrap(),
+            TickOutcome::AccountSwitchQueued
+        );
+        let applying = crate::codex_account::begin_next_apply(&context, &record.id, "runtime-1")
+            .unwrap()
+            .unwrap();
+        crate::codex_account::finish_next_apply(
+            &context,
+            &record.id,
+            "runtime-1",
+            "account-b",
+            applying.revision,
+            applying.intent_id.as_deref().unwrap(),
+            Ok(()),
+        )
+        .unwrap();
+        let switched = crate::load_session_record(&context, &record.id).unwrap();
+        let switched_binding = crate::codex_account::binding_snapshot(&switched);
+        assert_eq!(
+            tick_for_runtime_and_binding(
+                &context,
+                &record.id,
+                "runtime-1",
+                RuntimeBindingTick {
+                    binding: &switched_binding,
+                    failover_account: None,
+                },
+                1_893_456_001,
+                &UsageSnapshot {
+                    authoritative: true,
+                    has_exhausted_windows: false,
+                    exhausted_reset_epochs: Vec::new(),
+                    soonest_reset_epoch: None,
+                },
+                |_| Ok(()),
+            )
+            .unwrap(),
+            TickOutcome::Resumed
+        );
+        for (event_id, kind) in [
+            ("auto-continued-start", "turn_started"),
+            ("auto-continued-failed", "turn_failed"),
+        ] {
+            activity::ingest_event(
+                &context,
+                &record.id,
+                serde_json::from_value(json!({
+                    "schema_version": crate::activity::TURN_EVENT_VERSION,
+                    "event_id": event_id,
+                    "runtime_id": "runtime-1",
+                    "provider": "codex",
+                    "provider_turn_id": "turn-2",
+                    "kind": kind,
+                    "confidence": "authoritative"
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        }
+        let failed_revision = activity::state_for_view(&context, &switched)
+            .unwrap()
+            .revision;
+        arm_usage_exhaustion(
+            &context,
+            &record.id,
+            "turn-2".to_string(),
+            failed_revision,
+            "2030-01-01T00:00:02Z",
+        )
+        .unwrap();
+
+        let state = read_state(&context, &record.id, "ignored").unwrap();
+        assert_eq!(
+            state.attempted_accounts,
+            vec!["account-a".to_string(), "account-b".to_string()]
+        );
+    }
+
+    #[test]
+    fn manual_input_after_a_resume_starts_a_fresh_failover_chain() {
+        let lock = GlobalStateLock::new();
+        let _broker = EnvGuard::set(
+            &lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            r#"["/configured/broker"]"#,
+        );
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record, _) = seed_bound_codex_auto_resume(&tmp);
+        let mut state = default_state("2030-01-01T00:00:00Z");
+        state.enabled = true;
+        state.recovery_policy = NEXT_ACCOUNT_THEN_RESUME_POLICY.to_string();
+        state.state = "resumed".to_string();
+        state.blocked_turn_id = Some("turn-1".to_string());
+        state.blocked_revision = Some(4);
+        state.blocked_account = Some("account-a".to_string());
+        state.blocked_account_revision = Some(1);
+        state.attempt = 2;
+        state.ever_scheduled = true;
+        state.attempted_accounts = vec!["account-a".to_string(), "account-b".to_string()];
+        write_state(&context, &record.id, &state).unwrap();
+
+        cancel_for_manual_input_locked(&context, &record.id, "2030-01-01T00:00:01Z").unwrap();
+
+        let reset = read_state(&context, &record.id, "ignored").unwrap();
+        assert!(reset.enabled);
+        assert_eq!(reset.state, "enabled");
+        assert!(reset.blocked_turn_id.is_none());
+        assert!(reset.blocked_revision.is_none());
+        assert!(reset.blocked_account.is_none());
+        assert!(reset.blocked_account_revision.is_none());
+        assert_eq!(reset.attempt, 0);
+        assert!(!reset.ever_scheduled);
+        assert!(reset.attempted_accounts.is_empty());
     }
 
     #[test]

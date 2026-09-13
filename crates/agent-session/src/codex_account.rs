@@ -66,6 +66,10 @@ struct DurableInputFence {
     schema_version: String,
     launch_id: String,
     activity_revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    binding_account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    binding_revision: Option<u64>,
 }
 
 /// Durable, additive intent to apply a different Codex account before the next
@@ -680,12 +684,18 @@ fn record_input_fence_locked(
         .ok_or_else(|| invalid_binding_error(record))?;
     let activity_revision =
         crate::activity::state_for_view(context, record).map_or(0, |state| state.revision);
+    let (binding_account, binding_revision) = match decode_binding(record) {
+        DecodedBinding::Valid(binding) => (Some(binding.selected_account), Some(binding.revision)),
+        DecodedBinding::Absent | DecodedBinding::Invalid => (None, None),
+    };
     record.extra.insert(
         INPUT_FENCE_KEY.to_string(),
         serde_json::to_value(DurableInputFence {
             schema_version: BINDING_SCHEMA_VERSION.to_string(),
             launch_id,
             activity_revision,
+            binding_account,
+            binding_revision,
         })
         .map_err(|_| invalid_binding_error(record))?,
     );
@@ -1296,6 +1306,21 @@ fn input_fence(record: &SessionRecord) -> Result<Option<DurableInputFence>, CliE
         return Err(invalid_binding_error(record));
     }
     Ok(Some(fence))
+}
+
+pub(crate) fn input_binding_identity(
+    record: &SessionRecord,
+) -> Result<Option<(String, u64)>, CliError> {
+    let Some(fence) = input_fence(record)? else {
+        return Ok(None);
+    };
+    match (fence.binding_account, fence.binding_revision) {
+        (Some(account), Some(revision)) if validate_account(&account).is_ok() && revision > 0 => {
+            Ok(Some((account, revision)))
+        }
+        (None, None) => Ok(None),
+        _ => Err(invalid_binding_error(record)),
+    }
 }
 
 fn session_busy_error(record: &SessionRecord) -> CliError {

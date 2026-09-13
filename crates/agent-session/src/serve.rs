@@ -7826,25 +7826,21 @@ async fn process_codex_auto_resume_id(state: Arc<ServeState>, target: CodexAutoR
     let id = target.id;
     tokio::task::spawn_blocking(move || {
         let now_epoch = jiff::Timestamp::now().as_second();
-        let failover_account = usage
-            .has_exhausted_windows
-            .then(|| {
-                auto_resume::failover_selection_request(
-                    &context,
-                    &id,
-                    &expected_launch_id,
-                    &target.binding,
-                )
+        let failover_account = auto_resume::failover_selection_request(
+            &context,
+            &id,
+            &expected_launch_id,
+            &target.binding,
+            usage.has_exhausted_windows,
+        )
+        .ok()
+        .flatten()
+        .and_then(|request| {
+            crate::codex_account::select_next_account(&request.after, &request.excluded)
                 .ok()
                 .flatten()
-                .and_then(|request| {
-                    crate::codex_account::select_next_account(&request.after, &request.excluded)
-                        .ok()
-                        .flatten()
-                })
-                .map(|account| account.account)
-            })
-            .flatten();
+        })
+        .map(|account| account.account);
         if let Err(err) = auto_resume::tick_for_runtime_and_binding(
             &context,
             &id,
@@ -19037,6 +19033,96 @@ esac
         assert_eq!(
             body["data"]["auto_resume"]["recovery_policy"],
             "next_account_then_resume"
+        );
+    }
+
+    #[tokio::test]
+    async fn codex_scheduler_selects_a_healthy_account_after_an_open_window_rejection() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let broker = executable(
+            &tmp.path().join("broker"),
+            "#!/bin/sh\nprintf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"account\":\"account-b\"}'\n",
+        );
+        let broker_argv = serde_json::to_string(&vec![broker]).unwrap();
+        let _broker = EnvGuard::set(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER", &broker_argv);
+        let launch_id = seed_codex_app_server_session(tmp.path(), "codex-open-failover");
+        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        let mut record = load_session_record(&st.context, "codex-open-failover").unwrap();
+        crate::codex_account::set_initial_binding(&mut record, Some("account-a")).unwrap();
+        crate::write_session_record(&st.context, &record).unwrap();
+        crate::codex_account::finish_binding(
+            &st.context,
+            &record.id,
+            &launch_id,
+            "account-a",
+            1,
+            Ok(()),
+        )
+        .unwrap();
+        record = load_session_record(&st.context, &record.id).unwrap();
+        crate::activity::activate_runtime(&st.context, &record).unwrap();
+        crate::codex_account::authorize_input_locked(&st.context, &mut record).unwrap();
+        auto_resume::set_enabled_with_policy(
+            &st.context,
+            &record.id,
+            true,
+            auto_resume::NEXT_ACCOUNT_THEN_RESUME_POLICY,
+            "2030-01-01T00:00:00Z",
+        )
+        .unwrap();
+        crate::activity::ingest_codex_app_server_failure(
+            &st.context,
+            &record.id,
+            &launch_id,
+            "thread-open-failover",
+            "turn-open-failover",
+        )
+        .unwrap();
+        let (handle, mut commands) = codex_app_server::control_channel();
+        st.codex_controls.lock().unwrap().insert(
+            record.id.clone(),
+            CodexControlEntry {
+                launch_id: launch_id.clone(),
+                handle,
+            },
+        );
+        let responder = tokio::spawn(async move {
+            let Some(codex_app_server::ControlCommand::Usage(response)) = commands.recv().await
+            else {
+                panic!("scheduler did not request current Codex usage");
+            };
+            response
+                .send(Ok(UsageSnapshot {
+                    authoritative: true,
+                    has_exhausted_windows: false,
+                    exhausted_reset_epochs: Vec::new(),
+                    soonest_reset_epoch: None,
+                }))
+                .unwrap();
+        });
+
+        process_codex_auto_resume_id(
+            st.clone(),
+            CodexAutoResumeTarget {
+                id: record.id.clone(),
+                launch_id,
+                binding: crate::codex_account::binding_snapshot(&record),
+            },
+        )
+        .await;
+        responder.await.unwrap();
+
+        assert_eq!(
+            auto_resume::view_for_record(&st.context, &record).state,
+            "switching_account"
+        );
+        let account = crate::codex_account::view_for_record(
+            &load_session_record(&st.context, &record.id).unwrap(),
+        );
+        assert_eq!(
+            account.next.and_then(|next| next.account).as_deref(),
+            Some("account-b")
         );
     }
 
