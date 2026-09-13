@@ -1502,25 +1502,33 @@ fn activity_document_for_runtime(
         last_provider_event_provider: None,
         last_provider_event_at: None,
         last_provider_event_turn_id: None,
-        provider_session_id: record
-            .provider_resume
-            .as_ref()
-            .filter(|resume| resume.provider == record.agent)
-            .map(|resume| {
-                projected_provider_identifier(
-                    runtime_id,
-                    AgentKind::from_name(&record.agent).expect("validated session agent"),
-                    "session",
-                    &resume.session_id,
-                )
-            })
-            .transpose()?,
+        provider_session_id: provider_session_for_runtime(record, runtime_id)?,
         last_event_at: None,
         pending_journal: None,
         runtime_unhealthy_reason: None,
         operator_provider_turn_receipts: Vec::new(),
         extra,
     })
+}
+
+fn provider_session_for_runtime(
+    record: &SessionRecord,
+    runtime_id: &str,
+) -> Result<Option<String>, CliError> {
+    record
+        .provider_resume
+        .as_ref()
+        .and_then(|resume| {
+            let provider = AgentKind::from_name(&resume.provider)?;
+            let accepted = resume.provider == record.agent
+                || (provider == AgentKind::Dsh
+                    && session_accepts_activity_provider(record, &resume.provider));
+            accepted.then_some((resume, provider))
+        })
+        .map(|(resume, provider)| {
+            projected_provider_identifier(runtime_id, provider, "session", &resume.session_id)
+        })
+        .transpose()
 }
 
 pub(crate) fn activate_runtime_in_dir(
@@ -1561,10 +1569,16 @@ pub(crate) fn activate_runtime_in_dir(
     } else {
         None
     };
-    if let Some(existing) = existing.as_ref()
+    if let Some(existing) = existing.as_mut()
         && existing.runtime_id == runtime_id
         && existing.runtime_generation == runtime_generation
     {
+        if existing.provider_session_id.is_none()
+            && let Some(provider_session_id) = provider_session_for_runtime(record, runtime_id)?
+        {
+            existing.provider_session_id = Some(provider_session_id);
+            write_document(&path, existing)?;
+        }
         return Ok(
             match runtime_unhealthy_marker(dir, runtime_id, runtime_generation) {
                 RuntimeUnhealthyStatus::Matching(state) => *state,
@@ -3005,7 +3019,8 @@ fn live_external_dsh_turn(record: &SessionRecord) -> Result<TurnState, CliError>
 
 fn session_accepts_activity_provider(record: &SessionRecord, provider: &str) -> bool {
     if provider == AgentKind::Dsh.as_str() {
-        return agent_console_dsh_transport(record);
+        return agent_console_dsh_transport(record)
+            || crate::dsh_provider_lease_scope(record).is_ok_and(|scope| scope.is_some());
     }
     !agent_console_dsh_transport(record) && provider == record.agent
 }

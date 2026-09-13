@@ -19,6 +19,7 @@ comma-separated route segments below are exact alternatives, not wildcards.
 | `GET /history/sessions` | Bearer | This specification |
 | `GET /history/sessions/{history_id}/messages` | Bearer | This specification |
 | `POST /history/sessions/{history_id}/star` | Bearer | This specification |
+| `POST /history/sessions/{history_id}/resume` | Bearer | This specification |
 | `GET /codex/accounts` | Bearer | This specification |
 | `GET /activity/events` | Bearer | [Activity stream v1](activity-stream-v1.md) |
 | `GET /usage` | Open | This specification |
@@ -59,8 +60,10 @@ is no second state model.
 ### Provider session history
 
 `GET /history/sessions` returns a bounded, cursor-paged catalog of Codex,
-Claude, and DSH provider sessions. DSH entries are read-only and always carry
-`resumable: false`. Optional `q` searches only metadata already present in the
+Claude, and DSH provider sessions. DSH entries carry `resumable: true` only
+when their owning ready launch profile explicitly advertises exact-ID history
+resume; older and read-only profiles keep `resumable: false`. Optional `q`
+searches only metadata already present in the
 catalog snapshot: exact archived/managed title, bounded first-user-prompt
 preview when the provider scan supplies one, provider session id, provider,
 launch-profile id, cwd/repository label, machine, and timestamps. DSH's
@@ -78,7 +81,7 @@ history identity; archived metadata stays authoritative, and provider-only
 historical records do not invent a Console title. `data.capabilities` explicitly
 advertises `metadata_search: true`, `full_text_search: false`,
 `transcript_messages: true`, `latest_message_paging: true`, `archive: true`, and
-`star: true`.
+`star: true`, and `resume: true`.
 
 Starred sessions lead the page, newest star first, and the unstarred remainder
 follows in the retained recency order. Each item may add `starred_at`. Cursors
@@ -117,6 +120,33 @@ is resolved against the catalog first, and an id that names no history session i
 a not-found rather than a stored record. The response carries `history_id` and
 `starred_at`, which is null once the star is cleared. Clearing a star that was
 never set is a success, so a repeated toggle from two clients settles.
+
+`POST /history/sessions/{history_id}/resume` accepts no body. The daemon scans
+the owning provider source again, recomputes the opaque history identity, and
+derives provider id, cwd, profile, executable, and canonical resume arguments
+only from trusted server-side metadata. Codex and Claude use their existing
+provider-import behavior. DSH requires an owning ready Hermes profile whose
+`dsh_history.resume` is `exact-id`; it persists provider `dsh` independently
+from base agent `hermes` and invokes the profile with exactly
+`--resume <provider-session-id>`. The response contains the normal newly
+created managed `session` projection.
+
+Before the DSH provider process is released from its held launch gate, its
+runtime heartbeat sidecar obtains a private filesystem lease keyed by the
+canonical history root and provider session identity. The sidecar holds the
+kernel lock for the runtime lifetime. A competing launch returns
+`provider-session-already-running` with HTTP 409 and never starts a second
+provider writer; process exit releases the lock without PID-based stale-owner
+cleanup. Missing history returns `history-session-not-found`, an unsupported
+profile returns `history-resume-not-supported`, and unavailable provider
+history or profile readiness fails without launching a runtime.
+
+The history-resume boundary uses this bounded status mapping: 404
+`history-session-not-found`; 409 `provider-session-already-running`; 422
+`history-resume-not-supported` or `history-resume-identity-mismatch`; 503
+`history-resume-profile-unavailable` or `dsh-history-unavailable`; and 500
+`history-read-failed`. Errors raised after trusted launch admission retain the
+existing managed-session startup error contract.
 
 `POST /sessions/{id}/archive` requires
 `expected_session_incarnation` and accepts an optional `starred` boolean, which
@@ -178,7 +208,7 @@ recorded in `sympoies/nils-cli#1409`.
 - `GET /healthz`, `GET /sessions`, `GET /sessions/{id}/glance?tail=N` — reads, open on loopback. `GET /sessions`
   additively reports `data.observed_at`, sampled from daemon time after the returned session state is assembled, plus
   `data.agent_profiles` containing only ready server-owned
-  `{ id, label, agent, provider_resume_import_supported }` launch-profile
+  `{ id, label, agent, provider_resume_import_supported, history_resume_supported }` launch-profile
   summaries. `data.capabilities.profile_resume_import` advertises support for
   selecting one of those safe ids during provider import; executable paths,
   configuration roots, readiness commands, and environment remain private.
@@ -831,6 +861,8 @@ A Hermes-backed DSH profile may add
 or `none`. This optional read adapter is not a launch readiness prerequisite:
 if it is unavailable, DSH launch and readiness keep their existing behavior and
 the history endpoints return only the remaining valid catalog data.
+Adding `"resume":"exact-id"` to that object explicitly enables daemon-owned
+history resume for the ready profile. Omitting it preserves read-only behavior.
 
 ## Trust model
 
