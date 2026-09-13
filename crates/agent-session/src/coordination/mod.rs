@@ -38,8 +38,22 @@ const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 // this read/write path on the same whole-registry cap.
 const MAX_REGISTRY_BYTES: u64 = nils_common::coordination_projection::MAX_REGISTRY_BYTES;
 const RECEIPT_TTL_SECS: i64 = 24 * 60 * 60;
+// Idempotency receipts are bounded on two axes, and both are load-bearing.
+//
+// The count quotas cap how many receipts a principal and the registry may
+// retain. They say nothing about size: an outcome is an arbitrary JSON value,
+// so a principal holding far fewer than `MAX_RECEIPTS_PER_PRINCIPAL` receipts
+// can still retain orders of magnitude more memory and disk than the count
+// suggests. `MAX_RECEIPT_BYTES_PER_PRINCIPAL` is the missing axis: the sum of
+// each principal's serialized receipts, recomputed from the registry rather
+// than cached, so a reloaded registry enforces the same bound.
+//
+// At the limit `store_receipt` rejects rather than evicts. Evicting a retained
+// receipt would let a later replay of that key read as a fresh request, which
+// is exactly the idempotency guarantee these receipts exist to provide.
 const MAX_RECEIPTS_PER_PRINCIPAL: usize = 4_096;
 const MAX_RECEIPTS_GLOBAL: usize = 32_768;
+const MAX_RECEIPT_BYTES_PER_PRINCIPAL: u64 = 4 * 1024 * 1024;
 const TERMINAL_RETENTION_SECS: i64 = 5 * 60;
 const ACKNOWLEDGED_MESSAGE_RETENTION_SECS: i64 = 24 * 60 * 60;
 const CLAIM_MUTATION_FENCES_DIR: &str = "claim-mutation-fences";
@@ -2920,18 +2934,52 @@ pub(crate) fn store_receipt(
             None,
         ));
     }
-    registry.receipts.insert(
-        receipt_key,
-        IdempotencyReceipt {
-            principal,
-            incarnation,
-            operation,
-            digest,
-            outcome,
-            expires_at_epoch: now.saturating_add(RECEIPT_TTL_SECS),
-        },
-    );
+    let candidate = IdempotencyReceipt {
+        principal,
+        incarnation,
+        operation,
+        digest,
+        outcome,
+        expires_at_epoch: now.saturating_add(RECEIPT_TTL_SECS),
+    };
+    // Charge only the delta: replacing a receipt releases the bytes its
+    // predecessor held, so a replayed request cannot be billed twice.
+    let replaced_bytes = registry
+        .receipts
+        .get(&receipt_key)
+        .map(receipt_bytes)
+        .unwrap_or(0);
+    let retained_bytes =
+        principal_receipt_bytes(registry, &candidate.principal).saturating_sub(replaced_bytes);
+    if retained_bytes.saturating_add(receipt_bytes(&candidate)) > MAX_RECEIPT_BYTES_PER_PRINCIPAL {
+        return Err(CliError::data(
+            "quota-exceeded",
+            "coordination idempotency receipt byte budget exceeded",
+            None,
+        ));
+    }
+    registry.receipts.insert(receipt_key, candidate);
     Ok(())
+}
+
+/// Serialized size of one receipt, used for the per-principal byte budget.
+///
+/// An outcome that cannot be serialized is charged the whole budget so an
+/// unmeasurable receipt fails closed instead of being admitted for free.
+fn receipt_bytes(receipt: &IdempotencyReceipt) -> u64 {
+    serde_json::to_vec(receipt)
+        .map(|encoded| encoded.len() as u64)
+        .unwrap_or(MAX_RECEIPT_BYTES_PER_PRINCIPAL)
+}
+
+/// Aggregate serialized bytes the registry currently retains for one principal.
+fn principal_receipt_bytes(registry: &Registry, principal: &str) -> u64 {
+    registry
+        .receipts
+        .values()
+        .filter(|receipt| receipt.principal == principal)
+        .map(receipt_bytes)
+        .fold(0, u64::saturating_add)
 }
 
 fn receipt_key(principal: &str, incarnation: &str, operation: &str, key: &str) -> String {
@@ -3869,5 +3917,177 @@ mod tests {
         assert_eq!(registry.claims[3].state, "active");
         assert_eq!(registry.claims[4].state, "released");
         assert_eq!(registry.claims[5].state, "active");
+    }
+}
+
+#[cfg(test)]
+mod receipt_byte_budget_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn receipt_with_outcome_bytes(principal: &str, filler: usize) -> IdempotencyReceipt {
+        IdempotencyReceipt {
+            principal: principal.to_string(),
+            incarnation: "incarnation".to_string(),
+            operation: "operation".to_string(),
+            digest: "digest".to_string(),
+            outcome: json!({ "payload": "x".repeat(filler) }),
+            expires_at_epoch: i64::MAX,
+        }
+    }
+
+    fn seed_principal_bytes(
+        registry: &mut Registry,
+        principal: &str,
+        receipts: usize,
+        filler: usize,
+    ) {
+        for index in 0..receipts {
+            registry.receipts.insert(
+                format!("{principal}-seed-{index}"),
+                receipt_with_outcome_bytes(principal, filler),
+            );
+        }
+    }
+
+    #[test]
+    fn large_outcomes_exhaust_the_principal_byte_budget_far_below_the_count_quota() {
+        let mut registry = Registry::default();
+        let filler = 64 * 1024;
+        let seeded = MAX_RECEIPT_BYTES_PER_PRINCIPAL as usize / filler;
+        seed_principal_bytes(&mut registry, "worker", seeded, filler);
+
+        assert!(
+            registry.receipts.len() < MAX_RECEIPTS_PER_PRINCIPAL,
+            "the byte budget must bind before the count quota"
+        );
+
+        let error = store_receipt(
+            &mut registry,
+            "idempotency-key-0001".to_string(),
+            "worker".to_string(),
+            "incarnation".to_string(),
+            "operation".to_string(),
+            "digest".to_string(),
+            json!({ "payload": "x".repeat(filler) }),
+            0,
+        )
+        .expect_err("aggregate receipt bytes must be bounded");
+
+        assert_eq!(error.code(), "quota-exceeded");
+    }
+
+    #[test]
+    fn a_second_principal_keeps_its_own_byte_budget() {
+        let mut registry = Registry::default();
+        let filler = 64 * 1024;
+        let seeded = MAX_RECEIPT_BYTES_PER_PRINCIPAL as usize / filler;
+        seed_principal_bytes(&mut registry, "worker", seeded, filler);
+
+        store_receipt(
+            &mut registry,
+            "idempotency-key-0001".to_string(),
+            "other-worker".to_string(),
+            "incarnation".to_string(),
+            "operation".to_string(),
+            "digest".to_string(),
+            json!({ "payload": "x".repeat(filler) }),
+            0,
+        )
+        .expect("an unrelated principal must not inherit another principal's usage");
+    }
+
+    #[test]
+    fn overwriting_one_receipt_releases_the_bytes_it_previously_held() {
+        let mut registry = Registry::default();
+        let filler = 64 * 1024;
+        // A serialized receipt is larger than its raw filler, so leave headroom
+        // for two of them rather than dividing the budget exactly.
+        let seeded = (MAX_RECEIPT_BYTES_PER_PRINCIPAL as usize / filler) - 2;
+        seed_principal_bytes(&mut registry, "worker", seeded, filler);
+
+        let key = "idempotency-key-0001".to_string();
+        store_receipt(
+            &mut registry,
+            key.clone(),
+            "worker".to_string(),
+            "incarnation".to_string(),
+            "operation".to_string(),
+            "digest".to_string(),
+            json!({ "payload": "x".repeat(filler) }),
+            0,
+        )
+        .expect("the first store must fit");
+        let occupied = registry.receipts.len();
+
+        store_receipt(
+            &mut registry,
+            key,
+            "worker".to_string(),
+            "incarnation".to_string(),
+            "operation".to_string(),
+            "digest".to_string(),
+            json!({ "payload": "x".repeat(filler) }),
+            0,
+        )
+        .expect("replacing a receipt must charge only the delta, not the whole outcome again");
+
+        assert_eq!(
+            registry.receipts.len(),
+            occupied,
+            "the replacement must not add a second receipt"
+        );
+    }
+
+    #[test]
+    fn a_rejected_store_preserves_replay_for_every_retained_receipt() {
+        let mut registry = Registry::default();
+        let filler = 64 * 1024;
+        let seeded = MAX_RECEIPT_BYTES_PER_PRINCIPAL as usize / filler;
+        seed_principal_bytes(&mut registry, "worker", seeded, filler);
+        let retained = serde_json::to_value(&registry.receipts).expect("retained receipts encode");
+
+        store_receipt(
+            &mut registry,
+            "idempotency-key-0001".to_string(),
+            "worker".to_string(),
+            "incarnation".to_string(),
+            "operation".to_string(),
+            "digest".to_string(),
+            json!({ "payload": "x".repeat(filler) }),
+            0,
+        )
+        .expect_err("the store must be refused");
+
+        assert_eq!(
+            serde_json::to_value(&registry.receipts).expect("surviving receipts encode"),
+            retained,
+            "rejection must evict nothing, so retained receipts stay replayable"
+        );
+    }
+
+    #[test]
+    fn the_byte_budget_is_recomputed_from_a_reloaded_registry() {
+        let mut registry = Registry::default();
+        let filler = 64 * 1024;
+        let seeded = MAX_RECEIPT_BYTES_PER_PRINCIPAL as usize / filler;
+        seed_principal_bytes(&mut registry, "worker", seeded, filler);
+
+        let encoded = serde_json::to_vec(&registry).expect("registry encodes");
+        let mut reloaded: Registry = serde_json::from_slice(&encoded).expect("registry decodes");
+
+        let error = store_receipt(
+            &mut reloaded,
+            "idempotency-key-0001".to_string(),
+            "worker".to_string(),
+            "incarnation".to_string(),
+            "operation".to_string(),
+            "digest".to_string(),
+            json!({ "payload": "x".repeat(filler) }),
+            0,
+        )
+        .expect_err("the budget must survive a broker restart");
+
+        assert_eq!(error.code(), "quota-exceeded");
     }
 }
