@@ -585,6 +585,12 @@ holding far fewer receipts than the count quota cannot retain an unbounded
 amount of memory or disk. It is recomputed from the registry rather than
 cached, so it survives a broker restart unchanged.
 
+The byte budget is per principal only; there is no registry-wide byte limit on
+receipts. Enough distinct principals at full budget reach the whole-registry
+cap, which surfaces as a failed registry write rather than a per-request
+`quota-exceeded`. The registry cap, not the receipt budget, is the outer bound
+on total retention.
+
 Exceeding either axis returns `quota-exceeded` before the transition. The
 budget rejects rather than evicts: dropping a retained receipt would let a
 later replay of that key read as a fresh request, which is the guarantee
