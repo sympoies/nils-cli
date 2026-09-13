@@ -1,0 +1,351 @@
+//! Devlog domain model: locating the log, parsing month files, and the
+//! structural rules `docs/devlog/README.md` states in prose.
+
+use std::fmt;
+use std::path::{Path, PathBuf};
+
+/// Directory names that hold a development log, in detection order.
+///
+/// Two conventions exist across the organization: most repositories use
+/// `docs/devlog`, while a repository with a source/render split keeps its
+/// authored copy under `docs/source/devlog`. Detection covers both so a
+/// caller never has to say which one this repository uses.
+pub const DEVLOG_DIRS: [&str; 2] = ["docs/devlog", "docs/source/devlog"];
+
+/// A located development log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Devlog {
+    repo_root: PathBuf,
+    dir: PathBuf,
+}
+
+impl Devlog {
+    /// Locate the log under `repo_root`, trying each known directory in order.
+    pub fn locate(repo_root: &Path) -> Result<Self, DevlogError> {
+        for candidate in DEVLOG_DIRS {
+            let dir = repo_root.join(candidate);
+            if dir.is_dir() {
+                return Ok(Self {
+                    repo_root: repo_root.to_path_buf(),
+                    dir,
+                });
+            }
+        }
+        Err(DevlogError::NotFound {
+            repo_root: repo_root.to_path_buf(),
+        })
+    }
+
+    /// Use an explicit directory instead of detection.
+    pub fn at(repo_root: &Path, dir: &Path) -> Result<Self, DevlogError> {
+        if !dir.is_dir() {
+            return Err(DevlogError::NotADirectory {
+                path: dir.to_path_buf(),
+            });
+        }
+        Ok(Self {
+            repo_root: repo_root.to_path_buf(),
+            dir: dir.to_path_buf(),
+        })
+    }
+
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    pub fn repo_root(&self) -> &Path {
+        &self.repo_root
+    }
+
+    /// The log directory relative to the repository root, using forward
+    /// slashes so output is identical on every platform.
+    pub fn relative_dir(&self) -> String {
+        let relative = self
+            .dir
+            .strip_prefix(&self.repo_root)
+            .unwrap_or(self.dir.as_path());
+        relative
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("/")
+    }
+
+    pub fn index_path(&self) -> PathBuf {
+        self.dir.join("README.md")
+    }
+
+    pub fn month_path(&self, month: Month) -> PathBuf {
+        self.dir.join(format!("{month}.md"))
+    }
+
+    /// Every tracked month file, oldest first.
+    ///
+    /// A file whose stem is not a valid `YYYY-MM` is reported rather than
+    /// skipped: a silently ignored mis-named entry is the failure mode this
+    /// crate exists to prevent.
+    pub fn months(&self) -> Result<MonthScan, DevlogError> {
+        let mut months = Vec::new();
+        let mut unexpected = Vec::new();
+
+        let entries = std::fs::read_dir(&self.dir).map_err(|source| DevlogError::Io {
+            path: self.dir.clone(),
+            source,
+        })?;
+        for entry in entries {
+            let entry = entry.map_err(|source| DevlogError::Io {
+                path: self.dir.clone(),
+                source,
+            })?;
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                unexpected.push(path);
+                continue;
+            };
+            if name == "README.md" {
+                continue;
+            }
+            match name.strip_suffix(".md").map(str::parse::<Month>) {
+                Some(Ok(month)) => months.push(month),
+                _ => unexpected.push(path),
+            }
+        }
+
+        months.sort();
+        unexpected.sort();
+        Ok(MonthScan { months, unexpected })
+    }
+}
+
+/// The result of scanning the log directory for month files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MonthScan {
+    /// Valid `YYYY-MM` month files, oldest first.
+    pub months: Vec<Month>,
+    /// Files that do not match the `YYYY-MM.md` convention.
+    pub unexpected: Vec<PathBuf>,
+}
+
+/// A `YYYY-MM` month identifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Month {
+    year: i16,
+    month: i8,
+}
+
+impl Month {
+    pub fn new(year: i16, month: i8) -> Result<Self, DevlogError> {
+        if !(1..=12).contains(&month) {
+            return Err(DevlogError::InvalidMonth {
+                value: format!("{year:04}-{month:02}"),
+            });
+        }
+        Ok(Self { year, month })
+    }
+
+    pub fn year(self) -> i16 {
+        self.year
+    }
+
+    pub fn month(self) -> i8 {
+        self.month
+    }
+
+    /// The `# Development log - YYYY-MM` heading a month file opens with.
+    pub fn heading(self) -> String {
+        format!("# Development log - {self}")
+    }
+}
+
+impl fmt::Display for Month {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:04}-{:02}", self.year, self.month)
+    }
+}
+
+impl std::str::FromStr for Month {
+    type Err = DevlogError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let invalid = || DevlogError::InvalidMonth {
+            value: value.to_string(),
+        };
+        let (year, month) = value.split_once('-').ok_or_else(invalid)?;
+        if year.len() != 4 || month.len() != 2 {
+            return Err(invalid());
+        }
+        if !year.bytes().all(|b| b.is_ascii_digit()) || !month.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(invalid());
+        }
+        let year: i16 = year.parse().map_err(|_| invalid())?;
+        let month: i8 = month.parse().map_err(|_| invalid())?;
+        Self::new(year, month)
+    }
+}
+
+/// A `YYYY-MM-DD` entry date.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct EntryDate {
+    month: Month,
+    day: i8,
+}
+
+impl EntryDate {
+    pub fn new(month: Month, day: i8) -> Result<Self, DevlogError> {
+        let max = days_in_month(month);
+        if !(1..=max).contains(&day) {
+            return Err(DevlogError::InvalidDate {
+                value: format!("{month}-{day:02}"),
+            });
+        }
+        Ok(Self { month, day })
+    }
+
+    /// Today's date in the system time zone.
+    pub fn today() -> Result<Self, DevlogError> {
+        let now = jiff::Zoned::now().date();
+        let month = Month::new(now.year(), now.month())?;
+        Self::new(month, now.day())
+    }
+
+    pub fn month(self) -> Month {
+        self.month
+    }
+
+    pub fn day(self) -> i8 {
+        self.day
+    }
+}
+
+impl fmt::Display for EntryDate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}-{:02}", self.month, self.day)
+    }
+}
+
+impl std::str::FromStr for EntryDate {
+    type Err = DevlogError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let invalid = || DevlogError::InvalidDate {
+            value: value.to_string(),
+        };
+        let (month, day) = value.rsplit_once('-').ok_or_else(invalid)?;
+        if day.len() != 2 || !day.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(invalid());
+        }
+        let month: Month = month.parse().map_err(|_| invalid())?;
+        let day: i8 = day.parse().map_err(|_| invalid())?;
+        Self::new(month, day)
+    }
+}
+
+fn days_in_month(month: Month) -> i8 {
+    match month.month() {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if is_leap_year(month.year()) => 29,
+        2 => 28,
+        // `Month::new` rejects every other value, so this arm is unreachable
+        // for a constructed `Month`.
+        _ => 0,
+    }
+}
+
+fn is_leap_year(year: i16) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
+/// Errors this crate reports to its callers.
+#[derive(Debug)]
+pub enum DevlogError {
+    NotFound {
+        repo_root: PathBuf,
+    },
+    NotADirectory {
+        path: PathBuf,
+    },
+    InvalidMonth {
+        value: String,
+    },
+    InvalidDate {
+        value: String,
+    },
+    MissingMonthFile {
+        path: PathBuf,
+    },
+    MissingHeading {
+        path: PathBuf,
+        expected: String,
+    },
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    NotAGitWorkTree,
+}
+
+impl DevlogError {
+    /// The stable error code emitted in the JSON envelope.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::NotFound { .. } => "devlog-not-found",
+            Self::NotADirectory { .. } => "not-a-directory",
+            Self::InvalidMonth { .. } => "invalid-month",
+            Self::InvalidDate { .. } => "invalid-date",
+            Self::MissingMonthFile { .. } => "missing-month-file",
+            Self::MissingHeading { .. } => "missing-heading",
+            Self::Io { .. } => "io-error",
+            Self::NotAGitWorkTree => "not-a-git-work-tree",
+        }
+    }
+}
+
+impl fmt::Display for DevlogError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound { repo_root } => write!(
+                f,
+                "no development log under {}: expected one of {}",
+                repo_root.display(),
+                DEVLOG_DIRS.join(" or ")
+            ),
+            Self::NotADirectory { path } => {
+                write!(f, "not a directory: {}", path.display())
+            }
+            Self::InvalidMonth { value } => {
+                write!(f, "expected a YYYY-MM month, got '{value}'")
+            }
+            Self::InvalidDate { value } => {
+                write!(f, "expected a YYYY-MM-DD date, got '{value}'")
+            }
+            Self::MissingMonthFile { path } => {
+                write!(f, "no devlog file for month: {}", path.display())
+            }
+            Self::MissingHeading { path, expected } => write!(
+                f,
+                "{} does not open with its expected heading '{}'",
+                path.display(),
+                expected
+            ),
+            Self::Io { path, source } => {
+                write!(f, "{}: {source}", path.display())
+            }
+            Self::NotAGitWorkTree => {
+                write!(f, "must run inside a git work tree")
+            }
+        }
+    }
+}
+
+impl std::error::Error for DevlogError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io { source, .. } => Some(source),
+            _ => None,
+        }
+    }
+}
