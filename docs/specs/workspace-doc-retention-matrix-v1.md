@@ -19,6 +19,8 @@ Decision fields:
 | `DEVELOPMENT.md` | `workspace-level` | `canonical` | `keep` | Maintenance principles, routine workflow, and canonical reference routing. |
 | `AGENTS.md` | `workspace-level` | `canonical` | `keep` | Agent execution policy for this repository. |
 | `BINARY_DEPENDENCIES.md` | `workspace-level` | `canonical` | `keep` | Shared runtime/tooling dependency contract. |
+| `docs/devlog/README.md` | `workspace-level` | `canonical` | `keep` | Development log conventions, entry template, and month index. |
+| `docs/devlog/YYYY-MM.md` | `workspace-level` | `canonical` | `keep` | Append-only monthly development log entries. |
 | `docs/runbooks/cli-completion-development-standard.md` | `workspace-level` | `canonical` | `keep` | Canonical completion architecture and checks. |
 | `docs/runbooks/cli-help-style-guide.md` | `workspace-level` | `canonical` | `keep` | Workspace help-text style and command-ordering guidance. |
 | `docs/runbooks/crates-io-status-script-runbook.md` | `workspace-level` | `canonical` | `keep` | Workspace crates.io status workflow. |

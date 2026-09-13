@@ -65,7 +65,8 @@ artifacts, and release/publish procedures live in the
 | Documentation ownership and placement | [`Crate docs placement policy`](docs/specs/crate-docs-placement-policy.md) |
 | `agent-session` coordination | [`agent-session` docs](crates/agent-session/docs/README.md) |
 | Temporary-directory cleanup | [`Test temp-directory policy`](docs/specs/test-temp-directory-policy.md) |
+| Historical development narrative | [`Development log`](docs/devlog/README.md) |
 
-`AGENTS.md` owns agent-specific repository rules. Plans, discussions, and
-reports are retained evidence; they do not override current source, schemas,
-policy, or canonical runbooks.
+`AGENTS.md` owns agent-specific repository rules. Plans, discussions, reports,
+and the development log are retained evidence; they do not override current
+source, schemas, policy, or canonical runbooks.

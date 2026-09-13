@@ -20,6 +20,7 @@ Open only the references relevant to the requested change:
 - CLI completion policy: `docs/runbooks/cli-completion-development-standard.md`
 - New CLI crate standard: `docs/runbooks/new-cli-crate-development-standard.md`
 - Crate docs placement policy: `docs/specs/crate-docs-placement-policy.md`
+- Development log (append-only history): `docs/devlog/README.md`
 
 ## Required Local Check Entrypoints
 

@@ -468,3 +468,23 @@ scripts/crates-io-status.sh --all --format text
 
 Detailed status-script semantics live in
 `docs/runbooks/crates-io-status-script-runbook.md`.
+
+## 10. Development log
+
+`docs/devlog/README.md` owns the development log's conventions, entry template,
+and month index. This section owns only the command contract and the validation
+lane.
+
+Search past entries with:
+
+```bash
+scripts/devlog-search.sh <term> [YYYY-MM]
+```
+
+The term is a case-insensitive literal string; the optional `YYYY-MM` restricts
+the search to one month file. Exit status is `0` on a match, `1` when there are
+no matches or the requested month file is absent, and `2` for a usage error.
+`-h`/`--help` prints usage and exits `0`.
+
+Devlog-only changes are documentation, so they validate through the docs-only
+fast path in section 3.1.
