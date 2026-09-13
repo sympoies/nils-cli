@@ -570,6 +570,33 @@ digest, and outcome for 24 hours.
 - Receipt cleanup is bounded and never removes a live claim, operation, or
   unread message needed to explain the retained outcome.
 
+Receipt retention is bounded on two axes, and both are normative:
+
+| Limit | Value | Scope |
+| --- | --- | --- |
+| Receipt count | 4,096 | per principal |
+| Receipt count | 32,768 | whole registry |
+| Aggregate serialized receipt bytes | 4 MiB | per principal |
+
+The count limits bound how many outcomes a principal may retain; they do not
+bound their size, because an outcome is an arbitrary JSON value. The byte
+budget bounds the sum of one principal's serialized receipts, so a principal
+holding far fewer receipts than the count quota cannot retain an unbounded
+amount of memory or disk. It is recomputed from the registry rather than
+cached, so it survives a broker restart unchanged.
+
+The byte budget is per principal only; there is no registry-wide byte limit on
+receipts. Enough distinct principals at full budget reach the whole-registry
+cap, which surfaces as a failed registry write rather than a per-request
+`quota-exceeded`. The registry cap, not the receipt budget, is the outer bound
+on total retention.
+
+Exceeding either axis returns `quota-exceeded` before the transition. The
+budget rejects rather than evicts: dropping a retained receipt would let a
+later replay of that key read as a fresh request, which is the guarantee
+receipts exist to provide. Replacing an existing receipt charges only the
+difference, so a replayed request is not billed twice.
+
 ## Mailbox limits and state machine
 
 Limits are normative:
