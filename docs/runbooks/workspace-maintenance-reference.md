@@ -468,3 +468,25 @@ scripts/crates-io-status.sh --all --format text
 
 Detailed status-script semantics live in
 `docs/runbooks/crates-io-status-script-runbook.md`.
+
+## 10. Development log
+
+`docs/devlog/` holds the append-only historical narrative: one file per month,
+newest entry first, indexed by `docs/devlog/README.md`. It records the
+non-obvious context, validation results, and external references a diff cannot
+preserve. It never owns the current contract - update the canonical runbook,
+spec, or policy first.
+
+Search past entries with:
+
+```bash
+scripts/devlog-search.sh <term> [YYYY-MM]
+```
+
+The term is a case-insensitive literal string; the optional `YYYY-MM` restricts
+the search to one month file. Exit status is `0` on a match, `1` when there are
+no matches or no month files, and `2` for a usage error.
+
+Devlog-only changes are documentation, so they validate through the docs-only
+fast path in section 3.1. Conventions and the entry template live in
+`docs/devlog/README.md`.

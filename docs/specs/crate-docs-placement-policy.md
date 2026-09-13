@@ -33,6 +33,8 @@ Only the following root-level documentation categories are allowed as canonical 
 - `/AGENTS.md` (agent behavior policy)
 - `/BINARY_DEPENDENCIES.md` (workspace shared binary prerequisites)
 - `/docs/plans/*.md` (workspace planning documents)
+- `/docs/devlog/*.md` (workspace append-only development log; see
+  `docs/devlog/README.md`)
 - `/docs/specs/*.md` for `workspace-level` specifications only
 - `/docs/runbooks/*.md` for `workspace-level` runbooks only
 
