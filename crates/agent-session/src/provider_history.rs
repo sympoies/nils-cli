@@ -329,6 +329,67 @@ impl HistoryCatalog {
         cache.refreshed_at = None;
     }
 
+    /// Resolve a resume selector from a new provider scan rather than the
+    /// process-local catalog cache. Resume is a mutation boundary: a row that
+    /// disappeared, moved profiles, or changed provider identity since the
+    /// browser listed it must not launch from stale metadata.
+    pub(crate) fn resolve_fresh(&self, history_id: &str) -> Result<HistorySession, HistoryError> {
+        if !is_stable_history_id(history_id) {
+            return Err(HistoryError::NotFound);
+        }
+        let mut dsh_unavailable = false;
+        for source in &self.dsh_sources {
+            let listed = match list_dsh_sessions(source) {
+                Ok(listed) => listed,
+                Err(_) => {
+                    dsh_unavailable = true;
+                    continue;
+                }
+            };
+            for item in listed.into_iter().filter(valid_dsh_catalog_item) {
+                let id = stable_history_id(
+                    "dsh",
+                    Some(&source.agent_profile),
+                    &item.provider_session_id,
+                );
+                if id == history_id {
+                    return Ok(HistorySession {
+                        id,
+                        provider: "dsh".to_string(),
+                        provider_session_id: item.provider_session_id,
+                        agent_profile: Some(source.agent_profile.clone()),
+                        title: None,
+                        prompt_preview: None,
+                        first_user_prompt_preview: None,
+                        last_user_prompt_preview: None,
+                        repo_name: repo_name(&item.cwd),
+                        cwd: item.cwd,
+                        created_at: item.created_at,
+                        updated_at: item.updated_at,
+                        archived_at: None,
+                        starred_at: None,
+                        resumable: false,
+                        transcript_path: source.root.clone(),
+                        incremental_catalog_stamp: item.revision,
+                    });
+                }
+            }
+        }
+        let snapshot = scan_catalog(&self.sources, &[], &self.archives_root, &self.stars_root);
+        if let Some(session) = snapshot
+            .sessions
+            .into_iter()
+            .find(|session| session.id == history_id)
+        {
+            return Ok(session);
+        }
+        if snapshot.truncated || dsh_unavailable {
+            Err(HistoryError::Io)
+        } else {
+            Err(HistoryError::NotFound)
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn list(
         &self,

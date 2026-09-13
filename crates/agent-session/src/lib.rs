@@ -120,6 +120,7 @@ const AGENT_PROFILE_PROVIDER_CONFIG_DIR_RUNTIME_KEY: &str = "agent_profile_provi
 const AGENT_PROFILE_AUTO_RESUME_SUPPORTED_RUNTIME_KEY: &str = "agent_profile_auto_resume_supported";
 const AGENT_PROFILE_GRACEFUL_SHUTDOWN_RUNTIME_KEY: &str = "agent_profile_graceful_shutdown";
 const AGENT_PROFILE_CODEX_USAGE_ACCOUNT_RUNTIME_KEY: &str = "agent_profile_codex_usage_account";
+const DSH_HISTORY_ROOT_PROVIDER_RESUME_KEY: &str = "dsh_history_root";
 const PROVIDER_STOP_CANARY_RUNTIME_KEY: &str = "provider_stop_canary";
 const PROVIDER_STOP_CANARY_PROOF_RUNTIME_KEY: &str = "provider_stop_canary_proof";
 const PROVIDER_STOP_CANARY_SCHEMA: &str = "agent-session.provider-stop-canary.v1";
@@ -146,11 +147,12 @@ const STARTUP_STAGE_FILE: &str = ".startup-stage";
 const STARTUP_FAILURE_FILE: &str = ".startup-failure";
 const STARTUP_DIAGNOSTIC_FILE: &str = ".startup-diagnostic.log";
 const RUNTIME_EXIT_STATUS_FILE: &str = ".runtime-exit-status";
-const STARTUP_ARTIFACT_FILES: [&str; 4] = [
+const STARTUP_ARTIFACT_FILES: [&str; 5] = [
     STARTUP_STAGE_FILE,
     STARTUP_FAILURE_FILE,
     STARTUP_DIAGNOSTIC_FILE,
     RUNTIME_EXIT_STATUS_FILE,
+    coordination::broker::DSH_PROVIDER_LEASE_FAILURE_FILE,
 ];
 const SESSION_RESUME_FILE: &str = "resume.json";
 const SESSION_LOCKS_DIR: &str = "session-locks";
@@ -1614,6 +1616,20 @@ pub(crate) struct ProviderResumeImportArgs {
     pub(crate) format: OutputFormat,
 }
 
+pub(crate) struct DshHistoryResumeArgs {
+    pub(crate) provider_resume_id: String,
+    pub(crate) cwd: PathBuf,
+    pub(crate) history_root: PathBuf,
+    pub(crate) title: Option<String>,
+    pub(crate) coordination_mode: cli::CoordinationMode,
+    pub(crate) tmux_bin: Option<PathBuf>,
+    pub(crate) agent_bin: PathBuf,
+    pub(crate) agent_profile: String,
+    pub(crate) profile_auto_resume_supported: bool,
+    pub(crate) profile_graceful_shutdown: Option<String>,
+    pub(crate) codex_usage_account: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct DeleteResult {
     id: String,
@@ -2452,6 +2468,67 @@ pub(crate) fn start_provider_resume_session(
         resume_args,
         extra: BTreeMap::new(),
     };
+    start_resolved_provider_resume_session(context, args, cwd, provider_resume)
+}
+
+pub(crate) fn start_dsh_history_resume_session(
+    context: &CliContext,
+    args: DshHistoryResumeArgs,
+) -> Result<StartView, CliError> {
+    let provider_resume_id = normalize_provider_resume_id(&args.provider_resume_id)?;
+    let cwd = resolve_cwd(Some(&args.cwd))?;
+    let history_root = fs::canonicalize(&args.history_root).map_err(|_| {
+        CliError::unavailable(
+            "dsh-history-unavailable",
+            "the configured DSH history root is unavailable",
+            None,
+        )
+    })?;
+    if !history_root.is_dir() {
+        return Err(CliError::unavailable(
+            "dsh-history-unavailable",
+            "the configured DSH history root is unavailable",
+            None,
+        ));
+    }
+    let resume_args = canonical_dsh_provider_resume_args(&provider_resume_id);
+    let provider_resume = ProviderResume {
+        provider: AgentKind::Dsh.as_str().to_string(),
+        session_id: provider_resume_id.clone(),
+        captured_at: Zoned::now().timestamp().to_string(),
+        capture_method: "dsh-history-exact-id".to_string(),
+        resume_args,
+        extra: BTreeMap::from([(
+            DSH_HISTORY_ROOT_PROVIDER_RESUME_KEY.to_string(),
+            json!(display_path(&history_root)),
+        )]),
+    };
+    let start_args = ProviderResumeImportArgs {
+        agent: AgentKind::Hermes,
+        provider_resume_id,
+        title: args.title,
+        title_state: None,
+        id: None,
+        coordination_mode: args.coordination_mode,
+        tmux_bin: args.tmux_bin,
+        agent_bin: Some(args.agent_bin),
+        agent_profile: Some(args.agent_profile),
+        provider_config_dir: None,
+        profile_auto_resume_supported: Some(args.profile_auto_resume_supported),
+        profile_graceful_shutdown: args.profile_graceful_shutdown,
+        codex_usage_account: args.codex_usage_account,
+        agent_args: Vec::new(),
+        format: OutputFormat::Json,
+    };
+    start_resolved_provider_resume_session(context, start_args, cwd, provider_resume)
+}
+
+fn start_resolved_provider_resume_session(
+    context: &CliContext,
+    args: ProviderResumeImportArgs,
+    cwd: PathBuf,
+    provider_resume: ProviderResume,
+) -> Result<StartView, CliError> {
     let tmux_bin = resolve_tmux_bin(args.tmux_bin.as_deref());
     let agent_bin = resolve_agent_bin(args.agent, args.agent_bin.as_deref());
     let mut created = create_record(RecordRequest {
@@ -2479,6 +2556,17 @@ pub(crate) fn start_provider_resume_session(
         args.profile_graceful_shutdown.as_deref(),
         args.codex_usage_account.as_deref(),
     )?;
+
+    // DSH's durable provider identity is distinct from the Hermes base agent
+    // and becomes valid only after the owning profile context is persisted.
+    // Re-seed the still-unreleased runtime activity document at that point so
+    // the first provider event is fenced to the exact historical session.
+    if provider_resume.provider == AgentKind::Dsh.as_str()
+        && let Err(error) = activity::activate_runtime(context, &created.record)
+    {
+        cleanup_created_record(context, &created);
+        return Err(error);
+    }
 
     if let Err(err) =
         codex_app_server::configure_runtime(context, &agent_bin, &mut created.record, true)
@@ -16600,7 +16688,16 @@ fn validate_resume_metadata(
             Some(json!({ "id": record.id.clone(), "agent": record.agent.clone() })),
         )
     })?;
-    if provider_resume.provider != agent.as_str() {
+    let dsh_history_resume = agent == AgentKind::Hermes
+        && provider_resume.provider == AgentKind::Dsh.as_str()
+        && provider_resume.capture_method == "dsh-history-exact-id"
+        && session_agent_profile(record).is_some()
+        && provider_resume
+            .extra
+            .get(DSH_HISTORY_ROOT_PROVIDER_RESUME_KEY)
+            .and_then(Value::as_str)
+            .is_some_and(|root| Path::new(root).is_absolute());
+    if provider_resume.provider != agent.as_str() && !dsh_history_resume {
         return Err(CliError::data(
             "session-provider-mismatch",
             "session provider resume metadata does not match the agent",
@@ -16612,19 +16709,24 @@ fn validate_resume_metadata(
         ));
     }
     validate_stored_agent_args(record, agent)?;
-    let expected_args =
+    let expected_args = if dsh_history_resume {
+        Some(canonical_dsh_provider_resume_args(
+            &provider_resume.session_id,
+        ))
+    } else {
         canonical_provider_resume_args(agent, &record.cwd, &provider_resume.session_id)
-            .ok_or_else(|| {
-                CliError::data(
-                    "session-not-resumable",
-                    format!("session provider is not resumable: {}", record.id),
-                    Some(json!({
-                        "id": record.id.clone(),
-                        "agent": record.agent.clone(),
-                        "provider": provider_resume.provider.clone(),
-                    })),
-                )
-            })?;
+    }
+    .ok_or_else(|| {
+        CliError::data(
+            "session-not-resumable",
+            format!("session provider is not resumable: {}", record.id),
+            Some(json!({
+                "id": record.id.clone(),
+                "agent": record.agent.clone(),
+                "provider": provider_resume.provider.clone(),
+            })),
+        )
+    })?;
     if provider_resume.session_id.trim().is_empty() || provider_resume.resume_args != expected_args
     {
         return Err(CliError::data(
@@ -16657,6 +16759,36 @@ pub(crate) fn canonical_provider_resume_args(
         AgentKind::Hermes => None,
         AgentKind::Dsh => None,
     }
+}
+
+fn canonical_dsh_provider_resume_args(session_id: &str) -> Vec<String> {
+    vec!["--resume".to_string(), session_id.to_string()]
+}
+
+pub(crate) fn dsh_provider_lease_scope(record: &SessionRecord) -> Result<Option<String>, CliError> {
+    let Some(provider_resume) = record
+        .provider_resume
+        .as_ref()
+        .filter(|resume| resume.provider == AgentKind::Dsh.as_str())
+    else {
+        return Ok(None);
+    };
+    validate_resume_metadata(record)?;
+    let root = provider_resume
+        .extra
+        .get(DSH_HISTORY_ROOT_PROVIDER_RESUME_KEY)
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            CliError::data(
+                "session-not-resumable",
+                "DSH resume metadata has no trusted history root",
+                Some(json!({ "id": record.id })),
+            )
+        })?;
+    Ok(Some(format!(
+        "{}\0{}\0{}",
+        provider_resume.provider, root, provider_resume.session_id
+    )))
 }
 
 fn validate_stored_agent_args(record: &SessionRecord, agent: AgentKind) -> Result<(), CliError> {

@@ -23,6 +23,8 @@ use super::{
 };
 
 pub(crate) const BROKER_VERSION: &str = "agent-session.coordination-broker.v1";
+pub(crate) const DSH_PROVIDER_LEASE_FAILURE_FILE: &str = ".dsh-provider-lease-failure";
+const DSH_PROVIDER_LEASES_DIR: &str = "provider-session-leases";
 const STARTUP_RUNTIME_CONFIRMATION_WINDOW: Duration = Duration::from_secs(5);
 const STARTUP_RUNTIME_RETRY_INTERVAL: Duration = Duration::from_millis(20);
 const STOPPED_RUNTIME_CONFIRMATION_INTERVAL: Duration = Duration::from_millis(250);
@@ -345,6 +347,9 @@ pub(crate) fn activate_ready(context: &CliContext, record: &SessionRecord) -> Re
     let _runtime = crate::coordination_runtime_evidence(context, record)?;
     let started = Instant::now();
     while !heartbeat_fresh(context, &record.id, &incarnation, 0) {
+        if dsh_provider_lease_conflict_path(context, record).is_file() {
+            return Err(provider_session_already_running());
+        }
         if started.elapsed() >= Duration::from_secs(2) {
             return Err(CliError::runtime(
                 "coordination-broker-start-timeout",
@@ -374,7 +379,9 @@ pub(crate) fn activate_ready(context: &CliContext, record: &SessionRecord) -> Re
     broker.state = "ready".to_string();
     broker.heartbeat_at = timestamp(now);
     broker.heartbeat_epoch = now;
-    locked.save()
+    locked.save()?;
+    let _ = fs::remove_file(dsh_provider_lease_conflict_path(context, record));
+    Ok(())
 }
 
 pub(crate) fn ensure_ready(context: &CliContext, record: &SessionRecord) -> Result<(), CliError> {
@@ -1043,6 +1050,7 @@ pub(crate) fn run_heartbeat_sidecar(
     let mut established_owner = false;
     let mut observed_stopped = false;
     let mut activated_external_broker = false;
+    let mut provider_session_lease = None;
     loop {
         let record = match crate::load_session_record(context, &args.session) {
             Ok(record) => record,
@@ -1062,6 +1070,20 @@ pub(crate) fn run_heartbeat_sidecar(
         }
         if !heartbeat_owner_authorized(context, &args) {
             break;
+        }
+        if provider_session_lease.is_none() {
+            match acquire_dsh_provider_session_lease(context, &record) {
+                Ok(lease) => provider_session_lease = lease,
+                Err(error) if error.code() == "provider-session-already-running" => {
+                    let _ = write_atomic(
+                        &dsh_provider_lease_conflict_path(context, &record),
+                        b"provider-session-already-running\n",
+                        SECRET_FILE_MODE,
+                    );
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            }
         }
         established_owner = true;
         match crate::coordination_runtime_evidence(context, &record) {
@@ -1125,6 +1147,106 @@ pub(crate) fn run_heartbeat_sidecar(
         "session_id": args.session,
         "state": "stopped"
     }))
+}
+
+fn dsh_provider_lease_conflict_path(context: &CliContext, record: &SessionRecord) -> PathBuf {
+    crate::session_dir(context, &record.id).join(DSH_PROVIDER_LEASE_FAILURE_FILE)
+}
+
+fn acquire_dsh_provider_session_lease(
+    context: &CliContext,
+    record: &SessionRecord,
+) -> Result<Option<fs::File>, CliError> {
+    let Some(scope) = crate::dsh_provider_lease_scope(record)? else {
+        return Ok(None);
+    };
+    acquire_provider_session_lease_scope(context, &scope).map(Some)
+}
+
+fn acquire_provider_session_lease_scope(
+    context: &CliContext,
+    scope: &str,
+) -> Result<fs::File, CliError> {
+    let root = super::coordination_root(context)?;
+    let lease_root = root.join(DSH_PROVIDER_LEASES_DIR);
+    match fs::symlink_metadata(&lease_root) {
+        Ok(metadata)
+            if metadata.file_type().is_symlink()
+                || !metadata.is_dir()
+                || metadata.uid() != unsafe { libc::geteuid() } =>
+        {
+            return Err(CliError::runtime(
+                "coordination-store-untrusted",
+                "provider session lease directory is untrusted",
+                None,
+            ));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if let Err(error) = fs::create_dir(&lease_root)
+                && error.kind() != std::io::ErrorKind::AlreadyExists
+            {
+                return Err(unavailable());
+            }
+            let metadata = fs::symlink_metadata(&lease_root).map_err(|_| unavailable())?;
+            if metadata.file_type().is_symlink()
+                || !metadata.is_dir()
+                || metadata.uid() != unsafe { libc::geteuid() }
+            {
+                return Err(CliError::runtime(
+                    "coordination-store-untrusted",
+                    "provider session lease directory is untrusted",
+                    None,
+                ));
+            }
+        }
+        Err(_) => return Err(unavailable()),
+    }
+    fs::set_permissions(&lease_root, fs::Permissions::from_mode(0o700))
+        .map_err(|_| unavailable())?;
+    let path = lease_root.join(format!("{}.lock", digest_bytes(scope.as_bytes())));
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(SECRET_FILE_MODE)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(&path)
+        .map_err(|_| unavailable())?;
+    let metadata = file.metadata().map_err(|_| unavailable())?;
+    if !metadata.is_file()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.nlink() != 1
+        || metadata.permissions().mode() & 0o077 != 0
+    {
+        return Err(CliError::runtime(
+            "coordination-store-untrusted",
+            "provider session lease file is untrusted",
+            None,
+        ));
+    }
+    use std::os::fd::AsRawFd;
+    // SAFETY: `file` owns a valid descriptor retained by the heartbeat sidecar
+    // for the managed runtime's full lifetime.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        let error = std::io::Error::last_os_error();
+        if error.kind() == std::io::ErrorKind::WouldBlock {
+            return Err(provider_session_already_running());
+        }
+        return Err(unavailable());
+    }
+    Ok(file)
+}
+
+fn provider_session_already_running() -> CliError {
+    CliError::data(
+        "provider-session-already-running",
+        "the DSH provider session already has a live managed writer",
+        Some(json!({
+            "retryable": true,
+            "next_action": "stop_existing_session"
+        })),
+    )
 }
 
 fn heartbeat_advanced_since(
@@ -1246,6 +1368,28 @@ mod tests {
     use clap::Parser;
     use serde_json::json;
     use std::os::unix::fs::symlink;
+
+    #[test]
+    fn provider_session_lease_rejects_a_second_writer_and_releases_on_owner_drop() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        fs::create_dir_all(&context.state_dir).unwrap();
+        let first = acquire_provider_session_lease_scope(&context, "dsh\0/root\0session")
+            .expect("first writer owns the lease");
+        let conflict = acquire_provider_session_lease_scope(&context, "dsh\0/root\0session")
+            .expect_err("second writer must be rejected");
+        assert_eq!(conflict.code(), "provider-session-already-running");
+        let other = acquire_provider_session_lease_scope(&context, "dsh\0/root\0other-session")
+            .expect("another provider identity has an independent lease");
+
+        drop(first);
+        acquire_provider_session_lease_scope(&context, "dsh\0/root\0session")
+            .expect("kernel-released ownership is stale-safe and immediately reusable");
+        drop(other);
+    }
 
     #[test]
     fn checkpoint_file_is_private_and_reuses_only_a_trusted_inode() {

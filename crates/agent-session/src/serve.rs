@@ -66,15 +66,15 @@ use crate::provider_prompt::{
     ProviderPromptSource, ProviderPromptTail, prompt_observed_after,
 };
 use crate::{
-    BINARY, CliContext, CliError, ProviderResumeImportArgs, SessionRecord, SessionRegistryFence,
-    SessionTitleState, SessionTitleStateInput, SessionView, StartFailureDisposition,
-    WorkdirSearchOptions, archive_session_with_expected_incarnation,
+    BINARY, CliContext, CliError, DshHistoryResumeArgs, ProviderResumeImportArgs, SessionRecord,
+    SessionRegistryFence, SessionTitleState, SessionTitleStateInput, SessionView,
+    StartFailureDisposition, WorkdirSearchOptions, archive_session_with_expected_incarnation,
     canonicalize_structured_title_pair, cleanup_session_delete_tombstones, delete_session,
     glance_session, load_session_record, non_empty_env, prepare_session_attachment,
     profile_unavailable, repo_remote_url_from_cwd, resolve_tmux_bin, resume_session_by_id,
     search_workdirs, send_auto_resume_input, send_input_serialized, session_clipboard_buffer,
-    session_dir, session_status, short_hostname, start_provider_resume_session, start_session,
-    update_session_title_if_revision,
+    session_dir, session_status, short_hostname, start_dsh_history_resume_session,
+    start_provider_resume_session, start_session, update_session_title_if_revision,
 };
 
 const ATTACH_LIVE_FIFO_NAME: &str = "attach-live.fifo";
@@ -325,10 +325,18 @@ struct DshHistoryAdapterConfig {
     root: PathBuf,
     #[serde(default = "default_dsh_history_compression")]
     compression: String,
+    #[serde(default)]
+    resume: Option<DshHistoryResumeCapability>,
 }
 
 fn default_dsh_history_compression() -> String {
     "zstd".to_string()
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+enum DshHistoryResumeCapability {
+    ExactId,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -374,6 +382,7 @@ struct AgentLaunchProfileSummary {
     label: String,
     agent: String,
     provider_resume_import_supported: bool,
+    history_resume_supported: bool,
 }
 
 impl AgentLaunchProfiles {
@@ -633,7 +642,16 @@ impl AgentLaunchProfile {
             agent: self.agent.as_str().to_string(),
             provider_resume_import_supported: self.provider_config_dir.is_some()
                 && matches!(self.agent, AgentKind::Codex | AgentKind::Claude),
+            history_resume_supported: self.provider_resume_import_supported()
+                || self.dsh_history.as_ref().is_some_and(|history| {
+                    history.resume == Some(DshHistoryResumeCapability::ExactId)
+                }),
         }
+    }
+
+    fn provider_resume_import_supported(&self) -> bool {
+        self.provider_config_dir.is_some()
+            && matches!(self.agent, AgentKind::Codex | AgentKind::Claude)
     }
 
     fn is_ready(&self) -> bool {
@@ -894,6 +912,10 @@ fn router(state: Arc<ServeState>) -> Router {
             get(history_messages_handler),
         )
         .route("/history/sessions/{id}/star", post(history_star_handler))
+        .route(
+            "/history/sessions/{id}/resume",
+            post(history_resume_handler),
+        )
         .route("/codex/accounts", get(codex_accounts_handler))
         .route("/retitle/readiness", get(retitle_readiness_handler))
         .route("/sessions/{id}/retitle", post(session_retitle_handler))
@@ -2169,9 +2191,10 @@ fn envelope_status(status: StatusCode, data: Value) -> Response {
 fn envelope_err(err: CliError) -> Response {
     let data = err.into_inner();
     let status = match data.code.as_str() {
-        "session-not-found" | "message-not-found" | "retitle-v3-operation-not-found" => {
-            StatusCode::NOT_FOUND
-        }
+        "session-not-found"
+        | "message-not-found"
+        | "retitle-v3-operation-not-found"
+        | "history-session-not-found" => StatusCode::NOT_FOUND,
         "coordination-unauthorized" => StatusCode::UNAUTHORIZED,
         "rate-limited" | "retitle-provider-rate-limited" => StatusCode::TOO_MANY_REQUESTS,
         "wait-timeout" | "retitle-provider-timeout" => StatusCode::REQUEST_TIMEOUT,
@@ -2197,6 +2220,7 @@ fn envelope_err(err: CliError) -> Response {
         | "retitle-v3-idempotency-conflict"
         | "codex-account-session-incarnation-conflict"
         | "codex-account-session-busy"
+        | "provider-session-already-running"
         | "agent-blocked" => StatusCode::CONFLICT,
         "retitle-v3-memory-not-ready" => StatusCode::UNPROCESSABLE_ENTITY,
         "retitle-v3-history-unavailable" | "retitle-v3-history-degraded" => {
@@ -4634,18 +4658,31 @@ async fn history_list_handler(
     let catalog = state.history_catalog.clone();
     let title_cache = state.managed_history_titles.clone();
     let context = state.context.clone();
+    let launch_profiles = state.launch_profiles.clone();
     let machine = state.machine.clone();
     let response_machine = machine.clone();
     match tokio::task::spawn_blocking(move || {
         let titles = managed_history_titles(&context, &title_cache);
-        catalog.list_with_titles(
+        let mut page = catalog.list_with_titles(
             &machine,
             query.q.as_deref(),
             query.provider.as_deref(),
             query.cursor.as_deref(),
             query.limit.unwrap_or(50),
             &titles,
-        )
+        )?;
+        let ready_profiles = launch_profiles.ready_summaries();
+        for session in &mut page.sessions {
+            if session.provider == AgentKind::Dsh.as_str()
+                && let Some(profile_id) = session.agent_profile.as_deref()
+            {
+                let supported = ready_profiles
+                    .iter()
+                    .any(|profile| profile.id == profile_id && profile.history_resume_supported);
+                session.resumable = supported;
+            }
+        }
+        Ok::<_, HistoryError>(page)
     })
     .await
     {
@@ -4662,11 +4699,162 @@ async fn history_list_handler(
                 "latest_message_paging": true,
                 "archive": true,
                 "star": true,
+                "resume": true,
             },
         })),
         Ok(Err(error)) => history_error_response(error),
         Err(_) => join_err(),
     }
+}
+
+async fn history_resume_handler(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let context = state.context.clone();
+    let tmux_bin = state.tmux_bin.clone();
+    let catalog = state.history_catalog.clone();
+    let profiles = state.launch_profiles.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let history = catalog.resolve_fresh(&id).map_err(history_resume_catalog_error)?;
+        let expected_id = provider_history::stable_history_id(
+            &history.provider,
+            history.agent_profile.as_deref(),
+            &history.provider_session_id,
+        );
+        if expected_id != id {
+            return Err(CliError::data(
+                "history-resume-identity-mismatch",
+                "history identity changed before resume",
+                None,
+            ));
+        }
+        match history.provider.as_str() {
+            "dsh" => {
+                let profile_id = history.agent_profile.as_deref().ok_or_else(|| {
+                    history_resume_not_supported("DSH history has no owning launch profile")
+                })?;
+                let profile = profiles
+                    .get(profile_id)
+                    .ok_or_else(|| history_resume_profile_unavailable(profile_id))?;
+                let dsh_history = profile.dsh_history.as_ref().filter(|history| {
+                    history.resume == Some(DshHistoryResumeCapability::ExactId)
+                }).ok_or_else(|| {
+                    history_resume_not_supported("the DSH launch profile does not advertise exact-ID history resume")
+                })?;
+                if !profile.is_ready() {
+                    return Err(history_resume_profile_unavailable(profile_id));
+                }
+                start_dsh_history_resume_session(
+                    &context,
+                    DshHistoryResumeArgs {
+                        provider_resume_id: history.provider_session_id,
+                        cwd: PathBuf::from(history.cwd),
+                        history_root: dsh_history.root.clone(),
+                        title: history.title,
+                        coordination_mode: cli::CoordinationMode::Advisory,
+                        tmux_bin: Some(tmux_bin),
+                        agent_bin: profile.agent_bin.clone(),
+                        agent_profile: profile.id.clone(),
+                        profile_auto_resume_supported: profile.auto_resume_supported,
+                        profile_graceful_shutdown: profile
+                            .graceful_shutdown
+                            .map(|mode| mode.as_str().to_string()),
+                        codex_usage_account: profile.codex_usage_account.clone(),
+                    },
+                )
+            }
+            "codex" | "claude" => {
+                let agent = AgentKind::from_name(&history.provider).expect("matched provider");
+                let profile = history
+                    .agent_profile
+                    .as_deref()
+                    .map(|profile_id| {
+                        let profile = profiles
+                            .get(profile_id)
+                            .ok_or_else(|| history_resume_profile_unavailable(profile_id))?;
+                        if !profile.provider_resume_import_supported() {
+                            return Err(history_resume_not_supported(
+                                "the history launch profile does not support provider resume import",
+                            ));
+                        }
+                        if !profile.is_ready() {
+                            return Err(history_resume_profile_unavailable(profile_id));
+                        }
+                        Ok(profile)
+                    })
+                    .transpose()?;
+                start_provider_resume_session(
+                    &context,
+                    ProviderResumeImportArgs {
+                        agent,
+                        provider_resume_id: history.provider_session_id,
+                        title: history.title,
+                        title_state: None,
+                        id: None,
+                        coordination_mode: cli::CoordinationMode::Advisory,
+                        tmux_bin: Some(tmux_bin),
+                        agent_bin: profile.map(|profile| profile.agent_bin.clone()),
+                        agent_profile: profile.map(|profile| profile.id.clone()),
+                        provider_config_dir: profile
+                            .and_then(|profile| profile.provider_config_dir.clone()),
+                        profile_auto_resume_supported: profile
+                            .map(|profile| profile.auto_resume_supported),
+                        profile_graceful_shutdown: profile
+                            .and_then(|profile| profile.graceful_shutdown)
+                            .map(|mode| mode.as_str().to_string()),
+                        codex_usage_account: profile
+                            .and_then(|profile| profile.codex_usage_account.clone()),
+                        agent_args: Vec::new(),
+                        format: nils_common::cli_contract::OutputFormat::Json,
+                    },
+                )
+            }
+            _ => Err(history_resume_not_supported(
+                "the history provider does not support daemon-owned resume",
+            )),
+        }
+    })
+    .await;
+    match result {
+        Ok(Ok(view)) => envelope_ok(json!({ "machine": state.machine, "session": view.result })),
+        Ok(Err(error)) => envelope_err(error),
+        Err(_) => join_err(),
+    }
+}
+
+fn history_resume_catalog_error(error: HistoryError) -> CliError {
+    match error {
+        HistoryError::NotFound => CliError::data(
+            "history-session-not-found",
+            "history session was not found",
+            None,
+        ),
+        HistoryError::InvalidCursor => CliError::data(
+            "history-resume-identity-mismatch",
+            "history identity is invalid",
+            None,
+        ),
+        HistoryError::Io => {
+            CliError::runtime("history-read-failed", "history could not be read", None)
+        }
+    }
+}
+
+fn history_resume_not_supported(message: &'static str) -> CliError {
+    CliError::data("history-resume-not-supported", message, None)
+}
+
+fn history_resume_profile_unavailable(profile_id: &str) -> CliError {
+    CliError::unavailable(
+        "history-resume-profile-unavailable",
+        "the history launch profile is unavailable on this machine",
+        Some(json!({ "agent_profile": profile_id })),
+    )
 }
 
 async fn history_messages_handler(
@@ -12504,11 +12692,12 @@ mod tests {
                 label: "Claude GPT".to_string(),
                 agent: "claude".to_string(),
                 provider_resume_import_supported: true,
+                history_resume_supported: true,
             }]
         );
         assert_eq!(
             serde_json::to_value(&summaries).unwrap(),
-            json!([{"id":"claude-gpt","label":"Claude GPT","agent":"claude","provider_resume_import_supported":true}])
+            json!([{"id":"claude-gpt","label":"Claude GPT","agent":"claude","provider_resume_import_supported":true,"history_resume_supported":true}])
         );
 
         fs::write(&launcher, "#!/usr/bin/env sh\nexit 1\n").unwrap();
@@ -12565,6 +12754,50 @@ mod tests {
         assert_eq!(sources.len(), 1);
         assert_eq!(sources[0].agent_profile, "dsh-tui");
         assert_eq!(sources[0].compression, "zstd");
+    }
+
+    #[test]
+    fn launch_profiles_advertise_dsh_history_resume_only_when_exact_id_is_explicit() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let launcher = executable(&tmp.path().join("dsh-launcher"), "#!/bin/sh\nexit 0\n");
+        let adapter = executable(&tmp.path().join("dsh-history"), "#!/bin/sh\nexit 0\n");
+        let sessions = tmp.path().join("sessions");
+        fs::create_dir(&sessions).unwrap();
+
+        let without_resume = AgentLaunchProfiles::from_json(
+            &json!([{
+                "id": "dsh-read-only",
+                "label": "DSH read only",
+                "agent": "hermes",
+                "agent_bin": launcher,
+                "dsh_history": {
+                    "command": adapter,
+                    "root": sessions
+                }
+            }])
+            .to_string(),
+        )
+        .unwrap();
+        assert!(!without_resume.entries[0].summary().history_resume_supported);
+
+        let exact_resume = AgentLaunchProfiles::from_json(
+            &json!([{
+                "id": "dsh-exact-resume",
+                "label": "DSH exact resume",
+                "agent": "hermes",
+                "agent_bin": launcher,
+                "dsh_history": {
+                    "command": adapter,
+                    "root": sessions,
+                    "resume": "exact-id"
+                }
+            }])
+            .to_string(),
+        )
+        .unwrap();
+        let summary = exact_resume.entries[0].summary();
+        assert!(!summary.provider_resume_import_supported);
+        assert!(summary.history_resume_supported);
     }
 
     #[test]
@@ -12691,6 +12924,7 @@ mod tests {
                     label: "Claude GPT".to_string(),
                     agent: "claude".to_string(),
                     provider_resume_import_supported: false,
+                    history_resume_supported: false,
                 }]
             );
         }
@@ -18038,6 +18272,240 @@ esac
     }
 
     #[tokio::test]
+    async fn history_list_enables_only_explicit_ready_dsh_exact_resume() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        let history_root = tmp.path().join("dsh-sessions");
+        fs::create_dir(&cwd).unwrap();
+        fs::create_dir(&history_root).unwrap();
+        let launcher = executable(&tmp.path().join("dsh-launcher"), "#!/bin/sh\nexit 0\n");
+        let adapter = executable(
+            &tmp.path().join("dsh-history"),
+            &format!(
+                r##"#!/bin/sh
+case "$1" in
+  list) printf '%s\n' '{{"schema_version":"dsh-runtime-kit.history.v1","data":[{{"provider_session_id":"dsh-one","cwd":"{}","created_at":"2026-09-12T01:00:00.000Z","updated_at":"2026-09-12T02:00:00.000Z","revision":"rev-1"}}]}}' ;;
+  summaries) printf '%s\n' '{{"schema_version":"dsh-runtime-kit.history.v1","data":[]}}' ;;
+  *) exit 64 ;;
+esac
+"##,
+                cwd.display()
+            ),
+        );
+        let profiles = AgentLaunchProfiles::from_json(
+            &json!([{
+                "id":"dsh-tui",
+                "label":"DSH TUI",
+                "agent":"hermes",
+                "agent_bin":launcher,
+                "dsh_history":{
+                    "command":adapter,
+                    "root":history_root,
+                    "resume":"exact-id"
+                }
+            }])
+            .to_string(),
+        )
+        .unwrap();
+        let mut st = state(tmp.path(), Some(TOKEN), PathBuf::from("tmux"));
+        Arc::get_mut(&mut st).unwrap().history_catalog = Arc::new(
+            HistoryCatalog::new(
+                Vec::new(),
+                provider_history::archive_root(tmp.path()),
+                provider_history::star_root(tmp.path()),
+            )
+            .with_dsh_sources(profiles.dsh_history_sources()),
+        );
+        Arc::get_mut(&mut st).unwrap().launch_profiles = profiles;
+
+        let (status, body) = call(
+            router(st),
+            get_auth("/history/sessions?provider=dsh", Some(TOKEN)),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(body["data"]["sessions"][0]["provider"], "dsh");
+        assert_eq!(body["data"]["sessions"][0]["resumable"], true);
+        assert_eq!(body["data"]["capabilities"]["resume"], true);
+    }
+
+    #[tokio::test]
+    async fn history_resume_re_resolves_dsh_and_launches_canonical_exact_id() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        let history_root = tmp.path().join("dsh-sessions");
+        fs::create_dir(&cwd).unwrap();
+        fs::create_dir(&history_root).unwrap();
+        let launcher = executable(&tmp.path().join("dsh-launcher"), "#!/bin/sh\nexit 0\n");
+        let adapter = executable(
+            &tmp.path().join("dsh-history"),
+            &format!(
+                r##"#!/bin/sh
+case "$1" in
+  list) printf '%s\n' '{{"schema_version":"dsh-runtime-kit.history.v1","data":[{{"provider_session_id":"dsh-one","cwd":"{}","created_at":"2026-09-12T01:00:00.000Z","updated_at":"2026-09-12T02:00:00.000Z","revision":"rev-1"}}]}}' ;;
+  summaries) printf '%s\n' '{{"schema_version":"dsh-runtime-kit.history.v1","data":[]}}' ;;
+  *) exit 64 ;;
+esac
+"##,
+                cwd.display()
+            ),
+        );
+        let profiles = AgentLaunchProfiles::from_json(
+            &json!([{
+                "id":"dsh-tui",
+                "label":"DSH TUI",
+                "agent":"hermes",
+                "agent_bin":launcher,
+                "dsh_history":{
+                    "command":adapter,
+                    "root":history_root,
+                    "resume":"exact-id"
+                }
+            }])
+            .to_string(),
+        )
+        .unwrap();
+        let read_only_profiles = AgentLaunchProfiles::from_json(
+            &json!([{
+                "id":"dsh-tui",
+                "label":"DSH TUI",
+                "agent":"hermes",
+                "agent_bin":launcher,
+                "dsh_history":{
+                    "command":adapter,
+                    "root":history_root
+                }
+            }])
+            .to_string(),
+        )
+        .unwrap();
+        let log = tmp.path().join("tmux.log");
+        let tmux = resume_tmux(tmp.path(), &log);
+        let mut st = state(tmp.path(), Some(TOKEN), tmux);
+        Arc::get_mut(&mut st).unwrap().history_catalog = Arc::new(
+            HistoryCatalog::new(
+                Vec::new(),
+                provider_history::archive_root(tmp.path()),
+                provider_history::star_root(tmp.path()),
+            )
+            .with_dsh_sources(profiles.dsh_history_sources()),
+        );
+        Arc::get_mut(&mut st).unwrap().launch_profiles = read_only_profiles;
+        let id = provider_history::stable_history_id("dsh", Some("dsh-tui"), "dsh-one");
+
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(&format!("/history/sessions/{id}/resume"), None, json!({})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "body={body}");
+        assert!(!log.exists(), "unauthorized history resume must not launch");
+
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(
+                &format!("/history/sessions/{id}/resume"),
+                Some(TOKEN),
+                json!({ "cwd": "/browser/controlled", "argv": ["--unsafe"] }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "body={body}");
+        assert_eq!(body["error"]["code"], "history-resume-not-supported");
+        assert!(!log.exists(), "unsupported history resume must not launch");
+
+        Arc::get_mut(&mut st).unwrap().launch_profiles = profiles;
+
+        let missing_id = provider_history::stable_history_id("dsh", Some("dsh-tui"), "missing");
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(
+                &format!("/history/sessions/{missing_id}/resume"),
+                Some(TOKEN),
+                json!({}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "body={body}");
+        assert_eq!(body["error"]["code"], "history-session-not-found");
+        assert!(!log.exists(), "missing history resume must not launch");
+
+        let (status, body) = call(
+            router(st),
+            post_json(
+                &format!("/history/sessions/{id}/resume"),
+                Some(TOKEN),
+                json!({}),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        let managed_id = body["data"]["session"]["id"].as_str().unwrap();
+        assert_eq!(body["data"]["session"]["agent"], "hermes");
+        assert_eq!(body["data"]["session"]["agent_profile"], "dsh-tui");
+        let record: Value = serde_json::from_slice(
+            &fs::read(
+                tmp.path()
+                    .join("sessions")
+                    .join(managed_id)
+                    .join("session.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(record["provider_resume"]["provider"], "dsh");
+        assert_eq!(record["provider_resume"]["session_id"], "dsh-one");
+        assert_eq!(
+            record["provider_resume"]["resume_args"],
+            json!(["--resume", "dsh-one"])
+        );
+        assert_eq!(
+            record["provider_resume"]["dsh_history_root"],
+            history_root
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .as_ref()
+        );
+        let activity: Value = serde_json::from_slice(
+            &fs::read(
+                tmp.path()
+                    .join("sessions")
+                    .join(managed_id)
+                    .join("activity.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(activity["provider_session_id"].is_string());
+        let mismatched: crate::activity::TurnEvent = serde_json::from_value(json!({
+            "schema_version": crate::activity::TURN_EVENT_VERSION,
+            "event_id": "dsh-mismatch",
+            "runtime_id": body["data"]["session"]["session_incarnation"],
+            "provider": "dsh",
+            "provider_session_id": "different-dsh-session",
+            "kind": "progress",
+            "confidence": "observed"
+        }))
+        .unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        let error = crate::activity::ingest_event(&context, managed_id, mismatched)
+            .expect_err("a resumed DSH runtime must reject another provider identity");
+        assert_eq!(error.code(), "provider-session-id-mismatch");
+        let calls = fs::read_to_string(log).unwrap();
+        assert!(calls.contains("--resume dsh-one"), "calls={calls}");
+        assert!(
+            calls.contains(cwd.to_string_lossy().as_ref()),
+            "calls={calls}"
+        );
+    }
+
+    #[tokio::test]
     async fn history_star_toggle_stores_and_clears_one_star() {
         let tmp = tempfile::TempDir::new().unwrap();
         let history_root = tmp.path().join("provider/sessions/2026/09/01");
@@ -19568,7 +20036,7 @@ esac
         assert_eq!(list_status, StatusCode::OK, "body={list_body}");
         assert_eq!(
             list_body["data"]["agent_profiles"],
-            json!([{"id":"claude-gpt","label":"Claude GPT","agent":"claude","provider_resume_import_supported":true}])
+            json!([{"id":"claude-gpt","label":"Claude GPT","agent":"claude","provider_resume_import_supported":true,"history_resume_supported":true}])
         );
         assert_eq!(
             list_body["data"]["capabilities"]["profile_resume_import"],
