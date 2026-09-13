@@ -2275,6 +2275,7 @@ async fn apply_pending_next_account_at_idle(
     context: &CliContext,
     record: &SessionRecord,
     request_id: &mut u64,
+    expected_auto_failover: Option<&crate::codex_account::NextAccountIdentity>,
 ) -> Option<String> {
     let launch_id = record
         .runtime
@@ -2283,8 +2284,15 @@ async fn apply_pending_next_account_at_idle(
     let begin_context = context.clone();
     let begin_id = record.id.clone();
     let begin_launch = launch_id.clone();
-    let queued = tokio::task::spawn_blocking(move || {
-        crate::codex_account::begin_next_apply(&begin_context, &begin_id, &begin_launch)
+    let expected_auto_failover = expected_auto_failover.cloned();
+    let queued = tokio::task::spawn_blocking(move || match expected_auto_failover.as_ref() {
+        Some(expected) => crate::codex_account::begin_next_apply_if_unchanged(
+            &begin_context,
+            &begin_id,
+            &begin_launch,
+            expected,
+        ),
+        None => crate::codex_account::begin_next_apply(&begin_context, &begin_id, &begin_launch),
     })
     .await
     .ok()?;
@@ -2407,6 +2415,35 @@ async fn control_account_ready_with(
     } else {
         Err("Codex account binding is not ready".to_string())
     }
+}
+
+async fn automatic_failover_has_authoritative_idle(
+    context: &CliContext,
+    record: &SessionRecord,
+) -> Option<crate::codex_account::NextAccountIdentity> {
+    let context = context.clone();
+    let id = record.id.clone();
+    let expected_launch_id = record
+        .runtime
+        .as_ref()
+        .map(|runtime| runtime.launch_id.clone());
+    tokio::task::spawn_blocking(move || {
+        let current = crate::load_session_record(&context, &id).ok()?;
+        if current
+            .runtime
+            .as_ref()
+            .map(|runtime| runtime.launch_id.as_str())
+            != expected_launch_id.as_deref()
+        {
+            return None;
+        }
+        let identity = crate::codex_account::pending_auto_failover_apply(&current).ok()??;
+        crate::auto_resume::has_authoritative_usage_exhaustion_idle(&context, &current)
+            .then_some(identity)
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 pub(crate) async fn run_control(
@@ -2856,43 +2893,56 @@ pub(crate) async fn run_control(
                         let _ = response.send(result);
                     }
                     ControlCommand::ApplyNext { response } => {
-                        if reducer.active_turn_id.is_some() {
+                        // A structured `usageLimitExceeded` completion is an
+                        // authoritative terminal boundary. Codex may stop
+                        // answering `thread/turns/list` after that workspace
+                        // rejection, so an auto-failover intent must be able to
+                        // drain from the durable terminal evidence. All manual
+                        // next-account intents retain the live idle probe and
+                        // its interleaved-turn race protection.
+                        let terminal_auto_failover =
+                            automatic_failover_has_authoritative_idle(&context, &record).await;
+                        if reducer.active_turn_id.is_some() && terminal_auto_failover.is_none() {
                             let _ = response.send(Ok(()));
                             continue;
                         }
-                        request_id = request_id.saturating_add(1);
-                        if let Err(error) = send_json(
-                            &mut websocket,
-                            latest_turn_request(request_id, &thread_id),
-                        )
-                        .await
-                        {
-                            let _ = response.send(Err(error));
-                            return Err("Codex idle-boundary read failed".to_string());
-                        }
-                        let latest = receive_response_with_timeout(
-                            &mut websocket,
-                            request_id,
-                            Some((&context, &record, &mut reducer)),
-                            external_auth_account
-                                .as_deref()
-                                .map(|account| (&context, &record, account)),
-                            CONTROL_RESPONSE_TIMEOUT,
-                        )
-                        .await;
-                        let idle = match latest {
-                            Ok(_) if reducer.active_turn_id.is_some() => false,
-                            Ok(result) => match latest_turn_state(&result) {
-                                Some(LatestTurnState::Idle) => true,
-                                Some(LatestTurnState::InProgress(turn_id)) => {
-                                    reducer.note_started(turn_id);
-                                    false
-                                }
-                                None => false,
-                            },
-                            Err(error) => {
+                        let idle = if terminal_auto_failover.is_some() {
+                            true
+                        } else {
+                            request_id = request_id.saturating_add(1);
+                            if let Err(error) = send_json(
+                                &mut websocket,
+                                latest_turn_request(request_id, &thread_id),
+                            )
+                            .await
+                            {
                                 let _ = response.send(Err(error));
-                                continue;
+                                return Err("Codex idle-boundary read failed".to_string());
+                            }
+                            let latest = receive_response_with_timeout(
+                                &mut websocket,
+                                request_id,
+                                Some((&context, &record, &mut reducer)),
+                                external_auth_account
+                                    .as_deref()
+                                    .map(|account| (&context, &record, account)),
+                                CONTROL_RESPONSE_TIMEOUT,
+                            )
+                            .await;
+                            match latest {
+                                Ok(_) if reducer.active_turn_id.is_some() => false,
+                                Ok(result) => match latest_turn_state(&result) {
+                                    Some(LatestTurnState::Idle) => true,
+                                    Some(LatestTurnState::InProgress(turn_id)) => {
+                                        reducer.note_started(turn_id);
+                                        false
+                                    }
+                                    None => false,
+                                },
+                                Err(error) => {
+                                    let _ = response.send(Err(error));
+                                    continue;
+                                }
                             }
                         };
                         if idle
@@ -2901,6 +2951,7 @@ pub(crate) async fn run_control(
                                 &context,
                                 &record,
                                 &mut request_id,
+                                terminal_auto_failover.as_ref(),
                             )
                             .await
                         {
@@ -10458,6 +10509,165 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             authorization,
             "valid managed-account input must be authorized"
         );
+    }
+
+    #[tokio::test]
+    async fn automatic_failover_applies_after_structured_failure_without_live_idle_probe() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let broker = tmp.path().join("broker");
+        let broker_calls = tmp.path().join("broker-calls");
+        fs::write(
+            &broker,
+            r#"#!/bin/sh
+calls=$1
+shift
+account=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --account)
+      account="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+case "$account" in
+  gamania|sym) ;;
+  *) exit 2 ;;
+esac
+printf '%s\n' "$account" >> "$calls"
+printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"account\":\"$account\",\"access_token\":\"token-$account\",\"chatgpt_account_id\":\"workspace-$account\",\"plan\":\"team\"}"
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&broker, fs::Permissions::from_mode(0o700)).unwrap();
+        let _broker = EnvGuard::set(
+            &lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            &serde_json::to_string(&vec![
+                broker.to_string_lossy().into_owned(),
+                broker_calls.to_string_lossy().into_owned(),
+            ])
+            .unwrap(),
+        );
+        let socket_path = tmp.path().join("automatic-failover.sock");
+        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let mut record = record_with_runtime("automatic-failover", &socket_path);
+        crate::codex_account::set_initial_binding(&mut record, Some("gamania")).unwrap();
+        fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        crate::codex_account::finish_binding(
+            &context,
+            &record.id,
+            "runtime-automatic-failover",
+            "gamania",
+            1,
+            Ok(()),
+        )
+        .unwrap();
+        record = crate::load_session_record(&context, &record.id).unwrap();
+        crate::activity::activate_runtime(&context, &record).unwrap();
+        crate::codex_account::authorize_input_locked(&context, &mut record).unwrap();
+        crate::auto_resume::set_enabled_with_policy(
+            &context,
+            &record.id,
+            true,
+            crate::auto_resume::NEXT_ACCOUNT_THEN_RESUME_POLICY,
+            "2030-01-01T00:00:00Z",
+        )
+        .unwrap();
+        crate::activity::ingest_codex_app_server_failure_with_kind(
+            &context,
+            &record.id,
+            "runtime-automatic-failover",
+            "thread-automatic-failover",
+            "turn-automatic-failover",
+            StructuredFailureKind::UsageExhausted,
+        )
+        .unwrap();
+        crate::codex_account::queue_auto_failover_locked(&context, &mut record, "sym").unwrap();
+        record = crate::codex_account::prepare_control_reconnect(
+            &context,
+            &record.id,
+            "runtime-automatic-failover",
+        )
+        .unwrap();
+        bind_thread(&record, "thread-automatic-failover").unwrap();
+        assert!(
+            crate::codex_account::pending_auto_failover_apply(&record)
+                .unwrap()
+                .is_some()
+        );
+        let terminal = crate::activity::state_for_view(&context, &record).unwrap();
+        assert_eq!(terminal.phase, crate::activity::TurnPhase::Waiting);
+        assert!(terminal.current_turn.is_none());
+        assert!(crate::auto_resume::has_authoritative_usage_exhaustion_idle(
+            &context, &record
+        ));
+        assert!(
+            automatic_failover_has_authoritative_idle(&context, &record)
+                .await
+                .is_some()
+        );
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let initialize = receive_json(&mut socket).await;
+            respond(&mut socket, &initialize, json!({})).await;
+            assert_eq!(receive_json(&mut socket).await["method"], "initialized");
+            let first_login = receive_json(&mut socket).await;
+            assert_eq!(first_login["method"], "account/login/start");
+            respond(
+                &mut socket,
+                &first_login,
+                json!({ "type": "chatgptAuthTokens" }),
+            )
+            .await;
+            let loaded = receive_json(&mut socket).await;
+            assert_eq!(loaded["method"], "thread/loaded/list");
+            respond(
+                &mut socket,
+                &loaded,
+                json!({ "data": ["thread-automatic-failover"], "nextCursor": null }),
+            )
+            .await;
+            let resume = receive_json(&mut socket).await;
+            assert_eq!(resume["method"], "thread/resume");
+            respond(&mut socket, &resume, json!({})).await;
+
+            let failover_login = receive_json(&mut socket).await;
+            assert_eq!(
+                failover_login["method"], "account/login/start",
+                "an authoritative structured terminal failure must not depend on a live idle probe"
+            );
+            assert_eq!(failover_login["params"]["accessToken"], "token-sym");
+            respond(
+                &mut socket,
+                &failover_login,
+                json!({ "type": "chatgptAuthTokens" }),
+            )
+            .await;
+        });
+
+        let (handle, commands) = control_channel();
+        let control = tokio::spawn(run_control(context.clone(), record.clone(), commands));
+        handle.apply_next().await.unwrap();
+        server.await.unwrap();
+        control.abort();
+        let _ = control.await;
+
+        let persisted = crate::load_session_record(&context, &record.id).unwrap();
+        let view = crate::codex_account::view_for_record(&persisted);
+        assert_eq!(view.selected_account.as_deref(), Some("sym"));
+        assert!(view.next.is_none());
     }
 
     #[tokio::test]

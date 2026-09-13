@@ -109,6 +109,7 @@ pub(crate) struct NextAccountIdentity {
     pub(crate) account: String,
     pub(crate) revision: u64,
     pub(crate) intent_id: Option<String>,
+    pub(crate) selection_source: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -871,6 +872,29 @@ pub(crate) fn pending_next_apply(
     }
 }
 
+/// Whether the drainable next-account intent was selected by automatic
+/// failover after a provider-declared account exhaustion.
+pub(crate) fn pending_auto_failover_apply(
+    record: &SessionRecord,
+) -> Result<Option<NextAccountIdentity>, CliError> {
+    match decode_next(record) {
+        DecodedNext::Absent => Ok(None),
+        DecodedNext::Invalid => Err(invalid_next_error(record)),
+        DecodedNext::Valid(next)
+            if next.state == "queued"
+                && next.selection_source.as_deref() == Some("auto_failover") =>
+        {
+            Ok(Some(NextAccountIdentity {
+                account: next.account,
+                revision: next.revision,
+                intent_id: next.intent_id,
+                selection_source: next.selection_source,
+            }))
+        }
+        DecodedNext::Valid(_) => Ok(None),
+    }
+}
+
 pub(crate) fn next_account_identity(
     record: &SessionRecord,
 ) -> Result<Option<NextAccountIdentity>, CliError> {
@@ -881,6 +905,7 @@ pub(crate) fn next_account_identity(
             account: next.account,
             revision: next.revision,
             intent_id: next.intent_id,
+            selection_source: next.selection_source,
         })),
     }
 }
@@ -1174,6 +1199,24 @@ pub(crate) fn begin_next_apply(
     id: &str,
     expected_launch_id: &str,
 ) -> Result<Option<NextAccountIdentity>, CliError> {
+    begin_next_apply_inner(context, id, expected_launch_id, None)
+}
+
+pub(crate) fn begin_next_apply_if_unchanged(
+    context: &CliContext,
+    id: &str,
+    expected_launch_id: &str,
+    expected: &NextAccountIdentity,
+) -> Result<Option<NextAccountIdentity>, CliError> {
+    begin_next_apply_inner(context, id, expected_launch_id, Some(expected))
+}
+
+fn begin_next_apply_inner(
+    context: &CliContext,
+    id: &str,
+    expected_launch_id: &str,
+    expected: Option<&NextAccountIdentity>,
+) -> Result<Option<NextAccountIdentity>, CliError> {
     let _lock = acquire_session_record_lock(context, id)?;
     let _account_gate = crate::codex_app_server::acquire_account_mutation_gate(context, id)?;
     let mut record = load_session_record(context, id)?;
@@ -1190,6 +1233,19 @@ pub(crate) fn begin_next_apply(
         DecodedNext::Valid(next) if next.state == "queued" => next,
         DecodedNext::Valid(_) => return Ok(None),
     };
+    let current = NextAccountIdentity {
+        account: next.account.clone(),
+        revision: next.revision,
+        intent_id: next.intent_id.clone(),
+        selection_source: next.selection_source.clone(),
+    };
+    if let Some(expected) = expected
+        && (&current != expected
+            || current.selection_source.as_deref() != Some("auto_failover")
+            || !crate::auto_resume::has_authoritative_usage_exhaustion_idle(context, &record))
+    {
+        return Ok(None);
+    }
     if next.intent_id.is_none() {
         next.intent_id = Some(uuid::Uuid::new_v4().simple().to_string());
     }
@@ -1201,6 +1257,7 @@ pub(crate) fn begin_next_apply(
         account: next.account.clone(),
         revision: next.revision,
         intent_id: next.intent_id.clone(),
+        selection_source: next.selection_source.clone(),
     };
     store_next(&mut record, &next)?;
     record.updated_at = jiff::Timestamp::now().to_string();
@@ -2300,6 +2357,42 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
             view_for_record(&persisted).selected_account.as_deref(),
             Some("account-a")
         );
+    }
+
+    #[test]
+    fn automatic_apply_identity_never_consumes_a_superseding_explicit_intent() {
+        let lock = GlobalStateLock::new();
+        let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record) = persisted_bound(&tmp);
+        {
+            let _guard = acquire_session_record_lock(&context, &record.id).unwrap();
+            let mut current = load_session_record(&context, &record.id).unwrap();
+            queue_auto_failover_locked(&context, &mut current, "poies").unwrap();
+        }
+        let expected = pending_auto_failover_apply(&reload(&context, &record.id))
+            .unwrap()
+            .expect("automatic failover identity");
+
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "sym").unwrap();
+
+        assert!(
+            begin_next_apply_if_unchanged(
+                &context,
+                &record.id,
+                "runtime-binding-fixture",
+                &expected,
+            )
+            .unwrap()
+            .is_none(),
+            "stale automatic approval must not consume a newer explicit intent"
+        );
+        let current = reload(&context, &record.id);
+        let next = view_for_record(&current)
+            .next
+            .expect("explicit intent remains queued for the live idle probe");
+        assert_eq!(next.account.as_deref(), Some("sym"));
+        assert_eq!(next.state, "queued");
     }
 
     #[test]
