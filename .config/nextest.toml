@@ -16,9 +16,24 @@
 # which sets `flaky_summary: true`. A masked flake is therefore visible in the
 # check people read, not only in the raw log or the uploaded artifact.
 #
-# This is mitigation. Root-causing the masked flakes and lowering `retries` is
-# tracked in #1524 (the follow-up #934 planned but did not open).
-retries = 2
+# One retry, not two. #1524 root-caused and fixed the clusters it inventoried;
+# #1667 then measured the retry depth the survivors actually need, over 74 job
+# files from two `main` windows. All 29 flaky events passed on the first retry
+# and not one reached attempt 2, so the second attempt bought nothing. `0` is
+# still not on the table: 7 of 12 runs in the first window carried at least one
+# flaky event, so no retries would have turned most `main` pushes red.
+#
+# Still flaking as of #1667's second window, and worth their own investigation:
+# `nils-agent-session` `main_agent_worker_start_distinct_null_id_requests_hold_distinct_authority_fences`,
+# `launch_profile_readiness_timeout_kills_its_process_group`,
+# `delete_exhausts_bounded_identity_churn_without_losing_current_runtime`, the
+# paired `metadata::concurrent_distinct_mutations_*` / `concurrent_exact_replays_*`,
+# `nils-agent-hook` `codex_apply_patch_target_binding_meets_dispatch_latency_budget`,
+# and `nils-claude-cli` `spawn_retry_is_bounded_and_limited_to_would_block`.
+# Two thirds of those events are macOS. Every cluster investigated so far looked
+# like host contention and turned out to be a defect, so find the mechanism
+# before reserving threads for any of them.
+retries = 1
 
 # Process-containment fixtures own kernel tracking resources that cannot be
 # shared safely across parallel tests. Reserve the full CI thread pool for
