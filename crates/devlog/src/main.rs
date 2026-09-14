@@ -140,6 +140,12 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<i32, DevlogError> {
                 links: links.clone(),
                 follow_ups: follow_ups.clone(),
             };
+            // Both files this command writes are checked before either is
+            // touched. Letting the month file be written and the index then
+            // refuse would leave a half-finished operation behind a message
+            // that says nothing was written, and a retry after resolving the
+            // conflict would insert the entry a second time.
+            nils_devlog::index::assert_resolved(&devlog)?;
             let insertion = nils_devlog::entry::insert(&devlog, &entry, date)?;
             // A new month file is invisible until the index links it, so the
             // two mutations are one operation rather than two commands the
@@ -337,6 +343,9 @@ fn exit_code_for(err: &DevlogError) -> i32 {
         | DevlogError::NotADirectory { .. }
         | DevlogError::NotAGitWorkTree => exit::UNAVAILABLE,
         DevlogError::MissingMonthFile { .. } | DevlogError::MissingHeading { .. } => exit::RUNTIME,
+        // The file on disk is unusable input, which is the same class `check`
+        // reports its structural problems under.
+        DevlogError::ConflictMarkers { .. } => exit::DATA,
         DevlogError::Io { .. } => exit::SOFTWARE,
     }
 }

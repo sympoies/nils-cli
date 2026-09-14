@@ -87,6 +87,20 @@ Reported problem kinds:
 | `missing-index` | The log has no `README.md`. |
 | `index-missing-month` | A month file is not listed in the index. |
 | `index-stale-month` | The index lists a month with no file. |
+| `conflict-markers` | The file still holds an unresolved merge conflict. |
+
+A conflict marker stops the file being parsed any further. Both sides of a
+conflict are well-formed entries, so counting them would describe an
+unpublishable file as a healthy one. `new` and `index` refuse such a file for
+the same reason, leaving it exactly as the merge left it. `new` writes the month
+file and the index, and checks both before touching either, so a refusal never
+leaves a half-finished entry behind a message saying nothing was written.
+
+Markers quoted inside a fenced code block are not a conflict — the entry that
+documents conflict handling is the obvious case — and `=======` is never treated
+as a marker on its own, because on its own line it is also a Markdown setext
+heading underline. A real conflict always writes an opening and a closing
+marker at column zero, so neither exclusion costs detection.
 
 ## Output contract
 
@@ -101,7 +115,7 @@ Exit codes:
 | `0` | Success; for `search`, at least one match. |
 | `1` | `search` found no matches, a requested month file is absent, or `new` refused a month file whose heading is wrong. |
 | `64` | Usage error, including a malformed month or an impossible date. |
-| `65` | `check` found structural problems. |
+| `65` | `check` found structural problems, or a file still holds an unresolved merge conflict. |
 | `69` | No devlog directory, or not a git work tree. |
 | `70` | Filesystem error. |
 

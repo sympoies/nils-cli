@@ -369,6 +369,11 @@ fn every_documented_check_problem_kind_is_reported() {
             index: None,
         },
         Case {
+            kind: "conflict-markers",
+            month: "# Development log - 2026-04\n\n<<<<<<< HEAD\n## 2026-04-17 - Title\n\n### Result\n\n- a\n>>>>>>> feature\n",
+            index: None,
+        },
+        Case {
             kind: "index-stale-month",
             month: "",
             index: Some(
@@ -659,4 +664,252 @@ fn a_missing_devlog_emits_a_json_error_envelope() {
     assert_eq!(json["ok"], false);
     assert_eq!(json["schema_version"], "cli.devlog.error.v1");
     assert_eq!(json["error"]["code"], "devlog-not-found");
+}
+
+/// A month file left exactly as git writes it when two branches each added an
+/// entry for the same month. Both sides are well-formed entries, which is why
+/// the parser used to accept the file.
+const CONFLICTED_MONTH: &str = "# Development log - 2026-04\n\n<<<<<<< HEAD\n## 2026-04-20 - Ours\n\n### Result\n\n- a\n\n### Why / context\n\n- b\n\n### Evidence\n\n- c\n\n### Links\n\n- d\n=======\n## 2026-04-20 - Theirs\n\n### Result\n\n- a\n\n### Why / context\n\n- b\n\n### Evidence\n\n- c\n\n### Links\n\n- d\n>>>>>>> feature\n\n## 2026-04-17 - Existing entry\n\n### Result\n\n- Did a thing.\n\n### Why / context\n\n- Because.\n\n### Evidence\n\n- Ran it.\n\n### Links\n\n- `abc12345`\n";
+
+#[test]
+fn check_reports_conflict_markers_in_a_month_file() {
+    let fixture = Fixture::new("docs/devlog");
+    std::fs::write(
+        fixture.devlog_path("docs/devlog/2026-04.md"),
+        CONFLICTED_MONTH,
+    )
+    .expect("write conflicted month");
+
+    let output = run_in(&fixture.root, &["check"]);
+    let stdout = output.stdout_text();
+    assert_eq!(output.code, 65, "stdout={stdout}");
+    assert!(stdout.contains("conflict-markers"), "stdout={stdout}");
+}
+
+#[test]
+fn check_does_not_count_both_sides_of_a_conflict_as_entries() {
+    let fixture = Fixture::new("docs/devlog");
+    std::fs::write(
+        fixture.devlog_path("docs/devlog/2026-04.md"),
+        CONFLICTED_MONTH,
+    )
+    .expect("write conflicted month");
+
+    let output = run_in(&fixture.root, &["--format", "json", "check"]);
+    let envelope: serde_json::Value =
+        serde_json::from_str(&output.stdout_text()).expect("parse envelope");
+    assert_eq!(envelope["ok"], serde_json::json!(false));
+    // Reporting three entries here would describe the conflicted file as if it
+    // were publishable content.
+    assert_eq!(
+        envelope["error"]["details"]["entry_count"],
+        serde_json::json!(0)
+    );
+}
+
+#[test]
+fn check_reports_conflict_markers_in_the_index() {
+    let fixture = Fixture::new("docs/devlog");
+    std::fs::write(
+        fixture.devlog_path("docs/devlog/README.md"),
+        "# Development log\n\n## Months\n\n<<<<<<< HEAD\n- [2026-04](2026-04.md)\n=======\n- [2026-05](2026-05.md)\n>>>>>>> feature\n",
+    )
+    .expect("write conflicted index");
+
+    let output = run_in(&fixture.root, &["check"]);
+    let stdout = output.stdout_text();
+    assert_eq!(output.code, 65, "stdout={stdout}");
+    assert!(stdout.contains("conflict-markers"), "stdout={stdout}");
+}
+
+#[test]
+fn new_refuses_to_write_into_a_conflicted_month_file() {
+    let fixture = Fixture::new("docs/devlog");
+    std::fs::write(
+        fixture.devlog_path("docs/devlog/2026-04.md"),
+        CONFLICTED_MONTH,
+    )
+    .expect("write conflicted month");
+
+    let output = run_in(
+        &fixture.root,
+        &[
+            "new",
+            "--title",
+            "Later entry",
+            "--date",
+            "2026-04-25",
+            "--result",
+            "Shipped it.",
+            "--why",
+            "It was needed.",
+            "--evidence",
+            "Ran the gate.",
+            "--link",
+            "`abc12345`",
+        ],
+    );
+    assert_eq!(output.code, 65, "stderr={}", output.stderr_text());
+    assert!(
+        output.stderr_text().contains("merge conflict"),
+        "stderr={}",
+        output.stderr_text()
+    );
+    // The refusal has to leave the file exactly as the merge left it, so the
+    // author resolves one conflict rather than a conflict plus a new entry.
+    assert_eq!(fixture.read("docs/devlog/2026-04.md"), CONFLICTED_MONTH);
+}
+
+#[test]
+fn new_reports_the_conflict_error_code_in_the_envelope() {
+    let fixture = Fixture::new("docs/devlog");
+    std::fs::write(
+        fixture.devlog_path("docs/devlog/2026-04.md"),
+        CONFLICTED_MONTH,
+    )
+    .expect("write conflicted month");
+
+    let output = run_in(
+        &fixture.root,
+        &[
+            "--format",
+            "json",
+            "new",
+            "--title",
+            "Later entry",
+            "--date",
+            "2026-04-25",
+            "--result",
+            "Shipped it.",
+        ],
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_str(&output.stdout_text()).expect("parse envelope");
+    assert_eq!(envelope["ok"], serde_json::json!(false));
+    assert_eq!(
+        envelope["error"]["code"],
+        serde_json::json!("conflict-markers")
+    );
+}
+
+#[test]
+fn index_refuses_to_rewrite_a_conflicted_index() {
+    let fixture = Fixture::new("docs/devlog");
+    let conflicted = "# Development log\n\n## Months\n\n<<<<<<< HEAD\n- [2026-04](2026-04.md)\n=======\n- [2026-05](2026-05.md)\n>>>>>>> feature\n";
+    std::fs::write(fixture.devlog_path("docs/devlog/README.md"), conflicted)
+        .expect("write conflicted index");
+
+    let output = run_in(&fixture.root, &["index"]);
+    assert_eq!(output.code, 65, "stderr={}", output.stderr_text());
+    // Rewriting the `## Months` section would resolve half of this conflict
+    // and leave the markers around it in place.
+    assert_eq!(fixture.read("docs/devlog/README.md"), conflicted);
+}
+
+const CONFLICTED_INDEX: &str = "# Development log\n\n## Months\n\n<<<<<<< HEAD\n- [2026-04](2026-04.md)\n=======\n- [2026-05](2026-05.md)\n>>>>>>> feature\n";
+
+#[test]
+fn new_refuses_before_writing_when_only_the_index_is_conflicted() {
+    let fixture = Fixture::new("docs/devlog");
+    let original = fixture.read("docs/devlog/2026-04.md");
+    std::fs::write(
+        fixture.devlog_path("docs/devlog/README.md"),
+        CONFLICTED_INDEX,
+    )
+    .expect("write conflicted index");
+
+    let output = run_in(
+        &fixture.root,
+        &[
+            "new",
+            "--title",
+            "Later entry",
+            "--date",
+            "2026-04-25",
+            "--result",
+            "Shipped it.",
+        ],
+    );
+    assert_eq!(output.code, 65, "stderr={}", output.stderr_text());
+    // `new` writes the month file and then the index. Checking only the index
+    // write would leave the entry on disk behind a message saying nothing was
+    // written, and a retry after resolving the conflict would insert it twice.
+    assert_eq!(fixture.read("docs/devlog/2026-04.md"), original);
+}
+
+#[test]
+fn new_refuses_before_creating_a_month_file_when_the_index_is_conflicted() {
+    let fixture = Fixture::new("docs/devlog");
+    std::fs::write(
+        fixture.devlog_path("docs/devlog/README.md"),
+        CONFLICTED_INDEX,
+    )
+    .expect("write conflicted index");
+
+    let output = run_in(
+        &fixture.root,
+        &[
+            "new",
+            "--title",
+            "First of the month",
+            "--date",
+            "2026-06-02",
+            "--result",
+            "Shipped it.",
+        ],
+    );
+    assert_eq!(output.code, 65, "stderr={}", output.stderr_text());
+    assert!(
+        !fixture.devlog_path("docs/devlog/2026-06.md").exists(),
+        "the month file must not be created when the index is unusable"
+    );
+}
+
+#[test]
+fn an_entry_quoting_conflict_markers_in_a_fence_stays_writable() {
+    // The entry documenting conflict handling is the obvious case: it quotes
+    // the markers. Treating a quoted marker as a real one would make the month
+    // permanently unwritable until someone edited the prose.
+    let fixture = Fixture::new("docs/devlog");
+    std::fs::write(
+        fixture.devlog_path("docs/devlog/2026-04.md"),
+        "# Development log - 2026-04\n\n## 2026-04-17 - Conflict handling\n\n### Result\n\n- The CLI now refuses a file holding markers such as:\n\n  ```text\n  <<<<<<< HEAD\n  =======\n  >>>>>>> feature\n  ```\n\n### Why / context\n\n- b\n\n### Evidence\n\n- c\n\n### Links\n\n- d\n",
+    )
+    .expect("write entry quoting markers");
+
+    let check = run_in(&fixture.root, &["check"]);
+    assert_eq!(check.code, 0, "stdout={}", check.stdout_text());
+
+    let new = run_in(
+        &fixture.root,
+        &[
+            "new",
+            "--title",
+            "Later entry",
+            "--date",
+            "2026-04-25",
+            "--result",
+            "Shipped it.",
+            "--why",
+            "It was needed.",
+            "--evidence",
+            "Ran the gate.",
+            "--link",
+            "`abc12345`",
+        ],
+    );
+    assert_eq!(new.code, 0, "stderr={}", new.stderr_text());
+}
+
+#[test]
+fn a_month_file_whose_prose_contains_a_setext_underline_is_writable() {
+    let fixture = Fixture::new("docs/devlog");
+    std::fs::write(
+        fixture.devlog_path("docs/devlog/2026-04.md"),
+        "# Development log - 2026-04\n\n## 2026-04-17 - Underlines\n\n### Result\n\n- A separator line follows.\n\n### Why / context\n\n- b\n\n### Evidence\n\n- =======\n\n### Links\n\n- d\n",
+    )
+    .expect("write entry containing a separator");
+
+    let output = run_in(&fixture.root, &["check"]);
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
 }

@@ -286,11 +286,78 @@ pub enum DevlogError {
         path: PathBuf,
         expected: String,
     },
+    ConflictMarkers {
+        path: PathBuf,
+        line: usize,
+    },
     Io {
         path: PathBuf,
         source: std::io::Error,
     },
     NotAGitWorkTree,
+}
+
+/// Line prefixes git writes into a file it could not merge.
+///
+/// Month files conflict whenever two branches add an entry in the same month,
+/// because every entry is inserted at the same position. That makes an
+/// unresolved conflict the most likely damage a month file will ever carry, so
+/// both reading and writing have to recognize it.
+///
+/// The separator `=======` is deliberately absent: on its own line it is also a
+/// Markdown setext heading underline, and these files are prose. The opening,
+/// ancestor (`diff3` style), and closing markers are unambiguous, and a
+/// conflict always writes an opening and a closing one, so leaving the
+/// separator out costs no detection.
+const CONFLICT_MARKERS: [&str; 3] = ["<<<<<<<", "|||||||", ">>>>>>>"];
+
+/// The 1-based line number of the first conflict marker in `contents`, ignoring
+/// fenced code blocks.
+///
+/// An entry that documents merge-conflict handling quotes these markers inside
+/// a fence, and the entry describing this very behavior is the obvious example.
+/// Treating a quoted marker as a real one would make the month permanently
+/// unwritable by `new` until someone edited the prose, which is a worse failure
+/// than the one this function exists to catch. Git writes markers at column
+/// zero in the file body, never inside a fence it did not already break, so
+/// skipping fenced regions costs no real detection.
+pub fn first_conflict_marker(contents: &str) -> Option<usize> {
+    let mut fence: Option<&str> = None;
+
+    for (index, line) in contents.lines().enumerate() {
+        if let Some(open) = fence {
+            // A fence closes on a run of the same character at least as long as
+            // the one that opened it, per CommonMark.
+            if fence_delimiter(line).is_some_and(|close| close.starts_with(open)) {
+                fence = None;
+            }
+            continue;
+        }
+        if let Some(open) = fence_delimiter(line) {
+            fence = Some(open);
+            continue;
+        }
+        if CONFLICT_MARKERS
+            .iter()
+            .any(|marker| line.starts_with(marker))
+        {
+            return Some(index + 1);
+        }
+    }
+
+    None
+}
+
+/// The leading run of backticks or tildes when `line` opens or closes a fence.
+fn fence_delimiter(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    for character in ['`', '~'] {
+        let run = trimmed.split(|c| c != character).next().unwrap_or_default();
+        if run.len() >= 3 {
+            return Some(run);
+        }
+    }
+    None
 }
 
 impl DevlogError {
@@ -303,6 +370,7 @@ impl DevlogError {
             Self::InvalidDate { .. } => "invalid-date",
             Self::MissingMonthFile { .. } => "missing-month-file",
             Self::MissingHeading { .. } => "missing-heading",
+            Self::ConflictMarkers { .. } => "conflict-markers",
             Self::Io { .. } => "io-error",
             Self::NotAGitWorkTree => "not-a-git-work-tree",
         }
@@ -330,6 +398,11 @@ impl fmt::Display for DevlogError {
             Self::MissingMonthFile { path } => {
                 write!(f, "no devlog file for month: {}", path.display())
             }
+            Self::ConflictMarkers { path, line } => write!(
+                f,
+                "{} has an unresolved merge conflict at line {line}; resolve it before writing",
+                path.display()
+            ),
             Self::MissingHeading { path, expected } => write!(
                 f,
                 "{} does not open with its expected heading '{}'",
