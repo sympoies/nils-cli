@@ -152,26 +152,24 @@ const WRAP_COLUMN: usize = 79;
 /// into something that no longer resolves.
 fn render_bullet(text: &str) -> String {
     let mut lines: Vec<String> = Vec::new();
+    // The first line carries the list marker; every wrapped line that follows
+    // is indented to align under it, which is the only continuation form.
     let mut current = String::from("- ");
     let mut has_word = false;
 
     for word in text.split_whitespace() {
-        let indent = if lines.is_empty() { "- " } else { "  " };
         if has_word && current.chars().count() + 1 + word.chars().count() > WRAP_COLUMN {
             lines.push(current);
             current = format!("  {word}");
+            has_word = true;
             continue;
         }
         if has_word {
             current.push(' ');
-        } else {
-            current = indent.to_string();
         }
         current.push_str(word);
         has_word = true;
     }
-    if has_word || lines.is_empty() {
-        lines.push(current);
-    }
+    lines.push(current);
     lines.join("\n")
 }

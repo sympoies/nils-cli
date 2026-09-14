@@ -99,7 +99,7 @@ Exit codes:
 | Code | Meaning |
 | --- | --- |
 | `0` | Success; for `search`, at least one match. |
-| `1` | `search` found no matches, or a requested month file is absent. |
+| `1` | `search` found no matches, a requested month file is absent, or `new` refused a month file whose heading is wrong. |
 | `64` | Usage error, including a malformed month or an impossible date. |
 | `65` | `check` found structural problems. |
 | `69` | No devlog directory, or not a git work tree. |
@@ -108,6 +108,17 @@ Exit codes:
 `search` distinguishes "no matches in an existing month" (`1`, with the term
 echoed) from "that month has no file" (`1`, naming the missing file) so a typo
 does not read as an empty log.
+
+`new` refuses rather than repairs when a month file does not open with its
+expected `# Development log - YYYY-MM` heading: the file is left untouched and
+the expected heading is named. Rewriting someone's heading to make an insert
+succeed would hide whichever problem produced it.
+
+On `--format json`, `ok` mirrors the command outcome rather than execution: a
+`check` that finds problems and a `search` that matches nothing both emit a
+failure envelope (`structural-problems` / `no-matches`) carrying the same
+payload under `error.details`, so a JSON consumer never sees `ok: true` beside
+a non-zero exit.
 
 ## Dependencies
 

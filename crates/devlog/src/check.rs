@@ -214,12 +214,6 @@ fn check_index(devlog: &Devlog, months: &[Month]) -> Result<Vec<Problem>, Devlog
 
     Ok(problems)
 }
-
 fn relative(devlog: &Devlog, path: &Path) -> String {
-    path.strip_prefix(devlog.repo_root())
-        .unwrap_or(path)
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join("/")
+    devlog.relative(path)
 }

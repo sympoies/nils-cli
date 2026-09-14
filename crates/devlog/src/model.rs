@@ -60,11 +60,16 @@ impl Devlog {
     /// The log directory relative to the repository root, using forward
     /// slashes so output is identical on every platform.
     pub fn relative_dir(&self) -> String {
-        let relative = self
-            .dir
-            .strip_prefix(&self.repo_root)
-            .unwrap_or(self.dir.as_path());
-        relative
+        self.relative(&self.dir)
+    }
+
+    /// `path` relative to the repository root, forward-slashed.
+    ///
+    /// Output is identical on every platform so reported paths can be compared
+    /// and pasted regardless of where the log was checked out.
+    pub fn relative(&self, path: &Path) -> String {
+        path.strip_prefix(&self.repo_root)
+            .unwrap_or(path)
             .components()
             .map(|component| component.as_os_str().to_string_lossy().into_owned())
             .collect::<Vec<_>>()

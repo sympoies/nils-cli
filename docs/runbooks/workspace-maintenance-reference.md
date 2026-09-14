@@ -466,6 +466,9 @@ To query crates.io publish status locally, use:
 scripts/crates-io-status.sh --all --format text
 ```
 
+Detailed status-script semantics live in
+`docs/runbooks/crates-io-status-script-runbook.md`.
+
 ## 10. Development log
 
 `docs/devlog/README.md` owns the development log's conventions, entry template,

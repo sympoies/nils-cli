@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::process::Command as ProcessCommand;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use nils_common::cli_contract::{
@@ -8,6 +7,7 @@ use nils_common::cli_contract::{
 use nils_devlog::check::CheckReport;
 use nils_devlog::entry::Entry;
 use nils_devlog::model::{Devlog, DevlogError, EntryDate, Month};
+use nils_devlog::search::SearchReport;
 use serde::Serialize;
 
 const BINARY: &str = "devlog";
@@ -169,21 +169,47 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<i32, DevlogError> {
             let month = month.as_deref().map(str::parse::<Month>).transpose()?;
             let report = nils_devlog::search::search(&devlog, term, month)?;
             let found = !report.matches.is_empty();
-            emit(format, "search", 1, &report, |report| {
+            let render = |report: &SearchReport| {
                 for entry in &report.matches {
                     println!("{}.md:{}:{}", entry.month, entry.line_number, entry.line);
                 }
                 if report.matches.is_empty() {
                     eprintln!("(no matches for '{}')", report.term);
                 }
-            });
-            Ok(if found { exit::SUCCESS } else { exit::RUNTIME })
+            };
+            if found {
+                emit(format, "search", 1, &report, render);
+                Ok(exit::SUCCESS)
+            } else {
+                emit_failure(
+                    format,
+                    "search",
+                    1,
+                    &report,
+                    "no-matches",
+                    "no devlog entry matched the search term",
+                    render,
+                );
+                Ok(exit::RUNTIME)
+            }
         }
         Command::Check => {
             let report = nils_devlog::check::check(&devlog)?;
-            let ok = report.ok();
-            emit(format, "check", 1, &report, print_check);
-            Ok(if ok { exit::SUCCESS } else { exit::DATA })
+            if report.ok() {
+                emit(format, "check", 1, &report, print_check);
+                Ok(exit::SUCCESS)
+            } else {
+                emit_failure(
+                    format,
+                    "check",
+                    1,
+                    &report,
+                    "structural-problems",
+                    "the development log has structural problems",
+                    print_check,
+                );
+                Ok(exit::DATA)
+            }
         }
         Command::Index => {
             let update = nils_devlog::index::sync(&devlog)?;
@@ -224,10 +250,61 @@ where
     T: Serialize,
     F: FnOnce(&T),
 {
+    emit_outcome(format, command, version, payload, None, render_text);
+}
+
+/// Render a payload whose command outcome is a failure.
+///
+/// `docs/specs/cli-output-contract-v1.md` requires `ok` to mirror success or
+/// failure, so a `check` that found problems, or a `search` that matched
+/// nothing, must not report `ok: true` beside its non-zero exit. The payload
+/// still travels, under `error.details`, because it is the useful part of the
+/// answer rather than a diagnostic about one.
+fn emit_failure<T, F>(
+    format: OutputFormat,
+    command: &str,
+    version: u32,
+    payload: &T,
+    code: &str,
+    message: &str,
+    render_text: F,
+) where
+    T: Serialize,
+    F: FnOnce(&T),
+{
+    emit_outcome(
+        format,
+        command,
+        version,
+        payload,
+        Some((code, message)),
+        render_text,
+    );
+}
+
+fn emit_outcome<T, F>(
+    format: OutputFormat,
+    command: &str,
+    version: u32,
+    payload: &T,
+    failure: Option<(&str, &str)>,
+    render_text: F,
+) where
+    T: Serialize,
+    F: FnOnce(&T),
+{
     match format {
         OutputFormat::Json => {
-            let envelope = Envelope::success(schema_version_for(BINARY, command, version), payload);
-            match serde_json::to_string(&envelope) {
+            let schema_version = schema_version_for(BINARY, command, version);
+            let serialized = match failure {
+                None => serde_json::to_string(&Envelope::success(schema_version, payload)),
+                Some((code, message)) => {
+                    let details = serde_json::to_value(payload).unwrap_or(serde_json::Value::Null);
+                    let error = EnvelopeError::new(code, message).with_details(details);
+                    serde_json::to_string(&Envelope::<()>::failure(schema_version, error))
+                }
+            };
+            match serialized {
                 Ok(serialized) => println!("{serialized}"),
                 Err(err) => eprintln!("error: failed to serialize envelope: {err}"),
             }
@@ -266,18 +343,10 @@ fn exit_code_for(err: &DevlogError) -> i32 {
 }
 
 fn repo_root() -> Result<PathBuf, DevlogError> {
-    let output = ProcessCommand::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-        .map_err(|_| DevlogError::NotAGitWorkTree)?;
-    if !output.status.success() {
-        return Err(DevlogError::NotAGitWorkTree);
-    }
-    let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if root.is_empty() {
-        return Err(DevlogError::NotAGitWorkTree);
-    }
-    Ok(PathBuf::from(root))
+    nils_common::git::repo_root()
+        .ok()
+        .flatten()
+        .ok_or(DevlogError::NotAGitWorkTree)
 }
 
 fn detect_format_from_argv() -> OutputFormat {

@@ -77,9 +77,36 @@ pub fn sync(devlog: &Devlog) -> Result<IndexUpdate, DevlogError> {
     Ok(IndexUpdate { changed, months })
 }
 
+/// Byte range of the `## Months` section body, and the offset just past its
+/// heading line.
+///
+/// The heading is matched line-wise, not by substring: a substring search also
+/// matches `### Months` (which contains `## Months` at offset 1) and misses a
+/// heading that ends the file without a trailing newline. `listed_months`
+/// anchors on line starts, so matching the same way keeps `index` and `check`
+/// from disagreeing about the same file.
+fn months_section(index: &str) -> Option<(usize, usize)> {
+    let mut offset = 0usize;
+    let mut heading_end: Option<usize> = None;
+
+    for line in index.split_inclusive('\n') {
+        let trimmed = line.trim_end_matches(['\n', '\r']);
+        if heading_end.is_none() {
+            if trimmed == MONTHS_HEADING {
+                heading_end = Some(offset + line.len());
+            }
+        } else if trimmed.starts_with("## ") {
+            return heading_end.map(|start| (start, offset));
+        }
+        offset += line.len();
+    }
+
+    heading_end.map(|start| (start, index.len()))
+}
+
 fn replace_months_section(index: &str, months: &[Month]) -> String {
     let rendered = render_months(months);
-    let Some(start) = index.find(&format!("{MONTHS_HEADING}\n")) else {
+    let Some((body_start, body_end)) = months_section(index) else {
         // No section yet: append one rather than failing, so a log created by
         // hand can be brought under the contract by running `devlog index`.
         let mut out = index.trim_end().to_string();
@@ -91,24 +118,21 @@ fn replace_months_section(index: &str, months: &[Month]) -> String {
         return out;
     };
 
-    let after_heading = start + MONTHS_HEADING.len() + 1;
-    let tail = &index[after_heading..];
-    // The section runs until the next `## ` heading at line start, or EOF.
-    let end_offset = tail
-        .match_indices("\n## ")
-        .map(|(offset, _)| offset + 1)
-        .next()
-        .unwrap_or(tail.len());
-
     let mut out = String::with_capacity(index.len());
-    out.push_str(&index[..after_heading]);
+    out.push_str(&index[..body_start]);
+    // `body_start` sits just past the heading line, which may itself have had
+    // no trailing newline at end of file.
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
     out.push('\n');
     out.push_str(&rendered);
     out.push('\n');
-    let remainder = &tail[end_offset..];
+
+    let remainder = index[body_end..].trim_start_matches('\n');
     if !remainder.is_empty() {
         out.push('\n');
-        out.push_str(remainder.trim_start_matches('\n'));
+        out.push_str(remainder);
     }
     out
 }
