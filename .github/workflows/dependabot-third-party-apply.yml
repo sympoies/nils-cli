@@ -27,8 +27,13 @@ on:
 
 permissions: {}
 
+# Scoped to the verified commit rather than the branch: two event sources feed
+# this workflow, and GitHub keeps only one *pending* run per group, so a
+# branch-wide group lets a stale event cancel the queued run that would have
+# merged — a green bump then sits unmerged with nothing reporting failure. The
+# commit job's non-force ref update remains the real serialization guard.
 concurrency:
-  group: dependabot-third-party-apply-${{ github.event.workflow_run.head_branch }}
+  group: dependabot-third-party-apply-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
 jobs:
@@ -90,9 +95,16 @@ jobs:
             exit 1
           fi
 
+          # Cross-repository matches are dropped in the filter: `--head <name>`
+          # matches the branch name in any repository, so an outside fork branch
+          # named like a Dependabot branch would otherwise be selected and fail
+          # the author check, turning this job red and stranding the refresh.
+          # `gh pr list` does not accept `<owner>:<branch>`, so the qualification
+          # has to happen here rather than in the flag.
           pr_json="$(
             gh pr list --repo "${REPO}" --head "${HEAD_BRANCH}" --state open \
-              --json number,author,headRefOid --jq '.[0] // empty'
+              --json number,author,headRefOid,isCrossRepository \
+              --jq '[.[] | select(.isCrossRepository == false)][0] // empty'
           )"
           if [ -z "${pr_json}" ]; then
             echo "No open pull request for ${HEAD_BRANCH}; nothing to apply."
@@ -206,9 +218,12 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Same-repository only; see the commit job for why the qualification
+          # cannot live in `--head`.
           pr_json="$(
             gh pr list --repo "${REPO}" --head "${HEAD_BRANCH}" --state open \
-              --json number,author,headRefOid --jq '.[0] // empty'
+              --json number,author,headRefOid,isCrossRepository \
+              --jq '[.[] | select(.isCrossRepository == false)][0] // empty'
           )"
           if [ -z "${pr_json}" ]; then
             echo "No open pull request for ${HEAD_BRANCH}; nothing to merge."
