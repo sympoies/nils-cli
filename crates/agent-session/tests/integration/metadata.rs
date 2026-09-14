@@ -942,3 +942,79 @@ fn concurrent_distinct_mutations_conflict_then_retry_without_lost_updates() {
     );
     assert_eq!(data(&show)["attachments"][1]["label"], "topic");
 }
+
+/// The two halves of the sympoies/nils-cli#1712 repair.
+///
+/// `openat` with `O_CREAT` is not allowed to report `ENOENT` when the parent
+/// directory exists, and the lock path validates that parent's device and
+/// inode immediately before the call. macOS reports it anyway when two
+/// processes create the same lock file at once, which made the loser of a
+/// concurrent `metadata attach` fail with `session-record-lock-open-failed`
+/// instead of the revision conflict the contract promises.
+///
+/// The kernel race cannot be provoked from a test, so the retry is exercised
+/// through `NILS_AGENT_SESSION_TEST_LOCK_OPEN_ENOENT`, which fails that many
+/// opens in the child process.
+fn attach_with_lock_faults(state_dir: &Path, request: &Path, faults: &str) -> CmdOutput {
+    let request_arg = request.to_string_lossy().into_owned();
+    run_with_env(
+        state_dir,
+        &[
+            "metadata",
+            "attach",
+            "metadata-faulted",
+            "--request-file",
+            request_arg.as_str(),
+            "--if-revision",
+            "0",
+            "--idempotency-key",
+            "metadata-lock-fault-001",
+            "--format",
+            "json",
+        ],
+        &[("NILS_AGENT_SESSION_TEST_LOCK_OPEN_ENOENT", faults)],
+    )
+}
+
+#[test]
+fn a_burst_of_spurious_lock_open_enoent_is_retried_rather_than_reported() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state_dir = tmp.path().join("state");
+    let request = tmp.path().join("metadata.json");
+    seed_session(&state_dir, "metadata-faulted");
+    write_private(
+        &request,
+        br#"{"schema_version":"agent-session.metadata-attachment.request.v1","label":"acceptance.synthetic","value":"DSH-METADATA-731"}"#,
+    );
+
+    let output = attach_with_lock_faults(&state_dir, &request, "3");
+    assert_eq!(
+        output.code,
+        0,
+        "a retried ENOENT must not surface: stdout={} stderr={}",
+        output.stdout_text(),
+        output.stderr_text()
+    );
+    assert_eq!(data(&output.stdout_json())["revision"], 1);
+}
+
+#[test]
+fn a_lock_open_enoent_that_never_clears_is_still_reported() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state_dir = tmp.path().join("state");
+    let request = tmp.path().join("metadata.json");
+    seed_session(&state_dir, "metadata-faulted");
+    write_private(
+        &request,
+        br#"{"schema_version":"agent-session.metadata-attachment.request.v1","label":"acceptance.synthetic","value":"DSH-METADATA-731"}"#,
+    );
+
+    // More faults than attempts: a parent directory that really is gone must
+    // still fail, and must still fail with the same code as before the retry.
+    let output = attach_with_lock_faults(&state_dir, &request, "99");
+    assert_ne!(output.code, 0, "stdout={}", output.stdout_text());
+    assert_eq!(
+        output.stdout_json()["error"]["code"],
+        "session-record-lock-open-failed"
+    );
+}

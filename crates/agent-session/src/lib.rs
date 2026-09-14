@@ -11524,6 +11524,92 @@ fn acquire_session_record_lock(
     )
 }
 
+/// Open the session record lock file under `directory`, creating it if absent.
+///
+/// `openat` with `O_CREAT` is not permitted to report `ENOENT` when the parent
+/// directory exists, and this parent's device and inode are validated
+/// immediately before the call. macOS reports it anyway when two processes
+/// create the same lock file at the same moment: the loser of the create race
+/// surfaces its negative lookup instead of resolving again. It is the defect
+/// behind sympoies/nils-cli#1712, where the process that lost a concurrent
+/// `metadata attach` failed with `session-record-lock-open-failed` rather than
+/// the revision conflict the contract promises.
+///
+/// So `ENOENT` alone is retried. Nothing else is: the flags, the mode, and
+/// every check after the open are unchanged, any other error is returned
+/// immediately, and an `ENOENT` that survives every attempt is still reported.
+/// A parent that really is gone therefore still fails, one bounded delay later.
+#[cfg(unix)]
+fn open_session_lock_file_at(
+    directory: &fs::File,
+    name: &std::ffi::CStr,
+) -> io::Result<std::os::fd::RawFd> {
+    const ATTEMPTS: u32 = 8;
+
+    for attempt in 0..ATTEMPTS {
+        let outcome = match session_lock_open_fault() {
+            Some(forced) => Err(forced),
+            None => {
+                let descriptor = unsafe {
+                    libc::openat(
+                        directory.as_raw_fd(),
+                        name.as_ptr(),
+                        libc::O_CREAT | libc::O_RDWR | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                        SECRET_FILE_MODE,
+                    )
+                };
+                if descriptor >= 0 {
+                    Ok(descriptor)
+                } else {
+                    Err(io::Error::last_os_error())
+                }
+            }
+        };
+        let error = match outcome {
+            Ok(descriptor) => return Ok(descriptor),
+            Err(error) => error,
+        };
+        if error.kind() != io::ErrorKind::NotFound || attempt + 1 == ATTEMPTS {
+            return Err(error);
+        }
+        thread::sleep(Duration::from_micros(200 << attempt));
+    }
+    unreachable!("the last attempt returns rather than falling out of the loop")
+}
+
+/// Force the next lock-file open to fail with `ENOENT`, for tests only.
+///
+/// The spurious failure this guards against is a kernel race on one platform;
+/// it cannot be provoked from a test. `NILS_AGENT_SESSION_TEST_LOCK_OPEN_ENOENT`
+/// names how many opens to fail in this process, so a test can assert both that
+/// the retry survives a burst and that an unending one is still reported.
+#[cfg(unix)]
+fn session_lock_open_fault() -> Option<io::Error> {
+    #[cfg(debug_assertions)]
+    {
+        use std::sync::atomic::{AtomicI64, Ordering};
+
+        // -1 means the budget has not been read from the environment yet.
+        static REMAINING: AtomicI64 = AtomicI64::new(-1);
+
+        if REMAINING.load(Ordering::Relaxed) < 0 {
+            REMAINING.store(
+                env::var("NILS_AGENT_SESSION_TEST_LOCK_OPEN_ENOENT")
+                    .ok()
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .unwrap_or(0)
+                    .max(0),
+                Ordering::Relaxed,
+            );
+        }
+        if REMAINING.load(Ordering::Relaxed) > 0 {
+            REMAINING.fetch_sub(1, Ordering::Relaxed);
+            return Some(io::Error::from_raw_os_error(libc::ENOENT));
+        }
+    }
+    None
+}
+
 #[cfg(unix)]
 fn acquire_new_session_record_lock(
     context: &CliContext,
@@ -11549,21 +11635,8 @@ fn acquire_new_session_record_lock(
     let file_name_c = std::ffi::CString::new(file_name.as_bytes())
         .expect("validated session ID contains no null byte");
     let path = lock_dir_path.join(file_name);
-    let descriptor = unsafe {
-        libc::openat(
-            lock_dir.as_raw_fd(),
-            file_name_c.as_ptr(),
-            libc::O_CREAT | libc::O_RDWR | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-            SECRET_FILE_MODE,
-        )
-    };
-    if descriptor < 0 {
-        return Err(session_io_error(
-            "session-record-lock-open-failed",
-            &path,
-            io::Error::last_os_error(),
-        ));
-    }
+    let descriptor = open_session_lock_file_at(&lock_dir, &file_name_c)
+        .map_err(|error| session_io_error("session-record-lock-open-failed", &path, error))?;
     let file = unsafe { fs::File::from_raw_fd(descriptor) };
     file.set_permissions(fs::Permissions::from_mode(SECRET_FILE_MODE))
         .map_err(|error| session_io_error("session-record-lock-permission-failed", &path, error))?;
