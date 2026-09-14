@@ -81,6 +81,21 @@ fn check_month(
     let relative = relative(devlog, &path);
     let mut problems = Vec::new();
 
+    // Report a conflict and stop parsing this file. Both sides of an
+    // unresolved conflict are syntactically valid entries, so continuing would
+    // count them as real and report a clean structure for a file that cannot
+    // be published.
+    if let Some(line) = crate::model::first_conflict_marker(contents) {
+        problems.push(Problem {
+            kind: "conflict-markers",
+            path: relative,
+            detail: format!(
+                "unresolved merge conflict at line {line}; both sides parse as entries, so nothing below here is trustworthy"
+            ),
+        });
+        return problems;
+    }
+
     let heading = month.heading();
     let first = contents.lines().next().unwrap_or_default().trim();
     if first != heading {
@@ -189,6 +204,19 @@ fn check_index(devlog: &Devlog, months: &[Month]) -> Result<Vec<Problem>, Devlog
         }
         Err(source) => return Err(DevlogError::Io { path, source }),
     };
+
+    // Both sides of an unresolved conflict list months, so comparing the merged
+    // parse against the month files would report a plausible index for a file
+    // that cannot be published.
+    if let Some(line) = crate::model::first_conflict_marker(&contents) {
+        return Ok(vec![Problem {
+            kind: "conflict-markers",
+            path: relative,
+            detail: format!(
+                "unresolved merge conflict at line {line}; the month list below it cannot be trusted"
+            ),
+        }]);
+    }
 
     let listed = crate::index::listed_months(&contents);
     let mut problems = Vec::new();

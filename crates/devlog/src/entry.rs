@@ -99,6 +99,17 @@ pub fn insert(devlog: &Devlog, entry: &Entry, date: EntryDate) -> Result<Inserti
         }
     };
 
+    // Refuse before touching a file git could not merge. Inserting here would
+    // stack a new entry on top of an unresolved conflict and make the result
+    // look like ordinary content, which is harder to notice than the conflict
+    // it buried.
+    if let Some(line) = crate::model::first_conflict_marker(&existing) {
+        return Err(DevlogError::ConflictMarkers {
+            path: path.clone(),
+            line,
+        });
+    }
+
     let mut lines = existing.lines();
     let first = lines.next().unwrap_or_default();
     if first.trim() != heading {

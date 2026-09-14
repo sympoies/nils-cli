@@ -168,3 +168,62 @@ fn a_single_unbreakable_token_is_emitted_intact() {
     let rendered = entry.render(date);
     assert!(rendered.contains(&url), "the token must not be broken");
 }
+
+#[test]
+fn a_conflict_marker_is_found_at_its_one_based_line() {
+    let contents = "# Development log - 2026-04\n\n<<<<<<< HEAD\n## 2026-04-20 - Ours\n";
+    assert_eq!(nils_devlog::model::first_conflict_marker(contents), Some(3));
+}
+
+#[test]
+fn the_closing_marker_alone_is_still_a_conflict() {
+    // A partially hand-resolved file keeps only some markers; any one of them
+    // means the merge is unfinished.
+    let contents = "# Development log - 2026-04\n>>>>>>> feature\n";
+    assert_eq!(nils_devlog::model::first_conflict_marker(contents), Some(2));
+}
+
+#[test]
+fn a_setext_heading_underline_is_not_a_conflict_marker() {
+    // `=======` on its own line is a Markdown setext heading underline. These
+    // files are prose, so treating it as a marker would refuse to write into
+    // perfectly good logs.
+    let contents = "Development log\n=======\n\nSome prose.\n";
+    assert_eq!(nils_devlog::model::first_conflict_marker(contents), None);
+}
+
+#[test]
+fn a_clean_month_file_has_no_conflict_marker() {
+    let contents = "# Development log - 2026-04\n\n## 2026-04-17 - Entry\n\n### Result\n\n- a\n";
+    assert_eq!(nils_devlog::model::first_conflict_marker(contents), None);
+}
+
+#[test]
+fn the_diff3_ancestor_marker_is_a_conflict() {
+    // `merge.conflictStyle = diff3` adds this third marker; a file carrying it
+    // is as unresolved as one carrying the other two.
+    let contents = "# Development log - 2026-04\n||||||| base\n";
+    assert_eq!(nils_devlog::model::first_conflict_marker(contents), Some(2));
+}
+
+#[test]
+fn markers_quoted_inside_a_fenced_block_are_not_a_conflict() {
+    let contents =
+        "# Development log - 2026-04\n\n```text\n<<<<<<< HEAD\n=======\n>>>>>>> feature\n```\n";
+    assert_eq!(nils_devlog::model::first_conflict_marker(contents), None);
+}
+
+#[test]
+fn a_real_conflict_after_a_fenced_block_is_still_found() {
+    let contents = "# Development log - 2026-04\n\n```text\n<<<<<<< HEAD\n```\n\n>>>>>>> feature\n";
+    assert_eq!(nils_devlog::model::first_conflict_marker(contents), Some(7));
+}
+
+#[test]
+fn an_unclosed_fence_does_not_swallow_the_rest_of_the_file() {
+    // A fence that never closes is malformed prose. Detection stops inside it,
+    // which is the conservative direction: `check` still reports the file's
+    // other structural problems rather than refusing every write to it.
+    let contents = "# Development log - 2026-04\n\n~~~\n<<<<<<< HEAD\n";
+    assert_eq!(nils_devlog::model::first_conflict_marker(contents), None);
+}

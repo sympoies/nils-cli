@@ -51,6 +51,27 @@ pub struct IndexUpdate {
     pub months: Vec<Month>,
 }
 
+/// Fail if the index still holds an unresolved merge conflict.
+///
+/// `new` mutates the month file and then the index. Checking only inside
+/// `sync` would let the month file be written before the index refused, so a
+/// caller that retries after resolving the conflict would insert the entry
+/// twice. Callers that mutate both files check this first.
+pub fn assert_resolved(devlog: &Devlog) -> Result<(), DevlogError> {
+    let path = devlog.index_path();
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        // A missing index is not this function's failure to report; `sync`
+        // and `check` each say something more useful about it.
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => return Err(DevlogError::Io { path, source }),
+    };
+    match crate::model::first_conflict_marker(&contents) {
+        Some(line) => Err(DevlogError::ConflictMarkers { path, line }),
+        None => Ok(()),
+    }
+}
+
 /// Rewrite the index's `## Months` section from the tracked month files.
 ///
 /// Only that section is touched: everything a repository wrote around it is
@@ -62,6 +83,18 @@ pub fn sync(devlog: &Devlog) -> Result<IndexUpdate, DevlogError> {
         path: path.clone(),
         source,
     })?;
+
+    // Refuse before rewriting a file git could not merge. Regenerating the
+    // `## Months` section of a conflicted index would resolve part of the
+    // conflict and leave the rest, which reads as an ordinary file and hides
+    // that a human still has to finish the merge. `new` has already checked
+    // this through `assert_resolved`; `devlog index` reaches it here.
+    if let Some(line) = crate::model::first_conflict_marker(&contents) {
+        return Err(DevlogError::ConflictMarkers {
+            path: path.clone(),
+            line,
+        });
+    }
 
     let updated = replace_months_section(&contents, &scan.months);
     let changed = updated != contents;
