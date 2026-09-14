@@ -9,6 +9,11 @@
   `docs/plans/2026-07-25-semantic-commit-default-branch/semantic-commit-default-branch-plan.md`
 - Implementation source:
   `docs/plans/2026-07-25-semantic-commit-default-branch/semantic-commit-default-branch-discussion-source.md`
+- Additional source:
+  `docs/plans/2026-07-25-semantic-commit-default-branch/local-default-commit-mode-discussion-source.md`
+  — moved here on 2026-09-14 from the agent-runtime-kit capture of the same
+  name. It is the runtime-kit-side design for the same local-default commit
+  mode, so it belongs to this plan rather than to a second tracker.
 - Direct source-doc execution waiver: not applicable
 - Tracking issue: none — current-request maintainer waiver for local-only
   execution because GitHub PR, issue, and Actions access are unavailable
