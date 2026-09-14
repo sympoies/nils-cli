@@ -943,78 +943,160 @@ fn concurrent_distinct_mutations_conflict_then_retry_without_lost_updates() {
     assert_eq!(data(&show)["attachments"][1]["label"], "topic");
 }
 
-/// The two halves of the sympoies/nils-cli#1712 repair.
+/// The sympoies/nils-cli#1712 repair: a spurious `ENOENT` from the session
+/// record lock open is retried, and nothing else about the open changes.
 ///
-/// `openat` with `O_CREAT` is not allowed to report `ENOENT` when the parent
-/// directory exists, and the lock path validates that parent's device and
-/// inode immediately before the call. macOS reports it anyway when two
-/// processes create the same lock file at once, which made the loser of a
-/// concurrent `metadata attach` fail with `session-record-lock-open-failed`
-/// instead of the revision conflict the contract promises.
+/// The defect is a kernel behavior on macOS and cannot be provoked from a
+/// test, so these drive `NILS_AGENT_SESSION_TEST_LOCK_OPEN_FAULT`, which fails
+/// that many opens with that errno in the child process. What they pin is the
+/// retry policy — the boundary, the errno class, and that both lock-open paths
+/// carry it — not the race itself. The race stays owned by
+/// `concurrent_distinct_mutations_conflict_then_retry_without_lost_updates`,
+/// which asserts the stale writer loses on the revision fence and not on
+/// storage.
 ///
-/// The kernel race cannot be provoked from a test, so the retry is exercised
-/// through `NILS_AGENT_SESSION_TEST_LOCK_OPEN_ENOENT`, which fails that many
-/// opens in the child process.
-fn attach_with_lock_faults(state_dir: &Path, request: &Path, faults: &str) -> CmdOutput {
-    let request_arg = request.to_string_lossy().into_owned();
-    run_with_env(
-        state_dir,
-        &[
-            "metadata",
-            "attach",
-            "metadata-faulted",
-            "--request-file",
-            request_arg.as_str(),
-            "--if-revision",
-            "0",
-            "--idempotency-key",
-            "metadata-lock-fault-001",
-            "--format",
-            "json",
-        ],
-        &[("NILS_AGENT_SESSION_TEST_LOCK_OPEN_ENOENT", faults)],
-    )
-}
+/// The budgets are derived from `SESSION_LOCK_OPEN_ATTEMPTS` rather than
+/// written out, so the boundary is asserted instead of a range around it.
+#[cfg(debug_assertions)]
+mod lock_open_retry {
+    use super::{CmdOutput, Path, data, run_with_env, seed_session, write_private};
+    use agent_session::SESSION_LOCK_OPEN_ATTEMPTS;
+    use pretty_assertions::assert_eq;
 
-#[test]
-fn a_burst_of_spurious_lock_open_enoent_is_retried_rather_than_reported() {
-    let tmp = tempfile::TempDir::new().expect("tempdir");
-    let state_dir = tmp.path().join("state");
-    let request = tmp.path().join("metadata.json");
-    seed_session(&state_dir, "metadata-faulted");
-    write_private(
-        &request,
-        br#"{"schema_version":"agent-session.metadata-attachment.request.v1","label":"acceptance.synthetic","value":"DSH-METADATA-731"}"#,
-    );
+    const REQUEST: &[u8] = br#"{"schema_version":"agent-session.metadata-attachment.request.v1","label":"acceptance.synthetic","value":"DSH-METADATA-731"}"#;
 
-    let output = attach_with_lock_faults(&state_dir, &request, "3");
-    assert_eq!(
-        output.code,
-        0,
-        "a retried ENOENT must not surface: stdout={} stderr={}",
-        output.stdout_text(),
-        output.stderr_text()
-    );
-    assert_eq!(data(&output.stdout_json())["revision"], 1);
-}
+    fn attach(state_dir: &Path, request: &Path, fault: &str) -> CmdOutput {
+        let request_arg = request.to_string_lossy().into_owned();
+        run_with_env(
+            state_dir,
+            &[
+                "metadata",
+                "attach",
+                "metadata-faulted",
+                "--request-file",
+                request_arg.as_str(),
+                "--if-revision",
+                "0",
+                "--idempotency-key",
+                "metadata-lock-fault-001",
+                "--format",
+                "json",
+            ],
+            &[("NILS_AGENT_SESSION_TEST_LOCK_OPEN_FAULT", fault)],
+        )
+    }
 
-#[test]
-fn a_lock_open_enoent_that_never_clears_is_still_reported() {
-    let tmp = tempfile::TempDir::new().expect("tempdir");
-    let state_dir = tmp.path().join("state");
-    let request = tmp.path().join("metadata.json");
-    seed_session(&state_dir, "metadata-faulted");
-    write_private(
-        &request,
-        br#"{"schema_version":"agent-session.metadata-attachment.request.v1","label":"acceptance.synthetic","value":"DSH-METADATA-731"}"#,
-    );
+    fn fixture(tmp: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+        let state_dir = tmp.join("state");
+        let request = tmp.join("metadata.json");
+        seed_session(&state_dir, "metadata-faulted");
+        write_private(&request, REQUEST);
+        (state_dir, request)
+    }
 
-    // More faults than attempts: a parent directory that really is gone must
-    // still fail, and must still fail with the same code as before the retry.
-    let output = attach_with_lock_faults(&state_dir, &request, "99");
-    assert_ne!(output.code, 0, "stdout={}", output.stdout_text());
-    assert_eq!(
-        output.stdout_json()["error"]["code"],
-        "session-record-lock-open-failed"
-    );
+    #[test]
+    fn a_burst_one_short_of_the_bound_is_retried_rather_than_reported() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let (state_dir, request) = fixture(tmp.path());
+
+        let fault = format!("ENOENT:{}", SESSION_LOCK_OPEN_ATTEMPTS - 1);
+        let output = attach(&state_dir, &request, &fault);
+        assert_eq!(
+            output.code,
+            0,
+            "a retried ENOENT must not surface: stdout={} stderr={}",
+            output.stdout_text(),
+            output.stderr_text()
+        );
+        assert_eq!(data(&output.stdout_json())["revision"], 1);
+    }
+
+    #[test]
+    fn a_burst_that_reaches_the_bound_is_still_reported() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let (state_dir, request) = fixture(tmp.path());
+
+        // One more fault than attempts: a parent directory that really is gone
+        // must still fail, with the same code it failed with before the retry.
+        let fault = format!("ENOENT:{SESSION_LOCK_OPEN_ATTEMPTS}");
+        let output = attach(&state_dir, &request, &fault);
+        assert_eq!(
+            output.stdout_json()["error"]["code"],
+            "session-record-lock-open-failed"
+        );
+    }
+
+    #[test]
+    fn a_non_enoent_failure_is_not_retried_at_all() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let (state_dir, request) = fixture(tmp.path());
+
+        // Fewer faults than attempts. An implementation that retried every
+        // error would spend them and succeed; only ENOENT is retried, so this
+        // fails on the first one.
+        let fault = format!("EACCES:{}", SESSION_LOCK_OPEN_ATTEMPTS - 1);
+        let output = attach(&state_dir, &request, &fault);
+        assert_eq!(
+            output.stdout_json()["error"]["code"],
+            "session-record-lock-open-failed",
+            "stdout={}",
+            output.stdout_text()
+        );
+    }
+
+    #[test]
+    fn the_bound_keeps_the_documented_worst_case() {
+        // Deriving the budgets above from the constant pins the boundary but
+        // not the constant, so a larger bound would pass every case here while
+        // quietly falsifying the doc comment's promise. This is a lock path:
+        // the delay is the part a reader accepts the retry on.
+        let worst_case_micros: u64 = (0..SESSION_LOCK_OPEN_ATTEMPTS - 1)
+            .map(|attempt| 200u64 << attempt)
+            .sum();
+        assert!(
+            worst_case_micros < 26_000,
+            "worst case is {worst_case_micros}us; retry_spurious_lock_enoent documents under 26ms"
+        );
+    }
+
+    fn delete_with_fault(state_dir: &Path, fault: &str) -> CmdOutput {
+        run_with_env(
+            state_dir,
+            &["delete", "lock-sibling", "--format", "json"],
+            &[("NILS_AGENT_SESSION_TEST_LOCK_OPEN_FAULT", fault)],
+        )
+    }
+
+    #[test]
+    fn the_other_lock_open_path_carries_the_same_policy() {
+        // `metadata attach` takes its lock through `openat`; everything else —
+        // delete, coordination, the mailbox, `mutate_session_record` — opens
+        // the same file through `OpenOptions`. The race is between processes,
+        // not between call sites, so both have to retry.
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let state_dir = tmp.path().join("state");
+        seed_session(&state_dir, "lock-sibling");
+
+        let retried = delete_with_fault(
+            &state_dir,
+            &format!("ENOENT:{}", SESSION_LOCK_OPEN_ATTEMPTS - 1),
+        );
+        // The fixture has no live tmux runtime, so delete fails later for its
+        // own reasons. What matters is that it got past the lock.
+        assert_ne!(
+            retried.stdout_json()["error"]["code"],
+            "session-record-lock-open-failed",
+            "stdout={}",
+            retried.stdout_text()
+        );
+
+        let exhausted =
+            delete_with_fault(&state_dir, &format!("ENOENT:{SESSION_LOCK_OPEN_ATTEMPTS}"));
+        assert_eq!(
+            exhausted.stdout_json()["error"]["code"],
+            "session-record-lock-open-failed",
+            "stdout={}",
+            exhausted.stdout_text()
+        );
+    }
 }
