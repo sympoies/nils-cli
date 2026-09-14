@@ -17,40 +17,40 @@ _devlog() {
                 cmd="devlog"
                 ;;
             devlog,check)
-                cmd="devlog__subcmd__check"
+                cmd="devlog__check"
                 ;;
             devlog,completion)
-                cmd="devlog__subcmd__completion"
+                cmd="devlog__completion"
                 ;;
             devlog,help)
-                cmd="devlog__subcmd__help"
+                cmd="devlog__help"
                 ;;
             devlog,index)
-                cmd="devlog__subcmd__index"
+                cmd="devlog__index"
                 ;;
             devlog,new)
-                cmd="devlog__subcmd__new"
+                cmd="devlog__new"
                 ;;
             devlog,search)
-                cmd="devlog__subcmd__search"
+                cmd="devlog__search"
                 ;;
-            devlog__subcmd__help,check)
-                cmd="devlog__subcmd__help__subcmd__check"
+            devlog__help,check)
+                cmd="devlog__help__check"
                 ;;
-            devlog__subcmd__help,completion)
-                cmd="devlog__subcmd__help__subcmd__completion"
+            devlog__help,completion)
+                cmd="devlog__help__completion"
                 ;;
-            devlog__subcmd__help,help)
-                cmd="devlog__subcmd__help__subcmd__help"
+            devlog__help,help)
+                cmd="devlog__help__help"
                 ;;
-            devlog__subcmd__help,index)
-                cmd="devlog__subcmd__help__subcmd__index"
+            devlog__help,index)
+                cmd="devlog__help__index"
                 ;;
-            devlog__subcmd__help,new)
-                cmd="devlog__subcmd__help__subcmd__new"
+            devlog__help,new)
+                cmd="devlog__help__new"
                 ;;
-            devlog__subcmd__help,search)
-                cmd="devlog__subcmd__help__subcmd__search"
+            devlog__help,search)
+                cmd="devlog__help__search"
                 ;;
             *)
                 ;;
@@ -80,7 +80,7 @@ _devlog() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        devlog__subcmd__check)
+        devlog__check)
             opts="-h --format --dir --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -102,7 +102,7 @@ _devlog() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        devlog__subcmd__completion)
+        devlog__completion)
             opts="-h --format --dir --help bash elvish fish powershell zsh"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -124,7 +124,7 @@ _devlog() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        devlog__subcmd__help)
+        devlog__help)
             opts="new search check index completion help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -138,7 +138,7 @@ _devlog() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        devlog__subcmd__help__subcmd__check)
+        devlog__help__check)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -152,7 +152,7 @@ _devlog() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        devlog__subcmd__help__subcmd__completion)
+        devlog__help__completion)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -166,7 +166,7 @@ _devlog() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        devlog__subcmd__help__subcmd__help)
+        devlog__help__help)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -180,7 +180,7 @@ _devlog() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        devlog__subcmd__help__subcmd__index)
+        devlog__help__index)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -194,7 +194,7 @@ _devlog() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        devlog__subcmd__help__subcmd__new)
+        devlog__help__new)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -208,7 +208,7 @@ _devlog() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        devlog__subcmd__help__subcmd__search)
+        devlog__help__search)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -222,7 +222,7 @@ _devlog() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        devlog__subcmd__index)
+        devlog__index)
             opts="-h --format --dir --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -244,7 +244,7 @@ _devlog() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        devlog__subcmd__new)
+        devlog__new)
             opts="-h --title --date --result --why --evidence --link --follow-up --format --dir --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -294,7 +294,7 @@ _devlog() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        devlog__subcmd__search)
+        devlog__search)
             opts="-h --month --format --dir --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )

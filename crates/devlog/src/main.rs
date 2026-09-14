@@ -107,8 +107,7 @@ fn main() {
 
 fn run(cli: &Cli, format: OutputFormat) -> Result<i32, DevlogError> {
     if let Command::Completion { shell } = &cli.command {
-        let mut command = Cli::command();
-        clap_complete::generate(*shell, &mut command, BINARY, &mut std::io::stdout());
+        print_completion(*shell);
         return Ok(exit::SUCCESS);
     }
 
@@ -340,6 +339,29 @@ fn exit_code_for(err: &DevlogError) -> i32 {
         DevlogError::MissingMonthFile { .. } | DevlogError::MissingHeading { .. } => exit::RUNTIME,
         DevlogError::Io { .. } => exit::SOFTWARE,
     }
+}
+
+/// Write the completion script for `shell` to stdout.
+///
+/// Bash output is normalized before it is emitted: `clap_complete` names its
+/// per-subcommand cases `<bin>__subcmd__<name>`, while this workspace's
+/// completion assets and `scripts/ci/completion-flag-parity-audit.sh` expect
+/// `<bin>__<name>`. Every other crate here applies the same replacement, so
+/// skipping it produces a script with no per-subcommand cases at all.
+fn print_completion(shell: clap_complete::Shell) {
+    let mut command = Cli::command();
+    if matches!(shell, clap_complete::Shell::Bash) {
+        let mut rendered = Vec::new();
+        clap_complete::generate(shell, &mut command, BINARY, &mut rendered);
+        let normalized = String::from_utf8(rendered)
+            .expect("bash completion is valid UTF-8")
+            .replace("__subcmd__", "__");
+        if let Err(err) = std::io::Write::write_all(&mut std::io::stdout(), normalized.as_bytes()) {
+            eprintln!("error: failed to write bash completion: {err}");
+        }
+        return;
+    }
+    clap_complete::generate(shell, &mut command, BINARY, &mut std::io::stdout());
 }
 
 fn repo_root() -> Result<PathBuf, DevlogError> {
