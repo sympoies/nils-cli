@@ -20,13 +20,17 @@ fn describe_workers<'a>(outputs: impl IntoIterator<Item = &'a CmdOutput>) -> Str
         .into_iter()
         .enumerate()
         .map(|(index, output)| {
-            let code = serde_json::from_slice::<Value>(&output.stdout)
-                .ok()
-                .and_then(|body| body["error"]["code"].as_str().map(str::to_owned))
-                .unwrap_or_else(|| "-".to_string());
+            let body = serde_json::from_slice::<Value>(&output.stdout).ok();
+            let field = |name: &str| {
+                body.as_ref()
+                    .and_then(|body| body["error"][name].as_str().map(str::to_owned))
+                    .unwrap_or_else(|| "-".to_string())
+            };
             format!(
-                "  worker {index}: exit={} error={code} stderr={:?}",
+                "  worker {index}: exit={} error={} message={:?} stderr={:?}",
                 output.code,
+                field("code"),
+                field("message"),
                 output.stderr_text().trim()
             )
         })
@@ -901,7 +905,9 @@ fn concurrent_distinct_mutations_conflict_then_retry_without_lost_updates() {
         .expect("one stale writer");
     assert_eq!(
         failed.2.stdout_json()["error"]["code"],
-        "metadata-revision-conflict"
+        "metadata-revision-conflict",
+        "the stale writer must lose on the revision fence, not on storage\n{}",
+        describe_workers(results.iter().map(|(_, _, output)| output))
     );
     let retry = run(
         &state_dir,
