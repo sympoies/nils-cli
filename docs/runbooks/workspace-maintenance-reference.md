@@ -475,16 +475,21 @@ Detailed status-script semantics live in
 and month index. This section owns only the command contract and the validation
 lane.
 
-Search past entries with:
+The `devlog` CLI maintains and queries the log:
 
 ```bash
-scripts/devlog-search.sh <term> [YYYY-MM]
+devlog new --title "<title>" --result "<bullet>" --why "<bullet>" \
+  --evidence "<bullet>" --link "<bullet>"
+devlog search <term> [--month YYYY-MM]
+devlog check
+devlog index
 ```
 
-The term is a case-insensitive literal string; the optional `YYYY-MM` restricts
-the search to one month file. Exit status is `0` on a match, `1` when there are
-no matches or the requested month file is absent, and `2` for a usage error.
-`-h`/`--help` prints usage and exits `0`.
+`new` inserts newest-first and refreshes the month index in the same operation.
+`check` reports structural problems the Markdown lint cannot see: mis-named
+month files, index drift, missing or unknown entry sections, date/month
+mismatches, and entries that are not newest-first. Exit codes and the JSON
+envelope names are documented in `crates/devlog/README.md`.
 
 Devlog-only changes are documentation, so they validate through the docs-only
 fast path in section 3.1.

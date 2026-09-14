@@ -136,7 +136,7 @@ as the GitHub crate-directory landing page) and a `docs/README.md` index for cra
 These files are excluded from the canonical Crate-Local Inventory `find` pattern, so they are
 tracked here.
 
-Top-level crate READMEs (one per workspace member, 46 total):
+Top-level crate READMEs (one per workspace member, 47 total):
 
 - `crates/agent-docs/README.md`
 - `crates/agent-hook/README.md`
@@ -155,6 +155,7 @@ Top-level crate READMEs (one per workspace member, 46 total):
 - `crates/claude-cli/README.md`
 - `crates/cli-template/README.md`
 - `crates/codex-cli/README.md`
+- `crates/devlog/README.md`
 - `crates/docker-tools/README.md`
 - `crates/forge-cli/README.md`
 - `crates/fzf-cli/README.md`
@@ -185,7 +186,7 @@ Top-level crate READMEs (one per workspace member, 46 total):
 - `crates/web-evidence/README.md`
 - `crates/zsh-kit/README.md`
 
-Crate `docs/README.md` index files (one per workspace member, 46 total):
+Crate `docs/README.md` index files (one per workspace member, 47 total):
 
 - `crates/agent-docs/docs/README.md`
 - `crates/agent-hook/docs/README.md`
@@ -204,6 +205,7 @@ Crate `docs/README.md` index files (one per workspace member, 46 total):
 - `crates/claude-cli/docs/README.md`
 - `crates/cli-template/docs/README.md`
 - `crates/codex-cli/docs/README.md`
+- `crates/devlog/docs/README.md`
 - `crates/docker-tools/docs/README.md`
 - `crates/forge-cli/docs/README.md`
 - `crates/fzf-cli/docs/README.md`

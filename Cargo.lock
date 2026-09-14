@@ -2474,6 +2474,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "nils-devlog"
+version = "1.28.27"
+dependencies = [
+ "clap",
+ "clap_complete",
+ "jiff",
+ "nils-build-info",
+ "nils-common",
+ "nils-test-support",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "nils-docker-tools"
 version = "1.28.27"
 dependencies = [

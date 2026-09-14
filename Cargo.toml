@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/devlog",
   "crates/nils-common",
   "crates/nils-build-info",
   "crates/nils-provider-resume",

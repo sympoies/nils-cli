@@ -34,6 +34,7 @@ Completion obligations for those binaries are tracked in
 | Forge automation | `forge-cli`, `github-app-cli` | Drive PR/MR + Issue lifecycle and repository label catalog maintenance on GitHub (via `gh`) or GitLab (via `glab`), or mint GitHub App installation tokens. |
 | Agent policy and evidence | `agent-runtime`, `agent-docs`, `agent-hook`, `agent-memory`, `agent-out`, `agent-session`, `main-agent`, `agent-scope-lock`, `agent-run`, `test-first-evidence`, `web-evidence`, `browser-session`, `canary-check`, `docs-impact`, `heuristic-inbox`, `model-cross-check`, `repo-retro`, `review-evidence`, `review-specialists`, `skill-usage`, `evidence` | Render/install/audit runtime-kit surfaces, resolve agent policy docs, dispatch one shared cross-provider hook policy, manage local agent memory stores, run project commands through explicit env handling, allocate artifact paths, start tmux-backed agent sessions, operate durable Main Agent and interactive worker lifecycles, enforce edit scope, inspect repo retrospectives, merge specialist review evidence, persist deterministic workflow evidence, or migrate and query the durable skill-usage evidence archive. |
 | Planning and delivery | `plan-tooling`, `plan-issue`, `plan-issue-local`, `plan-archive`, `semantic-commit` | Validate/split implementation plans, orchestrate issue delivery, rehearse local plan flows, query archived plans, or run validated commit workflows. |
+| Development log | `devlog` | Record durable outcomes in a repository development log, check its structural integrity, and search past decisions. |
 | Provider lanes | `codex-cli`, `gemini-cli`, `claude-cli`, `opencode-cli` | Run provider-specific diagnostics, auth checks, and workflow adapters. |
 | Markdown rendering | `md-render` | Render `.md.tera` templates from JSON view data through the shared `nils-markdown` engine. |
 | Desktop, media, and local utilities | `docker-tools`, `macos-agent`, `screen-record`, `image-processing`, `fzf-cli`, `memo`, `secrets`, `zsh-kit` | Operate containers, automate desktop tasks, capture or convert media, use interactive shell helpers, manage the encrypted environment store, record/search local memos, or bootstrap an operator-supplied Zsh repository at runtime. |
@@ -95,6 +96,8 @@ Each crate is either a standalone CLI binary, a multi-binary crate, or a shared 
 
 ### Agent policy and evidence tooling
 
+- [crates/devlog](crates/devlog): Development log CLI (`devlog`) for entry creation, structural integrity checks, month-index
+  sync, and literal search over `docs/devlog` or `docs/source/devlog`.
 - [crates/agent-runtime](crates/agent-runtime): Runtime-kit tooling binary (`agent-runtime`) for render, install, doctor,
   audit-drift, runtime state maintenance, skill listing, and PR/MR body rendering.
 - [crates/agent-docs](crates/agent-docs): Deterministic policy-document resolver and auditor for Codex/agent workflows (`audit`,
