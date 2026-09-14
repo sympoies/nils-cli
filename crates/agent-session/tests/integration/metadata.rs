@@ -4,9 +4,35 @@ use std::path::Path;
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-use nils_test_support::cmd::{CmdOptions, run_resolved};
+use nils_test_support::cmd::{CmdOptions, CmdOutput, run_resolved};
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
+
+/// Render each concurrent worker's outcome for an assertion message.
+///
+/// These two tests race real CLI invocations, and their assertions used to
+/// throw away the only thing that explains a failure: which worker failed and
+/// what it reported. That matters more here than in an ordinary test, because
+/// the failures show up on the macOS lane and do not reproduce on Linux, so the
+/// assertion text is usually the only evidence anyone gets.
+fn describe_workers<'a>(outputs: impl IntoIterator<Item = &'a CmdOutput>) -> String {
+    outputs
+        .into_iter()
+        .enumerate()
+        .map(|(index, output)| {
+            let code = serde_json::from_slice::<Value>(&output.stdout)
+                .ok()
+                .and_then(|body| body["error"]["code"].as_str().map(str::to_owned))
+                .unwrap_or_else(|| "-".to_string());
+            format!(
+                "  worker {index}: exit={} error={code} stderr={:?}",
+                output.code,
+                output.stderr_text().trim()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 fn write_private(path: &Path, bytes: &[u8]) {
     fs::write(path, bytes).expect("write private fixture");
@@ -766,13 +792,22 @@ fn concurrent_exact_replays_serialize_to_one_attachment() {
         .into_iter()
         .map(|worker| worker.join().expect("join worker"))
         .collect::<Vec<_>>();
-    assert!(results.iter().all(|result| result.code == 0));
+    assert!(
+        results.iter().all(|result| result.code == 0),
+        "both workers must exit 0: the same idempotency key means the loser of \
+         the race replays the winner's write instead of failing its revision \
+         precondition\n{}",
+        describe_workers(&results)
+    );
     let replayed = results
         .iter()
         .map(|result| data(&result.stdout_json())["replayed"].as_bool().unwrap())
         .collect::<Vec<_>>();
-    assert!(replayed.contains(&false));
-    assert!(replayed.contains(&true));
+    assert!(
+        replayed.contains(&false) && replayed.contains(&true),
+        "exactly one worker must write and the other replay, got replayed={replayed:?}\n{}",
+        describe_workers(&results)
+    );
 
     let show = run(
         &state_dir,
@@ -856,7 +891,9 @@ fn concurrent_distinct_mutations_conflict_then_retry_without_lost_updates() {
             .iter()
             .filter(|(_, _, output)| output.code == 0)
             .count(),
-        1
+        1,
+        "distinct mutations at the same revision must leave exactly one winner\n{}",
+        describe_workers(results.iter().map(|(_, _, output)| output))
     );
     let failed = results
         .iter()
