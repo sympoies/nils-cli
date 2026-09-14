@@ -3,7 +3,7 @@
 This file documents third-party notice-file discovery for Rust crates used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `111c10d93c1f244b4d6b91573757ee9377daf595a8d3ab139f9f02995c039b00`
+- Cargo.lock SHA256: `eaaec74c881702ed4b9f8d08419b9f5005000ec668f3a734f9f10b7a1c40d76d`
 - Third-party crates (`source != null`): 496
 
 ## Notice Extraction Policy
@@ -241,7 +241,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### aws-lc-rs 1.17.0
+### aws-lc-rs 1.18.1
 
 - License: `ISC AND (Apache-2.0 OR ISC)`
 - Source: `crates.io`
@@ -249,7 +249,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### aws-lc-sys 0.41.0
+### aws-lc-sys 0.45.0
 
 - License: `ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)`
 - Source: `crates.io`
@@ -2719,7 +2719,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-MIT`
   - `LICENSE-Apache-2.0_WITH_LLVM-exception`
 
-### rustls 0.23.40
+### rustls 0.23.45
 
 - License: `Apache-2.0 OR ISC OR MIT`
 - Source: `crates.io`
@@ -2765,7 +2765,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - Notice files: No explicit NOTICE file discovered.
 - License file reference: none declared
 
-### rustls-webpki 0.103.13
+### rustls-webpki 0.103.15
 
 - License: `ISC`
 - Source: `crates.io`
