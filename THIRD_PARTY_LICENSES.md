@@ -3,7 +3,7 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `111c10d93c1f244b4d6b91573757ee9377daf595a8d3ab139f9f02995c039b00`
+- Cargo.lock SHA256: `eaaec74c881702ed4b9f8d08419b9f5005000ec668f3a734f9f10b7a1c40d76d`
 - Third-party crates (`source != null`): 496
 - Workspace crates (`source == null`, excluded below): 47
 
@@ -80,8 +80,8 @@ This file documents third-party Rust crate licenses used by this workspace.
 | async-trait | 0.1.89 | MIT OR Apache-2.0 | crates.io |
 | atomic-waker | 1.1.2 | Apache-2.0 OR MIT | crates.io |
 | autocfg | 1.5.1 | Apache-2.0 OR MIT | crates.io |
-| aws-lc-rs | 1.17.0 | ISC AND (Apache-2.0 OR ISC) | crates.io |
-| aws-lc-sys | 0.41.0 | ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0) | crates.io |
+| aws-lc-rs | 1.18.1 | ISC AND (Apache-2.0 OR ISC) | crates.io |
+| aws-lc-sys | 0.45.0 | ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0) | crates.io |
 | axum | 0.8.9 | MIT | crates.io |
 | axum-core | 0.5.6 | MIT | crates.io |
 | base64 | 0.22.1 | MIT OR Apache-2.0 | crates.io |
@@ -369,12 +369,12 @@ This file documents third-party Rust crate licenses used by this workspace.
 | rustc-hash | 2.1.2 | Apache-2.0 OR MIT | crates.io |
 | rustc_version | 0.4.1 | MIT OR Apache-2.0 | crates.io |
 | rustix | 1.1.4 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | crates.io |
-| rustls | 0.23.40 | Apache-2.0 OR ISC OR MIT | crates.io |
+| rustls | 0.23.45 | Apache-2.0 OR ISC OR MIT | crates.io |
 | rustls-native-certs | 0.8.4 | Apache-2.0 OR ISC OR MIT | crates.io |
 | rustls-pki-types | 1.14.1 | MIT OR Apache-2.0 | crates.io |
 | rustls-platform-verifier | 0.7.0 | MIT OR Apache-2.0 | crates.io |
 | rustls-platform-verifier-android | 0.1.1 | MIT OR Apache-2.0 | crates.io |
-| rustls-webpki | 0.103.13 | ISC | crates.io |
+| rustls-webpki | 0.103.15 | ISC | crates.io |
 | rustversion | 1.0.22 | MIT OR Apache-2.0 | crates.io |
 | ryu | 1.0.23 | Apache-2.0 OR BSL-1.0 | crates.io |
 | same-file | 1.0.6 | Unlicense/MIT | crates.io |
