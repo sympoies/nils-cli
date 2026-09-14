@@ -11524,6 +11524,80 @@ fn acquire_session_record_lock(
     )
 }
 
+/// How many times a session lock file open is attempted before its `ENOENT`
+/// is believed.
+///
+/// Public so a test can pin the boundary rather than a range: at
+/// `SESSION_LOCK_OPEN_ATTEMPTS - 1` forced failures the open still succeeds, at
+/// `SESSION_LOCK_OPEN_ATTEMPTS` it is reported.
+pub const SESSION_LOCK_OPEN_ATTEMPTS: u32 = 8;
+
+/// Open a session record lock file, retrying an `ENOENT` that cannot be true.
+///
+/// `open` creates the lock file if it is absent, so `ENOENT` should mean the
+/// parent directory is gone — and the callers validate that directory's device
+/// and inode immediately beforehand. On macOS it is nonetheless observed when
+/// two processes create the same lock file at the same moment: the loser of a
+/// concurrent `metadata attach` reported `session-record-lock-open-failed`
+/// instead of the revision conflict the contract promises
+/// (sympoies/nils-cli#1712). The precise kernel cause is not confirmed here;
+/// what is confirmed is the error, the platform, and that it needs concurrency.
+///
+/// So `ENOENT` alone is retried, at most `SESSION_LOCK_OPEN_ATTEMPTS` times
+/// with a doubling backoff that totals under 26ms. Every other error is
+/// returned on the first attempt, an `ENOENT` that outlasts the attempts is
+/// still returned, and nothing after the open changes. A parent directory that
+/// really is gone therefore still fails with the same error, about 26ms later.
+fn retry_spurious_lock_enoent<T>(mut open: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    for attempt in 0..SESSION_LOCK_OPEN_ATTEMPTS {
+        let error = match session_lock_open_fault().map_or_else(&mut open, Err) {
+            Ok(opened) => return Ok(opened),
+            Err(error) => error,
+        };
+        if error.kind() != io::ErrorKind::NotFound || attempt + 1 == SESSION_LOCK_OPEN_ATTEMPTS {
+            return Err(error);
+        }
+        thread::sleep(Duration::from_micros(200 << attempt));
+    }
+    unreachable!("the last attempt returns rather than falling out of the loop")
+}
+
+/// Force the next lock-file opens to fail, for tests only.
+///
+/// The race this guards against is a kernel behavior on one platform and cannot
+/// be provoked from a test, so `NILS_AGENT_SESSION_TEST_LOCK_OPEN_FAULT` names
+/// an errno and a count — `ENOENT:3`, `EACCES:3` — and that many opens fail in
+/// this process. The errno is part of it so a test can pin *which* errors are
+/// retried, not merely that retrying happens.
+fn session_lock_open_fault() -> Option<io::Error> {
+    #[cfg(debug_assertions)]
+    {
+        use std::sync::OnceLock;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static BUDGET: OnceLock<Option<(i32, u64)>> = OnceLock::new();
+        static CONSUMED: AtomicU64 = AtomicU64::new(0);
+
+        let budget = BUDGET.get_or_init(|| {
+            let value = env::var("NILS_AGENT_SESSION_TEST_LOCK_OPEN_FAULT").ok()?;
+            let (errno, count) = value.split_once(':')?;
+            let errno = match errno {
+                "ENOENT" => libc::ENOENT,
+                "EACCES" => libc::EACCES,
+                _ => return None,
+            };
+            Some((errno, count.parse().ok()?))
+        });
+
+        if let Some((errno, count)) = *budget
+            && CONSUMED.fetch_add(1, Ordering::Relaxed) < count
+        {
+            return Some(io::Error::from_raw_os_error(errno));
+        }
+    }
+    None
+}
+
 #[cfg(unix)]
 fn acquire_new_session_record_lock(
     context: &CliContext,
@@ -11549,21 +11623,22 @@ fn acquire_new_session_record_lock(
     let file_name_c = std::ffi::CString::new(file_name.as_bytes())
         .expect("validated session ID contains no null byte");
     let path = lock_dir_path.join(file_name);
-    let descriptor = unsafe {
-        libc::openat(
-            lock_dir.as_raw_fd(),
-            file_name_c.as_ptr(),
-            libc::O_CREAT | libc::O_RDWR | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-            SECRET_FILE_MODE,
-        )
-    };
-    if descriptor < 0 {
-        return Err(session_io_error(
-            "session-record-lock-open-failed",
-            &path,
-            io::Error::last_os_error(),
-        ));
-    }
+    let descriptor = retry_spurious_lock_enoent(|| {
+        let descriptor = unsafe {
+            libc::openat(
+                lock_dir.as_raw_fd(),
+                file_name_c.as_ptr(),
+                libc::O_CREAT | libc::O_RDWR | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                SECRET_FILE_MODE,
+            )
+        };
+        if descriptor >= 0 {
+            Ok(descriptor)
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    })
+    .map_err(|error| session_io_error("session-record-lock-open-failed", &path, error))?;
     let file = unsafe { fs::File::from_raw_fd(descriptor) };
     file.set_permissions(fs::Permissions::from_mode(SECRET_FILE_MODE))
         .map_err(|error| session_io_error("session-record-lock-permission-failed", &path, error))?;
@@ -11626,13 +11701,18 @@ fn acquire_session_record_lock_with_mode(
     let lock_dir = context.state_dir.join(SESSION_LOCKS_DIR);
     ensure_private_dir(&lock_dir)?;
     let path = lock_dir.join(format!("{id}.lock"));
-    let file = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .mode(SECRET_FILE_MODE)
-        .open(&path)
-        .map_err(|err| session_io_error("session-record-lock-open-failed", &path, err))?;
+    // The same file, in the same directory, as the `openat` path above: the
+    // race is between processes, not between call sites, so both opens carry
+    // the same retry policy.
+    let file = retry_spurious_lock_enoent(|| {
+        OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .mode(SECRET_FILE_MODE)
+            .open(&path)
+    })
+    .map_err(|err| session_io_error("session-record-lock-open-failed", &path, err))?;
     fs::set_permissions(&path, fs::Permissions::from_mode(SECRET_FILE_MODE))
         .map_err(|err| session_io_error("session-record-lock-permission-failed", &path, err))?;
     if matches!(mode, SessionRecordLockMode::Blocking) {

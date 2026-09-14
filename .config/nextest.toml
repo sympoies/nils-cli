@@ -26,13 +26,22 @@
 # Still flaking as of #1667's second window, and worth their own investigation:
 # `nils-agent-session` `main_agent_worker_start_distinct_null_id_requests_hold_distinct_authority_fences`,
 # `launch_profile_readiness_timeout_kills_its_process_group`,
-# `delete_exhausts_bounded_identity_churn_without_losing_current_runtime`, the
-# paired `metadata::concurrent_distinct_mutations_*` / `concurrent_exact_replays_*`,
+# `delete_exhausts_bounded_identity_churn_without_losing_current_runtime`,
 # `nils-agent-hook` `codex_apply_patch_target_binding_meets_dispatch_latency_budget`,
 # and `nils-claude-cli` `spawn_retry_is_bounded_and_limited_to_would_block`.
 # Two thirds of those events are macOS. Every cluster investigated so far looked
 # like host contention and turned out to be a defect, so find the mechanism
 # before reserving threads for any of them.
+#
+# The paired `metadata::concurrent_distinct_mutations_*` /
+# `concurrent_exact_replays_*` were on that list and now have a mechanism:
+# #1712. The losing writer failed with `session-record-lock-open-failed` and
+# `ENOENT`, which `openat` with `O_CREAT` may not return when the parent exists
+# — and the parent is identity-checked immediately before the call. Both lock
+# opens now retry that one errno. Treat the cluster as explained but not yet
+# confirmed: `retries = 1` means a still-broken macOS lane reports flaky and
+# then green rather than red, so the proof is a quiet macOS history, not a
+# passing run.
 retries = 1
 
 # Process-containment fixtures own kernel tracking resources that cannot be
