@@ -913,3 +913,85 @@ fn a_month_file_whose_prose_contains_a_setext_underline_is_writable() {
     let output = run_in(&fixture.root, &["check"]);
     assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
 }
+
+#[test]
+fn an_entry_without_links_or_follow_ups_is_complete() {
+    // Measured across the logs that already existed: 60 of 483 hand-written
+    // entries carry no Links section, because the author had nothing worth
+    // linking. Requiring it would report those as defects.
+    let fixture = Fixture::new("docs/devlog");
+    std::fs::write(
+        fixture.devlog_path("docs/devlog/2026-04.md"),
+        "# Development log - 2026-04\n\n## 2026-04-17 - No links to keep\n\n### Result\n\n- a\n\n### Why / context\n\n- b\n\n### Evidence\n\n- c\n",
+    )
+    .expect("write entry without links");
+
+    let output = run_in(&fixture.root, &["check"]);
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+}
+
+#[test]
+fn each_required_section_is_still_reported_when_absent() {
+    for (absent, body) in [
+        (
+            "Result",
+            "### Why / context\n\n- b\n\n### Evidence\n\n- c\n",
+        ),
+        (
+            "Why / context",
+            "### Result\n\n- a\n\n### Evidence\n\n- c\n",
+        ),
+        (
+            "Evidence",
+            "### Result\n\n- a\n\n### Why / context\n\n- b\n",
+        ),
+    ] {
+        let fixture = Fixture::new("docs/devlog");
+        std::fs::write(
+            fixture.devlog_path("docs/devlog/2026-04.md"),
+            format!("# Development log - 2026-04\n\n## 2026-04-17 - Thin entry\n\n{body}"),
+        )
+        .expect("write thin entry");
+
+        let output = run_in(&fixture.root, &["check"]);
+        let stdout = output.stdout_text();
+        assert_eq!(output.code, 65, "absent={absent} stdout={stdout}");
+        assert!(
+            stdout.contains(&format!("has no '### {absent}' section")),
+            "absent={absent} stdout={stdout}"
+        );
+    }
+}
+
+#[test]
+fn new_omits_an_optional_section_rather_than_writing_a_placeholder() {
+    let fixture = Fixture::new("docs/devlog");
+    let output = run_in(
+        &fixture.root,
+        &[
+            "new",
+            "--title",
+            "No links",
+            "--date",
+            "2026-06-20",
+            "--result",
+            "Shipped it.",
+            "--why",
+            "It was needed.",
+            "--evidence",
+            "Ran the gate.",
+        ],
+    );
+    assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
+
+    // A month with no existing file, so the assertions below see only the
+    // entry this command wrote.
+    let contents = fixture.read("docs/devlog/2026-06.md");
+    assert!(!contents.contains("### Links"), "contents={contents}");
+    assert!(!contents.contains("### Follow-ups"), "contents={contents}");
+    // A required section the author left empty still renders its prompt.
+    assert!(contents.contains("### Result"), "contents={contents}");
+
+    let check = run_in(&fixture.root, &["check"]);
+    assert_eq!(check.code, 0, "stdout={}", check.stdout_text());
+}

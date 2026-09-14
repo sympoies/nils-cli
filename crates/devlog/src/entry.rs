@@ -13,6 +13,24 @@ use crate::model::{Devlog, DevlogError, EntryDate, Month};
 /// The section labels an entry carries, in render order.
 pub const SECTIONS: [&str; 5] = ["Result", "Why / context", "Evidence", "Links", "Follow-ups"];
 
+/// The section labels an entry must carry.
+///
+/// `Links` is deliberately absent. It was required in the first cut of this
+/// crate, inferred from a backfill whose entries were written in one pass and
+/// all carried links. Measured against the logs that already existed across the
+/// organization, that inference was wrong: of 483 hand-written entries, 60 have
+/// no `Links` section, because the author had nothing worth linking. A required
+/// section that real authors routinely and correctly omit is a wrong
+/// requirement, not a widespread defect.
+///
+/// `Follow-ups` has always been optional for the same reason.
+pub const REQUIRED_SECTIONS: [&str; 3] = ["Result", "Why / context", "Evidence"];
+
+/// Whether `label` must appear in every entry.
+pub fn is_required_section(label: &str) -> bool {
+    REQUIRED_SECTIONS.contains(&label)
+}
+
 /// A single devlog entry before it is rendered.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Entry {
@@ -47,7 +65,12 @@ impl Entry {
         ];
 
         for (label, bullets) in sections {
-            if label == "Follow-ups" && bullets.is_empty() {
+            // An optional section with nothing in it is omitted rather than
+            // rendered as a TODO: a placeholder the author chose not to fill is
+            // noise in a log that exists to be read later. Required sections
+            // still render their TODO, because a missing one is a real gap and
+            // `check` reports it.
+            if bullets.is_empty() && !is_required_section(label) {
                 continue;
             }
             _ = writeln!(out);

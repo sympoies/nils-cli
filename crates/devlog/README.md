@@ -41,6 +41,19 @@ The log is detected under the repository root, in order:
 The second covers a repository with a source/render split, where the authored
 copy is not the rendered one. Pass `--dir <DIR>` to override detection.
 
+### Entry sections
+
+`Result`, `Why / context`, and `Evidence` are required. `Links` and
+`Follow-ups` are optional, and `new` omits an optional section rather than
+writing a placeholder into it.
+
+`Links` was required in the first cut of this crate. That was inferred from a
+backfill whose entries were written in one pass and all carried links; measured
+against the logs that already existed across the organization, 60 of 483
+hand-written entries have no `Links` section because the author had nothing
+worth linking. A required section that real authors routinely and correctly
+omit is a wrong requirement.
+
 ### `devlog new`
 
 ```bash
@@ -80,7 +93,7 @@ Reported problem kinds:
 | `unexpected-file` | Not a `YYYY-MM.md` month file; invisible to search and the index. |
 | `missing-heading` | The month file does not open with `# Development log - YYYY-MM`. |
 | `malformed-entry-heading` | An entry heading is not `## YYYY-MM-DD - <title>`. |
-| `missing-section` | An entry lacks `Result`, `Why / context`, `Evidence`, or `Links`. |
+| `missing-section` | An entry lacks `Result`, `Why / context`, or `Evidence`. |
 | `unknown-section` | An entry has a section outside the template. |
 | `date-month-mismatch` | An entry's date does not belong to its month file. |
 | `not-newest-first` | Entries are not ordered newest-first. |
