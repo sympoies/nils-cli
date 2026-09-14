@@ -974,8 +974,6 @@ fn new_omits_an_optional_section_rather_than_writing_a_placeholder() {
             "No links",
             "--date",
             "2026-06-20",
-            "--result",
-            "Shipped it.",
             "--why",
             "It was needed.",
             "--evidence",
@@ -989,8 +987,13 @@ fn new_omits_an_optional_section_rather_than_writing_a_placeholder() {
     let contents = fixture.read("docs/devlog/2026-06.md");
     assert!(!contents.contains("### Links"), "contents={contents}");
     assert!(!contents.contains("### Follow-ups"), "contents={contents}");
-    // A required section the author left empty still renders its prompt.
-    assert!(contents.contains("### Result"), "contents={contents}");
+    // `--result` is deliberately absent: a required section the author left
+    // empty still renders, and still renders its prompt, so the gap stays
+    // visible instead of disappearing with the optional sections.
+    assert!(
+        contents.contains("### Result\n\n- TODO\n"),
+        "contents={contents}"
+    );
 
     let check = run_in(&fixture.root, &["check"]);
     assert_eq!(check.code, 0, "stdout={}", check.stdout_text());

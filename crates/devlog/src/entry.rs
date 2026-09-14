@@ -47,9 +47,10 @@ impl Entry {
     /// Render the entry body, starting at its `## YYYY-MM-DD - title` heading
     /// and ending with a single trailing newline.
     ///
-    /// `Follow-ups` is optional per the entry template and is omitted when it
-    /// has no bullets. The other four sections always render, because an entry
-    /// missing them is the shape `check` reports.
+    /// `Links` and `Follow-ups` are optional and are omitted when they have no
+    /// bullets. The three sections in `REQUIRED_SECTIONS` always render, with a
+    /// `TODO` bullet when empty, because an entry missing one of them is the
+    /// shape `check` reports.
     pub fn render(&self, date: EntryDate) -> String {
         let mut out = String::new();
         // Writing into a String is infallible; the `_ =` keeps the lint quiet
