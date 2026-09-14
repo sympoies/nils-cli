@@ -38,7 +38,7 @@ _arguments "${_arguments_options[@]}" : \
 '*--result=[A \`Result\` bullet (repeatable)]:TEXT:_default' \
 '*--why=[A \`Why / context\` bullet (repeatable)]:TEXT:_default' \
 '*--evidence=[An \`Evidence\` bullet (repeatable)]:TEXT:_default' \
-'*--link=[A \`Links\` bullet (repeatable)]:TEXT:_default' \
+'*--link=[A \`Links\` bullet (repeatable; the section is omitted when empty)]:TEXT:_default' \
 '*--follow-up=[A \`Follow-ups\` bullet (repeatable; the section is omitted when empty)]:TEXT:_default' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \

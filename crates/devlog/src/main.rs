@@ -51,7 +51,7 @@ enum Command {
         /// An `Evidence` bullet (repeatable).
         #[arg(long = "evidence", value_name = "TEXT")]
         evidence: Vec<String>,
-        /// A `Links` bullet (repeatable).
+        /// A `Links` bullet (repeatable; the section is omitted when empty).
         #[arg(long = "link", value_name = "TEXT")]
         links: Vec<String>,
         /// A `Follow-ups` bullet (repeatable; the section is omitted when empty).

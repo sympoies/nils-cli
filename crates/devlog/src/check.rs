@@ -8,7 +8,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::entry::SECTIONS;
+use crate::entry::{REQUIRED_SECTIONS, SECTIONS};
 use crate::model::{Devlog, DevlogError, Month};
 
 /// One structural problem found in the log.
@@ -140,7 +140,7 @@ fn check_month(
     }
 
     for (title, labels) in &finished {
-        for required in SECTIONS.iter().take(4) {
+        for required in &REQUIRED_SECTIONS {
             if !labels.iter().any(|label| label == required) {
                 problems.push(Problem {
                     kind: "missing-section",

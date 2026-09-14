@@ -61,8 +61,11 @@ and same-turn fixes with no future debugging or decision value.
 
 ### Follow-ups
 
-- Optional.
+- Anything left open.
 ```
+
+`Result`, `Why / context`, and `Evidence` are required. `Links` and `Follow-ups`
+are optional: omit the whole section rather than leaving a placeholder in it.
 
 ## Months
 

@@ -227,3 +227,20 @@ fn an_unclosed_fence_does_not_swallow_the_rest_of_the_file() {
     let contents = "# Development log - 2026-04\n\n~~~\n<<<<<<< HEAD\n";
     assert_eq!(nils_devlog::model::first_conflict_marker(contents), None);
 }
+
+#[test]
+fn every_required_section_is_one_the_renderer_knows() {
+    // `check_month` used to take the first four of `SECTIONS`, which made the
+    // required set a prefix of the known set by construction. The two are now
+    // independent literals, so nothing but this test stops them drifting: a
+    // label only in `REQUIRED_SECTIONS` would have `check` report
+    // `missing-section` on every entry in every log, for a heading `render`
+    // never writes and `check` would then call `unknown-section` if an author
+    // added it by hand.
+    for required in nils_devlog::entry::REQUIRED_SECTIONS {
+        assert!(
+            nils_devlog::entry::SECTIONS.contains(&required),
+            "required section {required:?} is not in SECTIONS"
+        );
+    }
+}
