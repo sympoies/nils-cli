@@ -128,14 +128,32 @@ impl Devlog {
                 source,
             })?;
             let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
             let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
                 unexpected.push(path);
                 continue;
             };
+            // The index is the index whatever it is made of, and this scan is
+            // about month files. Testing its file type here reported a
+            // symlinked index as an unexpected file and failed `check` on a
+            // repository that had always passed.
             if name == "README.md" {
+                continue;
+            }
+            // A symlink is not a month file this log owns, even when it points
+            // at one. `is_file` follows the link, which was harmless while
+            // every caller only read; `fix` writes, and writing through a
+            // committed `2026-05.md -> ../../elsewhere` would rewrite a file
+            // outside the log and leave the link looking untouched in review.
+            // Reporting it is better than skipping it: a symlink here is
+            // something someone should look at either way.
+            let file_type = entry.file_type().map_err(|source| DevlogError::Io {
+                path: path.clone(),
+                source,
+            })?;
+            if !file_type.is_file() {
+                if !file_type.is_dir() {
+                    unexpected.push(path);
+                }
                 continue;
             }
             match name.strip_suffix(".md").map(str::parse::<Month>) {
@@ -347,19 +365,10 @@ const CONFLICT_MARKERS: [&str; 3] = ["<<<<<<<", "|||||||", ">>>>>>>"];
 /// zero in the file body, never inside a fence it did not already break, so
 /// skipping fenced regions costs no real detection.
 pub fn first_conflict_marker(contents: &str) -> Option<usize> {
-    let mut fence: Option<&str> = None;
+    let structural = structural_line_mask(contents.lines());
 
     for (index, line) in contents.lines().enumerate() {
-        if let Some(open) = fence {
-            // A fence closes on a run of the same character at least as long as
-            // the one that opened it, per CommonMark.
-            if fence_delimiter(line).is_some_and(|close| close.starts_with(open)) {
-                fence = None;
-            }
-            continue;
-        }
-        if let Some(open) = fence_delimiter(line) {
-            fence = Some(open);
+        if !structural[index] {
             continue;
         }
         if CONFLICT_MARKERS
@@ -373,8 +382,90 @@ pub fn first_conflict_marker(contents: &str) -> Option<usize> {
     None
 }
 
+/// Which lines carry structure, by 0-based index.
+///
+/// Everything this crate parses out of a month file — conflict markers, entry
+/// headings, section headings — is structure only outside a fenced block.
+/// Inside one it is an example, and the entry documenting this very format is
+/// the obvious case. `check` reading a quoted `## 2026-04-17 - Title` as a real
+/// entry would report problems nobody can fix without editing the prose, and
+/// `fix` would write a backfilled section into the middle of the code block.
+///
+/// A fence that is never closed swallows the rest of the file. That is the
+/// conservative direction and it is deliberate — `an_unclosed_fence_does_not_swallow_the_rest_of_the_file`
+/// pins it — but it has a cost worth knowing: a real conflict marker below an
+/// unterminated fence is invisible to the refusal that exists to catch one, so
+/// `fix` will repair the other months around it. Nothing in this crate reports
+/// an unterminated fence, which is the actual gap; see the follow-up issue.
+///
+/// This returns a mask rather than a cursor because the alternative has already
+/// failed here: when each pass derived the rule for itself, one of them was
+/// made fence-aware and its neighbour was not, and `fix` spliced a generated
+/// section into the middle of a code block while the comment above it said that
+/// could not happen. A value every pass indexes is harder to forget than a rule
+/// every pass has to remember.
+pub fn structural_line_mask<'a>(lines: impl IntoIterator<Item = &'a str>) -> Vec<bool> {
+    let lines: Vec<&str> = lines.into_iter().collect();
+    let mut structural = vec![true; lines.len()];
+    let mut at = 0usize;
+
+    while at < lines.len() {
+        let Some(open) = fence_delimiter(lines[at]) else {
+            at += 1;
+            continue;
+        };
+        // A fence closes on a run of the same character at least as long as the
+        // one that opened it, per CommonMark.
+        let closes_at = (at + 1..lines.len()).find(|index| {
+            fence_delimiter(lines[*index]).is_some_and(|close| close.starts_with(open))
+        });
+        match closes_at {
+            Some(end) => {
+                structural[at..=end].fill(false);
+                at = end + 1;
+            }
+            None => {
+                structural[at..].fill(false);
+                break;
+            }
+        }
+    }
+
+    structural
+}
+
+/// Whether a fence in `lines` is opened and never closed.
+///
+/// Everything from such a fence to the end of the file is treated as an
+/// example, which means there is no way to know where the content it hides
+/// ends. A caller that wants to *write* into those lines has to stop: see
+/// `fix`, where inserting into a region the mask has already swallowed made
+/// the insertion invisible to the next pass and the repair loop endless.
+pub fn has_unterminated_fence<'a>(lines: impl IntoIterator<Item = &'a str>) -> bool {
+    let lines: Vec<&str> = lines.into_iter().collect();
+    let mut at = 0usize;
+    while at < lines.len() {
+        let Some(open) = fence_delimiter(lines[at]) else {
+            at += 1;
+            continue;
+        };
+        match (at + 1..lines.len()).find(|index| {
+            fence_delimiter(lines[*index]).is_some_and(|close| close.starts_with(open))
+        }) {
+            Some(end) => at = end + 1,
+            None => return true,
+        }
+    }
+    false
+}
+
 /// The leading run of backticks or tildes when `line` opens or closes a fence.
-fn fence_delimiter(line: &str) -> Option<&str> {
+///
+/// Public because `fix` rewrites lines in place and must not rewrite one that
+/// a fence has turned into an example — an entry documenting this very format
+/// is the obvious case, and the conflict scan above already excludes it for
+/// the same reason.
+pub fn fence_delimiter(line: &str) -> Option<&str> {
     let trimmed = line.trim_start();
     for character in ['`', '~'] {
         let run = trimmed.split(|c| c != character).next().unwrap_or_default();

@@ -6,6 +6,7 @@
 
 pub mod check;
 pub mod entry;
+pub mod fix;
 pub mod index;
 pub mod model;
 pub mod search;

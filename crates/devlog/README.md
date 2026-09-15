@@ -30,6 +30,7 @@ satisfy all five by construction.
 | `devlog new` | Add an entry, creating the month file and index link when absent. |
 | `devlog search <term>` | Literal, case-insensitive search across month files. |
 | `devlog check` | Report structural problems. |
+| `devlog fix` | Repair the structural problems that have one correct repair. |
 | `devlog index` | Rewrite the README month index from the tracked month files. |
 | `devlog completion <bash\|zsh>` | Export the shell completion script. |
 
@@ -115,7 +116,7 @@ Reported problem kinds:
 
 | Kind | Meaning |
 | --- | --- |
-| `unexpected-file` | Not a `YYYY-MM.md` month file; invisible to search and the index. |
+| `unexpected-file` | Not a `YYYY-MM.md` regular file; invisible to search and the index. A symlink is reported here rather than followed. |
 | `missing-heading` | The month file does not open with `# Development log - YYYY-MM`. |
 | `malformed-entry-heading` | An entry heading is not `## YYYY-MM-DD - <title>`. |
 | `missing-section` | An entry lacks `Result`, `Why / context`, or `Evidence`. |
@@ -140,6 +141,100 @@ as a marker on its own, because on its own line it is also a Markdown setext
 heading underline. A real conflict always writes an opening and a closing
 marker at column zero, so neither exclusion costs detection.
 
+Nothing inside a fence is structure. An entry heading or a section heading
+quoted in a code block is an example, so `check` does not count it and `fix`
+does not rewrite it. This is the same exclusion the conflict scan makes, for
+the same reason, and an entry documenting this format is the case both exist
+for: counting a quoted `## 2026-04-17 - Title` would report a malformed heading
+and three missing sections that nobody could repair without editing the prose.
+A log whose entries quote headings will therefore report a lower `entry_count`
+than it did before this rule, which is the count being correct rather than
+changing.
+
+### `devlog fix`
+
+```bash
+devlog fix
+```
+
+Applies every repair a structural problem has exactly one correct answer for,
+then reports what is left:
+
+| Problem | Repair |
+| --- | --- |
+| A section label written as `**Result**` | Rewritten as `### Result`. |
+| `## 2026-04-17 — Title` | The separator becomes the `-` the parser splits on. |
+| A month heading that disagrees with its filename | The heading moves; the filename is what `search`, the index and `check` are keyed on. |
+| Entries out of newest-first order | Stably re-sorted. |
+| A required section an entry never had | Added, carrying a bullet that says it was not recorded. |
+| A month file missing from the index | Linked, the same rewrite `devlog index` performs. |
+
+Everything else is reported and left exactly as it was, and `fix` exits 65 as
+`check` would. A file that is not a month, an entry heading with no readable
+date, a section outside the template, a date in the wrong month: each of those
+would have to be guessed at, and a log is the wrong place to guess.
+
+Four of the repairs above are careful about what they do not touch. Only the
+five template labels are promoted, only when the bold span is the whole line
+and starts at column zero, and only where the label stands in for a section —
+inside an entry, in an entry that has no heading for it already. Only the
+separator position in a heading is rewritten, so a dash inside a title
+survives. Nothing inside a fenced code block is touched at all, because an
+entry documenting this format quotes both of those forms as examples. And an
+entry whose fence is never closed is left entirely alone: there is no knowing
+where its content ends, so there is nowhere in it a section can be placed.
+
+A file that mixes line endings is left alone too. Rebuilding it drops each
+carriage return, so one ending has to be chosen for the whole file, and
+choosing rewrites every line that used the other — a whole-file diff from a
+command reporting that it repaired nothing. Which ending such a file meant is
+not something `fix` can know.
+
+Those rules are measured, not assumed. Across the 1385 entries in the
+organization's logs there are 3136 standalone bold lines: 3105 are one of the
+five labels and 31 are prose, and that 31 includes `**Why**`, `**Follow-up**`
+and `**Why / root cause**`, each of which a looser match would have promoted
+into a section its author never wrote. Exactly one heading carries a dash today,
+`## 2026-06-21 - ... (v1.3.4–v1.3.7)`, and its separator is already correct —
+splitting it on its first dash yields something that is not a date, which is why
+the date is parsed before anything is rewritten.
+
+A log with an unresolved merge conflict is refused before anything is written,
+for the same reason `new` and `index` refuse one: repairs sitting beside a
+conflict make it read as an ordinary file.
+
+There is no `--dry-run`. `check` is the read-only question and already answers
+it, and the repairs are ordinary file edits in a git repository, so `git diff`
+shows exactly what changed.
+
+`fix` does not reformat. It leaves a log that needed nothing byte-identical —
+including its line endings, which are carried through rather than normalized —
+and it does not introduce an `MD022` or `MD012` violation where it inserts a
+section or moves an entry. Tidying the Markdown around entries it did not touch
+is `rumdl fmt`'s job, not this command's.
+
+A symlinked month file is reported as `unexpected-file` and never written
+through. `check` only ever read such a link; `fix` writes, and a committed
+`2026-05.md -> ../../elsewhere` would otherwise put a repair outside the log
+while leaving the link itself looking untouched in review.
+
+#### Backfilled sections
+
+A required section that an entry never had is added with:
+
+```markdown
+- Not recorded; added by `devlog fix`.
+```
+
+It records the absence and names what added it, and stops there. Inventing a
+plausible `Result` for an entry whose author never wrote one would put a false
+claim into a log that exists to be trusted later — and so would an earlier
+wording that asserted the entry predated the section contract, because nothing
+checks that. An entry written yesterday and missing a section gets this bullet
+too, and in a repository whose log is an audit record, a tool-authored claim
+about *why* evidence is absent is exactly the kind of content that must not be
+invented.
+
 ## Output contract
 
 `--format text` (default) and `--format json` per
@@ -153,7 +248,7 @@ Exit codes:
 | `0` | Success; for `search`, at least one match. |
 | `1` | `search` found no matches, a requested month file is absent, or `new` refused a month file whose heading is wrong. |
 | `64` | Usage error, including a malformed month or an impossible date. |
-| `65` | `check` found structural problems, or a file still holds an unresolved merge conflict. |
+| `65` | `check` found structural problems, `fix` could not repair all of them, or a file still holds an unresolved merge conflict. |
 | `69` | No devlog directory, or not a git work tree. |
 | `70` | Filesystem error. |
 
@@ -165,6 +260,12 @@ does not read as an empty log.
 expected `# Development log - YYYY-MM` heading: the file is left untouched and
 the expected heading is named. Rewriting someone's heading to make an insert
 succeed would hide whichever problem produced it.
+
+`fix` repairs that same heading, and the two are not in conflict. `new` is
+being asked to add an entry, so a surprise in the file is a reason to stop and
+say so. `fix` is being asked to repair the file, so the same surprise is the
+work. Anyone who hits the refusal from `new` has been told exactly which
+command to reach for next.
 
 On `--format json`, `ok` mirrors the command outcome rather than execution: a
 `check` that finds problems and a `search` that matches nothing both emit a
