@@ -998,3 +998,115 @@ fn new_omits_an_optional_section_rather_than_writing_a_placeholder() {
     let check = run_in(&fixture.root, &["check"]);
     assert_eq!(check.code, 0, "stdout={}", check.stdout_text());
 }
+
+#[test]
+fn new_writes_a_link_the_workspace_markdown_lint_accepts() {
+    let fixture = Fixture::new("docs/devlog");
+    let output = run_in(
+        &fixture.root,
+        &[
+            "new",
+            "--title",
+            "Linked entry",
+            "--date",
+            "2026-06-20",
+            "--result",
+            "Shipped it.",
+            "--why",
+            "It was needed.",
+            "--evidence",
+            "Ran the gate.",
+            "--link",
+            "https://github.com/sympoies/nils-cli/pull/1729",
+        ],
+    );
+    assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
+
+    let contents = fixture.read("docs/devlog/2026-06.md");
+    assert!(
+        contents.contains("- <https://github.com/sympoies/nils-cli/pull/1729>\n"),
+        "contents={contents}"
+    );
+
+    let check = run_in(&fixture.root, &["check"]);
+    assert_eq!(check.code, 0, "stdout={}", check.stdout_text());
+}
+
+#[test]
+fn a_log_outside_the_repository_root_is_reported_with_one_leading_slash() {
+    // `--dir` pointing at another checkout's log is the ordinary way to check
+    // a log this repository does not own, so the path below is the supported
+    // route rather than an edge case. POSIX leaves a leading `//`
+    // implementation-defined, so a doubled slash is not merely cosmetic.
+    let logged = Fixture::new("docs/devlog");
+    let elsewhere = Fixture::new("docs/devlog");
+    let absolute = logged.devlog_path("docs/devlog");
+    let absolute = absolute.to_str().expect("utf-8 fixture path");
+
+    let text = run_in(&elsewhere.root, &["--dir", absolute, "check"]);
+    assert_eq!(text.code, 0, "stderr={}", text.stderr_text());
+    assert!(
+        text.stdout_text().starts_with(&format!("{absolute}:")),
+        "stdout={}",
+        text.stdout_text()
+    );
+
+    let json = run_in(
+        &elsewhere.root,
+        &["--format", "json", "--dir", absolute, "check"],
+    );
+    assert_eq!(json.code, 0, "stderr={}", json.stderr_text());
+    assert_eq!(json.stdout_json()["data"]["devlog_dir"], absolute);
+}
+
+#[test]
+fn a_problem_outside_the_repository_root_names_a_pastable_path() {
+    let logged = Fixture::new("docs/devlog");
+    let elsewhere = Fixture::new("docs/devlog");
+    std::fs::write(
+        logged.devlog_path("docs/devlog/2026-13.md"),
+        "not a month\n",
+    )
+    .expect("write mis-named month file");
+    let absolute = logged.devlog_path("docs/devlog");
+    let absolute = absolute.to_str().expect("utf-8 fixture path");
+
+    let json = run_in(
+        &elsewhere.root,
+        &["--format", "json", "--dir", absolute, "check"],
+    );
+    assert_eq!(json.code, 65, "stderr={}", json.stderr_text());
+    // A failing check reports through the error envelope, so the problem rows
+    // live under `error.details` rather than `data`.
+    let reported = json.stdout_json()["error"]["details"]["problems"][0]["path"]
+        .as_str()
+        .expect("problem path")
+        .to_string();
+    assert_eq!(reported, format!("{absolute}/2026-13.md"));
+    assert!(
+        std::path::Path::new(&reported).is_file(),
+        "reported path is not readable back: {reported}"
+    );
+}
+
+#[test]
+fn a_log_under_the_repository_root_is_reported_relative_with_no_leading_slash() {
+    // The ordinary case, and the one the out-of-root assertions above do not
+    // pin: a rendering that prefixed every in-repository path with a slash
+    // would satisfy all of them.
+    let fixture = Fixture::new("docs/devlog");
+    std::fs::write(
+        fixture.devlog_path("docs/devlog/2026-13.md"),
+        "not a month\n",
+    )
+    .expect("write mis-named month file");
+
+    let json = run_in(&fixture.root, &["--format", "json", "check"]);
+    assert_eq!(json.code, 65, "stderr={}", json.stderr_text());
+    let payload = json.stdout_json();
+    assert_eq!(payload["error"]["details"]["devlog_dir"], "docs/devlog");
+    assert_eq!(
+        payload["error"]["details"]["problems"][0]["path"],
+        "docs/devlog/2026-13.md"
+    );
+}

@@ -244,3 +244,311 @@ fn every_required_section_is_one_the_renderer_knows() {
         );
     }
 }
+
+#[test]
+fn a_bare_url_bullet_is_rendered_as_an_autolink() {
+    // MD034 is enabled in this workspace's lint baseline, so a bare URL would
+    // block the commit of the entry the CLI just wrote. This assertion is the
+    // contract, and it is the same shape as the MD036 one above.
+    let entry = Entry {
+        title: "Did a thing".to_string(),
+        result: vec!["Shipped it".to_string()],
+        why: vec!["It was needed".to_string()],
+        evidence: vec!["Ran the gate".to_string()],
+        links: vec!["https://github.com/sympoies/nils-cli/pull/1729".to_string()],
+        ..Entry::default()
+    };
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let rendered = entry.render(date);
+
+    assert!(
+        rendered.contains("- <https://github.com/sympoies/nils-cli/pull/1729>\n"),
+        "rendered={rendered}"
+    );
+}
+
+#[test]
+fn a_url_is_wrapped_in_every_section_not_only_links() {
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["see https://example.com/r".to_string()],
+        why: vec!["see https://example.com/w".to_string()],
+        evidence: vec!["see https://example.com/e".to_string()],
+        links: vec!["https://example.com/l".to_string()],
+        follow_ups: vec!["see https://example.com/f".to_string()],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    for suffix in ["r", "w", "e", "l", "f"] {
+        assert!(
+            rendered.contains(&format!("<https://example.com/{suffix}>")),
+            "section {suffix} was not wrapped: {rendered}"
+        );
+    }
+}
+
+#[test]
+fn an_already_linked_url_is_rendered_unchanged() {
+    // Measured across the organization's logs, these two forms carry the
+    // overwhelming majority of the URLs an author writes: 1220 inline links
+    // and 454 autolinks against 74 bare URLs. Double-wrapping either would
+    // break far more entries than the bare form ever blocked.
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["r".to_string()],
+        why: vec!["w".to_string()],
+        evidence: vec!["e".to_string()],
+        links: vec![
+            "<https://example.com/a>".to_string(),
+            "[PR 1729](https://example.com/b)".to_string(),
+        ],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    assert!(
+        rendered.contains("- <https://example.com/a>\n"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("- [PR 1729](https://example.com/b)\n"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("<<"), "double-wrapped: {rendered}");
+    assert!(!rendered.contains("(<https"), "double-wrapped: {rendered}");
+}
+
+#[test]
+fn a_url_inside_a_code_span_is_left_alone() {
+    // A URL in a code span is already exempt from MD034, and wrapping it would
+    // change the command the entry is quoting. 39 of the URLs in the existing
+    // logs sit inside one.
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["r".to_string()],
+        why: vec!["w".to_string()],
+        evidence: vec!["ran `curl https://example.com/c` twice".to_string()],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    assert!(
+        rendered.contains("`curl https://example.com/c`"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("<https://example.com/c>"), "{rendered}");
+}
+
+#[test]
+fn trailing_sentence_punctuation_stays_outside_the_autolink() {
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["landed in https://example.com/p.".to_string()],
+        why: vec!["w".to_string()],
+        evidence: vec!["e".to_string()],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    assert!(rendered.contains("<https://example.com/p>."), "{rendered}");
+}
+
+#[test]
+fn a_multi_backtick_code_span_is_left_alone() {
+    // A span delimited by two backticks has an even backtick count, so a
+    // parity-based tracker never enters it and rewrites the command the entry
+    // is quoting. The delimiter is a run, not a count.
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["r".to_string()],
+        why: vec!["w".to_string()],
+        evidence: vec!["ran ``curl https://example.com/c | sh`` twice".to_string()],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    assert!(
+        rendered.contains("``curl https://example.com/c | sh``"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("<https://example.com/c>"), "{rendered}");
+}
+
+#[test]
+fn a_url_after_a_closed_code_span_is_still_wrapped() {
+    // Quoting a command and then citing where it ran is the common shape of an
+    // evidence bullet, and it is the one a tracker that never closes its span
+    // would leave bare.
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["r".to_string()],
+        why: vec!["w".to_string()],
+        evidence: vec!["ran `curl -sS` then see https://example.com/x".to_string()],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    assert!(
+        rendered.contains("`curl -sS` then see <https://example.com/x>"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn an_unmatched_backtick_does_not_swallow_the_rest_of_the_bullet() {
+    // An unmatched run is literal text and opens nothing, per CommonMark.
+    // Treating it as an opener would silently stop wrapping for the remainder,
+    // which is the MD034 failure this rendering exists to prevent.
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["r".to_string()],
+        why: vec!["w".to_string()],
+        evidence: vec!["the `-v flag, and then https://example.com/y".to_string()],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    assert!(rendered.contains("<https://example.com/y>"), "{rendered}");
+}
+
+#[test]
+fn a_parenthesized_url_in_prose_is_still_wrapped() {
+    // `rumdl` reports a bare URL inside parentheses, and `rumdl fmt` wraps the
+    // URL while leaving the parentheses outside. A word-level match that
+    // required the scheme at position zero missed this entirely.
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["see (https://example.com/z) for the run".to_string()],
+        why: vec!["w".to_string()],
+        evidence: vec!["e".to_string()],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    assert!(
+        rendered.contains("see (<https://example.com/z>) for the run"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn a_parenthesis_the_url_opened_stays_inside_the_autolink() {
+    // The counterpart to the case above, and the reason a closing parenthesis
+    // is not trimmed unconditionally: here it belongs to the URL.
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["https://en.wikipedia.org/wiki/Fixture_(disambiguation)".to_string()],
+        why: vec!["w".to_string()],
+        evidence: vec!["e".to_string()],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    assert!(
+        rendered.contains("- <https://en.wikipedia.org/wiki/Fixture_(disambiguation)>\n"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn every_trailing_punctuation_character_stays_outside_the_autolink() {
+    // Each of these ends a sentence rather than a URL, and `rumdl fmt` ends the
+    // URL before every one of them. Pinning the whole set stops a later edit
+    // from quietly dropping one.
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    for mark in ['.', ',', ';', ':', '!', '?', ']'] {
+        let entry = Entry {
+            title: "T".to_string(),
+            result: vec![format!("landed in https://example.com/p{mark} Next.")],
+            why: vec!["w".to_string()],
+            evidence: vec!["e".to_string()],
+            ..Entry::default()
+        };
+        let rendered = entry.render(date);
+        assert!(
+            rendered.contains(&format!("<https://example.com/p>{mark}")),
+            "mark={mark} rendered={rendered}"
+        );
+    }
+}
+
+#[test]
+fn the_plaintext_scheme_is_wrapped_too() {
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["served on http://localhost:8080/health".to_string()],
+        why: vec!["w".to_string()],
+        evidence: vec!["e".to_string()],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    assert!(
+        rendered.contains("<http://localhost:8080/health>"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn a_backtick_inside_a_longer_span_does_not_close_it() {
+    // Embedding a backtick is the whole reason to open a span with two of
+    // them, and CommonMark closes a span only on a run of the same length. A
+    // closer that accepted any run would end the span early and rewrite the
+    // URL that follows inside it.
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["r".to_string()],
+        why: vec!["w".to_string()],
+        evidence: vec!["ran ``echo ` then curl https://example.com/d`` once".to_string()],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    assert!(
+        rendered.contains("``echo ` then curl https://example.com/d``"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("<https://example.com/d>"), "{rendered}");
+}
+
+#[test]
+fn a_url_used_as_link_text_is_left_alone() {
+    // Both halves of this link are the same URL. Wrapping the first would run
+    // through `](` and swallow the second, turning a link every lint accepts
+    // into text that is not a link at all — worse than the bare URL this pass
+    // exists to fix, because nothing reports it.
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["r".to_string()],
+        why: vec!["w".to_string()],
+        evidence: vec!["e".to_string()],
+        links: vec![
+            "[https://example.com/a](https://example.com/a)".to_string(),
+            "see [https://example.com/b][1]".to_string(),
+        ],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    assert!(
+        rendered.contains("- [https://example.com/a](https://example.com/a)\n"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("- see [https://example.com/b][1]\n"),
+        "{rendered}"
+    );
+}
