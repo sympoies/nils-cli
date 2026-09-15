@@ -522,3 +522,33 @@ fn a_backtick_inside_a_longer_span_does_not_close_it() {
     );
     assert!(!rendered.contains("<https://example.com/d>"), "{rendered}");
 }
+
+#[test]
+fn a_url_used_as_link_text_is_left_alone() {
+    // Both halves of this link are the same URL. Wrapping the first would run
+    // through `](` and swallow the second, turning a link every lint accepts
+    // into text that is not a link at all — worse than the bare URL this pass
+    // exists to fix, because nothing reports it.
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["r".to_string()],
+        why: vec!["w".to_string()],
+        evidence: vec!["e".to_string()],
+        links: vec![
+            "[https://example.com/a](https://example.com/a)".to_string(),
+            "see [https://example.com/b][1]".to_string(),
+        ],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    assert!(
+        rendered.contains("- [https://example.com/a](https://example.com/a)\n"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("- see [https://example.com/b][1]\n"),
+        "{rendered}"
+    );
+}

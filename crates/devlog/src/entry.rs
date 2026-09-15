@@ -307,18 +307,25 @@ fn code_span_end(bytes: &[u8], from: usize, run: usize) -> Option<usize> {
 
 /// Trailing characters that end a sentence rather than a URL.
 ///
-/// `rumdl fmt` ends a URL before these and leaves them outside the brackets;
-/// matching it keeps what this CLI writes identical to what the formatter
-/// would have rewritten it to.
+/// `rumdl fmt` ends a URL before each of these and leaves it outside the
+/// brackets, and so does this. That is a statement about this set, not a claim
+/// of parity with the formatter: `rumdl` also ends a URL at a quote character,
+/// which this does not, so the two disagree on a quoted URL.
 const SENTENCE_PUNCTUATION: [char; 7] = ['.', ',', ';', ':', '!', '?', ']'];
 
 /// Where the bare URL starting at `at` ends, or `None` when there is not one
 /// there to wrap.
 ///
-/// A URL already inside an autolink or an inline link target is left alone;
-/// those two forms carry 1674 of the 1787 URLs in the existing logs, so
-/// rewriting either would break far more entries than the bare form ever
-/// blocked.
+/// A URL that is already part of a link is left alone, whichever half of the
+/// link it is. Those forms carry 1674 of the 1787 URLs in the existing logs,
+/// and rewriting one is worse than leaving a bare URL bare: a bare URL fails a
+/// lint that says so, while a mangled link passes every lint and is simply
+/// gone.
+///
+/// Only `http://` and `https://` are recognized. `MD034` also reports
+/// `www.`-style hosts, other schemes and bare email addresses, so this does not
+/// make a generated entry unconditionally lint-clean — it covers the forms that
+/// actually appear in these logs.
 fn bare_url_end(text: &str, at: usize) -> Option<usize> {
     let bytes = text.as_bytes();
     let scheme = ["https://", "http://"]
@@ -329,6 +336,13 @@ fn bare_url_end(text: &str, at: usize) -> Option<usize> {
         let before = bytes[at - 1];
         // `<url>` is already an autolink.
         if before == b'<' {
+            return None;
+        }
+        // `[url](dest)` and `[url][1]` use the URL as the link text. The scan
+        // below has no bracket terminator, so wrapping here would run through
+        // `](` and swallow the destination, turning a link that every lint
+        // accepts into text that is not a link at all.
+        if before == b'[' {
             return None;
         }
         // `](url)` is already an inline link target. A bare `(` is not: a
