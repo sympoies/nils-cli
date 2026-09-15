@@ -3568,14 +3568,22 @@ fn recover_viewer_pending_github_review<R: BackendRunner>(
     })?;
     let pr_url = format!("https://{host}/{repo}/pull/{id}", host = ctx.host);
     let snapshot = pr_reviews::compute_pending_guards_for_pr(runner, ctx, id, &pr_url)?;
+    // Filter on authorship ALONE, then require the single result to be
+    // deletable. Filtering on both at once would silently skip a viewer-owned
+    // review the viewer cannot delete — leaving exactly one deletable candidate,
+    // deleting it, and then failing the re-check anyway on the one that was
+    // skipped. That trades an unundoable delete for nothing.
     let candidates = snapshot
         .reviews
         .iter()
-        .filter(|review| review.viewer_did_author && review.viewer_can_delete)
+        .filter(|review| review.viewer_did_author)
         .collect::<Vec<_>>();
     let [candidate] = candidates.as_slice() else {
         return Err(conflict);
     };
+    if !candidate.viewer_can_delete {
+        return Err(conflict);
+    }
     let review_id = candidate.id.clone();
 
     let view = super::pr_view::compute(runner, ctx, id)?;

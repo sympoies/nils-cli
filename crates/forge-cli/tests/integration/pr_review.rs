@@ -1384,20 +1384,20 @@ esac
 fn github_review_recover_pending_stub(
     capture: &str,
     pending_body: &str,
-    pending_count: u8,
+    viewer_nodes: &[(&str, bool)],
 ) -> String {
     let deleted_flag = format!("{capture}.deleted");
-    let node = |id: &str| {
+    let node = |id: &str, can_delete: bool| {
         format!(
-            r#"{{"id":"{id}","url":"https://github.com/acme/widgets/pull/44#pullrequestreview-9911","author":{{"login":"review-bot"}},"state":"PENDING","commit":{{"oid":"head-44"}},"body":{body},"viewerDidAuthor":true,"viewerCanDelete":true}}"#,
+            r#"{{"id":"{id}","url":"https://github.com/acme/widgets/pull/44#pullrequestreview-9911","author":{{"login":"review-bot"}},"state":"PENDING","commit":{{"oid":"head-44"}},"body":{body},"viewerDidAuthor":true,"viewerCanDelete":{can_delete}}}"#,
             body = serde_json::to_string(pending_body).expect("pending body json"),
         )
     };
-    let guard_nodes = match pending_count {
-        0 => String::new(),
-        1 => node("PRR_pending"),
-        _ => format!("{},{}", node("PRR_pending"), node("PRR_other")),
-    };
+    let guard_nodes = viewer_nodes
+        .iter()
+        .map(|(id, can_delete)| node(id, *can_delete))
+        .collect::<Vec<_>>()
+        .join(",");
     let snapshot = format!(
         r#"{{"data":{{"node":{{"id":"PRR_pending","url":"https://github.com/acme/widgets/pull/44#pullrequestreview-9911","author":{{"login":"review-bot"}},"state":"PENDING","commit":{{"oid":"head-44"}},"body":{body},"viewerDidAuthor":true,"viewerCanDelete":true,"comments":{{"totalCount":0,"nodes":[],"pageInfo":{{"hasNextPage":false,"endCursor":null}}}},"pullRequest":{{"number":44,"url":"https://github.com/acme/widgets/pull/44","headRefOid":"head-44"}}}}}}}}"#,
         body = serde_json::to_string(pending_body).expect("pending body json"),
@@ -1491,7 +1491,7 @@ fn pr_review_recover_pending_deletes_the_abandoned_review_then_submits() {
     let stub = stub.gh_stub(&github_review_recover_pending_stub(
         &capture.to_string_lossy(),
         "Summary body",
-        1,
+        &[("PRR_pending", true)],
     ));
 
     let out = run_forge_cli(&stub, &recover_pending_argv(true));
@@ -1524,7 +1524,7 @@ fn pr_review_without_recover_pending_still_fails_closed() {
     let stub = stub.gh_stub(&github_review_recover_pending_stub(
         &capture.to_string_lossy(),
         "Summary body",
-        1,
+        &[("PRR_pending", true)],
     ));
 
     let out = run_forge_cli(&stub, &recover_pending_argv(false));
@@ -1549,7 +1549,7 @@ fn pr_review_recover_pending_refuses_a_body_that_is_not_the_one_being_submitted(
     let stub = stub.gh_stub(&github_review_recover_pending_stub(
         &capture.to_string_lossy(),
         "A different review nobody asked to delete",
-        1,
+        &[("PRR_pending", true)],
     ));
 
     let out = run_forge_cli(&stub, &recover_pending_argv(true));
@@ -1573,7 +1573,7 @@ fn pr_review_recover_pending_refuses_when_the_candidate_is_ambiguous() {
     let stub = stub.gh_stub(&github_review_recover_pending_stub(
         &capture.to_string_lossy(),
         "Summary body",
-        2,
+        &[("PRR_pending", true), ("PRR_other", true)],
     ));
 
     let out = run_forge_cli(&stub, &recover_pending_argv(true));
@@ -1588,6 +1588,32 @@ fn pr_review_recover_pending_refuses_when_the_candidate_is_ambiguous() {
     );
 }
 
+/// A second viewer-owned review the viewer cannot delete still blocks the
+/// submission, so deleting the one that is deletable buys nothing and costs an
+/// unundoable delete. The candidate count is therefore taken over authorship
+/// alone, and deletability is checked on the single result.
+#[test]
+fn pr_review_recover_pending_refuses_when_an_undeletable_sibling_would_still_block() {
+    let stub = StubEnv::new();
+    let capture = stub.tempdir.path().join("gh-args.log");
+    let stub = stub.gh_stub(&github_review_recover_pending_stub(
+        &capture.to_string_lossy(),
+        "Summary body",
+        &[("PRR_pending", true), ("PRR_other", false)],
+    ));
+
+    let out = run_forge_cli(&stub, &recover_pending_argv(true));
+
+    assert_eq!(out.code, 1, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let env = parse_envelope(&out.stdout);
+    assert_eq!(env["error"]["code"], "github_pending_review_exists");
+    let calls = fs::read_to_string(capture).expect("read captured calls");
+    assert!(
+        !calls.contains("deletePullRequestReview(input:"),
+        "a delete that cannot unblock the submission must not run: {calls}"
+    );
+}
+
 /// The flag names a destructive action, so it is refused where its guard could
 /// not run rather than being quietly ignored.
 #[test]
@@ -1597,7 +1623,7 @@ fn pr_review_recover_pending_requires_submit_review() {
     let stub = stub.gh_stub(&github_review_recover_pending_stub(
         &capture.to_string_lossy(),
         "Summary body",
-        1,
+        &[("PRR_pending", true)],
     ));
 
     let out = run_forge_cli(
