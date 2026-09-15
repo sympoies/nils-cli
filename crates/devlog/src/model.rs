@@ -82,6 +82,11 @@ impl Devlog {
                 // The root and a Windows prefix are the separator, so they are
                 // written as-is and never preceded by one.
                 Component::RootDir => rendered.push('/'),
+                // Unreachable on every platform this workspace builds for: CI
+                // runs Linux and macOS only. It is here so the match says what
+                // a prefix is rather than letting the arm below invent a
+                // separator in front of one, not because the Windows rendering
+                // has been verified.
                 Component::Prefix(prefix) => {
                     rendered.push_str(&prefix.as_os_str().to_string_lossy());
                 }

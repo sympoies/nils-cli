@@ -221,58 +221,144 @@ fn render_bullet(text: &str) -> String {
 /// wrote. This is the same class of defect and belongs in the same place: the
 /// renderer, not the caller.
 ///
-/// A whitespace-delimited word is the unit, because that is what the existing
-/// logs are made of. Across the 1385 entries in the organization's logs a URL
-/// scheme is preceded by `](` 1220 times (an inline link), by `<` 454 times
+/// The scan is over the whole bullet rather than over whitespace-delimited
+/// words, because the two contexts that must be preserved do not respect word
+/// boundaries. Across the 1385 entries in the organization's logs a URL scheme
+/// is preceded by `](` 1220 times (an inline link target), by `<` 454 times
 /// (already an autolink), by a backtick 39 times (a code span) and by
-/// whitespace 74 times — and only that last form is what `MD034` rejects. The
-/// first two are skipped for free because such a word does not start with the
-/// scheme. A code span is the one form that can put a bare-looking URL after
-/// whitespace, so it is tracked; wrapping a URL inside one would change the
-/// command the entry is quoting, and `MD034` exempts it anyway.
+/// whitespace 74 times — and only that last form is what `MD034` rejects. A
+/// URL inside a code span is exempt from `MD034` already, and wrapping it
+/// would change the command the entry is quoting, so a span is copied through
+/// whole.
 ///
 /// `MD034` also covers bare email addresses. One appears in those 1385
 /// entries, and deciding whether a word is an address is guesswork in a way
 /// that matching a scheme is not, so an address is left as written.
 fn autolink(text: &str) -> String {
-    let mut words: Vec<String> = Vec::new();
-    // A code span can run across several words, so this state lives outside
-    // the loop rather than being decided per word.
-    let mut in_code_span = false;
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    // Everything before `copied` is already in `out`; the scan emits slices
+    // rather than bytes so multi-byte characters pass through intact.
+    let mut copied = 0usize;
+    let mut at = 0usize;
 
-    for word in text.split_whitespace() {
-        words.push(if in_code_span {
-            word.to_string()
-        } else {
-            wrap_bare_url(word)
-        });
-        // A backtick run opens a span and the next one closes it, so an odd
-        // number of backticks in this word flips the state.
-        if word.bytes().filter(|byte| *byte == b'`').count() % 2 == 1 {
-            in_code_span = !in_code_span;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'`' => {
+                let run = backtick_run(bytes, at);
+                match code_span_end(bytes, at + run, run) {
+                    // A code span, copied through untouched.
+                    Some(end) => at = end,
+                    // An unmatched run is literal text and opens nothing, so
+                    // the scan continues. Treating it as an opener would
+                    // silently stop autolinking for the rest of the bullet.
+                    None => at += run,
+                }
+            }
+            b'h' => match bare_url_end(text, at) {
+                Some(end) => {
+                    out.push_str(&text[copied..at]);
+                    out.push('<');
+                    out.push_str(&text[at..end]);
+                    out.push('>');
+                    copied = end;
+                    at = end;
+                }
+                None => at += 1,
+            },
+            // Advancing a byte at a time is safe because every byte matched
+            // above is ASCII, and an ASCII byte never occurs inside a
+            // multi-byte character.
+            _ => at += 1,
         }
     }
 
-    words.join(" ")
+    out.push_str(&text[copied..]);
+    out
+}
+
+/// The length of the run of backticks starting at `at`.
+fn backtick_run(bytes: &[u8], at: usize) -> usize {
+    bytes[at..].iter().take_while(|byte| **byte == b'`').count()
+}
+
+/// Where the code span opened by a run of `run` backticks ends, past its
+/// closing run.
+///
+/// A span closes on a run of exactly the same length, per CommonMark — a
+/// longer or shorter run is content. `model.rs` draws the same distinction for
+/// fences, for the same reason: counting backticks rather than runs gets
+/// ```` ``code`` ```` wrong in both directions.
+fn code_span_end(bytes: &[u8], from: usize, run: usize) -> Option<usize> {
+    let mut at = from;
+    while at < bytes.len() {
+        if bytes[at] != b'`' {
+            at += 1;
+            continue;
+        }
+        let closing = backtick_run(bytes, at);
+        if closing == run {
+            return Some(at + closing);
+        }
+        at += closing;
+    }
+    None
 }
 
 /// Trailing characters that end a sentence rather than a URL.
 ///
 /// `rumdl fmt` ends a URL before these and leaves them outside the brackets;
 /// matching it keeps what this CLI writes identical to what the formatter
-/// would have rewritten it to. A closing parenthesis is deliberately absent
-/// for the same reason `rumdl` keeps one: it is part of the URL often enough
-/// (a Wikipedia title, say) that trimming it would break more links than it
-/// tidied.
+/// would have rewritten it to.
 const SENTENCE_PUNCTUATION: [char; 7] = ['.', ',', ';', ':', '!', '?', ']'];
 
-/// Wrap `word` in angle brackets when it is a bare URL, leaving any trailing
-/// sentence punctuation outside them.
-fn wrap_bare_url(word: &str) -> String {
-    if !word.starts_with("https://") && !word.starts_with("http://") {
-        return word.to_string();
+/// Where the bare URL starting at `at` ends, or `None` when there is not one
+/// there to wrap.
+///
+/// A URL already inside an autolink or an inline link target is left alone;
+/// those two forms carry 1674 of the 1787 URLs in the existing logs, so
+/// rewriting either would break far more entries than the bare form ever
+/// blocked.
+fn bare_url_end(text: &str, at: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let scheme = ["https://", "http://"]
+        .into_iter()
+        .find(|scheme| text[at..].starts_with(scheme))?;
+
+    if at > 0 {
+        let before = bytes[at - 1];
+        // `<url>` is already an autolink.
+        if before == b'<' {
+            return None;
+        }
+        // `](url)` is already an inline link target. A bare `(` is not: a
+        // parenthesized URL in prose is still bare, and `rumdl` reports it.
+        if before == b'(' && at >= 2 && bytes[at - 2] == b']' {
+            return None;
+        }
     }
-    let url = word.trim_end_matches(SENTENCE_PUNCTUATION);
-    let trailing = &word[url.len()..];
-    format!("<{url}>{trailing}")
+
+    let mut end = at + scheme.len();
+    while end < bytes.len()
+        && !bytes[end].is_ascii_whitespace()
+        && !matches!(bytes[end], b'<' | b'>' | b'`')
+    {
+        end += 1;
+    }
+
+    let mut url = &text[at..end];
+    loop {
+        url = url.trim_end_matches(SENTENCE_PUNCTUATION);
+        // A closing parenthesis ends the URL only when the URL has no opener
+        // for it. `rumdl fmt` draws the line in the same place, and it is the
+        // line that keeps a Wikipedia-style title whole without swallowing the
+        // parenthesis a sentence put around the link.
+        if !(url.ends_with(')') && url.matches(')').count() > url.matches('(').count()) {
+            break;
+        }
+        url = &url[..url.len() - 1];
+    }
+
+    // A scheme with nothing after it is not a URL worth linking.
+    (url.len() > scheme.len()).then(|| at + url.len())
 }

@@ -77,10 +77,19 @@ when it has no bullets.
 A bare URL in any bullet is written as an autolink, so `--link
 https://github.com/sympoies/nils-cli/pull/1729` renders as
 `- <https://github.com/sympoies/nils-cli/pull/1729>`. That is what `MD034`
-requires and what `rumdl fmt` would have rewritten it to. A URL that is already
-an autolink, the target of an inline `[text](url)` link, or inside a code span
-is left exactly as written; a bare email address is left alone too, because
-recognizing an address is guesswork in a way that matching a scheme is not.
+requires and what `rumdl fmt` would have rewritten it to.
+
+A URL that is already an autolink, the target of an inline `[text](url)` link,
+or inside a code span is left exactly as written. Punctuation that ends the
+sentence rather than the URL stays outside the brackets, and a parenthesis the
+URL itself opened stays inside it — `see (https://example.com/a)` becomes
+`see (<https://example.com/a>)`, while
+`https://en.wikipedia.org/wiki/Fixture_(disambiguation)` is wrapped whole. Each
+of those matches where `rumdl fmt` draws the same line.
+
+A bare email address is left alone, because recognizing an address is guesswork
+in a way that matching a scheme is not. `MD034` covers those too, so an entry
+carrying one can still fail the lint.
 
 The entry is inserted directly below the month heading
 and the index is refreshed in the same operation, because a month file nothing

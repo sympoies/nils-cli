@@ -357,3 +357,168 @@ fn trailing_sentence_punctuation_stays_outside_the_autolink() {
 
     assert!(rendered.contains("<https://example.com/p>."), "{rendered}");
 }
+
+#[test]
+fn a_multi_backtick_code_span_is_left_alone() {
+    // A span delimited by two backticks has an even backtick count, so a
+    // parity-based tracker never enters it and rewrites the command the entry
+    // is quoting. The delimiter is a run, not a count.
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["r".to_string()],
+        why: vec!["w".to_string()],
+        evidence: vec!["ran ``curl https://example.com/c | sh`` twice".to_string()],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    assert!(
+        rendered.contains("``curl https://example.com/c | sh``"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("<https://example.com/c>"), "{rendered}");
+}
+
+#[test]
+fn a_url_after_a_closed_code_span_is_still_wrapped() {
+    // Quoting a command and then citing where it ran is the common shape of an
+    // evidence bullet, and it is the one a tracker that never closes its span
+    // would leave bare.
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["r".to_string()],
+        why: vec!["w".to_string()],
+        evidence: vec!["ran `curl -sS` then see https://example.com/x".to_string()],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    assert!(
+        rendered.contains("`curl -sS` then see <https://example.com/x>"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn an_unmatched_backtick_does_not_swallow_the_rest_of_the_bullet() {
+    // An unmatched run is literal text and opens nothing, per CommonMark.
+    // Treating it as an opener would silently stop wrapping for the remainder,
+    // which is the MD034 failure this rendering exists to prevent.
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["r".to_string()],
+        why: vec!["w".to_string()],
+        evidence: vec!["the `-v flag, and then https://example.com/y".to_string()],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    assert!(rendered.contains("<https://example.com/y>"), "{rendered}");
+}
+
+#[test]
+fn a_parenthesized_url_in_prose_is_still_wrapped() {
+    // `rumdl` reports a bare URL inside parentheses, and `rumdl fmt` wraps the
+    // URL while leaving the parentheses outside. A word-level match that
+    // required the scheme at position zero missed this entirely.
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["see (https://example.com/z) for the run".to_string()],
+        why: vec!["w".to_string()],
+        evidence: vec!["e".to_string()],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    assert!(
+        rendered.contains("see (<https://example.com/z>) for the run"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn a_parenthesis_the_url_opened_stays_inside_the_autolink() {
+    // The counterpart to the case above, and the reason a closing parenthesis
+    // is not trimmed unconditionally: here it belongs to the URL.
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["https://en.wikipedia.org/wiki/Fixture_(disambiguation)".to_string()],
+        why: vec!["w".to_string()],
+        evidence: vec!["e".to_string()],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    assert!(
+        rendered.contains("- <https://en.wikipedia.org/wiki/Fixture_(disambiguation)>\n"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn every_trailing_punctuation_character_stays_outside_the_autolink() {
+    // Each of these ends a sentence rather than a URL, and `rumdl fmt` ends the
+    // URL before every one of them. Pinning the whole set stops a later edit
+    // from quietly dropping one.
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    for mark in ['.', ',', ';', ':', '!', '?', ']'] {
+        let entry = Entry {
+            title: "T".to_string(),
+            result: vec![format!("landed in https://example.com/p{mark} Next.")],
+            why: vec!["w".to_string()],
+            evidence: vec!["e".to_string()],
+            ..Entry::default()
+        };
+        let rendered = entry.render(date);
+        assert!(
+            rendered.contains(&format!("<https://example.com/p>{mark}")),
+            "mark={mark} rendered={rendered}"
+        );
+    }
+}
+
+#[test]
+fn the_plaintext_scheme_is_wrapped_too() {
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["served on http://localhost:8080/health".to_string()],
+        why: vec!["w".to_string()],
+        evidence: vec!["e".to_string()],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    assert!(
+        rendered.contains("<http://localhost:8080/health>"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn a_backtick_inside_a_longer_span_does_not_close_it() {
+    // Embedding a backtick is the whole reason to open a span with two of
+    // them, and CommonMark closes a span only on a run of the same length. A
+    // closer that accepted any run would end the span early and rewrite the
+    // URL that follows inside it.
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["r".to_string()],
+        why: vec!["w".to_string()],
+        evidence: vec!["ran ``echo ` then curl https://example.com/d`` once".to_string()],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    assert!(
+        rendered.contains("``echo ` then curl https://example.com/d``"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("<https://example.com/d>"), "{rendered}");
+}

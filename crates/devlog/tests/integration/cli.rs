@@ -1088,3 +1088,25 @@ fn a_problem_outside_the_repository_root_names_a_pastable_path() {
         "reported path is not readable back: {reported}"
     );
 }
+
+#[test]
+fn a_log_under_the_repository_root_is_reported_relative_with_no_leading_slash() {
+    // The ordinary case, and the one the out-of-root assertions above do not
+    // pin: a rendering that prefixed every in-repository path with a slash
+    // would satisfy all of them.
+    let fixture = Fixture::new("docs/devlog");
+    std::fs::write(
+        fixture.devlog_path("docs/devlog/2026-13.md"),
+        "not a month\n",
+    )
+    .expect("write mis-named month file");
+
+    let json = run_in(&fixture.root, &["--format", "json", "check"]);
+    assert_eq!(json.code, 65, "stderr={}", json.stderr_text());
+    let payload = json.stdout_json();
+    assert_eq!(payload["error"]["details"]["devlog_dir"], "docs/devlog");
+    assert_eq!(
+        payload["error"]["details"]["problems"][0]["path"],
+        "docs/devlog/2026-13.md"
+    );
+}
