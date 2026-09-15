@@ -116,7 +116,7 @@ Reported problem kinds:
 
 | Kind | Meaning |
 | --- | --- |
-| `unexpected-file` | Not a `YYYY-MM.md` month file; invisible to search and the index. |
+| `unexpected-file` | Not a `YYYY-MM.md` regular file; invisible to search and the index. A symlink is reported here rather than followed. |
 | `missing-heading` | The month file does not open with `# Development log - YYYY-MM`. |
 | `malformed-entry-heading` | An entry heading is not `## YYYY-MM-DD - <title>`. |
 | `missing-section` | An entry lacks `Result`, `Why / context`, or `Evidence`. |
@@ -198,24 +198,33 @@ There is no `--dry-run`. `check` is the read-only question and already answers
 it, and the repairs are ordinary file edits in a git repository, so `git diff`
 shows exactly what changed.
 
-`fix` does not reformat. It leaves a log that needed nothing byte-identical,
-and it does not introduce a `MD022` or `MD012` violation where it inserts a
-section — but tidying the Markdown around entries it did not touch is
-`rumdl fmt`'s job, not this command's.
+`fix` does not reformat. It leaves a log that needed nothing byte-identical —
+including its line endings, which are carried through rather than normalized —
+and it does not introduce an `MD022` or `MD012` violation where it inserts a
+section or moves an entry. Tidying the Markdown around entries it did not touch
+is `rumdl fmt`'s job, not this command's.
+
+A symlinked month file is reported as `unexpected-file` and never written
+through. `check` only ever read such a link; `fix` writes, and a committed
+`2026-05.md -> ../../elsewhere` would otherwise put a repair outside the log
+while leaving the link itself looking untouched in review.
 
 #### Backfilled sections
 
 A required section that an entry never had is added with:
 
 ```markdown
-- Not recorded separately; this entry predates the section contract.
+- Not recorded; added by `devlog fix`.
 ```
 
-That records the absence instead of describing work nobody wrote. Every entry
-this lands in was written before the section contract existed, so the sentence
-is true of all of them; inventing a plausible `Result` for an entry whose
-author never wrote one would put a false claim into a log that exists to be
-trusted later.
+It records the absence and names what added it, and stops there. Inventing a
+plausible `Result` for an entry whose author never wrote one would put a false
+claim into a log that exists to be trusted later — and so would an earlier
+wording that asserted the entry predated the section contract, because nothing
+checks that. An entry written yesterday and missing a section gets this bullet
+too, and in a repository whose log is an audit record, a tool-authored claim
+about *why* evidence is absent is exactly the kind of content that must not be
+invented.
 
 ## Output contract
 

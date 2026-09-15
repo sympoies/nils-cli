@@ -1147,7 +1147,7 @@ fn fix_does_not_promote_bold_prose_that_is_not_a_section_label() {
     let fixture = Fixture::new("docs/devlog");
     std::fs::write(
         fixture.devlog_path("docs/devlog/2026-04.md"),
-        "# Development log - 2026-04\n\n## 2026-04-17 - Entry\n\n### Result\n\n- Did a thing.\n\n**Not a section**\n\n- Prose the author emphasized.\n\n### Why / context\n\n- Because.\n\n### Evidence\n\n- Ran it.\n",
+        "# Development log - 2026-04\n\n## 2026-04-17 - Entry\n\n### Result\n\n- Did a thing.\n\n**Not a section**\n\n**Why**\n\n**Follow-up**\n\n- The **Result** section was added later.\n\n  **Evidence**\n\n### Why / context\n\n- Because.\n\n### Evidence\n\n- Ran it.\n",
     )
     .expect("write month with bold prose");
 
@@ -1157,10 +1157,22 @@ fn fix_does_not_promote_bold_prose_that_is_not_a_section_label() {
     let contents = fixture.read("docs/devlog/2026-04.md");
     // Promoting this would invent a section the author never wrote, and
     // `check` would then report it as unknown.
-    assert!(
-        contents.contains("**Not a section**"),
-        "contents={contents}"
-    );
+    // Each of these would be taken by a looser rule, and each would invent a
+    // section its author never wrote. `**Why**` and `**Follow-up**` are the
+    // near misses a prefix match takes; the embedded span is what a substring
+    // match takes; the indented one is inside a list item.
+    for survivor in [
+        "**Not a section**",
+        "**Why**",
+        "**Follow-up**",
+        "- The **Result** section was added later.",
+        "  **Evidence**",
+    ] {
+        assert!(
+            contents.contains(survivor),
+            "{survivor} was rewritten: contents={contents}"
+        );
+    }
 }
 
 #[test]
@@ -1254,7 +1266,7 @@ fn fix_backfills_a_required_section_and_says_it_was_not_recorded() {
     );
     // The bullet records the absence rather than describing work nobody wrote.
     assert!(
-        contents.contains("- Not recorded separately; this entry predates the section contract.\n"),
+        contents.contains("- Not recorded; added by `devlog fix`.\n"),
         "contents={contents}"
     );
 
@@ -1311,24 +1323,26 @@ fn fix_reports_what_it_cannot_repair_and_leaves_it_alone() {
 #[test]
 fn fix_refuses_a_conflicted_log_and_writes_nothing() {
     let fixture = Fixture::new("docs/devlog");
+    // The conflicted month sorts *after* the repairable one deliberately. With
+    // the order reversed a per-file check refuses before ever reaching the file
+    // it would have half-repaired, and the test cannot tell the two designs
+    // apart.
+    let conflicted = CONFLICTED_MONTH.replace("2026-04", "2026-05");
+    std::fs::write(fixture.devlog_path("docs/devlog/2026-05.md"), &conflicted)
+        .expect("write conflicted month");
     std::fs::write(
         fixture.devlog_path("docs/devlog/2026-04.md"),
-        CONFLICTED_MONTH,
+        HAND_WRITTEN_MONTH,
     )
-    .expect("write conflicted month");
-    std::fs::write(
-        fixture.devlog_path("docs/devlog/2026-05.md"),
-        HAND_WRITTEN_MONTH.replace("2026-04", "2026-05"),
-    )
-    .expect("write a repairable month beside it");
-    let repairable = fixture.read("docs/devlog/2026-05.md");
+    .expect("write a repairable month before it");
+    let repairable = fixture.read("docs/devlog/2026-04.md");
 
     let output = run_in(&fixture.root, &["fix"]);
     assert_eq!(output.code, 65, "stdout={}", output.stdout_text());
-    assert_eq!(fixture.read("docs/devlog/2026-04.md"), CONFLICTED_MONTH);
+    assert_eq!(fixture.read("docs/devlog/2026-05.md"), conflicted);
     // Every file is checked before any is written, so a repairable month
     // beside a conflicted one is not half-repaired behind a refusal.
-    assert_eq!(fixture.read("docs/devlog/2026-05.md"), repairable);
+    assert_eq!(fixture.read("docs/devlog/2026-04.md"), repairable);
 }
 
 #[test]
@@ -1434,4 +1448,173 @@ fn check_does_not_read_a_quoted_entry_heading_as_an_entry() {
     assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
     // One entry, not two: the quoted heading is an example.
     assert_eq!(output.stdout_json()["data"]["entry_count"], 1);
+}
+
+#[test]
+fn fix_leaves_an_entry_whose_date_cannot_be_read_unsorted() {
+    // Sorting around a heading whose date is unreadable would be guessing at
+    // where that entry belongs. `check` reports the heading instead.
+    let fixture = Fixture::new("docs/devlog");
+    let unreadable = "# Development log - 2026-04\n\n## 2026-04-01 - Oldest\n\n### Result\n\n- a\n\n### Why / context\n\n- b\n\n### Evidence\n\n- c\n\n## Undated entry\n\n### Result\n\n- a\n\n### Why / context\n\n- b\n\n### Evidence\n\n- c\n\n## 2026-04-20 - Newest\n\n### Result\n\n- a\n\n### Why / context\n\n- b\n\n### Evidence\n\n- c\n";
+    std::fs::write(fixture.devlog_path("docs/devlog/2026-04.md"), unreadable)
+        .expect("write month with an unreadable entry date");
+
+    let output = run_in(&fixture.root, &["--format", "json", "fix"]);
+    assert_eq!(output.code, 65, "stdout={}", output.stdout_text());
+    assert_eq!(fixture.read("docs/devlog/2026-04.md"), unreadable);
+    let kinds: Vec<String> = output.stdout_json()["error"]["details"]["remaining"]
+        .as_array()
+        .expect("remaining")
+        .iter()
+        .map(|problem| problem["kind"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert!(
+        kinds.iter().any(|kind| kind == "malformed-entry-heading"),
+        "kinds={kinds:?}"
+    );
+}
+
+#[test]
+fn fix_appending_a_section_to_the_last_entry_leaves_one_trailing_newline() {
+    // The only entry, with nothing after the sections it is missing, so both
+    // insertions append at the tail rather than above a later section. That is
+    // the branch that ends the file, and the one that previously left a blank
+    // line behind it.
+    let fixture = Fixture::new("docs/devlog");
+    std::fs::write(
+        fixture.devlog_path("docs/devlog/2026-06.md"),
+        "# Development log - 2026-06\n\n## 2026-06-20 - Entry\n\n### Result\n\n- Did a thing.\n",
+    )
+    .expect("write a month whose last entry is missing its tail sections");
+
+    let output = run_in(&fixture.root, &["--format", "json", "fix"]);
+    assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
+    assert_eq!(
+        output.stdout_json()["data"]["repairs"]["backfilled_sections"],
+        2
+    );
+
+    let contents = fixture.read("docs/devlog/2026-06.md");
+    assert!(contents.ends_with("fix`.\n"), "contents={contents}");
+    assert!(!contents.contains("\n\n\n"), "contents={contents}");
+}
+
+#[test]
+fn fix_leaves_a_month_file_that_does_not_open_with_a_heading_alone() {
+    // Overwriting line one would lose whatever the author put there. The
+    // heading repair only moves a heading that is already a heading.
+    let fixture = Fixture::new("docs/devlog");
+    let prose_first = "Some prose the author left at the top.\n\n## 2026-04-17 - Entry\n\n### Result\n\n- a\n\n### Why / context\n\n- b\n\n### Evidence\n\n- c\n";
+    std::fs::write(fixture.devlog_path("docs/devlog/2026-04.md"), prose_first)
+        .expect("write a month that does not open with a heading");
+
+    let output = run_in(&fixture.root, &["fix"]);
+    assert_eq!(output.code, 65, "stdout={}", output.stdout_text());
+    assert_eq!(fixture.read("docs/devlog/2026-04.md"), prose_first);
+    assert!(output.stdout_text().contains("missing-heading"));
+}
+
+#[test]
+fn fix_reorders_without_losing_the_blank_line_before_a_heading() {
+    // Two entries, in the wrong order, nothing else wrong — the most ordinary
+    // case there is, and the one where the block that was last in the file
+    // carries no trailing blank of its own.
+    let fixture = Fixture::new("docs/devlog");
+    std::fs::write(
+        fixture.devlog_path("docs/devlog/2026-10.md"),
+        "# Development log - 2026-10\n\n## 2026-10-01 - Old\n\n### Result\n\n- a\n\n### Why / context\n\n- b\n\n### Evidence\n\n- c\n\n## 2026-10-09 - New\n\n### Result\n\n- d\n\n### Why / context\n\n- e\n\n### Evidence\n\n- f\n",
+    )
+    .expect("write out-of-order month");
+
+    let output = run_in(&fixture.root, &["--format", "json", "fix"]);
+    assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
+    assert_eq!(
+        output.stdout_json()["data"]["repairs"]["reordered_entries"],
+        2
+    );
+
+    let contents = fixture.read("docs/devlog/2026-10.md");
+    let lines: Vec<&str> = contents.lines().collect();
+    for (index, line) in lines.iter().enumerate() {
+        if index > 0 && line.starts_with("## ") {
+            assert!(
+                lines[index - 1].trim().is_empty(),
+                "no blank line before {line}: contents={contents}"
+            );
+        }
+    }
+    assert!(contents.ends_with("- c\n"), "contents={contents}");
+    assert!(!contents.contains("\n\n\n"), "contents={contents}");
+}
+
+#[test]
+fn fix_backfills_around_a_fenced_example_without_touching_it() {
+    // The entry quotes a `### Evidence` heading as an example and is missing a
+    // real one. A fence-blind insertion counts the quoted heading as present
+    // and uses it as the insertion point, writing the generated section into
+    // the middle of the author's code block.
+    let fixture = Fixture::new("docs/devlog");
+    std::fs::write(
+        fixture.devlog_path("docs/devlog/2026-06.md"),
+        "# Development log - 2026-06\n\n## 2026-06-20 - How an entry is shaped\n\n### Result\n\n- The template looks like this:\n\n```markdown\n### Evidence\n\n- commands run\n```\n",
+    )
+    .expect("write a month quoting a section heading");
+
+    let output = run_in(&fixture.root, &["fix"]);
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+
+    let contents = fixture.read("docs/devlog/2026-06.md");
+    // The example is byte-identical, and both real sections landed after the
+    // whole fenced block rather than inside it.
+    assert!(
+        contents.contains("```markdown\n### Evidence\n\n- commands run\n```\n"),
+        "contents={contents}"
+    );
+    let fence_end = contents.rfind("```").expect("closing fence");
+    for section in ["### Why / context", "### Evidence\n\n- Not recorded"] {
+        let at = contents.rfind(section).expect(section);
+        assert!(
+            at > fence_end,
+            "{section} landed inside the fence: {contents}"
+        );
+    }
+
+    let check = run_in(&fixture.root, &["check"]);
+    assert_eq!(check.code, 0, "stdout={}", check.stdout_text());
+}
+
+#[test]
+fn fix_leaves_a_crlf_month_file_alone_when_it_needs_nothing() {
+    // `lines()` drops the carriage return, so rebuilding from it rewrites every
+    // line of a CRLF file — a whole-file diff from a command that reported it
+    // changed nothing.
+    let fixture = Fixture::new("docs/devlog");
+    let clean = fixture.read("docs/devlog/2026-04.md").replace('\n', "\r\n");
+    std::fs::write(fixture.devlog_path("docs/devlog/2026-04.md"), &clean)
+        .expect("write a CRLF month file");
+
+    let output = run_in(&fixture.root, &["fix"]);
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+    assert_eq!(fixture.read("docs/devlog/2026-04.md"), clean);
+    assert!(output.stdout_text().contains("nothing to repair"));
+}
+
+#[test]
+fn fix_does_not_write_through_a_symlinked_month_file() {
+    // A committed `2026-05.md -> ../../elsewhere` would let a repair land
+    // outside the log while the link itself looks untouched in review.
+    let fixture = Fixture::new("docs/devlog");
+    let outside = fixture.devlog_path("outside.md");
+    let before = "# Development log - 2026-05\n\n## 2026-05-02 - Entry\n\n**Result**\n\n- a\n";
+    std::fs::write(&outside, before).expect("write the link target");
+    std::os::unix::fs::symlink(&outside, fixture.devlog_path("docs/devlog/2026-05.md"))
+        .expect("create the symlinked month file");
+
+    let output = run_in(&fixture.root, &["fix"]);
+    assert_eq!(output.code, 65, "stdout={}", output.stdout_text());
+    assert_eq!(
+        std::fs::read_to_string(&outside).expect("read the link target"),
+        before
+    );
+    assert!(output.stdout_text().contains("unexpected-file"));
 }

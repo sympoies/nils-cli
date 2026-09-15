@@ -552,3 +552,30 @@ fn a_url_used_as_link_text_is_left_alone() {
         "{rendered}"
     );
 }
+
+#[test]
+fn a_nested_fence_does_not_close_the_one_that_contains_it() {
+    // An entry that quotes a fenced example opens with four backticks so the
+    // three-backtick block inside it stays quoted. A closer that accepted any
+    // run would end the outer fence early, exposing the example's contents as
+    // structure — and this rule now decides what `fix` rewrites, not only what
+    // `first_conflict_marker` refuses.
+    let contents =
+        "# Development log - 2026-04\n\n````markdown\n```text\n<<<<<<< HEAD\n```\n````\n";
+    assert_eq!(nils_devlog::model::first_conflict_marker(contents), None);
+
+    let mask = nils_devlog::model::structural_line_mask(contents.lines());
+    assert_eq!(
+        mask,
+        vec![true, true, false, false, false, false, false],
+        "only the heading and the blank line are structure"
+    );
+}
+
+#[test]
+fn a_fence_closes_on_a_longer_run_than_it_opened_with() {
+    // CommonMark closes on a run at least as long as the opener, which the
+    // conflict scan has always relied on.
+    let contents = "```\nquoted\n`````\n<<<<<<< HEAD\n";
+    assert_eq!(nils_devlog::model::first_conflict_marker(contents), Some(4));
+}

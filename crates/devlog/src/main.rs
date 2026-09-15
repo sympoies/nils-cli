@@ -275,7 +275,10 @@ fn print_check(report: &CheckReport) {
 
 fn print_fix(report: &FixReport) {
     let repairs = &report.repairs;
-    if repairs.total() == 0 && !report.index_updated {
+    // Branch on whether anything was written, not on the repair counts. Those
+    // can be zero for a file this rewrote anyway, and a write an operator
+    // cannot see in the output is a diff they cannot account for.
+    if report.files_changed == 0 && !report.index_updated {
         println!("{}: nothing to repair", report.devlog_dir);
     } else {
         println!(

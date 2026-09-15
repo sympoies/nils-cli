@@ -116,9 +116,9 @@ fn check_month(
     // for: reading its quoted `## 2026-04-17 - Title` as a real entry would
     // report a malformed heading and three missing sections that nobody can
     // repair without editing the prose.
-    let mut fences = crate::model::FenceScanner::default();
-    for line in contents.lines() {
-        if !fences.is_structural(line) {
+    let structural = crate::model::structural_line_mask(contents.lines());
+    for (index, line) in contents.lines().enumerate() {
+        if !structural[index] {
             continue;
         }
         if let Some(rest) = line.strip_prefix("## ") {

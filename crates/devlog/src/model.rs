@@ -128,7 +128,21 @@ impl Devlog {
                 source,
             })?;
             let path = entry.path();
-            if !path.is_file() {
+            // A symlink is not a month file this log owns, even when it points
+            // at one. `is_file` follows the link, which was harmless while
+            // every caller only read; `fix` writes, and writing through a
+            // committed `2026-05.md -> ../../elsewhere` would rewrite a file
+            // outside the log and leave the link looking untouched in review.
+            // Reporting it is better than skipping it: a symlink here is
+            // something someone should look at either way.
+            let file_type = entry.file_type().map_err(|source| DevlogError::Io {
+                path: path.clone(),
+                source,
+            })?;
+            if !file_type.is_file() {
+                if !file_type.is_dir() {
+                    unexpected.push(path);
+                }
                 continue;
             }
             let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
@@ -347,10 +361,10 @@ const CONFLICT_MARKERS: [&str; 3] = ["<<<<<<<", "|||||||", ">>>>>>>"];
 /// zero in the file body, never inside a fence it did not already break, so
 /// skipping fenced regions costs no real detection.
 pub fn first_conflict_marker(contents: &str) -> Option<usize> {
-    let mut fences = FenceScanner::default();
+    let structural = structural_line_mask(contents.lines());
 
     for (index, line) in contents.lines().enumerate() {
-        if !fences.is_structural(line) {
+        if !structural[index] {
             continue;
         }
         if CONFLICT_MARKERS
@@ -364,42 +378,56 @@ pub fn first_conflict_marker(contents: &str) -> Option<usize> {
     None
 }
 
-/// Tracks, line by line, whether a month file is inside a fenced code block.
+/// Which lines carry structure, by 0-based index.
 ///
 /// Everything this crate parses out of a month file — conflict markers, entry
-/// headings, section headings — is structure only outside a fence. Inside one
-/// it is an example, and the entry documenting this very format is the obvious
-/// case. `check` reading a quoted `## 2026-04-17 - Title` as a real entry would
-/// report problems nobody can fix without editing the prose, and `fix` would
-/// then write a backfilled section into the middle of the code block.
+/// headings, section headings — is structure only outside a fenced block.
+/// Inside one it is an example, and the entry documenting this very format is
+/// the obvious case. `check` reading a quoted `## 2026-04-17 - Title` as a real
+/// entry would report problems nobody can fix without editing the prose, and
+/// `fix` would write a backfilled section into the middle of the code block.
 ///
-/// One scanner, shared by every reader, is what keeps them agreeing about what
-/// an entry is.
-#[derive(Debug, Default)]
-pub struct FenceScanner<'a> {
-    open: Option<&'a str>,
-}
+/// A fence that is never closed swallows the rest of the file. That is the
+/// conservative direction and it is deliberate — `an_unclosed_fence_does_not_swallow_the_rest_of_the_file`
+/// pins it — but it has a cost worth knowing: a real conflict marker below an
+/// unterminated fence is invisible to the refusal that exists to catch one, so
+/// `fix` will repair the other months around it. Nothing in this crate reports
+/// an unterminated fence, which is the actual gap; see the follow-up issue.
+///
+/// This returns a mask rather than a cursor because the alternative has already
+/// failed here: when each pass derived the rule for itself, one of them was
+/// made fence-aware and its neighbour was not, and `fix` spliced a generated
+/// section into the middle of a code block while the comment above it said that
+/// could not happen. A value every pass indexes is harder to forget than a rule
+/// every pass has to remember.
+pub fn structural_line_mask<'a>(lines: impl IntoIterator<Item = &'a str>) -> Vec<bool> {
+    let lines: Vec<&str> = lines.into_iter().collect();
+    let mut structural = vec![true; lines.len()];
+    let mut at = 0usize;
 
-impl<'a> FenceScanner<'a> {
-    /// Advance over `line` and report whether it carries structure.
-    ///
-    /// A line that opens or closes a fence, and every line between them, does
-    /// not.
-    pub fn is_structural(&mut self, line: &'a str) -> bool {
-        if let Some(open) = self.open {
-            // A fence closes on a run of the same character at least as long as
-            // the one that opened it, per CommonMark.
-            if fence_delimiter(line).is_some_and(|close| close.starts_with(open)) {
-                self.open = None;
+    while at < lines.len() {
+        let Some(open) = fence_delimiter(lines[at]) else {
+            at += 1;
+            continue;
+        };
+        // A fence closes on a run of the same character at least as long as the
+        // one that opened it, per CommonMark.
+        let closes_at = (at + 1..lines.len()).find(|index| {
+            fence_delimiter(lines[*index]).is_some_and(|close| close.starts_with(open))
+        });
+        match closes_at {
+            Some(end) => {
+                structural[at..=end].fill(false);
+                at = end + 1;
             }
-            return false;
+            None => {
+                structural[at..].fill(false);
+                break;
+            }
         }
-        if let Some(open) = fence_delimiter(line) {
-            self.open = Some(open);
-            return false;
-        }
-        true
     }
+
+    structural
 }
 
 /// The leading run of backticks or tildes when `line` opens or closes a fence.

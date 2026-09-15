@@ -27,12 +27,15 @@ use crate::model::{Devlog, DevlogError, EntryDate, Month};
 
 /// The bullet a backfilled section carries.
 ///
-/// It records the absence rather than describing the work. Every entry this
-/// lands in was written before the section contract existed, so "not recorded"
-/// is true of all of them, and inventing a plausible `Result` for an entry
-/// whose author never wrote one would put a false claim in a log that exists
-/// to be trusted later.
-const PLACEHOLDER: &str = "- Not recorded separately; this entry predates the section contract.";
+/// It records the absence and names what added it, and stops there. Inventing
+/// a plausible `Result` for an entry whose author never wrote one would put a
+/// false claim in a log that exists to be trusted later — and so would the
+/// earlier wording, which asserted that the entry predated the section
+/// contract. Nothing checks that. An entry written yesterday and missing a
+/// section gets this bullet too, and in a repository whose log is an audit
+/// record, a tool-authored claim about *why* evidence is absent is exactly the
+/// kind of content that must not be invented.
+const PLACEHOLDER: &str = "- Not recorded; added by `devlog fix`.";
 
 /// The dashes that appear where the parser expects `-`.
 const DASHES: [char; 2] = ['\u{2014}', '\u{2013}'];
@@ -150,26 +153,32 @@ fn read(path: &std::path::Path) -> Result<String, DevlogError> {
     })
 }
 
+/// Which lines of `lines` carry structure.
+fn structural(lines: &[String]) -> Vec<bool> {
+    crate::model::structural_line_mask(lines.iter().map(String::as_str))
+}
+
 /// Apply every repair to one month file's contents.
 fn repair_month(contents: &str, month: Month) -> (String, Repairs) {
     let trailing_newline = contents.ends_with('\n');
+    // `lines()` drops a `\r`, so the file's own ending has to be carried
+    // separately and put back. Without that, `fix` rewrites every line of a
+    // CRLF file while reporting that it repaired nothing.
+    let newline = if contents.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
     let mut lines: Vec<String> = contents.lines().map(str::to_string).collect();
     let mut repairs = Repairs::default();
 
     // A line inside a fenced block is an example, not structure. An entry
-    // documenting this very format is the obvious case, and `check` already
-    // excludes fenced conflict markers for the same reason; rewriting a label
-    // or a heading there would edit the example rather than the entry.
-    let mut fence: Option<String> = None;
-    for line in &mut lines {
-        if let Some(open) = &fence {
-            if crate::model::fence_delimiter(line).is_some_and(|close| close.starts_with(open)) {
-                fence = None;
-            }
-            continue;
-        }
-        if let Some(open) = crate::model::fence_delimiter(line) {
-            fence = Some(open.to_string());
+    // documenting this very format is the obvious case, and `check` excludes
+    // fenced conflict markers for the same reason; rewriting a label or a
+    // heading there would edit the example rather than the entry.
+    let structural_lines = structural(&lines);
+    for (line, structural) in lines.iter_mut().zip(&structural_lines) {
+        if !structural {
             continue;
         }
         if let Some(label) = bold_section_label(line) {
@@ -185,9 +194,9 @@ fn repair_month(contents: &str, month: Month) -> (String, Repairs) {
     reorder_entries(&mut lines, &mut repairs);
     backfill_sections(&mut lines, &mut repairs);
 
-    let mut out = lines.join("\n");
+    let mut out = lines.join(newline);
     if trailing_newline {
-        out.push('\n');
+        out.push_str(newline);
     }
     (out, repairs)
 }
@@ -204,8 +213,14 @@ fn repair_month(contents: &str, month: Month) -> (String, Repairs) {
 /// 31 are prose — and that 31 includes `**Why**`, `**Follow-up**` and
 /// `**Why / root cause**`, each of which a prefix or fuzzy match would have
 /// turned into a section its author never wrote.
+///
+/// The label must also start at column zero. An indented one is inside a list
+/// item or an indented code block — neither is a section, and the fence mask
+/// does not model indented blocks. All 3119 labels in those logs are at column
+/// zero, so requiring it costs nothing and stops a four-space example from
+/// being promoted and un-indented.
 fn bold_section_label(line: &str) -> Option<&'static str> {
-    let inner = line.trim().strip_prefix("**")?.strip_suffix("**")?;
+    let inner = line.trim_end().strip_prefix("**")?.strip_suffix("**")?;
     SECTIONS.into_iter().find(|section| *section == inner)
 }
 
@@ -255,11 +270,11 @@ fn repair_month_heading(lines: &mut [String], month: Month, repairs: &mut Repair
 /// an example that `fix` could not see, and `fix` would splice a backfilled
 /// section into the middle of a code block.
 fn entry_starts(lines: &[String]) -> Vec<usize> {
-    let mut fences = crate::model::FenceScanner::default();
+    let structural_lines = structural(lines);
     lines
         .iter()
         .enumerate()
-        .filter(|(_, line)| fences.is_structural(line) && line.starts_with("## "))
+        .filter(|(at, line)| structural_lines[*at] && line.starts_with("## "))
         .map(|(at, _)| at)
         .collect()
 }
@@ -320,9 +335,24 @@ fn reorder_entries(lines: &mut Vec<String>, repairs: &mut Repairs) {
     }
     repairs.reordered_entries += moved;
 
+    // A block carries the blank lines that followed its entry, and the block
+    // that was last in the file has none — it ended at end of file. Moving it
+    // anywhere but last would butt its final bullet against the next heading,
+    // so every block is normalized to one trailing blank and the file's own
+    // trailing blanks are trimmed back off at the end. Reassembling without
+    // this introduced a blanks-around-headings violation in the most ordinary
+    // case there is: two entries, in the wrong order, nothing else wrong.
     let mut out = head;
     for from in order {
-        out.extend(blocks[from].iter().cloned());
+        let mut block = blocks[from].clone();
+        while block.last().is_some_and(|line| line.trim().is_empty()) {
+            block.pop();
+        }
+        block.push(String::new());
+        out.extend(block);
+    }
+    while out.last().is_some_and(|line| line.trim().is_empty()) {
+        out.pop();
     }
     *lines = out;
 }
@@ -401,10 +431,20 @@ fn backfill_entry(block: &mut Vec<String>) -> usize {
 /// "First" is template order, and the position is just above the earliest
 /// section that should follow it — or past the entry's last line of content
 /// when nothing should.
+///
+/// Both halves read the structural mask. A `### Evidence` quoted inside a fence
+/// is not a section this entry has, and the last line of a fenced block is not
+/// somewhere a section may be inserted. Getting only the first of those right
+/// would suppress a backfill the entry needs; getting only the second right
+/// would put the backfill in the wrong place. Getting neither right is what
+/// this function did, and it wrote a generated section into the middle of an
+/// author's code block.
 fn first_missing_section(block: &[String]) -> Option<(usize, usize)> {
+    let structural_lines = structural(block);
     let present: Vec<(usize, usize)> = block
         .iter()
         .enumerate()
+        .filter(|(at, _)| structural_lines[*at])
         .filter_map(|(at, line)| {
             let label = line.strip_prefix("### ")?.trim();
             let rank = SECTIONS.iter().position(|section| *section == label)?;
@@ -420,6 +460,9 @@ fn first_missing_section(block: &[String]) -> Option<(usize, usize)> {
         (!present.iter().any(|(present, _)| *present == rank)).then_some(rank)
     })?;
 
+    // Past the entry's last line, fenced or not: a section appended after a
+    // code block goes after the whole block, never between its last line and
+    // its closing delimiter.
     let tail = block
         .iter()
         .rposition(|line| !line.trim().is_empty())
