@@ -698,6 +698,28 @@ distinctions that cannot be proven offline.
   accepts either a delivery-mode `review-specialists merge` envelope or a
   finding-observation array, evaluates one deterministic transition, and uses
   both the exact PR head and state tip as compare-and-swap inputs.
+- `observe --preflight` runs the non-short-circuiting verdict sweep `--dry-run`
+  reports, in front of the live append, and stops with `review_preflight_failed`
+  naming every failing rule rather than the first. It exists so one call can do
+  what a caller otherwise writes as a `--dry-run` call, a `preflight_ok`
+  assertion, and a live call; the provider reads are the same ones that sequence
+  already paid for. Under `--dry-run` it adds nothing, because the dry run is
+  the sweep. `--preflight` with `--body-file -` is refused as
+  `review_preflight_body_not_replayable` before the first provider call: the
+  sweep and the append each read the body once, so a piped body would be
+  validated in one and submitted in the other.
+- `observe --auto-state` reads the current chain tip and compare-and-swaps
+  against it, instead of being handed one with `--expected-state` (the two
+  conflict). It is deliberately the weaker of the two, and the difference is not
+  ergonomic: `--expected-state` is a claim about a tip the caller *already saw*,
+  which is what catches a resumed shell reusing genesis state, and no
+  self-read can reconstruct that claim. Use `--auto-state` for the genesis
+  observation, where the tip is read fresh anyway and there is nothing earlier to
+  assert; keep `--expected-state` for a closing observation made against the
+  digest an earlier append returned. With `--preflight` the tip is read twice,
+  and a move in between fails as `review_state_tip_moved` naming both digests —
+  never a silent re-read, because the transition was computed against the chain
+  the sweep read and a moved tip makes that computation stale.
 - `observe --body <text>` / `--body-file <path>` (`-` reads stdin; mutually
   exclusive) posts a human-readable delivery outcome in the SAME provider comment
   as the appended ledger record, replacing a separate final outcome comment.
@@ -929,7 +951,27 @@ distinctions that cannot be proven offline.
   `github_pending_review_exists` (`RUNTIME 1`) before any review mutation. Its
   detail includes the provider head, viewer-owned pending count, and deletable
   count so callers can inspect the exact node. Pending reviews owned by other
-  viewers do not block submission. The pending guard and reviews POST are
+  viewers do not block submission.
+- `--recover-pending` turns that conflict into a recovery instead of a stop: the
+  abandoned viewer-owned pending review this submission would have replaced is
+  deleted, then the submission proceeds. Because the conflict is raised by a
+  *preflight*, before any mutation, there is no half-applied review to reconcile
+  and no retry to sequence — clearing the node is the whole recovery. What
+  remains is the guard around an unundoable delete, so it is strict: recovery is
+  attempted only when the PR owns exactly one viewer-authored pending review the
+  viewer may delete, and the delete itself then re-proves, under the
+  cross-process lease, that the node is still bound to `--expected-head`, carries
+  no inline draft comments, and has a body byte-identical to the body being
+  submitted. That is the same guard, lease, and post-delete read-back as
+  `pr pending-review delete --confirm-abandoned`, because it is the same code
+  path. A candidate that fails one of those guards surfaces that guard's own
+  `pending_review_*` error rather than the conflict, so the refusal says which
+  assumption did not hold; only the absence of a single nameable candidate hands
+  back `github_pending_review_exists` unchanged. A successful recovery reports
+  the deleted node as `data.recovered_pending_review`, and the flag is refused
+  before any provider call with `recover_pending_requires_submit_review`
+  (`DATA 65`) when there is no native submission for it to guard.
+  The pending guard and reviews POST are
   rendered in `--dry-run` as
   `data.pending_review_guard_plan` and `data.plan`. Omitting the expected head
   returns `expected_review_head_required` (`DATA 65`); supplying it without
