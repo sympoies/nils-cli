@@ -1376,6 +1376,262 @@ esac
     )
 }
 
+/// A GitHub stub that owns one viewer-authored, deletable pending review on
+/// PR 44 and serves the whole `--recover-pending` path: the pending-only guard
+/// page, the node snapshot the delete resolves, the delete mutation itself, and
+/// the native review POST that follows. `pending_body` and `pending_count` are
+/// what each refusal test varies.
+fn github_review_recover_pending_stub(
+    capture: &str,
+    pending_body: &str,
+    pending_count: u8,
+) -> String {
+    let deleted_flag = format!("{capture}.deleted");
+    let node = |id: &str| {
+        format!(
+            r#"{{"id":"{id}","url":"https://github.com/acme/widgets/pull/44#pullrequestreview-9911","author":{{"login":"review-bot"}},"state":"PENDING","commit":{{"oid":"head-44"}},"body":{body},"viewerDidAuthor":true,"viewerCanDelete":true}}"#,
+            body = serde_json::to_string(pending_body).expect("pending body json"),
+        )
+    };
+    let guard_nodes = match pending_count {
+        0 => String::new(),
+        1 => node("PRR_pending"),
+        _ => format!("{},{}", node("PRR_pending"), node("PRR_other")),
+    };
+    let snapshot = format!(
+        r#"{{"data":{{"node":{{"id":"PRR_pending","url":"https://github.com/acme/widgets/pull/44#pullrequestreview-9911","author":{{"login":"review-bot"}},"state":"PENDING","commit":{{"oid":"head-44"}},"body":{body},"viewerDidAuthor":true,"viewerCanDelete":true,"comments":{{"totalCount":0,"nodes":[],"pageInfo":{{"hasNextPage":false,"endCursor":null}}}},"pullRequest":{{"number":44,"url":"https://github.com/acme/widgets/pull/44","headRefOid":"head-44"}}}}}}}}"#,
+        body = serde_json::to_string(pending_body).expect("pending body json"),
+    );
+    r#"#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "@CAPTURE@"
+case "$1 $2" in
+  "pr view")
+    printf '%s\n' '{"number":44,"url":"https://github.com/acme/widgets/pull/44","state":"OPEN","isDraft":false,"baseRefName":"main","headRefName":"feat/reviews","headRefOid":"head-44","title":"feat: reviews","body":""}'
+    ;;
+  "api repos/acme/widgets/pulls/44")
+    echo "44"
+    ;;
+  "api repos/acme/widgets/pulls/44/reviews")
+    if [ ! -e "@DELETED_FLAG@" ]; then
+      echo "the native review must not be posted while the pending review stands" >&2
+      exit 99
+    fi
+    printf '%s\n' '{"html_url":"https://github.com/acme/widgets/pull/44#pullrequestreview-10001"}'
+    ;;
+  "api graphql")
+    case "$*" in
+      *"deletePullRequestReview(input:"*)
+        : > "@DELETED_FLAG@"
+        printf '%s\n' '{"data":{"deletePullRequestReview":{"pullRequestReview":{"id":"PRR_pending","url":"https://github.com/acme/widgets/pull/44#pullrequestreview-9911"}}}}'
+        ;;
+      *"states: [PENDING]"*)
+        if [ -e "@DELETED_FLAG@" ]; then
+          printf '%s\n' '{"data":{"repository":{"pullRequest":{"headRefOid":"head-44","reviews":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}'
+        else
+          printf '%s\n' '{"data":{"repository":{"pullRequest":{"headRefOid":"head-44","reviews":{"nodes":[@GUARD_NODES@],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}'
+        fi
+        ;;
+      *"node(id:"*)
+        if [ -e "@DELETED_FLAG@" ]; then
+          printf '%s\n' '{"data":{"node":null}}'
+        else
+          printf '%s\n' '@SNAPSHOT@'
+        fi
+        ;;
+      *)
+        echo "stub: unexpected graphql payload: $*" >&2
+        exit 99
+        ;;
+    esac
+    ;;
+  *)
+    echo "stub: unexpected gh args: $*" >&2
+    exit 99
+    ;;
+esac
+"#
+    .replace("@CAPTURE@", capture)
+    .replace("@DELETED_FLAG@", &deleted_flag)
+    .replace("@GUARD_NODES@", &guard_nodes)
+    .replace("@SNAPSHOT@", &snapshot)
+}
+
+fn recover_pending_argv(recover: bool) -> Vec<&'static str> {
+    let mut argv = vec![
+        "--provider",
+        "github",
+        "--repo",
+        "acme/widgets",
+        "--format",
+        "json",
+        "pr",
+        "review",
+        "44",
+        "--decision",
+        "comments-only",
+        "--submit-review",
+        "--expected-head",
+        "head-44",
+        "--comment",
+        "Summary body",
+    ];
+    if recover {
+        argv.push("--recover-pending");
+    }
+    argv
+}
+
+/// The whole point of the flag: the abandoned attempt is cleared and the
+/// submission this call was asked to make actually happens, in that order.
+#[test]
+fn pr_review_recover_pending_deletes_the_abandoned_review_then_submits() {
+    let stub = StubEnv::new();
+    let capture = stub.tempdir.path().join("gh-args.log");
+    let stub = stub.gh_stub(&github_review_recover_pending_stub(
+        &capture.to_string_lossy(),
+        "Summary body",
+        1,
+    ));
+
+    let out = run_forge_cli(&stub, &recover_pending_argv(true));
+
+    assert_eq!(out.code, 0, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let env = parse_envelope(&out.stdout);
+    assert_eq!(env["ok"], true);
+    assert_eq!(env["data"]["recovered_pending_review"], "PRR_pending");
+    assert_eq!(env["data"]["submitted_review"], true);
+
+    let calls = fs::read_to_string(capture).expect("read captured calls");
+    let deleted_at = calls
+        .find("deletePullRequestReview(input:")
+        .expect("the delete mutation ran");
+    let submitted_at = calls
+        .find("repos/acme/widgets/pulls/44/reviews")
+        .expect("the native review was submitted");
+    assert!(
+        deleted_at < submitted_at,
+        "recovery must clear the pending review before submitting: {calls}"
+    );
+}
+
+/// Without the flag the same provider state is still a hard stop, so recovery
+/// is something a caller opts into rather than something that just happens.
+#[test]
+fn pr_review_without_recover_pending_still_fails_closed() {
+    let stub = StubEnv::new();
+    let capture = stub.tempdir.path().join("gh-args.log");
+    let stub = stub.gh_stub(&github_review_recover_pending_stub(
+        &capture.to_string_lossy(),
+        "Summary body",
+        1,
+    ));
+
+    let out = run_forge_cli(&stub, &recover_pending_argv(false));
+
+    assert_eq!(out.code, 1, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let env = parse_envelope(&out.stdout);
+    assert_eq!(env["error"]["code"], "github_pending_review_exists");
+    let calls = fs::read_to_string(capture).expect("read captured calls");
+    assert!(
+        !calls.contains("deletePullRequestReview(input:"),
+        "nothing may be deleted without --recover-pending: {calls}"
+    );
+}
+
+/// A pending review whose body is not the body being submitted is somebody
+/// else's work, or an earlier draft that was revised. Deleting it is not
+/// undoable, so the guard refuses and says exactly why.
+#[test]
+fn pr_review_recover_pending_refuses_a_body_that_is_not_the_one_being_submitted() {
+    let stub = StubEnv::new();
+    let capture = stub.tempdir.path().join("gh-args.log");
+    let stub = stub.gh_stub(&github_review_recover_pending_stub(
+        &capture.to_string_lossy(),
+        "A different review nobody asked to delete",
+        1,
+    ));
+
+    let out = run_forge_cli(&stub, &recover_pending_argv(true));
+
+    assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let env = parse_envelope(&out.stdout);
+    assert_eq!(env["error"]["code"], "pending_review_body_mismatch");
+    let calls = fs::read_to_string(capture).expect("read captured calls");
+    assert!(
+        !calls.contains("deletePullRequestReview(input:"),
+        "a body mismatch must stop before the destructive call: {calls}"
+    );
+}
+
+/// With more than one candidate there is no single node recovery could name, so
+/// the original conflict is handed back untouched for a human to resolve.
+#[test]
+fn pr_review_recover_pending_refuses_when_the_candidate_is_ambiguous() {
+    let stub = StubEnv::new();
+    let capture = stub.tempdir.path().join("gh-args.log");
+    let stub = stub.gh_stub(&github_review_recover_pending_stub(
+        &capture.to_string_lossy(),
+        "Summary body",
+        2,
+    ));
+
+    let out = run_forge_cli(&stub, &recover_pending_argv(true));
+
+    assert_eq!(out.code, 1, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let env = parse_envelope(&out.stdout);
+    assert_eq!(env["error"]["code"], "github_pending_review_exists");
+    let calls = fs::read_to_string(capture).expect("read captured calls");
+    assert!(
+        !calls.contains("deletePullRequestReview(input:"),
+        "an ambiguous candidate must stop before the destructive call: {calls}"
+    );
+}
+
+/// The flag names a destructive action, so it is refused where its guard could
+/// not run rather than being quietly ignored.
+#[test]
+fn pr_review_recover_pending_requires_submit_review() {
+    let stub = StubEnv::new();
+    let capture = stub.tempdir.path().join("gh-args.log");
+    let stub = stub.gh_stub(&github_review_recover_pending_stub(
+        &capture.to_string_lossy(),
+        "Summary body",
+        1,
+    ));
+
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "--format",
+            "json",
+            "pr",
+            "review",
+            "44",
+            "--decision",
+            "comments-only",
+            "--recover-pending",
+            "--comment",
+            "Summary body",
+        ],
+    );
+
+    assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let env = parse_envelope(&out.stdout);
+    assert_eq!(
+        env["error"]["code"],
+        "recover_pending_requires_submit_review"
+    );
+    assert!(
+        !capture.exists(),
+        "the refusal must land before any provider call"
+    );
+}
+
 fn github_resumable_thread_stub(
     capture: &str,
     existing_thread: bool,

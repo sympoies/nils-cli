@@ -702,6 +702,20 @@ pub struct PrReviewArgs {
     /// `pr review-threads resolve`.
     #[arg(long = "thread-file", value_name = "PATH")]
     pub thread_file: Option<String>,
+    /// Recover from `github_pending_review_exists` instead of failing: delete
+    /// the exact abandoned viewer-owned pending review this submission would
+    /// have replaced, then submit. Recovery is accepted only when the PR owns
+    /// exactly one viewer-authored pending review, the viewer may delete it, it
+    /// is bound to `--expected-head`, and its body is byte-identical to the body
+    /// being submitted; anything else preserves the original
+    /// `github_pending_review_exists` error untouched. The destructive delete
+    /// runs the same guards, lease, and read-back as
+    /// `pr pending-review delete --confirm-abandoned`.
+    // Deliberately no clap `requires`: the op returns typed
+    // `recover_pending_requires_submit_review` / `expected_head_required`
+    // envelopes at runtime so JSON consumers branch on the error kind.
+    #[arg(long = "recover-pending", action = ArgAction::SetTrue)]
+    pub recover_pending: bool,
     /// Validate the body as the canonical specialist Review Report shape.
     #[arg(long = "specialist-report", action = ArgAction::SetTrue)]
     pub specialist_report: bool,
@@ -1040,7 +1054,24 @@ pub struct PrReviewLoopValidateArgs {
       reports every verdict in data.preflight[] without appending. The sweep \
       does not short-circuit, so the payload verdict is still reported when the \
       provider is unreachable — use it to check a findings file without writing \
-      durable provider-visible state.")]
+      durable provider-visible state.\n\n\
+      --auto-state AND --preflight\n  \
+      --preflight runs that same sweep in front of a LIVE append and stops with \
+      `review_preflight_failed`, naming every failing rule, instead of the first \
+      one. It replaces the separate --dry-run call a caller would otherwise make, \
+      and costs the same provider reads that call did.\n  \
+      --auto-state reads the current chain tip and compare-and-swaps against it, \
+      so a caller does not have to `inspect` and thread the digest through. It \
+      conflicts with --expected-state.\n  \
+      What --auto-state does NOT detect: a tip that moved BEFORE this command \
+      ran. A digest you carry from an earlier round is a claim about what you \
+      already saw, and only --expected-state can check it — which is what catches \
+      a resumed shell reusing genesis state. Use --auto-state for the genesis \
+      observation, where the tip is read fresh anyway, and keep --expected-state \
+      for a closing observation made against a tip an earlier append returned.\n  \
+      With both flags the tip is read twice, once for the sweep and once for the \
+      append. If it moved in between, the append fails with the distinct \
+      `review_state_tip_moved`, naming both digests — never a silent re-read.")]
 pub struct PrReviewLoopObserveArgs {
     pub id: u64,
     /// Exact provider head SHA whose review observation is being appended.
@@ -1054,6 +1085,15 @@ pub struct PrReviewLoopObserveArgs {
     /// Exact current provider-visible state-chain tip; omit only for genesis.
     #[arg(long = "expected-state", value_name = "DIGEST")]
     pub expected_state: Option<String>,
+    /// Read the current chain tip and compare-and-swap against it, instead of
+    /// naming it with `--expected-state`. See this command's help footer for
+    /// what this does NOT detect.
+    #[arg(long = "auto-state", action = ArgAction::SetTrue, conflicts_with = "expected_state")]
+    pub auto_state: bool,
+    /// Run the full `--dry-run` verdict sweep before this live append and stop
+    /// with `review_preflight_failed` if any rule fails.
+    #[arg(long = "preflight", action = ArgAction::SetTrue)]
+    pub preflight: bool,
     /// Human-readable delivery outcome to post in the same comment as this
     /// ledger record. Mutually exclusive with `--body-file`.
     #[arg(long, conflicts_with = "body_file")]
@@ -2567,6 +2607,44 @@ mod tests {
             let result = parse(&argv);
             assert!(result.is_ok(), "pr {sub} should parse, got {result:?}");
         }
+    }
+
+    /// Naming a tip and asking the CLI to read one are two different claims
+    /// about what the caller knows, and accepting both would silently discard
+    /// the stronger one.
+    #[test]
+    fn review_loop_observe_rejects_auto_state_together_with_expected_state() {
+        let conflict = parse(&[
+            "pr",
+            "review-loop",
+            "observe",
+            "7",
+            "--expected-head",
+            "abc123",
+            "--expected-state",
+            "sha256:tip",
+            "--auto-state",
+            "--findings-file",
+            "findings.json",
+        ]);
+        assert!(
+            conflict.is_err(),
+            "--auto-state must conflict with --expected-state, got {conflict:?}"
+        );
+
+        let accepted = parse(&[
+            "pr",
+            "review-loop",
+            "observe",
+            "7",
+            "--expected-head",
+            "abc123",
+            "--auto-state",
+            "--preflight",
+            "--findings-file",
+            "findings.json",
+        ]);
+        assert!(accepted.is_ok(), "got {accepted:?}");
     }
 
     #[test]

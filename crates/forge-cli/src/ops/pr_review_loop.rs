@@ -380,8 +380,39 @@ pub fn run_observe_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
 ) -> Result<i32, ForgeError> {
     let ctx = resolve_context(global, &remote_url_lookup)?;
     if global.dry_run {
+        // `--dry-run` already is the sweep, so `--preflight` adds nothing here.
         return emit_observe_dry_run(runner, &ctx, &args, format);
     }
+    // Run the sweep in front of the live append when asked, so one call reports
+    // every reason it would be rejected instead of the first. The tip it read is
+    // carried forward: under `--auto-state` there is no caller-supplied digest
+    // to compare against, and this is the only window in which a concurrent
+    // append is still visible to this command.
+    let preflight_tip = if args.preflight {
+        // The sweep reads the outcome body, and so does the append after it. A
+        // piped body can only be read once, so the append would silently submit
+        // a different body than the sweep validated. This is the same hazard the
+        // documented dry-run-then-live sequence has, except here it would be
+        // inside a single command, where a caller has no seam to notice it.
+        if args.body_file.as_deref() == Some("-") {
+            return Err(ForgeError::validation(
+                schema_err(),
+                "review_preflight_body_not_replayable",
+                "--preflight and --body-file - cannot be combined, because the sweep and the append each read the body once",
+                Some(
+                    "recovery=pass the outcome body as a file path, or drop --preflight and run the --dry-run sweep separately"
+                        .to_string(),
+                ),
+            ));
+        }
+        let evaluation = evaluate_observe(runner, &ctx, &args);
+        if !evaluation.ok {
+            return Err(preflight_failed(&evaluation.verdicts));
+        }
+        Some(evaluation.observed_tip)
+    } else {
+        None
+    };
     let observations = read_observations(&args.findings_file)?;
     // Read and validate the outcome body before the first provider call, so an
     // unreadable path or a non-portable body cannot fail between the ledger read
@@ -391,9 +422,17 @@ pub fn run_observe_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
     ensure_expected_head(view.head_sha.as_deref(), &args.expected_head)?;
     let state_view =
         pr_review::read_review_loop_state_view(runner, &ctx, &repository, view.number)?;
+    if let Some(observed) = preflight_tip.as_ref().filter(|_| args.auto_state)
+        && observed.as_deref() != state_view.chain.tip_digest.as_deref()
+    {
+        return Err(tip_moved(
+            observed.as_deref(),
+            state_view.chain.tip_digest.as_deref(),
+        ));
+    }
     ensure_expected_tip(
         state_view.chain.tip_digest.as_deref(),
-        args.expected_state.as_deref(),
+        resolved_expected_state(&args, state_view.chain.tip_digest.as_deref()),
     )?;
     let previous = review_state::latest_review_loop_state(&state_view.chain);
     let transition =
@@ -901,6 +940,81 @@ fn ensure_expected_tip(provider: Option<&str>, expected: Option<&str>) -> Result
     ))
 }
 
+/// Everything one non-short-circuiting preflight sweep decided, kept apart from
+/// how it is reported so a live `--preflight` append and `--dry-run` cannot
+/// drift into checking different things.
+struct ObserveEvaluation {
+    ok: bool,
+    verdicts: Vec<RuleVerdict>,
+    would_append: Option<bool>,
+    planned_comment: Option<PlannedStateComment>,
+    /// The chain tip this sweep read, or `None` for a genesis chain. `None` is
+    /// also what an unreadable chain leaves behind, which is safe because the
+    /// sweep's own verdict already failed in that case.
+    observed_tip: Option<String>,
+}
+
+/// The digest this call compare-and-swaps against.
+///
+/// Normally the caller's claim. Under `--auto-state` it is the tip just read,
+/// which makes the comparison true by construction — deliberately. The flag
+/// exists to spare a caller the `inspect`-and-thread dance when it has no
+/// earlier claim to make, and it therefore offers a strictly narrower guarantee
+/// than `--expected-state`: it cannot detect a tip that moved before the
+/// command ran. `run_observe_with` re-checks the tip across a `--preflight`
+/// sweep, which is the one window `--auto-state` can still observe.
+fn resolved_expected_state<'a>(
+    args: &'a PrReviewLoopObserveArgs,
+    provider_tip: Option<&'a str>,
+) -> Option<&'a str> {
+    if args.auto_state {
+        provider_tip
+    } else {
+        args.expected_state.as_deref()
+    }
+}
+
+/// Fails a live `--preflight` append, naming every rule that failed rather than
+/// the first. Reporting only the first would make `--preflight` strictly worse
+/// than the separate `--dry-run` call it replaces.
+fn preflight_failed(verdicts: &[RuleVerdict]) -> ForgeError {
+    let failures = verdicts
+        .iter()
+        .filter(|verdict| !verdict.ok)
+        .map(|verdict| match verdict.message.as_deref() {
+            Some(message) => format!("{}: {message}", verdict.rule),
+            None => verdict.rule.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    ForgeError::validation(
+        schema_err(),
+        "review_preflight_failed",
+        "the --preflight sweep rejected this observation, so nothing was appended",
+        Some(failures),
+    )
+}
+
+/// Fails an `--auto-state` append whose tip moved between the `--preflight`
+/// sweep and the append.
+///
+/// This is the one concurrency window `--auto-state` can see, and it is never
+/// resolved by re-reading: the transition was computed from the chain the sweep
+/// read, so a moved tip means that computation is stale. Silently re-reading
+/// would append a record derived from state that no longer exists.
+fn tip_moved(observed: Option<&str>, provider: Option<&str>) -> ForgeError {
+    ForgeError::validation(
+        schema_err(),
+        "review_state_tip_moved",
+        "the review-state tip moved between the --preflight sweep and the --auto-state append",
+        Some(format!(
+            "observed_state={}; provider_state={}; recovery=re-run the observation so it is evaluated against the current chain",
+            observed.unwrap_or("<genesis>"),
+            provider.unwrap_or("<genesis>")
+        )),
+    )
+}
+
 fn read_observations(
     path: &str,
 ) -> Result<Vec<review_state::ReviewFindingObservation>, ForgeError> {
@@ -1231,13 +1345,13 @@ fn emit_state(
 /// is what makes `--dry-run` usable as a schema check. Discovering the
 /// observation schema previously required a live `observe`, and a live
 /// `observe` appends durable, provider-visible state on success.
-fn emit_observe_dry_run<R: BackendRunner>(
+fn evaluate_observe<R: BackendRunner>(
     runner: &R,
     ctx: &ProviderContext,
     args: &PrReviewLoopObserveArgs,
-    format: OutputFormat,
-) -> Result<i32, ForgeError> {
+) -> ObserveEvaluation {
     let mut verdicts: Vec<RuleVerdict> = Vec::with_capacity(7);
+    let mut observed_tip = None;
 
     // Local first, so it survives an unreachable provider.
     let observations = match read_observations(&args.findings_file) {
@@ -1275,11 +1389,12 @@ fn emit_observe_dry_run<R: BackendRunner>(
             match pr_review::read_review_loop_state_view(runner, ctx, &repository, view.number) {
                 Ok(state_view) => {
                     verdicts.push(RuleVerdict::from_result("review_state_chain", Ok(())));
+                    observed_tip = state_view.chain.tip_digest.clone();
                     verdicts.push(RuleVerdict::from_result(
                         "expected_state_tip",
                         ensure_expected_tip(
                             state_view.chain.tip_digest.as_deref(),
-                            args.expected_state.as_deref(),
+                            resolved_expected_state(args, state_view.chain.tip_digest.as_deref()),
                         ),
                     ));
                     match &observations {
@@ -1402,7 +1517,22 @@ fn emit_observe_dry_run<R: BackendRunner>(
         }
     }
 
-    let preflight_ok = verdicts.iter().all(|verdict| verdict.ok);
+    ObserveEvaluation {
+        ok: verdicts.iter().all(|verdict| verdict.ok),
+        verdicts,
+        would_append,
+        planned_comment,
+        observed_tip,
+    }
+}
+
+fn emit_observe_dry_run<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    args: &PrReviewLoopObserveArgs,
+    format: OutputFormat,
+) -> Result<i32, ForgeError> {
+    let evaluation = evaluate_observe(runner, ctx, args);
     let combined = args.body.is_some() || args.body_file.is_some();
     Ok(emit_success(
         schema_version_for(BINARY, SCHEMA_OBSERVE, SCHEMA_VERSION),
@@ -1414,10 +1544,10 @@ fn emit_observe_dry_run<R: BackendRunner>(
                     false => "read the chain, evaluate one observation, and append with tip/head CAS".to_string(),
                 },
             ],
-            preflight_ok,
-            would_append,
-            planned_comment,
-            preflight: verdicts,
+            preflight_ok: evaluation.ok,
+            would_append: evaluation.would_append,
+            planned_comment: evaluation.planned_comment,
+            preflight: evaluation.verdicts,
         },
         format,
         |payload| {
@@ -1628,6 +1758,11 @@ mod tests {
         comments: std::cell::RefCell<Vec<serde_json::Value>>,
         approval: Option<String>,
         calls: std::cell::RefCell<Vec<Vec<String>>>,
+        chain_reads: std::cell::Cell<usize>,
+        /// Append one extra record to the chain immediately after the Nth chain
+        /// read is served, simulating another agent appending between this
+        /// command's two reads.
+        append_after_chain_read: Option<(usize, String)>,
     }
 
     impl FakeGitHub {
@@ -1637,7 +1772,46 @@ mod tests {
                 comments: std::cell::RefCell::new(Vec::new()),
                 approval: None,
                 calls: std::cell::RefCell::new(Vec::new()),
+                chain_reads: std::cell::Cell::new(0),
+                append_after_chain_read: None,
             }
+        }
+
+        fn with_concurrent_append_after_chain_read(mut self, reads: usize, head: &str) -> Self {
+            self.append_after_chain_read = Some((reads, head.to_string()));
+            self
+        }
+
+        /// Extends the seeded chain by one valid record, exactly as a concurrent
+        /// `observe` by another actor would. The record's content is irrelevant
+        /// to what this simulates; only the moved tip is.
+        fn append_concurrent_record(&self, head: &str) {
+            let bodies: Vec<String> = self
+                .comments
+                .borrow()
+                .iter()
+                .map(|node| node["body"].as_str().unwrap_or_default().to_string())
+                .collect();
+            let chain = review_state::parse_chain(bodies.iter().map(String::as_str), REPO, PR)
+                .expect("seeded chain");
+            let state =
+                review_state::latest_review_loop_state(&chain).expect("a seeded state to extend");
+            let record = review_state::ReviewStateRecord::new(
+                REPO,
+                PR,
+                head,
+                chain.records.len() as u64,
+                chain.tip_digest.clone(),
+                review_state::ReviewStatePayload::ReviewLoop {
+                    state: state.clone(),
+                },
+            )
+            .expect("concurrent record");
+            let body = review_state::render_state_comment_body(&record, None)
+                .expect("concurrent record body");
+            self.comments
+                .borrow_mut()
+                .push(comment_node(&body, "2026-07-20T12:00:05Z"));
         }
 
         fn with_state(self, state: &review_state::ReviewLoopState, head: &str) -> Self {
@@ -1739,6 +1913,16 @@ mod tests {
                         }}}
                     }
                 });
+                // Serve the page this read asked for, then move the chain, so
+                // the interleaving is "someone appended after I read", not
+                // "someone appended before I read".
+                let reads = self.chain_reads.get() + 1;
+                self.chain_reads.set(reads);
+                if let Some((after, head)) = self.append_after_chain_read.as_ref()
+                    && *after == reads
+                {
+                    self.append_concurrent_record(head);
+                }
                 return Ok(BackendSuccess {
                     stdout: page.to_string(),
                     stderr: String::new(),
@@ -2122,6 +2306,8 @@ mod tests {
             expected_head: expected_head.to_string(),
             findings_file: findings.to_string(),
             expected_state: expected_state.map(str::to_string),
+            auto_state: false,
+            preflight: false,
             body: None,
             body_file: None,
         }
@@ -2760,6 +2946,183 @@ mod tests {
                 .contains("expected_state=sha256:stale"),
             "detail should name the stale tip: {:?}",
             error.detail()
+        );
+    }
+
+    /// The flag's whole purpose: an append against an existing chain that names
+    /// no digest. Without `--auto-state` this same call is a genesis claim
+    /// against a non-genesis chain and is rejected, which is what the sibling
+    /// test below pins.
+    #[test]
+    fn observe_auto_state_appends_against_an_existing_chain_without_a_named_tip() {
+        let dir = tempfile::tempdir().unwrap();
+        let findings = findings_file(&dir, r#"[{"fingerprint":"correctness:review-loop:one"}]"#);
+        let state = genesis_state(HEAD, &[open_finding("correctness:review-loop:one")]);
+        let runner = FakeGitHub::new(HEAD).with_state(&state, HEAD);
+
+        let code = run_observe_with(
+            &runner,
+            &flags(false),
+            PrReviewLoopObserveArgs {
+                auto_state: true,
+                ..observe_args(&findings, HEAD, None)
+            },
+            OutputFormat::Json,
+            github_remote,
+        )
+        .expect("--auto-state reads the tip it compare-and-swaps against");
+
+        assert_eq!(code, 0);
+    }
+
+    /// The trade-off `--auto-state` makes, stated as a test: omitting the tip
+    /// without the flag is still a genesis claim, and still fails.
+    #[test]
+    fn observe_without_auto_state_still_rejects_an_unnamed_tip() {
+        let dir = tempfile::tempdir().unwrap();
+        let findings = findings_file(&dir, r#"[{"fingerprint":"correctness:review-loop:one"}]"#);
+        let state = genesis_state(HEAD, &[open_finding("correctness:review-loop:one")]);
+        let runner = FakeGitHub::new(HEAD).with_state(&state, HEAD);
+
+        let error = run_observe_with(
+            &runner,
+            &flags(false),
+            observe_args(&findings, HEAD, None),
+            OutputFormat::Json,
+            github_remote,
+        )
+        .expect_err("an unnamed tip is a genesis claim");
+
+        assert_eq!(error.kind(), "review_state_conflict");
+        assert_eq!(runner.appended_bodies(), Vec::<String>::new());
+    }
+
+    /// `--preflight` must be worth more than the first error a plain live run
+    /// would return, or it is not worth replacing a separate `--dry-run` call.
+    #[test]
+    fn observe_preflight_names_every_failing_rule_and_appends_nothing() {
+        let state = genesis_state(HEAD, &[open_finding("correctness:review-loop:one")]);
+        let runner = FakeGitHub::new(HEAD).with_state(&state, HEAD);
+
+        let error = run_observe_with(
+            &runner,
+            &flags(false),
+            PrReviewLoopObserveArgs {
+                preflight: true,
+                ..observe_args("/definitely/missing.json", "head-that-is-not-current", None)
+            },
+            OutputFormat::Json,
+            github_remote,
+        )
+        .expect_err("a failing preflight stops the append");
+
+        assert_eq!(error.kind(), "review_preflight_failed");
+        let detail = error.detail().unwrap_or_default();
+        assert!(
+            detail.contains("findings_file") && detail.contains("expected_head"),
+            "every failing rule should be named, not just the first: {detail}"
+        );
+        assert_eq!(
+            runner.appended_bodies(),
+            Vec::<String>::new(),
+            "a rejected preflight must not append"
+        );
+    }
+
+    #[test]
+    fn observe_preflight_appends_when_every_rule_passes() {
+        let dir = tempfile::tempdir().unwrap();
+        let findings = findings_file(
+            &dir,
+            r#"{"data":{"findings":[{"lifecycle_fingerprint":"correctness:review-loop:one","primary":{"severity":"high"}}]}}"#,
+        );
+        let runner = FakeGitHub::new(HEAD);
+
+        let code = run_observe_with(
+            &runner,
+            &flags(false),
+            PrReviewLoopObserveArgs {
+                preflight: true,
+                auto_state: true,
+                ..observe_args(&findings, HEAD, None)
+            },
+            OutputFormat::Json,
+            github_remote,
+        )
+        .expect("a clean preflight continues to the append");
+
+        assert_eq!(code, 0);
+        assert_eq!(runner.appended_bodies().len(), 1);
+    }
+
+    /// A piped body is consumed by whoever reads it first, so a sweep and an
+    /// append inside one command cannot share one. Refusing is the only honest
+    /// option: continuing would validate one body and submit another.
+    #[test]
+    fn observe_preflight_refuses_a_body_piped_on_stdin() {
+        let dir = tempfile::tempdir().unwrap();
+        let findings = findings_file(&dir, r#"[{"fingerprint":"correctness:review-loop:one"}]"#);
+        let runner = FakeGitHub::new(HEAD);
+
+        let error = run_observe_with(
+            &runner,
+            &flags(false),
+            PrReviewLoopObserveArgs {
+                preflight: true,
+                body_file: Some("-".to_string()),
+                ..observe_args(&findings, HEAD, None)
+            },
+            OutputFormat::Json,
+            github_remote,
+        )
+        .expect_err("a body that can only be read once cannot be read twice");
+
+        assert_eq!(error.kind(), "review_preflight_body_not_replayable");
+        assert_eq!(
+            runner.calls(),
+            Vec::<Vec<String>>::new(),
+            "the refusal belongs before the first provider call"
+        );
+    }
+
+    /// The one concurrency window `--auto-state` can still see.
+    ///
+    /// The transition is computed from the chain the sweep read, so a tip that
+    /// moves before the append makes that computation stale. Re-reading and
+    /// carrying on would append a record derived from state that no longer
+    /// exists, which is exactly the silent behaviour this flag must not have.
+    #[test]
+    fn observe_auto_state_fails_closed_when_the_tip_moves_after_the_preflight() {
+        let dir = tempfile::tempdir().unwrap();
+        let findings = findings_file(&dir, r#"[{"fingerprint":"correctness:review-loop:one"}]"#);
+        let state = genesis_state(HEAD, &[open_finding("correctness:review-loop:one")]);
+        let runner = FakeGitHub::new(HEAD)
+            .with_state(&state, HEAD)
+            .with_concurrent_append_after_chain_read(1, HEAD);
+
+        let error = run_observe_with(
+            &runner,
+            &flags(false),
+            PrReviewLoopObserveArgs {
+                auto_state: true,
+                preflight: true,
+                ..observe_args(&findings, HEAD, None)
+            },
+            OutputFormat::Json,
+            github_remote,
+        )
+        .expect_err("a tip that moved between the sweep and the append is not recoverable here");
+
+        assert_eq!(error.kind(), "review_state_tip_moved");
+        let detail = error.detail().unwrap_or_default();
+        assert!(
+            detail.contains("observed_state=") && detail.contains("provider_state="),
+            "both digests belong in the detail: {detail}"
+        );
+        assert_eq!(
+            runner.appended_bodies(),
+            Vec::<String>::new(),
+            "nothing may be appended against a chain that moved"
         );
     }
 

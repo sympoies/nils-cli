@@ -387,88 +387,68 @@ pub fn run_delete_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
 
     let view_output = runner.run(&pr_view::build_view_call(&ctx, &args.id.to_string()))?;
     let view = pr_view::parse_view_output(&ctx, &view_output)?;
-    let snapshot = pr_reviews::compute_pending_guard_for_pr(
+    let payload = delete_guarded_pending_review(
         runner,
         &ctx,
+        &view,
+        &GuardedPendingReview {
+            review_id: &args.review,
+            expected_head: &args.expected_head,
+            expected_commit: &args.expected_commit,
+            expected_body: &expected_body,
+        },
+    )?;
+    Ok(emit_success(schema_ok(), payload, format, render_text))
+}
+
+/// Delete exactly one guarded pending review, or refuse.
+///
+/// This is the destructive operation, so every check between here and the
+/// mutation is the safety argument for it, and there is deliberately only one
+/// copy: `pr pending-review delete --confirm-abandoned` and
+/// `pr review --recover-pending` both enter here. The guard runs three times —
+/// once on the pending-only snapshot, once on the resolved target, and once
+/// more after the lease is held — because the provider can move the node
+/// between any two reads and a stale guard would authorise deleting a review
+/// nobody asked to delete.
+pub(crate) fn delete_guarded_pending_review<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    view: &pr_view::PrViewPayload,
+    guard: &GuardedPendingReview<'_>,
+) -> Result<PrPendingReviewDeletePayload, ForgeError> {
+    let snapshot = pr_reviews::compute_pending_guard_for_pr(
+        runner,
+        ctx,
         view.number,
         &view.url,
-        &args.review,
+        guard.review_id,
     )?;
-    validate_expected_head(&snapshot.head_sha, &args)?;
+    validate_expected_head(&snapshot.head_sha, guard)?;
     let pending = snapshot
         .reviews
         .iter()
-        .find(|review| review.id == args.review)
-        .ok_or_else(|| pending_not_found(args.id, &args.review))?;
+        .find(|review| review.id == guard.review_id)
+        .ok_or_else(|| pending_not_found(view.number, guard.review_id))?;
 
-    validate_pending_guard(pending, &snapshot.head_sha, &args, &expected_body)?;
+    validate_pending_guard(pending, &snapshot.head_sha, guard, guard.expected_body)?;
 
-    let target = pr_reviews::compute_pending_target(runner, &ctx, &args.review)?
-        .ok_or_else(|| pending_not_found(args.id, &args.review))?;
-    if target.number != view.number || target.pr_url != view.url || target.review.id != args.review
-    {
-        return Err(ForgeError::validation(
-            schema_err(),
-            "pending_review_pr_mismatch",
-            "the pending review target no longer belongs to the named pull request",
-            Some(format!(
-                "expected_pr={}; provider_pr={}; review_id={}",
-                view.number, target.number, args.review
-            )),
-        ));
-    }
-    validate_pending_guard(&target.review, &target.head_sha, &args, &expected_body)?;
-    if target.inline_comment_count != 0 {
-        return Err(ForgeError::validation(
-            schema_err(),
-            "pending_review_inline_comments_present",
-            "pending reviews with inline draft comments require manual recovery",
-            Some(format!(
-                "review_id={}; inline_comment_count={}",
-                target.review.id, target.inline_comment_count
-            )),
-        ));
-    }
+    let target = resolve_guarded_target(runner, ctx, view, guard)?;
 
-    let _lease = acquire_pending_review_lease(&ctx, &view, &target.review.author)?;
-    let target = pr_reviews::compute_pending_target(runner, &ctx, &args.review)?
-        .ok_or_else(|| pending_not_found(args.id, &args.review))?;
-    if target.number != view.number || target.pr_url != view.url || target.review.id != args.review
-    {
-        return Err(ForgeError::validation(
-            schema_err(),
-            "pending_review_pr_mismatch",
-            "the pending review target no longer belongs to the named pull request",
-            Some(format!(
-                "expected_pr={}; provider_pr={}; review_id={}",
-                view.number, target.number, args.review
-            )),
-        ));
-    }
-    validate_pending_guard(&target.review, &target.head_sha, &args, &expected_body)?;
-    if target.inline_comment_count != 0 {
-        return Err(ForgeError::validation(
-            schema_err(),
-            "pending_review_inline_comments_present",
-            "pending reviews with inline draft comments require manual recovery",
-            Some(format!(
-                "review_id={}; inline_comment_count={}",
-                target.review.id, target.inline_comment_count
-            )),
-        ));
-    }
+    let _lease = acquire_pending_review_lease(ctx, view, &target.review.author)?;
+    let target = resolve_guarded_target(runner, ctx, view, guard)?;
 
     let pending = &target.review;
     let mutation = runner.run(&pr_review::build_github_delete_pending_review_call(
-        &ctx,
+        ctx,
         &pending.id,
     ));
-    let deleted_url = reconcile_deleted_target(runner, &ctx, &target, mutation)?;
+    let deleted_url = reconcile_deleted_target(runner, ctx, &target, mutation)?;
 
-    let payload = PrPendingReviewDeletePayload {
+    Ok(PrPendingReviewDeletePayload {
         provider: ctx.provider.as_str(),
         number: view.number,
-        url: view.url,
+        url: view.url.clone(),
         head_sha: target.head_sha,
         commit_sha: pending
             .commit_sha
@@ -478,8 +458,49 @@ pub fn run_delete_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         review_url: deleted_url,
         author: pending.author.clone(),
         deleted: true,
-    };
-    Ok(emit_success(schema_ok(), payload, format, render_text))
+    })
+}
+
+/// Re-resolve the delete target and re-run every guard against it.
+///
+/// Called once before taking the lease and once after, so the answer is proved
+/// against provider state the lease actually protects rather than against the
+/// read that motivated taking it.
+fn resolve_guarded_target<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    view: &pr_view::PrViewPayload,
+    guard: &GuardedPendingReview<'_>,
+) -> Result<pr_reviews::PendingReviewTarget, ForgeError> {
+    let target = pr_reviews::compute_pending_target(runner, ctx, guard.review_id)?
+        .ok_or_else(|| pending_not_found(view.number, guard.review_id))?;
+    if target.number != view.number
+        || target.pr_url != view.url
+        || target.review.id != guard.review_id
+    {
+        return Err(ForgeError::validation(
+            schema_err(),
+            "pending_review_pr_mismatch",
+            "the pending review target no longer belongs to the named pull request",
+            Some(format!(
+                "expected_pr={}; provider_pr={}; review_id={}",
+                view.number, target.number, guard.review_id
+            )),
+        ));
+    }
+    validate_pending_guard(&target.review, &target.head_sha, guard, guard.expected_body)?;
+    if target.inline_comment_count != 0 {
+        return Err(ForgeError::validation(
+            schema_err(),
+            "pending_review_inline_comments_present",
+            "pending reviews with inline draft comments require manual recovery",
+            Some(format!(
+                "review_id={}; inline_comment_count={}",
+                target.review.id, target.inline_comment_count
+            )),
+        ));
+    }
+    Ok(target)
 }
 
 fn load_pending_snapshot<R: BackendRunner, F: Fn(&str) -> Option<String>>(
@@ -1260,10 +1281,23 @@ fn unlock_file(fd: RawFd) {
     let _ = unsafe { libc::flock(fd, libc::LOCK_UN) };
 }
 
+/// The exact node a destructive pending-review deletion is bound to.
+///
+/// Every guard below reads only these four values, so the same envelope serves
+/// `pr pending-review delete` and the `pr review --recover-pending` path. The
+/// second caller matters: recovery must not be able to reach a weaker check
+/// than the command whose safety argument it borrows.
+pub(crate) struct GuardedPendingReview<'a> {
+    pub review_id: &'a str,
+    pub expected_head: &'a str,
+    pub expected_commit: &'a str,
+    pub expected_body: &'a str,
+}
+
 fn validate_pending_guard(
     pending: &pr_reviews::PendingReviewGuard,
     provider_head: &str,
-    args: &PrPendingReviewDeleteArgs,
+    args: &GuardedPendingReview<'_>,
     expected_body: &str,
 ) -> Result<(), ForgeError> {
     validate_expected_head(provider_head, args)?;
@@ -1286,7 +1320,7 @@ fn validate_pending_guard(
             Some(format!("review_id={}", pending.id)),
         ));
     }
-    if pending.commit_sha.as_deref() != Some(args.expected_commit.as_str()) {
+    if pending.commit_sha.as_deref() != Some(args.expected_commit) {
         return Err(expected_mismatch(
             "pending_review_commit_mismatch",
             "the pending review is bound to a different commit",
@@ -1315,7 +1349,7 @@ fn validate_pending_guard(
 
 fn validate_expected_head(
     provider_head: &str,
-    args: &PrPendingReviewDeleteArgs,
+    args: &GuardedPendingReview<'_>,
 ) -> Result<(), ForgeError> {
     if provider_head == args.expected_head {
         return Ok(());

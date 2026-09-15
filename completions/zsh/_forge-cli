@@ -284,6 +284,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
 '--mirror-issue[Mirror a compact activity note to \`--issue\` (required; omitting it returns the \`issue_required\` envelope at runtime)]' \
 '--submit-review[Submit a native provider review event instead of posting an outcome comment. On GitHub this POSTs \`.../pulls/<id>/reviews\`, creating the \`#pullrequestreview-\` object; \`--decision\` maps to the review event (comments-only→COMMENT, approve→APPROVE, request-changes→REQUEST_CHANGES). The review is authored by the invoking token'\''s identity (e.g. a reviewer bot via FORGE_BOT_PROFILE). A body is required for COMMENT and REQUEST_CHANGES and optional for APPROVE. GitHub-only in v1]' \
+'--recover-pending[Recover from \`github_pending_review_exists\` instead of failing\: delete the exact abandoned viewer-owned pending review this submission would have replaced, then submit. Recovery is accepted only when the PR owns exactly one viewer-authored pending review, the viewer may delete it, it is bound to \`--expected-head\`, and its body is byte-identical to the body being submitted; anything else preserves the original \`github_pending_review_exists\` error untouched. The destructive delete runs the same guards, lease, and read-back as \`pr pending-review delete --confirm-abandoned\`]' \
 '--specialist-report[Validate the body as the canonical specialist Review Report shape]' \
 '--metadata-only[Post only a concise personal-identity metadata breadcrumb for an already-published authoritative native review]' \
 '--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
@@ -723,6 +724,8 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
 '--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
 '--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'(--expected-state)--auto-state[Read the current chain tip and compare-and-swap against it, instead of naming it with \`--expected-state\`. See this command'\''s help footer for what this does NOT detect]' \
+'--preflight[Run the full \`--dry-run\` verdict sweep before this live append and stop with \`review_preflight_failed\` if any rule fails]' \
 '--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \

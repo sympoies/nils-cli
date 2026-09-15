@@ -98,6 +98,12 @@ pub struct PrReviewPayload {
     /// `submitted_review` is `false` and `review_threads` is empty.
     #[serde(default, skip_serializing_if = "is_zero_usize")]
     pub threads_skipped_idempotent: usize,
+    /// Node id of the abandoned viewer-owned pending review `--recover-pending`
+    /// deleted to clear the way for this submission. Present only when a
+    /// destructive recovery actually ran, so its absence is the ordinary case
+    /// rather than a default that has to be interpreted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovered_pending_review: Option<String>,
 }
 
 fn is_zero_usize(value: &usize) -> bool {
@@ -480,6 +486,18 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         None
     };
 
+    // `--recover-pending` deletes provider state, so it is refused outright
+    // anywhere its guard could not run, rather than being quietly ignored.
+    if args.recover_pending && !args.submit_review {
+        return Err(ForgeError::validation(
+            schema_err(),
+            "recover_pending_requires_submit_review",
+            "--recover-pending recovers a GitHub native review submission; pass --submit-review",
+            None,
+        ));
+    }
+    let mut recovered_pending_review: Option<String> = None;
+
     let expected_review_head = if args.submit_review || args.metadata_only {
         Some(args.expected_head.as_deref().ok_or_else(|| {
             ForgeError::validation(
@@ -744,12 +762,24 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
             )?;
         }
         if args.submit_review && thread_specs.is_empty() {
-            ensure_no_viewer_pending_github_review(
-                runner,
-                &ctx,
-                id,
-                expected_review_head.expect("validated native review head"),
-            )?;
+            let native_head = expected_review_head.expect("validated native review head");
+            match ensure_no_viewer_pending_github_review(runner, &ctx, id, native_head) {
+                Ok(()) => {}
+                Err(conflict)
+                    if args.recover_pending
+                        && conflict.kind() == "github_pending_review_exists" =>
+                {
+                    recovered_pending_review = Some(recover_viewer_pending_github_review(
+                        runner,
+                        &ctx,
+                        id,
+                        native_head,
+                        &body,
+                        conflict,
+                    )?);
+                }
+                Err(conflict) => return Err(conflict),
+            }
         }
     }
 
@@ -840,6 +870,7 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
             native_review_author,
             review_threads,
             threads_skipped_idempotent,
+            recovered_pending_review,
         },
         format,
         render_text,
@@ -3505,6 +3536,70 @@ fn ensure_no_viewer_pending_github_review<R: BackendRunner>(
     ))
 }
 
+/// Clear the one abandoned pending review this submission would have replaced,
+/// so `--recover-pending` can continue instead of failing.
+///
+/// The conflict is raised by a *preflight*, before any mutation, so the "retry
+/// the submission exactly once" a caller would otherwise write collapses to
+/// "carry on": there is no half-applied review to reconcile. What is left is the
+/// guard around a destructive, unundoable delete, and it is deliberately strict.
+/// Recovery is accepted only when the pull request owns exactly one
+/// viewer-authored pending review that the viewer may delete; the delete itself
+/// then re-proves, under a lease, that the node is still bound to
+/// `expected_head` and that its body is byte-identical to the body about to be
+/// submitted. Any other shape means the node may be a review someone still
+/// wants, so the original `github_pending_review_exists` is returned untouched
+/// and the operator decides.
+fn recover_viewer_pending_github_review<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    id: u64,
+    expected_head: &str,
+    intended_body: &str,
+    conflict: ForgeError,
+) -> Result<String, ForgeError> {
+    let repo = ctx.repo.as_deref().ok_or_else(|| {
+        ForgeError::validation(
+            schema_err(),
+            "repo_required",
+            "github pending-review recovery requires --repo owner/name or a recognised GitHub remote",
+            None,
+        )
+    })?;
+    let pr_url = format!("https://{host}/{repo}/pull/{id}", host = ctx.host);
+    let snapshot = pr_reviews::compute_pending_guards_for_pr(runner, ctx, id, &pr_url)?;
+    let candidates = snapshot
+        .reviews
+        .iter()
+        .filter(|review| review.viewer_did_author && review.viewer_can_delete)
+        .collect::<Vec<_>>();
+    let [candidate] = candidates.as_slice() else {
+        return Err(conflict);
+    };
+    let review_id = candidate.id.clone();
+
+    let view = super::pr_view::compute(runner, ctx, id)?;
+    super::pr_pending_review::delete_guarded_pending_review(
+        runner,
+        ctx,
+        &view,
+        &super::pr_pending_review::GuardedPendingReview {
+            review_id: &review_id,
+            expected_head,
+            // The abandoned attempt is this submission's own earlier try, so the
+            // commit it is bound to must be the head being reviewed now.
+            expected_commit: expected_head,
+            expected_body: intended_body,
+        },
+    )?;
+
+    // Re-run the submission's own precondition rather than trusting the delete's
+    // read-back. Only this proves the thing the caller actually needs: that the
+    // native review may now be submitted.
+    ensure_no_viewer_pending_github_review(runner, ctx, id, expected_head)?;
+    Ok(review_id)
+}
+
 /// True when `gh api` stderr indicates an HTTP 404 / Not Found — the only
 /// failure class that proves `<id>` is not a pull request.
 fn is_http_not_found(stderr: &str) -> bool {
@@ -3682,6 +3777,7 @@ mod tests {
             mirror_issue: false,
             submit_review,
             expected_head: submit_review.then(|| "head-44".to_string()),
+            recover_pending: false,
             thread_file: None,
             specialist_report: false,
             metadata_only: false,
