@@ -6,6 +6,7 @@ use nils_common::cli_contract::{
 };
 use nils_devlog::check::CheckReport;
 use nils_devlog::entry::Entry;
+use nils_devlog::fix::FixReport;
 use nils_devlog::model::{Devlog, DevlogError, EntryDate, Month};
 use nils_devlog::search::SearchReport;
 use serde::Serialize;
@@ -68,6 +69,8 @@ enum Command {
     },
     /// Report structural problems: month filenames, index drift, entry shape, ordering.
     Check,
+    /// Repair the structural problems that have one correct repair, and report the rest.
+    Fix,
     /// Rewrite the README month index from the tracked month files.
     Index,
     /// Export shell completion script.
@@ -216,6 +219,26 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<i32, DevlogError> {
                 Ok(exit::DATA)
             }
         }
+        Command::Fix => {
+            let report = nils_devlog::fix::fix(&devlog)?;
+            if report.ok() {
+                emit(format, "fix", 1, &report, print_fix);
+                Ok(exit::SUCCESS)
+            } else {
+                // The same exit and the same class as `check`: what survives a
+                // repair is a structural problem the log still has.
+                emit_failure(
+                    format,
+                    "fix",
+                    1,
+                    &report,
+                    "structural-problems",
+                    "the development log still has structural problems",
+                    print_fix,
+                );
+                Ok(exit::DATA)
+            }
+        }
         Command::Index => {
             let update = nils_devlog::index::sync(&devlog)?;
             let payload = IndexPayload {
@@ -248,6 +271,43 @@ fn print_check(report: &CheckReport) {
         println!("{}: {} - {}", problem.kind, problem.path, problem.detail);
     }
     println!("{} problem(s)", report.problems.len());
+}
+
+fn print_fix(report: &FixReport) {
+    let repairs = &report.repairs;
+    if repairs.total() == 0 && !report.index_updated {
+        println!("{}: nothing to repair", report.devlog_dir);
+    } else {
+        println!(
+            "{}: repaired {} file(s)",
+            report.devlog_dir, report.files_changed
+        );
+        for (label, count) in [
+            ("section labels", repairs.section_labels),
+            ("heading separators", repairs.heading_separators),
+            ("month headings", repairs.month_headings),
+            ("reordered entries", repairs.reordered_entries),
+            ("backfilled sections", repairs.backfilled_sections),
+        ] {
+            if count > 0 {
+                println!("  {label}: {count}");
+            }
+        }
+        if report.index_updated {
+            println!("  index: updated");
+        }
+    }
+
+    if report.remaining.is_empty() {
+        println!("ok: no structural problems");
+        return;
+    }
+    for problem in &report.remaining {
+        println!("{}: {} - {}", problem.kind, problem.path, problem.detail);
+    }
+    // These are the problems a repair would have had to guess at, so the count
+    // is phrased as work rather than as failure.
+    println!("{} problem(s) need a decision", report.remaining.len());
 }
 
 fn emit<T, F>(format: OutputFormat, command: &str, version: u32, payload: &T, render_text: F)

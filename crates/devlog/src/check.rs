@@ -110,7 +110,17 @@ fn check_month(
     let mut current: Option<(String, Vec<String>)> = None;
     let mut finished: Vec<(String, Vec<String>)> = Vec::new();
 
+    // A heading inside a fenced block is an example, not structure. The
+    // conflict scan already excludes fenced markers for this reason, and an
+    // entry documenting this very format is the case both exclusions exist
+    // for: reading its quoted `## 2026-04-17 - Title` as a real entry would
+    // report a malformed heading and three missing sections that nobody can
+    // repair without editing the prose.
+    let mut fences = crate::model::FenceScanner::default();
     for line in contents.lines() {
+        if !fences.is_structural(line) {
+            continue;
+        }
         if let Some(rest) = line.strip_prefix("## ") {
             if let Some(entry) = current.take() {
                 finished.push(entry);

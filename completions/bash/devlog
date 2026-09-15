@@ -22,6 +22,9 @@ _devlog() {
             devlog,completion)
                 cmd="devlog__completion"
                 ;;
+            devlog,fix)
+                cmd="devlog__fix"
+                ;;
             devlog,help)
                 cmd="devlog__help"
                 ;;
@@ -39,6 +42,9 @@ _devlog() {
                 ;;
             devlog__help,completion)
                 cmd="devlog__help__completion"
+                ;;
+            devlog__help,fix)
+                cmd="devlog__help__fix"
                 ;;
             devlog__help,help)
                 cmd="devlog__help__help"
@@ -59,7 +65,7 @@ _devlog() {
 
     case "${cmd}" in
         devlog)
-            opts="-h -V --format --dir --help --version new search check index completion help"
+            opts="-h -V --format --dir --help --version new search check fix index completion help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -124,8 +130,30 @@ _devlog() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        devlog__fix)
+            opts="-h --format --dir --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --dir)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         devlog__help)
-            opts="new search check index completion help"
+            opts="new search check fix index completion help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -153,6 +181,20 @@ _devlog() {
             return 0
             ;;
         devlog__help__completion)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        devlog__help__fix)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )

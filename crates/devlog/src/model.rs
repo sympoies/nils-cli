@@ -347,19 +347,10 @@ const CONFLICT_MARKERS: [&str; 3] = ["<<<<<<<", "|||||||", ">>>>>>>"];
 /// zero in the file body, never inside a fence it did not already break, so
 /// skipping fenced regions costs no real detection.
 pub fn first_conflict_marker(contents: &str) -> Option<usize> {
-    let mut fence: Option<&str> = None;
+    let mut fences = FenceScanner::default();
 
     for (index, line) in contents.lines().enumerate() {
-        if let Some(open) = fence {
-            // A fence closes on a run of the same character at least as long as
-            // the one that opened it, per CommonMark.
-            if fence_delimiter(line).is_some_and(|close| close.starts_with(open)) {
-                fence = None;
-            }
-            continue;
-        }
-        if let Some(open) = fence_delimiter(line) {
-            fence = Some(open);
+        if !fences.is_structural(line) {
             continue;
         }
         if CONFLICT_MARKERS
@@ -373,8 +364,51 @@ pub fn first_conflict_marker(contents: &str) -> Option<usize> {
     None
 }
 
+/// Tracks, line by line, whether a month file is inside a fenced code block.
+///
+/// Everything this crate parses out of a month file — conflict markers, entry
+/// headings, section headings — is structure only outside a fence. Inside one
+/// it is an example, and the entry documenting this very format is the obvious
+/// case. `check` reading a quoted `## 2026-04-17 - Title` as a real entry would
+/// report problems nobody can fix without editing the prose, and `fix` would
+/// then write a backfilled section into the middle of the code block.
+///
+/// One scanner, shared by every reader, is what keeps them agreeing about what
+/// an entry is.
+#[derive(Debug, Default)]
+pub struct FenceScanner<'a> {
+    open: Option<&'a str>,
+}
+
+impl<'a> FenceScanner<'a> {
+    /// Advance over `line` and report whether it carries structure.
+    ///
+    /// A line that opens or closes a fence, and every line between them, does
+    /// not.
+    pub fn is_structural(&mut self, line: &'a str) -> bool {
+        if let Some(open) = self.open {
+            // A fence closes on a run of the same character at least as long as
+            // the one that opened it, per CommonMark.
+            if fence_delimiter(line).is_some_and(|close| close.starts_with(open)) {
+                self.open = None;
+            }
+            return false;
+        }
+        if let Some(open) = fence_delimiter(line) {
+            self.open = Some(open);
+            return false;
+        }
+        true
+    }
+}
+
 /// The leading run of backticks or tildes when `line` opens or closes a fence.
-fn fence_delimiter(line: &str) -> Option<&str> {
+///
+/// Public because `fix` rewrites lines in place and must not rewrite one that
+/// a fence has turned into an example — an entry documenting this very format
+/// is the obvious case, and the conflict scan above already excludes it for
+/// the same reason.
+pub fn fence_delimiter(line: &str) -> Option<&str> {
     let trimmed = line.trim_start();
     for character in ['`', '~'] {
         let run = trimmed.split(|c| c != character).next().unwrap_or_default();
