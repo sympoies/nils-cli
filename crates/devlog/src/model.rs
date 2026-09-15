@@ -128,6 +128,17 @@ impl Devlog {
                 source,
             })?;
             let path = entry.path();
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                unexpected.push(path);
+                continue;
+            };
+            // The index is the index whatever it is made of, and this scan is
+            // about month files. Testing its file type here reported a
+            // symlinked index as an unexpected file and failed `check` on a
+            // repository that had always passed.
+            if name == "README.md" {
+                continue;
+            }
             // A symlink is not a month file this log owns, even when it points
             // at one. `is_file` follows the link, which was harmless while
             // every caller only read; `fix` writes, and writing through a
@@ -143,13 +154,6 @@ impl Devlog {
                 if !file_type.is_dir() {
                     unexpected.push(path);
                 }
-                continue;
-            }
-            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-                unexpected.push(path);
-                continue;
-            };
-            if name == "README.md" {
                 continue;
             }
             match name.strip_suffix(".md").map(str::parse::<Month>) {
@@ -428,6 +432,31 @@ pub fn structural_line_mask<'a>(lines: impl IntoIterator<Item = &'a str>) -> Vec
     }
 
     structural
+}
+
+/// Whether a fence in `lines` is opened and never closed.
+///
+/// Everything from such a fence to the end of the file is treated as an
+/// example, which means there is no way to know where the content it hides
+/// ends. A caller that wants to *write* into those lines has to stop: see
+/// `fix`, where inserting into a region the mask has already swallowed made
+/// the insertion invisible to the next pass and the repair loop endless.
+pub fn has_unterminated_fence<'a>(lines: impl IntoIterator<Item = &'a str>) -> bool {
+    let lines: Vec<&str> = lines.into_iter().collect();
+    let mut at = 0usize;
+    while at < lines.len() {
+        let Some(open) = fence_delimiter(lines[at]) else {
+            at += 1;
+            continue;
+        };
+        match (at + 1..lines.len()).find(|index| {
+            fence_delimiter(lines[*index]).is_some_and(|close| close.starts_with(open))
+        }) {
+            Some(end) => at = end + 1,
+            None => return true,
+        }
+    }
+    false
 }
 
 /// The leading run of backticks or tildes when `line` opens or closes a fence.

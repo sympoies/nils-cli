@@ -1618,3 +1618,120 @@ fn fix_does_not_write_through_a_symlinked_month_file() {
     );
     assert!(output.stdout_text().contains("unexpected-file"));
 }
+
+#[test]
+fn fix_terminates_on_an_entry_whose_fence_is_never_closed() {
+    // Everything from an unterminated fence to end of file is an example, so
+    // there is nowhere in it a section may be placed. Inserting one anyway put
+    // it where the next pass could not see it, and the repair loop made it
+    // again until memory ran out.
+    let fixture = Fixture::new("docs/devlog");
+    let unterminated = "# Development log - 2026-01\n\n## 2026-01-02 - Something\n\n### Why / context\n\n- because\n\n```text\nan example fence that was never closed\n";
+    std::fs::write(fixture.devlog_path("docs/devlog/2026-01.md"), unterminated)
+        .expect("write a month whose fence is never closed");
+
+    // Spawned with a deadline rather than run through the shared helper: the
+    // failure this guards against is non-termination, and a test that waits
+    // forever for it reports nothing and stalls the job it runs in.
+    let binary = bin::resolve("devlog");
+    let mut child = Command::new(&binary)
+        .arg("fix")
+        .current_dir(&fixture.root)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn devlog fix");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let status = loop {
+        match child.try_wait().expect("poll devlog fix") {
+            Some(status) => break status,
+            None if std::time::Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("devlog fix did not terminate within 30s");
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(25)),
+        }
+    };
+
+    assert_eq!(status.code(), Some(65), "status={status:?}");
+    assert_eq!(fixture.read("docs/devlog/2026-01.md"), unterminated);
+    let mut stdout = String::new();
+    std::io::Read::read_to_string(
+        &mut child.stdout.take().expect("captured stdout"),
+        &mut stdout,
+    )
+    .expect("read devlog fix stdout");
+    assert!(stdout.contains("missing-section"), "stdout={stdout}");
+}
+
+#[test]
+fn fix_leaves_a_month_file_with_mixed_line_endings_alone() {
+    // Rebuilding drops each carriage return, so one ending has to be chosen for
+    // the whole file — and choosing rewrites every line that used the other.
+    // Which ending a mixed file meant is not knowable, so it is left as it is.
+    let fixture = Fixture::new("docs/devlog");
+    let mixed = HAND_WRITTEN_MONTH.replacen("- Did a thing.\n", "- Did a thing.\r\n", 1);
+    std::fs::write(fixture.devlog_path("docs/devlog/2026-04.md"), &mixed)
+        .expect("write a month with mixed line endings");
+
+    let output = run_in(&fixture.root, &["--format", "json", "fix"]);
+    assert_eq!(output.code, 65, "stdout={}", output.stdout_text());
+    assert_eq!(fixture.read("docs/devlog/2026-04.md"), mixed);
+    let payload = output.stdout_json();
+    assert_eq!(payload["error"]["details"]["files_changed"], 0);
+    assert_eq!(payload["error"]["details"]["repairs"]["section_labels"], 0);
+}
+
+#[test]
+fn fix_promotes_a_label_only_where_it_stands_in_for_a_section() {
+    // A label before the first entry belongs to no entry, and a second one
+    // inside an entry that already has the heading would make a duplicate
+    // heading — which the lint reports and cannot fix, so promoting it would
+    // repair one violation by introducing a worse one.
+    let fixture = Fixture::new("docs/devlog");
+    std::fs::write(
+        fixture.devlog_path("docs/devlog/2026-04.md"),
+        "# Development log - 2026-04\n\n**Result**\n\n## 2026-04-17 - Entry\n\n### Result\n\n- Did a thing.\n\n**Result**\n\n- A second one, later.\n\n### Why / context\n\n- Because.\n\n### Evidence\n\n- Ran it.\n",
+    )
+    .expect("write a month with a preamble label and a duplicate");
+
+    let output = run_in(&fixture.root, &["--format", "json", "fix"]);
+    assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
+    assert_eq!(output.stdout_json()["data"]["repairs"]["section_labels"], 0);
+
+    let contents = fixture.read("docs/devlog/2026-04.md");
+    assert_eq!(contents.matches("### Result").count(), 1, "{contents}");
+    assert_eq!(contents.matches("**Result**").count(), 2, "{contents}");
+}
+
+#[test]
+fn fix_does_not_write_through_a_symlinked_index() {
+    // The same rule as a symlinked month file, applied to the index. It is also
+    // the case where testing the file type in the month scan wrongly reported
+    // the index as an unexpected file.
+    let fixture = Fixture::new("docs/devlog");
+    let outside = fixture.devlog_path("outside-index.md");
+    let before = "# Development log\n\nConventions live here.\n";
+    std::fs::write(&outside, before).expect("write the link target");
+    std::fs::remove_file(fixture.devlog_path("docs/devlog/README.md")).expect("remove the index");
+    std::os::unix::fs::symlink(&outside, fixture.devlog_path("docs/devlog/README.md"))
+        .expect("symlink the index");
+
+    let output = run_in(&fixture.root, &["--format", "json", "fix"]);
+    assert_eq!(
+        std::fs::read_to_string(&outside).expect("read the link target"),
+        before
+    );
+    assert_eq!(
+        output.stdout_json()["error"]["details"]["index_updated"],
+        false
+    );
+    // The index is the index whatever it is made of; it is not reported as an
+    // unexpected month file.
+    assert!(
+        !output.stdout_text().contains("unexpected-file"),
+        "stdout={}",
+        output.stdout_text()
+    );
+}

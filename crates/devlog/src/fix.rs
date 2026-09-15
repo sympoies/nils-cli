@@ -131,7 +131,17 @@ pub fn fix(devlog: &Devlog) -> Result<FixReport, DevlogError> {
     // rather than repairing structure, and whether a repository has a log is
     // its owner's decision rather than this command's. `check` reports the
     // absence, and it travels out in `remaining`.
-    let index_updated = if devlog.index_path().is_file() {
+    //
+    // A symlinked index is not written through, for the reason `months()`
+    // refuses a symlinked month file: the rewrite would land outside the log
+    // and the link would look untouched in review. `devlog index` still
+    // follows it, which is its own decision to make; this command rewrites
+    // everything at once and is the wrong place to discover that.
+    let index = devlog.index_path();
+    let index_is_a_regular_file = std::fs::symlink_metadata(&index)
+        .map(|metadata| metadata.file_type().is_file())
+        .unwrap_or(false);
+    let index_updated = if index_is_a_regular_file {
         index::sync(devlog)?.changed
     } else {
         false
@@ -159,34 +169,68 @@ fn structural(lines: &[String]) -> Vec<bool> {
 }
 
 /// Apply every repair to one month file's contents.
+///
+/// Returns the contents unchanged, and no repairs, when the file mixes line
+/// endings. Rebuilding from `lines()` drops each `\r`, so one ending has to be
+/// chosen for the whole file, and choosing rewrites every line that used the
+/// other one — a whole-file diff from a command reporting that it repaired
+/// nothing. Which ending a mixed file *meant* is not something this can know,
+/// so it is left alone and its problems are reported instead.
 fn repair_month(contents: &str, month: Month) -> (String, Repairs) {
+    let repairs = Repairs::default();
+    let crlf = contents.matches("\r\n").count();
+    let lf = contents.matches('\n').count() - crlf;
+    if crlf > 0 && lf > 0 {
+        return (contents.to_string(), repairs);
+    }
+    let newline = if crlf > 0 { "\r\n" } else { "\n" };
+
     let trailing_newline = contents.ends_with('\n');
-    // `lines()` drops a `\r`, so the file's own ending has to be carried
-    // separately and put back. Without that, `fix` rewrites every line of a
-    // CRLF file while reporting that it repaired nothing.
-    let newline = if contents.contains("\r\n") {
-        "\r\n"
-    } else {
-        "\n"
-    };
     let mut lines: Vec<String> = contents.lines().map(str::to_string).collect();
-    let mut repairs = Repairs::default();
+    let mut repairs = repairs;
 
     // A line inside a fenced block is an example, not structure. An entry
     // documenting this very format is the obvious case, and `check` excludes
     // fenced conflict markers for the same reason; rewriting a label or a
     // heading there would edit the example rather than the entry.
+    //
+    // A label is promoted only where it is standing in for a section: inside
+    // an entry, and only when that entry has no heading for it already. A
+    // label before the first entry belongs to no entry, and a second one
+    // inside an entry that already has the heading would make a duplicate
+    // heading — which the lint reports and cannot fix, so promoting it would
+    // repair one violation by introducing a worse one.
     let structural_lines = structural(&lines);
-    for (line, structural) in lines.iter_mut().zip(&structural_lines) {
-        if !structural {
+    let mut owner: Option<usize> = None;
+    let mut present: Vec<&'static str> = Vec::new();
+    for at in 0..lines.len() {
+        if !structural_lines[at] {
             continue;
         }
-        if let Some(label) = bold_section_label(line) {
-            *line = format!("### {label}");
-            repairs.section_labels += 1;
-        } else if let Some(repaired) = hyphenated_heading(line) {
-            *line = repaired;
+        // The separator repair runs before anything classifies the line. A
+        // `## 2026-04-17 — Title` is an entry heading either way, and deciding
+        // that first meant its dash was never repaired.
+        if let Some(repaired) = hyphenated_heading(&lines[at]) {
+            lines[at] = repaired;
             repairs.heading_separators += 1;
+        }
+
+        if lines[at].starts_with("## ") {
+            owner = Some(at);
+            present.clear();
+        } else if let Some(label) = lines[at]
+            .strip_prefix("### ")
+            .map(str::trim)
+            .and_then(|label| SECTIONS.into_iter().find(|section| *section == label))
+        {
+            present.push(label);
+        } else if let Some(label) = bold_section_label(&lines[at])
+            && owner.is_some()
+            && !present.contains(&label)
+        {
+            lines[at] = format!("### {label}");
+            present.push(label);
+            repairs.section_labels += 1;
         }
     }
 
@@ -396,7 +440,17 @@ fn backfill_entry(block: &mut Vec<String>) -> usize {
     // The positions are recomputed after each insertion. An entry carries at
     // most three of these and is a few dozen lines long, so tracking the
     // shifted indices by hand would trade clarity for nothing measurable.
-    while let Some((rank, at)) = first_missing_section(block) {
+    //
+    // The bound is not decoration. Recomputing means the loop ends when the
+    // inserted heading is *seen*, and an insertion that lands where the mask
+    // is not looking is never seen — which is how an entry ending in an
+    // unterminated fence turned this into an endless loop that exhausted
+    // memory. `first_missing_section` refuses that insertion now, and this
+    // bound is what makes termination a property of the loop rather than of
+    // that function staying correct.
+    while added < REQUIRED_SECTIONS.len()
+        && let Some((rank, at)) = first_missing_section(block)
+    {
         let mut insertion = vec![
             format!("### {}", SECTIONS[rank]),
             String::new(),
@@ -440,6 +494,14 @@ fn backfill_entry(block: &mut Vec<String>) -> usize {
 /// this function did, and it wrote a generated section into the middle of an
 /// author's code block.
 fn first_missing_section(block: &[String]) -> Option<(usize, usize)> {
+    // An entry with an unterminated fence has no knowable end: everything from
+    // that fence onward is an example, so there is nowhere in it a section may
+    // be placed. This is the same answer the unreadable-date case gives —
+    // leave it alone and let `check` report it — and refusing here is what
+    // stops the caller inserting a heading the next pass cannot see, forever.
+    if crate::model::has_unterminated_fence(block.iter().map(String::as_str)) {
+        return None;
+    }
     let structural_lines = structural(block);
     let present: Vec<(usize, usize)> = block
         .iter()

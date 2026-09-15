@@ -174,12 +174,21 @@ Everything else is reported and left exactly as it was, and `fix` exits 65 as
 date, a section outside the template, a date in the wrong month: each of those
 would have to be guessed at, and a log is the wrong place to guess.
 
-Three of the repairs above are careful about what they do not touch. Only the
-five template labels are promoted, and only when the bold span is the whole
-line, so prose the author emphasized stays prose. Only the separator position
-in a heading is rewritten, so a dash inside a title survives. And nothing
-inside a fenced code block is touched at all, because an entry documenting this
-format quotes both of those forms as examples.
+Four of the repairs above are careful about what they do not touch. Only the
+five template labels are promoted, only when the bold span is the whole line
+and starts at column zero, and only where the label stands in for a section —
+inside an entry, in an entry that has no heading for it already. Only the
+separator position in a heading is rewritten, so a dash inside a title
+survives. Nothing inside a fenced code block is touched at all, because an
+entry documenting this format quotes both of those forms as examples. And an
+entry whose fence is never closed is left entirely alone: there is no knowing
+where its content ends, so there is nowhere in it a section can be placed.
+
+A file that mixes line endings is left alone too. Rebuilding it drops each
+carriage return, so one ending has to be chosen for the whole file, and
+choosing rewrites every line that used the other — a whole-file diff from a
+command reporting that it repaired nothing. Which ending such a file meant is
+not something `fix` can know.
 
 Those rules are measured, not assumed. Across the 1385 entries in the
 organization's logs there are 3136 standalone bold lines: 3105 are one of the
