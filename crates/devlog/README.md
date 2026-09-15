@@ -16,10 +16,12 @@ The conventions are format-critical and previously had no owner:
 - the index drifts from the tracked month files with nothing to detect it;
 - entries insert newest-first under the month heading, which is positional;
 - section labels must be `###` headings, because `MD036` in this workspace's
-  Markdown lint baseline rejects bold labels.
+  Markdown lint baseline rejects bold labels;
+- a URL written bare fails `MD034` in that same baseline, so the entry cannot
+  be committed into the repository it describes.
 
-`devlog check` reports all four. `devlog new` produces entries that satisfy
-them by construction.
+`devlog check` reports the first four. `devlog new` produces entries that
+satisfy all five by construction.
 
 ## Commands
 
@@ -40,6 +42,10 @@ The log is detected under the repository root, in order:
 
 The second covers a repository with a source/render split, where the authored
 copy is not the rendered one. Pass `--dir <DIR>` to override detection.
+
+Paths are reported relative to the repository root. A `--dir` outside that root
+— checking another checkout's log — is reported as the absolute path it is, so
+what is printed can be pasted back into a command that reads it.
 
 ### Entry sections
 
@@ -66,7 +72,17 @@ devlog new \
 ```
 
 Each bullet flag repeats. `--date` defaults to today; `Follow-ups` is omitted
-when it has no bullets. The entry is inserted directly below the month heading
+when it has no bullets.
+
+A bare URL in any bullet is written as an autolink, so `--link
+https://github.com/sympoies/nils-cli/pull/1729` renders as
+`- <https://github.com/sympoies/nils-cli/pull/1729>`. That is what `MD034`
+requires and what `rumdl fmt` would have rewritten it to. A URL that is already
+an autolink, the target of an inline `[text](url)` link, or inside a code span
+is left exactly as written; a bare email address is left alone too, because
+recognizing an address is guesswork in a way that matching a scheme is not.
+
+The entry is inserted directly below the month heading
 and the index is refreshed in the same operation, because a month file nothing
 links to is a file nobody finds.
 

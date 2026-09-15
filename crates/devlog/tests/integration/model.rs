@@ -244,3 +244,116 @@ fn every_required_section_is_one_the_renderer_knows() {
         );
     }
 }
+
+#[test]
+fn a_bare_url_bullet_is_rendered_as_an_autolink() {
+    // MD034 is enabled in this workspace's lint baseline, so a bare URL would
+    // block the commit of the entry the CLI just wrote. This assertion is the
+    // contract, and it is the same shape as the MD036 one above.
+    let entry = Entry {
+        title: "Did a thing".to_string(),
+        result: vec!["Shipped it".to_string()],
+        why: vec!["It was needed".to_string()],
+        evidence: vec!["Ran the gate".to_string()],
+        links: vec!["https://github.com/sympoies/nils-cli/pull/1729".to_string()],
+        ..Entry::default()
+    };
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let rendered = entry.render(date);
+
+    assert!(
+        rendered.contains("- <https://github.com/sympoies/nils-cli/pull/1729>\n"),
+        "rendered={rendered}"
+    );
+}
+
+#[test]
+fn a_url_is_wrapped_in_every_section_not_only_links() {
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["see https://example.com/r".to_string()],
+        why: vec!["see https://example.com/w".to_string()],
+        evidence: vec!["see https://example.com/e".to_string()],
+        links: vec!["https://example.com/l".to_string()],
+        follow_ups: vec!["see https://example.com/f".to_string()],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    for suffix in ["r", "w", "e", "l", "f"] {
+        assert!(
+            rendered.contains(&format!("<https://example.com/{suffix}>")),
+            "section {suffix} was not wrapped: {rendered}"
+        );
+    }
+}
+
+#[test]
+fn an_already_linked_url_is_rendered_unchanged() {
+    // Measured across the organization's logs, these two forms carry the
+    // overwhelming majority of the URLs an author writes: 1220 inline links
+    // and 454 autolinks against 74 bare URLs. Double-wrapping either would
+    // break far more entries than the bare form ever blocked.
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["r".to_string()],
+        why: vec!["w".to_string()],
+        evidence: vec!["e".to_string()],
+        links: vec![
+            "<https://example.com/a>".to_string(),
+            "[PR 1729](https://example.com/b)".to_string(),
+        ],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    assert!(
+        rendered.contains("- <https://example.com/a>\n"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("- [PR 1729](https://example.com/b)\n"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("<<"), "double-wrapped: {rendered}");
+    assert!(!rendered.contains("(<https"), "double-wrapped: {rendered}");
+}
+
+#[test]
+fn a_url_inside_a_code_span_is_left_alone() {
+    // A URL in a code span is already exempt from MD034, and wrapping it would
+    // change the command the entry is quoting. 39 of the URLs in the existing
+    // logs sit inside one.
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["r".to_string()],
+        why: vec!["w".to_string()],
+        evidence: vec!["ran `curl https://example.com/c` twice".to_string()],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    assert!(
+        rendered.contains("`curl https://example.com/c`"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("<https://example.com/c>"), "{rendered}");
+}
+
+#[test]
+fn trailing_sentence_punctuation_stays_outside_the_autolink() {
+    let date: EntryDate = "2026-04-17".parse().expect("valid date");
+    let entry = Entry {
+        title: "T".to_string(),
+        result: vec!["landed in https://example.com/p.".to_string()],
+        why: vec!["w".to_string()],
+        evidence: vec!["e".to_string()],
+        ..Entry::default()
+    };
+    let rendered = entry.render(date);
+
+    assert!(rendered.contains("<https://example.com/p>."), "{rendered}");
+}

@@ -2,7 +2,7 @@
 //! structural rules `docs/devlog/README.md` states in prose.
 
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Directory names that hold a development log, in detection order.
 ///
@@ -67,13 +67,33 @@ impl Devlog {
     ///
     /// Output is identical on every platform so reported paths can be compared
     /// and pasted regardless of where the log was checked out.
+    ///
+    /// A path outside the repository root is returned unchanged apart from the
+    /// slash normalization. `--dir` pointing at another checkout's log is the
+    /// ordinary way to check a log this repository does not own, so that is a
+    /// supported route and what it prints has to stay pastable: joining the
+    /// components of an absolute path with `/` would render its root as a
+    /// second separator, and POSIX leaves a leading `//` implementation-defined.
     pub fn relative(&self, path: &Path) -> String {
-        path.strip_prefix(&self.repo_root)
-            .unwrap_or(path)
-            .components()
-            .map(|component| component.as_os_str().to_string_lossy().into_owned())
-            .collect::<Vec<_>>()
-            .join("/")
+        let path = path.strip_prefix(&self.repo_root).unwrap_or(path);
+        let mut rendered = String::new();
+        for component in path.components() {
+            match component {
+                // The root and a Windows prefix are the separator, so they are
+                // written as-is and never preceded by one.
+                Component::RootDir => rendered.push('/'),
+                Component::Prefix(prefix) => {
+                    rendered.push_str(&prefix.as_os_str().to_string_lossy());
+                }
+                component => {
+                    if !rendered.is_empty() && !rendered.ends_with('/') {
+                        rendered.push('/');
+                    }
+                    rendered.push_str(&component.as_os_str().to_string_lossy());
+                }
+            }
+        }
+        rendered
     }
 
     pub fn index_path(&self) -> PathBuf {
