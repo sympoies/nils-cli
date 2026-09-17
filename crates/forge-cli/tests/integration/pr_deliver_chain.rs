@@ -1294,6 +1294,95 @@ fn pr_deliver_zero_required_pending_visible_checks_time_out_before_merge() {
 }
 
 #[test]
+fn pr_deliver_gitlab_failed_checks_exit_nonzero_with_full_envelope() {
+    let tempdir = make_git_repo();
+    let repo_path = tempdir.path().join("repo");
+    git(
+        &repo_path,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "https://gitlab.com/group/project.git",
+        ],
+    );
+
+    let head = git_output(&repo_path, &["rev-parse", "HEAD"]);
+    for (job_status, expected_exit, expected_error, expected_state) in [
+        ("running", 69, "checks_timeout", "pending"),
+        ("failed", 1, "checks_failed", "failure"),
+    ] {
+        let script = format!(
+            r###"#!/bin/sh
+case "$1 $2" in
+  "auth status")
+    echo 'Logged in to gitlab.com as tester' >&2
+    ;;
+  "repo view")
+    echo '{{"namespace":{{"full_path":"group"}},"path":"project","web_url":"https://gitlab.com/group/project","default_branch":"main"}}'
+    ;;
+  "mr list")
+    echo '[{{"iid":42,"web_url":"https://gitlab.com/group/project/-/merge_requests/42","state":"opened","title":"feat: sample feature","source_branch":"feat/sample","target_branch":"main"}}]'
+    ;;
+  "mr view")
+    printf '%s\n' '{{"iid":42,"web_url":"https://gitlab.com/group/project/-/merge_requests/42","state":"opened","draft":true,"title":"feat: sample feature","source_branch":"feat/sample","target_branch":"main","sha":"{head}","description":"## Summary\n\nAdopted draft.\n\n## Test plan\n\nVerified.","head_pipeline":{{"id":99,"status":"{job_status}","web_url":"https://gitlab.com/group/project/-/pipelines/99"}}}}'
+    ;;
+  "api projects/group%2Fproject/pipelines/99/jobs?per_page=100")
+    echo '[{{"name":"lint:ruff","stage":"test","status":"{job_status}","allow_failure":false,"web_url":"https://gitlab.com/group/project/-/jobs/1"}}]'
+    ;;
+  *)
+    echo "unexpected glab args: $*" >&2
+    exit 99
+    ;;
+esac
+"###
+        );
+        let stub = StubEnv::new().glab_stub(&script);
+        let out = run_in_repo(
+            &stub,
+            &repo_path,
+            &[
+                "--provider",
+                "gitlab",
+                "--format",
+                "json",
+                "pr",
+                "deliver",
+                "--kind",
+                "feature",
+                "--title",
+                "feat: sample feature",
+                "--head",
+                "feat/sample",
+                "--base",
+                "main",
+                "--timeout",
+                "0s",
+                "--no-merge",
+            ],
+        );
+
+        assert_eq!(
+            out.code, expected_exit,
+            "stdout={}\nstderr={}",
+            out.stdout, out.stderr
+        );
+        let envelope = parse_envelope(&out.stdout);
+        assert_eq!(envelope["schema_version"], "cli.forge-cli.pr.deliver.v1");
+        assert_eq!(envelope["ok"], false);
+        assert_eq!(envelope["error"]["code"], expected_error);
+        assert_eq!(envelope["data"]["pr"]["number"], 42);
+        assert_eq!(envelope["data"]["pr"]["merged"], false);
+        assert_eq!(envelope["data"]["steps"][3]["step"], "wait_checks");
+        assert_eq!(envelope["data"]["steps"][3]["ok"], false);
+        assert_eq!(
+            envelope["data"]["steps"][3]["payload"]["state"],
+            expected_state
+        );
+    }
+}
+
+#[test]
 fn pr_deliver_zero_required_successful_visible_checks_use_all_check_fallback() {
     let tempdir = make_git_repo();
     let repo_path = tempdir.path().join("repo");
