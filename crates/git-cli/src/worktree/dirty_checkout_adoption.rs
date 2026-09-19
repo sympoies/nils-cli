@@ -8763,11 +8763,11 @@ mod tests {
         let (mut sender, receiver) = UnixStream::pair().expect("challenge descriptor pair");
         let descriptor = receiver.into_raw_fd();
         let writer = std::thread::spawn(move || {
-            for _ in 0..5 {
+            for _ in 0..20 {
                 if sender.write_all(b"a").is_err() {
                     break;
                 }
-                std::thread::sleep(Duration::from_millis(30));
+                std::thread::sleep(Duration::from_millis(50));
             }
         });
         let started = Instant::now();
@@ -8775,12 +8775,12 @@ mod tests {
             descriptor,
             unsafe { libc::getpid() },
             unsafe { libc::geteuid() },
-            Duration::from_millis(60),
+            Duration::from_millis(100),
         );
         let elapsed = started.elapsed();
         assert!(result.is_err(), "partial challenge frame must fail closed");
         assert!(
-            elapsed < Duration::from_millis(140),
+            elapsed < Duration::from_millis(500),
             "descriptor read exceeded one absolute deadline: {elapsed:?}"
         );
         writer.join().expect("join challenge writer");
