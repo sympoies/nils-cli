@@ -81,9 +81,12 @@ descriptor failure occurs before challenge lookup or consumption.
 On macOS, the parent creates an owner-only Unix listener, connects to it, and
 passes the accepted endpoint to the child. A `socketpair` endpoint does not
 preserve the required direct-parent identity across `exec` on that platform and
-is rejected by the same fail-closed credential check. The consumer obtains the
-peer's kernel audit token with `LOCAL_PEERTOKEN`, extracts its PID and effective
-UID through `libbsm`, and cross-checks the UID with `getpeereid`.
+is rejected by the same fail-closed credential check. The spawn operation must
+explicitly preserve the accepted non-stdio descriptor; on macOS, clearing
+`FD_CLOEXEC` alone is insufficient for spawn APIs that enable
+`POSIX_SPAWN_CLOEXEC_DEFAULT`. The consumer obtains the peer's kernel audit token
+with `LOCAL_PEERTOKEN`, extracts its PID and effective UID through `libbsm`, and
+cross-checks the UID with `getpeereid`.
 
 ## Receipt and Adoption Binding
 

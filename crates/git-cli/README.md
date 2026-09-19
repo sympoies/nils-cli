@@ -97,12 +97,13 @@ subcommands (matching the binary's `--help` output):
   peer is the direct parent process under the same effective user. Its peer writes exactly one
   64-byte lowercase-hex bearer and closes the write half; the raw bearer is rejected on argv and
   is never accepted through the environment. On macOS, create the stream through an owner-only
-  Unix listener and pass its accepted endpoint; a `socketpair` endpoint does not preserve the
-  required direct-parent identity across `exec` and is rejected. The reason must be a non-empty,
-  no-follow regular file of at most 2,000 bytes. The command recomputes the exact snapshot under
-  the shared lease lock, consumes the challenge once, rejects live foreign ownership, and writes
-  private receipt and lease-v2 state. Retained state contains digests, not the bearer token or
-  reason text. Options: `--format text|json`.
+  Unix listener and explicitly preserve its accepted endpoint in the child spawn; clearing
+  `FD_CLOEXEC` alone is insufficient for spawn APIs that enable `POSIX_SPAWN_CLOEXEC_DEFAULT`.
+  A `socketpair` endpoint does not preserve the required direct-parent identity across `exec` and
+  is rejected. The reason must be a non-empty, no-follow regular file of at most 2,000 bytes. The
+  command recomputes the exact snapshot under the shared lease lock, consumes the challenge once,
+  rejects live foreign ownership, and writes private receipt and lease-v2 state. Retained state
+  contains digests, not the bearer token or reason text. Options: `--format text|json`.
 - `revoke-dirty`: Revoke only the active adoption matching `--receipt <id>` without changing Git
   content. Revocation remains available when the adoption feature gate is disabled. Options:
   `--format text|json`.

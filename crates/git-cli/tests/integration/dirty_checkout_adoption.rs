@@ -21,6 +21,8 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::os::unix::net::UnixListener;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::os::unix::net::UnixStream;
+#[cfg(target_os = "macos")]
+use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -198,6 +200,15 @@ fn run_with_challenge_descriptor(
     );
     if options.stdin_null {
         command.stdin(Stdio::null());
+    }
+
+    #[cfg(target_os = "macos")]
+    // Rust uses posix_spawn with POSIX_SPAWN_CLOEXEC_DEFAULT on macOS when it
+    // can. A pre-exec hook selects fork/exec so this deliberately inheritable
+    // non-stdio descriptor reaches the child instead of being closed by the
+    // spawn implementation.
+    unsafe {
+        command.pre_exec(|| Ok(()));
     }
 
     let child = command.spawn().expect("spawn challenge descriptor command");
