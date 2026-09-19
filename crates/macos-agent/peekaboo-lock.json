@@ -93,7 +93,7 @@
               "team_id": "Y5PE65HELJ",
               "approved_at": "2026-07-15",
               "approval": "https://github.com/graysurf/agent-runtime-kit/issues/610#issuecomment-4984437753",
-              "reason": "Exact standalone CLI notarization exception retained only to authenticate an in-place upgrade to v4.2.2."
+              "reason": "Exact standalone CLI notarization exception retained only to authenticate an in-place upgrade to v4.4.0."
             }
           }
         },

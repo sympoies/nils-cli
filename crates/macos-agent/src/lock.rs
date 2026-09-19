@@ -20,6 +20,7 @@ const CLI_NOTARIZATION_WAIVER_TEAM_ID: &str = "Y5PE65HELJ";
 const CLI_NOTARIZATION_WAIVER_APPROVAL: &str =
     "https://github.com/graysurf/agent-runtime-kit/issues/610#issuecomment-4984437753";
 const CLI_NOTARIZATION_WAIVER_APPROVED_AT: &str = "2026-07-15";
+const CLI_NOTARIZATION_WAIVER_REASON: &str = "Exact standalone CLI notarization exception retained only to authenticate an in-place upgrade to v4.4.0.";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PeekabooLock {
@@ -353,7 +354,7 @@ fn validate_notarization(
                 && waiver.team_id == asset.team_id
                 && waiver.approved_at == CLI_NOTARIZATION_WAIVER_APPROVED_AT
                 && waiver.approval == CLI_NOTARIZATION_WAIVER_APPROVAL
-                && !waiver.reason.trim().is_empty() =>
+                && waiver.reason == CLI_NOTARIZATION_WAIVER_REASON =>
         {
             Ok(())
         }
@@ -406,7 +407,7 @@ fn lock_error(message: impl Into<String>) -> CliError {
 
 #[cfg(test)]
 mod tests {
-    use super::{NotarizationPolicy, PeekabooLock};
+    use super::{CLI_NOTARIZATION_WAIVER_REASON, NotarizationPolicy, PeekabooLock};
 
     #[test]
     fn embedded_lock_is_complete_and_immutable() {
@@ -441,6 +442,17 @@ mod tests {
 
     #[test]
     fn transition_only_cli_notarization_waiver_is_fail_closed() {
+        let lock = PeekabooLock::embedded().expect("embedded lock");
+        assert_eq!(
+            lock.upgrade_from_releases[0].assets[0]
+                .notarization
+                .waiver
+                .as_ref()
+                .expect("CLI waiver")
+                .reason,
+            CLI_NOTARIZATION_WAIVER_REASON
+        );
+
         let mut mismatched = PeekabooLock::embedded().expect("embedded lock");
         mismatched.upgrade_from_releases[0].assets[0]
             .notarization
