@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::io::Write;
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 #[cfg(target_os = "linux")]
 use std::os::unix::ffi::OsStringExt;
@@ -21,8 +21,6 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::os::unix::net::UnixListener;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::os::unix::net::UnixStream;
-#[cfg(target_os = "macos")]
-use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -161,25 +159,13 @@ fn run_with_challenge_descriptor(
     assert_secret_absent_while_live: bool,
 ) -> CmdOutput {
     let (mut sender, receiver) = challenge_descriptor_streams();
-    let descriptor = receiver.as_raw_fd();
-    let descriptor_flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
-    assert!(descriptor_flags >= 0, "read challenge descriptor flags");
-    assert!(
-        unsafe {
-            libc::fcntl(
-                descriptor,
-                libc::F_SETFD,
-                descriptor_flags & !libc::FD_CLOEXEC,
-            )
-        } >= 0,
-        "make challenge descriptor inheritable"
-    );
 
     let mut command = Command::new(bin);
     command
         .args(args)
         .arg("--challenge-fd")
-        .arg(descriptor.to_string())
+        .arg(libc::STDIN_FILENO.to_string())
+        .stdin(Stdio::from(OwnedFd::from(receiver)))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if let Some(cwd) = options.cwd.as_deref() {
@@ -198,21 +184,9 @@ fn run_with_challenge_descriptor(
         options.stdin.is_none(),
         "challenge fixture does not accept stdin"
     );
-    if options.stdin_null {
-        command.stdin(Stdio::null());
-    }
-
-    #[cfg(target_os = "macos")]
-    // Rust uses posix_spawn with POSIX_SPAWN_CLOEXEC_DEFAULT on macOS when it
-    // can. A pre-exec hook selects fork/exec so this deliberately inheritable
-    // non-stdio descriptor reaches the child instead of being closed by the
-    // spawn implementation.
-    unsafe {
-        command.pre_exec(|| Ok(()));
-    }
+    let _ = options.stdin_null;
 
     let child = command.spawn().expect("spawn challenge descriptor command");
-    drop(receiver);
     #[cfg(target_os = "linux")]
     if assert_secret_absent_while_live {
         let command_line =

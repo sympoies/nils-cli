@@ -5814,7 +5814,7 @@ impl Drop for LeaseLock {
     }
 }
 
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, IntoRawFd};
 
 fn unix_time() -> Result<u64> {
     Ok(SystemTime::now()
@@ -8376,7 +8376,7 @@ fn parse_challenge_descriptor(value: &str) -> std::result::Result<libc::c_int, C
     value
         .parse::<libc::c_int>()
         .ok()
-        .filter(|descriptor| *descriptor > libc::STDERR_FILENO)
+        .filter(|descriptor| *descriptor == libc::STDIN_FILENO || *descriptor > libc::STDERR_FILENO)
         .ok_or_else(|| {
             CliError::usage(
                 "invalid-challenge-fd",
@@ -8393,12 +8393,33 @@ fn challenge_descriptor_error() -> anyhow::Error {
 }
 
 fn read_challenge_descriptor(descriptor: libc::c_int) -> Result<String> {
-    read_challenge_descriptor_from_peer_until(
+    let challenge = read_challenge_descriptor_from_peer_until(
         descriptor,
         unsafe { libc::getppid() },
         unsafe { libc::geteuid() },
         CHALLENGE_DESCRIPTOR_TIMEOUT,
-    )
+    );
+    if descriptor == libc::STDIN_FILENO && !restore_standard_input() {
+        return Err(challenge_descriptor_error());
+    }
+    challenge
+}
+
+fn restore_standard_input() -> bool {
+    let null_descriptor = match File::open("/dev/null") {
+        Ok(file) => file.into_raw_fd(),
+        Err(_) => return false,
+    };
+    if null_descriptor != libc::STDIN_FILENO {
+        let duplicated = unsafe { libc::dup2(null_descriptor, libc::STDIN_FILENO) };
+        let _ = unsafe { libc::close(null_descriptor) };
+        if duplicated != libc::STDIN_FILENO {
+            return false;
+        }
+    }
+    let flags = unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_GETFD) };
+    flags >= 0
+        && unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } >= 0
 }
 
 #[cfg(test)]
@@ -8424,7 +8445,7 @@ fn read_challenge_descriptor_from_peer_until(
     use std::os::fd::FromRawFd;
     use std::os::unix::net::UnixStream;
 
-    if descriptor <= libc::STDERR_FILENO {
+    if descriptor < 0 || matches!(descriptor, libc::STDOUT_FILENO | libc::STDERR_FILENO) {
         return Err(challenge_descriptor_error());
     }
     let descriptor_flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
@@ -8858,6 +8879,21 @@ mod tests {
                 parse_adopt_args(&raw).is_err(),
                 "invalid descriptor argument must fail closed: {raw:?}"
             );
+        }
+    }
+
+    #[test]
+    fn challenge_descriptor_argument_accepts_stdin_or_a_non_stdio_descriptor() {
+        for descriptor in ["0", "3", "198"] {
+            let parsed = parse_adopt_args(&[
+                "--challenge-fd".to_string(),
+                descriptor.to_string(),
+                "--reason-file".to_string(),
+                "reason.txt".to_string(),
+            ])
+            .expect("parse descriptor argument")
+            .expect("adopt arguments");
+            assert_eq!(parsed.challenge_fd.to_string(), descriptor);
         }
     }
 
