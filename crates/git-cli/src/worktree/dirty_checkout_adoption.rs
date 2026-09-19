@@ -8546,42 +8546,11 @@ fn challenge_descriptor_peer_matches(
 
     #[cfg(target_os = "macos")]
     {
-        #[repr(C)]
-        #[derive(Clone, Copy)]
-        struct AuditToken {
-            values: [libc::c_uint; 8],
-        }
-
-        #[link(name = "bsm", kind = "dylib")]
-        unsafe extern "C" {
-            fn audit_token_to_pid(token: AuditToken) -> libc::pid_t;
-            fn audit_token_to_euid(token: AuditToken) -> libc::uid_t;
-        }
-
-        let mut peer_token = std::mem::MaybeUninit::<AuditToken>::zeroed();
-        let mut peer_token_length = std::mem::size_of::<AuditToken>() as libc::socklen_t;
-        let mut socket_peer_uid = 0;
-        let mut peer_gid = 0;
-        if unsafe {
-            libc::getsockopt(
-                descriptor,
-                libc::SOL_LOCAL,
-                libc::LOCAL_PEERTOKEN,
-                peer_token.as_mut_ptr().cast(),
-                &mut peer_token_length,
-            )
-        } != 0
-            || peer_token_length as usize != std::mem::size_of::<AuditToken>()
-            || unsafe { libc::getpeereid(descriptor, &mut socket_peer_uid, &mut peer_gid) } != 0
-        {
-            return false;
-        }
-        let peer_token = unsafe { peer_token.assume_init() };
-        let peer_pid = unsafe { audit_token_to_pid(peer_token) };
-        let peer_uid = unsafe { audit_token_to_euid(peer_token) };
-        peer_pid == expected_peer_pid
-            && peer_uid == expected_peer_uid
-            && socket_peer_uid == expected_peer_uid
+        macos_challenge_descriptor_peer_credentials(descriptor).is_some_and(|credentials| {
+            credentials.pid == expected_peer_pid
+                && credentials.effective_uid == expected_peer_uid
+                && credentials.socket_uid == expected_peer_uid
+        })
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -8589,6 +8558,56 @@ fn challenge_descriptor_peer_matches(
         let _ = (descriptor, expected_peer_pid, expected_peer_uid);
         false
     }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, PartialEq, Eq)]
+struct MacosChallengeDescriptorPeerCredentials {
+    pid: libc::pid_t,
+    effective_uid: libc::uid_t,
+    socket_uid: libc::uid_t,
+}
+
+#[cfg(target_os = "macos")]
+fn macos_challenge_descriptor_peer_credentials(
+    descriptor: libc::c_int,
+) -> Option<MacosChallengeDescriptorPeerCredentials> {
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct AuditToken {
+        values: [libc::c_uint; 8],
+    }
+
+    #[link(name = "bsm", kind = "dylib")]
+    unsafe extern "C" {
+        fn audit_token_to_pid(token: AuditToken) -> libc::pid_t;
+        fn audit_token_to_euid(token: AuditToken) -> libc::uid_t;
+    }
+
+    let mut peer_token = std::mem::MaybeUninit::<AuditToken>::zeroed();
+    let mut peer_token_length = std::mem::size_of::<AuditToken>() as libc::socklen_t;
+    let mut socket_peer_uid = 0;
+    let mut peer_gid = 0;
+    if unsafe {
+        libc::getsockopt(
+            descriptor,
+            libc::SOL_LOCAL,
+            libc::LOCAL_PEERTOKEN,
+            peer_token.as_mut_ptr().cast(),
+            &mut peer_token_length,
+        )
+    } != 0
+        || peer_token_length as usize != std::mem::size_of::<AuditToken>()
+        || unsafe { libc::getpeereid(descriptor, &mut socket_peer_uid, &mut peer_gid) } != 0
+    {
+        return None;
+    }
+    let peer_token = unsafe { peer_token.assume_init() };
+    Some(MacosChallengeDescriptorPeerCredentials {
+        pid: unsafe { audit_token_to_pid(peer_token) },
+        effective_uid: unsafe { audit_token_to_euid(peer_token) },
+        socket_uid: socket_peer_uid,
+    })
 }
 
 fn redact_adopt_parse_error(error: CliError) -> CliError {
@@ -8698,7 +8717,7 @@ fn resolve_state_root() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::fd::IntoRawFd;
+    use std::os::fd::{IntoRawFd, OwnedFd};
     #[cfg(target_os = "macos")]
     use std::os::unix::net::UnixListener;
     use std::os::unix::net::UnixStream;
@@ -8766,6 +8785,77 @@ mod tests {
             )
             .is_err(),
             "consumed descriptors must fail closed"
+        );
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn challenge_descriptor_authenticates_across_a_real_spawn_boundary() {
+        const CHILD_ENV: &str = "NILS_TEST_CHALLENGE_DESCRIPTOR_SPAWN_CHILD";
+        const CHALLENGE: &[u8] =
+            b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+        if env::var_os(CHILD_ENV).is_some() {
+            let descriptor = libc::STDIN_FILENO;
+            assert!(unsafe { libc::fcntl(descriptor, libc::F_GETFD) } >= 0);
+
+            #[cfg(target_os = "macos")]
+            {
+                let credentials = macos_challenge_descriptor_peer_credentials(descriptor)
+                    .expect("read spawned-parent credentials");
+                assert_eq!(credentials.pid, unsafe { libc::getppid() });
+                assert_eq!(credentials.effective_uid, unsafe { libc::geteuid() });
+                assert_eq!(credentials.socket_uid, unsafe { libc::geteuid() });
+            }
+
+            assert!(challenge_descriptor_peer_matches(
+                descriptor,
+                unsafe { libc::getppid() },
+                unsafe { libc::geteuid() },
+            ));
+            assert_eq!(
+                read_challenge_descriptor(descriptor).expect("read spawned challenge"),
+                std::str::from_utf8(CHALLENGE).expect("challenge UTF-8")
+            );
+            return;
+        }
+
+        let (mut sender, receiver) = challenge_descriptor_streams();
+        let mut command =
+            std::process::Command::new(env::current_exe().expect("current test binary"));
+        command
+            .arg("challenge_descriptor_authenticates_across_a_real_spawn_boundary")
+            .arg("--nocapture")
+            .env(CHILD_ENV, "1")
+            .stdin(std::process::Stdio::from(OwnedFd::from(receiver)))
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+
+        #[cfg(target_os = "macos")]
+        {
+            sender.write_all(CHALLENGE).expect("write challenge");
+            sender
+                .shutdown(std::net::Shutdown::Write)
+                .expect("seal challenge");
+        }
+
+        let child = command.spawn().expect("spawn descriptor child");
+
+        #[cfg(target_os = "linux")]
+        {
+            sender.write_all(CHALLENGE).expect("write challenge");
+            sender
+                .shutdown(std::net::Shutdown::Write)
+                .expect("seal challenge");
+        }
+
+        let output = child.wait_with_output().expect("wait for descriptor child");
+        drop(sender);
+        assert!(
+            output.status.success(),
+            "stdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
         );
     }
 

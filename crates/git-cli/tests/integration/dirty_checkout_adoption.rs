@@ -186,6 +186,16 @@ fn run_with_challenge_descriptor(
     );
     let _ = options.stdin_null;
 
+    #[cfg(target_os = "macos")]
+    {
+        sender
+            .write_all(challenge)
+            .expect("write challenge descriptor before spawn");
+        sender
+            .shutdown(std::net::Shutdown::Write)
+            .expect("seal challenge descriptor before spawn");
+    }
+
     let child = command.spawn().expect("spawn challenge descriptor command");
     #[cfg(target_os = "linux")]
     if assert_secret_absent_while_live {
@@ -208,18 +218,22 @@ fn run_with_challenge_descriptor(
     }
     #[cfg(target_os = "macos")]
     let _ = assert_secret_absent_while_live;
-    if let Err(error) = sender.write_all(challenge) {
-        assert_eq!(
-            error.kind(),
-            std::io::ErrorKind::BrokenPipe,
-            "write challenge descriptor"
-        );
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Err(error) = sender.write_all(challenge) {
+            assert_eq!(
+                error.kind(),
+                std::io::ErrorKind::BrokenPipe,
+                "write challenge descriptor"
+            );
+        }
+        sender
+            .shutdown(std::net::Shutdown::Write)
+            .expect("seal challenge descriptor");
     }
-    sender
-        .shutdown(std::net::Shutdown::Write)
-        .expect("seal challenge descriptor");
-    drop(sender);
     let output = child.wait_with_output().expect("wait for adoption command");
+    drop(sender);
     CmdOutput {
         code: output.status.code().unwrap_or(-1),
         stdout: output.stdout,

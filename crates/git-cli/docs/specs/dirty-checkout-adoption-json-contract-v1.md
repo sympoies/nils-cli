@@ -84,14 +84,17 @@ transport uses descriptor `0`, the consumer replaces the consumed socket with
 nor a closed standard input propagates beyond the authorization boundary.
 
 On macOS, the parent creates an owner-only Unix listener, connects to it, and
-maps the accepted endpoint to child stdin, and passes `--challenge-fd 0`. This
-uses the spawn API's explicit standard-I/O file action instead of relying on an
-arbitrary descriptor surviving `POSIX_SPAWN_CLOEXEC_DEFAULT`. A `socketpair`
-endpoint does not preserve the required direct-parent identity across `exec` on
-that platform and is rejected by the same fail-closed credential check. The
-consumer obtains the peer's kernel audit token with `LOCAL_PEERTOKEN`, extracts
-its PID and effective UID through `libbsm`, and cross-checks the UID with
-`getpeereid`.
+writes and half-closes the sender before spawning, retains that endpoint until
+the child finishes authentication, maps the accepted endpoint to child stdin,
+and passes `--challenge-fd 0`. The pre-spawn write binds macOS's mutable peer
+owner identity to the actual parent before the child requests
+`LOCAL_PEERTOKEN`. The stdin mapping uses the spawn API's explicit standard-I/O
+file action instead of relying on an arbitrary descriptor surviving
+`POSIX_SPAWN_CLOEXEC_DEFAULT`. A `socketpair` endpoint does not preserve the
+required direct-parent identity across `exec` on that platform and is rejected
+by the same fail-closed credential check. The consumer obtains the peer's
+kernel audit token with `LOCAL_PEERTOKEN`, extracts its PID and effective UID
+through `libbsm`, and cross-checks the UID with `getpeereid`.
 
 ## Receipt and Adoption Binding
 
