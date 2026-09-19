@@ -8525,22 +8525,42 @@ fn challenge_descriptor_peer_matches(
 
     #[cfg(target_os = "macos")]
     {
-        let mut peer_pid = 0;
-        let mut peer_pid_length = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
-        let mut peer_uid = 0;
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        struct AuditToken {
+            values: [libc::c_uint; 8],
+        }
+
+        #[link(name = "bsm", kind = "dylib")]
+        unsafe extern "C" {
+            fn audit_token_to_pid(token: AuditToken) -> libc::pid_t;
+            fn audit_token_to_euid(token: AuditToken) -> libc::uid_t;
+        }
+
+        let mut peer_token = std::mem::MaybeUninit::<AuditToken>::zeroed();
+        let mut peer_token_length = std::mem::size_of::<AuditToken>() as libc::socklen_t;
+        let mut socket_peer_uid = 0;
         let mut peer_gid = 0;
-        let peer_identity_matches = unsafe {
+        if unsafe {
             libc::getsockopt(
                 descriptor,
                 libc::SOL_LOCAL,
-                libc::LOCAL_PEERPID,
-                (&mut peer_pid as *mut libc::pid_t).cast(),
-                &mut peer_pid_length,
-            ) == 0
-                && peer_pid_length as usize == std::mem::size_of::<libc::pid_t>()
-                && libc::getpeereid(descriptor, &mut peer_uid, &mut peer_gid) == 0
-        };
-        peer_identity_matches && peer_pid == expected_peer_pid && peer_uid == expected_peer_uid
+                libc::LOCAL_PEERTOKEN,
+                peer_token.as_mut_ptr().cast(),
+                &mut peer_token_length,
+            )
+        } != 0
+            || peer_token_length as usize != std::mem::size_of::<AuditToken>()
+            || unsafe { libc::getpeereid(descriptor, &mut socket_peer_uid, &mut peer_gid) } != 0
+        {
+            return false;
+        }
+        let peer_token = unsafe { peer_token.assume_init() };
+        let peer_pid = unsafe { audit_token_to_pid(peer_token) };
+        let peer_uid = unsafe { audit_token_to_euid(peer_token) };
+        peer_pid == expected_peer_pid
+            && peer_uid == expected_peer_uid
+            && socket_peer_uid == expected_peer_uid
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
