@@ -34,7 +34,7 @@ archive, architecture, signature, and Gatekeeper commands use fixed macOS
 system paths rather than caller-controlled `PATH` lookup. App Gatekeeper/notary
 assessment is mandatory during both install and execution verification;
 `--strict` additionally assesses standalone CLI notarization. The current
-v4.2.2 CLI and app both require notarization and report
+v4.4.0 CLI and app both require notarization and report
 `security_posture=full`.
 Timeout or signal termination always fails closed. There is no runtime bypass
 flag. Lifecycle responses from install,
@@ -44,11 +44,11 @@ undifferentiated `verified=true` result. It atomically owns one stable app path.
 Rollback is permitted only
 when the exact prior tag, commit, assets, and executable digests are retained in
 the embedded `rollback_releases` allowlist; mutable receipts are never a trust
-root. The v4.2.2 lock intentionally authorizes no rollback release because the
-v3 command and capability surface cannot satisfy the v4 adapter contract. The
-exact v3.9.3 tuple is retained separately in `upgrade_from_releases` only to
-authenticate and retire an existing installation during an in-place upgrade;
-it can never become active again through rollback. A shared verified-backend
+root. The v4.4.0 lock intentionally authorizes no rollback release. The exact
+v4.2.2 tuple is retained in `upgrade_from_releases` only to authenticate and
+retire the supported in-place predecessor, while the exact v3.9.3 tuple remains
+available for older transition recovery. Neither transition-only release can
+become active again through rollback. A shared verified-backend
 lease, including the digest recorded in the
 journal, is held for the full lifetime of every execution. Install and rollback
 take the exclusive lifecycle lock, so verified code cannot be swapped between

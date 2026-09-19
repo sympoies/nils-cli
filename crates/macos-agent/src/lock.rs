@@ -411,10 +411,10 @@ mod tests {
     #[test]
     fn embedded_lock_is_complete_and_immutable() {
         let lock = PeekabooLock::embedded().expect("embedded lock");
-        assert_eq!(lock.tag, "v4.2.2");
+        assert_eq!(lock.tag, "v4.4.0");
         assert_eq!(lock.assets.len(), 2);
         assert_eq!(lock.cli_asset().architectures, ["arm64", "x86_64"]);
-        assert_eq!(lock.cli_asset().bridge_build, "4.2.2 (4.2.2)");
+        assert_eq!(lock.cli_asset().bridge_build, "4.4.0 (4.4.0)");
         assert_eq!(
             lock.cli_asset().notarization.policy,
             NotarizationPolicy::Required
@@ -423,12 +423,16 @@ mod tests {
             lock.app_asset().notarization.policy,
             NotarizationPolicy::Required
         );
-        assert_eq!(lock.app_asset().bridge_build, "4.2.2 (4020299)");
+        assert_eq!(lock.app_asset().bridge_build, "4.4.0 (4040099)");
         assert_eq!(
             lock.app_asset().bundle_id.as_deref(),
             Some("boo.peekaboo.mac")
         );
         assert!(lock.rollback_releases.is_empty());
+        assert!(
+            lock.upgrade_from_release("v4.2.2", "05675b0b5e2c382146963e19493787d9dac0d45b")
+                .is_some()
+        );
         assert!(
             lock.upgrade_from_release("v3.9.3", "3cfd612adbcb1b43e8431a7a1f3b02ec45d01269")
                 .is_some()
