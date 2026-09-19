@@ -742,8 +742,12 @@ pane name alone. Recovery first persists a non-ready `recovering` state; the
 sidecar may heartbeat while fenced, but readiness, operation reconciliation,
 and the idempotency receipt become visible only in one final registry commit.
 Runtime uncertainty moves the broker to `degraded` without releasing claims or
-operations; only positive stopped-runtime evidence may revoke them. Natural
-target exit immediately removes its
+operations; only positive stopped-runtime evidence may revoke them. On Linux,
+that evidence includes a valid persisted PID-namespace identity whose
+boot ID differs from the current boot: processes from that namespace cannot
+survive the reboot. A missing namespace identity or a same-boot namespace
+mismatch remains unverified and fails closed.
+Natural target exit immediately removes its
 incarnation-specific capability; a replacement uses a different path, so a
 stale runtime can never read the new credential. Delete also releases terminal
 coordination state before session removal is reported complete.

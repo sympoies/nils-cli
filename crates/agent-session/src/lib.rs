@@ -13831,6 +13831,11 @@ impl TmuxRuntimeIdentity {
                         .is_none_or(valid_linux_boot_id)
                     && valid_tmux_spawn_control_group_path(Path::new(&control_group.path))
             })
+            && self.pid_namespace.as_ref().is_none_or(|pid_namespace| {
+                pid_namespace.device > 0
+                    && pid_namespace.inode > 0
+                    && valid_linux_boot_id(&pid_namespace.boot_id)
+            })
             && self.cgroup_mount.as_ref().is_none_or(|mount| {
                 mount.namespace_device > 0
                     && mount.namespace_inode > 0
@@ -14751,6 +14756,10 @@ fn process_group_status(process_group_id: libc::pid_t) -> ProcessGroupStatus {
 
 #[cfg(target_os = "linux")]
 fn coordination_process_runtime_status(identity: &TmuxRuntimeIdentity) -> ProcessGroupStatus {
+    let pid_namespace_relation = linux_runtime_pid_namespace_relation(identity);
+    if pid_namespace_relation == LinuxPidNamespaceRelation::PriorBoot {
+        return ProcessGroupStatus::Stopped;
+    }
     let mut evidence = Vec::with_capacity(3);
     if let Some(control_group) = identity.control_group.as_ref() {
         let status = linux_control_group_runtime_status(identity, control_group);
@@ -14774,7 +14783,9 @@ fn coordination_process_runtime_status(identity: &TmuxRuntimeIdentity) -> Proces
         evidence.push(status);
     }
     let status = combine_runtime_status_evidence(&evidence);
-    if status == ProcessGroupStatus::Stopped && !linux_runtime_pid_namespace_matches(identity) {
+    if status == ProcessGroupStatus::Stopped
+        && pid_namespace_relation != LinuxPidNamespaceRelation::Same
+    {
         ProcessGroupStatus::Unknown
     } else {
         status
@@ -14812,15 +14823,36 @@ fn combine_runtime_status_evidence(evidence: &[ProcessGroupStatus]) -> ProcessGr
 }
 
 #[cfg(target_os = "linux")]
-fn linux_runtime_pid_namespace_matches(identity: &TmuxRuntimeIdentity) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LinuxPidNamespaceRelation {
+    Same,
+    PriorBoot,
+    Unverified,
+}
+
+#[cfg(target_os = "linux")]
+fn linux_runtime_pid_namespace_relation(
+    identity: &TmuxRuntimeIdentity,
+) -> LinuxPidNamespaceRelation {
     let Some(expected) = identity.pid_namespace.as_ref() else {
-        return false;
+        return LinuxPidNamespaceRelation::Unverified;
     };
-    if linux_boot_id().ok().as_deref() != Some(expected.boot_id.as_str()) {
-        return false;
+    if expected.device == 0 || expected.inode == 0 || !valid_linux_boot_id(&expected.boot_id) {
+        return LinuxPidNamespaceRelation::Unverified;
     }
-    fs::metadata("/proc/self/ns/pid")
+    let Ok(current_boot_id) = linux_boot_id() else {
+        return LinuxPidNamespaceRelation::Unverified;
+    };
+    if current_boot_id != expected.boot_id {
+        return LinuxPidNamespaceRelation::PriorBoot;
+    }
+    if fs::metadata("/proc/self/ns/pid")
         .is_ok_and(|metadata| metadata.dev() == expected.device && metadata.ino() == expected.inode)
+    {
+        LinuxPidNamespaceRelation::Same
+    } else {
+        LinuxPidNamespaceRelation::Unverified
+    }
 }
 
 fn process_runtime_status(identity: &TmuxRuntimeIdentity) -> ProcessGroupStatus {
@@ -20718,6 +20750,69 @@ exit 0
             super::ProcessGroupStatus::Unknown,
             "mismatched PID namespace provenance must fail closed"
         );
+
+        let prior_boot_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        assert_ne!(super::linux_boot_id().unwrap(), prior_boot_id);
+        identity
+            .pid_namespace
+            .as_mut()
+            .expect("PID namespace")
+            .boot_id = prior_boot_id.to_string();
+        assert_eq!(
+            super::coordination_process_runtime_status(&identity),
+            super::ProcessGroupStatus::Stopped,
+            "a valid namespace identity from a prior boot proves the old runtime is stopped"
+        );
+
+        let valid_prior_boot_namespace = identity
+            .pid_namespace
+            .clone()
+            .expect("valid prior-boot PID namespace");
+        let invalid_prior_boot_namespaces = [
+            (
+                "empty boot ID",
+                super::TmuxPidNamespaceIdentity {
+                    boot_id: String::new(),
+                    ..valid_prior_boot_namespace.clone()
+                },
+            ),
+            (
+                "noncanonical boot ID",
+                super::TmuxPidNamespaceIdentity {
+                    boot_id: prior_boot_id.to_uppercase(),
+                    ..valid_prior_boot_namespace.clone()
+                },
+            ),
+            (
+                "zero namespace device",
+                super::TmuxPidNamespaceIdentity {
+                    device: 0,
+                    ..valid_prior_boot_namespace.clone()
+                },
+            ),
+            (
+                "zero namespace inode",
+                super::TmuxPidNamespaceIdentity {
+                    inode: 0,
+                    ..valid_prior_boot_namespace.clone()
+                },
+            ),
+        ];
+        for (case, namespace) in invalid_prior_boot_namespaces {
+            identity.pid_namespace = Some(namespace);
+            assert_eq!(
+                super::coordination_process_runtime_status(&identity),
+                super::ProcessGroupStatus::Unknown,
+                "{case} must not prove the prior runtime stopped"
+            );
+            identity.process_group_id = Some(unsafe { libc::getpgrp() });
+            assert_eq!(
+                super::coordination_process_runtime_status(&identity),
+                super::ProcessGroupStatus::Running,
+                "{case} must not bypass positive live process evidence"
+            );
+            identity.process_group_id = Some(libc::pid_t::MAX);
+        }
     }
 
     #[cfg(target_os = "linux")]
