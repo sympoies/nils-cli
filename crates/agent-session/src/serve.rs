@@ -18897,6 +18897,81 @@ esac
         assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
+    #[tokio::test]
+    async fn http_session_routes_reject_encoded_path_traversal_before_state_access() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let outside = tmp.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        let sentinel = outside.join("sentinel");
+        fs::write(&sentinel, "preserve").unwrap();
+        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        let encoded_id = "%2E%2E%2Foutside";
+
+        let requests = [
+            get_auth(&format!("/sessions/{encoded_id}/buffer"), Some(TOKEN)),
+            post_json(
+                &format!("/sessions/{encoded_id}/prompt"),
+                Some(TOKEN),
+                json!({ "text": "ignored" }),
+            ),
+            post_json(
+                &format!("/sessions/{encoded_id}/resume"),
+                Some(TOKEN),
+                json!({}),
+            ),
+            patch_json(
+                &format!("/sessions/{encoded_id}"),
+                Some(TOKEN),
+                json!({ "title": "ignored" }),
+            ),
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/sessions/{encoded_id}"))
+                .header(AUTHORIZATION, format!("Bearer {TOKEN}"))
+                .body(Body::empty())
+                .unwrap(),
+        ];
+
+        for request in requests {
+            let (status, body) = call(router(st.clone()), request).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "body={body}");
+            assert_eq!(body["error"]["code"], "invalid-session-id");
+        }
+        assert_eq!(fs::read_to_string(sentinel).unwrap(), "preserve");
+    }
+
+    #[tokio::test]
+    async fn http_create_keeps_shell_metacharacters_in_literal_agent_argv() {
+        let lock = GlobalStateLock::new();
+        let _without_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        fs::create_dir_all(&cwd).unwrap();
+        let injected = tmp.path().join("must-not-exist");
+        let literal_arg = format!("fixture; $(touch {})", injected.display());
+        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(
+                "/sessions",
+                Some(TOKEN),
+                json!({
+                    "agent": "codex",
+                    "id": "literal-agent-argv",
+                    "cwd": cwd,
+                    "agent_args": ["--model", literal_arg]
+                }),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert!(!injected.exists(), "agent argv was interpreted by a shell");
+        let record = load_session_record(&st.context, "literal-agent-argv").unwrap();
+        assert_eq!(record.agent_args, ["--model", literal_arg.as_str()]);
+    }
+
     #[test]
     fn default_codex_launch_resolves_and_records_the_current_account() {
         let lock = GlobalStateLock::new();
