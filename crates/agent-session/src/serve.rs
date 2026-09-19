@@ -18908,7 +18908,7 @@ esac
         let encoded_id = "%2E%2E%2Foutside";
 
         let requests = [
-            get(&format!("/sessions/{encoded_id}/buffer")),
+            get_auth(&format!("/sessions/{encoded_id}/buffer"), Some(TOKEN)),
             post_json(
                 &format!("/sessions/{encoded_id}/prompt"),
                 Some(TOKEN),
