@@ -109,6 +109,9 @@ devlog search forge-cli --month 2026-05
 
 Matching is literal and case-insensitive; the terms people look up are crate
 names, flags, and error codes, which regex metacharacters would mangle.
+Search remains usable while a month file has an unresolved merge conflict, but
+prints a note naming the file and first marker line because matches can come
+from both sides. JSON mode carries the same note in the envelope's `warnings`.
 
 ### `devlog check`
 
