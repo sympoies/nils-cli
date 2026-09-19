@@ -394,9 +394,9 @@ fn build_worktree_group() -> Command {
             Command::new("adopt-dirty")
                 .about("Adopt one challenged dirty checkout snapshot")
                 .arg(
-                    Arg::new("challenge")
-                        .long("challenge")
-                        .value_name("token")
+                    Arg::new("challenge-fd")
+                        .long("challenge-fd")
+                        .value_name("fd")
                         .num_args(1)
                         .required(true),
                 )
@@ -693,7 +693,7 @@ mod tests {
             .expect("worktree group present");
         for (command_name, expected_ids) in [
             ("dirty-snapshot", vec!["format"]),
-            ("adopt-dirty", vec!["challenge", "reason-file", "format"]),
+            ("adopt-dirty", vec!["challenge-fd", "reason-file", "format"]),
             ("revoke-dirty", vec!["receipt", "format"]),
         ] {
             let command = worktree
@@ -716,12 +716,12 @@ mod tests {
         let adopt = worktree
             .find_subcommand("adopt-dirty")
             .expect("adopt-dirty command");
-        let challenge = adopt
+        let challenge_fd = adopt
             .get_arguments()
-            .find(|argument| argument.get_id() == "challenge")
-            .expect("challenge argument");
-        assert_eq!(challenge.get_long(), Some("challenge"));
-        assert_single_value_argument(challenge, true, ValueHint::Unknown, &[]);
+            .find(|argument| argument.get_id() == "challenge-fd")
+            .expect("challenge descriptor argument");
+        assert_eq!(challenge_fd.get_long(), Some("challenge-fd"));
+        assert_single_value_argument(challenge_fd, true, ValueHint::Unknown, &[]);
         let reason_file = adopt
             .get_arguments()
             .find(|argument| argument.get_id() == "reason-file")

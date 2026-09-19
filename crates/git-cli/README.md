@@ -92,12 +92,20 @@ subcommands (matching the binary's `--help` output):
   special filesystem objects, and resource-limit overflow fail closed. Options: `--format
   text|json`.
 - `adopt-dirty`: Exchange one unexpired runtime-issued challenge for an opaque adoption receipt.
-  Requires `AGENT_RUNTIME_DIRTY_CHECKOUT_ADOPTION=1` plus `--challenge <token>` and
-  `--reason-file <path>`. The reason must be a non-empty, no-follow regular file of at most 2,000
-  bytes. The command recomputes the exact snapshot under the shared lease lock, consumes the
-  challenge once, rejects live foreign ownership, and writes private receipt and lease-v2 state.
-  Retained state contains digests, not the bearer token or reason text. Options: `--format
-  text|json`.
+  Requires `AGENT_RUNTIME_DIRTY_CHECKOUT_ADOPTION=1`, `--challenge-fd <fd>`, and
+  `--reason-file <path>`. The descriptor must be an inherited connected Unix stream socket whose
+  peer is the direct parent process under the same effective user. Its peer writes exactly one
+  64-byte lowercase-hex bearer and closes the write half; the raw bearer is rejected on argv and
+  is never accepted through the environment. Descriptor `0` is supported so the private socket
+  can be mapped through a standard child-stdin spawn action; descriptors `1` and `2` are rejected.
+  On macOS, create the stream through an owner-only Unix listener, write and half-close the sender
+  before spawning, retain that sender until the child finishes authentication, map the accepted
+  endpoint to child stdin, and pass `--challenge-fd 0`; a `socketpair` endpoint does not preserve
+  the required direct-parent identity across `exec` and is rejected. The reason must be a
+  non-empty, no-follow regular file of at most 2,000 bytes. The command recomputes the exact
+  snapshot under the shared lease lock, consumes the challenge once, rejects live foreign
+  ownership, and writes private receipt and lease-v2 state. Retained state contains digests, not
+  the bearer token or reason text. Options: `--format text|json`.
 - `revoke-dirty`: Revoke only the active adoption matching `--receipt <id>` without changing Git
   content. Revocation remains available when the adoption feature gate is disabled. Options:
   `--format text|json`.

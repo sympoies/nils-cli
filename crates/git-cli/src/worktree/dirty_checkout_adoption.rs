@@ -66,6 +66,8 @@ const PROCESS_SUPERVISOR_CAPABILITY: &[u8] = b"nils-git-cli-process-supervisor-v
 const PROCESS_SUPERVISOR_COMPLETION: &[u8] = b"nils-git-cli-process-supervisor-completion-v1";
 const PROCESS_SUPERVISOR_COMPLETION_BYTES: usize = PROCESS_SUPERVISOR_COMPLETION.len() + 6;
 const SNAPSHOT_WORKER_SCHEMA: &str = "nils-git-cli.dirty-snapshot-worker.v1";
+const CHALLENGE_TOKEN_BYTES: usize = 64;
+const CHALLENGE_DESCRIPTOR_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -845,8 +847,27 @@ where
                 .to_str()
                 .and_then(|value| value.parse::<libc::c_int>().ok())
         })
-        .filter(|descriptor| *descriptor > libc::STDERR_FILENO)
+        .filter(|descriptor| *descriptor == libc::STDIN_FILENO || *descriptor > libc::STDERR_FILENO)
         .ok_or_else(process_scan_resource_error)?;
+    let descriptor = if descriptor == libc::STDIN_FILENO {
+        let duplicated = unsafe {
+            libc::fcntl(
+                libc::STDIN_FILENO,
+                libc::F_DUPFD_CLOEXEC,
+                libc::STDERR_FILENO + 1,
+            )
+        };
+        if duplicated < 0 {
+            return Err(process_scan_resource_error());
+        }
+        if !restore_standard_input() {
+            let _ = unsafe { libc::close(duplicated) };
+            return Err(process_scan_resource_error());
+        }
+        duplicated
+    } else {
+        descriptor
+    };
 
     #[cfg(target_os = "linux")]
     {
@@ -5812,7 +5833,7 @@ impl Drop for LeaseLock {
     }
 }
 
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, IntoRawFd, OwnedFd};
 
 fn unix_time() -> Result<u64> {
     Ok(SystemTime::now()
@@ -6202,24 +6223,11 @@ fn spawn_supervisor_output_child(
     let deadline_nanos = monotonic_deadline_nanos(deadline)?;
     let (mut capability_sender, capability_receiver) =
         std::os::unix::net::UnixStream::pair().context("process supervisor capability failed")?;
-    let capability_descriptor = capability_receiver.as_raw_fd();
-    let descriptor_flags = unsafe { libc::fcntl(capability_descriptor, libc::F_GETFD) };
-    if descriptor_flags < 0
-        || unsafe {
-            libc::fcntl(
-                capability_descriptor,
-                libc::F_SETFD,
-                descriptor_flags & !libc::FD_CLOEXEC,
-            )
-        } < 0
-    {
-        return Err(process_scan_resource_error());
-    }
     let mut supervisor = Command::new(executable.command_path());
     supervisor
         .arg(program)
         .args(arguments)
-        .stdin(Stdio::null())
+        .stdin(Stdio::from(OwnedFd::from(capability_receiver)))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0);
@@ -6238,7 +6246,7 @@ fn spawn_supervisor_output_child(
     }
     supervisor.env(PROCESS_SUPERVISOR_ENV, "1").env(
         PROCESS_SUPERVISOR_CAPABILITY_FD_ENV,
-        capability_descriptor.to_string(),
+        libc::STDIN_FILENO.to_string(),
     );
     let mut child = supervisor
         .spawn()
@@ -6254,7 +6262,6 @@ fn spawn_supervisor_output_child(
             return Err(error);
         }
     };
-    drop(capability_receiver);
     if let Err(error) = capability_sender.write_all(PROCESS_SUPERVISOR_CAPABILITY) {
         unsafe {
             let _ = libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
@@ -7521,7 +7528,7 @@ where
 #[cfg(target_os = "macos")]
 struct ProcessOwner {
     root: ProcessIdentity,
-    queue: File,
+    queue: Option<File>,
     tracked: HashMap<libc::pid_t, ProcessIdentity>,
     pending: HashMap<libc::pid_t, ProcessIdentity>,
 }
@@ -7560,17 +7567,33 @@ impl ProcessOwner {
             )
         };
         if changed < 0 {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::ENOTSUP) {
+                // Some macOS kernels expose NOTE_TRACK in libc but reject its
+                // registration. Retain the same identity-bound bounded scan
+                // used alongside kqueue; every other registration error stays
+                // fail-closed.
+                return Ok(Self {
+                    root,
+                    queue: None,
+                    tracked: HashMap::new(),
+                    pending: HashMap::new(),
+                });
+            }
             return Err(process_scan_resource_error());
         }
         Ok(Self {
             root,
-            queue,
+            queue: Some(queue),
             tracked: HashMap::new(),
             pending: HashMap::new(),
         })
     }
 
     fn refresh(&mut self, deadline: Instant) -> Result<()> {
+        let Some(queue) = &self.queue else {
+            return ensure_deadline(deadline);
+        };
         let timeout = libc::timespec {
             tv_sec: 0,
             tv_nsec: 0,
@@ -7580,7 +7603,7 @@ impl ProcessOwner {
             let mut events: [libc::kevent; 64] = unsafe { std::mem::zeroed() };
             let count = unsafe {
                 libc::kevent(
-                    self.queue.as_raw_fd(),
+                    queue.as_raw_fd(),
                     std::ptr::null(),
                     0,
                     events.as_mut_ptr(),
@@ -8220,16 +8243,21 @@ pub(super) fn run_adopt_dirty(args: &[String]) -> i32 {
             ),
         );
     }
+    let challenge = match read_challenge_descriptor(parsed.challenge_fd) {
+        Ok(challenge) => challenge,
+        Err(error) => {
+            return emit_error(
+                "worktree.adopt-dirty",
+                parsed.format,
+                adoption_cli_error(error),
+            );
+        }
+    };
     let result = env::current_dir()
         .context("current checkout could not be resolved")
         .and_then(|checkout| {
             let state_root = resolve_state_root()?;
-            adopt_dirty_cli(
-                &checkout,
-                &state_root,
-                &parsed.challenge,
-                &parsed.reason_file,
-            )
+            adopt_dirty_cli(&checkout, &state_root, &challenge, &parsed.reason_file)
         });
     match result {
         Ok(receipt) => emit_success("worktree.adopt-dirty", parsed.format, &receipt, || {
@@ -8272,7 +8300,7 @@ pub(super) fn run_revoke_dirty(args: &[String]) -> i32 {
 }
 
 struct AdoptArgs {
-    challenge: String,
+    challenge_fd: libc::c_int,
     reason_file: PathBuf,
     format: OutputFormat,
 }
@@ -8290,33 +8318,38 @@ fn parse_adopt_args(raw: &[String]) -> std::result::Result<Option<AdoptArgs>, Cl
         .any(|arg| matches!(arg.as_str(), "-h" | "--help"))
     {
         println!(
-            "Usage: git-cli worktree adopt-dirty --challenge <token> --reason-file <path> [--format text|json]"
+            "Usage: git-cli worktree adopt-dirty --challenge-fd <fd> --reason-file <path> [--format text|json]"
         );
         return Ok(None);
     }
-    let mut challenge = None;
+    let mut challenge_fd = None;
     let mut reason_file = None;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
-            "--challenge" => {
+            "--challenge-fd" => {
                 let value = args.get(index + 1).ok_or_else(|| {
-                    CliError::usage("missing-challenge", "--challenge requires a token")
+                    CliError::usage(
+                        "missing-challenge-fd",
+                        "--challenge-fd requires a descriptor",
+                    )
                 })?;
-                if challenge.replace(value.clone()).is_some() {
+                let value = parse_challenge_descriptor(value)?;
+                if challenge_fd.replace(value).is_some() {
                     return Err(CliError::usage(
-                        "duplicate-challenge",
-                        "--challenge may be supplied only once",
+                        "duplicate-challenge-fd",
+                        "--challenge-fd may be supplied only once",
                     ));
                 }
                 index += 2;
             }
-            value if value.starts_with("--challenge=") => {
-                let value = value.trim_start_matches("--challenge=");
-                if value.is_empty() || challenge.replace(value.to_string()).is_some() {
+            value if value.starts_with("--challenge-fd=") => {
+                let value = value.trim_start_matches("--challenge-fd=");
+                let value = parse_challenge_descriptor(value)?;
+                if challenge_fd.replace(value).is_some() {
                     return Err(CliError::usage(
-                        "invalid-challenge",
-                        "--challenge requires one token",
+                        "duplicate-challenge-fd",
+                        "--challenge-fd may be supplied only once",
                     ));
                 }
                 index += 1;
@@ -8352,12 +8385,250 @@ fn parse_adopt_args(raw: &[String]) -> std::result::Result<Option<AdoptArgs>, Cl
         }
     }
     Ok(Some(AdoptArgs {
-        challenge: challenge
-            .ok_or_else(|| CliError::usage("missing-challenge", "--challenge is required"))?,
+        challenge_fd: challenge_fd
+            .ok_or_else(|| CliError::usage("missing-challenge-fd", "--challenge-fd is required"))?,
         reason_file: reason_file
             .ok_or_else(|| CliError::usage("missing-reason-file", "--reason-file is required"))?,
         format,
     }))
+}
+
+fn parse_challenge_descriptor(value: &str) -> std::result::Result<libc::c_int, CliError> {
+    value
+        .parse::<libc::c_int>()
+        .ok()
+        .filter(|descriptor| *descriptor == libc::STDIN_FILENO || *descriptor > libc::STDERR_FILENO)
+        .ok_or_else(|| {
+            CliError::usage(
+                "invalid-challenge-fd",
+                "--challenge-fd requires an inherited descriptor",
+            )
+        })
+}
+
+fn challenge_descriptor_error() -> anyhow::Error {
+    domain_error(
+        DirtyCheckoutErrorKind::InvalidInput,
+        "dirty-checkout challenge descriptor is unavailable",
+    )
+}
+
+fn read_challenge_descriptor(descriptor: libc::c_int) -> Result<String> {
+    let challenge = read_challenge_descriptor_from_peer_until(
+        descriptor,
+        unsafe { libc::getppid() },
+        unsafe { libc::geteuid() },
+        CHALLENGE_DESCRIPTOR_TIMEOUT,
+    );
+    if descriptor == libc::STDIN_FILENO && !restore_standard_input() {
+        return Err(challenge_descriptor_error());
+    }
+    challenge
+}
+
+fn restore_standard_input() -> bool {
+    let null_descriptor = match File::open("/dev/null") {
+        Ok(file) => file.into_raw_fd(),
+        Err(_) => return false,
+    };
+    if null_descriptor != libc::STDIN_FILENO {
+        let duplicated = unsafe { libc::dup2(null_descriptor, libc::STDIN_FILENO) };
+        let _ = unsafe { libc::close(null_descriptor) };
+        if duplicated != libc::STDIN_FILENO {
+            return false;
+        }
+    }
+    let flags = unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_GETFD) };
+    flags >= 0
+        && unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } >= 0
+}
+
+#[cfg(test)]
+fn read_challenge_descriptor_from_peer(
+    descriptor: libc::c_int,
+    expected_peer_pid: libc::pid_t,
+    expected_peer_uid: libc::uid_t,
+) -> Result<String> {
+    read_challenge_descriptor_from_peer_until(
+        descriptor,
+        expected_peer_pid,
+        expected_peer_uid,
+        CHALLENGE_DESCRIPTOR_TIMEOUT,
+    )
+}
+
+fn read_challenge_descriptor_from_peer_until(
+    descriptor: libc::c_int,
+    expected_peer_pid: libc::pid_t,
+    expected_peer_uid: libc::uid_t,
+    timeout: Duration,
+) -> Result<String> {
+    use std::os::fd::FromRawFd;
+    use std::os::unix::net::UnixStream;
+
+    if descriptor < 0 || matches!(descriptor, libc::STDOUT_FILENO | libc::STDERR_FILENO) {
+        return Err(challenge_descriptor_error());
+    }
+    let descriptor_flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
+    if descriptor_flags < 0 {
+        return Err(challenge_descriptor_error());
+    }
+    let mut stream = unsafe { UnixStream::from_raw_fd(descriptor) };
+    if unsafe {
+        libc::fcntl(
+            descriptor,
+            libc::F_SETFD,
+            descriptor_flags | libc::FD_CLOEXEC,
+        )
+    } < 0
+    {
+        return Err(challenge_descriptor_error());
+    }
+
+    let mut socket_type = 0;
+    let mut socket_type_length = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+    if unsafe {
+        libc::getsockopt(
+            descriptor,
+            libc::SOL_SOCKET,
+            libc::SO_TYPE,
+            (&mut socket_type as *mut libc::c_int).cast(),
+            &mut socket_type_length,
+        )
+    } != 0
+        || socket_type_length as usize != std::mem::size_of::<libc::c_int>()
+        || socket_type != libc::SOCK_STREAM
+        || !challenge_descriptor_peer_matches(descriptor, expected_peer_pid, expected_peer_uid)
+    {
+        return Err(challenge_descriptor_error());
+    }
+
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(challenge_descriptor_error)?;
+    let mut challenge = [0_u8; CHALLENGE_TOKEN_BYTES + 1];
+    let mut challenge_len = 0;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() || stream.set_read_timeout(Some(remaining)).is_err() {
+            return Err(challenge_descriptor_error());
+        }
+        match stream.read(&mut challenge[challenge_len..]) {
+            Ok(0) => break,
+            Ok(read) => {
+                challenge_len += read;
+                if challenge_len > CHALLENGE_TOKEN_BYTES {
+                    return Err(challenge_descriptor_error());
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(_) => return Err(challenge_descriptor_error()),
+        }
+    }
+    let challenge = &challenge[..challenge_len];
+    if challenge.len() != CHALLENGE_TOKEN_BYTES
+        || !challenge
+            .iter()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return Err(challenge_descriptor_error());
+    }
+    String::from_utf8(challenge.to_vec()).map_err(|_| challenge_descriptor_error())
+}
+
+fn challenge_descriptor_peer_matches(
+    descriptor: libc::c_int,
+    expected_peer_pid: libc::pid_t,
+    expected_peer_uid: libc::uid_t,
+) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let mut credentials = std::mem::MaybeUninit::<libc::ucred>::zeroed();
+        let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        if unsafe {
+            libc::getsockopt(
+                descriptor,
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                credentials.as_mut_ptr().cast(),
+                &mut length,
+            )
+        } != 0
+            || length as usize != std::mem::size_of::<libc::ucred>()
+        {
+            return false;
+        }
+        linux_peer_credentials_match(
+            unsafe { credentials.assume_init() },
+            expected_peer_pid,
+            expected_peer_uid,
+        )
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        macos_challenge_descriptor_peer_credentials(descriptor).is_some_and(|credentials| {
+            credentials.pid == expected_peer_pid
+                && credentials.effective_uid == expected_peer_uid
+                && credentials.socket_uid == expected_peer_uid
+        })
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = (descriptor, expected_peer_pid, expected_peer_uid);
+        false
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, PartialEq, Eq)]
+struct MacosChallengeDescriptorPeerCredentials {
+    pid: libc::pid_t,
+    effective_uid: libc::uid_t,
+    socket_uid: libc::uid_t,
+}
+
+#[cfg(target_os = "macos")]
+fn macos_challenge_descriptor_peer_credentials(
+    descriptor: libc::c_int,
+) -> Option<MacosChallengeDescriptorPeerCredentials> {
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct AuditToken {
+        values: [libc::c_uint; 8],
+    }
+
+    #[link(name = "bsm", kind = "dylib")]
+    unsafe extern "C" {
+        fn audit_token_to_pid(token: AuditToken) -> libc::pid_t;
+        fn audit_token_to_euid(token: AuditToken) -> libc::uid_t;
+    }
+
+    let mut peer_token = std::mem::MaybeUninit::<AuditToken>::zeroed();
+    let mut peer_token_length = std::mem::size_of::<AuditToken>() as libc::socklen_t;
+    let mut socket_peer_uid = 0;
+    let mut peer_gid = 0;
+    if unsafe {
+        libc::getsockopt(
+            descriptor,
+            libc::SOL_LOCAL,
+            libc::LOCAL_PEERTOKEN,
+            peer_token.as_mut_ptr().cast(),
+            &mut peer_token_length,
+        )
+    } != 0
+        || peer_token_length as usize != std::mem::size_of::<AuditToken>()
+        || unsafe { libc::getpeereid(descriptor, &mut socket_peer_uid, &mut peer_gid) } != 0
+    {
+        return None;
+    }
+    let peer_token = unsafe { peer_token.assume_init() };
+    Some(MacosChallengeDescriptorPeerCredentials {
+        pid: unsafe { audit_token_to_pid(peer_token) },
+        effective_uid: unsafe { audit_token_to_euid(peer_token) },
+        socket_uid: socket_peer_uid,
+    })
 }
 
 fn redact_adopt_parse_error(error: CliError) -> CliError {
@@ -8467,7 +8738,275 @@ fn resolve_state_root() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::fd::{IntoRawFd, OwnedFd};
+    #[cfg(target_os = "macos")]
+    use std::os::unix::net::UnixListener;
+    use std::os::unix::net::UnixStream;
     use std::os::unix::process::ExitStatusExt;
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn challenge_descriptor_streams() -> (UnixStream, UnixStream) {
+        #[cfg(target_os = "linux")]
+        {
+            UnixStream::pair().expect("challenge descriptor pair")
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let root = tempfile::Builder::new()
+                .prefix("git-cli-challenge-")
+                .tempdir_in("/tmp")
+                .expect("challenge descriptor root");
+            let socket_path = root.path().join("challenge.sock");
+            let listener =
+                UnixListener::bind(&socket_path).expect("bind challenge descriptor listener");
+            let sender =
+                UnixStream::connect(&socket_path).expect("connect challenge descriptor sender");
+            let (receiver, _) = listener
+                .accept()
+                .expect("accept challenge descriptor receiver");
+            (sender, receiver)
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn sealed_challenge_descriptor(payload: &[u8]) -> (UnixStream, libc::c_int) {
+        let (mut sender, receiver) = challenge_descriptor_streams();
+        sender.write_all(payload).expect("write challenge payload");
+        sender
+            .shutdown(std::net::Shutdown::Write)
+            .expect("seal challenge payload");
+        (sender, receiver.into_raw_fd())
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn challenge_descriptor_accepts_one_exact_parent_bound_bearer() {
+        let (_sender, descriptor) = sealed_challenge_descriptor(
+            b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        );
+        let consumed_descriptor = unsafe { libc::fcntl(descriptor, libc::F_DUPFD_CLOEXEC, 3) };
+        assert!(consumed_descriptor > libc::STDERR_FILENO);
+
+        let challenge =
+            read_challenge_descriptor_from_peer(descriptor, unsafe { libc::getpid() }, unsafe {
+                libc::geteuid()
+            })
+            .expect("read exact challenge frame");
+
+        assert_eq!(
+            challenge,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+        assert!(
+            read_challenge_descriptor_from_peer(
+                consumed_descriptor,
+                unsafe { libc::getpid() },
+                unsafe { libc::geteuid() },
+            )
+            .is_err(),
+            "consumed descriptors must fail closed"
+        );
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn challenge_descriptor_authenticates_across_a_real_spawn_boundary() {
+        const CHILD_ENV: &str = "NILS_TEST_CHALLENGE_DESCRIPTOR_SPAWN_CHILD";
+        const CHALLENGE: &[u8] =
+            b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+        if env::var_os(CHILD_ENV).is_some() {
+            let descriptor = libc::STDIN_FILENO;
+            assert!(unsafe { libc::fcntl(descriptor, libc::F_GETFD) } >= 0);
+
+            #[cfg(target_os = "macos")]
+            {
+                let credentials = macos_challenge_descriptor_peer_credentials(descriptor)
+                    .expect("read spawned-parent credentials");
+                assert_eq!(credentials.pid, unsafe { libc::getppid() });
+                assert_eq!(credentials.effective_uid, unsafe { libc::geteuid() });
+                assert_eq!(credentials.socket_uid, unsafe { libc::geteuid() });
+            }
+
+            assert!(challenge_descriptor_peer_matches(
+                descriptor,
+                unsafe { libc::getppid() },
+                unsafe { libc::geteuid() },
+            ));
+            assert_eq!(
+                read_challenge_descriptor(descriptor).expect("read spawned challenge"),
+                std::str::from_utf8(CHALLENGE).expect("challenge UTF-8")
+            );
+            return;
+        }
+
+        let (mut sender, receiver) = challenge_descriptor_streams();
+        let mut command =
+            std::process::Command::new(env::current_exe().expect("current test binary"));
+        command
+            .arg("challenge_descriptor_authenticates_across_a_real_spawn_boundary")
+            .arg("--nocapture")
+            .env(CHILD_ENV, "1")
+            .stdin(std::process::Stdio::from(OwnedFd::from(receiver)))
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+
+        #[cfg(target_os = "macos")]
+        {
+            sender.write_all(CHALLENGE).expect("write challenge");
+            sender
+                .shutdown(std::net::Shutdown::Write)
+                .expect("seal challenge");
+        }
+
+        let child = command.spawn().expect("spawn descriptor child");
+
+        #[cfg(target_os = "linux")]
+        {
+            sender.write_all(CHALLENGE).expect("write challenge");
+            sender
+                .shutdown(std::net::Shutdown::Write)
+                .expect("seal challenge");
+        }
+
+        let output = child.wait_with_output().expect("wait for descriptor child");
+        drop(sender);
+        assert!(
+            output.status.success(),
+            "stdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn challenge_descriptor_rejects_malformed_or_wrong_process_inputs() {
+        assert!(
+            read_challenge_descriptor_from_peer(
+                libc::c_int::MAX,
+                unsafe { libc::getpid() },
+                unsafe { libc::geteuid() },
+            )
+            .is_err(),
+            "closed or invalid descriptors must fail closed"
+        );
+
+        for payload in [
+            b"short".as_slice(),
+            b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".as_slice(),
+            b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".as_slice(),
+        ] {
+            let (_sender, descriptor) = sealed_challenge_descriptor(payload);
+            assert!(
+                read_challenge_descriptor_from_peer(
+                    descriptor,
+                    unsafe { libc::getpid() },
+                    unsafe { libc::geteuid() },
+                )
+                .is_err(),
+                "malformed challenge descriptor must fail closed"
+            );
+        }
+
+        let (_sender, wrong_process) = sealed_challenge_descriptor(
+            b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        );
+        assert!(
+            read_challenge_descriptor_from_peer(
+                wrong_process,
+                unsafe { libc::getpid() } + 1,
+                unsafe { libc::geteuid() },
+            )
+            .is_err(),
+            "a descriptor whose peer is not the expected process must fail closed"
+        );
+
+        let regular_file = tempfile::tempfile()
+            .expect("challenge regular file")
+            .into_raw_fd();
+        assert!(
+            read_challenge_descriptor_from_peer(regular_file, unsafe { libc::getpid() }, unsafe {
+                libc::geteuid()
+            },)
+            .is_err(),
+            "non-socket descriptors must fail closed"
+        );
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn challenge_descriptor_enforces_one_absolute_read_deadline() {
+        let (mut sender, receiver) = challenge_descriptor_streams();
+        let descriptor = receiver.into_raw_fd();
+        let writer = std::thread::spawn(move || {
+            for _ in 0..20 {
+                if sender.write_all(b"a").is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        });
+        let started = Instant::now();
+        let result = read_challenge_descriptor_from_peer_until(
+            descriptor,
+            unsafe { libc::getpid() },
+            unsafe { libc::geteuid() },
+            Duration::from_millis(100),
+        );
+        let elapsed = started.elapsed();
+        assert!(result.is_err(), "partial challenge frame must fail closed");
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "descriptor read exceeded one absolute deadline: {elapsed:?}"
+        );
+        writer.join().expect("join challenge writer");
+    }
+
+    #[test]
+    fn challenge_descriptor_argument_rejects_missing_malformed_and_legacy_inputs() {
+        for raw in [
+            vec!["--reason-file".to_string(), "reason.txt".to_string()],
+            vec![
+                "--challenge-fd".to_string(),
+                "not-a-descriptor".to_string(),
+                "--reason-file".to_string(),
+                "reason.txt".to_string(),
+            ],
+            vec![
+                "--challenge-fd=2".to_string(),
+                "--reason-file".to_string(),
+                "reason.txt".to_string(),
+            ],
+            vec![
+                "--challenge".to_string(),
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+                "--reason-file".to_string(),
+                "reason.txt".to_string(),
+            ],
+        ] {
+            assert!(
+                parse_adopt_args(&raw).is_err(),
+                "invalid descriptor argument must fail closed: {raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn challenge_descriptor_argument_accepts_stdin_or_a_non_stdio_descriptor() {
+        for descriptor in ["0", "3", "198"] {
+            let parsed = parse_adopt_args(&[
+                "--challenge-fd".to_string(),
+                descriptor.to_string(),
+                "--reason-file".to_string(),
+                "reason.txt".to_string(),
+            ])
+            .expect("parse descriptor argument")
+            .expect("adopt arguments");
+            assert_eq!(parsed.challenge_fd.to_string(), descriptor);
+        }
+    }
 
     fn successful_worker_output(snapshot: serde_json::Value) -> std::process::Output {
         std::process::Output {
@@ -8694,28 +9233,23 @@ mod tests {
 
         let deadline_nanos = fixture_monotonic_deadline(timeout);
         let (mut sender, receiver) = UnixStream::pair().expect("fixture capability socket");
-        let descriptor = receiver.as_raw_fd();
-        let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
-        assert!(flags >= 0, "read fixture descriptor flags");
-        assert!(
-            unsafe { libc::fcntl(descriptor, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } >= 0,
-            "make fixture descriptor inheritable"
-        );
         let child = Command::new(env::current_exe().expect("current test executable"))
             .arg("authenticated_process_supervisor_test_fixture")
             .arg("--nocapture")
             .env(PROCESS_SUPERVISOR_ENV, "1")
-            .env(PROCESS_SUPERVISOR_CAPABILITY_FD_ENV, descriptor.to_string())
+            .env(
+                PROCESS_SUPERVISOR_CAPABILITY_FD_ENV,
+                libc::STDIN_FILENO.to_string(),
+            )
             .env("NILS_PROCESS_SUPERVISOR_TEST_SCENARIO", scenario)
             .env("NILS_PROCESS_SUPERVISOR_TEST_PID_PATH", pid_path)
-            .stdin(Stdio::null())
+            .stdin(Stdio::from(OwnedFd::from(receiver)))
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .process_group(0)
             .spawn()
             .expect("spawn authenticated supervisor fixture");
         let mut child = child;
-        drop(receiver);
         std::thread::sleep(capability_delay);
         if let Err(error) = sender.write_all(PROCESS_SUPERVISOR_CAPABILITY) {
             let _ = child.kill();
@@ -8745,21 +9279,17 @@ mod tests {
         use std::os::unix::net::UnixStream;
 
         let (mut sender, receiver) = UnixStream::pair().expect("fixture capability socket");
-        let descriptor = receiver.as_raw_fd();
-        let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
-        assert!(flags >= 0, "read fixture descriptor flags");
-        assert!(
-            unsafe { libc::fcntl(descriptor, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } >= 0,
-            "make fixture descriptor inheritable"
-        );
         let mut child = Command::new(env::current_exe().expect("current test executable"))
             .arg("authenticated_process_supervisor_test_fixture")
             .arg("--nocapture")
             .env(PROCESS_SUPERVISOR_ENV, "1")
-            .env(PROCESS_SUPERVISOR_CAPABILITY_FD_ENV, descriptor.to_string())
+            .env(
+                PROCESS_SUPERVISOR_CAPABILITY_FD_ENV,
+                libc::STDIN_FILENO.to_string(),
+            )
             .env("NILS_PROCESS_SUPERVISOR_TEST_SCENARIO", scenario)
             .env("NILS_PROCESS_SUPERVISOR_TEST_PID_PATH", pid_path)
-            .stdin(Stdio::null())
+            .stdin(Stdio::from(OwnedFd::from(receiver)))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .process_group(0)
@@ -8773,7 +9303,6 @@ mod tests {
                     .expect("create scoped output fallback owner"),
             )
         };
-        drop(receiver);
         if let Err(error) = sender.write_all(PROCESS_SUPERVISOR_CAPABILITY) {
             unsafe {
                 let _ = libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
@@ -8820,25 +9349,24 @@ mod tests {
         if scenario == "malformed-fd" {
             command.env(PROCESS_SUPERVISOR_CAPABILITY_FD_ENV, "not-a-descriptor");
         }
-        if let Some((_, receiver)) = &sockets {
-            let descriptor = receiver.as_raw_fd();
-            let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
-            assert!(flags >= 0, "read capability fixture descriptor flags");
-            assert!(
-                unsafe { libc::fcntl(descriptor, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } >= 0,
-                "make capability fixture descriptor inheritable"
+        if sockets.is_some() {
+            command.env(
+                PROCESS_SUPERVISOR_CAPABILITY_FD_ENV,
+                libc::STDIN_FILENO.to_string(),
             );
-            command.env(PROCESS_SUPERVISOR_CAPABILITY_FD_ENV, descriptor.to_string());
         }
+        let mut sockets = sockets.map(|(sender, receiver)| {
+            command.stdin(Stdio::from(OwnedFd::from(receiver)));
+            sender
+        });
         let mut child = command
             .spawn()
             .expect("spawn capability validation fixture");
-        if let (Some(bytes), Some((sender, receiver))) = (capability, sockets) {
-            drop(receiver);
-            (&sender)
+        if let (Some(bytes), Some(sender)) = (capability, sockets.as_mut()) {
+            sender
                 .write_all(bytes)
                 .expect("deliver capability validation bytes");
-            (&sender)
+            sender
                 .write_all(&fixture_monotonic_deadline(Duration::from_secs(1)).to_be_bytes())
                 .expect("deliver capability validation deadline");
         }

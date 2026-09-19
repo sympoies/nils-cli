@@ -3,19 +3,25 @@ use git_cli::worktree::dirty_checkout_adoption::{
     DirtyCheckoutError, DirtyCheckoutErrorKind, DirtySnapshot, adopt_dirty, dirty_snapshot,
     revoke_dirty,
 };
-use nils_test_support::cmd::{CmdOutput, run_with};
+use nils_test_support::cmd::{CmdOptions, CmdOutput, run_with};
 #[cfg(target_os = "linux")]
 use nils_test_support::git::{InitRepoOptions, init_repo_at_with};
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
-use std::os::fd::AsRawFd;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::io::Write;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 #[cfg(target_os = "linux")]
 use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
-use std::process::Command;
+#[cfg(target_os = "macos")]
+use std::os::unix::net::UnixListener;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::os::unix::net::UnixStream;
+use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const CHALLENGE_TOKEN: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -100,7 +106,7 @@ fn write_challenge(state_root: &std::path::Path, snapshot: &DirtySnapshot) -> st
     write_challenge_window(state_root, snapshot, issued_at, issued_at + 300)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn run_governed_command(
     harness: &GitCliHarness,
     cwd: &std::path::Path,
@@ -117,6 +123,149 @@ fn run_governed_command(
         options = options.with_env("AGENT_RUNTIME_DIRTY_CHECKOUT_ADOPTION", "1");
     }
     run_with(&harness.git_cli_bin(), args, &options)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn challenge_descriptor_streams() -> (UnixStream, UnixStream) {
+    #[cfg(target_os = "linux")]
+    {
+        UnixStream::pair().expect("challenge descriptor pair")
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let root = tempfile::Builder::new()
+            .prefix("git-cli-challenge-")
+            .tempdir_in("/tmp")
+            .expect("challenge descriptor root");
+        let socket_path = root.path().join("challenge.sock");
+        let listener =
+            UnixListener::bind(&socket_path).expect("bind challenge descriptor listener");
+        let sender =
+            UnixStream::connect(&socket_path).expect("connect challenge descriptor sender");
+        let (receiver, _) = listener
+            .accept()
+            .expect("accept challenge descriptor receiver");
+        (sender, receiver)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn run_with_challenge_descriptor(
+    bin: &std::path::Path,
+    args: &[&str],
+    options: &CmdOptions,
+    challenge: &[u8],
+    assert_secret_absent_while_live: bool,
+) -> CmdOutput {
+    let (mut sender, receiver) = challenge_descriptor_streams();
+
+    let mut command = Command::new(bin);
+    command
+        .args(args)
+        .arg("--challenge-fd")
+        .arg(libc::STDIN_FILENO.to_string())
+        .stdin(Stdio::from(OwnedFd::from(receiver)))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(cwd) = options.cwd.as_deref() {
+        command.current_dir(cwd);
+    }
+    for key in &options.env_remove {
+        command.env_remove(key);
+    }
+    for (key, value) in &options.envs {
+        command.env(key, value);
+    }
+    for (key, value) in &options.envs_os {
+        command.env(key, value);
+    }
+    assert!(
+        options.stdin.is_none(),
+        "challenge fixture does not accept stdin"
+    );
+    let _ = options.stdin_null;
+
+    #[cfg(target_os = "macos")]
+    {
+        sender
+            .write_all(challenge)
+            .expect("write challenge descriptor before spawn");
+        sender
+            .shutdown(std::net::Shutdown::Write)
+            .expect("seal challenge descriptor before spawn");
+    }
+
+    let child = command.spawn().expect("spawn challenge descriptor command");
+    #[cfg(target_os = "linux")]
+    if assert_secret_absent_while_live {
+        let command_line =
+            fs::read(format!("/proc/{}/cmdline", child.id())).expect("read live adoption argv");
+        let environment = fs::read(format!("/proc/{}/environ", child.id()))
+            .expect("read live adoption environment");
+        assert!(
+            !command_line
+                .windows(challenge.len())
+                .any(|window| window == challenge),
+            "raw challenge must not appear in live child argv"
+        );
+        assert!(
+            !environment
+                .windows(challenge.len())
+                .any(|window| window == challenge),
+            "raw challenge must not appear in live child environment"
+        );
+    }
+    #[cfg(target_os = "macos")]
+    let _ = assert_secret_absent_while_live;
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Err(error) = sender.write_all(challenge) {
+            assert_eq!(
+                error.kind(),
+                std::io::ErrorKind::BrokenPipe,
+                "write challenge descriptor"
+            );
+        }
+        sender
+            .shutdown(std::net::Shutdown::Write)
+            .expect("seal challenge descriptor");
+    }
+    let output = child.wait_with_output().expect("wait for adoption command");
+    drop(sender);
+    CmdOutput {
+        code: output.status.code().unwrap_or(-1),
+        stdout: output.stdout,
+        stderr: output.stderr,
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn run_governed_adopt_command(
+    harness: &GitCliHarness,
+    cwd: &std::path::Path,
+    state_root: &std::path::Path,
+    enabled: bool,
+    challenge: &[u8],
+    args: &[&str],
+    assert_secret_absent_while_live: bool,
+) -> CmdOutput {
+    let state_root = state_root.to_string_lossy().to_string();
+    let mut options = harness
+        .cmd_options(cwd)
+        .with_env("AGENT_RUNTIME_CHECKOUT_LEASE_STATE_HOME", &state_root)
+        .with_env_remove("AGENT_RUNTIME_DIRTY_CHECKOUT_ADOPTION");
+    if enabled {
+        options = options.with_env("AGENT_RUNTIME_DIRTY_CHECKOUT_ADOPTION", "1");
+    }
+    run_with_challenge_descriptor(
+        &harness.git_cli_bin(),
+        args,
+        &options,
+        challenge,
+        assert_secret_absent_while_live,
+    )
 }
 
 fn assert_help_contract(args: &[&str], expected_usage: &str) -> String {
@@ -153,7 +302,7 @@ fn dirty_snapshot_help_exposes_frozen_command_surface() {
 fn adopt_dirty_help_exposes_frozen_authorization_inputs() {
     assert_help_contract(
         &["worktree", "adopt-dirty", "--help"],
-        "Usage: git-cli worktree adopt-dirty --challenge <token> --reason-file <path>",
+        "Usage: git-cli worktree adopt-dirty --challenge-fd <fd> --reason-file <path>",
     );
 }
 
@@ -370,20 +519,20 @@ fn real_cli_worker_lifecycle_supports_a_non_utf8_checkout_root() {
     };
     write_challenge(state_home.path(), &snapshot);
     let reason_arg = reason_file.to_string_lossy().to_string();
-    let adopted = run_governed_command(
+    let adopted = run_governed_adopt_command(
         &harness,
         &checkout,
         state_home.path(),
         true,
+        CHALLENGE_TOKEN.as_bytes(),
         &[
             "worktree",
             "adopt-dirty",
-            "--challenge",
-            CHALLENGE_TOKEN,
             "--reason-file",
             &reason_arg,
             "--format=json",
         ],
+        false,
     );
     assert_eq!(
         adopted.code,
@@ -1317,8 +1466,6 @@ fn governed_cli_feature_gate_accepts_only_exact_one() {
     let args = [
         "worktree",
         "adopt-dirty",
-        "--challenge",
-        "malformed-challenge",
         "--reason-file",
         "/nonexistent/adoption-reason.txt",
         "--format=json",
@@ -1329,7 +1476,13 @@ fn governed_cli_feature_gate_accepts_only_exact_one() {
             .cmd_options(repo.path())
             .with_env("AGENT_RUNTIME_CHECKOUT_LEASE_STATE_HOME", &state_root)
             .with_env("AGENT_RUNTIME_DIRTY_CHECKOUT_ADOPTION", rejected);
-        let output = run_with(&harness.git_cli_bin(), &args, &options);
+        let output = run_with_challenge_descriptor(
+            &harness.git_cli_bin(),
+            &args,
+            &options,
+            b"malformed-challenge",
+            false,
+        );
         assert_json_error(
             &output,
             "dirty-checkout-adoption-disabled",
@@ -1341,12 +1494,18 @@ fn governed_cli_feature_gate_accepts_only_exact_one() {
         .cmd_options(repo.path())
         .with_env("AGENT_RUNTIME_CHECKOUT_LEASE_STATE_HOME", &state_root)
         .with_env("AGENT_RUNTIME_DIRTY_CHECKOUT_ADOPTION", "1");
-    let accepted = run_with(&harness.git_cli_bin(), &args, &options);
+    let accepted = run_with_challenge_descriptor(
+        &harness.git_cli_bin(),
+        &args,
+        &options,
+        b"malformed-challenge",
+        false,
+    );
     let (_, code) = json_error_identity(&accepted);
     assert_ne!(code, "dirty-checkout-adoption-disabled");
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn governed_cli_enforces_gate_and_returns_private_json_contracts() {
     let harness = GitCliHarness::new();
@@ -1360,21 +1519,21 @@ fn governed_cli_enforces_gate_and_returns_private_json_contracts() {
     let challenge_path = write_challenge(state_home.path(), &snapshot);
     let reason_arg = reason_file.to_string_lossy().to_string();
 
-    let disabled = run_governed_command(
+    let disabled = run_governed_adopt_command(
         &harness,
         repo.path(),
         state_home.path(),
         false,
+        CHALLENGE_TOKEN.as_bytes(),
         &[
             "worktree",
             "adopt-dirty",
-            "--challenge",
-            CHALLENGE_TOKEN,
             "--reason-file",
             &reason_arg,
             "--format",
             "json",
         ],
+        false,
     );
     assert_ne!(disabled.code, 0);
     assert_eq!(disabled.stderr_text(), "");
@@ -1394,20 +1553,20 @@ fn governed_cli_enforces_gate_and_returns_private_json_contracts() {
         "gate refusal must not consume challenge"
     );
 
-    let adopted = run_governed_command(
+    let adopted = run_governed_adopt_command(
         &harness,
         repo.path(),
         state_home.path(),
         true,
+        CHALLENGE_TOKEN.as_bytes(),
         &[
             "worktree",
             "adopt-dirty",
-            "--challenge",
-            CHALLENGE_TOKEN,
             "--reason-file",
             &reason_arg,
             "--format=json",
         ],
+        true,
     );
     assert_eq!(
         adopted.code,
@@ -1484,6 +1643,46 @@ fn governed_cli_enforces_gate_and_returns_private_json_contracts() {
         "cli.git-cli.worktree.revoke-dirty.v1"
     );
     assert_eq!(revoked_json["data"]["revoked"], true);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn governed_cli_rejects_malformed_descriptor_without_consuming_challenge() {
+    let harness = GitCliHarness::new();
+    let repo = init_repo();
+    let state_home = private_state_home();
+    let reason_file = state_home.path().join("adoption-reason.txt");
+    fs::write(repo.path().join("dirty.txt"), "dirty state\n").expect("write dirty file");
+    fs::write(&reason_file, "Preserve these changes.\n").expect("write reason file");
+    let snapshot = dirty_snapshot(repo.path()).expect("snapshot dirty checkout");
+    let challenge_path = write_challenge(state_home.path(), &snapshot);
+    let reason_arg = reason_file.to_string_lossy().to_string();
+
+    let output = run_governed_adopt_command(
+        &harness,
+        repo.path(),
+        state_home.path(),
+        true,
+        b"short",
+        &[
+            "worktree",
+            "adopt-dirty",
+            "--reason-file",
+            &reason_arg,
+            "--format=json",
+        ],
+        false,
+    );
+
+    assert_json_error(
+        &output,
+        "dirty-checkout-invalid-input",
+        nils_common::cli_contract::exit::DATA,
+    );
+    assert!(
+        challenge_path.exists(),
+        "descriptor rejection must precede challenge consumption"
+    );
 }
 
 #[cfg(target_os = "linux")]
@@ -1612,7 +1811,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn assert_exact_json_keys(value: &serde_json::Value, expected: &[&str], label: &str) {
     let mut actual: Vec<_> = value
         .as_object()
@@ -2753,18 +2952,18 @@ fn git_shaping_environment_cannot_validate_a_stale_virtual_index() {
         .with_env("AGENT_RUNTIME_CHECKOUT_LEASE_STATE_HOME", &state_root)
         .with_env("AGENT_RUNTIME_DIRTY_CHECKOUT_ADOPTION", "1")
         .with_env("GIT_INDEX_FILE", &stale_index_arg);
-    let output = run_with(
+    let output = run_with_challenge_descriptor(
         &harness.git_cli_bin(),
         &[
             "worktree",
             "adopt-dirty",
-            "--challenge",
-            CHALLENGE_TOKEN,
             "--reason-file",
             &reason_arg,
             "--format=json",
         ],
         &options,
+        CHALLENGE_TOKEN.as_bytes(),
+        false,
     );
 
     assert_json_error(

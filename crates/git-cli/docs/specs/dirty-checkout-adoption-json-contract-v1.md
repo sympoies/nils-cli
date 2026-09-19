@@ -63,6 +63,39 @@ from the SHA-256 digest of the exact challenge-file bytes.
 `authorization_turn_digest` binds the authorizing turn without retaining its
 text.
 
+## Bearer Transport
+
+`git-cli worktree adopt-dirty` accepts the raw bearer only through
+`--challenge-fd <fd>`. Descriptor `0` is supported so callers can map the
+private socket through a standard child-stdin spawn action; descriptors `1`
+and `2` are rejected. The argument contains only the non-secret descriptor
+number; the bearer itself must not appear in process arguments, environment
+variables, logs, CLI JSON, receipts, or provider evidence.
+
+The descriptor is an inherited connected Unix stream socket. Its peer must be
+the direct parent process under the same effective user. The parent writes
+exactly 64 lowercase hexadecimal bytes and closes the write half. The consumer
+authenticates the peer credentials, applies a bounded read timeout, rejects
+short, oversized, malformed, non-socket, closed, or wrong-process descriptors,
+marks the descriptor close-on-exec, and closes it after the single read. A
+descriptor failure occurs before challenge lookup or consumption. When the
+transport uses descriptor `0`, the consumer replaces the consumed socket with
+`/dev/null` before starting any Git subprocess, so neither the bearer channel
+nor a closed standard input propagates beyond the authorization boundary.
+
+On macOS, the parent creates an owner-only Unix listener, connects to it, and
+writes and half-closes the sender before spawning, retains that endpoint until
+the child finishes authentication, maps the accepted endpoint to child stdin,
+and passes `--challenge-fd 0`. The pre-spawn write binds macOS's mutable peer
+owner identity to the actual parent before the child requests
+`LOCAL_PEERTOKEN`. The stdin mapping uses the spawn API's explicit standard-I/O
+file action instead of relying on an arbitrary descriptor surviving
+`POSIX_SPAWN_CLOEXEC_DEFAULT`. A `socketpair` endpoint does not preserve the
+required direct-parent identity across `exec` on that platform and is rejected
+by the same fail-closed credential check. The consumer obtains the peer's
+kernel audit token with `LOCAL_PEERTOKEN`, extracts its PID and effective UID
+through `libbsm`, and cross-checks the UID with `getpeereid`.
+
 ## Receipt and Adoption Binding
 
 The receipt preserves the challenge's session, checkout, snapshot, and
