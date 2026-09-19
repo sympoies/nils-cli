@@ -847,8 +847,27 @@ where
                 .to_str()
                 .and_then(|value| value.parse::<libc::c_int>().ok())
         })
-        .filter(|descriptor| *descriptor > libc::STDERR_FILENO)
+        .filter(|descriptor| *descriptor == libc::STDIN_FILENO || *descriptor > libc::STDERR_FILENO)
         .ok_or_else(process_scan_resource_error)?;
+    let descriptor = if descriptor == libc::STDIN_FILENO {
+        let duplicated = unsafe {
+            libc::fcntl(
+                libc::STDIN_FILENO,
+                libc::F_DUPFD_CLOEXEC,
+                libc::STDERR_FILENO + 1,
+            )
+        };
+        if duplicated < 0 {
+            return Err(process_scan_resource_error());
+        }
+        if !restore_standard_input() {
+            let _ = unsafe { libc::close(duplicated) };
+            return Err(process_scan_resource_error());
+        }
+        duplicated
+    } else {
+        descriptor
+    };
 
     #[cfg(target_os = "linux")]
     {
@@ -5814,7 +5833,7 @@ impl Drop for LeaseLock {
     }
 }
 
-use std::os::fd::{AsRawFd, IntoRawFd};
+use std::os::fd::{AsRawFd, IntoRawFd, OwnedFd};
 
 fn unix_time() -> Result<u64> {
     Ok(SystemTime::now()
@@ -6204,24 +6223,11 @@ fn spawn_supervisor_output_child(
     let deadline_nanos = monotonic_deadline_nanos(deadline)?;
     let (mut capability_sender, capability_receiver) =
         std::os::unix::net::UnixStream::pair().context("process supervisor capability failed")?;
-    let capability_descriptor = capability_receiver.as_raw_fd();
-    let descriptor_flags = unsafe { libc::fcntl(capability_descriptor, libc::F_GETFD) };
-    if descriptor_flags < 0
-        || unsafe {
-            libc::fcntl(
-                capability_descriptor,
-                libc::F_SETFD,
-                descriptor_flags & !libc::FD_CLOEXEC,
-            )
-        } < 0
-    {
-        return Err(process_scan_resource_error());
-    }
     let mut supervisor = Command::new(executable.command_path());
     supervisor
         .arg(program)
         .args(arguments)
-        .stdin(Stdio::null())
+        .stdin(Stdio::from(OwnedFd::from(capability_receiver)))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0);
@@ -6240,7 +6246,7 @@ fn spawn_supervisor_output_child(
     }
     supervisor.env(PROCESS_SUPERVISOR_ENV, "1").env(
         PROCESS_SUPERVISOR_CAPABILITY_FD_ENV,
-        capability_descriptor.to_string(),
+        libc::STDIN_FILENO.to_string(),
     );
     let mut child = supervisor
         .spawn()
@@ -6256,7 +6262,6 @@ fn spawn_supervisor_output_child(
             return Err(error);
         }
     };
-    drop(capability_receiver);
     if let Err(error) = capability_sender.write_all(PROCESS_SUPERVISOR_CAPABILITY) {
         unsafe {
             let _ = libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
@@ -9212,28 +9217,23 @@ mod tests {
 
         let deadline_nanos = fixture_monotonic_deadline(timeout);
         let (mut sender, receiver) = UnixStream::pair().expect("fixture capability socket");
-        let descriptor = receiver.as_raw_fd();
-        let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
-        assert!(flags >= 0, "read fixture descriptor flags");
-        assert!(
-            unsafe { libc::fcntl(descriptor, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } >= 0,
-            "make fixture descriptor inheritable"
-        );
         let child = Command::new(env::current_exe().expect("current test executable"))
             .arg("authenticated_process_supervisor_test_fixture")
             .arg("--nocapture")
             .env(PROCESS_SUPERVISOR_ENV, "1")
-            .env(PROCESS_SUPERVISOR_CAPABILITY_FD_ENV, descriptor.to_string())
+            .env(
+                PROCESS_SUPERVISOR_CAPABILITY_FD_ENV,
+                libc::STDIN_FILENO.to_string(),
+            )
             .env("NILS_PROCESS_SUPERVISOR_TEST_SCENARIO", scenario)
             .env("NILS_PROCESS_SUPERVISOR_TEST_PID_PATH", pid_path)
-            .stdin(Stdio::null())
+            .stdin(Stdio::from(OwnedFd::from(receiver)))
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .process_group(0)
             .spawn()
             .expect("spawn authenticated supervisor fixture");
         let mut child = child;
-        drop(receiver);
         std::thread::sleep(capability_delay);
         if let Err(error) = sender.write_all(PROCESS_SUPERVISOR_CAPABILITY) {
             let _ = child.kill();
@@ -9263,21 +9263,17 @@ mod tests {
         use std::os::unix::net::UnixStream;
 
         let (mut sender, receiver) = UnixStream::pair().expect("fixture capability socket");
-        let descriptor = receiver.as_raw_fd();
-        let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
-        assert!(flags >= 0, "read fixture descriptor flags");
-        assert!(
-            unsafe { libc::fcntl(descriptor, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } >= 0,
-            "make fixture descriptor inheritable"
-        );
         let mut child = Command::new(env::current_exe().expect("current test executable"))
             .arg("authenticated_process_supervisor_test_fixture")
             .arg("--nocapture")
             .env(PROCESS_SUPERVISOR_ENV, "1")
-            .env(PROCESS_SUPERVISOR_CAPABILITY_FD_ENV, descriptor.to_string())
+            .env(
+                PROCESS_SUPERVISOR_CAPABILITY_FD_ENV,
+                libc::STDIN_FILENO.to_string(),
+            )
             .env("NILS_PROCESS_SUPERVISOR_TEST_SCENARIO", scenario)
             .env("NILS_PROCESS_SUPERVISOR_TEST_PID_PATH", pid_path)
-            .stdin(Stdio::null())
+            .stdin(Stdio::from(OwnedFd::from(receiver)))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .process_group(0)
@@ -9291,7 +9287,6 @@ mod tests {
                     .expect("create scoped output fallback owner"),
             )
         };
-        drop(receiver);
         if let Err(error) = sender.write_all(PROCESS_SUPERVISOR_CAPABILITY) {
             unsafe {
                 let _ = libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
@@ -9338,25 +9333,24 @@ mod tests {
         if scenario == "malformed-fd" {
             command.env(PROCESS_SUPERVISOR_CAPABILITY_FD_ENV, "not-a-descriptor");
         }
-        if let Some((_, receiver)) = &sockets {
-            let descriptor = receiver.as_raw_fd();
-            let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
-            assert!(flags >= 0, "read capability fixture descriptor flags");
-            assert!(
-                unsafe { libc::fcntl(descriptor, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } >= 0,
-                "make capability fixture descriptor inheritable"
+        if sockets.is_some() {
+            command.env(
+                PROCESS_SUPERVISOR_CAPABILITY_FD_ENV,
+                libc::STDIN_FILENO.to_string(),
             );
-            command.env(PROCESS_SUPERVISOR_CAPABILITY_FD_ENV, descriptor.to_string());
         }
+        let mut sockets = sockets.map(|(sender, receiver)| {
+            command.stdin(Stdio::from(OwnedFd::from(receiver)));
+            sender
+        });
         let mut child = command
             .spawn()
             .expect("spawn capability validation fixture");
-        if let (Some(bytes), Some((sender, receiver))) = (capability, sockets) {
-            drop(receiver);
-            (&sender)
+        if let (Some(bytes), Some(sender)) = (capability, sockets.as_mut()) {
+            sender
                 .write_all(bytes)
                 .expect("deliver capability validation bytes");
-            (&sender)
+            sender
                 .write_all(&fixture_monotonic_deadline(Duration::from_secs(1)).to_be_bytes())
                 .expect("deliver capability validation deadline");
         }
