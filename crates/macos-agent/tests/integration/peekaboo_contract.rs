@@ -72,8 +72,8 @@ fn repository_contains_a_complete_immutable_peekaboo_lock() {
 
     assert_eq!(lock["schema_version"], 2);
     assert_eq!(lock["repository"], "https://github.com/openclaw/Peekaboo");
-    assert_eq!(lock["tag"], "v4.2.2");
-    assert_eq!(lock["commit"], "05675b0b5e2c382146963e19493787d9dac0d45b");
+    assert_eq!(lock["tag"], "v4.4.0");
+    assert_eq!(lock["commit"], "d82dbd88832688252cbed2254af6433ed9699abd");
     assert_eq!(lock["minimum_macos"], "15.0");
     assert_eq!(lock["assets"].as_array().map(Vec::len), Some(2));
     assert_eq!(lock["assets"][0]["notarization"]["policy"], "required");
@@ -81,9 +81,10 @@ fn repository_contains_a_complete_immutable_peekaboo_lock() {
     assert_eq!(lock["rollback_releases"].as_array().map(Vec::len), Some(0));
     assert_eq!(
         lock["upgrade_from_releases"].as_array().map(Vec::len),
-        Some(1)
+        Some(2)
     );
     assert_eq!(lock["upgrade_from_releases"][0]["tag"], "v3.9.3");
+    assert_eq!(lock["upgrade_from_releases"][1]["tag"], "v4.2.2");
     let probe_ids = lock["required_capability_probes"]
         .as_array()
         .expect("probe array")

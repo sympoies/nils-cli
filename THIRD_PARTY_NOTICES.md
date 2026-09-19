@@ -4305,9 +4305,9 @@ This file documents third-party notice-file discovery for Rust crates used by th
 
 ## Locked Runtime Backend Notice
 
-### Peekaboo v4.2.2
+### Peekaboo v4.4.0
 
 - License: `MIT`
-- Source: <https://github.com/openclaw/Peekaboo/tree/v4.2.2>
-- License text: <https://github.com/openclaw/Peekaboo/blob/v4.2.2/LICENSE>
+- Source: <https://github.com/openclaw/Peekaboo/tree/v4.4.0>
+- License text: <https://github.com/openclaw/Peekaboo/blob/v4.4.0/LICENSE>
 - Distribution model: official release assets are downloaded on demand, verified against the immutable lock, and are not embedded in nils-cli release artifacts.

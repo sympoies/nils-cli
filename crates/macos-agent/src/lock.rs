@@ -20,6 +20,7 @@ const CLI_NOTARIZATION_WAIVER_TEAM_ID: &str = "Y5PE65HELJ";
 const CLI_NOTARIZATION_WAIVER_APPROVAL: &str =
     "https://github.com/graysurf/agent-runtime-kit/issues/610#issuecomment-4984437753";
 const CLI_NOTARIZATION_WAIVER_APPROVED_AT: &str = "2026-07-15";
+const CLI_NOTARIZATION_WAIVER_REASON: &str = "Exact standalone CLI notarization exception retained only to authenticate an in-place upgrade to v4.4.0.";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PeekabooLock {
@@ -353,7 +354,7 @@ fn validate_notarization(
                 && waiver.team_id == asset.team_id
                 && waiver.approved_at == CLI_NOTARIZATION_WAIVER_APPROVED_AT
                 && waiver.approval == CLI_NOTARIZATION_WAIVER_APPROVAL
-                && !waiver.reason.trim().is_empty() =>
+                && waiver.reason == CLI_NOTARIZATION_WAIVER_REASON =>
         {
             Ok(())
         }
@@ -406,15 +407,15 @@ fn lock_error(message: impl Into<String>) -> CliError {
 
 #[cfg(test)]
 mod tests {
-    use super::{NotarizationPolicy, PeekabooLock};
+    use super::{CLI_NOTARIZATION_WAIVER_REASON, NotarizationPolicy, PeekabooLock};
 
     #[test]
     fn embedded_lock_is_complete_and_immutable() {
         let lock = PeekabooLock::embedded().expect("embedded lock");
-        assert_eq!(lock.tag, "v4.2.2");
+        assert_eq!(lock.tag, "v4.4.0");
         assert_eq!(lock.assets.len(), 2);
         assert_eq!(lock.cli_asset().architectures, ["arm64", "x86_64"]);
-        assert_eq!(lock.cli_asset().bridge_build, "4.2.2 (4.2.2)");
+        assert_eq!(lock.cli_asset().bridge_build, "4.4.0 (4.4.0)");
         assert_eq!(
             lock.cli_asset().notarization.policy,
             NotarizationPolicy::Required
@@ -423,12 +424,16 @@ mod tests {
             lock.app_asset().notarization.policy,
             NotarizationPolicy::Required
         );
-        assert_eq!(lock.app_asset().bridge_build, "4.2.2 (4020299)");
+        assert_eq!(lock.app_asset().bridge_build, "4.4.0 (4040099)");
         assert_eq!(
             lock.app_asset().bundle_id.as_deref(),
             Some("boo.peekaboo.mac")
         );
         assert!(lock.rollback_releases.is_empty());
+        assert!(
+            lock.upgrade_from_release("v4.2.2", "05675b0b5e2c382146963e19493787d9dac0d45b")
+                .is_some()
+        );
         assert!(
             lock.upgrade_from_release("v3.9.3", "3cfd612adbcb1b43e8431a7a1f3b02ec45d01269")
                 .is_some()
@@ -437,6 +442,17 @@ mod tests {
 
     #[test]
     fn transition_only_cli_notarization_waiver_is_fail_closed() {
+        let lock = PeekabooLock::embedded().expect("embedded lock");
+        assert_eq!(
+            lock.upgrade_from_releases[0].assets[0]
+                .notarization
+                .waiver
+                .as_ref()
+                .expect("CLI waiver")
+                .reason,
+            CLI_NOTARIZATION_WAIVER_REASON
+        );
+
         let mut mismatched = PeekabooLock::embedded().expect("embedded lock");
         mismatched.upgrade_from_releases[0].assets[0]
             .notarization
