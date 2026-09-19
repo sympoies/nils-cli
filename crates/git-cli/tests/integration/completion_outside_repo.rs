@@ -106,12 +106,13 @@ fn dynamic_completion_exposes_dirty_checkout_argument_contracts() {
 
     let snapshot = complete(&["worktree", "dirty-snapshot", ""], "3");
     assert!(has(&snapshot, "--format"));
-    assert!(!has(&snapshot, "--challenge"));
+    assert!(!has(&snapshot, "--challenge-fd"));
 
     let adoption = complete(&["worktree", "adopt-dirty", ""], "3");
-    for expected in ["--challenge", "--reason-file", "--format"] {
+    for expected in ["--challenge-fd", "--reason-file", "--format"] {
         assert!(has(&adoption, expected), "missing {expected}: {adoption:?}");
     }
+    assert!(!has(&adoption, "--challenge"));
     assert!(!has(&adoption, "--receipt"));
 
     let revocation = complete(&["worktree", "revoke-dirty", ""], "3");

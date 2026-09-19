@@ -63,6 +63,21 @@ from the SHA-256 digest of the exact challenge-file bytes.
 `authorization_turn_digest` binds the authorizing turn without retaining its
 text.
 
+## Bearer Transport
+
+`git-cli worktree adopt-dirty` accepts the raw bearer only through
+`--challenge-fd <fd>`. The argument contains the non-secret descriptor number;
+the bearer itself must not appear in process arguments, environment variables,
+logs, CLI JSON, receipts, or provider evidence.
+
+The descriptor is an inherited connected Unix stream socket. Its peer must be
+the direct parent process under the same effective user. The parent writes
+exactly 64 lowercase hexadecimal bytes and closes the write half. The consumer
+authenticates the peer credentials, applies a bounded read timeout, rejects
+short, oversized, malformed, non-socket, closed, or wrong-process descriptors,
+marks the descriptor close-on-exec, and closes it after the single read. A
+descriptor failure occurs before challenge lookup or consumption.
+
 ## Receipt and Adoption Binding
 
 The receipt preserves the challenge's session, checkout, snapshot, and

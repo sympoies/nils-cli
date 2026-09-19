@@ -66,6 +66,8 @@ const PROCESS_SUPERVISOR_CAPABILITY: &[u8] = b"nils-git-cli-process-supervisor-v
 const PROCESS_SUPERVISOR_COMPLETION: &[u8] = b"nils-git-cli-process-supervisor-completion-v1";
 const PROCESS_SUPERVISOR_COMPLETION_BYTES: usize = PROCESS_SUPERVISOR_COMPLETION.len() + 6;
 const SNAPSHOT_WORKER_SCHEMA: &str = "nils-git-cli.dirty-snapshot-worker.v1";
+const CHALLENGE_TOKEN_BYTES: usize = 64;
+const CHALLENGE_DESCRIPTOR_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -8220,16 +8222,21 @@ pub(super) fn run_adopt_dirty(args: &[String]) -> i32 {
             ),
         );
     }
+    let challenge = match read_challenge_descriptor(parsed.challenge_fd) {
+        Ok(challenge) => challenge,
+        Err(error) => {
+            return emit_error(
+                "worktree.adopt-dirty",
+                parsed.format,
+                adoption_cli_error(error),
+            );
+        }
+    };
     let result = env::current_dir()
         .context("current checkout could not be resolved")
         .and_then(|checkout| {
             let state_root = resolve_state_root()?;
-            adopt_dirty_cli(
-                &checkout,
-                &state_root,
-                &parsed.challenge,
-                &parsed.reason_file,
-            )
+            adopt_dirty_cli(&checkout, &state_root, &challenge, &parsed.reason_file)
         });
     match result {
         Ok(receipt) => emit_success("worktree.adopt-dirty", parsed.format, &receipt, || {
@@ -8272,7 +8279,7 @@ pub(super) fn run_revoke_dirty(args: &[String]) -> i32 {
 }
 
 struct AdoptArgs {
-    challenge: String,
+    challenge_fd: libc::c_int,
     reason_file: PathBuf,
     format: OutputFormat,
 }
@@ -8290,33 +8297,38 @@ fn parse_adopt_args(raw: &[String]) -> std::result::Result<Option<AdoptArgs>, Cl
         .any(|arg| matches!(arg.as_str(), "-h" | "--help"))
     {
         println!(
-            "Usage: git-cli worktree adopt-dirty --challenge <token> --reason-file <path> [--format text|json]"
+            "Usage: git-cli worktree adopt-dirty --challenge-fd <fd> --reason-file <path> [--format text|json]"
         );
         return Ok(None);
     }
-    let mut challenge = None;
+    let mut challenge_fd = None;
     let mut reason_file = None;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
-            "--challenge" => {
+            "--challenge-fd" => {
                 let value = args.get(index + 1).ok_or_else(|| {
-                    CliError::usage("missing-challenge", "--challenge requires a token")
+                    CliError::usage(
+                        "missing-challenge-fd",
+                        "--challenge-fd requires a descriptor",
+                    )
                 })?;
-                if challenge.replace(value.clone()).is_some() {
+                let value = parse_challenge_descriptor(value)?;
+                if challenge_fd.replace(value).is_some() {
                     return Err(CliError::usage(
-                        "duplicate-challenge",
-                        "--challenge may be supplied only once",
+                        "duplicate-challenge-fd",
+                        "--challenge-fd may be supplied only once",
                     ));
                 }
                 index += 2;
             }
-            value if value.starts_with("--challenge=") => {
-                let value = value.trim_start_matches("--challenge=");
-                if value.is_empty() || challenge.replace(value.to_string()).is_some() {
+            value if value.starts_with("--challenge-fd=") => {
+                let value = value.trim_start_matches("--challenge-fd=");
+                let value = parse_challenge_descriptor(value)?;
+                if challenge_fd.replace(value).is_some() {
                     return Err(CliError::usage(
-                        "invalid-challenge",
-                        "--challenge requires one token",
+                        "duplicate-challenge-fd",
+                        "--challenge-fd may be supplied only once",
                     ));
                 }
                 index += 1;
@@ -8352,12 +8364,157 @@ fn parse_adopt_args(raw: &[String]) -> std::result::Result<Option<AdoptArgs>, Cl
         }
     }
     Ok(Some(AdoptArgs {
-        challenge: challenge
-            .ok_or_else(|| CliError::usage("missing-challenge", "--challenge is required"))?,
+        challenge_fd: challenge_fd
+            .ok_or_else(|| CliError::usage("missing-challenge-fd", "--challenge-fd is required"))?,
         reason_file: reason_file
             .ok_or_else(|| CliError::usage("missing-reason-file", "--reason-file is required"))?,
         format,
     }))
+}
+
+fn parse_challenge_descriptor(value: &str) -> std::result::Result<libc::c_int, CliError> {
+    value
+        .parse::<libc::c_int>()
+        .ok()
+        .filter(|descriptor| *descriptor > libc::STDERR_FILENO)
+        .ok_or_else(|| {
+            CliError::usage(
+                "invalid-challenge-fd",
+                "--challenge-fd requires an inherited descriptor",
+            )
+        })
+}
+
+fn challenge_descriptor_error() -> anyhow::Error {
+    domain_error(
+        DirtyCheckoutErrorKind::InvalidInput,
+        "dirty-checkout challenge descriptor is unavailable",
+    )
+}
+
+fn read_challenge_descriptor(descriptor: libc::c_int) -> Result<String> {
+    read_challenge_descriptor_from_peer(descriptor, unsafe { libc::getppid() }, unsafe {
+        libc::geteuid()
+    })
+}
+
+fn read_challenge_descriptor_from_peer(
+    descriptor: libc::c_int,
+    expected_peer_pid: libc::pid_t,
+    expected_peer_uid: libc::uid_t,
+) -> Result<String> {
+    use std::os::fd::FromRawFd;
+    use std::os::unix::net::UnixStream;
+
+    if descriptor <= libc::STDERR_FILENO {
+        return Err(challenge_descriptor_error());
+    }
+    let descriptor_flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
+    if descriptor_flags < 0 {
+        return Err(challenge_descriptor_error());
+    }
+    let mut stream = unsafe { UnixStream::from_raw_fd(descriptor) };
+    if unsafe {
+        libc::fcntl(
+            descriptor,
+            libc::F_SETFD,
+            descriptor_flags | libc::FD_CLOEXEC,
+        )
+    } < 0
+    {
+        return Err(challenge_descriptor_error());
+    }
+
+    let mut socket_type = 0;
+    let mut socket_type_length = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+    if unsafe {
+        libc::getsockopt(
+            descriptor,
+            libc::SOL_SOCKET,
+            libc::SO_TYPE,
+            (&mut socket_type as *mut libc::c_int).cast(),
+            &mut socket_type_length,
+        )
+    } != 0
+        || socket_type_length as usize != std::mem::size_of::<libc::c_int>()
+        || socket_type != libc::SOCK_STREAM
+        || !challenge_descriptor_peer_matches(descriptor, expected_peer_pid, expected_peer_uid)
+        || stream
+            .set_read_timeout(Some(CHALLENGE_DESCRIPTOR_TIMEOUT))
+            .is_err()
+    {
+        return Err(challenge_descriptor_error());
+    }
+
+    let mut challenge = Vec::with_capacity(CHALLENGE_TOKEN_BYTES + 1);
+    if Read::by_ref(&mut stream)
+        .take((CHALLENGE_TOKEN_BYTES + 1) as u64)
+        .read_to_end(&mut challenge)
+        .is_err()
+        || challenge.len() != CHALLENGE_TOKEN_BYTES
+        || !challenge
+            .iter()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return Err(challenge_descriptor_error());
+    }
+    String::from_utf8(challenge).map_err(|_| challenge_descriptor_error())
+}
+
+fn challenge_descriptor_peer_matches(
+    descriptor: libc::c_int,
+    expected_peer_pid: libc::pid_t,
+    expected_peer_uid: libc::uid_t,
+) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let mut credentials = std::mem::MaybeUninit::<libc::ucred>::zeroed();
+        let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        if unsafe {
+            libc::getsockopt(
+                descriptor,
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                credentials.as_mut_ptr().cast(),
+                &mut length,
+            )
+        } != 0
+            || length as usize != std::mem::size_of::<libc::ucred>()
+        {
+            return false;
+        }
+        linux_peer_credentials_match(
+            unsafe { credentials.assume_init() },
+            expected_peer_pid,
+            expected_peer_uid,
+        )
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let mut peer_pid = 0;
+        let mut peer_pid_length = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
+        let mut peer_uid = 0;
+        let mut peer_gid = 0;
+        let peer_identity_matches = unsafe {
+            libc::getsockopt(
+                descriptor,
+                libc::SOL_LOCAL,
+                libc::LOCAL_PEERPID,
+                (&mut peer_pid as *mut libc::pid_t).cast(),
+                &mut peer_pid_length,
+            ) == 0
+                && peer_pid_length as usize == std::mem::size_of::<libc::pid_t>()
+                && libc::getpeereid(descriptor, &mut peer_uid, &mut peer_gid) == 0
+        };
+        peer_identity_matches && peer_pid == expected_peer_pid && peer_uid == expected_peer_uid
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = (descriptor, expected_peer_pid, expected_peer_uid);
+        false
+    }
 }
 
 fn redact_adopt_parse_error(error: CliError) -> CliError {
@@ -8467,7 +8624,134 @@ fn resolve_state_root() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::fd::IntoRawFd;
+    use std::os::unix::net::UnixStream;
     use std::os::unix::process::ExitStatusExt;
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn sealed_challenge_descriptor(payload: &[u8]) -> libc::c_int {
+        let (mut sender, receiver) = UnixStream::pair().expect("challenge descriptor pair");
+        sender.write_all(payload).expect("write challenge payload");
+        sender
+            .shutdown(std::net::Shutdown::Write)
+            .expect("seal challenge payload");
+        drop(sender);
+        receiver.into_raw_fd()
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn challenge_descriptor_accepts_one_exact_parent_bound_bearer() {
+        let descriptor = sealed_challenge_descriptor(
+            b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        );
+        let consumed_descriptor = unsafe { libc::fcntl(descriptor, libc::F_DUPFD_CLOEXEC, 3) };
+        assert!(consumed_descriptor > libc::STDERR_FILENO);
+
+        let challenge =
+            read_challenge_descriptor_from_peer(descriptor, unsafe { libc::getpid() }, unsafe {
+                libc::geteuid()
+            })
+            .expect("read exact challenge frame");
+
+        assert_eq!(
+            challenge,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+        assert!(
+            read_challenge_descriptor_from_peer(
+                consumed_descriptor,
+                unsafe { libc::getpid() },
+                unsafe { libc::geteuid() },
+            )
+            .is_err(),
+            "consumed descriptors must fail closed"
+        );
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn challenge_descriptor_rejects_malformed_or_wrong_process_inputs() {
+        assert!(
+            read_challenge_descriptor_from_peer(
+                libc::c_int::MAX,
+                unsafe { libc::getpid() },
+                unsafe { libc::geteuid() },
+            )
+            .is_err(),
+            "closed or invalid descriptors must fail closed"
+        );
+
+        for payload in [
+            b"short".as_slice(),
+            b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".as_slice(),
+            b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".as_slice(),
+        ] {
+            let descriptor = sealed_challenge_descriptor(payload);
+            assert!(
+                read_challenge_descriptor_from_peer(
+                    descriptor,
+                    unsafe { libc::getpid() },
+                    unsafe { libc::geteuid() },
+                )
+                .is_err(),
+                "malformed challenge descriptor must fail closed"
+            );
+        }
+
+        let wrong_process = sealed_challenge_descriptor(
+            b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        );
+        assert!(
+            read_challenge_descriptor_from_peer(
+                wrong_process,
+                unsafe { libc::getpid() } + 1,
+                unsafe { libc::geteuid() },
+            )
+            .is_err(),
+            "a descriptor whose peer is not the expected process must fail closed"
+        );
+
+        let regular_file = tempfile::tempfile()
+            .expect("challenge regular file")
+            .into_raw_fd();
+        assert!(
+            read_challenge_descriptor_from_peer(regular_file, unsafe { libc::getpid() }, unsafe {
+                libc::geteuid()
+            },)
+            .is_err(),
+            "non-socket descriptors must fail closed"
+        );
+    }
+
+    #[test]
+    fn challenge_descriptor_argument_rejects_missing_malformed_and_legacy_inputs() {
+        for raw in [
+            vec!["--reason-file".to_string(), "reason.txt".to_string()],
+            vec![
+                "--challenge-fd".to_string(),
+                "not-a-descriptor".to_string(),
+                "--reason-file".to_string(),
+                "reason.txt".to_string(),
+            ],
+            vec![
+                "--challenge-fd=2".to_string(),
+                "--reason-file".to_string(),
+                "reason.txt".to_string(),
+            ],
+            vec![
+                "--challenge".to_string(),
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+                "--reason-file".to_string(),
+                "reason.txt".to_string(),
+            ],
+        ] {
+            assert!(
+                parse_adopt_args(&raw).is_err(),
+                "invalid descriptor argument must fail closed: {raw:?}"
+            );
+        }
+    }
 
     fn successful_worker_output(snapshot: serde_json::Value) -> std::process::Output {
         std::process::Output {
