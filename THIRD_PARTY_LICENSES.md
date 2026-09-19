@@ -3,7 +3,7 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `14975cfb25c062d50f168ef0ad7da9fa4d91e71237bc5265952ec3f3578197b0`
+- Cargo.lock SHA256: `98008aedb31d61c0b9a2b8e31b294bda78f8b199ba65058adcb6f1ef12f21e19`
 - Third-party crates (`source != null`): 496
 - Workspace crates (`source == null`, excluded below): 47
 
@@ -108,10 +108,10 @@ This file documents third-party Rust crate licenses used by this workspace.
 | chacha20 | 0.10.1 | MIT OR Apache-2.0 | crates.io |
 | chrono | 0.4.45 | MIT OR Apache-2.0 | crates.io |
 | chrono-tz | 0.10.4 | MIT OR Apache-2.0 | crates.io |
-| clap | 4.6.6 | MIT OR Apache-2.0 | crates.io |
-| clap_builder | 4.6.6 | MIT OR Apache-2.0 | crates.io |
-| clap_complete | 4.6.9 | MIT OR Apache-2.0 | crates.io |
-| clap_derive | 4.6.4 | MIT OR Apache-2.0 | crates.io |
+| clap | 4.6.7 | MIT OR Apache-2.0 | crates.io |
+| clap_builder | 4.6.7 | MIT OR Apache-2.0 | crates.io |
+| clap_complete | 4.6.11 | MIT OR Apache-2.0 | crates.io |
+| clap_derive | 4.6.7 | MIT OR Apache-2.0 | crates.io |
 | clap_lex | 1.1.0 | MIT OR Apache-2.0 | crates.io |
 | cmake | 0.1.58 | MIT OR Apache-2.0 | crates.io |
 | color_quant | 1.1.0 | MIT | crates.io |
@@ -228,9 +228,9 @@ This file documents third-party Rust crate licenses used by this workspace.
 | jaq-core | 3.1.1 | MIT | crates.io |
 | jaq-json | 2.0.3 | MIT | crates.io |
 | jaq-std | 3.0.3 | MIT | crates.io |
-| jiff | 0.2.35 | Unlicense OR MIT | crates.io |
+| jiff | 0.2.37 | Unlicense OR MIT | crates.io |
 | jiff-core | 0.1.0 | Unlicense OR MIT | crates.io |
-| jiff-static | 0.2.35 | Unlicense OR MIT | crates.io |
+| jiff-static | 0.2.37 | Unlicense OR MIT | crates.io |
 | jiff-tzdb | 0.1.6 | Unlicense OR MIT | crates.io |
 | jiff-tzdb-platform | 0.1.3 | Unlicense OR MIT | crates.io |
 | jni | 0.22.4 | MIT OR Apache-2.0 | crates.io |
@@ -242,7 +242,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | jsonschema | 0.49.9 | MIT | crates.io |
 | jsonschema-regex | 0.49.9 | MIT | crates.io |
 | jsonschema-value | 0.49.9 | MIT | crates.io |
-| jsonwebtoken | 11.0.0 | MIT | crates.io |
+| jsonwebtoken | 11.1.0 | MIT | crates.io |
 | kqueue | 1.2.0 | MIT | crates.io |
 | kqueue-sys | 1.1.2 | MIT | crates.io |
 | kurbo | 0.13.1 | Apache-2.0 OR MIT | crates.io |
@@ -358,7 +358,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | regex-automata | 0.4.16 | MIT OR Apache-2.0 | crates.io |
 | regex-bites | 0.1.6 | MIT OR Apache-2.0 | crates.io |
 | regex-syntax | 0.8.11 | MIT OR Apache-2.0 | crates.io |
-| reqwest | 0.13.4 | MIT OR Apache-2.0 | crates.io |
+| reqwest | 0.13.5 | MIT OR Apache-2.0 | crates.io |
 | resvg | 0.48.1 | Apache-2.0 OR MIT | crates.io |
 | rgb | 0.8.53 | MIT | crates.io |
 | ring | 0.17.14 | Apache-2.0 AND ISC | crates.io |
@@ -474,7 +474,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | usvg | 0.48.1 | Apache-2.0 OR MIT | crates.io |
 | utf8_iter | 1.0.4 | Apache-2.0 OR MIT | crates.io |
 | utf8parse | 0.2.2 | Apache-2.0 OR MIT | crates.io |
-| uuid | 1.26.0 | Apache-2.0 OR MIT | crates.io |
+| uuid | 1.26.1 | Apache-2.0 OR MIT | crates.io |
 | uuid-simd | 0.8.0 | MIT | crates.io |
 | valuable | 0.1.1 | MIT | crates.io |
 | vcpkg | 0.2.15 | MIT/Apache-2.0 | crates.io |
