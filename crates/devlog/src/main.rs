@@ -177,25 +177,33 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<i32, DevlogError> {
             let month = month.as_deref().map(str::parse::<Month>).transpose()?;
             let report = nils_devlog::search::search(&devlog, term, month)?;
             let found = !report.matches.is_empty();
+            let warnings = report
+                .conflicts
+                .iter()
+                .map(|conflict| conflict.warning())
+                .collect::<Vec<_>>();
             let render = |report: &SearchReport| {
                 for entry in &report.matches {
                     println!("{}.md:{}:{}", entry.month, entry.line_number, entry.line);
+                }
+                for conflict in &report.conflicts {
+                    eprintln!("{}", conflict.warning());
                 }
                 if report.matches.is_empty() {
                     eprintln!("(no matches for '{}')", report.term);
                 }
             };
             if found {
-                emit(format, "search", 1, &report, render);
+                emit_with_warnings(format, "search", 1, &report, &warnings, render);
                 Ok(exit::SUCCESS)
             } else {
-                emit_failure(
+                emit_failure_with_warnings(
                     format,
                     "search",
                     1,
                     &report,
-                    "no-matches",
-                    "no devlog entry matched the search term",
+                    &warnings,
+                    ("no-matches", "no devlog entry matched the search term"),
                     render,
                 );
                 Ok(exit::RUNTIME)
@@ -318,7 +326,29 @@ where
     T: Serialize,
     F: FnOnce(&T),
 {
-    emit_outcome(format, command, version, payload, None, render_text);
+    emit_outcome(format, command, version, payload, &[], None, render_text);
+}
+
+fn emit_with_warnings<T, F>(
+    format: OutputFormat,
+    command: &str,
+    version: u32,
+    payload: &T,
+    warnings: &[String],
+    render_text: F,
+) where
+    T: Serialize,
+    F: FnOnce(&T),
+{
+    emit_outcome(
+        format,
+        command,
+        version,
+        payload,
+        warnings,
+        None,
+        render_text,
+    );
 }
 
 /// Render a payload whose command outcome is a failure.
@@ -345,7 +375,31 @@ fn emit_failure<T, F>(
         command,
         version,
         payload,
+        &[],
         Some((code, message)),
+        render_text,
+    );
+}
+
+fn emit_failure_with_warnings<T, F>(
+    format: OutputFormat,
+    command: &str,
+    version: u32,
+    payload: &T,
+    warnings: &[String],
+    failure: (&str, &str),
+    render_text: F,
+) where
+    T: Serialize,
+    F: FnOnce(&T),
+{
+    emit_outcome(
+        format,
+        command,
+        version,
+        payload,
+        warnings,
+        Some(failure),
         render_text,
     );
 }
@@ -355,6 +409,7 @@ fn emit_outcome<T, F>(
     command: &str,
     version: u32,
     payload: &T,
+    warnings: &[String],
     failure: Option<(&str, &str)>,
     render_text: F,
 ) where
@@ -365,11 +420,17 @@ fn emit_outcome<T, F>(
         OutputFormat::Json => {
             let schema_version = schema_version_for(BINARY, command, version);
             let serialized = match failure {
-                None => serde_json::to_string(&Envelope::success(schema_version, payload)),
+                None => serde_json::to_string(
+                    &Envelope::success(schema_version, payload)
+                        .with_warnings(warnings.iter().cloned()),
+                ),
                 Some((code, message)) => {
                     let details = serde_json::to_value(payload).unwrap_or(serde_json::Value::Null);
                     let error = EnvelopeError::new(code, message).with_details(details);
-                    serde_json::to_string(&Envelope::<()>::failure(schema_version, error))
+                    serde_json::to_string(
+                        &Envelope::<()>::failure(schema_version, error)
+                            .with_warnings(warnings.iter().cloned()),
+                    )
                 }
             };
             match serialized {

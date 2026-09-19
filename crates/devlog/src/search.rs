@@ -2,7 +2,7 @@
 
 use serde::Serialize;
 
-use crate::model::{Devlog, DevlogError, Month};
+use crate::model::{Devlog, DevlogError, Month, first_conflict_marker};
 
 /// One matching line.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -12,12 +12,31 @@ pub struct Match {
     pub line: String,
 }
 
+/// An unresolved merge conflict observed while searching a month file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchConflict {
+    pub month: String,
+    pub line_number: usize,
+}
+
+impl SearchConflict {
+    /// Render the non-fatal diagnostic shared by text and JSON output.
+    pub fn warning(&self) -> String {
+        format!(
+            "note: {}.md:{}: unresolved merge conflict; search results may include both sides",
+            self.month, self.line_number
+        )
+    }
+}
+
 /// The result of a search.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct SearchReport {
     pub term: String,
     pub months_searched: usize,
     pub matches: Vec<Match>,
+    #[serde(skip_serializing)]
+    pub conflicts: Vec<SearchConflict>,
 }
 
 /// Search `term` across every month file, or one month when `month` is given.
@@ -43,6 +62,7 @@ pub fn search(
 
     let needle = term.to_lowercase();
     let mut matches = Vec::new();
+    let mut conflicts = Vec::new();
 
     for month in &months {
         let path = devlog.month_path(*month);
@@ -50,6 +70,12 @@ pub fn search(
             path: path.clone(),
             source,
         })?;
+        if let Some(line_number) = first_conflict_marker(&contents) {
+            conflicts.push(SearchConflict {
+                month: month.to_string(),
+                line_number,
+            });
+        }
         for (index, line) in contents.lines().enumerate() {
             if line.to_lowercase().contains(&needle) {
                 matches.push(Match {
@@ -65,5 +91,6 @@ pub fn search(
         term: term.to_string(),
         months_searched: months.len(),
         matches,
+        conflicts,
     })
 }

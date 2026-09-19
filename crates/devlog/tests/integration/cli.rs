@@ -229,6 +229,26 @@ fn search_matches_case_insensitively_and_reports_line_numbers() {
 }
 
 #[test]
+fn search_warns_when_matches_come_from_a_conflicted_file() {
+    let fixture = Fixture::new("docs/devlog");
+    std::fs::write(
+        fixture.devlog_path("docs/devlog/2026-04.md"),
+        "# Development log - 2026-04\n\n<<<<<<< HEAD\n- Shipped ours.\n=======\n- Shipped theirs.\n>>>>>>> feature\n",
+    )
+    .expect("write conflicted month");
+
+    let output = run_in(&fixture.root, &["search", "shipped"]);
+
+    assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
+    assert!(output.stdout_text().contains("2026-04.md:4:"));
+    assert!(output.stdout_text().contains("2026-04.md:6:"));
+    assert_eq!(
+        output.stderr_text(),
+        "note: 2026-04.md:3: unresolved merge conflict; search results may include both sides\n"
+    );
+}
+
+#[test]
 fn search_without_matches_exits_one_and_says_so_on_stderr() {
     let fixture = Fixture::new("docs/devlog");
     let output = run_in(&fixture.root, &["search", "nothing-matches-this"]);
@@ -265,6 +285,28 @@ fn search_emits_a_json_envelope() {
     assert_eq!(json["schema_version"], "cli.devlog.search.v1");
     assert_eq!(json["data"]["matches"][0]["month"], "2026-04");
     assert_eq!(json["data"]["matches"][0]["line_number"], 3);
+}
+
+#[test]
+fn search_carries_a_conflict_warning_in_the_json_envelope() {
+    let fixture = Fixture::new("docs/devlog");
+    std::fs::write(
+        fixture.devlog_path("docs/devlog/2026-04.md"),
+        "# Development log - 2026-04\n\n<<<<<<< HEAD\n- Shipped ours.\n=======\n- Shipped theirs.\n>>>>>>> feature\n",
+    )
+    .expect("write conflicted month");
+
+    let output = run_in(&fixture.root, &["--format", "json", "search", "shipped"]);
+
+    assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
+    assert_eq!(output.stderr_text(), "");
+    let json = output.stdout_json();
+    assert_eq!(json["schema_version"], "cli.devlog.search.v1");
+    assert_eq!(json["data"]["matches"].as_array().map(Vec::len), Some(2));
+    assert_eq!(
+        json["warnings"][0],
+        "note: 2026-04.md:3: unresolved merge conflict; search results may include both sides"
+    );
 }
 
 #[test]
@@ -469,6 +511,37 @@ fn a_search_without_matches_emits_a_failure_envelope() {
     assert_eq!(json["schema_version"], "cli.devlog.search.v1");
     assert_eq!(json["ok"], false);
     assert_eq!(json["error"]["code"], "no-matches");
+}
+
+#[test]
+fn search_carries_a_conflict_warning_in_the_json_failure_envelope() {
+    let fixture = Fixture::new("docs/devlog");
+    std::fs::write(
+        fixture.devlog_path("docs/devlog/2026-04.md"),
+        "# Development log - 2026-04\n\n<<<<<<< HEAD\n- Shipped ours.\n=======\n- Shipped theirs.\n>>>>>>> feature\n",
+    )
+    .expect("write conflicted month");
+
+    let output = run_in(
+        &fixture.root,
+        &["--format", "json", "search", "absent-term"],
+    );
+
+    assert_eq!(output.code, 1, "stderr={}", output.stderr_text());
+    assert_eq!(output.stderr_text(), "");
+    let json = output.stdout_json();
+    assert_eq!(json["schema_version"], "cli.devlog.search.v1");
+    assert_eq!(json["ok"], false);
+    assert_eq!(json["error"]["code"], "no-matches");
+    assert_eq!(json["error"]["details"]["term"], "absent-term");
+    assert_eq!(
+        json["error"]["details"]["matches"].as_array().map(Vec::len),
+        Some(0)
+    );
+    assert_eq!(
+        json["warnings"][0],
+        "note: 2026-04.md:3: unresolved merge conflict; search results may include both sides"
+    );
 }
 
 #[test]
