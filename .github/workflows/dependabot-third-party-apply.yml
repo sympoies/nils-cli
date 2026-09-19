@@ -114,8 +114,8 @@ jobs:
           author="$(printf '%s' "${pr_json}" | jq -r .author.login)"
           head_oid="$(printf '%s' "${pr_json}" | jq -r .headRefOid)"
 
-          if [ "${author}" != "dependabot[bot]" ]; then
-            echo "::error::PR #${number} is authored by ${author}, not dependabot[bot]." >&2
+          if [[ "${author}" != "dependabot[bot]" && "${author}" != "app/dependabot" ]]; then
+            echo "::error::PR #${number} is authored by ${author}, not Dependabot." >&2
             exit 1
           fi
           # The branch moved while this ran, so the refresh no longer describes
@@ -234,8 +234,8 @@ jobs:
           author="$(printf '%s' "${pr_json}" | jq -r .author.login)"
           head_oid="$(printf '%s' "${pr_json}" | jq -r .headRefOid)"
 
-          if [ "${author}" != "dependabot[bot]" ]; then
-            echo "PR #${number} is authored by ${author}, not dependabot[bot]; refusing to merge."
+          if [[ "${author}" != "dependabot[bot]" && "${author}" != "app/dependabot" ]]; then
+            echo "PR #${number} is authored by ${author}, not Dependabot; refusing to merge."
             exit 0
           fi
 
