@@ -272,6 +272,7 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 - `bash scripts/ci/tests/detect-docs-only.test.sh`
 - `bash scripts/ci/tests/detect-release-only.test.sh`
 - `node scripts/ci/tests/release-ci-gate.test.cjs`
+- `bash scripts/ci/tests/dependabot-third-party-workflow-contract.test.sh`
 - `bash scripts/ci/tests/release-workflow-contract.test.sh`
 - `bash scripts/ci/tests/shared-helper-adoption-audit.test.sh`
 - `bash scripts/ci/tests/publish-order-audit.test.sh`

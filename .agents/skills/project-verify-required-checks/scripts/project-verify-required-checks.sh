@@ -19,6 +19,7 @@ Runs the full CI/parity checks from DEVELOPMENT.md:
   - bash scripts/ci/tests/detect-docs-only.test.sh
   - bash scripts/ci/tests/detect-release-only.test.sh
   - node scripts/ci/tests/release-ci-gate.test.cjs
+  - bash scripts/ci/tests/dependabot-third-party-workflow-contract.test.sh
   - bash scripts/ci/tests/release-workflow-contract.test.sh
   - bash scripts/ci/tests/shared-helper-adoption-audit.test.sh
   - bash scripts/ci/tests/publish-order-audit.test.sh
@@ -148,6 +149,7 @@ run bash scripts/ci/tests/local-fast-checks.test.sh
 run bash scripts/ci/tests/detect-docs-only.test.sh
 run bash scripts/ci/tests/detect-release-only.test.sh
 run node scripts/ci/tests/release-ci-gate.test.cjs
+run bash scripts/ci/tests/dependabot-third-party-workflow-contract.test.sh
 run bash scripts/ci/tests/release-workflow-contract.test.sh
 run bash scripts/ci/tests/shared-helper-adoption-audit.test.sh
 run bash scripts/ci/tests/publish-order-audit.test.sh
