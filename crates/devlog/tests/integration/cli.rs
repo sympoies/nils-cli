@@ -416,6 +416,11 @@ fn every_documented_check_problem_kind_is_reported() {
             index: None,
         },
         Case {
+            kind: "unterminated-fence",
+            month: "# Development log - 2026-04\n\n```text\nnever closed\n",
+            index: None,
+        },
+        Case {
             kind: "index-stale-month",
             month: "",
             index: Some(
@@ -744,6 +749,8 @@ fn a_missing_devlog_emits_a_json_error_envelope() {
 /// the parser used to accept the file.
 const CONFLICTED_MONTH: &str = "# Development log - 2026-04\n\n<<<<<<< HEAD\n## 2026-04-20 - Ours\n\n### Result\n\n- a\n\n### Why / context\n\n- b\n\n### Evidence\n\n- c\n\n### Links\n\n- d\n=======\n## 2026-04-20 - Theirs\n\n### Result\n\n- a\n\n### Why / context\n\n- b\n\n### Evidence\n\n- c\n\n### Links\n\n- d\n>>>>>>> feature\n\n## 2026-04-17 - Existing entry\n\n### Result\n\n- Did a thing.\n\n### Why / context\n\n- Because.\n\n### Evidence\n\n- Ran it.\n\n### Links\n\n- `abc12345`\n";
 
+const UNTERMINATED_FENCE_MONTH: &str = "# Development log - 2026-04\n\n## 2026-04-17 - Fence handling\n\n### Result\n\n- a\n\n### Why / context\n\n- b\n\n### Evidence\n\n- c\n\n```text\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature\n";
+
 #[test]
 fn check_reports_conflict_markers_in_a_month_file() {
     let fixture = Fixture::new("docs/devlog");
@@ -757,6 +764,49 @@ fn check_reports_conflict_markers_in_a_month_file() {
     let stdout = output.stdout_text();
     assert_eq!(output.code, 65, "stdout={stdout}");
     assert!(stdout.contains("conflict-markers"), "stdout={stdout}");
+}
+
+#[test]
+fn check_reports_an_unterminated_fence_at_its_opening_line() {
+    let fixture = Fixture::new("docs/devlog");
+    std::fs::write(
+        fixture.devlog_path("docs/devlog/2026-04.md"),
+        UNTERMINATED_FENCE_MONTH,
+    )
+    .expect("write month with an unterminated fence");
+
+    let text = run_in(&fixture.root, &["check"]);
+    assert_eq!(text.code, 65, "stdout={}", text.stdout_text());
+    assert!(
+        text.stdout_text().contains(
+            "unterminated-fence: docs/devlog/2026-04.md - fenced code block opened at line 17 is not closed"
+        ),
+        "stdout={}",
+        text.stdout_text()
+    );
+    assert!(
+        !text.stdout_text().contains("conflict-markers"),
+        "the conflict remains masked by the open fence: stdout={}",
+        text.stdout_text()
+    );
+
+    let json = run_in(&fixture.root, &["--format", "json", "check"]);
+    assert_eq!(json.code, 65, "stderr={}", json.stderr_text());
+    let payload = json.stdout_json();
+    let problems = payload["error"]["details"]["problems"]
+        .as_array()
+        .expect("problems");
+    let fence = problems
+        .iter()
+        .find(|problem| problem["kind"] == "unterminated-fence")
+        .expect("unterminated-fence problem");
+    assert_eq!(fence["path"], "docs/devlog/2026-04.md");
+    assert!(
+        fence["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("line 17")),
+        "fence={fence}"
+    );
 }
 
 #[test]
@@ -1416,6 +1466,46 @@ fn fix_refuses_a_conflicted_log_and_writes_nothing() {
     // Every file is checked before any is written, so a repairable month
     // beside a conflicted one is not half-repaired behind a refusal.
     assert_eq!(fixture.read("docs/devlog/2026-04.md"), repairable);
+}
+
+#[test]
+fn fix_repairs_safe_files_but_leaves_an_unterminated_fence_untouched() {
+    let fixture = Fixture::new("docs/devlog");
+    let unterminated = UNTERMINATED_FENCE_MONTH.replace("2026-04", "2026-05");
+    std::fs::write(fixture.devlog_path("docs/devlog/2026-05.md"), &unterminated)
+        .expect("write month with an unterminated fence");
+    std::fs::write(
+        fixture.devlog_path("docs/devlog/2026-04.md"),
+        HAND_WRITTEN_MONTH,
+    )
+    .expect("write a repairable month");
+
+    let output = run_in(&fixture.root, &["--format", "json", "fix"]);
+    assert_eq!(output.code, 65, "stdout={}", output.stdout_text());
+    assert_eq!(fixture.read("docs/devlog/2026-05.md"), unterminated);
+    assert_ne!(
+        fixture.read("docs/devlog/2026-04.md"),
+        HAND_WRITTEN_MONTH,
+        "safe repairs in another file should still be applied"
+    );
+
+    let json = output.stdout_json();
+    assert_eq!(json["error"]["details"]["files_changed"], 1);
+    let remaining = json["error"]["details"]["remaining"]
+        .as_array()
+        .expect("remaining");
+    assert!(
+        remaining
+            .iter()
+            .any(|problem| problem["kind"] == "unterminated-fence"),
+        "remaining={remaining:?}"
+    );
+    assert!(
+        !remaining
+            .iter()
+            .any(|problem| problem["kind"] == "conflict-markers"),
+        "the conflict remains masked by the open fence: remaining={remaining:?}"
+    );
 }
 
 #[test]

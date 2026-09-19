@@ -391,12 +391,12 @@ pub fn first_conflict_marker(contents: &str) -> Option<usize> {
 /// entry would report problems nobody can fix without editing the prose, and
 /// `fix` would write a backfilled section into the middle of the code block.
 ///
-/// A fence that is never closed swallows the rest of the file. That is the
-/// conservative direction and it is deliberate — `an_unclosed_fence_does_not_swallow_the_rest_of_the_file`
-/// pins it — but it has a cost worth knowing: a real conflict marker below an
-/// unterminated fence is invisible to the refusal that exists to catch one, so
-/// `fix` will repair the other months around it. Nothing in this crate reports
-/// an unterminated fence, which is the actual gap; see the follow-up issue.
+/// A fence that is never closed masks the rest of the file. That conservative
+/// direction is deliberate: a real conflict marker below the opening remains
+/// quoted content, while `check` reports the opening line as an
+/// `unterminated-fence` problem. `fix` can still repair safe content elsewhere,
+/// but it leaves the masked region untouched because no closing line can be
+/// inferred.
 ///
 /// This returns a mask rather than a cursor because the alternative has already
 /// failed here: when each pass derived the rule for itself, one of them was
@@ -434,14 +434,14 @@ pub fn structural_line_mask<'a>(lines: impl IntoIterator<Item = &'a str>) -> Vec
     structural
 }
 
-/// Whether a fence in `lines` is opened and never closed.
+/// The 1-based opening line of the first fence that is never closed.
 ///
 /// Everything from such a fence to the end of the file is treated as an
 /// example, which means there is no way to know where the content it hides
 /// ends. A caller that wants to *write* into those lines has to stop: see
 /// `fix`, where inserting into a region the mask has already swallowed made
 /// the insertion invisible to the next pass and the repair loop endless.
-pub fn has_unterminated_fence<'a>(lines: impl IntoIterator<Item = &'a str>) -> bool {
+pub fn unterminated_fence_line<'a>(lines: impl IntoIterator<Item = &'a str>) -> Option<usize> {
     let lines: Vec<&str> = lines.into_iter().collect();
     let mut at = 0usize;
     while at < lines.len() {
@@ -453,10 +453,15 @@ pub fn has_unterminated_fence<'a>(lines: impl IntoIterator<Item = &'a str>) -> b
             fence_delimiter(lines[*index]).is_some_and(|close| close.starts_with(open))
         }) {
             Some(end) => at = end + 1,
-            None => return true,
+            None => return Some(at + 1),
         }
     }
-    false
+    None
+}
+
+/// Whether a fence in `lines` is opened and never closed.
+pub fn has_unterminated_fence<'a>(lines: impl IntoIterator<Item = &'a str>) -> bool {
+    unterminated_fence_line(lines).is_some()
 }
 
 /// The leading run of backticks or tildes when `line` opens or closes a fence.
