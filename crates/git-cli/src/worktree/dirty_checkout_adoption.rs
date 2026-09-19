@@ -7528,7 +7528,7 @@ where
 #[cfg(target_os = "macos")]
 struct ProcessOwner {
     root: ProcessIdentity,
-    queue: File,
+    queue: Option<File>,
     tracked: HashMap<libc::pid_t, ProcessIdentity>,
     pending: HashMap<libc::pid_t, ProcessIdentity>,
 }
@@ -7567,17 +7567,33 @@ impl ProcessOwner {
             )
         };
         if changed < 0 {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::ENOTSUP) {
+                // Some macOS kernels expose NOTE_TRACK in libc but reject its
+                // registration. Retain the same identity-bound bounded scan
+                // used alongside kqueue; every other registration error stays
+                // fail-closed.
+                return Ok(Self {
+                    root,
+                    queue: None,
+                    tracked: HashMap::new(),
+                    pending: HashMap::new(),
+                });
+            }
             return Err(process_scan_resource_error());
         }
         Ok(Self {
             root,
-            queue,
+            queue: Some(queue),
             tracked: HashMap::new(),
             pending: HashMap::new(),
         })
     }
 
     fn refresh(&mut self, deadline: Instant) -> Result<()> {
+        let Some(queue) = &self.queue else {
+            return ensure_deadline(deadline);
+        };
         let timeout = libc::timespec {
             tv_sec: 0,
             tv_nsec: 0,
@@ -7587,7 +7603,7 @@ impl ProcessOwner {
             let mut events: [libc::kevent; 64] = unsafe { std::mem::zeroed() };
             let count = unsafe {
                 libc::kevent(
-                    self.queue.as_raw_fd(),
+                    queue.as_raw_fd(),
                     std::ptr::null(),
                     0,
                     events.as_mut_ptr(),
