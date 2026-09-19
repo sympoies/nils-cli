@@ -8393,15 +8393,33 @@ fn challenge_descriptor_error() -> anyhow::Error {
 }
 
 fn read_challenge_descriptor(descriptor: libc::c_int) -> Result<String> {
-    read_challenge_descriptor_from_peer(descriptor, unsafe { libc::getppid() }, unsafe {
-        libc::geteuid()
-    })
+    read_challenge_descriptor_from_peer_until(
+        descriptor,
+        unsafe { libc::getppid() },
+        unsafe { libc::geteuid() },
+        CHALLENGE_DESCRIPTOR_TIMEOUT,
+    )
 }
 
+#[cfg(test)]
 fn read_challenge_descriptor_from_peer(
     descriptor: libc::c_int,
     expected_peer_pid: libc::pid_t,
     expected_peer_uid: libc::uid_t,
+) -> Result<String> {
+    read_challenge_descriptor_from_peer_until(
+        descriptor,
+        expected_peer_pid,
+        expected_peer_uid,
+        CHALLENGE_DESCRIPTOR_TIMEOUT,
+    )
+}
+
+fn read_challenge_descriptor_from_peer_until(
+    descriptor: libc::c_int,
+    expected_peer_pid: libc::pid_t,
+    expected_peer_uid: libc::uid_t,
+    timeout: Duration,
 ) -> Result<String> {
     use std::os::fd::FromRawFd;
     use std::os::unix::net::UnixStream;
@@ -8439,26 +8457,41 @@ fn read_challenge_descriptor_from_peer(
         || socket_type_length as usize != std::mem::size_of::<libc::c_int>()
         || socket_type != libc::SOCK_STREAM
         || !challenge_descriptor_peer_matches(descriptor, expected_peer_pid, expected_peer_uid)
-        || stream
-            .set_read_timeout(Some(CHALLENGE_DESCRIPTOR_TIMEOUT))
-            .is_err()
     {
         return Err(challenge_descriptor_error());
     }
 
-    let mut challenge = Vec::with_capacity(CHALLENGE_TOKEN_BYTES + 1);
-    if Read::by_ref(&mut stream)
-        .take((CHALLENGE_TOKEN_BYTES + 1) as u64)
-        .read_to_end(&mut challenge)
-        .is_err()
-        || challenge.len() != CHALLENGE_TOKEN_BYTES
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(challenge_descriptor_error)?;
+    let mut challenge = [0_u8; CHALLENGE_TOKEN_BYTES + 1];
+    let mut challenge_len = 0;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() || stream.set_read_timeout(Some(remaining)).is_err() {
+            return Err(challenge_descriptor_error());
+        }
+        match stream.read(&mut challenge[challenge_len..]) {
+            Ok(0) => break,
+            Ok(read) => {
+                challenge_len += read;
+                if challenge_len > CHALLENGE_TOKEN_BYTES {
+                    return Err(challenge_descriptor_error());
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(_) => return Err(challenge_descriptor_error()),
+        }
+    }
+    let challenge = &challenge[..challenge_len];
+    if challenge.len() != CHALLENGE_TOKEN_BYTES
         || !challenge
             .iter()
             .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
     {
         return Err(challenge_descriptor_error());
     }
-    String::from_utf8(challenge).map_err(|_| challenge_descriptor_error())
+    String::from_utf8(challenge.to_vec()).map_err(|_| challenge_descriptor_error())
 }
 
 fn challenge_descriptor_peer_matches(
@@ -8722,6 +8755,35 @@ mod tests {
             .is_err(),
             "non-socket descriptors must fail closed"
         );
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn challenge_descriptor_enforces_one_absolute_read_deadline() {
+        let (mut sender, receiver) = UnixStream::pair().expect("challenge descriptor pair");
+        let descriptor = receiver.into_raw_fd();
+        let writer = std::thread::spawn(move || {
+            for _ in 0..5 {
+                if sender.write_all(b"a").is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(30));
+            }
+        });
+        let started = Instant::now();
+        let result = read_challenge_descriptor_from_peer_until(
+            descriptor,
+            unsafe { libc::getpid() },
+            unsafe { libc::geteuid() },
+            Duration::from_millis(60),
+        );
+        let elapsed = started.elapsed();
+        assert!(result.is_err(), "partial challenge frame must fail closed");
+        assert!(
+            elapsed < Duration::from_millis(140),
+            "descriptor read exceeded one absolute deadline: {elapsed:?}"
+        );
+        writer.join().expect("join challenge writer");
     }
 
     #[test]

@@ -3,9 +3,7 @@ use git_cli::worktree::dirty_checkout_adoption::{
     DirtyCheckoutError, DirtyCheckoutErrorKind, DirtySnapshot, adopt_dirty, dirty_snapshot,
     revoke_dirty,
 };
-#[cfg(target_os = "linux")]
-use nils_test_support::cmd::run_with;
-use nils_test_support::cmd::{CmdOptions, CmdOutput};
+use nils_test_support::cmd::{CmdOptions, CmdOutput, run_with};
 #[cfg(target_os = "linux")]
 use nils_test_support::git::{InitRepoOptions, init_repo_at_with};
 use pretty_assertions::assert_eq;
@@ -106,7 +104,7 @@ fn write_challenge(state_root: &std::path::Path, snapshot: &DirtySnapshot) -> st
     write_challenge_window(state_root, snapshot, issued_at, issued_at + 300)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn run_governed_command(
     harness: &GitCliHarness,
     cwd: &std::path::Path,
@@ -217,7 +215,7 @@ fn run_with_challenge_descriptor(
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn run_governed_adopt_command(
     harness: &GitCliHarness,
     cwd: &std::path::Path,
@@ -1481,7 +1479,7 @@ fn governed_cli_feature_gate_accepts_only_exact_one() {
     assert_ne!(code, "dirty-checkout-adoption-disabled");
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn governed_cli_enforces_gate_and_returns_private_json_contracts() {
     let harness = GitCliHarness::new();
@@ -1787,7 +1785,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn assert_exact_json_keys(value: &serde_json::Value, expected: &[&str], label: &str) {
     let mut actual: Vec<_> = value
         .as_object()
