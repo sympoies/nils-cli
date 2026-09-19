@@ -19425,6 +19425,7 @@ esac
     #[tokio::test]
     async fn deleted_runtime_helper_returns_a_durable_safe_startup_failure() {
         let lock = GlobalStateLock::new();
+        let _without_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
         let tmp = tempfile::TempDir::new().unwrap();
         let cwd = tmp.path().join("repo");
         let runtime_dir = tempfile::Builder::new()
@@ -19634,6 +19635,7 @@ esac
     #[tokio::test]
     async fn serve_created_capable_codex_session_projects_supported_app_server_runtime() {
         let lock = GlobalStateLock::new();
+        let _without_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
         let tmp = tempfile::TempDir::new().unwrap();
         let cwd = tmp.path().join("repo");
         let runtime_dir = tempfile::Builder::new()
@@ -20272,6 +20274,8 @@ esac
 
     #[tokio::test]
     async fn fresh_profile_session_resume_preserves_context_or_fails_closed_without_proof() {
+        let lock = GlobalStateLock::new();
+        let _without_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
         let tmp = tempfile::TempDir::new().unwrap();
         let cwd = tmp.path().join("worktrees/issue-362");
         let config_dir = tmp.path().join("codex-profile");
@@ -26603,6 +26607,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","accounts"
     #[tokio::test]
     async fn create_records_workdir_usage_for_recent_first_search() {
         let lock = GlobalStateLock::new();
+        let _without_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
         let tmp = tempfile::TempDir::new().unwrap();
         let home = tmp.path().join("home");
         let alpha_repo = home.join("Project/sympoies/alpha");

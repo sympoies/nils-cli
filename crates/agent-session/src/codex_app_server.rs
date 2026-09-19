@@ -2356,6 +2356,31 @@ async fn finish_account_binding(
     .map_err(|err| format!("Codex account binding persistence failed: {}", err.code()))
 }
 
+async fn restore_account_binding_after_refresh_failure(
+    context: &CliContext,
+    record: &SessionRecord,
+    launch_id: &str,
+    account: &str,
+    attempt: crate::codex_account::RefreshBindingAttempt,
+) -> Result<crate::codex_account::CodexAccountView, String> {
+    let restore_context = context.clone();
+    let restore_id = record.id.clone();
+    let restore_launch_id = launch_id.to_string();
+    let restore_account = account.to_string();
+    tokio::task::spawn_blocking(move || {
+        crate::codex_account::restore_binding_after_refresh_failure(
+            &restore_context,
+            &restore_id,
+            &restore_launch_id,
+            &restore_account,
+            attempt,
+        )
+    })
+    .await
+    .map_err(|_| "Codex account refresh recovery worker failed".to_string())?
+    .map_err(|err| format!("Codex account refresh recovery failed: {}", err.code()))
+}
+
 async fn control_account_ready(
     context: &CliContext,
     record: &SessionRecord,
@@ -4828,8 +4853,8 @@ where
     let begin_id = record.id.clone();
     let begin_launch_id = launch_id.clone();
     let begin_account = account.to_string();
-    let revision = tokio::task::spawn_blocking(move || {
-        crate::codex_account::begin_binding(
+    let attempt = tokio::task::spawn_blocking(move || {
+        crate::codex_account::begin_refresh_binding(
             &begin_context,
             &begin_id,
             &begin_launch_id,
@@ -4839,6 +4864,7 @@ where
     .await
     .map_err(|_| "Codex account refresh worker failed".to_string())?
     .map_err(|err| format!("Codex account refresh rejected: {}", err.code()))?;
+    let revision = attempt.revision();
     let refresh_account = account.to_string();
     let credentials_result = tokio::task::spawn_blocking(move || {
         crate::codex_account::resolve_account(&refresh_account, true)
@@ -4848,25 +4874,15 @@ where
     let credentials = match credentials_result {
         Ok(Ok(credentials)) => credentials,
         Ok(Err(err)) => {
-            let _ = finish_account_binding(
-                context,
-                record,
-                &launch_id,
-                account,
-                revision,
-                Err("refresh_failed"),
+            let _ = restore_account_binding_after_refresh_failure(
+                context, record, &launch_id, account, attempt,
             )
             .await;
             return Err(format!("Codex account refresh failed: {}", err.code()));
         }
         Err(error) => {
-            let _ = finish_account_binding(
-                context,
-                record,
-                &launch_id,
-                account,
-                revision,
-                Err("refresh_failed"),
+            let _ = restore_account_binding_after_refresh_failure(
+                context, record, &launch_id, account, attempt,
             )
             .await;
             return Err(error);
@@ -4918,13 +4934,8 @@ where
     .await;
     drop(refresh_fence);
     if let Err(error) = send_result {
-        let _ = finish_account_binding(
-            context,
-            record,
-            &launch_id,
-            account,
-            revision,
-            Err("refresh_failed"),
+        let _ = restore_account_binding_after_refresh_failure(
+            context, record, &launch_id, account, attempt,
         )
         .await;
         return Err(error);
@@ -5383,6 +5394,37 @@ mod tests {
         ) -> Result<(), Self::Error> {
             self.messages.push(item);
             Ok(())
+        }
+
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn poll_close(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    struct FailingMessageSink;
+
+    impl futures_util::Sink<Message> for FailingMessageSink {
+        type Error = tokio_tungstenite::tungstenite::Error;
+
+        fn poll_ready(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn start_send(self: std::pin::Pin<&mut Self>, _item: Message) -> Result<(), Self::Error> {
+            Err(tokio_tungstenite::tungstenite::Error::ConnectionClosed)
         }
 
         fn poll_flush(
@@ -6645,7 +6687,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
     }
 
     #[tokio::test]
-    async fn external_auth_refresh_failure_marks_binding_failed() {
+    async fn external_auth_refresh_failure_restores_bound_binding_for_retry() {
         let lock = GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
         let broker = tmp.path().join("broker");
@@ -6685,14 +6727,99 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         assert!(error.starts_with("Codex account refresh failed:"));
         let persisted = crate::load_session_record(&context, &record.id).unwrap();
         let view = crate::codex_account::view_for_record(&persisted);
-        assert_eq!(view.state, "failed");
-        assert_eq!(view.failure_reason.as_deref(), Some("refresh_failed"));
+        assert_eq!(view.state, "bound");
+        assert_eq!(view.failure_reason, None);
         assert_eq!(
-            crate::codex_account::ensure_input_allowed(&persisted)
-                .unwrap_err()
-                .code(),
-            "codex-account-not-bound"
+            view.applied_runtime_id.as_deref(),
+            Some("runtime-refresh-failure")
         );
+        assert!(crate::codex_account::ensure_input_allowed(&persisted).is_ok());
+
+        fs::write(
+            &broker,
+            r#"#!/bin/sh
+printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"gamania","access_token":"retry-fixture-token","chatgpt_account_id":"workspace-retry"}'
+"#,
+        )
+        .unwrap();
+        let mut retry_sink = RecordingMessageSink::default();
+        assert!(
+            respond_to_external_auth_refresh(
+                &mut retry_sink,
+                &json!({
+                    "id": 20,
+                    "method": "account/chatgptAuthTokens/refresh",
+                    "params": { "reason": "unauthorized" }
+                }),
+                Some((&context, &record, "gamania")),
+            )
+            .await
+            .unwrap()
+        );
+        let retried = crate::load_session_record(&context, &record.id).unwrap();
+        let retry_view = crate::codex_account::view_for_record(&retried);
+        assert_eq!(retry_view.state, "bound");
+        assert_eq!(retry_view.revision, 3);
+        assert_eq!(retry_sink.messages.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn external_auth_refresh_send_failure_restores_bound_binding_for_retry() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let broker = tmp.path().join("broker");
+        fs::write(
+            &broker,
+            r#"#!/bin/sh
+printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"gamania","access_token":"send-failure-fixture-token","chatgpt_account_id":"workspace-send-failure"}'
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&broker, fs::Permissions::from_mode(0o700)).unwrap();
+        let argv = serde_json::to_string(&vec![broker.to_string_lossy().into_owned()]).unwrap();
+        let _broker = EnvGuard::set(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER", &argv);
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let mut record =
+            record_with_runtime("refresh-send-failure", &tmp.path().join("server.sock"));
+        crate::codex_account::set_initial_binding(&mut record, Some("gamania")).unwrap();
+        fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        crate::codex_account::finish_binding(
+            &context,
+            &record.id,
+            "runtime-refresh-send-failure",
+            "gamania",
+            1,
+            Ok(()),
+        )
+        .unwrap();
+
+        let error = respond_to_external_auth_refresh(
+            &mut FailingMessageSink,
+            &json!({
+                "id": 21,
+                "method": "account/chatgptAuthTokens/refresh",
+                "params": { "reason": "unauthorized" }
+            }),
+            Some((&context, &record, "gamania")),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.starts_with("Codex app-server write failed:"));
+        let persisted = crate::load_session_record(&context, &record.id).unwrap();
+        let view = crate::codex_account::view_for_record(&persisted);
+        assert_eq!(view.state, "bound");
+        assert_eq!(view.revision, 2);
+        assert_eq!(view.selected_account.as_deref(), Some("gamania"));
+        assert_eq!(
+            view.applied_runtime_id.as_deref(),
+            Some("runtime-refresh-send-failure")
+        );
+        assert!(crate::codex_account::ensure_input_allowed(&persisted).is_ok());
     }
 
     #[tokio::test(start_paused = true)]

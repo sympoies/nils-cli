@@ -645,8 +645,11 @@ recorded in `sympoies/nils-cli#1409`.
   unknown rather than being inferred from the current global default. On daemon reconnect or stopped-session resume, the new control
   connection re-applies that nickname before accepting input. Codex
   `account/chatgptAuthTokens/refresh` with reason `unauthorized` triggers one
-  forced broker refresh and the same durable pending/bound transition; failure
-  becomes visible and remains fail closed.
+  forced broker refresh and the same durable pending/bound transition. If that
+  refresh fails before new credentials reach the exact runtime, the daemon
+  restores the prior bound identity at the newer revision so a later provider
+  request can retry; a superseding account or runtime change wins instead.
+  Initial binding and explicit account-switch failures remain fail closed.
 - Session reads include a monotonic `title_revision`. `PATCH /sessions/{id}` may include
   `expected_title_revision`; a stale value returns `409 title-revision-conflict` without changing the title.
   Upgraded clients also send the runtime's random `session_incarnation` as `expected_session_incarnation` and the

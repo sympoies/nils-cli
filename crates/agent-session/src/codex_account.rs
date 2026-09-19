@@ -127,6 +127,18 @@ pub(crate) enum BindingSnapshot {
     Blocked,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RefreshBindingAttempt {
+    previous_revision: u64,
+    revision: u64,
+}
+
+impl RefreshBindingAttempt {
+    pub(crate) fn revision(self) -> u64 {
+        self.revision
+    }
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(crate) struct CodexAccountView {
     pub(crate) schema_version: &'static str,
@@ -438,12 +450,12 @@ pub(crate) fn prepare_control_reconnect(
     Ok(record)
 }
 
-pub(crate) fn begin_binding(
+pub(crate) fn begin_refresh_binding(
     context: &CliContext,
     id: &str,
     expected_launch_id: &str,
     account: &str,
-) -> Result<u64, CliError> {
+) -> Result<RefreshBindingAttempt, CliError> {
     validate_account(account)?;
     let _lock = acquire_session_record_lock(context, id)?;
     let mut record = load_session_record(context, id)?;
@@ -471,7 +483,8 @@ pub(crate) fn begin_binding(
             ));
         }
     };
-    let revision = prior.revision.saturating_add(1).max(1);
+    let previous_revision = prior.revision;
+    let revision = previous_revision.saturating_add(1).max(1);
     store_binding(
         &mut record,
         &DurableBinding {
@@ -487,7 +500,60 @@ pub(crate) fn begin_binding(
     )?;
     record.updated_at = jiff::Timestamp::now().to_string();
     write_session_record(context, &record)?;
-    Ok(revision)
+    Ok(RefreshBindingAttempt {
+        previous_revision,
+        revision,
+    })
+}
+
+/// Roll a failed external-auth refresh back to the exact binding that was
+/// authoritative when the refresh began. Initial binding and account-switch
+/// failures still use `finish_binding` and remain fail-closed.
+pub(crate) fn restore_binding_after_refresh_failure(
+    context: &CliContext,
+    id: &str,
+    expected_launch_id: &str,
+    account: &str,
+    attempt: RefreshBindingAttempt,
+) -> Result<CodexAccountView, CliError> {
+    let _lock = acquire_session_record_lock(context, id)?;
+    let mut record = load_session_record(context, id)?;
+    ensure_runtime(&record, expected_launch_id)?;
+    let current = match decode_binding(&record) {
+        DecodedBinding::Valid(binding)
+            if attempt.previous_revision > 0
+                && attempt.revision == attempt.previous_revision.saturating_add(1).max(1)
+                && binding.state == "pending"
+                && binding.selected_account == account
+                && binding.revision == attempt.revision
+                && binding.applied_runtime_id.is_none() =>
+        {
+            binding
+        }
+        DecodedBinding::Valid(_) | DecodedBinding::Absent | DecodedBinding::Invalid => {
+            return Err(CliError::runtime(
+                "codex-account-binding-superseded",
+                "Codex account binding changed while its credential refresh was failing",
+                Some(json!({ "id": id })),
+            ));
+        }
+    };
+    store_binding(
+        &mut record,
+        &DurableBinding {
+            schema_version: BINDING_SCHEMA_VERSION.to_string(),
+            selected_account: account.to_string(),
+            selection_source: current.selection_source,
+            revision: attempt.revision,
+            state: "bound".to_string(),
+            applied_runtime_id: Some(expected_launch_id.to_string()),
+            failure_reason: None,
+            updated_at: jiff::Timestamp::now().to_string(),
+        },
+    )?;
+    record.updated_at = jiff::Timestamp::now().to_string();
+    write_session_record(context, &record)?;
+    Ok(view_for_record(&record))
 }
 
 pub(crate) fn finish_binding(
@@ -2566,6 +2632,63 @@ wait "$child"
             json.get("next").is_none(),
             "the next field must be omitted when no intent is queued"
         );
+    }
+
+    #[test]
+    fn failed_refresh_restore_keeps_the_exact_bound_identity_retryable() {
+        let lock = GlobalStateLock::new();
+        let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record) = persisted_bound(&tmp);
+
+        let attempt =
+            begin_refresh_binding(&context, &record.id, "runtime-binding-fixture", "gamania")
+                .unwrap();
+        assert_eq!(attempt.revision(), 8);
+        let view = restore_binding_after_refresh_failure(
+            &context,
+            &record.id,
+            "runtime-binding-fixture",
+            "gamania",
+            attempt,
+        )
+        .unwrap();
+
+        assert_eq!(view.state, "bound");
+        assert_eq!(view.selected_account.as_deref(), Some("gamania"));
+        assert_eq!(view.revision, 8);
+        assert_eq!(
+            view.applied_runtime_id.as_deref(),
+            Some("runtime-binding-fixture")
+        );
+        assert!(ensure_input_allowed(&reload(&context, &record.id)).is_ok());
+    }
+
+    #[test]
+    fn failed_refresh_restore_cannot_overwrite_a_newer_account_switch() {
+        let lock = GlobalStateLock::new();
+        let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record) = persisted_bound(&tmp);
+        let attempt =
+            begin_refresh_binding(&context, &record.id, "runtime-binding-fixture", "gamania")
+                .unwrap();
+        mark_waiting(&context, &record);
+        begin_switch_binding(&context, &record.id, "runtime-binding-fixture", "poies").unwrap();
+
+        let error = restore_binding_after_refresh_failure(
+            &context,
+            &record.id,
+            "runtime-binding-fixture",
+            "gamania",
+            attempt,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code(), "codex-account-binding-superseded");
+        let view = view_for_record(&reload(&context, &record.id));
+        assert_eq!(view.state, "pending");
+        assert_eq!(view.selected_account.as_deref(), Some("poies"));
     }
 
     #[test]
