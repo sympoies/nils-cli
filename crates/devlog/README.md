@@ -130,6 +130,7 @@ Reported problem kinds:
 | `index-missing-month` | A month file is not listed in the index. |
 | `index-stale-month` | The index lists a month with no file. |
 | `conflict-markers` | The file still holds an unresolved merge conflict. |
+| `unterminated-fence` | A fenced code block is not closed; the opening line is reported. |
 
 A conflict marker stops the file being parsed any further. Both sides of a
 conflict are well-formed entries, so counting them would describe an
@@ -153,6 +154,11 @@ and three missing sections that nobody could repair without editing the prose.
 A log whose entries quote headings will therefore report a lower `entry_count`
 than it did before this rule, which is the count being correct rather than
 changing.
+
+An unterminated fence keeps that same conservative mask through end of file,
+so a conflict marker or heading below it is still treated as quoted content.
+`check` reports the fence's opening line as `unterminated-fence`, making the
+malformed boundary visible without guessing where the fence should close.
 
 ### `devlog fix`
 
@@ -183,9 +189,11 @@ and starts at column zero, and only where the label stands in for a section —
 inside an entry, in an entry that has no heading for it already. Only the
 separator position in a heading is rewritten, so a dash inside a title
 survives. Nothing inside a fenced code block is touched at all, because an
-entry documenting this format quotes both of those forms as examples. And an
-entry whose fence is never closed is left entirely alone: there is no knowing
-where its content ends, so there is nowhere in it a section can be placed.
+entry documenting this format quotes both of those forms as examples. An
+unterminated fenced region is likewise left exactly as written: there is no
+knowing where its content ends, so there is nowhere in it a section can be
+placed. Other deterministic repairs may still be applied, but the remaining
+`unterminated-fence` problem makes `fix` exit 65.
 
 A file that mixes line endings is left alone too. Rebuilding it drops each
 carriage return, so one ending has to be chosen for the whole file, and

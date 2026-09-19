@@ -220,12 +220,25 @@ fn a_real_conflict_after_a_fenced_block_is_still_found() {
 }
 
 #[test]
-fn an_unclosed_fence_does_not_swallow_the_rest_of_the_file() {
+fn an_unclosed_fence_masks_the_rest_of_the_file() {
     // A fence that never closes is malformed prose. Detection stops inside it,
     // which is the conservative direction: `check` still reports the file's
     // other structural problems rather than refusing every write to it.
     let contents = "# Development log - 2026-04\n\n~~~\n<<<<<<< HEAD\n";
     assert_eq!(nils_devlog::model::first_conflict_marker(contents), None);
+    assert_eq!(
+        nils_devlog::model::unterminated_fence_line(contents.lines()),
+        Some(3)
+    );
+}
+
+#[test]
+fn a_closed_fence_has_no_unterminated_opening_line() {
+    let contents = "# Development log - 2026-04\n\n````text\n```\n`````\n";
+    assert_eq!(
+        nils_devlog::model::unterminated_fence_line(contents.lines()),
+        None
+    );
 }
 
 #[test]

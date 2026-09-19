@@ -96,6 +96,16 @@ fn check_month(
         return problems;
     }
 
+    if let Some(line) = crate::model::unterminated_fence_line(contents.lines()) {
+        problems.push(Problem {
+            kind: "unterminated-fence",
+            path: relative.clone(),
+            detail: format!(
+                "fenced code block opened at line {line} is not closed; content below it is not checked as structure"
+            ),
+        });
+    }
+
     let heading = month.heading();
     let first = contents.lines().next().unwrap_or_default().trim();
     if first != heading {
