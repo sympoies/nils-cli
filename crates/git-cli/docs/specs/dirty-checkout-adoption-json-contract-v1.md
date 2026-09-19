@@ -78,6 +78,11 @@ short, oversized, malformed, non-socket, closed, or wrong-process descriptors,
 marks the descriptor close-on-exec, and closes it after the single read. A
 descriptor failure occurs before challenge lookup or consumption.
 
+On macOS, the parent creates an owner-only Unix listener, connects to it, and
+passes the accepted endpoint to the child. A `socketpair` endpoint does not
+preserve the required direct-parent identity across `exec` on that platform and
+is rejected by the same fail-closed credential check.
+
 ## Receipt and Adoption Binding
 
 The receipt preserves the challenge's session, checkout, snapshot, and

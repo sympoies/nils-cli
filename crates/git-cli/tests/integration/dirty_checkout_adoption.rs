@@ -17,6 +17,8 @@ use std::os::unix::ffi::OsStrExt;
 #[cfg(target_os = "linux")]
 use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+#[cfg(target_os = "macos")]
+use std::os::unix::net::UnixListener;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::os::unix::net::UnixStream;
 use std::process::{Command, Stdio};
@@ -124,6 +126,31 @@ fn run_governed_command(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+fn challenge_descriptor_streams() -> (UnixStream, UnixStream) {
+    #[cfg(target_os = "linux")]
+    {
+        UnixStream::pair().expect("challenge descriptor pair")
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let root = tempfile::Builder::new()
+            .prefix("git-cli-challenge-")
+            .tempdir_in("/tmp")
+            .expect("challenge descriptor root");
+        let socket_path = root.path().join("challenge.sock");
+        let listener =
+            UnixListener::bind(&socket_path).expect("bind challenge descriptor listener");
+        let sender =
+            UnixStream::connect(&socket_path).expect("connect challenge descriptor sender");
+        let (receiver, _) = listener
+            .accept()
+            .expect("accept challenge descriptor receiver");
+        (sender, receiver)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn run_with_challenge_descriptor(
     bin: &std::path::Path,
     args: &[&str],
@@ -131,7 +158,7 @@ fn run_with_challenge_descriptor(
     challenge: &[u8],
     assert_secret_absent_while_live: bool,
 ) -> CmdOutput {
-    let (mut sender, receiver) = UnixStream::pair().expect("challenge descriptor pair");
+    let (mut sender, receiver) = challenge_descriptor_streams();
     let descriptor = receiver.as_raw_fd();
     let descriptor_flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
     assert!(descriptor_flags >= 0, "read challenge descriptor flags");

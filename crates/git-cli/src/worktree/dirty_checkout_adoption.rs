@@ -8658,24 +8658,50 @@ fn resolve_state_root() -> Result<PathBuf> {
 mod tests {
     use super::*;
     use std::os::fd::IntoRawFd;
+    #[cfg(target_os = "macos")]
+    use std::os::unix::net::UnixListener;
     use std::os::unix::net::UnixStream;
     use std::os::unix::process::ExitStatusExt;
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn sealed_challenge_descriptor(payload: &[u8]) -> libc::c_int {
-        let (mut sender, receiver) = UnixStream::pair().expect("challenge descriptor pair");
+    fn challenge_descriptor_streams() -> (UnixStream, UnixStream) {
+        #[cfg(target_os = "linux")]
+        {
+            UnixStream::pair().expect("challenge descriptor pair")
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let root = tempfile::Builder::new()
+                .prefix("git-cli-challenge-")
+                .tempdir_in("/tmp")
+                .expect("challenge descriptor root");
+            let socket_path = root.path().join("challenge.sock");
+            let listener =
+                UnixListener::bind(&socket_path).expect("bind challenge descriptor listener");
+            let sender =
+                UnixStream::connect(&socket_path).expect("connect challenge descriptor sender");
+            let (receiver, _) = listener
+                .accept()
+                .expect("accept challenge descriptor receiver");
+            (sender, receiver)
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn sealed_challenge_descriptor(payload: &[u8]) -> (UnixStream, libc::c_int) {
+        let (mut sender, receiver) = challenge_descriptor_streams();
         sender.write_all(payload).expect("write challenge payload");
         sender
             .shutdown(std::net::Shutdown::Write)
             .expect("seal challenge payload");
-        drop(sender);
-        receiver.into_raw_fd()
+        (sender, receiver.into_raw_fd())
     }
 
     #[test]
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn challenge_descriptor_accepts_one_exact_parent_bound_bearer() {
-        let descriptor = sealed_challenge_descriptor(
+        let (_sender, descriptor) = sealed_challenge_descriptor(
             b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         );
         let consumed_descriptor = unsafe { libc::fcntl(descriptor, libc::F_DUPFD_CLOEXEC, 3) };
@@ -8720,7 +8746,7 @@ mod tests {
             b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".as_slice(),
             b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".as_slice(),
         ] {
-            let descriptor = sealed_challenge_descriptor(payload);
+            let (_sender, descriptor) = sealed_challenge_descriptor(payload);
             assert!(
                 read_challenge_descriptor_from_peer(
                     descriptor,
@@ -8732,7 +8758,7 @@ mod tests {
             );
         }
 
-        let wrong_process = sealed_challenge_descriptor(
+        let (_sender, wrong_process) = sealed_challenge_descriptor(
             b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         );
         assert!(
@@ -8760,7 +8786,7 @@ mod tests {
     #[test]
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn challenge_descriptor_enforces_one_absolute_read_deadline() {
-        let (mut sender, receiver) = UnixStream::pair().expect("challenge descriptor pair");
+        let (mut sender, receiver) = challenge_descriptor_streams();
         let descriptor = receiver.into_raw_fd();
         let writer = std::thread::spawn(move || {
             for _ in 0..20 {

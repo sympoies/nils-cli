@@ -96,11 +96,13 @@ subcommands (matching the binary's `--help` output):
   `--reason-file <path>`. The descriptor must be an inherited connected Unix stream socket whose
   peer is the direct parent process under the same effective user. Its peer writes exactly one
   64-byte lowercase-hex bearer and closes the write half; the raw bearer is rejected on argv and
-  is never accepted through the environment. The reason must be a non-empty, no-follow regular
-  file of at most 2,000 bytes. The command recomputes the exact snapshot under the shared lease
-  lock, consumes the challenge once, rejects live foreign ownership, and writes private receipt
-  and lease-v2 state. Retained state contains digests, not the bearer token or reason text.
-  Options: `--format text|json`.
+  is never accepted through the environment. On macOS, create the stream through an owner-only
+  Unix listener and pass its accepted endpoint; a `socketpair` endpoint does not preserve the
+  required direct-parent identity across `exec` and is rejected. The reason must be a non-empty,
+  no-follow regular file of at most 2,000 bytes. The command recomputes the exact snapshot under
+  the shared lease lock, consumes the challenge once, rejects live foreign ownership, and writes
+  private receipt and lease-v2 state. Retained state contains digests, not the bearer token or
+  reason text. Options: `--format text|json`.
 - `revoke-dirty`: Revoke only the active adoption matching `--receipt <id>` without changing Git
   content. Revocation remains available when the adoption feature gate is disabled. Options:
   `--format text|json`.
