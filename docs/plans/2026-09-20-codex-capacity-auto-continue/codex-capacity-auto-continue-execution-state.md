@@ -7,11 +7,11 @@
 - Tracking issue: <https://github.com/sympoies/nils-cli/issues/1762>
 - Current sprint: 1
 - Status: complete
-- Current gate: review
+- Current gate: complete
 - Current task: complete
 - Next task: none
 - Plan branch: `feat/codex-capacity-auto-continue`
-- Integration PR: pending
+- Integration PR: sympoies/nils-cli#1763 merged (<https://github.com/sympoies/nils-cli/pull/1763>)
 - Blockers: none
 - Last updated: 2026-09-20
 - Branch/commit/PR: sympoies/nils-cli#1763 merged (<https://github.com/sympoies/nils-cli/pull/1763>)
@@ -23,7 +23,7 @@
 | 1.1 | Capture failing capacity-recovery tests | done | Captured the pre-change failure and added positive/negative structured capacity regression coverage. | Red evidence retained by test-first-evidence. |
 | 1.2 | Generalize durable auto-resume for capacity | done | Added additive durable recovery cause, bounded capacity attempt chain, restart discovery, and race fences. | Public agent-session.auto-resume.v1 projection remains unchanged. |
 | 1.3 | Submit the fixed continuation through the control channel | done | Routed due capacity recovery directly through the bound app-server Continue command with the fixed prompt. | No usage lookup, terminal pane write, or synthetic Enter. |
-| 1.4 | Align supervision and public documentation | done | Updated Main Agent supervision semantics and canonical agent-session contract documentation; recorded the devlog and completed the repository finish line. | Ready for specialist review and PR delivery. |
+| 1.4 | Align supervision and public documentation | done | Updated Main Agent supervision semantics and canonical agent-session contract documentation; recorded the devlog and completed the repository finish line. | Specialist review and PR delivery completed. |
 
 ## Blockers
 
