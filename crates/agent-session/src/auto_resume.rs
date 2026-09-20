@@ -1540,7 +1540,11 @@ where
         return Ok(TickOutcome::TerminalFailure);
     }
     if record.agent == "codex" {
-        crate::codex_account::authorize_input_locked(context, &mut record)?;
+        if capacity_recovery {
+            crate::codex_account::authorize_proxy_input_locked(context, &mut record, true)?;
+        } else {
+            crate::codex_account::authorize_input_locked(context, &mut record)?;
+        }
     }
     if capacity_recovery {
         state.attempt = state.attempt.saturating_add(1);
@@ -1865,6 +1869,8 @@ mod tests {
 
     #[test]
     fn capacity_recovery_uses_bounded_delays_and_stops_after_five_submissions() {
+        let lock = GlobalStateLock::new();
+        let _without_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, record, _) = seed_bound_codex_auto_resume(&tmp);
         set_enabled(&context, &record.id, true, "2030-01-01T00:00:00Z").unwrap();
