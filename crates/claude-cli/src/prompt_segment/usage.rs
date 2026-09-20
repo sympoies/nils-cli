@@ -132,20 +132,6 @@ impl SourceTrace {
             elapsed_ms: elapsed.as_millis(),
         });
     }
-
-    /// Records the outcome of a source attempt that started at `started`.
-    ///
-    /// The caller keeps ownership of the attempt's value: the trace only ever
-    /// observes its error classification, never the result it carries.
-    fn record_outcome<T>(
-        &mut self,
-        source: &'static str,
-        started: Instant,
-        outcome: &Result<T, ProviderUsageReason>,
-    ) {
-        let reason = outcome.as_ref().err().copied();
-        self.record(source, started.elapsed(), reason, reason.is_none());
-    }
 }
 
 pub fn run(options: &UsageOptions) -> i32 {
@@ -242,19 +228,27 @@ fn resolve_usage(source: UsageSource, trace: &mut SourceTrace) -> UsageResult {
     match source {
         UsageSource::Auto => {
             let started = Instant::now();
-            let oauth = try_oauth(cache_file.as_ref());
-            trace.record_outcome("oauth", started, &oauth);
-            let oauth_reason = match oauth {
-                Ok(result) => return result,
-                Err(reason) => reason,
+            let oauth_reason = match try_oauth(cache_file.as_ref()) {
+                Ok(result) => {
+                    trace.record("oauth", started.elapsed(), None, true);
+                    return result;
+                }
+                Err(reason) => {
+                    trace.record("oauth", started.elapsed(), Some(reason), false);
+                    reason
+                }
             };
 
             let started = Instant::now();
-            let cli = try_claude_cli(cache_file.as_ref());
-            trace.record_outcome("cli", started, &cli);
-            let cli_reason = match cli {
-                Ok(result) => return result,
-                Err(reason) => reason,
+            let cli_reason = match try_claude_cli(cache_file.as_ref()) {
+                Ok(result) => {
+                    trace.record("cli", started.elapsed(), None, true);
+                    return result;
+                }
+                Err(reason) => {
+                    trace.record("cli", started.elapsed(), Some(reason), false);
+                    reason
+                }
             };
             let transcript_reason = trace_transcript_reason(trace);
             let reason = transcript_reason
@@ -268,19 +262,29 @@ fn resolve_usage(source: UsageSource, trace: &mut SourceTrace) -> UsageResult {
         }
         UsageSource::Oauth => {
             let started = Instant::now();
-            let oauth = try_oauth(cache_file.as_ref());
-            trace.record_outcome("oauth", started, &oauth);
-            oauth.unwrap_or_else(|reason| {
-                empty_result(cache_file, "oauth usage unavailable", reason)
-            })
+            match try_oauth(cache_file.as_ref()) {
+                Ok(result) => {
+                    trace.record("oauth", started.elapsed(), None, true);
+                    result
+                }
+                Err(reason) => {
+                    trace.record("oauth", started.elapsed(), Some(reason), false);
+                    empty_result(cache_file, "oauth usage unavailable", reason)
+                }
+            }
         }
         UsageSource::Cli => {
             let started = Instant::now();
-            let cli = try_claude_cli(cache_file.as_ref());
-            trace.record_outcome("cli", started, &cli);
-            cli.unwrap_or_else(|reason| {
-                empty_result(cache_file, "claude cli usage unavailable", reason)
-            })
+            match try_claude_cli(cache_file.as_ref()) {
+                Ok(result) => {
+                    trace.record("cli", started.elapsed(), None, true);
+                    result
+                }
+                Err(reason) => {
+                    trace.record("cli", started.elapsed(), Some(reason), false);
+                    empty_result(cache_file, "claude cli usage unavailable", reason)
+                }
+            }
         }
         UsageSource::Cache => {
             let note = cache_unavailable_note(cache_file.as_ref());
