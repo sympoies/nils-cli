@@ -53,6 +53,45 @@ pub fn read_cache_file(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
+/// Removes the resolved usage cache file.
+///
+/// Only the exact `<cache dir>/usage.json` path is removed: the cache
+/// directory can be operator-supplied through
+/// `CLAUDE_PROMPT_SEGMENT_CACHE_DIR`, so the directory itself and the sibling
+/// refresh locks are never deleted. Returns `Ok(false)` when there was nothing
+/// to remove.
+pub fn clear_usage_cache() -> Result<bool> {
+    let Some(path) = cache_file() else {
+        anyhow::bail!("claude-cli usage: cannot resolve the usage cache path");
+    };
+    clear_usage_cache_at(&path)
+}
+
+fn clear_usage_cache_at(path: &Path) -> Result<bool> {
+    if !path.is_absolute() {
+        anyhow::bail!(
+            "claude-cli usage: refusing to clear a non-absolute cache path: {}",
+            path.display()
+        );
+    }
+    if path.file_name() != Some(std::ffi::OsStr::new(CACHE_FILE_NAME)) {
+        anyhow::bail!(
+            "claude-cli usage: refusing to clear an unexpected cache file: {}",
+            path.display()
+        );
+    }
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "claude-cli usage: failed to clear cache: {}",
+                path.display()
+            )
+        }),
+    }
+}
+
 pub fn write_cache_file(path: &Path, body: &str) -> Result<()> {
     shared_fs::write_atomic(path, body.as_bytes(), shared_fs::SECRET_FILE_MODE)
         .with_context(|| format!("failed to write cache: {}", path.display()))
@@ -118,7 +157,9 @@ fn cache_dir() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{cache_display_expired_at, signed_age_seconds, snapshot, snapshot_at};
+    use super::{
+        cache_display_expired_at, clear_usage_cache_at, signed_age_seconds, snapshot, snapshot_at,
+    };
     use pretty_assertions::assert_eq;
     use std::fs::File;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -211,5 +252,45 @@ mod tests {
             signed_age_seconds(now, now + Duration::from_secs(5) + Duration::from_nanos(1)),
             Some(-6)
         );
+    }
+
+    #[test]
+    fn clear_usage_cache_removes_only_the_resolved_cache_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("usage.json");
+        let lock = tmp.path().join("usage.refresh.lock");
+        std::fs::write(&path, "{}").expect("write cache");
+        std::fs::write(&lock, "").expect("write lock");
+
+        assert!(clear_usage_cache_at(&path).expect("clear"));
+        assert!(!path.exists());
+        assert!(lock.is_file(), "refresh locks must survive a cache clear");
+        assert!(tmp.path().is_dir(), "cache dir must survive a cache clear");
+    }
+
+    #[test]
+    fn clear_usage_cache_is_a_quiet_success_when_the_cache_is_missing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("usage.json");
+
+        assert!(!clear_usage_cache_at(&path).expect("clear"));
+    }
+
+    #[test]
+    fn clear_usage_cache_rejects_an_unexpected_cache_file_name() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("credentials.json");
+        std::fs::write(&path, "{}").expect("write");
+
+        let err = clear_usage_cache_at(&path).expect_err("unexpected file name should fail");
+        assert!(err.to_string().contains("unexpected cache file"));
+        assert!(path.is_file());
+    }
+
+    #[test]
+    fn clear_usage_cache_rejects_a_relative_cache_path() {
+        let err = clear_usage_cache_at(std::path::Path::new("usage.json"))
+            .expect_err("relative path should fail");
+        assert!(err.to_string().contains("non-absolute cache path"));
     }
 }

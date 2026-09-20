@@ -26,6 +26,7 @@ claude-cli prompt-segment [options]
 claude-cli prompt-segment check
 claude-cli prompt-segment status [--format text|json]
 claude-cli usage [--format text|json] [--source auto|oauth|cli|cache]
+                 [-c|--clear-cache] [-d|--debug]
 claude-cli completion <bash|zsh>
 ```
 
@@ -176,6 +177,13 @@ are retained but contribute no prompt or usage windows.
   usage through a service-consumable contract.
 - `auto`: Try OAuth, then a bounded native Claude `/usage` probe, then cache.
 - `oauth`, `cli`, and `cache`: Select one source for focused diagnostics.
+- `-c, --clear-cache`: Remove the resolved `usage.json` before querying. Only
+  that exact file is removed; the cache directory and the sibling refresh locks
+  are left alone. Combining it with `--source cache` is rejected with exit `64`.
+- `-d, --debug`: Report one bounded line per attempted source on stderr
+  (`source`, `outcome`, optional `reason`, and `elapsed_ms`). Stdout stays
+  exactly one versioned envelope, so debug mode never changes what a
+  `claude-cli.usage.v1` consumer parses.
 
 JSON uses `claude-cli.usage.v1`. It includes provider, source, stale state,
 normalized windows, and an optional provider-neutral `reason_code`. Provider

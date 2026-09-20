@@ -40,6 +40,8 @@ const API_ERROR_TRANSCRIPT_TAIL_BYTES: u64 = 256 * 1024;
 pub struct UsageOptions {
     pub source: UsageSource,
     pub output_json: bool,
+    pub clear_cache: bool,
+    pub debug: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -93,8 +95,86 @@ struct ParsedWindow {
     resets_at: Option<String>,
 }
 
+/// One bounded record of a single usage-source attempt.
+///
+/// `--debug` reports only these classifications and their elapsed time. Provider
+/// bodies, terminal transcripts, credentials, and absolute paths never enter a
+/// trace.
+#[derive(Clone, Copy, Debug)]
+struct SourceAttempt {
+    source: &'static str,
+    outcome: &'static str,
+    reason: Option<ProviderUsageReason>,
+    elapsed_ms: u128,
+}
+
+#[derive(Default)]
+struct SourceTrace {
+    attempts: Vec<SourceAttempt>,
+}
+
+impl SourceTrace {
+    fn record(
+        &mut self,
+        source: &'static str,
+        elapsed: Duration,
+        reason: Option<ProviderUsageReason>,
+        available: bool,
+    ) {
+        self.attempts.push(SourceAttempt {
+            source,
+            outcome: if available {
+                "available"
+            } else {
+                "unavailable"
+            },
+            reason,
+            elapsed_ms: elapsed.as_millis(),
+        });
+    }
+
+    fn attempt<T>(
+        &mut self,
+        source: &'static str,
+        action: impl FnOnce() -> Result<T, ProviderUsageReason>,
+    ) -> Result<T, ProviderUsageReason> {
+        let started = Instant::now();
+        let outcome = action();
+        let reason = outcome.as_ref().err().copied();
+        self.record(source, started.elapsed(), reason, reason.is_none());
+        outcome
+    }
+}
+
 pub fn run(options: &UsageOptions) -> i32 {
-    let result = resolve_usage(options.source);
+    if options.clear_cache && options.source == UsageSource::Cache {
+        return emit_usage_error(
+            options.output_json,
+            exit::USAGE,
+            "invalid-flag-combination",
+            "claude-cli usage: --clear-cache is not compatible with --source cache",
+            Some(json!({ "flags": ["--clear-cache", "--source=cache"] })),
+        );
+    }
+
+    if options.clear_cache
+        && let Err(error) = cache::clear_usage_cache()
+    {
+        return emit_usage_error(
+            options.output_json,
+            exit::RUNTIME,
+            "cache-clear-failed",
+            error.to_string(),
+            None,
+        );
+    }
+
+    let mut trace = SourceTrace::default();
+    let result = resolve_usage(options.source, &mut trace);
+
+    if options.debug {
+        emit_debug_trace(&trace);
+    }
 
     if options.output_json {
         if diag_output::emit_success_result(USAGE_SCHEMA_VERSION, USAGE_COMMAND, &result).is_err() {
@@ -107,38 +187,104 @@ pub fn run(options: &UsageOptions) -> i32 {
     exit::SUCCESS
 }
 
-fn resolve_usage(source: UsageSource) -> UsageResult {
+fn emit_usage_error(
+    output_json: bool,
+    code: i32,
+    error_code: &str,
+    message: impl Into<String>,
+    details: Option<Value>,
+) -> i32 {
+    let message = message.into();
+    if output_json {
+        if diag_output::emit_error(
+            USAGE_SCHEMA_VERSION,
+            USAGE_COMMAND,
+            error_code,
+            message,
+            details,
+        )
+        .is_err()
+        {
+            return exit::RUNTIME;
+        }
+    } else {
+        eprintln!("{message}");
+    }
+    code
+}
+
+/// Writes the bounded source trace to stderr.
+///
+/// Debug output is deliberately not part of the `claude-cli.usage.v1` stdout
+/// envelope: consumers keep parsing exactly one versioned document either way.
+fn emit_debug_trace(trace: &SourceTrace) {
+    for attempt in &trace.attempts {
+        match attempt.reason {
+            Some(reason) => eprintln!(
+                "claude-cli usage: debug: source={} outcome={} reason={} elapsed_ms={}",
+                attempt.source,
+                attempt.outcome,
+                reason.as_str(),
+                attempt.elapsed_ms
+            ),
+            None => eprintln!(
+                "claude-cli usage: debug: source={} outcome={} elapsed_ms={}",
+                attempt.source, attempt.outcome, attempt.elapsed_ms
+            ),
+        }
+    }
+}
+
+fn resolve_usage(source: UsageSource, trace: &mut SourceTrace) -> UsageResult {
     let cache_file = cache::cache_file();
     match source {
         UsageSource::Auto => {
-            let oauth_reason = match try_oauth(cache_file.as_ref()) {
+            let oauth_reason = match trace.attempt("oauth", || try_oauth(cache_file.as_ref())) {
                 Ok(result) => return result,
                 Err(reason) => reason,
             };
-            let cli_reason = match try_claude_cli(cache_file.as_ref()) {
+            let cli_reason = match trace.attempt("cli", || try_claude_cli(cache_file.as_ref())) {
                 Ok(result) => return result,
                 Err(reason) => reason,
             };
-            let reason = recent_api_error_reason()
+            let transcript_reason = trace_transcript_reason(trace);
+            let reason = transcript_reason
                 .map(|transcript_reason| {
                     prefer_reason(prefer_reason(oauth_reason, cli_reason), transcript_reason)
                 })
                 .unwrap_or_else(|| prefer_reason(oauth_reason, cli_reason));
-            read_cache(cache_file.as_ref())
+            trace_read_cache(trace, cache_file.as_ref())
                 .map(|result| result_with_reason(result, reason))
                 .unwrap_or_else(|| empty_result(cache_file, "usage unavailable", reason))
         }
-        UsageSource::Oauth => try_oauth(cache_file.as_ref())
+        UsageSource::Oauth => trace
+            .attempt("oauth", || try_oauth(cache_file.as_ref()))
             .unwrap_or_else(|reason| empty_result(cache_file, "oauth usage unavailable", reason)),
-        UsageSource::Cli => try_claude_cli(cache_file.as_ref()).unwrap_or_else(|reason| {
-            empty_result(cache_file, "claude cli usage unavailable", reason)
-        }),
+        UsageSource::Cli => trace
+            .attempt("cli", || try_claude_cli(cache_file.as_ref()))
+            .unwrap_or_else(|reason| {
+                empty_result(cache_file, "claude cli usage unavailable", reason)
+            }),
         UsageSource::Cache => {
             let note = cache_unavailable_note(cache_file.as_ref());
-            read_cache(cache_file.as_ref())
+            trace_read_cache(trace, cache_file.as_ref())
                 .unwrap_or_else(|| empty_result(cache_file, note, ProviderUsageReason::Unknown))
         }
     }
+}
+
+fn trace_read_cache(trace: &mut SourceTrace, cache_file: Option<&PathBuf>) -> Option<UsageResult> {
+    let started = Instant::now();
+    let result = read_cache(cache_file);
+    trace.record("cache", started.elapsed(), None, result.is_some());
+    result
+}
+
+fn trace_transcript_reason(trace: &mut SourceTrace) -> Option<ProviderUsageReason> {
+    let started = Instant::now();
+    let reason = recent_api_error_reason();
+    trace.record("transcript", started.elapsed(), reason, reason.is_some());
+    reason
 }
 
 fn try_oauth(cache_file: Option<&PathBuf>) -> Result<UsageResult, ProviderUsageReason> {

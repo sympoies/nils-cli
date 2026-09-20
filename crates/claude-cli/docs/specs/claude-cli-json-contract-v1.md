@@ -52,6 +52,33 @@ Stable `reason_code` values:
 - `timeout`
 - `unknown`
 
+### Usage error envelopes
+
+`usage` normally succeeds, including when no window is available. It emits an
+error envelope only for an operator-input or cache-maintenance failure:
+
+| `error.code` | Exit | Cause |
+| --- | --- | --- |
+| `invalid-flag-combination` | `64` | `--clear-cache` combined with `--source cache` |
+| `cache-clear-failed` | `1` | `--clear-cache` could not resolve or remove `usage.json` |
+
+`--clear-cache` removes only the resolved `<cache dir>/usage.json`. The cache
+directory and the sibling refresh locks are never removed.
+
+### Usage debug output
+
+`--debug` writes one bounded line per attempted source to **stderr**:
+
+```text
+claude-cli usage: debug: source=oauth outcome=unavailable reason=auth_required elapsed_ms=12
+```
+
+`source` is `oauth`, `cli`, `transcript`, or `cache`; `outcome` is `available`
+or `unavailable`; `reason` is a stable `reason_code` when one was classified.
+Debug output is not part of this contract, is not emitted on stdout, and never
+changes the stdout envelope: a consumer parses exactly one versioned document
+with or without `--debug`.
+
 ## Prompt-segment status
 
 Stable result fields are `authenticated`, `cache_exists`, `cache_stale`,
@@ -136,5 +163,7 @@ false. Ready exits `0`; unavailable exits `1`.
 - Auth status additionally excludes personal and organization identity.
 - Agent doctor excludes upstream diagnostic stdout/stderr, settings paths,
   environment values, and model output because it does not make a model call.
+- Usage `--debug` emits only source classifications and elapsed milliseconds:
+  no provider bodies, terminal transcripts, credentials, or absolute paths.
 - Tests seed recognizable secret markers and assert that stdout and stderr omit
   them.

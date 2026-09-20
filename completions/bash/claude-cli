@@ -1135,7 +1135,7 @@ _claude__cli() {
             return 0
             ;;
         claude__cli__usage)
-            opts="-h --format --json --source --help"
+            opts="-c -d -h --format --json --source --clear-cache --debug --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
