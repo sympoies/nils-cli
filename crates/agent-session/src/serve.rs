@@ -19303,7 +19303,7 @@ esac
         let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
         let record = load_session_record(&st.context, "codex-capacity-recovery").unwrap();
         crate::activity::activate_runtime(&st.context, &record).unwrap();
-        crate::activity::ingest_codex_app_server_failure_with_kind(
+        let failure = crate::activity::ingest_codex_app_server_failure_with_kind(
             &st.context,
             &record.id,
             &launch_id,
@@ -19312,6 +19312,11 @@ esac
             codex_app_server::StructuredFailureKind::ProviderCapacity,
         )
         .unwrap();
+        let blocked_turn_id = failure
+            .turn_state
+            .last_turn
+            .and_then(|turn| turn.provider_turn_id)
+            .unwrap();
         auto_resume::set_enabled(&st.context, &record.id, true, "2020-01-01T00:00:00Z").unwrap();
         let revision = crate::activity::state_for_view(&st.context, &record)
             .unwrap()
@@ -19321,7 +19326,7 @@ esac
             &record.id,
             &launch_id,
             &crate::codex_account::binding_snapshot(&record),
-            "turn-capacity".to_string(),
+            blocked_turn_id,
             revision,
             "2020-01-01T00:00:01Z",
         )
@@ -19359,6 +19364,103 @@ esac
         assert_eq!(
             auto_resume::view_for_record(&st.context, &record).state,
             "resumed"
+        );
+    }
+
+    #[tokio::test]
+    async fn codex_capacity_scheduler_retries_missing_or_stale_control_without_submitting() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let launch_id = seed_codex_app_server_session(tmp.path(), "codex-capacity-no-control");
+        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        let record = load_session_record(&st.context, "codex-capacity-no-control").unwrap();
+        crate::activity::activate_runtime(&st.context, &record).unwrap();
+        let failure = crate::activity::ingest_codex_app_server_failure_with_kind(
+            &st.context,
+            &record.id,
+            &launch_id,
+            "thread-capacity",
+            "turn-capacity",
+            codex_app_server::StructuredFailureKind::ProviderCapacity,
+        )
+        .unwrap();
+        let blocked_turn_id = failure
+            .turn_state
+            .last_turn
+            .and_then(|turn| turn.provider_turn_id)
+            .unwrap();
+        auto_resume::set_enabled(&st.context, &record.id, true, "2020-01-01T00:00:00Z").unwrap();
+        let revision = crate::activity::state_for_view(&st.context, &record)
+            .unwrap()
+            .revision;
+        let binding = crate::codex_account::binding_snapshot(&record);
+        auto_resume::arm_provider_capacity(
+            &st.context,
+            &record.id,
+            &launch_id,
+            &binding,
+            blocked_turn_id.clone(),
+            revision,
+            "2020-01-01T00:00:01Z",
+        )
+        .unwrap();
+
+        let (stale_handle, mut stale_commands) = codex_app_server::control_channel();
+        st.codex_controls.lock().unwrap().insert(
+            record.id.clone(),
+            CodexControlEntry {
+                launch_id: "stale-launch".to_string(),
+                handle: stale_handle,
+            },
+        );
+        process_codex_capacity_auto_resume_id(
+            st.clone(),
+            CodexAutoResumeTarget {
+                id: record.id.clone(),
+                launch_id: launch_id.clone(),
+                binding: binding.clone(),
+            },
+        )
+        .await;
+        assert!(stale_commands.try_recv().is_err());
+        let stale_view = auto_resume::view_for_record(&st.context, &record);
+        assert_eq!(stale_view.state, "transient_failure");
+        assert_eq!(
+            stale_view.failure_reason.as_deref(),
+            Some("control_unavailable")
+        );
+
+        auto_resume::set_enabled(&st.context, &record.id, true, "2020-01-01T00:01:00Z").unwrap();
+        auto_resume::arm_provider_capacity(
+            &st.context,
+            &record.id,
+            &launch_id,
+            &binding,
+            blocked_turn_id,
+            revision,
+            "2020-01-01T00:01:01Z",
+        )
+        .unwrap();
+        st.codex_controls.lock().unwrap().remove(&record.id);
+        process_codex_capacity_auto_resume_id(
+            st.clone(),
+            CodexAutoResumeTarget {
+                id: record.id.clone(),
+                launch_id,
+                binding,
+            },
+        )
+        .await;
+        let missing_view = auto_resume::view_for_record(&st.context, &record);
+        assert_eq!(missing_view.state, "transient_failure");
+        assert_eq!(
+            missing_view.failure_reason.as_deref(),
+            Some("control_unavailable")
+        );
+        assert_eq!(
+            auto_resume::pending_sessions(&st.context, i64::MAX)
+                .unwrap()
+                .capacity_ids,
+            vec![record.id]
         );
     }
 

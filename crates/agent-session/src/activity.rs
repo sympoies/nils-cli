@@ -3049,6 +3049,14 @@ fn arm_auto_resume_from_event(
         && event.confidence == Confidence::Authoritative
         && matches!(event.source_kind, SourceKind::ProviderHook)
         && event.provider == AgentKind::Codex.as_str()
+        && state.current_turn.is_none()
+        && state.last_turn.as_ref().is_some_and(|turn| {
+            turn.outcome == "completed"
+                && event
+                    .provider_turn_id
+                    .as_ref()
+                    .is_some_and(|turn_id| turn.provider_turn_id.as_ref() == Some(turn_id))
+        })
     {
         crate::auto_resume::complete_provider_capacity_recovery(
             context,

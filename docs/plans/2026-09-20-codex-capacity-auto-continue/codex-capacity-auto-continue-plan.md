@@ -43,6 +43,7 @@ OpenAI Codex change is required.
 managed Codex session after a structured capacity interruption.
 
 **Demo/Validation**:
+
 - Command(s): focused `nils-agent-session` Rust tests; `bash
   scripts/ci/nils-cli-checks-entrypoint.sh --local-fast`
 - Verify: structured capacity evidence schedules and submits the fixed prompt

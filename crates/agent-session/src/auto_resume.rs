@@ -805,6 +805,11 @@ pub(crate) fn arm_provider_capacity(
                 .as_ref()
                 .and_then(|turn| turn.attention.as_ref())
                 .is_none()
+            && activity.last_turn.as_ref().is_some_and(|turn| {
+                turn.outcome == "failed"
+                    && turn.provider_failure_kind() == Some(PROVIDER_CAPACITY_CAUSE)
+                    && turn.provider_turn_id.as_deref() == Some(blocked_turn_id.as_str())
+            })
     }) {
         return Ok(false);
     }
@@ -2121,6 +2126,51 @@ mod tests {
     }
 
     #[test]
+    fn capacity_control_unavailable_uses_a_separate_bounded_retry_budget() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record, _) = seed_bound_codex_auto_resume(&tmp);
+        set_enabled(&context, &record.id, true, "2030-01-01T00:00:00Z").unwrap();
+        ingest_provider_capacity(&context, &record, "capacity-control-missing");
+
+        for expected_fallbacks in 1..=MAX_TRANSIENT_ATTEMPTS {
+            let state = read_state(&context, &record.id, "2030-01-01T00:00:00Z").unwrap();
+            let due = state
+                .scheduled_at
+                .as_deref()
+                .or(state.next_check_at.as_deref())
+                .and_then(epoch_from_string)
+                .unwrap();
+            let outcome = record_scheduler_error_for_runtime(
+                &context,
+                &record.id,
+                &record.runtime.as_ref().unwrap().launch_id,
+                due,
+                "control_unavailable",
+            )
+            .unwrap();
+            let state = read_state(&context, &record.id, "2030-01-01T00:00:00Z").unwrap();
+            assert_eq!(
+                state.attempt, 0,
+                "control discovery must not consume a provider submission"
+            );
+            assert_eq!(state.fallback_schedules, expected_fallbacks);
+            if expected_fallbacks < MAX_TRANSIENT_ATTEMPTS {
+                assert_eq!(outcome, TickOutcome::Retrying);
+                assert_eq!(state.state, "transient_failure");
+            } else {
+                assert_eq!(outcome, TickOutcome::TerminalFailure);
+                assert!(!state.enabled);
+                assert_eq!(state.state, "terminal_failure");
+                assert_eq!(state.failure_reason.as_deref(), Some("control_unavailable"));
+            }
+        }
+        assert_eq!(
+            pending_sessions(&context, i64::MAX).unwrap(),
+            PendingSessions::default()
+        );
+    }
+
+    #[test]
     fn successful_capacity_continuation_completion_clears_the_retry_chain() {
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, record, _) = seed_bound_codex_auto_resume(&tmp);
@@ -2142,30 +2192,79 @@ mod tests {
             |_| Ok(()),
         )
         .unwrap();
-        for (suffix, kind) in [("started", "turn_started"), ("completed", "turn_completed")] {
-            activity::ingest_event(
-                &context,
-                &record.id,
-                serde_json::from_value(json!({
-                    "schema_version": crate::activity::TURN_EVENT_VERSION,
-                    "event_id": format!("capacity-success-{suffix}"),
-                    "runtime_id": record.runtime.as_ref().unwrap().launch_id.as_str(),
-                    "provider": "codex",
-                    "provider_session_id": "thread-capacity",
-                    "provider_turn_id": "capacity-success",
-                    "kind": kind,
-                    "confidence": "authoritative"
-                }))
-                .unwrap(),
-            )
-            .unwrap();
-        }
+        activity::ingest_event(
+            &context,
+            &record.id,
+            serde_json::from_value(json!({
+                "schema_version": crate::activity::TURN_EVENT_VERSION,
+                "event_id": "capacity-success-started",
+                "runtime_id": record.runtime.as_ref().unwrap().launch_id.as_str(),
+                "provider": "codex",
+                "provider_session_id": "thread-capacity",
+                "provider_turn_id": "capacity-success",
+                "kind": "turn_started",
+                "confidence": "authoritative"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        activity::ingest_event(
+            &context,
+            &record.id,
+            serde_json::from_value(json!({
+                "schema_version": crate::activity::TURN_EVENT_VERSION,
+                "event_id": "codex-done",
+                "runtime_id": record.runtime.as_ref().unwrap().launch_id.as_str(),
+                "provider": "codex",
+                "provider_session_id": "thread-capacity",
+                "provider_turn_id": "turn-1",
+                "kind": "turn_completed",
+                "confidence": "authoritative"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let after_stale_completion =
+            read_state(&context, &record.id, "2030-01-01T00:00:30Z").unwrap();
+        assert_eq!(after_stale_completion.state, "resumed");
+        assert_eq!(
+            after_stale_completion.recovery_cause.as_deref(),
+            Some(PROVIDER_CAPACITY_CAUSE),
+            "an older completion replay must not clear the active capacity chain"
+        );
+        activity::ingest_event(
+            &context,
+            &record.id,
+            serde_json::from_value(json!({
+                "schema_version": crate::activity::TURN_EVENT_VERSION,
+                "event_id": "capacity-success-completed",
+                "runtime_id": record.runtime.as_ref().unwrap().launch_id.as_str(),
+                "provider": "codex",
+                "provider_session_id": "thread-capacity",
+                "provider_turn_id": "capacity-success",
+                "kind": "turn_completed",
+                "confidence": "authoritative"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
 
         let cleared = read_state(&context, &record.id, "2030-01-01T00:01:00Z").unwrap();
         assert!(cleared.enabled);
         assert_eq!(cleared.state, "enabled");
         assert_eq!(cleared.recovery_cause, None);
         assert_eq!(cleared.attempt, 0);
+
+        ingest_provider_capacity(&context, &record, "capacity-completes");
+        let replayed = read_state(&context, &record.id, "2030-01-01T00:01:01Z").unwrap();
+        assert!(replayed.enabled);
+        assert_eq!(replayed.state, "enabled");
+        assert_eq!(replayed.recovery_cause, None);
+        assert_eq!(
+            pending_sessions(&context, scheduled + 10_000).unwrap(),
+            PendingSessions::default(),
+            "a stale replay of the completed capacity failure must not create a new prompt"
+        );
     }
 
     #[test]
