@@ -395,6 +395,29 @@ pub(crate) fn set_initial_binding_with_source(
     )
 }
 
+#[cfg(test)]
+pub(crate) fn seed_bound_binding_for_test(
+    record: &mut SessionRecord,
+    account: &str,
+    runtime_id: &str,
+) {
+    validate_account(account).unwrap();
+    store_binding(
+        record,
+        &DurableBinding {
+            schema_version: BINDING_SCHEMA_VERSION.to_string(),
+            selected_account: account.to_string(),
+            selection_source: Some("default_at_launch".to_string()),
+            revision: 1,
+            state: "bound".to_string(),
+            applied_runtime_id: Some(runtime_id.to_string()),
+            failure_reason: None,
+            updated_at: jiff::Timestamp::now().to_string(),
+        },
+    )
+    .unwrap();
+}
+
 pub(crate) fn mark_runtime_pending(record: &mut SessionRecord) -> Result<(), CliError> {
     let mut binding = match decode_binding(record) {
         DecodedBinding::Absent => return Ok(()),

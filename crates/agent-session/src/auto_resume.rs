@@ -1805,24 +1805,9 @@ mod tests {
                 json!("/run/codex.attached"),
             ),
         ]));
-        crate::codex_account::set_initial_binding_with_source(
-            &mut record,
-            Some("account-a"),
-            Some("default_at_launch"),
-        )
-        .unwrap();
+        crate::codex_account::seed_bound_binding_for_test(&mut record, "account-a", "runtime-1");
         crate::write_session_record(&context, &record).unwrap();
-        crate::codex_account::finish_binding(
-            &context,
-            &record.id,
-            "runtime-1",
-            "account-a",
-            1,
-            Ok(()),
-        )
-        .unwrap();
-        let mut record = crate::load_session_record(&context, &record.id).unwrap();
-        crate::codex_account::authorize_input_locked(&context, &mut record).unwrap();
+        crate::codex_account::authorize_proxy_input_locked(&context, &mut record, true).unwrap();
         for (event_id, kind) in [
             ("codex-start", "turn_started"),
             ("codex-done", "turn_completed"),
