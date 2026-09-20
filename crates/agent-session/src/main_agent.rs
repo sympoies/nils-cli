@@ -9628,6 +9628,12 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
                         && turn.provider_failure_kind() == Some("provider_capacity")
                 })
         });
+    let provider_capacity_recovery_pending = provider_capacity_evidence
+        && auto_resume_view["enabled"] == true
+        && matches!(
+            auto_resume_view["state"].as_str(),
+            Some("scheduled" | "checking" | "transient_failure" | "resumed")
+        );
     // Guidance is projected from the same locked coordination snapshot when
     // that snapshot is usable. Any lock/schema failure is already represented
     // by coordination evidence, so it must not create a second, higher
@@ -9940,7 +9946,9 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
         account_handoff_in_flight,
         readiness_stop_required,
         pre_bootstrap_attention_required,
-        provider_capacity_attention_required: provider_capacity_evidence,
+        provider_capacity_recovery_pending,
+        provider_capacity_attention_required: provider_capacity_evidence
+            && !provider_capacity_recovery_pending,
         idle_claim_revocation_required,
         coordination_broker_stale,
         edit_authority_stale,
@@ -9999,7 +10007,9 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
     });
     let diagnosis_schema = if matches!(
         classification,
-        "pre_bootstrap_attention_required" | "provider_capacity_attention_required"
+        "pre_bootstrap_attention_required"
+            | "provider_capacity_recovery_pending"
+            | "provider_capacity_attention_required"
     ) {
         "main-agent.worker-diagnose-result.v7"
     } else if matches!(
@@ -10117,12 +10127,12 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
     });
     if diagnosis_schema == "main-agent.worker-diagnose-result.v7" {
         diagnosis["attention"] = json!({
-            "kind": if classification == "provider_capacity_attention_required" {
+            "kind": if matches!(classification, "provider_capacity_recovery_pending" | "provider_capacity_attention_required") {
                 "provider_capacity"
             } else {
                 "pre_bootstrap"
             },
-            "source": if classification == "provider_capacity_attention_required" {
+            "source": if matches!(classification, "provider_capacity_recovery_pending" | "provider_capacity_attention_required") {
                 "provider_protocol"
             } else {
                 "coordination_state"
@@ -10194,15 +10204,17 @@ fn worker_recovery_action(
         "argv": supervise
     });
     match classification {
-        "pre_bootstrap_attention_required" | "provider_capacity_attention_required" => {
+        "pre_bootstrap_attention_required"
+        | "provider_capacity_recovery_pending"
+        | "provider_capacity_attention_required" => {
             action["schema_version"] = json!("main-agent.worker-recovery-action.v7");
-            action["kind"] = json!(
-                if classification == "provider_capacity_attention_required" {
-                    "bounded_provider_capacity_recheck"
-                } else {
-                    "bounded_bootstrap_attention_recheck"
-                }
-            );
+            action["kind"] = json!(if classification == "provider_capacity_recovery_pending" {
+                "bounded_provider_capacity_recovery_recheck"
+            } else if classification == "provider_capacity_attention_required" {
+                "bounded_provider_capacity_recheck"
+            } else {
+                "bounded_bootstrap_attention_recheck"
+            });
         }
         "provider_stop_canary_release_in_progress" => {
             action["schema_version"] = json!("main-agent.worker-recovery-action.v6");
@@ -10630,8 +10642,10 @@ struct WorkerDiagnosisFacts {
     /// failure owns the lane. Claim renewal is impossible before bootstrap.
     pre_bootstrap_attention_required: bool,
     /// Exact provider-protocol evidence reports temporary model/service
-    /// capacity. This is distinct from account quota and never authorizes an
-    /// account switch or provider input.
+    /// capacity. This is distinct from account quota and never authorizes the
+    /// Main Agent to switch accounts or issue provider input; the session
+    /// daemon may independently own a fenced capacity continuation.
+    provider_capacity_recovery_pending: bool,
     provider_capacity_attention_required: bool,
     /// A live worker has authoritatively returned to an idle provider boundary
     /// while its exact assignment-derived claim and broker remain active, with
@@ -10754,6 +10768,12 @@ fn classify_worker_diagnosis(facts: WorkerDiagnosisFacts) -> (&'static str, &'st
         (
             "account_handoff_in_flight",
             "complete the exact reserved account handoff, or run the projected revision-fenced `main-agent worker account-handoff-cancel` action before any runtime stop or assignment transition",
+            false,
+        )
+    } else if facts.provider_capacity_recovery_pending {
+        (
+            "provider_capacity_recovery_pending",
+            "preserve the exact worker and provider conversation while daemon-owned auto-resume applies its bounded retry; continue supervision without switching accounts, resending the prompt, or sending raw terminal input",
             false,
         )
     } else if facts.provider_capacity_attention_required {
@@ -31314,6 +31334,7 @@ mod tests {
             account_handoff_in_flight: false,
             readiness_stop_required: false,
             pre_bootstrap_attention_required: false,
+            provider_capacity_recovery_pending: false,
             provider_capacity_attention_required: false,
             idle_claim_revocation_required: false,
             coordination_broker_stale: false,
@@ -32188,6 +32209,16 @@ mod tests {
         );
         assert_eq!(
             classify_worker_diagnosis(WorkerDiagnosisFacts {
+                provider_capacity_recovery_pending: true,
+                claim_renewal_required: true,
+                ..base
+            })
+            .0,
+            "provider_capacity_recovery_pending",
+            "daemon-owned capacity recovery must outrank generic claim renewal"
+        );
+        assert_eq!(
+            classify_worker_diagnosis(WorkerDiagnosisFacts {
                 provider_capacity_attention_required: true,
                 claim_renewal_required: true,
                 ..base
@@ -32404,6 +32435,7 @@ mod tests {
             "worker_unreachable",
             "uncertain_mutation",
             "pre_bootstrap_attention_required",
+            "provider_capacity_recovery_pending",
             "provider_capacity_attention_required",
             "readiness_stop_required",
             "idle_claim_revocation_in_progress",
@@ -32433,7 +32465,9 @@ mod tests {
             );
             let expected_schema = if matches!(
                 classification,
-                "pre_bootstrap_attention_required" | "provider_capacity_attention_required"
+                "pre_bootstrap_attention_required"
+                    | "provider_capacity_recovery_pending"
+                    | "provider_capacity_attention_required"
             ) {
                 "main-agent.worker-recovery-action.v7"
             } else if matches!(

@@ -27,7 +27,11 @@ const PROTOCOL_STATE_LOCK_TIMEOUT: Duration = Duration::from_secs(1);
 pub(crate) const WAIT_FOR_RESET_POLICY: &str = "wait_for_reset";
 pub(crate) const NEXT_ACCOUNT_THEN_RESUME_POLICY: &str = "next_account_then_resume";
 
+const USAGE_EXHAUSTION_CAUSE: &str = "usage_exhaustion";
+const PROVIDER_CAPACITY_CAUSE: &str = "provider_capacity";
+
 pub(crate) const CONTINUATION_MESSAGE: &str = "Continue the interrupted task from where you stopped. First inspect the current session and repository state, then continue toward the existing objective. Do not repeat completed work.";
+pub(crate) const CAPACITY_CONTINUATION_MESSAGE: &str = "The selected model was at capacity, interrupting the previous turn. Please continue from where you stopped.";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct DurableAutoResume {
@@ -44,6 +48,8 @@ struct DurableAutoResume {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     failure_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    recovery_cause: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     blocked_turn_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     blocked_revision: Option<u64>,
@@ -51,6 +57,8 @@ struct DurableAutoResume {
     blocked_account: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     blocked_account_revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    blocked_binding_state: Option<String>,
     #[serde(default)]
     attempt: u32,
     #[serde(default)]
@@ -96,6 +104,7 @@ pub(crate) struct UsageSnapshot {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct PendingSessions {
     pub(crate) recovery_ids: Vec<String>,
+    pub(crate) capacity_ids: Vec<String>,
     pub(crate) usage_ids: Vec<String>,
     pub(crate) error_codes: Vec<String>,
 }
@@ -150,15 +159,36 @@ fn default_state(now: &str) -> DurableAutoResume {
         scheduled_at: None,
         next_check_at: None,
         failure_reason: None,
+        recovery_cause: None,
         blocked_turn_id: None,
         blocked_revision: None,
         blocked_account: None,
         blocked_account_revision: None,
+        blocked_binding_state: None,
         attempt: 0,
         ever_scheduled: false,
         fallback_schedules: 0,
         attempted_accounts: Vec::new(),
     }
+}
+
+fn reset_enabled_recovery(state: &mut DurableAutoResume, now: &str) {
+    state.enabled = true;
+    state.state = "enabled".to_string();
+    state.updated_at = now.to_string();
+    state.scheduled_at = None;
+    state.next_check_at = None;
+    state.failure_reason = None;
+    state.recovery_cause = None;
+    state.blocked_turn_id = None;
+    state.blocked_revision = None;
+    state.blocked_account = None;
+    state.blocked_account_revision = None;
+    state.blocked_binding_state = None;
+    state.attempt = 0;
+    state.ever_scheduled = false;
+    state.fallback_schedules = 0;
+    state.attempted_accounts.clear();
 }
 
 fn path(context: &CliContext, id: &str) -> PathBuf {
@@ -199,6 +229,17 @@ fn read_state(context: &CliContext, id: &str, now: &str) -> Result<DurableAutoRe
         return Err(CliError::data(
             "auto-resume-state-invalid",
             "durable auto-resume state has an invalid recovery policy",
+            Some(json!({ "id": id })),
+        ));
+    }
+    if state
+        .recovery_cause
+        .as_deref()
+        .is_some_and(|cause| !matches!(cause, USAGE_EXHAUSTION_CAUSE | PROVIDER_CAPACITY_CAUSE))
+    {
+        return Err(CliError::data(
+            "auto-resume-state-invalid",
+            "durable auto-resume state has an invalid recovery cause",
             Some(json!({ "id": id })),
         ));
     }
@@ -308,7 +349,7 @@ pub(crate) fn set_enabled_with_policy(
     if enabled && !supported(&record) {
         return Err(CliError::data(
             "auto-resume-unsupported",
-            "this provider does not expose an authoritative structured usage-exhaustion signal",
+            "this provider does not expose an authoritative structured auto-resume signal",
             Some(json!({ "id": record.id, "provider": record.agent })),
         ));
     }
@@ -342,10 +383,12 @@ pub(crate) fn set_enabled_with_policy(
     state.scheduled_at = None;
     state.next_check_at = None;
     state.failure_reason = None;
+    state.recovery_cause = None;
     state.blocked_turn_id = None;
     state.blocked_revision = None;
     state.blocked_account = None;
     state.blocked_account_revision = None;
+    state.blocked_binding_state = None;
     state.attempt = 0;
     state.ever_scheduled = false;
     state.fallback_schedules = 0;
@@ -407,6 +450,7 @@ pub(crate) fn rearm_usage_exhaustion_for_runtime(
     state.scheduled_at = None;
     state.next_check_at = None;
     state.failure_reason = None;
+    state.recovery_cause = Some(USAGE_EXHAUSTION_CAUSE.to_string());
     state.blocked_turn_id = Some(blocked_turn_id);
     state.blocked_revision = Some(blocked_revision);
     let blocked_account = crate::codex_account::input_binding_identity(&record)?;
@@ -414,6 +458,7 @@ pub(crate) fn rearm_usage_exhaustion_for_runtime(
         .as_ref()
         .map(|(account, _)| account.to_string());
     state.blocked_account_revision = blocked_account.map(|(_, revision)| revision);
+    state.blocked_binding_state = None;
     state.attempt = 0;
     state.ever_scheduled = false;
     state.fallback_schedules = 0;
@@ -466,20 +511,11 @@ pub(crate) fn cancel_for_manual_input_locked(
         // The prior automatic continuation has already been submitted. A new
         // manual input begins a distinct recovery chain, so it must not inherit
         // the accounts or retry budget consumed by the earlier failure.
-        state.state = "enabled".to_string();
-        state.updated_at = now.to_string();
-        state.scheduled_at = None;
-        state.next_check_at = None;
-        state.failure_reason = None;
-        state.blocked_turn_id = None;
-        state.blocked_revision = None;
-        state.blocked_account = None;
-        state.blocked_account_revision = None;
-        state.attempt = 0;
-        state.ever_scheduled = false;
-        state.fallback_schedules = 0;
-        state.attempted_accounts.clear();
+        reset_enabled_recovery(&mut state, now);
         return write_state(context, id, &state);
+    }
+    if state.enabled && state.state == "enabled" && current_capacity_failure(context, id) {
+        return cancel_unarmed_capacity(context, id, &mut state, now, "manual_input");
     }
     cancel_active_locked(context, id, now, "manual_input")
 }
@@ -489,7 +525,47 @@ pub(crate) fn cancel_for_account_switch_locked(
     id: &str,
     now: &str,
 ) -> Result<(), CliError> {
+    let mut state = read_state(context, id, now)?;
+    if state.enabled
+        && state.state == "resumed"
+        && state.recovery_cause.as_deref() == Some(PROVIDER_CAPACITY_CAUSE)
+    {
+        reset_enabled_recovery(&mut state, now);
+        return write_state(context, id, &state);
+    }
+    if state.enabled && state.state == "enabled" && current_capacity_failure(context, id) {
+        return cancel_unarmed_capacity(context, id, &mut state, now, "account_switch");
+    }
     cancel_active_locked(context, id, now, "account_switch")
+}
+
+fn current_capacity_failure(context: &CliContext, id: &str) -> bool {
+    let Ok(record) = load_session_record(context, id) else {
+        return false;
+    };
+    crate::activity::state_for_view(context, &record).is_some_and(|activity| {
+        activity.current_turn.is_none()
+            && activity.last_turn.as_ref().is_some_and(|turn| {
+                turn.outcome == "failed"
+                    && turn.provider_failure_kind() == Some(PROVIDER_CAPACITY_CAUSE)
+            })
+    })
+}
+
+fn cancel_unarmed_capacity(
+    context: &CliContext,
+    id: &str,
+    state: &mut DurableAutoResume,
+    now: &str,
+    reason: &str,
+) -> Result<(), CliError> {
+    state.enabled = false;
+    state.state = "cancelled".to_string();
+    state.updated_at = now.to_string();
+    state.scheduled_at = None;
+    state.next_check_at = None;
+    state.failure_reason = Some(reason.to_string());
+    write_state(context, id, state)
 }
 
 fn cancel_active_locked(
@@ -646,6 +722,13 @@ pub(crate) fn arm_usage_exhaustion(
     if !state.enabled {
         return Ok(false);
     }
+    if state.recovery_cause.as_deref() == Some(PROVIDER_CAPACITY_CAUSE) && state.state == "checking"
+    {
+        // A durable pre-submit claim is already in flight. Even a newer
+        // capacity event cannot prove whether that submission was accepted,
+        // so it must never create a replayable schedule.
+        return Ok(false);
+    }
     if state.blocked_turn_id.as_deref() == Some(blocked_turn_id.as_str())
         && matches!(
             state.state.as_str(),
@@ -654,7 +737,8 @@ pub(crate) fn arm_usage_exhaustion(
     {
         return Ok(false);
     }
-    let preserve_recovery_chain = state.recovery_policy == NEXT_ACCOUNT_THEN_RESUME_POLICY
+    let preserve_recovery_chain = state.recovery_cause.as_deref() != Some(PROVIDER_CAPACITY_CAUSE)
+        && state.recovery_policy == NEXT_ACCOUNT_THEN_RESUME_POLICY
         && record.agent == "codex"
         && state.state == "resumed";
     state.state = "armed".to_string();
@@ -662,6 +746,7 @@ pub(crate) fn arm_usage_exhaustion(
     state.scheduled_at = None;
     state.next_check_at = None;
     state.failure_reason = None;
+    state.recovery_cause = Some(USAGE_EXHAUSTION_CAUSE.to_string());
     state.blocked_turn_id = Some(blocked_turn_id);
     state.blocked_revision = Some(blocked_revision);
     let blocked_account = crate::codex_account::input_binding_identity(&record)?;
@@ -669,6 +754,7 @@ pub(crate) fn arm_usage_exhaustion(
         .as_ref()
         .map(|(account, _)| account.to_string());
     state.blocked_account_revision = blocked_account.map(|(_, revision)| revision);
+    state.blocked_binding_state = None;
     if !preserve_recovery_chain {
         state.attempt = 0;
         state.ever_scheduled = false;
@@ -676,6 +762,119 @@ pub(crate) fn arm_usage_exhaustion(
     }
     write_state(context, &record.id, &state)?;
     Ok(true)
+}
+
+pub(crate) fn arm_provider_capacity(
+    context: &CliContext,
+    id: &str,
+    expected_launch_id: &str,
+    expected_binding: &crate::codex_account::BindingSnapshot,
+    blocked_turn_id: String,
+    blocked_revision: u64,
+    now: &str,
+) -> Result<bool, CliError> {
+    let observed = load_session_record(context, id)?;
+    let canonical_id = observed.id.clone();
+    let _lock =
+        acquire_session_record_lock_timed(context, &canonical_id, PROTOCOL_STATE_LOCK_TIMEOUT)?;
+    let record = load_session_record(context, &canonical_id)?;
+    crate::ensure_same_session_identity(&observed, &record)?;
+    if record.agent != "codex"
+        || !crate::codex_app_server::runtime_is_supported(&record)
+        || !runtime_matches(&record, Some(expected_launch_id))
+        || crate::codex_account::binding_snapshot(&record) != *expected_binding
+    {
+        return Ok(false);
+    }
+    let mut state = read_state(context, &record.id, now)?;
+    if !state.enabled {
+        return Ok(false);
+    }
+    if state.recovery_cause.as_deref() == Some(PROVIDER_CAPACITY_CAUSE) && state.state == "checking"
+    {
+        // A durable pre-submit claim is already in flight. Even a newer
+        // capacity event cannot prove whether that submission was accepted,
+        // so it must never create a replayable schedule.
+        return Ok(false);
+    }
+    if !crate::activity::state_for_view(context, &record).is_some_and(|activity| {
+        activity.phase == crate::activity::TurnPhase::Waiting
+            && activity.revision == blocked_revision
+            && activity
+                .current_turn
+                .as_ref()
+                .and_then(|turn| turn.attention.as_ref())
+                .is_none()
+    }) {
+        return Ok(false);
+    }
+    if state.blocked_turn_id.as_deref() == Some(blocked_turn_id.as_str())
+        && state.recovery_cause.as_deref() == Some(PROVIDER_CAPACITY_CAUSE)
+        && matches!(state.state.as_str(), "scheduled" | "checking" | "resumed")
+    {
+        return Ok(false);
+    }
+    let preserve_recovery_chain = state.recovery_cause.as_deref() == Some(PROVIDER_CAPACITY_CAUSE)
+        && state.state == "resumed";
+    if preserve_recovery_chain && state.attempt >= MAX_TRANSIENT_ATTEMPTS {
+        state.enabled = false;
+        state.state = "terminal_failure".to_string();
+        state.updated_at = now.to_string();
+        state.scheduled_at = None;
+        state.next_check_at = None;
+        state.failure_reason = Some("capacity_retry_exhausted".to_string());
+        write_state(context, &record.id, &state)?;
+        return Ok(true);
+    }
+    if !preserve_recovery_chain {
+        state.attempt = 0;
+        state.fallback_schedules = 0;
+    }
+    let now_epoch = epoch_from_string(now).ok_or_else(|| {
+        CliError::data(
+            "auto-resume-time-invalid",
+            "auto-resume timestamp is outside the supported range",
+            None,
+        )
+    })?;
+    let delay = RETRY_DELAYS_SECONDS[state.attempt as usize];
+    state.state = "scheduled".to_string();
+    state.updated_at = now.to_string();
+    state.scheduled_at = Some(epoch_string(now_epoch.saturating_add(delay))?);
+    state.next_check_at = None;
+    state.failure_reason = None;
+    state.recovery_cause = Some(PROVIDER_CAPACITY_CAUSE.to_string());
+    state.blocked_turn_id = Some(blocked_turn_id);
+    state.blocked_revision = Some(blocked_revision);
+    record_capacity_binding(&record, &mut state);
+    state.ever_scheduled = true;
+    state.attempted_accounts.clear();
+    write_state(context, &record.id, &state)?;
+    Ok(true)
+}
+
+pub(crate) fn complete_provider_capacity_recovery(
+    context: &CliContext,
+    id: &str,
+    completed_revision: u64,
+    now: &str,
+) -> Result<(), CliError> {
+    let observed = load_session_record(context, id)?;
+    let canonical_id = observed.id.clone();
+    let _lock =
+        acquire_session_record_lock_timed(context, &canonical_id, PROTOCOL_STATE_LOCK_TIMEOUT)?;
+    let record = load_session_record(context, &canonical_id)?;
+    crate::ensure_same_session_identity(&observed, &record)?;
+    let mut state = read_state(context, &record.id, now)?;
+    if state.enabled
+        && state.state == "resumed"
+        && state.recovery_cause.as_deref() == Some(PROVIDER_CAPACITY_CAUSE)
+        && completed_revision > state.blocked_revision.unwrap_or_default()
+    {
+        reset_enabled_recovery(&mut state, now);
+        write_state(context, &record.id, &state)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn pending_sessions(
@@ -727,10 +926,18 @@ pub(crate) fn pending_sessions(
         if !state.enabled {
             continue;
         }
+        if state.state == "checking" {
+            pending.recovery_ids.push(id);
+            continue;
+        }
+        let pending_ids = if state.recovery_cause.as_deref() == Some(PROVIDER_CAPACITY_CAUSE) {
+            &mut pending.capacity_ids
+        } else {
+            &mut pending.usage_ids
+        };
         match state.state.as_str() {
-            "checking" => pending.recovery_ids.push(id),
-            "switching_account" => pending.usage_ids.push(id),
-            "armed" => pending.usage_ids.push(id),
+            "switching_account" => pending_ids.push(id),
+            "armed" => pending_ids.push(id),
             "scheduled"
                 if state
                     .scheduled_at
@@ -738,7 +945,7 @@ pub(crate) fn pending_sessions(
                     .and_then(epoch_from_string)
                     .is_none_or(|due| due <= now_epoch) =>
             {
-                pending.usage_ids.push(id);
+                pending_ids.push(id);
             }
             "transient_failure"
                 if state
@@ -747,12 +954,13 @@ pub(crate) fn pending_sessions(
                     .and_then(epoch_from_string)
                     .is_none_or(|due| due <= now_epoch) =>
             {
-                pending.usage_ids.push(id);
+                pending_ids.push(id);
             }
             _ => {}
         }
     }
     pending.recovery_ids.sort();
+    pending.capacity_ids.sort();
     pending.usage_ids.sort();
     pending.error_codes.sort();
     Ok(pending)
@@ -811,6 +1019,9 @@ fn record_scheduler_error_inner(
         )
     {
         return Ok(TickOutcome::Unchanged);
+    }
+    if state.recovery_cause.as_deref() == Some(PROVIDER_CAPACITY_CAUSE) {
+        return record_capacity_scheduler_retry(context, &record, state, now_epoch, reason);
     }
     record_retry(context, &record, state, now_epoch, reason)
 }
@@ -925,6 +1136,45 @@ fn blocked_account_identity_available(state: &DurableAutoResume) -> bool {
         (state.blocked_account.as_deref(), state.blocked_account_revision),
         (Some(account), Some(revision)) if !account.is_empty() && revision > 0
     )
+}
+
+fn record_capacity_binding(record: &SessionRecord, state: &mut DurableAutoResume) {
+    match crate::codex_account::binding_snapshot(record) {
+        crate::codex_account::BindingSnapshot::Unbound => {
+            state.blocked_binding_state = Some("unbound".to_string());
+            state.blocked_account = None;
+            state.blocked_account_revision = None;
+        }
+        crate::codex_account::BindingSnapshot::Bound { account, revision } => {
+            state.blocked_binding_state = Some("bound".to_string());
+            state.blocked_account = Some(account);
+            state.blocked_account_revision = Some(revision);
+        }
+        crate::codex_account::BindingSnapshot::Blocked => {
+            state.blocked_binding_state = Some("blocked".to_string());
+            state.blocked_account = None;
+            state.blocked_account_revision = None;
+        }
+    }
+}
+
+fn capacity_binding_matches(record: &SessionRecord, state: &DurableAutoResume) -> bool {
+    match (
+        state.blocked_binding_state.as_deref(),
+        state.blocked_account.as_deref(),
+        state.blocked_account_revision,
+        crate::codex_account::binding_snapshot(record),
+    ) {
+        (Some("unbound"), None, None, crate::codex_account::BindingSnapshot::Unbound) => true,
+        (
+            Some("bound"),
+            Some(expected_account),
+            Some(expected_revision),
+            crate::codex_account::BindingSnapshot::Bound { account, revision },
+        ) => account == expected_account && revision == expected_revision,
+        (Some("blocked"), None, None, crate::codex_account::BindingSnapshot::Blocked) => true,
+        _ => false,
+    }
 }
 
 fn current_account_changed(record: &SessionRecord, state: &DurableAutoResume) -> bool {
@@ -1105,134 +1355,163 @@ where
         return Ok(TickOutcome::Unchanged);
     }
 
-    if !usage.authoritative {
-        return record_retry(context, &record, state, now_epoch, "usage_unavailable");
-    }
-
-    if state.recovery_policy == NEXT_ACCOUNT_THEN_RESUME_POLICY
-        && record.agent == "codex"
-        && !blocked_account_identity_available(&state)
-    {
-        return record_retry(context, &record, state, now_epoch, "state_unavailable");
-    }
-
-    let current_account_changed = current_account_changed(&record, &state);
-
-    if state.state == "switching_account" {
-        match crate::codex_account::next_transition_state(&record) {
-            crate::codex_account::NextTransitionState::Pending => {
-                return Ok(TickOutcome::Unchanged);
-            }
-            crate::codex_account::NextTransitionState::Failed
-            | crate::codex_account::NextTransitionState::Invalid => {
-                state.enabled = false;
-                state.state = "terminal_failure".to_string();
-                state.updated_at = now;
-                state.failure_reason = Some("account_switch_failed".to_string());
-                write_state(context, &record.id, &state)?;
-                return Ok(TickOutcome::TerminalFailure);
-            }
-            crate::codex_account::NextTransitionState::Absent => {}
-        }
-    }
-
-    // The structured provider rejection is authoritative evidence that the
-    // bound account cannot accept this turn. Its percentage windows may still
-    // be open when a distinct workspace-credit pool is exhausted, so a fresh
-    // broker-confirmed alternative is sufficient to authorize failover.
-    if state.recovery_policy == NEXT_ACCOUNT_THEN_RESUME_POLICY
-        && record.agent == "codex"
-        && (!current_account_changed || usage.has_exhausted_windows)
-        && let Some(account) = fences.failover_account
-    {
-        let current = crate::codex_account::selected_account(&record);
-        if current.as_deref() != Some(account)
-            && !state.attempted_accounts.iter().any(|item| item == account)
-        {
-            if let Some(current) = current
-                && !state.attempted_accounts.contains(&current)
-            {
-                state.attempted_accounts.push(current);
-            }
-            state.attempted_accounts.push(account.to_string());
-            state.state = "switching_account".to_string();
-            state.updated_at = now.clone();
-            state.scheduled_at = None;
-            state.next_check_at = None;
-            state.failure_reason = None;
-            state.ever_scheduled = true;
+    let capacity_recovery = state.recovery_cause.as_deref() == Some(PROVIDER_CAPACITY_CAUSE);
+    if capacity_recovery {
+        if state.attempt >= MAX_TRANSIENT_ATTEMPTS {
+            state.enabled = false;
+            state.state = "terminal_failure".to_string();
+            state.updated_at = now;
+            state.failure_reason = Some("capacity_retry_exhausted".to_string());
             write_state(context, &record.id, &state)?;
-            crate::codex_account::queue_auto_failover_locked(context, &mut record, account)?;
-            return Ok(TickOutcome::AccountSwitchQueued);
+            return Ok(TickOutcome::TerminalFailure);
+        }
+        if !capacity_binding_matches(&record, &state) {
+            state.enabled = false;
+            state.state = "terminal_failure".to_string();
+            state.updated_at = now;
+            state.failure_reason = Some("account_changed".to_string());
+            write_state(context, &record.id, &state)?;
+            return Ok(TickOutcome::TerminalFailure);
         }
     }
 
-    if usage.has_exhausted_windows {
-        let Some(latest_reset) = usage.exhausted_reset_epochs.iter().copied().max() else {
-            return record_retry(
-                context,
-                &record,
-                state,
-                now_epoch,
-                "exhausted_reset_unavailable",
-            );
-        };
-        let wake_epoch = latest_reset.max(now_epoch.saturating_add(1))
-            + bounded_jitter_seconds(&record.id, state.blocked_turn_id.as_deref().unwrap_or(""));
-        state.state = "scheduled".to_string();
-        state.updated_at = now;
-        state.scheduled_at = Some(epoch_string(wake_epoch)?);
-        state.next_check_at = None;
-        state.failure_reason = (state.recovery_policy == NEXT_ACCOUNT_THEN_RESUME_POLICY)
-            .then(|| "no_account_available".to_string());
-        state.ever_scheduled = true;
-        // A real percentage-window exhaustion drove this schedule, so the
-        // authoritative-arming fallback below is no longer in play; clear its
-        // budget.
-        state.fallback_schedules = 0;
-        write_state(context, &record.id, &state)?;
-        return Ok(TickOutcome::Scheduled);
-    }
+    if !capacity_recovery {
+        if !usage.authoritative {
+            return record_retry(context, &record, state, now_epoch, "usage_unavailable");
+        }
 
-    if state.recovery_policy == NEXT_ACCOUNT_THEN_RESUME_POLICY
-        && record.agent == "codex"
-        && !current_account_changed
-    {
-        return record_retry(context, &record, state, now_epoch, "no_account_available");
-    }
+        if state.recovery_policy == NEXT_ACCOUNT_THEN_RESUME_POLICY
+            && record.agent == "codex"
+            && !blocked_account_identity_available(&state)
+        {
+            return record_retry(context, &record, state, now_epoch, "state_unavailable");
+        }
 
-    if !state.ever_scheduled && !current_account_changed {
-        // The session was armed by an authoritative provider rate-limit signal
-        // (see `arm_usage_exhaustion`), yet no usage window reports
-        // `used_percent >= 100`. Claude can expose this as a session limit, so
-        // it schedules from the nearest window or uses a bounded unknown-reset
-        // probe.
-        let fallback_reset = match usage.soonest_reset_epoch.filter(|reset| *reset > now_epoch) {
-            Some(reset) => reset,
-            None if record.agent == "claude" => now_epoch
-                .saturating_add(unknown_reset_probe_delay_seconds(state.fallback_schedules)),
-            None => {
+        let current_account_changed = current_account_changed(&record, &state);
+
+        if state.state == "switching_account" {
+            match crate::codex_account::next_transition_state(&record) {
+                crate::codex_account::NextTransitionState::Pending => {
+                    return Ok(TickOutcome::Unchanged);
+                }
+                crate::codex_account::NextTransitionState::Failed
+                | crate::codex_account::NextTransitionState::Invalid => {
+                    state.enabled = false;
+                    state.state = "terminal_failure".to_string();
+                    state.updated_at = now;
+                    state.failure_reason = Some("account_switch_failed".to_string());
+                    write_state(context, &record.id, &state)?;
+                    return Ok(TickOutcome::TerminalFailure);
+                }
+                crate::codex_account::NextTransitionState::Absent => {}
+            }
+        }
+
+        // The structured provider rejection is authoritative evidence that the
+        // bound account cannot accept this turn. Its percentage windows may still
+        // be open when a distinct workspace-credit pool is exhausted, so a fresh
+        // broker-confirmed alternative is sufficient to authorize failover.
+        if state.recovery_policy == NEXT_ACCOUNT_THEN_RESUME_POLICY
+            && record.agent == "codex"
+            && (!current_account_changed || usage.has_exhausted_windows)
+            && let Some(account) = fences.failover_account
+        {
+            let current = crate::codex_account::selected_account(&record);
+            if current.as_deref() != Some(account)
+                && !state.attempted_accounts.iter().any(|item| item == account)
+            {
+                if let Some(current) = current
+                    && !state.attempted_accounts.contains(&current)
+                {
+                    state.attempted_accounts.push(current);
+                }
+                state.attempted_accounts.push(account.to_string());
+                state.state = "switching_account".to_string();
+                state.updated_at = now.clone();
+                state.scheduled_at = None;
+                state.next_check_at = None;
+                state.failure_reason = None;
+                state.ever_scheduled = true;
+                write_state(context, &record.id, &state)?;
+                crate::codex_account::queue_auto_failover_locked(context, &mut record, account)?;
+                return Ok(TickOutcome::AccountSwitchQueued);
+            }
+        }
+
+        if usage.has_exhausted_windows {
+            let Some(latest_reset) = usage.exhausted_reset_epochs.iter().copied().max() else {
                 return record_retry(
                     context,
                     &record,
                     state,
                     now_epoch,
-                    "usage_window_not_exhausted",
+                    "exhausted_reset_unavailable",
                 );
-            }
-        };
-        let wake_epoch = fallback_reset
-            + bounded_jitter_seconds(&record.id, state.blocked_turn_id.as_deref().unwrap_or(""));
-        state.state = "scheduled".to_string();
-        state.updated_at = now;
-        state.scheduled_at = Some(epoch_string(wake_epoch)?);
-        state.next_check_at = None;
-        state.failure_reason = None;
-        state.attempt = 0;
-        state.ever_scheduled = true;
-        state.fallback_schedules = state.fallback_schedules.saturating_add(1);
-        write_state(context, &record.id, &state)?;
-        return Ok(TickOutcome::Scheduled);
+            };
+            let wake_epoch = latest_reset.max(now_epoch.saturating_add(1))
+                + bounded_jitter_seconds(
+                    &record.id,
+                    state.blocked_turn_id.as_deref().unwrap_or(""),
+                );
+            state.state = "scheduled".to_string();
+            state.updated_at = now;
+            state.scheduled_at = Some(epoch_string(wake_epoch)?);
+            state.next_check_at = None;
+            state.failure_reason = (state.recovery_policy == NEXT_ACCOUNT_THEN_RESUME_POLICY)
+                .then(|| "no_account_available".to_string());
+            state.ever_scheduled = true;
+            // A real percentage-window exhaustion drove this schedule, so the
+            // authoritative-arming fallback below is no longer in play; clear its
+            // budget.
+            state.fallback_schedules = 0;
+            write_state(context, &record.id, &state)?;
+            return Ok(TickOutcome::Scheduled);
+        }
+
+        if state.recovery_policy == NEXT_ACCOUNT_THEN_RESUME_POLICY
+            && record.agent == "codex"
+            && !current_account_changed
+        {
+            return record_retry(context, &record, state, now_epoch, "no_account_available");
+        }
+
+        if !state.ever_scheduled && !current_account_changed {
+            // The session was armed by an authoritative provider rate-limit signal
+            // (see `arm_usage_exhaustion`), yet no usage window reports
+            // `used_percent >= 100`. Claude can expose this as a session limit, so
+            // it schedules from the nearest window or uses a bounded unknown-reset
+            // probe.
+            let fallback_reset = match usage.soonest_reset_epoch.filter(|reset| *reset > now_epoch)
+            {
+                Some(reset) => reset,
+                None if record.agent == "claude" => now_epoch
+                    .saturating_add(unknown_reset_probe_delay_seconds(state.fallback_schedules)),
+                None => {
+                    return record_retry(
+                        context,
+                        &record,
+                        state,
+                        now_epoch,
+                        "usage_window_not_exhausted",
+                    );
+                }
+            };
+            let wake_epoch = fallback_reset
+                + bounded_jitter_seconds(
+                    &record.id,
+                    state.blocked_turn_id.as_deref().unwrap_or(""),
+                );
+            state.state = "scheduled".to_string();
+            state.updated_at = now;
+            state.scheduled_at = Some(epoch_string(wake_epoch)?);
+            state.next_check_at = None;
+            state.failure_reason = None;
+            state.attempt = 0;
+            state.ever_scheduled = true;
+            state.fallback_schedules = state.fallback_schedules.saturating_add(1);
+            write_state(context, &record.id, &state)?;
+            return Ok(TickOutcome::Scheduled);
+        }
     }
 
     if !blocked_claim_is_eligible(context, &record, &state) {
@@ -1258,6 +1537,9 @@ where
     if record.agent == "codex" {
         crate::codex_account::authorize_input_locked(context, &mut record)?;
     }
+    if capacity_recovery {
+        state.attempt = state.attempt.saturating_add(1);
+    }
     state.state = "checking".to_string();
     state.updated_at = now.clone();
     state.scheduled_at = None;
@@ -1269,6 +1551,9 @@ where
             state.state = "resumed".to_string();
             state.updated_at = now;
             state.failure_reason = None;
+            if capacity_recovery {
+                state.fallback_schedules = 0;
+            }
             write_state(context, &record.id, &state)?;
             Ok(TickOutcome::Resumed)
         }
@@ -1355,6 +1640,31 @@ fn record_retry(
         return Ok(TickOutcome::TerminalFailure);
     }
     let delay = RETRY_DELAYS_SECONDS[state.attempt.saturating_sub(1) as usize];
+    state.state = "transient_failure".to_string();
+    state.next_check_at = Some(epoch_string(now_epoch.saturating_add(delay))?);
+    write_state(context, &record.id, &state)?;
+    Ok(TickOutcome::Retrying)
+}
+
+fn record_capacity_scheduler_retry(
+    context: &CliContext,
+    record: &SessionRecord,
+    mut state: DurableAutoResume,
+    now_epoch: i64,
+    reason: &str,
+) -> Result<TickOutcome, CliError> {
+    state.fallback_schedules = state.fallback_schedules.saturating_add(1);
+    state.updated_at = epoch_string(now_epoch)?;
+    state.failure_reason = Some(reason.to_string());
+    state.scheduled_at = None;
+    if state.fallback_schedules >= MAX_TRANSIENT_ATTEMPTS {
+        state.enabled = false;
+        state.state = "terminal_failure".to_string();
+        state.next_check_at = None;
+        write_state(context, &record.id, &state)?;
+        return Ok(TickOutcome::TerminalFailure);
+    }
+    let delay = RETRY_DELAYS_SECONDS[state.fallback_schedules.saturating_sub(1) as usize];
     state.state = "transient_failure".to_string();
     state.next_check_at = Some(epoch_string(now_epoch.saturating_add(delay))?);
     write_state(context, &record.id, &state)?;
@@ -1533,6 +1843,337 @@ mod tests {
             .unwrap()
             .revision;
         (context, record, revision)
+    }
+
+    fn ingest_provider_capacity(context: &CliContext, record: &SessionRecord, turn_id: &str) {
+        activity::ingest_event(
+            context,
+            &record.id,
+            serde_json::from_value(json!({
+                "schema_version": crate::activity::TURN_EVENT_VERSION,
+                "event_id": format!("{turn_id}-started"),
+                "runtime_id": record.runtime.as_ref().unwrap().launch_id.as_str(),
+                "provider": "codex",
+                "provider_session_id": "thread-capacity",
+                "provider_turn_id": turn_id,
+                "kind": "turn_started",
+                "confidence": "authoritative"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        activity::ingest_codex_app_server_failure_with_kind(
+            context,
+            &record.id,
+            &record.runtime.as_ref().unwrap().launch_id,
+            "thread-capacity",
+            turn_id,
+            crate::codex_app_server::StructuredFailureKind::ProviderCapacity,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn capacity_recovery_uses_bounded_delays_and_stops_after_five_submissions() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record, _) = seed_bound_codex_auto_resume(&tmp);
+        set_enabled(&context, &record.id, true, "2030-01-01T00:00:00Z").unwrap();
+        let no_usage = UsageSnapshot {
+            authoritative: false,
+            has_exhausted_windows: false,
+            exhausted_reset_epochs: Vec::new(),
+            soonest_reset_epoch: None,
+        };
+        let mut submissions = 0;
+
+        for (index, expected_delay) in RETRY_DELAYS_SECONDS.into_iter().enumerate() {
+            ingest_provider_capacity(&context, &record, &format!("capacity-{index}"));
+            let state = read_state(&context, &record.id, "2030-01-01T00:00:00Z").unwrap();
+            assert_eq!(
+                state.recovery_cause.as_deref(),
+                Some(PROVIDER_CAPACITY_CAUSE)
+            );
+            assert_eq!(state.state, "scheduled");
+            let scheduled = epoch_from_string(state.scheduled_at.as_deref().unwrap()).unwrap();
+            let updated = epoch_from_string(&state.updated_at).unwrap();
+            assert_eq!(scheduled - updated, expected_delay);
+
+            let pending_before = pending_sessions(&context, scheduled - 1).unwrap();
+            assert!(pending_before.capacity_ids.is_empty());
+            let pending_due = pending_sessions(&context, scheduled).unwrap();
+            assert_eq!(pending_due.capacity_ids, vec![record.id.clone()]);
+            assert!(pending_due.usage_ids.is_empty());
+
+            let outcome = tick_for_runtime(
+                &context,
+                &record.id,
+                &record.runtime.as_ref().unwrap().launch_id,
+                scheduled,
+                &no_usage,
+                |_| {
+                    submissions += 1;
+                    Ok(())
+                },
+            )
+            .unwrap();
+            assert_eq!(outcome, TickOutcome::Resumed);
+            assert_eq!(submissions, index + 1);
+        }
+
+        ingest_provider_capacity(&context, &record, "capacity-exhausted");
+        let state = read_state(&context, &record.id, "2030-01-01T00:00:00Z").unwrap();
+        assert!(!state.enabled);
+        assert_eq!(state.state, "terminal_failure");
+        assert_eq!(
+            state.failure_reason.as_deref(),
+            Some("capacity_retry_exhausted")
+        );
+        assert_eq!(submissions, 5);
+    }
+
+    #[test]
+    fn capacity_recovery_is_opt_in_deduplicated_and_runtime_fenced() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record, _) = seed_bound_codex_auto_resume(&tmp);
+
+        ingest_provider_capacity(&context, &record, "disabled-capacity");
+        assert_eq!(view_for_record(&context, &record).state, "disabled");
+
+        set_enabled(&context, &record.id, true, "2030-01-01T00:00:00Z").unwrap();
+        ingest_provider_capacity(&context, &record, "scheduled-capacity");
+        let before_duplicate = fs::read(path(&context, &record.id)).unwrap();
+        ingest_provider_capacity(&context, &record, "scheduled-capacity");
+        assert_eq!(
+            fs::read(path(&context, &record.id)).unwrap(),
+            before_duplicate
+        );
+
+        let state = read_state(&context, &record.id, "2030-01-01T00:00:00Z").unwrap();
+        let scheduled = epoch_from_string(state.scheduled_at.as_deref().unwrap()).unwrap();
+        let mut submissions = 0;
+        let outcome = tick_for_runtime(
+            &context,
+            &record.id,
+            "replacement-runtime",
+            scheduled,
+            &UsageSnapshot {
+                authoritative: false,
+                has_exhausted_windows: false,
+                exhausted_reset_epochs: Vec::new(),
+                soonest_reset_epoch: None,
+            },
+            |_| {
+                submissions += 1;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(outcome, TickOutcome::Unchanged);
+        assert_eq!(submissions, 0);
+
+        cancel_for_manual_input_locked(&context, &record.id, "2030-01-01T00:00:01Z").unwrap();
+        let view = view_for_record(&context, &record);
+        assert_eq!(view.state, "cancelled");
+        assert_eq!(view.failure_reason.as_deref(), Some("manual_input"));
+    }
+
+    #[test]
+    fn capacity_arming_refuses_an_account_mutation_after_the_failure_event() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, mut record, _) = seed_bound_codex_auto_resume(&tmp);
+        let expected_binding = crate::codex_account::binding_snapshot(&record);
+        ingest_provider_capacity(&context, &record, "pre-mutation-capacity");
+        set_enabled(&context, &record.id, true, "2030-01-01T00:00:00Z").unwrap();
+        let revision = activity::state_for_view(&context, &record)
+            .unwrap()
+            .revision;
+
+        record.extra.get_mut("codex_account_binding").unwrap()["revision"] = json!(2);
+        crate::write_session_record(&context, &record).unwrap();
+        assert!(
+            !arm_provider_capacity(
+                &context,
+                &record.id,
+                &record.runtime.as_ref().unwrap().launch_id,
+                &expected_binding,
+                "pre-mutation-capacity".to_string(),
+                revision,
+                "2030-01-01T00:00:01Z",
+            )
+            .unwrap()
+        );
+        assert_eq!(view_for_record(&context, &record).state, "enabled");
+    }
+
+    #[test]
+    fn manual_input_wins_the_gap_between_capacity_projection_and_arming() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record, _) = seed_bound_codex_auto_resume(&tmp);
+        let expected_binding = crate::codex_account::binding_snapshot(&record);
+        ingest_provider_capacity(&context, &record, "capacity-before-manual");
+        set_enabled(&context, &record.id, true, "2030-01-01T00:00:00Z").unwrap();
+        let revision = activity::state_for_view(&context, &record)
+            .unwrap()
+            .revision;
+        assert!(
+            current_capacity_failure(&context, &record.id),
+            "state={:?}",
+            activity::state_for_view(&context, &record)
+        );
+
+        cancel_for_manual_input_locked(&context, &record.id, "2030-01-01T00:00:01Z").unwrap();
+        assert!(
+            !arm_provider_capacity(
+                &context,
+                &record.id,
+                &record.runtime.as_ref().unwrap().launch_id,
+                &expected_binding,
+                "capacity-before-manual".to_string(),
+                revision,
+                "2030-01-01T00:00:02Z",
+            )
+            .unwrap()
+        );
+        let view = view_for_record(&context, &record);
+        assert!(!view.enabled);
+        assert_eq!(view.state, "cancelled");
+        assert_eq!(view.failure_reason.as_deref(), Some("manual_input"));
+    }
+
+    #[test]
+    fn pending_attention_prevents_capacity_arming() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, mut record, _) = seed_bound_codex_auto_resume(&tmp);
+        record.runtime.as_mut().unwrap().extra.insert(
+            crate::codex_app_server::ATTENTION_AUTHORITY_KEY.to_string(),
+            json!("protocol"),
+        );
+        crate::write_session_record(&context, &record).unwrap();
+        let expected_binding = crate::codex_account::binding_snapshot(&record);
+        ingest_provider_capacity(&context, &record, "capacity-before-attention");
+        set_enabled(&context, &record.id, true, "2030-01-01T00:00:00Z").unwrap();
+        let blocked_revision = activity::state_for_view(&context, &record)
+            .unwrap()
+            .revision;
+        activity::ingest_codex_app_server_attention(
+            &context,
+            &record.id,
+            &record.runtime.as_ref().unwrap().launch_id,
+            "thread-capacity",
+            None,
+            "capacity-approval",
+            Some("approval"),
+        )
+        .unwrap();
+
+        assert!(
+            !arm_provider_capacity(
+                &context,
+                &record.id,
+                &record.runtime.as_ref().unwrap().launch_id,
+                &expected_binding,
+                "capacity-before-attention".to_string(),
+                blocked_revision,
+                "2030-01-01T00:00:01Z",
+            )
+            .unwrap()
+        );
+        assert_eq!(view_for_record(&context, &record).state, "enabled");
+    }
+
+    #[test]
+    fn capacity_submission_with_an_unknown_outcome_is_never_replayed() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record, _) = seed_bound_codex_auto_resume(&tmp);
+        set_enabled(&context, &record.id, true, "2030-01-01T00:00:00Z").unwrap();
+        ingest_provider_capacity(&context, &record, "capacity-unknown");
+        let state = read_state(&context, &record.id, "2030-01-01T00:00:00Z").unwrap();
+        let scheduled = epoch_from_string(state.scheduled_at.as_deref().unwrap()).unwrap();
+
+        assert_eq!(
+            tick_for_runtime(
+                &context,
+                &record.id,
+                &record.runtime.as_ref().unwrap().launch_id,
+                scheduled,
+                &UsageSnapshot {
+                    authoritative: false,
+                    has_exhausted_windows: false,
+                    exhausted_reset_epochs: Vec::new(),
+                    soonest_reset_epoch: None,
+                },
+                |_| Err(CliError::runtime("submit-unknown", "unknown", None)),
+            )
+            .unwrap(),
+            TickOutcome::TerminalFailure
+        );
+        let view = view_for_record(&context, &record);
+        assert!(!view.enabled);
+        assert_eq!(view.state, "terminal_failure");
+        assert_eq!(
+            view.failure_reason.as_deref(),
+            Some("submission_outcome_unknown")
+        );
+        assert_eq!(
+            pending_sessions(&context, scheduled + 10_000).unwrap(),
+            PendingSessions::default()
+        );
+    }
+
+    #[test]
+    fn successful_capacity_continuation_completion_clears_the_retry_chain() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record, _) = seed_bound_codex_auto_resume(&tmp);
+        set_enabled(&context, &record.id, true, "2030-01-01T00:00:00Z").unwrap();
+        ingest_provider_capacity(&context, &record, "capacity-completes");
+        let state = read_state(&context, &record.id, "2030-01-01T00:00:00Z").unwrap();
+        let scheduled = epoch_from_string(state.scheduled_at.as_deref().unwrap()).unwrap();
+        tick_for_runtime(
+            &context,
+            &record.id,
+            &record.runtime.as_ref().unwrap().launch_id,
+            scheduled,
+            &UsageSnapshot {
+                authoritative: false,
+                has_exhausted_windows: false,
+                exhausted_reset_epochs: Vec::new(),
+                soonest_reset_epoch: None,
+            },
+            |_| Ok(()),
+        )
+        .unwrap();
+        for (suffix, kind) in [("started", "turn_started"), ("completed", "turn_completed")] {
+            activity::ingest_event(
+                &context,
+                &record.id,
+                serde_json::from_value(json!({
+                    "schema_version": crate::activity::TURN_EVENT_VERSION,
+                    "event_id": format!("capacity-success-{suffix}"),
+                    "runtime_id": record.runtime.as_ref().unwrap().launch_id.as_str(),
+                    "provider": "codex",
+                    "provider_session_id": "thread-capacity",
+                    "provider_turn_id": "capacity-success",
+                    "kind": kind,
+                    "confidence": "authoritative"
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        }
+
+        let cleared = read_state(&context, &record.id, "2030-01-01T00:01:00Z").unwrap();
+        assert!(cleared.enabled);
+        assert_eq!(cleared.state, "enabled");
+        assert_eq!(cleared.recovery_cause, None);
+        assert_eq!(cleared.attempt, 0);
+    }
+
+    #[test]
+    fn capacity_continuation_prompt_is_fixed_and_short() {
+        assert_eq!(
+            CAPACITY_CONTINUATION_MESSAGE,
+            "The selected model was at capacity, interrupting the previous turn. Please continue from where you stopped."
+        );
     }
 
     #[test]
@@ -2890,6 +3531,7 @@ mod tests {
             "enabled",
             "armed",
             "scheduled",
+            "switching_account",
             "checking",
             "resumed",
             "cancelled",
@@ -2905,7 +3547,13 @@ mod tests {
             "session_state_changed",
             "submission_outcome_unknown",
             "provider_unsupported",
+            "account_switch",
+            "no_account_available",
+            "account_switch_failed",
             "scheduler_error",
+            "control_unavailable",
+            "account_changed",
+            "capacity_retry_exhausted",
         ];
         for state in states {
             let mut durable = default_state("2030-01-01T00:00:00Z");
@@ -2917,6 +3565,7 @@ mod tests {
             assert_eq!(value["schema_version"], AUTO_RESUME_SCHEMA_VERSION);
             assert_eq!(value["state"], state);
             assert_eq!(value.get("scheduled_at").is_some(), state == "scheduled");
+            assert!(value.get("recovery_cause").is_none());
         }
         for reason in reasons {
             let mut durable = default_state("2030-01-01T00:00:00Z");

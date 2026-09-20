@@ -61,7 +61,7 @@ created.
 
 | Provider | Audited floor | Classification | Start | Completion | Attention | Failure | Setup |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Codex | 0.144.1 baseline; exact-attention versions 0.144.1 and 0.144.3 | supported; exact attention and usage failure require an audited agent-session app-server v2 runtime | `UserPromptSubmit`, observed | matching `agent-turn-complete`, authoritative; raw `Stop` remains journal evidence only | managed protocol authority: typed exact request/resolution; raw/unmanaged hook authority: `PermissionRequest` conservative latch | live app-server `failed` + `usageLimitExceeded`, authoritative; raw TUI remains unavailable | additive hooks/notify plus capability-probed private Unix app-server runtime for fresh sessions |
+| Codex | 0.144.1 baseline; exact-attention versions 0.144.1 and 0.144.3; capacity enum re-audited at 0.153.4 | supported; exact attention and structured failure recovery require an audited agent-session app-server v2 runtime | `UserPromptSubmit`, observed | matching `agent-turn-complete`, authoritative; raw `Stop` remains journal evidence only | managed protocol authority: typed exact request/resolution; raw/unmanaged hook authority: `PermissionRequest` conservative latch | live app-server terminal `failed` + exact `usageLimitExceeded` or `serverOverloaded`, authoritative; raw TUI remains unavailable | additive hooks/notify plus capability-probed private Unix app-server runtime for fresh sessions |
 | Claude Code | 2.1.206 baseline; Elicitation audit 2.1.210 | partial; usage failure supported; Elicitation exact only when both callbacks carry the same non-empty id | `UserPromptSubmit`, observed; general `PreToolUse` provides observed progress/reactivation; uncorrelated `SubagentStop` is ignored | `idle_prompt`, observed; raw `Stop` is journal evidence only | exact `AskUserQuestion`; conditional exact `Elicitation`; `PermissionRequest`/notification conservative latch | structured `StopFailure.error`, authoritative; only `rate_limit` can arm auto-resume | additive merge into `~/.claude/settings.json` |
 | Hermes | 0.18.2 | supported | `pre_llm_call`, observed | successful non-interrupted `post_llm_call`, authoritative | non-empty shell `extra.tool_call_id` projects to exact pre/post correlation; missing/empty-id tuple fallback remains conservative | runtime/fallback only | additive merge into `~/.hermes/config.yaml`; Hermes consent remains mandatory |
 
@@ -136,7 +136,10 @@ submission. Both paths require the same bound thread, persist only a private
 SHA-256 binding, and fail closed on mismatch. A
 matching non-retrying `error` notification followed by `turn/completed`, or a
 terminal failed Turn carrying the same structured error, maps
-`usageLimitExceeded` to `usage_exhausted`. Wrong threads, wrong turns,
+`usageLimitExceeded` to `usage_exhausted` and `serverOverloaded` to the internal
+`provider_capacity` cause. The latter arms auto-resume only when that managed
+session is already opted in; it uses the private control connection and never
+terminal input. Wrong threads, wrong turns,
 non-terminal statuses, retrying errors, reordered partial envelopes, unknown
 values, malformed usage snapshots, and monitor gaps cannot arm or submit. Raw
 thread/turn ids are runtime-scoped SHA-256 projections before persistence. For
@@ -149,7 +152,11 @@ The persisted rollout history is not used to recover failures because the live
 probe demonstrated that a failed quota turn can later appear as completed with
 no error. Continuation therefore uses the same bound live connection and is
 successful only after `turn/start` acknowledges a new turn id. Unknown outcomes
-are terminal and never replayed.
+are terminal and never replayed. Capacity recovery submits the fixed message
+`The selected model was at capacity, interrupting the previous turn. Please
+continue from where you stopped.` after 30, 60, 120, 300, and 600 seconds
+across at most five submitted attempts. A later successful completion or
+manual input clears that chain.
 
 ### Claude Code
 

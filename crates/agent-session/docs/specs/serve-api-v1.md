@@ -403,7 +403,12 @@ recorded in `sympoies/nils-cli#1409`.
   capability probe selects the app-server v2 runtime. The daemon consumes the
   live metadata-only protocol
   and requires an exact bound thread/turn with terminal `status == "failed"`
-  plus `codexErrorInfo == "usageLimitExceeded"`. Standalone/raw Codex TUI,
+  plus `codexErrorInfo == "usageLimitExceeded"` or the internal
+  `serverOverloaded` capacity cause. Capacity recovery preserves the public v1
+  projection, waits 30, 60, 120, 300, and 600 seconds across at most five
+  submitted attempts, and uses this fixed control-channel message:
+  `The selected model was at capacity, interrupting the previous turn. Please
+  continue from where you stopped.` Standalone/raw Codex TUI,
   imported Codex conversations, and resumed pre-app-server Codex sessions remain
   unsupported. Terminal text and assistant output are never treated as
   authority.
@@ -417,17 +422,22 @@ recorded in `sympoies/nils-cli#1409`.
   `usage_window_not_exhausted`, `exhausted_reset_unavailable`,
   `session_state_changed`, `submission_outcome_unknown`, `provider_unsupported`,
   `account_switch`, `no_account_available`, `account_switch_failed`, and
-  `scheduler_error`. Consumers must preserve
+  `scheduler_error`, `control_unavailable`, `account_changed`, and
+  `capacity_retry_exhausted`. Consumers must preserve
   the object but render unknown future state or reason values as a safe generic
   unavailable/failure condition; they must not infer permission to submit from
   an unknown value. `scheduled_at` is present only while the daemon has a next
-  scheduled wake, either for a provider reset or an unknown-reset continuation
-  probe. `failure_reason` is present only when the latest transition records a
+  scheduled wake, either for a provider reset, an unknown-reset continuation
+  probe, or bounded provider-capacity backoff. `failure_reason` is present only when the latest transition records a
   safe operational reason.
 - The daemon owns scheduling. It waits for the latest reset among all exhausted
   windows, adds bounded deterministic jitter, re-collects usage at wake, checks
   that the session activity revision is still eligible, and durably claims the
   submission before sending one fixed product-owned continuation message.
+  Capacity recovery skips usage collection but retains the same runtime,
+  binding, activity revision, pending-attention, manual-input, health, and
+  durable pre-submit fences. An indeterminate control submission is terminal
+  and is never replayed after restart.
   When an authoritative Claude rate limit has no exhausted percentage window
   or future reset timestamp, the daemon keeps the claim scheduled and uses a
   low-frequency continuation probe (backing off through five, fifteen, thirty,

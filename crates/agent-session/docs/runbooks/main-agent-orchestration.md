@@ -417,7 +417,8 @@ envelopes. `idle_claim_revocation_required` and
 `provider_stop_canary_release_in_progress`,
 `provider_process_stopped_wrapper_live`, and generic
 `process_runtime_stopped_wrapper_live_contradiction` classifications use the
-v6 envelopes. `pre_bootstrap_attention_required` and
+v6 envelopes. `pre_bootstrap_attention_required`,
+`provider_capacity_recovery_pending`, and
 `provider_capacity_attention_required` use v7 envelopes with a bounded
 `attention` projection. Branch on `classification`, never on prose:
 
@@ -443,6 +444,7 @@ v6 envelopes. `pre_bootstrap_attention_required` and
 | `edit_authority_stale` | Preserve the exact worker and perform a bounded supervision recheck; route only durable broker-lost evidence to broker recovery. |
 | `claim_renewal_required` | Ask the exact worker to renew its own current claim and revision using its own capability file. |
 | `pre_bootstrap_attention_required` | Preserve the live starting worker and continue bounded bootstrap supervision. No claim exists to renew; do not send provider input or replace the worker. |
+| `provider_capacity_recovery_pending` | Preserve the exact worker and conversation while daemon-owned auto-resume applies its bounded capacity backoff and app-server continuation. Continue supervision; do not switch accounts, resend the prompt, or send raw terminal input. |
 | `provider_capacity_attention_required` | Preserve the exact worker and conversation, wait for capacity, and continue bounded supervision. Do not switch accounts, resend the prompt, or send raw terminal input. This requires exact structured `serverOverloaded` evidence, not rendered prose. |
 | `guidance_continuity_required` | Run revision-fenced `worker guidance-reconcile`; retain message identity and unread state. |
 | `orphan_guidance_quarantine_required` | Run revision-fenced `worker guidance-quarantine`; quarantine only exact-controller stale-incarnation records when no `previous_worker` exists. |

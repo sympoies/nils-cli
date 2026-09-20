@@ -49,9 +49,13 @@ assistant content are discarded. A raw Codex interactive notification does not
 carry an equivalent structured failure field. An agent-session-managed Codex
 app-server v2 runtime reuses the stable v1 `source_kind: "provider_hook"` wire
 value only after its live bound thread/turn reports terminal `failed` plus exact
-`usageLimitExceeded`. Within v1, `provider_hook` denotes authoritative
+`usageLimitExceeded`. The protocol-owned v2 admission also accepts an exact
+terminal non-retrying `serverOverloaded` failure as `provider_capacity` without
+adding that reason to the public v1 ingestion union. Within v1, `provider_hook` denotes authoritative
 provider-structured evidence from either a hook or the bound protocol; that
-metadata-only projection can authoritatively arm usage-reset auto-resume.
+metadata-only projection can authoritatively arm usage-reset auto-resume. For
+an opted-in managed Codex runtime, the internal capacity projection instead
+arms a bounded daemon-owned continuation; rendered terminal prose never does.
 
 Provider hooks and direct `activity event` callers may supply bounded raw opaque
 session or turn identifiers. Ingestion projects them to runtime-scoped SHA-256
