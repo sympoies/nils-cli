@@ -304,7 +304,11 @@ fn trace_read_cache(trace: &mut SourceTrace, cache_file: Option<&PathBuf>) -> Op
 fn trace_transcript_reason(trace: &mut SourceTrace) -> Option<ProviderUsageReason> {
     let started = Instant::now();
     let reason = recent_api_error_reason();
-    trace.record("transcript", started.elapsed(), reason, reason.is_some());
+    // The transcript scan only ever classifies a failure; it can never make
+    // usage available. Recording it as unavailable keeps `outcome` meaning the
+    // same thing for every source, and lets the optional `reason` carry what
+    // the scan found.
+    trace.record("transcript", started.elapsed(), reason, false);
     reason
 }
 

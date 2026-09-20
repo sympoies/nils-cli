@@ -502,3 +502,65 @@ fn usage_debug_traces_every_attempted_source_without_leaking_private_paths() {
         "debug output must not print fixture paths: {stderr_text}"
     );
 }
+
+#[test]
+fn usage_clear_cache_failure_is_one_versioned_cache_clear_failed_envelope() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    // A directory where the cache file belongs makes `remove_file` fail with
+    // something other than `NotFound`, which is the documented
+    // `cache-clear-failed` row rather than the quiet missing-cache success.
+    std::fs::create_dir_all(tmp.path().join("usage.json")).expect("blocking directory");
+
+    let output = run(
+        &["usage", "--clear-cache", "--format", "json"],
+        &base_options(tmp.path()),
+    );
+
+    assert_exit(&output, 1);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["schema_version"], "claude-cli.usage.v1");
+    assert_eq!(payload["command"], "usage");
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"]["code"], "cache-clear-failed");
+}
+
+#[test]
+fn usage_clear_cache_removes_the_refresh_throttle_stamp() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cache_file = write_cache(tmp.path(), &usage_json(21.0, 10.0));
+    let stamp = tmp.path().join("usage.refresh.at");
+    std::fs::write(&stamp, "1").expect("write refresh stamp");
+
+    let output = run(
+        &["usage", "--clear-cache", "--source", "oauth"],
+        &base_options(tmp.path()),
+    );
+
+    assert_exit(&output, 0);
+    assert!(!cache_file.exists());
+    assert!(
+        !stamp.exists(),
+        "a surviving throttle stamp would suppress the next background refresh \
+         while no cache remains to render"
+    );
+}
+
+#[test]
+fn usage_debug_reports_the_transcript_probe_as_unavailable() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+
+    let output = run(&["usage", "--debug"], &base_options(tmp.path()));
+
+    assert_exit(&output, 0);
+    let stderr_text = stderr(&output);
+    // The transcript scan can only ever classify a failure, so it must never
+    // claim the `available` outcome the other sources use for real usage.
+    assert!(
+        stderr_text.contains("source=transcript outcome=unavailable"),
+        "stderr: {stderr_text}"
+    );
+    assert!(
+        !stderr_text.contains("source=transcript outcome=available"),
+        "stderr: {stderr_text}"
+    );
+}

@@ -53,13 +53,21 @@ pub fn read_cache_file(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
-/// Removes the resolved usage cache file.
+/// Removes the resolved usage cache file and the refresh throttle stamp.
 ///
-/// Only the exact `<cache dir>/usage.json` path is removed: the cache
-/// directory can be operator-supplied through
-/// `CLAUDE_PROMPT_SEGMENT_CACHE_DIR`, so the directory itself and the sibling
-/// refresh locks are never deleted. Returns `Ok(false)` when there was nothing
-/// to remove.
+/// Only the exact `<cache dir>/usage.json` and its `usage.refresh.at` sibling
+/// are removed. The cache directory can be operator-supplied through
+/// `CLAUDE_PROMPT_SEGMENT_CACHE_DIR`, so the directory itself is never deleted,
+/// and neither are the refresh locks: `refresh.lock` and `refresh.spawn.lock`
+/// belong to a possibly running background refresh, and unlinking a held lock
+/// would let a second refresh acquire a fresh file and defeat the coalescing.
+///
+/// The throttle stamp *is* removed, because leaving it behind would suppress
+/// the next background refresh for up to
+/// `CLAUDE_PROMPT_SEGMENT_REFRESH_MIN_SECONDS` — an explicit clear would then
+/// leave the prompt with no cache and no way to repopulate it.
+///
+/// Returns `Ok(false)` when there was no cache file to remove.
 pub fn clear_usage_cache() -> Result<bool> {
     let Some(path) = cache_file() else {
         anyhow::bail!("claude-cli usage: cannot resolve the usage cache path");
@@ -68,25 +76,65 @@ pub fn clear_usage_cache() -> Result<bool> {
 }
 
 fn clear_usage_cache_at(path: &Path) -> Result<bool> {
-    if !path.is_absolute() {
-        anyhow::bail!(
-            "claude-cli usage: refusing to clear a non-absolute cache path: {}",
-            path.display()
-        );
-    }
-    if path.file_name() != Some(std::ffi::OsStr::new(CACHE_FILE_NAME)) {
+    // `cache_dir` returns `CLAUDE_PROMPT_SEGMENT_CACHE_DIR` verbatim, and every
+    // other cache operation accepts a relative value. Resolve against the
+    // working directory so a clear behaves like the reads and writes beside it
+    // rather than failing permanently; the file-name check below is what bounds
+    // what may be deleted.
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .with_context(|| {
+                format!(
+                    "claude-cli usage: cannot resolve the relative cache path: {}",
+                    path.display()
+                )
+            })?
+            .join(path)
+    };
+
+    if resolved.file_name() != Some(std::ffi::OsStr::new(CACHE_FILE_NAME)) {
         anyhow::bail!(
             "claude-cli usage: refusing to clear an unexpected cache file: {}",
-            path.display()
+            resolved.display()
         );
     }
-    match std::fs::remove_file(path) {
-        Ok(()) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+
+    let removed = match std::fs::remove_file(&resolved) {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "claude-cli usage: failed to clear cache: {}",
+                    resolved.display()
+                )
+            });
+        }
+    };
+
+    clear_refresh_stamp(&resolved)?;
+
+    Ok(removed)
+}
+
+/// Removes `<stem>.refresh.at` beside the cleared cache file.
+///
+/// The stamp name mirrors `refresh::sibling_path`. A missing stamp is success;
+/// it only means no refresh has been attempted yet.
+fn clear_refresh_stamp(cache_file: &Path) -> Result<()> {
+    let Some(stem) = cache_file.file_stem() else {
+        return Ok(());
+    };
+    let stamp = cache_file.with_file_name(format!("{}.refresh.at", stem.to_string_lossy()));
+    match std::fs::remove_file(&stamp) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error).with_context(|| {
             format!(
-                "claude-cli usage: failed to clear cache: {}",
-                path.display()
+                "claude-cli usage: failed to clear the refresh stamp: {}",
+                stamp.display()
             )
         }),
     }
@@ -255,16 +303,29 @@ mod tests {
     }
 
     #[test]
-    fn clear_usage_cache_removes_only_the_resolved_cache_file() {
+    fn clear_usage_cache_removes_the_cache_and_the_refresh_stamp_only() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let path = tmp.path().join("usage.json");
         let lock = tmp.path().join("usage.refresh.lock");
+        let spawn_lock = tmp.path().join("usage.refresh.spawn.lock");
+        let stamp = tmp.path().join("usage.refresh.at");
         std::fs::write(&path, "{}").expect("write cache");
         std::fs::write(&lock, "").expect("write lock");
+        std::fs::write(&spawn_lock, "").expect("write spawn lock");
+        std::fs::write(&stamp, "1").expect("write refresh stamp");
 
         assert!(clear_usage_cache_at(&path).expect("clear"));
         assert!(!path.exists());
+        assert!(
+            !stamp.exists(),
+            "the refresh throttle stamp must not survive a clear, or the next \
+             background refresh stays suppressed with no cache to render"
+        );
         assert!(lock.is_file(), "refresh locks must survive a cache clear");
+        assert!(
+            spawn_lock.is_file(),
+            "spawn locks must survive a cache clear"
+        );
         assert!(tmp.path().is_dir(), "cache dir must survive a cache clear");
     }
 
@@ -288,9 +349,29 @@ mod tests {
     }
 
     #[test]
-    fn clear_usage_cache_rejects_a_relative_cache_path() {
-        let err = clear_usage_cache_at(std::path::Path::new("usage.json"))
-            .expect_err("relative path should fail");
-        assert!(err.to_string().contains("non-absolute cache path"));
+    fn clear_usage_cache_resolves_a_relative_cache_path_like_the_other_operations() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("usage.json");
+        std::fs::write(&path, "{}").expect("write cache");
+
+        // A relative `CLAUDE_PROMPT_SEGMENT_CACHE_DIR` is accepted by
+        // `read_cache_file` and `write_cache_file`, so a clear resolves it the
+        // same way instead of failing permanently.
+        let relative = std::path::Path::new("usage.json");
+        assert!(!relative.is_absolute());
+
+        let resolved_elsewhere = clear_usage_cache_at(relative).expect("relative clear");
+        assert!(
+            !resolved_elsewhere,
+            "a relative path resolves against the working directory, which holds no cache here"
+        );
+        assert!(path.is_file(), "the fixture cache is a different directory");
+    }
+
+    #[test]
+    fn clear_usage_cache_still_refuses_an_unexpected_relative_file_name() {
+        let err = clear_usage_cache_at(std::path::Path::new("credentials.json"))
+            .expect_err("unexpected relative file name should fail");
+        assert!(err.to_string().contains("unexpected cache file"));
     }
 }

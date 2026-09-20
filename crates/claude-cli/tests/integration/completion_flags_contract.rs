@@ -3,20 +3,20 @@ use nils_test_support::cmd::{self, CmdOutput};
 use pretty_assertions::assert_eq;
 use std::path::PathBuf;
 
-fn claude_cli_bin() -> PathBuf {
+fn completion_bin() -> PathBuf {
     bin::resolve("claude-cli")
 }
 
-fn run(args: &[&str]) -> CmdOutput {
-    let bin = claude_cli_bin();
+fn run_uncontained(args: &[&str]) -> CmdOutput {
+    let bin = completion_bin();
     cmd::run(&bin, args, &[], None)
 }
 
-fn stdout(output: &CmdOutput) -> String {
+fn stdout_text(output: &CmdOutput) -> String {
     output.stdout_text()
 }
 
-fn assert_exit(output: &CmdOutput, code: i32) {
+fn assert_completion_exit(output: &CmdOutput, code: i32) {
     assert_eq!(output.code, code, "stderr: {}", output.stderr_text());
 }
 
@@ -175,24 +175,33 @@ fn leaf_paths() -> Vec<Vec<&'static str>> {
 
 #[test]
 fn completion_flags_contract_leaf_help_matches_bash_and_zsh_candidates() {
-    let bash_output = run(&["completion", "bash"]);
-    assert_exit(&bash_output, 0);
-    let bash_script = stdout(&bash_output);
+    let bash_output = run_uncontained(&["completion", "bash"]);
+    assert_completion_exit(&bash_output, 0);
+    let bash_script = stdout_text(&bash_output);
 
-    let zsh_output = run(&["completion", "zsh"]);
-    assert_exit(&zsh_output, 0);
-    let zsh_script = stdout(&zsh_output);
+    let zsh_output = run_uncontained(&["completion", "zsh"]);
+    assert_completion_exit(&zsh_output, 0);
+    let zsh_script = stdout_text(&zsh_output);
+
+    // `parse_help_flag_tokens` keys off a line that reads exactly `Options:`.
+    // If clap's help layout ever changes, every leaf yields an empty list and
+    // the per-leaf skip below would turn this whole test into a silent no-op,
+    // so count what was actually asserted and hold it to a floor.
+    let mut verified_flags = 0usize;
 
     for path in leaf_paths() {
         let mut help_args = path.clone();
         help_args.push("--help");
-        let help_output = run(&help_args);
-        assert_exit(&help_output, 0);
-        let help_text = stdout(&help_output);
+        let help_output = run_uncontained(&help_args);
+        assert_completion_exit(&help_output, 0);
+        let help_text = stdout_text(&help_output);
         let expected_flags = parse_help_flag_tokens(&help_text);
+        // `auth logout`, `config show`, and `config set` genuinely declare no
+        // options beyond `--help`.
         if expected_flags.is_empty() {
             continue;
         }
+        verified_flags += expected_flags.len();
 
         let label = bash_case_label(&path);
         let bash_opts = bash_case_opts(&bash_script, &label);
@@ -214,4 +223,11 @@ fn completion_flags_contract_leaf_help_matches_bash_and_zsh_candidates() {
             );
         }
     }
+
+    assert!(
+        verified_flags >= 20,
+        "only {verified_flags} flags were checked against the generated shells; \
+         `parse_help_flag_tokens` has most likely stopped matching clap's help \
+         layout, which would let this test pass while asserting nothing"
+    );
 }

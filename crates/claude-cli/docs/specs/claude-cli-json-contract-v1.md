@@ -17,7 +17,7 @@ versioned envelope.
 
 | Command | `schema_version` | Payload |
 | --- | --- | --- |
-| `usage` | `claude-cli.usage.v1` | `result` |
+| `usage` | `claude-cli.usage.v1` | `result` or `error` |
 | `prompt-segment status` | `claude-cli.prompt-segment.v1` | `result` |
 | `auth status` | `claude-cli.auth.v1` | `result` or `error` |
 | `agent doctor` | `claude-cli.agent.doctor.v1` | `result` |
@@ -62,8 +62,14 @@ error envelope only for an operator-input or cache-maintenance failure:
 | `invalid-flag-combination` | `64` | `--clear-cache` combined with `--source cache` |
 | `cache-clear-failed` | `1` | `--clear-cache` could not resolve or remove `usage.json` |
 
-`--clear-cache` removes only the resolved `<cache dir>/usage.json`. The cache
-directory and the sibling refresh locks are never removed.
+`--clear-cache` removes the resolved `<cache dir>/usage.json` and its
+`usage.refresh.at` throttle stamp. It never removes the cache directory itself,
+nor the `usage.refresh.lock` / `usage.refresh.spawn.lock` files that a running
+background refresh may hold. The throttle stamp is cleared so the next
+background refresh is not suppressed while no cache remains to render. A
+relative `CLAUDE_PROMPT_SEGMENT_CACHE_DIR` resolves against the working
+directory, matching how the cache is read and written; only a file named
+`usage.json` is ever removed.
 
 ### Usage debug output
 
@@ -75,6 +81,10 @@ claude-cli usage: debug: source=oauth outcome=unavailable reason=auth_required e
 
 `source` is `oauth`, `cli`, `transcript`, or `cache`; `outcome` is `available`
 or `unavailable`; `reason` is a stable `reason_code` when one was classified.
+`outcome` means the same thing for every source: `available` is reported only
+when that source produced usage. The `transcript` probe classifies a prior
+failure and never yields usage, so it always reports `unavailable` and carries
+its classification in `reason`.
 Debug output is not part of this contract, is not emitted on stdout, and never
 changes the stdout envelope: a consumer parses exactly one versioned document
 with or without `--debug`.

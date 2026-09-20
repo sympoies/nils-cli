@@ -4,12 +4,12 @@ use pretty_assertions::assert_eq;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-fn claude_cli_bin() -> PathBuf {
+fn completion_bin() -> PathBuf {
     bin::resolve("claude-cli")
 }
 
-fn run(args: &[&str]) -> CmdOutput {
-    let bin = claude_cli_bin();
+fn run_uncontained(args: &[&str]) -> CmdOutput {
+    let bin = completion_bin();
     cmd::run(&bin, args, &[], None)
 }
 
@@ -17,7 +17,7 @@ fn completion_zsh() -> &'static str {
     static OUTPUT: OnceLock<String> = OnceLock::new();
     OUTPUT
         .get_or_init(|| {
-            let output = run(&["completion", "zsh"]);
+            let output = run_uncontained(&["completion", "zsh"]);
             assert_eq!(output.code, 0, "stderr: {}", output.stderr_text());
             output.stdout_text()
         })
