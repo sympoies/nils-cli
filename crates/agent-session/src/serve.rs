@@ -6965,6 +6965,10 @@ async fn auto_resume_loop(state: Arc<ServeState>) {
             )
             .await;
         }
+        if !pending.capacity_ids.is_empty() {
+            let partition = partition_auto_resume_ids(&state, pending.capacity_ids).await;
+            process_codex_capacity_auto_resume_ids(state.clone(), partition.codex).await;
+        }
         if !pending.usage_ids.is_empty() {
             let partition = partition_auto_resume_ids(&state, pending.usage_ids).await;
             if !partition.codex.is_empty() {
@@ -7778,6 +7782,97 @@ async fn process_codex_auto_resume_ids(
     while !tasks.is_empty() {
         report_auto_resume_join(tasks.join_next().await);
     }
+}
+
+async fn process_codex_capacity_auto_resume_ids(
+    state: Arc<ServeState>,
+    targets: Vec<CodexAutoResumeTarget>,
+) {
+    let mut tasks = JoinSet::new();
+    for target in targets {
+        let state = state.clone();
+        tasks.spawn(async move { process_codex_capacity_auto_resume_id(state, target).await });
+        if tasks.len() >= MAX_CONCURRENT_AUTO_RESUME_TICKS {
+            report_auto_resume_join(tasks.join_next().await);
+        }
+    }
+    while !tasks.is_empty() {
+        report_auto_resume_join(tasks.join_next().await);
+    }
+}
+
+async fn process_codex_capacity_auto_resume_id(
+    state: Arc<ServeState>,
+    target: CodexAutoResumeTarget,
+) {
+    let control = state
+        .codex_controls
+        .lock()
+        .ok()
+        .and_then(|controls| controls.get(&target.id).cloned());
+    let Some(control) = control else {
+        record_codex_scheduler_error_for_runtime(
+            state.context.clone(),
+            target.id,
+            target.launch_id,
+            "control_unavailable",
+        )
+        .await;
+        return;
+    };
+    if control.launch_id != target.launch_id {
+        record_codex_scheduler_error_for_runtime(
+            state.context.clone(),
+            target.id,
+            target.launch_id,
+            "control_unavailable",
+        )
+        .await;
+        return;
+    }
+    let context = state.context.clone();
+    let runtime = tokio::runtime::Handle::current();
+    let handle = control.handle.clone();
+    let expected_launch_id = target.launch_id;
+    let id = target.id;
+    tokio::task::spawn_blocking(move || {
+        let now_epoch = jiff::Timestamp::now().as_second();
+        if let Err(err) = auto_resume::tick_for_runtime_and_binding(
+            &context,
+            &id,
+            &expected_launch_id,
+            auto_resume::RuntimeBindingTick {
+                binding: &target.binding,
+                failover_account: None,
+            },
+            now_epoch,
+            &UsageSnapshot {
+                authoritative: false,
+                has_exhausted_windows: false,
+                exhausted_reset_epochs: Vec::new(),
+                soonest_reset_epoch: None,
+            },
+            |_| {
+                runtime
+                    .block_on(handle.submit(auto_resume::CAPACITY_CONTINUATION_MESSAGE))
+                    .map(|_| ())
+                    .map_err(|_| {
+                        CliError::runtime(
+                            "codex-app-server-submit-unknown",
+                            "Codex capacity continuation submission outcome is unknown",
+                            Some(json!({ "id": id })),
+                        )
+                    })
+            },
+        ) {
+            eprintln!(
+                "warning: Codex capacity auto-resume tick failed: {}",
+                err.code()
+            );
+        }
+    })
+    .await
+    .ok();
 }
 
 async fn process_codex_auto_resume_id(state: Arc<ServeState>, target: CodexAutoResumeTarget) {
@@ -19198,6 +19293,174 @@ esac
         assert_eq!(
             account.next.and_then(|next| next.account).as_deref(),
             Some("account-b")
+        );
+    }
+
+    #[tokio::test]
+    async fn codex_capacity_scheduler_submits_the_fixed_prompt_without_usage_lookup() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let launch_id = seed_codex_app_server_session(tmp.path(), "codex-capacity-recovery");
+        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        let record = load_session_record(&st.context, "codex-capacity-recovery").unwrap();
+        crate::activity::activate_runtime(&st.context, &record).unwrap();
+        let failure = crate::activity::ingest_codex_app_server_failure_with_kind(
+            &st.context,
+            &record.id,
+            &launch_id,
+            "thread-capacity",
+            "turn-capacity",
+            codex_app_server::StructuredFailureKind::ProviderCapacity,
+        )
+        .unwrap();
+        let blocked_turn_id = failure
+            .turn_state
+            .last_turn
+            .and_then(|turn| turn.provider_turn_id)
+            .unwrap();
+        auto_resume::set_enabled(&st.context, &record.id, true, "2020-01-01T00:00:00Z").unwrap();
+        let revision = crate::activity::state_for_view(&st.context, &record)
+            .unwrap()
+            .revision;
+        auto_resume::arm_provider_capacity(
+            &st.context,
+            &record.id,
+            &launch_id,
+            &crate::codex_account::binding_snapshot(&record),
+            blocked_turn_id,
+            revision,
+            "2020-01-01T00:00:01Z",
+        )
+        .unwrap();
+
+        let (handle, mut commands) = codex_app_server::control_channel();
+        st.codex_controls.lock().unwrap().insert(
+            record.id.clone(),
+            CodexControlEntry {
+                launch_id: launch_id.clone(),
+                handle,
+            },
+        );
+        let responder = tokio::spawn(async move {
+            let Some(codex_app_server::ControlCommand::Continue { message, response }) =
+                commands.recv().await
+            else {
+                panic!("capacity recovery must submit directly without requesting usage");
+            };
+            assert_eq!(message, auto_resume::CAPACITY_CONTINUATION_MESSAGE);
+            response.send(Ok("continued-turn".to_string())).unwrap();
+        });
+
+        process_codex_capacity_auto_resume_id(
+            st.clone(),
+            CodexAutoResumeTarget {
+                id: record.id.clone(),
+                launch_id,
+                binding: crate::codex_account::binding_snapshot(&record),
+            },
+        )
+        .await;
+        responder.await.unwrap();
+
+        assert_eq!(
+            auto_resume::view_for_record(&st.context, &record).state,
+            "resumed"
+        );
+    }
+
+    #[tokio::test]
+    async fn codex_capacity_scheduler_retries_missing_or_stale_control_without_submitting() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let launch_id = seed_codex_app_server_session(tmp.path(), "codex-capacity-no-control");
+        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        let record = load_session_record(&st.context, "codex-capacity-no-control").unwrap();
+        crate::activity::activate_runtime(&st.context, &record).unwrap();
+        let failure = crate::activity::ingest_codex_app_server_failure_with_kind(
+            &st.context,
+            &record.id,
+            &launch_id,
+            "thread-capacity",
+            "turn-capacity",
+            codex_app_server::StructuredFailureKind::ProviderCapacity,
+        )
+        .unwrap();
+        let blocked_turn_id = failure
+            .turn_state
+            .last_turn
+            .and_then(|turn| turn.provider_turn_id)
+            .unwrap();
+        auto_resume::set_enabled(&st.context, &record.id, true, "2020-01-01T00:00:00Z").unwrap();
+        let revision = crate::activity::state_for_view(&st.context, &record)
+            .unwrap()
+            .revision;
+        let binding = crate::codex_account::binding_snapshot(&record);
+        auto_resume::arm_provider_capacity(
+            &st.context,
+            &record.id,
+            &launch_id,
+            &binding,
+            blocked_turn_id.clone(),
+            revision,
+            "2020-01-01T00:00:01Z",
+        )
+        .unwrap();
+
+        let (stale_handle, mut stale_commands) = codex_app_server::control_channel();
+        st.codex_controls.lock().unwrap().insert(
+            record.id.clone(),
+            CodexControlEntry {
+                launch_id: "stale-launch".to_string(),
+                handle: stale_handle,
+            },
+        );
+        process_codex_capacity_auto_resume_id(
+            st.clone(),
+            CodexAutoResumeTarget {
+                id: record.id.clone(),
+                launch_id: launch_id.clone(),
+                binding: binding.clone(),
+            },
+        )
+        .await;
+        assert!(stale_commands.try_recv().is_err());
+        let stale_view = auto_resume::view_for_record(&st.context, &record);
+        assert_eq!(stale_view.state, "transient_failure");
+        assert_eq!(
+            stale_view.failure_reason.as_deref(),
+            Some("control_unavailable")
+        );
+
+        auto_resume::set_enabled(&st.context, &record.id, true, "2020-01-01T00:01:00Z").unwrap();
+        auto_resume::arm_provider_capacity(
+            &st.context,
+            &record.id,
+            &launch_id,
+            &binding,
+            blocked_turn_id,
+            revision,
+            "2020-01-01T00:01:01Z",
+        )
+        .unwrap();
+        st.codex_controls.lock().unwrap().remove(&record.id);
+        process_codex_capacity_auto_resume_id(
+            st.clone(),
+            CodexAutoResumeTarget {
+                id: record.id.clone(),
+                launch_id,
+                binding,
+            },
+        )
+        .await;
+        let missing_view = auto_resume::view_for_record(&st.context, &record);
+        assert_eq!(missing_view.state, "transient_failure");
+        assert_eq!(
+            missing_view.failure_reason.as_deref(),
+            Some("control_unavailable")
+        );
+        assert_eq!(
+            auto_resume::pending_sessions(&st.context, i64::MAX)
+                .unwrap()
+                .capacity_ids,
+            vec![record.id]
         );
     }
 

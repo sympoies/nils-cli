@@ -3,8 +3,8 @@
 //! The interactive TUI's human-readable error text is intentionally ignored.
 //! Structured failures are admitted only when the live protocol reports an
 //! allowlisted `codexErrorInfo` and a matching terminal `failed` completion for
-//! the same bound thread and turn. Auto-resume remains exclusive to
-//! `usageLimitExceeded`; `serverOverloaded` is projected as provider capacity.
+//! the same bound thread and turn. Auto-resume distinguishes
+//! `usageLimitExceeded` from bounded `serverOverloaded` capacity recovery.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::env;
@@ -7002,7 +7002,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
     }
 
     #[test]
-    fn structured_provider_capacity_is_projected_without_arming_usage_resume() {
+    fn structured_provider_capacity_arms_managed_capacity_recovery() {
         let tmp = tempfile::TempDir::new().unwrap();
         let context = CliContext {
             state_dir: tmp.path().join("state"),
@@ -7035,8 +7035,8 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         );
         assert_eq!(
             crate::auto_resume::view_for_record(&context, &record).state,
-            "enabled",
-            "provider capacity is not account usage exhaustion and must not arm auto-resume"
+            "scheduled",
+            "authoritative provider capacity should arm the managed recovery chain"
         );
     }
 

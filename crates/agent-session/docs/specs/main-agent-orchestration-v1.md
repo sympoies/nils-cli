@@ -390,7 +390,7 @@ evidence and a visible tmux wrapper; its reconciliation action is
 non-executable. Existing v2-v5 classifications retain their exact schema
 identifiers and projections.
 
-`pre_bootstrap_attention_required` and
+`pre_bootstrap_attention_required`, `provider_capacity_recovery_pending`, and
 `provider_capacity_attention_required` use
 `main-agent.worker-diagnose-result.v7`,
 `main-agent.worker-supervise-result.v7`, and
@@ -406,17 +406,21 @@ turn is admitted only through the internal protocol-owned
 `agent-session.turn-event.v2` path. Generic activity ingestion continues to
 accept only v1 and its closed failure-reason union. Reduction persists the
 additive bounded `last_turn.provider_failure_kind: provider_capacity` marker,
-which classifies `provider_capacity_attention_required` only for a bound live
-worker in an eligible `starting`, `working`, or `blocked` assignment at that
-authoritative waiting boundary. A newer active turn or any later submitted,
+which classifies `provider_capacity_recovery_pending` when the bound live
+worker's opted-in daemon auto-resume state is `scheduled`, `checking`,
+`transient_failure`, or `resumed`. Otherwise the same eligible `starting`,
+`working`, or `blocked` assignment at that authoritative waiting boundary is
+`provider_capacity_attention_required`. A newer active turn or any later submitted,
 accepted, cancelled, or released assignment lifecycle retires the
 classification. Conflicting
 structured failure kinds for one turn fail closed unless the terminal
 completion embeds the resolving kind. Free-form error prose is not admitted.
-This state is distinct from quota or credit exhaustion: it MUST
-NOT arm usage auto-resume, authorize account handoff, resend the prompt, or
-send terminal input. Both v7 actions are Main-owned bounded supervision
-rechecks and are not automatic-retry-safe. Existing v2-v6 classifications
+This state is distinct from quota or credit exhaustion: it MUST NOT arm usage
+recovery or authorize account handoff. An already opted-in managed session MAY
+arm its separate bounded capacity continuation through the daemon-owned
+app-server control channel. Main MUST wait for that owner and MUST NOT resend
+the prompt or send terminal input. All v7 actions are Main-owned bounded
+supervision rechecks and are not automatic-retry-safe. Existing v2-v6 classifications
 retain their exact schema identifiers and projections.
 
 `worker stop-runtime` MUST authenticate the exact current Main controller and
@@ -932,7 +936,7 @@ The full supervision classification set additionally includes
 `orphan_guidance_quarantine_required`,
 `account_handoff_capability_gap`, `account_handoff_required`, and
 `stale_provider_activity`. The additive v7 set also includes
-`pre_bootstrap_attention_required` and
+`pre_bootstrap_attention_required`, `provider_capacity_recovery_pending`, and
 `provider_capacity_attention_required`. Broker-heartbeat/edit-authority staleness is not
 claim-expiry evidence: only `claim_renewal_required` directs the exact worker to
 renew its own claim. `coordination_broker_stale` routes to exact-incarnation

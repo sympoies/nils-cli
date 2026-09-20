@@ -2820,7 +2820,7 @@ fn ingest_event_with_lock(
         drop(_health_fence);
         drop(_lock);
         drop(record_lock);
-        arm_auto_resume_from_event(context, &record.id, &event, &state, &now())?;
+        arm_auto_resume_from_event(context, &record, &event, &state, &now())?;
         return Ok(ActivityResult {
             id: record.id,
             turn_state: state,
@@ -2835,7 +2835,7 @@ fn ingest_event_with_lock(
         drop(_health_fence);
         drop(_lock);
         drop(record_lock);
-        arm_auto_resume_from_event(context, &record.id, &event, &state, &received_at)?;
+        arm_auto_resume_from_event(context, &record, &event, &state, &received_at)?;
         return Ok(ActivityResult {
             id: record.id,
             turn_state: state,
@@ -2900,7 +2900,7 @@ fn ingest_event_with_lock(
     drop(_health_fence);
     drop(_lock);
     drop(record_lock);
-    arm_auto_resume_from_event(context, &record.id, &event, &state, &received_at)?;
+    arm_auto_resume_from_event(context, &record, &event, &state, &received_at)?;
     Ok(ActivityResult {
         id: record.id,
         turn_state: state,
@@ -3040,13 +3040,33 @@ fn agent_console_dsh_transport(record: &SessionRecord) -> bool {
 
 fn arm_auto_resume_from_event(
     context: &CliContext,
-    id: &str,
+    record: &SessionRecord,
     event: &TurnEvent,
     state: &TurnState,
     received_at: &str,
 ) -> Result<(), CliError> {
+    if event.kind == TurnEventKind::TurnCompleted
+        && event.confidence == Confidence::Authoritative
+        && matches!(event.source_kind, SourceKind::ProviderHook)
+        && event.provider == AgentKind::Codex.as_str()
+        && state.current_turn.is_none()
+        && state.last_turn.as_ref().is_some_and(|turn| {
+            turn.outcome == "completed"
+                && event
+                    .provider_turn_id
+                    .as_ref()
+                    .is_some_and(|turn_id| turn.provider_turn_id.as_ref() == Some(turn_id))
+        })
+    {
+        crate::auto_resume::complete_provider_capacity_recovery(
+            context,
+            &record.id,
+            state.revision,
+            received_at,
+        )?;
+        return Ok(());
+    }
     if event.kind != TurnEventKind::TurnFailed
-        || event.failure_reason.as_deref() != Some("usage_exhausted")
         || event.confidence != Confidence::Authoritative
         || !matches!(event.source_kind, SourceKind::ProviderHook)
     {
@@ -3056,13 +3076,36 @@ fn arm_auto_resume_from_event(
         .provider_turn_id
         .clone()
         .unwrap_or_else(|| event.event_id.clone());
-    crate::auto_resume::arm_usage_exhaustion(
-        context,
-        id,
-        blocked_turn_id,
-        state.revision,
-        received_at,
-    )?;
+    match event.failure_reason.as_deref() {
+        Some("usage_exhausted") => {
+            crate::auto_resume::arm_usage_exhaustion(
+                context,
+                &record.id,
+                blocked_turn_id,
+                state.revision,
+                received_at,
+            )?;
+        }
+        Some("provider_capacity")
+            if event.schema_version == CODEX_PROTOCOL_TURN_EVENT_VERSION
+                && event.provider == AgentKind::Codex.as_str() =>
+        {
+            crate::auto_resume::arm_provider_capacity(
+                context,
+                &record.id,
+                record
+                    .runtime
+                    .as_ref()
+                    .map(|runtime| runtime.launch_id.as_str())
+                    .unwrap_or(""),
+                &crate::codex_account::binding_snapshot(record),
+                blocked_turn_id,
+                state.revision,
+                received_at,
+            )?;
+        }
+        _ => {}
+    }
     Ok(())
 }
 
