@@ -133,16 +133,18 @@ impl SourceTrace {
         });
     }
 
-    fn attempt<T>(
+    /// Records the outcome of a source attempt that started at `started`.
+    ///
+    /// The caller keeps ownership of the attempt's value: the trace only ever
+    /// observes its error classification, never the result it carries.
+    fn record_outcome<T>(
         &mut self,
         source: &'static str,
-        action: impl FnOnce() -> Result<T, ProviderUsageReason>,
-    ) -> Result<T, ProviderUsageReason> {
-        let started = Instant::now();
-        let outcome = action();
+        started: Instant,
+        outcome: &Result<T, ProviderUsageReason>,
+    ) {
         let reason = outcome.as_ref().err().copied();
         self.record(source, started.elapsed(), reason, reason.is_none());
-        outcome
     }
 }
 
@@ -239,11 +241,18 @@ fn resolve_usage(source: UsageSource, trace: &mut SourceTrace) -> UsageResult {
     let cache_file = cache::cache_file();
     match source {
         UsageSource::Auto => {
-            let oauth_reason = match trace.attempt("oauth", || try_oauth(cache_file.as_ref())) {
+            let started = Instant::now();
+            let oauth = try_oauth(cache_file.as_ref());
+            trace.record_outcome("oauth", started, &oauth);
+            let oauth_reason = match oauth {
                 Ok(result) => return result,
                 Err(reason) => reason,
             };
-            let cli_reason = match trace.attempt("cli", || try_claude_cli(cache_file.as_ref())) {
+
+            let started = Instant::now();
+            let cli = try_claude_cli(cache_file.as_ref());
+            trace.record_outcome("cli", started, &cli);
+            let cli_reason = match cli {
                 Ok(result) => return result,
                 Err(reason) => reason,
             };
@@ -257,14 +266,22 @@ fn resolve_usage(source: UsageSource, trace: &mut SourceTrace) -> UsageResult {
                 .map(|result| result_with_reason(result, reason))
                 .unwrap_or_else(|| empty_result(cache_file, "usage unavailable", reason))
         }
-        UsageSource::Oauth => trace
-            .attempt("oauth", || try_oauth(cache_file.as_ref()))
-            .unwrap_or_else(|reason| empty_result(cache_file, "oauth usage unavailable", reason)),
-        UsageSource::Cli => trace
-            .attempt("cli", || try_claude_cli(cache_file.as_ref()))
-            .unwrap_or_else(|reason| {
+        UsageSource::Oauth => {
+            let started = Instant::now();
+            let oauth = try_oauth(cache_file.as_ref());
+            trace.record_outcome("oauth", started, &oauth);
+            oauth.unwrap_or_else(|reason| {
+                empty_result(cache_file, "oauth usage unavailable", reason)
+            })
+        }
+        UsageSource::Cli => {
+            let started = Instant::now();
+            let cli = try_claude_cli(cache_file.as_ref());
+            trace.record_outcome("cli", started, &cli);
+            cli.unwrap_or_else(|reason| {
                 empty_result(cache_file, "claude cli usage unavailable", reason)
-            }),
+            })
+        }
         UsageSource::Cache => {
             let note = cache_unavailable_note(cache_file.as_ref());
             trace_read_cache(trace, cache_file.as_ref())
