@@ -357,6 +357,10 @@ _arguments "${_arguments_options[@]}" : \
 '--format=[Output format (\`text\` or \`json\`)]:format:(text json)' \
 '--source=[Usage source to read]:SOURCE:(auto oauth cli cache)' \
 '(--format)--json[Hidden alias for \`--format json\`]' \
+'-c[Clear the usage cache file before querying]' \
+'--clear-cache[Clear the usage cache file before querying]' \
+'-d[Report bounded source-attempt diagnostics on stderr]' \
+'--debug[Report bounded source-attempt diagnostics on stderr]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0

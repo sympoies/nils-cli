@@ -102,7 +102,7 @@ no race involved. Give any such API a parent the fixture owns.
 3. **If a test starts background work, stop it before the fixture drops** — and
    wait on the *last* write, not the first observable one.
    `crates/codex-cli/tests/integration/prompt_segment_refresh.rs` and
-   `crates/claude-cli/tests/integration.rs` wait for the refresh lock to be
+   `crates/claude-cli/tests/integration/support.rs` wait for the refresh lock to be
    released rather than for the cache file, because the child writes its marker
    and releases its lock after the cache. Waiting on an intermediate artifact
    returns while writes are still pending.

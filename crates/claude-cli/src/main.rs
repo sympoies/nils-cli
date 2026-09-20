@@ -162,6 +162,8 @@ fn handle_usage(args: &cli::UsageArgs) -> i32 {
             cli::UsageSource::Cache => claude_cli::prompt_segment::usage::UsageSource::Cache,
         },
         output_json: args.output.is_json(),
+        clear_cache: args.clear_cache,
+        debug: args.debug,
     })
 }
 
