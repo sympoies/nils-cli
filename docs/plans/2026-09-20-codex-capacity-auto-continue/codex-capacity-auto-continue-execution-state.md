@@ -6,15 +6,15 @@
 - Discussion source: docs/plans/2026-09-20-codex-capacity-auto-continue/codex-capacity-auto-continue-discussion-source.md
 - Tracking issue: <https://github.com/sympoies/nils-cli/issues/1762>
 - Current sprint: 1
-- Status: in-progress
+- Status: complete
 - Current gate: review
-- Current task: review and PR delivery
-- Next task: deliver and merge the implementation PR
+- Current task: complete
+- Next task: none
 - Plan branch: `feat/codex-capacity-auto-continue`
 - Integration PR: pending
 - Blockers: none
 - Last updated: 2026-09-20
-- Branch/commit/PR: pending
+- Branch/commit/PR: sympoies/nils-cli#1763 merged (<https://github.com/sympoies/nils-cli/pull/1763>)
 
 ## Task Ledger
 
@@ -55,6 +55,6 @@
 
 ## Handoff
 
-- Complete specialist review, deliver and merge the PR, release and deploy
-  nils-cli, then close this tracker through the strict issue-backed plan
-  workflow.
+- Tracking issue <https://github.com/sympoies/nils-cli/issues/1762> is closed;
+  terminal execution state is synchronized. No closeout or merge action
+  remains.
