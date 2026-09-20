@@ -6,15 +6,15 @@
 - Discussion source: docs/plans/2026-09-20-codex-capacity-auto-continue/codex-capacity-auto-continue-discussion-source.md
 - Tracking issue: <https://github.com/sympoies/nils-cli/issues/1762>
 - Current sprint: 1
-- Status: in-progress
-- Current gate: review
-- Current task: review and PR delivery
-- Next task: deliver and merge the implementation PR
+- Status: complete
+- Current gate: complete
+- Current task: complete
+- Next task: none
 - Plan branch: `feat/codex-capacity-auto-continue`
-- Integration PR: pending
+- Integration PR: sympoies/nils-cli#1763 merged (<https://github.com/sympoies/nils-cli/pull/1763>)
 - Blockers: none
 - Last updated: 2026-09-20
-- Branch/commit/PR: pending
+- Branch/commit/PR: sympoies/nils-cli#1763 merged (<https://github.com/sympoies/nils-cli/pull/1763>)
 
 ## Task Ledger
 
@@ -23,7 +23,7 @@
 | 1.1 | Capture failing capacity-recovery tests | done | Captured the pre-change failure and added positive/negative structured capacity regression coverage. | Red evidence retained by test-first-evidence. |
 | 1.2 | Generalize durable auto-resume for capacity | done | Added additive durable recovery cause, bounded capacity attempt chain, restart discovery, and race fences. | Public agent-session.auto-resume.v1 projection remains unchanged. |
 | 1.3 | Submit the fixed continuation through the control channel | done | Routed due capacity recovery directly through the bound app-server Continue command with the fixed prompt. | No usage lookup, terminal pane write, or synthetic Enter. |
-| 1.4 | Align supervision and public documentation | done | Updated Main Agent supervision semantics and canonical agent-session contract documentation; recorded the devlog and completed the repository finish line. | Ready for specialist review and PR delivery. |
+| 1.4 | Align supervision and public documentation | done | Updated Main Agent supervision semantics and canonical agent-session contract documentation; recorded the devlog and completed the repository finish line. | Specialist review and PR delivery completed. |
 
 ## Blockers
 
@@ -55,6 +55,6 @@
 
 ## Handoff
 
-- Complete specialist review, deliver and merge the PR, release and deploy
-  nils-cli, then close this tracker through the strict issue-backed plan
-  workflow.
+- Tracking issue <https://github.com/sympoies/nils-cli/issues/1762> is closed;
+  terminal execution state is synchronized. No closeout or merge action
+  remains.
