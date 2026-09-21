@@ -1824,6 +1824,31 @@ fn validate_activity_values(
     Ok(())
 }
 
+/// A title/result commit must never publish a decision whose history basis was
+/// rewritten, and must never label the session with an objective the user has
+/// already superseded. Everything else about an interactive session — assistant
+/// progress, tool output, a transcript that grows for the whole duration of an
+/// inference — is normal and must not reject the result.
+///
+/// The fence therefore rejects `retitle-v3-history-conflict` for:
+///
+/// - a source discontinuity, a different history source or segment, or a
+///   rewound offset, because the committed memory is no longer a prefix of the
+///   live history;
+/// - an uninitialized memory cursor, which has no prefix to fence at all;
+/// - an appended human prompt that memory has not folded yet, because a manual
+///   request carries no provider-turn fence and the decision was derived from
+///   the previous objective.
+///
+/// A session with no provider resume is `retitle-v3-history-unavailable`.
+///
+/// A clean forward append of provider progress passes: the memory the decision
+/// was derived from is still a verified prefix of the live history, readiness
+/// reports `history_advanced` immediately afterwards, and the next projection
+/// folds the delta. The human-prompt probe reads one bounded refresh chunk;
+/// when more history is pending than that chunk covers the fence stays
+/// permissive, because an uncertain very chatty session must not become
+/// unretitleable — that is the exact failure an equality fence produced.
 fn validate_history_fence(
     catalog: &HistoryCatalog,
     record: &SessionRecord,
@@ -1835,24 +1860,36 @@ fn validate_history_fence(
             "provider history is unavailable for this session",
         )
     })?;
+    let Some(cursor) = memory.cursor.as_ref() else {
+        return Err(v3_error(
+            "retitle-v3-history-conflict",
+            "retitle v3 memory has no history cursor to fence",
+        ));
+    };
     let page = catalog
         .incremental_messages_for_provider_session_identity(
             &resume.provider,
             session_agent_profile(record),
             &resume.session_id,
-            memory.cursor.as_ref(),
+            Some(cursor),
             &memory.applied_message_ids,
-            1,
+            REFRESH_CHUNK_BYTES,
         )
         .map_err(history_error)?;
     if page.discontinuity
-        || !page.caught_up
-        || memory.cursor.as_ref() != Some(&page.cursor)
-        || !page.messages.is_empty()
+        || page.cursor.source_id != cursor.source_id
+        || page.cursor.segment_id != cursor.segment_id
+        || page.cursor.offset < cursor.offset
     {
         return Err(v3_error(
             "retitle-v3-history-conflict",
-            "provider history advanced before retitle v3 completion",
+            "provider history diverged before retitle v3 completion",
+        ));
+    }
+    if page.messages.iter().any(|message| message.human_prompt) {
+        return Err(v3_error(
+            "retitle-v3-history-conflict",
+            "a new human prompt superseded the retitle v3 objective",
         ));
     }
     Ok(())
@@ -5251,7 +5288,7 @@ mod tests {
     }
 
     #[test]
-    fn crash_before_title_commit_retries_idempotently_and_history_progress_rejects_stale_result() {
+    fn crash_before_title_commit_retries_idempotently_and_history_progress_stays_committable() {
         let tmp = tempfile::tempdir().unwrap();
         let id = "crash-title";
         let (context, catalog, transcript) = fixture(
@@ -5308,14 +5345,20 @@ mod tests {
             .unwrap();
         assert_eq!(fresh.outcome.as_deref(), Some("committed"));
 
-        // A direct history-fence probe proves even a same-record inference is
-        // rejected once a provider turn has appended.
+        // Direct fence probes: appended provider progress passes, and a new
+        // human prompt is refused because it supersedes the objective the
+        // decision was derived from.
         let record = load_session_record(&context, id).unwrap();
         let current_memory = memory_from_record(&record).unwrap();
-        fs::OpenOptions::new()
+        let mut transcript_file = fs::OpenOptions::new()
             .append(true)
             .open(&transcript)
-            .unwrap()
+            .unwrap();
+        transcript_file
+            .write_all(codex_row("assistant", "still working on it", "turn-one").as_bytes())
+            .unwrap();
+        assert!(validate_history_fence(&catalog, &record, &current_memory).is_ok());
+        transcript_file
             .write_all(codex_row("user", "new pivot", "turn-two").as_bytes())
             .unwrap();
         assert_eq!(
@@ -5324,6 +5367,184 @@ mod tests {
                 .code(),
             "retitle-v3-history-conflict"
         );
+    }
+
+    #[test]
+    fn provider_history_appended_during_inference_still_commits_the_title() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "history-append";
+        let (context, catalog, transcript) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row("user", "make long retitle reliable", "turn-one"),
+        );
+        let request = request(id, 0, 0);
+        let accepted = refresh_once(&context, &catalog, id, &request).unwrap();
+        assert_eq!(accepted.status, "accepted");
+        let inference = inference_context(&context, id, &accepted.operation_hash).unwrap();
+
+        // An interactive session keeps writing provider history while the
+        // provider produces the title. That append leaves the decision usable.
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .unwrap()
+            .write_all(codex_row("assistant", "still working on it", "turn-one").as_bytes())
+            .unwrap();
+
+        let committed = commit_inference(
+            &context,
+            &catalog,
+            id,
+            &inference,
+            SessionTitleState {
+                topic: Some("Reliable long retitle".to_string()),
+                topic_source: crate::SessionTitleTopicSource::Auto,
+                references: Vec::new(),
+                activity: None,
+                extra: BTreeMap::new(),
+            },
+            &[],
+        )
+        .unwrap();
+        assert_eq!(committed.status, "terminal");
+        assert_eq!(committed.outcome.as_deref(), Some("committed"));
+        assert_eq!(committed.changed, Some(true));
+        assert_eq!(committed.title_revision, 1);
+        assert_eq!(
+            load_session_record(&context, id).unwrap().title.as_deref(),
+            Some("Reliable long retitle")
+        );
+    }
+
+    #[test]
+    fn a_human_prompt_during_the_inference_rejects_the_superseded_title() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "history-pivot";
+        let (context, catalog, transcript) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row("user", "make long retitle reliable", "turn-one"),
+        );
+        let request = request(id, 0, 0);
+        let accepted = refresh_once(&context, &catalog, id, &request).unwrap();
+        let inference = inference_context(&context, id, &accepted.operation_hash).unwrap();
+
+        // A manual request carries no provider-turn fence, so the history fence
+        // is what keeps the previous objective from titling the new one.
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .unwrap()
+            .write_all(
+                codex_row("user", "actually rewrite the release notes", "turn-two").as_bytes(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            commit_inference(
+                &context,
+                &catalog,
+                id,
+                &inference,
+                SessionTitleState {
+                    topic: Some("Reliable long retitle".to_string()),
+                    topic_source: crate::SessionTitleTopicSource::Auto,
+                    references: Vec::new(),
+                    activity: None,
+                    extra: BTreeMap::new(),
+                },
+                &[],
+            )
+            .unwrap_err()
+            .code(),
+            "retitle-v3-history-conflict"
+        );
+        assert_eq!(load_session_record(&context, id).unwrap().title_revision, 0);
+    }
+
+    #[test]
+    fn a_provider_failure_over_appended_history_keeps_its_own_failure_class() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "history-append-failure";
+        let (context, catalog, transcript) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row("user", "make long retitle reliable", "turn-one"),
+        );
+        let request = request(id, 0, 0);
+        let accepted = refresh_once(&context, &catalog, id, &request).unwrap();
+        let inference = inference_context(&context, id, &accepted.operation_hash).unwrap();
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .unwrap()
+            .write_all(codex_row("assistant", "still working on it", "turn-one").as_bytes())
+            .unwrap();
+
+        // The failure commit shares the fence, so an appended transcript must
+        // not rewrite a real provider failure as a history conflict.
+        let terminal = complete_provider_failure(
+            &context,
+            &catalog,
+            id,
+            &inference,
+            "unavailable",
+            "provider_call",
+            &[],
+        )
+        .unwrap();
+        assert_eq!(terminal.status, "terminal");
+        assert_eq!(terminal.outcome.as_deref(), Some("terminal_failure"));
+        assert_eq!(terminal.failure_class.as_deref(), Some("unavailable"));
+        assert_eq!(terminal.failure_stage.as_deref(), Some("provider_call"));
+    }
+
+    #[test]
+    fn rewritten_provider_history_rejects_the_title_commit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "history-rewrite";
+        let (context, catalog, transcript) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row("user", "make long retitle reliable", "turn-one"),
+        );
+        let request = request(id, 0, 0);
+        let accepted = refresh_once(&context, &catalog, id, &request).unwrap();
+        let inference = inference_context(&context, id, &accepted.operation_hash).unwrap();
+
+        // A rewritten transcript is a real divergence: the memory the provider
+        // saw is no longer a prefix of the live history.
+        fs::write(
+            &transcript,
+            codex_row("user", "an unrelated replacement transcript", "turn-nine"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            commit_inference(
+                &context,
+                &catalog,
+                id,
+                &inference,
+                SessionTitleState {
+                    topic: Some("Reliable long retitle".to_string()),
+                    topic_source: crate::SessionTitleTopicSource::Auto,
+                    references: Vec::new(),
+                    activity: None,
+                    extra: BTreeMap::new(),
+                },
+                &[],
+            )
+            .unwrap_err()
+            .code(),
+            "retitle-v3-history-conflict"
+        );
+        assert_eq!(load_session_record(&context, id).unwrap().title_revision, 0);
     }
 
     #[test]

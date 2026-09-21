@@ -372,21 +372,47 @@ An incremental memory commit rechecks:
 - prior semantic turn and delta hash;
 - the admitted operation identity and request digest.
 
-A title/result commit additionally rechecks the complete current history
-cursor, source segment, semantic delta hash, activity revision, and provider
-turn. Any newer history delta, different current turn, incarnation change,
-title change, or memory change rejects the old result before title mutation.
-The one exception is a missing first title produced by an automatic operation:
-assistant progress from the same provider turn MAY advance memory while the
-provider runs, but the session incarnation, zero title revision, execution
-claim, provider turn, and original active objective MUST still match.
+A title/result commit additionally rechecks the current history source segment
+and semantic delta hash. An incarnation change, title change, or memory change
+rejects the old result before title mutation. It also rechecks the activity
+revision and provider turn for an operation that carries those fences, so a
+different current turn rejects an automatic result; a manual request is
+forbidden from carrying them, and is fenced by incarnation, title revision,
+memory identity, the receipt and execution claim, and the history rules below.
+
+History freshness is checked as a divergence test, not as an equality test. A
+source discontinuity, a different history source or segment, a rewound offset,
+or an uninitialized cursor rejects the result as
+`retitle-v3-history-conflict`, because the committed memory is no longer a
+verified prefix of the live history. For a growing file that verification is
+the catalog's sampled continuity check, not a full prefix rehash, so a rewrite
+combined with an append resolves as an append.
+
+An appended human prompt that memory has not folded yet also rejects the
+result: it supersedes the objective the decision was derived from, and on the
+manual path no provider-turn fence would otherwise catch it. The probe reads
+one bounded refresh chunk; when more history is pending than that chunk covers
+the fence stays permissive rather than making a very chatty session
+unretitleable.
+
+A clean forward append of provider progress MUST NOT reject the result. An
+interactive session appends provider history for the whole duration of an
+inference, so an equality test would make an interactive Retitle unable to
+commit; the decision remains derived from a verified prefix, readiness reports
+`history_advanced` immediately afterwards, and the next projection folds the
+delta. The one exception to the memory-change rule is a missing first title
+produced by an automatic operation: assistant progress from the same provider
+turn MAY advance memory while the provider runs, but the session incarnation,
+zero title revision, execution claim, provider turn, and original active
+objective MUST still match.
 
 Cursor advance, reduced memory, receipts, readiness, and any deterministic
 title change MUST be written atomically under the existing session-record lock.
 A crash before that write leaves the old cursor and memory authoritative. A
 retry reprocesses the same delta once. A crash after it replays the receipt and
 does not skip or duplicate the turn. A provider result is never allowed to
-commit after its fence has become stale.
+commit after its history basis has diverged or its objective has been
+superseded.
 
 ## Operation manager, coalescing, and recovery
 
