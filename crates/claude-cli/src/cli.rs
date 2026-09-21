@@ -275,6 +275,12 @@ pub struct UsageArgs {
     /// Usage source to read
     #[arg(long = "source", value_enum, default_value_t = UsageSource::Auto)]
     pub source: UsageSource,
+    /// Clear the usage cache file before querying
+    #[arg(short = 'c', long = "clear-cache")]
+    pub clear_cache: bool,
+    /// Report bounded source-attempt diagnostics on stderr
+    #[arg(short = 'd', long = "debug")]
+    pub debug: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
