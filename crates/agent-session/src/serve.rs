@@ -929,6 +929,10 @@ fn router(state: Arc<ServeState>) -> Router {
             post(session_retitle_v3_handler),
         )
         .route(
+            "/sessions/{id}/retitle-v3/operations",
+            get(session_retitle_v3_receipts_handler),
+        )
+        .route(
             "/sessions/{id}/retitle-v3/operations/{operation_hash}",
             get(session_retitle_v3_operation_handler),
         )
@@ -3379,6 +3383,27 @@ async fn session_retitle_v3_readiness_handler(
     }
 }
 
+async fn session_retitle_v3_receipts_handler(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let context = state.context.clone();
+    match tokio::task::spawn_blocking(move || crate::retitle_v3::operation_receipts(&context, &id))
+        .await
+    {
+        Ok(Ok(receipts)) => envelope_ok(json!({
+            "machine": state.machine,
+            "retitle": receipts,
+        })),
+        Ok(Err(error)) => envelope_err(error),
+        Err(_) => join_err(),
+    }
+}
+
 async fn session_retitle_v3_operation_handler(
     State(state): State<Arc<ServeState>>,
     headers: HeaderMap,
@@ -4639,6 +4664,7 @@ async fn list_handler(State(state): State<Arc<ServeState>>) -> Response {
                     "managed_account_handoff": crate::codex_app_server::MANAGED_ACCOUNT_HANDOFF_CAPABILITY,
                     "session_retitle_v2": true,
                     "session_retitle_v3": true,
+                    "session_retitle_v3_receipts": true,
                 },
             }))
         }
@@ -12184,6 +12210,121 @@ mod tests {
         let record = crate::load_session_record(&context, "older-revision").unwrap();
         assert_eq!(record.title.as_deref(), Some("Existing title"));
         assert_eq!(record.title_revision, 1);
+    }
+
+    #[tokio::test]
+    async fn retitle_v3_receipts_are_listed_read_only_authenticated_and_content_free() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let provider = executable(
+            &tmp.path().join("receipts-provider"),
+            "#!/bin/sh\nprintf '%s\\n' '{\"topic_action\":\"set\",\"topic\":\"Fix automatic session titles\",\"activity\":null,\"references\":[]}'\n",
+        );
+        let config = json!({
+            "provider":"command",
+            "argv":[provider],
+            "timeout_ms":1000,
+            "context":{"max_chars":4000,"per_message_chars":1000,"recent_turns":8}
+        })
+        .to_string();
+        let _config = EnvGuard::set(&lock, "AGENT_SESSION_RETITLE_CONFIG", &config);
+        let codex_home = tmp.path().join("codex-home");
+        let transcript_dir = codex_home.join("sessions/2026/09/10");
+        std::fs::create_dir_all(&transcript_dir).unwrap();
+        std::fs::write(
+            transcript_dir.join("rollout.jsonl"),
+            concat!(
+                "{\"timestamp\":\"2026-09-10T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"provider-receipts\",\"cwd\":\"/tmp\",\"source\":\"cli\",\"timestamp\":\"2026-09-10T00:00:00Z\"}}\n",
+                "{\"timestamp\":\"2026-09-10T00:00:01Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Fix automatic session titles\"}],\"internal_chat_message_metadata_passthrough\":{\"turn_id\":\"turn-receipts\",\"content_item_kinds\":[\"user.text\"]}}}\n"
+            ),
+        )
+        .unwrap();
+        let _codex_home = EnvGuard::set(&lock, "CODEX_HOME", codex_home.to_string_lossy().as_ref());
+        let id = "retitle-receipts";
+        let tmux = minimal_tmux(tmp.path());
+        seed_session_with_runtime(tmp.path(), id, "codex", &format!("hs-{id}"));
+        let record_path = tmp.path().join(format!("sessions/{id}/session.json"));
+        let mut record: Value =
+            serde_json::from_slice(&std::fs::read(&record_path).unwrap()).unwrap();
+        record["provider_resume"] = json!({
+            "provider":"codex",
+            "session_id":"provider-receipts",
+            "captured_at":"2026-09-10T00:00:02Z",
+            "capture_method":"fixture",
+            "resume_args":[]
+        });
+        std::fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+        write_automatic_activity(tmp.path(), id, 1, Some("turn-receipts"), None);
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        let view = crate::session_view(
+            &context,
+            &crate::load_session_record(&context, id).unwrap(),
+            Some("running".into()),
+            Some(&tmux),
+        );
+        let request = automatic_retitle_candidate(&view).unwrap().request;
+        let operation_hash = crate::retitle_v3::request_operation_hash(id, &request);
+        let app = router(state(tmp.path(), Some(TOKEN), tmux));
+
+        let receipts_path = format!("/sessions/{id}/retitle-v3/operations");
+        let (status, denied) = call(app.clone(), get_auth(&receipts_path, None)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "body={denied}");
+
+        let (status, empty) = call(app.clone(), get_auth(&receipts_path, Some(TOKEN))).await;
+        assert_eq!(status, StatusCode::OK, "body={empty}");
+        assert_eq!(
+            empty["data"]["retitle"]["schema_version"],
+            "agent-session.session-retitle.receipts.v3"
+        );
+        assert_eq!(
+            empty["data"]["retitle"]["receipts"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+
+        let (status, accepted) = call(
+            app.clone(),
+            post_json(
+                &format!("/sessions/{id}/retitle-v3"),
+                Some(TOKEN),
+                serde_json::to_value(request).unwrap(),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "body={accepted}");
+        let completed = wait_for_retitle_v3_operation(&app, id, &operation_hash).await;
+        assert_eq!(completed["data"]["retitle"]["outcome"], "committed");
+
+        let (status, listed) = call(app.clone(), get_auth(&receipts_path, Some(TOKEN))).await;
+        assert_eq!(status, StatusCode::OK, "body={listed}");
+        let retitle = &listed["data"]["retitle"];
+        assert_eq!(retitle["capability"], "agent-session.session-retitle.v3");
+        assert_eq!(retitle["max_receipts"], 8);
+        let receipts = retitle["receipts"].as_array().unwrap();
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0]["operation_hash"], operation_hash);
+        assert_eq!(receipts[0]["trigger"], "automatic");
+        assert_eq!(receipts[0]["outcome"], "committed");
+        assert_eq!(receipts[0]["terminal"], true);
+        assert_eq!(receipts[0]["result_is_current"], true);
+        assert_eq!(receipts[0]["execution_claim_held"], false);
+        assert_eq!(
+            receipts[0]["result_fence"]["title_revision"],
+            retitle["current_fence"]["title_revision"]
+        );
+        // The receipt list is the diagnostic surface a multi-principal console
+        // may read, so the committed title must not travel with it even though
+        // the single-operation response carries one.
+        let rendered = serde_json::to_string(&listed).unwrap();
+        assert!(
+            !rendered.contains("Fix automatic session titles"),
+            "receipt list leaked session content: {rendered}"
+        );
     }
 
     #[tokio::test]
