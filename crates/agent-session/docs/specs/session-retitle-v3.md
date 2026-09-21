@@ -372,14 +372,25 @@ An incremental memory commit rechecks:
 - prior semantic turn and delta hash;
 - the admitted operation identity and request digest.
 
-A title/result commit additionally rechecks the complete current history
-cursor, source segment, semantic delta hash, activity revision, and provider
-turn. Any newer history delta, different current turn, incarnation change,
-title change, or memory change rejects the old result before title mutation.
-The one exception is a missing first title produced by an automatic operation:
-assistant progress from the same provider turn MAY advance memory while the
-provider runs, but the session incarnation, zero title revision, execution
-claim, provider turn, and original active objective MUST still match.
+A title/result commit additionally rechecks the current history source segment,
+semantic delta hash, activity revision, and provider turn. A different current
+turn, incarnation change, title change, or memory change rejects the old result
+before title mutation.
+
+History freshness is checked as a divergence test, not as an equality test. The
+committed memory MUST still be an exact prefix of the live history: a source
+discontinuity, a different history source or segment, a rewound offset, or an
+uninitialized cursor rejects the result as `retitle-v3-history-conflict`. A
+clean forward append beyond the committed cursor MUST NOT reject it. An
+interactive session appends provider history for the whole duration of an
+inference, so an equality test would make an interactive Retitle unable to
+commit; the decision remains derived from a verified prefix, readiness reports
+`history_advanced` immediately afterwards, and the next projection folds the
+delta. The one exception to the memory-change rule is a missing first title
+produced by an automatic operation: assistant progress from the same provider
+turn MAY advance memory while the provider runs, but the session incarnation,
+zero title revision, execution claim, provider turn, and original active
+objective MUST still match.
 
 Cursor advance, reduced memory, receipts, readiness, and any deterministic
 title change MUST be written atomically under the existing session-record lock.
