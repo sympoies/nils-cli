@@ -23,6 +23,7 @@ pub(crate) const CAPABILITY: &str = "agent-session.session-retitle.v3";
 pub(crate) const REQUEST_SCHEMA: &str = "agent-session.session-retitle.request.v3";
 pub(crate) const RESPONSE_SCHEMA: &str = "agent-session.session-retitle.v3";
 pub(crate) const READINESS_SCHEMA: &str = "agent-session.session-retitle.readiness.v3";
+pub(crate) const RECEIPTS_SCHEMA: &str = "agent-session.session-retitle.receipts.v3";
 const MARKER_KEY: &str = "session_retitle_v3";
 const MARKER_SCHEMA: &str = "agent-session.session-retitle-state.v3";
 const SEMANTIC_PROJECTION_VERSION: u8 = 2;
@@ -280,6 +281,52 @@ pub(crate) struct RetitleV3Response {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) finished_at: Option<String>,
     pub(crate) duration_bucket: String,
+}
+
+/// Read-only projection of the daemon's own retitle receipts.
+///
+/// `RetitleV3Response` answers "how did this one operation end" and carries the
+/// resulting public title. This list answers "what has retitle been doing on
+/// this session", so it deliberately drops the title and every other content
+/// field: it exists to be read by an operator through the console, which is
+/// multi-principal, and the receipt vocabulary is already bounded and stable.
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct RetitleV3ReceiptSummary {
+    pub(crate) operation_hash: String,
+    pub(crate) trigger: String,
+    pub(crate) state: String,
+    pub(crate) terminal: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) outcome: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) changed: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) failure_class: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) failure_stage: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) provider_attempts: Vec<crate::retitle::ProviderAttemptObservation>,
+    pub(crate) admission_fence: RetitleV3ResultFence,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) result_fence: Option<RetitleV3ResultFence>,
+    pub(crate) result_is_current: bool,
+    pub(crate) attempt_generation: u8,
+    pub(crate) execution_claim_held: bool,
+    pub(crate) started_at: String,
+    pub(crate) updated_at: String,
+    pub(crate) duration_bucket: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct RetitleV3Receipts {
+    schema_version: &'static str,
+    capability: &'static str,
+    pub(crate) readiness: MemoryReadiness,
+    pub(crate) current_fence: RetitleV3ResultFence,
+    pub(crate) max_receipts: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) selected_operation_hash: Option<String>,
+    pub(crate) receipts: Vec<RetitleV3ReceiptSummary>,
 }
 
 #[derive(Clone, Debug)]
@@ -548,6 +595,41 @@ pub(crate) fn operation_response(
         .iter()
         .find(|receipt| receipt.operation_hash == operation_hash)
         .map(|receipt| response_from_receipt(&record, &memory, receipt)))
+}
+
+/// Lists this session's retitle receipts newest first.
+///
+/// The daemon already keeps a bounded receipt per operation, but until now the
+/// only way to read one was `session.json` on the host, so every failure
+/// investigation needed shell access to the machine that failed. The bound is
+/// the stored one (`MAX_RECEIPTS`), so this route cannot grow with session age.
+pub(crate) fn operation_receipts(
+    context: &CliContext,
+    id: &str,
+) -> Result<RetitleV3Receipts, CliError> {
+    let record = load_session_record(context, id)?;
+    let memory = memory_from_record(&record)?;
+    let current_fence = RetitleV3ResultFence {
+        session_incarnation: incarnation(&record),
+        title_revision: record.title_revision,
+        memory_revision: memory.revision,
+    };
+    let receipts = memory
+        .receipts
+        .iter()
+        .rev()
+        .map(|receipt| receipt_summary(&record, &memory, receipt))
+        .collect();
+    Ok(RetitleV3Receipts {
+        schema_version: RECEIPTS_SCHEMA,
+        capability: CAPABILITY,
+        readiness: memory.readiness.clone(),
+        current_fence,
+        max_receipts: MAX_RECEIPTS,
+        selected_operation_hash: selected_operation(&memory)
+            .map(|receipt| receipt.operation_hash.clone()),
+        receipts,
+    })
 }
 
 pub(crate) fn operation_response_for_request(
@@ -2904,6 +2986,62 @@ fn response_from_receipt(
     }
 }
 
+fn receipt_summary(
+    record: &SessionRecord,
+    memory: &SemanticMemory,
+    receipt: &OperationReceipt,
+) -> RetitleV3ReceiptSummary {
+    RetitleV3ReceiptSummary {
+        operation_hash: receipt.operation_hash.clone(),
+        trigger: receipt.trigger.clone(),
+        state: receipt.state.clone(),
+        terminal: is_terminal_receipt(receipt),
+        outcome: receipt.outcome.clone(),
+        changed: receipt.changed,
+        failure_class: receipt
+            .failure_class
+            .as_deref()
+            .map(stable_failure_class)
+            .map(str::to_string),
+        failure_stage: receipt
+            .failure_stage
+            .as_deref()
+            .map(stable_failure_stage)
+            .map(str::to_string),
+        provider_attempts: receipt
+            .provider_attempts
+            .iter()
+            .take(MAX_PROVIDER_ATTEMPTS)
+            .map(sanitize_provider_attempt)
+            .collect(),
+        admission_fence: RetitleV3ResultFence {
+            session_incarnation: receipt.admitted_incarnation.clone(),
+            title_revision: receipt.admitted_title_revision,
+            memory_revision: receipt.admitted_memory_revision,
+        },
+        result_fence: receipt
+            .result_title_revision
+            .map(|title_revision| RetitleV3ResultFence {
+                session_incarnation: receipt.result_incarnation.clone(),
+                title_revision,
+                memory_revision: receipt
+                    .result_memory_revision
+                    .unwrap_or(receipt.admitted_memory_revision),
+            }),
+        result_is_current: receipt.result_title_revision.is_some_and(|title_revision| {
+            receipt.result_incarnation == incarnation(record)
+                && title_revision == record.title_revision
+                && receipt.result_memory_revision == Some(memory.revision)
+        }),
+        attempt_generation: receipt.attempt_generation,
+        // The claim itself is a hashed token with an expiry; only its presence
+        // is diagnostic, so the token never leaves the daemon.
+        execution_claim_held: receipt.execution_claim.is_some(),
+        started_at: safe_timestamp(&receipt.created_at),
+        updated_at: safe_timestamp(&receipt.updated_at),
+        duration_bucket: stable_duration_bucket(&receipt.duration_bucket).to_string(),
+    }
+}
 fn incarnation(record: &SessionRecord) -> Option<String> {
     record
         .runtime

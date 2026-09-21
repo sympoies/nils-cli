@@ -41,6 +41,7 @@ for the server bearer.
 | `GET /retitle/v3/readiness` | Machine-level v3/provider readiness |
 | `GET /sessions/{id}/retitle-v3/readiness` | Session memory and history freshness |
 | `POST /sessions/{id}/retitle-v3` | Strict mutation/admission request |
+| `GET /sessions/{id}/retitle-v3/operations` | Read-only receipt list for diagnosis |
 | `GET /sessions/{id}/retitle-v3/operations/{operation_hash}` | Durable operation reconciliation |
 
 Machine readiness and session readiness are deliberately separate. A ready
@@ -235,6 +236,27 @@ result superseded by later session state.
 
 An identical retry or GET returns the original outcome, not a separate
 `replayed` outcome. Reconciliation therefore does not change result semantics.
+
+## Receipt list
+
+`GET /sessions/{id}/retitle-v3/operations` returns the session's retained
+receipts newest first under `data.retitle`, bounded by the stored receipt limit
+so the response cannot grow with session age. It exists so an operator can see
+what retitle has been doing on a session without reading `session.json` on the
+host.
+
+It is a strict subset of the single-operation response: the same
+`operation_hash`, `trigger`, `state`, `outcome`, `changed`, `failure_class`,
+`failure_stage`, provider attempt observations, admission and result fences,
+`result_is_current`, `attempt_generation`, timestamps, and `duration_bucket`,
+plus `terminal` and `execution_claim_held`. It omits the public title, and an
+execution claim is reported only as a boolean so its token hash and expiry stay
+inside the daemon.
+
+The list is read-only. It never admits, advances, or terminalizes an operation,
+so polling it cannot change a result; `GET
+/sessions/{id}/retitle-v3/operations/{operation_hash}` remains the only route
+that resumes an accepted operation.
 
 ## Memory-first behavior
 
@@ -544,7 +566,9 @@ test/deployment evidence MUST NOT contain:
 - provider commands, absolute transcript/state/project paths, or raw cursors.
 
 HTTP may expose the user-visible title, bounded readiness fields, opaque hashes,
-and the content-free provider attempt taxonomy. It MUST NOT expose origin,
+and the content-free provider attempt taxonomy. The receipt list is narrower
+still: it is designed to be read by a multi-principal console and carries no
+title at all. It MUST NOT expose origin,
 active objective, current activity, ledgers, segments, or provider input.
 
 Complete injected instruction regions, provider context blocks, image payloads,
