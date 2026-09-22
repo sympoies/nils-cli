@@ -3486,6 +3486,11 @@ pub(crate) fn resolve_agent_session_executable() -> io::Result<PathBuf> {
 }
 
 fn resolve_agent_session_executable_from(current_executable: &Path) -> io::Result<PathBuf> {
+    // Linux reports the resolved `/proc/self/exe`, but macOS reports the
+    // invocation path, which is a link for a Homebrew `bin/` install. Resolve
+    // the running binary itself so the exact-sibling check below still runs in
+    // its real release directory and still refuses a linked sibling.
+    let current_executable = &fs::canonicalize(current_executable)?;
     let binary_name = format!("agent-session{}", env::consts::EXE_SUFFIX);
     let executable = if current_executable
         .file_name()
@@ -19041,6 +19046,36 @@ mod tests {
         assert_eq!(
             resolve_agent_session_executable_from(&agent_session).expect("current executable"),
             agent_session
+        );
+    }
+
+    #[test]
+    fn agent_session_executable_resolves_a_linked_invocation_to_its_release() {
+        // macOS reports the unresolved invocation path from current_exe, so a
+        // Homebrew `bin/` link must resolve to the linked release directory.
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let release = tmp.path().join("Cellar/nils-cli/1.0.0/bin");
+        let bin = tmp.path().join("bin");
+        fs::create_dir_all(&release).expect("release dir");
+        fs::create_dir_all(&bin).expect("bin dir");
+        let name = |stem: &str| format!("{stem}{}", std::env::consts::EXE_SUFFIX);
+        for stem in ["agent-session", "main-agent"] {
+            let binary = release.join(name(stem));
+            fs::write(&binary, stem).expect("release fixture");
+            fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).expect("release mode");
+            std::os::unix::fs::symlink(&binary, bin.join(name(stem))).expect("bin link");
+        }
+        let released = fs::canonicalize(release.join(name("agent-session"))).expect("release");
+
+        assert_eq!(
+            resolve_agent_session_executable_from(&bin.join(name("agent-session")))
+                .expect("linked agent-session"),
+            released
+        );
+        assert_eq!(
+            resolve_agent_session_executable_from(&bin.join(name("main-agent")))
+                .expect("linked facade"),
+            released
         );
     }
 
