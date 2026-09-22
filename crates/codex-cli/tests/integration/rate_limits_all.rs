@@ -264,6 +264,15 @@ fn rate_limits_all_exposes_reset_credits_and_aligns_the_complete_table() {
             .get("rate_limit_reset_credits")
             .is_none()
     );
+    let stored: Value =
+        serde_json::from_slice(&fs::read(secrets.join("alpha.json")).expect("stored secret"))
+            .expect("stored json");
+    assert!(stored.get("rate_limit_reset_credits").is_none());
+    assert!(
+        stored["codex_rate_limits"]
+            .get("rate_limit_reset_credits")
+            .is_none()
+    );
 
     let text_output = run(
         &["diag", "rate-limits", "--all", "--no-refresh-auth"],
