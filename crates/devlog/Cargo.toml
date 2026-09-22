@@ -1,6 +1,6 @@
 [package]
 name = "nils-devlog"
-version = "1.28.38"
+version = "1.28.39"
 edition.workspace = true
 license.workspace = true
 
@@ -15,11 +15,11 @@ path = "src/main.rs"
 clap = { workspace = true }
 clap_complete = { workspace = true }
 jiff = { workspace = true }
-nils-build-info = { version = "1.28.38", path = "../nils-build-info" }
-nils-common = { version = "1.28.38", path = "../nils-common", package = "nils-common" }
+nils-build-info = { version = "1.28.39", path = "../nils-build-info" }
+nils-common = { version = "1.28.39", path = "../nils-common", package = "nils-common" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
-nils-test-support = { version = "1.28.38", path = "../nils-test-support" }
+nils-test-support = { version = "1.28.39", path = "../nils-test-support" }
 pretty_assertions = { workspace = true }
