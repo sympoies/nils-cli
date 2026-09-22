@@ -162,6 +162,18 @@ and durable-state failures remain fail-closed. If the primary is statically
 unavailable but the fallback is configured and ready, readiness reports the
 fallback provider with `degraded`, `fallback_ready`, and `restore_primary`.
 
+A primary that answers `quota_exceeded` is skipped for the next 600 seconds
+when a fallback is configured, because an exhausted subscription spends its
+whole provider call before saying so and automatic retitle can fire on every
+turn. Only `quota_exceeded` arms that window: a timeout, a missing account, or
+a malformed response says nothing about capacity and keeps dialing the primary
+every attempt. A skipped attempt is reported as a `quota_backoff_skipped`
+outcome at the `provider_selection` stage, so it stays distinguishable from a
+primary that was never configured, and readiness reports the same `degraded`,
+`fallback_ready`, `restore_primary` projection while the window is open. The
+window lives in daemon memory, keyed by provider kind and observable model
+label, and a restart clears it.
+
 Codex subscription uses the existing account broker and the supported Codex
 app-server protocol. A fixed `account` remains supported. Alternatively,
 `account_selection: default_with_capacity` asks the broker before every

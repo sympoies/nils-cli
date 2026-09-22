@@ -12,7 +12,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -555,7 +555,11 @@ impl RetitleService {
             Err(_) => return RetitleReadiness::unavailable("config_invalid", "configure_provider"),
         };
         let primary = provider_readiness(config);
-        if primary.status != "unavailable" {
+        // A primary inside its quota window is not statically unavailable, but
+        // the next title will not reach it either. Reporting it ready would
+        // describe a provider the daemon has already decided to skip.
+        let suppressed = quota_backoff_active(config);
+        if primary.status != "unavailable" && !suppressed {
             return primary;
         }
         if let Some(fallback) = config.fallback.as_deref() {
@@ -1380,7 +1384,7 @@ pub(crate) fn infer_title_state_observed(
             providers: Vec::new(),
         })?;
     let mut providers = Vec::with_capacity(MAX_PROVIDER_ATTEMPT_OBSERVATIONS);
-    match infer_with_provider_observed(&permit.config, &input, context, existing, timeout) {
+    match primary_attempt_observed(&permit.config, &input, context, existing, timeout) {
         Ok((state, observation)) => {
             providers.push(observation);
             Ok(ObservedInference {
@@ -1504,7 +1508,7 @@ pub(crate) fn infer_semantic_memory_observed(
             providers: Vec::new(),
         })?;
     let mut providers = Vec::with_capacity(MAX_PROVIDER_ATTEMPT_OBSERVATIONS);
-    match infer_with_provider_observed(&permit.config, &input, &context, existing, timeout) {
+    match primary_attempt_observed(&permit.config, &input, &context, existing, timeout) {
         Ok((state, observation)) => {
             providers.push(observation);
             Ok(ObservedInference {
@@ -1713,6 +1717,105 @@ fn provider_failure_stage(code: &str, decision_parse: bool) -> &str {
         "retitle-provider-malformed-response" => "provider_response",
         _ => "provider_call",
     }
+}
+
+/// How long an exhausted subscription primary is skipped before it is dialed
+/// again.
+///
+/// A blind retry is not free: the primary spends its whole provider call —
+/// process spawn, credential resolution, request — before the API reports that
+/// the quota is gone, and automatic retitle can fire on every turn. The account
+/// broker already refuses an account whose quota snapshot reports exhaustion,
+/// so this window only covers the gap where the snapshot claims capacity and
+/// the API disagrees.
+const PRIMARY_QUOTA_BACKOFF: Duration = Duration::from_secs(600);
+
+const QUOTA_EXCEEDED_CODE: &str = "retitle-provider-quota-exceeded";
+
+/// Suppressed primaries, keyed by the same observable identity the attempt log
+/// reports. In memory on purpose: the window is short, a daemon restart is a
+/// deliberate operator action that should dial the primary again immediately,
+/// and no credential, account, or prompt is involved.
+static QUOTA_BACKOFF: Mutex<Option<HashMap<String, Instant>>> = Mutex::new(None);
+
+fn quota_backoff_key(config: &RetitleConfig) -> String {
+    format!(
+        "{}:{}",
+        config.kind(),
+        observable_model_label_for_provider(config).unwrap_or_else(|| "-".to_string())
+    )
+}
+
+/// A poisoned lock still answers: one panicking caller must not turn the
+/// backoff into a permanently failing gate on every later title.
+fn quota_backoff_guard() -> MutexGuard<'static, Option<HashMap<String, Instant>>> {
+    QUOTA_BACKOFF
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn quota_backoff_active(config: &RetitleConfig) -> bool {
+    let key = quota_backoff_key(config);
+    let mut guard = quota_backoff_guard();
+    let windows = guard.get_or_insert_with(HashMap::new);
+    match windows.get(&key) {
+        Some(until) if *until > Instant::now() => true,
+        Some(_) => {
+            windows.remove(&key);
+            false
+        }
+        None => false,
+    }
+}
+
+fn arm_quota_backoff(config: &RetitleConfig) {
+    let key = quota_backoff_key(config);
+    let mut guard = quota_backoff_guard();
+    guard
+        .get_or_insert_with(HashMap::new)
+        .insert(key, Instant::now() + PRIMARY_QUOTA_BACKOFF);
+}
+
+#[cfg(test)]
+fn reset_quota_backoff() {
+    *quota_backoff_guard() = None;
+}
+
+/// The primary attempt with the quota window applied.
+///
+/// A suppressed primary reports a content-free `quota_backoff_skipped`
+/// observation and the same quota error the window was armed from, so the
+/// caller's existing fallback arm runs unchanged and a skipped primary stays
+/// distinguishable from one that was never configured. Only `quota_exceeded`
+/// arms the window: a timeout, a missing account, or a malformed response says
+/// nothing about capacity and must keep dialing the primary every attempt.
+fn primary_attempt_observed(
+    config: &RetitleConfig,
+    input: &str,
+    context: &TitleContextV2,
+    existing: Option<&SessionTitleState>,
+    timeout: Duration,
+) -> Result<(SessionTitleState, ProviderAttemptObservation), Box<ProviderAttemptFailure>> {
+    if config.fallback.is_some() && quota_backoff_active(config) {
+        let observed_at = jiff::Timestamp::now().to_string();
+        return Err(Box::new(ProviderAttemptFailure {
+            error: provider_quota_exceeded(),
+            observation: provider_attempt_observation(
+                config,
+                "quota_backoff_skipped",
+                Some("provider_selection"),
+                &observed_at,
+                Duration::ZERO,
+            ),
+        }));
+    }
+    let attempt = infer_with_provider_observed(config, input, context, existing, timeout);
+    if let Err(failure) = &attempt
+        && failure.error.code() == QUOTA_EXCEEDED_CODE
+    {
+        arm_quota_backoff(config);
+    }
+    attempt
 }
 
 fn fallback_eligible(code: &str) -> bool {
@@ -4679,5 +4782,143 @@ esac
         }
         assert!(is_public_error_code("session-not-found"));
         assert!(!is_public_error_code("session-write-failed"));
+    }
+
+    fn backoff_context() -> TitleContextV2 {
+        TitleContextV2 {
+            schema_version: "agent-session.title-context.v2",
+            session: TitleContextSession {
+                agent: "codex".into(),
+                repo_name: None,
+                title_state: None,
+            },
+            turns: vec![turn(1, "Retitle this session")],
+            coverage: TitleContextCoverage {
+                source: "provider_transcript",
+                complete: true,
+                truncated: false,
+            },
+            trigger: RetitleTrigger::Manual,
+        }
+    }
+
+    const BACKOFF_FALLBACK_ARGV: &str = r#"printf '%s\n' '{"topic_action":"set","topic":"Fallback title","activity":null,"references":[]}'"#;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_exhausted_primary_is_skipped_for_the_whole_window() {
+        let lock = nils_test_support::GlobalStateLock::new();
+        reset_quota_backoff();
+        // One accept only: the second attempt must never reach the primary, and
+        // a closed port would report `unavailable` rather than the skip outcome
+        // this test asserts.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let served = Arc::clone(&calls);
+        thread::spawn(move || {
+            for stream in listener.incoming().take(1) {
+                let Ok(mut stream) = stream else { break };
+                served.fetch_add(1, Ordering::SeqCst);
+                let mut buffer = [0u8; 2048];
+                let _ = stream.read(&mut buffer);
+                // 403 is one of the two statuses the client reads as an
+                // exhausted quota rather than a transient rate limit.
+                let _ = stream.write_all(
+                    b"HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                );
+            }
+        });
+
+        let config = json!({
+            "provider": "openai_compatible",
+            "base_url": format!("http://127.0.0.1:{port}/v1"),
+            "model": "gpt-5.6-luna",
+            "timeout_ms": 2000,
+            "fallback": {
+                "provider": "command",
+                "argv": ["/bin/sh", "-c", BACKOFF_FALLBACK_ARGV],
+                "timeout_ms": 1000
+            }
+        })
+        .to_string();
+        let _config =
+            nils_test_support::EnvGuard::set(&lock, "AGENT_SESSION_RETITLE_CONFIG", &config);
+        let service = RetitleService::from_environment();
+        let context = backoff_context();
+
+        let permit = service.acquire().await.unwrap();
+        // The HTTP client owns a blocking runtime, which cannot be dropped from
+        // inside an async context.
+        let first =
+            tokio::task::block_in_place(|| infer_title_state_observed(&permit, &context, None))
+                .unwrap_or_else(|failure| panic!("first attempt failed: {}", failure.error.code()));
+        assert_eq!(first.providers[0].outcome, "quota_exceeded");
+        assert_eq!(first.providers[1].outcome, "success");
+        assert!(quota_backoff_active(&permit.config));
+        drop(permit);
+
+        let permit = service.acquire().await.unwrap();
+        let second =
+            tokio::task::block_in_place(|| infer_title_state_observed(&permit, &context, None))
+                .unwrap_or_else(|failure| {
+                    panic!("second attempt failed: {}", failure.error.code())
+                });
+        assert_eq!(second.providers.len(), 2);
+        assert_eq!(second.providers[0].outcome, "quota_backoff_skipped");
+        assert_eq!(
+            second.providers[0].failure_class.as_deref(),
+            Some("quota_backoff_skipped")
+        );
+        assert_eq!(
+            second.providers[0].failure_stage.as_deref(),
+            Some("provider_selection")
+        );
+        assert_eq!(second.providers[1].outcome, "success");
+        assert_eq!(
+            second.inferred.state.topic.as_deref(),
+            Some("Fallback title")
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        drop(permit);
+
+        // A skipped primary is not a healthy primary, and readiness has to say so.
+        let readiness = service.readiness();
+        assert_eq!(readiness.status, "degraded");
+        assert_eq!(readiness.reason_code, "fallback_ready");
+        assert_eq!(readiness.next_action, "restore_primary");
+
+        reset_quota_backoff();
+        assert_ne!(service.readiness().reason_code, "fallback_ready");
+    }
+
+    #[tokio::test]
+    async fn a_non_quota_provider_failure_leaves_the_primary_dialable() {
+        let lock = nils_test_support::GlobalStateLock::new();
+        reset_quota_backoff();
+        let config = json!({
+            "provider": "command",
+            "argv": ["/bin/sh", "-c", "exit 1"],
+            "timeout_ms": 1000,
+            "fallback": {
+                "provider": "command",
+                "argv": ["/bin/sh", "-c", BACKOFF_FALLBACK_ARGV],
+                "timeout_ms": 1000
+            }
+        })
+        .to_string();
+        let _config =
+            nils_test_support::EnvGuard::set(&lock, "AGENT_SESSION_RETITLE_CONFIG", &config);
+        let service = RetitleService::from_environment();
+        let permit = service.acquire().await.unwrap();
+        let context = backoff_context();
+
+        let observed = infer_title_state_observed(&permit, &context, None)
+            .unwrap_or_else(|failure| panic!("attempt failed: {}", failure.error.code()));
+        assert_eq!(observed.providers[0].outcome, "unavailable");
+        // An unreachable or slow primary says nothing about capacity, so the
+        // next title must dial it again.
+        assert!(!quota_backoff_active(&permit.config));
+        assert_ne!(service.readiness().reason_code, "fallback_ready");
+        reset_quota_backoff();
     }
 }
