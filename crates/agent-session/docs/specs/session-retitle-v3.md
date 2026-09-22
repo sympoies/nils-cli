@@ -261,14 +261,24 @@ that resumes an accepted operation.
 ## Memory-first behavior
 
 A manual Retitle with current, usable memory MUST complete from a deterministic
-local render without invoking a title provider. It may commit a changed title
-or return `unchanged`. Its work is independent of total transcript size.
+local render without invoking a title provider when its current title candidate
+has readable objective text. It may commit a changed title or return
+`unchanged`. Its work is independent of total transcript size.
 
 That local render MUST use the stored readable objective, never the private
 `objective:` projection. When no readable objective survives sanitization, or
 when the readable objective itself carries an internal projection shape — a
 human prompt may legitimately begin `blocker:` or contain the separator — the
 operation MUST defer to provider inference instead of failing the request.
+The same rule applies to an older projection whose active objective is only a
+greeting while a later non-routine human task survives in its journey ledger:
+that ledger has a private projection, not readable title text. Provider input
+uses the later projection as its active objective without rewriting stored
+memory. A provider failure preserves the old title and memory as
+`degraded_cached`. A later manual request may retry provider inference after a
+successful bounded history refresh even while that cached memory remains
+degraded. A successful manual provider result restores memory readiness to
+`ready` and reports the title as `current`.
 
 If memory is stale, the daemon performs one bounded incremental refresh. It MAY
 complete synchronously when that refresh reaches a safe commit point within
@@ -314,8 +324,9 @@ The marker contains:
   title-provider boundary; operation receipts survive that rebuild;
 - monotonic `revision`;
 - immutable `origin`, set from the first eligible sanitized human prompt;
-- `active_objective`, initially the origin and replaceable only by an explicit
-  sanitized human objective pivot;
+- `active_objective`, initially the origin and replaceable by an explicit
+  sanitized human objective pivot, or by the first substantive human prompt
+  after a greeting-only origin;
 - a readable objective stored beside `origin` and `active_objective`. It is set
   only from a sanitized human prompt, is capped at the public session-title
   bound, excludes image transport scaffolding and every image-reference marker
@@ -336,11 +347,15 @@ most eight entries each. Eviction MUST prefer the oldest terminal receipt and
 MUST NOT evict the active non-terminal operation.
 
 The origin is never automatically replaced. Routine human follow-ups update
-the journey but not the active objective. Only a deterministic, explicit pivot
-cue in a human-submitted turn can replace `active_objective`. Assistant,
-developer, system, tool, compact-summary, generated continuation, and terminal
-output can update neither `origin` nor `active_objective`. Assistant text MAY
-update activity or a bounded ledger after sanitization.
+the journey but not the active objective. A deterministic, explicit pivot cue
+in a human-submitted turn can replace `active_objective`. A greeting-only origin
+is a placeholder: the first later human prompt that is neither another greeting
+nor a routine acknowledgement also replaces `active_objective`. Older
+projections retain their cached state and use the provider path above when a
+later task is recorded only in the journey. Assistant, developer, system, tool,
+compact-summary, generated continuation, and terminal output can update neither
+`origin` nor `active_objective`. Assistant text MAY update activity or a bounded
+ledger after sanitization.
 
 The provider input is a deterministic JSON projection of the accepted memory
 and MUST be strictly smaller than 16 KiB. It excludes readable objective text,

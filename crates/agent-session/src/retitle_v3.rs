@@ -1074,21 +1074,23 @@ pub(crate) fn inference_context(
 ) -> Result<InferenceContext, CliError> {
     let record = load_session_record(context, id)?;
     let memory = memory_from_record(&record)?;
-    let receipt_ready = memory
+    let ready_receipt = memory
         .receipts
         .iter()
-        .any(|receipt| receipt.operation_hash == operation_hash && receipt.state == "ready");
-    if memory.readiness != MemoryReadiness::Ready || !receipt_ready || !usable_memory(&memory) {
+        .find(|receipt| receipt.operation_hash == operation_hash && receipt.state == "ready");
+    let readiness_allows_inference = memory.readiness == MemoryReadiness::Ready
+        || (memory.readiness == MemoryReadiness::Degraded
+            && ready_receipt.is_some_and(|receipt| receipt.trigger == "manual"));
+    // A caught-up manual retry may use a cached degraded title while a
+    // previously failed provider recovers. The ready receipt proves that the
+    // current request passed its bounded history refresh.
+    if !readiness_allows_inference || ready_receipt.is_none() || !usable_memory(&memory) {
         return Err(v3_error(
             "retitle-v3-memory-not-ready",
             "semantic memory is not ready for provider evaluation",
         ));
     }
-    let receipt = memory
-        .receipts
-        .iter()
-        .find(|receipt| receipt.operation_hash == operation_hash)
-        .expect("ready receipt exists");
+    let receipt = ready_receipt.expect("ready receipt exists");
     if selected_operation(&memory).map(|selected| selected.operation_hash.as_str())
         != Some(operation_hash)
     {
@@ -1295,6 +1297,13 @@ pub(crate) fn complete_manual_locally(
         return Ok(None);
     }
     let memory = memory_from_record(&record)?;
+    // Older projections may still hold a greeting as their active objective.
+    // Their journey has only a private projection of the later task, so a
+    // readable local title is unavailable; let the provider infer it while
+    // retaining the existing memory and title as a failure fallback.
+    if later_greeting_objective(&memory).is_some() {
+        return Ok(None);
+    }
     let Some(objective) = memory.active_objective.as_ref().or(memory.origin.as_ref()) else {
         return Ok(None);
     };
@@ -1375,6 +1384,11 @@ pub(crate) fn commit_inference(
         validate_history_fence(catalog, &authority.record, &memory)?;
     }
     validate_activity_fence(context, &authority.record, inference)?;
+    if memory.readiness == MemoryReadiness::Degraded && inference.trigger == "manual" {
+        // This manual receipt reached a caught-up history page. A successful
+        // provider result closes the cached-title degradation as well.
+        memory.readiness = MemoryReadiness::Ready;
+    }
     let changed =
         authority.record.title != title || authority.record.title_state.as_ref() != Some(&state);
     if changed {
@@ -2064,7 +2078,11 @@ fn reduce_messages(memory: &mut SemanticMemory, messages: &[HistoryMessage]) {
             if memory.origin.is_none() {
                 memory.origin = Some(fact.clone());
                 memory.active_objective = Some(fact.clone());
-            } else if explicit_objective_pivot(&text) {
+            } else if explicit_objective_pivot(&text)
+                || (greeting_origin_is_active(memory)
+                    && !is_greeting_placeholder(&text)
+                    && !is_routine_followup(&text))
+            {
                 memory.active_objective = Some(fact.clone());
             }
             push_bounded(
@@ -2129,6 +2147,99 @@ fn explicit_objective_pivot(text: &str) -> bool {
     ]
     .iter()
     .any(|cue| normalized.starts_with(cue) || normalized.contains(cue))
+}
+
+fn normalized_short_prompt(text: &str) -> String {
+    text.chars()
+        .map(|character| {
+            if character.is_alphanumeric() || character.is_whitespace() {
+                character
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+fn is_greeting_placeholder(text: &str) -> bool {
+    matches!(
+        normalized_short_prompt(text).as_str(),
+        "hi" | "hello"
+            | "hey"
+            | "hi there"
+            | "hello there"
+            | "hey there"
+            | "good morning"
+            | "good afternoon"
+            | "good evening"
+            | "嗨"
+            | "你好"
+            | "您好"
+            | "哈囉"
+            | "哈啰"
+            | "早安"
+            | "午安"
+            | "晚安"
+    )
+}
+
+fn greeting_origin_is_active(memory: &SemanticMemory) -> bool {
+    memory.origin.as_ref().is_some_and(|origin| {
+        memory.active_objective.as_ref().is_some_and(|active| {
+            active.turn_id == origin.turn_id
+                && origin
+                    .display
+                    .as_deref()
+                    .is_some_and(is_greeting_placeholder)
+        })
+    })
+}
+
+fn is_routine_followup(text: &str) -> bool {
+    matches!(
+        normalized_short_prompt(text).as_str(),
+        "yes"
+            | "yes continue"
+            | "ok"
+            | "okay"
+            | "sure"
+            | "sounds good"
+            | "continue"
+            | "please continue"
+            | "please do"
+            | "go ahead"
+            | "thanks"
+            | "thank you"
+            | "好"
+            | "好的"
+            | "繼續"
+            | "請繼續"
+            | "可以"
+            | "了解"
+            | "謝謝"
+    )
+}
+
+fn later_greeting_objective(memory: &SemanticMemory) -> Option<&LedgerEntry> {
+    if !greeting_origin_is_active(memory) {
+        return None;
+    }
+    let origin_turn = &memory.origin.as_ref()?.turn_id;
+    memory.journey.iter().find(|entry| {
+        let projected = entry
+            .text
+            .strip_prefix("objective: ")
+            .unwrap_or(&entry.text);
+        entry.kind == "human_objective"
+            && entry.turn_id != *origin_turn
+            && projected != "session work"
+            && !is_greeting_placeholder(projected)
+            && !is_routine_followup(projected)
+    })
 }
 
 fn classify_assistant_kind(text: &str) -> &'static str {
@@ -2233,6 +2344,13 @@ fn strip_image_reference_markers(value: &str) -> String {
 pub(crate) fn render_provider_input(memory: &SemanticMemory) -> Result<String, CliError> {
     let mut memory = memory.clone();
     sanitize_memory_in_place(&mut memory);
+    if let Some(candidate) = later_greeting_objective(&memory).cloned() {
+        memory.active_objective = Some(MemoryFact {
+            turn_id: candidate.turn_id,
+            text: candidate.text,
+            display: None,
+        });
+    }
     // Readable objective prose exists for the local title only; provider input
     // stays the bounded projection.
     for fact in [
@@ -3383,6 +3501,25 @@ mod tests {
         let mut record = load_session_record(context, id).unwrap();
         store_memory(&mut record, memory).unwrap();
         crate::write_session_record(context, &record).unwrap();
+    }
+
+    fn prior_greeting_operation(tmp: &Path, id: &str) -> (CliContext, HistoryCatalog, String) {
+        let rows = format!(
+            "{}{}{}",
+            codex_row("user", "hi", "turn-one"),
+            codex_row("user", "檢查並修復 retitle 標題", "turn-two"),
+            codex_row("user", "what is the status?", "turn-three"),
+        );
+        let (context, catalog, _) = fixture(tmp, id, Some("hi"), &rows);
+        let accepted = refresh_once(&context, &catalog, id, &request(id, 1, 0)).unwrap();
+        let mut memory = memory_from_record(&load_session_record(&context, id).unwrap()).unwrap();
+        assert_eq!(memory.projection_version, 2);
+        assert_ne!(memory.active_objective, memory.origin);
+        // Simulate the released v2 reducer, which retained a greeting as the
+        // active objective even after it recorded the later human task.
+        memory.active_objective = memory.origin.clone();
+        store_fixture_memory(&context, id, &memory);
+        (context, catalog, accepted.operation_hash)
     }
 
     fn request(id: &str, title_revision: u64, memory_revision: u64) -> RetitleV3Request {
@@ -4579,6 +4716,191 @@ mod tests {
         // The origin is retained for memory, but the title follows the objective
         // the human actually pivoted to.
         assert_eq!(terminal.title.as_deref(), Some("現在改成先修 retitle 標題"));
+    }
+
+    #[test]
+    fn a_task_after_an_initial_greeting_replaces_the_placeholder_title() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "greeting-then-task";
+        let rows = format!(
+            "{}{}{}",
+            codex_row("user", "hello there", "turn-one"),
+            codex_row("user", "sure", "turn-ack"),
+            codex_row(
+                "user",
+                "Review and update the compatibility lock versions",
+                "turn-two",
+            ),
+        );
+        let (context, catalog, _) = fixture(tmp.path(), id, Some("hello there"), &rows);
+        let accepted = refresh_once(&context, &catalog, id, &request(id, 1, 0)).unwrap();
+        let terminal = complete_manual_locally(&context, &catalog, id, &accepted.operation_hash)
+            .unwrap()
+            .expect("manual memory-first result");
+
+        assert_eq!(terminal.outcome.as_deref(), Some("committed"));
+        assert_eq!(
+            terminal.title.as_deref(),
+            Some("Review and update the compatibility lock versions")
+        );
+        assert!(terminal.provider_attempts.is_empty());
+    }
+
+    #[test]
+    fn a_routine_reply_does_not_replace_an_initial_greeting() {
+        for greeting in ["hi", "hello there", "您好", "good morning"] {
+            for acknowledgement in ["yes, continue", "sure", "請繼續", "了解"] {
+                let mut memory = SemanticMemory::default();
+                reduce_messages(
+                    &mut memory,
+                    &[
+                        message("turn-one", "user", greeting, true),
+                        message("turn-two", "user", acknowledgement, true),
+                    ],
+                );
+                assert_eq!(memory.active_objective, memory.origin);
+            }
+        }
+        assert!(!is_greeting_placeholder("hello, fix retitle"));
+    }
+
+    #[test]
+    fn prior_greeting_projection_uses_provider_without_clearing_its_cache() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "prior-greeting-projection";
+        let (context, catalog, operation_hash) = prior_greeting_operation(tmp.path(), id);
+        assert!(
+            complete_manual_locally(&context, &catalog, id, &operation_hash)
+                .unwrap()
+                .is_none()
+        );
+        let inference = match claim_provider_inference(
+            &context,
+            id,
+            &operation_hash,
+            "provider-claim",
+        )
+        .unwrap()
+        {
+            ProviderClaim::Claimed(inference) => inference,
+            _ => panic!("the later task needs provider inference"),
+        };
+        let projected: serde_json::Value = serde_json::from_str(&inference.input).unwrap();
+        assert_ne!(projected["active_objective"], projected["origin"]);
+        assert_eq!(
+            projected["active_objective"]["text"],
+            projected["journey"][1]["text"]
+        );
+        assert_ne!(
+            projected["active_objective"]["text"],
+            projected["journey"][2]["text"]
+        );
+        let terminal = commit_inference(
+            &context,
+            &catalog,
+            id,
+            &inference,
+            SessionTitleState {
+                topic: Some("檢查並修復 retitle 標題".to_string()),
+                topic_source: SessionTitleTopicSource::Auto,
+                references: Vec::new(),
+                activity: None,
+                extra: BTreeMap::new(),
+            },
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(terminal.outcome.as_deref(), Some("committed"));
+        assert_eq!(terminal.title.as_deref(), Some("檢查並修復 retitle 標題"));
+        let memory = memory_from_record(&load_session_record(&context, id).unwrap()).unwrap();
+        assert_eq!(memory.projection_version, 2);
+        assert_eq!(memory.active_objective, memory.origin);
+    }
+
+    #[test]
+    fn prior_greeting_projection_keeps_its_title_and_memory_on_provider_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "prior-greeting-failure";
+        let (context, catalog, operation_hash) = prior_greeting_operation(tmp.path(), id);
+        assert!(
+            complete_manual_locally(&context, &catalog, id, &operation_hash)
+                .unwrap()
+                .is_none()
+        );
+        let inference = match claim_provider_inference(
+            &context,
+            id,
+            &operation_hash,
+            "provider-claim",
+        )
+        .unwrap()
+        {
+            ProviderClaim::Claimed(inference) => inference,
+            _ => panic!("the later task needs provider inference"),
+        };
+        let terminal = complete_provider_failure(
+            &context,
+            &catalog,
+            id,
+            &inference,
+            "unavailable",
+            "provider_response",
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(terminal.outcome.as_deref(), Some("degraded_cached"));
+        assert_eq!(terminal.title.as_deref(), Some("hi"));
+        let memory = memory_from_record(&load_session_record(&context, id).unwrap()).unwrap();
+        assert_eq!(memory.projection_version, 2);
+        assert_eq!(memory.active_objective, memory.origin);
+        assert_eq!(memory.journey.len(), 3);
+
+        let mut retry = request(id, 1, memory.revision);
+        retry.idempotency_key = "retry-after-provider-recovery".to_string();
+        let accepted = refresh_once(&context, &catalog, id, &retry).unwrap();
+        assert_eq!(accepted.readiness, MemoryReadiness::Degraded);
+        assert!(
+            complete_manual_locally(&context, &catalog, id, &accepted.operation_hash)
+                .unwrap()
+                .is_none()
+        );
+        let inference = match claim_provider_inference(
+            &context,
+            id,
+            &accepted.operation_hash,
+            "recovered-provider-claim",
+        )
+        .unwrap()
+        {
+            ProviderClaim::Claimed(inference) => inference,
+            _ => panic!("a fresh manual request must retry the provider"),
+        };
+        let recovered = commit_inference(
+            &context,
+            &catalog,
+            id,
+            &inference,
+            SessionTitleState {
+                topic: Some("檢查並修復 retitle 標題".to_string()),
+                topic_source: SessionTitleTopicSource::Auto,
+                references: Vec::new(),
+                activity: None,
+                extra: BTreeMap::new(),
+            },
+            &[],
+        )
+        .unwrap();
+        assert_eq!(recovered.outcome.as_deref(), Some("committed"));
+        assert_eq!(recovered.title.as_deref(), Some("檢查並修復 retitle 標題"));
+        assert_eq!(recovered.readiness, MemoryReadiness::Ready);
+        let memory = memory_from_record(&load_session_record(&context, id).unwrap()).unwrap();
+        assert_eq!(memory.readiness, MemoryReadiness::Ready);
+        assert_eq!(
+            title_status(&load_session_record(&context, id).unwrap(), &memory),
+            "current"
+        );
     }
 
     #[test]
