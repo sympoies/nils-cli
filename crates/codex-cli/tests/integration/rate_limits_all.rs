@@ -227,13 +227,18 @@ fn rate_limits_all_exposes_reset_credits_and_aligns_the_complete_table() {
             "primary_window": { "limit_window_seconds": 18_000, "used_percent": 6, "reset_at": reset_at - 500_000 },
             "secondary_window": { "limit_window_seconds": 604_800, "used_percent": 12, "reset_at": reset_at }
         },
-        "rate_limit_reset_credits": { "available_count": 3 }
+        "rate_limit_reset_credits": { "available_count": 0 }
     });
     let server = LoopbackServer::new().expect("server");
     server.add_route(
         "GET",
         "/wham/usage",
         HttpResponse::new(200, response.to_string()),
+    );
+    server.add_route(
+        "GET",
+        "/wham/rate-limit-reset-credits",
+        HttpResponse::new(200, r#"{"available_count":3}"#),
     );
 
     let json_output = run(
@@ -256,6 +261,15 @@ fn rate_limits_all_exposes_reset_credits_and_aligns_the_complete_table() {
     assert_eq!(payload["results"][0]["reset_credits"]["available_count"], 3);
     assert!(
         payload["results"][0]["raw_usage"]
+            .get("rate_limit_reset_credits")
+            .is_none()
+    );
+    let stored: Value =
+        serde_json::from_slice(&fs::read(secrets.join("alpha.json")).expect("stored secret"))
+            .expect("stored json");
+    assert!(stored.get("rate_limit_reset_credits").is_none());
+    assert!(
+        stored["codex_rate_limits"]
             .get("rate_limit_reset_credits")
             .is_none()
     );
@@ -284,6 +298,52 @@ fn rate_limits_all_exposes_reset_credits_and_aligns_the_complete_table() {
     assert!(separator.chars().all(|character| character == '-'));
     assert_eq!(row.len(), header.len());
     assert!(row.ends_with("     3"), "{row}");
+}
+
+#[test]
+fn rate_limits_all_falls_back_to_usage_reset_credits_when_details_fail() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let secrets = dir.path().join("secrets");
+    fs::create_dir_all(&secrets).expect("secret dir");
+    fs::write(
+        secrets.join("alpha.json"),
+        r#"{"tokens":{"access_token":"tok-alpha","account_id":"acct_001"}}"#,
+    )
+    .expect("secret");
+    let server = LoopbackServer::new().expect("server");
+    server.add_route(
+        "GET",
+        "/wham/usage",
+        HttpResponse::new(
+            200,
+            r#"{"rate_limit":{},"rate_limit_reset_credits":{"available_count":2}}"#,
+        ),
+    );
+    server.add_route(
+        "GET",
+        "/wham/rate-limit-reset-credits",
+        HttpResponse::new(503, r#"{"error":"unavailable"}"#),
+    );
+
+    let output = run(
+        &[
+            "diag",
+            "rate-limits",
+            "--all",
+            "--format",
+            "json",
+            "--no-refresh-auth",
+        ],
+        &[("CODEX_SECRET_DIR", &secrets)],
+        &[
+            ("CODEX_CHATGPT_BASE_URL", &server.url()),
+            ("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false"),
+        ],
+    );
+
+    assert_exit(&output, 0);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["results"][0]["reset_credits"]["available_count"], 2);
 }
 
 #[test]
@@ -594,15 +654,23 @@ fn rate_limits_all_json_falls_back_to_official_codex_auth_file() {
     );
 
     let requests = server.take_requests();
-    assert_eq!(requests.len(), 1);
     assert_eq!(
-        requests[0].header_value("authorization"),
-        Some("Bearer tok-official".to_string())
+        requests
+            .iter()
+            .map(|request| request.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["/wham/usage", "/wham/rate-limit-reset-credits"]
     );
-    assert_eq!(
-        requests[0].header_value("chatgpt-account-id"),
-        Some("acct_official".to_string())
-    );
+    for request in requests {
+        assert_eq!(
+            request.header_value("authorization"),
+            Some("Bearer tok-official".to_string())
+        );
+        assert_eq!(
+            request.header_value("chatgpt-account-id"),
+            Some("acct_official".to_string())
+        );
+    }
 }
 
 #[test]
