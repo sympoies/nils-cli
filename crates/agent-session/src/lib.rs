@@ -19027,9 +19027,10 @@ mod tests {
         fs::set_permissions(&agent_session, fs::Permissions::from_mode(0o700))
             .expect("agent-session mode");
 
+        // The resolver canonicalizes; macOS tempdirs sit behind `/var`.
         assert_eq!(
             resolve_agent_session_executable_from(&main_agent).expect("sibling executable"),
-            agent_session
+            fs::canonicalize(&agent_session).expect("canonical agent-session")
         );
     }
 
@@ -19045,7 +19046,7 @@ mod tests {
 
         assert_eq!(
             resolve_agent_session_executable_from(&agent_session).expect("current executable"),
-            agent_session
+            fs::canonicalize(&agent_session).expect("canonical agent-session")
         );
     }
 
@@ -19077,6 +19078,19 @@ mod tests {
                 .expect("linked facade"),
             released
         );
+
+        // Resolving the invocation must not relax the sibling check: a linked
+        // agent-session beside the real facade is still refused.
+        let linked_sibling = tmp.path().join("linked-sibling");
+        fs::create_dir_all(&linked_sibling).expect("linked sibling dir");
+        let facade = linked_sibling.join(name("main-agent"));
+        fs::write(&facade, "main-agent").expect("facade fixture");
+        fs::set_permissions(&facade, fs::Permissions::from_mode(0o700)).expect("facade mode");
+        std::os::unix::fs::symlink(&released, linked_sibling.join(name("agent-session")))
+            .expect("sibling link");
+        let refused = resolve_agent_session_executable_from(&facade)
+            .expect_err("linked sibling must be refused");
+        assert_eq!(refused.kind(), io::ErrorKind::PermissionDenied);
     }
 
     #[test]
