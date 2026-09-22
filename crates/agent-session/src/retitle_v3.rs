@@ -2407,6 +2407,7 @@ fn stable_failure_stage(value: &str) -> &'static str {
     match value {
         "provider_admission" => "provider_admission",
         "provider_worker" => "provider_worker",
+        "provider_selection" => "provider_selection",
         "provider_setup" => "provider_setup",
         "provider_call" => "provider_call",
         "provider_response" => "provider_response",
@@ -2425,6 +2426,7 @@ fn stable_failure_class(value: &str) -> &'static str {
         "unavailable" => "unavailable",
         "rate_limited" => "rate_limited",
         "quota_exceeded" => "quota_exceeded",
+        "quota_backoff_skipped" => "quota_backoff_skipped",
         "deadline_exhausted" => "deadline_exhausted",
         "malformed_response" => "malformed_response",
         "worker_failed" => "worker_failed",
@@ -2455,6 +2457,10 @@ fn stable_provider_outcome(value: &str) -> &'static str {
         "unavailable" => "unavailable",
         "rate_limited" => "rate_limited",
         "quota_exceeded" => "quota_exceeded",
+        // A primary the daemon deliberately skipped is not a worker failure,
+        // and collapsing it into one would hide the backoff from every v3
+        // receipt consumer.
+        "quota_backoff_skipped" => "quota_backoff_skipped",
         "deadline_exhausted" => "deadline_exhausted",
         "malformed_response" => "malformed_response",
         "worker_failed" => "worker_failed",

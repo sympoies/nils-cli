@@ -496,10 +496,13 @@ only:
 - `duration_bucket`.
 
 Stable outcomes are `success`, `account_missing`, `api_key_missing`, `timeout`,
-`unavailable`, `rate_limited`, `quota_exceeded`, `deadline_exhausted`,
-`malformed_response`, and `worker_failed`. Stable stages are
-`provider_admission`, `provider_worker`, `provider_setup`, `provider_call`,
-`provider_response`, `provider_parse`, `provider_budget`, and `provider`.
+`unavailable`, `rate_limited`, `quota_exceeded`, `quota_backoff_skipped`,
+`deadline_exhausted`, `malformed_response`, and `worker_failed`.
+`quota_backoff_skipped` reports a primary the daemon did not dial because an
+earlier `quota_exceeded` is still inside its backoff window. Stable stages are
+`provider_admission`, `provider_worker`, `provider_selection`,
+`provider_setup`, `provider_call`, `provider_response`, `provider_parse`,
+`provider_budget`, and `provider`.
 Unknown internal stages collapse to `provider`.
 
 For malformed responses, stable failure classes distinguish at least
