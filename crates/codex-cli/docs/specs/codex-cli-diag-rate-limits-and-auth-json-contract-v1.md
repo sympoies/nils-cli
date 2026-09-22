@@ -134,7 +134,9 @@ Informational (do not hard-depend for schema validation):
 upstream object contains a non-negative integer `available_count`; absent,
 negative, fractional, string, null, or malformed values are omitted without
 discarding otherwise valid windows. Cached results omit it and consumers must
-not interpret absence as zero.
+not interpret absence as zero. Live diagnostics prefer the dedicated
+`/wham/rate-limit-reset-credits` details response and fall back to the
+`/wham/usage` value if that request fails or does not contain a valid count.
 
 Provider usage failures may carry additive `reason_code` on a per-account
 `result`. Command-level errors carry the same value under

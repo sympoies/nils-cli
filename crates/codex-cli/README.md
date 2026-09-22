@@ -183,8 +183,11 @@ Auth examples:
   and prompt refresh/retry continues without rendering expired percentages.
 - `--watch` refreshes output every 60 seconds until interrupted and requires `--async`.
 - Live responses expose earned reset credits as optional JSON
-  `reset_credits.available_count`. The all-account text table shows `Resets` as
-  the rightmost, right-aligned column. Cached results omit reset credits because
+  `reset_credits.available_count`. Live diagnostics prefer the dedicated
+  `/wham/rate-limit-reset-credits` response and fall back to the count embedded
+  in `/wham/usage` when that details request is unavailable or malformed. The
+  all-account text table shows `Resets` as the rightmost, right-aligned column.
+  Cached results omit reset credits because
   this mutable capability is never persisted.
 
 ### config

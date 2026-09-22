@@ -11,7 +11,7 @@ use std::time::Duration;
 use crate::auth;
 use crate::diag_output;
 use crate::provider_profile::CODEX_PROVIDER_PROFILE;
-use crate::rate_limits::client::{UsageRequest, fetch_usage};
+use crate::rate_limits::client::{UsageRequest, fetch_usage_with_reset_credits};
 use nils_common::env as shared_env;
 use nils_common::fs;
 use nils_common::provider_runtime::persistence::{
@@ -518,7 +518,7 @@ fn collect_json_result_for_secret(
         max_time_seconds: max_time,
     };
 
-    match fetch_usage(&usage_request) {
+    match fetch_usage_with_reset_credits(&usage_request) {
         Ok(usage) => {
             if should_writeback_usage(target_file)
                 && let Err(err) = writeback::write_weekly(target_file, &usage.json)
@@ -1622,7 +1622,7 @@ fn fetch_one_line_network(target_file: &Path, no_refresh_auth: bool) -> AsyncFet
         max_time_seconds: max_time,
     };
 
-    let usage = match fetch_usage(&usage_request) {
+    let usage = match fetch_usage_with_reset_credits(&usage_request) {
         Ok(value) => value,
         Err(err) => {
             let msg = err.to_string();
@@ -2063,7 +2063,7 @@ fn run_single_mode(
         max_time_seconds: max_time,
     };
 
-    let usage = match fetch_usage(&usage_request) {
+    let usage = match fetch_usage_with_reset_credits(&usage_request) {
         Ok(value) => value,
         Err(err) => {
             let reason = err.reason();
@@ -2381,7 +2381,7 @@ fn single_one_line(
         max_time_seconds: max_time,
     };
 
-    let usage = match fetch_usage(&usage_request) {
+    let usage = match fetch_usage_with_reset_credits(&usage_request) {
         Ok(value) => value,
         Err(err) => {
             if debug_mode {

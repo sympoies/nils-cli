@@ -113,6 +113,51 @@ pub fn fetch_usage(request: &UsageRequest) -> Result<UsageResponse, UsageFetchEr
     })
 }
 
+pub fn fetch_usage_with_reset_credits(
+    request: &UsageRequest,
+) -> Result<UsageResponse, UsageFetchError> {
+    let mut usage = fetch_usage(request)?;
+    if let Ok(available_count) = fetch_reset_credit_count(request)
+        && let Some(object) = usage.json.as_object_mut()
+    {
+        object.insert(
+            "rate_limit_reset_credits".to_string(),
+            serde_json::json!({ "available_count": available_count }),
+        );
+    }
+    Ok(usage)
+}
+
+fn fetch_reset_credit_count(request: &UsageRequest) -> Result<i64, UsageFetchError> {
+    let (access_token, account_id) = read_tokens(&request.target_file)
+        .map_err(|error| UsageFetchError::new(token_read_failure_reason(&error)))?;
+    let mut response =
+        send_reset_credit_details_request(request, &access_token, account_id.as_deref())?;
+
+    if response.status == 401 && request.refresh_on_401 {
+        let refreshed_tokens =
+            refresh_target(&request.target_file, request.suppress_auth_refresh_output)
+                .or_else(|| read_tokens(&request.target_file).ok());
+        if let Some((access_token, account_id)) = refreshed_tokens {
+            response =
+                send_reset_credit_details_request(request, &access_token, account_id.as_deref())?;
+        }
+    }
+
+    if response.status != 200 {
+        return Err(UsageFetchError::new(classify_http_failure(
+            response.status,
+            &response.body,
+        )));
+    }
+
+    serde_json::from_str::<Value>(&response.body)
+        .ok()
+        .and_then(|value| value.get("available_count").and_then(Value::as_i64))
+        .filter(|available_count| *available_count >= 0)
+        .ok_or_else(|| UsageFetchError::new(ProviderUsageReason::Unknown))
+}
+
 pub fn consume_reset_credit(
     request: &ResetCreditRequest,
 ) -> Result<ResetCreditResponse, UsageFetchError> {
@@ -197,6 +242,42 @@ fn send_request(
         })
     })?;
 
+    let status = resp.status().as_u16();
+    let body = resp.text().unwrap_or_default();
+    Ok(HttpResponse { status, body })
+}
+
+fn send_reset_credit_details_request(
+    request: &UsageRequest,
+    access_token: &str,
+    account_id: Option<&str>,
+) -> Result<HttpResponse, UsageFetchError> {
+    let client = Client::builder()
+        .connect_timeout(Duration::from_secs(request.connect_timeout_seconds))
+        .timeout(Duration::from_secs(request.max_time_seconds))
+        .build()
+        .map_err(|_| UsageFetchError::new(ProviderUsageReason::Unknown))?;
+
+    let url = format!(
+        "{}/wham/rate-limit-reset-credits",
+        request.base_url.trim_end_matches('/')
+    );
+    let mut req = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {access_token}"))
+        .header("Accept", "application/json")
+        .header("User-Agent", "codex-cli");
+    if let Some(account_id) = account_id {
+        req = req.header("ChatGPT-Account-Id", account_id);
+    }
+
+    let resp = req.send().map_err(|error| {
+        UsageFetchError::new(if error.is_timeout() {
+            ProviderUsageReason::Timeout
+        } else {
+            ProviderUsageReason::ServiceUnavailable
+        })
+    })?;
     let status = resp.status().as_u16();
     let body = resp.text().unwrap_or_default();
     Ok(HttpResponse { status, body })

@@ -7,7 +7,8 @@ use crate::diag_output;
 use crate::provider_profile::CODEX_PROVIDER_PROFILE;
 use crate::rate_limits;
 use crate::rate_limits::client::{
-    ResetCreditOutcome, ResetCreditRequest, UsageRequest, consume_reset_credit, fetch_usage,
+    ResetCreditOutcome, ResetCreditRequest, UsageRequest, consume_reset_credit,
+    fetch_usage_with_reset_credits,
 };
 use nils_common::provider_usage::ProviderUsageReason;
 
@@ -121,7 +122,7 @@ pub fn run(options: &ResetRateLimitsOptions) -> Result<i32> {
         && nils_common::env::env_truthy(CODEX_PROVIDER_PROFILE.env.auto_refresh_enabled);
 
     if !options.yes {
-        let usage = match fetch_usage(&UsageRequest {
+        let usage = match fetch_usage_with_reset_credits(&UsageRequest {
             target_file: target_file.clone(),
             refresh_on_401,
             suppress_auth_refresh_output: true,
