@@ -169,6 +169,10 @@ pub struct StartArgs {
     #[arg(skip)]
     pub initial_agent_profile: Option<String>,
 
+    /// Internal: DSH history root from the server-owned launch profile.
+    #[arg(skip)]
+    pub initial_dsh_history_root: Option<PathBuf>,
+
     /// Internal: provider config root owned by the selected launch profile.
     #[arg(skip)]
     pub initial_provider_config_dir: Option<PathBuf>,

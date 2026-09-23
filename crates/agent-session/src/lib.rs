@@ -1946,9 +1946,23 @@ fn start_session_with_create_guard(
         ));
     }
     validate_agent_args(args.agent, &args.agent_args)?;
+    if args.initial_agent_profile.as_deref() == Some("dsh-tui")
+        && args.initial_dsh_history_root.is_some()
+        && !args.agent_args.is_empty()
+    {
+        return Err(CliError::usage(
+            "reserved-agent-arg",
+            "fresh managed DSH profile arguments are owned by agent-session",
+            None,
+        ));
+    }
     let cwd = resolve_cwd(args.cwd.as_deref())?;
     let prompt = read_prompt(&args.prompt, args.prompt_file.as_deref(), args.prompt_stdin)?;
-    let provider_plan = initial_provider_resume_plan(args.agent, &cwd);
+    let provider_plan = initial_provider_resume_plan(
+        args.agent,
+        args.initial_agent_profile.as_deref(),
+        args.initial_dsh_history_root.as_deref(),
+    )?;
     let launch_started_at = SystemTime::now();
     let tmux_bin = resolve_tmux_bin(args.tmux_bin.as_deref());
     let agent_bin = resolve_agent_bin(args.agent, args.agent_bin.as_deref());
@@ -3132,8 +3146,12 @@ struct InitialProviderPlan {
     launch_args: Vec<String>,
 }
 
-fn initial_provider_resume_plan(agent: AgentKind, _cwd: &Path) -> InitialProviderPlan {
-    match agent {
+fn initial_provider_resume_plan(
+    agent: AgentKind,
+    profile: Option<&str>,
+    dsh_history_root: Option<&Path>,
+) -> Result<InitialProviderPlan, CliError> {
+    let plan = match agent {
         AgentKind::Claude => {
             let session_id = uuid::Uuid::new_v4().to_string();
             InitialProviderPlan {
@@ -3149,9 +3167,48 @@ fn initial_provider_resume_plan(agent: AgentKind, _cwd: &Path) -> InitialProvide
             }
         }
         AgentKind::Codex => InitialProviderPlan::default(),
+        AgentKind::Hermes if profile == Some("dsh-tui") && dsh_history_root.is_some() => {
+            let root = dsh_history_root.ok_or_else(|| {
+                CliError::unavailable(
+                    "dsh-history-unavailable",
+                    "managed DSH profile requires an exact-id history root",
+                    None,
+                )
+            })?;
+            let root = fs::canonicalize(root).map_err(|_| {
+                CliError::unavailable(
+                    "dsh-history-unavailable",
+                    "managed DSH history root is unavailable",
+                    None,
+                )
+            })?;
+            if !root.is_dir() {
+                return Err(CliError::unavailable(
+                    "dsh-history-unavailable",
+                    "managed DSH history root is unavailable",
+                    None,
+                ));
+            }
+            let session_id = uuid::Uuid::new_v4().to_string();
+            InitialProviderPlan {
+                provider_resume: Some(ProviderResume {
+                    provider: AgentKind::Dsh.as_str().to_string(),
+                    session_id: session_id.clone(),
+                    captured_at: Zoned::now().timestamp().to_string(),
+                    capture_method: "dsh-history-exact-id".to_string(),
+                    resume_args: canonical_dsh_provider_resume_args(&session_id),
+                    extra: BTreeMap::from([(
+                        DSH_HISTORY_ROOT_PROVIDER_RESUME_KEY.to_string(),
+                        json!(display_path(&root)),
+                    )]),
+                }),
+                launch_args: vec!["--agent-session-seed".to_string(), session_id],
+            }
+        }
         AgentKind::Hermes => InitialProviderPlan::default(),
         AgentKind::Dsh => InitialProviderPlan::default(),
-    }
+    };
+    Ok(plan)
 }
 
 fn validate_agent_args(agent: AgentKind, args: &[String]) -> Result<(), CliError> {
@@ -8209,6 +8266,7 @@ fn start_interactive_tmux(
         }
         AgentKind::Hermes => {
             command.arg("chat");
+            command.args(provider_launch_args);
         }
         AgentKind::Dsh => {
             return Err(CliError::usage(
@@ -18321,6 +18379,44 @@ mod tests {
         strip_trailing_blank_lines, tmux_launch_may_have_created_runtime,
         try_acquire_session_record_lock, write_session_record,
     };
+
+    #[test]
+    fn managed_dsh_profile_assigns_provider_identity_before_launch() {
+        let temp = tempfile::TempDir::new().expect("history root");
+        let plan = super::initial_provider_resume_plan(
+            AgentKind::Hermes,
+            Some("dsh-tui"),
+            Some(temp.path()),
+        )
+        .expect("managed DSH plan");
+        let resume = plan.provider_resume.expect("provider resume");
+        assert_eq!(resume.provider, "dsh");
+        assert_eq!(resume.capture_method, "dsh-history-exact-id");
+        assert_eq!(
+            plan.launch_args,
+            vec!["--agent-session-seed", resume.session_id.as_str()]
+        );
+        assert_eq!(
+            resume.resume_args,
+            vec!["--resume", resume.session_id.as_str()]
+        );
+        assert_eq!(
+            resume.extra[super::DSH_HISTORY_ROOT_PROVIDER_RESUME_KEY],
+            serde_json::json!(temp.path().canonicalize().expect("canonical root")),
+        );
+        assert!(
+            super::initial_provider_resume_plan(AgentKind::Hermes, None, None)
+                .expect("ordinary Hermes plan")
+                .provider_resume
+                .is_none()
+        );
+        assert!(
+            super::initial_provider_resume_plan(AgentKind::Hermes, Some("dsh-tui"), None)
+                .expect("read-only DSH profile plan")
+                .provider_resume
+                .is_none()
+        );
+    }
 
     #[cfg(not(target_os = "linux"))]
     #[test]
