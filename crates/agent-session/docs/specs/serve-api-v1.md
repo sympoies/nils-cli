@@ -131,6 +131,17 @@ from base agent `hermes` and invokes the profile with exactly
 `--resume <provider-session-id>`. The response contains the normal newly
 created managed `session` projection.
 
+For a fresh `POST /sessions` using the server-owned `dsh-tui` profile with
+`dsh_history.resume=exact-id`, agent-session allocates the DSH UUID before
+creating the managed record. It stores the exact provider identity and canonical
+history root in `provider_resume`, then passes
+`--agent-session-seed <provider-session-id>` to the trusted profile launcher.
+That launcher materializes an empty DSH session through the official persistence
+API and starts the unmodified TUI with `--resume <provider-session-id>`.
+The coordination broker holds the provider lease before releasing the TUI launch
+gate. Missing history storage refuses the new launch; caller-supplied resume or
+seed arguments cannot replace the managed identity.
+
 Before the DSH provider process is released from its held launch gate, its
 runtime heartbeat sidecar obtains a private filesystem lease keyed by the
 canonical history root and provider session identity. The sidecar holds the
@@ -885,8 +896,9 @@ A Hermes-backed DSH profile may add
 `"dsh_history":{"command":"/absolute/dsh-runtime-kit-history","root":"/absolute/dsh-sessions","compression":"zstd"}`.
 `command` and `root` must be absolute and `compression` is `zstd` (the default)
 or `none`. This optional read adapter is not a launch readiness prerequisite:
-if it is unavailable, DSH launch and readiness keep their existing behavior and
-the history endpoints return only the remaining valid catalog data.
+if it is unavailable, ordinary DSH launch and readiness keep their existing
+behavior and the history endpoints return only the remaining valid catalog data.
+The managed `dsh-tui` exact-id fresh launch requires the configured root.
 Adding `"resume":"exact-id"` to that object explicitly enables daemon-owned
 history resume for the ready profile. Omitting it preserves read-only behavior.
 

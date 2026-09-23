@@ -4283,6 +4283,7 @@ fn run_worker_start_single_input(
                 initial_codex_account_source: None,
                 initial_title_state: None,
                 initial_agent_profile: None,
+                initial_dsh_history_root: None,
                 initial_provider_config_dir: launch_provider_config_dir.clone(),
                 initial_profile_auto_resume_supported: None,
                 initial_profile_graceful_shutdown: None,

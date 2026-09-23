@@ -5978,6 +5978,12 @@ async fn create_handler(
         initial_codex_account_source: selection_source,
         initial_title_state: title_state,
         initial_agent_profile: launch_profile.as_ref().map(|profile| profile.id.clone()),
+        initial_dsh_history_root: launch_profile
+            .as_ref()
+            .filter(|profile| profile.id == "dsh-tui")
+            .and_then(|profile| profile.dsh_history.as_ref())
+            .filter(|history| history.resume == Some(DshHistoryResumeCapability::ExactId))
+            .map(|history| history.root.clone()),
         initial_provider_config_dir: launch_profile
             .as_ref()
             .and_then(|profile| profile.provider_config_dir.clone()),
@@ -18735,6 +18741,118 @@ esac
             calls.contains(cwd.to_string_lossy().as_ref()),
             "calls={calls}"
         );
+    }
+
+    #[tokio::test]
+    async fn fresh_dsh_profile_launch_passes_its_preassigned_provider_id() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        let history_root = tmp.path().join("dsh-sessions");
+        fs::create_dir(&cwd).unwrap();
+        fs::create_dir(&history_root).unwrap();
+        let launcher = executable(&tmp.path().join("dsh-launcher"), "#!/bin/sh\nexit 0\n");
+        let adapter = executable(&tmp.path().join("dsh-history"), "#!/bin/sh\nexit 0\n");
+        let profiles = AgentLaunchProfiles::from_json(
+            &json!([{
+                "id":"dsh-tui", "label":"DSH TUI", "agent":"hermes",
+                "agent_bin": launcher,
+                "dsh_history": { "command": adapter, "root": history_root, "resume":"exact-id" }
+            }])
+            .to_string(),
+        )
+        .unwrap();
+        let log = tmp.path().join("tmux.log");
+        let tmux = resume_tmux(tmp.path(), &log);
+        let mut st = state(tmp.path(), Some(TOKEN), tmux);
+        Arc::get_mut(&mut st).unwrap().launch_profiles = profiles;
+
+        let (status, denied) = call(
+            router(st.clone()),
+            post_json(
+                "/sessions",
+                Some(TOKEN),
+                json!({
+                    "agent":"hermes", "agent_profile":"dsh-tui", "id":"bad-dsh", "cwd":cwd,
+                    "agent_args":["--continue"]
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "body={denied}");
+        assert_eq!(denied["error"]["code"], "reserved-agent-arg");
+        assert!(!log.exists(), "a conflicting TUI argument must not launch");
+
+        let (status, body) = call(
+            router(st),
+            post_json(
+                "/sessions",
+                Some(TOKEN),
+                json!({
+                    "agent":"hermes", "agent_profile":"dsh-tui", "id":"fresh-dsh", "cwd":cwd
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        let provider_id = body["data"]["session"]["provider_resume"]["session_id"]
+            .as_str()
+            .expect("assigned provider id");
+        assert_eq!(
+            body["data"]["session"]["provider_resume"]["provider"],
+            "dsh"
+        );
+        assert!(
+            fs::read_to_string(&log)
+                .unwrap()
+                .contains(&format!("--agent-session-seed {provider_id}"))
+        );
+        let record: Value = serde_json::from_slice(
+            &fs::read(tmp.path().join("sessions/fresh-dsh/session.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(record["provider_resume"]["session_id"], provider_id);
+    }
+
+    #[tokio::test]
+    async fn read_only_dsh_profile_keeps_ordinary_hermes_launch() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        let history_root = tmp.path().join("dsh-sessions");
+        fs::create_dir(&cwd).unwrap();
+        fs::create_dir(&history_root).unwrap();
+        let launcher = executable(&tmp.path().join("dsh-launcher"), "#!/bin/sh\nexit 0\n");
+        let adapter = executable(&tmp.path().join("dsh-history"), "#!/bin/sh\nexit 0\n");
+        let profiles = AgentLaunchProfiles::from_json(
+            &json!([{
+                "id":"dsh-tui", "label":"DSH TUI", "agent":"hermes",
+                "agent_bin": launcher,
+                "dsh_history": { "command": adapter, "root": history_root }
+            }])
+            .to_string(),
+        )
+        .unwrap();
+        let log = tmp.path().join("tmux.log");
+        let tmux = resume_tmux(tmp.path(), &log);
+        let mut st = state(tmp.path(), Some(TOKEN), tmux);
+        Arc::get_mut(&mut st).unwrap().launch_profiles = profiles;
+
+        let (status, body) = call(
+            router(st),
+            post_json(
+                "/sessions",
+                Some(TOKEN),
+                json!({
+                    "agent":"hermes", "agent_profile":"dsh-tui", "id":"read-only-dsh", "cwd":cwd,
+                    "agent_args":["--verbose"]
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert!(body["data"]["session"]["provider_resume"].is_null());
+        let calls = fs::read_to_string(log).unwrap();
+        assert!(calls.contains("chat --verbose"), "calls={calls}");
+        assert!(!calls.contains("--agent-session-seed"), "calls={calls}");
     }
 
     #[tokio::test]
