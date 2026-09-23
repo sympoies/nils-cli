@@ -486,8 +486,10 @@ fn portable_paths_scan_routes_dsh_agent_artifacts_outside_the_checkout() {
         "env -C . env -C .cache touch scratch.json",
         "cd definitely-missing || touch .cache/scratch.json",
         "(cd .cache; touch scratch.json)",
+        "((cd .cache; touch scratch.json))",
         "cd .cache && (touch scratch.json)",
         "cd .cache && ((touch scratch.json))",
+        "cd .cache && (echo ready && touch scratch.json)",
         "install -d agent-out/rehearsal",
         "install --directory .cache/scratch",
         "install -dm755 agent-out/rehearsal",
@@ -546,6 +548,9 @@ fn portable_paths_scan_routes_dsh_agent_artifacts_outside_the_checkout() {
         "bash -c 'touch -r agent-out/reference.md notes.md'",
         "bash -c 'cp agent-out/source.json notes.json'",
         "(cp agent-out/source.json notes.json)",
+        "(cd /tmp; cp agent-out/source.json notes.json)",
+        "cd /tmp && (cp agent-out/source.json notes.json)",
+        "cd /tmp && (echo ready && cp agent-out/source.json notes.json)",
     ] {
         let (code, envelope) = dispatch(&fixture, "dsh-session-3", command);
         assert_eq!(

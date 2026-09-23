@@ -151,27 +151,46 @@ fn artifact_unclassifiable_subject(
     if artifact_command_targets_misrouted(request, command.invocations) {
         return true;
     }
-    if let Some(inner) = command
-        .raw
-        .trim()
+    let mut unwrapped = command.raw.trim();
+    while let Some(inner) = unwrapped
         .strip_prefix('(')
         .and_then(|body| body.strip_suffix(')'))
     {
-        return artifact_command_targets_misrouted(request, &parse_invocations(inner));
+        unwrapped = inner.trim();
     }
-    if let Some((prefix, grouped)) = command.raw.rsplit_once("&&") {
-        let mut inner = grouped.trim();
+    if unwrapped != command.raw.trim() {
+        let inner_invocations = parse_invocations(unwrapped);
+        let misrouted = artifact_command_targets_misrouted(request, &inner_invocations);
+        if misrouted
+            || inner_invocations
+                .iter()
+                .all(|invocation| !invocation.unresolved_nested)
+        {
+            return misrouted;
+        }
+    }
+    if let Some((prefix, grouped)) = command.raw.match_indices("&&").find_map(|(index, _)| {
+        let grouped = command.raw[index + 2..].trim();
+        (grouped.starts_with('(') && grouped.ends_with(')'))
+            .then_some((&command.raw[..index], grouped))
+    }) {
+        let mut inner = grouped;
         while let Some(body) = inner
             .strip_prefix('(')
             .and_then(|body| body.strip_suffix(')'))
         {
             inner = body.trim();
         }
-        if inner != grouped.trim() {
+        if inner != grouped {
             let mut invocations = parse_invocations(prefix);
             invocations.extend(parse_invocations(inner));
-            if artifact_command_targets_misrouted(request, &invocations) {
-                return true;
+            let misrouted = artifact_command_targets_misrouted(request, &invocations);
+            if misrouted
+                || invocations
+                    .iter()
+                    .all(|invocation| !invocation.unresolved_nested)
+            {
+                return misrouted;
             }
         }
     }
