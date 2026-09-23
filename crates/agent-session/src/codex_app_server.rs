@@ -3937,10 +3937,12 @@ fn client_observation(value: &Value) -> Option<Value> {
             json_id_key(id)?;
             let system_ephemeral = value.pointer("/params/ephemeral").and_then(Value::as_bool)
                 == Some(true)
-                && value
-                    .pointer("/params/threadSource")
-                    .and_then(Value::as_str)
-                    == Some("system");
+                && matches!(
+                    value
+                        .pointer("/params/threadSource")
+                        .and_then(Value::as_str),
+                    Some("system" | "thread_title")
+                );
             json!({
                 "id": id,
                 "method": "thread/start",
@@ -7777,7 +7779,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
             "method": "thread/start",
             "params": {
                 "ephemeral": true,
-                "threadSource": "system",
+                "threadSource": "thread_title",
                 "model": "must-not-leave-the-adapter"
             }
         }))
@@ -7789,6 +7791,17 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
                 "method": "thread/start",
                 "params": { "systemEphemeral": true }
             })
+        );
+        assert_eq!(
+            client_observation(&json!({
+                "id": 6,
+                "method": "thread/start",
+                "params": { "ephemeral": true, "threadSource": "user" }
+            }))
+            .unwrap()
+            .pointer("/params/systemEphemeral"),
+            Some(&json!(false)),
+            "user-created ephemeral threads must still enforce the primary binding"
         );
         observer.observe_client(&record, &auxiliary_start).unwrap();
         observer
