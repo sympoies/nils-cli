@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -33,6 +33,7 @@ const GOVERNED_COMMIT_TOOL: &str = "runtime_kit_governed_commit";
 const LEASE_SCHEMA: &str = "agent-hook.dsh-checkout-lease.v1";
 const DEFAULT_BRANCH_SCHEMA: &str = "agent-hook.dsh-default-branch.v2";
 const LEASE_TTL_SECONDS: u64 = 8 * 60 * 60;
+const ARTIFACT_ROUTE_CONTEXT: &str = "Agent artifacts must use an allocated path outside the checkout. Run `agent-out project --topic <topic> --mkdir --format json`, then write inside its `result.path`. Never create an `agent-out` directory. Repo-local `.cache/` allows only `.cache/agent-validation/` markers.";
 
 pub(crate) struct Outcome {
     pub(crate) action: DecisionAction,
@@ -115,9 +116,15 @@ struct ParsedCommand<'a> {
 /// the explanation as context.
 fn unclassifiable(
     group: DshCapabilityGroup,
+    request: &NormalizedRequest,
     command: Option<&ParsedCommand<'_>>,
     guidance: &ShellGuidance,
 ) -> Outcome {
+    if group == DshCapabilityGroup::PortablePathsScan
+        && command.is_some_and(|command| artifact_unclassifiable_subject(request, command))
+    {
+        return Outcome::block_with_context(group, ARTIFACT_ROUTE_CONTEXT);
+    }
     match group.tier() {
         DshTier::Integrity => Outcome::block_with_context(group, guidance.blocked),
         DshTier::GovernedSeam => {
@@ -135,6 +142,184 @@ fn unclassifiable(
             }
         }
     }
+}
+
+fn artifact_unclassifiable_subject(
+    request: &NormalizedRequest,
+    command: &ParsedCommand<'_>,
+) -> bool {
+    if artifact_command_targets_misrouted(request, command.invocations) {
+        return true;
+    }
+    let mut unwrapped = command.raw.trim();
+    while let Some(inner) = unwrapped
+        .strip_prefix('(')
+        .and_then(|body| body.strip_suffix(')'))
+    {
+        unwrapped = inner.trim();
+    }
+    if unwrapped != command.raw.trim() {
+        let inner_invocations = parse_invocations(unwrapped);
+        let misrouted = artifact_command_targets_misrouted(request, &inner_invocations);
+        if misrouted
+            || inner_invocations
+                .iter()
+                .all(|invocation| !invocation.unresolved_nested)
+        {
+            return misrouted;
+        }
+    }
+    if let Some((prefix, grouped)) = command.raw.match_indices("&&").find_map(|(index, _)| {
+        let grouped = command.raw[index + 2..].trim();
+        (grouped.starts_with('(') && grouped.ends_with(')'))
+            .then_some((&command.raw[..index], grouped))
+    }) {
+        let mut inner = grouped;
+        while let Some(body) = inner
+            .strip_prefix('(')
+            .and_then(|body| body.strip_suffix(')'))
+        {
+            inner = body.trim();
+        }
+        if inner != grouped {
+            let mut invocations = parse_invocations(prefix);
+            invocations.extend(parse_invocations(inner));
+            let misrouted = artifact_command_targets_misrouted(request, &invocations);
+            if misrouted
+                || invocations
+                    .iter()
+                    .all(|invocation| !invocation.unresolved_nested)
+            {
+                return misrouted;
+            }
+        }
+    }
+    if command.raw.contains("||")
+        && shell_write_targets(command.invocations)
+            .artifact_candidates
+            .iter()
+            .any(|target| artifact_candidate_is_misrouted(request, Path::new(""), target))
+    {
+        return true;
+    }
+    if !command
+        .invocations
+        .iter()
+        .any(|invocation| invocation.unresolved_nested && invocation.words.is_empty())
+    {
+        return false;
+    }
+    let words = shell_words(command.raw).map(unquote).collect::<Vec<_>>();
+    let may_write = words.iter().any(|word| {
+        matches!(
+            basename(word),
+            "mkdir"
+                | "touch"
+                | "cp"
+                | "mv"
+                | "install"
+                | "rsync"
+                | "tee"
+                | "truncate"
+                | "dd"
+                | "sed"
+                | "patch"
+        )
+    }) || command.raw.contains('>');
+    may_write
+        && words
+            .iter()
+            .any(|word| artifact_path_is_misrouted(request, Path::new(word)))
+}
+
+fn artifact_command_targets_misrouted(
+    request: &NormalizedRequest,
+    invocations: &[Invocation],
+) -> bool {
+    let mut shell_cwd = PathBuf::new();
+    let mut directory_stack = Vec::new();
+    for invocation in invocations {
+        let executable = invocation.words.first().map(|word| basename(word));
+        if matches!(executable, Some("cd" | "pushd")) {
+            let mut index = 1;
+            while invocation
+                .words
+                .get(index)
+                .is_some_and(|word| matches!(word.as_str(), "-L" | "-P" | "-e"))
+            {
+                index += 1;
+            }
+            if invocation.words.get(index).is_some_and(|word| word == "--") {
+                index += 1;
+            }
+            if let Some(path) = invocation
+                .words
+                .get(index)
+                .filter(|path| !path.starts_with('-'))
+            {
+                if executable == Some("pushd") {
+                    directory_stack.push(shell_cwd.clone());
+                }
+                let path = Path::new(path);
+                shell_cwd = if path.is_absolute() {
+                    path.to_path_buf()
+                } else {
+                    shell_cwd.join(path)
+                };
+            }
+            continue;
+        }
+        if executable == Some("popd") {
+            if let Some(previous) = directory_stack.pop() {
+                shell_cwd = previous;
+            }
+            continue;
+        }
+        let effective_cwd = invocation
+            .cwd_override
+            .as_ref()
+            .map_or_else(|| shell_cwd.clone(), |path| shell_cwd.join(path));
+        let targets = shell_write_targets(std::slice::from_ref(invocation));
+        if targets
+            .artifact_candidates
+            .iter()
+            .any(|target| artifact_candidate_is_misrouted(request, &effective_cwd, target))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn artifact_candidate_is_misrouted(
+    request: &NormalizedRequest,
+    cwd: &Path,
+    candidate: &str,
+) -> bool {
+    let expanded = candidate
+        .strip_prefix("$PWD/")
+        .or_else(|| candidate.strip_prefix("${PWD}/"))
+        .unwrap_or(candidate);
+    if artifact_path_is_misrouted(request, &cwd.join(expanded)) {
+        return true;
+    }
+    let Some(open) = expanded.find('{') else {
+        return false;
+    };
+    let Some(close) = expanded[open + 1..].find('}').map(|index| open + 1 + index) else {
+        return false;
+    };
+    let alternatives = expanded[open + 1..close].split(',').collect::<Vec<_>>();
+    alternatives.len() <= 16
+        && alternatives.into_iter().any(|alternative| {
+            let path = format!(
+                "{}{}{}",
+                &expanded[..open],
+                alternative,
+                &expanded[close + 1..]
+            );
+            artifact_path_is_misrouted(request, &cwd.join(path))
+        })
 }
 
 fn python_advisory(group: DshCapabilityGroup, manager: &str) -> Outcome {
@@ -209,7 +394,7 @@ fn evaluate_group(
 ) -> Result<Outcome, HookError> {
     let invocations = if command_dependent(group, request) {
         let Some(command) = command(raw) else {
-            return Ok(unclassifiable(group, None, &SHELL_COMMAND_INVALID));
+            return Ok(unclassifiable(group, request, None, &SHELL_COMMAND_INVALID));
         };
         let invocations = parse_invocations(&command);
         if group == DshCapabilityGroup::BlockDirectPython {
@@ -230,6 +415,7 @@ fn evaluate_group(
         {
             return Ok(unclassifiable(
                 group,
+                request,
                 Some(&parsed),
                 &SHELL_COMMAND_UNCLASSIFIABLE,
             ));
@@ -237,6 +423,7 @@ fn evaluate_group(
         if sequential_shell_context_unknown(&invocations) {
             return Ok(unclassifiable(
                 group,
+                request,
                 Some(&parsed),
                 &SHELL_CONTEXT_UNCLASSIFIABLE,
             ));
@@ -540,6 +727,7 @@ fn is_memory_note_path(path: &str) -> bool {
 #[derive(Default)]
 struct ShellWriteTargets {
     literal: Vec<String>,
+    artifact_candidates: Vec<String>,
     unresolved: bool,
     indeterminate: Vec<Vec<String>>,
 }
@@ -547,6 +735,9 @@ struct ShellWriteTargets {
 impl ShellWriteTargets {
     fn push(&mut self, candidate: &str) {
         let candidate = candidate.trim_matches([',', ':']);
+        if !candidate.is_empty() {
+            self.artifact_candidates.push(candidate.to_string());
+        }
         if candidate.is_empty() || dynamic(candidate) {
             self.unresolved = true;
         } else {
@@ -605,9 +796,21 @@ fn shell_write_targets(invocations: &[Invocation]) -> ShellWriteTargets {
             continue;
         };
         match executable {
-            "cp" | "mv" | "install" => modeled_copy_targets(words, &mut targets),
+            "cp" | "mv" => modeled_copy_targets(words, &mut targets),
+            "install"
+                if words.iter().skip(1).any(|word| {
+                    word == "--directory"
+                        || (word.starts_with('-')
+                            && !word.starts_with("--")
+                            && word[1..].contains('d'))
+                }) =>
+            {
+                modeled_created_paths(words, &mut targets);
+            }
+            "install" => modeled_copy_targets(words, &mut targets),
             "rsync" => modeled_last_operand_target(words, &mut targets),
-            "tee" | "touch" | "truncate" => {
+            "touch" | "mkdir" => modeled_created_paths(words, &mut targets),
+            "tee" | "truncate" => {
                 let mut found = false;
                 for target in words.iter().skip(1).filter(|word| !word.starts_with('-')) {
                     found = true;
@@ -635,16 +838,11 @@ fn shell_write_targets(invocations: &[Invocation]) -> ShellWriteTargets {
                         || word.starts_with("--in-place=")
                 }) =>
             {
-                let mut found = false;
-                for target in words.iter().skip(1).filter(|word| !word.starts_with('-')) {
-                    found = true;
-                    targets.push(target);
-                }
-                if !found {
-                    targets.unresolved = true;
-                }
+                modeled_sed_in_place_targets(words, &mut targets);
             }
-            "patch" | "ed" | "ex" | "vi" | "vim" | "nvim" | "emacs" => {
+            "patch" => modeled_patch_targets(words, &mut targets),
+            "vi" | "vim" | "nvim" => modeled_editor_targets(words, &mut targets),
+            "ed" | "ex" | "emacs" => {
                 let mut found = false;
                 for target in words.iter().skip(1).filter(|word| !word.starts_with('-')) {
                     found = true;
@@ -672,6 +870,140 @@ fn shell_write_targets(invocations: &[Invocation]) -> ShellWriteTargets {
         }
     }
     targets
+}
+
+fn modeled_created_paths(words: &[String], targets: &mut ShellWriteTargets) {
+    let touch = words.first().is_some_and(|word| basename(word) == "touch");
+    let mut index = 1;
+    while index < words.len() {
+        let word = words[index].as_str();
+        if word == "--" {
+            for path in &words[index + 1..] {
+                targets.push(path);
+            }
+            break;
+        }
+        let takes_value = if touch {
+            matches!(
+                word,
+                "-d" | "--date" | "-r" | "--reference" | "-t" | "--time"
+            )
+        } else {
+            matches!(word, "-m" | "--mode" | "-Z" | "--context")
+        };
+        if takes_value {
+            index += 2;
+            continue;
+        }
+        if word.starts_with('-') && word != "-" {
+            index += 1;
+            continue;
+        }
+        targets.push(word);
+        index += 1;
+    }
+}
+
+fn modeled_sed_in_place_targets(words: &[String], targets: &mut ShellWriteTargets) {
+    let mut has_script_option = false;
+    let mut operands = Vec::new();
+    let mut index = 1;
+    while index < words.len() {
+        let word = words[index].as_str();
+        if word == "--" {
+            operands.extend(words[index + 1..].iter().map(String::as_str));
+            break;
+        }
+        if matches!(word, "-e" | "--expression" | "-f" | "--file") {
+            has_script_option = true;
+            index += 2;
+            continue;
+        }
+        if word.starts_with("--expression=")
+            || word.starts_with("--file=")
+            || (word.starts_with("-e") && word.len() > 2)
+            || (word.starts_with("-f") && word.len() > 2)
+        {
+            has_script_option = true;
+            index += 1;
+            continue;
+        }
+        if word.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        operands.push(word);
+        index += 1;
+    }
+    let files = if has_script_option {
+        &operands[..]
+    } else {
+        operands.get(1..).unwrap_or_default()
+    };
+    if files.is_empty() {
+        targets.unresolved = true;
+    }
+    for file in files {
+        targets.push(file);
+    }
+}
+
+fn modeled_patch_targets(words: &[String], targets: &mut ShellWriteTargets) {
+    let mut positional = Vec::new();
+    let mut index = 1;
+    while index < words.len() {
+        let word = words[index].as_str();
+        if word == "--" {
+            positional.extend(words[index + 1..].iter().map(String::as_str));
+            break;
+        }
+        if matches!(
+            word,
+            "-i" | "--input" | "-p" | "--strip" | "-d" | "--directory"
+        ) {
+            index += 2;
+            continue;
+        }
+        if matches!(word, "-o" | "--output" | "-r" | "--reject-file") {
+            if let Some(path) = words.get(index + 1) {
+                targets.push(path);
+            }
+            index += 2;
+            continue;
+        }
+        if word.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        positional.push(word);
+        index += 1;
+    }
+    if let Some(file) = positional.first() {
+        targets.push(file);
+    }
+}
+
+fn modeled_editor_targets(words: &[String], targets: &mut ShellWriteTargets) {
+    let mut index = 1;
+    while index < words.len() {
+        let word = words[index].as_str();
+        if word == "--" {
+            for file in &words[index + 1..] {
+                targets.push(file);
+            }
+            break;
+        }
+        if matches!(word, "-u" | "-U" | "-S" | "-c" | "--cmd") {
+            index += 2;
+            continue;
+        }
+        if word.starts_with('-') || word.starts_with('+') {
+            index += 1;
+            continue;
+        }
+        targets.push(word);
+        index += 1;
+    }
 }
 
 fn modeled_copy_targets(words: &[String], targets: &mut ShellWriteTargets) {
@@ -1095,6 +1427,15 @@ fn portable_paths_scan(
     invocations: &[Invocation],
 ) -> Result<Outcome, HookError> {
     let group = DshCapabilityGroup::PortablePathsScan;
+    if request
+        .target_paths
+        .iter()
+        .any(|target| artifact_path_is_misrouted(request, target))
+        || (request.matcher.as_deref() == Some("bash")
+            && artifact_command_targets_misrouted(request, invocations))
+    {
+        return Ok(Outcome::block_with_context(group, ARTIFACT_ROUTE_CONTEXT));
+    }
     let native_target = request
         .target_paths
         .iter()
@@ -1116,6 +1457,59 @@ fn portable_paths_scan(
         }
     }
     Ok(Outcome::allow(group))
+}
+
+fn artifact_path_is_misrouted(request: &NormalizedRequest, target: &Path) -> bool {
+    let Some(workdir) = request.execution_path.as_deref() else {
+        return false;
+    };
+    let named = lexical_absolute_path(workdir, target);
+    let physical = physical_existing_prefix(&named).unwrap_or_else(|| named.clone());
+    if [named.as_path(), physical.as_path()].iter().any(|path| {
+        path.components()
+            .any(|component| component.as_os_str() == "agent-out")
+    }) {
+        return true;
+    }
+    if ![named.as_path(), physical.as_path()].iter().any(|path| {
+        path.components()
+            .any(|component| component.as_os_str() == ".cache")
+    }) {
+        return false;
+    }
+    let Some(layout) = git_layout(workdir) else {
+        return false;
+    };
+    physical
+        .strip_prefix(layout.root.join(".cache"))
+        .ok()
+        .and_then(|relative| relative.components().next())
+        .is_some_and(|component| component.as_os_str() != "agent-validation")
+}
+
+fn lexical_absolute_path(workdir: &Path, target: &Path) -> PathBuf {
+    let joined = if target.is_absolute() {
+        target.to_path_buf()
+    } else {
+        workdir.join(target)
+    };
+    let mut path = PathBuf::new();
+    for component in joined.components() {
+        match component {
+            Component::ParentDir => {
+                path.pop();
+            }
+            Component::CurDir => {}
+            other => path.push(other.as_os_str()),
+        }
+    }
+    path
+}
+
+fn physical_existing_prefix(path: &Path) -> Option<PathBuf> {
+    let existing = path.ancestors().find(|ancestor| ancestor.exists())?;
+    let relative = path.strip_prefix(existing).ok()?;
+    Some(fs::canonicalize(existing).ok()?.join(relative))
 }
 
 fn forge_label_reminder(invocations: &[Invocation]) -> Result<Outcome, HookError> {
@@ -1405,6 +1799,7 @@ fn stop_pre_pr_reminder(
 #[derive(Clone, Debug)]
 struct Invocation {
     words: Vec<String>,
+    cwd_override: Option<String>,
     unresolved_nested: bool,
     output_targets: Vec<String>,
     unresolved_output: bool,
@@ -1461,6 +1856,7 @@ fn visit_source(source: &str, depth: usize, output: &mut Vec<Invocation>) {
     {
         output.push(Invocation {
             words: Vec::new(),
+            cwd_override: None,
             unresolved_nested: true,
             output_targets: Vec::new(),
             unresolved_output: false,
@@ -1470,6 +1866,7 @@ fn visit_source(source: &str, depth: usize, output: &mut Vec<Invocation>) {
     let Some(segments) = shell_segments(source) else {
         output.push(Invocation {
             words: Vec::new(),
+            cwd_override: None,
             unresolved_nested: true,
             output_targets: Vec::new(),
             unresolved_output: false,
@@ -1480,6 +1877,7 @@ fn visit_source(source: &str, depth: usize, output: &mut Vec<Invocation>) {
         let Ok(tokens) = shell_words::split(segment.trim()) else {
             output.push(Invocation {
                 words: Vec::new(),
+                cwd_override: None,
                 unresolved_nested: true,
                 output_targets: Vec::new(),
                 unresolved_output: false,
@@ -1509,6 +1907,7 @@ fn visit_source(source: &str, depth: usize, output: &mut Vec<Invocation>) {
         }) {
             output.push(Invocation {
                 words: Vec::new(),
+                cwd_override: None,
                 unresolved_nested: true,
                 output_targets: Vec::new(),
                 unresolved_output: false,
@@ -1516,12 +1915,14 @@ fn visit_source(source: &str, depth: usize, output: &mut Vec<Invocation>) {
             continue;
         }
         let (output_targets, unresolved_output) = parse_output_redirections(segment.trim());
+        let cwd_override = invocation_env_chdir(&tokens);
         let (words, nested, unresolved_nested) = unwrap_invocation(tokens);
         if words.is_empty() && nested.is_none() && !unresolved_nested {
             continue;
         }
         output.push(Invocation {
             words: words.clone(),
+            cwd_override,
             unresolved_nested: unresolved_nested
                 || words
                     .first()
@@ -1534,6 +1935,7 @@ fn visit_source(source: &str, depth: usize, output: &mut Vec<Invocation>) {
             if depth == MAX_PARSE_DEPTH {
                 output.push(Invocation {
                     words: Vec::new(),
+                    cwd_override: None,
                     unresolved_nested: true,
                     output_targets: Vec::new(),
                     unresolved_output: false,
@@ -1901,6 +2303,53 @@ fn shell_word_end(source: &str, start: usize) -> Option<usize> {
     (quote.is_none() && !escaped && index > start).then_some(index)
 }
 
+fn invocation_env_chdir(tokens: &[String]) -> Option<String> {
+    let mut index = 0;
+    while tokens
+        .get(index)
+        .is_some_and(|word| assignment(word).is_some())
+    {
+        index += 1;
+    }
+    let mut cwd = PathBuf::new();
+    let mut changed = false;
+    while tokens
+        .get(index)
+        .is_some_and(|word| basename(word) == "env")
+    {
+        index += 1;
+        while let Some(word) = tokens.get(index) {
+            if word == "--" {
+                index += 1;
+                break;
+            }
+            let chdir = if matches!(word.as_str(), "-C" | "--chdir") {
+                index += 1;
+                tokens.get(index).map(String::as_str)
+            } else {
+                word.strip_prefix("--chdir=")
+                    .or_else(|| word.strip_prefix("-C").filter(|path| !path.is_empty()))
+            };
+            if let Some(path) = chdir {
+                cwd = cwd.join(path);
+                changed = true;
+                index += 1;
+                continue;
+            }
+            if matches!(word.as_str(), "-u" | "--unset" | "-a" | "--argv0") {
+                index += 2;
+                continue;
+            }
+            if word.starts_with('-') || assignment(word).is_some() {
+                index += 1;
+                continue;
+            }
+            break;
+        }
+    }
+    changed.then(|| cwd.to_string_lossy().into_owned())
+}
+
 fn unwrap_invocation(tokens: Vec<String>) -> (Vec<String>, Option<String>, bool) {
     let mut index = 0;
     while index < tokens.len() {
@@ -1958,6 +2407,7 @@ fn unwrap_invocation(tokens: Vec<String>) -> (Vec<String>, Option<String>, bool)
                         || token.starts_with("--chdir=")
                         || token.starts_with("--argv0=")
                         || (token.starts_with("-u") && token.len() > 2)
+                        || (token.starts_with("-C") && token.len() > 2)
                         || matches!(
                             token.as_str(),
                             "-i" | "--ignore-environment" | "-0" | "--null" | "--debug"

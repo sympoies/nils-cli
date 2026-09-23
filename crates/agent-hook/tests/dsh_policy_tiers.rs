@@ -467,6 +467,153 @@ fn content_seams_keep_failing_closed_when_an_unclassifiable_command_names_their_
 }
 
 #[test]
+fn portable_paths_scan_routes_dsh_agent_artifacts_outside_the_checkout() {
+    let fixture = Fixture::new(&policy_for("portable-paths-scan", "downgrade-only"));
+    fs::create_dir(fixture.root.join(".git")).expect("repository marker");
+
+    for command in [
+        "mkdir -p agent-out/rehearsal",
+        "touch .cache/scratch.json",
+        "cp report.json agent-out/rehearsal/report.json",
+        "export EDITOR=vi; mkdir agent-out/rehearsal",
+        "cd .cache && touch scratch.json",
+        "cd -P .cache && touch scratch.json",
+        "cd -- .cache && touch scratch.json",
+        "pushd .cache && touch scratch.json",
+        "env -C .cache touch scratch.json",
+        "env --chdir=.cache touch scratch.json",
+        "env -C.cache touch scratch.json",
+        "env -C . env -C .cache touch scratch.json",
+        "cd definitely-missing || touch .cache/scratch.json",
+        "(cd .cache; touch scratch.json)",
+        "((cd .cache; touch scratch.json))",
+        "cd .cache && (touch scratch.json)",
+        "cd .cache && ((touch scratch.json))",
+        "cd .cache && (echo ready && touch scratch.json)",
+        "install -d agent-out/rehearsal",
+        "install --directory .cache/scratch",
+        "install -dm755 agent-out/rehearsal",
+        "mkdir -p agent-out/$topic",
+        "mkdir agent-{out,tmp}",
+        "touch .cache/$name",
+        "touch \"$PWD/.cache/scratch.json\"",
+        "touch \"${PWD}/.cache/scratch.json\"",
+        "mkdir agent-out/{logs,reports}",
+        "mkdir \"$PWD/agent-out/rehearsal\"",
+        "mkdir ~/agent-out/rehearsal",
+        "sed -i 's/foo/bar/' agent-out/README.md",
+        "bash -c 'touch agent-out/rehearsal/report.json'",
+    ] {
+        let (code, envelope) = dispatch(&fixture, "dsh-session-1", command);
+        assert_eq!(code, 1, "command={command} envelope={envelope}");
+        assert_eq!(envelope["data"]["action"], "block");
+        assert_eq!(
+            envelope["data"]["reasons"][0]["code"],
+            "portable-paths-scan"
+        );
+        assert!(
+            envelope["data"]["context"]
+                .as_str()
+                .expect("artifact route")
+                .contains("agent-out project"),
+            "command={command} envelope={envelope}"
+        );
+    }
+
+    let (code, envelope) = dispatch(
+        &fixture,
+        "dsh-session-2",
+        "mkdir -p .cache/agent-validation && touch .cache/agent-validation/marker.json",
+    );
+    assert_eq!(code, 0, "sanctioned marker path: {envelope}");
+    assert_eq!(envelope["data"]["action"], "allow");
+
+    for command in [
+        "ls agent-out",
+        "touch -r agent-out/reference.md notes.md",
+        "touch /tmp/.cache/scratch.json",
+        "export EDITOR=vi; touch -r agent-out/reference.md notes.md",
+        "cd /tmp/.cache && touch scratch.json",
+        "cd /tmp/.cache && (touch scratch.json)",
+        "pushd /tmp/.cache && touch scratch.json",
+        "env -C/tmp/.cache touch scratch.json",
+        "cd /tmp && touch .cache/scratch.json",
+        "mkdir report-{one,two}",
+        "sed -i 's/foo/agent-out/' README.md",
+        "patch -i agent-out/change.patch notes.txt",
+        "vim -u agent-out/vimrc notes.md",
+        "cp agent-out/$name notes.json",
+        "install source.json notes.json",
+        "bash -c 'ls agent-out'",
+        "bash -c 'touch -r agent-out/reference.md notes.md'",
+        "bash -c 'cp agent-out/source.json notes.json'",
+        "(cp agent-out/source.json notes.json)",
+        "(cd /tmp; cp agent-out/source.json notes.json)",
+        "cd /tmp && (cp agent-out/source.json notes.json)",
+        "cd /tmp && (echo ready && cp agent-out/source.json notes.json)",
+    ] {
+        let (code, envelope) = dispatch(&fixture, "dsh-session-3", command);
+        assert_eq!(
+            code, 0,
+            "read-only or out-of-repo path: {command} {envelope}"
+        );
+        assert_ne!(envelope["data"]["action"], "block");
+    }
+
+    fs::create_dir(fixture.root.join("agent-out")).expect("guarded directory");
+    std::os::unix::fs::symlink(fixture.root.join("agent-out"), fixture.root.join("notes"))
+        .expect("alias into guarded directory");
+    let (code, envelope) = dispatch(&fixture, "dsh-session-4", "touch notes/leaked.json");
+    assert_eq!(code, 1, "symlink alias into guarded path: {envelope}");
+}
+
+#[test]
+fn portable_paths_scan_routes_native_dsh_writes_and_preserves_marker_path() {
+    let policy = policy_for("portable-paths-scan", "downgrade-only")
+        .replace("matcher = \"bash\"", "matcher = \"write\"");
+    let fixture = Fixture::new(&policy);
+    fs::create_dir(fixture.root.join(".git")).expect("repository marker");
+
+    for relative in ["agent-out/report.md", ".cache/scratch/report.md"] {
+        let mut payload: Value =
+            serde_json::from_str(&request(&fixture, "dsh-session-1", "")).expect("DSH request");
+        payload["tool"] = json!({
+            "name": "write",
+            "arguments": {
+                "file_path": fixture.root.join(relative),
+                "content": "report"
+            }
+        });
+        let output = fixture.run(
+            &["dispatch", "--product", "dsh", "--format", "json"],
+            Some(&payload.to_string()),
+        );
+        assert_eq!(
+            output.code,
+            1,
+            "target={relative} envelope={}",
+            output.stdout_text()
+        );
+        assert_eq!(output.stdout_json()["data"]["action"], "block");
+    }
+
+    let mut marker: Value =
+        serde_json::from_str(&request(&fixture, "dsh-session-2", "")).expect("DSH request");
+    marker["tool"] = json!({
+        "name": "write",
+        "arguments": {
+            "file_path": fixture.root.join(".cache/agent-validation/project-dev.ok"),
+            "content": "ready"
+        }
+    });
+    let output = fixture.run(
+        &["dispatch", "--product", "dsh", "--format", "json"],
+        Some(&marker.to_string()),
+    );
+    assert_eq!(output.code, 0, "marker path: {}", output.stdout_text());
+}
+
+#[test]
 fn a_natural_context_under_an_advise_rule_is_not_reported_as_a_downgrade() {
     let fixture = Fixture::new(&policy_for("block-direct-git-commit", "downgrade-only"));
     add_override(&fixture, RULE_ID, "advise");
