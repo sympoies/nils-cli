@@ -159,6 +159,22 @@ fn artifact_unclassifiable_subject(
     {
         return artifact_command_targets_misrouted(request, &parse_invocations(inner));
     }
+    if let Some((prefix, grouped)) = command.raw.rsplit_once("&&") {
+        let mut inner = grouped.trim();
+        while let Some(body) = inner
+            .strip_prefix('(')
+            .and_then(|body| body.strip_suffix(')'))
+        {
+            inner = body.trim();
+        }
+        if inner != grouped.trim() {
+            let mut invocations = parse_invocations(prefix);
+            invocations.extend(parse_invocations(inner));
+            if artifact_command_targets_misrouted(request, &invocations) {
+                return true;
+            }
+        }
+    }
     if command.raw.contains("||")
         && shell_write_targets(command.invocations)
             .artifact_candidates
