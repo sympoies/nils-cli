@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -33,6 +33,7 @@ const GOVERNED_COMMIT_TOOL: &str = "runtime_kit_governed_commit";
 const LEASE_SCHEMA: &str = "agent-hook.dsh-checkout-lease.v1";
 const DEFAULT_BRANCH_SCHEMA: &str = "agent-hook.dsh-default-branch.v2";
 const LEASE_TTL_SECONDS: u64 = 8 * 60 * 60;
+const ARTIFACT_ROUTE_CONTEXT: &str = "Agent artifacts must use an allocated path outside the checkout. Run `agent-out project --topic <topic> --mkdir --format json`, then write inside its `result.path`. Never create an `agent-out` directory. Repo-local `.cache/` allows only `.cache/agent-validation/` markers.";
 
 pub(crate) struct Outcome {
     pub(crate) action: DecisionAction,
@@ -115,9 +116,15 @@ struct ParsedCommand<'a> {
 /// the explanation as context.
 fn unclassifiable(
     group: DshCapabilityGroup,
+    request: &NormalizedRequest,
     command: Option<&ParsedCommand<'_>>,
     guidance: &ShellGuidance,
 ) -> Outcome {
+    if group == DshCapabilityGroup::PortablePathsScan
+        && command.is_some_and(|command| artifact_unclassifiable_subject(request, command))
+    {
+        return Outcome::block_with_context(group, ARTIFACT_ROUTE_CONTEXT);
+    }
     match group.tier() {
         DshTier::Integrity => Outcome::block_with_context(group, guidance.blocked),
         DshTier::GovernedSeam => {
@@ -135,6 +142,81 @@ fn unclassifiable(
             }
         }
     }
+}
+
+fn artifact_unclassifiable_subject(
+    request: &NormalizedRequest,
+    command: &ParsedCommand<'_>,
+) -> bool {
+    let mut shell_cwd = PathBuf::new();
+    for invocation in command.invocations {
+        if invocation
+            .words
+            .first()
+            .is_some_and(|word| basename(word) == "cd")
+        {
+            let mut index = 1;
+            while invocation
+                .words
+                .get(index)
+                .is_some_and(|word| matches!(word.as_str(), "-L" | "-P" | "-e"))
+            {
+                index += 1;
+            }
+            if invocation.words.get(index).is_some_and(|word| word == "--") {
+                index += 1;
+            }
+            if let Some(path) = invocation
+                .words
+                .get(index)
+                .filter(|path| !path.starts_with('-'))
+            {
+                let path = Path::new(path);
+                shell_cwd = if path.is_absolute() {
+                    path.to_path_buf()
+                } else {
+                    shell_cwd.join(path)
+                };
+            }
+            continue;
+        }
+        let targets = shell_write_targets(std::slice::from_ref(invocation));
+        if targets
+            .literal
+            .iter()
+            .any(|target| artifact_path_is_misrouted(request, &shell_cwd.join(target)))
+        {
+            return true;
+        }
+    }
+    if !command
+        .invocations
+        .iter()
+        .any(|invocation| invocation.unresolved_nested && invocation.words.is_empty())
+    {
+        return false;
+    }
+    let words = shell_words(command.raw).map(unquote).collect::<Vec<_>>();
+    let may_write = words.iter().any(|word| {
+        matches!(
+            basename(word),
+            "mkdir"
+                | "touch"
+                | "cp"
+                | "mv"
+                | "install"
+                | "rsync"
+                | "tee"
+                | "truncate"
+                | "dd"
+                | "sed"
+                | "patch"
+        )
+    }) || command.raw.contains('>');
+    may_write
+        && words
+            .iter()
+            .any(|word| artifact_path_is_misrouted(request, Path::new(word)))
 }
 
 fn python_advisory(group: DshCapabilityGroup, manager: &str) -> Outcome {
@@ -209,7 +291,7 @@ fn evaluate_group(
 ) -> Result<Outcome, HookError> {
     let invocations = if command_dependent(group, request) {
         let Some(command) = command(raw) else {
-            return Ok(unclassifiable(group, None, &SHELL_COMMAND_INVALID));
+            return Ok(unclassifiable(group, request, None, &SHELL_COMMAND_INVALID));
         };
         let invocations = parse_invocations(&command);
         if group == DshCapabilityGroup::BlockDirectPython {
@@ -230,6 +312,7 @@ fn evaluate_group(
         {
             return Ok(unclassifiable(
                 group,
+                request,
                 Some(&parsed),
                 &SHELL_COMMAND_UNCLASSIFIABLE,
             ));
@@ -237,6 +320,7 @@ fn evaluate_group(
         if sequential_shell_context_unknown(&invocations) {
             return Ok(unclassifiable(
                 group,
+                request,
                 Some(&parsed),
                 &SHELL_CONTEXT_UNCLASSIFIABLE,
             ));
@@ -607,7 +691,8 @@ fn shell_write_targets(invocations: &[Invocation]) -> ShellWriteTargets {
         match executable {
             "cp" | "mv" | "install" => modeled_copy_targets(words, &mut targets),
             "rsync" => modeled_last_operand_target(words, &mut targets),
-            "tee" | "touch" | "truncate" => {
+            "touch" | "mkdir" => modeled_created_paths(words, &mut targets),
+            "tee" | "truncate" => {
                 let mut found = false;
                 for target in words.iter().skip(1).filter(|word| !word.starts_with('-')) {
                     found = true;
@@ -672,6 +757,38 @@ fn shell_write_targets(invocations: &[Invocation]) -> ShellWriteTargets {
         }
     }
     targets
+}
+
+fn modeled_created_paths(words: &[String], targets: &mut ShellWriteTargets) {
+    let touch = words.first().is_some_and(|word| basename(word) == "touch");
+    let mut index = 1;
+    while index < words.len() {
+        let word = words[index].as_str();
+        if word == "--" {
+            for path in &words[index + 1..] {
+                targets.push(path);
+            }
+            break;
+        }
+        let takes_value = if touch {
+            matches!(
+                word,
+                "-d" | "--date" | "-r" | "--reference" | "-t" | "--time"
+            )
+        } else {
+            matches!(word, "-m" | "--mode" | "-Z" | "--context")
+        };
+        if takes_value {
+            index += 2;
+            continue;
+        }
+        if word.starts_with('-') && word != "-" {
+            index += 1;
+            continue;
+        }
+        targets.push(word);
+        index += 1;
+    }
 }
 
 fn modeled_copy_targets(words: &[String], targets: &mut ShellWriteTargets) {
@@ -1095,6 +1212,21 @@ fn portable_paths_scan(
     invocations: &[Invocation],
 ) -> Result<Outcome, HookError> {
     let group = DshCapabilityGroup::PortablePathsScan;
+    let mut artifact_targets = request.target_paths.clone();
+    if request.matcher.as_deref() == Some("bash") {
+        artifact_targets.extend(
+            shell_write_targets(invocations)
+                .literal
+                .into_iter()
+                .map(PathBuf::from),
+        );
+    }
+    if artifact_targets
+        .iter()
+        .any(|target| artifact_path_is_misrouted(request, target))
+    {
+        return Ok(Outcome::block_with_context(group, ARTIFACT_ROUTE_CONTEXT));
+    }
     let native_target = request
         .target_paths
         .iter()
@@ -1116,6 +1248,59 @@ fn portable_paths_scan(
         }
     }
     Ok(Outcome::allow(group))
+}
+
+fn artifact_path_is_misrouted(request: &NormalizedRequest, target: &Path) -> bool {
+    let Some(workdir) = request.execution_path.as_deref() else {
+        return false;
+    };
+    let named = lexical_absolute_path(workdir, target);
+    let physical = physical_existing_prefix(&named).unwrap_or_else(|| named.clone());
+    if [named.as_path(), physical.as_path()].iter().any(|path| {
+        path.components()
+            .any(|component| component.as_os_str() == "agent-out")
+    }) {
+        return true;
+    }
+    if ![named.as_path(), physical.as_path()].iter().any(|path| {
+        path.components()
+            .any(|component| component.as_os_str() == ".cache")
+    }) {
+        return false;
+    }
+    let Some(layout) = git_layout(workdir) else {
+        return false;
+    };
+    physical
+        .strip_prefix(layout.root.join(".cache"))
+        .ok()
+        .and_then(|relative| relative.components().next())
+        .is_some_and(|component| component.as_os_str() != "agent-validation")
+}
+
+fn lexical_absolute_path(workdir: &Path, target: &Path) -> PathBuf {
+    let joined = if target.is_absolute() {
+        target.to_path_buf()
+    } else {
+        workdir.join(target)
+    };
+    let mut path = PathBuf::new();
+    for component in joined.components() {
+        match component {
+            Component::ParentDir => {
+                path.pop();
+            }
+            Component::CurDir => {}
+            other => path.push(other.as_os_str()),
+        }
+    }
+    path
+}
+
+fn physical_existing_prefix(path: &Path) -> Option<PathBuf> {
+    let existing = path.ancestors().find(|ancestor| ancestor.exists())?;
+    let relative = path.strip_prefix(existing).ok()?;
+    Some(fs::canonicalize(existing).ok()?.join(relative))
 }
 
 fn forge_label_reminder(invocations: &[Invocation]) -> Result<Outcome, HookError> {
