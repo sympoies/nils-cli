@@ -1,4 +1,4 @@
-//! Governed creation of a new private Forgejo repository and signed root commit.
+//! Governed creation or adoption of an empty repository and signed root commit.
 
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions};
@@ -12,11 +12,15 @@ use nils_common::cli_contract::{OutputFormat, schema_version_for};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::backend::{ProcessOutputError, output_with_limits, redact_and_tail};
-use crate::cli::{BINARY, GlobalFlags, RepoBootstrapArgs, RepoBootstrapOwnerKind};
+use crate::backend::{BackendProgram, ProcessOutputError, output_with_limits, redact_and_tail};
+use crate::cli::{
+    BINARY, GlobalFlags, ProviderFlag, RepoBootstrapArgs, RepoBootstrapOwnerKind,
+    RepoBootstrapVisibility,
+};
 use crate::envelope::emit_success;
 use crate::error::ForgeError;
 use crate::forgejo::ForgejoClient;
+use crate::provider::{Provider, ProviderContext};
 
 const RECEIPT_SCHEMA: &str = "forge-cli.repo-bootstrap.receipt.v1";
 const MAX_RECEIPT_BYTES: usize = 256 * 1024;
@@ -27,6 +31,11 @@ const PROCESS_TIMEOUT: Duration = Duration::from_secs(120);
 const PROCESS_OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
 const GIT_BIN_ENV: &str = "FORGE_CLI_GIT_BIN";
 const SEMANTIC_COMMIT_BIN_ENV: &str = "FORGE_CLI_SEMANTIC_COMMIT_BIN";
+const GITHUB_PUSH_TOKEN_ENV: &str = "FORGE_CLI_BOOTSTRAP_GITHUB_TOKEN";
+
+fn default_private() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -42,8 +51,14 @@ struct ReceiptFile {
 struct BootstrapReceipt {
     schema_version: String,
     provider: String,
+    #[serde(default)]
+    host: String,
     repository: String,
     owner_kind: RepoBootstrapOwnerKind,
+    #[serde(default = "default_private")]
+    private: bool,
+    #[serde(default)]
+    existing_empty: bool,
     default_branch: String,
     message: String,
     reason: String,
@@ -60,6 +75,8 @@ struct BootstrapReceipt {
 #[derive(Debug, Serialize)]
 struct BootstrapPayload {
     provider: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host: Option<String>,
     repository: String,
     private: bool,
     default_branch: String,
@@ -84,16 +101,19 @@ struct BootstrapDryRunFile {
 struct BootstrapDryRunPayload {
     dry_run: bool,
     provider: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host: Option<String>,
     repository: String,
     owner_kind: RepoBootstrapOwnerKind,
     private: bool,
+    existing_empty: bool,
     auto_init: bool,
     default_branch: String,
     message: String,
     authorization_validated: bool,
     resume: bool,
     files: Vec<BootstrapDryRunFile>,
-    steps: [&'static str; 5],
+    steps: Vec<&'static str>,
 }
 
 #[derive(Debug)]
@@ -111,31 +131,544 @@ struct ProcessResult {
     stderr: String,
 }
 
+struct PushAuth<'a> {
+    token_env: &'a str,
+    username: &'a str,
+    token: Option<String>,
+}
+
+enum BootstrapBackend {
+    Forgejo(ForgejoClient),
+    Github(GithubClient),
+}
+
+struct GithubClient {
+    context: ProviderContext,
+}
+
+impl BootstrapBackend {
+    fn from_global(global: &GlobalFlags) -> Result<Self, ForgeError> {
+        if matches!(global.provider, Some(ProviderFlag::Github)) {
+            return Ok(Self::Github(GithubClient::from_global(global)?));
+        }
+        Ok(Self::Forgejo(ForgejoClient::from_global(global)?))
+    }
+
+    fn host(&self) -> Option<&str> {
+        match self {
+            Self::Forgejo(_) => None,
+            Self::Github(client) => Some(&client.context.host),
+        }
+    }
+
+    fn discover_version(&self) -> Result<(), ForgeError> {
+        match self {
+            Self::Forgejo(client) => client.discover_version(),
+            Self::Github(_) => Ok(()),
+        }
+    }
+
+    fn authenticated_user(&self) -> Result<String, ForgeError> {
+        match self {
+            Self::Forgejo(client) => client.authenticated_user(),
+            Self::Github(client) => client.authenticated_user(),
+        }
+    }
+
+    fn repo_optional(
+        &self,
+        owner: &str,
+        repo: &str,
+    ) -> Result<Option<serde_json::Value>, ForgeError> {
+        match self {
+            Self::Forgejo(client) => client.repo_optional(owner, repo),
+            Self::Github(client) => client.api_optional(&format!("repos/{owner}/{repo}")),
+        }
+    }
+
+    fn repo(&self, owner: &str, repo: &str) -> Result<serde_json::Value, ForgeError> {
+        match self {
+            Self::Forgejo(client) => client.repo(owner, repo),
+            Self::Github(client) => client.api_json(&format!("repos/{owner}/{repo}"), &[]),
+        }
+    }
+
+    fn create_repo(
+        &self,
+        kind: RepoBootstrapOwnerKind,
+        owner: &str,
+        repo: &str,
+        private: bool,
+    ) -> Result<(), ForgeError> {
+        match self {
+            Self::Forgejo(client) => client.create_repo(kind, owner, repo).map(|_| ()),
+            Self::Github(client) => client.create_repo(kind, owner, repo, private),
+        }
+    }
+
+    fn branch_optional(
+        &self,
+        owner: &str,
+        repo: &str,
+        branch: &str,
+    ) -> Result<Option<serde_json::Value>, ForgeError> {
+        match self {
+            Self::Forgejo(client) => client.branch_optional(owner, repo, branch),
+            Self::Github(client) => {
+                client.api_optional(&format!("repos/{owner}/{repo}/git/ref/heads/{branch}"))
+            }
+        }
+    }
+
+    fn branch_sha(&self, value: Option<serde_json::Value>) -> Result<Option<String>, ForgeError> {
+        match self {
+            Self::Forgejo(_) => branch_sha(value),
+            Self::Github(_) => value
+                .map(|value| {
+                    value
+                        .pointer("/object/sha")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                        .ok_or_else(|| software("GitHub branch read-back omitted object.sha"))
+                })
+                .transpose(),
+        }
+    }
+
+    fn remote_empty(&self, owner: &str, repo: &str) -> Result<bool, ForgeError> {
+        match self {
+            Self::Forgejo(client) => client
+                .repo(owner, repo)?
+                .get("empty")
+                .and_then(serde_json::Value::as_bool)
+                .ok_or_else(|| software("Forgejo repository read-back omitted empty")),
+            Self::Github(client) => client.empty_refs(owner, repo),
+        }
+    }
+
+    fn parse_repo_snapshot(
+        &self,
+        value: &serde_json::Value,
+        owner: &str,
+        repo: &str,
+        owner_kind: RepoBootstrapOwnerKind,
+        private: bool,
+    ) -> Result<RepoSnapshot, ForgeError> {
+        match self {
+            Self::Forgejo(client) => parse_repo_snapshot(value, client, owner, repo),
+            Self::Github(client) => {
+                client.parse_repo_snapshot(value, owner, repo, owner_kind, private)
+            }
+        }
+    }
+
+    fn verify_final_refs(
+        &self,
+        owner: &str,
+        repo: &str,
+        branch: &str,
+        sha: &str,
+    ) -> Result<(), ForgeError> {
+        match self {
+            Self::Forgejo(_) => Ok(()),
+            Self::Github(client) => client.verify_final_refs(owner, repo, branch, sha),
+        }
+    }
+
+    fn update_default_branch(
+        &self,
+        owner: &str,
+        repo: &str,
+        branch: &str,
+    ) -> Result<(), ForgeError> {
+        match self {
+            Self::Forgejo(client) => client
+                .update_default_branch(owner, repo, branch)
+                .map(|_| ()),
+            Self::Github(client) => client.update_default_branch(owner, repo, branch),
+        }
+    }
+
+    fn commit(&self, owner: &str, repo: &str, sha: &str) -> Result<serde_json::Value, ForgeError> {
+        match self {
+            Self::Forgejo(client) => client.commit(owner, repo, sha),
+            Self::Github(client) => {
+                client.api_json(&format!("repos/{owner}/{repo}/git/commits/{sha}"), &[])
+            }
+        }
+    }
+
+    fn verify_provider_signature(
+        &self,
+        value: &serde_json::Value,
+        sha: &str,
+    ) -> Result<(), ForgeError> {
+        match self {
+            Self::Forgejo(_) => verify_provider_signature(value, sha),
+            Self::Github(_) => {
+                let observed = value.get("sha").and_then(serde_json::Value::as_str);
+                if observed != Some(sha) {
+                    return Err(remote_drift(sha, observed.unwrap_or("<missing>")));
+                }
+                if value
+                    .pointer("/verification/verified")
+                    .and_then(serde_json::Value::as_bool)
+                    != Some(true)
+                {
+                    return Err(validation(
+                        "provider_signature_unverified",
+                        "GitHub did not verify the delivered root commit signature",
+                        None,
+                    ));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn token_env(&self) -> &str {
+        match self {
+            Self::Forgejo(client) => client.token_env(),
+            Self::Github(_) => GITHUB_PUSH_TOKEN_ENV,
+        }
+    }
+
+    fn push_username<'a>(&self, authenticated_login: &'a str) -> &'a str {
+        match self {
+            Self::Forgejo(_) => authenticated_login,
+            Self::Github(_) => "x-access-token",
+        }
+    }
+
+    fn push_token(&self) -> Result<Option<String>, ForgeError> {
+        match self {
+            Self::Forgejo(_) => Ok(None),
+            Self::Github(client) => client.auth_token().map(Some),
+        }
+    }
+}
+
+impl GithubClient {
+    fn from_global(global: &GlobalFlags) -> Result<Self, ForgeError> {
+        let context = crate::provider::detect_unscoped(
+            global.provider_hint(),
+            &global.remote,
+            global.repo.as_deref(),
+            |_| None,
+        )?;
+        if context.provider != Provider::GitHub {
+            return Err(ForgeError::provider_unsupported(
+                error_schema(),
+                "GitHub bootstrap requires a GitHub provider",
+                None,
+            ));
+        }
+        Ok(Self { context })
+    }
+
+    fn run_gh(&self, args: &[OsString]) -> Result<ProcessResult, ForgeError> {
+        run_process(
+            &BackendProgram::Gh.executable(),
+            None,
+            args,
+            &[(
+                OsString::from("GH_HOST"),
+                OsString::from(&self.context.host),
+            )],
+        )
+    }
+
+    fn api_result(&self, endpoint: &str, tail: &[OsString]) -> Result<ProcessResult, ForgeError> {
+        let mut args = vec![OsString::from("api")];
+        self.context.push_github_api_hostname(&mut args);
+        args.push(OsString::from(endpoint));
+        args.extend_from_slice(tail);
+        self.run_gh(&args)
+    }
+
+    fn api_json(&self, endpoint: &str, tail: &[OsString]) -> Result<serde_json::Value, ForgeError> {
+        let result = require_success(
+            self.api_result(endpoint, tail)?,
+            "bootstrap_github_api_failed",
+            "GitHub bootstrap API request failed",
+        )?;
+        serde_json::from_str(&result.stdout).map_err(|error| {
+            unavailable(
+                "bootstrap_github_api_invalid",
+                "GitHub bootstrap API returned invalid JSON",
+                Some(error.to_string()),
+            )
+        })
+    }
+
+    fn api_optional(&self, endpoint: &str) -> Result<Option<serde_json::Value>, ForgeError> {
+        let result = self.api_result(endpoint, &[])?;
+        if result.success {
+            return serde_json::from_str(&result.stdout)
+                .map(Some)
+                .map_err(|error| {
+                    unavailable(
+                        "bootstrap_github_api_invalid",
+                        "GitHub bootstrap API returned invalid JSON",
+                        Some(error.to_string()),
+                    )
+                });
+        }
+        if github_api_status(&result) == Some(404) {
+            return Ok(None);
+        }
+        Err(ForgeError::runtime_failure(
+            error_schema(),
+            "bootstrap_github_api_failed",
+            "GitHub bootstrap API request failed",
+            Some(result.stderr),
+        ))
+    }
+
+    fn authenticated_user(&self) -> Result<String, ForgeError> {
+        self.api_json("user", &[])?
+            .get("login")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| software("GitHub authenticated user response omitted login"))
+    }
+
+    fn empty_refs(&self, owner: &str, repo: &str) -> Result<bool, ForgeError> {
+        let result = self.api_result(&format!("repos/{owner}/{repo}/git/refs"), &[])?;
+        if !result.success {
+            if github_api_status(&result) == Some(409) {
+                let message = serde_json::from_str::<serde_json::Value>(&result.stdout)
+                    .ok()
+                    .and_then(|value| {
+                        value
+                            .get("message")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_string)
+                    });
+                if message.as_deref() == Some("Git Repository is empty.") {
+                    return Ok(true);
+                }
+            }
+            return Err(ForgeError::runtime_failure(
+                error_schema(),
+                "bootstrap_github_refs_failed",
+                "GitHub reference read-back failed",
+                Some(result.stderr),
+            ));
+        }
+        let refs: serde_json::Value = serde_json::from_str(&result.stdout).map_err(|error| {
+            unavailable(
+                "bootstrap_github_api_invalid",
+                "GitHub references response was invalid JSON",
+                Some(error.to_string()),
+            )
+        })?;
+        let refs = refs
+            .as_array()
+            .ok_or_else(|| software("GitHub references response was not an array"))?;
+        Ok(refs.is_empty())
+    }
+
+    fn verify_final_refs(
+        &self,
+        owner: &str,
+        repo: &str,
+        branch: &str,
+        sha: &str,
+    ) -> Result<(), ForgeError> {
+        let refs = self.api_json(&format!("repos/{owner}/{repo}/git/refs"), &[])?;
+        let refs = refs
+            .as_array()
+            .ok_or_else(|| software("GitHub references response was not an array"))?;
+        let expected_ref = format!("refs/heads/{branch}");
+        if refs.len() != 1
+            || refs[0].get("ref").and_then(serde_json::Value::as_str) != Some(expected_ref.as_str())
+            || refs[0]
+                .pointer("/object/sha")
+                .and_then(serde_json::Value::as_str)
+                != Some(sha)
+        {
+            return Err(validation(
+                "remote_drift",
+                "GitHub bootstrap requires exactly the delivered root branch and no other refs",
+                None,
+            ));
+        }
+        Ok(())
+    }
+
+    fn create_repo(
+        &self,
+        kind: RepoBootstrapOwnerKind,
+        owner: &str,
+        repo: &str,
+        private: bool,
+    ) -> Result<(), ForgeError> {
+        let endpoint = match kind {
+            RepoBootstrapOwnerKind::User => "user/repos".to_string(),
+            RepoBootstrapOwnerKind::Org => format!("orgs/{owner}/repos"),
+        };
+        let args = [
+            OsString::from("--method"),
+            OsString::from("POST"),
+            OsString::from("-f"),
+            OsString::from(format!("name={repo}")),
+            OsString::from("-F"),
+            OsString::from(format!("private={private}")),
+            OsString::from("-F"),
+            OsString::from("auto_init=false"),
+        ];
+        self.api_json(&endpoint, &args).map(|_| ())
+    }
+
+    fn parse_repo_snapshot(
+        &self,
+        value: &serde_json::Value,
+        owner: &str,
+        repo: &str,
+        owner_kind: RepoBootstrapOwnerKind,
+        private: bool,
+    ) -> Result<RepoSnapshot, ForgeError> {
+        let observed_owner = value
+            .pointer("/owner/login")
+            .and_then(serde_json::Value::as_str);
+        let observed_name = value.get("name").and_then(serde_json::Value::as_str);
+        let observed_private = value.get("private").and_then(serde_json::Value::as_bool);
+        let observed_owner_kind = value
+            .pointer("/owner/type")
+            .and_then(serde_json::Value::as_str);
+        let expected_owner_kind = match owner_kind {
+            RepoBootstrapOwnerKind::User => "User",
+            RepoBootstrapOwnerKind::Org => "Organization",
+        };
+        let expected_url = format!("https://{}/{owner}/{repo}.git", self.context.host);
+        let clone_url = value.get("clone_url").and_then(serde_json::Value::as_str);
+        if observed_owner != Some(owner)
+            || observed_name != Some(repo)
+            || observed_private != Some(private)
+            || observed_owner_kind != Some(expected_owner_kind)
+            || clone_url != Some(expected_url.as_str())
+        {
+            return Err(validation(
+                "remote_drift",
+                "GitHub repository read-back does not match the requested owner, owner kind, name, visibility, and clone URL",
+                None,
+            ));
+        }
+        Ok(RepoSnapshot {
+            clone_url: expected_url,
+            default_branch: value
+                .get("default_branch")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            empty: self.empty_refs(owner, repo)?,
+        })
+    }
+
+    fn update_default_branch(
+        &self,
+        owner: &str,
+        repo: &str,
+        branch: &str,
+    ) -> Result<(), ForgeError> {
+        let args = [
+            OsString::from("--method"),
+            OsString::from("PATCH"),
+            OsString::from("-f"),
+            OsString::from(format!("default_branch={branch}")),
+        ];
+        self.api_json(&format!("repos/{owner}/{repo}"), &args)
+            .map(|_| ())
+    }
+
+    fn auth_token(&self) -> Result<String, ForgeError> {
+        let args = [
+            OsString::from("auth"),
+            OsString::from("token"),
+            OsString::from("--hostname"),
+            OsString::from(&self.context.host),
+        ];
+        let result = require_success(
+            self.run_gh(&args)?,
+            "bootstrap_github_auth_failed",
+            "failed to retrieve the GitHub credential for the bounded push",
+        )?;
+        let token = result.stdout.trim();
+        if token.is_empty() || token.chars().any(char::is_whitespace) {
+            return Err(validation(
+                "bootstrap_github_auth_invalid",
+                "GitHub credential response was empty or malformed",
+                None,
+            ));
+        }
+        Ok(token.to_string())
+    }
+}
+
+fn github_api_status(result: &ProcessResult) -> Option<u16> {
+    serde_json::from_str::<serde_json::Value>(&result.stdout)
+        .ok()
+        .and_then(|value| value.get("status").cloned())
+        .and_then(|status| {
+            status
+                .as_str()
+                .and_then(|value| value.parse().ok())
+                .or_else(|| status.as_u64().and_then(|value| u16::try_from(value).ok()))
+        })
+}
+
 pub fn run(
     global: &GlobalFlags,
     args: RepoBootstrapArgs,
     format: OutputFormat,
 ) -> Result<i32, ForgeError> {
-    let (owner, repo) = crate::forgejo::repo_parts(global)?;
+    let (owner, repo) = crate::forgejo::repo_parts(global).map_err(|_| {
+        validation(
+            "repo_invalid",
+            "repo bootstrap requires --repo owner/name with safe path components",
+            None,
+        )
+    })?;
     validate_branch(&args.default_branch)?;
     validate_message(&args.message)?;
     let reason = read_small_regular_file(&args.reason_file, MAX_REASON_BYTES, "authorization")?;
     let files = prepare_files(&args.files)?;
     let repository = format!("{owner}/{repo}");
-    let provider = global.named_provider().ok_or_else(|| {
-        ForgeError::provider_unsupported(
-            error_schema(),
-            "repo bootstrap requires a named Forgejo provider",
+    let provider = match global.provider.as_ref() {
+        Some(ProviderFlag::Github) => "github",
+        Some(ProviderFlag::Named(name)) => name.as_str(),
+        _ => {
+            return Err(ForgeError::provider_unsupported(
+                error_schema(),
+                "repo bootstrap requires --provider github or a named Forgejo provider",
+                None,
+            ));
+        }
+    };
+    let is_github = matches!(global.provider, Some(ProviderFlag::Github));
+    let private = args.visibility == RepoBootstrapVisibility::Private;
+    let host = if is_github {
+        Some(GithubClient::from_global(global)?.context.host)
+    } else {
+        None
+    };
+    if !is_github && (!private || args.existing_empty) {
+        return Err(validation(
+            "bootstrap_mode_unsupported",
+            "Forgejo bootstrap supports only creation of a private repository",
             None,
-        )
-    })?;
+        ));
+    }
     if global.dry_run {
         let payload = BootstrapDryRunPayload {
             dry_run: true,
             provider: provider.to_string(),
+            host: host.clone(),
             repository,
             owner_kind: args.owner_kind,
-            private: true,
+            private,
+            existing_empty: args.existing_empty,
             auto_init: false,
             default_branch: args.default_branch,
             message: args.message,
@@ -149,8 +682,14 @@ pub fn run(
                     bytes: file.bytes,
                 })
                 .collect(),
-            steps: [
-                "create_private_empty_repository",
+            steps: vec![
+                if args.existing_empty {
+                    "verify_existing_empty_repository"
+                } else if !is_github {
+                    "create_private_empty_repository"
+                } else {
+                    "create_empty_repository"
+                },
                 "create_signed_zero_parent_root",
                 "push_exact_root_once",
                 "set_default_branch_after_push",
@@ -163,7 +702,8 @@ pub fn run(
             format,
             |payload| {
                 println!(
-                    "would bootstrap private Forgejo repository {} on {} from {} file(s)",
+                    "would bootstrap {} repository {} on {} from {} file(s)",
+                    if payload.private { "private" } else { "public" },
                     payload.repository,
                     payload.default_branch,
                     payload.files.len()
@@ -171,11 +711,16 @@ pub fn run(
             },
         ));
     }
-    let state_dir = bootstrap_state_dir(provider, &owner, &repo)?;
+    let state_dir = bootstrap_state_dir(provider, host.as_deref(), &owner, &repo)?;
     let receipt_path = state_dir.join("receipt.json");
     let checkout = state_dir.join("checkout");
 
-    let client = ForgejoClient::from_global(global)?;
+    let client = BootstrapBackend::from_global(global)?;
+    if client.host() != host.as_deref() {
+        return Err(software(
+            "bootstrap provider authority changed during initialization",
+        ));
+    }
     client.discover_version()?;
     let authenticated_login = client.authenticated_user()?;
     if args.owner_kind == RepoBootstrapOwnerKind::User && authenticated_login != owner {
@@ -189,8 +734,11 @@ pub fn run(
     let expected = BootstrapReceipt {
         schema_version: RECEIPT_SCHEMA.to_string(),
         provider: provider.to_string(),
+        host: host.clone().unwrap_or_default(),
         repository: repository.clone(),
         owner_kind: args.owner_kind,
+        private,
+        existing_empty: args.existing_empty,
         default_branch: args.default_branch.clone(),
         message: args.message.clone(),
         reason,
@@ -225,10 +773,17 @@ pub fn run(
             ));
         }
         None => {
-            if client.repo_optional(&owner, &repo)?.is_some() {
+            let exists = client.repo_optional(&owner, &repo)?.is_some();
+            if exists != args.existing_empty {
                 return Err(validation(
-                    "repository_exists",
-                    format!("Forgejo repository '{repository}' already exists"),
+                    if exists {
+                        "repository_exists"
+                    } else {
+                        "repository_missing"
+                    },
+                    format!(
+                        "repository '{repository}' existence does not match the requested bootstrap mode"
+                    ),
                     None,
                 ));
             }
@@ -239,7 +794,7 @@ pub fn run(
 
     let mut repo_snapshot = client.repo_optional(&owner, &repo)?;
     if repo_snapshot.is_none() {
-        if receipt.remote_created || receipt.complete {
+        if receipt.remote_created || receipt.complete || receipt.existing_empty {
             return Err(validation(
                 "remote_drift",
                 "the durable bootstrap receipt expects a remote repository, but it is absent",
@@ -248,44 +803,47 @@ pub fn run(
         }
         receipt.create_attempted = true;
         persist_receipt(&receipt_path, &receipt)?;
-        let create_result = client.create_repo(args.owner_kind, &owner, &repo);
+        let create_result = client.create_repo(args.owner_kind, &owner, &repo, private);
         repo_snapshot = client.repo_optional(&owner, &repo)?;
         if repo_snapshot.is_none() {
             let detail = create_result.err().map(|error| error.to_string());
             return Err(ForgeError::runtime_failure(
                 error_schema(),
                 "bootstrap_create_failed",
-                "Forgejo repository creation could not be reconciled by exact read-back",
+                "repository creation could not be reconciled by exact read-back",
                 detail,
             ));
         }
         if create_result.is_err() {
             receipt.reconciled = true;
         }
-    } else if !receipt.create_attempted && !receipt.remote_created {
+    } else if !receipt.existing_empty && !receipt.create_attempted && !receipt.remote_created {
         return Err(validation(
             "repository_exists",
-            format!("Forgejo repository '{repository}' appeared before the create attempt"),
+            format!("repository '{repository}' appeared before the create attempt"),
             None,
         ));
     }
 
-    let mut snapshot = parse_repo_snapshot(
+    let mut snapshot = client.parse_repo_snapshot(
         repo_snapshot.as_ref().expect("repository snapshot"),
-        &client,
         &owner,
         &repo,
+        receipt.owner_kind,
+        private,
     )?;
     let existing_branch =
-        branch_sha(client.branch_optional(&owner, &repo, &args.default_branch)?)?;
+        client.branch_sha(client.branch_optional(&owner, &repo, &args.default_branch)?)?;
     if receipt.local_sha.is_none() && (!snapshot.empty || existing_branch.is_some()) {
         return Err(validation(
             "repository_not_empty",
-            "Forgejo bootstrap requires an empty repository with no target branch",
+            "bootstrap requires an empty repository with no target branch",
             None,
         ));
     }
-    receipt.remote_created = true;
+    if !receipt.existing_empty {
+        receipt.remote_created = true;
+    }
     persist_receipt(&receipt_path, &receipt)?;
 
     let local_sha = match receipt.local_sha.clone() {
@@ -312,12 +870,19 @@ pub fn run(
     };
 
     let branch_before_push =
-        branch_sha(client.branch_optional(&owner, &repo, &receipt.default_branch)?)?;
+        client.branch_sha(client.branch_optional(&owner, &repo, &receipt.default_branch)?)?;
     let mut pushed = false;
     match branch_before_push {
         Some(ref observed) if observed == &local_sha => receipt.reconciled = true,
         Some(observed) => return Err(remote_drift(&local_sha, &observed)),
         None => {
+            if !client.remote_empty(&owner, &repo)? {
+                return Err(validation(
+                    "repository_not_empty",
+                    "another ref appeared before the bounded first push",
+                    None,
+                ));
+            }
             receipt.push_attempted = true;
             persist_receipt(&receipt_path, &receipt)?;
             let askpass = write_askpass(&state_dir)?;
@@ -327,11 +892,17 @@ pub fn run(
                 &receipt.default_branch,
                 &local_sha,
                 &askpass,
-                client.token_env(),
-                &authenticated_login,
+                PushAuth {
+                    token_env: client.token_env(),
+                    username: client.push_username(&authenticated_login),
+                    token: client.push_token()?,
+                },
             )?;
-            let observed =
-                branch_sha(client.branch_optional(&owner, &repo, &receipt.default_branch)?)?;
+            let observed = client.branch_sha(client.branch_optional(
+                &owner,
+                &repo,
+                &receipt.default_branch,
+            )?)?;
             match observed {
                 Some(ref observed) if observed == &local_sha => {
                     pushed = push.success;
@@ -355,12 +926,18 @@ pub fn run(
 
     if snapshot.default_branch != receipt.default_branch {
         let update = client.update_default_branch(&owner, &repo, &receipt.default_branch);
-        snapshot = parse_repo_snapshot(&client.repo(&owner, &repo)?, &client, &owner, &repo)?;
+        snapshot = client.parse_repo_snapshot(
+            &client.repo(&owner, &repo)?,
+            &owner,
+            &repo,
+            receipt.owner_kind,
+            private,
+        )?;
         if snapshot.default_branch != receipt.default_branch {
             return Err(ForgeError::runtime_failure(
                 error_schema(),
                 "bootstrap_default_branch_failed",
-                "Forgejo default branch update did not match read-back",
+                "default branch update did not match read-back",
                 update.err().map(|error| error.to_string()),
             ));
         }
@@ -370,28 +947,29 @@ pub fn run(
     }
     receipt.default_branch_set = true;
 
-    let final_branch =
-        branch_sha(client.branch_optional(&owner, &repo, &receipt.default_branch)?)?.ok_or_else(
-            || {
-                ForgeError::runtime_failure(
-                    error_schema(),
-                    "bootstrap_readback_failed",
-                    "Forgejo branch disappeared during final read-back",
-                    None,
-                )
-            },
-        )?;
+    let final_branch = client
+        .branch_sha(client.branch_optional(&owner, &repo, &receipt.default_branch)?)?
+        .ok_or_else(|| {
+            ForgeError::runtime_failure(
+                error_schema(),
+                "bootstrap_readback_failed",
+                "branch disappeared during final read-back",
+                None,
+            )
+        })?;
     if final_branch != local_sha {
         return Err(remote_drift(&local_sha, &final_branch));
     }
-    verify_provider_signature(&client.commit(&owner, &repo, &local_sha)?, &local_sha)?;
+    client.verify_final_refs(&owner, &repo, &receipt.default_branch, &local_sha)?;
+    client.verify_provider_signature(&client.commit(&owner, &repo, &local_sha)?, &local_sha)?;
 
     receipt.complete = true;
     persist_receipt(&receipt_path, &receipt)?;
     let payload = BootstrapPayload {
         provider: provider.to_string(),
+        host,
         repository,
-        private: true,
+        private,
         default_branch: receipt.default_branch.clone(),
         root_commit_sha: local_sha,
         signature_verified: true,
@@ -840,8 +1418,7 @@ fn push_once(
     branch: &str,
     sha: &str,
     askpass: &Path,
-    token_env: &str,
-    username: &str,
+    auth: PushAuth<'_>,
 ) -> Result<ProcessResult, ForgeError> {
     let refspec = format!("{sha}:refs/heads/{branch}");
     let args = [
@@ -862,7 +1439,7 @@ fn push_once(
         clone_url,
         &refspec,
     ];
-    let env = [
+    let mut env = vec![
         (
             OsString::from("GIT_ASKPASS"),
             askpass.as_os_str().to_os_string(),
@@ -871,13 +1448,16 @@ fn push_once(
         (OsString::from("GCM_INTERACTIVE"), OsString::from("never")),
         (
             OsString::from("FORGE_CLI_BOOTSTRAP_TOKEN_ENV"),
-            OsString::from(token_env),
+            OsString::from(auth.token_env),
         ),
         (
             OsString::from("FORGE_CLI_BOOTSTRAP_USERNAME"),
-            OsString::from(username),
+            OsString::from(auth.username),
         ),
     ];
+    if let Some(token) = auth.token {
+        env.push((OsString::from(GITHUB_PUSH_TOKEN_ENV), OsString::from(token)));
+    }
     run_git(checkout, &args, &env)
 }
 
@@ -984,8 +1564,11 @@ fn validate_receipt_inputs(
 ) -> Result<(), ForgeError> {
     if actual.schema_version != RECEIPT_SCHEMA
         || actual.provider != expected.provider
+        || actual.host != expected.host
         || actual.repository != expected.repository
         || actual.owner_kind != expected.owner_kind
+        || actual.private != expected.private
+        || actual.existing_empty != expected.existing_empty
         || actual.default_branch != expected.default_branch
         || actual.message != expected.message
         || actual.reason != expected.reason
@@ -1000,7 +1583,12 @@ fn validate_receipt_inputs(
     Ok(())
 }
 
-fn bootstrap_state_dir(provider: &str, owner: &str, repo: &str) -> Result<PathBuf, ForgeError> {
+fn bootstrap_state_dir(
+    provider: &str,
+    host: Option<&str>,
+    owner: &str,
+    repo: &str,
+) -> Result<PathBuf, ForgeError> {
     let root = match std::env::var_os("XDG_STATE_HOME").filter(|value| !value.is_empty()) {
         Some(value) => PathBuf::from(value),
         None => PathBuf::from(
@@ -1016,11 +1604,11 @@ fn bootstrap_state_dir(provider: &str, owner: &str, repo: &str) -> Result<PathBu
         )
         .join(".local/state"),
     };
-    let dir = root
-        .join("forge-cli/repo-bootstrap")
-        .join(provider)
-        .join(owner)
-        .join(repo);
+    let mut dir = root.join("forge-cli/repo-bootstrap").join(provider);
+    if let Some(host) = host {
+        dir = dir.join(sha256_hex(host.as_bytes()));
+    }
+    let dir = dir.join(owner).join(repo);
     create_private_dir(&dir)?;
     Ok(dir)
 }
@@ -1483,8 +2071,11 @@ mod tests {
         BootstrapReceipt {
             schema_version: RECEIPT_SCHEMA.to_string(),
             provider: "forgejo".to_string(),
+            host: String::new(),
             repository: "acme/widgets".to_string(),
             owner_kind: RepoBootstrapOwnerKind::User,
+            private: true,
+            existing_empty: false,
             default_branch: "main".to_string(),
             message: "chore: bootstrap".to_string(),
             reason: "new private repository".to_string(),
