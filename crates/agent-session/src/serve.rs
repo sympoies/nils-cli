@@ -117,6 +117,19 @@ const PROVIDER_PROMPT_DISCOVERY_MAX_CONCURRENT_SCANS: usize = 4;
 const PROVIDER_PROMPT_RECOVERY_MAX_CONCURRENT_SCANS: usize = 2;
 const MAX_CONCURRENT_AUTO_RESUME_TICKS: usize = 4;
 const MAX_AGENT_LAUNCH_PROFILES: usize = 16;
+// The DSH TUI draws its composer before it accepts pasted input. The ordinary
+// 1.2-second launch delay can submit the prompt during that interval and leave
+// an apparently ready session with no first turn.
+const DSH_TUI_INITIAL_PROMPT_DELAY_MS: u64 = 5_000;
+
+fn initial_prompt_paste_delay_ms(profile_id: Option<&str>) -> u64 {
+    if profile_id == Some("dsh-tui") {
+        DSH_TUI_INITIAL_PROMPT_DELAY_MS
+    } else {
+        cli::DEFAULT_PASTE_DELAY_MS
+    }
+}
+
 /// Upper bound on the `keys` list a single `send` request may carry.
 ///
 /// The list is remote input whose length is otherwise bounded only by the Axum
@@ -6014,7 +6027,9 @@ async fn create_handler(
             .map(|profile| profile.agent_bin.clone()),
         agent_args: body.agent_args,
         coordination_mode: body.coordination_mode,
-        paste_delay_ms: cli::DEFAULT_PASTE_DELAY_MS,
+        paste_delay_ms: initial_prompt_paste_delay_ms(
+            launch_profile.as_ref().map(|profile| profile.id.as_str()),
+        ),
         format: nils_common::cli_contract::OutputFormat::Json,
     };
     match tokio::task::spawn_blocking(move || {
@@ -12966,6 +12981,19 @@ mod tests {
     }
 
     #[test]
+    fn dsh_tui_start_waits_for_its_interactive_composer_before_initial_prompt() {
+        assert_eq!(initial_prompt_paste_delay_ms(Some("dsh-tui")), 5_000);
+        assert_eq!(
+            initial_prompt_paste_delay_ms(None),
+            cli::DEFAULT_PASTE_DELAY_MS
+        );
+        assert_eq!(
+            initial_prompt_paste_delay_ms(Some("other-profile")),
+            cli::DEFAULT_PASTE_DELAY_MS
+        );
+    }
+
+    #[test]
     fn launch_profiles_project_a_valid_dsh_history_adapter_source() {
         let tmp = tempfile::TempDir::new().unwrap();
         let launcher = executable(&tmp.path().join("dsh-launcher"), "#!/bin/sh\nexit 0\n");
@@ -18782,18 +18810,24 @@ esac
         assert_eq!(denied["error"]["code"], "reserved-agent-arg");
         assert!(!log.exists(), "a conflicting TUI argument must not launch");
 
+        let prompt_started = Instant::now();
         let (status, body) = call(
             router(st),
             post_json(
                 "/sessions",
                 Some(TOKEN),
                 json!({
-                    "agent":"hermes", "agent_profile":"dsh-tui", "id":"fresh-dsh", "cwd":cwd
+                    "agent":"hermes", "agent_profile":"dsh-tui", "id":"fresh-dsh", "cwd":cwd,
+                    "prompt":"initial DSH prompt"
                 }),
             ),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "body={body}");
+        assert!(
+            prompt_started.elapsed() >= Duration::from_millis(4_500),
+            "DSH initial prompt must wait for the interactive composer"
+        );
         let provider_id = body["data"]["session"]["provider_resume"]["session_id"]
             .as_str()
             .expect("assigned provider id");
@@ -18801,11 +18835,9 @@ esac
             body["data"]["session"]["provider_resume"]["provider"],
             "dsh"
         );
-        assert!(
-            fs::read_to_string(&log)
-                .unwrap()
-                .contains(&format!("--agent-session-seed {provider_id}"))
-        );
+        let calls = fs::read_to_string(&log).unwrap();
+        assert!(calls.contains(&format!("--agent-session-seed {provider_id}")));
+        assert!(calls.contains("paste-buffer"), "prompt not pasted: {calls}");
         let record: Value = serde_json::from_slice(
             &fs::read(tmp.path().join("sessions/fresh-dsh/session.json")).unwrap(),
         )
