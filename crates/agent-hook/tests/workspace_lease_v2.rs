@@ -753,6 +753,38 @@ fn same_session_resume_recovers_its_own_dirty_target() {
 }
 
 #[test]
+fn a_released_dirty_target_can_pass_to_another_session_without_changing_files() {
+    let fixture = Fixture::new(POLICY);
+    let root = repo(&fixture.root.join("repo-a"));
+    let target = only_target(&write_targets(
+        &fixture,
+        "session-a",
+        "r-owner",
+        &root.join("tracked.txt"),
+    ));
+    let owner = bind(&fixture, "session-a", "b-owner", &target);
+    assert_eq!(owner["kind"], "bound");
+    fs::write(root.join("tracked.txt"), "unfinished\n").expect("unfinished work");
+
+    let active = bind(&fixture, "session-b", "b-active", &target);
+    assert_eq!(active["code"], "WORKSPACE_FOREIGN_ACTIVE");
+    assert_eq!(
+        release(&fixture, "session-a", "rel-owner", &owner)["kind"],
+        "released"
+    );
+
+    let successor = bind(&fixture, "session-b", "b-successor", &target);
+    assert_eq!(successor["kind"], "bound", "successor={successor}");
+    assert_eq!(
+        fs::read_to_string(root.join("tracked.txt")).unwrap(),
+        "unfinished\n"
+    );
+    let former = begin(&fixture, "session-a", "g-former", &owner, &target);
+    assert_eq!(former["kind"], "denied");
+    assert_eq!(former["code"], "WORKSPACE_BINDING_STALE");
+}
+
+#[test]
 fn mixed_protocol_generations_are_rejected_rather_than_reinterpreted() {
     let fixture = Fixture::new(POLICY);
     let root = repo(&fixture.root.join("repo-a"));

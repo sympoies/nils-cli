@@ -956,7 +956,20 @@ fn bind(
             ));
         }
         let identity = managed_identity(&identity)?;
-        if !same_principal_recovery && dirty(identity)? {
+        // A completed owner may hand its unfinished files to the next
+        // session. Release is written only after every operation has a
+        // terminal outcome; an active or merely expired owner is never
+        // transferred. V2 requires the successor's exact resolved target.
+        let released_target_handoff = protocol == ProtocolGeneration::V2
+            && request.target.is_some()
+            && state.as_ref().is_some_and(|existing| {
+                existing.binding.status == BindingStatus::Released
+                    && existing
+                        .operations
+                        .iter()
+                        .all(|operation| operation.status != OperationStatus::Active)
+            });
+        if !same_principal_recovery && !released_target_handoff && dirty(identity)? {
             return Ok(denied(
                 protocol.bind_result_schema(),
                 "dirty",

@@ -2302,6 +2302,22 @@ fn unsafe_default_delivery_preserves_governed_recovery_and_feature_worktrees() {
             output.stdout_text()
         );
     }
+    let staged_from_anchor = fixture.run(
+        &["dispatch", "--product", "dsh", "--format", "json"],
+        Some(&request_for_path(
+            &fixture,
+            "dsh-session-1",
+            &fixture.root,
+            "bash",
+            json!({"command": "git add -- tracked.txt", "workdir": feature}),
+        )),
+    );
+    assert_eq!(
+        staged_from_anchor.code,
+        0,
+        "{}",
+        staged_from_anchor.stdout_text()
+    );
 
     for command in [
         "git rebase --exec 'git update-ref refs/heads/main HEAD' main",
