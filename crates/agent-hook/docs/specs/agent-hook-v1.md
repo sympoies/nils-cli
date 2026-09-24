@@ -357,7 +357,15 @@ generation when the host-authenticated session and optional parent lineage are
 exactly the same and every operation is terminal. This is recovery of the same
 owner's work, not reassignment: it still mints a new binding ID and generation.
 A startup, clear, foreign session, changed parent, or unterminated operation
-remains fail-closed.
+does not qualify for same-principal recovery.
+
+Protocol v2 also permits a different session to bind an explicitly resolved
+target after its former owner released the binding with every operation
+terminal. The target remains dirty and its bytes are preserved; replacement
+atomically fences the former generation. A dirty checkout without a released
+binding, a live foreign owner, an expired owner that never released, or an
+unterminated operation remains unavailable for cross-session handoff. The
+session's starting cwd does not select or authorize this v2 target.
 
 `begin` binds the exact call/root/tool/arguments/nesting facts to one operation
 ID and unpredictable fence before tool dispatch. Known read-only DSH tools
