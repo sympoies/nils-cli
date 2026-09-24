@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::backend::{
-    BackendCall, BackendProgram, BackendRunner, ProcessOutputError, ProcessRunner,
-    output_with_limits, redact_and_tail,
+    BackendCall, BackendProgram, BackendRunner, ProcessOutputError, output_with_limits,
+    redact_and_tail,
 };
 use crate::cli::{
     BINARY, GlobalFlags, ProviderFlag, RepoBootstrapArgs, RepoBootstrapOwnerKind,
@@ -25,6 +25,7 @@ use crate::envelope::emit_success;
 use crate::error::ForgeError;
 use crate::forgejo::ForgejoClient;
 use crate::provider::{Provider, ProviderContext};
+use crate::rate_limit::default_runner;
 
 const LEGACY_RECEIPT_SCHEMA: &str = "forge-cli.repo-bootstrap.receipt.v1";
 const RECEIPT_SCHEMA: &str = "forge-cli.repo-bootstrap.receipt.v2";
@@ -189,6 +190,7 @@ enum BootstrapBackend {
 
 struct GithubClient {
     context: ProviderContext,
+    runner: Box<dyn BackendRunner>,
 }
 
 impl BootstrapBackend {
@@ -408,13 +410,18 @@ impl GithubClient {
                 None,
             ));
         }
-        Ok(Self { context })
+        Ok(Self {
+            context,
+            runner: Box::new(default_runner()),
+        })
     }
 
     fn run_gh(&self, args: &[OsString]) -> Result<ProcessResult, ForgeError> {
         let call = BackendCall::new(BackendProgram::Gh, args.iter().cloned())
             .with_host(Provider::GitHub, &self.context.host);
-        let output = ProcessRunner.run_raw_with_timeout(&call, Some(PROCESS_TIMEOUT))?;
+        let output = self
+            .runner
+            .run_raw_with_timeout(&call, Some(PROCESS_TIMEOUT))?;
         Ok(ProcessResult {
             success: output.status_success,
             code: output.exit_code,
