@@ -173,6 +173,7 @@ struct RepoSnapshot {
 struct ProcessResult {
     success: bool,
     code: i32,
+    http_status: Option<u16>,
     stdout: String,
     stderr: String,
 }
@@ -425,17 +426,27 @@ impl GithubClient {
         Ok(ProcessResult {
             success: output.status_success,
             code: output.exit_code,
+            http_status: None,
             stdout: output.stdout,
             stderr: output.stderr,
         })
     }
 
     fn api_result(&self, endpoint: &str, tail: &[OsString]) -> Result<ProcessResult, ForgeError> {
-        let mut args = vec![OsString::from("api")];
+        let mut args = vec![OsString::from("api"), OsString::from("--include")];
         self.context.push_github_api_hostname(&mut args);
         args.push(OsString::from(endpoint));
         args.extend_from_slice(tail);
-        self.run_gh(&args)
+        let mut result = self.run_gh(&args)?;
+        match split_github_http_response(&result.stdout) {
+            Ok((status, body)) => {
+                result.http_status = Some(status);
+                result.stdout = body.to_string();
+            }
+            Err(error) if result.success => return Err(error),
+            Err(_) => return Ok(result),
+        }
+        Ok(result)
     }
 
     fn api_json(&self, endpoint: &str, tail: &[OsString]) -> Result<serde_json::Value, ForgeError> {
@@ -662,15 +673,31 @@ impl GithubClient {
 }
 
 fn github_api_status(result: &ProcessResult) -> Option<u16> {
-    serde_json::from_str::<serde_json::Value>(&result.stdout)
-        .ok()
-        .and_then(|value| value.get("status").cloned())
-        .and_then(|status| {
-            status
-                .as_str()
-                .and_then(|value| value.parse().ok())
-                .or_else(|| status.as_u64().and_then(|value| u16::try_from(value).ok()))
-        })
+    result.http_status
+}
+
+fn split_github_http_response(raw: &str) -> Result<(u16, &str), ForgeError> {
+    let (headers, body) = raw
+        .split_once("\r\n\r\n")
+        .or_else(|| raw.split_once("\n\n"))
+        .ok_or_else(|| software("GitHub API response omitted the HTTP header separator"))?;
+    let mut status_line = headers
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .split_whitespace();
+    let protocol = status_line.next().unwrap_or_default();
+    let status = status_line
+        .next()
+        .and_then(|value| value.parse::<u16>().ok());
+    match status {
+        Some(status) if protocol.starts_with("HTTP/") && (100..=599).contains(&status) => {
+            Ok((status, body))
+        }
+        _ => Err(software(
+            "GitHub API response omitted a valid HTTP status line",
+        )),
+    }
 }
 
 pub fn run(
@@ -2044,6 +2071,7 @@ fn run_process(
     Ok(ProcessResult {
         success: output.status.success(),
         code: output.status.code().unwrap_or(-1),
+        http_status: None,
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
         stderr: redact_and_tail(&String::from_utf8_lossy(&output.stderr)),
     })
@@ -2641,6 +2669,17 @@ mod tests {
         );
         drop(first);
         acquire_bootstrap_lock(tmp.path()).expect("lock released");
+    }
+
+    #[test]
+    fn github_http_status_comes_from_response_headers() {
+        let (status, body) = split_github_http_response(
+            "HTTP/2.0 409 Conflict\r\nContent-Type: application/json\r\n\r\n{\"message\":\"empty\"}",
+        )
+        .unwrap();
+        assert_eq!(status, 409);
+        assert_eq!(body, "{\"message\":\"empty\"}");
+        assert!(split_github_http_response("{\"status\":\"409\"}").is_err());
     }
 
     #[test]

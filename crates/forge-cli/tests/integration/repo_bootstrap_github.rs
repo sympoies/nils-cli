@@ -47,22 +47,35 @@ fi
 printf 'GH_HOST=%s %s\n' "$GH_HOST" "$*" >> "$GH_TEST_LOG"
 endpoint=
 method=GET
+include=no
 for arg in "$@"; do
   case "$arg" in
+    --include) include=yes ;;
     user|user/repos|orgs/*|repos/*) endpoint=$arg ;;
     POST|PATCH) method=$arg ;;
   esac
 done
-not_found() { printf '%s\n' '{"message":"Not Found","status":"404"}'; exit 1; }
+response_header() {
+  if [ "$include" = yes ]; then
+    printf 'HTTP/2.0 %s\r\nContent-Type: application/json\r\n\r\n' "$1"
+  fi
+}
+not_found() { response_header '404 Not Found'; printf '%s\n' '{"message":"Not Found"}'; exit 1; }
 repo_json() {
   branch=${GH_TEST_DEFAULT_BRANCH:-main}
   if [ -f "$GH_TEST_BRANCH_FILE" ]; then branch=$(cat "$GH_TEST_BRANCH_FILE"); fi
   visibility=${GH_TEST_VISIBILITY:-public}
   if [ -f "$GH_TEST_REMOTE_SHA" ] && [ -n "${GH_TEST_VISIBILITY_AFTER_PUSH:-}" ]; then visibility=$GH_TEST_VISIBILITY_AFTER_PUSH; fi
+  response_header '200 OK'
   printf '{"owner":{"login":"sympoies","type":"%s"},"name":"widgets","private":%s,"visibility":"%s","clone_url":"https://github.com/sympoies/widgets.git","default_branch":"%s"}\n' "${GH_TEST_OWNER_TYPE:-Organization}" "${GH_TEST_PRIVATE:-false}" "$visibility" "$branch"
 }
 case "$endpoint" in
-  user) printf '%s\n' '{"login":"operator"}' ;;
+  user)
+    if [ "${GH_TEST_TRANSPORT_FAILURE:-}" = yes ]; then
+      printf '%s\n' 'gh: simulated connection failure' >&2
+      exit 1
+    fi
+    response_header '200 OK'; printf '%s\n' '{"login":"operator"}' ;;
   user/repos|orgs/sympoies/repos)
     [ "$method" = POST ] || exit 2
     : > "$GH_TEST_EXISTS"
@@ -77,9 +90,11 @@ case "$endpoint" in
     ;;
   repos/sympoies/widgets/git/refs)
     [ -f "$GH_TEST_REMOTE_SHA" ] || {
-      printf '%s\n' '{"message":"Git Repository is empty.","status":"409"}'
+      response_header '409 Conflict'
+      printf '%s\n' '{"message":"Git Repository is empty."}'
       exit 1
     }
+    response_header '200 OK'
     if [ "${GH_TEST_EXTRA_REF:-}" = yes ]; then
       printf '[{"ref":"refs/heads/main","object":{"sha":"%s"}},{"ref":"refs/tags/other","object":{"sha":"%s"}}]\n' "$(cat "$GH_TEST_REMOTE_SHA")" "$GH_TEST_SHA"
     else
@@ -88,9 +103,11 @@ case "$endpoint" in
     ;;
   repos/sympoies/widgets/git/ref/heads/main)
     [ -f "$GH_TEST_REMOTE_SHA" ] || not_found
+    response_header '200 OK'
     printf '{"ref":"refs/heads/main","object":{"sha":"%s"}}\n' "$(cat "$GH_TEST_REMOTE_SHA")"
     ;;
   repos/sympoies/widgets/git/commits/*)
+    response_header '200 OK'
     printf '{"sha":"%s","verification":{"verified":%s}}\n' "$GH_TEST_SHA" "${GH_TEST_VERIFIED:-true}"
     ;;
   *) printf 'unexpected gh endpoint: %s\n' "$endpoint" >&2; exit 2 ;;
@@ -260,9 +277,30 @@ fn github_adopts_exact_empty_public_repo_with_signed_root_and_idempotent_resume(
         second.stdout, second.stderr
     );
     assert_eq!(parse_envelope(&second.stdout)["data"]["idempotent"], true);
+    assert!(
+        fs::read_to_string(&fixture.gh_log)
+            .expect("gh log")
+            .contains("api --include"),
+        "GitHub API calls must request response headers"
+    );
     let git_log = fs::read_to_string(&fixture.git_log).expect("git log");
     assert_eq!(git_log.matches("push --porcelain").count(), 1);
     assert!(!first.to_string().contains("fixture-token-value"));
+}
+
+#[test]
+fn github_preserves_non_http_gh_failure_diagnostic() {
+    let mut fixture = Fixture::new(true);
+    fixture
+        .stub
+        .envs
+        .push(("GH_TEST_TRANSPORT_FAILURE".into(), "yes".into()));
+    let result = fixture.run(true, false);
+    assert_ne!(result.code, 0);
+    let error = &parse_envelope(&result.stdout)["error"];
+    assert_eq!(error["code"], "bootstrap_github_api_failed");
+    assert!(error.to_string().contains("simulated connection failure"));
+    assert!(!fixture.remote_sha.exists());
 }
 
 #[test]
