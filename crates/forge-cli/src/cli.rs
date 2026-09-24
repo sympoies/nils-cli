@@ -351,12 +351,18 @@ pub struct RepoPushDefaultArgs {
     pub default_branch_receipt: Option<PathBuf>,
 }
 
-/// `repo bootstrap` arguments for a new private Forgejo repository.
+/// `repo bootstrap` arguments for a signed empty repository on GitHub or Forgejo.
 #[derive(Args, Debug, Clone)]
 pub struct RepoBootstrapArgs {
     /// Whether the repository owner is the authenticated user or an organization.
     #[arg(long = "owner-kind", value_enum)]
     pub owner_kind: RepoBootstrapOwnerKind,
+    /// GitHub repository visibility (Forgejo bootstrap remains private).
+    #[arg(long, value_enum, default_value = "private")]
+    pub visibility: RepoBootstrapVisibility,
+    /// Adopt an existing empty GitHub repository instead of creating one.
+    #[arg(long = "existing-empty", action = ArgAction::SetTrue)]
+    pub existing_empty: bool,
     /// Exact branch name to create and establish as the remote default.
     #[arg(long = "default-branch", value_name = "BRANCH")]
     pub default_branch: String,
@@ -372,6 +378,14 @@ pub struct RepoBootstrapArgs {
     /// Resume an existing durable bootstrap receipt after exact read-back.
     #[arg(long, action = ArgAction::SetTrue)]
     pub resume: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, serde::Serialize, serde::Deserialize)]
+#[clap(rename_all = "lower")]
+#[serde(rename_all = "lowercase")]
+pub enum RepoBootstrapVisibility {
+    Private,
+    Public,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, serde::Serialize, serde::Deserialize)]
@@ -2030,7 +2044,7 @@ pub struct IssueCommentArgs {
 pub enum RepoCommand {
     /// Resolve the repo slug, default branch, and supported merge methods.
     View,
-    /// Create and initialize one new private Forgejo repository under a durable receipt.
+    /// Create or adopt an empty GitHub repository, or create a private Forgejo repository.
     Bootstrap(RepoBootstrapArgs),
     /// Deliver one signed commit to the default branch with a normal fast-forward push.
     PushDefault(RepoPushDefaultArgs),
