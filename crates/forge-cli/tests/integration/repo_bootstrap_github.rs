@@ -57,7 +57,9 @@ not_found() { printf '%s\n' '{"message":"Not Found","status":"404"}'; exit 1; }
 repo_json() {
   branch=${GH_TEST_DEFAULT_BRANCH:-main}
   if [ -f "$GH_TEST_BRANCH_FILE" ]; then branch=$(cat "$GH_TEST_BRANCH_FILE"); fi
-  printf '{"owner":{"login":"sympoies","type":"%s"},"name":"widgets","private":%s,"clone_url":"https://github.com/sympoies/widgets.git","default_branch":"%s"}\n' "${GH_TEST_OWNER_TYPE:-Organization}" "${GH_TEST_PRIVATE:-false}" "$branch"
+  visibility=${GH_TEST_VISIBILITY:-public}
+  if [ -f "$GH_TEST_REMOTE_SHA" ] && [ -n "${GH_TEST_VISIBILITY_AFTER_PUSH:-}" ]; then visibility=$GH_TEST_VISIBILITY_AFTER_PUSH; fi
+  printf '{"owner":{"login":"sympoies","type":"%s"},"name":"widgets","private":%s,"visibility":"%s","clone_url":"https://github.com/sympoies/widgets.git","default_branch":"%s"}\n' "${GH_TEST_OWNER_TYPE:-Organization}" "${GH_TEST_PRIVATE:-false}" "$visibility" "$branch"
 }
 case "$endpoint" in
   user) printf '%s\n' '{"login":"operator"}' ;;
@@ -144,6 +146,15 @@ printf '{"ok":true,"commit":{"sha":"%s"}}\n' "$GH_TEST_SHA"
     }
 
     fn run(&self, existing: bool, resume: bool) -> super::support::CmdOutput {
+        self.run_with_visibility(existing, resume, "public")
+    }
+
+    fn run_with_visibility(
+        &self,
+        existing: bool,
+        resume: bool,
+        visibility: &str,
+    ) -> super::support::CmdOutput {
         let mut args = vec![
             "--provider",
             "github",
@@ -156,7 +167,7 @@ printf '{"ok":true,"commit":{"sha":"%s"}}\n' "$GH_TEST_SHA"
             "--owner-kind",
             "org",
             "--visibility",
-            "public",
+            visibility,
             "--default-branch",
             "main",
             "--file",
@@ -255,6 +266,31 @@ fn github_adopts_exact_empty_public_repo_with_signed_root_and_idempotent_resume(
 }
 
 #[test]
+fn github_does_not_repeat_an_indeterminate_first_push_on_resume() {
+    let fixture = Fixture::new(true);
+    let first = fixture.run(true, false);
+    assert_eq!(first.code, 0, "stdout={}", first.stdout);
+    let first_data = parse_envelope(&first.stdout);
+    let receipt_path = first_data["data"]["receipt"]
+        .as_str()
+        .expect("receipt path");
+    let mut receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(receipt_path).expect("receipt")).expect("receipt JSON");
+    receipt["complete"] = false.into();
+    fs::write(receipt_path, serde_json::to_vec_pretty(&receipt).unwrap()).expect("write receipt");
+    fs::remove_file(&fixture.remote_sha).expect("simulate absent remote ref");
+
+    let resumed = fixture.run(true, true);
+    assert_ne!(resumed.code, 0);
+    assert_eq!(
+        parse_envelope(&resumed.stdout)["error"]["code"],
+        "bootstrap_push_indeterminate"
+    );
+    let git_log = fs::read_to_string(&fixture.git_log).expect("git log");
+    assert_eq!(git_log.matches("push --porcelain").count(), 1);
+}
+
+#[test]
 fn github_creates_an_empty_public_org_repo_before_first_push() {
     let fixture = Fixture::new(false);
     let result = fixture.run(false, false);
@@ -305,6 +341,57 @@ fn github_refuses_visibility_mismatch_before_push() {
         "remote_drift"
     );
     assert!(!fixture.remote_sha.exists());
+}
+
+#[test]
+fn github_private_bootstrap_rejects_enterprise_internal_visibility() {
+    let mut fixture = Fixture::new(true);
+    fixture
+        .stub
+        .envs
+        .push(("GH_TEST_PRIVATE".into(), "true".into()));
+    fixture
+        .stub
+        .envs
+        .push(("GH_TEST_VISIBILITY".into(), "internal".into()));
+    let result = fixture.run_with_visibility(true, false, "private");
+    assert_ne!(result.code, 0);
+    assert_eq!(
+        parse_envelope(&result.stdout)["error"]["code"],
+        "remote_drift"
+    );
+    assert!(
+        !fs::read_to_string(&fixture.git_log)
+            .unwrap_or_default()
+            .contains("push ")
+    );
+}
+
+#[test]
+fn github_rechecks_visibility_after_the_first_push() {
+    let mut fixture = Fixture::new(true);
+    fixture
+        .stub
+        .envs
+        .push(("GH_TEST_PRIVATE".into(), "true".into()));
+    fixture
+        .stub
+        .envs
+        .push(("GH_TEST_VISIBILITY".into(), "private".into()));
+    fixture
+        .stub
+        .envs
+        .push(("GH_TEST_VISIBILITY_AFTER_PUSH".into(), "public".into()));
+    let result = fixture.run_with_visibility(true, false, "private");
+    assert_ne!(result.code, 0);
+    assert_eq!(
+        parse_envelope(&result.stdout)["error"]["code"],
+        "remote_drift"
+    );
+    assert!(
+        fixture.remote_sha.exists(),
+        "the drift is detected after push"
+    );
 }
 
 #[test]

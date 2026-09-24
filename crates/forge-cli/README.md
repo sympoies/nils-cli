@@ -69,8 +69,10 @@ Omit `--existing-empty` to create a new empty repository; include it only when
 adopting a repository that already exists and has no refs. The CLI records an
 exact-input receipt before creation or push, verifies the local signature and
 zero-parent ancestry, reads back the exact remote branch and provider signature,
-and never retries an ambiguous first push. If interrupted, inspect the receipt
-reported in the error and repeat the same command with `--resume`. A completed
+and never retries an ambiguous first push. Receipts use schema v2; prior
+Forgejo v1 receipts remain readable. If interrupted, inspect the receipt
+reported in the error and repeat the same command with `--resume`. If an
+attempted push has no remote branch, resume stops for manual reconciliation. A completed
 matching receipt is idempotent. Nested paths belong in a normal managed
 worktree and PR after the initial branch exists.
 

@@ -3,7 +3,8 @@
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::fd::AsRawFd;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -12,7 +13,10 @@ use nils_common::cli_contract::{OutputFormat, schema_version_for};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::backend::{BackendProgram, ProcessOutputError, output_with_limits, redact_and_tail};
+use crate::backend::{
+    BackendCall, BackendProgram, BackendRunner, ProcessOutputError, ProcessRunner,
+    output_with_limits, redact_and_tail,
+};
 use crate::cli::{
     BINARY, GlobalFlags, ProviderFlag, RepoBootstrapArgs, RepoBootstrapOwnerKind,
     RepoBootstrapVisibility,
@@ -22,7 +26,8 @@ use crate::error::ForgeError;
 use crate::forgejo::ForgejoClient;
 use crate::provider::{Provider, ProviderContext};
 
-const RECEIPT_SCHEMA: &str = "forge-cli.repo-bootstrap.receipt.v1";
+const LEGACY_RECEIPT_SCHEMA: &str = "forge-cli.repo-bootstrap.receipt.v1";
+const RECEIPT_SCHEMA: &str = "forge-cli.repo-bootstrap.receipt.v2";
 const MAX_RECEIPT_BYTES: usize = 256 * 1024;
 const MAX_REASON_BYTES: usize = 2_000;
 const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
@@ -32,10 +37,6 @@ const PROCESS_OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
 const GIT_BIN_ENV: &str = "FORGE_CLI_GIT_BIN";
 const SEMANTIC_COMMIT_BIN_ENV: &str = "FORGE_CLI_SEMANTIC_COMMIT_BIN";
 const GITHUB_PUSH_TOKEN_ENV: &str = "FORGE_CLI_BOOTSTRAP_GITHUB_TOKEN";
-
-fn default_private() -> bool {
-    true
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -51,13 +52,10 @@ struct ReceiptFile {
 struct BootstrapReceipt {
     schema_version: String,
     provider: String,
-    #[serde(default)]
     host: String,
     repository: String,
     owner_kind: RepoBootstrapOwnerKind,
-    #[serde(default = "default_private")]
     private: bool,
-    #[serde(default)]
     existing_empty: bool,
     default_branch: String,
     message: String,
@@ -70,6 +68,53 @@ struct BootstrapReceipt {
     default_branch_set: bool,
     complete: bool,
     reconciled: bool,
+}
+
+// The released v1 receipt had only Forgejo fields. Parse it strictly before
+// upgrading in memory so new provider fields cannot masquerade as v1 state.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyBootstrapReceipt {
+    schema_version: String,
+    provider: String,
+    repository: String,
+    owner_kind: RepoBootstrapOwnerKind,
+    default_branch: String,
+    message: String,
+    reason: String,
+    files: Vec<ReceiptFile>,
+    create_attempted: bool,
+    remote_created: bool,
+    local_sha: Option<String>,
+    push_attempted: bool,
+    default_branch_set: bool,
+    complete: bool,
+    reconciled: bool,
+}
+
+impl From<LegacyBootstrapReceipt> for BootstrapReceipt {
+    fn from(old: LegacyBootstrapReceipt) -> Self {
+        Self {
+            schema_version: RECEIPT_SCHEMA.to_string(),
+            provider: old.provider,
+            host: String::new(),
+            repository: old.repository,
+            owner_kind: old.owner_kind,
+            private: true,
+            existing_empty: false,
+            default_branch: old.default_branch,
+            message: old.message,
+            reason: old.reason,
+            files: old.files,
+            create_attempted: old.create_attempted,
+            remote_created: old.remote_created,
+            local_sha: old.local_sha,
+            push_attempted: old.push_attempted,
+            default_branch_set: old.default_branch_set,
+            complete: old.complete,
+            reconciled: old.reconciled,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -367,15 +412,15 @@ impl GithubClient {
     }
 
     fn run_gh(&self, args: &[OsString]) -> Result<ProcessResult, ForgeError> {
-        run_process(
-            &BackendProgram::Gh.executable(),
-            None,
-            args,
-            &[(
-                OsString::from("GH_HOST"),
-                OsString::from(&self.context.host),
-            )],
-        )
+        let call = BackendCall::new(BackendProgram::Gh, args.iter().cloned())
+            .with_host(Provider::GitHub, &self.context.host);
+        let output = ProcessRunner.run_raw_with_timeout(&call, Some(PROCESS_TIMEOUT))?;
+        Ok(ProcessResult {
+            success: output.status_success,
+            code: output.exit_code,
+            stdout: output.stdout,
+            stderr: output.stderr,
+        })
     }
 
     fn api_result(&self, endpoint: &str, tail: &[OsString]) -> Result<ProcessResult, ForgeError> {
@@ -534,6 +579,8 @@ impl GithubClient {
             .and_then(serde_json::Value::as_str);
         let observed_name = value.get("name").and_then(serde_json::Value::as_str);
         let observed_private = value.get("private").and_then(serde_json::Value::as_bool);
+        let observed_visibility = value.get("visibility").and_then(serde_json::Value::as_str);
+        let expected_visibility = if private { "private" } else { "public" };
         let observed_owner_kind = value
             .pointer("/owner/type")
             .and_then(serde_json::Value::as_str);
@@ -546,6 +593,7 @@ impl GithubClient {
         if observed_owner != Some(owner)
             || observed_name != Some(repo)
             || observed_private != Some(private)
+            || observed_visibility != Some(expected_visibility)
             || observed_owner_kind != Some(expected_owner_kind)
             || clone_url != Some(expected_url.as_str())
         {
@@ -712,6 +760,7 @@ pub fn run(
         ));
     }
     let state_dir = bootstrap_state_dir(provider, host.as_deref(), &owner, &repo)?;
+    let _operation_lock = acquire_bootstrap_lock(&state_dir)?;
     let receipt_path = state_dir.join("receipt.json");
     let checkout = state_dir.join("checkout");
 
@@ -876,6 +925,13 @@ pub fn run(
         Some(ref observed) if observed == &local_sha => receipt.reconciled = true,
         Some(observed) => return Err(remote_drift(&local_sha, &observed)),
         None => {
+            if receipt.push_attempted {
+                return Err(validation(
+                    "bootstrap_push_indeterminate",
+                    "a prior first push was attempted but the target branch is absent; inspect the remote and receipt before recovery",
+                    None,
+                ));
+            }
             if !client.remote_empty(&owner, &repo)? {
                 return Err(validation(
                     "repository_not_empty",
@@ -944,6 +1000,20 @@ pub fn run(
         if update.is_err() {
             receipt.reconciled = true;
         }
+    }
+    snapshot = client.parse_repo_snapshot(
+        &client.repo(&owner, &repo)?,
+        &owner,
+        &repo,
+        receipt.owner_kind,
+        private,
+    )?;
+    if snapshot.default_branch != receipt.default_branch {
+        return Err(validation(
+            "remote_drift",
+            "repository default branch changed before final verification",
+            None,
+        ));
     }
     receipt.default_branch_set = true;
 
@@ -1688,13 +1758,103 @@ fn load_receipt(path: &Path) -> Result<Option<BootstrapReceipt>, ForgeError> {
             None,
         ));
     }
-    serde_json::from_slice(&bytes).map(Some).map_err(|error| {
+    let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
         validation(
             "bootstrap_receipt_invalid",
             "bootstrap receipt is not valid JSON",
             Some(error.to_string()),
         )
-    })
+    })?;
+    let schema = value
+        .get("schema_version")
+        .and_then(serde_json::Value::as_str);
+    let receipt = match schema {
+        Some(LEGACY_RECEIPT_SCHEMA) => {
+            let old: LegacyBootstrapReceipt = serde_json::from_value(value).map_err(|error| {
+                validation(
+                    "bootstrap_receipt_invalid",
+                    "v1 bootstrap receipt has invalid fields",
+                    Some(error.to_string()),
+                )
+            })?;
+            if old.provider == "github" || old.schema_version != LEGACY_RECEIPT_SCHEMA {
+                return Err(validation(
+                    "bootstrap_receipt_invalid",
+                    "v1 bootstrap receipt is not a Forgejo receipt",
+                    None,
+                ));
+            }
+            old.into()
+        }
+        Some(RECEIPT_SCHEMA) => serde_json::from_value(value).map_err(|error| {
+            validation(
+                "bootstrap_receipt_invalid",
+                "bootstrap receipt has invalid fields",
+                Some(error.to_string()),
+            )
+        })?,
+        _ => {
+            return Err(validation(
+                "bootstrap_receipt_invalid",
+                "bootstrap receipt has an unsupported schema",
+                None,
+            ));
+        }
+    };
+    Ok(Some(receipt))
+}
+
+fn acquire_bootstrap_lock(state_dir: &Path) -> Result<File, ForgeError> {
+    let path = state_dir.join(".bootstrap.lock");
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(&path)
+        .map_err(|error| {
+            unavailable(
+                "bootstrap_lock_unavailable",
+                "failed to open bootstrap operation lock",
+                Some(error.to_string()),
+            )
+        })?;
+    let metadata = file.metadata().map_err(|error| {
+        unavailable(
+            "bootstrap_lock_unavailable",
+            "failed to inspect bootstrap operation lock",
+            Some(error.to_string()),
+        )
+    })?;
+    if !metadata.file_type().is_file()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.mode() & 0o077 != 0
+    {
+        return Err(validation(
+            "bootstrap_lock_unsafe",
+            "bootstrap operation lock is not a private owner-controlled regular file",
+            None,
+        ));
+    }
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::EWOULDBLOCK)
+            || error.raw_os_error() == Some(libc::EAGAIN)
+        {
+            return Err(unavailable(
+                "bootstrap_operation_in_progress",
+                "another bootstrap operation is active for this repository",
+                None,
+            ));
+        }
+        return Err(unavailable(
+            "bootstrap_lock_unavailable",
+            "failed to acquire bootstrap operation lock",
+            Some(error.to_string()),
+        ));
+    }
+    Ok(file)
 }
 
 fn persist_receipt(path: &Path, receipt: &BootstrapReceipt) -> Result<(), ForgeError> {
@@ -2435,6 +2595,45 @@ mod tests {
         let text = String::from_utf8(bytes).expect("utf-8");
         assert!(text.contains('\n'), "the receipt is pretty-printed");
         assert!(text.contains(RECEIPT_SCHEMA));
+    }
+
+    #[test]
+    fn forgejo_v1_receipt_migrates_but_rejects_new_fields() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("receipt.json");
+        let mut prior = serde_json::to_value(receipt(Vec::new())).unwrap();
+        let object = prior.as_object_mut().unwrap();
+        object.insert("schema_version".into(), LEGACY_RECEIPT_SCHEMA.into());
+        object.remove("host");
+        object.remove("private");
+        object.remove("existing_empty");
+        fs::write(&path, serde_json::to_vec(&prior).unwrap()).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+
+        let migrated = load_receipt(&path).unwrap().unwrap();
+        assert_eq!(migrated.schema_version, RECEIPT_SCHEMA);
+        assert_eq!(migrated.provider, "forgejo");
+        assert!(migrated.private);
+        assert_eq!(migrated.host, "");
+
+        prior["host"] = "github.com".into();
+        fs::write(&path, serde_json::to_vec(&prior).unwrap()).unwrap();
+        assert_eq!(
+            load_receipt(&path).unwrap_err().kind(),
+            "bootstrap_receipt_invalid"
+        );
+    }
+
+    #[test]
+    fn bootstrap_operation_lock_rejects_a_second_owner() {
+        let tmp = TempDir::new().unwrap();
+        let first = acquire_bootstrap_lock(tmp.path()).expect("first lock");
+        assert_eq!(
+            acquire_bootstrap_lock(tmp.path()).unwrap_err().kind(),
+            "bootstrap_operation_in_progress"
+        );
+        drop(first);
+        acquire_bootstrap_lock(tmp.path()).expect("lock released");
     }
 
     #[test]
