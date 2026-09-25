@@ -2973,7 +2973,7 @@ fn checkout_lease_is_session_bound_and_clean_reclaim_is_not_early() {
 }
 
 #[test]
-fn current_runtime_lease_marker_defers_only_the_legacy_checkout_guard() {
+fn current_runtime_lease_marker_defers_only_the_prior_checkout_guard() {
     let fixture = Fixture::new(&policy("checkout-lease-guard", "dsh"));
     git(&fixture, &["init", "--quiet"]);
     git(&fixture, &["config", "user.email", "test@example.com"]);
