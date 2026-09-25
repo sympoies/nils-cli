@@ -124,6 +124,7 @@ fn bind_request(session: &str, request_id: &str, target: &Value) -> Value {
         "request_id": request_id,
         "session_id": session,
         "target": target,
+        "takeover_capability": true,
         "source": "startup"
     })
 }
@@ -628,6 +629,227 @@ fn one_physical_worktree_still_contends_across_sessions() {
     assert_eq!(contender["kind"], "denied");
     assert_eq!(contender["state"], "foreign-active");
     assert_eq!(contender["code"], "WORKSPACE_FOREIGN_ACTIVE");
+}
+
+#[test]
+fn existing_v2_clients_keep_their_exact_foreign_denial_shape() {
+    let fixture = Fixture::new(POLICY);
+    let root = repo(&fixture.root.join("repo-a"));
+    let target = only_target(&write_targets(
+        &fixture,
+        "session-a",
+        "r-a",
+        &root.join("tracked.txt"),
+    ));
+    assert_eq!(
+        bind(&fixture, "session-a", "b-owner", &target)["kind"],
+        "bound"
+    );
+    let mut old_request = bind_request("session-b", "b-old-client", &target);
+    old_request
+        .as_object_mut()
+        .unwrap()
+        .remove("takeover_capability");
+    let denied = ok(&fixture, "bind", old_request);
+    assert_eq!(denied["code"], "WORKSPACE_FOREIGN_ACTIVE");
+    assert!(
+        denied.get("conflict").is_none(),
+        "old strict v2 parsers cannot accept new fields"
+    );
+}
+
+#[test]
+fn unborn_repository_can_transfer_an_idle_owner() {
+    let fixture = Fixture::new(POLICY);
+    let root = fixture.root.join("unborn");
+    fs::create_dir_all(&root).unwrap();
+    git(&root, &["init", "--quiet"]);
+    let target = only_target(&write_targets(
+        &fixture,
+        "session-a",
+        "r-unborn",
+        &root.join("first.txt"),
+    ));
+    let owner = bind(&fixture, "session-a", "b-owner", &target);
+    assert_eq!(owner["kind"], "bound");
+    let denied = bind(&fixture, "session-b", "b-contender", &target);
+    assert_eq!(denied["code"], "WORKSPACE_FOREIGN_ACTIVE");
+    let conflict = denied["conflict"].as_str().expect("unborn conflict");
+    let mut approved = bind_request("session-b", "b-unborn-takeover", &target);
+    approved["takeover_conflict"] = json!(conflict);
+    assert_eq!(ok(&fixture, "bind", approved)["kind"], "bound");
+    assert_eq!(
+        begin(&fixture, "session-a", "g-former", &owner, &target)["code"],
+        "WORKSPACE_BINDING_STALE"
+    );
+}
+
+#[test]
+fn unborn_conflict_becomes_stale_after_the_first_commit() {
+    let fixture = Fixture::new(POLICY);
+    let root = fixture.root.join("unborn");
+    fs::create_dir_all(&root).unwrap();
+    git(&root, &["init", "--quiet"]);
+    let target = only_target(&write_targets(
+        &fixture,
+        "session-a",
+        "r-unborn",
+        &root.join("first.txt"),
+    ));
+    let owner = bind(&fixture, "session-a", "b-owner", &target);
+    let denied = bind(&fixture, "session-b", "b-contender", &target);
+    let conflict = denied["conflict"].as_str().expect("unborn conflict");
+    fs::write(root.join("first.txt"), "first commit\n").unwrap();
+    git(&root, &["add", "first.txt"]);
+    git(
+        &root,
+        &[
+            "-c",
+            "user.name=Workspace Test",
+            "-c",
+            "user.email=workspace@example.com",
+            "commit",
+            "--quiet",
+            "-m",
+            "test: first commit",
+        ],
+    );
+    let mut approved = bind_request("session-b", "b-stale-unborn", &target);
+    approved["takeover_conflict"] = json!(conflict);
+    assert_eq!(
+        ok(&fixture, "bind", approved)["code"],
+        "WORKSPACE_TAKEOVER_STALE"
+    );
+    assert_eq!(
+        begin(&fixture, "session-a", "g-owner", &owner, &target)["kind"],
+        "granted"
+    );
+}
+
+#[test]
+fn approved_idle_owner_takeover_fences_the_previous_generation() {
+    let fixture = Fixture::new(POLICY);
+    let root = repo(&fixture.root.join("repo-a"));
+    let target = only_target(&write_targets(
+        &fixture,
+        "session-a",
+        "r-owner",
+        &root.join("tracked.txt"),
+    ));
+    let owner = bind(&fixture, "session-a", "b-owner", &target);
+    fs::write(root.join("tracked.txt"), "unfinished\n").expect("unfinished work");
+
+    let conflict = bind(&fixture, "session-b", "b-contender", &target);
+    assert_eq!(conflict["code"], "WORKSPACE_FOREIGN_ACTIVE");
+    let conflict_id = conflict["conflict"].as_str().expect("takeover conflict");
+
+    let mut approved = bind_request("session-b", "b-takeover", &target);
+    approved["takeover_conflict"] = json!(conflict_id);
+    let successor = ok(&fixture, "bind", approved);
+    assert_eq!(successor["kind"], "bound", "successor={successor}");
+    assert_ne!(successor["generation"], owner["generation"]);
+    assert_eq!(
+        fs::read_to_string(root.join("tracked.txt")).unwrap(),
+        "unfinished\n"
+    );
+
+    let former = begin(&fixture, "session-a", "g-former", &owner, &target);
+    assert_eq!(former["code"], "WORKSPACE_BINDING_STALE");
+}
+
+#[test]
+fn takeover_requires_the_exact_conflict_and_no_active_operation() {
+    let fixture = Fixture::new(POLICY);
+    let root = repo(&fixture.root.join("repo-a"));
+    let target = only_target(&write_targets(
+        &fixture,
+        "session-a",
+        "r-owner",
+        &root.join("tracked.txt"),
+    ));
+    let owner = bind(&fixture, "session-a", "b-owner", &target);
+    let conflict = bind(&fixture, "session-b", "b-contender", &target);
+    let conflict_id = conflict["conflict"].as_str().expect("takeover conflict");
+
+    let mut stale = bind_request("session-b", "b-stale", &target);
+    stale["takeover_conflict"] = json!("0".repeat(64));
+    assert_eq!(ok(&fixture, "bind", stale)["kind"], "denied");
+
+    let call = write_targets(&fixture, "session-a", "r-active", &root.join("tracked.txt"));
+    let active_target = only_target(&call);
+    let active = begin(&fixture, "session-a", "g-active", &owner, &active_target);
+    assert_eq!(active["kind"], "granted");
+
+    let mut approved = bind_request("session-b", "b-takeover", &target);
+    approved["takeover_conflict"] = json!(conflict_id);
+    let denied = ok(&fixture, "bind", approved);
+    assert_eq!(denied["kind"], "denied");
+    assert_eq!(denied["code"], "WORKSPACE_OPERATION_UNCERTAIN");
+
+    complete(
+        &fixture,
+        "session-a",
+        "c-active",
+        &owner,
+        &active,
+        "g-active",
+    );
+    let mut approved = bind_request("session-b", "b-after-complete", &target);
+    approved["takeover_conflict"] = json!(conflict_id);
+    let successor = ok(&fixture, "bind", approved);
+    assert_eq!(successor["kind"], "bound");
+}
+
+#[test]
+fn takeover_conflict_becomes_stale_when_the_checkout_head_changes() {
+    let fixture = Fixture::new(POLICY);
+    let root = repo(&fixture.root.join("repo-a"));
+    let target = only_target(&write_targets(
+        &fixture,
+        "session-a",
+        "r-owner",
+        &root.join("tracked.txt"),
+    ));
+    let owner = bind(&fixture, "session-a", "b-owner", &target);
+    let conflict = bind(&fixture, "session-b", "b-contender", &target);
+    let conflict_id = conflict["conflict"].as_str().expect("takeover conflict");
+    fs::write(root.join("tracked.txt"), "new head\n").expect("new content");
+    git(&root, &["add", "tracked.txt"]);
+    git(&root, &["commit", "--quiet", "-m", "test: move head"]);
+
+    let mut approved = bind_request("session-b", "b-stale-head", &target);
+    approved["takeover_conflict"] = json!(conflict_id);
+    let denied = ok(&fixture, "bind", approved);
+    assert_eq!(denied["code"], "WORKSPACE_TAKEOVER_STALE");
+    assert_eq!(
+        begin(&fixture, "session-a", "g-owner", &owner, &target)["kind"],
+        "granted"
+    );
+}
+
+#[test]
+fn takeover_conflict_becomes_stale_when_only_the_branch_changes() {
+    let fixture = Fixture::new(POLICY);
+    let root = repo(&fixture.root.join("repo-a"));
+    let target = only_target(&write_targets(
+        &fixture,
+        "session-a",
+        "r-owner",
+        &root.join("tracked.txt"),
+    ));
+    let owner = bind(&fixture, "session-a", "b-owner", &target);
+    let conflict = bind(&fixture, "session-b", "b-contender", &target);
+    let conflict_id = conflict["conflict"].as_str().expect("takeover conflict");
+    git(&root, &["switch", "--quiet", "-c", "other-branch"]);
+
+    let mut approved = bind_request("session-b", "b-stale-branch", &target);
+    approved["takeover_conflict"] = json!(conflict_id);
+    let denied = ok(&fixture, "bind", approved);
+    assert_eq!(denied["code"], "WORKSPACE_TAKEOVER_STALE");
+    assert_eq!(
+        begin(&fixture, "session-a", "g-owner", &owner, &target)["kind"],
+        "granted"
+    );
 }
 
 #[test]

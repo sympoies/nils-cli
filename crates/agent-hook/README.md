@@ -141,10 +141,22 @@ operation ID and fence before execution. `complete` accepts only the exact
 binding, generation, operation, fence, and call identity. `renew` cannot revive
 an expired generation, and `release` refuses an unterminated operation.
 
-An explicit `resume` or `compact` may recover dirty work only when the prior
+In the v1 protocol, an explicit `resume` or `compact` may recover dirty work only when the prior
 generation has no active operation and its session plus optional parent
 lineage exactly match. Recovery mints a fresh binding ID and generation;
 startup, clear, foreign-session, and changed-lineage takeovers remain denied.
+
+For an exact v2 target, a caller may opt into `takeover_capability`. A live
+foreign denial then includes a conflict identifier for the branch and HEAD,
+including an unborn branch.
+An explicit `takeover_conflict` bind atomically transfers an idle owner only
+while that identifier still matches; active operations remain protected and
+the prior generation is fenced. This is a coordination contract: the caller
+obtains user consent. Older v2 callers retain their exact denial shape and
+the earlier DSH checkout guard remains active until the current runtime opts
+into its exact-target v2 integration. The runtime sets
+`DSH_RUNTIME_KIT_WORKSPACE_LEASE_V2=1` only for dispatches while its native v2
+provider is registered; this is a rollout selector, not an access credential.
 
 Every command reads one strict, duplicate-free WorkspaceLease v1 JSON request
 from standard input and defaults to a versioned service JSON response. Exact

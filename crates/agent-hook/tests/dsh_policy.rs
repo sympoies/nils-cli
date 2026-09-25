@@ -2973,6 +2973,36 @@ fn checkout_lease_is_session_bound_and_clean_reclaim_is_not_early() {
 }
 
 #[test]
+fn current_runtime_lease_marker_defers_only_the_prior_checkout_guard() {
+    let fixture = Fixture::new(&policy("checkout-lease-guard", "dsh"));
+    git(&fixture, &["init", "--quiet"]);
+    git(&fixture, &["config", "user.email", "test@example.com"]);
+    git(&fixture, &["config", "user.name", "Test"]);
+    fs::write(fixture.root.join("tracked.txt"), "base\n").unwrap();
+    git(&fixture, &["add", "--all"]);
+    git(&fixture, &["commit", "--quiet", "-m", "test: initial"]);
+    let input = request_for_session(
+        &fixture,
+        "lease-owner",
+        "bash",
+        json!({"command": "printf ok"}),
+    );
+    let current = fixture.run_with_env(
+        &["dispatch", "--product", "dsh", "--format", "json"],
+        Some(&input),
+        &[("DSH_RUNTIME_KIT_WORKSPACE_LEASE_V2", "1")],
+    );
+    assert_eq!(current.code, 0, "envelope={}", current.stdout_text());
+    assert_eq!(current.stdout_json()["data"]["action"], "allow");
+    assert!(
+        !fixture
+            .state_home
+            .join("dsh-runtime-kit/agent-hook/dsh-checkout-leases")
+            .exists()
+    );
+}
+
+#[test]
 fn checkout_lease_does_not_contend_in_authenticated_advisory_mode() {
     let fixture = Fixture::new(&policy("checkout-lease-guard", "dsh"));
     git(&fixture, &["init", "--quiet"]);
