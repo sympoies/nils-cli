@@ -701,7 +701,19 @@ fn unborn_conflict_becomes_stale_after_the_first_commit() {
     let conflict = denied["conflict"].as_str().expect("unborn conflict");
     fs::write(root.join("first.txt"), "first commit\n").unwrap();
     git(&root, &["add", "first.txt"]);
-    git(&root, &["commit", "--quiet", "-m", "test: first commit"]);
+    git(
+        &root,
+        &[
+            "-c",
+            "user.name=Workspace Test",
+            "-c",
+            "user.email=workspace@example.com",
+            "commit",
+            "--quiet",
+            "-m",
+            "test: first commit",
+        ],
+    );
     let mut approved = bind_request("session-b", "b-stale-unborn", &target);
     approved["takeover_conflict"] = json!(conflict);
     assert_eq!(
