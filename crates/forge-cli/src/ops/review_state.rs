@@ -703,13 +703,14 @@ pub fn observe_review_loop(
         .values()
         .filter(|finding| finding.status == ReviewFindingStatus::Open && finding.blocking)
         .count();
-    let next_no_progress = if head_changed && current_blocking >= previous_blocking {
-        previous.no_progress_rounds.saturating_add(1)
-    } else if head_changed {
-        0
-    } else {
-        previous.no_progress_rounds
-    };
+    let next_no_progress =
+        if head_changed && current_blocking > 0 && current_blocking >= previous_blocking {
+            previous.no_progress_rounds.saturating_add(1)
+        } else if head_changed {
+            0
+        } else {
+            previous.no_progress_rounds
+        };
     if next_no_progress > previous.budget.max_no_progress_rounds {
         return Err(review_stop(
             "review_no_progress",
@@ -2010,6 +2011,21 @@ mod tests {
         )
         .expect_err("round three exceeds a two-round budget");
         assert_eq!(round_limit.kind(), "review_round_limit_exceeded");
+    }
+
+    #[test]
+    fn clean_heads_do_not_exhaust_the_blocking_finding_progress_budget() {
+        let mut state = observe_review_loop(None, "head-a", &[])
+            .expect("clean genesis")
+            .state;
+        state.budget.max_no_progress_rounds = 1;
+
+        for head in ["head-b", "head-c", "head-d"] {
+            state = observe_review_loop(Some(&state), head, &[])
+                .expect("a clean reviewed head remains admissible")
+                .state;
+            assert_eq!(state.no_progress_rounds, 0);
+        }
     }
 
     #[test]
