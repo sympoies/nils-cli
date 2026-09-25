@@ -1487,7 +1487,7 @@ pub(crate) fn infer_semantic_memory_observed(
         trigger,
     };
     let input = format!(
-        "Return only one JSON object with keys topic_action (keep|set|clear), topic (string|null), activity (string|null), references (array of #number strings). Use the bounded semantic-memory fields including origin, active_objective, current_activity, milestones, decisions, blockers, and journey. Preserve origin; change an automatic topic only for an explicit human_objective journey entry. Never invent references. Do not use tools. Semantic memory:\n{semantic_memory}"
+        "Return only one JSON object with keys topic_action (keep|set|clear), topic (string|null), activity (string|null), references (empty array). Write a concise topic of at most 72 characters that captures the concrete task, not a verbatim voice transcription or preamble. Read human_objective for the actual task and use the bounded semantic-memory journey to detect an explicit change of objective. Keep an existing topic through routine progress, but update it for a new user-directed objective. Leave issue and PR references out of topic and activity; the daemon adds verified references. Do not use tools. Semantic memory:\n{semantic_memory}"
     );
     if input.len() >= crate::retitle_v3::MAX_PROVIDER_INPUT_BYTES {
         return Err(ObservedInferenceError {
@@ -2267,6 +2267,7 @@ fn parse_decision(
             .as_deref()
             .is_none_or(|topic| topic.trim().is_empty());
     let user_owned = existing.topic_source == SessionTitleTopicSource::User;
+    let provider_set_topic = !user_owned && decision.topic_action == TopicAction::Set;
     let (topic, topic_source, references) =
         if user_owned || decision.topic_action == TopicAction::Keep {
             (existing.topic, existing.topic_source, existing.references)
@@ -2305,12 +2306,36 @@ fn parse_decision(
         activity,
         extra: existing.extra,
     };
-    if initial_automatic && !usable_initial_automatic_topic(state.topic.as_deref()) {
+    if context.coverage.source == "semantic_memory"
+        && ((provider_set_topic && state.topic.as_deref().is_some_and(contains_work_number))
+            || state.activity.as_deref().is_some_and(contains_work_number)
+            || (provider_set_topic
+                && state
+                    .topic
+                    .as_deref()
+                    .is_some_and(|topic| topic.chars().count() > 72)))
+    {
+        return Err(provider_malformed_class("schema_validation"));
+    }
+    if initial_automatic
+        && (!usable_initial_automatic_topic(state.topic.as_deref())
+            || state
+                .topic
+                .as_deref()
+                .is_some_and(|topic| topic.chars().count() > 72))
+    {
         return Err(provider_malformed_class("schema_validation"));
     }
     canonicalize_structured_title_pair(None, false, state.clone())
         .map(|(_, state)| state.expect("structured title state"))
         .map_err(|_| provider_malformed())
+}
+
+fn contains_work_number(value: &str) -> bool {
+    value
+        .as_bytes()
+        .windows(2)
+        .any(|pair| pair[0] == b'#' && pair[1].is_ascii_digit())
 }
 
 fn usable_initial_automatic_topic(topic: Option<&str>) -> bool {
@@ -4132,6 +4157,23 @@ mod tests {
             .as_deref(),
             Some("Fix automatic session titles")
         );
+        let existing = SessionTitleState {
+            topic: Some("Existing task".to_string()),
+            topic_source: SessionTitleTopicSource::Auto,
+            references: Vec::new(),
+            activity: None,
+            extra: BTreeMap::new(),
+        };
+        for output in [
+            r##"{"topic_action":"set","topic":"Fix issue #999","activity":null,"references":[]}"##.to_string(),
+            r##"{"topic_action":"set","topic":"Fix session titles","activity":"Review agent-console #999","references":[]}"##.to_string(),
+            json!({"topic_action":"set","topic":"x".repeat(73),"activity":null,"references":[]}).to_string(),
+        ] {
+            assert_eq!(
+                parse_decision(&output, &context, Some(&existing)).unwrap_err().code(),
+                "retitle-provider-malformed-response"
+            );
+        }
     }
 
     #[test]

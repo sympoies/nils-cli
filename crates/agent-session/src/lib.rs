@@ -10674,15 +10674,31 @@ fn normalize_title_state(mut state: SessionTitleState) -> Result<SessionTitleSta
     let mut normalized_references = Vec::with_capacity(SESSION_TITLE_MAX_REFERENCES);
     for reference in state.references {
         let reference = reference.trim_matches(is_javascript_whitespace).to_string();
-        let number = reference.strip_prefix('#').unwrap_or_default();
-        if number.is_empty()
+        let (repo, number) = if let Some(number) = reference.strip_prefix('#') {
+            (None, number)
+        } else if let Some((repo, number)) = reference.split_once(" #") {
+            (Some(repo), number)
+        } else {
+            (None, "")
+        };
+        if repo.is_some_and(|repo| {
+            !(2..=64).contains(&repo.len())
+                || !repo
+                    .bytes()
+                    .next()
+                    .is_some_and(|byte| byte.is_ascii_alphabetic())
+                || repo != repo.to_ascii_lowercase()
+                || !repo
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        }) || number.is_empty()
             || number.starts_with('0')
             || number.len() > 10
             || !number.chars().all(|character| character.is_ascii_digit())
         {
             return Err(CliError::usage(
                 "invalid-title-state",
-                "title_state references must use #<positive-number>",
+                "title_state references must use #<positive-number> or repo #<positive-number>",
                 Some(json!({ "field": "title_state.references" })),
             ));
         }
@@ -19648,6 +19664,22 @@ exit 97
         .unwrap();
 
         assert!(title.contains("#317 - Implement contract"));
+    }
+
+    #[test]
+    fn structured_title_renderer_supports_repo_qualified_references() {
+        let title = super::render_session_title_state(&super::SessionTitleState {
+            topic: Some("Improve session titles".to_string()),
+            topic_source: super::SessionTitleTopicSource::Auto,
+            references: vec!["#12".to_string(), "agent-console #3".to_string()],
+            activity: None,
+            extra: std::collections::BTreeMap::new(),
+        })
+        .unwrap();
+        assert_eq!(
+            title.as_deref(),
+            Some("Improve session titles #12 agent-console #3")
+        );
     }
 
     #[test]

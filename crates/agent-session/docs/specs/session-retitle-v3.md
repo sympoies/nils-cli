@@ -260,10 +260,12 @@ that resumes an accepted operation.
 
 ## Memory-first behavior
 
-A manual Retitle with current, usable memory MUST complete from a deterministic
-local render without invoking a title provider when its current title candidate
-has readable objective text. It may commit a changed title or return
-`unchanged`. Its work is independent of total transcript size.
+A manual Retitle with current, usable memory completes from a deterministic
+local render without invoking a title provider when its readable objective is
+at most 72 characters. It may commit a changed title or return `unchanged`.
+Longer conversational objectives use provider inference so a voice transcript's
+opening words do not become the public title. Both paths are independent of
+total transcript size.
 
 That local render MUST use the stored readable objective, never the private
 `objective:` projection. When no readable objective survives sanitization, or
@@ -290,7 +292,10 @@ rendered from already accepted memory. A current-memory manual request MUST NOT
 invoke a provider merely to reproduce its existing title. Primary and fallback
 execution follow the bounded taxonomy below.
 
-The first automatic title MUST be provider-authored. The daemon MUST NOT expose
+The first automatic title MUST be provider-authored. The provider receives a
+bounded, sanitized human objective (at most 1,200 characters) as task context
+and is asked for a topic of at most 72 characters, without repeating a voice
+transcription preamble. The daemon MUST NOT expose
 its private deterministic `objective:` projection as the session title. Image
 transport scaffolding and image-reference markers are excluded from the
 semantic projection supplied to that provider. A first automatic result MUST
@@ -334,6 +339,15 @@ The marker contains:
   absent when sanitization redacted any of its material, is never set from
   assistant text, and is excluded from the provider projection. It exists so a
   local title render never has to publish the `objective:` projection;
+- a sanitized, bounded human objective context for provider topic inference;
+  it changes only when the active human objective changes;
+- up to two deterministic work-item references extracted from human prompts;
+  an explicit later reference replaces the list, and an objective pivot without
+  a reference clears it. Image markers and model output cannot supply a
+  reference. The rendered title uses `#N` for the current repository and
+  `repo #N` for another repository. A nearby prose word does not qualify a
+  bare `#N` as cross-repository; the compact form requires a repository-shaped
+  token with punctuation, or an explicit GitHub issue or pull URL;
 - `current_activity`, which assistant progress may update;
 - bounded `milestones`, `decisions`, `blockers`, and `journey` ledgers;
 - bounded source `segments` and the current incremental `cursor`;
@@ -358,9 +372,12 @@ compact-summary, generated continuation, and terminal output can update neither
 ledger after sanitization.
 
 The provider input is a deterministic JSON projection of the accepted memory
-and MUST be strictly smaller than 16 KiB. It excludes readable objective text,
+and MUST be strictly smaller than 16 KiB. It includes sanitized human objective
+context, but excludes the public readable objective field, work references,
 cursor, segment, receipt, timestamp, path, credential, environment, and raw
-provider identity fields.
+provider identity fields. When readable human context is present, the provider
+projection excludes assistant-derived activity and ledgers so instructions in
+the human prompt cannot copy that private memory into a public title.
 Repeated rendering of the same memory revision MUST produce identical bytes.
 
 ## Incremental history and discontinuity
@@ -633,6 +650,7 @@ gate.
 | Provider taxonomy | Primary/fallback timeout, unavailable, quota, rate-limit, missing-message, JSON-parse, and schema-validation remain distinguishable without content |
 | Degraded cached | Failed refresh with usable memory preserves title and returns terminal `degraded_cached` |
 | No cache | Failed refresh with no usable memory returns typed terminal failure/error and never invents a title |
-| Fresh manual | Repeated Retitle completes without provider inference, stays under the 250 ms p95 daemon target, and preserves objective |
+| Fresh manual, concise objective | Repeated Retitle completes without provider inference, stays under the 250 ms p95 daemon target, and preserves objective |
+| Fresh manual, long voice objective | Provider receives sanitized task context and the raw opening of the transcription is not published as a title |
 | Mixed versions | old-edge/new-daemon, new-edge/old-daemon, and v2-only combinations select a safe supported path |
 | Privacy canaries | Session record, HTTP, operation replay, structured logs/journal, provider attempt evidence, and retained artifacts contain none of the forbidden values |
