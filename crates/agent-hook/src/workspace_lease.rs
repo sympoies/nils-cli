@@ -1110,9 +1110,25 @@ fn takeover_conflict(state: &State) -> Result<String, HookError> {
         return Err(state_invalid());
     };
     let repository = git2::Repository::open(&identity.root).map_err(|_| state_invalid())?;
-    let head = repository.head().map_err(|_| state_invalid())?;
-    let branch = head.name().map_err(|_| state_invalid())?;
-    let commit = head.target().ok_or_else(state_invalid)?;
+    let (branch, commit) = match repository.head() {
+        Ok(head) => (
+            head.name().map_err(|_| state_invalid())?.to_string(),
+            head.target().ok_or_else(state_invalid)?.to_string(),
+        ),
+        Err(error) if error.code() == git2::ErrorCode::UnbornBranch => {
+            let head = repository
+                .find_reference("HEAD")
+                .map_err(|_| state_invalid())?;
+            (
+                head.symbolic_target()
+                    .map_err(|_| state_invalid())?
+                    .ok_or_else(state_invalid)?
+                    .to_string(),
+                "unborn".to_string(),
+            )
+        }
+        Err(_) => return Err(state_invalid()),
+    };
     digest_value(
         "workspace-takeover-conflict",
         &json!({
@@ -1120,7 +1136,7 @@ fn takeover_conflict(state: &State) -> Result<String, HookError> {
             "binding_id": state.binding.binding_id,
             "generation": state.binding.generation,
             "branch": branch,
-            "head": commit.to_string(),
+            "head": commit,
         }),
     )
 }

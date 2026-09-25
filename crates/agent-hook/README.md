@@ -147,7 +147,8 @@ lineage exactly match. Recovery mints a fresh binding ID and generation;
 startup, clear, foreign-session, and changed-lineage takeovers remain denied.
 
 For an exact v2 target, a caller may opt into `takeover_capability`. A live
-foreign denial then includes a conflict identifier when HEAD is resolvable.
+foreign denial then includes a conflict identifier for the branch and HEAD,
+including an unborn branch.
 An explicit `takeover_conflict` bind atomically transfers an idle owner only
 while that identifier still matches; active operations remain protected and
 the prior generation is fenced. This is a coordination contract: the caller

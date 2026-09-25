@@ -458,7 +458,8 @@ HEAD under the workspace lock, rejects an active operation, and replaces the
 former generation. The conflict is a compare-and-swap value, not an approval
 receipt; the DSH caller obtains one tool approval before sending the transfer.
 Older v2 callers omit the capability and receive the unchanged strict denial
-shape. An unborn HEAD still returns the ordinary foreign-active denial.
+shape. An unborn branch uses its symbolic HEAD name and an explicit unborn
+marker; creating the first commit invalidates that conflict.
 The opted-in retry returns `WORKSPACE_TAKEOVER_STALE` if the conflict changes,
 and `WORKSPACE_OPERATION_UNCERTAIN` while the former owner has an active
 operation. The current DSH runtime passes
