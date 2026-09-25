@@ -26,7 +26,7 @@ pub(crate) const READINESS_SCHEMA: &str = "agent-session.session-retitle.readine
 pub(crate) const RECEIPTS_SCHEMA: &str = "agent-session.session-retitle.receipts.v3";
 const MARKER_KEY: &str = "session_retitle_v3";
 const MARKER_SCHEMA: &str = "agent-session.session-retitle-state.v3";
-const SEMANTIC_PROJECTION_VERSION: u8 = 2;
+const SEMANTIC_PROJECTION_VERSION: u8 = 3;
 const MAX_MARKER_BYTES: usize = 16 * 1024;
 pub(crate) const MAX_PROVIDER_INPUT_BYTES: usize = 16 * 1024;
 const MAX_SEMANTIC_PROJECTION_BYTES: usize = 12 * 1024;
@@ -35,6 +35,7 @@ const MAX_TEXT_CHARS: usize = 320;
 /// A readable objective must already fit the public session-title bound so a
 /// local commit can never fail title normalization on a long first prompt.
 const MAX_OBJECTIVE_DISPLAY_CHARS: usize = crate::SESSION_TITLE_MAX_CHARS;
+const MAX_OBJECTIVE_CONTEXT_CHARS: usize = 1200;
 const MAX_ACTIVITY_CHARS: usize = 320;
 const MAX_LEDGER_ENTRIES: usize = 6;
 const MAX_SEGMENTS: usize = 8;
@@ -147,6 +148,10 @@ pub(crate) struct SemanticMemory {
     origin: Option<MemoryFact>,
     #[serde(skip_serializing_if = "Option::is_none")]
     active_objective: Option<MemoryFact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    objective_context: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    work_references: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     current_activity: Option<MemoryFact>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -180,6 +185,8 @@ impl Default for SemanticMemory {
             revision: 0,
             origin: None,
             active_objective: None,
+            objective_context: None,
+            work_references: Vec::new(),
             current_activity: None,
             milestones: Vec::new(),
             decisions: Vec::new(),
@@ -1318,10 +1325,27 @@ pub(crate) fn complete_manual_locally(
     else {
         return Ok(None);
     };
+    // A long conversational prompt is context for a title, not itself a title.
+    // Let the provider summarize it instead of publishing its first 120 chars.
+    if memory
+        .objective_context
+        .as_deref()
+        .is_some_and(|context| context.chars().count() > 72)
+    {
+        return Ok(None);
+    }
+    let existing_user_topic = inference
+        .existing
+        .as_ref()
+        .filter(|state| state.topic_source == SessionTitleTopicSource::User);
     let state = SessionTitleState {
-        topic: Some(topic),
-        topic_source: SessionTitleTopicSource::Auto,
-        references: Vec::new(),
+        topic: existing_user_topic
+            .and_then(|state| state.topic.clone())
+            .or(Some(topic)),
+        topic_source: existing_user_topic.map_or(SessionTitleTopicSource::Auto, |_| {
+            SessionTitleTopicSource::User
+        }),
+        references: display_work_references(&record.cwd, &memory.work_references),
         // Activity is private semantic context. A deterministic local title
         // must not turn assistant/provider prose into an HTTP-visible field.
         activity: None,
@@ -1335,7 +1359,7 @@ pub(crate) fn commit_inference(
     catalog: &HistoryCatalog,
     id: &str,
     inference: &InferenceContext,
-    state: SessionTitleState,
+    mut state: SessionTitleState,
     provider_attempts: &[crate::retitle::ProviderAttemptObservation],
 ) -> Result<RetitleV3Response, CliError> {
     if title_state_contains_sensitive_material(&state)
@@ -1351,8 +1375,6 @@ pub(crate) fn commit_inference(
             provider_attempts,
         );
     }
-    let (title, state) = canonicalize_structured_title_pair(None, false, state)?;
-    let state = state.expect("inferred title state is structured");
     let mut authority = lock_exact_session_authority(context, id)?
         .ok_or_else(|| v3_error("session-not-found", "session does not exist"))?;
     let mut memory = memory_from_record(&authority.record)?;
@@ -1389,6 +1411,11 @@ pub(crate) fn commit_inference(
         // provider result closes the cached-title degradation as well.
         memory.readiness = MemoryReadiness::Ready;
     }
+    // References are independent of topic ownership. Read the same fenced
+    // snapshot being committed so neither a model nor a stale turn can invent them.
+    state.references = display_work_references(&authority.record.cwd, &memory.work_references);
+    let (title, state) = canonicalize_structured_title_pair(None, false, state)?;
+    let state = state.expect("inferred title state is structured");
     let changed =
         authority.record.title != title || authority.record.title_state.as_ref() != Some(&state);
     if changed {
@@ -2070,6 +2097,9 @@ fn reduce_messages(memory: &mut SemanticMemory, messages: &[HistoryMessage]) {
         };
         if message.human_prompt && message.role == "user" {
             let projected = semantic_label("objective", &text, MAX_TEXT_CHARS);
+            let references = extract_work_references(&strip_image_reference_markers(
+                &crate::retitle::filter_text(&source_text),
+            ));
             let fact = MemoryFact {
                 turn_id: message.id.clone(),
                 text: projected.clone(),
@@ -2078,12 +2108,18 @@ fn reduce_messages(memory: &mut SemanticMemory, messages: &[HistoryMessage]) {
             if memory.origin.is_none() {
                 memory.origin = Some(fact.clone());
                 memory.active_objective = Some(fact.clone());
+                memory.objective_context = objective_context(&source_text);
+                memory.work_references = references;
             } else if explicit_objective_pivot(&text)
                 || (greeting_origin_is_active(memory)
                     && !is_greeting_placeholder(&text)
                     && !is_routine_followup(&text))
             {
                 memory.active_objective = Some(fact.clone());
+                memory.objective_context = objective_context(&source_text);
+                memory.work_references = references;
+            } else if !references.is_empty() {
+                memory.work_references = references;
             }
             push_bounded(
                 &mut memory.journey,
@@ -2314,6 +2350,131 @@ fn objective_display(value: &str) -> Option<String> {
         .filter(|display| !display.contains("<redacted>"))
 }
 
+fn objective_context(value: &str) -> Option<String> {
+    let stripped =
+        strip_image_reference_markers(&crate::provider_prompt::image_preview_text(value));
+    sanitize_text(&stripped, MAX_OBJECTIVE_CONTEXT_CHARS)
+}
+
+fn valid_reference_number(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with('0')
+        && value.len() <= 10
+        && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn valid_repo_label(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    (2..=64).contains(&value.len())
+        && value == lower
+        && !matches!(
+            lower.as_str(),
+            "and"
+                | "or"
+                | "the"
+                | "for"
+                | "with"
+                | "in"
+                | "on"
+                | "to"
+                | "by"
+                | "of"
+                | "at"
+                | "as"
+                | "fix"
+                | "review"
+                | "implement"
+                | "update"
+                | "close"
+                | "issue"
+                | "issues"
+                | "pr"
+                | "pull"
+                | "request"
+        )
+        && value
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphabetic())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
+fn valid_work_reference(value: &str) -> bool {
+    if let Some(number) = value.strip_prefix('#') {
+        return valid_reference_number(number);
+    }
+    value
+        .split_once(" #")
+        .is_some_and(|(repo, number)| valid_repo_label(repo) && valid_reference_number(number))
+}
+
+fn display_work_references(cwd: &str, references: &[String]) -> Vec<String> {
+    let local_repo = crate::repo_name_from_cwd(cwd);
+    references
+        .iter()
+        .map(|reference| {
+            reference
+                .split_once(" #")
+                .filter(|(repo, _)| local_repo.as_deref() == Some(*repo))
+                .map_or_else(|| reference.clone(), |(_, number)| format!("#{number}"))
+        })
+        .collect()
+}
+
+fn extract_work_references(value: &str) -> Vec<String> {
+    let mut references = Vec::new();
+    let words = value.split_whitespace().collect::<Vec<_>>();
+    for (index, word) in words.iter().enumerate() {
+        if let Some(path) = word.strip_prefix("https://github.com/") {
+            let parts = path
+                .trim_end_matches(|character: char| !character.is_ascii_digit())
+                .split('/')
+                .collect::<Vec<_>>();
+            if parts.len() >= 4
+                && matches!(parts[2], "issues" | "pull")
+                && valid_repo_label(parts[1])
+                && valid_reference_number(parts[3])
+            {
+                let reference = format!("{} #{}", parts[1], parts[3]);
+                if !references.contains(&reference) {
+                    references.push(reference);
+                }
+            }
+        }
+        let token = word
+            .trim_matches(|character: char| !character.is_ascii_alphanumeric() && character != '#');
+        let Some(number) = token.strip_prefix('#') else {
+            continue;
+        };
+        if !valid_reference_number(number) {
+            continue;
+        }
+        let repo = index
+            .checked_sub(1)
+            .and_then(|previous| words.get(previous))
+            .map(|previous| {
+                previous.trim_matches(|character: char| {
+                    !character.is_ascii_alphanumeric()
+                        && character != '-'
+                        && character != '_'
+                        && character != '.'
+                })
+            })
+            .filter(|previous| valid_repo_label(previous));
+        let reference =
+            repo.map_or_else(|| format!("#{number}"), |repo| format!("{repo} #{number}"));
+        if !references.contains(&reference) {
+            references.push(reference);
+        }
+        if references.len() == 2 {
+            break;
+        }
+    }
+    references
+}
+
 /// Removes every `[Image #<n>]` reference marker. A prompt carrying several
 /// images repeats the marker inline, so stripping only a leading one leaves
 /// scaffolding in text that both the projection and a title would inherit.
@@ -2363,15 +2524,22 @@ pub(crate) fn render_provider_input(memory: &SemanticMemory) -> Result<String, C
     {
         fact.display = None;
     }
+    // Raw human prose must not share a provider request with assistant-derived
+    // private memory: a prompt could otherwise ask the model to copy it into
+    // the public title. Older projections retain their prior provider shape.
+    let has_readable_objective = memory.objective_context.is_some();
     let value = json!({
         "schema_version": CAPABILITY,
+        "human_objective": memory.objective_context,
         "origin": memory.origin,
         "active_objective": memory.active_objective,
-        "current_activity": memory.current_activity,
-        "milestones": memory.milestones,
-        "decisions": memory.decisions,
-        "blockers": memory.blockers,
-        "journey": memory.journey,
+        "current_activity": (!has_readable_objective).then_some(memory.current_activity).flatten(),
+        "milestones": if has_readable_objective { Vec::new() } else { memory.milestones },
+        "decisions": if has_readable_objective { Vec::new() } else { memory.decisions },
+        "blockers": if has_readable_objective { Vec::new() } else { memory.blockers },
+        "journey": if has_readable_objective {
+            memory.journey.into_iter().filter(|entry| entry.kind == "human_objective").collect::<Vec<_>>()
+        } else { memory.journey },
     });
     let rendered = serde_json::to_string(&value).map_err(|_| {
         v3_error(
@@ -2401,6 +2569,11 @@ fn sanitize_text(value: &str, max_chars: usize) -> Option<String> {
         if credential_shaped(trimmed)
             || trimmed.starts_with('/')
             || trimmed.starts_with("~/")
+            || trimmed.contains("://")
+            || trimmed.contains("(/")
+            || trimmed.contains("(~/")
+            || trimmed.contains("](/")
+            || trimmed.contains("](~/")
             || credential_assignment(trimmed)
             || environment_assignment(trimmed)
             || trimmed.to_ascii_lowercase().starts_with("http://")
@@ -2646,6 +2819,14 @@ fn safe_timestamp(value: &str) -> String {
 }
 
 fn sanitize_memory_in_place(memory: &mut SemanticMemory) {
+    memory.objective_context = memory
+        .objective_context
+        .as_deref()
+        .and_then(|context| sanitize_text(context, MAX_OBJECTIVE_CONTEXT_CHARS));
+    memory
+        .work_references
+        .retain(|reference| valid_work_reference(reference));
+    memory.work_references.truncate(2);
     for fact in [
         memory.origin.as_mut(),
         memory.active_objective.as_mut(),
@@ -3513,7 +3694,7 @@ mod tests {
         let (context, catalog, _) = fixture(tmp, id, Some("hi"), &rows);
         let accepted = refresh_once(&context, &catalog, id, &request(id, 1, 0)).unwrap();
         let mut memory = memory_from_record(&load_session_record(&context, id).unwrap()).unwrap();
-        assert_eq!(memory.projection_version, 2);
+        assert_eq!(memory.projection_version, SEMANTIC_PROJECTION_VERSION);
         assert_ne!(memory.active_objective, memory.origin);
         // Simulate the released v2 reducer, which retained a greeting as the
         // active objective even after it recorded the later human task.
@@ -3593,7 +3774,8 @@ mod tests {
         let provider = render_provider_input(&memory).unwrap();
         // The sanitized human objective is durable so a local title renders
         // prose instead of the projection. Assistant text stays projection-only
-        // in the marker, and provider input carries neither verbatim.
+        // in the marker. Provider input carries the human objective but never
+        // verbatim assistant progress.
         assert_eq!(
             memory.origin.as_ref().unwrap().display.as_deref(),
             Some("investigate long retitle failures")
@@ -3605,8 +3787,8 @@ mod tests {
         ] {
             assert!(!durable.contains(raw));
         }
+        assert!(provider.contains("investigate long retitle failures"));
         for raw in [
-            "investigate long retitle failures",
             "Implementing bounded cursor",
             "Decided to retain the origin",
         ] {
@@ -4433,6 +4615,159 @@ mod tests {
     }
 
     #[test]
+    fn voice_objective_gives_the_provider_readable_task_context() {
+        let mut memory = SemanticMemory::default();
+        reduce_messages(
+            &mut memory,
+            &[message(
+                "voice-turn",
+                "user",
+                "嗯我想一下，前面那個 Telegram 的事情先放著，今天主要是請你修好 Agent Console 的 retitle，讓語音首句有清楚主題，直接完成驗證。",
+                true,
+            )],
+        );
+        let input = render_provider_input(&memory).unwrap();
+        assert!(input.contains("今天主要是請你修好 Agent Console 的 retitle"));
+        assert!(!input.contains("\"display\""));
+    }
+
+    #[test]
+    fn readable_objective_redacts_embedded_links_and_excludes_assistant_memory() {
+        let mut memory = SemanticMemory::default();
+        reduce_messages(
+            &mut memory,
+            &[
+                message(
+                    "human",
+                    "user",
+                    "Fix titles using [ticket](https://private.example/secret/issues/3?signature=private-canary) and [trace](file:///home/alice/private/trace.log)",
+                    true,
+                ),
+                message(
+                    "assistant",
+                    "assistant",
+                    "Private assistant canary: ALPHA_CANARY",
+                    false,
+                ),
+            ],
+        );
+        let stored = serde_json::to_string(&memory).unwrap();
+        let input = render_provider_input(&memory).unwrap();
+        for canary in [
+            "private.example",
+            "private-canary",
+            "/home/alice/private",
+            "ALPHA_CANARY",
+        ] {
+            assert!(!input.contains(canary), "provider input leaked {canary}");
+        }
+        for canary in ["private.example", "private-canary", "/home/alice/private"] {
+            assert!(!stored.contains(canary), "memory leaked {canary}");
+        }
+        assert!(input.contains("Fix titles"));
+    }
+
+    #[test]
+    fn human_work_references_are_deterministic_and_assistant_mentions_are_ignored() {
+        let mut memory = SemanticMemory::default();
+        reduce_messages(
+            &mut memory,
+            &[
+                message("first", "user", "Fix #12 and agent-console #3", true),
+                message("assistant", "assistant", "Maybe also #999", false),
+            ],
+        );
+        assert_eq!(memory.work_references, vec!["#12", "agent-console #3"]);
+        reduce_messages(
+            &mut memory,
+            &[message("pivot", "user", "Now switch to #24", true)],
+        );
+        assert_eq!(memory.work_references, vec!["#24"]);
+        assert_eq!(
+            extract_work_references("See https://github.com/serenvia/agent-console/pull/3"),
+            vec!["agent-console #3"]
+        );
+        assert_eq!(
+            display_work_references("/work/agent-console", &["agent-console #3".to_string()]),
+            vec!["#3"]
+        );
+    }
+
+    #[test]
+    fn v3_commit_uses_human_references_instead_of_model_references() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "deterministic-references";
+        let (context, catalog, _) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row("user", "Fix #12 and agent-console #3", "turn-one"),
+        );
+        let accepted = refresh_once(&context, &catalog, id, &request(id, 0, 0)).unwrap();
+        let inference = inference_context(&context, id, &accepted.operation_hash).unwrap();
+        let result = commit_inference(
+            &context,
+            &catalog,
+            id,
+            &inference,
+            SessionTitleState {
+                topic: Some("Improve retitle references".to_string()),
+                topic_source: SessionTitleTopicSource::Auto,
+                references: vec!["#999".to_string()],
+                activity: None,
+                extra: BTreeMap::new(),
+            },
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            result.title.as_deref(),
+            Some("Improve retitle references #12 agent-console #3")
+        );
+        assert_eq!(
+            load_session_record(&context, id)
+                .unwrap()
+                .title_state
+                .unwrap()
+                .references,
+            vec!["#12", "agent-console #3"]
+        );
+    }
+
+    #[test]
+    fn user_owned_topic_keeps_its_text_and_receives_human_references() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "user-topic-references";
+        let (context, catalog, _) = fixture(
+            tmp.path(),
+            id,
+            Some("My title"),
+            &codex_row("user", "Fix issue #12", "turn-one"),
+        );
+        let mut record = load_session_record(&context, id).unwrap();
+        record.title_state.as_mut().unwrap().topic_source = SessionTitleTopicSource::User;
+        crate::write_session_record(&context, &record).unwrap();
+        let accepted = refresh_once(&context, &catalog, id, &request(id, 1, 0)).unwrap();
+        let inference = inference_context(&context, id, &accepted.operation_hash).unwrap();
+        let result = commit_inference(
+            &context,
+            &catalog,
+            id,
+            &inference,
+            SessionTitleState {
+                topic: Some("My title".to_string()),
+                topic_source: SessionTitleTopicSource::User,
+                references: vec!["#999".to_string()],
+                activity: None,
+                extra: BTreeMap::new(),
+            },
+            &[],
+        )
+        .unwrap();
+        assert_eq!(result.title.as_deref(), Some("My title #12"));
+    }
+
+    #[test]
     fn readable_objective_elides_image_scaffolding_and_keeps_the_projection_private() {
         let mut memory = SemanticMemory::default();
         reduce_messages(
@@ -4475,7 +4810,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_input_never_carries_the_readable_objective() {
+    fn provider_input_carries_sanitized_human_objective_without_public_display_field() {
         let mut memory = SemanticMemory::default();
         reduce_messages(
             &mut memory,
@@ -4490,7 +4825,7 @@ mod tests {
         let rendered = render_provider_input(&memory).unwrap();
 
         assert!(!rendered.contains("\"display\""));
-        assert!(!rendered.contains("Please Fix The Retitle Title"));
+        assert!(rendered.contains("Please Fix The Retitle Title"));
         assert!(rendered.contains("objective: fix"));
     }
 
@@ -4814,7 +5149,7 @@ mod tests {
         assert_eq!(terminal.outcome.as_deref(), Some("committed"));
         assert_eq!(terminal.title.as_deref(), Some("檢查並修復 retitle 標題"));
         let memory = memory_from_record(&load_session_record(&context, id).unwrap()).unwrap();
-        assert_eq!(memory.projection_version, 2);
+        assert_eq!(memory.projection_version, SEMANTIC_PROJECTION_VERSION);
         assert_eq!(memory.active_objective, memory.origin);
     }
 
@@ -4853,7 +5188,7 @@ mod tests {
         assert_eq!(terminal.outcome.as_deref(), Some("degraded_cached"));
         assert_eq!(terminal.title.as_deref(), Some("hi"));
         let memory = memory_from_record(&load_session_record(&context, id).unwrap()).unwrap();
-        assert_eq!(memory.projection_version, 2);
+        assert_eq!(memory.projection_version, SEMANTIC_PROJECTION_VERSION);
         assert_eq!(memory.active_objective, memory.origin);
         assert_eq!(memory.journey.len(), 3);
 
@@ -4904,7 +5239,7 @@ mod tests {
     }
 
     #[test]
-    fn long_objective_commits_within_the_public_title_bound() {
+    fn long_voice_objective_defers_to_provider_instead_of_publishing_raw_prompt() {
         let tmp = tempfile::tempdir().unwrap();
         let id = "long-manual-title";
         let prompt = (0..20)
@@ -4918,17 +5253,13 @@ mod tests {
             &codex_row("user", &prompt, "turn-one"),
         );
         let accepted = refresh_once(&context, &catalog, id, &request(id, 0, 0)).unwrap();
-        let terminal = complete_manual_locally(&context, &catalog, id, &accepted.operation_hash)
-            .unwrap()
-            .expect("manual memory-first result");
-
-        let title = terminal.title.as_deref().expect("committed title");
         assert!(
-            title.chars().count() <= crate::SESSION_TITLE_MAX_CHARS,
-            "title exceeded the public bound: {} chars",
-            title.chars().count()
+            complete_manual_locally(&context, &catalog, id, &accepted.operation_hash)
+                .unwrap()
+                .is_none()
         );
-        assert!(title.starts_with("distinctobjective00 distinctobjective01"));
+        let inference = inference_context(&context, id, &accepted.operation_hash).unwrap();
+        assert!(inference.input.contains("distinctobjective19"));
     }
 
     #[test]

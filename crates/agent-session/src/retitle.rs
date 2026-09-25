@@ -1487,7 +1487,7 @@ pub(crate) fn infer_semantic_memory_observed(
         trigger,
     };
     let input = format!(
-        "Return only one JSON object with keys topic_action (keep|set|clear), topic (string|null), activity (string|null), references (array of #number strings). Use the bounded semantic-memory fields including origin, active_objective, current_activity, milestones, decisions, blockers, and journey. Preserve origin; change an automatic topic only for an explicit human_objective journey entry. Never invent references. Do not use tools. Semantic memory:\n{semantic_memory}"
+        "Return only one JSON object with keys topic_action (keep|set|clear), topic (string|null), activity (string|null), references (empty array). Write a concise topic of at most 72 characters that captures the concrete task, not a verbatim voice transcription or preamble. Read human_objective for the actual task and use the bounded semantic-memory journey to detect an explicit change of objective. Keep an existing topic through routine progress, but update it for a new user-directed objective. Leave issue and PR references out of topic and activity; the daemon adds verified references. Do not use tools. Semantic memory:\n{semantic_memory}"
     );
     if input.len() >= crate::retitle_v3::MAX_PROVIDER_INPUT_BYTES {
         return Err(ObservedInferenceError {
@@ -2305,7 +2305,13 @@ fn parse_decision(
         activity,
         extra: existing.extra,
     };
-    if initial_automatic && !usable_initial_automatic_topic(state.topic.as_deref()) {
+    if initial_automatic
+        && (!usable_initial_automatic_topic(state.topic.as_deref())
+            || state
+                .topic
+                .as_deref()
+                .is_some_and(|topic| topic.chars().count() > 72))
+    {
         return Err(provider_malformed_class("schema_validation"));
     }
     canonicalize_structured_title_pair(None, false, state.clone())
