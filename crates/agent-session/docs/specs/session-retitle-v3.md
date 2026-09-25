@@ -345,7 +345,9 @@ The marker contains:
   an explicit later reference replaces the list, and an objective pivot without
   a reference clears it. Image markers and model output cannot supply a
   reference. The rendered title uses `#N` for the current repository and
-  `repo #N` for another repository;
+  `repo #N` for another repository. A nearby prose word does not qualify a
+  bare `#N` as cross-repository; the compact form requires a repository-shaped
+  token with punctuation, or an explicit GitHub issue or pull URL;
 - `current_activity`, which assistant progress may update;
 - bounded `milestones`, `decisions`, `blockers`, and `journey` ledgers;
 - bounded source `segments` and the current incremental `cursor`;
@@ -373,7 +375,9 @@ The provider input is a deterministic JSON projection of the accepted memory
 and MUST be strictly smaller than 16 KiB. It includes sanitized human objective
 context, but excludes the public readable objective field, work references,
 cursor, segment, receipt, timestamp, path, credential, environment, and raw
-provider identity fields.
+provider identity fields. When readable human context is present, the provider
+projection excludes assistant-derived activity and ledgers so instructions in
+the human prompt cannot copy that private memory into a public title.
 Repeated rendering of the same memory revision MUST produce identical bytes.
 
 ## Incremental history and discontinuity

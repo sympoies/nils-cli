@@ -1304,44 +1304,42 @@ pub(crate) fn complete_manual_locally(
         return Ok(None);
     }
     let memory = memory_from_record(&record)?;
-    // Older projections may still hold a greeting as their active objective.
-    // Their journey has only a private projection of the later task, so a
-    // readable local title is unavailable; let the provider infer it while
-    // retaining the existing memory and title as a failure fallback.
-    if later_greeting_objective(&memory).is_some() {
-        return Ok(None);
-    }
-    let Some(objective) = memory.active_objective.as_ref().or(memory.origin.as_ref()) else {
-        return Ok(None);
-    };
-    // The stored projection is a comparison key, not prose. Without readable
-    // objective text — or when the prose itself reads as a projection, which a
-    // human prompt is free to do — this operation defers to provider inference
-    // rather than publishing internal semantic memory as the session title.
-    let Some(topic) = objective
-        .display
-        .clone()
-        .filter(|topic| !crate::retitle::topic_is_internal_projection(topic))
-    else {
-        return Ok(None);
-    };
-    // A long conversational prompt is context for a title, not itself a title.
-    // Let the provider summarize it instead of publishing its first 120 chars.
-    if memory
-        .objective_context
-        .as_deref()
-        .is_some_and(|context| context.chars().count() > 72)
-    {
-        return Ok(None);
-    }
     let existing_user_topic = inference
         .existing
         .as_ref()
         .filter(|state| state.topic_source == SessionTitleTopicSource::User);
+    let topic = if let Some(topic) = existing_user_topic.and_then(|state| state.topic.clone()) {
+        topic
+    } else {
+        // Older projections may still hold a greeting as their active
+        // objective. Their journey has only a private projection of the later
+        // task, so a readable local title is unavailable.
+        if later_greeting_objective(&memory).is_some() {
+            return Ok(None);
+        }
+        let Some(objective) = memory.active_objective.as_ref().or(memory.origin.as_ref()) else {
+            return Ok(None);
+        };
+        // The stored projection is a comparison key, not title prose.
+        let Some(topic) = objective
+            .display
+            .clone()
+            .filter(|topic| !crate::retitle::topic_is_internal_projection(topic))
+        else {
+            return Ok(None);
+        };
+        // A long conversational prompt needs a concise provider topic.
+        if memory
+            .objective_context
+            .as_deref()
+            .is_some_and(|context| context.chars().count() > 72)
+        {
+            return Ok(None);
+        }
+        topic
+    };
     let state = SessionTitleState {
-        topic: existing_user_topic
-            .and_then(|state| state.topic.clone())
-            .or(Some(topic)),
+        topic: Some(topic),
         topic_source: existing_user_topic.map_or(SessionTitleTopicSource::Auto, |_| {
             SessionTitleTopicSource::User
         }),
@@ -2462,7 +2460,15 @@ fn extract_work_references(value: &str) -> Vec<String> {
                         && character != '.'
                 })
             })
-            .filter(|previous| valid_repo_label(previous));
+            // An adjacent ordinary word is not evidence of a repository.
+            // Punctuation makes the compact form unambiguous; plain repo
+            // names remain available through an explicit GitHub URL.
+            .filter(|previous| {
+                valid_repo_label(previous)
+                    && previous
+                        .bytes()
+                        .any(|byte| matches!(byte, b'-' | b'_' | b'.'))
+            });
         let reference =
             repo.map_or_else(|| format!("#{number}"), |repo| format!("{repo} #{number}"));
         if !references.contains(&reference) {
@@ -4678,6 +4684,10 @@ mod tests {
             ],
         );
         assert_eq!(memory.work_references, vec!["#12", "agent-console #3"]);
+        assert_eq!(
+            extract_work_references("Handle bug #12 and track ticket #13"),
+            vec!["#12", "#13"]
+        );
         reduce_messages(
             &mut memory,
             &[message("pivot", "user", "Now switch to #24", true)],
@@ -4765,6 +4775,31 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result.title.as_deref(), Some("My title #12"));
+    }
+
+    #[test]
+    fn user_owned_topic_with_long_objective_attaches_references_without_provider() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "user-topic-long-objective";
+        let (context, catalog, _) = fixture(
+            tmp.path(),
+            id,
+            Some("My title"),
+            &codex_row(
+                "user",
+                "Please review the long explanation of this task and the previous context before fixing issue #12 while preserving the name I chose",
+                "turn-one",
+            ),
+        );
+        let mut record = load_session_record(&context, id).unwrap();
+        record.title_state.as_mut().unwrap().topic_source = SessionTitleTopicSource::User;
+        crate::write_session_record(&context, &record).unwrap();
+        let accepted = refresh_once(&context, &catalog, id, &request(id, 1, 0)).unwrap();
+        let result = complete_manual_locally(&context, &catalog, id, &accepted.operation_hash)
+            .unwrap()
+            .expect("user topic should render locally");
+        assert_eq!(result.title.as_deref(), Some("My title #12"));
+        assert!(result.provider_attempts.is_empty());
     }
 
     #[test]
