@@ -769,8 +769,9 @@ distinctions that cannot be proven offline.
 - The default budget is five repair rounds, two consecutive no-progress rounds,
   and zero automatic reopens for a previously fixed lifecycle fingerprint.
   Same-head/same-findings retries append nothing. Only a new reviewed head
-  advances a round, and only a strict reduction in open-finding cardinality is
-  mechanical progress. Stable-fingerprint collisions, reopens, no progress,
+  advances a round. The no-progress budget applies only while open blocking
+  findings remain; a clean reviewed head resets it. A strict reduction in
+  open-finding cardinality is mechanical progress. Stable-fingerprint collisions, reopens, no progress,
   and the round limit fail closed as typed terminal errors. An extendable error
   first appends a durable hard-stop receipt, so a restart returns the same stop.
 - A durable terminal budget error includes an exact extension proposal, but
