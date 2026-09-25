@@ -4007,6 +4007,11 @@ fn checkout_lease(
     run_child: &mut dyn FnMut(Command) -> Result<Output, HookError>,
 ) -> Result<Outcome, HookError> {
     let group = DshCapabilityGroup::CheckoutLeaseGuard;
+    // Current runtime-kit owns an exact-target WorkspaceLease v2 fence. Older
+    // DSH integrations retain the earlier checkout guard during nils rollout.
+    if std::env::var("DSH_RUNTIME_KIT_WORKSPACE_LEASE_V2").as_deref() == Ok("1") {
+        return Ok(Outcome::allow(group));
+    }
     if crate::liveness::coordination_failure_mode().is_some() {
         return Ok(Outcome::allow(group));
     }

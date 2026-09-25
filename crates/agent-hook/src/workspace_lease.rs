@@ -185,6 +185,10 @@ struct BindRequest {
     cwd: Option<PathBuf>,
     #[serde(default)]
     target: Option<TargetRef>,
+    #[serde(default)]
+    takeover_capability: bool,
+    #[serde(default)]
+    takeover_conflict: Option<String>,
     source: SessionStartSource,
 }
 
@@ -866,6 +870,20 @@ fn bind(
     if request.target.is_some() && (!protocol.admits_bind_target() || request.cwd.is_some()) {
         return Err(wire_invalid());
     }
+    if request.takeover_capability && protocol != ProtocolGeneration::V2 {
+        return Err(wire_invalid());
+    }
+    if request.takeover_conflict.is_some()
+        && (protocol != ProtocolGeneration::V2
+            || request.target.is_none()
+            || !request.takeover_capability
+            || request
+                .takeover_conflict
+                .as_deref()
+                .is_none_or(|value| !is_hex_digest(value)))
+    {
+        return Err(wire_invalid());
+    }
     let session_digest = digest(request.session_id.as_bytes());
     let parent_session_digest = request
         .parent_session_id
@@ -890,16 +908,29 @@ fn bind(
             text: "workspace lease: target requires no repository binding\n".to_string(),
         });
     }
-    let request_digest = digest_value(
-        "workspace-bind",
-        &json!({
-            "version": request.version,
-            "session_digest": session_digest,
-            "parent_session_digest": parent_session_digest,
-            "identity": identity,
-            "source": request.source,
-        }),
-    )?;
+    let mut digest_facts = json!({
+        "version": request.version,
+        "session_digest": session_digest,
+        "parent_session_digest": parent_session_digest,
+        "identity": identity,
+        "source": request.source,
+    });
+    // Keep the released v2 digest for requests that did not negotiate this
+    // capability, so a bind retry after a nils upgrade remains idempotent.
+    if request.takeover_capability || request.takeover_conflict.is_some() {
+        let facts = digest_facts
+            .as_object_mut()
+            .expect("bind digest facts object");
+        facts.insert(
+            "takeover_capability".to_string(),
+            json!(request.takeover_capability),
+        );
+        facts.insert(
+            "takeover_conflict".to_string(),
+            json!(request.takeover_conflict),
+        );
+    }
+    let request_digest = digest_value("workspace-bind", &digest_facts)?;
     let request_id_digest = digest(request.request_id.as_bytes());
     let locked = lock_workspace(state_root, &key, Some(fingerprint_key))?;
     let mut state = read_state(&locked)?;
@@ -929,17 +960,65 @@ fn bind(
         }
     }
 
+    let approved_takeover = if let Some(presented) = request.takeover_conflict.as_deref() {
+        let Some(existing) = state.as_ref().filter(|existing| {
+            existing.binding.status == BindingStatus::Active
+                && existing.binding.expires_at_epoch > now
+        }) else {
+            return Ok(denied(
+                protocol.bind_result_schema(),
+                "uncertain",
+                "WORKSPACE_TAKEOVER_STALE",
+                "the approved workspace conflict is no longer active",
+            ));
+        };
+        let expected = takeover_conflict(existing)?;
+        if !constant_time_eq(presented, &expected) {
+            return Ok(denied(
+                protocol.bind_result_schema(),
+                "uncertain",
+                "WORKSPACE_TAKEOVER_STALE",
+                "the approved workspace conflict changed",
+            ));
+        }
+        if existing
+            .operations
+            .iter()
+            .any(|operation| operation.status == OperationStatus::Active)
+        {
+            return Ok(denied(
+                protocol.bind_result_schema(),
+                "uncertain",
+                "WORKSPACE_OPERATION_UNCERTAIN",
+                "the previous workspace owner still has an active operation",
+            ));
+        }
+        true
+    } else {
+        false
+    };
+
     if managed {
         if let Some(existing) = state.as_ref()
             && existing.binding.status == BindingStatus::Active
             && existing.binding.expires_at_epoch > now
+            && !approved_takeover
         {
-            return Ok(denied(
+            let mut outcome = denied(
                 protocol.bind_result_schema(),
                 "foreign-active",
                 "WORKSPACE_FOREIGN_ACTIVE",
                 "another live session owns this workspace",
-            ));
+            );
+            if protocol == ProtocolGeneration::V2
+                && request.target.is_some()
+                && request.takeover_capability
+                && let Some(object) = outcome.data.as_object_mut()
+                && let Ok(conflict) = takeover_conflict(existing)
+            {
+                object.insert("conflict".to_string(), json!(conflict));
+            }
+            return Ok(outcome);
         }
         if let Some(existing) = state.as_ref()
             && existing.binding.status == BindingStatus::Active
@@ -969,7 +1048,11 @@ fn bind(
                         .iter()
                         .all(|operation| operation.status != OperationStatus::Active)
             });
-        if !same_principal_recovery && !released_target_handoff && dirty(identity)? {
+        if !same_principal_recovery
+            && !released_target_handoff
+            && !approved_takeover
+            && dirty(identity)?
+        {
             return Ok(denied(
                 protocol.bind_result_schema(),
                 "dirty",
@@ -1020,6 +1103,26 @@ fn bind(
     };
     write_state(&locked, &state)?;
     Ok(bound(&state, protocol))
+}
+
+fn takeover_conflict(state: &State) -> Result<String, HookError> {
+    let WorkspaceIdentity::Managed { identity } = &state.identity else {
+        return Err(state_invalid());
+    };
+    let repository = git2::Repository::open(&identity.root).map_err(|_| state_invalid())?;
+    let head = repository.head().map_err(|_| state_invalid())?;
+    let branch = head.name().map_err(|_| state_invalid())?;
+    let commit = head.target().ok_or_else(state_invalid)?;
+    digest_value(
+        "workspace-takeover-conflict",
+        &json!({
+            "workspace_key": state.workspace_key,
+            "binding_id": state.binding.binding_id,
+            "generation": state.binding.generation,
+            "branch": branch,
+            "head": commit.to_string(),
+        }),
+    )
 }
 
 fn begin(

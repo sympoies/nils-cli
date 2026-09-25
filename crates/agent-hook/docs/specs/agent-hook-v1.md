@@ -451,6 +451,21 @@ v1 rule applied per physical worktree. One session therefore owns independent
 bindings for repositories A and B, while two sessions targeting one physical
 worktree still contend.
 
+An exact-target v2 bind may set `takeover_capability: true`. Only opted-in
+foreign-active denials include an optional `conflict` digest. A later bind with
+that digest in `takeover_conflict` rechecks the current binding, branch and
+HEAD under the workspace lock, rejects an active operation, and replaces the
+former generation. The conflict is a compare-and-swap value, not an approval
+receipt; the DSH caller obtains one tool approval before sending the transfer.
+Older v2 callers omit the capability and receive the unchanged strict denial
+shape. An unborn HEAD still returns the ordinary foreign-active denial.
+The opted-in retry returns `WORKSPACE_TAKEOVER_STALE` if the conflict changes,
+and `WORKSPACE_OPERATION_UNCERTAIN` while the former owner has an active
+operation. The current DSH runtime passes
+`DSH_RUNTIME_KIT_WORKSPACE_LEASE_V2=1` only while its native provider is
+registered, which makes the older cwd-scoped checkout policy defer to that
+exact-target lease; older runtimes continue to use the earlier policy.
+
 Every v2 `bound` result names the exact repository target it owns, including
 its `workspace_key`. Convergence between an eager anchor binding and a later
 lazy acquisition of the same repository is the runtime's obligation, not a
