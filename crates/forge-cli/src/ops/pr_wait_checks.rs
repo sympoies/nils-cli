@@ -46,7 +46,7 @@ use crate::error::ForgeError;
 use crate::ops::pr_checks::{self, PrChecksPayload, SCHEMA, SCHEMA_VERSION};
 use crate::ops::pr_create::find_git_toplevel;
 use crate::ops::required_check_gate::CheckPresence;
-use crate::provider::{Provider, ProviderContext, detect, git_remote_url};
+use crate::provider::{Provider, ProviderContext, detect, git_remote_url, parse_slug};
 use crate::rate_limit::default_runner;
 
 /// How long a GitHub head may report nothing at all before the loop checks
@@ -54,9 +54,11 @@ use crate::rate_limit::default_runner;
 /// enough for an external CI app to post its first status after a push.
 pub const NO_CI_GRACE_PERIOD: Duration = Duration::from_secs(60);
 
-/// Actionable next step attached to every `checks_not_registered` emission.
-pub const NOT_REGISTERED_HINT: &str = "if this repository genuinely configures no CI, declare \
-     `[checks] none = true` with a `none_reason` in .forge-cli.toml, or pass --allow-no-checks";
+/// Actionable next step attached to every `checks_not_registered` emission
+/// (wait-checks, the deliver wait step, and the merge rule-8 gate).
+pub const NOT_REGISTERED_HINT: &str = "if this repository genuinely configures no CI, land \
+     `[checks] none = true` with a `none_reason` in .forge-cli.toml on the base branch, or pass \
+     --allow-no-checks";
 
 /// Trait abstracting `now()` and `sleep` so tests can step time without
 /// `std::thread::sleep`.
@@ -96,7 +98,16 @@ pub fn run(
     let runner = default_runner();
     let clock = SystemClock;
     let mut args = args;
+    // The working tree's declaration speaks only for its own repository, so a
+    // `--repo` pointing elsewhere does not inherit it.
+    let targets_this_checkout = global.repo.as_deref().is_none_or(|target| {
+        git_remote_url(&global.remote)
+            .as_deref()
+            .and_then(parse_slug)
+            .is_some_and(|slug| slug.eq_ignore_ascii_case(target))
+    });
     if !args.allow_no_checks
+        && targets_this_checkout
         && let Ok(workdir) = std::env::current_dir()
     {
         let cfg = ForgeConfig::load_layered(&workdir, find_git_toplevel(&workdir).as_deref());
@@ -145,15 +156,7 @@ pub fn run_with<R: BackendRunner, C: Clock, F: Fn(&str) -> Option<String>>(
         WaitOutcome::NotRegistered(snapshot, cause) => Ok(emit_failure_with_hint(
             snapshot,
             "checks_not_registered",
-            match cause {
-                NotRegisteredCause::BudgetExpired => {
-                    "no checks registered for this head within the timeout"
-                }
-                NotRegisteredCause::NoWorkflows => {
-                    "no checks registered for this head and the repository has no \
-                     GitHub Actions workflows"
-                }
-            },
+            &cause.message("this head"),
             Some(NOT_REGISTERED_HINT),
             nils_common::cli_contract::exit::DATA,
             format,
@@ -182,6 +185,21 @@ pub enum NotRegisteredCause {
     /// Nothing registered within [`NO_CI_GRACE_PERIOD`] and the GitHub
     /// repository has no Actions workflows, so nothing ever could.
     NoWorkflows,
+}
+
+impl NotRegisteredCause {
+    /// Error message naming `subject` (e.g. "this head").
+    pub fn message(self, subject: &str) -> String {
+        match self {
+            Self::BudgetExpired => {
+                format!("no checks registered for {subject} within the timeout")
+            }
+            Self::NoWorkflows => format!(
+                "no checks registered for {subject} and the repository has no GitHub \
+                 Actions workflows"
+            ),
+        }
+    }
 }
 
 /// Macro-facing entry point: poll until terminal or timeout and return the

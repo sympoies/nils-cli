@@ -1170,9 +1170,11 @@ distinctions that cannot be proven offline.
     `--allow-no-checks-reason` bypasses it and records the reason in
     `data.no_checks_override_reason`. `pr deliver` accepts the same pair
     and forwards it to its wait-checks and merge steps. Without the flags,
-    a repository `.forge-cli.toml` `[checks] none = true` declaration with a
-    non-empty `none_reason` has the same effect and records that reason in
-    the same field;
+    a `[checks] none = true` declaration with a non-empty `none_reason` has
+    the same effect and records that reason in the same field — read from
+    the `.forge-cli.toml` committed on the base branch
+    (`refs/remotes/<remote>/<base>`), never the working tree, so a PR head
+    cannot waive its own gate;
   - target branch is the repo default branch OR explicitly approved
     via `--allow-non-default-base`;
   - when resolved review convergence is enabled, no current-head native
@@ -1840,10 +1842,17 @@ override.
 `[checks].none` follows the same rule: `pr wait-checks`, `pr merge`, and
 `pr deliver` treat `none = true` (with a non-empty `none_reason`) as
 `--allow-no-checks`, and a global `none = false` requires checks everywhere —
-repo config cannot flip it to `true`. `none = true` without a reason is ignored
-with an `invalid-config-value:checks.none:missing_none_reason` warning, so the
-fail-closed default stays in force. The explicit `--allow-no-checks` flag
-remains the per-invocation override.
+repo config cannot flip it to `true`. Because the setting loosens a
+fail-closed gate, `pr merge` and `pr deliver` read the repo layer from the
+`.forge-cli.toml` committed on the PR base branch
+(`refs/remotes/<remote>/<base>`) rather than the working tree, which may be the
+unmerged PR head; a repository opts out by landing the declaration first.
+The declaration also applies only to its own repository: when `--repo` names a
+repository other than the checkout's `--remote`, it is ignored.
+`pr wait-checks` gates nothing (merge re-checks rule 8) and reads the working
+tree. `none = true` without a reason is ignored and the fail-closed default
+stays in force. The explicit `--allow-no-checks` flag remains the
+per-invocation override.
 
 ### `[test_first]` — test-first evidence gate
 

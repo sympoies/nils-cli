@@ -911,8 +911,9 @@ pub struct PrMergeArgs {
     /// flag an empty required-check snapshot triggers `checks_not_registered`,
     /// because "all required checks passed" is vacuously true over an empty set
     /// and so proves nothing about the head. Requires
-    /// `--allow-no-checks-reason`. A repository `.forge-cli.toml`
-    /// `[checks] none = true` with a `none_reason` has the same effect.
+    /// `--allow-no-checks-reason`. `[checks] none = true` with a
+    /// `none_reason` in the base branch's `.forge-cli.toml` has the same
+    /// effect.
     #[arg(
         long = "allow-no-checks",
         action = ArgAction::SetTrue,
@@ -1633,8 +1634,8 @@ pub struct PrDeliverArgs {
     /// Deliver a head for which no checks are registered. Without this flag,
     /// delivery waits out its `--timeout` for checks to appear and then fails
     /// with `checks_not_registered` rather than treating an empty check set as
-    /// a pass. Requires `--allow-no-checks-reason`. A repository
-    /// `.forge-cli.toml` `[checks] none = true` with a `none_reason` has the
+    /// a pass. Requires `--allow-no-checks-reason`. `[checks] none = true`
+    /// with a `none_reason` in the base branch's `.forge-cli.toml` has the
     /// same effect.
     #[arg(
         long = "allow-no-checks",

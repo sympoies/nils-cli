@@ -312,6 +312,13 @@ fn pr_wait_checks_expires_as_not_registered_when_nothing_is_ever_reported() {
     assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
     let env = parse_envelope(&out.stdout);
     assert_eq!(env["error"]["code"], "checks_not_registered");
+    assert!(
+        env["error"]["hint"]
+            .as_str()
+            .is_some_and(|hint| hint.contains("[checks] none = true")),
+        "the envelope must name the opt-outs: {}",
+        out.stdout
+    );
     // The snapshot is reported verbatim, so `data.state` is still "success"
     // while `ok` is false. Consumers must gate on ok / error.kind — this
     // asserts the combination so any future normalization is deliberate.

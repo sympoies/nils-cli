@@ -1530,6 +1530,11 @@ fn pr_deliver_zero_checks_complete_when_the_repository_declares_none() {
         &repo_path,
         &["update-ref", "refs/remotes/origin/feat/sample", "HEAD"],
     );
+    // The declaration counts only once it is on the base branch.
+    git(
+        &repo_path,
+        &["update-ref", "refs/remotes/origin/main", "HEAD"],
+    );
 
     let stub = StubEnv::new();
     let (_stub, out) =

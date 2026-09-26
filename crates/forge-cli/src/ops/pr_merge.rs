@@ -69,7 +69,7 @@ pub struct PrMergePayload {
     /// gate (rule 13) was explicitly bypassed; absent otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unresolved_threads_override_reason: Option<String>,
-    /// Recorded `--allow-no-checks-reason` (or the repository's
+    /// Recorded `--allow-no-checks-reason` (or the base branch's
     /// `[checks].none_reason`) when the head merged with no required checks
     /// registered (rule 8); absent otherwise. This is the only
     /// durable record that a merge happened without CI evidence.
@@ -159,7 +159,6 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
             method,
             delete_branch,
             review_policy: &policy,
-            no_checks: NoChecksAllowance::resolve(&cfg, args),
         },
     )?;
     Ok(emit_success(
@@ -217,7 +216,6 @@ pub fn compute_with_clock<R: BackendRunner, C: Clock>(
             method,
             delete_branch,
             review_policy: &policy,
-            no_checks: NoChecksAllowance::resolve(&cfg, args),
         },
     )
 }
@@ -249,6 +247,20 @@ pub(crate) fn resolve_review_convergence_for_workdir(
     let policy = resolve_review_convergence_policy(&cfg, explicit_required)?;
     ensure_review_convergence_provider(provider, &policy)?;
     Ok(policy)
+}
+
+/// `owner/name` of `remote` in the checkout at `workdir`, or `None` when the
+/// remote is missing or not slug-shaped.
+fn remote_slug(workdir: &std::path::Path, remote: &str) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .current_dir(workdir)
+        .args(["remote", "get-url", remote])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    crate::provider::parse_slug(String::from_utf8_lossy(&output.stdout).trim())
 }
 
 fn resolve_review_convergence_policy(
@@ -297,31 +309,68 @@ struct ResolvedMergeSettings<'a> {
     method: MergeMethod,
     delete_branch: bool,
     review_policy: &'a crate::config::ReviewConvergencePolicy,
-    no_checks: NoChecksAllowance,
 }
 
 /// Whether rule 8 may pass a head with no registered checks, and the reason
 /// recorded when it does. An explicit `--allow-no-checks` wins; otherwise a
-/// repository `[checks] none = true` declaration supplies its `none_reason`.
+/// `[checks] none = true` declaration supplies its `none_reason`.
 struct NoChecksAllowance {
     allowed: bool,
     reason: Option<String>,
 }
 
 impl NoChecksAllowance {
-    fn resolve(cfg: &ForgeConfig, args: &PrMergeArgs) -> Self {
+    fn resolve(
+        args: &PrMergeArgs,
+        ctx: &ProviderContext,
+        workdir: &std::path::Path,
+        remote: &str,
+        base: &str,
+    ) -> Self {
         if args.allow_no_checks {
             return Self {
                 allowed: true,
                 reason: args.allow_no_checks_reason.clone(),
             };
         }
-        let reason = cfg.declared_no_checks_reason().map(str::to_string);
+        let reason = declared_no_checks_reason_on_base(workdir, ctx.repo.as_deref(), remote, base);
         Self {
             allowed: reason.is_some(),
             reason,
         }
     }
+}
+
+/// The `[checks].none_reason` declared by the global config layered with the
+/// repo `.forge-cli.toml` **as committed on the base branch**
+/// (`refs/remotes/<remote>/<base>`), not the working tree.
+///
+/// `[checks] none` loosens the fail-closed rule 8, and the working tree may be
+/// the unmerged PR head: a PR that deletes its CI and adds the declaration
+/// must not waive its own gate. The base branch holds only what already
+/// merged, so a repository opts out by landing the declaration first.
+///
+/// The declaration also speaks only for its own repository: when the PR is
+/// addressed as `target_repo` (e.g. through `--repo`) and that is not the
+/// checkout's `<remote>` repository, it is ignored.
+pub(crate) fn declared_no_checks_reason_on_base(
+    workdir: &std::path::Path,
+    target_repo: Option<&str>,
+    remote: &str,
+    base: &str,
+) -> Option<String> {
+    let remote_repo = remote_slug(workdir, remote)?;
+    if target_repo.is_some_and(|target| !target.eq_ignore_ascii_case(&remote_repo)) {
+        return None;
+    }
+    let toplevel = find_git_toplevel(workdir)?;
+    let base_ref = format!("refs/remotes/{remote}/{base}");
+    ForgeConfig::load_global()
+        .overlaid_by(ForgeConfig::load_from_git_ref(
+            workdir, &toplevel, &base_ref,
+        ))
+        .declared_no_checks_reason()
+        .map(str::to_string)
 }
 
 fn run_lockdown_chain<R: BackendRunner, C: Clock>(
@@ -403,6 +452,8 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
         ));
     }
 
+    let no_checks = NoChecksAllowance::resolve(args, ctx, workdir, &global.remote, &pr.base);
+
     // Rule 9 — method must be in the repo's allowed list.
     enforce_method_supported(settings.method, &repo)?;
 
@@ -413,7 +464,7 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
         global,
         ctx,
         &args.id.to_string(),
-        CheckPresence::from_allow_no_checks(settings.no_checks.allowed),
+        CheckPresence::from_allow_no_checks(no_checks.allowed),
     )?;
 
     // Durable review-loop gate. Existing ledgers are never bypassed by the
@@ -551,7 +602,7 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
         } else {
             None
         },
-        no_checks_override_reason: settings.no_checks.reason,
+        no_checks_override_reason: no_checks.reason,
         stale_thread_dispositions,
         review_convergence: review_snapshot,
         review_loop,

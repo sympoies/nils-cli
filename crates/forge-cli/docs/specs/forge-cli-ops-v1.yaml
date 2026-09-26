@@ -1382,8 +1382,9 @@ macros:
       # non-terminal and, once the budget expires, fails DATA 65 with
       # checks_not_registered (lock-down rule 8). This applies on GitLab too,
       # where an MR with no pipeline reports the same empty snapshot.
-      # --allow-no-checks (+ reason), or repo [checks] none = true
-      # (+ none_reason), is the declared opt-out.
+      # --allow-no-checks (+ reason), or [checks] none = true (+ none_reason)
+      # in the .forge-cli.toml committed on the base branch, is the declared
+      # opt-out.
       - { step: wait_checks,        op: pr.wait-checks }
       - { step: ready,              op: pr.ready,  skip_when: "--no-merge" }
       - { step: merge,              op: pr.merge,  skip_when: "--no-merge" }

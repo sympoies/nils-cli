@@ -256,6 +256,48 @@ impl ForgeConfig {
         cfg
     }
 
+    /// Load the `.forge-cli.toml` committed on `git_ref` rather than the one in
+    /// the working tree, searching the same directories [`load_from`] walks
+    /// (from `start_dir` up to `git_toplevel`, both inclusive). A missing file
+    /// or an unreadable ref yields defaults.
+    ///
+    /// This is the trusted source for settings that loosen a fail-closed gate:
+    /// a PR head's working tree can carry any file, but its base branch holds
+    /// only what already merged.
+    ///
+    /// [`load_from`]: Self::load_from
+    pub fn load_from_git_ref(start_dir: &Path, git_toplevel: &Path, git_ref: &str) -> Self {
+        let top = canonical_or_path(git_toplevel);
+        let mut cursor = Some(canonical_or_path(start_dir));
+        while let Some(dir) = cursor {
+            let Ok(rel) = dir.strip_prefix(&top) else {
+                return Self::default();
+            };
+            let rel_path = rel
+                .join(CONFIG_FILE_NAME)
+                .to_string_lossy()
+                .replace('\\', "/");
+            if let Some(contents) = git_show(&top, git_ref, &rel_path) {
+                let mut cfg = match toml::from_str::<Value>(&contents) {
+                    Ok(value) => parse_value(&value),
+                    Err(err) => {
+                        let mut cfg = Self::default();
+                        cfg.warnings
+                            .push(format!("invalid-config-value:parse_error:{err}"));
+                        cfg
+                    }
+                };
+                cfg.source_path = Some(top.join(rel_path));
+                return cfg;
+            }
+            if dir == top {
+                return Self::default();
+            }
+            cursor = dir.parent().map(Path::to_path_buf);
+        }
+        Self::default()
+    }
+
     /// Load the user-global config from
     /// `${XDG_CONFIG_HOME:-$HOME/.config}/forge-cli/config.toml`, if present.
     /// Returns `ForgeConfig::default()` when no global file exists. Read or
@@ -562,6 +604,21 @@ fn find_config_file(start_dir: &Path, git_toplevel: Option<&Path>) -> Option<Pat
         cursor = dir.parent().map(Path::to_path_buf);
     }
     None
+}
+
+/// `git show <git_ref>:<path>` from `repo`, or `None` when the ref or path does
+/// not exist.
+fn git_show(repo: &Path, git_ref: &str, path: &str) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .current_dir(repo)
+        .arg("show")
+        .arg(format!("{git_ref}:{path}"))
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 fn canonical_or_path(p: &Path) -> PathBuf {
@@ -1317,6 +1374,42 @@ required_only = false
                 "invalid-config-value:checks.none_reason:empty".to_string(),
                 "invalid-config-value:checks.none:missing_none_reason".to_string(),
             ]
+        );
+    }
+
+    /// The git-ref loader reads the committed file, not the working tree, and
+    /// finds a file in a parent directory the same way `load_from` does.
+    #[test]
+    fn load_from_git_ref_reads_the_committed_file_not_the_working_tree() {
+        let tmp = TempDir::new().unwrap();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .current_dir(tmp.path())
+                .args(args)
+                .output()
+                .expect("git spawn");
+            assert!(out.status.success(), "git {args:?} failed");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.email", "test@example.com"]);
+        git(&["config", "user.name", "Tester"]);
+        git(&["config", "commit.gpgsign", "false"]);
+        write(
+            tmp.path(),
+            "[checks]\nnone = true\nnone_reason = \"committed\"\n",
+        );
+        git(&["add", CONFIG_FILE_NAME]);
+        git(&["commit", "-q", "-m", "config"]);
+        // The working tree drifts from the committed file.
+        write(tmp.path(), "[checks]\nnone = false\n");
+        let sub = tmp.path().join("crate");
+        fs::create_dir_all(&sub).unwrap();
+
+        let cfg = ForgeConfig::load_from_git_ref(&sub, tmp.path(), "main");
+        assert_eq!(cfg.declared_no_checks_reason(), Some("committed"));
+        assert_eq!(
+            ForgeConfig::load_from_git_ref(&sub, tmp.path(), "refs/remotes/origin/main"),
+            ForgeConfig::default()
         );
     }
 
