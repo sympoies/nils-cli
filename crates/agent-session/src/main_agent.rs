@@ -17308,6 +17308,7 @@ fn run_worker_message(context: &CliContext, args: WorkerMessageArgs) -> Result<V
     crate::coordination::mailbox::send_with_commit_authorization(
         context,
         cli::MessageSendArgs {
+            to_machine: None,
             from_session: record.id.clone(),
             to_session: worker.session_id.clone(),
             body_file: args.body_file,

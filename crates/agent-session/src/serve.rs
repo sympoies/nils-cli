@@ -192,6 +192,7 @@ struct ServeState {
     context: CliContext,
     machine: String,
     token: Option<String>,
+    federation: Option<crate::coordination::remote::Config>,
     max_attachment_bytes: u64,
     tmux_bin: PathBuf,
     attach_brokers: AttachBrokerRegistry,
@@ -798,6 +799,21 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
         .or_else(short_hostname)
         .unwrap_or_else(|| "unknown".to_string());
 
+    let federation = match crate::coordination::remote::Config::from_environment(&machine) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("error: {}", error.message());
+            return exit::USAGE;
+        }
+    };
+    if let Some(config) = &federation
+        && token
+            .as_deref()
+            .is_none_or(|value| value == config.token || value == config.ingress_token)
+    {
+        eprintln!("error: federation requires a distinct operator token");
+        return exit::USAGE;
+    }
     let launch_profiles = match AgentLaunchProfiles::from_environment() {
         Ok(profiles) => profiles,
         Err(err) => {
@@ -853,6 +869,7 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
             context: context.clone(),
             machine,
             token,
+            federation,
             max_attachment_bytes,
             tmux_bin,
             attach_brokers: AttachBrokerRegistry::default(),
@@ -883,7 +900,15 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
             "agent-session serve listening on http://{bind} (machine={})",
             state.machine
         );
+        if let Err(error) = crate::coordination::remote::write_endpoint(
+            &state.context,
+            listener.local_addr().expect("bound address"),
+        ) {
+            eprintln!("error: {}", error.message());
+            return exit::RUNTIME;
+        }
         let app = router(state.clone());
+        let federation_task = tokio::spawn(remote_outbox_loop(state.clone()));
         let codex_control_task = tokio::spawn(codex_control_loop(state.clone()));
         let auto_resume_task = tokio::spawn(auto_resume_loop(state.clone()));
         let auto_retitle_task = tokio::spawn(auto_retitle_loop(state.clone()));
@@ -894,6 +919,8 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
         let result = axum::serve(listener, app)
             .with_graceful_shutdown(shutdown_signal())
             .await;
+        federation_task.abort();
+        let _ = federation_task.await;
         auto_resume_task.abort();
         let _ = auto_resume_task.await;
         auto_retitle_task.abort();
@@ -917,6 +944,22 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
 
 fn router(state: Arc<ServeState>) -> Router {
     Router::new()
+        .route(
+            "/coordination/messages/receive/v1",
+            post(remote_receive_handler),
+        )
+        .route(
+            "/sessions/{id}/messages/remote/v1",
+            post(remote_submit_handler),
+        )
+        .route(
+            "/sessions/{id}/messages/peers/v1",
+            get(remote_peers_handler),
+        )
+        .route(
+            "/sessions/{id}/messages/{message_id}/delivery/v1",
+            get(remote_delivery_handler),
+        )
         .route("/healthz", get(healthz))
         .route("/sessions", get(list_handler).post(create_handler))
         .route("/history/sessions", get(history_list_handler))
@@ -4665,6 +4708,7 @@ async fn list_handler(State(state): State<Arc<ServeState>>) -> Response {
                 "observed_at": activity_observed_at(),
                 "sessions": sessions,
                 "agent_profiles": agent_profiles,
+                "coordination": {"remote_messaging_supported":state.federation.is_some()},
                 "capabilities": {
                     "profile_resume_import": true,
                     "managed_resume_command": false,
@@ -10994,6 +11038,150 @@ async fn handle_input(
     })?
 }
 
+// Remote submission trusts only local session capability, never an operator token.
+fn remote_session_token(headers: &HeaderMap) -> Result<String, CliError> {
+    headers
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::to_string)
+        .ok_or_else(crate::coordination::unauthorized)
+}
+async fn remote_submit_handler(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+    body: Result<Json<crate::coordination::remote::Submit>, JsonRejection>,
+) -> Response {
+    let body = match coordination_json(body) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let token = match remote_session_token(&headers) {
+        Ok(v) => v,
+        Err(e) => return envelope_err(e),
+    };
+    let Some(config) = state.federation.clone() else {
+        return envelope_err(CliError::runtime(
+            "remote-messaging-unavailable",
+            "federation is disabled",
+            None,
+        ));
+    };
+    let context = state.context.clone();
+    match tokio::task::spawn_blocking(move || {
+        crate::coordination::remote::submit(&context, &config, &id, &token, body)
+    })
+    .await
+    {
+        Ok(Ok(value)) => Json(value).into_response(),
+        Ok(Err(e)) => envelope_err(e),
+        Err(_) => join_err(),
+    }
+}
+async fn remote_peers_handler(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+) -> Response {
+    let token = match remote_session_token(&headers) {
+        Ok(v) => v,
+        Err(e) => return envelope_err(e),
+    };
+    let Some(config) = state.federation.clone() else {
+        return envelope_err(CliError::runtime(
+            "remote-messaging-unavailable",
+            "federation is disabled",
+            None,
+        ));
+    };
+    let context = state.context.clone();
+    match tokio::task::spawn_blocking(move || {
+        crate::coordination::remote::peers(&context, &config, &id, &token)
+    })
+    .await
+    {
+        Ok(Ok(value)) => Json(value).into_response(),
+        Ok(Err(e)) => envelope_err(e),
+        Err(_) => join_err(),
+    }
+}
+async fn remote_delivery_handler(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath((id, message)): AxPath<(String, String)>,
+) -> Response {
+    let token = match remote_session_token(&headers) {
+        Ok(v) => v,
+        Err(e) => return envelope_err(e),
+    };
+    let context = state.context.clone();
+    match tokio::task::spawn_blocking(move || {
+        crate::coordination::remote::delivery(&context, &id, &token, &message)
+    })
+    .await
+    {
+        Ok(Ok(value)) => Json(value).into_response(),
+        Ok(Err(e)) => envelope_err(e),
+        Err(_) => join_err(),
+    }
+}
+async fn remote_receive_handler(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    body: Result<Json<crate::coordination::remote::Envelope>, JsonRejection>,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let Some(config) = state.federation.as_ref() else {
+        return envelope_err(CliError::runtime(
+            "remote-messaging-unavailable",
+            "federation is disabled",
+            None,
+        ));
+    };
+    if !headers
+        .get("X-Agent-Session-Relay-Token")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| constant_time_eq(v, &config.ingress_token))
+    {
+        return envelope_err(crate::coordination::unauthorized());
+    }
+    let body = match coordination_json(body) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let context = state.context.clone();
+    let machine = state.machine.clone();
+    match tokio::task::spawn_blocking(move || {
+        crate::coordination::remote::receive(&context, &machine, body)
+    })
+    .await
+    {
+        Ok(Ok(value)) => {
+            state.coordination_notification_wake.notify_one();
+            Json(value).into_response()
+        }
+        Ok(Err(e)) => envelope_err(e),
+        Err(_) => join_err(),
+    }
+}
+async fn remote_outbox_loop(state: Arc<ServeState>) {
+    let Some(config) = state.federation.clone() else {
+        return;
+    };
+    loop {
+        let context = state.context.clone();
+        let config = config.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            crate::coordination::remote::drain(&context, &config)
+        })
+        .await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -15451,6 +15639,7 @@ mod tests {
             },
             machine: MACHINE.to_string(),
             token: token.map(str::to_string),
+            federation: None,
             max_attachment_bytes: DEFAULT_MAX_ATTACHMENT_BYTES,
             tmux_bin,
             attach_brokers: AttachBrokerRegistry::default(),

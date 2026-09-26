@@ -729,6 +729,7 @@ pub(crate) fn send(
         mailbox::send(
             context,
             cli::MessageSendArgs {
+                to_machine: None,
                 from_session: sender.id.clone(),
                 to_session: id.to_string(),
                 body_file,

@@ -935,3 +935,22 @@ there are no live runtimes to fence, so startup continues. Other non-success
 outcomes remain unavailable and fail startup with
 `codex-account-reconnect-fence-unavailable`; the daemon never treats an
 unclassified inspection failure as an empty session universe.
+
+## Federated mailbox routes
+
+Federation is specified in [coordination](session-coordination-v1.md#cross-host-mailbox-federation-v1).
+The following routes return raw versioned federation JSON; failures retain the
+usual serve error envelope:
+
+| Route | Authority | Result |
+| --- | --- | --- |
+| `POST /sessions/{id}/messages/remote/v1` | Current local session capability in `Authorization: Bearer` | Durable source delivery projection |
+| `GET /sessions/{id}/messages/peers/v1` | Current local session capability | Ownership-filtered peer metadata |
+| `GET /sessions/{id}/messages/{message_id}/delivery/v1` | Current local sender capability | Source delivery projection; no body |
+| `POST /coordination/messages/receive/v1` | Operator bearer plus dedicated ingress header | Destination persistence receipt |
+
+The source submit JSON has `to_machine`, `to_session`, `body`, `idempotency_key`,
+nullable `reply_to`, nullable `expires_in`, nullable `reply_revision`.
+Federated routes never accept operator authority as a substitute for source
+session capability. Disabled federation rejects remote submission/discovery and
+receipt ingress; retained source delivery status remains queryable locally.

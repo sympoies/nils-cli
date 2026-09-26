@@ -651,6 +651,10 @@ pub struct MessageArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum MessageCommand {
+    /// Discover authorized remote mailbox recipients through the local daemon.
+    Peers(MessagePeersArgs),
+    /// Inspect durable remote delivery; delivered means saved, not read or accepted.
+    Delivery(MessageDeliveryArgs),
     /// Send one bounded private message and schedule an eventual fixed notification.
     Send(MessageSendArgs),
     /// List bounded private mailbox metadata for the authenticated recipient.
@@ -672,6 +676,9 @@ pub struct MessageSendArgs {
     pub from_session: String,
     #[arg(long = "to")]
     pub to_session: String,
+    /// Remote machine; omitted keeps local mailbox behavior.
+    #[arg(long)]
+    pub to_machine: Option<String>,
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     pub body_file: PathBuf,
     /// Private capability file; defaults to AGENT_SESSION_CAPABILITY_FILE.
@@ -683,6 +690,28 @@ pub struct MessageSendArgs {
     pub reply_to: Option<String>,
     #[arg(long, value_name = "DURATION")]
     pub expires_in: Option<String>,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Args)]
+pub struct MessagePeersArgs {
+    #[arg(long)]
+    pub session: String,
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    pub capability_file: Option<PathBuf>,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Args)]
+pub struct MessageDeliveryArgs {
+    #[arg(long)]
+    pub session: String,
+    #[arg(long)]
+    pub message: String,
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    pub capability_file: Option<PathBuf>,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
 }

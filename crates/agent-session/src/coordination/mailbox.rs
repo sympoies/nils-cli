@@ -88,6 +88,10 @@ struct MessageMetadata {
 
 #[derive(Clone, Debug, Serialize)]
 struct SenderProjection {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    machine: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_incarnation: Option<String>,
     session_id: String,
     authenticated: bool,
 }
@@ -106,6 +110,9 @@ struct UntrustedBody {
 }
 
 pub(crate) fn send(context: &CliContext, args: MessageSendArgs) -> Result<Value, CliError> {
+    if args.to_machine.is_some() {
+        return super::remote::cli_send(context, args);
+    }
     send_impl(context, args, false, || Ok(()))
 }
 
@@ -437,12 +444,24 @@ pub(crate) fn reply(context: &CliContext, args: MessageReplyArgs) -> Result<Valu
                 && message.recipient_incarnation == sender_incarnation
         })
         .cloned();
+    if original
+        .as_ref()
+        .is_none_or(|message| super::remote::is_remote_sender(&message.sender_session_id))
+        && let Some(replay) =
+            super::remote::reply_replay(context, &record.id, &sender_incarnation, &args, &body)?
+    {
+        return Ok(replay);
+    }
+
     if registry_changed {
         locked.save()?;
     }
     drop(locked);
     drop(_sender_lock);
     let original = original.ok_or_else(message_not_found)?;
+    if super::remote::is_remote_sender(&original.sender_session_id) {
+        return super::remote::cli_reply(context, &args, &original, body);
+    }
     if original.state == "expired" {
         return Err(message_expired());
     }
@@ -733,7 +752,8 @@ where
         .messages
         .iter()
         .filter(|message| {
-            message.sender_session_id == sender_session_id
+            !super::remote::is_remote_sender(&message.sender_session_id)
+                && message.sender_session_id == sender_session_id
                 && message.recipient_session_id == recipient.id
                 && message.created_at_epoch > now.saturating_sub(60)
         })
@@ -751,7 +771,8 @@ where
         .messages
         .iter()
         .filter(|message| {
-            message.sender_session_id == sender_session_id
+            !super::remote::is_remote_sender(&message.sender_session_id)
+                && message.sender_session_id == sender_session_id
                 && message.recipient_session_id == recipient.id
                 && message.created_at_epoch_millis > now_millis.saturating_sub(1_000)
         })
@@ -812,7 +833,8 @@ where
             if expected_parent_revision.is_some_and(|revision| parent.revision != revision) {
                 return Err(message_revision_conflict());
             }
-            if parent.sender_session_id != recipient.id
+            if super::remote::is_remote_sender(&parent.sender_session_id)
+                || parent.sender_session_id != recipient.id
                 || parent.sender_incarnation != recipient_incarnation
             {
                 return Err(message_not_found());
@@ -926,6 +948,7 @@ where
     for message in &mut locked.registry.messages {
         if message.recipient_session_id == recipient_session_id
             && message.recipient_incarnation == previous_incarnation
+            && !super::remote::is_remote_sender(&message.sender_session_id)
             && message.sender_session_id == controller_session_id
             && message.sender_incarnation == controller_incarnation
             && message.state == "unread"
@@ -997,6 +1020,7 @@ where
     for message in &mut locked.registry.messages {
         if message.recipient_session_id == recipient_session_id
             && message.recipient_incarnation != current_incarnation
+            && !super::remote::is_remote_sender(&message.sender_session_id)
             && message.sender_session_id == controller_session_id
             && message.sender_incarnation == controller_incarnation
             && message.expires_at_epoch > now
@@ -1017,7 +1041,7 @@ where
     Ok(quarantined)
 }
 
-fn read_body(path: &Path) -> Result<String, CliError> {
+pub(crate) fn read_body(path: &Path) -> Result<String, CliError> {
     let mut file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
@@ -1059,7 +1083,7 @@ fn read_body(path: &Path) -> Result<String, CliError> {
     Ok(body)
 }
 
-fn resolve_capability_file(path: Option<&Path>) -> Result<PathBuf, CliError> {
+pub(crate) fn resolve_capability_file(path: Option<&Path>) -> Result<PathBuf, CliError> {
     path.map(PathBuf::from)
         .or_else(|| std::env::var_os(super::CAPABILITY_ENV).map(PathBuf::from))
         .ok_or_else(super::unauthorized)
@@ -1069,9 +1093,18 @@ fn metadata(message: &StoredMessage) -> MessageMetadata {
     MessageMetadata {
         schema_version: message.schema_version.clone(),
         message_id: message.message_id.clone(),
-        sender: SenderProjection {
-            session_id: message.sender_session_id.clone(),
-            authenticated: true,
+        sender: {
+            let remote = super::remote::sender_address(message);
+            SenderProjection {
+                machine: remote.as_ref().map(|sender| sender.machine.clone()),
+                session_incarnation: remote
+                    .as_ref()
+                    .map(|sender| sender.session_incarnation.clone()),
+                session_id: remote
+                    .map(|sender| sender.session_id)
+                    .unwrap_or_else(|| message.sender_session_id.clone()),
+                authenticated: true,
+            }
         },
         recipient_session_id: message.recipient_session_id.clone(),
         state: message.state.clone(),
@@ -1100,7 +1133,7 @@ fn find_recipient_message_mut<'a>(
         .ok_or_else(message_not_found)
 }
 
-fn parse_expiry(value: Option<&str>) -> Result<i64, CliError> {
+pub(crate) fn parse_expiry(value: Option<&str>) -> Result<i64, CliError> {
     let Some(value) = value else {
         return Ok(DEFAULT_EXPIRY_SECS);
     };

@@ -4,6 +4,7 @@ pub(crate) mod claims;
 pub(crate) mod context;
 pub(crate) mod mailbox;
 mod notification;
+pub(crate) mod remote;
 pub(crate) mod server;
 
 pub(crate) use notification::NotificationCandidate;
@@ -283,6 +284,16 @@ pub(crate) fn run_broker(context: &CliContext, args: cli::BrokerArgs) -> i32 {
 
 pub(crate) fn run_message(context: &CliContext, args: cli::MessageArgs) -> i32 {
     let (command, format, result) = match args.command {
+        MessageCommand::Peers(args) => (
+            "message-peers",
+            args.format,
+            remote::cli_peers(context, args),
+        ),
+        MessageCommand::Delivery(args) => (
+            "message-delivery",
+            args.format,
+            remote::cli_delivery(context, args),
+        ),
         MessageCommand::Send(args) => ("message-send", args.format, mailbox::send(context, args)),
         MessageCommand::Inbox(args) => {
             ("message-inbox", args.format, mailbox::inbox(context, args))
@@ -3251,6 +3262,7 @@ fn guidance_summary_from_registry(
     let mut summary = GuidanceSummary::default();
     for message in registry.messages.iter().filter(|message| {
         message.recipient_session_id == session_id
+            && !remote::is_remote_sender(&message.sender_session_id)
             && message.sender_session_id == controller_session_id
             && message.sender_incarnation == controller_incarnation
     }) {
