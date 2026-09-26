@@ -1934,20 +1934,20 @@ pub(crate) fn latest_turn_request(id: u64, thread_id: &str) -> Value {
 fn latest_in_progress_turn_id(result: &Value) -> Option<&str> {
     match latest_turn_state(result)? {
         LatestTurnState::InProgress(turn_id) => Some(turn_id),
-        LatestTurnState::Idle => None,
+        LatestTurnState::Idle(_) => None,
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
 enum LatestTurnState<'a> {
-    Idle,
+    Idle(Option<&'a str>),
     InProgress(&'a str),
 }
 
 fn latest_turn_state(result: &Value) -> Option<LatestTurnState<'_>> {
     let turns = result.get("data")?.as_array()?;
     let Some(turn) = turns.first() else {
-        return Some(LatestTurnState::Idle);
+        return Some(LatestTurnState::Idle(None));
     };
     let turn_id = turn
         .get("id")
@@ -1955,7 +1955,7 @@ fn latest_turn_state(result: &Value) -> Option<LatestTurnState<'_>> {
         .filter(|id| protocol_id_is_valid(id))?;
     match turn.get("status").and_then(Value::as_str)? {
         "inProgress" => Some(LatestTurnState::InProgress(turn_id)),
-        "completed" | "failed" | "interrupted" => Some(LatestTurnState::Idle),
+        "completed" | "failed" | "interrupted" => Some(LatestTurnState::Idle(Some(turn_id))),
         _ => None,
     }
 }
@@ -2927,10 +2927,6 @@ pub(crate) async fn run_control(
                         // its interleaved-turn race protection.
                         let terminal_auto_failover =
                             automatic_failover_has_authoritative_idle(&context, &record).await;
-                        if reducer.active_turn_id.is_some() && terminal_auto_failover.is_none() {
-                            let _ = response.send(Ok(()));
-                            continue;
-                        }
                         let idle = if terminal_auto_failover.is_some() {
                             true
                         } else {
@@ -2955,9 +2951,19 @@ pub(crate) async fn run_control(
                             )
                             .await;
                             match latest {
-                                Ok(_) if reducer.active_turn_id.is_some() => false,
                                 Ok(result) => match latest_turn_state(&result) {
-                                    Some(LatestTurnState::Idle) => true,
+                                    Some(LatestTurnState::Idle(latest_turn_id)) => {
+                                        // A missed completion leaves the reducer active even
+                                        // after the provider has finished that exact turn. A
+                                        // different active id means a new turn raced the probe.
+                                        match reducer.active_turn_id.as_deref() {
+                                            Some(active) if Some(active) != latest_turn_id => false,
+                                            _ => {
+                                                reducer.active_turn_id = None;
+                                                true
+                                            }
+                                        }
+                                    }
                                     Some(LatestTurnState::InProgress(turn_id)) => {
                                         reducer.note_started(turn_id);
                                         false
@@ -5313,11 +5319,11 @@ mod tests {
                 "data": [{"id": "raw-completed-turn", "status": "completed", "items": []}],
                 "nextCursor": null
             })),
-            Some(LatestTurnState::Idle)
+            Some(LatestTurnState::Idle(Some("raw-completed-turn")))
         );
         assert_eq!(
             latest_turn_state(&json!({"data": []})),
-            Some(LatestTurnState::Idle)
+            Some(LatestTurnState::Idle(None))
         );
         assert_eq!(
             latest_turn_state(&json!({
@@ -9941,22 +9947,21 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
                 )
                 .await;
             }
-            complete_turn_rx.await.unwrap();
-            send_json(
+            let active_turn = receive_json(&mut socket).await;
+            assert_eq!(active_turn["method"], "thread/turns/list");
+            respond(
                 &mut socket,
+                &active_turn,
                 json!({
-                    "method": "turn/completed",
-                    "params": {
-                        "threadId": "raw-thread-apply-next",
-                        "turn": {
-                            "id": "turn-apply-next",
-                            "status": "completed"
-                        }
-                    }
+                    "data": [{"id": "turn-apply-next", "status": "inProgress", "items": []}],
+                    "nextCursor": null
                 }),
             )
-            .await
-            .unwrap();
+            .await;
+            complete_turn_rx.await.unwrap();
+            // The long-lived control connection missed turn/completed. The
+            // provider's latest-turn response must still let it drain the
+            // queued account after the turn becomes idle.
             let latest_turn = receive_json(&mut socket).await;
             assert_eq!(latest_turn["method"], "thread/turns/list");
             assert_eq!(latest_turn["params"]["threadId"], "raw-thread-apply-next");
