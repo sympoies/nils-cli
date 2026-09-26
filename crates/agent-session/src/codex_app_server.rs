@@ -9995,21 +9995,8 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             .await;
             stale_probe_seen.send(()).unwrap();
             complete_racing_turn_rx.await.unwrap();
-            send_json(
-                &mut socket,
-                json!({
-                    "method": "turn/completed",
-                    "params": {
-                        "threadId": "raw-thread-apply-next",
-                        "turn": {
-                            "id": "racing-turn",
-                            "status": "completed"
-                        }
-                    }
-                }),
-            )
-            .await
-            .unwrap();
+            // The racing turn also finishes without a control notification.
+            // Only its matching terminal probe can release the queued switch.
             let latest_turn = receive_json(&mut socket).await;
             assert_eq!(latest_turn["method"], "thread/turns/list");
             respond(
