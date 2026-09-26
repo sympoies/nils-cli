@@ -18,7 +18,16 @@
 //! reported success for a head no CI had touched — which is exactly what the
 //! provider returns during its check-registration window after a push or
 //! force-with-lease. Polling through that window is the point of this atom.
-//! `--allow-no-checks` opts a genuinely check-free repository out.
+//! `--allow-no-checks`, or a repository `[checks] none = true` declaration in
+//! `.forge-cli.toml`, opts a genuinely check-free repository out.
+//!
+//! A repository that can never register a check would otherwise look like a
+//! slow one until the whole budget ran out. On GitHub, once
+//! [`NO_CI_GRACE_PERIOD`] has passed with nothing reported for the head, the
+//! loop asks whether the repository has any Actions workflows at all; when it
+//! has none it stops early with `checks_not_registered`. External CI apps are
+//! still covered, because any status or check run they post counts as
+//! registered and ends the empty streak.
 //!
 //! Polling uses `std::thread::sleep`; the implementation owns the clock
 //! through the [`Clock`] trait so tests can drive deterministic snapshot
@@ -29,14 +38,27 @@ use std::time::{Duration, Instant};
 use nils_common::cli_contract::{Envelope, EnvelopeError, OutputFormat, schema_version_for};
 use serde_json::json;
 
-use crate::backend::{BackendRunner, DryRunPayload};
+use crate::backend::{BackendCall, BackendProgram, BackendRunner, DryRunPayload};
 use crate::cli::{BINARY, GlobalFlags, PrChecksArgs, PrWaitChecksArgs};
+use crate::config::ForgeConfig;
 use crate::envelope::emit_success;
 use crate::error::ForgeError;
 use crate::ops::pr_checks::{self, PrChecksPayload, SCHEMA, SCHEMA_VERSION};
+use crate::ops::pr_create::find_git_toplevel;
 use crate::ops::required_check_gate::CheckPresence;
-use crate::provider::{ProviderContext, detect, git_remote_url};
+use crate::provider::{Provider, ProviderContext, detect, git_remote_url, parse_slug};
 use crate::rate_limit::default_runner;
+
+/// How long a GitHub head may report nothing at all before the loop checks
+/// whether the repository could register a check in the first place. Long
+/// enough for an external CI app to post its first status after a push.
+pub const NO_CI_GRACE_PERIOD: Duration = Duration::from_secs(60);
+
+/// Actionable next step attached to every `checks_not_registered` emission
+/// (wait-checks, the deliver wait step, and the merge rule-8 gate).
+pub const NOT_REGISTERED_HINT: &str = "if this repository genuinely configures no CI, land \
+     `[checks] none = true` with a `none_reason` in .forge-cli.toml on the base branch, or pass \
+     --allow-no-checks";
 
 /// Trait abstracting `now()` and `sleep` so tests can step time without
 /// `std::thread::sleep`.
@@ -75,6 +97,22 @@ pub fn run(
 ) -> Result<i32, ForgeError> {
     let runner = default_runner();
     let clock = SystemClock;
+    let mut args = args;
+    // The working tree's declaration speaks only for its own repository, so a
+    // `--repo` pointing elsewhere does not inherit it.
+    let targets_this_checkout = global.repo.as_deref().is_none_or(|target| {
+        git_remote_url(&global.remote)
+            .as_deref()
+            .and_then(parse_slug)
+            .is_some_and(|slug| slug.eq_ignore_ascii_case(target))
+    });
+    if !args.allow_no_checks
+        && targets_this_checkout
+        && let Ok(workdir) = std::env::current_dir()
+    {
+        let cfg = ForgeConfig::load_layered(&workdir, find_git_toplevel(&workdir).as_deref());
+        args.allow_no_checks = cfg.declared_no_checks_reason().is_some();
+    }
     run_with(&runner, &clock, global, &args, format, git_remote_url)
 }
 
@@ -115,11 +153,11 @@ pub fn run_with<R: BackendRunner, C: Clock, F: Fn(&str) -> Option<String>>(
             format,
         )),
         WaitOutcome::TimedOut(snapshot) => Ok(emit_timeout(snapshot, format)),
-        WaitOutcome::NotRegistered(snapshot) => Ok(emit_failure(
+        WaitOutcome::NotRegistered(snapshot, cause) => Ok(emit_failure_with_hint(
             snapshot,
             "checks_not_registered",
-            "no checks registered for this head within the timeout; \
-             pass --allow-no-checks if this repository genuinely configures none",
+            &cause.message("this head"),
+            Some(NOT_REGISTERED_HINT),
             nils_common::cli_contract::exit::DATA,
             format,
         )),
@@ -132,11 +170,36 @@ pub enum WaitOutcome {
     Success(PrChecksPayload),
     Failed(PrChecksPayload),
     TimedOut(PrChecksPayload),
-    /// The budget expired with the gating set still empty — no check ever
-    /// registered for this head. Distinct from [`WaitOutcome::TimedOut`],
-    /// where checks existed but had not finished: the two have different
-    /// causes and different fixes, so they must not share an error kind.
-    NotRegistered(PrChecksPayload),
+    /// No check ever registered for this head. Distinct from
+    /// [`WaitOutcome::TimedOut`], where checks existed but had not finished:
+    /// the two have different causes and different fixes, so they must not
+    /// share an error kind.
+    NotRegistered(PrChecksPayload, NotRegisteredCause),
+}
+
+/// Why a wait ended as [`WaitOutcome::NotRegistered`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotRegisteredCause {
+    /// The whole budget expired with the gating set still empty.
+    BudgetExpired,
+    /// Nothing registered within [`NO_CI_GRACE_PERIOD`] and the GitHub
+    /// repository has no Actions workflows, so nothing ever could.
+    NoWorkflows,
+}
+
+impl NotRegisteredCause {
+    /// Error message naming `subject` (e.g. "this head").
+    pub fn message(self, subject: &str) -> String {
+        match self {
+            Self::BudgetExpired => {
+                format!("no checks registered for {subject} within the timeout")
+            }
+            Self::NoWorkflows => format!(
+                "no checks registered for {subject} and the repository has no GitHub \
+                 Actions workflows"
+            ),
+        }
+    }
 }
 
 /// Macro-facing entry point: poll until terminal or timeout and return the
@@ -178,6 +241,8 @@ fn poll_until_terminal_or_timeout<R: BackendRunner, C: Clock>(
     // — flipping a retryable UNAVAILABLE 69 into a fatal DATA 65 on exactly the
     // slow-registration case this exists for.
     let mut ever_saw_a_check = false;
+    // Probe for Actions workflows at most once per run.
+    let mut workflows_probed = false;
 
     loop {
         let snapshot = pr_checks::snapshot(runner, global, ctx, snapshot_args)?;
@@ -191,12 +256,30 @@ fn poll_until_terminal_or_timeout<R: BackendRunner, C: Clock>(
             return Ok(WaitOutcome::Failed(snapshot));
         }
         let now = clock.now();
+        if !ever_saw_a_check
+            && !workflows_probed
+            && presence == CheckPresence::Required
+            && ctx.provider == Provider::GitHub
+            && now.saturating_duration_since(start) >= NO_CI_GRACE_PERIOD
+        {
+            workflows_probed = true;
+            if github_repo_has_no_workflows(runner, ctx) {
+                let snapshot = with_duration(snapshot, ms_between(start, now));
+                return Ok(WaitOutcome::NotRegistered(
+                    snapshot,
+                    NotRegisteredCause::NoWorkflows,
+                ));
+            }
+        }
         if now >= deadline {
             let expired = with_duration(snapshot, ms_between(start, now));
             // Report *why* the budget expired. Nothing ever registered is a
             // different problem, with a different fix, from checks that ran long.
             if !ever_saw_a_check {
-                return Ok(WaitOutcome::NotRegistered(expired));
+                return Ok(WaitOutcome::NotRegistered(
+                    expired,
+                    NotRegisteredCause::BudgetExpired,
+                ));
             }
             return Ok(WaitOutcome::TimedOut(expired));
         }
@@ -207,6 +290,38 @@ fn poll_until_terminal_or_timeout<R: BackendRunner, C: Clock>(
         }
         clock.sleep(sleep_for);
     }
+}
+
+/// True only when GitHub positively reports `total_count: 0` Actions workflows
+/// for the repository. Any failure to ask — no repo slug, a permission error,
+/// an unexpected body — answers `false`, which keeps the ordinary wait.
+fn github_repo_has_no_workflows<R: BackendRunner>(runner: &R, ctx: &ProviderContext) -> bool {
+    let Some(call) = build_github_workflows_call(ctx) else {
+        return false;
+    };
+    let Ok(output) = runner.run(&call) else {
+        return false;
+    };
+    serde_json::from_str::<serde_json::Value>(&output.stdout)
+        .ok()
+        .and_then(|body| body.get("total_count").and_then(serde_json::Value::as_u64))
+        == Some(0)
+}
+
+/// `gh api repos/{owner}/{repo}/actions/workflows?per_page=1`, or `None`
+/// when the context carries no `owner/name` slug to address.
+fn build_github_workflows_call(ctx: &ProviderContext) -> Option<BackendCall> {
+    let repo = ctx.repo.as_deref()?;
+    let (owner, name) = repo.split_once('/')?;
+    if owner.is_empty() || name.is_empty() || name.contains('/') {
+        return None;
+    }
+    let mut argv = vec![
+        std::ffi::OsString::from("api"),
+        std::ffi::OsString::from(format!("repos/{repo}/actions/workflows?per_page=1")),
+    ];
+    ctx.push_github_api_hostname(&mut argv);
+    Some(BackendCall::new(BackendProgram::Gh, argv))
 }
 
 fn ms_between(start: Instant, end: Instant) -> u64 {
@@ -256,6 +371,17 @@ fn emit_failure(
     exit_code: i32,
     format: OutputFormat,
 ) -> i32 {
+    emit_failure_with_hint(snapshot, kind, message, None, exit_code, format)
+}
+
+fn emit_failure_with_hint(
+    snapshot: PrChecksPayload,
+    kind: &'static str,
+    message: &str,
+    hint: Option<&str>,
+    exit_code: i32,
+    format: OutputFormat,
+) -> i32 {
     let schema = schema_version_for(BINARY, SCHEMA, SCHEMA_VERSION);
     let envelope = Envelope {
         schema_version: schema,
@@ -265,7 +391,7 @@ fn emit_failure(
         error: Some(EnvelopeError {
             code: kind.to_string(),
             message: message.to_string(),
-            hint: None,
+            hint: hint.map(str::to_string),
             details: Some(json!({
                 "state": snapshot.state,
                 "required_count": snapshot.required_count,
@@ -282,6 +408,9 @@ fn emit_failure(
         }
         OutputFormat::Text => {
             eprintln!("error: {kind}: {message}");
+            if let Some(hint) = hint {
+                eprintln!("hint: {hint}");
+            }
             render_text(&snapshot);
         }
     }
@@ -573,7 +702,10 @@ mod tests {
             poll_until_terminal_or_timeout(&runner, &clock, &global, &ctx, &args, &snapshot_args)
                 .expect("poll must not error");
         assert!(
-            matches!(outcome, WaitOutcome::NotRegistered(_)),
+            matches!(
+                outcome,
+                WaitOutcome::NotRegistered(_, NotRegisteredCause::BudgetExpired)
+            ),
             "an always-empty snapshot must expire as not-registered"
         );
     }
@@ -653,6 +785,166 @@ mod tests {
             WaitOutcome::Success(snapshot) => assert_eq!(snapshot.required_count, 1),
             _ => panic!("late registration must still reach success"),
         }
+    }
+
+    /// Routes `gh api …/actions/workflows` to a fixed answer and every other
+    /// call through a check-snapshot sequence that repeats its last entry.
+    struct WorkflowProbeRunner {
+        checks: RefCell<Vec<String>>,
+        workflows: Result<String, ()>,
+        probes: RefCell<usize>,
+    }
+
+    impl WorkflowProbeRunner {
+        fn new(checks: &[&str], workflows: Result<&str, ()>) -> Self {
+            Self {
+                checks: RefCell::new(checks.iter().map(|c| c.to_string()).collect()),
+                workflows: workflows.map(str::to_string),
+                probes: RefCell::new(0),
+            }
+        }
+    }
+
+    impl BackendRunner for WorkflowProbeRunner {
+        fn run(&self, call: &BackendCall) -> Result<BackendSuccess, ForgeError> {
+            if call.argv.first().map(|a| a.as_os_str()) == Some("api".as_ref()) {
+                *self.probes.borrow_mut() += 1;
+                assert_eq!(
+                    call.argv[1],
+                    std::ffi::OsString::from("repos/acme/widgets/actions/workflows?per_page=1")
+                );
+                return match &self.workflows {
+                    Ok(body) => Ok(BackendSuccess {
+                        stdout: body.clone(),
+                        stderr: String::new(),
+                    }),
+                    Err(()) => Err(ForgeError::validation("test", "stub", "api refused", None)),
+                };
+            }
+            let mut checks = self.checks.borrow_mut();
+            let next = if checks.len() > 1 {
+                checks.remove(0)
+            } else {
+                checks[0].clone()
+            };
+            Ok(BackendSuccess {
+                stdout: next,
+                stderr: String::new(),
+            })
+        }
+    }
+
+    fn repo_ctx() -> ProviderContext {
+        ProviderContext {
+            repo: Some("acme/widgets".into()),
+            ..make_ctx(Provider::GitHub)
+        }
+    }
+
+    fn default_budget_args() -> PrWaitChecksArgs {
+        PrWaitChecksArgs {
+            timeout: Duration::from_secs(30 * 60),
+            interval: Duration::from_secs(20),
+            ..make_args("1")
+        }
+    }
+
+    fn poll(runner: &WorkflowProbeRunner, args: &PrWaitChecksArgs) -> WaitOutcome {
+        let snapshot_args = PrChecksArgs {
+            id: args.id.clone(),
+            required_only: args.required_only,
+        };
+        poll_until_terminal_or_timeout(
+            runner,
+            &StepClock::new(),
+            &make_global(),
+            &repo_ctx(),
+            args,
+            &snapshot_args,
+        )
+        .expect("poll must not error")
+    }
+
+    /// The #1801 case: no workflows and nothing reported. The wait stops once
+    /// the grace period has passed instead of burning the 30-minute budget.
+    #[test]
+    fn a_repository_without_workflows_fails_after_the_grace_period() {
+        let runner = WorkflowProbeRunner::new(&["[]"], Ok(r#"{"total_count":0,"workflows":[]}"#));
+        match poll(&runner, &default_budget_args()) {
+            WaitOutcome::NotRegistered(snapshot, NotRegisteredCause::NoWorkflows) => {
+                let waited = Duration::from_millis(snapshot.duration_ms.expect("duration"));
+                assert!(waited >= NO_CI_GRACE_PERIOD, "waited {waited:?}");
+                assert!(waited < NO_CI_GRACE_PERIOD * 2, "waited {waited:?}");
+            }
+            _ => panic!("a repository with no workflows must fail fast as not-registered"),
+        }
+        assert_eq!(*runner.probes.borrow(), 1);
+    }
+
+    /// A repository that has workflows keeps today's wait: nothing is decided
+    /// from the probe, and it is asked only once.
+    #[test]
+    fn a_repository_with_workflows_waits_out_the_budget() {
+        let runner = WorkflowProbeRunner::new(&["[]"], Ok(r#"{"total_count":2,"workflows":[]}"#));
+        match poll(&runner, &default_budget_args()) {
+            WaitOutcome::NotRegistered(snapshot, NotRegisteredCause::BudgetExpired) => {
+                assert_eq!(snapshot.duration_ms, Some(30 * 60 * 1000));
+            }
+            _ => panic!("a repository with workflows must wait for the whole budget"),
+        }
+        assert_eq!(*runner.probes.borrow(), 1);
+    }
+
+    /// Failing to ask is not evidence of no CI; the wait continues.
+    #[test]
+    fn a_failed_workflow_probe_keeps_waiting() {
+        let runner = WorkflowProbeRunner::new(&["[]"], Err(()));
+        assert!(matches!(
+            poll(&runner, &default_budget_args()),
+            WaitOutcome::NotRegistered(_, NotRegisteredCause::BudgetExpired)
+        ));
+    }
+
+    /// Slow registration past the grace period still reaches success when the
+    /// repository has workflows.
+    #[test]
+    fn checks_registering_after_the_grace_period_still_succeed() {
+        let mut sequence = vec!["[]"; 2 * 5];
+        sequence.extend([ONE_REQUIRED_PASS, ONE_REQUIRED_PASS]);
+        let runner = WorkflowProbeRunner::new(&sequence, Ok(r#"{"total_count":1,"workflows":[]}"#));
+        match poll(&runner, &default_budget_args()) {
+            WaitOutcome::Success(snapshot) => {
+                assert_eq!(snapshot.required_count, 1);
+                assert!(
+                    Duration::from_millis(snapshot.duration_ms.expect("duration"))
+                        > NO_CI_GRACE_PERIOD
+                );
+            }
+            _ => panic!("late registration must still reach success"),
+        }
+    }
+
+    /// A declared opt-out never needs the probe.
+    #[test]
+    fn allowed_no_checks_never_probes_workflows() {
+        let runner = WorkflowProbeRunner::new(&["[]"], Ok(r#"{"total_count":0}"#));
+        let args = PrWaitChecksArgs {
+            allow_no_checks: true,
+            ..default_budget_args()
+        };
+        assert!(matches!(poll(&runner, &args), WaitOutcome::Success(_)));
+        assert_eq!(*runner.probes.borrow(), 0);
+    }
+
+    #[test]
+    fn workflow_probe_needs_an_owner_name_slug() {
+        assert!(build_github_workflows_call(&make_ctx(Provider::GitHub)).is_none());
+        let nested = ProviderContext {
+            repo: Some("group/sub/repo".into()),
+            ..make_ctx(Provider::GitHub)
+        };
+        assert!(build_github_workflows_call(&nested).is_none());
+        assert!(build_github_workflows_call(&repo_ctx()).is_some());
     }
 
     #[test]

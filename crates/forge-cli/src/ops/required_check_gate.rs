@@ -50,6 +50,7 @@ use crate::backend::BackendRunner;
 use crate::cli::{BINARY, GlobalFlags, PrChecksArgs};
 use crate::error::ForgeError;
 use crate::ops::pr_checks::{self, PrChecksPayload};
+use crate::ops::pr_wait_checks::NOT_REGISTERED_HINT;
 use crate::provider::ProviderContext;
 use nils_common::cli_contract::schema_version_for;
 
@@ -166,9 +167,10 @@ fn classify(
         return Err(ForgeError::validation(
             schema(),
             "checks_not_registered",
-            "no required checks are registered for this head, so nothing proves it was checked; \
-             wait for the provider to register them, or pass --allow-no-checks if this repository \
-             genuinely configures none",
+            format!(
+                "no required checks are registered for this head, so nothing proves it was \
+                 checked; wait for the provider to register them, or {NOT_REGISTERED_HINT}"
+            ),
             None,
         ));
     }

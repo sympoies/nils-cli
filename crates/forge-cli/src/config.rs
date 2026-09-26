@@ -55,7 +55,13 @@ const KNOWN_MERGE_KEYS: &[&str] = &["method", "delete_branch"];
 const KNOWN_BODY_KEYS: &[&str] = &["summary_heading", "test_plan_heading"];
 const KNOWN_BRANCH_KEYS: &[&str] = &["feature_prefix", "bug_prefix"];
 const KNOWN_TEST_FIRST_KEYS: &[&str] = &["require"];
-const KNOWN_CHECKS_KEYS: &[&str] = &["timeout", "interval", "required_only"];
+const KNOWN_CHECKS_KEYS: &[&str] = &[
+    "timeout",
+    "interval",
+    "required_only",
+    "none",
+    "none_reason",
+];
 const KNOWN_INBOX_KEYS: &[&str] = &[
     "gitlab_vpn",
     "gitlab_vpn_check",
@@ -174,6 +180,11 @@ pub struct ForgeConfig {
     pub checks_timeout: Option<Duration>,
     pub checks_interval: Option<Duration>,
     pub checks_required_only: Option<bool>,
+    /// `[checks].none` — the repository declares that it configures no CI, so
+    /// a head with no registered checks may pass. Only kept as `Some(true)`
+    /// when paired with a non-empty `none_reason`.
+    pub checks_none: Option<bool>,
+    pub checks_none_reason: Option<String>,
     pub inbox_gitlab_vpn: Option<String>,
     pub inbox_gitlab_vpn_check: Option<String>,
     pub inbox_gitlab_vpn_check_timeout: Option<Duration>,
@@ -243,6 +254,48 @@ impl ForgeConfig {
         let mut cfg = parse_value(&value);
         cfg.source_path = Some(found);
         cfg
+    }
+
+    /// Load the `.forge-cli.toml` committed on `git_ref` rather than the one in
+    /// the working tree, searching the same directories [`load_from`] walks
+    /// (from `start_dir` up to `git_toplevel`, both inclusive). A missing file
+    /// or an unreadable ref yields defaults.
+    ///
+    /// This is the trusted source for settings that loosen a fail-closed gate:
+    /// a PR head's working tree can carry any file, but its base branch holds
+    /// only what already merged.
+    ///
+    /// [`load_from`]: Self::load_from
+    pub fn load_from_git_ref(start_dir: &Path, git_toplevel: &Path, git_ref: &str) -> Self {
+        let top = canonical_or_path(git_toplevel);
+        let mut cursor = Some(canonical_or_path(start_dir));
+        while let Some(dir) = cursor {
+            let Ok(rel) = dir.strip_prefix(&top) else {
+                return Self::default();
+            };
+            let rel_path = rel
+                .join(CONFIG_FILE_NAME)
+                .to_string_lossy()
+                .replace('\\', "/");
+            if let Some(contents) = git_show(&top, git_ref, &rel_path) {
+                let mut cfg = match toml::from_str::<Value>(&contents) {
+                    Ok(value) => parse_value(&value),
+                    Err(err) => {
+                        let mut cfg = Self::default();
+                        cfg.warnings
+                            .push(format!("invalid-config-value:parse_error:{err}"));
+                        cfg
+                    }
+                };
+                cfg.source_path = Some(top.join(rel_path));
+                return cfg;
+            }
+            if dir == top {
+                return Self::default();
+            }
+            cursor = dir.parent().map(Path::to_path_buf);
+        }
+        Self::default()
     }
 
     /// Load the user-global config from
@@ -334,6 +387,15 @@ impl ForgeConfig {
             top.review_convergence_bots.clone(),
             protect_global_review,
         );
+        // `none` and its reason travel as a pair from one layer. A base
+        // `none = false` requires checks and, like an enabled review gate, the
+        // top layer cannot weaken it.
+        let (checks_none, checks_none_reason) =
+            if self.checks_none == Some(false) || top.checks_none.is_none() {
+                (self.checks_none, self.checks_none_reason)
+            } else {
+                (top.checks_none, top.checks_none_reason)
+            };
         Self {
             merge_method: top.merge_method.or(self.merge_method),
             merge_delete_branch: top.merge_delete_branch.or(self.merge_delete_branch),
@@ -344,6 +406,8 @@ impl ForgeConfig {
             checks_timeout: top.checks_timeout.or(self.checks_timeout),
             checks_interval: top.checks_interval.or(self.checks_interval),
             checks_required_only: top.checks_required_only.or(self.checks_required_only),
+            checks_none,
+            checks_none_reason,
             inbox_gitlab_vpn: top.inbox_gitlab_vpn.or(self.inbox_gitlab_vpn),
             inbox_gitlab_vpn_check: top.inbox_gitlab_vpn_check.or(self.inbox_gitlab_vpn_check),
             inbox_gitlab_vpn_check_timeout: top
@@ -434,6 +498,17 @@ impl ForgeConfig {
     /// Resolve `[checks].required_only`. Default is `true` per spec.
     pub fn resolve_required_only(&self, explicit: Option<bool>) -> bool {
         explicit.or(self.checks_required_only).unwrap_or(true)
+    }
+
+    /// The `[checks].none_reason` of a `[checks] none = true` declaration, or
+    /// `None` when the repository does not declare that it configures no CI.
+    /// Callers treat an explicit `--allow-no-checks` as taking precedence.
+    pub fn declared_no_checks_reason(&self) -> Option<&str> {
+        if self.checks_none == Some(true) {
+            self.checks_none_reason.as_deref()
+        } else {
+            None
+        }
     }
 
     /// Resolve `[test_first].require`. Default is `false` per spec — the gate
@@ -529,6 +604,21 @@ fn find_config_file(start_dir: &Path, git_toplevel: Option<&Path>) -> Option<Pat
         cursor = dir.parent().map(Path::to_path_buf);
     }
     None
+}
+
+/// `git show <git_ref>:<path>` from `repo`, or `None` when the ref or path does
+/// not exist.
+fn git_show(repo: &Path, git_ref: &str, path: &str) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .current_dir(repo)
+        .arg("show")
+        .arg(format!("{git_ref}:{path}"))
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 fn canonical_or_path(p: &Path) -> PathBuf {
@@ -791,8 +881,30 @@ fn parse_checks(table: &toml::map::Map<String, Value>, cfg: &mut ForgeConfig) {
                     .warnings
                     .push("invalid-config-value:checks.required_only:not_a_bool".to_string()),
             },
+            "none" => match value.as_bool() {
+                Some(b) => cfg.checks_none = Some(b),
+                None => cfg
+                    .warnings
+                    .push("invalid-config-value:checks.none:not_a_bool".to_string()),
+            },
+            "none_reason" => match value.as_str().map(str::trim) {
+                Some("") => cfg
+                    .warnings
+                    .push("invalid-config-value:checks.none_reason:empty".to_string()),
+                Some(reason) => cfg.checks_none_reason = Some(reason.to_string()),
+                None => cfg
+                    .warnings
+                    .push("invalid-config-value:checks.none_reason:not_a_string".to_string()),
+            },
             _ => unreachable!("key filtered above"),
         }
+    }
+    // The reason is the audit record, so a declaration without one is dropped
+    // and the fail-closed default stays in force.
+    if cfg.checks_none == Some(true) && cfg.checks_none_reason.is_none() {
+        cfg.checks_none = None;
+        cfg.warnings
+            .push("invalid-config-value:checks.none:missing_none_reason".to_string());
     }
 }
 
@@ -1231,6 +1343,114 @@ required_only = false
 
         let explicit_policy = layered.resolve_review_convergence(Some(false));
         assert!(!explicit_policy.require);
+    }
+
+    #[test]
+    fn checks_none_declaration_carries_its_reason() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "[checks]\nnone = true\nnone_reason = \"docs-only repository with no CI\"\n",
+        );
+        let cfg = ForgeConfig::load_from(tmp.path(), Some(tmp.path()));
+        assert!(cfg.warnings.is_empty(), "warnings={:?}", cfg.warnings);
+        assert_eq!(
+            cfg.declared_no_checks_reason(),
+            Some("docs-only repository with no CI")
+        );
+    }
+
+    /// A reason is what makes the declaration auditable, so a declaration
+    /// without one is ignored and the fail-closed default stays in force.
+    #[test]
+    fn checks_none_without_a_reason_is_ignored_with_a_warning() {
+        let tmp = TempDir::new().unwrap();
+        write(tmp.path(), "[checks]\nnone = true\nnone_reason = \"  \"\n");
+        let cfg = ForgeConfig::load_from(tmp.path(), Some(tmp.path()));
+        assert_eq!(cfg.declared_no_checks_reason(), None);
+        assert_eq!(
+            cfg.warnings,
+            vec![
+                "invalid-config-value:checks.none_reason:empty".to_string(),
+                "invalid-config-value:checks.none:missing_none_reason".to_string(),
+            ]
+        );
+    }
+
+    /// The git-ref loader reads the committed file, not the working tree, and
+    /// finds a file in a parent directory the same way `load_from` does.
+    #[test]
+    fn load_from_git_ref_reads_the_committed_file_not_the_working_tree() {
+        let tmp = TempDir::new().unwrap();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .current_dir(tmp.path())
+                .args(args)
+                .output()
+                .expect("git spawn");
+            assert!(out.status.success(), "git {args:?} failed");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.email", "test@example.com"]);
+        git(&["config", "user.name", "Tester"]);
+        git(&["config", "commit.gpgsign", "false"]);
+        write(
+            tmp.path(),
+            "[checks]\nnone = true\nnone_reason = \"committed\"\n",
+        );
+        git(&["add", CONFIG_FILE_NAME]);
+        git(&["commit", "-q", "-m", "config"]);
+        // The working tree drifts from the committed file.
+        write(tmp.path(), "[checks]\nnone = false\n");
+        let sub = tmp.path().join("crate");
+        fs::create_dir_all(&sub).unwrap();
+
+        let cfg = ForgeConfig::load_from_git_ref(&sub, tmp.path(), "main");
+        assert_eq!(cfg.declared_no_checks_reason(), Some("committed"));
+        assert_eq!(
+            ForgeConfig::load_from_git_ref(&sub, tmp.path(), "refs/remotes/origin/main"),
+            ForgeConfig::default()
+        );
+    }
+
+    #[test]
+    fn checks_none_false_declares_nothing() {
+        let tmp = TempDir::new().unwrap();
+        write(tmp.path(), "[checks]\nnone = false\n");
+        let cfg = ForgeConfig::load_from(tmp.path(), Some(tmp.path()));
+        assert!(cfg.warnings.is_empty(), "warnings={:?}", cfg.warnings);
+        assert_eq!(cfg.declared_no_checks_reason(), None);
+    }
+
+    /// Same monotonic rule as review convergence: a global `none = false`
+    /// requires checks everywhere, and a repo file cannot opt out of it.
+    #[test]
+    fn checks_none_repo_layer_cannot_weaken_a_global_requirement() {
+        let global = ForgeConfig {
+            checks_none: Some(false),
+            ..ForgeConfig::default()
+        };
+        let repo = ForgeConfig {
+            checks_none: Some(true),
+            checks_none_reason: Some("no CI here".to_string()),
+            ..ForgeConfig::default()
+        };
+        assert_eq!(global.overlaid_by(repo).declared_no_checks_reason(), None);
+    }
+
+    #[test]
+    fn checks_none_repo_layer_declares_when_global_is_silent() {
+        let repo = ForgeConfig {
+            checks_none: Some(true),
+            checks_none_reason: Some("no CI here".to_string()),
+            ..ForgeConfig::default()
+        };
+        assert_eq!(
+            ForgeConfig::default()
+                .overlaid_by(repo)
+                .declared_no_checks_reason(),
+            Some("no CI here")
+        );
     }
 
     #[test]

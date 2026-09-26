@@ -42,7 +42,7 @@ use crate::ops::pr_create::{
     validate_provider_subject_head, validate_qualified_provider_subject,
 };
 use crate::ops::pr_view::PrViewPayload;
-use crate::ops::pr_wait_checks::{Clock, SystemClock, WaitOutcome};
+use crate::ops::pr_wait_checks::{Clock, NOT_REGISTERED_HINT, SystemClock, WaitOutcome};
 use crate::ops::{
     auth_status, issue_close, issue_closeout, pr_checks, pr_list, pr_merge, pr_ready, pr_view,
     pr_wait_checks, repo_view,
@@ -384,14 +384,24 @@ fn execute_sequence<R: BackendRunner, C: Clock>(
         (number, url, verified_subject)
     };
 
-    // 4. pr.wait-checks
+    // 4. pr.wait-checks — a `[checks] none = true` declaration on the base
+    //    branch stands in for `--allow-no-checks`; the merge step resolves the
+    //    same source and records its reason.
     let wait_started = clock.now();
+    let allow_no_checks = args.allow_no_checks
+        || pr_merge::declared_no_checks_reason_on_base(
+            workdir,
+            ctx.repo.as_deref(),
+            &global.remote,
+            &expected_base,
+        )
+        .is_some();
     let wait_args = PrWaitChecksArgs {
         id: pr_number.to_string(),
         timeout: args.timeout,
         interval: std::time::Duration::from_secs(20),
         required_only: true,
-        allow_no_checks: args.allow_no_checks,
+        allow_no_checks,
     };
     let wait_outcome = match pr_wait_checks::compute(runner, clock, global, ctx, &wait_args) {
         Ok(WaitOutcome::Success(snapshot))
@@ -467,12 +477,14 @@ fn execute_sequence<R: BackendRunner, C: Clock>(
                 format,
             ));
         }
-        Ok(WaitOutcome::NotRegistered(snapshot)) => {
+        Ok(WaitOutcome::NotRegistered(snapshot, cause)) => {
             let err = ForgeError::validation(
                 schema_version_for(BINARY, "pr.checks", 1),
                 "checks_not_registered",
-                "no checks registered for the delivered head within the timeout; \
-                 pass --allow-no-checks if this repository genuinely configures none",
+                format!(
+                    "{}; {NOT_REGISTERED_HINT}",
+                    cause.message("the delivered head")
+                ),
                 None,
             );
             steps.push(Step {
@@ -733,8 +745,8 @@ fn add_duration_prefix(outcome: WaitOutcome, prefix: std::time::Duration) -> Wai
             WaitOutcome::Success(with_total_duration(snapshot, prefix))
         }
         WaitOutcome::Failed(snapshot) => WaitOutcome::Failed(with_total_duration(snapshot, prefix)),
-        WaitOutcome::NotRegistered(snapshot) => {
-            WaitOutcome::NotRegistered(with_total_duration(snapshot, prefix))
+        WaitOutcome::NotRegistered(snapshot, cause) => {
+            WaitOutcome::NotRegistered(with_total_duration(snapshot, prefix), cause)
         }
         WaitOutcome::TimedOut(snapshot) => {
             WaitOutcome::TimedOut(with_total_duration(snapshot, prefix))

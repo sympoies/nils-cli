@@ -75,7 +75,7 @@ validations_catalog:
     rule: "every required check is success at merge time, and at least one check was reported"
     error_kind: checks_pending     # exit DATA when pending
     failed_error_kind: checks_failed  # exit RUNTIME when failed
-    absent_error_kind: checks_not_registered  # exit DATA when no required checks AND no visible rows; bypass with --allow-no-checks (+ --allow-no-checks-reason)
+    absent_error_kind: checks_not_registered  # exit DATA when no required checks AND no visible rows; bypass with --allow-no-checks (+ --allow-no-checks-reason) or repo [checks] none = true (+ none_reason)
   merge_method_supported:
     rule: "method in {squash, merge, rebase} and backend supports it"
     error_kind: merge_method_unsupported
@@ -953,8 +953,12 @@ operations:
       Polls pr.checks until every required check is terminal. An empty gating
       set is NOT terminal (lock-down rule 8): the poll continues through the
       provider's check-registration window instead of reading "nothing is
-      failing" as "everything passed". --allow-no-checks makes it terminal for
-      a project that configures none. Emits a single envelope at the end.
+      failing" as "everything passed". --allow-no-checks, or a repo
+      .forge-cli.toml [checks] none = true (+ none_reason), makes it terminal
+      for a project that configures none. On GitHub, after 60s with nothing
+      reported, a repository whose actions/workflows listing has
+      total_count 0 fails early with checks_not_registered instead of
+      polling out the budget. Emits a single envelope at the end.
       Maps results to exit code:
         all success         -> SUCCESS 0
         any failure         -> RUNTIME 1, error.kind=checks_failed
@@ -963,6 +967,8 @@ operations:
           checks were seen  -> UNAVAILABLE 69, error.kind=checks_timeout
         deadline reached,
           none ever seen    -> DATA 65, error.kind=checks_not_registered
+        github, no workflows,
+          none after 60s    -> DATA 65, error.kind=checks_not_registered
       On the checks_not_registered emission the envelope carries ok=false while
       data.state is still "success" (the snapshot is reported verbatim), so
       consumers must gate on ok / error.kind, not on data.state.
@@ -1376,7 +1382,9 @@ macros:
       # non-terminal and, once the budget expires, fails DATA 65 with
       # checks_not_registered (lock-down rule 8). This applies on GitLab too,
       # where an MR with no pipeline reports the same empty snapshot.
-      # --allow-no-checks (+ reason) is the declared opt-out.
+      # --allow-no-checks (+ reason), or [checks] none = true (+ none_reason)
+      # in the .forge-cli.toml committed on the base branch, is the declared
+      # opt-out.
       - { step: wait_checks,        op: pr.wait-checks }
       - { step: ready,              op: pr.ready,  skip_when: "--no-merge" }
       - { step: merge,              op: pr.merge,  skip_when: "--no-merge" }

@@ -1751,6 +1751,148 @@ fn pr_merge_github_allow_no_checks_bypasses_rule_eight_and_records_the_reason() 
     assert!(merged.exists(), "the bypassed merge must reach the backend");
 }
 
+fn set_base_ref_to_head(repo: &std::path::Path) {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["update-ref", "refs/remotes/origin/main", "HEAD"])
+        .output()
+        .expect("git spawn");
+    assert!(out.status.success(), "update-ref failed");
+}
+
+/// The repository-declared opt-out: `[checks] none` in the base branch's
+/// `.forge-cli.toml` stands in for the flags and its reason lands in the same
+/// audit field.
+#[test]
+fn pr_merge_github_repo_declared_no_checks_merges_and_records_the_reason() {
+    let tempdir = make_github_repo(Some(
+        "[checks]\nnone = true\nnone_reason = \"docs-only repository with no CI\"\n",
+    ));
+    let repo_path = tempdir.path().join("repo");
+    set_base_ref_to_head(&repo_path);
+
+    let stub = StubEnv::new();
+    let merged = stub.tempdir.path().join("github-merged");
+    let body = github_merge_stub_with_checks(&stub, "", "", true, None, NO_CHECKS);
+    let stub = stub.gh_stub(&body);
+
+    let out = run_forge_cli_in(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--format",
+            "json",
+            "pr",
+            "merge",
+            "7",
+            "--review-convergence=false",
+        ],
+        Some(&repo_path),
+    );
+
+    assert_eq!(out.code, 0, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let env = parse_envelope(&out.stdout);
+    assert_eq!(
+        env["data"]["no_checks_override_reason"],
+        "docs-only repository with no CI"
+    );
+    assert!(merged.exists(), "the declared merge must reach the backend");
+}
+
+/// A declaration speaks only for its own repository: merging another
+/// repository's PR through `--repo` from this checkout does not inherit it.
+#[test]
+fn pr_merge_ignores_a_no_checks_declaration_for_a_different_repo() {
+    let tempdir = make_github_repo(Some(
+        "[checks]\nnone = true\nnone_reason = \"docs-only repository with no CI\"\n",
+    ));
+    let repo_path = tempdir.path().join("repo");
+    set_base_ref_to_head(&repo_path);
+
+    let stub = StubEnv::new();
+    let merged = stub.tempdir.path().join("github-merged");
+    let body = github_merge_stub_with_checks(&stub, "", "", true, None, NO_CHECKS);
+    let stub = stub.gh_stub(&body);
+
+    let out = run_forge_cli_in(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/other",
+            "--format",
+            "json",
+            "pr",
+            "merge",
+            "7",
+            "--review-convergence=false",
+        ],
+        Some(&repo_path),
+    );
+
+    assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let env = parse_envelope(&out.stdout);
+    assert_eq!(env["error"]["code"], "checks_not_registered");
+    assert!(
+        !merged.exists(),
+        "another repo's declaration must not merge"
+    );
+}
+
+/// A PR head cannot waive its own rule-8 gate: a declaration present only in
+/// the working tree, not on the base branch, is ignored.
+#[test]
+fn pr_merge_ignores_a_no_checks_declaration_absent_from_the_base_branch() {
+    let tempdir = make_github_repo(None);
+    let repo_path = tempdir.path().join("repo");
+    set_base_ref_to_head(&repo_path);
+    fs::write(
+        repo_path.join(".forge-cli.toml"),
+        "[checks]\nnone = true\nnone_reason = \"this PR removed CI\"\n",
+    )
+    .expect("write config");
+    for args in [
+        &["add", ".forge-cli.toml"][..],
+        &["commit", "-q", "-m", "waive checks"],
+    ] {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&repo_path)
+            .args(args)
+            .output()
+            .expect("git spawn");
+        assert!(out.status.success(), "git {args:?} failed");
+    }
+
+    let stub = StubEnv::new();
+    let merged = stub.tempdir.path().join("github-merged");
+    let body = github_merge_stub_with_checks(&stub, "", "", true, None, NO_CHECKS);
+    let stub = stub.gh_stub(&body);
+
+    let out = run_forge_cli_in(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--format",
+            "json",
+            "pr",
+            "merge",
+            "7",
+            "--review-convergence=false",
+        ],
+        Some(&repo_path),
+    );
+
+    assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let env = parse_envelope(&out.stdout);
+    assert_eq!(env["error"]["code"], "checks_not_registered");
+    assert!(!merged.exists(), "an undeclared head must not merge");
+}
+
 /// The field is absent — not null, not empty — when the bypass was not used,
 /// so its presence is itself the audit signal.
 #[test]

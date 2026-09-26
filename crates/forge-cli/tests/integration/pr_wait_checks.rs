@@ -312,6 +312,13 @@ fn pr_wait_checks_expires_as_not_registered_when_nothing_is_ever_reported() {
     assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
     let env = parse_envelope(&out.stdout);
     assert_eq!(env["error"]["code"], "checks_not_registered");
+    assert!(
+        env["error"]["hint"]
+            .as_str()
+            .is_some_and(|hint| hint.contains("[checks] none = true")),
+        "the envelope must name the opt-outs: {}",
+        out.stdout
+    );
     // The snapshot is reported verbatim, so `data.state` is still "success"
     // while `ok` is false. Consumers must gate on ok / error.kind — this
     // asserts the combination so any future normalization is deliberate.
@@ -344,6 +351,42 @@ fn pr_wait_checks_allow_no_checks_completes_immediately() {
             "--timeout",
             "30s",
             "--allow-no-checks",
+        ],
+    );
+
+    assert_eq!(out.code, 0, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let env = parse_envelope(&out.stdout);
+    assert_eq!(env["data"]["required_count"], 0);
+}
+
+/// `[checks] none` in `.forge-cli.toml` is the durable form of
+/// `--allow-no-checks`: the wait completes at once without the flag.
+#[test]
+fn pr_wait_checks_repo_declared_no_checks_completes_immediately() {
+    let mut stub = StubEnv::new();
+    gh_sequence_stub(&stub, &[EMPTY_SNAP]);
+    std::fs::write(
+        stub.tempdir.path().join(".forge-cli.toml"),
+        "[checks]\nnone = true\nnone_reason = \"no CI in this repository\"\n",
+    )
+    .expect("write config");
+    let gh_path = stub.tempdir.path().join("gh");
+    stub = stub.env("FORGE_CLI_GH_BIN", gh_path.to_string_lossy());
+
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--format",
+            "json",
+            "pr",
+            "wait-checks",
+            "1",
+            "--interval",
+            "10ms",
+            "--timeout",
+            "30s",
         ],
     );
 
