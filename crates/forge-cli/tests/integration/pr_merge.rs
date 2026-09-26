@@ -1751,6 +1751,44 @@ fn pr_merge_github_allow_no_checks_bypasses_rule_eight_and_records_the_reason() 
     assert!(merged.exists(), "the bypassed merge must reach the backend");
 }
 
+/// The repository-declared opt-out: `[checks] none` in `.forge-cli.toml`
+/// stands in for the flags and its reason lands in the same audit field.
+#[test]
+fn pr_merge_github_repo_declared_no_checks_merges_and_records_the_reason() {
+    let tempdir = make_github_repo(Some(
+        "[checks]\nnone = true\nnone_reason = \"docs-only repository with no CI\"\n",
+    ));
+    let repo_path = tempdir.path().join("repo");
+
+    let stub = StubEnv::new();
+    let merged = stub.tempdir.path().join("github-merged");
+    let body = github_merge_stub_with_checks(&stub, "", "", true, None, NO_CHECKS);
+    let stub = stub.gh_stub(&body);
+
+    let out = run_forge_cli_in(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--format",
+            "json",
+            "pr",
+            "merge",
+            "7",
+            "--review-convergence=false",
+        ],
+        Some(&repo_path),
+    );
+
+    assert_eq!(out.code, 0, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let env = parse_envelope(&out.stdout);
+    assert_eq!(
+        env["data"]["no_checks_override_reason"],
+        "docs-only repository with no CI"
+    );
+    assert!(merged.exists(), "the declared merge must reach the backend");
+}
+
 /// The field is absent — not null, not empty — when the bypass was not used,
 /// so its presence is itself the audit signal.
 #[test]

@@ -502,8 +502,17 @@ distinctions that cannot be proven offline.
     `ok = false`, exit `DATA 65`, `error.kind = "checks_not_registered"`.
     An empty snapshot is **not** terminal (rule 8): the poll continues
     through the provider's check-registration window rather than reading
-    "nothing is failing" as "everything passed". `--allow-no-checks` makes
-    the empty set terminal for a repository that configures none.
+    "nothing is failing" as "everything passed". `--allow-no-checks`, or a
+    repository `[checks] none = true` declaration, makes the empty set
+    terminal for a repository that configures none.
+  - GitHub no-CI fast fail: once the head has reported nothing for 60s, the
+    wait asks `gh api repos/<owner>/<repo>/actions/workflows`. When GitHub
+    reports `total_count: 0` the wait stops early with the same
+    `checks_not_registered` / `DATA 65` instead of polling out its budget.
+    Any status or check run (including one from an external CI app) counts
+    as registered, and a failed or non-zero probe keeps the ordinary wait.
+    `checks_not_registered` envelopes carry an `error.hint` naming both
+    opt-outs.
 - Output schema: `cli.forge-cli.pr.checks.v1`,
   `data = { state, required_count, success_count, failed:[…], pending:[…], checks:[…], duration_ms, warnings? }`.
 
@@ -1160,7 +1169,10 @@ distinctions that cannot be proven offline.
     with `checks_not_registered`; `--allow-no-checks` with a non-empty
     `--allow-no-checks-reason` bypasses it and records the reason in
     `data.no_checks_override_reason`. `pr deliver` accepts the same pair
-    and forwards it to its wait-checks and merge steps;
+    and forwards it to its wait-checks and merge steps. Without the flags,
+    a repository `.forge-cli.toml` `[checks] none = true` declaration with a
+    non-empty `none_reason` has the same effect and records that reason in
+    the same field;
   - target branch is the repo default branch OR explicitly approved
     via `--allow-non-default-base`;
   - when resolved review convergence is enabled, no current-head native
@@ -1393,7 +1405,8 @@ backend implementations cannot diverge.
    excluded by `workflow:rules`, or pipelines disabled on a fork — reports
    the same empty snapshot and is now refused rather than merged. That is
    the intended reading of "absence is not success", and
-   `--allow-no-checks` is the declared way to say a project has no CI.
+   `--allow-no-checks`, or `[checks] none = true` with a `none_reason` in
+   `.forge-cli.toml`, is the declared way to say a project has no CI.
 9. **Merge method.** Default `squash`. Repo override allowed via
    `.forge-cli.toml` `[merge] method = "squash" | "merge" | "rebase"`.
    Per-invocation `--method` overrides the repo override; both are
@@ -1767,6 +1780,9 @@ bug_prefix = "fix/"
 timeout = "30m"
 interval = "20s"
 required_only = true
+none = false                          # true: this repo configures no CI; a
+none_reason = "<why no CI is needed>" # head with no checks may pass (needs
+                                      # a non-empty none_reason)
 
 [inbox]
 gitlab_vpn = "off"                    # off | optional | required
@@ -1803,11 +1819,11 @@ require = true` or `[merge] method = "rebase"`) applies across every repo
 without duplicating it into each checkout. A missing global file is not an
 error. The global layer feeds the sections forge-cli actually consumes from
 config today — `[merge]`, `[inbox]`, `[test_first]`, and
-`[review_convergence]`. The `[checks]`,
-`[body]`, and `[branch]` keys are parsed (and validated) for
-forward-compatibility but are not yet wired into the corresponding command
-paths at either layer, so values placed there are accepted but currently
-inert.
+`[review_convergence]`, plus `[checks].none` / `none_reason`. The other
+`[checks]` keys and the `[body]` and `[branch]` keys are parsed (and
+validated) for forward-compatibility but are not yet wired into the
+corresponding command paths at either layer, so values placed there are
+accepted but currently inert.
 
 Resolution order for any setting: explicit flag > repo `.forge-cli.toml` >
 global `config.toml` > spec default. Inbox env vars sit between explicit flags
@@ -1820,6 +1836,14 @@ global/default quiet period, or override the failure timeout, but cannot disable
 the gate, remove global bots, or shorten the quiet period. The explicit
 `--review-convergence=false` flag remains the intentional per-invocation
 override.
+
+`[checks].none` follows the same rule: `pr wait-checks`, `pr merge`, and
+`pr deliver` treat `none = true` (with a non-empty `none_reason`) as
+`--allow-no-checks`, and a global `none = false` requires checks everywhere —
+repo config cannot flip it to `true`. `none = true` without a reason is ignored
+with an `invalid-config-value:checks.none:missing_none_reason` warning, so the
+fail-closed default stays in force. The explicit `--allow-no-checks` flag
+remains the per-invocation override.
 
 ### `[test_first]` — test-first evidence gate
 

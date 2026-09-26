@@ -911,7 +911,8 @@ pub struct PrMergeArgs {
     /// flag an empty required-check snapshot triggers `checks_not_registered`,
     /// because "all required checks passed" is vacuously true over an empty set
     /// and so proves nothing about the head. Requires
-    /// `--allow-no-checks-reason`.
+    /// `--allow-no-checks-reason`. A repository `.forge-cli.toml`
+    /// `[checks] none = true` with a `none_reason` has the same effect.
     #[arg(
         long = "allow-no-checks",
         action = ArgAction::SetTrue,
@@ -1309,8 +1310,10 @@ pub struct PrWaitChecksArgs {
     #[arg(long, value_parser = parse_duration, default_value = "20s")]
     pub interval: Duration,
     /// Treat a head with no registered checks as complete instead of waiting
-    /// out the timeout. Without it, an empty check set is not terminal and the
-    /// wait expires as `checks_not_registered`.
+    /// out the timeout. Without it (or a repository `[checks] none = true`), an
+    /// empty check set is not terminal and the wait expires as
+    /// `checks_not_registered` — early on GitHub when the repository has no
+    /// Actions workflows.
     #[arg(long = "allow-no-checks", action = ArgAction::SetTrue)]
     pub allow_no_checks: bool,
     /// Restrict the gating decision to required checks (default `true`).
@@ -1630,7 +1633,9 @@ pub struct PrDeliverArgs {
     /// Deliver a head for which no checks are registered. Without this flag,
     /// delivery waits out its `--timeout` for checks to appear and then fails
     /// with `checks_not_registered` rather than treating an empty check set as
-    /// a pass. Requires `--allow-no-checks-reason`.
+    /// a pass. Requires `--allow-no-checks-reason`. A repository
+    /// `.forge-cli.toml` `[checks] none = true` with a `none_reason` has the
+    /// same effect.
     #[arg(
         long = "allow-no-checks",
         action = ArgAction::SetTrue,

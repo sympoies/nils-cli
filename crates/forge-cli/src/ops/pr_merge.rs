@@ -9,7 +9,7 @@
 //! | 6 — default_branch_protected        | PR base ≠ repo default branch, `--allow-non-default-base=0` | `default_branch_protected`| DATA 65    |
 //! | 7 — draft_merge_refused             | `pr view` returns `draft=true`                              | `draft_merge_refused`     | DATA 65    |
 //! | 8 — required_checks_green (TTL=0)   | fresh `pr.checks --required-only` not all green             | `checks_pending`/`failed` | DATA / RT  |
-//! | 8 — checks_registered (TTL=0)       | no required checks *and* no visible rows, `--allow-no-checks=0` | `checks_not_registered` | DATA 65 |
+//! | 8 — checks_registered (TTL=0)       | no required checks *and* no visible rows, no `--allow-no-checks` / `[checks] none` | `checks_not_registered` | DATA 65 |
 //! | 9 — merge_method_supported          | resolved method not in `repo.view.merge_methods_allowed`    | `merge_method_unsupported`| DATA 65    |
 //! | 10 — keep_branch_conflict           | `--keep-branch` set while `[merge].delete_branch=true`      | `keep_branch_conflict`    | DATA 65    |
 //! | 12 — review_convergence             | enabled native-review policy has not converged              | review-specific kind       | DATA / UNAV |
@@ -69,8 +69,9 @@ pub struct PrMergePayload {
     /// gate (rule 13) was explicitly bypassed; absent otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unresolved_threads_override_reason: Option<String>,
-    /// Recorded `--allow-no-checks-reason` when the head merged with no
-    /// required checks registered (rule 8); absent otherwise. This is the only
+    /// Recorded `--allow-no-checks-reason` (or the repository's
+    /// `[checks].none_reason`) when the head merged with no required checks
+    /// registered (rule 8); absent otherwise. This is the only
     /// durable record that a merge happened without CI evidence.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub no_checks_override_reason: Option<String>,
@@ -158,6 +159,7 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
             method,
             delete_branch,
             review_policy: &policy,
+            no_checks: NoChecksAllowance::resolve(&cfg, args),
         },
     )?;
     Ok(emit_success(
@@ -215,6 +217,7 @@ pub fn compute_with_clock<R: BackendRunner, C: Clock>(
             method,
             delete_branch,
             review_policy: &policy,
+            no_checks: NoChecksAllowance::resolve(&cfg, args),
         },
     )
 }
@@ -294,6 +297,31 @@ struct ResolvedMergeSettings<'a> {
     method: MergeMethod,
     delete_branch: bool,
     review_policy: &'a crate::config::ReviewConvergencePolicy,
+    no_checks: NoChecksAllowance,
+}
+
+/// Whether rule 8 may pass a head with no registered checks, and the reason
+/// recorded when it does. An explicit `--allow-no-checks` wins; otherwise a
+/// repository `[checks] none = true` declaration supplies its `none_reason`.
+struct NoChecksAllowance {
+    allowed: bool,
+    reason: Option<String>,
+}
+
+impl NoChecksAllowance {
+    fn resolve(cfg: &ForgeConfig, args: &PrMergeArgs) -> Self {
+        if args.allow_no_checks {
+            return Self {
+                allowed: true,
+                reason: args.allow_no_checks_reason.clone(),
+            };
+        }
+        let reason = cfg.declared_no_checks_reason().map(str::to_string);
+        Self {
+            allowed: reason.is_some(),
+            reason,
+        }
+    }
 }
 
 fn run_lockdown_chain<R: BackendRunner, C: Clock>(
@@ -385,7 +413,7 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
         global,
         ctx,
         &args.id.to_string(),
-        CheckPresence::from_allow_no_checks(args.allow_no_checks),
+        CheckPresence::from_allow_no_checks(settings.no_checks.allowed),
     )?;
 
     // Durable review-loop gate. Existing ledgers are never bypassed by the
@@ -523,11 +551,7 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
         } else {
             None
         },
-        no_checks_override_reason: if args.allow_no_checks {
-            args.allow_no_checks_reason.clone()
-        } else {
-            None
-        },
+        no_checks_override_reason: settings.no_checks.reason,
         stale_thread_dispositions,
         review_convergence: review_snapshot,
         review_loop,

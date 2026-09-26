@@ -1513,6 +1513,34 @@ fn pr_deliver_zero_required_and_zero_visible_checks_complete_when_explicitly_all
     assert_no_all_check_call_after_required(&calls);
 }
 
+/// A repository that declares `[checks] none` in `.forge-cli.toml` delivers
+/// without the CLI flags instead of waiting out the budget.
+#[test]
+fn pr_deliver_zero_checks_complete_when_the_repository_declares_none() {
+    let tempdir = make_git_repo();
+    let repo_path = tempdir.path().join("repo");
+    fs::write(
+        repo_path.join(".forge-cli.toml"),
+        "[checks]\nnone = true\nnone_reason = \"this fixture repository configures no CI\"\n",
+    )
+    .expect("write config");
+    git(&repo_path, &["add", ".forge-cli.toml"]);
+    git(&repo_path, &["commit", "-q", "-m", "declare no checks"]);
+    git(
+        &repo_path,
+        &["update-ref", "refs/remotes/origin/feat/sample", "HEAD"],
+    );
+
+    let stub = StubEnv::new();
+    let (_stub, out) =
+        run_zero_required_delivery(stub, &repo_path, FIXTURE_EMPTY_CHECKS_JSON, "30s", true);
+
+    assert_eq!(out.code, 0, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let envelope = parse_envelope(&out.stdout);
+    assert_eq!(envelope["data"]["steps"][3]["step"], "wait_checks");
+    assert_eq!(envelope["data"]["steps"][3]["ok"], true);
+}
+
 #[test]
 fn pr_deliver_head_flag_uses_named_branch_push_state() {
     let tempdir = make_git_repo();

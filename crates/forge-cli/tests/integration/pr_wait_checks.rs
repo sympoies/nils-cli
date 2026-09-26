@@ -351,3 +351,39 @@ fn pr_wait_checks_allow_no_checks_completes_immediately() {
     let env = parse_envelope(&out.stdout);
     assert_eq!(env["data"]["required_count"], 0);
 }
+
+/// `[checks] none` in `.forge-cli.toml` is the durable form of
+/// `--allow-no-checks`: the wait completes at once without the flag.
+#[test]
+fn pr_wait_checks_repo_declared_no_checks_completes_immediately() {
+    let mut stub = StubEnv::new();
+    gh_sequence_stub(&stub, &[EMPTY_SNAP]);
+    std::fs::write(
+        stub.tempdir.path().join(".forge-cli.toml"),
+        "[checks]\nnone = true\nnone_reason = \"no CI in this repository\"\n",
+    )
+    .expect("write config");
+    let gh_path = stub.tempdir.path().join("gh");
+    stub = stub.env("FORGE_CLI_GH_BIN", gh_path.to_string_lossy());
+
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--format",
+            "json",
+            "pr",
+            "wait-checks",
+            "1",
+            "--interval",
+            "10ms",
+            "--timeout",
+            "30s",
+        ],
+    );
+
+    assert_eq!(out.code, 0, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let env = parse_envelope(&out.stdout);
+    assert_eq!(env["data"]["required_count"], 0);
+}
