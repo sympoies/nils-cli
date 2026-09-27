@@ -8924,7 +8924,7 @@ async fn group_cleanup_preview_handler(
     }
     let context = state.context.clone();
     match tokio::task::spawn_blocking(move || {
-        crate::main_agent::preview_group_cleanup(&context, &id)
+        crate::group_lifecycle::preview_group_cleanup(&context, &id)
     })
     .await
     {
@@ -8938,7 +8938,7 @@ async fn group_cleanup_execute_handler(
     State(state): State<Arc<ServeState>>,
     headers: HeaderMap,
     AxPath(id): AxPath<String>,
-    body: Result<Json<crate::main_agent::GroupCleanupRequest>, JsonRejection>,
+    body: Result<Json<crate::group_lifecycle::GroupCleanupRequest>, JsonRejection>,
 ) -> Response {
     if let Some(resp) = deny_unauthorized(&state, &headers) {
         return resp;
@@ -8950,7 +8950,7 @@ async fn group_cleanup_execute_handler(
     let context = state.context.clone();
     let tmux = state.tmux_bin.clone();
     match tokio::task::spawn_blocking(move || {
-        crate::main_agent::execute_group_cleanup(&context, &id, request, tmux)
+        crate::group_lifecycle::execute_group_cleanup(&context, &id, request, tmux)
     })
     .await
     {
@@ -8975,7 +8975,7 @@ async fn group_archive_preview_handler(
     }
     let context = state.context.clone();
     match tokio::task::spawn_blocking(move || {
-        crate::main_agent::preview_group_cleanup(&context, &id)
+        crate::group_lifecycle::preview_group_cleanup(&context, &id)
     })
     .await
     {
@@ -8995,7 +8995,7 @@ async fn group_archive_execute_handler(
     State(state): State<Arc<ServeState>>,
     headers: HeaderMap,
     AxPath(id): AxPath<String>,
-    body: Result<Json<crate::main_agent::GroupArchiveRequest>, JsonRejection>,
+    body: Result<Json<crate::group_lifecycle::GroupArchiveRequest>, JsonRejection>,
 ) -> Response {
     if let Some(resp) = deny_unauthorized(&state, &headers) {
         return resp;
@@ -9007,7 +9007,7 @@ async fn group_archive_execute_handler(
     let context = state.context.clone();
     let tmux = state.tmux_bin.clone();
     match tokio::task::spawn_blocking(move || {
-        crate::main_agent::execute_group_archive(&context, &id, request, tmux)
+        crate::group_lifecycle::execute_group_archive(&context, &id, request, tmux)
     })
     .await
     {
@@ -9021,7 +9021,7 @@ async fn group_archive_execute_handler(
             envelope_ok(json!({
                 "machine": state.machine,
                 "archive": {
-                    "schema_version": crate::main_agent::GROUP_ARCHIVE_RESULT_SCHEMA,
+                    "schema_version": crate::group_lifecycle::GROUP_ARCHIVE_RESULT_SCHEMA,
                     "completed": execution.value["completed"],
                     "cleanup": execution.value,
                 },
@@ -17265,7 +17265,7 @@ esac
                 "/sessions/steer/orchestration/group-archive",
                 None,
                 json!({
-                    "schema_version": crate::main_agent::GROUP_ARCHIVE_REQUEST_SCHEMA,
+                    "schema_version": crate::group_lifecycle::GROUP_ARCHIVE_REQUEST_SCHEMA,
                     "expected_main_incarnation": "launch-steer",
                     "expected_run_revision": 1,
                     "expected_plan_digest": format!("sha256:{}", "a".repeat(64)),
@@ -26278,7 +26278,7 @@ esac
                 "/sessions/steer/orchestration/group-cleanup",
                 None,
                 json!({
-                    "schema_version": crate::main_agent::GROUP_CLEANUP_REQUEST_SCHEMA,
+                    "schema_version": crate::group_lifecycle::GROUP_CLEANUP_REQUEST_SCHEMA,
                     "expected_main_incarnation": "launch-steer",
                     "expected_run_revision": 1,
                     "expected_plan_digest": format!("sha256:{}", "a".repeat(64)),
@@ -26449,7 +26449,7 @@ esac
         let cleanup = &preview_body["data"]["archive"]["cleanup"];
         assert_eq!(cleanup["workers"].as_array().unwrap().len(), 1);
         let request = json!({
-            "schema_version": crate::main_agent::GROUP_ARCHIVE_REQUEST_SCHEMA,
+            "schema_version": crate::group_lifecycle::GROUP_ARCHIVE_REQUEST_SCHEMA,
             "expected_main_incarnation": main.runtime.as_ref().unwrap().launch_id,
             "expected_run_revision": cleanup["run_revision"],
             "expected_plan_digest": cleanup["plan_digest"],
@@ -26552,7 +26552,7 @@ esac
         assert_eq!(body["error"]["code"], "idempotency-conflict");
 
         let cleanup_request = json!({
-            "schema_version": crate::main_agent::GROUP_CLEANUP_REQUEST_SCHEMA,
+            "schema_version": crate::group_lifecycle::GROUP_CLEANUP_REQUEST_SCHEMA,
             "expected_main_incarnation": main.runtime.as_ref().unwrap().launch_id,
             "expected_run_revision": cleanup["run_revision"],
             "expected_plan_digest": cleanup["plan_digest"],
@@ -26731,13 +26731,13 @@ esac
             );
             locked.save().unwrap();
         }
-        let preview = crate::main_agent::preview_group_cleanup(&st.context, &main.id).unwrap();
-        let request = crate::main_agent::GroupCleanupRequest {
-            schema_version: crate::main_agent::GROUP_CLEANUP_REQUEST_SCHEMA.to_string(),
+        let preview = crate::group_lifecycle::preview_group_cleanup(&st.context, &main.id).unwrap();
+        let request = crate::group_lifecycle::GroupCleanupRequest {
+            schema_version: crate::group_lifecycle::GROUP_CLEANUP_REQUEST_SCHEMA.to_string(),
             expected_main_incarnation: main_incarnation,
             expected_run_revision: preview["run_revision"].as_u64().unwrap(),
             expected_plan_digest: preview["plan_digest"].as_str().unwrap().to_string(),
-            mode: crate::main_agent::GroupCleanupMode::Safe,
+            mode: crate::group_lifecycle::GroupCleanupMode::Safe,
             idempotency_key: "cleanup-registry-replay-0001".to_string(),
         };
 
@@ -26782,7 +26782,7 @@ esac
 
         fs::remove_file(session_dir(&st.context, &worker.id).join("session.json"))
             .expect("remove worker record for provisional failure");
-        let first = crate::main_agent::execute_group_cleanup(
+        let first = crate::group_lifecycle::execute_group_cleanup(
             &st.context,
             &main.id,
             request.clone(),
