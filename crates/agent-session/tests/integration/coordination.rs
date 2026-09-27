@@ -37048,6 +37048,8 @@ fn main_agent_quick_idempotency_binds_the_canonical_readiness_wait() {
 
     let launched = run("0");
     assert_eq!(launched.code, 0, "stderr={}", launched.stderr_text());
+    // The numbered `L0` input is stored as its named work mode.
+    assert_eq!(data(&launched)["run"]["tier"], "direct");
     let parent_receipt = "main-one:main-incarnation-one:quick-await-contract-0001";
     let pending_run = data(&launched)["run"].clone();
     rewrite_orchestration_registry(&state_dir, |registry| {
