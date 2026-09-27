@@ -41,7 +41,7 @@ struct MetadataAttachmentRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct SessionMetadataState {
+pub struct SessionMetadataState {
     schema_version: String,
     revision: u64,
     attachments: BTreeMap<String, MetadataAttachment>,

@@ -906,31 +906,29 @@ fn replace_private_read_path_for_test(path: &Path) {
 pub(crate) const REGISTRY_SCHEMA: &str = "agent-session.orchestration-registry.v3";
 const LEGACY_REGISTRY_V2_SCHEMA: &str = "agent-session.orchestration-registry.v2";
 const LEGACY_REGISTRY_V1_SCHEMA: &str = "agent-session.orchestration-registry.v1";
-pub(crate) const RUN_SCHEMA: &str = "agent-session.orchestration-run.v1";
-pub(crate) const ASSIGNMENT_SCHEMA: &str = "agent-session.orchestration-assignment.v3";
+pub const RUN_SCHEMA: &str = "agent-session.orchestration-run.v1";
+pub const ASSIGNMENT_SCHEMA: &str = "agent-session.orchestration-assignment.v3";
 const LEGACY_ASSIGNMENT_V2_SCHEMA: &str = "agent-session.orchestration-assignment.v2";
 const LEGACY_ASSIGNMENT_V1_SCHEMA: &str = "agent-session.orchestration-assignment.v1";
 pub(crate) const SESSION_PROJECTION_SCHEMA: &str = "agent-session.session-orchestration.v1";
-pub(crate) const PACKET_SCHEMA: &str = "main-agent.objective-packet.v1";
-pub(crate) const ASSIGNMENT_INPUT_SCHEMA: &str = "main-agent.assignment-input.v1";
-pub(crate) const CHECKPOINT_INPUT_SCHEMA: &str = "main-agent.checkpoint-input.v1";
-pub(crate) const SUBMIT_RECOVERY_SCHEMA: &str = "main-agent.submit-recovery.v1";
-pub(crate) const WORKER_QUARANTINE_SCHEMA: &str = "main-agent.worker-quarantine.v1";
+pub const PACKET_SCHEMA: &str = "main-agent.objective-packet.v1";
+pub const ASSIGNMENT_INPUT_SCHEMA: &str = "main-agent.assignment-input.v1";
+pub const CHECKPOINT_INPUT_SCHEMA: &str = "main-agent.checkpoint-input.v1";
+pub const SUBMIT_RECOVERY_SCHEMA: &str = "main-agent.submit-recovery.v1";
+pub const WORKER_QUARANTINE_SCHEMA: &str = "main-agent.worker-quarantine.v1";
 pub(crate) const GROUP_CLEANUP_PROGRESS_RECEIPT_SCHEMA: &str =
     "agent-session.main-agent-group-cleanup-receipt.v2";
 pub(crate) const GROUP_CLEANUP_PROGRESS_RECEIPT_V1_SCHEMA: &str =
     "agent-session.main-agent-group-cleanup-receipt.v1";
-pub(crate) const ACCOUNT_HANDOFF_RESERVATION_SCHEMA: &str =
-    "main-agent.account-handoff-reservation.v3";
-pub(crate) const WORKER_RUNTIME_STOP_RESERVATION_SCHEMA: &str =
+pub const ACCOUNT_HANDOFF_RESERVATION_SCHEMA: &str = "main-agent.account-handoff-reservation.v3";
+pub const WORKER_RUNTIME_STOP_RESERVATION_SCHEMA: &str =
     "main-agent.worker-runtime-stop-reservation.v1";
-pub(crate) const PROVIDER_STOP_CANARY_RESERVATION_SCHEMA: &str =
+pub const PROVIDER_STOP_CANARY_RESERVATION_SCHEMA: &str =
     "main-agent.provider-stop-canary-reservation.v1";
-pub(crate) const WORKER_CLAIM_REVOCATION_RESERVATION_SCHEMA: &str =
+pub const WORKER_CLAIM_REVOCATION_RESERVATION_SCHEMA: &str =
     "main-agent.worker-claim-revocation-reservation.v1";
-pub(crate) const WORKER_READINESS_STOP_PROOF_SCHEMA: &str =
-    "main-agent.worker-readiness-stop-proof.v1";
-pub(crate) const LEGACY_ACCOUNT_HANDOFF_RESERVATION_V2_SCHEMA: &str =
+pub const WORKER_READINESS_STOP_PROOF_SCHEMA: &str = "main-agent.worker-readiness-stop-proof.v1";
+pub const LEGACY_ACCOUNT_HANDOFF_RESERVATION_V2_SCHEMA: &str =
     "main-agent.account-handoff-reservation.v2";
 pub(crate) const LEGACY_ACCOUNT_HANDOFF_RESERVATION_SCHEMA: &str =
     "main-agent.account-handoff-reservation.v1";
@@ -1152,7 +1150,7 @@ const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct SessionRef {
+pub struct SessionRef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub machine: Option<String>,
     pub session_id: String,
@@ -1162,7 +1160,7 @@ pub(crate) struct SessionRef {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct RunCheckpoint {
+pub struct RunCheckpoint {
     pub revision: u64,
     pub summary: String,
     pub next_action: String,
@@ -1171,7 +1169,7 @@ pub(crate) struct RunCheckpoint {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ControllerClaimIdentity {
+pub struct ControllerClaimIdentity {
     pub claim_id: String,
     pub controller: SessionRef,
     pub acquisition_revision: u64,
@@ -1190,7 +1188,7 @@ pub(crate) struct ControllerClaimBinding {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct RunRecord {
+pub struct RunRecord {
     pub schema_version: String,
     pub run_id: String,
     pub revision: u64,
@@ -1214,7 +1212,7 @@ pub(crate) struct RunRecord {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct TimedRelationship {
+pub struct TimedRelationship {
     pub session: SessionRef,
     pub expires_at: String,
     pub expires_at_epoch: i64,
@@ -1222,7 +1220,7 @@ pub(crate) struct TimedRelationship {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct SubmitRecoveryRecord {
+pub struct SubmitRecoveryRecord {
     pub schema_version: String,
     pub attempt_id: String,
     #[serde(default = "default_submit_recovery_origin")]
@@ -1246,7 +1244,7 @@ fn default_submit_recovery_origin() -> String {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WorkerQuarantineRecord {
+pub struct WorkerQuarantineRecord {
     pub schema_version: String,
     pub worker: SessionRef,
     pub reason: String,
@@ -1256,7 +1254,7 @@ pub(crate) struct WorkerQuarantineRecord {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct AccountHandoffReservationRecord {
+pub struct AccountHandoffReservationRecord {
     pub schema_version: String,
     pub request_digest: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1304,7 +1302,7 @@ pub(crate) struct SessionGroupCleanupFence {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct SessionRuntimeStopFence {
+pub struct SessionRuntimeStopFence {
     schema_version: String,
     state: String,
     assignment_id: String,
@@ -1335,24 +1333,24 @@ struct SessionProviderStopCanaryFence {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct SessionClaimedRuntimeStopIdentity {
+pub struct SessionClaimedRuntimeStopIdentity {
     schema_version: String,
     pub(crate) assignment_id: String,
-    pub(crate) assignment_revision: u64,
-    pub(crate) worker: SessionRef,
+    pub assignment_revision: u64,
+    pub worker: SessionRef,
     pub(crate) controller: SessionRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     origin_assignment_revision: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     origin_controller: Option<SessionRef>,
     pub(crate) request_digest: String,
-    pub(crate) idempotency_key: String,
+    pub idempotency_key: String,
     created_at: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WorkerDeleteIdentity {
+pub struct WorkerDeleteIdentity {
     schema_version: String,
     assignment_id: String,
     assignment_revision: u64,
@@ -1394,7 +1392,7 @@ struct WorkerReentryIdentity {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct AssignmentRecord {
+pub struct AssignmentRecord {
     pub schema_version: String,
     pub assignment_id: String,
     pub run_id: String,
@@ -1451,7 +1449,7 @@ pub(crate) struct AssignmentRecord {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WorkerRuntimeStopReservationRecord {
+pub struct WorkerRuntimeStopReservationRecord {
     pub schema_version: String,
     pub request_digest: String,
     pub idempotency_key: String,
@@ -1469,7 +1467,7 @@ pub(crate) struct WorkerRuntimeStopReservationRecord {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ProviderStopCanaryReservationRecord {
+pub struct ProviderStopCanaryReservationRecord {
     pub schema_version: String,
     pub state: String,
     pub request_digest: String,
@@ -1498,7 +1496,7 @@ pub(crate) struct ProviderStopCanaryReservationRecord {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WorkerClaimRevocationReservationRecord {
+pub struct WorkerClaimRevocationReservationRecord {
     pub schema_version: String,
     pub request_digest: String,
     pub idempotency_key: String,
@@ -1516,7 +1514,7 @@ pub(crate) struct WorkerClaimRevocationReservationRecord {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WorkerReadinessStopProofRecord {
+pub struct WorkerReadinessStopProofRecord {
     pub schema_version: String,
     pub worker: SessionRef,
     pub readiness_state: String,
@@ -1527,7 +1525,7 @@ pub(crate) struct WorkerReadinessStopProofRecord {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct IdempotencyReceipt {
+pub struct IdempotencyReceipt {
     pub principal_session_id: String,
     pub principal_incarnation: String,
     pub operation: String,
@@ -1538,7 +1536,7 @@ pub(crate) struct IdempotencyReceipt {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct Registry {
+pub struct Registry {
     pub schema_version: String,
     pub runs: BTreeMap<String, RunRecord>,
     pub assignments: BTreeMap<String, AssignmentRecord>,
@@ -1892,7 +1890,7 @@ impl Registry {
     }
 }
 
-pub(crate) fn worker_runtime_stop_revision_is_valid(
+pub fn worker_runtime_stop_revision_is_valid(
     reserved_revision: u64,
     adopted_revision: Option<u64>,
     assignment_revision: u64,
@@ -1905,7 +1903,7 @@ pub(crate) fn worker_runtime_stop_revision_is_valid(
     }
 }
 
-pub(crate) fn worker_claim_revocation_revision_is_valid(
+pub fn worker_claim_revocation_revision_is_valid(
     reserved_revision: u64,
     adopted_revision: Option<u64>,
     assignment_revision: u64,
@@ -2041,11 +2039,11 @@ fn worker_counts(context: &CliContext, registry: &Registry, run: &RunRecord) -> 
     counts
 }
 
-pub(crate) fn controller_is_current(context: &CliContext, run: &RunRecord) -> bool {
+pub fn controller_is_current(context: &CliContext, run: &RunRecord) -> bool {
     session_ref_is_live(context, &run.controller)
 }
 
-pub(crate) fn session_ref_is_live(context: &CliContext, reference: &SessionRef) -> bool {
+pub fn session_ref_is_live(context: &CliContext, reference: &SessionRef) -> bool {
     crate::load_session_record(context, &reference.session_id)
         .ok()
         .and_then(|record| {
@@ -2057,7 +2055,7 @@ pub(crate) fn session_ref_is_live(context: &CliContext, reference: &SessionRef) 
         .unwrap_or(false)
 }
 
-pub(crate) fn session_ref_matches(
+pub fn session_ref_matches(
     reference: &SessionRef,
     record: &SessionRecord,
     incarnation: &str,
@@ -2136,7 +2134,7 @@ fn session_execution_authority_fence(
     )
 }
 
-pub(crate) fn ensure_session_not_quarantined(
+pub fn ensure_session_not_quarantined(
     context: &CliContext,
     record: &SessionRecord,
 ) -> Result<(), CliError> {
@@ -2577,7 +2575,7 @@ fn validated_session_provider_stop_canary_fence(
     Ok(Some(marker))
 }
 
-pub(crate) fn persist_session_provider_stop_canary_fence(
+pub fn persist_session_provider_stop_canary_fence(
     context: &CliContext,
     assignment: &AssignmentRecord,
     request_digest: &str,
@@ -2641,7 +2639,7 @@ pub(crate) fn session_provider_stop_canary_fence_matches(
         && marker.request_digest == request_digest)
 }
 
-pub(crate) fn clear_session_provider_stop_canary_fence(
+pub fn clear_session_provider_stop_canary_fence(
     context: &CliContext,
     assignment_id: &str,
     worker: &SessionRef,
@@ -2670,7 +2668,7 @@ pub(crate) fn clear_session_provider_stop_canary_fence(
     }
 }
 
-pub(crate) fn session_provider_stop_canary_fence_request_digest(
+pub fn session_provider_stop_canary_fence_request_digest(
     context: &CliContext,
     assignment_id: &str,
     worker: &SessionRef,
@@ -2689,7 +2687,7 @@ pub(crate) fn session_provider_stop_canary_fence_request_digest(
     Ok(Some(marker.request_digest))
 }
 
-pub(crate) fn persist_session_runtime_stop_fence(
+pub fn persist_session_runtime_stop_fence(
     context: &CliContext,
     assignment_id: &str,
     assignment_revision: u64,
@@ -2741,7 +2739,7 @@ pub(crate) fn persist_session_runtime_stop_fence(
     Ok(marker)
 }
 
-pub(crate) fn persist_session_claimed_runtime_stop_identity(
+pub fn persist_session_claimed_runtime_stop_identity(
     context: &CliContext,
     assignment_id: &str,
     assignment_revision: u64,
@@ -2794,7 +2792,7 @@ pub(crate) fn persist_session_claimed_runtime_stop_identity(
     Ok(identity)
 }
 
-pub(crate) fn assignment_claimed_runtime_stop_identity(
+pub fn assignment_claimed_runtime_stop_identity(
     context: &CliContext,
     assignment: &AssignmentRecord,
 ) -> Result<Option<SessionClaimedRuntimeStopIdentity>, CliError> {
@@ -2832,7 +2830,7 @@ pub(crate) fn assignment_claimed_runtime_stop_identity(
     Ok(Some(identity))
 }
 
-pub(crate) fn session_claimed_runtime_stop_fence_matches(
+pub fn session_claimed_runtime_stop_fence_matches(
     context: &CliContext,
     assignment_id: &str,
     assignment_revision: u64,
@@ -3074,7 +3072,7 @@ fn validate_request_changes_identity(identity: &RequestChangesIdentity) -> Resul
     Ok(())
 }
 
-pub(crate) fn persist_request_changes_identity(
+pub fn persist_request_changes_identity(
     context: &CliContext,
     assignment: &AssignmentRecord,
     request_digest: &str,
@@ -3133,7 +3131,7 @@ pub(crate) fn persist_request_changes_identity(
     write_atomic(&path, &bytes, SECRET_FILE_MODE).map_err(|_| store_unavailable())
 }
 
-pub(crate) fn request_changes_identity_matches(
+pub fn request_changes_identity_matches(
     context: &CliContext,
     registry: &Registry,
     assignment: &AssignmentRecord,
@@ -3371,7 +3369,7 @@ fn validate_provider_stop_canary_reservation(
     Ok(())
 }
 
-pub(crate) fn provider_stop_canary_reservation(
+pub fn provider_stop_canary_reservation(
     context: &CliContext,
     assignment: &AssignmentRecord,
 ) -> Result<Option<ProviderStopCanaryReservationRecord>, CliError> {
@@ -3384,7 +3382,7 @@ pub(crate) fn provider_stop_canary_reservation(
     Ok(Some(reservation))
 }
 
-pub(crate) fn store_provider_stop_canary_reservation(
+pub fn store_provider_stop_canary_reservation(
     context: &CliContext,
     assignment: &AssignmentRecord,
     reservation: &ProviderStopCanaryReservationRecord,
@@ -3464,7 +3462,7 @@ pub(crate) fn store_provider_stop_canary_reservation(
     write_atomic(&path, &bytes, SECRET_FILE_MODE).map_err(|_| store_unavailable())
 }
 
-pub(crate) fn clear_provider_stop_canary_reservation(
+pub fn clear_provider_stop_canary_reservation(
     context: &CliContext,
     assignment: &AssignmentRecord,
     request_digest: &str,
@@ -3492,7 +3490,7 @@ pub(crate) fn clear_provider_stop_canary_reservation(
     }
 }
 
-pub(crate) fn clear_adopted_provider_stop_canary_reservation(
+pub fn clear_adopted_provider_stop_canary_reservation(
     context: &CliContext,
     assignment: &AssignmentRecord,
 ) -> Result<(), CliError> {
@@ -3612,7 +3610,7 @@ fn validate_worker_reentry_identity(identity: &WorkerReentryIdentity) -> Result<
     Ok(())
 }
 
-pub(crate) fn persist_worker_reentry_identity(
+pub fn persist_worker_reentry_identity(
     context: &CliContext,
     assignment: &AssignmentRecord,
     notification_generation: u64,
@@ -3703,7 +3701,7 @@ pub(crate) fn assignment_worker_reentry_in_progress(
     Ok(true)
 }
 
-pub(crate) fn worker_reentry_identity_matches(
+pub fn worker_reentry_identity_matches(
     context: &CliContext,
     assignment: &AssignmentRecord,
     notification_generation: u64,
@@ -3724,7 +3722,7 @@ pub(crate) fn worker_reentry_identity_matches(
         && identity.idempotency_key == idempotency_key)
 }
 
-pub(crate) fn clear_worker_reentry_identity(
+pub fn clear_worker_reentry_identity(
     context: &CliContext,
     assignment_id: &str,
     request_digest: &str,
@@ -3756,7 +3754,7 @@ pub(crate) fn clear_worker_reentry_identity(
         .map_err(|_| store_unavailable())
 }
 
-pub(crate) fn persist_worker_delete_identity(
+pub fn persist_worker_delete_identity(
     context: &CliContext,
     assignment: &AssignmentRecord,
     request_digest: &str,
@@ -3826,7 +3824,7 @@ pub(crate) fn assignment_worker_delete_in_progress(
     Ok(true)
 }
 
-pub(crate) fn clear_worker_delete_identity(
+pub fn clear_worker_delete_identity(
     context: &CliContext,
     assignment_id: &str,
     request_digest: &str,
@@ -3850,7 +3848,7 @@ pub(crate) fn clear_worker_delete_identity(
     fs::remove_file(path).map_err(|_| store_unavailable())
 }
 
-pub(crate) fn mark_session_runtime_stop_fence_stopped(
+pub fn mark_session_runtime_stop_fence_stopped(
     context: &CliContext,
     assignment_id: &str,
     assignment_revision: u64,
@@ -3890,7 +3888,7 @@ pub(crate) fn mark_session_runtime_stop_fence_stopped(
     write_atomic(&path, &bytes, SECRET_FILE_MODE).map_err(|_| store_unavailable())
 }
 
-pub(crate) fn rebind_session_runtime_stop_fence_controller(
+pub fn rebind_session_runtime_stop_fence_controller(
     context: &CliContext,
     assignment_id: &str,
     assignment_revision: u64,
@@ -3991,7 +3989,7 @@ fn pause_claimed_runtime_stop_adopt_rebind_for_test(stage: &str) -> Result<(), C
     Ok(())
 }
 
-pub(crate) fn rebind_stopped_claimed_runtime_stop_for_adopt(
+pub fn rebind_stopped_claimed_runtime_stop_for_adopt(
     context: &CliContext,
     assignment: &AssignmentRecord,
     successor_controller: &SessionRef,
@@ -4132,7 +4130,7 @@ pub(crate) fn rebind_stopped_claimed_runtime_stop_for_adopt(
     Ok(true)
 }
 
-pub(crate) fn assignment_runtime_stop_fence_in_progress(
+pub fn assignment_runtime_stop_fence_in_progress(
     context: &CliContext,
     assignment: &AssignmentRecord,
 ) -> Result<bool, CliError> {
@@ -4271,7 +4269,7 @@ fn validated_session_authority_quarantine(
     Ok(Some(marker))
 }
 
-pub(crate) fn persist_session_authority_quarantine(
+pub fn persist_session_authority_quarantine(
     context: &CliContext,
     assignment_id: &str,
     assignment_revision: u64,
@@ -4345,7 +4343,7 @@ pub(crate) fn persist_session_authority_quarantine(
     Ok(quarantine.clone())
 }
 
-pub(crate) fn clear_matching_session_authority_quarantine(
+pub fn clear_matching_session_authority_quarantine(
     context: &CliContext,
     assignment_id: &str,
     assignment_revision: u64,
@@ -4482,7 +4480,7 @@ pub(crate) fn clear_matching_session_authority_quarantine(
     }
 }
 
-pub(crate) fn require_session_authority_quarantine(
+pub fn require_session_authority_quarantine(
     context: &CliContext,
     assignment_id: &str,
     assignment_revision: u64,
@@ -4508,7 +4506,7 @@ pub(crate) fn require_session_authority_quarantine(
     Ok(())
 }
 
-pub(crate) fn session_authority_quarantine_matches(
+pub fn session_authority_quarantine_matches(
     context: &CliContext,
     assignment_id: &str,
     assignment_revision: u64,
@@ -4535,7 +4533,7 @@ pub(crate) fn session_authority_quarantine_matches(
     Ok(true)
 }
 
-pub(crate) fn session_authority_quarantine_released(
+pub fn session_authority_quarantine_released(
     context: &CliContext,
     assignment_id: &str,
     assignment_revision: u64,
@@ -4854,7 +4852,7 @@ fn validate_worker_quarantine(quarantine: &WorkerQuarantineRecord) -> Result<(),
     Ok(())
 }
 
-pub(crate) fn load_registry_readonly(context: &CliContext) -> Result<Registry, CliError> {
+pub fn load_registry_readonly(context: &CliContext) -> Result<Registry, CliError> {
     let path = orchestration_root(context).join(REGISTRY_FILE);
     let Some(bytes) = read_registry_bytes(&path)? else {
         return Ok(Registry::empty());
@@ -5069,7 +5067,7 @@ fn decode_registry_bytes(bytes: &[u8]) -> Result<(Registry, String), CliError> {
     Ok((registry, source_schema))
 }
 
-pub(crate) struct LockedRegistry {
+pub struct LockedRegistry {
     _lock: File,
     path: PathBuf,
     rollback_path: PathBuf,
@@ -5177,7 +5175,7 @@ fn verify_private_descriptor_path(
     Ok(())
 }
 
-pub(crate) fn lock_registry(context: &CliContext) -> Result<LockedRegistry, CliError> {
+pub fn lock_registry(context: &CliContext) -> Result<LockedRegistry, CliError> {
     let root = ensure_orchestration_root(context)?;
     let path = root.join(REGISTRY_FILE);
     let lock_path = root.join(REGISTRY_LOCK);
@@ -5263,7 +5261,7 @@ pub(crate) fn load_controller_claim_binding(
 /// run. Callers hold the orchestration registry lock so sidecar and registry
 /// ordering is serialized. Writing the sidecar first is crash-safe: an orphan
 /// is ignored until a matching run exists.
-pub(crate) fn create_controller_claim_binding(
+pub fn create_controller_claim_binding(
     context: &CliContext,
     run: &RunRecord,
     identity: ControllerClaimIdentity,
@@ -5297,7 +5295,7 @@ pub(crate) fn create_controller_claim_binding(
 /// Append a rebind successor without changing the v1 run record shape. A
 /// failed registry save may leave a pending successor in this sidecar; readers
 /// select the newest identity matching the committed run controller.
-pub(crate) fn append_controller_claim_binding(
+pub fn append_controller_claim_binding(
     context: &CliContext,
     run: &RunRecord,
     identity: ControllerClaimIdentity,
@@ -5328,7 +5326,7 @@ pub(crate) fn append_controller_claim_binding(
     Ok(true)
 }
 
-pub(crate) fn controller_claim_identity_for_run(
+pub fn controller_claim_identity_for_run(
     context: &CliContext,
     run: &RunRecord,
 ) -> Result<Option<ControllerClaimIdentity>, CliError> {
@@ -7033,7 +7031,7 @@ pub(crate) fn remove_group_cleanup_progress(
     }
 }
 
-pub(crate) fn store_packet(context: &CliContext, value: &Value) -> Result<String, CliError> {
+pub fn store_packet(context: &CliContext, value: &Value) -> Result<String, CliError> {
     let bytes = serde_json::to_vec(value)
         .map_err(|_| store_invalid("private orchestration packet is invalid"))?;
     if bytes.len() > 256 * 1024 {
@@ -7064,7 +7062,7 @@ pub(crate) fn store_packet(context: &CliContext, value: &Value) -> Result<String
     Ok(digest)
 }
 
-pub(crate) fn packet_digest(value: &Value) -> Result<String, CliError> {
+pub fn packet_digest(value: &Value) -> Result<String, CliError> {
     let bytes = serde_json::to_vec(value)
         .map_err(|_| store_invalid("private orchestration packet is invalid"))?;
     if bytes.len() > 256 * 1024 {
@@ -7075,7 +7073,7 @@ pub(crate) fn packet_digest(value: &Value) -> Result<String, CliError> {
     Ok(packet_digest_bytes(&bytes))
 }
 
-pub(crate) fn read_packet(context: &CliContext, digest: &str) -> Result<Value, CliError> {
+pub fn read_packet(context: &CliContext, digest: &str) -> Result<Value, CliError> {
     let path = packet_path(context, digest)?;
     let snapshot = read_private_bounded_file_with_limit(
         &path,
@@ -7251,7 +7249,7 @@ fn validate_session_ref(reference: &SessionRef) -> Result<(), CliError> {
     Ok(())
 }
 
-pub(crate) fn validate_slug(name: &str, value: &str, max: usize) -> Result<(), CliError> {
+pub fn validate_slug(name: &str, value: &str, max: usize) -> Result<(), CliError> {
     if value.is_empty()
         || value.len() > max
         || !value
@@ -7270,7 +7268,7 @@ fn validate_state(value: &str, allowed: &[&str]) -> Result<(), CliError> {
     Ok(())
 }
 
-pub(crate) fn validate_summary(name: &str, value: &str) -> Result<(), CliError> {
+pub fn validate_summary(name: &str, value: &str) -> Result<(), CliError> {
     if value.trim().is_empty() || value.chars().count() > 240 || value.chars().any(char::is_control)
     {
         return Err(store_invalid(&format!("{name} is invalid")));

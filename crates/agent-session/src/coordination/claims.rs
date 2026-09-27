@@ -34,13 +34,13 @@ const OPERATION_TTL_SECS: i64 = 30 * 60;
 const OPERATION_LEASE_VERSION: &str = "agent-session.operation-lease.v1";
 
 #[derive(Clone, Debug)]
-pub(crate) struct AcquiredClaim {
+pub struct AcquiredClaim {
     pub claim_id: String,
     pub revision: u64,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct ControllerClaimSnapshot {
+pub struct ControllerClaimSnapshot {
     pub claim_id: String,
     pub revision: u64,
     pub session_id: String,
@@ -48,7 +48,7 @@ pub(crate) struct ControllerClaimSnapshot {
     pub work_context_digest: String,
 }
 
-pub(crate) struct ClaimTransactionResult {
+pub struct ClaimTransactionResult {
     pub outcome: Value,
     pub acquired: Option<AcquiredClaim>,
 }
@@ -87,7 +87,7 @@ pub(crate) struct OperationLease {
     pub outcome: Option<String>,
 }
 
-pub(crate) struct MainAgentWorkerStartFence {
+pub struct MainAgentWorkerStartFence {
     lease_id: String,
     session_id: String,
     session_incarnation: String,
@@ -96,7 +96,7 @@ pub(crate) struct MainAgentWorkerStartFence {
 }
 
 impl MainAgentWorkerStartFence {
-    pub(crate) fn finish(self, context: &CliContext, succeeded: bool) -> Result<(), CliError> {
+    pub fn finish(self, context: &CliContext, succeeded: bool) -> Result<(), CliError> {
         finish_main_agent_worker_start_fence(
             context,
             &self.session_id,
@@ -257,7 +257,7 @@ fn acquire_main_agent_worker_start_owner_lock(
     Ok(file)
 }
 
-pub(crate) fn finish_retained_main_agent_worker_start_fence(
+pub fn finish_retained_main_agent_worker_start_fence(
     context: &CliContext,
     record: &crate::SessionRecord,
     incarnation: &str,
@@ -319,11 +319,11 @@ struct ReconcileProof {
     outcome: String,
 }
 
-pub(crate) fn claim(context: &CliContext, args: WorkContextClaimArgs) -> Result<Value, CliError> {
+pub fn claim(context: &CliContext, args: WorkContextClaimArgs) -> Result<Value, CliError> {
     claim_impl(context, args, None, false, false, None).map(|result| result.outcome)
 }
 
-pub(crate) fn claim_main_agent_worker(
+pub fn claim_main_agent_worker(
     context: &CliContext,
     args: WorkContextClaimArgs,
     previous_incarnation: Option<&str>,
@@ -331,7 +331,7 @@ pub(crate) fn claim_main_agent_worker(
     claim_impl(context, args, previous_incarnation, true, false, None).map(|result| result.outcome)
 }
 
-pub(crate) fn claim_tracked(
+pub fn claim_tracked(
     context: &CliContext,
     args: WorkContextClaimArgs,
     session_authority: &crate::LockedSessionAuthority,
@@ -816,7 +816,7 @@ pub(crate) fn clear_declared(
     }))
 }
 
-pub(crate) fn show(context: &CliContext, args: WorkContextShowArgs) -> Result<Value, CliError> {
+pub fn show(context: &CliContext, args: WorkContextShowArgs) -> Result<Value, CliError> {
     let locked = lock_registry(context)?;
     let claim = active_claim_for_session(&locked.registry, &args.session)?;
     public_context(claim)
@@ -955,7 +955,7 @@ pub(crate) fn release(
     release_impl(context, args, None)
 }
 
-pub(crate) fn release_prelocked(
+pub fn release_prelocked(
     context: &CliContext,
     args: WorkContextReleaseArgs,
     session_authority: &crate::LockedSessionAuthority,
@@ -1838,7 +1838,7 @@ pub(crate) fn active_claim<'a>(
         .ok_or_else(claim_unavailable)
 }
 
-pub(crate) fn acquire_main_agent_worker_start_fence(
+pub fn acquire_main_agent_worker_start_fence(
     context: &CliContext,
     record: &crate::SessionRecord,
     incarnation: &str,
@@ -1920,7 +1920,7 @@ pub(crate) fn acquire_main_agent_worker_start_fence(
 ///
 /// `None` means no active claim. `Some(false)` is deliberately distinct: a
 /// worker must not bootstrap over a pre-existing arbitrary claim.
-pub(crate) fn main_agent_worker_claim_match(
+pub fn main_agent_worker_claim_match(
     context: &CliContext,
     record: &crate::SessionRecord,
     candidate: &WorkContextInput,
@@ -1943,7 +1943,7 @@ pub(crate) fn main_agent_worker_claim_match(
 
 /// Return whether the authenticated controller's active claim is the exact
 /// stored run context without a worker-only checkout-shell grant.
-pub(crate) fn main_agent_controller_claim_match(
+pub fn main_agent_controller_claim_match(
     context: &CliContext,
     record: &crate::SessionRecord,
     candidate: &WorkContextInput,
@@ -1967,7 +1967,7 @@ pub(crate) fn main_agent_controller_claim_match(
 
 /// Return the exact active controller claim identity and canonical scope
 /// digest after proving that it matches the stored objective work context.
-pub(crate) fn main_agent_controller_claim_snapshot(
+pub fn main_agent_controller_claim_snapshot(
     context: &CliContext,
     record: &crate::SessionRecord,
     candidate: &WorkContextInput,
@@ -1996,7 +1996,7 @@ pub(crate) fn main_agent_controller_claim_snapshot(
 
 /// Observe the caller's current active claim without treating context equality
 /// as ownership. Closeout compares this snapshot to retained run provenance.
-pub(crate) fn active_controller_claim_snapshot(
+pub fn active_controller_claim_snapshot(
     context: &CliContext,
     record: &crate::SessionRecord,
     incarnation: &str,
@@ -2015,7 +2015,7 @@ pub(crate) fn active_controller_claim_snapshot(
         .transpose()
 }
 
-pub(crate) fn controller_claim_has_nonterminal_operation(
+pub fn controller_claim_has_nonterminal_operation(
     context: &CliContext,
     record: &crate::SessionRecord,
     incarnation: &str,
@@ -2034,7 +2034,7 @@ pub(crate) fn controller_claim_has_nonterminal_operation(
     Ok(has_nonterminal_operation(&locked.registry, &claim.claim_id))
 }
 
-pub(crate) fn controller_claim_is_active(
+pub fn controller_claim_is_active(
     context: &CliContext,
     record: &crate::SessionRecord,
     incarnation: &str,

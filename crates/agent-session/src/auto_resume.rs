@@ -74,9 +74,9 @@ struct DurableAutoResume {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct AutoResumeView {
+pub struct AutoResumeView {
     pub(crate) schema_version: &'static str,
-    pub(crate) supported: bool,
+    pub supported: bool,
     pub(crate) enabled: bool,
     pub(crate) recovery_policy: String,
     pub(crate) state: String,
@@ -280,7 +280,7 @@ fn projection_unavailable(state: &DurableAutoResume) -> bool {
         && state.failure_reason.as_deref() == Some("state_unavailable")
 }
 
-pub(crate) fn view_for_record(context: &CliContext, record: &SessionRecord) -> AutoResumeView {
+pub fn view_for_record(context: &CliContext, record: &SessionRecord) -> AutoResumeView {
     if crate::activity::runtime_is_unhealthy(context, record) {
         return AutoResumeView {
             schema_version: AUTO_RESUME_SCHEMA_VERSION,
@@ -401,7 +401,7 @@ pub(crate) fn set_enabled_with_policy(
 /// runtime incarnation. The session-record lock fences both identity
 /// validation and the auto-resume write, so a replacement reusing the public
 /// session id cannot inherit an older handoff's mutation.
-pub(crate) fn rearm_usage_exhaustion_for_runtime(
+pub fn rearm_usage_exhaustion_for_runtime(
     context: &CliContext,
     id: &str,
     expected_launch_id: &str,

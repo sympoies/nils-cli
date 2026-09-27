@@ -208,6 +208,25 @@ pub fn sibling_or_skip(bin_name: &str, cargo_package: &str) -> Option<PathBuf> {
     }
 }
 
+/// Resolve a sibling binary a test cannot run without.
+///
+/// Unlike [`sibling_or_skip`], absence is fatal: use this when the binary is the
+/// subject of the test rather than an optional collaborator, so a
+/// package-scoped run fails with the build command to run instead of reporting
+/// green-but-empty. A selected artifact from another release fails the same way
+/// [`sibling_or_skip`] does.
+pub fn required_sibling(bin_name: &str, cargo_package: &str) -> PathBuf {
+    match sibling(bin_name) {
+        Sibling::Ready(path) => path,
+        other => {
+            let unusable = other
+                .unusable(bin_name, cargo_package)
+                .expect("every non-Ready sibling has a reason");
+            panic!("{}", unusable.message);
+        }
+    }
+}
+
 fn require_sibling() -> bool {
     std::env::var(REQUIRE_SIBLING_ENV).is_ok_and(|value| value == "1")
 }
@@ -244,7 +263,9 @@ fn env_names(bin_name: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Origin, Sibling, WORKSPACE_RELEASE, env_names, resolve_optional, sibling};
+    use super::{
+        Origin, Sibling, WORKSPACE_RELEASE, env_names, required_sibling, resolve_optional, sibling,
+    };
     use crate::{EnvGuard, GlobalStateLock, write_exe};
     use tempfile::TempDir;
 
@@ -301,6 +322,36 @@ mod tests {
         let _guards = without_bin_exe_env(&lock, "nts-absent-sibling");
 
         assert_eq!(resolve_optional("nts-absent-sibling"), None);
+    }
+
+    #[test]
+    fn required_sibling_fails_with_the_build_command_when_absent() {
+        let lock = GlobalStateLock::new();
+        let _guards = without_bin_exe_env(&lock, "nts-required-sibling");
+
+        let panic =
+            std::panic::catch_unwind(|| required_sibling("nts-required-sibling", "nils-nts"))
+                .expect_err("an absent required sibling must fail, not skip");
+        let message = panic.downcast_ref::<String>().cloned().unwrap_or_default();
+        assert!(
+            message.contains("cargo build -p nils-nts --bins"),
+            "message must name the build command: {message}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn required_sibling_returns_an_artifact_from_this_workspace_release() {
+        let lock = GlobalStateLock::new();
+        let temp = TempDir::new().expect("tempdir");
+        let path = write_version_stub(temp.path(), "nts-required-current", WORKSPACE_RELEASE);
+        let _guard = EnvGuard::set(
+            &lock,
+            "CARGO_BIN_EXE_nts-required-current",
+            path.to_str().expect("path"),
+        );
+
+        assert_eq!(required_sibling("nts-required-current", "nils-nts"), path);
     }
 
     #[test]

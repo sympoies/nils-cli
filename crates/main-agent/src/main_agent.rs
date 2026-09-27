@@ -23,11 +23,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::cli::{self, AgentKind, CoordinationMode};
-use crate::coordination::context::{
+use agent_session::internal::cli::{self, AgentKind, CoordinationMode};
+use agent_session::internal::coordination::context::{
     Scope, ScopeKind, WORK_CONTEXT_INPUT_VERSION, WorkContextInput, checkout_root,
 };
-use crate::orchestration::{
+use agent_session::internal::orchestration::{
     self, ACCOUNT_HANDOFF_RESERVATION_SCHEMA, ASSIGNMENT_INPUT_SCHEMA, ASSIGNMENT_SCHEMA,
     AccountHandoffReservationRecord, AssignmentRecord, CHECKPOINT_INPUT_SCHEMA,
     ControllerClaimIdentity, LEGACY_ACCOUNT_HANDOFF_RESERVATION_V2_SCHEMA, PACKET_SCHEMA,
@@ -38,8 +38,8 @@ use crate::orchestration::{
     WorkerClaimRevocationReservationRecord, WorkerQuarantineRecord, WorkerReadinessStopProofRecord,
     WorkerRuntimeStopReservationRecord,
 };
-use crate::orchestration_support::*;
-use crate::{
+use agent_session::internal::orchestration_support::*;
+use agent_session::internal::{
     CliContext, CliError, PromptDelivery, SessionRecord, StartFailureDisposition,
     acquire_session_record_lock, delete_session, delete_session_for_terminal_assignment,
     load_session_record, resolve_tmux_bin, run_output_with_timeout_and_cap,
@@ -728,7 +728,7 @@ struct CloseoutArgs {
 }
 
 const MANAGED_ACCOUNT_HANDOFF_CAPABILITY: &str =
-    crate::codex_app_server::MANAGED_ACCOUNT_HANDOFF_CAPABILITY;
+    agent_session::internal::codex_app_server::MANAGED_ACCOUNT_HANDOFF_CAPABILITY;
 
 #[derive(Clone, Debug, Args)]
 struct QuickArgs {
@@ -760,7 +760,7 @@ struct PacketSchemaArgs {
 #[derive(Debug, Args)]
 struct CompletionArgs {
     #[arg(value_enum)]
-    shell: crate::completion::CompletionShell,
+    shell: agent_session::internal::completion::CompletionShell,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -860,11 +860,11 @@ enum Principal {
     },
 }
 
-pub(crate) fn run() -> i32 {
+pub fn run() -> i32 {
     run_with_args(env::args_os())
 }
 
-pub(crate) fn run_with_args<I, T>(args: I) -> i32
+pub fn run_with_args<I, T>(args: I) -> i32
 where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
@@ -889,7 +889,12 @@ where
             } else {
                 "parse-error"
             };
-            return emit_parse_error(BINARY, format, code, &crate::render_clap_message(&error));
+            return emit_parse_error(
+                BINARY,
+                format,
+                code,
+                &agent_session::internal::render_clap_message(&error),
+            );
         }
     };
     dispatch(cli)
@@ -1268,15 +1273,16 @@ fn run_init(context: &CliContext, args: InitArgs) -> Result<Value, CliError> {
         ));
     }
     validate_idempotency_key(&args.idempotency_key)?;
-    let packet: ObjectivePacket = crate::coordination::read_bounded_json(
+    let packet: ObjectivePacket = agent_session::internal::coordination::read_bounded_json(
         &args.packet_file,
         256 * 1024,
         "invalid-objective-packet",
     )?;
     validate_objective_packet(&packet)?;
     let (record, incarnation) = authenticated_self(context)?;
-    let session_authority = crate::lock_exact_session_authority(context, &record.id)?
-        .ok_or_else(|| not_found("session-not-found", "authenticated session was not found"))?;
+    let session_authority =
+        agent_session::internal::lock_exact_session_authority(context, &record.id)?
+            .ok_or_else(|| not_found("session-not-found", "authenticated session was not found"))?;
     let locked_incarnation = session_authority
         .record
         .runtime
@@ -1295,7 +1301,7 @@ fn run_init(context: &CliContext, args: InitArgs) -> Result<Value, CliError> {
     let packet_value =
         serde_json::to_value(&packet).map_err(|_| invalid_input("objective packet is invalid"))?;
     let packet_digest = orchestration::packet_digest(&packet_value)?;
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         "main-agent-init",
         &json!({ "packet": packet, "if_revision": args.if_revision }),
     );
@@ -1330,18 +1336,19 @@ fn run_init(context: &CliContext, args: InitArgs) -> Result<Value, CliError> {
         &args.idempotency_key,
         &session_authority,
     )?;
-    let claim_snapshot = crate::coordination::claims::main_agent_controller_claim_snapshot(
-        context,
-        &record,
-        &packet.work_context,
-    )?
-    .ok_or_else(|| {
-        CliError::data(
-            "controller-claim-provenance-unavailable",
-            "Main Agent init could not bind the exact authenticated controller claim",
-            None,
-        )
-    })?;
+    let claim_snapshot =
+        agent_session::internal::coordination::claims::main_agent_controller_claim_snapshot(
+            context,
+            &record,
+            &packet.work_context,
+        )?
+        .ok_or_else(|| {
+            CliError::data(
+                "controller-claim-provenance-unavailable",
+                "Main Agent init could not bind the exact authenticated controller claim",
+                None,
+            )
+        })?;
     let mutation = (|| {
         let mut locked = orchestration::lock_registry(context)?;
         if let Some(value) = idempotency_replay(
@@ -1525,8 +1532,9 @@ fn run_rebind(context: &CliContext, args: RunMutationArgs) -> Result<Value, CliE
     validate_idempotency_key(&args.idempotency_key)?;
     let (record, incarnation) = authenticated_self(context)?;
     signal_rebind_authority_lock_for_test("before_authority_lock")?;
-    let rebind_authority = crate::lock_exact_session_authority(context, &record.id)?
-        .ok_or_else(|| not_found("session-not-found", "authenticated session was not found"))?;
+    let rebind_authority =
+        agent_session::internal::lock_exact_session_authority(context, &record.id)?
+            .ok_or_else(|| not_found("session-not-found", "authenticated session was not found"))?;
     signal_rebind_authority_lock_for_test("after_authority_lock")?;
     let locked_incarnation = rebind_authority
         .record
@@ -1571,18 +1579,19 @@ fn run_rebind(context: &CliContext, args: RunMutationArgs) -> Result<Value, CliE
         &args.idempotency_key,
         &rebind_authority,
     )?;
-    let claim_snapshot = crate::coordination::claims::main_agent_controller_claim_snapshot(
-        context,
-        &record,
-        &packet.work_context,
-    )?
-    .ok_or_else(|| {
-        CliError::data(
-            "controller-claim-provenance-unavailable",
-            "Main Agent rebind could not bind the exact authenticated controller claim",
-            None,
-        )
-    })?;
+    let claim_snapshot =
+        agent_session::internal::coordination::claims::main_agent_controller_claim_snapshot(
+            context,
+            &record,
+            &packet.work_context,
+        )?
+        .ok_or_else(|| {
+            CliError::data(
+                "controller-claim-provenance-unavailable",
+                "Main Agent rebind could not bind the exact authenticated controller claim",
+                None,
+            )
+        })?;
 
     let mutation = (|| {
         let mut locked = orchestration::lock_registry(context)?;
@@ -1672,7 +1681,7 @@ fn controller_claim_identity(
     context: &CliContext,
     record: &SessionRecord,
     incarnation: &str,
-    snapshot: &crate::coordination::claims::ControllerClaimSnapshot,
+    snapshot: &agent_session::internal::coordination::claims::ControllerClaimSnapshot,
 ) -> Result<ControllerClaimIdentity, CliError> {
     if snapshot.session_id != record.id || snapshot.session_incarnation != incarnation {
         return Err(CliError::data(
@@ -1737,7 +1746,7 @@ fn pause_rebind_for_test(stage: &str) -> Result<(), CliError> {
 }
 
 fn rebind_request_digest(if_revision: u64, run_id: &str) -> String {
-    crate::coordination::request_digest(
+    agent_session::internal::coordination::request_digest(
         "main-agent-rebind",
         &json!({ "if_revision": if_revision, "run_id": run_id }),
     )
@@ -1781,7 +1790,7 @@ fn rebind_idempotency_replay(
         ));
     }
     let request_digest = rebind_request_digest(if_revision, stored_run_id);
-    let legacy_request_digest = crate::coordination::request_digest(
+    let legacy_request_digest = agent_session::internal::coordination::request_digest(
         "main-agent-rebind",
         &json!({ "if_revision": if_revision }),
     );
@@ -1859,9 +1868,9 @@ fn validate_rebind_candidate(
 fn rollback_rebind_claim_after_error(
     context: &CliContext,
     record: &SessionRecord,
-    acquired_claim: Option<&crate::coordination::claims::AcquiredClaim>,
+    acquired_claim: Option<&agent_session::internal::coordination::claims::AcquiredClaim>,
     idempotency_key: &str,
-    session_authority: &crate::LockedSessionAuthority,
+    session_authority: &agent_session::internal::LockedSessionAuthority,
     mut error: CliError,
 ) -> CliError {
     if let Err(rollback_error) = rollback_rebind_claim(
@@ -1871,8 +1880,8 @@ fn rollback_rebind_claim_after_error(
         idempotency_key,
         session_authority,
     ) {
-        let original_details = error.0.details.take();
-        error.0.details = Some(json!({
+        let original_details = error.details_mut().take();
+        *error.details_mut() = Some(json!({
             "original_details": original_details,
             "claim_rollback_error": {
                 "code": rollback_error.code(),
@@ -1886,14 +1895,14 @@ fn rollback_rebind_claim_after_error(
 fn rollback_rebind_claim(
     context: &CliContext,
     record: &SessionRecord,
-    acquired_claim: Option<&crate::coordination::claims::AcquiredClaim>,
+    acquired_claim: Option<&agent_session::internal::coordination::claims::AcquiredClaim>,
     idempotency_key: &str,
-    session_authority: &crate::LockedSessionAuthority,
+    session_authority: &agent_session::internal::LockedSessionAuthority,
 ) -> Result<(), CliError> {
     let Some(acquired_claim) = acquired_claim else {
         return Ok(());
     };
-    let rollback_digest = crate::coordination::request_digest(
+    let rollback_digest = agent_session::internal::coordination::request_digest(
         "main-agent-rebind-claim-rollback",
         &json!({
             "idempotency_key": idempotency_key,
@@ -1901,7 +1910,7 @@ fn rollback_rebind_claim(
             "claim_revision": acquired_claim.revision
         }),
     );
-    crate::coordination::claims::release_prelocked(
+    agent_session::internal::coordination::claims::release_prelocked(
         context,
         cli::WorkContextReleaseArgs {
             session: record.id.clone(),
@@ -1952,7 +1961,7 @@ fn run_self_readiness(context: &CliContext) -> Result<Value, CliError> {
         "ready": true,
         "session_id": record.id,
         "session_incarnation": incarnation,
-        "checkpoint_file": crate::display_path(&checkpoint_file)
+        "checkpoint_file": nils_common::fs::display_path(&checkpoint_file)
     }))
 }
 
@@ -1961,9 +1970,12 @@ fn ensure_runtime_checkpoint_ready(
     record: &SessionRecord,
     incarnation: &str,
 ) -> Result<PathBuf, CliError> {
-    let expected =
-        crate::coordination::checkpoint_path_for_state(&context.state_dir, &record.id, incarnation);
-    let supplied = env::var_os(crate::coordination::CHECKPOINT_ENV)
+    let expected = agent_session::internal::coordination::checkpoint_path_for_state(
+        &context.state_dir,
+        &record.id,
+        incarnation,
+    );
+    let supplied = env::var_os(agent_session::internal::coordination::CHECKPOINT_ENV)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .ok_or_else(runtime_checkpoint_unavailable)?;
@@ -2044,7 +2056,7 @@ fn run_controller_recover(
     args: ControllerRecoverArgs,
 ) -> Result<Value, CliError> {
     validate_idempotency_key(&args.idempotency_key)?;
-    crate::coordination::ensure_recovery_registry_schema(context)?;
+    agent_session::internal::coordination::ensure_recovery_registry_schema(context)?;
     let session_id = env::var("AGENT_SESSION_ID")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -2077,7 +2089,11 @@ fn run_controller_recover(
                 None,
             )
         })?;
-    crate::coordination::validate_recovery_capability(context, &record, &capability_file)?;
+    agent_session::internal::coordination::validate_recovery_capability(
+        context,
+        &record,
+        &capability_file,
+    )?;
     let registry = orchestration::load_registry_readonly(context)?;
     if let Some(outcome) = controller_recovery_idempotency_replay(
         &registry,
@@ -2107,7 +2123,7 @@ fn run_controller_recover(
             ));
         }
     };
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         "main-agent-controller-recover",
         &json!({
             "session_id": record.id,
@@ -2122,29 +2138,36 @@ fn run_controller_recover(
             None,
         ));
     }
-    let mut runtime = crate::coordination_runtime_evidence(context, &record)?;
+    let mut runtime = agent_session::internal::coordination_runtime_evidence(context, &record)?;
     #[cfg(debug_assertions)]
     match env::var("NILS_AGENT_SESSION_TEST_CONTROLLER_RUNTIME_STATUS").as_deref() {
-        Ok("stopped") => runtime.status = crate::CoordinationRuntimeStatus::Stopped,
-        Ok("unknown") => runtime.status = crate::CoordinationRuntimeStatus::Unknown,
+        Ok("stopped") => {
+            runtime.status = agent_session::internal::CoordinationRuntimeStatus::Stopped
+        }
+        Ok("unknown") => {
+            runtime.status = agent_session::internal::CoordinationRuntimeStatus::Unknown
+        }
         _ => {}
     }
-    if runtime.status != crate::CoordinationRuntimeStatus::Running {
+    if runtime.status != agent_session::internal::CoordinationRuntimeStatus::Running {
         return Err(CliError::runtime(
             "controller-recovery-runtime-uncertain",
             "controller recovery requires the exact unchanged live runtime",
             Some(json!({
                 "runtime_status": match runtime.status {
-                    crate::CoordinationRuntimeStatus::Running => "running",
-                    crate::CoordinationRuntimeStatus::Stopped => "stopped",
-                    crate::CoordinationRuntimeStatus::Unknown => "unknown"
+                    agent_session::internal::CoordinationRuntimeStatus::Running => "running",
+                    agent_session::internal::CoordinationRuntimeStatus::Stopped => "stopped",
+                    agent_session::internal::CoordinationRuntimeStatus::Unknown => "unknown"
                 },
                 "required_action": "preserve the controller and use broker status/adopt only after exact runtime identity is proven"
             })),
         ));
     }
-    let quiescence =
-        crate::coordination::lock_session_quiescence(context, &session_id, &incarnation)?;
+    let quiescence = agent_session::internal::coordination::lock_session_quiescence(
+        context,
+        &session_id,
+        &incarnation,
+    )?;
     if !quiescence.broker_present || !quiescence.broker_identity_matched {
         return Err(CliError::data(
             "controller-recovery-incarnation-conflict",
@@ -2211,7 +2234,7 @@ fn run_controller_recover(
             None,
         )
     })?;
-    let primitive = crate::coordination::recover_broker(
+    let primitive = agent_session::internal::coordination::recover_broker(
         context,
         cli::BrokerRecoveryArgs {
             session: record.id.clone(),
@@ -2265,7 +2288,7 @@ fn run_controller_recover(
                 ));
             }
         };
-    let verified_quiescence = crate::coordination::lock_session_quiescence(
+    let verified_quiescence = agent_session::internal::coordination::lock_session_quiescence(
         context,
         &verified_record.id,
         &verified_incarnation,
@@ -2380,7 +2403,7 @@ fn controller_recovery_idempotency_replay(
             None,
         ));
     }
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         "main-agent-controller-recover",
         &json!({
             "session_id": record.id,
@@ -2434,15 +2457,19 @@ fn run_status(context: &CliContext, _args: ReadArgs) -> Result<Value, CliError> 
 
 fn run_checkpoint(context: &CliContext, args: CheckpointArgs) -> Result<Value, CliError> {
     validate_idempotency_key(&args.idempotency_key)?;
-    let input: CheckpointInput =
-        crate::coordination::read_bounded_json(&args.file, 64 * 1024, "invalid-checkpoint")?;
+    let input: CheckpointInput = agent_session::internal::coordination::read_bounded_json(
+        &args.file,
+        64 * 1024,
+        "invalid-checkpoint",
+    )?;
     validate_checkpoint(&input)?;
     let (record, incarnation) = authenticated_self(context)?;
     orchestration::ensure_session_not_quarantined(context, &record)?;
     ensure_active_claim(context, &record)?;
     let mut locked = orchestration::lock_registry(context)?;
     let principal = resolve_principal(&locked.registry, &record, &incarnation)?;
-    let request_digest = crate::coordination::request_digest("main-agent-checkpoint", &input);
+    let request_digest =
+        agent_session::internal::coordination::request_digest("main-agent-checkpoint", &input);
     if let Some(value) = idempotency_replay(
         &locked.registry,
         &record,
@@ -2663,7 +2690,7 @@ fn await_worker_start_bootstrap_handshake(
         Err(error) if error.code() == "worker-quarantined" => false,
         Err(error) => return Err(error),
     };
-    if initially_clear && !crate::provider_stop_canary_armed(record) {
+    if initially_clear && !agent_session::internal::provider_stop_canary_armed(record) {
         return Ok(());
     }
     let worker = session_ref(context, record, incarnation);
@@ -2687,7 +2714,7 @@ fn await_worker_start_bootstrap_handshake(
     };
     let runtime_identity_digest = format!(
         "sha256:{}",
-        crate::coordination_runtime_evidence(context, record)?.identity_digest
+        agent_session::internal::coordination_runtime_evidence(context, record)?.identity_digest
     );
     let quarantine_matches = orchestration::session_authority_quarantine_matches(
         context,
@@ -2962,7 +2989,7 @@ fn run_bootstrap(context: &CliContext, args: BootstrapArgs) -> Result<Value, Cli
     Ok(json!({
         "schema_version": "main-agent.bootstrap-result.v1",
         "claim": "active",
-        "checkpoint_file": crate::display_path(&checkpoint_file),
+        "checkpoint_file": nils_common::fs::display_path(&checkpoint_file),
         "worker_instructions": worker_bootstrap_instructions(
             &main_agent_bin,
             &checkpoint_file,
@@ -2977,8 +3004,8 @@ fn worker_bootstrap_instructions(
     checkpoint_file: &Path,
     assignment: &AssignmentRecord,
 ) -> Value {
-    let executable = crate::display_path(main_agent_bin);
-    let checkpoint_file = crate::display_path(checkpoint_file);
+    let executable = nils_common::fs::display_path(main_agent_bin);
+    let checkpoint_file = nils_common::fs::display_path(checkpoint_file);
     json!({
         "schema_version": "main-agent.worker-instructions.v1",
         "task_source": "assignment.assignment_packet.task",
@@ -3041,7 +3068,7 @@ fn carry_forward_bootstrap_guidance_with_authorization(
     let expected_revision = assignment.revision;
     let expected_manager = assignment.primary_manager.clone();
     let worker_authority =
-        crate::lock_exact_session_authority(context, &current_worker.session_id)?
+        agent_session::internal::lock_exact_session_authority(context, &current_worker.session_id)?
             .ok_or_else(|| not_found("worker-session-not-found", "worker session was not found"))?;
     let worker_incarnation = worker_authority
         .record
@@ -3060,7 +3087,7 @@ fn carry_forward_bootstrap_guidance_with_authorization(
             None,
         ));
     }
-    crate::coordination::carry_forward_unread_controller_guidance_with_authorization(
+    agent_session::internal::coordination::carry_forward_unread_controller_guidance_with_authorization(
         context,
         &current_worker.session_id,
         &previous_worker.session_incarnation,
@@ -3146,7 +3173,7 @@ fn record_preclaim_bootstrap_blocker(
     failure_code: &str,
 ) -> Result<(), CliError> {
     let (active_claim, active_operation) =
-        crate::coordination::session_has_active_claim_or_operation(
+        agent_session::internal::coordination::session_has_active_claim_or_operation(
             context,
             &record.id,
             incarnation,
@@ -3259,7 +3286,7 @@ fn run_worker_start_single(context: &CliContext, args: WorkerStartArgs) -> Resul
         .assignment_file
         .as_ref()
         .ok_or_else(|| invalid_input("worker start requires --assignment-file"))?;
-    let input: AssignmentInput = crate::coordination::read_bounded_json(
+    let input: AssignmentInput = agent_session::internal::coordination::read_bounded_json(
         assignment_file,
         256 * 1024,
         "invalid-assignment-packet",
@@ -3283,7 +3310,9 @@ fn run_worker_start_single_input(
             Some(json!({ "await_ready": args.await_ready })),
         ));
     }
-    crate::ensure_provider_stop_canary_platform_supported(input.provider_stop_canary.is_some())?;
+    agent_session::internal::ensure_provider_stop_canary_platform_supported(
+        input.provider_stop_canary.is_some(),
+    )?;
     let (record, incarnation) = authenticated_self(context)?;
     ensure_active_claim(context, &record)?;
     let (packet_value, request_digest, legacy_request_digest) =
@@ -3379,7 +3408,7 @@ fn run_worker_start_single_input(
         .map(|(_, id, _, _)| id.clone())
         .or_else(|| input.launch.session_id.clone())
         .unwrap_or_else(|| retry_stable_worker_session_id(&assignment_id, &legacy_request_digest));
-    crate::validate_id(&worker_session_id)?;
+    agent_session::internal::validate_id(&worker_session_id)?;
     let worker_start_fence_key = worker_start_fence_key(
         &request_digest,
         &args.idempotency_key,
@@ -3788,25 +3817,30 @@ fn run_worker_start_single_input(
                 {
                     let expected_worker = expected_worker.clone();
                     let provider_resume = provider_resume.clone();
-                    worker = crate::mutate_session_record(context, &worker.id, |current| {
-                        let current_incarnation = current
-                            .runtime
-                            .as_ref()
-                            .map(|runtime| runtime.launch_id.as_str())
-                            .filter(|value| !value.is_empty())
-                            .ok_or_else(|| {
-                                invalid_input("worker session incarnation is unavailable")
-                            })?;
-                        if session_ref(context, current, current_incarnation) != expected_worker {
-                            return Err(CliError::data(
-                                "assignment-start-conflict",
-                                "persisted ambiguous worker start changed its exact session evidence",
-                                Some(json!({ "assignment_id": assignment_id })),
-                            ));
-                        }
-                        current.provider_resume = Some(provider_resume);
-                        Ok(current.clone())
-                    })?;
+                    worker = agent_session::internal::mutate_session_record(
+                        context,
+                        &worker.id,
+                        |current| {
+                            let current_incarnation = current
+                                .runtime
+                                .as_ref()
+                                .map(|runtime| runtime.launch_id.as_str())
+                                .filter(|value| !value.is_empty())
+                                .ok_or_else(|| {
+                                    invalid_input("worker session incarnation is unavailable")
+                                })?;
+                            if session_ref(context, current, current_incarnation) != expected_worker
+                            {
+                                return Err(CliError::data(
+                                    "assignment-start-conflict",
+                                    "persisted ambiguous worker start changed its exact session evidence",
+                                    Some(json!({ "assignment_id": assignment_id })),
+                                ));
+                            }
+                            current.provider_resume = Some(provider_resume);
+                            Ok(current.clone())
+                        },
+                    )?;
                     pause_batch_lane_for_test("after_ambiguous_resume_backfill")?;
                 }
             }
@@ -3837,7 +3871,7 @@ fn run_worker_start_single_input(
     } else {
         let mut create_guard = || {
             pause_batch_lane_for_test("before_session_create")?;
-            let fence = crate::coordination::claims::acquire_main_agent_worker_start_fence(
+            let fence = agent_session::internal::coordination::claims::acquire_main_agent_worker_start_fence(
                 context,
                 &record,
                 &incarnation,
@@ -3882,42 +3916,83 @@ fn run_worker_start_single_input(
             }
             Ok(())
         };
-        let mut pre_runtime_release_guard =
-            |worker: &SessionRecord| -> Result<(), crate::PreRuntimeReleaseGuardError> {
-                let worker_incarnation = worker
-                    .runtime
-                    .as_ref()
-                    .map(|runtime| runtime.launch_id.as_str())
-                    .filter(|value| !value.is_empty())
-                    .ok_or_else(|| invalid_input("worker session incarnation is unavailable"))?;
-                ensure_active_claim(context, &record)?;
-                let expected_worker = session_ref(context, worker, worker_incarnation);
-                let runtime_identity_digest = format!(
-                    "sha256:{}",
-                    crate::coordination_runtime_evidence(context, worker)?.identity_digest
-                );
-                orchestration::persist_session_authority_quarantine(
-                    context,
-                    &assignment_id,
-                    2,
-                    &orchestration::WorkerQuarantineRecord {
-                        schema_version: orchestration::WORKER_QUARANTINE_SCHEMA.to_string(),
-                        worker: expected_worker.clone(),
-                        reason: WORKER_START_QUARANTINE_REASON.to_string(),
-                        runtime_identity_digest,
-                        created_at: timestamp(),
-                    },
+        let mut pre_runtime_release_guard = |worker: &SessionRecord| -> Result<
+            (),
+            agent_session::internal::PreRuntimeReleaseGuardError,
+        > {
+            let worker_incarnation = worker
+                .runtime
+                .as_ref()
+                .map(|runtime| runtime.launch_id.as_str())
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| invalid_input("worker session incarnation is unavailable"))?;
+            ensure_active_claim(context, &record)?;
+            let expected_worker = session_ref(context, worker, worker_incarnation);
+            let runtime_identity_digest = format!(
+                "sha256:{}",
+                agent_session::internal::coordination_runtime_evidence(context, worker)?
+                    .identity_digest
+            );
+            orchestration::persist_session_authority_quarantine(
+                context,
+                &assignment_id,
+                2,
+                &orchestration::WorkerQuarantineRecord {
+                    schema_version: orchestration::WORKER_QUARANTINE_SCHEMA.to_string(),
+                    worker: expected_worker.clone(),
+                    reason: WORKER_START_QUARANTINE_REASON.to_string(),
+                    runtime_identity_digest,
+                    created_at: timestamp(),
+                },
+            )?;
+            pause_batch_lane_for_test("after_canary_quarantine_before_registry_lock")?;
+            let mut locked = orchestration::lock_registry(context)?;
+            if let Some(batch_lane) = batch_lane {
+                renew_worker_start_batch_lane_after_child_side_effect_locked(
+                    &mut locked.registry,
+                    batch_lane,
                 )?;
-                pause_batch_lane_for_test("after_canary_quarantine_before_registry_lock")?;
-                let mut locked = orchestration::lock_registry(context)?;
-                if let Some(batch_lane) = batch_lane {
-                    renew_worker_start_batch_lane_after_child_side_effect_locked(
-                        &mut locked.registry,
-                        batch_lane,
-                    )?;
-                }
-                validate_worker_start_authority_locked(
-                    &locked.registry,
+            }
+            validate_worker_start_authority_locked(
+                &locked.registry,
+                &record,
+                &incarnation,
+                &assignment_id,
+                &worker_session_id,
+                &expected_packet_digest,
+                &args.idempotency_key,
+                &request_digest,
+                &legacy_request_digest,
+                &launch_input.launch.cwd,
+                launch_provider_config_dir.as_deref(),
+                None,
+                false,
+            )?;
+            let current = locked
+                .registry
+                .assignments
+                .get_mut(&assignment_id)
+                .ok_or_else(|| not_found("assignment-not-found", "assignment was not found"))?;
+            current.worker = Some(expected_worker.clone());
+            current.revision = 2;
+            current.updated_at = timestamp();
+            store_worker_start_launch_phase_locked(
+                &mut locked.registry,
+                &record,
+                &incarnation,
+                &args.idempotency_key,
+                &request_digest,
+                &legacy_request_digest,
+                WORKER_START_PHASE_CANARY_STARTUP_PENDING,
+                Some(&expected_worker),
+            )?;
+            locked.save()?;
+            drop(locked);
+            if let Err(error) =
+                pause_batch_lane_for_test("after_canary_worker_attachment_before_runtime_release")
+            {
+                return match rollback_prebound_canary_worker_start(
+                    context,
                     &record,
                     &incarnation,
                     &assignment_id,
@@ -3928,60 +4003,26 @@ fn run_worker_start_single_input(
                     &legacy_request_digest,
                     &launch_input.launch.cwd,
                     launch_provider_config_dir.as_deref(),
-                    None,
-                    false,
-                )?;
-                let current = locked
-                    .registry
-                    .assignments
-                    .get_mut(&assignment_id)
-                    .ok_or_else(|| not_found("assignment-not-found", "assignment was not found"))?;
-                current.worker = Some(expected_worker.clone());
-                current.revision = 2;
-                current.updated_at = timestamp();
-                store_worker_start_launch_phase_locked(
-                    &mut locked.registry,
-                    &record,
-                    &incarnation,
-                    &args.idempotency_key,
-                    &request_digest,
-                    &legacy_request_digest,
-                    WORKER_START_PHASE_CANARY_STARTUP_PENDING,
-                    Some(&expected_worker),
-                )?;
-                locked.save()?;
-                drop(locked);
-                if let Err(error) = pause_batch_lane_for_test(
-                    "after_canary_worker_attachment_before_runtime_release",
+                    &expected_worker,
                 ) {
-                    return match rollback_prebound_canary_worker_start(
-                        context,
-                        &record,
-                        &incarnation,
-                        &assignment_id,
-                        &worker_session_id,
-                        &expected_packet_digest,
-                        &args.idempotency_key,
-                        &request_digest,
-                        &legacy_request_digest,
-                        &launch_input.launch.cwd,
-                        launch_provider_config_dir.as_deref(),
-                        &expected_worker,
-                    ) {
-                        Ok(()) => Err(crate::PreRuntimeReleaseGuardError::rolled_back(error)),
-                        Err(rollback_error) => Err(crate::PreRuntimeReleaseGuardError::committed(
+                    Ok(()) => Err(
+                        agent_session::internal::PreRuntimeReleaseGuardError::rolled_back(error),
+                    ),
+                    Err(rollback_error) => Err(
+                        agent_session::internal::PreRuntimeReleaseGuardError::committed(
                             rollback_error,
-                        )),
-                    };
-                }
-                Ok(())
-            };
+                        ),
+                    ),
+                };
+            }
+            Ok(())
+        };
         let mut post_runtime_release_guard = |worker: &SessionRecord| {
             if provider_stop_canary_startup_admission_required()
-                && let Err(error) = crate::await_provider_stop_canary_startup(
+                && let Err(error) = agent_session::internal::await_provider_stop_canary_startup(
                     context,
                     worker,
-                    crate::provider_stop_canary_startup_wait(),
+                    agent_session::internal::provider_stop_canary_startup_wait(),
                 )
             {
                 let worker_incarnation = worker
@@ -4156,10 +4197,11 @@ fn run_worker_start_single_input(
                 &expected_worker,
             )
         };
-        let pre_runtime_release_guard: crate::PreRuntimeReleaseGuard<'_> = launch_input
-            .provider_stop_canary
-            .is_some()
-            .then_some(&mut pre_runtime_release_guard);
+        let pre_runtime_release_guard: agent_session::internal::PreRuntimeReleaseGuard<'_> =
+            launch_input
+                .provider_stop_canary
+                .is_some()
+                .then_some(&mut pre_runtime_release_guard);
         let post_runtime_release_guard: SessionStartGuard<'_> = launch_input
             .provider_stop_canary
             .is_some()
@@ -4172,7 +4214,7 @@ fn run_worker_start_single_input(
             .provider_stop_canary
             .is_some()
             .then_some(&mut post_prompt_delivery_guard);
-        let started = crate::start_session_with_create_guard(
+        let started = agent_session::internal::start_session_with_create_guard(
             context,
             cli::StartArgs {
                 // A synchronous `main-agent` invocation does not retain the
@@ -4211,7 +4253,7 @@ fn run_worker_start_single_input(
             StartFailureDisposition::ReturnError,
             PromptDelivery::ManagedWorkerExactlyOnce,
             Some(&mut create_guard),
-            crate::StartLifecycleGuards {
+            agent_session::internal::StartLifecycleGuards {
                 pre_runtime_release: pre_runtime_release_guard,
                 post_runtime_release: post_runtime_release_guard,
                 post_prompt_delivery: post_prompt_delivery_guard,
@@ -4320,7 +4362,7 @@ fn run_worker_start_single_input(
                     ));
                 }
             }
-            match crate::coordination::claims::acquire_main_agent_worker_start_fence(
+            match agent_session::internal::coordination::claims::acquire_main_agent_worker_start_fence(
                 context,
                 &record,
                 &incarnation,
@@ -4468,7 +4510,9 @@ fn run_worker_start_single_input(
             if worker_status != "running"
                 && launch_phase == WORKER_START_PHASE_CANARY_STARTUP_PENDING
             {
-                if !crate::launch_gate_path(&context.state_dir, &worker_record).is_file() {
+                if !agent_session::internal::launch_gate_path(&context.state_dir, &worker_record)
+                    .is_file()
+                {
                     rollback_prebound_canary_worker_start(
                         context,
                         &record,
@@ -4485,7 +4529,7 @@ fn run_worker_start_single_input(
                     )?;
                     return Ok(CanaryReplayAction::CleanupAndReplay);
                 }
-                let error = crate::provider_stop_canary_startup_error(
+                let error = agent_session::internal::provider_stop_canary_startup_error(
                     "controller",
                     "provider-stop-canary-wrapper-stopped",
                 );
@@ -4560,7 +4604,8 @@ fn run_worker_start_single_input(
                     Some(json!({ "phase": "canary-prompt-attempt" })),
                 ));
             }
-            let launch_gate = crate::launch_gate_path(&context.state_dir, &worker_record);
+            let launch_gate =
+                agent_session::internal::launch_gate_path(&context.state_dir, &worker_record);
             if launch_phase == WORKER_START_PHASE_RUNTIME_HELD && !launch_gate.is_file() {
                 ensure_active_claim(context, &record)?;
                 let mut locked = orchestration::lock_registry(context)?;
@@ -4594,14 +4639,14 @@ fn run_worker_start_single_input(
             }
             let release_was_already_observed = launch_gate.is_file();
             if !release_was_already_observed {
-                crate::release_held_runtime(context, &worker_record)?;
+                agent_session::internal::release_held_runtime(context, &worker_record)?;
             }
             if launch_phase == WORKER_START_PHASE_CANARY_STARTUP_PENDING
                 && provider_stop_canary_startup_admission_required()
-                && let Err(error) = crate::await_provider_stop_canary_startup(
+                && let Err(error) = agent_session::internal::await_provider_stop_canary_startup(
                     context,
                     &worker_record,
-                    crate::provider_stop_canary_startup_wait(),
+                    agent_session::internal::provider_stop_canary_startup_wait(),
                 )
             {
                 ensure_active_claim(context, &record)?;
@@ -4672,7 +4717,7 @@ fn run_worker_start_single_input(
                     Some(json!({ "phase": "canary-runtime-release" })),
                 ));
             }
-            match crate::paste_prompt(
+            match agent_session::internal::paste_prompt(
                 &resolve_tmux_bin(None),
                 &worker_record,
                 PromptDelivery::ManagedWorkerExactlyOnce,
@@ -4872,7 +4917,11 @@ fn run_worker_start_single_input(
                 pause_canary_authority_release_for_test()?;
                 let runtime_identity_digest = format!(
                     "sha256:{}",
-                    crate::coordination_runtime_evidence(context, &worker_record)?.identity_digest
+                    agent_session::internal::coordination_runtime_evidence(
+                        context,
+                        &worker_record
+                    )?
+                    .identity_digest
                 );
                 if let Err(error) = orchestration::clear_matching_session_authority_quarantine(
                     context,
@@ -4955,11 +5004,17 @@ fn ensure_external_worker_broker(
     context: &CliContext,
     worker_record: &SessionRecord,
 ) -> Result<(), CliError> {
-    let incarnation = crate::coordination::incarnation(worker_record)?;
-    if crate::coordination::capability_path(context, &worker_record.id, &incarnation).exists() {
+    let incarnation = agent_session::internal::coordination::incarnation(worker_record)?;
+    if agent_session::internal::coordination::capability_path(
+        context,
+        &worker_record.id,
+        &incarnation,
+    )
+    .exists()
+    {
         return Ok(());
     }
-    crate::coordination::provision(context, worker_record).map(|_| ())
+    agent_session::internal::coordination::provision(context, worker_record).map(|_| ())
     // Deliberately not `activate_ready`: that step belongs to a launcher that
     // already has a live runtime and a fresh heartbeat. An external lane has
     // neither at this point — its runtime evidence and its heartbeat both begin
@@ -4990,9 +5045,9 @@ fn finish_external_worker_start(
     let existing = match load_session_record(context, worker_session_id) {
         // Repair a record whose second (extra-key) write was lost to a crash:
         // the path is derivable, so replay converges instead of wedging.
-        Ok(worker) => Some(crate::dsh_external::ensure_recorded_liveness_path(
-            context, worker,
-        )?),
+        Ok(worker) => Some(
+            agent_session::internal::dsh_external::ensure_recorded_liveness_path(context, worker)?,
+        ),
         Err(error) if error.code() == "session-not-found" => None,
         Err(error) => return Err(error),
     };
@@ -5000,7 +5055,7 @@ fn finish_external_worker_start(
     let worker_record = match existing {
         Some(worker) => {
             ensure_worker_launch_matches(context, &worker, launch_input, &replay_prompts)?;
-            let fence = crate::coordination::claims::acquire_main_agent_worker_start_fence(
+            let fence = agent_session::internal::coordination::claims::acquire_main_agent_worker_start_fence(
                 context,
                 record,
                 incarnation,
@@ -5040,7 +5095,7 @@ fn finish_external_worker_start(
         }
         None => {
             let mut create_guard = || {
-                let fence = crate::coordination::claims::acquire_main_agent_worker_start_fence(
+                let fence = agent_session::internal::coordination::claims::acquire_main_agent_worker_start_fence(
                     context,
                     record,
                     incarnation,
@@ -5078,7 +5133,7 @@ fn finish_external_worker_start(
                 worker_start_fence = Some(fence);
                 Ok(())
             };
-            let created = crate::dsh_external::create_external_worker_record(
+            let created = agent_session::internal::dsh_external::create_external_worker_record(
                 context,
                 Path::new(&launch_input.launch.cwd),
                 worker_session_id,
@@ -5247,28 +5302,30 @@ fn external_launch_payload(
     launch_id: &str,
     prompt: &str,
 ) -> Result<Value, CliError> {
-    let state_dir = crate::display_path(&context.state_dir);
-    let capability_file = crate::display_path(&crate::coordination::capability_path(
-        context,
-        &worker_record.id,
-        launch_id,
-    ));
-    let checkpoint_file = crate::display_path(&crate::coordination::checkpoint_path_for_state(
-        &context.state_dir,
-        &worker_record.id,
-        launch_id,
-    ));
+    let state_dir = nils_common::fs::display_path(&context.state_dir);
+    let capability_file =
+        nils_common::fs::display_path(&agent_session::internal::coordination::capability_path(
+            context,
+            &worker_record.id,
+            launch_id,
+        ));
+    let checkpoint_file = nils_common::fs::display_path(
+        &agent_session::internal::coordination::checkpoint_path_for_state(
+            &context.state_dir,
+            &worker_record.id,
+            launch_id,
+        ),
+    );
     // Derived, never read back: a crash between the record write and the
     // extra-key write must not wedge every replay on a missing key. The
     // persisted key exists only for the context-free sidecar reader.
-    let liveness_file = crate::display_path(&crate::dsh_external::liveness_path(
-        context,
-        &worker_record.id,
-    ));
+    let liveness_file = nils_common::fs::display_path(
+        &agent_session::internal::dsh_external::liveness_path(context, &worker_record.id),
+    );
     let agent_session_bin = env::current_exe()
         .ok()
         .and_then(|executable| Some(executable.parent()?.join("agent-session")))
-        .map(|path| crate::display_path(&path))
+        .map(|path| nils_common::fs::display_path(&path))
         .ok_or_else(|| {
             CliError::runtime(
                 "main-agent-executable-unavailable",
@@ -5318,7 +5375,7 @@ fn external_launch_payload(
             "json"
         ],
         "liveness_file": liveness_file,
-        "liveness_schema": crate::dsh_external::LIVENESS_SCHEMA
+        "liveness_schema": agent_session::internal::dsh_external::LIVENESS_SCHEMA
     }))
 }
 
@@ -5338,8 +5395,8 @@ fn worker_start_request_digests(
     let packet_value =
         serde_json::to_value(input).map_err(|_| invalid_input("assignment packet is invalid"))?;
     let legacy_request_digest =
-        crate::coordination::request_digest("main-agent-worker-start", input);
-    let request_digest = crate::coordination::request_digest(
+        agent_session::internal::coordination::request_digest("main-agent-worker-start", input);
+    let request_digest = agent_session::internal::coordination::request_digest(
         "main-agent-worker-start-v2",
         &json!({
             "assignment": &packet_value,
@@ -5355,7 +5412,7 @@ fn worker_start_fence_key(
     assignment_id: &str,
     worker_session_id: &str,
 ) -> String {
-    crate::coordination::request_digest(
+    agent_session::internal::coordination::request_digest(
         "main-agent-worker-start-fence-key",
         &(
             request_digest,
@@ -5412,14 +5469,16 @@ fn finish_retained_worker_start_fence_for_outcome(
                 "canary worker-start receipt worker is inconsistent",
             ));
         }
-        let worker_record = crate::load_session_record(context, &worker.session_id)?;
+        let worker_record =
+            agent_session::internal::load_session_record(context, &worker.session_id)?;
         let worker_incarnation = worker_record
             .runtime
             .as_ref()
             .map(|runtime| runtime.launch_id.as_str())
             .unwrap_or_default();
-        if !crate::provider_stop_canary_armed(&worker_record)
-            || crate::provider_stop_canary_assignment_id(&worker_record) != Some(assignment_id)
+        if !agent_session::internal::provider_stop_canary_armed(&worker_record)
+            || agent_session::internal::provider_stop_canary_assignment_id(&worker_record)
+                != Some(assignment_id)
             || !orchestration::session_ref_matches(&worker, &worker_record, worker_incarnation)
         {
             return Err(CliError::data(
@@ -5430,7 +5489,8 @@ fn finish_retained_worker_start_fence_for_outcome(
         }
         let runtime_identity_digest = format!(
             "sha256:{}",
-            crate::coordination_runtime_evidence(context, &worker_record)?.identity_digest
+            agent_session::internal::coordination_runtime_evidence(context, &worker_record)?
+                .identity_digest
         );
         orchestration::clear_matching_session_authority_quarantine(
             context,
@@ -5448,7 +5508,7 @@ fn finish_retained_worker_start_fence_for_outcome(
         assignment_id,
         worker_session_id,
     );
-    crate::coordination::claims::finish_retained_main_agent_worker_start_fence(
+    agent_session::internal::coordination::claims::finish_retained_main_agent_worker_start_fence(
         context,
         record,
         incarnation,
@@ -5492,7 +5552,7 @@ fn worker_start_readiness_progress(
     timeout: Duration,
     submit_key_recovery_eligible: bool,
 ) -> Value {
-    let now = crate::coordination::now_epoch();
+    let now = agent_session::internal::coordination::now_epoch();
     let initial_lease_secs = worker_start_finalizer_lease_secs(&Value::Null);
     let deadline_at_epoch =
         now.saturating_add(i64::try_from(timeout.as_secs()).unwrap_or(i64::MAX));
@@ -5546,7 +5606,7 @@ fn finish_worker_start_readiness(
             .ok_or_else(|| invalid_input("worker start readiness deadline is invalid"))?;
         let timeout = Duration::from_secs(
             deadline_at_epoch
-                .saturating_sub(crate::coordination::now_epoch())
+                .saturating_sub(agent_session::internal::coordination::now_epoch())
                 .try_into()
                 .unwrap_or(0),
         );
@@ -5723,7 +5783,7 @@ fn join_or_claim_worker_start_readiness(
         let lease_until = progress["finalizer_lease_until_epoch"]
             .as_i64()
             .ok_or_else(|| invalid_input("worker start readiness lease is invalid"))?;
-        if crate::coordination::now_epoch() < lease_until {
+        if agent_session::internal::coordination::now_epoch() < lease_until {
             thread::sleep(WORKER_WAIT_POLL_INTERVAL);
             let registry = orchestration::load_registry_readonly(context)?;
             progress = idempotency_replay(
@@ -5750,7 +5810,7 @@ fn join_or_claim_worker_start_readiness(
         if !worker_start_readiness_is_pending(&current) {
             return Ok((current, None));
         }
-        let now = crate::coordination::now_epoch();
+        let now = agent_session::internal::coordination::now_epoch();
         if current["finalizer_lease_until_epoch"]
             .as_i64()
             .is_some_and(|lease| now < lease)
@@ -5816,7 +5876,7 @@ fn run_worker_start_batch(
                 .and_then(|name| name.to_str())
                 .ok_or_else(|| invalid_input("batch packet name must be UTF-8"))?
                 .to_string();
-            let bytes = crate::coordination::read_bounded_bytes(
+            let bytes = agent_session::internal::coordination::read_bounded_bytes(
                 &path,
                 256 * 1024,
                 "invalid-assignment-packet",
@@ -5824,7 +5884,7 @@ fn run_worker_start_batch(
             packets.push(BatchPacket {
                 path,
                 name,
-                digest: crate::coordination::digest_bytes(&bytes),
+                digest: agent_session::internal::coordination::digest_bytes(&bytes),
                 bytes,
             });
         }
@@ -5847,8 +5907,10 @@ fn run_worker_start_batch(
             })
         })
         .collect::<Vec<_>>();
-    let request_digest =
-        crate::coordination::request_digest("main-agent-worker-start-batch-v1", &manifest);
+    let request_digest = agent_session::internal::coordination::request_digest(
+        "main-agent-worker-start-batch-v1",
+        &manifest,
+    );
     let (main, main_incarnation) = authenticated_self(context)?;
     ensure_active_claim(context, &main)?;
     let mut progress = {
@@ -6069,7 +6131,7 @@ fn claim_worker_start_batch_lane(
         {
             return Ok((current, None));
         }
-        let now = crate::coordination::now_epoch();
+        let now = agent_session::internal::coordination::now_epoch();
         let lease_active = worker_start_batch_lane_is_claim(&current["lanes"][index])
             && current["lanes"][index]["lease_until_epoch"]
                 .as_i64()
@@ -6158,7 +6220,7 @@ fn renew_worker_start_batch_lane_at_fence_locked(
         lane.request_digest,
     )?
     .ok_or_else(|| invalid_input("batch start receipt is unavailable"))?;
-    let now = crate::coordination::now_epoch();
+    let now = agent_session::internal::coordination::now_epoch();
     if !worker_start_batch_lane_fence_is_valid(
         &current["lanes"][lane.index],
         lane.owner_id,
@@ -6428,7 +6490,7 @@ fn worker_start_is_pending(value: &Value) -> bool {
 #[derive(Debug)]
 struct AmbiguousWorkerStartEvidence {
     worker: SessionRef,
-    provider_resume: Option<crate::ProviderResume>,
+    provider_resume: Option<agent_session::internal::ProviderResume>,
 }
 
 fn parse_ambiguous_worker_start_evidence(
@@ -6450,15 +6512,16 @@ fn parse_ambiguous_worker_start_evidence(
     let provider_resume = match value.get("provider_resume") {
         None | Some(Value::Null) => None,
         Some(provider_resume) => Some(
-            serde_json::from_value::<crate::ProviderResume>(provider_resume.clone()).map_err(
-                |_| {
-                    CliError::data(
-                        "assignment-start-conflict",
-                        "persisted ambiguous worker start has invalid resume evidence",
-                        None,
-                    )
-                },
-            )?,
+            serde_json::from_value::<agent_session::internal::ProviderResume>(
+                provider_resume.clone(),
+            )
+            .map_err(|_| {
+                CliError::data(
+                    "assignment-start-conflict",
+                    "persisted ambiguous worker start has invalid resume evidence",
+                    None,
+                )
+            })?,
         ),
     };
     Ok(Some(AmbiguousWorkerStartEvidence {
@@ -6587,7 +6650,7 @@ fn store_worker_start_launch_phase_evidence_locked(
     legacy_request_digest: &str,
     phase: &str,
     worker: Option<&SessionRef>,
-    provider_resume: Option<&crate::ProviderResume>,
+    provider_resume: Option<&agent_session::internal::ProviderResume>,
 ) -> Result<(), CliError> {
     let mut pending = worker_start_idempotency_replay(
         registry,
@@ -6632,7 +6695,7 @@ fn store_worker_start_ambiguous_launch_phase_locked(
     request_digest: &str,
     legacy_request_digest: &str,
     worker: &SessionRef,
-    provider_resume: Option<&crate::ProviderResume>,
+    provider_resume: Option<&agent_session::internal::ProviderResume>,
 ) -> Result<(), CliError> {
     store_worker_start_launch_phase_evidence_locked(
         registry,
@@ -6662,7 +6725,7 @@ fn worker_start_startup_failure_error(pending: &Value) -> Option<CliError> {
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
     })?;
-    Some(crate::provider_stop_canary_startup_error(
+    Some(agent_session::internal::provider_stop_canary_startup_error(
         stage,
         failure_code,
     ))
@@ -6686,7 +6749,7 @@ fn store_worker_start_startup_failure_locked(
             None,
         ));
     }
-    let details = error.0.details.as_ref().ok_or_else(|| {
+    let details = error.details().ok_or_else(|| {
         CliError::data(
             "assignment-start-conflict",
             "canary startup failure details are unavailable",
@@ -6903,7 +6966,7 @@ fn previous_worker_start_prompt(assignment_id: &str, main_agent_bin: &Path) -> S
 }
 
 fn worker_bootstrap_idempotency_key(assignment_id: &str) -> String {
-    let digest = crate::coordination::request_digest(
+    let digest = agent_session::internal::coordination::request_digest(
         "main-agent-worker-bootstrap-idempotency",
         &assignment_id,
     );
@@ -6912,7 +6975,7 @@ fn worker_bootstrap_idempotency_key(assignment_id: &str) -> String {
 
 fn retry_stable_worker_session_id(assignment_id: &str, request_digest: &str) -> String {
     let candidate = format!("worker-{assignment_id}");
-    if crate::validate_id(&candidate).is_ok() {
+    if agent_session::internal::validate_id(&candidate).is_ok() {
         candidate
     } else {
         format!("worker-{}", &request_digest[..32])
@@ -6937,12 +7000,12 @@ fn ensure_worker_launch_matches(
         .is_some_and(|prompt| expected_prompts.contains(&prompt.as_str()));
     let canary_matches = input.provider_stop_canary.is_some()
         == matches!(
-            crate::provider_stop_canary_state(context, worker),
-            Ok(crate::ProviderStopCanaryState::Armed
-                | crate::ProviderStopCanaryState::Ready
-                | crate::ProviderStopCanaryState::StopRequested
-                | crate::ProviderStopCanaryState::StoppedWrapperLive
-                | crate::ProviderStopCanaryState::Released)
+            agent_session::internal::provider_stop_canary_state(context, worker),
+            Ok(agent_session::internal::ProviderStopCanaryState::Armed
+                | agent_session::internal::ProviderStopCanaryState::Ready
+                | agent_session::internal::ProviderStopCanaryState::StopRequested
+                | agent_session::internal::ProviderStopCanaryState::StoppedWrapperLive
+                | agent_session::internal::ProviderStopCanaryState::Released)
         );
     if worker.agent != input.launch.agent
         || !worker_cwd_matches
@@ -7375,26 +7438,29 @@ fn worker_prompt_observed_inner(context: &CliContext, worker: &SessionRecord) ->
     if !metadata.is_file()
         || metadata.uid() != unsafe { libc::geteuid() }
         || metadata.mode() & 0o077 != 0
-        || metadata.len() > crate::provider_prompt::MAX_PROVIDER_PROMPT_BYTES as u64
+        || metadata.len()
+            > agent_session::internal::provider_prompt::MAX_PROVIDER_PROMPT_BYTES as u64
     {
         return None;
     }
     let mut bytes = Vec::with_capacity(
         metadata
             .len()
-            .min(crate::provider_prompt::MAX_PROVIDER_PROMPT_BYTES as u64 + 1) as usize,
+            .min(agent_session::internal::provider_prompt::MAX_PROVIDER_PROMPT_BYTES as u64 + 1)
+            as usize,
     );
     Read::by_ref(&mut prompt_file)
-        .take(crate::provider_prompt::MAX_PROVIDER_PROMPT_BYTES as u64 + 1)
+        .take(agent_session::internal::provider_prompt::MAX_PROVIDER_PROMPT_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
         .ok()?;
-    if bytes.len() > crate::provider_prompt::MAX_PROVIDER_PROMPT_BYTES {
+    if bytes.len() > agent_session::internal::provider_prompt::MAX_PROVIDER_PROMPT_BYTES {
         return None;
     }
     let prompt = String::from_utf8(bytes).ok()?;
     let attempted_at = worker.created_at.parse::<jiff::Timestamp>().ok()?;
-    let source = crate::provider_prompt::ProviderPromptTail::resolve_source(worker)?;
-    crate::provider_prompt::prompt_observed_after(&source, &prompt, &attempted_at)
+    let source =
+        agent_session::internal::provider_prompt::ProviderPromptTail::resolve_source(worker)?;
+    agent_session::internal::provider_prompt::prompt_observed_after(&source, &prompt, &attempted_at)
 }
 
 struct WorkerPromptObservationReaderPermit;
@@ -7523,7 +7589,7 @@ fn persist_worker_start_readiness_progress(
     }
     let lease_secs = worker_start_finalizer_lease_secs(&current);
     current["finalizer_lease_until_epoch"] =
-        json!(crate::coordination::now_epoch().saturating_add(lease_secs));
+        json!(agent_session::internal::coordination::now_epoch().saturating_add(lease_secs));
     store_receipt(
         &mut locked.registry,
         main,
@@ -7545,7 +7611,7 @@ fn worker_start_finalizer_lease_secs(progress: &Value) -> i64 {
         return value;
     }
     if progress["recovery_continuation"]["stage"].as_str() == Some("sending") {
-        i64::try_from(crate::PANE_INPUT_COMMAND_TIMEOUT.as_secs())
+        i64::try_from(agent_session::internal::PANE_INPUT_COMMAND_TIMEOUT.as_secs())
             .unwrap_or(i64::MAX)
             .saturating_add(2)
     } else {
@@ -8190,12 +8256,15 @@ fn authoritative_worker_turn_terminated(
     {
         return false;
     }
-    let Ok(activity) = crate::activity::activity_status_for_record(context, expected) else {
+    let Ok(activity) =
+        agent_session::internal::activity::activity_status_for_record(context, expected)
+    else {
         return false;
     };
-    activity.turn_state.phase == crate::activity::TurnPhase::Waiting
+    activity.turn_state.phase == agent_session::internal::activity::TurnPhase::Waiting
         && activity.turn_state.last_turn.is_some()
-        && activity.turn_state.source.confidence == crate::activity::Confidence::Authoritative
+        && activity.turn_state.source.confidence
+            == agent_session::internal::activity::Confidence::Authoritative
 }
 
 #[derive(Clone)]
@@ -8246,7 +8315,7 @@ fn reserve_submit_recovery(
         .ok_or_else(|| invalid_input("worker start readiness receipt is unavailable"))?;
         let lease_is_live = progress["finalizer_lease_until_epoch"]
             .as_i64()
-            .is_some_and(|lease| crate::coordination::now_epoch() < lease);
+            .is_some_and(|lease| agent_session::internal::coordination::now_epoch() < lease);
         if !worker_start_readiness_is_pending(&progress)
             || progress["finalizer_id"].as_str() != Some(readiness.finalizer_id)
             || !lease_is_live
@@ -8342,7 +8411,7 @@ fn reserve_submit_recovery(
         progress["recovery_continuation"] =
             worker_start_recovery_continuation(&reservation, "reserved");
         progress["finalizer_lease_until_epoch"] = json!(
-            crate::coordination::now_epoch()
+            agent_session::internal::coordination::now_epoch()
                 .saturating_add(worker_start_finalizer_lease_secs(&progress))
         );
         store_receipt(
@@ -8691,7 +8760,9 @@ fn send_reserved_submit_recovery(
                 })?;
                 let lease_is_live = progress["finalizer_lease_until_epoch"]
                     .as_i64()
-                    .is_some_and(|lease| crate::coordination::now_epoch() < lease);
+                    .is_some_and(|lease| {
+                        agent_session::internal::coordination::now_epoch() < lease
+                    });
                 let continuation_matches = progress["recovery_continuation"]["stage"] == "sending"
                     && progress["recovery_continuation"]["reservation"]["attempt_id"]
                         == reservation.attempt_id
@@ -8897,7 +8968,7 @@ fn run_worker_retire(
     validate_idempotency_key(&args.idempotency_key)?;
     let (record, incarnation) = authenticated_self(context)?;
     ensure_active_claim(context, &record)?;
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         "worker-retire",
         &json!({
             "assignment_id": args.assignment_id,
@@ -8959,7 +9030,7 @@ fn run_worker_retire(
             let historical_release = if assignment.state == "released" {
                 let release_key =
                     compatible_child_idempotency_key(&args.idempotency_key, "release");
-                let release_digest = crate::coordination::request_digest(
+                let release_digest = agent_session::internal::coordination::request_digest(
                     "worker-release",
                     &json!({
                         "assignment_id": args.assignment_id,
@@ -9175,7 +9246,7 @@ fn recover_released_retire_claim(
             .contains_key(&receipt_key(&main.id, main_incarnation, &revoke_key));
     if assignment.revision == release_revision {
         let (active_claim, active_operation) =
-            crate::coordination::session_has_active_claim_or_operation(
+            agent_session::internal::coordination::session_has_active_claim_or_operation(
                 context,
                 &worker.session_id,
                 &worker.session_incarnation,
@@ -9293,7 +9364,7 @@ impl<T> DiagnosticEvidence<T> {
 }
 
 struct CoordinationDiagnosis {
-    guidance: crate::coordination::GuidanceSummary,
+    guidance: agent_session::internal::coordination::GuidanceSummary,
     broker_authoritative: bool,
     broker_lost_since_epoch: Option<i64>,
     claim_active: bool,
@@ -9372,26 +9443,26 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
         // unavailable: treating it as unavailable would fence the very
         // cancel/reassign routes such a lane needs. `Unproven` stays
         // unavailable, so a corrupt sidecar still fails closed.
-        Some(record) if crate::dsh_external::is_external_record(record) => {
-            match crate::activity::state_for_view(context, record) {
-                Some(turn_state) if turn_state.phase != crate::activity::TurnPhase::Unknown => {
+        Some(record) if agent_session::internal::dsh_external::is_external_record(record) => {
+            match agent_session::internal::activity::state_for_view(context, record) {
+                Some(turn_state) if turn_state.phase != agent_session::internal::activity::TurnPhase::Unknown => {
                     DiagnosticEvidence::Present(turn_state)
                 }
-                _ => match crate::dsh_external::external_lane_disposition_with_broker(
+                _ => match agent_session::internal::dsh_external::external_lane_disposition_with_broker(
                     context, record,
                 ) {
-                    crate::dsh_external::ExternalLaneDisposition::NeverAttached => {
+                    agent_session::internal::dsh_external::ExternalLaneDisposition::NeverAttached => {
                         DiagnosticEvidence::Absent("worker-lane-never-attached")
                     }
-                    crate::dsh_external::ExternalLaneDisposition::ProvenStopped => {
+                    agent_session::internal::dsh_external::ExternalLaneDisposition::ProvenStopped => {
                         DiagnosticEvidence::Absent("worker-lane-stopped")
                     }
                     _ => DiagnosticEvidence::Unavailable("worker-activity-unknown".to_string()),
                 },
             }
         }
-        Some(record) => match crate::activity::activity_status(context, &record.id) {
-            Ok(result) if result.turn_state.phase != crate::activity::TurnPhase::Unknown => {
+        Some(record) => match agent_session::internal::activity::activity_status(context, &record.id) {
+            Ok(result) if result.turn_state.phase != agent_session::internal::activity::TurnPhase::Unknown => {
                 DiagnosticEvidence::Present(result.turn_state)
             }
             Ok(_) => DiagnosticEvidence::Unavailable("worker-activity-unknown".to_string()),
@@ -9401,7 +9472,7 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
     };
     let coordination_evidence = match assignment.worker.as_ref() {
         Some(worker) if session_evidence.value().is_some() => {
-            match crate::coordination::lock_session_quiescence(
+            match agent_session::internal::coordination::lock_session_quiescence(
                 context,
                 &worker.session_id,
                 &worker.session_incarnation,
@@ -9475,7 +9546,7 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
     let claim_expires_in_seconds = coordination_evidence
         .value()
         .and_then(|value| value.claim_expires_at_epoch)
-        .map(|expires| expires.saturating_sub(crate::coordination::now_epoch()));
+        .map(|expires| expires.saturating_sub(agent_session::internal::coordination::now_epoch()));
     let broker_authoritative = coordination_evidence
         .value()
         .is_some_and(|value| value.broker_authoritative);
@@ -9492,25 +9563,27 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
         .unwrap_or(0);
     let activity = activity_evidence.value();
     let provider_terminated = activity.as_ref().is_some_and(|state| {
-        state.phase == crate::activity::TurnPhase::Waiting
+        state.phase == agent_session::internal::activity::TurnPhase::Waiting
             && state.last_turn.is_some()
-            && state.source.confidence == crate::activity::Confidence::Authoritative
+            && state.source.confidence
+                == agent_session::internal::activity::Confidence::Authoritative
     });
     let attention_kind = activity
         .as_ref()
         .and_then(|state| state.current_turn.as_ref())
         .and_then(|turn| turn.attention.as_ref())
         .map(|attention| bounded_attention_kind(&attention.kind));
-    let startup_dialog =
-        activity.is_some_and(|state| state.phase == crate::activity::TurnPhase::NeedsInput);
+    let startup_dialog = activity.is_some_and(|state| {
+        state.phase == agent_session::internal::activity::TurnPhase::NeedsInput
+    });
     let account_view = session_evidence
         .value()
-        .map(crate::codex_account::view_for_record)
+        .map(agent_session::internal::codex_account::view_for_record)
         .and_then(|view| serde_json::to_value(view).ok())
         .unwrap_or(Value::Null);
     let auto_resume_view = session_evidence
         .value()
-        .map(|record| crate::auto_resume::view_for_record(context, record))
+        .map(|record| agent_session::internal::auto_resume::view_for_record(context, record))
         .and_then(|view| serde_json::to_value(view).ok())
         .unwrap_or(Value::Null);
     let provider_resume_preserved = session_evidence
@@ -9526,10 +9599,11 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
     ) && assignment.worker.is_some()
         && worker_status == "running"
         && activity.is_some_and(|state| {
-            state.phase == crate::activity::TurnPhase::Waiting
+            state.phase == agent_session::internal::activity::TurnPhase::Waiting
                 && state.current_turn.is_none()
-                && state.source.confidence == crate::activity::Confidence::Authoritative
-                && state.source.kind == crate::activity::SourceKind::ProviderHook
+                && state.source.confidence
+                    == agent_session::internal::activity::Confidence::Authoritative
+                && state.source.kind == agent_session::internal::activity::SourceKind::ProviderHook
                 && state.last_turn.as_ref().is_some_and(|turn| {
                     turn.outcome == "failed"
                         && turn.provider_failure_kind() == Some("provider_capacity")
@@ -9573,8 +9647,8 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
     );
     let worktree_unavailable = worktree_progress["available"] != true;
     let worktree_clean = worktree_progress["clean"].as_bool().unwrap_or(false);
-    let provider_active =
-        activity.is_some_and(|state| state.phase == crate::activity::TurnPhase::Working);
+    let provider_active = activity
+        .is_some_and(|state| state.phase == agent_session::internal::activity::TurnPhase::Working);
     let provider_progress_stale = activity
         .and_then(|state| state.current_turn.as_ref())
         .and_then(|turn| {
@@ -9598,7 +9672,7 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
         provider_active && provider_progress_stale && material_progress_stale;
     let capability_advertised = session_evidence
         .value()
-        .is_some_and(crate::codex_app_server::managed_account_handoff_supported);
+        .is_some_and(agent_session::internal::codex_app_server::managed_account_handoff_supported);
     let controls_supported = capability_advertised
         && account_view["supported"] == true
         && auto_resume_view["supported"] == true;
@@ -9632,7 +9706,9 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
         assignment.worker.is_some() && matches!(&session_evidence, DiagnosticEvidence::Absent(_));
     let durable_runtime_status = session_evidence
         .value()
-        .and_then(|record| crate::coordination_runtime_evidence(context, record).ok())
+        .and_then(|record| {
+            agent_session::internal::coordination_runtime_evidence(context, record).ok()
+        })
         .map(|evidence| evidence.status);
     let stopped_runtime_unverified = !cfg!(target_os = "linux")
         && assignment.worker.is_some()
@@ -9640,8 +9716,8 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
         && !matches!(
             durable_runtime_status,
             Some(
-                crate::CoordinationRuntimeStatus::Stopped
-                    | crate::CoordinationRuntimeStatus::Running
+                agent_session::internal::CoordinationRuntimeStatus::Stopped
+                    | agent_session::internal::CoordinationRuntimeStatus::Running
             )
         );
     let evidence_unavailable = packet_evidence.is_unavailable_or_mismatched()
@@ -9659,9 +9735,9 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
     // broker witness cannot change this answer; the context-free reader is the
     // exact question being asked.
     let runtime_never_attached = session_evidence.value().is_some_and(|record| {
-        crate::dsh_external::is_external_record(record)
-            && crate::dsh_external::external_lane_disposition(record)
-                == crate::dsh_external::ExternalLaneDisposition::NeverAttached
+        agent_session::internal::dsh_external::is_external_record(record)
+            && agent_session::internal::dsh_external::external_lane_disposition(record)
+                == agent_session::internal::dsh_external::ExternalLaneDisposition::NeverAttached
     });
     let failed_preclaim = worker_failed_preclaim(PreClaimEvidence {
         assignment_state: &assignment.state,
@@ -9681,9 +9757,9 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
     // combined cgroup/process-session/process-group proof the terminalization
     // re-establishes under the session-record lock.
     let durable_runtime_stopped =
-        durable_runtime_status == Some(crate::CoordinationRuntimeStatus::Stopped);
+        durable_runtime_status == Some(agent_session::internal::CoordinationRuntimeStatus::Stopped);
     let durable_runtime_running =
-        durable_runtime_status == Some(crate::CoordinationRuntimeStatus::Running);
+        durable_runtime_status == Some(agent_session::internal::CoordinationRuntimeStatus::Running);
     // A visible tmux wrapper cannot overrule exact stopped process evidence.
     // The canary supervisor additionally supplies exact-child proof while its
     // own managed runtime remains live. Both paths receive distinct typed,
@@ -9692,9 +9768,11 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
     let provider_stop_canary_stopped_wrapper_live = worker_status == "running"
         && session_evidence.value().is_some_and(|record| {
             matches!(
-                crate::provider_stop_canary_state(context, record),
-                Ok(crate::ProviderStopCanaryState::StoppedWrapperLive
-                    | crate::ProviderStopCanaryState::Released)
+                agent_session::internal::provider_stop_canary_state(context, record),
+                Ok(
+                    agent_session::internal::ProviderStopCanaryState::StoppedWrapperLive
+                        | agent_session::internal::ProviderStopCanaryState::Released
+                )
             )
         });
     let provider_process_stopped_wrapper_live = worker_status == "running"
@@ -9709,7 +9787,7 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
             .as_ref()
             .is_some_and(|reservation| {
                 session_evidence.value().is_some_and(|record| {
-                    crate::provider_stop_canary_proof_matches_reservation(
+                    agent_session::internal::provider_stop_canary_proof_matches_reservation(
                         context,
                         record,
                         reservation,
@@ -9803,7 +9881,7 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
             &context.state_dir,
             &worker.session_id,
             &worker.session_incarnation,
-            crate::coordination::now_epoch(),
+            agent_session::internal::coordination::now_epoch(),
         )
     });
     let edit_authority_fresh = broker_authoritative
@@ -10186,7 +10264,7 @@ fn worker_recovery_action(
                 .worker
                 .as_ref()
                 .expect("readiness stop classification requires a bound worker");
-            let key_material = crate::coordination::request_digest(
+            let key_material = agent_session::internal::coordination::request_digest(
                 "worker-stop-runtime-supervision-key",
                 &json!({
                     "assignment_id": assignment.assignment_id,
@@ -10259,7 +10337,7 @@ fn worker_recovery_action(
                 .worker
                 .as_ref()
                 .expect("idle claim revocation requires a bound worker");
-            let key_material = crate::coordination::request_digest(
+            let key_material = agent_session::internal::coordination::request_digest(
                 "worker-revoke-claim-supervision-key",
                 &json!({
                     "assignment_id": assignment.assignment_id,
@@ -11188,7 +11266,7 @@ fn inspect_worktree_progress(
             }));
         }
     };
-    let now = crate::coordination::now_epoch();
+    let now = agent_session::internal::coordination::now_epoch();
     let session_absent = assignment
         .worker
         .as_ref()
@@ -11381,7 +11459,7 @@ fn worktree_material_fingerprint_with_git(
     }
     Some(format!(
         "sha256:{}",
-        crate::coordination::digest_bytes(&material)
+        agent_session::internal::coordination::digest_bytes(&material)
     ))
 }
 
@@ -11397,7 +11475,10 @@ fn clean_worktree_material_fingerprint() -> String {
                 append_digest_fingerprint_component(&mut material, label, 0, &empty_digest)
                     .expect("clean tracked fingerprint is bounded");
             }
-            format!("sha256:{}", crate::coordination::digest_bytes(&material))
+            format!(
+                "sha256:{}",
+                agent_session::internal::coordination::digest_bytes(&material)
+            )
         })
         .clone()
 }
@@ -12006,10 +12087,11 @@ fn persist_worktree_progress_snapshot(
             None,
         )
     })?;
-    let name = crate::coordination::digest_bytes(assignment.assignment_id.as_bytes());
+    let name =
+        agent_session::internal::coordination::digest_bytes(assignment.assignment_id.as_bytes());
     let snapshot_path = directory.join(format!("main-agent-progress-{name}.json"));
     let previous = match fs::symlink_metadata(&snapshot_path) {
-        Ok(_) => Some(crate::coordination::read_bounded_json::<
+        Ok(_) => Some(agent_session::internal::coordination::read_bounded_json::<
             WorktreeProgressSnapshot,
         >(
             &snapshot_path,
@@ -12074,7 +12156,7 @@ fn run_worker_cancel(context: &CliContext, args: WorkerCancelArgs) -> Result<Val
     orchestration::validate_summary("cancellation reason", &args.reason)?;
     let (main, main_incarnation) = authenticated_self(context)?;
     ensure_active_claim(context, &main)?;
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         "worker-cancel",
         &json!({
             "assignment_id": args.assignment_id,
@@ -12160,12 +12242,12 @@ fn run_worker_cancel(context: &CliContext, args: WorkerCancelArgs) -> Result<Val
                 None,
             ));
         }
-        if crate::dsh_external::is_external_record(&worker_record) {
+        if agent_session::internal::dsh_external::is_external_record(&worker_record) {
             // A plugin-owned lane has no tmux runtime whose absence could be
             // proven here, and its runtime evidence is unavailable precisely
             // when the plugin never attached. Its terminal proof is the sidecar
             // disposition corroborated by the absent broker heartbeat.
-            if !crate::dsh_external::external_lane_terminal_is_proven(
+            if !agent_session::internal::dsh_external::external_lane_terminal_is_proven(
                 context,
                 &worker_record,
                 worker_incarnation,
@@ -12177,13 +12259,15 @@ fn run_worker_cancel(context: &CliContext, args: WorkerCancelArgs) -> Result<Val
                 ));
             }
         } else {
-            let runtime_evidence = crate::coordination_runtime_evidence(context, &worker_record)?;
+            let runtime_evidence =
+                agent_session::internal::coordination_runtime_evidence(context, &worker_record)?;
             let exact_failed_canary_quiescent = preclaim_runtime_gone
-                && crate::provider_stop_canary_failed_startup_runtime_quiescent(
+                && agent_session::internal::provider_stop_canary_failed_startup_runtime_quiescent(
                     &worker_record,
                     &args.assignment_id,
                 );
-            if (runtime_evidence.status != crate::CoordinationRuntimeStatus::Stopped
+            if (runtime_evidence.status
+                != agent_session::internal::CoordinationRuntimeStatus::Stopped
                 && !exact_failed_canary_quiescent)
                 || session_status(context, &resolve_tmux_bin(None), &worker_record) != "stopped"
             {
@@ -12200,13 +12284,17 @@ fn run_worker_cancel(context: &CliContext, args: WorkerCancelArgs) -> Result<Val
     };
     let worker_bound = assignment.worker.is_some();
     let quiescence = if let Some(worker) = &assignment.worker {
-        crate::coordination::lock_session_quiescence(
+        agent_session::internal::coordination::lock_session_quiescence(
             context,
             &worker.session_id,
             &worker.session_incarnation,
         )?
     } else {
-        crate::coordination::lock_session_quiescence(context, &main.id, &main_incarnation)?
+        agent_session::internal::coordination::lock_session_quiescence(
+            context,
+            &main.id,
+            &main_incarnation,
+        )?
     };
     if worker_bound && !quiescence.broker_present && !broker_evidence_waived {
         return Err(CliError::runtime(
@@ -12454,10 +12542,10 @@ fn run_worker_reconcile_stopped(
     validate_idempotency_key(&args.idempotency_key)?;
     orchestration::validate_summary("terminalization reason", &args.reason)?;
     let (main, main_incarnation, continuation_claim) =
-        crate::coordination::authenticate_any_from_file_with_active_claim_observational(
+        agent_session::internal::coordination::authenticate_any_from_file_with_active_claim_observational(
             context, None,
         )?;
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         "worker-reconcile-stopped",
         &json!({
             "assignment_id": args.assignment_id,
@@ -12571,17 +12659,18 @@ fn run_worker_reconcile_stopped(
                 None,
             ));
         }
-        let runtime_evidence = crate::coordination_runtime_evidence(context, &worker_record)?;
+        let runtime_evidence =
+            agent_session::internal::coordination_runtime_evidence(context, &worker_record)?;
         match runtime_evidence.status {
-            crate::CoordinationRuntimeStatus::Stopped => {}
-            crate::CoordinationRuntimeStatus::Running => {
+            agent_session::internal::CoordinationRuntimeStatus::Stopped => {}
+            agent_session::internal::CoordinationRuntimeStatus::Running => {
                 return Err(CliError::data(
                     "worker-runtime-still-live",
                     "the assignment cannot be terminalized while the exact worker process runtime can still act",
                     Some(json!({ "assignment_id": args.assignment_id })),
                 ));
             }
-            crate::CoordinationRuntimeStatus::Unknown => {
+            agent_session::internal::CoordinationRuntimeStatus::Unknown => {
                 return Err(CliError::runtime(
                     "coordination-runtime-unverified",
                     "the assignment cannot be terminalized without stopped exact-runtime evidence",
@@ -12599,14 +12688,15 @@ fn run_worker_reconcile_stopped(
 
         // This guard binds the exact active, unexpired controller claim into
         // the same coordination snapshot that proves target quiescence.
-        let terminalization = crate::coordination::lock_stopped_worker_terminalization(
-            context,
-            &worker.session_id,
-            &worker.session_incarnation,
-            &main.id,
-            &main_incarnation,
-            &continuation_claim,
-        )?;
+        let terminalization =
+            agent_session::internal::coordination::lock_stopped_worker_terminalization(
+                context,
+                &worker.session_id,
+                &worker.session_incarnation,
+                &main.id,
+                &main_incarnation,
+                &continuation_claim,
+            )?;
         let worker_claim_observed = terminalization.worker_claim_observed();
         let controller_claim = terminalization.controller_claim().clone();
 
@@ -12766,17 +12856,18 @@ fn run_worker_reconcile_stopped(
             None,
         ));
     }
-    let runtime_evidence = crate::coordination_runtime_evidence(context, &worker_record)?;
+    let runtime_evidence =
+        agent_session::internal::coordination_runtime_evidence(context, &worker_record)?;
     match runtime_evidence.status {
-        crate::CoordinationRuntimeStatus::Stopped => {}
-        crate::CoordinationRuntimeStatus::Running => {
+        agent_session::internal::CoordinationRuntimeStatus::Stopped => {}
+        agent_session::internal::CoordinationRuntimeStatus::Running => {
             return Err(CliError::data(
                 "worker-runtime-still-live",
                 "the assignment cannot seal authority while the exact worker runtime can still act",
                 Some(json!({ "assignment_id": args.assignment_id })),
             ));
         }
-        crate::CoordinationRuntimeStatus::Unknown => {
+        agent_session::internal::CoordinationRuntimeStatus::Unknown => {
             return Err(CliError::runtime(
                 "coordination-runtime-unverified",
                 "the assignment cannot seal authority without stopped exact-runtime evidence",
@@ -12798,7 +12889,7 @@ fn run_worker_reconcile_stopped(
     // check share this one coordination transaction. Only the named worker is
     // ever included. A successor must use a distinct claim id; an in-place
     // revision or expiry drift does not silently inherit stage-1 authority.
-    let expected_controller_claim = crate::coordination::ControllerClaimTuple {
+    let expected_controller_claim = agent_session::internal::coordination::ControllerClaimTuple {
         claim_id: progress.controller_claim_id.clone(),
         revision: progress.controller_claim_revision,
         expires_at_epoch: progress.controller_claim_expires_at_epoch,
@@ -12814,14 +12905,15 @@ fn run_worker_reconcile_stopped(
             None,
         ));
     };
-    let mut terminalization = crate::coordination::lock_stopped_worker_terminalization(
-        context,
-        &progress.worker.session_id,
-        &progress.worker.session_incarnation,
-        &main.id,
-        &main_incarnation,
-        &continuation_claim,
-    )?;
+    let mut terminalization =
+        agent_session::internal::coordination::lock_stopped_worker_terminalization(
+            context,
+            &progress.worker.session_id,
+            &progress.worker.session_incarnation,
+            &main.id,
+            &main_incarnation,
+            &continuation_claim,
+        )?;
 
     // Keep orchestration continuity locked across the destructive seal and
     // final receipt. A concurrent retire or other assignment mutation cannot
@@ -13111,11 +13203,15 @@ fn current_authoritative_idle_live_evidence(
     assignment: &AssignmentRecord,
     operation: &str,
 ) -> Result<(u64, String), CliError> {
-    let activity = crate::activity::activity_status_for_record(context, worker_record)?.turn_state;
-    let authoritative_idle = activity.phase == crate::activity::TurnPhase::Waiting
+    let activity =
+        agent_session::internal::activity::activity_status_for_record(context, worker_record)?
+            .turn_state;
+    let authoritative_idle = activity.phase
+        == agent_session::internal::activity::TurnPhase::Waiting
         && activity.current_turn.is_none()
         && activity.last_turn.is_some()
-        && activity.source.confidence == crate::activity::Confidence::Authoritative;
+        && activity.source.confidence
+            == agent_session::internal::activity::Confidence::Authoritative;
     if !authoritative_idle {
         return Err(CliError::data(
             "worker-turn-not-idle",
@@ -13133,12 +13229,13 @@ fn current_authoritative_idle_live_evidence(
             None,
         )
     })?;
-    let runtime_evidence = crate::coordination_runtime_evidence(context, worker_record)?;
+    let runtime_evidence =
+        agent_session::internal::coordination_runtime_evidence(context, worker_record)?;
     match runtime_evidence.status {
-        crate::CoordinationRuntimeStatus::Running => {
+        agent_session::internal::CoordinationRuntimeStatus::Running => {
             Ok((activity.revision, runtime_evidence.identity_digest))
         }
-        crate::CoordinationRuntimeStatus::Stopped => Err(CliError::data(
+        agent_session::internal::CoordinationRuntimeStatus::Stopped => Err(CliError::data(
             "worker-runtime-stopped",
             format!(
                 "{operation} requires the exact worker runtime to still be running; use worker reconcile-stopped for a durably stopped post-claim worker"
@@ -13148,7 +13245,7 @@ fn current_authoritative_idle_live_evidence(
                 "worker_incarnation": worker.session_incarnation
             })),
         )),
-        crate::CoordinationRuntimeStatus::Unknown => Err(CliError::runtime(
+        agent_session::internal::CoordinationRuntimeStatus::Unknown => Err(CliError::runtime(
             "coordination-runtime-unverified",
             format!("{operation} cannot prove the exact worker runtime is still running"),
             Some(json!({
@@ -13160,7 +13257,7 @@ fn current_authoritative_idle_live_evidence(
 }
 
 fn provider_stop_canary_stalled_turn_admissible(
-    activity: &crate::activity::TurnState,
+    activity: &agent_session::internal::activity::TurnState,
     packet_scopes_empty: bool,
     worktree_progress: &Value,
     now_seconds: i64,
@@ -13178,12 +13275,13 @@ fn provider_stop_canary_stalled_turn_admissible(
         return false;
     };
     packet_scopes_empty
-        && activity.phase == crate::activity::TurnPhase::Working
-        && activity.source.kind == crate::activity::SourceKind::ProviderHook
+        && activity.phase == agent_session::internal::activity::TurnPhase::Working
+        && activity.source.kind == agent_session::internal::activity::SourceKind::ProviderHook
         && activity.source.provider.as_deref() == Some("codex")
         && matches!(
             activity.source.confidence,
-            crate::activity::Confidence::Authoritative | crate::activity::Confidence::Observed
+            agent_session::internal::activity::Confidence::Authoritative
+                | agent_session::internal::activity::Confidence::Observed
         )
         && current_turn.attention.is_none()
         && now_seconds.saturating_sub(last_progress.as_second()) >= WORKER_PROVIDER_STALE_SECS
@@ -13198,11 +13296,15 @@ fn current_provider_stop_canary_live_evidence(
     assignment: &AssignmentRecord,
     packet: &AssignmentInput,
 ) -> Result<(u64, String), CliError> {
-    let activity = crate::activity::activity_status_for_record(context, worker_record)?.turn_state;
-    let authoritative_idle = activity.phase == crate::activity::TurnPhase::Waiting
+    let activity =
+        agent_session::internal::activity::activity_status_for_record(context, worker_record)?
+            .turn_state;
+    let authoritative_idle = activity.phase
+        == agent_session::internal::activity::TurnPhase::Waiting
         && activity.current_turn.is_none()
         && activity.last_turn.is_some()
-        && activity.source.confidence == crate::activity::Confidence::Authoritative;
+        && activity.source.confidence
+            == agent_session::internal::activity::Confidence::Authoritative;
     let worktree_progress = if authoritative_idle {
         None
     } else {
@@ -13233,12 +13335,13 @@ fn current_provider_stop_canary_live_evidence(
             None,
         )
     })?;
-    let runtime_evidence = crate::coordination_runtime_evidence(context, worker_record)?;
+    let runtime_evidence =
+        agent_session::internal::coordination_runtime_evidence(context, worker_record)?;
     match runtime_evidence.status {
-        crate::CoordinationRuntimeStatus::Running => {
+        agent_session::internal::CoordinationRuntimeStatus::Running => {
             Ok((activity.revision, runtime_evidence.identity_digest))
         }
-        crate::CoordinationRuntimeStatus::Stopped => Err(CliError::data(
+        agent_session::internal::CoordinationRuntimeStatus::Stopped => Err(CliError::data(
             "worker-runtime-stopped",
             "worker stop-provider-canary requires the exact worker runtime to still be running; use worker reconcile-stopped for a durably stopped post-claim worker",
             Some(json!({
@@ -13246,7 +13349,7 @@ fn current_provider_stop_canary_live_evidence(
                 "worker_incarnation": worker.session_incarnation
             })),
         )),
-        crate::CoordinationRuntimeStatus::Unknown => Err(CliError::runtime(
+        agent_session::internal::CoordinationRuntimeStatus::Unknown => Err(CliError::runtime(
             "coordination-runtime-unverified",
             "worker stop-provider-canary cannot prove the exact worker runtime is still running",
             Some(json!({
@@ -13336,10 +13439,10 @@ fn run_worker_revoke_claim(
     validate_idempotency_key(&args.idempotency_key)?;
     orchestration::validate_summary("claim revocation reason", &args.reason)?;
     let (main, main_incarnation, controller_claim) =
-        crate::coordination::authenticate_any_from_file_with_active_claim_observational(
+        agent_session::internal::coordination::authenticate_any_from_file_with_active_claim_observational(
             context, None,
         )?;
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         "worker-revoke-claim",
         &json!({
             "assignment_id": args.assignment_id,
@@ -13546,8 +13649,10 @@ fn run_worker_revoke_claim(
             None,
         ));
     }
-    let _activity_lock =
-        crate::activity::acquire_coordination_activity_lock(context, &worker_record.id)?;
+    let _activity_lock = agent_session::internal::activity::acquire_coordination_activity_lock(
+        context,
+        &worker_record.id,
+    )?;
     let quarantine_matches = if is_resumed {
         orchestration::session_authority_quarantine_matches(
             context,
@@ -13610,7 +13715,7 @@ fn run_worker_revoke_claim(
     // coordination registry a second time. Only replay needs to distinguish a
     // reservation whose target authority was already sealed before a crash.
     let already_sealed = if is_resumed && quarantine_matches {
-        let quiescence = crate::coordination::lock_session_quiescence(
+        let quiescence = agent_session::internal::coordination::lock_session_quiescence(
             context,
             &progress.worker.session_id,
             &progress.worker.session_incarnation,
@@ -13624,7 +13729,7 @@ fn run_worker_revoke_claim(
     };
     if !already_sealed {
         let mut revocation = if is_resumed && !quarantine_matches {
-            crate::coordination::lock_worker_claim_revocation_replay(
+            agent_session::internal::coordination::lock_worker_claim_revocation_replay(
                 context,
                 &worker_record,
                 &progress.worker.session_incarnation,
@@ -13634,7 +13739,7 @@ fn run_worker_revoke_claim(
                 &controller_claim,
             )?
         } else {
-            crate::coordination::lock_worker_claim_revocation(
+            agent_session::internal::coordination::lock_worker_claim_revocation(
                 context,
                 &worker_record,
                 &progress.worker.session_incarnation,
@@ -13964,10 +14069,10 @@ fn run_worker_provider_stop_canary(
         "worker-stop-provider-canary"
     };
     let (main, main_incarnation, controller_claim) =
-        crate::coordination::authenticate_any_from_file_with_active_claim_observational(
+        agent_session::internal::coordination::authenticate_any_from_file_with_active_claim_observational(
             context, None,
         )?;
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         operation,
         &json!({
             "assignment_id": args.assignment_id,
@@ -14082,8 +14187,10 @@ fn run_worker_provider_stop_canary(
             None,
         ));
     }
-    let _activity_lock =
-        crate::activity::acquire_coordination_activity_lock(context, &worker_record.id)?;
+    let _activity_lock = agent_session::internal::activity::acquire_coordination_activity_lock(
+        context,
+        &worker_record.id,
+    )?;
     let assignment_reservation =
         orchestration::provider_stop_canary_reservation(context, &assignment)?;
     let release_replay_stopped = release
@@ -14093,8 +14200,8 @@ fn run_worker_provider_stop_canary(
                 && reservation.release_idempotency_key.as_deref()
                     == Some(args.idempotency_key.as_str())
         })
-        && crate::coordination_runtime_evidence(context, &worker_record)?.status
-            == crate::CoordinationRuntimeStatus::Stopped;
+        && agent_session::internal::coordination_runtime_evidence(context, &worker_record)?.status
+            == agent_session::internal::CoordinationRuntimeStatus::Stopped;
     let (activity_revision, runtime_identity_digest) = if release {
         let reservation = assignment_reservation.as_ref().ok_or_else(|| {
             CliError::data(
@@ -14103,8 +14210,11 @@ fn run_worker_provider_stop_canary(
                 None,
             )
         })?;
-        let evidence = crate::coordination_runtime_evidence(context, &worker_record)?;
-        if !release_replay_stopped && evidence.status != crate::CoordinationRuntimeStatus::Running {
+        let evidence =
+            agent_session::internal::coordination_runtime_evidence(context, &worker_record)?;
+        if !release_replay_stopped
+            && evidence.status != agent_session::internal::CoordinationRuntimeStatus::Running
+        {
             return Err(CliError::data(
                 "provider-stop-canary-wrapper-not-live",
                 "provider stop canary release requires the exact wrapper runtime to remain live",
@@ -14129,7 +14239,7 @@ fn run_worker_provider_stop_canary(
     }
     let stop_replay_child_stopped = !release
         && assignment_reservation.as_ref().is_some_and(|reservation| {
-            crate::provider_stop_canary_stopped_child_proven(
+            agent_session::internal::provider_stop_canary_stopped_child_proven(
                 context,
                 &worker_record,
                 &reservation.request_digest,
@@ -14142,21 +14252,23 @@ fn run_worker_provider_stop_canary(
     let mut claimed_guard = if release || stop_replay_child_stopped {
         None
     } else {
-        Some(crate::coordination::lock_claimed_worker_runtime_stop(
-            context,
-            &worker_record,
-            &worker.session_incarnation,
-            &expected_work_context,
-            &main.id,
-            &main_incarnation,
-            &controller_claim,
-        )?)
+        Some(
+            agent_session::internal::coordination::lock_claimed_worker_runtime_stop(
+                context,
+                &worker_record,
+                &worker.session_incarnation,
+                &expected_work_context,
+                &main.id,
+                &main_incarnation,
+                &controller_claim,
+            )?,
+        )
     };
     let admitted_worker_claim = claimed_guard
         .as_ref()
         .map(|guard| guard.worker_claim().clone());
     if let Some(worker_claim) = admitted_worker_claim.as_ref() {
-        let minimum_expiry = crate::coordination::now_epoch()
+        let minimum_expiry = agent_session::internal::coordination::now_epoch()
             .saturating_add(claimed_runtime_stop_termination_margin_secs());
         if worker_claim.expires_at_epoch <= minimum_expiry {
             return Err(CliError::data(
@@ -14292,7 +14404,10 @@ fn run_worker_provider_stop_canary(
             )
         })?;
         let (child_pid, child_start_ticks) =
-            crate::provider_stop_canary_ready_child_identity(context, &worker_record)?;
+            agent_session::internal::provider_stop_canary_ready_child_identity(
+                context,
+                &worker_record,
+            )?;
         let reservation = ProviderStopCanaryReservationRecord {
             schema_version: PROVIDER_STOP_CANARY_RESERVATION_SCHEMA.to_string(),
             state: "stop_requested".to_string(),
@@ -14363,20 +14478,21 @@ fn run_worker_provider_stop_canary(
     drop(claimed_guard);
 
     if !release && !stop_replay_child_stopped {
-        let worker_claim = crate::coordination::ControllerClaimTuple {
+        let worker_claim = agent_session::internal::coordination::ControllerClaimTuple {
             claim_id: reservation.worker_claim_id.clone(),
             revision: reservation.worker_claim_revision,
             expires_at_epoch: reservation.worker_claim_expires_at_epoch,
         };
-        let admitted_controller_claim = crate::coordination::ControllerClaimTuple {
-            claim_id: reservation.controller_claim_id.clone(),
-            revision: reservation.controller_claim_revision,
-            expires_at_epoch: reservation.controller_claim_expires_at_epoch,
-        };
-        let minimum_expiry = crate::coordination::now_epoch()
+        let admitted_controller_claim =
+            agent_session::internal::coordination::ControllerClaimTuple {
+                claim_id: reservation.controller_claim_id.clone(),
+                revision: reservation.controller_claim_revision,
+                expires_at_epoch: reservation.controller_claim_expires_at_epoch,
+            };
+        let minimum_expiry = agent_session::internal::coordination::now_epoch()
             .saturating_add(claimed_runtime_stop_termination_margin_secs());
         let exact_claims_active =
-            crate::coordination::verify_claimed_worker_runtime_stop_claim_fence(
+            agent_session::internal::coordination::verify_claimed_worker_runtime_stop_claim_fence(
                 context,
                 &assignment.assignment_id,
                 args.if_revision,
@@ -14401,11 +14517,11 @@ fn run_worker_provider_stop_canary(
         }
     }
 
-    let state = crate::provider_stop_canary_state(context, &worker_record)?;
+    let state = agent_session::internal::provider_stop_canary_state(context, &worker_record)?;
     let transition_needs_authorization = if release {
         match state {
-            crate::ProviderStopCanaryState::StoppedWrapperLive => {
-                crate::release_provider_stop_canary(
+            agent_session::internal::ProviderStopCanaryState::StoppedWrapperLive => {
+                agent_session::internal::release_provider_stop_canary(
                     context,
                     &worker_record,
                     &request_digest,
@@ -14413,8 +14529,8 @@ fn run_worker_provider_stop_canary(
                 )?;
                 true
             }
-            crate::ProviderStopCanaryState::Released
-                if crate::provider_stop_canary_release_identity_matches(
+            agent_session::internal::ProviderStopCanaryState::Released
+                if agent_session::internal::provider_stop_canary_release_identity_matches(
                     context,
                     &worker_record,
                     &request_digest,
@@ -14433,8 +14549,8 @@ fn run_worker_provider_stop_canary(
         }
     } else {
         match state {
-            crate::ProviderStopCanaryState::Ready => {
-                crate::request_provider_stop_canary(
+            agent_session::internal::ProviderStopCanaryState::Ready => {
+                agent_session::internal::request_provider_stop_canary(
                     context,
                     &worker_record,
                     &request_digest,
@@ -14442,8 +14558,8 @@ fn run_worker_provider_stop_canary(
                 )?;
                 true
             }
-            crate::ProviderStopCanaryState::StopRequested
-                if crate::provider_stop_canary_request_identity_matches(
+            agent_session::internal::ProviderStopCanaryState::StopRequested
+                if agent_session::internal::provider_stop_canary_request_identity_matches(
                     context,
                     &worker_record,
                     &request_digest,
@@ -14452,8 +14568,8 @@ fn run_worker_provider_stop_canary(
             {
                 true
             }
-            crate::ProviderStopCanaryState::StoppedWrapperLive
-                if crate::provider_stop_canary_request_identity_matches(
+            agent_session::internal::ProviderStopCanaryState::StoppedWrapperLive
+                if agent_session::internal::provider_stop_canary_request_identity_matches(
                     context,
                     &worker_record,
                     &request_digest,
@@ -14472,7 +14588,7 @@ fn run_worker_provider_stop_canary(
         }
     };
     if transition_needs_authorization {
-        crate::authorize_provider_stop_canary_transition(
+        agent_session::internal::authorize_provider_stop_canary_transition(
             context,
             &worker_record,
             &main.id,
@@ -14487,13 +14603,14 @@ fn run_worker_provider_stop_canary(
     let deadline = Instant::now() + provider_stop_canary_transition_timeout();
     loop {
         if release {
-            let runtime = crate::coordination_runtime_evidence(context, &worker_record)?;
-            if runtime.status == crate::CoordinationRuntimeStatus::Stopped
+            let runtime =
+                agent_session::internal::coordination_runtime_evidence(context, &worker_record)?;
+            if runtime.status == agent_session::internal::CoordinationRuntimeStatus::Stopped
                 && session_status(context, &resolve_tmux_bin(None), &worker_record) == "stopped"
             {
                 break;
             }
-        } else if crate::provider_stop_canary_stopped_child_proven(
+        } else if agent_session::internal::provider_stop_canary_stopped_child_proven(
             context,
             &worker_record,
             &reservation.request_digest,
@@ -14503,7 +14620,7 @@ fn run_worker_provider_stop_canary(
         )? && session_status(context, &resolve_tmux_bin(None), &worker_record)
             == "running"
         {
-            crate::record_provider_stop_canary_proof(
+            agent_session::internal::record_provider_stop_canary_proof(
                 context,
                 &mut worker_record,
                 &reservation.request_digest,
@@ -14523,17 +14640,18 @@ fn run_worker_provider_stop_canary(
         thread::sleep(Duration::from_millis(25));
     }
     drop(mutation_fence_owner);
-    let admitted_worker_claim = crate::coordination::ControllerClaimTuple {
+    let admitted_worker_claim = agent_session::internal::coordination::ControllerClaimTuple {
         claim_id: reservation.worker_claim_id.clone(),
         revision: reservation.worker_claim_revision,
         expires_at_epoch: reservation.worker_claim_expires_at_epoch,
     };
-    let worker_claim_preserved = crate::coordination::exact_claim_active_observational(
-        context,
-        &worker.session_id,
-        &worker.session_incarnation,
-        &admitted_worker_claim,
-    )?;
+    let worker_claim_preserved =
+        agent_session::internal::coordination::exact_claim_active_observational(
+            context,
+            &worker.session_id,
+            &worker.session_incarnation,
+            &admitted_worker_claim,
+        )?;
 
     let mut locked = orchestration::lock_registry(context)?;
     let current_run_id = require_current_main(&locked.registry, &main, &main_incarnation)?
@@ -14911,7 +15029,7 @@ fn replay_completed_claimed_runtime_stop(
             None,
         ));
     }
-    crate::coordination::clear_claimed_worker_runtime_stop_claim_fence(
+    agent_session::internal::coordination::clear_claimed_worker_runtime_stop_claim_fence(
         context,
         &assignment.assignment_id,
         args.if_revision,
@@ -14938,10 +15056,10 @@ fn run_worker_stop_claimed_runtime(
     }
     ensure_worker_runtime_stop_not_plugin_owned(context, &args.assignment_id)?;
     let (main, main_incarnation, controller_claim) =
-        crate::coordination::authenticate_any_from_file_with_active_claim_observational(
+        agent_session::internal::coordination::authenticate_any_from_file_with_active_claim_observational(
             context, None,
         )?;
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         "worker-stop-claimed-runtime",
         &json!({
             "assignment_id": args.assignment_id,
@@ -15014,7 +15132,7 @@ fn run_worker_stop_claimed_runtime(
     }
     drop(registry);
 
-    crate::coordination::sweep_inactive_claim_mutation_fence_orphans(context)?;
+    agent_session::internal::coordination::sweep_inactive_claim_mutation_fence_orphans(context)?;
     pause_stop_claimed_runtime_for_test("before_lifecycle_lock")?;
     let _worker_lifecycle = acquire_session_record_lock(context, &worker.session_id)?;
     let mut worker_record = load_session_record(context, &worker.session_id)?;
@@ -15080,16 +15198,19 @@ fn run_worker_stop_claimed_runtime(
             }
         }
     }
-    let _activity_lock =
-        crate::activity::acquire_coordination_activity_lock(context, &worker_record.id)?;
-    let runtime_evidence = crate::coordination_runtime_evidence(context, &worker_record)?;
+    let _activity_lock = agent_session::internal::activity::acquire_coordination_activity_lock(
+        context,
+        &worker_record.id,
+    )?;
+    let runtime_evidence =
+        agent_session::internal::coordination_runtime_evidence(context, &worker_record)?;
     let tmux_status = session_status(context, &resolve_tmux_bin(None), &worker_record);
     // An interrupted stop can leave a stale tmux wrapper visible after the
     // exact recorded process identity is durably stopped. The receipt plus the
     // session-owned fence makes that state attributable to this operation, so
     // replay must finalize without issuing a second runtime stop.
     let runtime_already_stopped = replay_progress.is_some()
-        && runtime_evidence.status == crate::CoordinationRuntimeStatus::Stopped;
+        && runtime_evidence.status == agent_session::internal::CoordinationRuntimeStatus::Stopped;
 
     let progress = if let Some(progress) = replay_progress {
         if !orchestration::session_claimed_runtime_stop_fence_matches(
@@ -15107,7 +15228,8 @@ fn run_worker_stop_claimed_runtime(
             ));
         }
         if !runtime_already_stopped
-            && (runtime_evidence.status != crate::CoordinationRuntimeStatus::Running
+            && (runtime_evidence.status
+                != agent_session::internal::CoordinationRuntimeStatus::Running
                 || tmux_status != "running")
         {
             return Err(CliError::runtime(
@@ -15118,7 +15240,7 @@ fn run_worker_stop_claimed_runtime(
         }
         progress
     } else {
-        if runtime_evidence.status != crate::CoordinationRuntimeStatus::Running
+        if runtime_evidence.status != agent_session::internal::CoordinationRuntimeStatus::Running
             || tmux_status != "running"
         {
             return Err(CliError::data(
@@ -15134,17 +15256,18 @@ fn run_worker_stop_claimed_runtime(
                 &assignment,
                 "worker stop-claimed-runtime",
             )?;
-        let claimed_guard = crate::coordination::lock_claimed_worker_runtime_stop(
-            context,
-            &worker_record,
-            &worker.session_incarnation,
-            &expected_work_context,
-            &main.id,
-            &main_incarnation,
-            &controller_claim,
-        )?;
+        let claimed_guard =
+            agent_session::internal::coordination::lock_claimed_worker_runtime_stop(
+                context,
+                &worker_record,
+                &worker.session_incarnation,
+                &expected_work_context,
+                &main.id,
+                &main_incarnation,
+                &controller_claim,
+            )?;
         let worker_claim = claimed_guard.worker_claim().clone();
-        let minimum_expiry = crate::coordination::now_epoch()
+        let minimum_expiry = agent_session::internal::coordination::now_epoch()
             .saturating_add(claimed_runtime_stop_termination_margin_secs());
         if worker_claim.expires_at_epoch <= minimum_expiry {
             return Err(CliError::data(
@@ -15238,18 +15361,18 @@ fn run_worker_stop_claimed_runtime(
         progress
     };
 
-    let worker_claim = crate::coordination::ControllerClaimTuple {
+    let worker_claim = agent_session::internal::coordination::ControllerClaimTuple {
         claim_id: progress.worker_claim_id.clone(),
         revision: progress.worker_claim_revision,
         expires_at_epoch: progress.worker_claim_expires_at_epoch,
     };
-    let controller_claim = crate::coordination::ControllerClaimTuple {
+    let controller_claim = agent_session::internal::coordination::ControllerClaimTuple {
         claim_id: progress.controller_claim_id.clone(),
         revision: progress.controller_claim_revision,
         expires_at_epoch: progress.controller_claim_expires_at_epoch,
     };
     if !runtime_already_stopped
-        && !crate::coordination::exact_claim_active_observational(
+        && !agent_session::internal::coordination::exact_claim_active_observational(
             context,
             &main.id,
             &main_incarnation,
@@ -15262,7 +15385,7 @@ fn run_worker_stop_claimed_runtime(
             None,
         ));
     }
-    let minimum_expiry = crate::coordination::now_epoch()
+    let minimum_expiry = agent_session::internal::coordination::now_epoch()
         .saturating_add(claimed_runtime_stop_termination_margin_secs());
     if !runtime_already_stopped && worker_claim.expires_at_epoch <= minimum_expiry {
         return Err(CliError::data(
@@ -15279,7 +15402,7 @@ fn run_worker_stop_claimed_runtime(
         ));
     }
     let mutation_fence_owner = if !runtime_already_stopped {
-        let mut guard = crate::coordination::lock_claimed_worker_runtime_stop(
+        let mut guard = agent_session::internal::coordination::lock_claimed_worker_runtime_stop(
             context,
             &worker_record,
             &worker.session_incarnation,
@@ -15308,10 +15431,10 @@ fn run_worker_stop_claimed_runtime(
     };
     if !runtime_already_stopped {
         pause_stop_claimed_runtime_for_test("before_runtime_stop")?;
-        let pre_stop_minimum_expiry = crate::coordination::now_epoch()
+        let pre_stop_minimum_expiry = agent_session::internal::coordination::now_epoch()
             .saturating_add(claimed_runtime_stop_termination_margin_secs());
         let exact_claims_active_before_stop =
-            crate::coordination::verify_claimed_worker_runtime_stop_claim_fence(
+            agent_session::internal::coordination::verify_claimed_worker_runtime_stop_claim_fence(
                 context,
                 &assignment.assignment_id,
                 args.if_revision,
@@ -15334,10 +15457,15 @@ fn run_worker_stop_claimed_runtime(
                 None,
             ));
         }
-        crate::stop_session_runtime_locked(context, &mut worker_record, &resolve_tmux_bin(None))?;
+        agent_session::internal::stop_session_runtime_locked(
+            context,
+            &mut worker_record,
+            &resolve_tmux_bin(None),
+        )?;
     }
-    let stopped_evidence = crate::coordination_runtime_evidence(context, &worker_record)?;
-    if stopped_evidence.status != crate::CoordinationRuntimeStatus::Stopped {
+    let stopped_evidence =
+        agent_session::internal::coordination_runtime_evidence(context, &worker_record)?;
+    if stopped_evidence.status != agent_session::internal::CoordinationRuntimeStatus::Stopped {
         return Err(CliError::runtime(
             "coordination-runtime-unverified",
             "worker claimed runtime stop did not establish exact stopped-runtime evidence",
@@ -15345,7 +15473,7 @@ fn run_worker_stop_claimed_runtime(
         ));
     }
     let exact_claims_active_after =
-        crate::coordination::verify_claimed_worker_runtime_stop_claim_fence(
+        agent_session::internal::coordination::verify_claimed_worker_runtime_stop_claim_fence(
             context,
             &assignment.assignment_id,
             args.if_revision,
@@ -15456,7 +15584,7 @@ fn run_worker_stop_claimed_runtime(
     locked.save()?;
     drop(locked);
     pause_stop_claimed_runtime_for_test("after_final_receipt")?;
-    crate::coordination::clear_claimed_worker_runtime_stop_claim_fence(
+    agent_session::internal::coordination::clear_claimed_worker_runtime_stop_claim_fence(
         context,
         &assignment.assignment_id,
         args.if_revision,
@@ -15484,8 +15612,8 @@ fn claimed_runtime_stop_termination_margin_secs() -> i64 {
         return value;
     }
     i64::try_from(
-        crate::PANE_INPUT_COMMAND_TIMEOUT
-            .saturating_add(crate::DELETE_TERMINATION_VERIFY_TIMEOUT)
+        agent_session::internal::PANE_INPUT_COMMAND_TIMEOUT
+            .saturating_add(agent_session::internal::DELETE_TERMINATION_VERIFY_TIMEOUT)
             .saturating_add(Duration::from_secs(2))
             .as_secs(),
     )
@@ -15655,10 +15783,12 @@ fn ensure_external_lane_deletable(
     let Some((record, incarnation)) = external_lane_worker_record(context, assignment_id)? else {
         return Ok(());
     };
-    match crate::dsh_external::external_lane_disposition_with_broker(context, &record) {
-        crate::dsh_external::ExternalLaneDisposition::NeverAttached
-        | crate::dsh_external::ExternalLaneDisposition::ProvenStopped
-            if crate::dsh_external::external_lane_terminal_is_proven(
+    match agent_session::internal::dsh_external::external_lane_disposition_with_broker(
+        context, &record,
+    ) {
+        agent_session::internal::dsh_external::ExternalLaneDisposition::NeverAttached
+        | agent_session::internal::dsh_external::ExternalLaneDisposition::ProvenStopped
+            if agent_session::internal::dsh_external::external_lane_terminal_is_proven(
                 context,
                 &record,
                 &incarnation,
@@ -15697,7 +15827,7 @@ fn external_lane_worker_record(
         Err(error) if error.code() == "session-not-found" => return Ok(None),
         Err(error) => return Err(error),
     };
-    if !crate::dsh_external::is_external_record(&record) {
+    if !agent_session::internal::dsh_external::is_external_record(&record) {
         return Ok(None);
     }
     let incarnation = worker.session_incarnation.clone();
@@ -15731,7 +15861,7 @@ fn ensure_worker_session_runtime_stop_not_plugin_owned(
         // A store read failure must not read as "not plugin owned".
         Err(error) => return Err(error),
     };
-    if crate::dsh_external::is_external_record(&record) {
+    if agent_session::internal::dsh_external::is_external_record(&record) {
         return Err(CliError::usage(
             "dsh-runtime-plugin-owned",
             "dsh worker runtimes are owned by the external dsh-runtime-kit plugin; interrupt the lane there, then reconcile once the liveness sidecar proves the lane stopped",
@@ -15825,10 +15955,10 @@ fn run_worker_stop_runtime(
     }
     ensure_worker_runtime_stop_not_plugin_owned(context, &args.assignment_id)?;
     let (main, main_incarnation, controller_claim) =
-        crate::coordination::authenticate_any_from_file_with_active_claim_observational(
+        agent_session::internal::coordination::authenticate_any_from_file_with_active_claim_observational(
             context, None,
         )?;
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         "worker-stop-runtime",
         &json!({
             "assignment_id": args.assignment_id,
@@ -15921,15 +16051,17 @@ fn run_worker_stop_runtime(
             None,
         ));
     }
-    let runtime_evidence = crate::coordination_runtime_evidence(context, &worker_record)?;
+    let runtime_evidence =
+        agent_session::internal::coordination_runtime_evidence(context, &worker_record)?;
     let tmux_status = session_status(context, &resolve_tmux_bin(None), &worker_record);
     let runtime_ready = if resumed {
         matches!(
             runtime_evidence.status,
-            crate::CoordinationRuntimeStatus::Running | crate::CoordinationRuntimeStatus::Stopped
+            agent_session::internal::CoordinationRuntimeStatus::Running
+                | agent_session::internal::CoordinationRuntimeStatus::Stopped
         ) && matches!(tmux_status.as_str(), "running" | "stopped")
     } else {
-        runtime_evidence.status == crate::CoordinationRuntimeStatus::Running
+        runtime_evidence.status == agent_session::internal::CoordinationRuntimeStatus::Running
             && tmux_status == "running"
     };
     if !runtime_ready {
@@ -15940,7 +16072,7 @@ fn run_worker_stop_runtime(
         ));
     }
 
-    let mut stop_guard = crate::coordination::lock_worker_runtime_stop(
+    let mut stop_guard = agent_session::internal::coordination::lock_worker_runtime_stop(
         context,
         &worker.session_id,
         &worker.session_incarnation,
@@ -16087,9 +16219,14 @@ fn run_worker_stop_runtime(
     drop(locked);
     pause_worker_runtime_stop_for_test("after_authority_seal")?;
 
-    crate::stop_session_runtime_locked(context, &mut worker_record, &resolve_tmux_bin(None))?;
-    let stopped_evidence = crate::coordination_runtime_evidence(context, &worker_record)?;
-    if stopped_evidence.status != crate::CoordinationRuntimeStatus::Stopped {
+    agent_session::internal::stop_session_runtime_locked(
+        context,
+        &mut worker_record,
+        &resolve_tmux_bin(None),
+    )?;
+    let stopped_evidence =
+        agent_session::internal::coordination_runtime_evidence(context, &worker_record)?;
+    if stopped_evidence.status != agent_session::internal::CoordinationRuntimeStatus::Stopped {
         return Err(CliError::runtime(
             "coordination-runtime-unverified",
             "worker runtime stop did not establish exact stopped-runtime evidence",
@@ -16263,7 +16400,7 @@ fn run_worker_submit_recovery(
     let timeout = Duration::from_secs(parse_bounded_duration(&args.timeout, 30)?);
     let (main, main_incarnation) = authenticated_self(context)?;
     ensure_active_claim(context, &main)?;
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         "worker-submit-recovery",
         &json!({
             "assignment_id": args.assignment_id,
@@ -16497,7 +16634,7 @@ fn run_worker_reconcile_recovery(
     validate_idempotency_key(&args.idempotency_key)?;
     let (main, main_incarnation) = authenticated_self(context)?;
     ensure_active_claim(context, &main)?;
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         "worker-reconcile-recovery",
         &json!({
             "assignment_id": args.assignment_id,
@@ -16588,17 +16725,18 @@ fn run_worker_reconcile_recovery(
             None,
         ));
     }
-    let runtime_evidence = crate::coordination_runtime_evidence(context, &worker_record)?;
+    let runtime_evidence =
+        agent_session::internal::coordination_runtime_evidence(context, &worker_record)?;
     match runtime_evidence.status {
-        crate::CoordinationRuntimeStatus::Stopped => {}
-        crate::CoordinationRuntimeStatus::Running => {
+        agent_session::internal::CoordinationRuntimeStatus::Stopped => {}
+        agent_session::internal::CoordinationRuntimeStatus::Running => {
             return Err(CliError::data(
                 "submit-recovery-runtime-still-live",
                 "recovery cannot be terminalized while the exact worker process runtime can still act",
                 Some(json!({ "assignment_id": args.assignment_id })),
             ));
         }
-        crate::CoordinationRuntimeStatus::Unknown => {
+        agent_session::internal::CoordinationRuntimeStatus::Unknown => {
             return Err(CliError::runtime(
                 "coordination-runtime-unverified",
                 "recovery cannot be terminalized without stopped exact-runtime evidence",
@@ -16613,7 +16751,7 @@ fn run_worker_reconcile_recovery(
             Some(json!({ "assignment_id": args.assignment_id })),
         ));
     }
-    let quiescence = crate::coordination::lock_session_quiescence(
+    let quiescence = agent_session::internal::coordination::lock_session_quiescence(
         context,
         &worker.session_id,
         &worker.session_incarnation,
@@ -16786,7 +16924,7 @@ fn run_worker_reassign(context: &CliContext, args: WorkerReassignArgs) -> Result
     validate_idempotency_key(&args.idempotency_key)?;
     orchestration::validate_summary("reassignment reason", &args.reason)?;
     parse_await_ready(&args.await_ready)?;
-    let replacement: AssignmentInput = crate::coordination::read_bounded_json(
+    let replacement: AssignmentInput = agent_session::internal::coordination::read_bounded_json(
         &args.assignment_file,
         256 * 1024,
         "invalid-assignment-packet",
@@ -16800,14 +16938,16 @@ fn run_worker_reassign(context: &CliContext, args: WorkerReassignArgs) -> Result
             "worker reassign requires a distinct replacement assignment_id",
         ));
     }
-    let replacement_start_digest =
-        crate::coordination::request_digest("main-agent-worker-start", &replacement);
+    let replacement_start_digest = agent_session::internal::coordination::request_digest(
+        "main-agent-worker-start",
+        &replacement,
+    );
     let replacement_session = replacement.launch.session_id.clone().unwrap_or_else(|| {
         retry_stable_worker_session_id(&replacement_id, &replacement_start_digest)
     });
     let (main, main_incarnation) = authenticated_self(context)?;
     ensure_active_claim(context, &main)?;
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         "worker-reassign",
         &json!({
             "assignment_id": args.assignment_id,
@@ -17187,7 +17327,7 @@ fn run_worker_message(context: &CliContext, args: WorkerMessageArgs) -> Result<V
     let expected_worker = worker.clone();
     let expected_run_id = run.run_id.clone();
     pause_message_after_routing_read_for_test(&args.assignment_id, &expected_worker)?;
-    crate::coordination::mailbox::send_with_commit_authorization(
+    agent_session::internal::coordination::mailbox::send_with_commit_authorization(
         context,
         cli::MessageSendArgs {
             to_machine: None,
@@ -17235,7 +17375,7 @@ fn run_worker_guidance_reconcile(
     args: AssignmentMutationArgs,
 ) -> Result<Value, CliError> {
     validate_idempotency_key(&args.idempotency_key)?;
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         "worker-guidance-reconcile",
         &json!({
             "assignment_id": args.assignment_id,
@@ -17285,7 +17425,7 @@ fn run_worker_guidance_reconcile(
     drop(registry);
 
     let worker_authority =
-        crate::lock_exact_session_authority(context, &current_worker.session_id)?
+        agent_session::internal::lock_exact_session_authority(context, &current_worker.session_id)?
             .ok_or_else(|| not_found("worker-session-not-found", "worker session was not found"))?;
     let worker_incarnation = worker_authority
         .record
@@ -17305,7 +17445,7 @@ fn run_worker_guidance_reconcile(
         ));
     }
     let _carried =
-        crate::coordination::carry_forward_unread_controller_guidance_with_authorization(
+        agent_session::internal::coordination::carry_forward_unread_controller_guidance_with_authorization(
             context,
             &current_worker.session_id,
             &previous_worker.session_incarnation,
@@ -17389,7 +17529,7 @@ fn run_worker_guidance_quarantine(
     args: AssignmentMutationArgs,
 ) -> Result<Value, CliError> {
     validate_idempotency_key(&args.idempotency_key)?;
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         "worker-guidance-quarantine",
         &json!({
             "assignment_id": args.assignment_id,
@@ -17435,7 +17575,7 @@ fn run_worker_guidance_quarantine(
     drop(registry);
 
     let worker_authority =
-        crate::lock_exact_session_authority(context, &current_worker.session_id)?
+        agent_session::internal::lock_exact_session_authority(context, &current_worker.session_id)?
             .ok_or_else(|| not_found("worker-session-not-found", "worker session was not found"))?;
     let worker_incarnation = worker_authority
         .record
@@ -17455,7 +17595,7 @@ fn run_worker_guidance_quarantine(
         ));
     }
     let quarantined =
-        crate::coordination::quarantine_orphaned_controller_guidance_with_authorization(
+        agent_session::internal::coordination::quarantine_orphaned_controller_guidance_with_authorization(
             context,
             &current_worker.session_id,
             &current_worker.session_incarnation,
@@ -17545,9 +17685,9 @@ fn run_worker_account_handoff(
             None,
         ));
     }
-    crate::codex_account::validate_account(&args.account)?;
+    agent_session::internal::codex_account::validate_account(&args.account)?;
     let timeout = parse_wait_timeout(&args.timeout)?;
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         "worker-account-handoff",
         &json!({
             "assignment_id": args.assignment_id,
@@ -17645,7 +17785,7 @@ fn run_worker_account_handoff(
             None,
         ));
     }
-    let quiescence = crate::coordination::lock_session_quiescence(
+    let quiescence = agent_session::internal::coordination::lock_session_quiescence(
         context,
         &worker.session_id,
         &worker.session_incarnation,
@@ -17679,22 +17819,26 @@ fn run_worker_account_handoff(
     // session mutation or the bounded apply wait, so the reciprocal path cannot
     // form coordination -> session-record.
     drop(quiescence);
-    let activity = crate::activity::activity_status_for_record(context, &worker_record)?.turn_state;
+    let activity =
+        agent_session::internal::activity::activity_status_for_record(context, &worker_record)?
+            .turn_state;
     let blocked_turn = activity
         .last_turn
         .as_ref()
         .filter(|turn| bounded_quota_outcome(&turn.outcome))
         .and_then(|turn| turn.provider_turn_id.clone())
         .map(|turn_id| (turn_id, activity.revision));
-    let initial_account = crate::codex_account::view_for_record(&worker_record);
-    let initial_next_identity = crate::codex_account::next_account_identity(&worker_record)?;
+    let initial_account = agent_session::internal::codex_account::view_for_record(&worker_record);
+    let initial_next_identity =
+        agent_session::internal::codex_account::next_account_identity(&worker_record)?;
     let reserved_account_intent_id = initial_next_identity
         .as_ref()
         .filter(|identity| identity.account == args.account)
         .and_then(|identity| identity.intent_id.clone())
         .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
-    let initial_auto_resume = crate::auto_resume::view_for_record(context, &worker_record);
-    if !crate::codex_app_server::managed_account_handoff_supported(&worker_record)
+    let initial_auto_resume =
+        agent_session::internal::auto_resume::view_for_record(context, &worker_record);
+    if !agent_session::internal::codex_app_server::managed_account_handoff_supported(&worker_record)
         || !initial_account.supported
         || !initial_auto_resume.supported
     {
@@ -17883,7 +18027,7 @@ fn run_worker_account_handoff(
                 ));
             }
             _ => {
-                crate::codex_account::queue_next_account_if_unchanged(
+                agent_session::internal::codex_account::queue_next_account_if_unchanged(
                     context,
                     &worker.session_id,
                     &worker.session_incarnation,
@@ -17937,8 +18081,9 @@ fn run_worker_account_handoff(
                 None,
             ));
         }
-        let view = crate::codex_account::view_for_record(&current);
-        let current_next_identity = crate::codex_account::next_account_identity(&current)?;
+        let view = agent_session::internal::codex_account::view_for_record(&current);
+        let current_next_identity =
+            agent_session::internal::codex_account::next_account_identity(&current)?;
         if view.state == "bound"
             && view.selected_account.as_deref() == Some(args.account.as_str())
             && view.applied_runtime_id.as_deref() == Some(worker.session_incarnation.as_str())
@@ -17992,7 +18137,7 @@ fn run_worker_account_handoff(
     pause_account_handoff_for_test("before_auto_resume_rearm")?;
     let auto_resume_rearmed = if let Some((blocked_turn_id, blocked_revision)) = blocked_turn {
         let now = jiff::Timestamp::now().to_string();
-        crate::auto_resume::rearm_usage_exhaustion_for_runtime(
+        agent_session::internal::auto_resume::rearm_usage_exhaustion_for_runtime(
             context,
             &worker.session_id,
             &worker.session_incarnation,
@@ -18015,7 +18160,7 @@ fn run_worker_account_handoff(
     } else {
         false
     };
-    let final_quiescence = crate::coordination::lock_session_quiescence(
+    let final_quiescence = agent_session::internal::coordination::lock_session_quiescence(
         context,
         &worker.session_id,
         &worker.session_incarnation,
@@ -18131,7 +18276,7 @@ fn run_worker_account_handoff_cancel(
     args: WorkerAccountHandoffCancelArgs,
 ) -> Result<Value, CliError> {
     validate_idempotency_key(&args.idempotency_key)?;
-    crate::codex_account::validate_account(&args.account)?;
+    agent_session::internal::codex_account::validate_account(&args.account)?;
     orchestration::validate_slug("account handoff reservation id", &args.reservation_id, 128)?;
     if let Some(intent_id) = args.intent_id.as_deref() {
         orchestration::validate_slug("account intent id", intent_id, 128)?;
@@ -18143,7 +18288,7 @@ fn run_worker_account_handoff_cancel(
             None,
         ));
     }
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         "worker-account-handoff-cancel",
         &json!({
             "assignment_id": args.assignment_id,
@@ -18224,7 +18369,7 @@ fn run_worker_account_handoff_cancel(
             None,
         ));
     }
-    let quiescence = crate::coordination::lock_session_quiescence(
+    let quiescence = agent_session::internal::coordination::lock_session_quiescence(
         context,
         &worker.session_id,
         &worker.session_incarnation,
@@ -18257,8 +18402,9 @@ fn run_worker_account_handoff_cancel(
     // session record. This matches group cleanup's global lock order.
     drop(quiescence);
 
-    let before = crate::codex_account::view_for_record(&worker_record);
-    let expected_next_identity = crate::codex_account::next_account_identity(&worker_record)?;
+    let before = agent_session::internal::codex_account::view_for_record(&worker_record);
+    let expected_next_identity =
+        agent_session::internal::codex_account::next_account_identity(&worker_record)?;
     if !before.supported {
         return Err(CliError::data(
             "account-handoff-capability-unavailable",
@@ -18349,14 +18495,17 @@ fn run_worker_account_handoff_cancel(
     }
     pause_account_handoff_for_test("before_cancel")?;
     let after = if reservation_owns_next {
-        crate::codex_account::cancel_next_account_if_matches(
+        agent_session::internal::codex_account::cancel_next_account_if_matches(
             context,
             &worker.session_id,
             &worker.session_incarnation,
             expected_next_identity.as_ref(),
         )?
     } else {
-        crate::codex_account::view_for_record(&load_session_record(context, &worker.session_id)?)
+        agent_session::internal::codex_account::view_for_record(&load_session_record(
+            context,
+            &worker.session_id,
+        )?)
     };
     if after.selected_account != before.selected_account
         || (reservation_owns_next && after.next.is_some())
@@ -18391,7 +18540,7 @@ fn run_worker_account_handoff_cancel(
             "worker_replaced": false
         }
     });
-    let final_quiescence = crate::coordination::lock_session_quiescence(
+    let final_quiescence = agent_session::internal::coordination::lock_session_quiescence(
         context,
         &worker.session_id,
         &worker.session_incarnation,
@@ -18561,7 +18710,7 @@ fn ensure_account_handoff_authority(
     worker: &SessionRef,
     reservation: &AccountHandoffReservationRecord,
 ) -> Result<(), CliError> {
-    let quiescence = crate::coordination::lock_session_quiescence(
+    let quiescence = agent_session::internal::coordination::lock_session_quiescence(
         context,
         &worker.session_id,
         &worker.session_incarnation,
@@ -18658,7 +18807,7 @@ fn drive_account_handoff_apply_for_test(
     #[cfg(debug_assertions)]
     match env::var("NILS_AGENT_SESSION_TEST_ACCOUNT_HANDOFF_APPLY_RESULT").as_deref() {
         Ok("success") | Ok("failed") => {
-            if let Some(next) = crate::codex_account::begin_next_apply(
+            if let Some(next) = agent_session::internal::codex_account::begin_next_apply(
                 context,
                 &worker.session_id,
                 &worker.session_incarnation,
@@ -18678,7 +18827,7 @@ fn drive_account_handoff_apply_for_test(
                 } else {
                     Err("test-managed-account-apply-failed")
                 };
-                crate::codex_account::finish_next_apply(
+                agent_session::internal::codex_account::finish_next_apply(
                     context,
                     &worker.session_id,
                     &worker.session_incarnation,
@@ -18690,7 +18839,7 @@ fn drive_account_handoff_apply_for_test(
             }
         }
         Ok("superseded") => {
-            crate::codex_account::queue_next_account(
+            agent_session::internal::codex_account::queue_next_account(
                 context,
                 &worker.session_id,
                 &worker.session_incarnation,
@@ -18775,7 +18924,7 @@ fn run_assignment_state(
     ensure_active_claim(context, &record)?;
     let mut locked = orchestration::lock_registry(context)?;
     let run = require_current_main(&locked.registry, &record, &incarnation)?.clone();
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         operation,
         &json!({ "assignment_id": args.assignment_id, "if_revision": args.if_revision }),
     );
@@ -18838,7 +18987,7 @@ fn run_worker_request_changes(
     ensure_active_claim(context, &record)?;
     let mut locked = orchestration::lock_registry(context)?;
     let run = require_current_main(&locked.registry, &record, &incarnation)?.clone();
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         "worker-request-changes",
         &json!({
             "assignment_id": args.assignment_id,
@@ -18922,7 +19071,7 @@ fn run_worker_request_changes(
 
 fn run_worker_reenter(context: &CliContext, args: WorkerReenterArgs) -> Result<Value, CliError> {
     validate_idempotency_key(&args.idempotency_key)?;
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         "worker-reenter",
         &json!({
             "assignment_id": args.assignment_id,
@@ -19102,7 +19251,7 @@ fn finalize_worker_reenter(
             idempotency_key,
         )?;
     }
-    let notification = match crate::coordination::retry_notification(
+    let notification = match agent_session::internal::coordination::retry_notification(
         context,
         &worker.session_id,
         &worker.session_incarnation,
@@ -19361,9 +19510,10 @@ fn verify_worker_reenter_runtime(
             )),
         ));
     }
-    let turn = crate::activity::activity_status(context, &worker.session_id)?.turn_state;
-    if turn.phase != crate::activity::TurnPhase::Waiting
-        || turn.source.confidence != crate::activity::Confidence::Authoritative
+    let turn =
+        agent_session::internal::activity::activity_status(context, &worker.session_id)?.turn_state;
+    if turn.phase != agent_session::internal::activity::TurnPhase::Waiting
+        || turn.source.confidence != agent_session::internal::activity::Confidence::Authoritative
         || turn.current_turn.is_some()
         || turn
             .last_turn
@@ -19397,7 +19547,7 @@ fn verify_worker_reenter_runtime(
         ));
     }
 
-    let quiescence = crate::coordination::lock_session_quiescence(
+    let quiescence = agent_session::internal::coordination::lock_session_quiescence(
         context,
         &worker.session_id,
         &worker.session_incarnation,
@@ -19527,7 +19677,7 @@ fn run_worker_delete(
     ensure_external_lane_deletable(context, &args.assignment_id)?;
     let (record, incarnation) = authenticated_self(context)?;
     ensure_active_claim(context, &record)?;
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         "worker-delete",
         &json!({ "assignment_id": args.assignment_id, "if_revision": args.if_revision }),
     );
@@ -19657,7 +19807,7 @@ fn run_worker_delete(
         ));
     }
     let (active_claim, active_operation) =
-        crate::coordination::session_has_active_claim_or_operation(
+        agent_session::internal::coordination::session_has_active_claim_or_operation(
             context,
             &worker.session_id,
             &worker.session_incarnation,
@@ -19955,7 +20105,7 @@ fn run_collaborate(context: &CliContext, args: RelationshipArgs) -> Result<Value
 fn run_borrow(context: &CliContext, args: BorrowArgs) -> Result<Value, CliError> {
     let target = resolve_live_session_ref(context, &args.session)?;
     let seconds = parse_bounded_duration(&args.duration, 8 * 60 * 60)?;
-    let now = crate::coordination::now_epoch();
+    let now = agent_session::internal::coordination::now_epoch();
     let expires_at_epoch = now.saturating_add(seconds as i64);
     run_relationship_mutation(
         context,
@@ -19972,7 +20122,7 @@ fn run_borrow(context: &CliContext, args: BorrowArgs) -> Result<Value, CliError>
             }
             assignment.borrowed_by.push(TimedRelationship {
                 session: target.clone(),
-                expires_at: crate::coordination::timestamp(expires_at_epoch),
+                expires_at: agent_session::internal::coordination::timestamp(expires_at_epoch),
                 expires_at_epoch,
             });
             assignment
@@ -19988,8 +20138,11 @@ fn run_handoff(context: &CliContext, args: HandoffArgs) -> Result<Value, CliErro
     let target = resolve_live_session_ref(context, &args.to_session)?;
     let (record, incarnation) = authenticated_self(context)?;
     ensure_active_claim(context, &record)?;
-    let quiescence =
-        crate::coordination::lock_session_quiescence(context, &record.id, &incarnation)?;
+    let quiescence = agent_session::internal::coordination::lock_session_quiescence(
+        context,
+        &record.id,
+        &incarnation,
+    )?;
     if !quiescence.active_claim {
         return Err(CliError::data(
             "claim-not-active",
@@ -20015,7 +20168,7 @@ fn run_handoff(context: &CliContext, args: HandoffArgs) -> Result<Value, CliErro
         .find(|run| run.controller == target && run.state == "active")
         .map(|run| run.run_id.clone())
         .ok_or_else(|| invalid_input("handoff target is not an active Main Agent"))?;
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         "handoff",
         &json!({ "assignment_id": args.assignment_id, "if_revision": args.if_revision }),
     );
@@ -20095,7 +20248,7 @@ fn run_adopt(context: &CliContext, args: AssignmentMutationArgs) -> Result<Value
     ensure_active_claim(context, &record)?;
     let mut locked = orchestration::lock_registry(context)?;
     let run = require_current_main(&locked.registry, &record, &incarnation)?.clone();
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         "adopt",
         &json!({ "assignment_id": args.assignment_id, "if_revision": args.if_revision }),
     );
@@ -20576,8 +20729,8 @@ fn prepare_orphan_provider_stop_canary_adoption(
             None,
         ));
     }
-    let runtime = crate::coordination_runtime_evidence(context, &worker_record)?;
-    if runtime.status != crate::CoordinationRuntimeStatus::Stopped
+    let runtime = agent_session::internal::coordination_runtime_evidence(context, &worker_record)?;
+    if runtime.status != agent_session::internal::CoordinationRuntimeStatus::Stopped
         || session_status(context, &resolve_tmux_bin(None), &worker_record) != "stopped"
     {
         return Err(CliError::unavailable(
@@ -20602,11 +20755,11 @@ fn recover_missing_claim_revocation_quarantine_for_adopt(
     expected_work_context: &WorkContextInput,
 ) -> Result<(), CliError> {
     let (main, main_incarnation, controller_claim) =
-        crate::coordination::authenticate_any_from_file_with_active_claim_observational(
+        agent_session::internal::coordination::authenticate_any_from_file_with_active_claim_observational(
             context, None,
         )?;
     if main.id != expected_main.id || main_incarnation != expected_main_incarnation {
-        return Err(crate::coordination::unauthorized());
+        return Err(agent_session::internal::coordination::unauthorized());
     }
     let _worker_lifecycle = acquire_session_record_lock(context, &reservation.worker.session_id)?;
     let worker_record = load_session_record(context, &reservation.worker.session_id)?;
@@ -20623,13 +20776,19 @@ fn recover_missing_claim_revocation_quarantine_for_adopt(
             None,
         ));
     }
-    let _activity_lock =
-        crate::activity::acquire_coordination_activity_lock(context, &worker_record.id)?;
-    let activity = crate::activity::activity_status_for_record(context, &worker_record)?.turn_state;
-    let authoritative_idle = activity.phase == crate::activity::TurnPhase::Waiting
+    let _activity_lock = agent_session::internal::activity::acquire_coordination_activity_lock(
+        context,
+        &worker_record.id,
+    )?;
+    let activity =
+        agent_session::internal::activity::activity_status_for_record(context, &worker_record)?
+            .turn_state;
+    let authoritative_idle = activity.phase
+        == agent_session::internal::activity::TurnPhase::Waiting
         && activity.current_turn.is_none()
         && activity.last_turn.is_some()
-        && activity.source.confidence == crate::activity::Confidence::Authoritative
+        && activity.source.confidence
+            == agent_session::internal::activity::Confidence::Authoritative
         && activity.revision == progress.activity_revision;
     if !authoritative_idle {
         return Err(CliError::data(
@@ -20641,8 +20800,9 @@ fn recover_missing_claim_revocation_quarantine_for_adopt(
             })),
         ));
     }
-    let runtime_evidence = crate::coordination_runtime_evidence(context, &worker_record)?;
-    if runtime_evidence.status != crate::CoordinationRuntimeStatus::Running
+    let runtime_evidence =
+        agent_session::internal::coordination_runtime_evidence(context, &worker_record)?;
+    if runtime_evidence.status != agent_session::internal::CoordinationRuntimeStatus::Running
         || runtime_evidence.identity_digest != progress.runtime_identity_digest
     {
         return Err(CliError::runtime(
@@ -20654,7 +20814,7 @@ fn recover_missing_claim_revocation_quarantine_for_adopt(
             })),
         ));
     }
-    let _revocation = crate::coordination::lock_worker_claim_revocation(
+    let _revocation = agent_session::internal::coordination::lock_worker_claim_revocation(
         context,
         &worker_record,
         &reservation.worker.session_incarnation,
@@ -20796,13 +20956,13 @@ fn pause_runtime_stop_adopt_for_test(stage: &str) -> Result<(), CliError> {
 /// work-context equality.
 fn run_closeout(context: &CliContext, args: CloseoutArgs) -> Result<Value, CliError> {
     validate_idempotency_key(&args.idempotency_key)?;
-    let checkpoint: CheckpointInput = crate::coordination::read_bounded_json(
+    let checkpoint: CheckpointInput = agent_session::internal::coordination::read_bounded_json(
         &args.checkpoint_file,
         64 * 1024,
         "invalid-checkpoint",
     )?;
     validate_checkpoint(&checkpoint)?;
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         "main-agent-closeout",
         &json!({
             "if_run_revision": args.if_run_revision,
@@ -20849,7 +21009,7 @@ fn run_closeout(context: &CliContext, args: CloseoutArgs) -> Result<Value, CliEr
                     Some(json!({ "run_id": run.run_id, "current_revision": run.revision })),
                 )
             })?;
-            let observed = crate::coordination::claims::active_controller_claim_snapshot(
+            let observed = agent_session::internal::coordination::claims::active_controller_claim_snapshot(
                 context,
                 &record,
                 &incarnation,
@@ -21114,7 +21274,7 @@ fn run_closeout(context: &CliContext, args: CloseoutArgs) -> Result<Value, CliEr
     }
 
     let closeout_authority = if !closeout_stage_complete(&progress, "claim_release") {
-        let authority = crate::lock_exact_session_authority(context, &record.id)?
+        let authority = agent_session::internal::lock_exact_session_authority(context, &record.id)?
             .ok_or_else(|| not_found("session-not-found", "authenticated session was not found"))?;
         let locked_incarnation = authority
             .record
@@ -21138,7 +21298,7 @@ fn run_closeout(context: &CliContext, args: CloseoutArgs) -> Result<Value, CliEr
         let bound_claim_id = progress["controller_claim"]["claim_id"]
             .as_str()
             .ok_or_else(|| invalid_input("closeout bound claim id is invalid"))?;
-        if crate::coordination::claims::controller_claim_has_nonterminal_operation(
+        if agent_session::internal::coordination::claims::controller_claim_has_nonterminal_operation(
             context,
             &record,
             &incarnation,
@@ -21213,11 +21373,12 @@ fn run_closeout(context: &CliContext, args: CloseoutArgs) -> Result<Value, CliEr
     }
 
     if !closeout_stage_complete(&progress, "claim_release") {
-        let active = crate::coordination::claims::active_controller_claim_snapshot(
-            context,
-            &record,
-            &incarnation,
-        )?;
+        let active =
+            agent_session::internal::coordination::claims::active_controller_claim_snapshot(
+                context,
+                &record,
+                &incarnation,
+            )?;
         let bound_claim_id = progress["controller_claim"]["claim_id"]
             .as_str()
             .ok_or_else(|| invalid_input("closeout bound claim id is invalid"))?;
@@ -21229,7 +21390,7 @@ fn run_closeout(context: &CliContext, args: CloseoutArgs) -> Result<Value, CliEr
                 if active.claim_id == bound_claim_id
                     && active.work_context_digest == bound_digest =>
             {
-                if let Err(error) = crate::coordination::claims::release_prelocked(
+                if let Err(error) = agent_session::internal::coordination::claims::release_prelocked(
                     context,
                     cli::WorkContextReleaseArgs {
                         session: record.id.clone(),
@@ -21269,7 +21430,7 @@ fn run_closeout(context: &CliContext, args: CloseoutArgs) -> Result<Value, CliEr
                 progress["controller_claim"]["active_after"] = json!(false);
             }
             Some(active) if active.claim_id != bound_claim_id => {
-                if crate::coordination::claims::controller_claim_is_active(
+                if agent_session::internal::coordination::claims::controller_claim_is_active(
                     context,
                     &record,
                     &incarnation,
@@ -21311,7 +21472,7 @@ fn run_closeout(context: &CliContext, args: CloseoutArgs) -> Result<Value, CliEr
                 ));
             }
             None => {
-                if crate::coordination::claims::controller_claim_is_active(
+                if agent_session::internal::coordination::claims::controller_claim_is_active(
                     context,
                     &record,
                     &incarnation,
@@ -21474,7 +21635,8 @@ fn run_close(context: &CliContext, args: RunMutationArgs) -> Result<Value, CliEr
     validate_idempotency_key(&args.idempotency_key)?;
     let (record, incarnation) = authenticated_self(context)?;
     ensure_active_claim(context, &record)?;
-    let request_digest = crate::coordination::request_digest("close", &args.if_revision);
+    let request_digest =
+        agent_session::internal::coordination::request_digest("close", &args.if_revision);
     let mut locked = orchestration::lock_registry(context)?;
     if let Some(value) = idempotency_replay(
         &locked.registry,
@@ -21562,7 +21724,7 @@ fn run_quick(context: &CliContext, args: QuickArgs) -> Result<Value, CliError> {
     let await_ready_seconds = parse_await_ready(&args.await_ready)?
         .map(|duration| duration.as_secs())
         .unwrap_or(0);
-    let input: AssignmentInput = crate::coordination::read_bounded_json(
+    let input: AssignmentInput = agent_session::internal::coordination::read_bounded_json(
         &args.assignment_file,
         256 * 1024,
         "invalid-assignment-packet",
@@ -21624,11 +21786,11 @@ fn run_quick(context: &CliContext, args: QuickArgs) -> Result<Value, CliError> {
         "work_context": work_context,
         "next_action": null,
     });
-    let legacy_request_digest = crate::coordination::request_digest(
+    let legacy_request_digest = agent_session::internal::coordination::request_digest(
         "main-agent-quick",
         &json!({ "objective": objective, "assignment": input }),
     );
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         "main-agent-quick-v2",
         &json!({
             "objective": objective,
@@ -21793,7 +21955,7 @@ where
     let run_id = require_current_main(&locked.registry, &record, &incarnation)?
         .run_id
         .clone();
-    let request_digest = crate::coordination::request_digest(
+    let request_digest = agent_session::internal::coordination::request_digest(
         operation,
         &json!({ "assignment_id": assignment_id, "if_revision": if_revision }),
     );
@@ -21838,11 +22000,11 @@ where
 }
 
 fn authenticated_self(context: &CliContext) -> Result<(SessionRecord, String), CliError> {
-    crate::coordination::authenticate_any_from_file(context, None)
+    agent_session::internal::coordination::authenticate_any_from_file(context, None)
 }
 
 fn ensure_active_claim(context: &CliContext, record: &SessionRecord) -> Result<(), CliError> {
-    crate::coordination::claims::show(
+    agent_session::internal::coordination::claims::show(
         context,
         cli::WorkContextShowArgs {
             session: record.id.clone(),
@@ -21862,7 +22024,7 @@ fn ensure_or_acquire_claim(
     checkout_shell_grant: bool,
 ) -> Result<(), CliError> {
     if checkout_shell_grant {
-        match crate::coordination::claims::main_agent_worker_claim_match(
+        match agent_session::internal::coordination::claims::main_agent_worker_claim_match(
             context, record, candidate,
         )? {
             Some(true) => return Ok(()),
@@ -21885,13 +22047,13 @@ fn ensure_or_acquire_claim(
     let (candidate_path, claim_args) =
         prepare_claim_args(context, record, candidate, idempotency_key)?;
     let result = if checkout_shell_grant {
-        crate::coordination::claims::claim_main_agent_worker(
+        agent_session::internal::coordination::claims::claim_main_agent_worker(
             context,
             claim_args,
             rebind_from.map(|previous| previous.session_incarnation.as_str()),
         )
     } else {
-        crate::coordination::claims::claim(context, claim_args)
+        agent_session::internal::coordination::claims::claim(context, claim_args)
     };
     let _ = fs::remove_file(candidate_path);
     result.map(|_| ())
@@ -21902,9 +22064,9 @@ fn ensure_or_acquire_claim_tracked(
     record: &SessionRecord,
     candidate: &WorkContextInput,
     idempotency_key: &str,
-    session_authority: &crate::LockedSessionAuthority,
-) -> Result<Option<crate::coordination::claims::AcquiredClaim>, CliError> {
-    match crate::coordination::claims::main_agent_controller_claim_match(
+    session_authority: &agent_session::internal::LockedSessionAuthority,
+) -> Result<Option<agent_session::internal::coordination::claims::AcquiredClaim>, CliError> {
+    match agent_session::internal::coordination::claims::main_agent_controller_claim_match(
         context, record, candidate,
     )? {
         Some(true) => return Ok(None),
@@ -21919,7 +22081,11 @@ fn ensure_or_acquire_claim_tracked(
     }
     let (candidate_path, claim_args) =
         prepare_claim_args(context, record, candidate, idempotency_key)?;
-    let result = crate::coordination::claims::claim_tracked(context, claim_args, session_authority);
+    let result = agent_session::internal::coordination::claims::claim_tracked(
+        context,
+        claim_args,
+        session_authority,
+    );
     let _ = fs::remove_file(candidate_path);
     let acquired = result?.acquired.ok_or_else(|| {
         CliError::data(
@@ -22072,7 +22238,7 @@ fn resolve_live_session_ref(context: &CliContext, value: &str) -> Result<Session
     let (id, expected_incarnation) = value
         .split_once('@')
         .ok_or_else(|| invalid_input("session ref must be SESSION_ID@SESSION_INCARNATION"))?;
-    crate::validate_id(id)?;
+    agent_session::internal::validate_id(id)?;
     orchestration::validate_slug("session incarnation", expected_incarnation, 128)?;
     let record = load_session_record(context, id)?;
     let actual = record
@@ -22117,7 +22283,7 @@ fn private_run_view(context: &CliContext, run: &RunRecord) -> Result<Value, CliE
 }
 
 fn public_assignment_view(assignment: &AssignmentRecord) -> Value {
-    let now = crate::coordination::now_epoch();
+    let now = agent_session::internal::coordination::now_epoch();
     let borrowed_by = assignment
         .borrowed_by
         .iter()
@@ -22285,7 +22451,10 @@ fn objective_packet_schema_example() -> Value {
 /// to the same key, preserving idempotent replay; the `quick-` prefix plus 32
 /// hex digits satisfies the 8-128 printable-ASCII key rule.
 fn default_quick_idempotency_key(input: &AssignmentInput) -> String {
-    let digest = crate::coordination::request_digest("main-agent-quick-idempotency", input);
+    let digest = agent_session::internal::coordination::request_digest(
+        "main-agent-quick-idempotency",
+        input,
+    );
     format!("quick-{}", &digest[..32])
 }
 
@@ -22345,7 +22514,7 @@ fn validate_assignment_input(input: &AssignmentInput) -> Result<(), CliError> {
         return Err(invalid_input("assignment launch cwd is invalid"));
     }
     if let Some(id) = &input.launch.session_id {
-        crate::validate_id(id)?;
+        agent_session::internal::validate_id(id)?;
     }
     Ok(())
 }
@@ -22604,7 +22773,7 @@ fn validate_checkpoint(input: &CheckpointInput) -> Result<(), CliError> {
 }
 
 fn child_idempotency_key(parent: &str, stage: &str) -> String {
-    let digest = crate::coordination::request_digest(
+    let digest = agent_session::internal::coordination::request_digest(
         "main-agent-child-idempotency",
         &json!({ "parent": parent, "stage": stage }),
     );
@@ -22852,15 +23021,23 @@ fn print_json<T: Serialize>(value: &T) -> i32 {
     }
 }
 
-fn run_completion(shell: crate::completion::CompletionShell) -> i32 {
+fn run_completion(shell: agent_session::internal::completion::CompletionShell) -> i32 {
     let mut command = MainAgentCli::command();
     let bin_name = command.get_name().to_string();
     match shell {
-        crate::completion::CompletionShell::Bash => {
-            crate::completion::print_completion(Shell::Bash, &mut command, &bin_name)
+        agent_session::internal::completion::CompletionShell::Bash => {
+            agent_session::internal::completion::print_completion(
+                Shell::Bash,
+                &mut command,
+                &bin_name,
+            )
         }
-        crate::completion::CompletionShell::Zsh => {
-            crate::completion::print_completion(Shell::Zsh, &mut command, &bin_name)
+        agent_session::internal::completion::CompletionShell::Zsh => {
+            agent_session::internal::completion::print_completion(
+                Shell::Zsh,
+                &mut command,
+                &bin_name,
+            )
         }
     }
     exit::SUCCESS
@@ -22977,11 +23154,11 @@ mod tests {
             "fixture must include changed packet membership"
         );
         assert_ne!(
-            crate::coordination::request_digest(
+            agent_session::internal::coordination::request_digest(
                 "main-agent-worker-start-batch-v1",
                 &fixture["batch"]["manifest"],
             ),
-            crate::coordination::request_digest(
+            agent_session::internal::coordination::request_digest(
                 "main-agent-worker-start-batch-v1",
                 &fixture["batch"]["changed_manifest"],
             ),
@@ -23242,7 +23419,8 @@ mod tests {
         assert!(
             worker_start_finalizer_lease_secs(
                 &json!({ "recovery_continuation": { "stage": "sending" } })
-            ) > i64::try_from(crate::PANE_INPUT_COMMAND_TIMEOUT.as_secs()).expect("pane timeout"),
+            ) > i64::try_from(agent_session::internal::PANE_INPUT_COMMAND_TIMEOUT.as_secs())
+                .expect("pane timeout"),
             "the finalizer lease must outlive a possibly ambiguous send"
         );
     }
@@ -23715,7 +23893,7 @@ mod tests {
 
     fn cleanup_test_session(id: &str, incarnation: &str) -> SessionRecord {
         SessionRecord {
-            schema_version: crate::SESSION_DOCUMENT_VERSION.to_string(),
+            schema_version: agent_session::internal::SESSION_DOCUMENT_VERSION.to_string(),
             id: id.to_string(),
             agent: "codex".to_string(),
             mode: "interactive".to_string(),
@@ -23730,7 +23908,7 @@ mod tests {
             created_at: "2030-01-01T00:00:00Z".to_string(),
             updated_at: "2030-01-01T00:00:00Z".to_string(),
             provider_resume: None,
-            runtime: Some(crate::RuntimeInfo {
+            runtime: Some(agent_session::internal::RuntimeInfo {
                 kind: "tmux".to_string(),
                 tmux_session: format!("agent-{id}"),
                 generation: 1,
@@ -23885,7 +24063,7 @@ mod tests {
 
         fs::write(
             &prompt_path,
-            vec![b'x'; crate::provider_prompt::MAX_PROVIDER_PROMPT_BYTES + 1],
+            vec![b'x'; agent_session::internal::provider_prompt::MAX_PROVIDER_PROMPT_BYTES + 1],
         )
         .expect("oversize prompt");
         fs::set_permissions(&prompt_path, fs::Permissions::from_mode(0o600))
@@ -24435,7 +24613,8 @@ mod tests {
         };
         let worker_record = cleanup_test_session("clean-progress-worker", "clean-progress-inc");
         fs::create_dir_all(session_dir(&context, &worker_record.id)).expect("session directory");
-        crate::write_session_record(&context, &worker_record).expect("worker session");
+        agent_session::internal::write_session_record(&context, &worker_record)
+            .expect("worker session");
         let mut assignment = dep_assignment("clean-progress-assignment", "run-one", "working");
         assignment.worker = Some(session_ref(&context, &worker_record, "clean-progress-inc"));
 
@@ -24448,7 +24627,9 @@ mod tests {
             0,
             "empty porcelain status must not launch diff or untracked-list probes"
         );
-        let name = crate::coordination::digest_bytes(assignment.assignment_id.as_bytes());
+        let name = agent_session::internal::coordination::digest_bytes(
+            assignment.assignment_id.as_bytes(),
+        );
         let snapshot_path = session_dir(&context, &worker_record.id)
             .join("coordination")
             .join(format!("main-agent-progress-{name}.json"));
@@ -25056,7 +25237,8 @@ mod tests {
         };
         let mut worker_record = cleanup_test_session("progress-worker", "progress-incarnation");
         fs::create_dir_all(session_dir(&context, &worker_record.id)).expect("session directory");
-        crate::write_session_record(&context, &worker_record).expect("worker session");
+        agent_session::internal::write_session_record(&context, &worker_record)
+            .expect("worker session");
         let mut assignment = dep_assignment("assignment-progress", "run-one", "working");
         assignment.worker = Some(session_ref(
             &context,
@@ -25069,7 +25251,9 @@ mod tests {
                 .expect("initial snapshot"),
             (100, 100)
         );
-        let name = crate::coordination::digest_bytes(assignment.assignment_id.as_bytes());
+        let name = agent_session::internal::coordination::digest_bytes(
+            assignment.assignment_id.as_bytes(),
+        );
         let snapshot_path = session_dir(&context, &worker_record.id)
             .join("coordination")
             .join(format!("main-agent-progress-{name}.json"));
@@ -25118,7 +25302,8 @@ mod tests {
             .as_mut()
             .expect("worker runtime")
             .launch_id = "progress-incarnation-two".to_string();
-        crate::write_session_record(&context, &worker_record).expect("resumed worker session");
+        agent_session::internal::write_session_record(&context, &worker_record)
+            .expect("resumed worker session");
         assignment.worker = Some(session_ref(
             &context,
             &worker_record,
@@ -25822,7 +26007,7 @@ mod tests {
         assignment_a.worker = Some(worker_a.clone());
         let mut assignment_b = dep_assignment("assignment-b", "run", "working");
         assignment_b.worker = Some(worker_b);
-        let request_digest = crate::coordination::request_digest(
+        let request_digest = agent_session::internal::coordination::request_digest(
             "worker-stop-claimed-runtime",
             &json!({
                 "assignment_id": assignment_a.assignment_id,
@@ -25830,7 +26015,7 @@ mod tests {
                 "if_revision": assignment_a.revision
             }),
         );
-        fs::create_dir_all(crate::session_dir(&context, "worker-a")).unwrap();
+        fs::create_dir_all(agent_session::internal::session_dir(&context, "worker-a")).unwrap();
         orchestration::persist_session_claimed_runtime_stop_identity(
             &context,
             &assignment_a.assignment_id,
@@ -27094,27 +27279,28 @@ mod tests {
 
     #[test]
     fn provider_stop_canary_admits_only_clean_scope_empty_stalled_turns() {
-        let activity: crate::activity::TurnState = serde_json::from_value(json!({
-            "schema_version": "agent-session.turn-state.v1",
-            "phase": "working",
-            "phase_changed_at": "2030-01-01T00:00:00Z",
-            "revision": 6,
-            "source": {
-                "kind": "provider_hook",
-                "provider": "codex",
-                "confidence": "observed"
-            },
-            "semantic_event": {
-                "kind": "progress",
-                "observed_at": "2030-01-01T00:00:00Z"
-            },
-            "current_turn": {
-                "provider_turn_id": "stalled-canary-turn",
-                "started_at": "2030-01-01T00:00:00Z",
-                "last_progress_at": "2030-01-01T00:00:00Z"
-            }
-        }))
-        .expect("stalled activity");
+        let activity: agent_session::internal::activity::TurnState =
+            serde_json::from_value(json!({
+                "schema_version": "agent-session.turn-state.v1",
+                "phase": "working",
+                "phase_changed_at": "2030-01-01T00:00:00Z",
+                "revision": 6,
+                "source": {
+                    "kind": "provider_hook",
+                    "provider": "codex",
+                    "confidence": "observed"
+                },
+                "semantic_event": {
+                    "kind": "progress",
+                    "observed_at": "2030-01-01T00:00:00Z"
+                },
+                "current_turn": {
+                    "provider_turn_id": "stalled-canary-turn",
+                    "started_at": "2030-01-01T00:00:00Z",
+                    "last_progress_at": "2030-01-01T00:00:00Z"
+                }
+            }))
+            .expect("stalled activity");
         let now = "2030-01-01T00:16:00Z"
             .parse::<jiff::Timestamp>()
             .expect("current timestamp")
@@ -27150,29 +27336,30 @@ mod tests {
                 .as_second()
         ));
 
-        let with_attention: crate::activity::TurnState = serde_json::from_value(json!({
-            "schema_version": "agent-session.turn-state.v1",
-            "phase": "working",
-            "phase_changed_at": "2030-01-01T00:00:00Z",
-            "revision": 6,
-            "source": {
-                "kind": "provider_hook",
-                "provider": "codex",
-                "confidence": "authoritative"
-            },
-            "current_turn": {
-                "provider_turn_id": "attention-canary-turn",
-                "started_at": "2030-01-01T00:00:00Z",
-                "last_progress_at": "2030-01-01T00:00:00Z",
-                "attention": {
-                    "kind": "approval",
-                    "requested_at": "2030-01-01T00:00:00Z",
-                    "pending_count": 1,
-                    "certainty": "exact"
+        let with_attention: agent_session::internal::activity::TurnState =
+            serde_json::from_value(json!({
+                "schema_version": "agent-session.turn-state.v1",
+                "phase": "working",
+                "phase_changed_at": "2030-01-01T00:00:00Z",
+                "revision": 6,
+                "source": {
+                    "kind": "provider_hook",
+                    "provider": "codex",
+                    "confidence": "authoritative"
+                },
+                "current_turn": {
+                    "provider_turn_id": "attention-canary-turn",
+                    "started_at": "2030-01-01T00:00:00Z",
+                    "last_progress_at": "2030-01-01T00:00:00Z",
+                    "attention": {
+                        "kind": "approval",
+                        "requested_at": "2030-01-01T00:00:00Z",
+                        "pending_count": 1,
+                        "certainty": "exact"
+                    }
                 }
-            }
-        }))
-        .expect("attention activity");
+            }))
+            .expect("attention activity");
         assert!(!provider_stop_canary_stalled_turn_admissible(
             &with_attention,
             true,

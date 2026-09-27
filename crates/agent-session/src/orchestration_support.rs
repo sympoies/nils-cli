@@ -13,13 +13,11 @@ use serde_json::{Value, json};
 use crate::orchestration::{self, AssignmentRecord, IdempotencyReceipt, SessionRef};
 use crate::{CliContext, CliError, SessionRecord};
 
-pub(crate) const MAX_IDEMPOTENCY_RECEIPTS: usize = 32_768;
+pub const MAX_IDEMPOTENCY_RECEIPTS: usize = 32_768;
 #[cfg(test)]
-pub(crate) static IDEMPOTENCY_RECEIPT_CAPACITY_FOR_TEST: AtomicUsize =
+pub static IDEMPOTENCY_RECEIPT_CAPACITY_FOR_TEST: AtomicUsize =
     AtomicUsize::new(MAX_IDEMPOTENCY_RECEIPTS);
-pub(crate) fn ensure_submit_recovery_not_in_flight(
-    assignment: &AssignmentRecord,
-) -> Result<(), CliError> {
+pub fn ensure_submit_recovery_not_in_flight(assignment: &AssignmentRecord) -> Result<(), CliError> {
     if submit_recovery_in_flight(assignment) {
         return Err(CliError::data(
             "submit-recovery-in-flight",
@@ -33,7 +31,7 @@ pub(crate) fn ensure_submit_recovery_not_in_flight(
     Ok(())
 }
 
-pub(crate) fn submit_recovery_in_flight(assignment: &AssignmentRecord) -> bool {
+pub fn submit_recovery_in_flight(assignment: &AssignmentRecord) -> bool {
     assignment.submit_recovery.as_ref().is_some_and(|recovery| {
         matches!(recovery.state.as_str(), "attempting" | "sent")
             && assignment
@@ -43,7 +41,7 @@ pub(crate) fn submit_recovery_in_flight(assignment: &AssignmentRecord) -> bool {
     })
 }
 
-pub(crate) fn account_handoff_in_flight(assignment: &AssignmentRecord) -> CliError {
+pub fn account_handoff_in_flight(assignment: &AssignmentRecord) -> CliError {
     CliError::data(
         "account-handoff-in-flight",
         "assignment mutation is fenced until the reserved account handoff is resolved",
@@ -54,16 +52,14 @@ pub(crate) fn account_handoff_in_flight(assignment: &AssignmentRecord) -> CliErr
     )
 }
 
-pub(crate) fn ensure_account_handoff_not_in_flight(
-    assignment: &AssignmentRecord,
-) -> Result<(), CliError> {
+pub fn ensure_account_handoff_not_in_flight(assignment: &AssignmentRecord) -> Result<(), CliError> {
     if assignment.account_handoff.is_some() {
         return Err(account_handoff_in_flight(assignment));
     }
     Ok(())
 }
 
-pub(crate) fn worker_runtime_stop_in_flight(assignment: &AssignmentRecord) -> CliError {
+pub fn worker_runtime_stop_in_flight(assignment: &AssignmentRecord) -> CliError {
     CliError::unavailable(
         "worker-runtime-stop-in-flight",
         "assignment mutation is fenced until the exact worker runtime stop completes or its durable receipt is replayed",
@@ -74,7 +70,7 @@ pub(crate) fn worker_runtime_stop_in_flight(assignment: &AssignmentRecord) -> Cl
     )
 }
 
-pub(crate) fn ensure_worker_runtime_stop_not_in_flight(
+pub fn ensure_worker_runtime_stop_not_in_flight(
     assignment: &AssignmentRecord,
 ) -> Result<(), CliError> {
     if assignment.runtime_stop.is_some() {
@@ -83,7 +79,7 @@ pub(crate) fn ensure_worker_runtime_stop_not_in_flight(
     Ok(())
 }
 
-pub(crate) fn worker_claim_revocation_in_flight(assignment: &AssignmentRecord) -> CliError {
+pub fn worker_claim_revocation_in_flight(assignment: &AssignmentRecord) -> CliError {
     CliError::unavailable(
         "worker-claim-revocation-in-flight",
         "assignment mutation is fenced until the exact worker claim revocation completes or its durable receipt is replayed",
@@ -94,7 +90,7 @@ pub(crate) fn worker_claim_revocation_in_flight(assignment: &AssignmentRecord) -
     )
 }
 
-pub(crate) fn ensure_worker_claim_revocation_not_in_flight(
+pub fn ensure_worker_claim_revocation_not_in_flight(
     assignment: &AssignmentRecord,
 ) -> Result<(), CliError> {
     if assignment.claim_revocation.is_some() {
@@ -104,7 +100,7 @@ pub(crate) fn ensure_worker_claim_revocation_not_in_flight(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum AssignmentMutationOwner {
+pub enum AssignmentMutationOwner {
     Ordinary,
     StoppedReconciliation,
     AccountHandoff,
@@ -114,7 +110,7 @@ pub(crate) enum AssignmentMutationOwner {
     ProviderStopCanary,
 }
 
-pub(crate) fn ensure_assignment_mutation_admitted(
+pub fn ensure_assignment_mutation_admitted(
     context: &CliContext,
     assignment: &AssignmentRecord,
     owner: AssignmentMutationOwner,
@@ -181,11 +177,7 @@ pub(crate) fn ensure_assignment_mutation_admitted(
     Ok(())
 }
 
-pub(crate) fn session_ref(
-    context: &CliContext,
-    record: &SessionRecord,
-    incarnation: &str,
-) -> SessionRef {
+pub fn session_ref(context: &CliContext, record: &SessionRecord, incarnation: &str) -> SessionRef {
     SessionRef {
         machine: context.host.clone(),
         session_id: record.id.clone(),
@@ -194,12 +186,12 @@ pub(crate) fn session_ref(
     }
 }
 
-pub(crate) fn receipt_key(session_id: &str, incarnation: &str, idempotency_key: &str) -> String {
+pub fn receipt_key(session_id: &str, incarnation: &str, idempotency_key: &str) -> String {
     format!("{session_id}:{incarnation}:{idempotency_key}")
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn store_receipt_for_principal(
+pub fn store_receipt_for_principal(
     registry: &mut orchestration::Registry,
     principal_session_id: &str,
     incarnation: &str,
@@ -235,7 +227,7 @@ pub(crate) fn store_receipt_for_principal(
     Ok(())
 }
 
-pub(crate) fn idempotency_receipt_capacity() -> usize {
+pub fn idempotency_receipt_capacity() -> usize {
     #[cfg(test)]
     {
         IDEMPOTENCY_RECEIPT_CAPACITY_FOR_TEST.load(Ordering::Acquire)
@@ -246,11 +238,11 @@ pub(crate) fn idempotency_receipt_capacity() -> usize {
     }
 }
 
-pub(crate) fn validate_idempotency_key(value: &str) -> Result<(), CliError> {
+pub fn validate_idempotency_key(value: &str) -> Result<(), CliError> {
     orchestration::validate_slug("idempotency key", value, 128)
 }
 
-pub(crate) fn ensure_revision(expected: u64, actual: u64, resource: &str) -> Result<(), CliError> {
+pub fn ensure_revision(expected: u64, actual: u64, resource: &str) -> Result<(), CliError> {
     if expected == actual {
         Ok(())
     } else {
@@ -262,14 +254,14 @@ pub(crate) fn ensure_revision(expected: u64, actual: u64, resource: &str) -> Res
     }
 }
 
-pub(crate) fn timestamp() -> String {
+pub fn timestamp() -> String {
     Zoned::now().timestamp().to_string()
 }
 
-pub(crate) fn invalid_input(message: &str) -> CliError {
+pub fn invalid_input(message: &str) -> CliError {
     CliError::data("invalid-orchestration-input", message, None)
 }
 
-pub(crate) fn not_found(code: &'static str, message: &'static str) -> CliError {
+pub fn not_found(code: &'static str, message: &'static str) -> CliError {
     CliError::data(code, message, None)
 }

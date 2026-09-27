@@ -105,10 +105,10 @@ enum DecodedNext {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct NextAccountIdentity {
-    pub(crate) account: String,
-    pub(crate) revision: u64,
-    pub(crate) intent_id: Option<String>,
+pub struct NextAccountIdentity {
+    pub account: String,
+    pub revision: u64,
+    pub intent_id: Option<String>,
     pub(crate) selection_source: Option<String>,
 }
 
@@ -140,37 +140,37 @@ impl RefreshBindingAttempt {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct CodexAccountView {
+pub struct CodexAccountView {
     pub(crate) schema_version: &'static str,
-    pub(crate) supported: bool,
-    pub(crate) state: &'static str,
+    pub supported: bool,
+    pub state: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) selected_account: Option<String>,
+    pub selected_account: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) effective_account: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) selection_source: Option<String>,
     pub(crate) revision: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) applied_runtime_id: Option<String>,
+    pub applied_runtime_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) failure_reason: Option<String>,
     /// Additive queued next-account intent. Absent for old daemons, unsupported
     /// sessions, and whenever no next account is queued.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) next: Option<CodexNextAccountView>,
+    pub next: Option<CodexNextAccountView>,
 }
 
 /// Public projection of a queued next-account intent. Additive and secret-free:
 /// it exposes the desired nickname, its revision, and its lifecycle state only.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct CodexNextAccountView {
+pub struct CodexNextAccountView {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) account: Option<String>,
+    pub account: Option<String>,
     pub(crate) revision: u64,
-    pub(crate) state: &'static str,
+    pub state: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) failure_reason: Option<String>,
+    pub failure_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -219,7 +219,7 @@ pub(crate) fn broker_is_configured() -> bool {
     matches!(broker_argv(), Ok(Some(_)))
 }
 
-pub(crate) fn view_for_record(record: &SessionRecord) -> CodexAccountView {
+pub fn view_for_record(record: &SessionRecord) -> CodexAccountView {
     let decoded = decode_binding(record);
     if record.agent != "codex"
         || !crate::codex_app_server::runtime_is_supported(record)
@@ -984,7 +984,7 @@ pub(crate) fn pending_auto_failover_apply(
     }
 }
 
-pub(crate) fn next_account_identity(
+pub fn next_account_identity(
     record: &SessionRecord,
 ) -> Result<Option<NextAccountIdentity>, CliError> {
     match decode_next(record) {
@@ -1055,7 +1055,7 @@ pub(crate) fn queue_auto_failover_locked(
 }
 
 /// Queue a durable next-account intent for an already-bound session.
-pub(crate) fn queue_next_account(
+pub fn queue_next_account(
     context: &CliContext,
     id: &str,
     expected_launch_id: &str,
@@ -1079,7 +1079,7 @@ pub(crate) fn queue_next_account_with_unbound(
     queue_next_account_inner(context, id, expected_launch_id, account, true, None, None)
 }
 
-pub(crate) fn queue_next_account_if_unchanged(
+pub fn queue_next_account_if_unchanged(
     context: &CliContext,
     id: &str,
     expected_launch_id: &str,
@@ -1246,7 +1246,7 @@ pub(crate) fn cancel_next_account(
     Ok(view_for_record(&record))
 }
 
-pub(crate) fn cancel_next_account_if_matches(
+pub fn cancel_next_account_if_matches(
     context: &CliContext,
     id: &str,
     expected_launch_id: &str,
@@ -1283,7 +1283,7 @@ pub(crate) fn cancel_next_account_if_matches(
 /// Transition a queued intent to `applying` under the current incarnation and
 /// return the account + revision to apply. Returns `None` when nothing is
 /// drainable; a malformed intent fails closed.
-pub(crate) fn begin_next_apply(
+pub fn begin_next_apply(
     context: &CliContext,
     id: &str,
     expected_launch_id: &str,
@@ -1359,7 +1359,7 @@ fn begin_next_apply_inner(
 /// is marked `failed`, the applied binding is untouched, and the next prompt
 /// stays fenced. A stale worker whose intent was superseded, cancelled, or
 /// re-queued is rejected without mutating newer state.
-pub(crate) fn finish_next_apply(
+pub fn finish_next_apply(
     context: &CliContext,
     id: &str,
     expected_launch_id: &str,
@@ -1743,7 +1743,7 @@ fn ensure_runtime(record: &SessionRecord, expected_launch_id: &str) -> Result<()
     ))
 }
 
-pub(crate) fn validate_account(account: &str) -> Result<(), CliError> {
+pub fn validate_account(account: &str) -> Result<(), CliError> {
     if account.is_empty()
         || account.len() > MAX_ACCOUNT_BYTES
         || !account

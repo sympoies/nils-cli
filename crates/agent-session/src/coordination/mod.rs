@@ -1,8 +1,8 @@
 pub(crate) mod advisory;
 pub(crate) mod broker;
-pub(crate) mod claims;
-pub(crate) mod context;
-pub(crate) mod mailbox;
+pub mod claims;
+pub mod context;
+pub mod mailbox;
 mod notification;
 pub(crate) mod remote;
 pub(crate) mod server;
@@ -69,7 +69,7 @@ const MAX_CLAIM_MUTATION_FENCE_FILES: usize = 256;
 const MAX_CLAIM_MUTATION_OPERATION_FILES: usize = 512;
 const MAX_CLAIM_MUTATION_FENCE_BYTES: u64 = 64 * 1024;
 pub(crate) const CAPABILITY_ENV: &str = "AGENT_SESSION_CAPABILITY_FILE";
-pub(crate) const CHECKPOINT_ENV: &str = "AGENT_SESSION_CHECKPOINT_FILE";
+pub const CHECKPOINT_ENV: &str = "AGENT_SESSION_CHECKPOINT_FILE";
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
@@ -308,7 +308,7 @@ pub(crate) fn run_message(context: &CliContext, args: cli::MessageArgs) -> i32 {
     render_coordination(command, format, result)
 }
 
-pub(crate) fn session_has_active_claim_or_operation(
+pub fn session_has_active_claim_or_operation(
     context: &CliContext,
     session_id: &str,
     incarnation: &str,
@@ -335,7 +335,7 @@ pub(crate) fn session_has_active_claim_or_operation(
     Ok((!active_claim_ids.is_empty(), has_operation))
 }
 
-pub(crate) struct SessionQuiescenceGuard {
+pub struct SessionQuiescenceGuard {
     _locked: LockedRegistry,
     session_id: String,
     incarnation: String,
@@ -381,7 +381,7 @@ impl SessionQuiescenceGuard {
         Ok(true)
     }
 
-    pub(crate) fn has_active_claim(&self, session_id: &str, incarnation: &str) -> bool {
+    pub fn has_active_claim(&self, session_id: &str, incarnation: &str) -> bool {
         self._locked.registry.claims.iter().any(|claim| {
             claim.session_id == session_id
                 && claim.session_incarnation == incarnation
@@ -389,7 +389,7 @@ impl SessionQuiescenceGuard {
         })
     }
 
-    pub(crate) fn guidance_summary(
+    pub fn guidance_summary(
         &self,
         session_id: &str,
         incarnation: &str,
@@ -413,31 +413,31 @@ pub(crate) struct GroupCleanupQuiescenceGuard {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-pub(crate) struct ControllerClaimTuple {
-    pub(crate) claim_id: String,
-    pub(crate) revision: u64,
-    pub(crate) expires_at_epoch: i64,
+pub struct ControllerClaimTuple {
+    pub claim_id: String,
+    pub revision: u64,
+    pub expires_at_epoch: i64,
 }
 
-pub(crate) struct StoppedWorkerTerminalizationGuard {
+pub struct StoppedWorkerTerminalizationGuard {
     seal: WorkerAuthoritySealGuard,
     worker_claim_observed: bool,
 }
 
-pub(crate) struct WorkerClaimRevocationGuard {
+pub struct WorkerClaimRevocationGuard {
     seal: WorkerAuthoritySealGuard,
 }
 
-pub(crate) struct WorkerRuntimeStopGuard {
+pub struct WorkerRuntimeStopGuard {
     seal: WorkerAuthoritySealGuard,
 }
 
-pub(crate) struct ClaimedWorkerRuntimeStopGuard {
+pub struct ClaimedWorkerRuntimeStopGuard {
     seal: WorkerAuthoritySealGuard,
     worker_claim: ControllerClaimTuple,
 }
 
-pub(crate) struct ClaimMutationFenceOwnerGuard {
+pub struct ClaimMutationFenceOwnerGuard {
     _owner_lock: File,
 }
 
@@ -504,20 +504,20 @@ impl WorkerRuntimeStopGuard {
     /// its orchestration reservation while this registry lock is held, then
     /// seals coordination authority before dropping the lock and performing
     /// bounded external runtime termination.
-    pub(crate) fn seal(&mut self, context: &CliContext) -> Result<(), CliError> {
+    pub fn seal(&mut self, context: &CliContext) -> Result<(), CliError> {
         self.seal.seal(context)
     }
 }
 
 impl ClaimedWorkerRuntimeStopGuard {
-    pub(crate) fn worker_claim(&self) -> &ControllerClaimTuple {
+    pub fn worker_claim(&self) -> &ControllerClaimTuple {
         &self.worker_claim
     }
 
     /// Persist an exact claim-mutation fence while this guard still owns the
     /// observational coordination lock. External runtime termination can then
     /// proceed without monopolizing the global registry lock.
-    pub(crate) fn persist_claim_mutation_fence(
+    pub fn persist_claim_mutation_fence(
         &mut self,
         context: &CliContext,
         assignment_id: &str,
@@ -575,17 +575,17 @@ impl ClaimedWorkerRuntimeStopGuard {
 }
 
 impl StoppedWorkerTerminalizationGuard {
-    pub(crate) fn worker_claim_observed(&self) -> bool {
+    pub fn worker_claim_observed(&self) -> bool {
         self.worker_claim_observed
     }
 
-    pub(crate) fn controller_claim(&self) -> &ControllerClaimTuple {
+    pub fn controller_claim(&self) -> &ControllerClaimTuple {
         &self.seal.controller_claim
     }
 
     /// Seal only the exact stopped worker while the exact active, unexpired
     /// controller claim remains unchanged under this same registry lock.
-    pub(crate) fn seal(&mut self, context: &CliContext) -> Result<(), CliError> {
+    pub fn seal(&mut self, context: &CliContext) -> Result<(), CliError> {
         self.seal.seal(context)
     }
 }
@@ -594,7 +594,7 @@ impl WorkerClaimRevocationGuard {
     /// Fence only the exact idle worker while the admitted controller claim,
     /// assignment-derived worker claim, and zero-operation proof remain bound
     /// to this one coordination registry lock.
-    pub(crate) fn seal(&mut self, context: &CliContext) -> Result<(), CliError> {
+    pub fn seal(&mut self, context: &CliContext) -> Result<(), CliError> {
         self.seal.seal(context)
     }
 }
@@ -702,7 +702,7 @@ pub(crate) fn lock_group_cleanup_quiescence(
     })
 }
 
-pub(crate) fn lock_worker_runtime_stop(
+pub fn lock_worker_runtime_stop(
     context: &CliContext,
     worker_session_id: &str,
     worker_incarnation: &str,
@@ -723,7 +723,7 @@ pub(crate) fn lock_worker_runtime_stop(
     Ok(WorkerRuntimeStopGuard { seal })
 }
 
-pub(crate) fn lock_claimed_worker_runtime_stop(
+pub fn lock_claimed_worker_runtime_stop(
     context: &CliContext,
     worker_record: &SessionRecord,
     worker_incarnation: &str,
@@ -804,7 +804,7 @@ pub(crate) fn lock_claimed_worker_runtime_stop(
     Ok(ClaimedWorkerRuntimeStopGuard { seal, worker_claim })
 }
 
-pub(crate) fn exact_claim_active_observational(
+pub fn exact_claim_active_observational(
     context: &CliContext,
     session_id: &str,
     session_incarnation: &str,
@@ -1205,9 +1205,7 @@ fn claim_mutation_fence_owner_active(
     Err(store_unavailable())
 }
 
-pub(crate) fn sweep_inactive_claim_mutation_fence_orphans(
-    context: &CliContext,
-) -> Result<(), CliError> {
+pub fn sweep_inactive_claim_mutation_fence_orphans(context: &CliContext) -> Result<(), CliError> {
     let directory = claim_mutation_fence_directory(context, CLAIM_MUTATION_FENCE_LOCKS_DIR)?;
     let entries = fs::read_dir(&directory)
         .map_err(|_| store_unavailable())?
@@ -1381,7 +1379,7 @@ pub(crate) fn ensure_claim_mutation_not_fenced(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn verify_claimed_worker_runtime_stop_claim_fence(
+pub fn verify_claimed_worker_runtime_stop_claim_fence(
     context: &CliContext,
     assignment_id: &str,
     assignment_revision: u64,
@@ -1467,7 +1465,7 @@ pub(crate) fn verify_claimed_worker_runtime_stop_claim_fence(
     Ok(claims_active)
 }
 
-pub(crate) fn clear_claimed_worker_runtime_stop_claim_fence(
+pub fn clear_claimed_worker_runtime_stop_claim_fence(
     context: &CliContext,
     assignment_id: &str,
     assignment_revision: u64,
@@ -1605,7 +1603,7 @@ fn lock_worker_authority_seal(
     ))
 }
 
-pub(crate) fn lock_stopped_worker_terminalization(
+pub fn lock_stopped_worker_terminalization(
     context: &CliContext,
     worker_session_id: &str,
     worker_incarnation: &str,
@@ -1633,7 +1631,7 @@ pub(crate) fn lock_stopped_worker_terminalization(
     })
 }
 
-pub(crate) fn lock_worker_claim_revocation(
+pub fn lock_worker_claim_revocation(
     context: &CliContext,
     worker_record: &SessionRecord,
     worker_incarnation: &str,
@@ -1654,7 +1652,7 @@ pub(crate) fn lock_worker_claim_revocation(
     )
 }
 
-pub(crate) fn lock_worker_claim_revocation_replay(
+pub fn lock_worker_claim_revocation_replay(
     context: &CliContext,
     worker_record: &SessionRecord,
     worker_incarnation: &str,
@@ -1725,7 +1723,7 @@ fn lock_worker_claim_revocation_inner(
     }
 }
 
-pub(crate) fn lock_session_quiescence(
+pub fn lock_session_quiescence(
     context: &CliContext,
     session_id: &str,
     incarnation: &str,
@@ -1835,7 +1833,7 @@ fn render_value_text(value: &Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| "{}".to_string()) + "\n"
 }
 
-pub(crate) fn provision(context: &CliContext, record: &SessionRecord) -> Result<PathBuf, CliError> {
+pub fn provision(context: &CliContext, record: &SessionRecord) -> Result<PathBuf, CliError> {
     broker::provision(context, record)
 }
 
@@ -1856,7 +1854,7 @@ pub(crate) fn ensure_ready(context: &CliContext, record: &SessionRecord) -> Resu
     broker::ensure_ready(context, record)
 }
 
-pub(crate) fn ensure_recovery_registry_schema(context: &CliContext) -> Result<(), CliError> {
+pub fn ensure_recovery_registry_schema(context: &CliContext) -> Result<(), CliError> {
     let path = coordination_root(context)?.join(REGISTRY_FILE);
     let bytes = read_private_file(&path, MAX_REGISTRY_BYTES).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
@@ -1885,7 +1883,7 @@ pub(crate) fn ensure_recovery_registry_schema(context: &CliContext) -> Result<()
     Ok(())
 }
 
-pub(crate) fn validate_recovery_capability(
+pub fn validate_recovery_capability(
     context: &CliContext,
     record: &SessionRecord,
     capability_file: &Path,
@@ -1934,7 +1932,7 @@ pub(crate) fn validate_recovery_capability(
     Ok(())
 }
 
-pub(crate) fn recover_broker(
+pub fn recover_broker(
     context: &CliContext,
     args: cli::BrokerRecoveryArgs,
 ) -> Result<Value, CliError> {
@@ -2111,7 +2109,7 @@ pub(crate) fn notification_prompt(message_id: &str, session_id: &str) -> String 
     notification::fixed_prompt(message_id, session_id)
 }
 
-pub(crate) fn retry_notification(
+pub fn retry_notification(
     context: &CliContext,
     target_session_id: &str,
     target_incarnation: &str,
@@ -2129,11 +2127,7 @@ pub(crate) fn coordination_dir(context: &CliContext, session_id: &str) -> PathBu
     session_dir(context, session_id).join("coordination")
 }
 
-pub(crate) fn capability_path(
-    context: &CliContext,
-    session_id: &str,
-    incarnation: &str,
-) -> PathBuf {
+pub fn capability_path(context: &CliContext, session_id: &str, incarnation: &str) -> PathBuf {
     capability_path_for_state(&context.state_dir, session_id, incarnation)
 }
 
@@ -2152,11 +2146,7 @@ pub(crate) fn capability_path_for_state(
         ))
 }
 
-pub(crate) fn checkpoint_path_for_state(
-    state_dir: &Path,
-    session_id: &str,
-    incarnation: &str,
-) -> PathBuf {
+pub fn checkpoint_path_for_state(state_dir: &Path, session_id: &str, incarnation: &str) -> PathBuf {
     state_dir
         .join("sessions")
         .join(session_id)
@@ -2203,7 +2193,7 @@ fn capability_token_from_file(capability_file: Option<&Path>) -> Result<String, 
     Ok(token.trim().to_string())
 }
 
-pub(crate) fn authenticate_any_from_file(
+pub fn authenticate_any_from_file(
     context: &CliContext,
     capability_file: Option<&Path>,
 ) -> Result<(SessionRecord, String), CliError> {
@@ -2216,7 +2206,7 @@ pub(crate) fn authenticate_any_from_file(
     Ok((record, incarnation))
 }
 
-pub(crate) fn authenticate_any_from_file_with_active_claim_observational(
+pub fn authenticate_any_from_file_with_active_claim_observational(
     context: &CliContext,
     capability_file: Option<&Path>,
 ) -> Result<(SessionRecord, String, ControllerClaimTuple), CliError> {
@@ -2461,7 +2451,7 @@ pub(crate) fn revalidate_capability_file(
     Ok(())
 }
 
-pub(crate) fn incarnation(record: &SessionRecord) -> Result<String, CliError> {
+pub fn incarnation(record: &SessionRecord) -> Result<String, CliError> {
     record
         .runtime
         .as_ref()
@@ -3045,7 +3035,7 @@ fn validate_idempotency_key(key: &str) -> Result<(), CliError> {
     Ok(())
 }
 
-pub(crate) fn request_digest<T: Serialize>(operation: &str, value: &T) -> String {
+pub fn request_digest<T: Serialize>(operation: &str, value: &T) -> String {
     let mut digest = Sha256::new();
     digest.update(operation.as_bytes());
     digest.update([0]);
@@ -3106,7 +3096,7 @@ fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
     outer.finalize().into()
 }
 
-pub(crate) fn digest_bytes(value: &[u8]) -> String {
+pub fn digest_bytes(value: &[u8]) -> String {
     hex(&Sha256::digest(value))
 }
 
@@ -3131,7 +3121,7 @@ fn digest_eq(left: &str, right: &str) -> bool {
         == 0
 }
 
-pub(crate) fn now_epoch() -> i64 {
+pub fn now_epoch() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -3140,13 +3130,13 @@ pub(crate) fn now_epoch() -> i64 {
         .unwrap_or(i64::MAX)
 }
 
-pub(crate) fn timestamp(epoch: i64) -> String {
+pub fn timestamp(epoch: i64) -> String {
     Timestamp::from_second(epoch)
         .map(|value| value.to_string())
         .unwrap_or_else(|_| Timestamp::now().to_string())
 }
 
-pub(crate) fn unauthorized() -> CliError {
+pub fn unauthorized() -> CliError {
     CliError::data(
         "coordination-unauthorized",
         "coordination authority could not be verified",
@@ -3251,7 +3241,7 @@ pub(crate) struct CoordinationSummary {
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
-pub(crate) struct GuidanceSummary {
+pub struct GuidanceSummary {
     pub unread_count: usize,
     pub consumed_count: usize,
     pub stale_incarnation_unread_count: usize,
@@ -3296,7 +3286,7 @@ fn guidance_summary_from_registry(
     summary
 }
 
-pub(crate) fn carry_forward_unread_controller_guidance_with_authorization<G, F>(
+pub fn carry_forward_unread_controller_guidance_with_authorization<G, F>(
     context: &CliContext,
     recipient_session_id: &str,
     previous_incarnation: &str,
@@ -3319,7 +3309,7 @@ where
     )
 }
 
-pub(crate) fn quarantine_orphaned_controller_guidance_with_authorization<G, F>(
+pub fn quarantine_orphaned_controller_guidance_with_authorization<G, F>(
     context: &CliContext,
     recipient_session_id: &str,
     current_incarnation: &str,
@@ -3350,7 +3340,7 @@ pub(crate) fn json_value<T: Serialize>(value: T) -> Result<Value, CliError> {
     })
 }
 
-pub(crate) fn read_bounded_json<T: for<'de> Deserialize<'de>>(
+pub fn read_bounded_json<T: for<'de> Deserialize<'de>>(
     path: &Path,
     max_bytes: u64,
     code: &'static str,
@@ -3360,7 +3350,7 @@ pub(crate) fn read_bounded_json<T: for<'de> Deserialize<'de>>(
         .map_err(|_| CliError::data(code, "coordination input is invalid", None))
 }
 
-pub(crate) fn read_bounded_bytes(
+pub fn read_bounded_bytes(
     path: &Path,
     max_bytes: u64,
     code: &'static str,
