@@ -32,6 +32,7 @@ use uuid::Uuid;
 use crate::error::HookError;
 
 mod acceptance;
+mod owner;
 
 const STATE_SCHEMA: &str = "agent-hook.finish-line.state.v1";
 const MAX_RELEASE_TOMBSTONES: usize = 64;
@@ -148,6 +149,8 @@ struct BeginRequest {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct OpenRequest {
+    #[serde(default, deserialize_with = "deserialize_optional_owner_pid")]
+    owner_pid: Option<u32>,
     schema_version: String,
     product: String,
     session_id: String,
@@ -156,6 +159,13 @@ struct OpenRequest {
     attempt_token: String,
     #[serde(default, deserialize_with = "deserialize_optional_command")]
     command: Option<String>,
+}
+
+fn deserialize_optional_owner_pid<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    u32::deserialize(deserializer).map(Some)
 }
 
 fn deserialize_optional_command<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -438,6 +448,8 @@ impl State {
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct SessionState {
+    #[serde(skip)]
+    owner_process: Option<owner::OwnerProcess>,
     targets: BTreeMap<String, TargetState>,
     #[serde(default)]
     runner_capability_digest: Option<String>,
@@ -502,7 +514,7 @@ impl TargetStatus {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct OperationRecord {
     session_key: String,
@@ -684,6 +696,7 @@ fn open(state_root: &Path, request: OpenRequest) -> Result<Outcome, HookError> {
         }
         Err(error) => return Err(error),
     };
+    let owner_process = request.owner_pid.map(owner::authenticate).transpose()?;
     let lease_expires_at = capability_lease_expiry()?;
     let mut attempted_orphan_reclaim = false;
     loop {
@@ -699,7 +712,21 @@ fn open(state_root: &Path, request: OpenRequest) -> Result<Outcome, HookError> {
                 existing.runner_capability_incarnation,
             );
             let capability_digest = runner_capability_digest(&identity, &capability);
-            if !constant_time_eq(expected.as_bytes(), capability_digest.as_bytes()) {
+            if !constant_time_eq(expected.as_bytes(), capability_digest.as_bytes())
+                || existing.owner_process != owner_process
+            {
+                if let Some(new_owner) = owner_process.as_ref() {
+                    drop(store);
+                    if let Some(outcome) = recover_crashed_session(
+                        state_root,
+                        &identity,
+                        &request.attempt_token,
+                        new_owner,
+                        lease_expires_at,
+                    )? {
+                        return Ok(outcome);
+                    }
+                }
                 return Err(HookError::data(
                     "finish-line-session-active",
                     "finish-line session already belongs to a different private open attempt",
@@ -742,6 +769,7 @@ fn open(state_root: &Path, request: OpenRequest) -> Result<Outcome, HookError> {
             .sessions
             .entry(identity.session_key.clone())
             .or_default();
+        session.owner_process = owner_process.clone();
         session.runner_capability_digest = Some(capability_digest.clone());
         session.runner_capability_incarnation = Some(incarnation);
         session.capability_lease_expires_at_epoch = Some(lease_expires_at);
@@ -756,6 +784,170 @@ fn open(state_root: &Path, request: OpenRequest) -> Result<Outcome, HookError> {
             "finish-line DSH runner capability opened\n",
         ));
     }
+}
+
+#[cfg(target_os = "linux")]
+fn recover_crashed_session(
+    state_root: &Path,
+    identity: &RequestIdentity,
+    attempt_token: &str,
+    new_owner: &owner::OwnerProcess,
+    lease_expires_at: u64,
+) -> Result<Option<Outcome>, HookError> {
+    // Compare the whole serialized session/operation snapshot after cleanup.
+    // Existing run supervisors may terminalize while the repository lock is
+    // dropped; no partial snapshot can authorize a rotation.
+    let snapshot = |store: &Store| -> Result<Option<(Value, Value)>, HookError> {
+        let Some(session) = store.state.sessions.get(&identity.session_key) else {
+            return Ok(None);
+        };
+        let Some(old_owner) = session.owner_process.as_ref() else {
+            return Ok(None);
+        };
+        if !owner::proven_dead(old_owner) {
+            return Ok(None);
+        }
+        let operations = store
+            .state
+            .operations
+            .iter()
+            .filter(|(_, operation)| operation.session_key == identity.session_key)
+            .collect::<BTreeMap<_, _>>();
+        let values =
+            serde_json::to_value((session, &session.owner_process, operations)).map_err(|_| {
+                HookError::runtime(
+                    "finish-line-state-serialize-failed",
+                    "finish-line recovery snapshot could not be serialized",
+                )
+            })?;
+        Ok(Some((values, json!(store.state.generation))))
+    };
+    let (expected, units) = {
+        let store = Store::open(state_root, identity)?;
+        let Some(expected) = snapshot(&store)? else {
+            return Ok(None);
+        };
+        if !acceptance::crash_recovery_eligible(&store, identity)? {
+            return Ok(None);
+        }
+        let pending = store
+            .state
+            .operations
+            .values()
+            .filter(|operation| {
+                operation.session_key == identity.session_key
+                    && (operation.terminal.is_none() || operation.active_unit.is_some())
+            })
+            .collect::<Vec<_>>();
+        if pending.len() > MAX_EXPIRED_ORPHAN_OPERATIONS {
+            return Ok(None);
+        }
+        let Some(units) = pending
+            .iter()
+            .map(|operation| operation.active_unit.clone())
+            .collect::<Option<BTreeSet<_>>>()
+        else {
+            return Ok(None);
+        };
+        (expected, units)
+    };
+    for unit in &units {
+        stop_contained_unit(unit)?;
+    }
+    let mut store = Store::open(state_root, identity)?;
+    owner::authenticate_bound(new_owner)?;
+    if snapshot(&store)?.as_ref() != Some(&expected)
+        || !acceptance::crash_recovery_eligible(&store, identity)?
+    {
+        return Ok(None);
+    }
+    for unit in &units {
+        if !contained_unit_is_quiescent(unit)? || contained_unit_has_pending_job(unit)? {
+            return Ok(None);
+        }
+    }
+    let old_digest = store
+        .state
+        .sessions
+        .get(&identity.session_key)
+        .and_then(|session| session.runner_capability_digest.clone())
+        .ok_or_else(|| {
+            HookError::data(
+                "finish-line-state-invalid",
+                "finish-line crashed session has no capability binding",
+            )
+        })?;
+    // Preserve an existing validation obligation and invalidate every result
+    // for a repository whose crashed client had begun execution or edits.
+    // An untouched generation-zero approval probe creates no mutation epoch.
+    if store.state.generation > 0
+        || store
+            .state
+            .sessions
+            .get(&identity.session_key)
+            .is_some_and(|session| !session.targets.is_empty())
+    {
+        store.state.generation = store.state.generation.checked_add(1).ok_or_else(|| {
+            HookError::data(
+                "finish-line-generation-exhausted",
+                "finish-line recovery generation is exhausted",
+            )
+        })?;
+    }
+    let incarnation = store.state.next_sequence()?;
+    let capability = open_runner_capability(identity, attempt_token, Some(incarnation));
+    let digest = runner_capability_digest(identity, &capability);
+    // Invalidate the separate evidence file FIRST. Interrupted writes leave
+    // missing evidence under the old capability, never old success under new authority.
+    acceptance::invalidate_crashed_session(&store, identity)?;
+    store
+        .state
+        .operations
+        .retain(|_, operation| operation.session_key != identity.session_key);
+    let session = store
+        .state
+        .sessions
+        .get_mut(&identity.session_key)
+        .expect("snapshot session checked");
+    session.targets.clear();
+    session.owner_process = Some(new_owner.clone());
+    session.runner_capability_digest = Some(digest);
+    session.runner_capability_incarnation = Some(incarnation);
+    session.capability_lease_expires_at_epoch = Some(lease_expires_at);
+    store.state.released_sessions.insert(
+        released_session_key(&identity.session_key, &old_digest),
+        ReleasedSession {
+            capability_digest: old_digest,
+            session_key: Some(identity.session_key.clone()),
+            sequence: incarnation,
+        },
+    );
+    compact_release_tombstones(&mut store.state);
+    store.save()?;
+    drop(store);
+    for unit in units {
+        let _ = reset_contained_unit(&unit);
+    }
+    Ok(Some(success_outcome(
+        json!({
+            "schema_version": "agent-hook.finish-line.open-result.v1",
+            "status": "recovered",
+            "runner_capability": capability,
+            "correlation_id": identity.correlation_id,
+        }),
+        "finish-line crashed client recovered after authoritative quiescence\n",
+    )))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn recover_crashed_session(
+    _state_root: &Path,
+    _identity: &RequestIdentity,
+    _attempt_token: &str,
+    _new_owner: &owner::OwnerProcess,
+    _lease_expires_at: u64,
+) -> Result<Option<Outcome>, HookError> {
+    Ok(None)
 }
 
 fn classify_non_repository_open(
@@ -811,6 +1003,14 @@ fn begin(state_root: &Path, request: BeginRequest) -> Result<Outcome, HookError>
     let mut attempted_orphan_reclaim = false;
     loop {
         let mut store = Store::open(state_root, &identity)?;
+        if let Some(owner) = store
+            .state
+            .sessions
+            .get(&identity.session_key)
+            .and_then(|session| session.owner_process.as_ref())
+        {
+            owner::authenticate_bound(owner)?;
+        }
         if let Some(existing) = store.state.operations.get(&operation_key) {
             let exact_retry = existing.session_key == identity.session_key
                 && existing.turn_key == identity.turn_key
@@ -987,6 +1187,7 @@ fn run_validation(state_root: &Path, request: RunRequest) -> Result<Outcome, Hoo
     let unit = format!("nils-finish-line-{}", Uuid::new_v4().simple());
     let sequence;
     let generation;
+    let reservation;
     {
         let mut store = Store::open(state_root, &identity)?;
         validate_runner_capability(&store, &identity, &request.runner_capability)?;
@@ -1102,6 +1303,12 @@ fn run_validation(state_root: &Path, request: RunRequest) -> Result<Outcome, Hoo
                 active_unit: Some(unit.clone()),
             },
         );
+        reservation = store
+            .state
+            .operations
+            .get(&operation_key)
+            .expect("inserted runner reservation")
+            .clone();
         store.state.contract_digest = Some(snapshot.global_digest);
         store.save()?;
     }
@@ -1118,6 +1325,7 @@ fn run_validation(state_root: &Path, request: RunRequest) -> Result<Outcome, Hoo
         Ok(execution) => execution,
         Err(error) => {
             let store = Store::open(state_root, &identity)?;
+            require_current_reservation(&store, &operation_key, &reservation)?;
             acceptance::record_contained_infrastructure_failure(
                 &store,
                 &identity,
@@ -1134,6 +1342,7 @@ fn run_validation(state_root: &Path, request: RunRequest) -> Result<Outcome, Hoo
     let disposition;
     {
         let mut store = Store::open(state_root, &identity)?;
+        require_current_reservation(&store, &operation_key, &reservation)?;
         let current_generation = store.state.generation;
         let contract_current = current_snapshot.targets.iter().any(|candidate| {
             candidate.target_digest == target.target_digest
@@ -1234,6 +1443,7 @@ fn run_ordinary_shell(
     let unit = format!("nils-finish-line-{}", Uuid::new_v4().simple());
     let sequence;
     let generation;
+    let reservation;
     {
         let mut store = Store::open(state_root, &identity)?;
         validate_runner_capability(&store, &identity, &request.runner_capability)?;
@@ -1344,6 +1554,12 @@ fn run_ordinary_shell(
                 active_unit: Some(unit.clone()),
             },
         );
+        reservation = store
+            .state
+            .operations
+            .get(&operation_key)
+            .expect("inserted runner reservation")
+            .clone();
         store.state.contract_digest = Some(snapshot.global_digest);
         store.save()?;
     }
@@ -1361,6 +1577,7 @@ fn run_ordinary_shell(
     let current_snapshot = resolve_contracts(&identity)?;
     {
         let mut store = Store::open(state_root, &identity)?;
+        require_current_reservation(&store, &operation_key, &reservation)?;
         let operation = store
             .state
             .operations
@@ -1401,6 +1618,33 @@ fn run_ordinary_shell(
     ))
 }
 
+fn require_current_reservation(
+    store: &Store,
+    operation_key: &str,
+    reservation: &OperationRecord,
+) -> Result<(), HookError> {
+    let current = store.state.operations.get(operation_key);
+    let matches = current.is_some_and(|operation| {
+        operation.session_key == reservation.session_key
+            && operation.turn_key == reservation.turn_key
+            && operation.token_digest == reservation.token_digest
+            && operation.generation == reservation.generation
+            && operation.sequence == reservation.sequence
+            && operation.kind == reservation.kind
+            && operation.target_digest == reservation.target_digest
+            && operation.contract_digest == reservation.contract_digest
+            && operation.active_unit == reservation.active_unit
+            && operation.terminal.is_none()
+    });
+    if !matches {
+        return Err(finish_line_unavailable(
+            "finish-line-operation-superseded",
+            "finish-line runner reservation is no longer current",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_runner_capability(
     store: &Store,
     identity: &RequestIdentity,
@@ -1413,6 +1657,14 @@ fn validate_runner_capability(
         .get(&identity.session_key)
         .and_then(|session| session.runner_capability_digest.as_deref())
         .is_some_and(|expected| constant_time_eq(expected.as_bytes(), supplied.as_bytes()));
+    if let Some(owner) = store
+        .state
+        .sessions
+        .get(&identity.session_key)
+        .and_then(|session| session.owner_process.as_ref())
+    {
+        owner::authenticate_bound(owner)?;
+    }
     if !valid {
         return Err(HookError::data(
             "finish-line-runner-capability-invalid",
@@ -3870,6 +4122,102 @@ mod tests {
 
     use super::*;
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn crash_recovery_owned_sessions_are_not_reclaimed_by_unbound_lease_expiry() {
+        let dir = tempfile::TempDir::new().expect("private state");
+        let identity = RequestIdentity {
+            repo_root: dir.path().to_path_buf(),
+            repo_digest: format!("sha256:{}", "a".repeat(64)),
+            repo_key: "test-repo".to_string(),
+            session_key: "owned-session".to_string(),
+            turn_key: "turn".to_string(),
+            correlation_id: "correlation".to_string(),
+        };
+        let root = dir.path().join("agent-hook");
+        let mut store = Store::open(&root, &identity).expect("store");
+        let current_owner =
+            owner::authenticate(unsafe { libc::getppid() } as u32).expect("live owner");
+        for dead in [false, true] {
+            let mut process = current_owner.clone();
+            if dead {
+                let mut value = serde_json::to_value(&process).expect("owner value");
+                value["start_ticks"] =
+                    json!(value["start_ticks"].as_u64().expect("start ticks") + 1);
+                process = serde_json::from_value(value).expect("reused owner seam");
+            }
+            store.state.sessions.insert(
+                identity.session_key.clone(),
+                SessionState {
+                    owner_process: Some(process),
+                    runner_capability_digest: Some("owned-binding".to_string()),
+                    runner_capability_incarnation: Some(1),
+                    capability_lease_expires_at_epoch: Some(0),
+                    ..SessionState::default()
+                },
+            );
+            store.save().expect("save owner");
+            drop(store);
+            assert!(
+                !reclaim_expired_crash_orphan_session(&root, &identity).expect("reclaim"),
+                "owner-bound sessions require explicit recovery with evidence invalidation"
+            );
+            store = Store::open(&root, &identity).expect("reopen");
+            assert!(store.state.sessions.contains_key(&identity.session_key));
+        }
+    }
+
+    #[test]
+    fn crash_recovery_old_finalizers_cannot_claim_replacement_reservations() {
+        let dir = tempfile::TempDir::new().expect("private state");
+        let identity = RequestIdentity {
+            repo_root: dir.path().to_path_buf(),
+            repo_digest: format!("sha256:{}", "a".repeat(64)),
+            repo_key: "test-repo".to_string(),
+            session_key: "session".to_string(),
+            turn_key: "turn".to_string(),
+            correlation_id: "correlation".to_string(),
+        };
+        let mut store = Store::open(&dir.path().join("agent-hook"), &identity).expect("store");
+        for kind in [StoredOperationKind::Validation, StoredOperationKind::Shell] {
+            let old = OperationRecord {
+                session_key: identity.session_key.clone(),
+                turn_key: identity.turn_key.clone(),
+                token_digest: "binding".to_string(),
+                generation: 4,
+                sequence: 7,
+                kind,
+                target_digest: Some("same-target".to_string()),
+                contract_digest: Some("same-contract".to_string()),
+                terminal: None,
+                active_unit: Some("nils-finish-line-old".to_string()),
+            };
+            store
+                .state
+                .operations
+                .insert("same-operation-id".to_string(), old.clone());
+            assert!(require_current_reservation(&store, "same-operation-id", &old).is_ok());
+            // Pause the old completion, rotate the authority and reserve a new
+            // run under the same operation ID and unchanged generation.
+            let mut replacement = old.clone();
+            replacement.sequence += 1;
+            replacement.active_unit = Some("nils-finish-line-new".to_string());
+            store
+                .state
+                .operations
+                .insert("same-operation-id".to_string(), replacement.clone());
+            let before = serde_json::to_value(&store.state).expect("before");
+            assert_eq!(
+                require_current_reservation(&store, "same-operation-id", &old)
+                    .expect_err("old finalizer must fail before any target or evidence write")
+                    .code,
+                "finish-line-operation-superseded"
+            );
+            assert_eq!(serde_json::to_value(&store.state).expect("after"), before);
+            assert!(require_current_reservation(&store, "same-operation-id", &replacement).is_ok());
+        }
+    }
+
     fn expired_candidate(session_key: &str) -> ExpiredOrphanCandidate {
         ExpiredOrphanCandidate {
             session_key: session_key.to_string(),
@@ -4411,6 +4759,12 @@ fn reclaim_expired_crash_orphan_session(
             .sessions
             .iter()
             .filter_map(|(session_key, session)| {
+                // Owner-bound sessions use explicit death proof and recovery,
+                // including acceptance invalidation. Released lease reclamation
+                // must neither steal a live owner nor bypass that transaction.
+                if session.owner_process.is_some() {
+                    return None;
+                }
                 let lease_expires_at_epoch = session.capability_lease_expires_at_epoch?;
                 if lease_expires_at_epoch > now {
                     return None;
@@ -4484,8 +4838,9 @@ fn reclaim_expired_crash_orphan_session(
                 .sessions
                 .get(&candidate.session_key)
                 .is_some_and(|session| {
-                    session.capability_lease_expires_at_epoch
-                        == Some(candidate.lease_expires_at_epoch)
+                    session.owner_process.is_none()
+                        && session.capability_lease_expires_at_epoch
+                            == Some(candidate.lease_expires_at_epoch)
                         && session.runner_capability_incarnation == candidate.capability_incarnation
                         && session
                             .runner_capability_digest
@@ -4692,6 +5047,7 @@ fn finish_line_temporary(code: &str, message: &str) -> HookError {
 struct Store {
     state_path: PathBuf,
     state: State,
+    initial_owners: owner::OwnerRegistry,
     _lock: RepoLock,
 }
 
@@ -4721,10 +5077,12 @@ impl Store {
                 "initialized finish-line repository state is missing",
             ));
         }
-        let state = read_state(&state_path, &identity.repo_digest)?;
+        let mut state = read_state(&state_path, &identity.repo_digest)?;
+        let initial_owners = owner::load(&state_path, &mut state)?;
         let store = Self {
             state_path,
             state,
+            initial_owners,
             _lock: lock,
         };
         if state_missing {
@@ -4746,6 +5104,7 @@ impl Store {
                 "finish-line state exceeds 384 KiB",
             ));
         }
+        owner::save(&self.state_path, &self.state, &self.initial_owners)?;
         write_state_atomic(&self.state_path, &bytes)
     }
 }

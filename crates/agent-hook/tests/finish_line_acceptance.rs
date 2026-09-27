@@ -308,6 +308,201 @@ fn reserve_completion(
     call(fixture, "verdict", &request)
 }
 
+fn crash_recovery_owned_open(fixture: &Fixture, token: &str) -> (i32, Value) {
+    let mut request = common(fixture, "session-recovery", "turn-owner");
+    request["schema_version"] = json!("agent-hook.finish-line.open.v1");
+    request["attempt_token"] = json!(token);
+    request["owner_pid"] = json!(std::process::id());
+    call(fixture, "open", &request)
+}
+
+fn simulate_reused_owner_incarnation(fixture: &Fixture) {
+    // Acceptance state-machine seam: kernel death proof is exercised with real
+    // SIGKILL in finish_line.rs. Here the stored PID points to an earlier start
+    // tick incarnation so we can reuse this file's real CLI acceptance helpers.
+    let (main, _) = finish_line_state_paths(fixture);
+    let owners = main.with_extension("owners");
+    let mut state = read_json(&owners);
+    for binding in state["bindings"]
+        .as_object_mut()
+        .expect("owner bindings")
+        .values_mut()
+    {
+        let ticks = binding["owner"]["start_ticks"].as_u64().expect("ticks");
+        binding["owner"]["start_ticks"] = json!(ticks + 1);
+    }
+    write_json(&owners, &state);
+}
+
+#[test]
+fn crash_recovery_invalidates_evidence_claims_and_pending_completion() {
+    let fixture = fixture();
+    let (code, opened) = crash_recovery_owned_open(&fixture, "private-open:old-owner");
+    assert_eq!(code, 0, "opened={opened}");
+    let capability = opened["data"]["runner_capability"]
+        .as_str()
+        .expect("capability");
+    let (code, registered) = register(&fixture, "session-recovery", capability);
+    assert_eq!(code, 0, "registered={registered}");
+    let contract = registered["data"]["contract_digest"]
+        .as_str()
+        .expect("contract");
+    assert_eq!(
+        admit_validator(
+            &fixture,
+            "session-recovery",
+            capability,
+            contract,
+            "old-validator"
+        )
+        .0,
+        0
+    );
+    assert_eq!(
+        observe(
+            &fixture,
+            "session-recovery",
+            capability,
+            "old-validator",
+            "succeeded"
+        )
+        .0,
+        0
+    );
+    assert_eq!(
+        reserve_completion(
+            &fixture,
+            "session-recovery",
+            capability,
+            contract,
+            "old-completion"
+        )
+        .0,
+        0
+    );
+    let (_, acceptance_path) = finish_line_state_paths(&fixture);
+    let mut before = read_json(&acceptance_path);
+    for session in before["sessions"]
+        .as_object_mut()
+        .expect("sessions")
+        .values_mut()
+    {
+        session["claimed_sources"] = json!([support::sha256(b"old-contained-source")]);
+    }
+    write_json(&acceptance_path, &before);
+    simulate_reused_owner_incarnation(&fixture);
+    let (code, recovered) = crash_recovery_owned_open(&fixture, "private-open:new-owner");
+    assert_eq!(code, 0, "recovered={recovered}");
+    assert_eq!(recovered["data"]["status"], "recovered");
+    let new_capability = recovered["data"]["runner_capability"]
+        .as_str()
+        .expect("replacement");
+    assert_ne!(new_capability, capability);
+    let state = read_json(&acceptance_path);
+    assert!(
+        state["sessions"]
+            .as_object()
+            .expect("sessions")
+            .values()
+            .all(|session| session["evidence"]
+                .as_object()
+                .expect("evidence")
+                .is_empty()
+                && session["claimed_sources"]
+                    .as_array()
+                    .expect("sources")
+                    .is_empty())
+    );
+    assert!(
+        state["operations"]
+            .as_object()
+            .expect("operations")
+            .values()
+            .any(
+                |operation| operation["terminal"]["source_digest"] == "client-crash-recovery"
+                    && operation["terminal"]["observation"] == "infrastructure-blocked"
+            )
+    );
+    let (code, missing) = verdict(&fixture, "session-recovery", new_capability, contract);
+    assert_eq!(
+        code, 1,
+        "old success must not authorize recovered completion: {missing}"
+    );
+    assert_eq!(missing["data"]["aggregate"], "missing");
+    assert_eq!(
+        admit_validator(
+            &fixture,
+            "session-recovery",
+            new_capability,
+            contract,
+            "fresh-validator"
+        )
+        .0,
+        0
+    );
+    assert_eq!(
+        observe(
+            &fixture,
+            "session-recovery",
+            new_capability,
+            "fresh-validator",
+            "succeeded"
+        )
+        .0,
+        0
+    );
+    assert_eq!(
+        verdict(&fixture, "session-recovery", new_capability, contract).0,
+        0
+    );
+}
+
+#[test]
+fn crash_recovery_refuses_uncontained_acceptance_work_without_rotating() {
+    for kind in ["mutation", "validator"] {
+        let fixture = fixture();
+        let (code, opened) = crash_recovery_owned_open(&fixture, "private-open:old-owner");
+        assert_eq!(code, 0, "opened={opened}");
+        let capability = opened["data"]["runner_capability"]
+            .as_str()
+            .expect("capability");
+        let (_, registered) = register(&fixture, "session-recovery", capability);
+        let contract = registered["data"]["contract_digest"]
+            .as_str()
+            .expect("contract");
+        let (code, pending) = if kind == "mutation" {
+            admit_mutation(
+                &fixture,
+                "session-recovery",
+                capability,
+                contract,
+                "uncontained-pending",
+            )
+        } else {
+            admit_validator(
+                &fixture,
+                "session-recovery",
+                capability,
+                contract,
+                "uncontained-pending",
+            )
+        };
+        assert_eq!(code, 0, "pending={pending}");
+        simulate_reused_owner_incarnation(&fixture);
+        let (main, acceptance) = finish_line_state_paths(&fixture);
+        let before_main = read_json(&main);
+        let before_acceptance = read_json(&acceptance);
+        let (code, refused) = crash_recovery_owned_open(&fixture, "private-open:new-owner");
+        assert_eq!(
+            code, 65,
+            "uncontained {kind} cannot be declared quiescent: {refused}"
+        );
+        assert_eq!(refused["error"]["code"], "finish-line-session-active");
+        assert_eq!(read_json(&main), before_main);
+        assert_eq!(read_json(&acceptance), before_acceptance);
+    }
+}
+
 #[test]
 fn named_host_validator_satisfies_only_its_exact_current_requirement() {
     let fixture = fixture();

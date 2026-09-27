@@ -745,6 +745,245 @@ fn tombstone_churn_never_resurrects_a_released_capability() {
     assert_eq!(replacement_release["data"]["status"], "released");
 }
 
+fn crash_recovery_open(fixture: &Fixture, token: &str, owner_pid: u32) -> (i32, Value) {
+    let mut request = common(fixture, "session-crash-recovery", "turn-recovery");
+    request["schema_version"] = json!("agent-hook.finish-line.open.v1");
+    request["attempt_token"] = json!(token);
+    request["owner_pid"] = json!(owner_pid);
+    let output = fixture.run(
+        &["finish-line", "open", "--format", "json"],
+        Some(&request.to_string()),
+    );
+    (output.code, output.stdout_json())
+}
+
+#[test]
+#[ignore = "requires NILS_AGENT_HOOK_ROLLBACK_BIN pointing to an authenticated released baseline"]
+fn crash_recovery_owner_sidecar_preserves_released_reader_compatibility() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let baseline = std::env::var_os("NILS_AGENT_HOOK_ROLLBACK_BIN").expect("baseline binary");
+    let fixture = fixture();
+    let (_owner, _) = support::OwnedFinishLineClient::open(
+        &fixture,
+        "session-crash-recovery",
+        "open-token:rollback-owner",
+    );
+    let mut request = common(&fixture, "session-crash-recovery", "turn-rollback-status");
+    request["schema_version"] = json!("agent-hook.finish-line.status.v1");
+    let mut child = Command::new(baseline)
+        .args(["finish-line", "status", "--format", "json"])
+        .current_dir(&fixture.root)
+        .env("HOME", &fixture.home)
+        .env("XDG_CONFIG_HOME", &fixture.config_home)
+        .env("XDG_STATE_HOME", &fixture.state_home)
+        .env("AGENT_SESSION_STATE_DIR", &fixture.session_state)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("released reader");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(request.to_string().as_bytes())
+        .expect("request");
+    let result = child.wait_with_output().expect("released result");
+    let envelope: Value = serde_json::from_slice(&result.stdout).expect("released JSON");
+    assert_eq!(result.status.code(), Some(0), "released reader={envelope}");
+    assert_eq!(envelope["ok"], true);
+    let (code, denied) = crash_recovery_open(
+        &fixture,
+        "open-token:rollback-contender",
+        std::process::id(),
+    );
+    assert_eq!(
+        code, 65,
+        "live owner remains bound after old reader: {denied}"
+    );
+    assert_eq!(denied["error"]["code"], "finish-line-session-active");
+}
+
+#[test]
+fn crash_recovery_quiesces_active_contained_children_before_rotating() {
+    verify_crash_recovery_active_cleanup(false);
+}
+
+#[test]
+fn crash_recovery_quiesces_with_a_surviving_old_supervisor() {
+    verify_crash_recovery_active_cleanup(true);
+}
+
+fn verify_crash_recovery_active_cleanup(owner_only: bool) {
+    let fixture = fixture();
+    let command = "sleep 30 & printf '%s' \"$!\" > recovery-child.pid; printf started > recovery-started; wait; printf late > recovery-late";
+    one_contract(&fixture, command);
+    let (mut owner, old_capability) = support::OwnedFinishLineClient::open(
+        &fixture,
+        "session-crash-recovery",
+        "open-token:active-owner",
+    );
+    let mut request = common(&fixture, "session-crash-recovery", "turn-before-crash");
+    request["schema_version"] = json!("agent-hook.finish-line.run.v1");
+    request["operation_id"] = json!("active-validation");
+    request["runner_capability"] = json!(old_capability);
+    request["intent"] = json!("project-dev");
+    request["command"] = json!(command);
+    request["timeout_ms"] = json!(60_000);
+    request["execution"] = json!({ "kind": "bash-v1", "workdir": fixture.root,
+        "output_max_bytes": 64 * 1024, "runner": {"kind": "danger-full-access"} });
+    owner.start("run", &request);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !fixture.root.join("recovery-started").exists() {
+        assert!(
+            Instant::now() < deadline,
+            "contained validation did not start: {:?}",
+            owner.result()
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    let child: i32 = fs::read_to_string(fixture.root.join("recovery-child.pid"))
+        .expect("contained child")
+        .parse()
+        .expect("PID");
+    if owner_only {
+        owner.kill_owner_only();
+    } else {
+        owner.kill_and_wait();
+    }
+    let (code, recovered) = crash_recovery_open(
+        &fixture,
+        "open-token:active-replacement",
+        std::process::id(),
+    );
+    assert_eq!(code, 0, "active cleanup={recovered}");
+    assert_eq!(recovered["data"]["status"], "recovered");
+    assert_ne!(recovered["data"]["runner_capability"], old_capability);
+    assert_ne!(
+        unsafe { libc::kill(child, 0) },
+        0,
+        "old contained child survived recovery"
+    );
+    assert!(!fixture.root.join("recovery-late").exists());
+    let (_, blocked) = stop(&fixture, "session-crash-recovery");
+    assert!(
+        reason_codes(&blocked).contains(&"validation-missing"),
+        "recovery must not manufacture validation: {blocked}"
+    );
+}
+
+#[test]
+fn crash_recovery_rejects_untrusted_owner_claims_without_changing_unbound_ownership() {
+    let fixture = fixture();
+    one_contract(&fixture, ":");
+    let (unbound_code, unbound) = open_runner_with_token(
+        &fixture,
+        "session-crash-recovery",
+        "turn-unbound",
+        "open-token:unbound",
+    );
+    assert_eq!(unbound_code, 0, "unbound={unbound}");
+    let (unknown_code, unknown) =
+        crash_recovery_open(&fixture, "open-token:new", std::process::id());
+    assert_eq!(
+        unknown_code, 65,
+        "unknown owner must remain protected: {unknown}"
+    );
+    assert_eq!(unknown["error"]["code"], "finish-line-session-active");
+    for value in [Value::Null, json!(0), json!(i32::MAX as u32), json!("1")] {
+        let mut request = common(&fixture, "untrusted-owner", "turn-1");
+        request["schema_version"] = json!("agent-hook.finish-line.open.v1");
+        request["attempt_token"] = json!("open-token:untrusted");
+        request["owner_pid"] = value;
+        let result = fixture.run(
+            &["finish-line", "open", "--format", "json"],
+            Some(&request.to_string()),
+        );
+        assert_eq!(result.code, 65, "untrusted owner={}", result.stdout_text());
+    }
+    let (retry_code, retry) = open_runner_with_token(
+        &fixture,
+        "session-crash-recovery",
+        "turn-retry",
+        "open-token:unbound",
+    );
+    assert_eq!(retry_code, 0, "unbound retry={retry}");
+    assert_eq!(
+        retry["data"]["runner_capability"],
+        unbound["data"]["runner_capability"]
+    );
+}
+
+#[test]
+fn crash_recovery_proves_dead_owner_and_rotates_without_waiting_for_expiry() {
+    verify_crash_recovery("open-token:replacement");
+}
+
+#[test]
+fn crash_recovery_rotates_even_when_a_new_owner_reuses_the_attempt_token() {
+    verify_crash_recovery("open-token:crashed-owner");
+}
+
+fn verify_crash_recovery(replacement_token: &str) {
+    let fixture = fixture();
+    one_contract(&fixture, ":");
+    let (mut owner, old_capability) = support::OwnedFinishLineClient::open(
+        &fixture,
+        "session-crash-recovery",
+        "open-token:crashed-owner",
+    );
+    let main_path = fs::read_dir(fixture.state_home.join("agent-hook/finish-line/repos"))
+        .expect("repo files")
+        .map(|entry| entry.expect("entry").path())
+        .find(|path| {
+            path.extension().is_some_and(|ext| ext == "json")
+                && !path.to_string_lossy().ends_with(".acceptance.json")
+        })
+        .expect("main state");
+    let main: Value =
+        serde_json::from_slice(&fs::read(&main_path).expect("main bytes")).expect("main JSON");
+    assert!(
+        main["sessions"]
+            .as_object()
+            .expect("sessions")
+            .values()
+            .all(|session| session.get("owner_process").is_none()),
+        "v1 main state must remain rollback readable"
+    );
+    let (live_code, live) = crash_recovery_open(&fixture, replacement_token, std::process::id());
+    assert_eq!(live_code, 65, "live owner stolen: {live}");
+    assert_eq!(live["error"]["code"], "finish-line-session-active");
+    owner.kill_and_wait();
+    let (recovered_code, recovered) =
+        crash_recovery_open(&fixture, replacement_token, std::process::id());
+    assert_eq!(
+        recovered_code, 0,
+        "dead owner must recover immediately: {recovered}"
+    );
+    assert_eq!(recovered["data"]["status"], "recovered");
+    let capability = recovered["data"]["runner_capability"]
+        .as_str()
+        .expect("new capability");
+    assert_ne!(capability, old_capability);
+    let (retry_code, retry) = crash_recovery_open(&fixture, replacement_token, std::process::id());
+    assert_eq!(retry_code, 0, "retry={retry}");
+    assert_eq!(retry["data"]["status"], "duplicate");
+    assert_eq!(retry["data"]["runner_capability"], capability);
+    let (old_release_code, old_release) = release_runner(
+        &fixture,
+        "session-crash-recovery",
+        "turn-stale-release",
+        &old_capability,
+    );
+    assert_eq!(old_release_code, 0, "old release={old_release}");
+    assert_eq!(old_release["data"]["status"], "duplicate");
+    let (after_code, after) = crash_recovery_open(&fixture, replacement_token, std::process::id());
+    assert_eq!(after_code, 0, "replacement revoked: {after}");
+    assert_eq!(after["data"]["runner_capability"], capability);
+}
+
 #[test]
 fn open_is_retry_safe_and_cannot_take_over_a_live_session() {
     let fixture = fixture();

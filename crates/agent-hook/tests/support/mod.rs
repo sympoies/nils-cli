@@ -227,3 +227,158 @@ pub fn now_epoch() -> i64 {
         .expect("clock")
         .as_secs() as i64
 }
+
+/// A real long-lived client ancestor, with request/receipt files confined to
+/// the test fixture. Keep the pipe open so each nils invocation is its child.
+#[cfg(target_os = "linux")]
+pub struct OwnedFinishLineClient {
+    child: std::process::Child,
+    request: PathBuf,
+    response: PathBuf,
+    code: PathBuf,
+    reaped: bool,
+}
+
+#[cfg(target_os = "linux")]
+impl OwnedFinishLineClient {
+    pub fn open(fixture: &Fixture, session: &str, token: &str) -> (Self, String) {
+        use std::os::unix::process::CommandExt;
+        let private_dir = fixture.root.join(format!("owner-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&private_dir).expect("owner private directory");
+        fs::set_permissions(&private_dir, fs::Permissions::from_mode(0o700))
+            .expect("private owner mode");
+        let request = private_dir.join("request.json");
+        let response = request.with_extension("response");
+        let code = request.with_extension("code");
+        let errors = request.with_extension("stderr");
+        let child = Command::new("/bin/bash")
+            .args([
+                "-c",
+                r#"
+while IFS= read -r action; do
+  "$1" finish-line "$action" --format json < "$2" > "$3"
+  printf '%s' "$?" > "$4"
+done
+"#,
+                "owned-finish-line-client",
+            ])
+            .arg(nils_test_support::bin::resolve("agent-hook"))
+            .arg(&request)
+            .arg(&response)
+            .arg(&code)
+            .current_dir(&fixture.root)
+            .env("HOME", &fixture.home)
+            .env("XDG_CONFIG_HOME", &fixture.config_home)
+            .env("XDG_STATE_HOME", &fixture.state_home)
+            .env("AGENT_SESSION_STATE_DIR", &fixture.session_state)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(fs::File::create(errors).expect("owner stderr"))
+            .process_group(0)
+            .spawn()
+            .expect("real client owner");
+        let mut owner = Self {
+            child,
+            request,
+            response,
+            code,
+            reaped: false,
+        };
+        let (status, opened) = owner.call(
+            "open",
+            &serde_json::json!({
+                "schema_version": "agent-hook.finish-line.open.v1", "product": "dsh",
+                "session_id": session, "turn_id": "turn-open", "cwd": fixture.root,
+                "attempt_token": token, "owner_pid": owner.child.id(),
+            }),
+        );
+        assert_eq!(status, 0, "owned open={opened}");
+        let capability = opened["data"]["runner_capability"]
+            .as_str()
+            .expect("owner capability")
+            .to_string();
+        (owner, capability)
+    }
+
+    pub fn start(&mut self, action: &str, request: &serde_json::Value) {
+        use std::io::Write;
+        let _ = fs::remove_file(&self.response);
+        let _ = fs::remove_file(&self.code);
+        fs::write(&self.request, request.to_string()).expect("private owner request");
+        Self::set_request_private(&self.request);
+        self.child
+            .stdin
+            .as_mut()
+            .expect("live owner pipe")
+            .write_all(format!("{action}\n").as_bytes())
+            .expect("send owner action");
+    }
+
+    fn set_request_private(path: &Path) {
+        Fixture::set_private(path);
+    }
+
+    pub fn call(&mut self, action: &str, request: &serde_json::Value) -> (i32, serde_json::Value) {
+        self.start(action, request);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if let Ok(code) = fs::read_to_string(&self.code)
+                && let Ok(code) = code.parse()
+                && let Ok(bytes) = fs::read(&self.response)
+                && let Ok(response) = serde_json::from_slice(&bytes)
+            {
+                return (code, response);
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "owned invocation did not complete"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    pub fn result(&self) -> Option<(i32, serde_json::Value)> {
+        let code = fs::read_to_string(&self.code).ok()?.parse().ok()?;
+        let response = serde_json::from_slice(&fs::read(&self.response).ok()?).ok()?;
+        Some((code, response))
+    }
+
+    pub fn kill_owner_only(&self) {
+        assert_eq!(
+            unsafe { libc::kill(self.child.id() as i32, libc::SIGKILL) },
+            0
+        );
+        // Keep the dead owner unreaped until Drop, reserving its process-group
+        // identity while its surviving supervisor races recovery cleanup.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            let status = fs::read_to_string(format!("/proc/{}/status", self.child.id()))
+                .expect("unreaped owner status");
+            if status
+                .lines()
+                .any(|line| line.starts_with("State:") && line.contains("Z (zombie)"))
+            {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "owner did not die");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    pub fn kill_and_wait(&mut self) {
+        if !self.reaped {
+            unsafe {
+                libc::kill(-(self.child.id() as i32), libc::SIGKILL);
+            }
+            let _ = self.child.wait();
+            self.reaped = true;
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for OwnedFinishLineClient {
+    fn drop(&mut self) {
+        self.kill_and_wait();
+    }
+}

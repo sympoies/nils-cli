@@ -621,6 +621,29 @@ The request and response contracts are:
   or make the old capability valid. The
   caller must keep both attempt token and bearer
   private; `run` rejects a missing, stale, or cross-session value.
+  Linux clients may additionally send `owner_pid`, a positive integer naming
+  their live same-user ancestor process. Null, non-integer, unrelated, or
+  unverifiable identities are rejected with `finish-line-owner-invalid`.
+  Nils derives the PID start time, boot identity, PID namespace, and UID from
+  the kernel; request JSON cannot supply death or cleanup evidence. Exact
+  retries must match both the token-derived capability and owner identity.
+  A new verified owner can immediately resume the same session after nils
+  proves the bound old process dead, stops every recorded contained unit, and
+  verifies authoritative quiescence. Successful rotation returns
+  `status = "recovered"` with a fresh capability incarnation. A live or unknown
+  old owner, uncontained pending work, or unresolved mutation admission fails
+  closed; lease expiry alone never authorizes takeover of an owner-bound
+  session. Recovery invalidates the crashed session's validation evidence and
+  claims before publishing new authority, terminalizes recoverable pending
+  acceptance operations as infrastructure-blocked, and preserves any existing
+  validation obligation. Completion requires fresh evidence. Late old run
+  finalizers cannot claim replacement reservations or publish evidence.
+  Owner bindings are stored in a bounded private `.owners` sidecar keyed by
+  the main state's exact capability digest and incarnation. The strict released
+  V1 main-state shape is unchanged. Interrupted sidecar/main writes preserve
+  the committed binding; missing or mismatched bindings leave the session
+  unbound and cannot authorize automatic recovery. Clients omitting
+  `owner_pid` retain the existing unbound behavior and cannot claim this recovery guarantee.
   Containment-host validation precedes identity and state mutation; non-Linux
   activation fails with exit `69` and
   `finish-line-containment-unavailable`. Linux activation also requires the
