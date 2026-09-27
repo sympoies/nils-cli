@@ -25,7 +25,8 @@ use sha2::{Digest, Sha256};
 
 use agent_session::internal::cli::{self, AgentKind, CoordinationMode};
 use agent_session::internal::coordination::context::{
-    Scope, ScopeKind, WORK_CONTEXT_INPUT_VERSION, WorkContextInput, checkout_root,
+    Scope, ScopeKind, WORK_CONTEXT_INPUT_VERSION, WorkContextInput, canonical_work_mode,
+    checkout_root,
 };
 use agent_session::internal::orchestration::{
     self, ACCOUNT_HANDOFF_RESERVATION_SCHEMA, ASSIGNMENT_INPUT_SCHEMA, ASSIGNMENT_SCHEMA,
@@ -1425,7 +1426,7 @@ fn run_init(context: &CliContext, args: InitArgs) -> Result<Value, CliError> {
                     run_id: run_id.clone(),
                     revision: 1,
                     state: "active".to_string(),
-                    tier: crate::coordination::context::canonical_work_mode(&packet.tier)
+                    tier: canonical_work_mode(&packet.tier)
                         .map_or_else(|| packet.tier.clone(), str::to_string),
                     objective_summary: packet.objective_summary.clone(),
                     objective_packet_digest: packet_digest,
@@ -21717,7 +21718,7 @@ fn session_controls_live_run(
 }
 
 fn run_quick(context: &CliContext, args: QuickArgs) -> Result<Value, CliError> {
-    let tier = crate::coordination::context::canonical_work_mode(&args.tier)
+    let tier = canonical_work_mode(&args.tier)
         .ok_or_else(|| invalid_input("quick tier is invalid"))?
         .to_string();
     // Reject a malformed duration before the ephemeral run exists, so a typo
@@ -22467,7 +22468,7 @@ fn validate_objective_packet(packet: &ObjectivePacket) -> Result<(), CliError> {
         .with_hint("run `main-agent packet-schema` for an example objective packet"));
     }
     orchestration::validate_summary("objective summary", &packet.objective_summary)?;
-    if crate::coordination::context::canonical_work_mode(&packet.tier).is_none() {
+    if canonical_work_mode(&packet.tier).is_none() {
         return Err(invalid_input("objective packet tier is invalid"));
     }
     if packet.done_criteria.len() > 64
