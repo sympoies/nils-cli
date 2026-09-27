@@ -336,6 +336,8 @@ fn coordination_command_name(command: &Command) -> Option<&'static str> {
             cli::BrokerCommand::Heartbeat(_) => "broker-heartbeat",
         }),
         Command::Message(args) => Some(match &args.command {
+            cli::MessageCommand::Peers(_) => "message-peers",
+            cli::MessageCommand::Delivery(_) => "message-delivery",
             cli::MessageCommand::Send(_) => "message-send",
             cli::MessageCommand::Inbox(_) => "message-inbox",
             cli::MessageCommand::Show(_) => "message-show",
@@ -374,6 +376,8 @@ fn coordination_leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
             ("broker", "reconcile") => Some("broker-reconcile"),
             ("broker", "stop") => Some("broker-stop"),
             ("message", "send") => Some("message-send"),
+            ("message", "peers") => Some("message-peers"),
+            ("message", "delivery") => Some("message-delivery"),
             ("message", "inbox") => Some("message-inbox"),
             ("message", "show") => Some("message-show"),
             ("message", "ack") => Some("message-ack"),
@@ -426,6 +430,8 @@ fn command_format(command: &Command) -> OutputFormat {
             cli::BrokerCommand::Heartbeat(args) => args.format,
         },
         Command::Message(args) => match &args.command {
+            cli::MessageCommand::Peers(args) => args.format,
+            cli::MessageCommand::Delivery(args) => args.format,
             cli::MessageCommand::Send(args) => args.format,
             cli::MessageCommand::Inbox(args) => args.format,
             cli::MessageCommand::Show(args) => args.format,
@@ -7397,6 +7403,15 @@ fn run_provider_stop_canary_guardian(
         #[cfg(target_os = "linux")]
         let mut seccomp_filter = provider_stop_canary_seccomp_filter()?;
         let mut child = ProcessCommand::new(agent_bin);
+        for key in [
+            "AGENT_SESSION_TOKEN",
+            "AGENT_SESSION_RELAY_URL",
+            "AGENT_SESSION_RELAY_TOKEN",
+            "AGENT_SESSION_RELAY_INGRESS_TOKEN",
+            "AGENT_CONSOLE_COORDINATION_RELAYS",
+        ] {
+            child.env_remove(key);
+        }
         child
             .arg("--cd")
             .arg(&record.cwd)
@@ -8150,7 +8165,7 @@ fn add_interactive_agent_environment(command: &mut ProcessCommand) {
     command
         .arg("sh")
         .arg("-c")
-        .arg("unset NO_COLOR; exec \"$@\"")
+        .arg("unset NO_COLOR AGENT_SESSION_TOKEN AGENT_SESSION_RELAY_URL AGENT_SESSION_RELAY_TOKEN AGENT_SESSION_RELAY_INGRESS_TOKEN AGENT_CONSOLE_COORDINATION_RELAYS; exec \"$@\"")
         .arg("agent-session-interactive");
 }
 
@@ -10513,6 +10528,15 @@ fn add_runtime_tmux_environment(
                 Some(json!({ "id": record.id })),
             )
         })?;
+    for key in [
+        "AGENT_SESSION_TOKEN",
+        "AGENT_SESSION_RELAY_URL",
+        "AGENT_SESSION_RELAY_TOKEN",
+        "AGENT_SESSION_RELAY_INGRESS_TOKEN",
+        "AGENT_CONSOLE_COORDINATION_RELAYS",
+    ] {
+        command.env_remove(key).arg("-e").arg(key);
+    }
     for value in [
         format!("AGENT_SESSION_ID={}", record.id),
         format!("AGENT_SESSION_STATE_DIR={}", display_path(state_dir)),
@@ -25047,5 +25071,26 @@ exit 42
         assert_eq!(super::post_paste_settle_delay(true, false), None);
         assert_eq!(super::post_paste_settle_delay(false, true), None);
         assert_eq!(super::post_paste_settle_delay(false, false), None);
+    }
+}
+
+#[cfg(test)]
+mod federation_child_environment_tests {
+    #[test]
+    fn interactive_provider_child_does_not_inherit_daemon_credentials() {
+        let mut command = std::process::Command::new("/usr/bin/env");
+        for key in [
+            "NO_COLOR",
+            "AGENT_SESSION_TOKEN",
+            "AGENT_SESSION_RELAY_URL",
+            "AGENT_SESSION_RELAY_TOKEN",
+            "AGENT_SESSION_RELAY_INGRESS_TOKEN",
+            "AGENT_CONSOLE_COORDINATION_RELAYS",
+        ] {
+            command.env(key, "synthetic-private-fixture-value");
+        }
+        super::add_interactive_agent_environment(&mut command);
+        command.args(["sh", "-c", "test -z \"${NO_COLOR+x}\" && test -z \"${AGENT_SESSION_TOKEN+x}\" && test -z \"${AGENT_SESSION_RELAY_URL+x}\" && test -z \"${AGENT_SESSION_RELAY_TOKEN+x}\" && test -z \"${AGENT_SESSION_RELAY_INGRESS_TOKEN+x}\" && test -z \"${AGENT_CONSOLE_COORDINATION_RELAYS+x}\""]);
+        assert!(command.status().expect("provider shell fixture").success());
     }
 }

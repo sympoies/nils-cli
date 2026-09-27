@@ -1024,3 +1024,119 @@ Release readiness requires:
   crash windows;
 - unchanged established lifecycle/list/send/server regression suites and completion
   freshness/parity checks.
+
+## Cross-host mailbox federation v1
+
+Federation adds `message send --to-machine MACHINE`, `message peers --session ID`,
+`message delivery --session ID --message ID`, and automatic remote `message reply`.
+`--host` continues to control attach-command generation. Omitted `--to-machine`
+retains the local mailbox. Bodies remain untrusted peer data; notification, inbox
+persistence, read/acknowledgement and accepting work are separate events.
+
+The source CLI reads the private `coordination/daemon-endpoint.json` in its state
+root and authenticates to its own daemon with the current session capability.
+It never reads relay or machine operator secrets. The daemon discovers authorized
+recipients at `GET /api/coordination/peers/v1` (query `source_session_id` and
+`source_incarnation`) and submits to `POST /api/coordination/relay/v1` at the
+configured edge. Only Console-registered sessions with exact same-principal
+ownership and current coordination support are eligible. The edge binds its
+outbound service bearer to the source machine, checks both ownership tuples,
+and chooses destinations from its configured machine inventory.
+
+The JSON envelope is `agent-session.remote-message.v1`:
+
+```json
+{
+  "schema_version": "agent-session.remote-message.v1",
+  "message_id": "a UUID",
+  "from": {"machine": "sympoies", "session_id": "source", "session_incarnation": "launch UUID"},
+  "to": {"machine": "c8", "session_id": "target", "session_incarnation": "launch UUID"},
+  "body": "untrusted peer data",
+  "body_sha256": "lowercase SHA-256 hex",
+  "created_at_epoch": 1800000000,
+  "expires_at_epoch": 1800086400,
+  "reply_to": null,
+  "reply_depth": 0
+}
+```
+
+The destination `POST /coordination/messages/receive/v1` requires both the existing
+operator bearer and a distinct `X-Agent-Session-Relay-Token`. It validates schema,
+body digest, expiry, mailbox quotas, current recipient incarnation and ready
+broker before atomically persisting inbox, origin, notification and dedup receipt.
+It returns raw JSON `agent-session.remote-delivery.v1` with `message_id`,
+`state: delivered`, `recipient` (the complete `to` address), and
+`persisted_at_epoch`. `delivered` proves destination persistence only. Session
+capabilities and bodies never appear in delivery status or diagnostic logs.
+
+Peer discovery returns raw `agent-session.remote-peers.v1`, with `peers` containing
+`machine`, `session_id`, `session_incarnation`, and `messaging_supported`.
+`GET /sessions` advertises `data.coordination.remote_messaging_supported`;
+per-session `coordination_mode` and `coordination.coordination_available` determine
+current recipient readiness.
+
+Source outbox submission returns a raw delivery projection (wrapped in the usual
+CLI envelope for CLI callers): `message_id`, `state`, `sender`, `recipient`,
+`attempts`, `reason`, and optional `receipt`. States are `queued`, `delivered`,
+`rejected`, or `delivery-unknown`. Network errors retry five seconds after the
+request finishes until expiry. Due entries are selected by their retry deadline,
+so a repeatedly timed-out entry cannot starve later messages. The worker wakes
+on enqueue or the next pending deadline and sleeps indefinitely when no entries
+remain queued. No registry, journal or session lock spans network I/O.
+A source restart preserves the original envelope and
+recipient incarnation. Retries with the same idempotency key and content return
+the original identity without rediscovery; changed content is rejected. The
+outbox retains up to 256 envelopes and rejects at capacity. Entries are retained
+until 24 hours after expiry. Expiry without a confirmed receipt remains unknown,
+including the case where the receiver saved the message but its response was lost.
+An admission rejection on the first attempt is `rejected`; after any prior
+unconfirmed attempt it is conservatively `delivery-unknown`, retaining the last
+reason. In particular, replacement after a lost response cannot prove nondelivery.
+
+Destination receipts are retained until 24 hours after envelope expiry (maximum seven days),
+up to 4096 receipts; capacity rejects instead of evicting live deduplication IDs.
+An exact retained receipt is returned before expiry, current recipient incarnation
+or mailbox admission checks, without re-entering the inbox. Same-ID changed-content retries
+are rejected. Remote senders retain machine/session/incarnation separately from
+local sender identity; local controller guidance does not adopt remote origins.
+Remote replies preserve the original sender incarnation and existing revision
+and maximum-depth (16) checks.
+
+Federation never changes the local coordination registry schema or session runtime.
+Source envelopes live in the private `coordination/federation-journal.json`,
+schema `agent-session.federation-journal.v1`, bounded to 8 MiB and 256 envelopes.
+A dedicated private `coordination/federation-journal.lock` serializes journal
+reads/writes with the same bounded, owner-checked file locking rules as the registry.
+Authorization uses session then registry then journal lock order. Journal-only
+delivery and retry operations never load or maintain the local registry. The
+journal is saved atomically and no lock spans HTTP.
+Unsupported or corrupt journal versions fail closed without rewriting state.
+
+Remote and local ingress share the existing mailbox admission rules, including
+30 messages per pair per minute, a burst of 10 per second, the recipient mailbox
+limits and the 68 MiB global body quota. Refusal returns typed `rate-limited` or
+`quota-exceeded` before inbox persistence.
+
+Destination inbox, notification and deduplication receipt share one existing
+registry commit. Authoritative sender identity is the existing
+`sender_session_id` string: `remote:` followed by a canonical JSON tuple of
+machine and session ID. Colon is forbidden by the local session ID validator, so
+this representation cannot collide with a local session or controller. The
+existing `sender_incarnation` retains the foreign incarnation. New projections
+and replies decode the tuple; older writers preserve these existing fields and
+cannot reply to it as a local session. No remote origin is normalized into a
+local sender. Malformed reserved identities never route locally.
+
+Receive receipts use the existing receipt schema and quota, with reserved
+principal `remote:receive`, incarnation `v1`, operation
+`remote-message-receive`, and the globally unique message UUID as key. The
+receipt digest covers the full envelope and its TTL is extended through envelope
+expiry plus 24 hours. Old receipt sweepers preserve this exact expiry field.
+Same-ID local-message collisions also reject before mutation. This keeps inbox,
+origin, deduplication and notification atomic without a two-file recovery gap.
+
+Rollback disables federation values and retains the journal. Older local writers
+continue to operate unchanged registry schemas; pending remote deliveries pause
+until a federation-capable daemon resumes. Existing sessions and pinned broker
+and hook helpers do not require recreation. Never delete the journal to roll back
+or reinterpret an opaque remote sender as a local session.

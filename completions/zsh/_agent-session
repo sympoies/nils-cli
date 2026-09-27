@@ -594,10 +594,36 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:agent-session-message-command-$line[1]:"
         case $line[1] in
-            (send)
+            (peers)
+_arguments "${_arguments_options[@]}" : \
+'--session=[Authenticated source session id]:SESSION:_default' \
+'--capability-file=[]:PATH:_files' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(delivery)
+_arguments "${_arguments_options[@]}" : \
+'--session=[Authenticated source session id]:SESSION:_default' \
+'--message=[Remote message id returned by send or reply]:MESSAGE:_default' \
+'--capability-file=[]:PATH:_files' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(send)
 _arguments "${_arguments_options[@]}" : \
 '--from=[Authenticated managed session id sending the message]:FROM_SESSION:_default' \
 '--to=[]:TO_SESSION:_default' \
+'--to-machine=[Remote machine; omitted keeps local mailbox behavior]:TO_MACHINE:_default' \
 '--body-file=[]:PATH:_files' \
 '--capability-file=[Private capability file; defaults to AGENT_SESSION_CAPABILITY_FILE]:PATH:_files' \
 '--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
@@ -961,6 +987,8 @@ _agent-session__subcmd__logs_commands() {
 (( $+functions[_agent-session__subcmd__message_commands] )) ||
 _agent-session__subcmd__message_commands() {
     local commands; commands=(
+'peers:Discover authorized remote mailbox recipients through the local daemon' \
+'delivery:Inspect durable remote delivery; delivered means saved, not read or accepted' \
 'send:Send one bounded private message and schedule an eventual fixed notification' \
 'inbox:List bounded private mailbox metadata for the authenticated recipient' \
 'show:Read one private message body as its authenticated recipient' \
@@ -975,10 +1003,20 @@ _agent-session__subcmd__message__subcmd__ack_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session message ack commands' commands "$@"
 }
+(( $+functions[_agent-session__subcmd__message__subcmd__delivery_commands] )) ||
+_agent-session__subcmd__message__subcmd__delivery_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session message delivery commands' commands "$@"
+}
 (( $+functions[_agent-session__subcmd__message__subcmd__inbox_commands] )) ||
 _agent-session__subcmd__message__subcmd__inbox_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session message inbox commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__message__subcmd__peers_commands] )) ||
+_agent-session__subcmd__message__subcmd__peers_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session message peers commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__message__subcmd__reply_commands] )) ||
 _agent-session__subcmd__message__subcmd__reply_commands() {

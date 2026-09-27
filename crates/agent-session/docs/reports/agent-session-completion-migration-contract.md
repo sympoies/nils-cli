@@ -7,13 +7,21 @@
 - Contract owner: Codex
 - Target PR: [#1326](https://github.com/sympoies/nils-cli/pull/1326)
 - Status: done
-- Last updated: 2026-07-20
+- Last updated: 2026-09-27
 - Completion enforcement metadata tuple from matrix row:
   - `completion_mode=clap-first`
   - `completion_mode_toggles=forbidden`
   - `alternate_completion_dispatch=forbidden`
   - `generated_load_failure=fail-closed`
   - `completion_engine=static`
+
+## Federation CLI extension
+
+Remote send adds `--to-machine`; `message peers` and `message delivery` expose
+session/capability/format flags, with `--message` on delivery. The command model
+and generated bash/zsh snapshots remain the only completion path. Validate
+syntax, export, runtime completion and repository finish-line with the existing
+commands below.
 
 ## command graph
 
