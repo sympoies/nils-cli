@@ -205,6 +205,20 @@ and rejects background Bash at the plugin boundary. A probe omits `execution`:
 an exact validation target returns `ready`, while any other command returns
 `ordinary-ready`.
 
+Linux clients can bind `open` to their live process with `owner_pid`. Nils
+authenticates a same-user caller ancestor and records kernel-derived process
+identity in a private sidecar, preserving the released V1 state format. After
+that process crashes, a new verified owner can reopen the same session without
+waiting for lease expiry. Nils first proves death, stops the recorded contained
+work and verifies quiescence, invalidates old acceptance evidence, then returns
+`status = "recovered"` with a fresh capability. A live or unknown owner and
+uncontained or unresolved mutation work remain protected. Owner-bound sessions
+are excluded from unbound expiry reclamation; resume them through `open` and
+release them through the authenticated lifecycle. Recovery preserves validation
+obligations and requires fresh validation before completion. Unbound clients
+that omit `owner_pid` do not receive this guarantee. See the exact recovery and
+interrupted-write contract in [the service spec](docs/specs/agent-hook-v1.md).
+
 The follow-up `run` carrying `execution.kind = "bash-v1"` is the only executor.
 For an exact validation target, nils reserves the attempt, launches the exact
 command, observes its exit, signal, timeout, and bounded output, and records

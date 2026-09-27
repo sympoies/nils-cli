@@ -1001,6 +1001,53 @@ pub(super) fn verdict(state_root: &Path, input: &[u8]) -> Result<Outcome, HookEr
     })
 }
 
+pub(super) fn crash_recovery_eligible(
+    store: &Store,
+    identity: &RequestIdentity,
+) -> Result<bool, HookError> {
+    let state = read_state(store, identity)?;
+    Ok(state
+        .operations
+        .values()
+        .filter(|operation| {
+            operation.session_key == identity.session_key && operation.terminal.is_none()
+        })
+        .all(|operation| match operation.kind {
+            AcceptanceOperationKind::Completion => true,
+            AcceptanceOperationKind::Mutation => false,
+            AcceptanceOperationKind::Validator { .. } => operation
+                .source_operation_key
+                .as_ref()
+                .and_then(|key| store.state.operations.get(key))
+                .is_some_and(|source| {
+                    source.session_key == identity.session_key
+                        && (source.terminal.is_some() || source.active_unit.is_some())
+                }),
+        }))
+}
+
+pub(super) fn invalidate_crashed_session(
+    store: &Store,
+    identity: &RequestIdentity,
+) -> Result<(), HookError> {
+    let mut state = read_state(store, identity)?;
+    if let Some(session) = state.sessions.get_mut(&identity.session_key) {
+        session.evidence.clear();
+        session.claimed_sources.clear();
+        session.claimed_sources_generation = None;
+    }
+    for operation in state.operations.values_mut().filter(|operation| {
+        operation.session_key == identity.session_key && operation.terminal.is_none()
+    }) {
+        operation.terminal = Some(AcceptanceTerminal {
+            observation: ObservationStatus::InfrastructureBlocked,
+            source_digest: "client-crash-recovery".to_string(),
+            disposition: CompletionDisposition::Applied,
+        });
+    }
+    save_state(store, &state)
+}
+
 pub(super) fn session_busy(store: &Store, identity: &RequestIdentity) -> Result<bool, HookError> {
     let state = read_state(store, identity)?;
     Ok(state.operations.values().any(|operation| {
