@@ -92,7 +92,7 @@ Checklist:
 | `--agent` | `ValueEnum` | `crates/agent-session/src/cli.rs` | static `codex`, `claude`, `hermes` values | completion freshness/flag parity |
 | `--coordination-mode` | `ValueEnum` | `crates/agent-session/src/cli.rs` | static `advisory`, `enforce`, `off` values | completion freshness/flag parity |
 | `--format` | `ValueEnum` | `nils_common::cli_contract::OutputFormat` | static `text`, `json` values | completion freshness/flag parity |
-| `send --key` | `ValueEnum` | `crates/agent-session/src/cli.rs` | static `enter`, `escape`, `backspace`, `c-c`, `up`, `down`, `left`, `right`, `tab` values | completion freshness/flag parity |
+| `send --key` | `ValueEnum` | `crates/agent-session/src/cli.rs` | static `enter`, `escape`, `backspace`, `c-c`, `up`, `down`, `left`, `shift-left`, `right`, `tab` values | completion freshness/flag parity |
 | `work-context complete --outcome` | `ValueEnum` | `crates/agent-session/src/cli.rs` | static `pass`, `fail` values | completion freshness/flag parity |
 | `completion <shell>` | `ValueEnum` | `crates/agent-session/src/completion.rs` | static `bash`, `zsh` values | completion freshness/flag parity |
 | path flags | `ValueHint` | `crates/agent-session/src/cli.rs` | shell path completion | completion freshness/flag parity |
