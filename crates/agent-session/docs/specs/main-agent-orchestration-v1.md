@@ -120,7 +120,7 @@ main-agent worker retire ID --if-revision N --idempotency-key KEY --format json
 main-agent collaborate|borrow|handoff|adopt ...
 main-agent close --if-revision N --idempotency-key KEY --format json
 main-agent closeout --if-run-revision N --checkpoint-file FILE --idempotency-key KEY --format json
-main-agent quick --assignment-file FILE [--tier L0|L1|L2|L3] [--await-ready D] --idempotency-key KEY --format json
+main-agent quick --assignment-file FILE [--tier direct|issue|program|program/plan|program/dispatch] [--await-ready D] --idempotency-key KEY --format json
 ```
 
 `init` first confirms or acquires the caller-owned coordination claim, then
@@ -217,7 +217,7 @@ Membership, name, order, or raw-byte changes conflict before any new worker
 launch. The immutable parent manifest makes the historical
 `{parent}-{index}` child key unambiguous, so new and rolling-upgrade callers
 share one lane authority instead of splitting work across key schemes.
-`main-agent quick --assignment-file FILE` is the L0/L1 fast-path: it
+`main-agent quick --assignment-file FILE` is the `direct`/`issue` fast-path: it
 synthesizes an ephemeral run and work-context claim from the assignment (the
 packet MUST declare a `repository`), launches the single worker in one call, and
 marks the run ephemeral so it auto-closes once that worker is torn down — no

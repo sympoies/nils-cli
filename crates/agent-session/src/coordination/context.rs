@@ -151,9 +151,9 @@ impl WorkContextInput {
         }
         self.intent = bounded_text("intent", self.intent, 64)?;
         self.tier = bounded_text("tier", self.tier, 16)?;
-        if !matches!(self.tier.as_str(), "L0" | "L1" | "L2" | "L3") {
-            return Err(invalid_context("tier must be L0, L1, L2, or L3"));
-        }
+        self.tier = canonical_work_mode(&self.tier)
+            .ok_or_else(|| invalid_context(WORK_MODE_EXPECTATION))?
+            .to_string();
         self.summary = bounded_text("summary", self.summary, 240)?;
         canonicalize_unique(&mut self.repositories, 8, canonical_repository)?;
         canonicalize_unique(&mut self.worktrees, 8, canonical_worktree)?;
@@ -729,6 +729,21 @@ fn reject_duplicates<T: Ord + Clone>(values: &[T], kind: &str) -> Result<(), Cli
     Ok(())
 }
 
+pub(crate) const WORK_MODE_EXPECTATION: &str = "tier must be direct, issue, program, program/plan, or program/dispatch (numbered L0-L3 codes accepted)";
+
+/// Resolve a `tier` value to its named work mode. The numbered `L0`-`L3` codes
+/// remain accepted input and normalize to the mode that replaced them.
+pub(crate) fn canonical_work_mode(value: &str) -> Option<&'static str> {
+    match value {
+        "direct" | "L0" => Some("direct"),
+        "issue" | "L1" => Some("issue"),
+        "program" => Some("program"),
+        "program/plan" | "L2" => Some("program/plan"),
+        "program/dispatch" | "L3" => Some("program/dispatch"),
+        _ => None,
+    }
+}
+
 fn bounded_text(name: &str, value: String, max: usize) -> Result<String, CliError> {
     let value = value.trim().to_string();
     if value.is_empty()
@@ -836,6 +851,58 @@ mod tests {
         assert!(input.clone().validate_and_canonicalize().is_err());
         input.summary = "a".repeat(240);
         assert!(input.validate_and_canonicalize().is_ok());
+    }
+
+    fn input_with_tier(tier: &str) -> WorkContextInput {
+        WorkContextInput {
+            schema_version: WORK_CONTEXT_INPUT_VERSION.to_string(),
+            intent: "implementation".to_string(),
+            tier: tier.to_string(),
+            repositories: vec!["example/repo".to_string()],
+            worktrees: Vec::new(),
+            provider_refs: Vec::new(),
+            plan_refs: Vec::new(),
+            scopes: vec![scope(ScopeKind::Repository, ".")],
+            summary: "tier".to_string(),
+        }
+    }
+
+    #[test]
+    fn named_work_modes_are_accepted_unchanged() {
+        for mode in [
+            "direct",
+            "issue",
+            "program",
+            "program/plan",
+            "program/dispatch",
+        ] {
+            let canonical = input_with_tier(mode)
+                .validate_and_canonicalize()
+                .expect("named mode");
+            assert_eq!(canonical.tier, mode);
+        }
+    }
+
+    #[test]
+    fn numbered_tier_codes_normalize_to_named_work_modes() {
+        for (numbered, mode) in [
+            ("L0", "direct"),
+            ("L1", "issue"),
+            ("L2", "program/plan"),
+            ("L3", "program/dispatch"),
+        ] {
+            let canonical = input_with_tier(numbered)
+                .validate_and_canonicalize()
+                .expect("numbered code");
+            assert_eq!(canonical.tier, mode);
+        }
+    }
+
+    #[test]
+    fn unknown_work_modes_are_rejected() {
+        for tier in ["L4", "Direct", "program/other", "plan"] {
+            assert!(input_with_tier(tier).validate_and_canonicalize().is_err());
+        }
     }
 
     #[test]

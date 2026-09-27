@@ -829,8 +829,8 @@ struct QuickArgs {
     /// Private assignment packet JSON file.
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     assignment_file: PathBuf,
-    /// Work tier for the synthesized ephemeral run (L0/L1 delegate-all).
-    #[arg(long, default_value = "L0")]
+    /// Work mode for the synthesized ephemeral run (`direct` or `issue` delegate-all; numbered L0-L3 codes accepted).
+    #[arg(long, default_value = "direct")]
     tier: String,
     /// Bounded wait for the worker's authenticated checkpoint, with the same
     /// runtime-owned single-Enter recovery `worker start --await-ready` performs.
@@ -1512,7 +1512,8 @@ fn run_init(context: &CliContext, args: InitArgs) -> Result<Value, CliError> {
                     run_id: run_id.clone(),
                     revision: 1,
                     state: "active".to_string(),
-                    tier: packet.tier.clone(),
+                    tier: crate::coordination::context::canonical_work_mode(&packet.tier)
+                        .map_or_else(|| packet.tier.clone(), str::to_string),
                     objective_summary: packet.objective_summary.clone(),
                     objective_packet_digest: packet_digest,
                     controller: session_ref(context, &record, &incarnation),
@@ -23697,9 +23698,9 @@ fn session_controls_live_run(
 }
 
 fn run_quick(context: &CliContext, args: QuickArgs) -> Result<Value, CliError> {
-    if !matches!(args.tier.as_str(), "L0" | "L1" | "L2" | "L3") {
-        return Err(invalid_input("quick tier is invalid"));
-    }
+    let tier = crate::coordination::context::canonical_work_mode(&args.tier)
+        .ok_or_else(|| invalid_input("quick tier is invalid"))?
+        .to_string();
     // Reject a malformed duration before the ephemeral run exists, so a typo
     // cannot leave a created run behind for the caller to clean up.
     let await_ready_seconds = parse_await_ready(&args.await_ready)?
@@ -23731,7 +23732,7 @@ fn run_quick(context: &CliContext, args: QuickArgs) -> Result<Value, CliError> {
     let work_context = WorkContextInput {
         schema_version: WORK_CONTEXT_INPUT_VERSION.to_string(),
         intent: "implementation".to_string(),
-        tier: args.tier.clone(),
+        tier: tier.clone(),
         repositories: vec![repository.clone()],
         worktrees: input.worktree.clone().into_iter().collect(),
         provider_refs: Vec::new(),
@@ -23758,7 +23759,7 @@ fn run_quick(context: &CliContext, args: QuickArgs) -> Result<Value, CliError> {
 
     let objective = json!({
         "schema_version": PACKET_SCHEMA,
-        "tier": args.tier,
+        "tier": &tier,
         "objective_summary": input.task_summary,
         "objective": {},
         "done_criteria": [],
@@ -23813,7 +23814,7 @@ fn run_quick(context: &CliContext, args: QuickArgs) -> Result<Value, CliError> {
                     run_id: run_id.clone(),
                     revision: 1,
                     state: "active".to_string(),
-                    tier: args.tier.clone(),
+                    tier: tier.clone(),
                     objective_summary: input.task_summary.clone(),
                     objective_packet_digest: packet_digest,
                     controller: session_ref(context, &record, &incarnation),
@@ -24467,7 +24468,7 @@ fn idempotency_receipt_capacity() -> usize {
 fn objective_packet_schema_example() -> Value {
     json!({
         "schema_version": PACKET_SCHEMA,
-        "tier": "L0",
+        "tier": "direct",
         "objective_summary": "<one-line objective summary>",
         "objective": {},
         "done_criteria": ["<done criterion>"],
@@ -24477,7 +24478,7 @@ fn objective_packet_schema_example() -> Value {
         "work_context": {
             "schema_version": WORK_CONTEXT_INPUT_VERSION,
             "intent": "implementation",
-            "tier": "L0",
+            "tier": "direct",
             "repositories": ["owner/name"],
             "summary": "<work-context summary>"
         }
@@ -24501,7 +24502,7 @@ fn validate_objective_packet(packet: &ObjectivePacket) -> Result<(), CliError> {
         .with_hint("run `main-agent packet-schema` for an example objective packet"));
     }
     orchestration::validate_summary("objective summary", &packet.objective_summary)?;
-    if !matches!(packet.tier.as_str(), "L0" | "L1" | "L2" | "L3") {
+    if crate::coordination::context::canonical_work_mode(&packet.tier).is_none() {
         return Err(invalid_input("objective packet tier is invalid"));
     }
     if packet.done_criteria.len() > 64

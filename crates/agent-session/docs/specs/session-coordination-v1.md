@@ -125,7 +125,7 @@ Public claims use `agent-session.work-context.v1`:
   "revision": 1,
   "state": "active",
   "intent": "implementation",
-  "tier": "L2",
+  "tier": "program",
   "repositories": ["owner/repository"],
   "worktrees": ["hmac-sha256:epoch:digest"],
   "provider_refs": [
@@ -152,7 +152,7 @@ The exact claim/check input schema is `agent-session.work-context-input.v1`:
 {
   "schema_version": "agent-session.work-context-input.v1",
   "intent": "implementation",
-  "tier": "L2",
+  "tier": "program",
   "repositories": ["owner/repository"],
   "worktrees": [],
   "provider_refs": [{"kind": "issue", "repository": "owner/repository", "number": 123}],
@@ -161,6 +161,14 @@ The exact claim/check input schema is `agent-session.work-context-input.v1`:
   "summary": "Implement session coordination"
 }
 ```
+
+`tier` names the work's tracking mode: `direct`, `issue`, `program`,
+`program/plan`, or `program/dispatch`. The earlier numbered codes remain
+accepted input and normalize to the mode that replaced them (`L0` -> `direct`,
+`L1` -> `issue`, `L2` -> `program/plan`, `L3` -> `program/dispatch`); stored
+and projected records carry the named value. The field name is unchanged and
+the value is informational: it never grants or denies work. Records written
+before this normalization may still carry a numbered code.
 
 `summary` is bounded to 240 UTF-8 bytes. Collection limits are 8 repositories,
 8 worktree fingerprints, 16 provider references, 16 plan references, and 32
@@ -783,7 +791,7 @@ Every leaf command has its own CLI envelope identity, for example
 
 ```text
 agent-session work-context status
-agent-session work-context set [--if-absent] [--summary TEXT] [--intent NAME] [--tier L0|L1|L2|L3] [--repository OWNER/REPO] [--path PATH]... [--issue N]... [--pr N]... [--plan-ref REF]...
+agent-session work-context set [--if-absent] [--summary TEXT] [--intent NAME] [--tier direct|issue|program|program/plan|program/dispatch] [--repository OWNER/REPO] [--path PATH]... [--issue N]... [--pr N]... [--plan-ref REF]...
 agent-session work-context clear
 agent-session work-context advise [--targets-file JSON]
 agent-session work-context acknowledge [--for DURATION]

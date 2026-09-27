@@ -356,8 +356,8 @@ pub struct WorkContextSetArgs {
     /// Work intent label.
     #[arg(long, default_value = "implementation")]
     pub intent: String,
-    /// Tracking tier (L0, L1, L2, or L3).
-    #[arg(long, default_value = "L0")]
+    /// Tracking work mode: direct, issue, program, program/plan, or program/dispatch (numbered L0-L3 codes accepted).
+    #[arg(long, default_value = "direct")]
     pub tier: String,
     /// Canonical owner/repository. Defaults to the current checkout's origin.
     #[arg(long, value_name = "OWNER/REPO")]
