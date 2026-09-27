@@ -278,3 +278,43 @@ fail-closed.
 The normative endpoint surface is in [Serve API v1](../specs/serve-api-v1.md).
 Wire-level activity, coordination, turn-state, and maintenance contracts are
 indexed in the crate [documentation map](../README.md).
+
+## Cross-host mailbox configuration
+
+Set these daemon-private values together:
+
+- `AGENT_SESSION_RELAY_URL`: the Console edge origin (HTTPS; loopback HTTP allowed for isolated fixtures).
+- `AGENT_SESSION_RELAY_TOKEN`: this machine's dedicated outbound relay bearer.
+- `AGENT_SESSION_RELAY_INGRESS_TOKEN`: this machine's dedicated inbound relay token.
+
+Machine identity uses the existing `--machine`/`AGENT_SESSION_MACHINE` contract.
+The existing operator bearer must be configured and distinct from both relay
+credentials. Partial config or unsafe URL/token combinations fail startup.
+The edge's `AGENT_CONSOLE_COORDINATION_RELAYS` maps each machine to its outbound
+and ingress credentials. Provider launches remove these secrets (including the
+edge aggregate) from inherited process and tmux environments.
+
+Agents use their normal session capability and the same state root as their
+daemon. `message peers --session "$AGENT_SESSION_ID" --format json` discovers
+eligible destinations. Send with `--to-machine`, then poll `message delivery`;
+`queued` is not a remote persistence receipt. Existing inbox/show/ack commands
+operate locally, and reply automatically routes to the original source machine.
+
+Installed-artifact isolated acceptance (Node builtins only):
+
+```sh
+node crates/agent-session/tests/fixtures/remote-mailbox-acceptance.mjs \
+  --agent-session-bin /absolute/immutable/release/agent-session
+```
+
+Add `--previous-agent-session-bin` for an old-writer roundtrip: message mutation
+preserves remote origin and receipt TTL, broker authentication stays available,
+and an old reply cannot target a local session. The fixture creates private temporary roots, real HTTP
+daemons, an authenticated relay fixture, synthetic capabilities and exact child
+cleanup. It prints a content-free JSON result. It does not exercise real Console
+ownership; edge tests and fleet acceptance cover that boundary.
+
+Disabling all three federation values preserves local messaging and remote state.
+Rollback may restore an older daemon for local operations: registry schemas and
+existing sessions stay unchanged. Retain `coordination/federation-journal.json`;
+pending remote deliveries pause until a federation-capable daemon resumes.

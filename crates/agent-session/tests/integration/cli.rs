@@ -1627,7 +1627,7 @@ fn activity_events_are_runtime_bound_private_and_deterministic() {
     assert!(
         new_session
             .iter()
-            .any(|arg| arg == "unset NO_COLOR; exec \"$@\""),
+            .any(|arg| arg == "unset NO_COLOR AGENT_SESSION_TOKEN AGENT_SESSION_RELAY_URL AGENT_SESSION_RELAY_TOKEN AGENT_SESSION_RELAY_INGRESS_TOKEN AGENT_CONSOLE_COORDINATION_RELAYS; exec \"$@\""),
         "interactive agent panes must not inherit a controller-only NO_COLOR flag: {new_session:?}"
     );
     let launching_helper = nils_test_support::bin::resolve("agent-session");
@@ -4412,6 +4412,16 @@ fn start_creates_session_state_without_printing_prompt() {
             "-c".to_string(),
             cwd_arg.clone(),
             "-e".to_string(),
+            "AGENT_SESSION_TOKEN".to_string(),
+            "-e".to_string(),
+            "AGENT_SESSION_RELAY_URL".to_string(),
+            "-e".to_string(),
+            "AGENT_SESSION_RELAY_TOKEN".to_string(),
+            "-e".to_string(),
+            "AGENT_SESSION_RELAY_INGRESS_TOKEN".to_string(),
+            "-e".to_string(),
+            "AGENT_CONSOLE_COORDINATION_RELAYS".to_string(),
+            "-e".to_string(),
             format!("AGENT_SESSION_ID={id}"),
             "-e".to_string(),
             format!("AGENT_SESSION_STATE_DIR={}", state_dir.display()),
@@ -4480,7 +4490,7 @@ fn start_creates_session_state_without_printing_prompt() {
             agent_session_bin,
             "sh".to_string(),
             "-c".to_string(),
-            "unset NO_COLOR; exec \"$@\"".to_string(),
+            "unset NO_COLOR AGENT_SESSION_TOKEN AGENT_SESSION_RELAY_URL AGENT_SESSION_RELAY_TOKEN AGENT_SESSION_RELAY_INGRESS_TOKEN AGENT_CONSOLE_COORDINATION_RELAYS; exec \"$@\"".to_string(),
             "agent-session-interactive".to_string(),
             codex_arg.clone(),
             "--cd".to_string(),
@@ -9782,6 +9792,16 @@ fn resume_recreates_tmux_runtime_from_exact_provider_identity() {
             "-c".to_string(),
             cwd.to_string_lossy().to_string(),
             "-e".to_string(),
+            "AGENT_SESSION_TOKEN".to_string(),
+            "-e".to_string(),
+            "AGENT_SESSION_RELAY_URL".to_string(),
+            "-e".to_string(),
+            "AGENT_SESSION_RELAY_TOKEN".to_string(),
+            "-e".to_string(),
+            "AGENT_SESSION_RELAY_INGRESS_TOKEN".to_string(),
+            "-e".to_string(),
+            "AGENT_CONSOLE_COORDINATION_RELAYS".to_string(),
+            "-e".to_string(),
             "AGENT_SESSION_ID=recoverable".to_string(),
             "-e".to_string(),
             format!("AGENT_SESSION_STATE_DIR={}", state_dir.display()),
@@ -9844,7 +9864,7 @@ fn resume_recreates_tmux_runtime_from_exact_provider_identity() {
             agent_session_bin,
             "sh".to_string(),
             "-c".to_string(),
-            "unset NO_COLOR; exec \"$@\"".to_string(),
+            "unset NO_COLOR AGENT_SESSION_TOKEN AGENT_SESSION_RELAY_URL AGENT_SESSION_RELAY_TOKEN AGENT_SESSION_RELAY_INGRESS_TOKEN AGENT_CONSOLE_COORDINATION_RELAYS; exec \"$@\"".to_string(),
             "agent-session-interactive".to_string(),
             codex_arg.clone(),
             "resume".to_string(),
@@ -10635,7 +10655,7 @@ fn resume_recovers_provider_identity_from_durable_sidecar() {
     assert!(
         new_session
             .iter()
-            .any(|arg| arg == "unset NO_COLOR; exec \"$@\""),
+            .any(|arg| arg == "unset NO_COLOR AGENT_SESSION_TOKEN AGENT_SESSION_RELAY_URL AGENT_SESSION_RELAY_TOKEN AGENT_SESSION_RELAY_INGRESS_TOKEN AGENT_CONSOLE_COORDINATION_RELAYS; exec \"$@\""),
         "resumed interactive panes must restore provider colour output: {new_session:?}"
     );
     assert!(

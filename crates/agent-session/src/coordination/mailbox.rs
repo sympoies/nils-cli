@@ -20,9 +20,9 @@ use super::{
 };
 
 const MESSAGE_VERSION: &str = "agent-session.message.v1";
-const BODY_MAX_BYTES: usize = 16 * 1024;
+pub(super) const BODY_MAX_BYTES: usize = 16 * 1024;
 const DEFAULT_EXPIRY_SECS: i64 = 24 * 60 * 60;
-const MAX_EXPIRY_SECS: i64 = 7 * 24 * 60 * 60;
+pub(super) const MAX_EXPIRY_SECS: i64 = 7 * 24 * 60 * 60;
 const MAX_SESSION_MESSAGES: usize = 256;
 const MAX_SESSION_BYTES: usize = 4 * 1024 * 1024;
 const PAIR_RATE_PER_MINUTE: usize = 30;
@@ -32,7 +32,7 @@ const MAX_CURSORS: usize = 4_096;
 const DEFAULT_PAGE: usize = 50;
 const MAX_PAGE: usize = 100;
 const MAX_WAIT_SECS: u64 = 60;
-const MAX_REPLY_DEPTH: u8 = 16;
+pub(super) const MAX_REPLY_DEPTH: u8 = 16;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct StoredMessage {
@@ -88,6 +88,10 @@ struct MessageMetadata {
 
 #[derive(Clone, Debug, Serialize)]
 struct SenderProjection {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    machine: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_incarnation: Option<String>,
     session_id: String,
     authenticated: bool,
 }
@@ -106,6 +110,9 @@ struct UntrustedBody {
 }
 
 pub(crate) fn send(context: &CliContext, args: MessageSendArgs) -> Result<Value, CliError> {
+    if args.to_machine.is_some() {
+        return super::remote::cli_send(context, args);
+    }
     send_impl(context, args, false, || Ok(()))
 }
 
@@ -437,12 +444,24 @@ pub(crate) fn reply(context: &CliContext, args: MessageReplyArgs) -> Result<Valu
                 && message.recipient_incarnation == sender_incarnation
         })
         .cloned();
+    if original
+        .as_ref()
+        .is_none_or(|message| super::remote::is_remote_sender(&message.sender_session_id))
+        && let Some(replay) =
+            super::remote::reply_replay(context, &record.id, &sender_incarnation, &args, &body)?
+    {
+        return Ok(replay);
+    }
+
     if registry_changed {
         locked.save()?;
     }
     drop(locked);
     drop(_sender_lock);
     let original = original.ok_or_else(message_not_found)?;
+    if super::remote::is_remote_sender(&original.sender_session_id) {
+        return super::remote::cli_reply(context, &args, &original, body);
+    }
     if original.state == "expired" {
         return Err(message_expired());
     }
@@ -728,72 +747,15 @@ where
             )
         })?;
     let recipient_incarnation = broker.incarnation.clone();
-    let pair_recent = locked
-        .registry
-        .messages
-        .iter()
-        .filter(|message| {
-            message.sender_session_id == sender_session_id
-                && message.recipient_session_id == recipient.id
-                && message.created_at_epoch > now.saturating_sub(60)
-        })
-        .count();
-    if pair_recent >= PAIR_RATE_PER_MINUTE {
-        return Err(CliError::data(
-            "rate-limited",
-            "coordination message rate limit exceeded",
-            None,
-        ));
-    }
     let now_millis = now_epoch_millis();
-    let pair_burst = locked
-        .registry
-        .messages
-        .iter()
-        .filter(|message| {
-            message.sender_session_id == sender_session_id
-                && message.recipient_session_id == recipient.id
-                && message.created_at_epoch_millis > now_millis.saturating_sub(1_000)
-        })
-        .count();
-    if pair_burst >= PAIR_BURST {
-        return Err(CliError::data(
-            "rate-limited",
-            "coordination message burst limit exceeded",
-            None,
-        ));
-    }
-    let live_for_recipient: Vec<_> = locked
-        .registry
-        .messages
-        .iter()
-        .filter(|message| {
-            message.recipient_session_id == recipient.id && message.state != "deleted"
-        })
-        .collect();
-    let recipient_bytes: usize = live_for_recipient
-        .iter()
-        .map(|message| message.body_bytes)
-        .sum();
-    let registry_bytes: usize = locked
-        .registry
-        .messages
-        .iter()
-        .filter(|message| message.state != "deleted")
-        .map(|message| message.body_bytes)
-        .sum();
-    if live_for_recipient.len() >= MAX_SESSION_MESSAGES
-        || recipient_bytes.saturating_add(body.len()) > MAX_SESSION_BYTES
-        // Mirror the enforced whole-registry cap (`super::MAX_REGISTRY_BYTES`,
-        // 68 MiB) so a send is refused before the persisted registry can exceed it.
-        || registry_bytes.saturating_add(body.len()) > super::MAX_REGISTRY_BYTES as usize
-    {
-        return Err(CliError::data(
-            "quota-exceeded",
-            "coordination mailbox quota exceeded",
-            None,
-        ));
-    }
+    admit_message(
+        &locked.registry,
+        sender_session_id,
+        &recipient.id,
+        body.len(),
+        now,
+        now_millis,
+    )?;
     let reply_depth = match reply_to.as_deref() {
         Some(parent_id) => {
             let parent = locked
@@ -812,7 +774,8 @@ where
             if expected_parent_revision.is_some_and(|revision| parent.revision != revision) {
                 return Err(message_revision_conflict());
             }
-            if parent.sender_session_id != recipient.id
+            if super::remote::is_remote_sender(&parent.sender_session_id)
+                || parent.sender_session_id != recipient.id
                 || parent.sender_incarnation != recipient_incarnation
             {
                 return Err(message_not_found());
@@ -926,6 +889,7 @@ where
     for message in &mut locked.registry.messages {
         if message.recipient_session_id == recipient_session_id
             && message.recipient_incarnation == previous_incarnation
+            && !super::remote::is_remote_sender(&message.sender_session_id)
             && message.sender_session_id == controller_session_id
             && message.sender_incarnation == controller_incarnation
             && message.state == "unread"
@@ -997,6 +961,7 @@ where
     for message in &mut locked.registry.messages {
         if message.recipient_session_id == recipient_session_id
             && message.recipient_incarnation != current_incarnation
+            && !super::remote::is_remote_sender(&message.sender_session_id)
             && message.sender_session_id == controller_session_id
             && message.sender_incarnation == controller_incarnation
             && message.expires_at_epoch > now
@@ -1017,7 +982,7 @@ where
     Ok(quarantined)
 }
 
-fn read_body(path: &Path) -> Result<String, CliError> {
+pub(crate) fn read_body(path: &Path) -> Result<String, CliError> {
     let mut file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
@@ -1059,7 +1024,7 @@ fn read_body(path: &Path) -> Result<String, CliError> {
     Ok(body)
 }
 
-fn resolve_capability_file(path: Option<&Path>) -> Result<PathBuf, CliError> {
+pub(crate) fn resolve_capability_file(path: Option<&Path>) -> Result<PathBuf, CliError> {
     path.map(PathBuf::from)
         .or_else(|| std::env::var_os(super::CAPABILITY_ENV).map(PathBuf::from))
         .ok_or_else(super::unauthorized)
@@ -1069,9 +1034,18 @@ fn metadata(message: &StoredMessage) -> MessageMetadata {
     MessageMetadata {
         schema_version: message.schema_version.clone(),
         message_id: message.message_id.clone(),
-        sender: SenderProjection {
-            session_id: message.sender_session_id.clone(),
-            authenticated: true,
+        sender: {
+            let remote = super::remote::sender_address(message);
+            SenderProjection {
+                machine: remote.as_ref().map(|sender| sender.machine.clone()),
+                session_incarnation: remote
+                    .as_ref()
+                    .map(|sender| sender.session_incarnation.clone()),
+                session_id: remote
+                    .map(|sender| sender.session_id)
+                    .unwrap_or_else(|| message.sender_session_id.clone()),
+                authenticated: true,
+            }
         },
         recipient_session_id: message.recipient_session_id.clone(),
         state: message.state.clone(),
@@ -1100,7 +1074,7 @@ fn find_recipient_message_mut<'a>(
         .ok_or_else(message_not_found)
 }
 
-fn parse_expiry(value: Option<&str>) -> Result<i64, CliError> {
+pub(crate) fn parse_expiry(value: Option<&str>) -> Result<i64, CliError> {
     let Some(value) = value else {
         return Ok(DEFAULT_EXPIRY_SECS);
     };
@@ -1172,7 +1146,7 @@ fn message_expired() -> CliError {
     CliError::data("message-expired", "coordination message has expired", None)
 }
 
-fn now_epoch_millis() -> i64 {
+pub(super) fn now_epoch_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -1187,6 +1161,79 @@ fn message_revision_conflict() -> CliError {
         "message revision fence did not match",
         None,
     )
+}
+
+// Both local and federated ingress enforce the same mailbox policy.
+pub(super) fn admit_message(
+    registry: &Registry,
+    sender_session_id: &str,
+    recipient_id: &str,
+    body_bytes: usize,
+    now: i64,
+    now_millis: i64,
+) -> Result<(), CliError> {
+    let pair_recent = registry
+        .messages
+        .iter()
+        .filter(|message| {
+            message.sender_session_id == sender_session_id
+                && message.recipient_session_id == recipient_id
+                && message.created_at_epoch > now.saturating_sub(60)
+        })
+        .count();
+    if pair_recent >= PAIR_RATE_PER_MINUTE {
+        return Err(CliError::data(
+            "rate-limited",
+            "coordination message rate limit exceeded",
+            None,
+        ));
+    }
+    let pair_burst = registry
+        .messages
+        .iter()
+        .filter(|message| {
+            message.sender_session_id == sender_session_id
+                && message.recipient_session_id == recipient_id
+                && message.created_at_epoch_millis > now_millis.saturating_sub(1_000)
+        })
+        .count();
+    if pair_burst >= PAIR_BURST {
+        return Err(CliError::data(
+            "rate-limited",
+            "coordination message burst limit exceeded",
+            None,
+        ));
+    }
+    let live_for_recipient: Vec<_> = registry
+        .messages
+        .iter()
+        .filter(|message| {
+            message.recipient_session_id == recipient_id && message.state != "deleted"
+        })
+        .collect();
+    let recipient_bytes: usize = live_for_recipient
+        .iter()
+        .map(|message| message.body_bytes)
+        .sum();
+    let registry_bytes: usize = registry
+        .messages
+        .iter()
+        .filter(|message| message.state != "deleted")
+        .map(|message| message.body_bytes)
+        .sum();
+    if live_for_recipient.len() >= MAX_SESSION_MESSAGES
+        || recipient_bytes.saturating_add(body_bytes) > MAX_SESSION_BYTES
+        // Mirror the enforced whole-registry cap (`super::MAX_REGISTRY_BYTES`,
+        // 68 MiB) so a send is refused before the persisted registry can exceed it.
+        || registry_bytes.saturating_add(body_bytes) > super::MAX_REGISTRY_BYTES as usize
+    {
+        return Err(CliError::data(
+            "quota-exceeded",
+            "coordination mailbox quota exceeded",
+            None,
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -2,6 +2,15 @@ use std::process::Command;
 
 use nils_test_support::bin;
 
+#[test]
+fn remote_mailbox_surface_is_discoverable() {
+    let output = Command::new(bin::resolve("agent-session"))
+        .args(["message", "send", "--help"])
+        .output()
+        .expect("agent-session help");
+    assert!(String::from_utf8_lossy(&output.stdout).contains("--to-machine"));
+}
+
 fn help(args: &[&str]) -> String {
     let output = Command::new(bin::resolve("main-agent"))
         .args(args)
