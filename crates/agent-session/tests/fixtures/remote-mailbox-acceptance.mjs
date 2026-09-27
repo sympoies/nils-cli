@@ -76,7 +76,7 @@ try {
     const message=JSON.parse(Buffer.concat(chunks));
     assert.deepEqual(message.from,address(source));
     if(message.body==='timeout-first'){await delay(16000);res.destroy();return;}
-    if(denyRelay){res.writeHead(403);res.end(JSON.stringify({error:{code:denyRelay}}));return;}
+    if(denyRelay){res.writeHead(denyRelay==='rate-limited'?429:403);res.end(JSON.stringify({error:{code:denyRelay}}));return;}
     if(hold){res.writeHead(503);res.end(JSON.stringify({error:{code:'remote-messaging-unavailable'}}));return;}
     if(blockRelay){relayBlocked=true;await delay(2500);relayBlocked=false;}
     const target=hosts.find(h=>h.machine===message.to.machine);
