@@ -208,6 +208,10 @@ jobs:
         env:
           AGENT_SESSION_TEST_REQUIRE_CGROUP: "1"
         run: |
+          # The integration binary drives `main-agent`, which ships from the sibling
+          # nils-main-agent package; build both binaries so the test never runs a
+          # missing or cache-restored stale sibling.
+          cargo build -p nils-agent-session -p nils-main-agent --bins
           systemd-run --user --scope --quiet --collect \
             --unit "nils-provider-stop-canary-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-1" \
             -- cargo test -p nils-agent-session --test integration \

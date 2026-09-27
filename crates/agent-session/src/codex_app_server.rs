@@ -36,7 +36,7 @@ use crate::{
     write_session_record,
 };
 
-pub(crate) const MANAGED_ACCOUNT_HANDOFF_CAPABILITY: &str =
+pub const MANAGED_ACCOUNT_HANDOFF_CAPABILITY: &str =
     "agent-session.codex-managed-account-handoff.v1";
 const MANAGED_ACCOUNT_HANDOFF_CAPABILITY_KEY: &str = "managed_account_handoff_capability";
 
@@ -247,7 +247,7 @@ fn configure_runtime_with_capabilities(
     write_session_record(context, record)
 }
 
-pub(crate) fn managed_account_handoff_supported(record: &SessionRecord) -> bool {
+pub fn managed_account_handoff_supported(record: &SessionRecord) -> bool {
     record.runtime.as_ref().is_some_and(|runtime| {
         runtime.kind == RUNTIME_KIND
             && runtime

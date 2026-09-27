@@ -1,23 +1,69 @@
-mod activity;
-mod auto_resume;
-mod cli;
-mod codex_account;
-mod codex_app_server;
+#[doc(hidden)]
+pub mod activity;
+#[doc(hidden)]
+pub mod auto_resume;
+#[doc(hidden)]
+pub mod cli;
+#[doc(hidden)]
+pub mod codex_account;
+#[doc(hidden)]
+pub mod codex_app_server;
 pub mod completion;
-mod coordination;
+#[doc(hidden)]
+pub mod coordination;
 mod diagnose;
-mod dsh_external;
+#[doc(hidden)]
+pub mod dsh_external;
 mod group_lifecycle;
-mod main_agent;
 mod maintenance;
-mod metadata;
-mod orchestration;
-mod orchestration_support;
+#[doc(hidden)]
+pub mod metadata;
+#[doc(hidden)]
+pub mod orchestration;
+#[doc(hidden)]
+pub mod orchestration_support;
 mod provider_history;
-mod provider_prompt;
+#[doc(hidden)]
+pub mod provider_prompt;
 mod retitle;
 mod retitle_v3;
 mod serve;
+
+/// Unstable engine surface for the `nils-main-agent` workspace crate.
+///
+/// This is not a public API. It exists so the `main-agent` facade can live in
+/// its own crate while the session engine, orchestration registry, and group
+/// lifecycle stay here; items change with any release.
+#[doc(hidden)]
+pub mod internal {
+    pub use crate::{
+        CliContext, CliError, CoordinationRuntimeStatus, DELETE_TERMINATION_VERIFY_TIMEOUT,
+        LockedSessionAuthority, PANE_INPUT_COMMAND_TIMEOUT, PreRuntimeReleaseGuard,
+        PreRuntimeReleaseGuardError, PromptDelivery, ProviderResume, ProviderStopCanaryState,
+        RuntimeInfo, SESSION_DOCUMENT_VERSION, SessionRecord, StartFailureDisposition,
+        StartLifecycleGuards, acquire_session_record_lock,
+        authorize_provider_stop_canary_transition, await_provider_stop_canary_startup,
+        coordination_runtime_evidence, delete_session, delete_session_for_terminal_assignment,
+        ensure_provider_stop_canary_platform_supported, launch_gate_path, load_session_record,
+        lock_exact_session_authority, mutate_session_record, paste_prompt,
+        provider_stop_canary_armed, provider_stop_canary_assignment_id,
+        provider_stop_canary_failed_startup_runtime_quiescent,
+        provider_stop_canary_proof_matches_reservation, provider_stop_canary_ready_child_identity,
+        provider_stop_canary_release_identity_matches,
+        provider_stop_canary_request_identity_matches, provider_stop_canary_startup_error,
+        provider_stop_canary_startup_wait, provider_stop_canary_state,
+        provider_stop_canary_stopped_child_proven, record_provider_stop_canary_proof,
+        release_held_runtime, release_provider_stop_canary, render_clap_message,
+        request_provider_stop_canary, resolve_tmux_bin, run_output_with_timeout_and_cap,
+        runtime_is_proven_never_launched, send_submit_recovery_input_serialized, session_dir,
+        session_status, start_session_with_create_guard, stop_session_runtime_locked, validate_id,
+        write_session_record,
+    };
+    pub use crate::{
+        activity, auto_resume, cli, codex_account, codex_app_server, completion, coordination,
+        dsh_external, orchestration, orchestration_support, provider_prompt,
+    };
+}
 
 #[cfg(test)]
 use std::cell::Cell;
@@ -80,7 +126,7 @@ use serde_json::{Value, json};
 
 use cli::{AgentKind, Cli, Command, SpecialKey};
 
-const SESSION_DOCUMENT_VERSION: &str = "agent-session.session.v1";
+pub const SESSION_DOCUMENT_VERSION: &str = "agent-session.session.v1";
 const SESSION_RESUME_DOCUMENT_VERSION: &str = "agent-session.resume.v1";
 const STARTUP_PROJECTION_VERSION: &str = "agent-session.startup.v1";
 
@@ -178,7 +224,7 @@ const CODEX_RESUME_CAPTURE_TIMEOUT_MS: u64 = 1500;
 const CODEX_RESUME_CAPTURE_POLL_MS: u64 = 100;
 const CODEX_RESUME_AMBIGUITY_WINDOW_MS: u64 = 500;
 const CODEX_RESUME_BACKFILL_MAX_AGE_SECS: u64 = 10 * 60;
-const PANE_INPUT_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+pub const PANE_INPUT_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 const PANE_OBSERVATION_COMMAND_TIMEOUT: Duration = Duration::from_secs(1);
 const PANE_OBSERVATION_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const SUBMIT_RECOVERY_INPUT_COMMAND_TIMEOUT: Duration = Duration::from_secs(1);
@@ -190,7 +236,7 @@ const PANE_PASTE_READY_DEADLINE: Duration = Duration::from_secs(15);
 /// paste, its settle, and the provider acknowledgement all still fit inside one
 /// request.
 const CLAUDE_STRUCTURED_PROMPT_PANE_READY_DEADLINE: Duration = Duration::from_secs(4);
-const DELETE_TERMINATION_VERIFY_TIMEOUT: Duration = Duration::from_secs(1);
+pub const DELETE_TERMINATION_VERIFY_TIMEOUT: Duration = Duration::from_secs(1);
 const DELETE_TERMINATION_VERIFY_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const DELETE_TERMINATION_PROBE_TIMEOUT: Duration = Duration::from_millis(100);
 const DELETE_TERMINATION_IDENTITY_RETRY_LIMIT: usize = 3;
@@ -217,18 +263,6 @@ const HELD_LAUNCH_SCRIPT: &str = "gate=$1; broker_gate=$2; heartbeat=$3; capabil
 
 pub fn run() -> i32 {
     run_with_args(env::args_os())
-}
-
-pub fn run_main_agent() -> i32 {
-    main_agent::run()
-}
-
-pub fn run_main_agent_with_args<I, T>(args: I) -> i32
-where
-    I: IntoIterator<Item = T>,
-    T: Into<OsString> + Clone,
-{
-    main_agent::run_with_args(args)
 }
 
 pub fn run_with_args<I, T>(args: I) -> i32
@@ -483,7 +517,7 @@ fn detect_format_from_args(args: &[OsString]) -> OutputFormat {
     OutputFormat::Text
 }
 
-fn render_clap_message(err: &clap::Error) -> String {
+pub fn render_clap_message(err: &clap::Error) -> String {
     // clap prints the missing argument names on indented continuation lines that
     // the first-non-empty-line collapse below would drop, leaving an unnamed
     // "the following required arguments were not provided:" message. Pull the
@@ -879,13 +913,13 @@ fn run_delete(context: &CliContext, args: cli::DeleteArgs) -> i32 {
 }
 
 #[derive(Debug, Clone)]
-struct CliContext {
-    state_dir: PathBuf,
-    host: Option<String>,
+pub struct CliContext {
+    pub state_dir: PathBuf,
+    pub host: Option<String>,
 }
 
 impl CliContext {
-    fn resolve(state_dir: Option<PathBuf>, host: Option<String>) -> Result<Self, CliError> {
+    pub fn resolve(state_dir: Option<PathBuf>, host: Option<String>) -> Result<Self, CliError> {
         let state_dir = resolve_state_dir(state_dir)?;
         let host = resolve_host(
             host.or_else(|| non_empty_env("AGENT_SESSION_HOST"))
@@ -896,38 +930,38 @@ impl CliContext {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-struct SessionRecord {
-    schema_version: String,
-    id: String,
-    agent: String,
-    mode: String,
+pub struct SessionRecord {
+    pub schema_version: String,
+    pub id: String,
+    pub agent: String,
+    pub mode: String,
     #[serde(default)]
-    coordination_mode: cli::CoordinationMode,
-    title: Option<String>,
+    pub coordination_mode: cli::CoordinationMode,
+    pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    title_state: Option<SessionTitleState>,
+    pub title_state: Option<SessionTitleState>,
     #[serde(default)]
-    title_revision: u64,
-    cwd: String,
-    tmux_session: String,
-    prompt_file: Option<String>,
-    log_file: Option<String>,
-    created_at: String,
-    updated_at: String,
+    pub title_revision: u64,
+    pub cwd: String,
+    pub tmux_session: String,
+    pub prompt_file: Option<String>,
+    pub log_file: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    provider_resume: Option<ProviderResume>,
+    pub provider_resume: Option<ProviderResume>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    runtime: Option<RuntimeInfo>,
+    pub runtime: Option<RuntimeInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    public_metadata: Option<metadata::SessionMetadataState>,
+    pub public_metadata: Option<metadata::SessionMetadataState>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    agent_args: Vec<String>,
+    pub agent_args: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    agent_bin: Option<String>,
+    pub agent_bin: Option<String>,
     #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
-    extra: BTreeMap<String, Value>,
+    pub extra: BTreeMap<String, Value>,
     #[serde(skip)]
-    resume_sidecar_extra: BTreeMap<String, Value>,
+    pub resume_sidecar_extra: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -939,7 +973,7 @@ enum SessionTitleTopicSource {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-struct SessionTitleState {
+pub struct SessionTitleState {
     topic: Option<String>,
     topic_source: SessionTitleTopicSource,
     #[serde(default)]
@@ -991,7 +1025,7 @@ impl From<&SessionTitleState> for SessionTitleStateView {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-struct ProviderResume {
+pub struct ProviderResume {
     provider: String,
     session_id: String,
     captured_at: String,
@@ -1023,15 +1057,15 @@ impl From<&ProviderResume> for ProviderResumeView {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-struct RuntimeInfo {
-    kind: String,
-    tmux_session: String,
-    generation: u64,
-    started_at: String,
+pub struct RuntimeInfo {
+    pub kind: String,
+    pub tmux_session: String,
+    pub generation: u64,
+    pub started_at: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
-    launch_id: String,
+    pub launch_id: String,
     #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
-    extra: BTreeMap<String, Value>,
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
@@ -1203,7 +1237,7 @@ fn startup_projection_for_view(record: &SessionRecord) -> Option<StartupProjecti
     Some(startup)
 }
 
-pub(crate) fn runtime_is_proven_never_launched(record: &SessionRecord) -> bool {
+pub fn runtime_is_proven_never_launched(record: &SessionRecord) -> bool {
     let Some(current_launch_id) = record
         .runtime
         .as_ref()
@@ -1534,8 +1568,8 @@ struct DurableResumeRecord {
 }
 
 #[derive(Debug, Serialize)]
-struct SessionView {
-    id: String,
+pub struct SessionView {
+    pub id: String,
     agent: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     capabilities: Vec<&'static str>,
@@ -1558,7 +1592,7 @@ struct SessionView {
     session_incarnation: Option<String>,
     cwd: String,
     tmux_session: String,
-    status: String,
+    pub status: String,
     resumable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     resume_blocked_reason: Option<String>,
@@ -1600,10 +1634,10 @@ struct SessionView {
 }
 
 #[derive(Debug)]
-struct StartView {
+pub struct StartView {
     format: OutputFormat,
-    result: SessionView,
-    prompt_delivery_observation: Option<PromptDeliveryObservation>,
+    pub result: SessionView,
+    pub prompt_delivery_observation: Option<PromptDeliveryObservation>,
 }
 
 pub(crate) struct ProviderResumeImportArgs {
@@ -1639,14 +1673,14 @@ pub(crate) struct DshHistoryResumeArgs {
 }
 
 #[derive(Debug, Serialize)]
-struct DeleteResult {
+pub struct DeleteResult {
     id: String,
     tmux_session: String,
     killed: bool,
-    deleted: bool,
+    pub deleted: bool,
     session_dir: String,
     #[serde(skip)]
-    cleanup_pending: bool,
+    pub cleanup_pending: bool,
     #[serde(skip)]
     registry_fence: SessionRegistryFence,
 }
@@ -1750,29 +1784,41 @@ struct WorkdirUsage {
 }
 
 #[derive(Debug, Clone)]
-struct CliError(Box<CliErrorData>);
+pub struct CliError(Box<CliErrorData>);
 
 #[derive(Debug, Clone)]
-struct CliErrorData {
-    code: String,
-    message: String,
-    details: Option<Value>,
+pub struct CliErrorData {
+    pub code: String,
+    pub message: String,
+    pub details: Option<Value>,
     /// Optional actionable remedy surfaced as the envelope `hint` (JSON) or a
     /// `hint:` line (text). None keeps the wire shape identical to before.
-    hint: Option<String>,
-    exit_code: i32,
+    pub hint: Option<String>,
+    pub exit_code: i32,
 }
 
 impl CliError {
-    fn code(&self) -> &str {
+    pub fn code(&self) -> &str {
         &self.0.code
     }
 
-    fn message(&self) -> &str {
+    pub fn message(&self) -> &str {
         &self.0.message
     }
 
-    fn usage(code: impl Into<String>, message: impl Into<String>, details: Option<Value>) -> Self {
+    pub fn details(&self) -> Option<&Value> {
+        self.0.details.as_ref()
+    }
+
+    pub fn details_mut(&mut self) -> &mut Option<Value> {
+        &mut self.0.details
+    }
+
+    pub fn usage(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        details: Option<Value>,
+    ) -> Self {
         Self(Box::new(CliErrorData {
             code: code.into(),
             message: message.into(),
@@ -1782,7 +1828,7 @@ impl CliError {
         }))
     }
 
-    fn runtime(
+    pub fn runtime(
         code: impl Into<String>,
         message: impl Into<String>,
         details: Option<Value>,
@@ -1796,7 +1842,11 @@ impl CliError {
         }))
     }
 
-    fn data(code: impl Into<String>, message: impl Into<String>, details: Option<Value>) -> Self {
+    pub fn data(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        details: Option<Value>,
+    ) -> Self {
         Self(Box::new(CliErrorData {
             code: code.into(),
             message: message.into(),
@@ -1806,7 +1856,7 @@ impl CliError {
         }))
     }
 
-    fn unavailable(
+    pub fn unavailable(
         code: impl Into<String>,
         message: impl Into<String>,
         details: Option<Value>,
@@ -1831,24 +1881,24 @@ impl CliError {
 
     /// Attach an actionable remedy hint to this error. Mirrors git-cli's
     /// `CliError::with_hint`; surfaced by `render_error` in both binaries.
-    fn with_hint(mut self, hint: impl Into<String>) -> Self {
+    pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
         self.0.hint = Some(hint.into());
         self
     }
 
-    fn into_inner(self) -> CliErrorData {
+    pub fn into_inner(self) -> CliErrorData {
         *self.0
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum StartFailureDisposition {
+pub enum StartFailureDisposition {
     ReturnError,
     ReturnSession,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PromptDelivery {
+pub enum PromptDelivery {
     /// Ordinary interactive starts may retry a paste while it is still proven
     /// unsubmitted. This covers provider TUIs that draw before accepting input.
     ResilientBeforeSubmit,
@@ -1858,7 +1908,7 @@ enum PromptDelivery {
 }
 
 #[derive(Clone, Debug, Serialize)]
-struct PromptDeliveryObservation {
+pub struct PromptDeliveryObservation {
     schema_version: &'static str,
     composer: PromptComposerObservation,
 }
@@ -1878,20 +1928,20 @@ enum PreRuntimeReleaseGuardState {
     Committed,
 }
 
-struct PreRuntimeReleaseGuardError {
+pub struct PreRuntimeReleaseGuardError {
     error: CliError,
     state: PreRuntimeReleaseGuardState,
 }
 
 impl PreRuntimeReleaseGuardError {
-    fn rolled_back(error: CliError) -> Self {
+    pub fn rolled_back(error: CliError) -> Self {
         Self {
             error,
             state: PreRuntimeReleaseGuardState::RolledBack,
         }
     }
 
-    fn committed(error: CliError) -> Self {
+    pub fn committed(error: CliError) -> Self {
         Self {
             error,
             state: PreRuntimeReleaseGuardState::Committed,
@@ -1908,16 +1958,16 @@ impl From<CliError> for PreRuntimeReleaseGuardError {
     }
 }
 
-type PreRuntimeReleaseGuard<'a> =
+pub type PreRuntimeReleaseGuard<'a> =
     Option<&'a mut dyn FnMut(&SessionRecord) -> Result<(), PreRuntimeReleaseGuardError>>;
 
 #[derive(Default)]
-struct StartLifecycleGuards<'a> {
-    pre_runtime_release: PreRuntimeReleaseGuard<'a>,
-    post_runtime_release: SessionStartGuard<'a>,
-    post_prompt_delivery: SessionStartGuard<'a>,
-    ambiguous_prompt_delivery: SessionStartGuard<'a>,
-    definitive_failure: SessionStartGuard<'a>,
+pub struct StartLifecycleGuards<'a> {
+    pub pre_runtime_release: PreRuntimeReleaseGuard<'a>,
+    pub post_runtime_release: SessionStartGuard<'a>,
+    pub post_prompt_delivery: SessionStartGuard<'a>,
+    pub ambiguous_prompt_delivery: SessionStartGuard<'a>,
+    pub definitive_failure: SessionStartGuard<'a>,
 }
 
 fn start_session(
@@ -1936,7 +1986,7 @@ fn start_session(
     )
 }
 
-fn start_session_with_create_guard(
+pub fn start_session_with_create_guard(
     context: &CliContext,
     args: cli::StartArgs,
     failure_disposition: StartFailureDisposition,
@@ -3671,7 +3721,7 @@ fn configure_provider_stop_canary(
     ensure_provider_stop_canary_platform_supported(armed)
 }
 
-pub(crate) fn ensure_provider_stop_canary_platform_supported(armed: bool) -> Result<(), CliError> {
+pub fn ensure_provider_stop_canary_platform_supported(armed: bool) -> Result<(), CliError> {
     #[cfg(target_os = "linux")]
     {
         let _ = armed;
@@ -3690,7 +3740,7 @@ pub(crate) fn ensure_provider_stop_canary_platform_supported(armed: bool) -> Res
     }
 }
 
-fn provider_stop_canary_armed(record: &SessionRecord) -> bool {
+pub fn provider_stop_canary_armed(record: &SessionRecord) -> bool {
     record.runtime.as_ref().is_some_and(|runtime| {
         runtime
             .extra
@@ -3713,7 +3763,7 @@ fn provider_stop_canary_armed(record: &SessionRecord) -> bool {
     })
 }
 
-fn provider_stop_canary_assignment_id(record: &SessionRecord) -> Option<&str> {
+pub fn provider_stop_canary_assignment_id(record: &SessionRecord) -> Option<&str> {
     record
         .runtime
         .as_ref()?
@@ -3920,7 +3970,7 @@ fn read_provider_stop_canary_runtime_failure(
         .then(|| (stage.to_string(), failure_code.to_string()))
 }
 
-pub(crate) fn provider_stop_canary_startup_error(stage: &str, failure_code: &str) -> CliError {
+pub fn provider_stop_canary_startup_error(stage: &str, failure_code: &str) -> CliError {
     CliError::data(
         "provider-stop-canary-startup-failed",
         "the exact Codex canary failed before prompt delivery",
@@ -3939,7 +3989,7 @@ pub(crate) fn provider_stop_canary_startup_error(stage: &str, failure_code: &str
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn await_provider_stop_canary_startup(
+pub fn await_provider_stop_canary_startup(
     context: &CliContext,
     record: &SessionRecord,
     timeout: Duration,
@@ -3988,7 +4038,7 @@ pub(crate) fn await_provider_stop_canary_startup(
 }
 
 #[cfg(not(target_os = "linux"))]
-pub(crate) fn await_provider_stop_canary_startup(
+pub fn await_provider_stop_canary_startup(
     _context: &CliContext,
     _record: &SessionRecord,
     _timeout: Duration,
@@ -3999,7 +4049,7 @@ pub(crate) fn await_provider_stop_canary_startup(
     ))
 }
 
-pub(crate) fn provider_stop_canary_startup_wait() -> Duration {
+pub fn provider_stop_canary_startup_wait() -> Duration {
     #[cfg(debug_assertions)]
     if let Ok(value) = env::var("NILS_AGENT_SESSION_TEST_PROVIDER_STOP_CANARY_STARTUP_MS")
         && let Ok(milliseconds) = value.parse::<u64>()
@@ -7000,7 +7050,7 @@ fn query_provider_stop_canary_startup(
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn authorize_provider_stop_canary_transition(
+pub fn authorize_provider_stop_canary_transition(
     context: &CliContext,
     record: &SessionRecord,
     controller_session_id: &str,
@@ -7083,7 +7133,7 @@ pub(crate) fn authorize_provider_stop_canary_transition(
 }
 
 #[cfg(not(target_os = "linux"))]
-pub(crate) fn authorize_provider_stop_canary_transition(
+pub fn authorize_provider_stop_canary_transition(
     _context: &CliContext,
     _record: &SessionRecord,
     _controller_session_id: &str,
@@ -7820,7 +7870,7 @@ fn provider_stop_canary_hold() -> Duration {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ProviderStopCanaryState {
+pub enum ProviderStopCanaryState {
     NotArmed,
     Armed,
     Ready,
@@ -7829,7 +7879,7 @@ pub(crate) enum ProviderStopCanaryState {
     Released,
 }
 
-pub(crate) fn provider_stop_canary_state(
+pub fn provider_stop_canary_state(
     context: &CliContext,
     record: &SessionRecord,
 ) -> Result<ProviderStopCanaryState, CliError> {
@@ -7900,7 +7950,7 @@ fn provider_stop_canary_proof_matches(context: &CliContext, record: &SessionReco
         && proof["child_pid"] == stopped["child_pid"]
 }
 
-pub(crate) fn provider_stop_canary_proof_matches_reservation(
+pub fn provider_stop_canary_proof_matches_reservation(
     context: &CliContext,
     record: &SessionRecord,
     reservation: &orchestration::ProviderStopCanaryReservationRecord,
@@ -7923,7 +7973,7 @@ pub(crate) fn provider_stop_canary_proof_matches_reservation(
         && proof["child_start_ticks"].as_u64() == Some(reservation.child_start_ticks)
 }
 
-pub(crate) fn provider_stop_canary_ready_child_identity(
+pub fn provider_stop_canary_ready_child_identity(
     context: &CliContext,
     record: &SessionRecord,
 ) -> Result<(u32, u64), CliError> {
@@ -7985,7 +8035,7 @@ pub(crate) fn provider_stop_canary_ready_child_identity(
     }
 }
 
-pub(crate) fn provider_stop_canary_stopped_child_proven(
+pub fn provider_stop_canary_stopped_child_proven(
     context: &CliContext,
     record: &SessionRecord,
     request_digest: &str,
@@ -8033,7 +8083,7 @@ pub(crate) fn provider_stop_canary_stopped_child_proven(
     }
 }
 
-pub(crate) fn record_provider_stop_canary_proof(
+pub fn record_provider_stop_canary_proof(
     context: &CliContext,
     record: &mut SessionRecord,
     request_digest: &str,
@@ -8063,7 +8113,7 @@ pub(crate) fn record_provider_stop_canary_proof(
     write_session_record(context, record)
 }
 
-pub(crate) fn request_provider_stop_canary(
+pub fn request_provider_stop_canary(
     context: &CliContext,
     record: &SessionRecord,
     request_digest: &str,
@@ -8089,7 +8139,7 @@ pub(crate) fn request_provider_stop_canary(
     )
 }
 
-pub(crate) fn provider_stop_canary_request_identity_matches(
+pub fn provider_stop_canary_request_identity_matches(
     context: &CliContext,
     record: &SessionRecord,
     request_digest: &str,
@@ -8110,7 +8160,7 @@ pub(crate) fn provider_stop_canary_request_identity_matches(
         })
 }
 
-pub(crate) fn release_provider_stop_canary(
+pub fn release_provider_stop_canary(
     context: &CliContext,
     record: &SessionRecord,
     request_digest: &str,
@@ -8136,7 +8186,7 @@ pub(crate) fn release_provider_stop_canary(
     )
 }
 
-pub(crate) fn provider_stop_canary_release_identity_matches(
+pub fn provider_stop_canary_release_identity_matches(
     context: &CliContext,
     record: &SessionRecord,
     request_digest: &str,
@@ -8834,7 +8884,7 @@ fn collect_codex_resume_candidates(
     }
 }
 
-fn paste_prompt(
+pub fn paste_prompt(
     tmux_bin: &Path,
     record: &SessionRecord,
     delivery: PromptDelivery,
@@ -9259,7 +9309,7 @@ fn send_input_serialized(
 /// authority source is fenced. The record, activity, and coordination locks
 /// remain held through the tmux write, so an incarnation replacement, startup
 /// dialog/turn transition, claim, or operation cannot cross the final check.
-pub(crate) fn send_submit_recovery_input_serialized<G, F>(
+pub fn send_submit_recovery_input_serialized<G, F>(
     context: &CliContext,
     expected: &SessionRecord,
     expected_incarnation: &str,
@@ -10389,7 +10439,7 @@ fn start_resume_tmux(
     run_tmux_new_session(command, tmux_bin, record)
 }
 
-fn launch_gate_path(state_dir: &Path, record: &SessionRecord) -> PathBuf {
+pub fn launch_gate_path(state_dir: &Path, record: &SessionRecord) -> PathBuf {
     state_dir
         .join("sessions")
         .join(&record.id)
@@ -10469,7 +10519,7 @@ fn begin_held_runtime(
     Ok(())
 }
 
-fn release_held_runtime(context: &CliContext, record: &SessionRecord) -> Result<(), CliError> {
+pub fn release_held_runtime(context: &CliContext, record: &SessionRecord) -> Result<(), CliError> {
     let incarnation = coordination::incarnation(record)?;
     let capability = coordination::capability_path(context, &record.id, &incarnation);
     let metadata = fs::metadata(&capability).map_err(|_| {
@@ -11372,7 +11422,7 @@ fn load_session_view(
     ))
 }
 
-fn load_session_record(context: &CliContext, id: &str) -> Result<SessionRecord, CliError> {
+pub fn load_session_record(context: &CliContext, id: &str) -> Result<SessionRecord, CliError> {
     let resolved = resolve_session_record_path(context, id)?;
     let record = read_session_record(&resolved.record_path)?;
     validate_record_id(&record, &resolved.expected_id, &resolved.record_path)?;
@@ -11574,7 +11624,7 @@ fn validate_record_id(
 }
 
 #[derive(Debug)]
-pub(crate) struct SessionRecordLock(fs::File);
+pub struct SessionRecordLock(fs::File);
 
 impl Drop for SessionRecordLock {
     fn drop(&mut self) {
@@ -11585,12 +11635,12 @@ impl Drop for SessionRecordLock {
     }
 }
 
-pub(crate) struct LockedSessionAuthority {
+pub struct LockedSessionAuthority {
     _lock: SessionRecordLock,
-    pub(crate) record: SessionRecord,
+    pub record: SessionRecord,
 }
 
-pub(crate) fn lock_exact_session_authority(
+pub fn lock_exact_session_authority(
     context: &CliContext,
     id: &str,
 ) -> Result<Option<LockedSessionAuthority>, CliError> {
@@ -11614,7 +11664,7 @@ pub(crate) fn lock_exact_session_authority(
     }))
 }
 
-fn acquire_session_record_lock(
+pub fn acquire_session_record_lock(
     context: &CliContext,
     id: &str,
 ) -> Result<SessionRecordLock, CliError> {
@@ -11863,11 +11913,7 @@ fn session_io_error(code: &str, path: &Path, err: io::Error) -> CliError {
     )
 }
 
-pub(crate) fn mutate_session_record<T, F>(
-    context: &CliContext,
-    id: &str,
-    mutate: F,
-) -> Result<T, CliError>
+pub fn mutate_session_record<T, F>(context: &CliContext, id: &str, mutate: F) -> Result<T, CliError>
 where
     F: FnOnce(&mut SessionRecord) -> Result<T, CliError>,
 {
@@ -11980,10 +12026,7 @@ where
     operation(&mut record)
 }
 
-pub(crate) fn write_session_record(
-    context: &CliContext,
-    record: &SessionRecord,
-) -> Result<(), CliError> {
+pub fn write_session_record(context: &CliContext, record: &SessionRecord) -> Result<(), CliError> {
     let bytes = render_session_document_for_write(record)?;
     #[cfg(test)]
     SESSION_RESUME_WRITE_COUNT.with(|count| count.set(count.get() + 1));
@@ -12691,7 +12734,7 @@ fn read_session_log_file(
     }
 }
 
-fn delete_session(
+pub fn delete_session(
     context: &CliContext,
     id: &str,
     tmux_bin: PathBuf,
@@ -12826,7 +12869,7 @@ pub(crate) fn archive_session_for_group_cleanup_with_expected_incarnation(
     Ok((pending_archive.commit(), deleted))
 }
 
-fn delete_session_for_terminal_assignment(
+pub fn delete_session_for_terminal_assignment(
     context: &CliContext,
     id: &str,
     tmux_bin: PathBuf,
@@ -13215,7 +13258,7 @@ impl SessionTerminationOperation {
     }
 }
 
-pub(crate) fn stop_session_runtime_locked(
+pub fn stop_session_runtime_locked(
     context: &CliContext,
     record: &mut SessionRecord,
     tmux_bin: &Path,
@@ -14778,19 +14821,19 @@ enum ProcessGroupStatus {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CoordinationRuntimeStatus {
+pub enum CoordinationRuntimeStatus {
     Running,
     Stopped,
     Unknown,
 }
 
-pub(crate) struct CoordinationRuntimeEvidence {
-    pub(crate) identity_digest: String,
+pub struct CoordinationRuntimeEvidence {
+    pub identity_digest: String,
     pub(crate) identity: Value,
-    pub(crate) status: CoordinationRuntimeStatus,
+    pub status: CoordinationRuntimeStatus,
 }
 
-pub(crate) fn coordination_runtime_evidence(
+pub fn coordination_runtime_evidence(
     context: &CliContext,
     record: &SessionRecord,
 ) -> Result<CoordinationRuntimeEvidence, CliError> {
@@ -15840,7 +15883,7 @@ fn prove_provider_stop_canary_failed_startup_runtime_quiescent(
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn provider_stop_canary_failed_startup_runtime_quiescent(
+pub fn provider_stop_canary_failed_startup_runtime_quiescent(
     record: &SessionRecord,
     assignment_id: &str,
 ) -> bool {
@@ -15927,7 +15970,7 @@ fn provider_stop_canary_failed_startup_runtime_quiescent_at_root_with_probe(
 }
 
 #[cfg(not(target_os = "linux"))]
-pub(crate) fn provider_stop_canary_failed_startup_runtime_quiescent(
+pub fn provider_stop_canary_failed_startup_runtime_quiescent(
     _record: &SessionRecord,
     _assignment_id: &str,
 ) -> bool {
@@ -16860,7 +16903,7 @@ fn managed_tmux_pane_target(tmux_session: &str) -> String {
     format!("={tmux_session}:0.0")
 }
 
-fn session_status(context: &CliContext, tmux_bin: &Path, record: &SessionRecord) -> String {
+pub fn session_status(context: &CliContext, tmux_bin: &Path, record: &SessionRecord) -> String {
     if dsh_external::is_external_record(record) {
         return dsh_external::external_session_status(context, record);
     }
@@ -17160,7 +17203,7 @@ fn run_output_with_timeout(
     run_output_with_timeout_and_cap(command, timeout, DELETE_TMUX_PROBE_MAX_OUTPUT_BYTES)
 }
 
-pub(crate) fn run_output_with_timeout_and_cap(
+pub fn run_output_with_timeout_and_cap(
     command: ProcessCommand,
     timeout: Duration,
     max_output_bytes: usize,
@@ -17430,7 +17473,7 @@ fn absolute_path(path: &Path) -> Result<PathBuf, CliError> {
     Ok(normalize_path(&cwd.join(expanded)))
 }
 
-fn resolve_tmux_bin(explicit: Option<&Path>) -> PathBuf {
+pub fn resolve_tmux_bin(explicit: Option<&Path>) -> PathBuf {
     explicit
         .map(Path::to_path_buf)
         .or_else(|| non_empty_env("AGENT_SESSION_TMUX_BIN").map(PathBuf::from))
@@ -17527,7 +17570,7 @@ fn default_session_id_base(timestamp: &str, agent: AgentKind, title_slug: Option
     }
 }
 
-fn validate_id(id: &str) -> Result<(), CliError> {
+pub fn validate_id(id: &str) -> Result<(), CliError> {
     if id.is_empty()
         || !id
             .chars()
@@ -17542,7 +17585,7 @@ fn validate_id(id: &str) -> Result<(), CliError> {
     Ok(())
 }
 
-fn session_dir(context: &CliContext, id: &str) -> PathBuf {
+pub fn session_dir(context: &CliContext, id: &str) -> PathBuf {
     context.state_dir.join("sessions").join(id)
 }
 

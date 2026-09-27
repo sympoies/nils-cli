@@ -519,7 +519,7 @@ pub fn validate_physical_targets(
     Ok(())
 }
 
-pub(crate) fn checkout_root(path: &Path) -> Result<PathBuf, CliError> {
+pub fn checkout_root(path: &Path) -> Result<PathBuf, CliError> {
     checkout_root_with(path, physical_target_unavailable)
 }
 

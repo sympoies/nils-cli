@@ -167,6 +167,7 @@ Top-level crate READMEs (one per workspace member, 47 total):
 - `crates/github-app-cli/README.md`
 - `crates/image-processing/README.md`
 - `crates/macos-agent/README.md`
+- `crates/main-agent/README.md`
 - `crates/memo/README.md`
 - `crates/nils-build-info/README.md`
 - `crates/nils-common/README.md`
@@ -217,6 +218,7 @@ Crate `docs/README.md` index files (one per workspace member, 47 total):
 - `crates/github-app-cli/docs/README.md`
 - `crates/image-processing/docs/README.md`
 - `crates/macos-agent/docs/README.md`
+- `crates/main-agent/docs/README.md`
 - `crates/memo/docs/README.md`
 - `crates/nils-build-info/docs/README.md`
 - `crates/nils-common/docs/README.md`

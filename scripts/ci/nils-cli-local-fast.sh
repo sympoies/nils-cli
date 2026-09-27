@@ -257,6 +257,15 @@ for path in changed:
     else:
         workspace_reasons.append(f"unclassified workspace path changed: {path}")
 
+# Packages whose tests drive each other's binaries: the agent-session integration
+# tests run `main-agent`, which ships from nils-main-agent, and `main-agent`
+# launches `agent-session` workers. Select them together so neither is validated
+# against a missing or stale sibling.
+coupled_packages = [{"nils-agent-session", "nils-main-agent"}]
+for group in coupled_packages:
+    if packages & group:
+        packages |= group
+
 if not changed:
     mode = "none"
 elif workspace_reasons:
@@ -487,6 +496,15 @@ fi
 for package in "${packages[@]}"; do
   run cargo clippy -p "$package" --all-targets --all-features -- -D warnings
 done
+
+# Build every selected package's binaries first: coupled packages resolve each
+# other's binaries from target/<profile>, which a package-scoped test run does
+# not build for a sibling package.
+declare -a package_args=()
+for package in "${packages[@]}"; do
+  package_args+=(-p "$package")
+done
+run cargo build "${package_args[@]}" --bins
 
 for package in "${packages[@]}"; do
   if [[ "$test_runner" == "nextest" ]]; then

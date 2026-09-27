@@ -15,7 +15,7 @@ use crate::{
 };
 
 pub(crate) const PROVIDER_PROMPT_CAPABILITY: &str = "provider-prompt.v1";
-pub(crate) const MAX_PROVIDER_PROMPT_BYTES: usize = 16 * 1024;
+pub const MAX_PROVIDER_PROMPT_BYTES: usize = 16 * 1024;
 const MAX_PROVIDER_LINE_BYTES: usize = 256 * 1024;
 const MAX_PROVIDER_READ_BYTES: usize = 64 * 1024;
 const PROVIDER_CONTINUITY_BYTES: usize = 4 * 1024;
@@ -82,7 +82,7 @@ struct PendingClaudePrompt {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ProviderPromptSource {
+pub struct ProviderPromptSource {
     provider: ProviderKind,
     session_id: String,
     path: PathBuf,
@@ -245,7 +245,7 @@ impl GoalPreviewState {
 }
 
 #[derive(Debug)]
-pub(crate) struct ProviderPromptTail {
+pub struct ProviderPromptTail {
     source: ProviderPromptSource,
     identity: FileIdentity,
     offset: u64,
@@ -275,7 +275,7 @@ pub(crate) struct ProviderLastPromptTracker {
 }
 
 impl ProviderPromptTail {
-    pub(crate) fn resolve_source(record: &SessionRecord) -> Option<ProviderPromptSource> {
+    pub fn resolve_source(record: &SessionRecord) -> Option<ProviderPromptSource> {
         resolve_provider_prompt_source(record)
     }
 
@@ -935,7 +935,7 @@ fn read_tail_window_with_start(path: &Path, max_bytes: usize) -> io::Result<(Vec
 /// prompt has no reliable timestamp, or the bounded window cannot prove that it
 /// reaches the attempt boundary. This avoids turning incomplete observation
 /// into either a duplicate delivery or a false acknowledgement.
-pub(crate) fn prompt_observed_after(
+pub fn prompt_observed_after(
     source: &ProviderPromptSource,
     expected_prompt: &str,
     attempted_at: &jiff::Timestamp,

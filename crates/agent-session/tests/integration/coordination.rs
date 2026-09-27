@@ -19,7 +19,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use nils_test_support::bin;
-use nils_test_support::cmd::{CmdOptions, CmdOutput, run_resolved};
+use nils_test_support::cmd::{CmdOptions, CmdOutput, run_resolved, run_with};
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -198,7 +198,7 @@ fn run_main_agent(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> CmdOutput
             );
         }
     }
-    run_resolved("main-agent", args, &options)
+    run_with(&crate::main_agent_bin(), args, &options)
 }
 
 fn run_main_agent_with_codex_trust(
@@ -224,8 +224,8 @@ fn run_main_agent_without_checkpoint(
     args: &[&str],
     envs: &[(&str, &str)],
 ) -> CmdOutput {
-    run_resolved(
-        "main-agent",
+    run_with(
+        &crate::main_agent_bin(),
         args,
         &CmdOptions::new().with_cwd(dir).with_envs(envs),
     )
@@ -7333,7 +7333,7 @@ fn main_agent_rebind_serializes_concurrent_exact_retries_through_rollback() {
             digest(successor_incarnation)
         ));
 
-    let mut failing = Command::new(bin::resolve("main-agent"));
+    let mut failing = Command::new(crate::main_agent_bin());
     failing
         .current_dir(&checkout)
         .args(rebind_args)
@@ -7373,7 +7373,7 @@ fn main_agent_rebind_serializes_concurrent_exact_retries_through_rollback() {
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    let mut retrying = Command::new(bin::resolve("main-agent"));
+    let mut retrying = Command::new(crate::main_agent_bin());
     retrying
         .current_dir(&checkout)
         .args(rebind_args)
@@ -7472,7 +7472,7 @@ fn main_agent_rebind_serializes_direct_claim_mutations_through_rollback() {
     let barrier = tmp.path().join("rebind-claim-mutation-rollback");
     fs::create_dir(&barrier).expect("rebind barrier");
 
-    let mut failing = Command::new(bin::resolve("main-agent"));
+    let mut failing = Command::new(crate::main_agent_bin());
     failing
         .current_dir(&checkout)
         .args([
@@ -8551,7 +8551,7 @@ fn main_agent_worker_start_rejects_untrusted_or_unverifiable_codex_checkout_befo
         0,
         "create Codex config FIFO"
     );
-    let mut fifo_command = Command::new(bin::resolve("main-agent"));
+    let mut fifo_command = Command::new(crate::main_agent_bin());
     fifo_command
         .current_dir(&checkout)
         .args([
@@ -8957,7 +8957,7 @@ fn assert_main_agent_worker_start_replay_converges(prompt_generation: &str) {
         "main-agent-worker-bootstrap-idempotency",
         &json!(assignment_id),
     );
-    let main_agent_bin = bin::resolve("main-agent");
+    let main_agent_bin = crate::main_agent_bin();
     let main_agent_bin = main_agent_bin.to_string_lossy();
     let main_agent_bin = shell_words::quote(&main_agent_bin);
     let worker_prompt = state_dir.join(format!("sessions/{worker_id}/prompt.md"));
@@ -9206,7 +9206,7 @@ fn main_agent_worker_start_preserves_ambiguous_initial_enter_without_redelivery(
     ));
     let identity_race_barrier = tmp.path().join("ambiguous-prompt-identity-race");
     fs::create_dir(&identity_race_barrier).expect("identity race barrier");
-    let mut start = Command::new(bin::resolve("main-agent"));
+    let mut start = Command::new(crate::main_agent_bin());
     start
         .current_dir(&checkout)
         .args(args)
@@ -9394,7 +9394,7 @@ fn main_agent_worker_start_preserves_ambiguous_initial_enter_without_redelivery(
 
     let replay_identity_race_barrier = tmp.path().join("ambiguous-replay-identity-race");
     fs::create_dir(&replay_identity_race_barrier).expect("replay identity race barrier");
-    let mut replay = Command::new(bin::resolve("main-agent"));
+    let mut replay = Command::new(crate::main_agent_bin());
     replay
         .current_dir(&checkout)
         .args(args)
@@ -10078,7 +10078,7 @@ fn main_agent_canary_bootstrap_waits_for_matching_startup_quarantine_clear() {
             .and_then(|value| value.strip_prefix("capability-"))
             .expect("main capability name")
     ));
-    let mut start = Command::new(bin::resolve("main-agent"));
+    let mut start = Command::new(crate::main_agent_bin());
     start
         .current_dir(&checkout)
         .args([
@@ -10150,7 +10150,7 @@ fn main_agent_canary_bootstrap_waits_for_matching_startup_quarantine_clear() {
         &json!(assignment_id.as_str()),
     );
     let bootstrap_key = format!("bootstrap-{}", &bootstrap_digest[..32]);
-    let timed_out = Command::new(bin::resolve("main-agent"))
+    let timed_out = Command::new(crate::main_agent_bin())
         .current_dir(&worker_checkout)
         .args([
             "--state-dir",
@@ -10202,7 +10202,7 @@ fn main_agent_canary_bootstrap_waits_for_matching_startup_quarantine_clear() {
         serde_json::from_slice(&fs::read(&quarantine_path).expect("read exact startup quarantine"))
             .expect("startup quarantine JSON");
     fs::remove_file(&quarantine_path).expect("simulate missing startup quarantine");
-    let invalid_clear = Command::new(bin::resolve("main-agent"))
+    let invalid_clear = Command::new(crate::main_agent_bin())
         .current_dir(&worker_checkout)
         .args([
             "--state-dir",
@@ -10237,7 +10237,7 @@ fn main_agent_canary_bootstrap_waits_for_matching_startup_quarantine_clear() {
         "invalid-clear bootstrap must not acquire its claim"
     );
     write_private_json(&quarantine_path, &quarantine);
-    let mut bootstrap = Command::new(bin::resolve("main-agent"));
+    let mut bootstrap = Command::new(crate::main_agent_bin());
     bootstrap
         .current_dir(&worker_checkout)
         .args([
@@ -10442,7 +10442,7 @@ fn main_agent_canary_bootstrap_waits_for_matching_startup_quarantine_clear() {
     write_private_json(&quarantine_path, &quarantine);
     let proof_barrier = tmp.path().join("canary-release-proof-persisted");
     fs::create_dir(&proof_barrier).expect("release proof barrier");
-    let mut interrupted_replay = Command::new(bin::resolve("main-agent"));
+    let mut interrupted_replay = Command::new(crate::main_agent_bin());
     interrupted_replay
         .current_dir(&checkout)
         .args([
@@ -10675,7 +10675,7 @@ fn main_agent_canary_worker_start_never_completes_an_interrupted_prompt_attempt(
         "--format",
         "json",
     ];
-    let mut start = Command::new(bin::resolve("main-agent"));
+    let mut start = Command::new(crate::main_agent_bin());
     start
         .current_dir(&checkout)
         .args(args)
@@ -10876,7 +10876,7 @@ fn main_agent_worker_start_binds_broker_to_same_release_agent_session_sibling() 
     );
     assert_eq!(started.code, 0, "stderr={}", started.stderr_text());
 
-    let main_agent = bin::resolve("main-agent");
+    let main_agent = crate::main_agent_bin();
     let expected_broker = bin::resolve("agent-session");
     assert_eq!(expected_broker.parent(), main_agent.parent());
     let launch = tmux_calls(&tmux_log)
@@ -10982,7 +10982,7 @@ fn main_agent_worker_start_emits_and_executes_exact_compiled_canary_supervisor()
         capability_path.with_file_name(format!("main-agent-checkpoint-{capability_name}.json"));
     let attachment_barrier = tmp.path().join("canary-pre-release-attachment");
     fs::create_dir(&attachment_barrier).expect("canary attachment barrier");
-    let mut start_command = Command::new(bin::resolve("main-agent"));
+    let mut start_command = Command::new(crate::main_agent_bin());
     start_command
         .current_dir(&checkout)
         .args([
@@ -11080,7 +11080,7 @@ fn main_agent_worker_start_emits_and_executes_exact_compiled_canary_supervisor()
     );
     let rollback_barrier = tmp.path().join("canary-rollback-cleanup");
     fs::create_dir(&rollback_barrier).expect("rollback cleanup barrier");
-    let mut rollback_command = Command::new(bin::resolve("main-agent"));
+    let mut rollback_command = Command::new(crate::main_agent_bin());
     rollback_command
         .current_dir(&checkout)
         .args([
@@ -11935,7 +11935,7 @@ fn main_agent_canary_startup_admits_only_authenticated_guardian_status() {
     write_trusted_codex_config(&codex_home, &[&checkout]);
     let attachment_barrier = tmp.path().join("authenticated-startup-attachment");
     fs::create_dir(&attachment_barrier).expect("attachment barrier");
-    let mut initial = Command::new(bin::resolve("main-agent"));
+    let mut initial = Command::new(crate::main_agent_bin());
     initial
         .current_dir(&checkout)
         .args([
@@ -15851,7 +15851,7 @@ fn main_agent_worker_bootstrap_acquires_claim_and_checkpoints_from_packet() {
     assert_eq!(
         data(&bootstrapped)["worker_instructions"]["checkpoint"]["argv_template"],
         json!([
-            bin::resolve("main-agent").to_string_lossy(),
+            crate::main_agent_bin().to_string_lossy(),
             "checkpoint",
             "--file",
             data(&bootstrapped)["checkpoint_file"],
@@ -15874,7 +15874,7 @@ fn main_agent_worker_bootstrap_acquires_claim_and_checkpoints_from_packet() {
         json!({
             "required_before_mutation": true,
             "argv_template": [
-                bin::resolve("main-agent").to_string_lossy(),
+                crate::main_agent_bin().to_string_lossy(),
                 "bootstrap",
                 "--idempotency-key",
                 "<new-stable-key-for-current-revision>",
@@ -16327,7 +16327,7 @@ fn main_agent_worker_bootstrap_acquires_claim_and_checkpoints_from_packet() {
     let third_capability_arg = third_capability_file.to_string_lossy().into_owned();
     let guidance_barrier = tmp.path().join("bootstrap-guidance-race-barrier");
     fs::create_dir(&guidance_barrier).expect("guidance barrier");
-    let raced_bootstrap = Command::new(bin::resolve("main-agent"))
+    let raced_bootstrap = Command::new(crate::main_agent_bin())
         .current_dir(&worker_checkout)
         .args([
             "--state-dir",
@@ -17524,7 +17524,7 @@ impl StoppedPostClaimFixture {
         barrier: &Path,
     ) -> Child {
         let runtime_pid = runtime.pid().to_string();
-        let mut command = Command::new(bin::resolve("main-agent"));
+        let mut command = Command::new(crate::main_agent_bin());
         command
             .current_dir(&self.checkout)
             .args([
@@ -17572,7 +17572,7 @@ impl StoppedPostClaimFixture {
 
     #[cfg(target_os = "linux")]
     fn spawn_reconcile_at_barrier(&self, barrier: &Path, stage: &str) -> Child {
-        let mut command = Command::new(bin::resolve("main-agent"));
+        let mut command = Command::new(crate::main_agent_bin());
         command
             .current_dir(&self.checkout)
             .args(self.reconcile_args())
@@ -18144,7 +18144,7 @@ fn claimed_runtime_stop_identity_only_interruption_projects_exact_replay() {
         "json",
     ];
     let barrier = fixture._tmp.path().join("claimed-stop-after-identity");
-    let mut interrupted = Command::new(bin::resolve("main-agent"));
+    let mut interrupted = Command::new(crate::main_agent_bin());
     interrupted
         .current_dir(&fixture.checkout)
         .args(stop_args)
@@ -18326,7 +18326,7 @@ fn claimed_runtime_stop_refuses_controller_claim_drift_before_runtime_stop() {
         "json",
     ];
     let barrier = fixture._tmp.path().join("claimed-stop-controller-drift");
-    let mut interrupted = Command::new(bin::resolve("main-agent"));
+    let mut interrupted = Command::new(crate::main_agent_bin());
     interrupted
         .current_dir(&fixture.checkout)
         .args(stop_args)
@@ -18507,7 +18507,7 @@ fn claimed_runtime_stop_fences_exact_claim_mutation_without_blocking_unrelated_c
         ._tmp
         .path()
         .join("claimed-stop-controller-serialized");
-    let mut stop = Command::new(bin::resolve("main-agent"));
+    let mut stop = Command::new(crate::main_agent_bin());
     stop.current_dir(&fixture.checkout)
         .args(stop_args)
         .envs(live_env)
@@ -18976,7 +18976,7 @@ fn claimed_runtime_stop_waiter_replays_terminal_result_after_assignment_advances
         "json",
     ];
     let barrier = fixture._tmp.path().join("claimed-stop-terminal-waiter");
-    let mut waiter = Command::new(bin::resolve("main-agent"));
+    let mut waiter = Command::new(crate::main_agent_bin());
     waiter
         .current_dir(&fixture.checkout)
         .args(stop_args)
@@ -19192,7 +19192,7 @@ fn assert_claimed_runtime_stop_pending_successor_loss(stage: &str) {
             ._tmp
             .path()
             .join(format!("claimed-stop-successor-{stage}"));
-        let mut interrupted_adopt = Command::new(bin::resolve("main-agent"));
+        let mut interrupted_adopt = Command::new(crate::main_agent_bin());
         interrupted_adopt
             .current_dir(&fixture.checkout)
             .args(adopt_args)
@@ -19554,7 +19554,7 @@ fn claimed_runtime_stop_preserves_the_active_claim_for_reconcile_stopped() {
         ._tmp
         .path()
         .join("claimed-runtime-stop-after-reservation");
-    let mut interrupted = Command::new(bin::resolve("main-agent"));
+    let mut interrupted = Command::new(crate::main_agent_bin());
     interrupted
         .current_dir(&fixture.checkout)
         .args(stop_args)
@@ -19817,7 +19817,7 @@ fn claimed_runtime_stop_preserves_the_active_claim_for_reconcile_stopped() {
         ._tmp
         .path()
         .join("claimed-runtime-stop-after-runtime-stopped");
-    let mut after_runtime = Command::new(bin::resolve("main-agent"));
+    let mut after_runtime = Command::new(crate::main_agent_bin());
     after_runtime
         .current_dir(&fixture.checkout)
         .args(stop_args)
@@ -19882,7 +19882,7 @@ fn claimed_runtime_stop_preserves_the_active_claim_for_reconcile_stopped() {
         .path()
         .join("claimed-runtime-stop-after-final-receipt");
     let spawn_receipt_waiter = || {
-        let mut command = Command::new(bin::resolve("main-agent"));
+        let mut command = Command::new(crate::main_agent_bin());
         command
             .current_dir(&fixture.checkout)
             .args(stop_args)
@@ -20201,7 +20201,7 @@ fn claimed_runtime_stop_preserves_the_active_claim_for_reconcile_stopped() {
         "json",
     ];
     let spawn_delete_at_barrier = |stage: &str, barrier: &Path| {
-        let mut command = Command::new(bin::resolve("main-agent"));
+        let mut command = Command::new(crate::main_agent_bin());
         command
             .current_dir(&fixture.checkout)
             .args(delete_args)
@@ -20936,7 +20936,7 @@ fn provider_stop_canary_rejects_same_uid_request_from_inside_provider_cgroup() {
             "NILS_AGENT_SESSION_TEST_STOP_CLAIMED_RUNTIME_MARGIN_SECONDS",
             "1",
         )
-        .env("CANARY_MAIN_AGENT_BIN", bin::resolve("main-agent"))
+        .env("CANARY_MAIN_AGENT_BIN", crate::main_agent_bin())
         .env("CANARY_STATE_DIR", &fixture.state_dir)
         .env(
             "CANARY_READY_PATH",
@@ -22345,7 +22345,7 @@ fn stopped_orphan_provider_stop_canary_adopts_then_reconciles_under_successor() 
             .map(|name| format!("main-agent-checkpoint-{name}.json"))
             .expect("successor capability filename"),
     );
-    let mut first_adopt = Command::new(bin::resolve("main-agent"));
+    let mut first_adopt = Command::new(crate::main_agent_bin());
     first_adopt
         .current_dir(&fixture.checkout)
         .args([
@@ -23216,7 +23216,7 @@ impl ExhaustedReadinessRuntimeStopFixture {
     }
 
     fn spawn_stop_at(&self, stage: &str, barrier: &Path) -> Child {
-        let mut command = Command::new(bin::resolve("main-agent"));
+        let mut command = Command::new(crate::main_agent_bin());
         command
             .args(self.stop_args())
             .current_dir(&self.main_checkout)
@@ -23621,7 +23621,7 @@ fn runtime_stop_partial_fence_rebind_survives_pending_successor_loss() {
         "--format",
         "json",
     ];
-    let mut second_adopt = Command::new(bin::resolve("main-agent"));
+    let mut second_adopt = Command::new(crate::main_agent_bin());
     second_adopt
         .current_dir(&fixture.main_checkout)
         .args(second_adopt_args)
@@ -24690,7 +24690,7 @@ fn main_agent_revoke_claim_fences_exact_idle_live_worker_without_input() {
     let idle_activity_before_reservation =
         fs::read(&worker_activity_path).expect("idle worker activity");
     let barrier = tmp.path().join("f31-after-reservation");
-    let mut interrupted = Command::new(bin::resolve("main-agent"));
+    let mut interrupted = Command::new(crate::main_agent_bin());
     interrupted
         .current_dir(&main_checkout)
         .args([
@@ -24926,7 +24926,7 @@ fn main_agent_revoke_claim_fences_exact_idle_live_worker_without_input() {
         main_two_capability.as_str(),
     )];
     let adopt_barrier = tmp.path().join("f31-orphan-adopt-before-save");
-    let mut interrupted_adopt = Command::new(bin::resolve("main-agent"));
+    let mut interrupted_adopt = Command::new(crate::main_agent_bin());
     interrupted_adopt
         .current_dir(&main_checkout)
         .args([
@@ -25148,7 +25148,7 @@ fn main_agent_revoke_claim_fences_exact_idle_live_worker_without_input() {
         "--format",
         "json",
     ];
-    let mut winner = Command::new(bin::resolve("main-agent"));
+    let mut winner = Command::new(crate::main_agent_bin());
     winner
         .current_dir(&main_checkout)
         .args(revoke_args)
@@ -25182,7 +25182,7 @@ fn main_agent_revoke_claim_fences_exact_idle_live_worker_without_input() {
             .is_null(),
         "the sealed crash boundary must retain progress and its assignment reservation"
     );
-    let mut waiter = Command::new(bin::resolve("main-agent"));
+    let mut waiter = Command::new(crate::main_agent_bin());
     waiter
         .current_dir(&main_checkout)
         .args(revoke_args)
@@ -25591,7 +25591,7 @@ fn main_agent_revoke_claim_keeps_accepted_assignment_retirable() {
         "--format",
         "json",
     ];
-    let mut first = Command::new(bin::resolve("main-agent"));
+    let mut first = Command::new(crate::main_agent_bin());
     first
         .current_dir(&main_checkout)
         .args(revoke_args)
@@ -25612,7 +25612,7 @@ fn main_agent_revoke_claim_keeps_accepted_assignment_retirable() {
         .stderr(Stdio::piped());
     let first = first.spawn().expect("spawn first fresh revoke-claim");
     wait_for_barrier(&first_lifecycle_barrier);
-    let mut second = Command::new(bin::resolve("main-agent"));
+    let mut second = Command::new(crate::main_agent_bin());
     second
         .current_dir(&main_checkout)
         .args(revoke_args)
@@ -28500,7 +28500,7 @@ fn main_agent_supervise_exposes_the_fail_closed_classification_matrix_without_mu
             .to_string();
     let worker_before_rearm_race =
         fs::read(&worker_record_path).expect("worker before rearm incarnation race");
-    let rearm_race = Command::new(bin::resolve("main-agent"))
+    let rearm_race = Command::new(crate::main_agent_bin())
         .current_dir(&main_checkout)
         .args([
             "--state-dir",
@@ -28808,7 +28808,7 @@ fn main_agent_supervise_exposes_the_fail_closed_classification_matrix_without_mu
             .as_u64()
             .expect("operation handoff revision")
             .to_string();
-    let account_with_operation_race = Command::new(bin::resolve("main-agent"))
+    let account_with_operation_race = Command::new(crate::main_agent_bin())
         .current_dir(&main_checkout)
         .args([
             "--state-dir",
@@ -29043,7 +29043,7 @@ fn main_agent_supervise_exposes_the_fail_closed_classification_matrix_without_mu
             .as_u64()
             .expect("snapshot handoff revision")
             .to_string();
-    let stale_snapshot_handoff = Command::new(bin::resolve("main-agent"))
+    let stale_snapshot_handoff = Command::new(crate::main_agent_bin())
         .current_dir(&main_checkout)
         .args([
             "--state-dir",
@@ -29300,7 +29300,7 @@ fn main_agent_supervise_exposes_the_fail_closed_classification_matrix_without_mu
         "--format".to_string(),
         "json".to_string(),
     ];
-    let cancel_race = Command::new(bin::resolve("main-agent"))
+    let cancel_race = Command::new(crate::main_agent_bin())
         .current_dir(&main_checkout)
         .args(cancel_race_args)
         .env("AGENT_SESSION_CAPABILITY_FILE", &main_capability)
@@ -30030,7 +30030,7 @@ fn main_agent_handoff_requires_operation_quiescence_and_adopt_requires_an_orphan
     write_private_json(&account_worker_path, &account_worker);
     let account_barrier = tmp.path().join("account-handoff-race-barrier");
     fs::create_dir(&account_barrier).expect("account handoff barrier");
-    let old_account_handoff = Command::new(bin::resolve("main-agent"))
+    let old_account_handoff = Command::new(crate::main_agent_bin())
         .current_dir(&checkout)
         .args([
             "--state-dir",
@@ -30196,7 +30196,7 @@ fn main_agent_handoff_requires_operation_quiescence_and_adopt_requires_an_orphan
         .expect("message body mode");
     let routing_barrier = tmp.path().join("message-routing-barrier");
     fs::create_dir(&routing_barrier).expect("routing barrier");
-    let racing_message = Command::new(bin::resolve("main-agent"))
+    let racing_message = Command::new(crate::main_agent_bin())
         .current_dir(&checkout)
         .args([
             "--state-dir",
@@ -31397,7 +31397,7 @@ fn main_agent_worker_start_batch_stale_lane_owner_cannot_create_the_child_sessio
     fs::create_dir(&barrier).expect("barrier");
     let idempotency_key = "batch-stale-owner-0001";
     let spawn_batch = |pause: bool| {
-        let mut command = Command::new(bin::resolve("main-agent"));
+        let mut command = Command::new(crate::main_agent_bin());
         command
             .current_dir(&checkout)
             .args([
@@ -31542,7 +31542,7 @@ fn main_agent_worker_start_revalidates_controller_claim_immediately_before_sessi
     );
     let barrier = tmp.path().join("controller-claim-barrier");
     fs::create_dir(&barrier).expect("barrier");
-    let mut command = Command::new(bin::resolve("main-agent"));
+    let mut command = Command::new(crate::main_agent_bin());
     command
         .current_dir(&checkout)
         .args([
@@ -31671,7 +31671,7 @@ fn main_agent_worker_start_fences_claim_release_through_attachment_and_pins_code
     );
     let barrier = tmp.path().join("authority-fence-barrier");
     fs::create_dir(&barrier).expect("barrier");
-    let mut command = Command::new(bin::resolve("main-agent"));
+    let mut command = Command::new(crate::main_agent_bin());
     command
         .current_dir(&checkout)
         .args([
@@ -31852,7 +31852,7 @@ fn main_agent_worker_start_replay_reuses_the_crash_retained_authority_fence() {
     fs::create_dir(&barrier).expect("barrier");
     let contender_ready = tmp.path().join("fence-contender-ready");
     let make_command = |pause: bool| {
-        let mut command = Command::new(bin::resolve("main-agent"));
+        let mut command = Command::new(crate::main_agent_bin());
         command
             .current_dir(&checkout)
             .args([
@@ -32146,7 +32146,7 @@ fn main_agent_worker_start_distinct_null_id_requests_hold_distinct_authority_fen
     fs::create_dir(&first_barrier).expect("first barrier");
     fs::create_dir(&second_barrier).expect("second barrier");
     let spawn = |idempotency_key: &str, barrier: &Path| {
-        let mut command = Command::new(bin::resolve("main-agent"));
+        let mut command = Command::new(crate::main_agent_bin());
         command
             .current_dir(&checkout)
             .args([
@@ -32368,7 +32368,7 @@ fn main_agent_worker_start_batch_converges_concurrently_from_historical_lane_rec
     let barrier = tmp.path().join("historical-batch-barrier");
     fs::create_dir(&barrier).expect("barrier");
     let spawn_batch = |pause: bool| {
-        let mut command = Command::new(bin::resolve("main-agent"));
+        let mut command = Command::new(crate::main_agent_bin());
         command
             .current_dir(&checkout)
             .args([
@@ -32585,7 +32585,7 @@ fn main_agent_worker_start_await_ready_folds_timeout_into_readiness_failed() {
         format!(
             "#!/usr/bin/env sh\nset -eu\nAGENT_SESSION_CAPABILITY_FILE='{capability}' '{main_agent}' --state-dir '{state_dir}' worker submit-recovery assignment-await-ready --if-revision 2 --timeout 1s --idempotency-key explicit-race-automatic-0001 --format json > '{output}'\n",
             capability = main_capability,
-            main_agent = bin::resolve("main-agent").display(),
+            main_agent = crate::main_agent_bin().display(),
             state_dir = state_dir.display(),
             output = explicit_hook_output.display(),
         ),
@@ -32964,7 +32964,7 @@ fn main_agent_worker_start_timeout_reports_exact_submitted_prompt() {
     let codex_arg = codex_bin.to_string_lossy().into_owned();
     let codex_session_arg = codex_session.to_string_lossy().into_owned();
     let started_at = Instant::now();
-    let start = Command::new(bin::resolve("main-agent"))
+    let start = Command::new(crate::main_agent_bin())
         .current_dir(&checkout)
         .args([
             "--state-dir",
@@ -33118,7 +33118,7 @@ fn main_agent_worker_start_concurrent_replays_join_one_readiness_finalizer() {
     let tmux_log_arg = tmux_log.to_string_lossy().into_owned();
     let codex_arg = codex_bin.to_string_lossy().into_owned();
     let spawn_start = || {
-        Command::new(bin::resolve("main-agent"))
+        Command::new(crate::main_agent_bin())
             .current_dir(&checkout)
             .args([
                 "--state-dir",
@@ -33280,7 +33280,7 @@ fn main_agent_worker_start_finalizer_takeover_resumes_the_same_recovery_attempt(
         let takeover_barrier_arg = takeover_barrier.to_string_lossy().into_owned();
         let idempotency_key = format!("readiness-takeover-{crash_stage}-0001");
         let spawn_start = |pause: bool, pause_takeover: bool| {
-            let mut command = Command::new(bin::resolve("main-agent"));
+            let mut command = Command::new(crate::main_agent_bin());
             command
                 .current_dir(&checkout)
                 .args([
@@ -33630,7 +33630,7 @@ fn main_agent_submit_recovery_rechecks_authority_inside_the_serialized_send_boun
                 0
             );
         }
-        let mut recovery_command = Command::new(bin::resolve("main-agent"));
+        let mut recovery_command = Command::new(crate::main_agent_bin());
         recovery_command
             .current_dir(&checkout)
             .args([
@@ -34644,7 +34644,7 @@ fn main_agent_submit_recovery_rechecks_authority_inside_the_serialized_send_boun
                 let cancel_barrier = tmp.path().join("cancel-authority-barrier");
                 fs::create_dir(&cancel_barrier).expect("cancel barrier");
                 let cancel_barrier_arg = cancel_barrier.to_string_lossy().into_owned();
-                let mut raced_cancel = Command::new(bin::resolve("main-agent"));
+                let mut raced_cancel = Command::new(crate::main_agent_bin());
                 raced_cancel
                     .current_dir(&checkout)
                     .args([
@@ -35057,7 +35057,7 @@ fn main_agent_submit_recovery_fences_concurrent_manager_mutations_until_resolved
             format!(
                 "#!/usr/bin/env sh\nset -eu\nAGENT_SESSION_CAPABILITY_FILE='{main_capability}' '{main_agent}' --state-dir '{state_dir}' {transition_args} --format json > '{output}'\n",
                 main_capability = main_capability,
-                main_agent = bin::resolve("main-agent").display(),
+                main_agent = crate::main_agent_bin().display(),
                 state_dir = state_dir.display(),
                 transition_args = transition_args,
                 output = hook_output.display(),
@@ -35223,7 +35223,7 @@ fn assert_main_agent_worker_start_stops_on_authoritative_turn(kind: &str) {
     let codex_arg = codex_bin.to_string_lossy().into_owned();
     let codex_session_arg = codex_session.to_string_lossy().into_owned();
     let worker_checkout_arg = worker_checkout.to_string_lossy().into_owned();
-    let start = Command::new(bin::resolve("main-agent"))
+    let start = Command::new(crate::main_agent_bin())
         .current_dir(&checkout)
         .args([
             "--state-dir",
@@ -35513,7 +35513,7 @@ AGENT_SESSION_CAPABILITY_FILE={main_capability} \
             state_dir = state_dir.display(),
             worker_checkout = worker_checkout.display(),
             worker_id = worker_id,
-            main_agent = bin::resolve("main-agent").display(),
+            main_agent = crate::main_agent_bin().display(),
             bootstrap_key = bootstrap_key,
             output = enter_hook_output.display(),
             submitted_checkpoint = submitted_checkpoint.display(),
@@ -35756,7 +35756,7 @@ fn main_agent_worker_start_waits_for_late_bootstrap_after_recovery_failure() {
     let tmux_log_arg = tmux_log.to_string_lossy().into_owned();
     let codex_arg = codex_bin.to_string_lossy().into_owned();
 
-    let mut start = Command::new(bin::resolve("main-agent"))
+    let mut start = Command::new(crate::main_agent_bin())
         .current_dir(&checkout)
         .args([
             "--state-dir",
@@ -35978,7 +35978,7 @@ fn exercise_definitive_recovery_failure_boundary(mode: &str) {
     let codex_arg = codex_bin.to_string_lossy().into_owned();
     let idempotency_key = format!("worker-start-recovery-failure-{mode}-0001");
 
-    let mut command = Command::new(bin::resolve("main-agent"));
+    let mut command = Command::new(crate::main_agent_bin());
     command
         .current_dir(&checkout)
         .args([
@@ -36439,7 +36439,7 @@ grep -q worker-bootstrap-checkout-mismatch {output}
             state_dir = state_dir.display(),
             worker_checkout = worker_checkout.display(),
             worker_id = worker_id,
-            main_agent = bin::resolve("main-agent").display(),
+            main_agent = crate::main_agent_bin().display(),
             bootstrap_key = bootstrap_key,
             output = enter_hook_output.display(),
         ),
@@ -36630,7 +36630,7 @@ fn main_agent_submit_recovery_is_bounded_idempotent_and_never_sends_a_second_ent
     fs::create_dir(&owner_barrier).expect("owner barrier");
     fs::create_dir(&contender_barrier).expect("contender barrier");
     let spawn_recovery = |barrier: &Path, stage: &str| {
-        Command::new(bin::resolve("main-agent"))
+        Command::new(crate::main_agent_bin())
             .current_dir(&checkout)
             .args(recover_args)
             .envs(envs)
@@ -37316,7 +37316,7 @@ fn main_agent_retire_replays_released_worker_with_retained_claim() {
     // focused on retained-claim recovery instead of coupling it to a live tmux
     // teardown race already exercised by the delete integration suite.
     let delete_barrier = tmp.path().join("retire-replay-delete-reservation");
-    let mut retire = Command::new(bin::resolve("main-agent"));
+    let mut retire = Command::new(crate::main_agent_bin());
     retire
         .current_dir(&main_checkout)
         .args(retire_args)
@@ -37696,8 +37696,8 @@ fn main_agent_worker_retire_rejects_non_terminal_and_missing() {
 #[test]
 fn main_agent_capabilities_exposes_the_runtime_checkpoint_contract() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
-    let output = run_resolved(
-        "main-agent",
+    let output = run_with(
+        &crate::main_agent_bin(),
         &["capabilities", "--provider", "codex", "--format", "json"],
         &CmdOptions::new()
             .with_cwd(tmp.path())
@@ -38851,7 +38851,7 @@ fn main_agent_worker_start_dsh_replay_joins_the_pre_attachment_authority_fence()
     fs::create_dir(&barrier).expect("barrier");
     let contender_ready = tmp.path().join("dsh-fence-contender-ready");
     let make_command = |pause: bool| {
-        let mut command = Command::new(bin::resolve("main-agent"));
+        let mut command = Command::new(crate::main_agent_bin());
         command
             .current_dir(&checkout)
             .args([
