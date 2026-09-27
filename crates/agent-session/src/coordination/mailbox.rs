@@ -116,7 +116,7 @@ pub(crate) fn send(context: &CliContext, args: MessageSendArgs) -> Result<Value,
     send_impl(context, args, false, || Ok(()))
 }
 
-pub(crate) fn send_with_commit_authorization<G, F>(
+pub fn send_with_commit_authorization<G, F>(
     context: &CliContext,
     args: MessageSendArgs,
     authorize: F,

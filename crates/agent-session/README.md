@@ -8,10 +8,15 @@ prompt, then return a short tmux attach command for the user to continue from Te
 
 ## Package vs binary name
 
-| Field        | Value                         |
-| ------------ | ----------------------------- |
-| Package name | `nils-agent-session`          |
-| Binary names | `agent-session`, `main-agent` |
+| Field        | Value                |
+| ------------ | -------------------- |
+| Package name | `nils-agent-session` |
+| Binary name  | `agent-session`      |
+
+The `main-agent` binary ships from the sibling
+[`nils-main-agent`](../main-agent/README.md) package. It drives this crate's
+session engine and orchestration registry, whose contracts and runbooks stay
+documented here.
 
 ## Documentation map
 

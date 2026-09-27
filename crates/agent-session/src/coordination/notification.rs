@@ -36,7 +36,7 @@ pub(crate) struct NotificationReceipt {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct NotificationProjection {
+pub struct NotificationProjection {
     pub state: String,
     pub generation: u64,
     pub notified_generation: u64,

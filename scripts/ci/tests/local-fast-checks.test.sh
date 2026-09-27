@@ -56,6 +56,26 @@ assert_package_crate_uses_package_mode() {
   echo "ok"
 }
 
+assert_agent_session_change_selects_main_agent_too() {
+  echo "== agent-session change also validates main-agent =="
+  local output
+  output="$(plan_for --changed-file crates/agent-session/src/lib.rs)"
+  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_MODE=packages"
+  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-agent-session"
+  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-main-agent"
+  echo "ok"
+}
+
+assert_main_agent_change_selects_agent_session_too() {
+  echo "== main-agent change also validates agent-session =="
+  local output
+  output="$(plan_for --changed-file crates/main-agent/src/main_agent.rs)"
+  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_MODE=packages"
+  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-agent-session"
+  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-main-agent"
+  echo "ok"
+}
+
 assert_bin_only_package_skips_doctests() {
   echo "== bin-only package skips doctests =="
   local output
@@ -260,6 +280,8 @@ assert_deleted_shell_script_escalates_without_syntax_check() {
 }
 
 assert_package_crate_uses_package_mode
+assert_agent_session_change_selects_main_agent_too
+assert_main_agent_change_selects_agent_session_too
 assert_bin_only_package_skips_doctests
 assert_library_package_keeps_doctests
 assert_shared_crate_escalates_to_workspace

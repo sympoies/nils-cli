@@ -24,7 +24,7 @@ use crate::{
 pub(crate) const DSH_RUNTIME_KIND: &str = "dsh_external";
 
 /// Versioned schema of the plugin-maintained liveness sidecar.
-pub(crate) const LIVENESS_SCHEMA: &str = "main-agent.dsh-runtime-liveness.v1";
+pub const LIVENESS_SCHEMA: &str = "main-agent.dsh-runtime-liveness.v1";
 
 /// Sidecar file name inside the session state directory.
 pub(crate) const LIVENESS_FILE: &str = "dsh-runtime-liveness.json";
@@ -111,7 +111,7 @@ pub(crate) struct DshRuntimeLiveness {
 /// worker agent's lifecycle. The record carries `runtime.kind = "dsh_external"`
 /// (derived from the agent kind at creation) and the absolute liveness sidecar
 /// path, so later status and evidence probes need no CLI context.
-pub(crate) fn create_external_worker_record(
+pub fn create_external_worker_record(
     context: &CliContext,
     cwd: &std::path::Path,
     worker_session_id: &str,
@@ -157,7 +157,7 @@ pub(crate) fn create_external_worker_record(
 /// Converge a record whose liveness-path key was lost between the record write
 /// and the extra-key write (a crash in that window). The path is derivable, so
 /// a replay repairs it instead of failing permanently.
-pub(crate) fn ensure_recorded_liveness_path(
+pub fn ensure_recorded_liveness_path(
     context: &CliContext,
     record: SessionRecord,
 ) -> Result<SessionRecord, CliError> {
@@ -176,14 +176,14 @@ pub(crate) fn ensure_recorded_liveness_path(
     })
 }
 
-pub(crate) fn is_external_record(record: &SessionRecord) -> bool {
+pub fn is_external_record(record: &SessionRecord) -> bool {
     record
         .runtime
         .as_ref()
         .is_some_and(|runtime| runtime.kind == DSH_RUNTIME_KIND)
 }
 
-pub(crate) fn liveness_path(context: &CliContext, session_id: &str) -> PathBuf {
+pub fn liveness_path(context: &CliContext, session_id: &str) -> PathBuf {
     crate::session_dir(context, session_id).join(LIVENESS_FILE)
 }
 
@@ -253,7 +253,7 @@ fn recorded_liveness_path_is_derived(context: &CliContext, record: &SessionRecor
 /// `NeverAttached` is included deliberately: without it a lane whose plugin
 /// never took the launch has no terminal disposition at all, and its assignment
 /// can be neither cancelled nor reassigned.
-pub(crate) fn external_lane_terminal_is_proven(
+pub fn external_lane_terminal_is_proven(
     context: &CliContext,
     record: &SessionRecord,
     incarnation: &str,
@@ -396,7 +396,7 @@ fn linux_process_start_time(_pid: i32) -> Option<u64> {
 /// Why a lane's liveness could not be proven. Destructive callers report the
 /// reason instead of treating unproven liveness as absence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum UnprovenReason {
+pub enum UnprovenReason {
     /// A sidecar exists but is unreadable, malformed, oversized, or bound to a
     /// different launch than this record's.
     InvalidEvidence,
@@ -464,7 +464,7 @@ fn lane_broker_witness(context: &CliContext, record: &SessionRecord) -> LaneBrok
 /// Collapsing `Unproven` into "absent" would let a corrupted sidecar authorize
 /// destroying the record of a running lane.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ExternalLaneDisposition {
+pub enum ExternalLaneDisposition {
     /// No sidecar exists: the external runtime never attached to this launch.
     NeverAttached,
     Running,
@@ -475,12 +475,12 @@ pub(crate) enum ExternalLaneDisposition {
 /// Classify without a broker witness. Every reader that can supply one should
 /// use [`external_lane_disposition_with_broker`]: without it a lane the plugin
 /// closed stays unproven until the whole harness exits.
-pub(crate) fn external_lane_disposition(record: &SessionRecord) -> ExternalLaneDisposition {
+pub fn external_lane_disposition(record: &SessionRecord) -> ExternalLaneDisposition {
     lane_disposition(record, LaneBrokerWitness::Unread)
 }
 
 /// Classify with the lane's coordination heartbeat as a second witness.
-pub(crate) fn external_lane_disposition_with_broker(
+pub fn external_lane_disposition_with_broker(
     context: &CliContext,
     record: &SessionRecord,
 ) -> ExternalLaneDisposition {

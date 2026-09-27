@@ -519,7 +519,7 @@ pub fn validate_physical_targets(
     Ok(())
 }
 
-pub(crate) fn checkout_root(path: &Path) -> Result<PathBuf, CliError> {
+pub fn checkout_root(path: &Path) -> Result<PathBuf, CliError> {
     checkout_root_with(path, physical_target_unavailable)
 }
 
@@ -733,7 +733,7 @@ pub(crate) const WORK_MODE_EXPECTATION: &str = "tier must be direct, issue, prog
 
 /// Resolve a `tier` value to its named work mode. The numbered `L0`-`L3` codes
 /// remain accepted input and normalize to the mode that replaced them.
-pub(crate) fn canonical_work_mode(value: &str) -> Option<&'static str> {
+pub fn canonical_work_mode(value: &str) -> Option<&'static str> {
     match value {
         "direct" | "L0" => Some("direct"),
         "issue" | "L1" => Some("issue"),

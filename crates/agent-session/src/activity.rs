@@ -62,7 +62,7 @@ const AGENT_CONSOLE_DSH_LAUNCHER: &str = "run-agent-console-dsh";
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum TurnPhase {
+pub enum TurnPhase {
     Starting,
     Working,
     Waiting,
@@ -72,7 +72,7 @@ pub(crate) enum TurnPhase {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum Confidence {
+pub enum Confidence {
     Authoritative,
     #[default]
     Observed,
@@ -81,7 +81,7 @@ pub(crate) enum Confidence {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum SourceKind {
+pub enum SourceKind {
     #[default]
     ProviderHook,
     ConsoleObservation,
@@ -124,18 +124,18 @@ pub(crate) struct ShadowObservationView {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-pub(crate) struct TurnSource {
-    pub(crate) kind: SourceKind,
+pub struct TurnSource {
+    pub kind: SourceKind,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) provider: Option<String>,
-    pub(crate) confidence: Confidence,
+    pub provider: Option<String>,
+    pub confidence: Confidence,
     #[serde(default, flatten)]
     extra: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-pub(crate) struct AttentionView {
-    pub(crate) kind: String,
+pub struct AttentionView {
+    pub kind: String,
     pub(crate) requested_at: String,
     pub(crate) pending_count: usize,
     #[serde(default)]
@@ -145,32 +145,32 @@ pub(crate) struct AttentionView {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-pub(crate) struct CurrentTurn {
+pub struct CurrentTurn {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) provider_turn_id: Option<String>,
-    pub(crate) started_at: String,
+    pub started_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) last_progress_at: Option<String>,
+    pub last_progress_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) attention: Option<AttentionView>,
+    pub attention: Option<AttentionView>,
     #[serde(default, flatten)]
     extra: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-pub(crate) struct LastTurn {
+pub struct LastTurn {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) provider_turn_id: Option<String>,
+    pub provider_turn_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) started_at: Option<String>,
     pub(crate) completed_at: String,
-    pub(crate) outcome: String,
+    pub outcome: String,
     #[serde(default, flatten)]
     extra: Map<String, Value>,
 }
 
 impl LastTurn {
-    pub(crate) fn provider_failure_kind(&self) -> Option<&str> {
+    pub fn provider_failure_kind(&self) -> Option<&str> {
         self.extra
             .get("provider_failure_kind")
             .and_then(Value::as_str)
@@ -178,12 +178,12 @@ impl LastTurn {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-pub(crate) struct TurnState {
+pub struct TurnState {
     pub(crate) schema_version: String,
-    pub(crate) phase: TurnPhase,
+    pub phase: TurnPhase,
     pub(crate) phase_changed_at: String,
-    pub(crate) revision: u64,
-    pub(crate) source: TurnSource,
+    pub revision: u64,
+    pub source: TurnSource,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) semantic_event: Option<SemanticEventView>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -191,9 +191,9 @@ pub(crate) struct TurnState {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) shadow_observation: Option<ShadowObservationView>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) current_turn: Option<CurrentTurn>,
+    pub current_turn: Option<CurrentTurn>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) last_turn: Option<LastTurn>,
+    pub last_turn: Option<LastTurn>,
     #[serde(default, flatten)]
     extra: Map<String, Value>,
 }
@@ -428,9 +428,9 @@ pub(crate) struct TurnEvent {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(crate) struct ActivityResult {
+pub struct ActivityResult {
     pub(crate) id: String,
-    pub(crate) turn_state: TurnState,
+    pub turn_state: TurnState,
     pub(crate) duplicate: bool,
 }
 
@@ -740,7 +740,7 @@ pub(crate) struct ActivitySnapshot {
 }
 
 #[derive(Debug)]
-pub(crate) struct ActivityLock {
+pub struct ActivityLock {
     file: fs::File,
     directory: PathBuf,
 }
@@ -799,7 +799,7 @@ fn acquire_lock(dir: &Path) -> Result<ActivityLock, CliError> {
     acquire_lock_with_mode(dir, ActivityLockMode::Blocking)
 }
 
-pub(crate) fn acquire_coordination_activity_lock(
+pub fn acquire_coordination_activity_lock(
     context: &CliContext,
     session_id: &str,
 ) -> Result<ActivityLock, CliError> {
@@ -1884,7 +1884,7 @@ pub(crate) fn refuse_if_blocked(
     ))
 }
 
-pub(crate) fn state_for_view(context: &CliContext, record: &SessionRecord) -> Option<TurnState> {
+pub fn state_for_view(context: &CliContext, record: &SessionRecord) -> Option<TurnState> {
     // A plugin-owned dsh lane reports its turn through the liveness sidecar
     // instead of this store's activity document, and its unhealthy markers
     // belong to a tmux runtime it never had. Projecting it here keeps every
@@ -3109,12 +3109,12 @@ fn arm_auto_resume_from_event(
     Ok(())
 }
 
-pub(crate) fn activity_status(context: &CliContext, id: &str) -> Result<ActivityResult, CliError> {
+pub fn activity_status(context: &CliContext, id: &str) -> Result<ActivityResult, CliError> {
     let record = load_session_record(context, id)?;
     activity_status_for_record(context, &record)
 }
 
-pub(crate) fn activity_status_for_record(
+pub fn activity_status_for_record(
     context: &CliContext,
     record: &SessionRecord,
 ) -> Result<ActivityResult, CliError> {
