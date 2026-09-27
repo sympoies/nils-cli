@@ -37,7 +37,7 @@ checkout, revision, and idempotency behavior from the managed runtime:
 ```bash
 agent-session work-context status
 agent-session work-context set \
-  --tier L2 \
+  --tier issue \
   --repository sympoies/nils-cli \
   --path crates/agent-session/ \
   --issue 123 \

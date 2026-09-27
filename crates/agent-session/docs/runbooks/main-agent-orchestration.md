@@ -55,12 +55,12 @@ Save as `objective.json`:
 ```json
 {
   "schema_version": "main-agent.objective-packet.v1",
-  "tier": "L0",
+  "tier": "direct",
   "objective_summary": "Deliver the bounded change",
   "work_context": {
     "schema_version": "agent-session.work-context-input.v1",
     "intent": "implementation",
-    "tier": "L0",
+    "tier": "direct",
     "summary": "Deliver the bounded change"
   }
 }

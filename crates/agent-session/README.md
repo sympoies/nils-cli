@@ -54,7 +54,7 @@ agent-session activity setup --agent codex --repair --expected-preview-digest sh
 agent-session metadata attach <id> --request-file metadata.json --if-revision 0 --idempotency-key attach-001 --format json
 agent-session metadata show <id> --label acceptance.synthetic --format json
 agent-session work-context status --format json
-agent-session work-context set --tier L2 --issue 123 --summary "Implement the tracked fix"
+agent-session work-context set --tier issue --issue 123 --summary "Implement the tracked fix"
 agent-session work-context advise --format json
 agent-session work-context acknowledge --for 30m
 agent-session work-context clear

@@ -2943,7 +2943,8 @@ fn self_targeting_context_set_if_absent_preserves_an_existing_declaration() {
     );
     assert_eq!(created.code, 0, "stderr={}", created.stderr_text());
     assert_eq!(data(&created)["changed"], true);
-    assert_eq!(data(&created)["context"]["tier"], "L2");
+    // Numbered tier codes stay accepted and are stored as their named work mode.
+    assert_eq!(data(&created)["context"]["tier"], "program/plan");
     assert_eq!(data(&created)["context"]["summary"], "fresh DSH context");
 }
 

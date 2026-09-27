@@ -312,7 +312,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 _arguments "${_arguments_options[@]}" : \
 '--summary=[Short public description of the current work]:TEXT:_default' \
 '--intent=[Work intent label]:INTENT:_default' \
-'--tier=[Tracking tier (L0, L1, L2, or L3)]:TIER:_default' \
+'--tier=[Tracking work mode\: direct, issue, program, program/plan, or program/dispatch (numbered L0-L3 codes accepted)]:TIER:_default' \
 '--repository=[Canonical owner/repository. Defaults to the current checkout'\''s origin]:OWNER/REPO:_default' \
 '*--path=[Repository-relative exact or prefix path to declare. Repeatable]:PATH:_default' \
 '*--issue=[Issue number in the inferred repository. Repeatable]:NUMBER:_default' \
