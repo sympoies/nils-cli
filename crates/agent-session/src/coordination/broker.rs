@@ -1354,11 +1354,20 @@ pub(crate) fn heartbeat_fresh(
     incarnation: &str,
     _registry_heartbeat_epoch: i64,
 ) -> bool {
-    nils_common::coordination_projection::heartbeat_fresh(
+    heartbeat_fresh_with_clock(context, session_id, incarnation, now_epoch)
+}
+
+fn heartbeat_fresh_with_clock(
+    context: &CliContext,
+    session_id: &str,
+    incarnation: &str,
+    clock: impl FnOnce() -> i64,
+) -> bool {
+    nils_common::coordination_projection::heartbeat_fresh_with_clock(
         &context.state_dir,
         session_id,
         incarnation,
-        now_epoch(),
+        clock,
     )
 }
 
@@ -1368,6 +1377,31 @@ mod tests {
     use clap::Parser;
     use serde_json::json;
     use std::os::unix::fs::symlink;
+
+    #[test]
+    fn heartbeat_clock_boundary_does_not_report_a_healthy_broker_lost() {
+        let temporary = tempfile::TempDir::new().expect("temporary state");
+        let context = CliContext {
+            state_dir: temporary.path().to_path_buf(),
+            host: None,
+        };
+        let heartbeat =
+            nils_common::coordination_projection::heartbeat_path(&context.state_dir, "worker");
+        fs::create_dir_all(heartbeat.parent().unwrap()).unwrap();
+        fs::write(&heartbeat, "worker-inc:100\n").unwrap();
+        fs::set_permissions(&heartbeat, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(
+            heartbeat_fresh_with_clock(&context, "worker", "worker-inc", || {
+                // Publish the next second exactly where the reader samples its clock.
+                let replacement = heartbeat.with_extension("next");
+                fs::write(&replacement, "worker-inc:101\n").unwrap();
+                fs::set_permissions(&replacement, fs::Permissions::from_mode(0o600)).unwrap();
+                fs::rename(replacement, &heartbeat).unwrap();
+                100
+            }),
+            "an update after the clock sample must not falsely lose a healthy broker"
+        );
+    }
 
     #[test]
     fn provider_session_lease_rejects_a_second_writer_and_releases_on_owner_drop() {
