@@ -11348,6 +11348,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             crate::cli::SpecialKey::Up,
             crate::cli::SpecialKey::Down,
             crate::cli::SpecialKey::Left,
+            crate::cli::SpecialKey::ShiftLeft,
             crate::cli::SpecialKey::Right,
             crate::cli::SpecialKey::Tab,
         ] {

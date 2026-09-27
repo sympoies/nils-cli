@@ -1973,7 +1973,7 @@ _agent__session() {
                     return 0
                     ;;
                 --key)
-                    COMPREPLY=($(compgen -W "enter escape backspace c-c up down left right tab" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "enter escape backspace c-c up down left shift-left right tab" -- "${cur}"))
                     return 0
                     ;;
                 --tmux-bin)

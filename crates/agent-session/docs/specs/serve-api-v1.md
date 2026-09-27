@@ -691,7 +691,7 @@ recorded in `sympoies/nils-cli#1409`.
   has structured state, allowing upgraded clients to migrate title-only records conservatively.
 - `POST /sessions/{id}/send` accepts at most 64 entries in `keys`; a longer list is
   rejected with `400 too-many-keys` and a `limit` detail before the daemon sizes any
-  allocation from the request. Every accepted name resolves to one of the nine
+  allocation from the request. Every accepted name resolves to one of the
   canonical `SpecialKey` values, so the bound is far above any real caller. An
   unknown name still fails the whole request with `400 invalid-key`.
 - Blocked-input contract. While a session's turn phase is `needs_input` — reached
@@ -755,7 +755,12 @@ recorded in `sympoies/nils-cli#1409`.
   a normal broker close drains already accepted frames under the WebSocket send bound, while lag/error teardown remains
   immediate. The client sends JSON control frames
   `{ "text": "...", "key": "enter", "keys": ["c-c"], "resize": { "cols": 80, "rows": 24 } }`. Token-gated; disconnect
-  leaves the tmux session alive. Concurrent clients share the pane geometry; resize sequences are serialized and the
+  leaves the tmux session alive. The named key `shift-left` uses tmux `S-Left`,
+  honoring the pane's negotiated keyboard mode. For older clients, an exact
+  `text` frame containing `ESC[1;2D` also means Shift+Left; the sequence inside
+  other text or bracketed-paste markers remains literal. Both forms use the same
+  serialized session input and runtime fencing as other keys.
+  Concurrent clients share the pane geometry; resize sequences are serialized and the
   last completed resize wins. A client may opt into authoritative Codex/Claude prompt events by sending
   `{ "subscribe": ["provider-prompt.v1"] }`. For a known, resumed, imported, or reconnected provider session, the daemon
   baselines the exact provider transcript at EOF. When a generation-1 fresh Codex/Claude runtime is still establishing its

@@ -311,7 +311,7 @@ also revalidates that claim from its retained coordination guard, so released
 or stale source authority cannot mutate after the initial check.
 
 `send` pushes input to a live session: literal text (`--text` / `--text-stdin`) and/or repeatable named keys
-(`--key enter|escape|backspace|c-c|up|down|left|right|tab`), so codex/claude approval prompts and terminal editing
+(`--key enter|escape|backspace|c-c|up|down|left|shift-left|right|tab`), so codex/claude approval prompts and terminal editing
 remain usable from a phone.
 `glance` returns the recent pane tail plus live status as a JSON contract for dashboard tiles (cheaper than a full attach).
 `resume` recreates a missing tmux runtime only when the session has exact provider resume metadata; it never resumes the

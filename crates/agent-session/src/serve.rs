@@ -134,7 +134,7 @@ fn initial_prompt_paste_delay_ms(profile_id: Option<&str>) -> u64 {
 ///
 /// The list is remote input whose length is otherwise bounded only by the Axum
 /// body limit, and it is what sizes the handler's key allocation. Every accepted
-/// name resolves to one of nine `SpecialKey` variants, so this is far above any
+/// name resolves to a canonical `SpecialKey` variant, so this is far above any
 /// real caller while keeping the allocation bounded by a constant.
 const MAX_SEND_KEYS: usize = 64;
 const AGENT_LAUNCH_PROFILE_READINESS_TIMEOUT: Duration = Duration::from_secs(2);
@@ -10997,7 +10997,7 @@ async fn handle_input(
         return Ok(());
     }
 
-    let text = value
+    let mut text = value
         .get("text")
         .and_then(Value::as_str)
         .map(str::to_string);
@@ -11018,6 +11018,14 @@ async fn handle_input(
         .and_then(SpecialKey::from_name)
     {
         keys.push(key);
+    }
+    // Older clients classify modified arrows as text. An exact key frame must
+    // pass through tmux's key encoder, which honors the pane's keyboard mode;
+    // pasting its escape bytes prints them literally in enhanced TUIs.
+    // Embedded and bracketed-paste sequences remain literal text.
+    if text.as_deref() == Some("\u{1b}[1;2D") {
+        text = None;
+        keys.insert(0, SpecialKey::ShiftLeft);
     }
     if text.is_none() && keys.is_empty() {
         return Ok(());
@@ -28088,6 +28096,45 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","accounts"
         );
         assert!(!calls.contains("load-buffer"));
         assert!(!calls.contains("paste-buffer"));
+    }
+
+    #[tokio::test]
+    async fn attach_shift_left_sequence_is_a_key_but_embedded_sequences_are_text() {
+        for (frame, expected_key) in [
+            (json!({"text": "\u{1b}[1;2D"}), true),
+            (json!({"key": "shift-left"}), true),
+            (json!({"keys": ["shift-left"]}), true),
+            (json!({"text": "before\u{1b}[1;2Dafter"}), false),
+            (json!({"text": "\u{1b}[200~\u{1b}[1;2D\u{1b}[201~"}), false),
+        ] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let log = tmp.path().join("calls.log");
+            let tmux = logging_tmux(tmp.path(), &log);
+            let context = CliContext {
+                state_dir: tmp.path().join("state"),
+                host: None,
+            };
+            let record = test_record("shift-left", "hs-codex-shift-left");
+            crate::write_session_record(&context, &record).unwrap();
+            handle_input(
+                &context,
+                &tmux,
+                &record,
+                "hs-codex-shift-left:0.0",
+                &frame.to_string(),
+                &mut false,
+                &tokio::sync::Mutex::new(()),
+            )
+            .await
+            .unwrap();
+            let calls = std::fs::read_to_string(&log).unwrap();
+            assert_eq!(
+                calls.contains("send-keys -t hs-codex-shift-left:0.0 S-Left"),
+                expected_key
+            );
+            assert_eq!(calls.contains("paste-buffer"), !expected_key);
+            assert_eq!(calls.contains("load-buffer"), !expected_key);
+        }
     }
 
     #[tokio::test]

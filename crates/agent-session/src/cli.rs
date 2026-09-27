@@ -1214,6 +1214,7 @@ pub enum SpecialKey {
     Up,
     Down,
     Left,
+    ShiftLeft,
     Right,
     Tab,
 }
@@ -1229,6 +1230,7 @@ impl SpecialKey {
             Self::Up => "up",
             Self::Down => "down",
             Self::Left => "left",
+            Self::ShiftLeft => "shift-left",
             Self::Right => "right",
             Self::Tab => "tab",
         }
@@ -1245,6 +1247,7 @@ impl SpecialKey {
             "up" => Some(Self::Up),
             "down" => Some(Self::Down),
             "left" => Some(Self::Left),
+            "shift-left" => Some(Self::ShiftLeft),
             "right" => Some(Self::Right),
             "tab" => Some(Self::Tab),
             _ => None,
@@ -1261,6 +1264,7 @@ impl SpecialKey {
             Self::Up => "Up",
             Self::Down => "Down",
             Self::Left => "Left",
+            Self::ShiftLeft => "S-Left",
             Self::Right => "Right",
             Self::Tab => "Tab",
         }
