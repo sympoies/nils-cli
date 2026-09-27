@@ -8,6 +8,8 @@ import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
+import { writeHeartbeat } from './remote-mailbox-heartbeat.mjs';
+import { assertHeartbeatWriterBoundary } from './remote-mailbox-heartbeat.test.mjs';
 
 const index = process.argv.indexOf('--agent-session-bin');
 assert(index >= 0 && process.argv[index + 1], 'requires --agent-session-bin exact binary');
@@ -27,7 +29,7 @@ function seed(host) {
   privateWrite(join(sessionRoot,'session.json'),{schema_version:'agent-session.session.v1',id:host.session,agent:'codex',mode:'interactive',title:'remote fixture',title_revision:0,cwd:root,tmux_session:`fixture-${host.machine}`,prompt_file:null,log_file:null,created_at:'2030-01-01T00:00:00Z',updated_at:'2030-01-01T00:00:00Z',coordination_mode:'advisory',runtime:{kind:'tmux',tmux_session:`fixture-${host.machine}`,generation:1,started_at:'2030-01-01T00:00:00Z',launch_id:host.incarnation}});
   host.capabilityFile=join(sessionRoot,'coordination',`capability-${hash(host.incarnation)}`);
   privateWrite(host.capabilityFile,host.capability);
-  privateWrite(join(sessionRoot,'coordination','heartbeat'),`${host.incarnation}:${now()}\n`);
+  writeHeartbeat(join(sessionRoot,'coordination','heartbeat'),`${host.incarnation}:${now()}\n`);
   privateWrite(join(host.root,'coordination','registry.json'),{schema_version:'agent-session.coordination-registry.v2',fingerprint_epoch:1,fingerprint_key:randomUUID()+randomUUID(),brokers:{[host.session]:{session_id:host.session,incarnation:host.incarnation,coordination_mode:'advisory',capability_digest:hash(host.capability),generation:1,state:'ready',heartbeat_at:'2030-01-01T00:00:00Z',heartbeat_epoch:now()}},claims:[],operations:[],messages:[],receipts:{},notifications:{}});
 }
 const address = h => ({machine:h.machine,session_id:h.session,session_incarnation:h.incarnation});
@@ -56,6 +58,7 @@ async function delivered(host,id){return waitFor(async()=>{const value=await sta
 async function send(source,target,label){return cli(source,['send','--from',source.session,'--to-machine',target.machine,'--to',target.session,'--body-file',bodyFile(label,label),'--idempotency-key',label]);}
 async function inspect(target,id,text){const value=await cli(target,['show','--session',target.session,'--message',id]);assert.equal(value.body.text,text);assert.equal(value.body.classification,'untrusted_peer_data');return value;}
 try {
+  assertHeartbeatWriterBoundary();
   hosts.forEach(seed);
   for(const collision of ['relay','ingress']){
     const h=hosts[0];const env={...process.env,AGENT_SESSION_RELAY_URL:'https://relay.example',AGENT_SESSION_RELAY_TOKEN:h.relay,AGENT_SESSION_RELAY_INGRESS_TOKEN:h.ingress};
@@ -88,7 +91,7 @@ try {
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));edge={server,url:`http://127.0.0.1:${server.address().port}`};
   await Promise.all(hosts.map(h=>start(h)));
-  const heartbeat=setInterval(()=>hosts.forEach(h=>privateWrite(join(h.root,'sessions',h.session,'coordination','heartbeat'),`${h.incarnation}:${now()}\n`)),1000);heartbeat.unref();
+  const heartbeat=setInterval(()=>hosts.forEach(h=>writeHeartbeat(join(h.root,'sessions',h.session,'coordination','heartbeat'),`${h.incarnation}:${now()}\n`)),1000);heartbeat.unref();
   const [alpha,beta]=hosts;
   assert.equal(JSON.parse(readFileSync(join(alpha.root,'coordination','registry.json'),'utf8')).schema_version,'agent-session.coordination-registry.v2');
   assert.equal((await cli(alpha,['peers','--session',alpha.session])).peers.length,2);checks.push('v2-read-before-federation');
@@ -154,7 +157,7 @@ checks.push('bidirectional-reply-show-status');
   assert.equal(fencedReply.recipient.session_incarnation,originalAlphaIncarnation);
   const fencedReplyResult=await waitFor(async()=>{const v=await status(beta,fencedReply.message_id);return v.state==='rejected'?v:false;},'reply exact old source incarnation refused');assert.equal(fencedReplyResult.reason,'session-incarnation-conflict');
   assert(!JSON.parse(readFileSync(join(alpha.root,'coordination','registry.json'),'utf8')).messages.some(m=>m.message_id===fencedReply.message_id));
-  alpha.incarnation=originalAlphaIncarnation;alphaRecord.runtime.launch_id=alpha.incarnation;privateWrite(alphaPath,alphaRecord);privateWrite(join(alpha.root,'sessions',alpha.session,'coordination','heartbeat'),alpha.incarnation+':'+now()+'\n');checks.push('reply-origin-replacement-no-retarget');
+  alpha.incarnation=originalAlphaIncarnation;alphaRecord.runtime.launch_id=alpha.incarnation;privateWrite(alphaPath,alphaRecord);writeHeartbeat(join(alpha.root,'sessions',alpha.session,'coordination','heartbeat'),alpha.incarnation+':'+now()+'\n');checks.push('reply-origin-replacement-no-retarget');
   const bad=await fetch(beta.url+'/coordination/messages/receive/v1',{method:'POST',headers:{Authorization:`Bearer ${beta.operator}`,'Content-Type':'application/json'},body:'{}'});assert.equal(bad.status,401);checks.push('dedicated-ingress-required');
   for(const reason of ['origin-forbidden','coordination-unauthorized']){
     denyRelay=reason;const refused=await send(alpha,beta,'reject-'+reason);
@@ -171,7 +174,7 @@ checks.push('bidirectional-reply-show-status');
   beta.incarnation=randomUUID();betaRecord.runtime.launch_id=beta.incarnation;privateWrite(betaPath,betaRecord);
   const ambiguousResult=await waitFor(async()=>{const v=await status(alpha,ambiguous.message_id);return v.state==='delivery-unknown'?v:false;},'response loss plus replacement remains unknown');assert.equal(ambiguousResult.reason,'session-incarnation-conflict');
   assert.equal(JSON.parse(readFileSync(join(beta.root,'coordination','registry.json'),'utf8')).messages.filter(m=>m.message_id===ambiguous.message_id).length,1);
-  beta.incarnation=originalBetaIncarnation;betaRecord.runtime.launch_id=beta.incarnation;privateWrite(betaPath,betaRecord);privateWrite(join(beta.root,'sessions',beta.session,'coordination','heartbeat'),beta.incarnation+':'+now()+'\n');checks.push('lost-response-replacement-preserves-delivery-ambiguity');
+  beta.incarnation=originalBetaIncarnation;betaRecord.runtime.launch_id=beta.incarnation;privateWrite(betaPath,betaRecord);writeHeartbeat(join(beta.root,'sessions',beta.session,'coordination','heartbeat'),beta.incarnation+':'+now()+'\n');checks.push('lost-response-replacement-preserves-delivery-ambiguity');
   hold=true;const fenced=await send(alpha,beta,'replacement');
   await waitFor(async()=>(await status(alpha,fenced.message_id)).attempts>0,'pending failed attempt');
   const recordPath=join(beta.root,'sessions',beta.session,'session.json');const record=JSON.parse(readFileSync(recordPath,'utf8'));beta.incarnation=randomUUID();record.runtime.launch_id=beta.incarnation;privateWrite(recordPath,record);
@@ -184,7 +187,7 @@ checks.push('bidirectional-reply-show-status');
   const peerRecord=JSON.parse(readFileSync(join(alpha.root,'sessions',alpha.session,'session.json'),'utf8'));
   peerRecord.id=localPeer.session;peerRecord.runtime.launch_id=localPeer.incarnation;privateWrite(join(peerRoot,'session.json'),peerRecord);
   localPeer.capabilityFile=join(peerRoot,'coordination','capability-'+hash(localPeer.incarnation));privateWrite(localPeer.capabilityFile,localPeer.capability);
-  privateWrite(join(peerRoot,'coordination','heartbeat'),localPeer.incarnation+':'+now()+'\n');
+  writeHeartbeat(join(peerRoot,'coordination','heartbeat'),localPeer.incarnation+':'+now()+'\n');
   const localRegistryPath=join(alpha.root,'coordination','registry.json');const localRegistry=JSON.parse(readFileSync(localRegistryPath,'utf8'));
   localRegistry.brokers[localPeer.session]={...localRegistry.brokers[alpha.session],session_id:localPeer.session,incarnation:localPeer.incarnation,capability_digest:hash(localPeer.capability)};privateWrite(localRegistryPath,localRegistry);
   const local=await cli(alpha,['send','--from',alpha.session,'--to',localPeer.session,'--body-file',bodyFile('local','local'),'--idempotency-key','local-0001']);
