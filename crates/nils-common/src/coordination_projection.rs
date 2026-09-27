@@ -164,6 +164,21 @@ pub fn heartbeat_fresh(
         .is_some_and(|age| age <= HEARTBEAT_FRESH_SECONDS)
 }
 
+/// Read the exact private heartbeat before sampling a live comparison clock.
+/// Snapshot consumers can continue using the explicit-time freshness API.
+pub fn heartbeat_fresh_with_clock(
+    state_dir: &Path,
+    session_id: &str,
+    incarnation: &str,
+    clock: impl FnOnce() -> i64,
+) -> bool {
+    let Some(observed_epoch) = read_heartbeat_epoch(state_dir, session_id, incarnation) else {
+        return false;
+    };
+    let age = clock().saturating_sub(observed_epoch);
+    (0..=HEARTBEAT_FRESH_SECONDS).contains(&age)
+}
+
 /// Return the privacy-safe age of the exact broker heartbeat sidecar.
 ///
 /// The sidecar body and path remain private. Consumers can compare this age
@@ -175,6 +190,12 @@ pub fn heartbeat_age_seconds(
     incarnation: &str,
     now_epoch: i64,
 ) -> Option<i64> {
+    let observed_epoch = read_heartbeat_epoch(state_dir, session_id, incarnation)?;
+    let age = now_epoch.saturating_sub(observed_epoch);
+    (age >= 0).then_some(age)
+}
+
+fn read_heartbeat_epoch(state_dir: &Path, session_id: &str, incarnation: &str) -> Option<i64> {
     let path = heartbeat_path(state_dir, session_id);
     let Ok(bytes) = read_private(&path, MAX_HEARTBEAT_BYTES) else {
         return None;
@@ -189,8 +210,7 @@ pub fn heartbeat_age_seconds(
     let Ok(observed_epoch) = observed_epoch.parse::<i64>() else {
         return None;
     };
-    let age = now_epoch.saturating_sub(observed_epoch);
-    (age >= 0).then_some(age)
+    Some(observed_epoch)
 }
 
 pub fn session_coordination_mode(
@@ -473,5 +493,42 @@ mod tests {
             heartbeat_age_seconds(temporary.path(), "worker", "worker-inc", 99),
             None
         );
+    }
+
+    #[test]
+    fn heartbeat_live_clock_preserves_exact_parse_privacy_and_hard_age_bounds() {
+        let temporary = tempfile::TempDir::new().expect("temporary state");
+        let heartbeat = heartbeat_path(temporary.path(), "worker");
+        fs::create_dir_all(heartbeat.parent().unwrap()).unwrap();
+        for (body, comparison, expected, samples_clock) in [
+            ("worker-inc:100\n", 100, true, true),
+            ("worker-inc:100\n", 130, true, true),
+            ("worker-inc:100\n", 131, false, true),
+            ("worker-inc:101\n", 100, false, true),
+            ("other-inc:100\n", 100, false, false),
+            ("worker-inc:invalid\n", 100, false, false),
+            ("malformed", 100, false, false),
+        ] {
+            fs::write(&heartbeat, body).unwrap();
+            fs::set_permissions(&heartbeat, fs::Permissions::from_mode(0o600)).unwrap();
+            let mut sampled = false;
+            assert_eq!(
+                heartbeat_fresh_with_clock(temporary.path(), "worker", "worker-inc", || {
+                    sampled = true;
+                    comparison
+                }),
+                expected,
+                "body={body:?} comparison={comparison}",
+            );
+            assert_eq!(sampled, samples_clock);
+        }
+        fs::write(&heartbeat, "worker-inc:100\n").unwrap();
+        fs::set_permissions(&heartbeat, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(!heartbeat_fresh_with_clock(
+            temporary.path(),
+            "worker",
+            "worker-inc",
+            || panic!("untrusted heartbeat must precede clock")
+        ));
     }
 }
