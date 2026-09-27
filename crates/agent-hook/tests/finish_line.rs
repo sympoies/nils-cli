@@ -875,7 +875,7 @@ fn verify_crash_recovery_active_cleanup(owner_only: bool) {
 }
 
 #[test]
-fn crash_recovery_rejects_untrusted_owner_claims_without_changing_legacy_ownership() {
+fn crash_recovery_rejects_untrusted_owner_claims_without_changing_unbound_ownership() {
     let fixture = fixture();
     one_contract(&fixture, ":");
     let (unbound_code, unbound) = open_runner_with_token(
