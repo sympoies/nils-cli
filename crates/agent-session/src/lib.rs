@@ -376,6 +376,8 @@ fn coordination_leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
             ("broker", "reconcile") => Some("broker-reconcile"),
             ("broker", "stop") => Some("broker-stop"),
             ("message", "send") => Some("message-send"),
+            ("message", "peers") => Some("message-peers"),
+            ("message", "delivery") => Some("message-delivery"),
             ("message", "inbox") => Some("message-inbox"),
             ("message", "show") => Some("message-show"),
             ("message", "ack") => Some("message-ack"),

@@ -209,6 +209,7 @@ struct ServeState {
     managed_history_titles: Arc<StdMutex<ManagedHistoryTitleCache>>,
     coordination_wait_workers: Arc<tokio::sync::Semaphore>,
     coordination_notification_wake: Arc<tokio::sync::Notify>,
+    remote_outbox_wake: Arc<tokio::sync::Notify>,
 }
 
 #[derive(Default)]
@@ -888,6 +889,7 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
                 COORDINATION_WAIT_WORKER_LIMIT,
             )),
             coordination_notification_wake: Arc::new(tokio::sync::Notify::new()),
+            remote_outbox_wake: Arc::new(tokio::sync::Notify::new()),
         });
         let listener = match bind_listener_and_start_delete_tombstone_cleanup(context, bind).await {
             Ok(listener) => listener,
@@ -11074,7 +11076,10 @@ async fn remote_submit_handler(
     })
     .await
     {
-        Ok(Ok(value)) => Json(value).into_response(),
+        Ok(Ok(value)) => {
+            state.remote_outbox_wake.notify_one();
+            Json(value).into_response()
+        }
         Ok(Err(e)) => envelope_err(e),
         Err(_) => join_err(),
     }
@@ -11174,11 +11179,26 @@ async fn remote_outbox_loop(state: Arc<ServeState>) {
     loop {
         let context = state.context.clone();
         let config = config.clone();
-        let _ = tokio::task::spawn_blocking(move || {
+        let deadline = match tokio::task::spawn_blocking(move || {
             crate::coordination::remote::drain(&context, &config)
         })
-        .await;
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        .await
+        {
+            Ok(Ok(value)) => value,
+            _ => Some(crate::coordination::now_epoch().saturating_add(5)),
+        };
+        // Notify retains an enqueue permit even if submission races with drain.
+        if let Some(deadline) = deadline {
+            let seconds = deadline
+                .saturating_sub(crate::coordination::now_epoch())
+                .max(0) as u64;
+            tokio::select! {
+                _ = state.remote_outbox_wake.notified() => {},
+                _ = tokio::time::sleep(Duration::from_secs(seconds)) => {},
+            }
+        } else {
+            state.remote_outbox_wake.notified().await;
+        }
     }
 }
 
@@ -15658,6 +15678,7 @@ mod tests {
                 COORDINATION_WAIT_WORKER_LIMIT,
             )),
             coordination_notification_wake: Arc::new(tokio::sync::Notify::new()),
+            remote_outbox_wake: Arc::new(tokio::sync::Notify::new()),
         })
     }
 

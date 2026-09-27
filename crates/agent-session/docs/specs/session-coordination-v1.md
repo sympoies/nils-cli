@@ -1078,18 +1078,25 @@ current recipient readiness.
 Source outbox submission returns a raw delivery projection (wrapped in the usual
 CLI envelope for CLI callers): `message_id`, `state`, `sender`, `recipient`,
 `attempts`, `reason`, and optional `receipt`. States are `queued`, `delivered`,
-`rejected`, or `delivery-unknown`. Network errors retry after five seconds until
-expiry. One pending item is processed per daemon tick; no registry or session
-lock spans network I/O. A source restart preserves the original envelope and
+`rejected`, or `delivery-unknown`. Network errors retry five seconds after the
+request finishes until expiry. Due entries are selected by their retry deadline,
+so a repeatedly timed-out entry cannot starve later messages. The worker wakes
+on enqueue or the next pending deadline and sleeps indefinitely when no entries
+remain queued. No registry, journal or session lock spans network I/O.
+A source restart preserves the original envelope and
 recipient incarnation. Retries with the same idempotency key and content return
 the original identity without rediscovery; changed content is rejected. The
 outbox retains up to 256 envelopes and rejects at capacity. Entries are retained
 until 24 hours after expiry. Expiry without a confirmed receipt remains unknown,
 including the case where the receiver saved the message but its response was lost.
+An admission rejection on the first attempt is `rejected`; after any prior
+unconfirmed attempt it is conservatively `delivery-unknown`, retaining the last
+reason. In particular, replacement after a lost response cannot prove nondelivery.
 
 Destination receipts are retained until 24 hours after envelope expiry (maximum seven days),
 up to 4096 receipts; capacity rejects instead of evicting live deduplication IDs.
-An expired envelope never re-enters the inbox. Same-ID changed-content retries
+An exact retained receipt is returned before expiry, current recipient incarnation
+or mailbox admission checks, without re-entering the inbox. Same-ID changed-content retries
 are rejected. Remote senders retain machine/session/incarnation separately from
 local sender identity; local controller guidance does not adopt remote origins.
 Remote replies preserve the original sender incarnation and existing revision
@@ -1098,9 +1105,17 @@ and maximum-depth (16) checks.
 Federation never changes the local coordination registry schema or session runtime.
 Source envelopes live in the private `coordination/federation-journal.json`,
 schema `agent-session.federation-journal.v1`, bounded to 8 MiB and 256 envelopes.
-The existing hardened registry lock serializes journal reads/writes with session
-capability checks; the journal is saved atomically and no lock spans HTTP.
+A dedicated private `coordination/federation-journal.lock` serializes journal
+reads/writes with the same bounded, owner-checked file locking rules as the registry.
+Authorization uses session then registry then journal lock order. Journal-only
+delivery and retry operations never load or maintain the local registry. The
+journal is saved atomically and no lock spans HTTP.
 Unsupported or corrupt journal versions fail closed without rewriting state.
+
+Remote and local ingress share the existing mailbox admission rules, including
+30 messages per pair per minute, a burst of 10 per second, the recipient mailbox
+limits and the 68 MiB global body quota. Refusal returns typed `rate-limited` or
+`quota-exceeded` before inbox persistence.
 
 Destination inbox, notification and deduplication receipt share one existing
 registry commit. Authoritative sender identity is the existing

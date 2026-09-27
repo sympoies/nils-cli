@@ -5750,6 +5750,19 @@ fn coordination_review_round2_parse_errors_keep_exact_leaf_envelope_identity() {
 }
 
 #[test]
+fn federation_parse_errors_keep_exact_leaf_envelope_identity() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    for leaf in ["peers", "delivery"] {
+        let output = run(tmp.path(), &["message", leaf, "--format", "json"]);
+        assert_eq!(output.code, 64);
+        assert_eq!(
+            output.stdout_json()["schema_version"],
+            format!("cli.agent-session.message-{leaf}.v1")
+        );
+    }
+}
+
+#[test]
 fn coordination_review_round2_reply_revalidates_parent_revision_in_final_transaction() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let state_dir = tmp.path().join("state");

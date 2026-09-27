@@ -596,7 +596,7 @@ _arguments "${_arguments_options[@]}" : \
         case $line[1] in
             (peers)
 _arguments "${_arguments_options[@]}" : \
-'--session=[]:SESSION:_default' \
+'--session=[Authenticated source session id]:SESSION:_default' \
 '--capability-file=[]:PATH:_files' \
 '--format=[]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
@@ -608,8 +608,8 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ;;
 (delivery)
 _arguments "${_arguments_options[@]}" : \
-'--session=[]:SESSION:_default' \
-'--message=[]:MESSAGE:_default' \
+'--session=[Authenticated source session id]:SESSION:_default' \
+'--message=[Remote message id returned by send or reply]:MESSAGE:_default' \
 '--capability-file=[]:PATH:_files' \
 '--format=[]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \

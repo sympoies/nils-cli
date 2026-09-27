@@ -1964,6 +1964,53 @@ pub(crate) fn unresolved_notifications(
     notification::unresolved(context)
 }
 
+// Shared private-file and bounded flock rules without loading any registry.
+pub(crate) fn lock_private_store(context: &CliContext, name: &str) -> Result<File, CliError> {
+    let lock_path = coordination_root(context)?.join(name);
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(SECRET_FILE_MODE)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(&lock_path)
+        .map_err(|error| {
+            if error.raw_os_error() == Some(libc::ELOOP) {
+                store_untrusted()
+            } else {
+                store_unavailable()
+            }
+        })?;
+    lock.set_permissions(fs::Permissions::from_mode(SECRET_FILE_MODE))
+        .map_err(|_| store_unavailable())?;
+    let lock_metadata = lock.metadata().map_err(|_| store_unavailable())?;
+    if !lock_metadata.is_file()
+        || lock_metadata.uid() != unsafe { libc::geteuid() }
+        || lock_metadata.mode() & 0o077 != 0
+        || lock_metadata.nlink() != 1
+    {
+        return Err(store_untrusted());
+    }
+    let started = Instant::now();
+    loop {
+        // SAFETY: flock is called with a valid, owned file descriptor.
+        let result = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if result == 0 {
+            break;
+        }
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(libc::EWOULDBLOCK) || started.elapsed() >= LOCK_TIMEOUT {
+            return Err(CliError::runtime(
+                "coordination-lock-timeout",
+                "coordination registry lock could not be acquired",
+                None,
+            ));
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    Ok(lock)
+}
+
 #[cfg(test)]
 pub(crate) fn begin_notification_attempt(
     context: &CliContext,
@@ -2451,48 +2498,7 @@ fn lock_registry_with_maintenance(
     maintenance: RegistryMaintenance,
 ) -> Result<LockedRegistry, CliError> {
     let root = coordination_root(context)?;
-    let lock_path = root.join(REGISTRY_LOCK);
-    let lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .mode(SECRET_FILE_MODE)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(&lock_path)
-        .map_err(|error| {
-            if error.raw_os_error() == Some(libc::ELOOP) {
-                store_untrusted()
-            } else {
-                store_unavailable()
-            }
-        })?;
-    lock.set_permissions(fs::Permissions::from_mode(SECRET_FILE_MODE))
-        .map_err(|_| store_unavailable())?;
-    let lock_metadata = lock.metadata().map_err(|_| store_unavailable())?;
-    if !lock_metadata.is_file()
-        || lock_metadata.uid() != unsafe { libc::geteuid() }
-        || lock_metadata.mode() & 0o077 != 0
-        || lock_metadata.nlink() != 1
-    {
-        return Err(store_untrusted());
-    }
-    let started = Instant::now();
-    loop {
-        // SAFETY: flock is called with a valid, owned file descriptor.
-        let result = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        if result == 0 {
-            break;
-        }
-        let error = io::Error::last_os_error();
-        if error.raw_os_error() != Some(libc::EWOULDBLOCK) || started.elapsed() >= LOCK_TIMEOUT {
-            return Err(CliError::runtime(
-                "coordination-lock-timeout",
-                "coordination registry lock could not be acquired",
-                None,
-            ));
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
+    let lock = lock_private_store(context, REGISTRY_LOCK)?;
     let path = root.join(REGISTRY_FILE);
     let mut registry = match read_private_file(&path, MAX_REGISTRY_BYTES) {
         Ok(bytes) => {

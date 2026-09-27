@@ -20,9 +20,9 @@ use super::{
 };
 
 const MESSAGE_VERSION: &str = "agent-session.message.v1";
-const BODY_MAX_BYTES: usize = 16 * 1024;
+pub(super) const BODY_MAX_BYTES: usize = 16 * 1024;
 const DEFAULT_EXPIRY_SECS: i64 = 24 * 60 * 60;
-const MAX_EXPIRY_SECS: i64 = 7 * 24 * 60 * 60;
+pub(super) const MAX_EXPIRY_SECS: i64 = 7 * 24 * 60 * 60;
 const MAX_SESSION_MESSAGES: usize = 256;
 const MAX_SESSION_BYTES: usize = 4 * 1024 * 1024;
 const PAIR_RATE_PER_MINUTE: usize = 30;
@@ -32,7 +32,7 @@ const MAX_CURSORS: usize = 4_096;
 const DEFAULT_PAGE: usize = 50;
 const MAX_PAGE: usize = 100;
 const MAX_WAIT_SECS: u64 = 60;
-const MAX_REPLY_DEPTH: u8 = 16;
+pub(super) const MAX_REPLY_DEPTH: u8 = 16;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct StoredMessage {
@@ -747,74 +747,15 @@ where
             )
         })?;
     let recipient_incarnation = broker.incarnation.clone();
-    let pair_recent = locked
-        .registry
-        .messages
-        .iter()
-        .filter(|message| {
-            !super::remote::is_remote_sender(&message.sender_session_id)
-                && message.sender_session_id == sender_session_id
-                && message.recipient_session_id == recipient.id
-                && message.created_at_epoch > now.saturating_sub(60)
-        })
-        .count();
-    if pair_recent >= PAIR_RATE_PER_MINUTE {
-        return Err(CliError::data(
-            "rate-limited",
-            "coordination message rate limit exceeded",
-            None,
-        ));
-    }
     let now_millis = now_epoch_millis();
-    let pair_burst = locked
-        .registry
-        .messages
-        .iter()
-        .filter(|message| {
-            !super::remote::is_remote_sender(&message.sender_session_id)
-                && message.sender_session_id == sender_session_id
-                && message.recipient_session_id == recipient.id
-                && message.created_at_epoch_millis > now_millis.saturating_sub(1_000)
-        })
-        .count();
-    if pair_burst >= PAIR_BURST {
-        return Err(CliError::data(
-            "rate-limited",
-            "coordination message burst limit exceeded",
-            None,
-        ));
-    }
-    let live_for_recipient: Vec<_> = locked
-        .registry
-        .messages
-        .iter()
-        .filter(|message| {
-            message.recipient_session_id == recipient.id && message.state != "deleted"
-        })
-        .collect();
-    let recipient_bytes: usize = live_for_recipient
-        .iter()
-        .map(|message| message.body_bytes)
-        .sum();
-    let registry_bytes: usize = locked
-        .registry
-        .messages
-        .iter()
-        .filter(|message| message.state != "deleted")
-        .map(|message| message.body_bytes)
-        .sum();
-    if live_for_recipient.len() >= MAX_SESSION_MESSAGES
-        || recipient_bytes.saturating_add(body.len()) > MAX_SESSION_BYTES
-        // Mirror the enforced whole-registry cap (`super::MAX_REGISTRY_BYTES`,
-        // 68 MiB) so a send is refused before the persisted registry can exceed it.
-        || registry_bytes.saturating_add(body.len()) > super::MAX_REGISTRY_BYTES as usize
-    {
-        return Err(CliError::data(
-            "quota-exceeded",
-            "coordination mailbox quota exceeded",
-            None,
-        ));
-    }
+    admit_message(
+        &locked.registry,
+        sender_session_id,
+        &recipient.id,
+        body.len(),
+        now,
+        now_millis,
+    )?;
     let reply_depth = match reply_to.as_deref() {
         Some(parent_id) => {
             let parent = locked
@@ -1205,7 +1146,7 @@ fn message_expired() -> CliError {
     CliError::data("message-expired", "coordination message has expired", None)
 }
 
-fn now_epoch_millis() -> i64 {
+pub(super) fn now_epoch_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -1220,6 +1161,79 @@ fn message_revision_conflict() -> CliError {
         "message revision fence did not match",
         None,
     )
+}
+
+// Both local and federated ingress enforce the same mailbox policy.
+pub(super) fn admit_message(
+    registry: &Registry,
+    sender_session_id: &str,
+    recipient_id: &str,
+    body_bytes: usize,
+    now: i64,
+    now_millis: i64,
+) -> Result<(), CliError> {
+    let pair_recent = registry
+        .messages
+        .iter()
+        .filter(|message| {
+            message.sender_session_id == sender_session_id
+                && message.recipient_session_id == recipient_id
+                && message.created_at_epoch > now.saturating_sub(60)
+        })
+        .count();
+    if pair_recent >= PAIR_RATE_PER_MINUTE {
+        return Err(CliError::data(
+            "rate-limited",
+            "coordination message rate limit exceeded",
+            None,
+        ));
+    }
+    let pair_burst = registry
+        .messages
+        .iter()
+        .filter(|message| {
+            message.sender_session_id == sender_session_id
+                && message.recipient_session_id == recipient_id
+                && message.created_at_epoch_millis > now_millis.saturating_sub(1_000)
+        })
+        .count();
+    if pair_burst >= PAIR_BURST {
+        return Err(CliError::data(
+            "rate-limited",
+            "coordination message burst limit exceeded",
+            None,
+        ));
+    }
+    let live_for_recipient: Vec<_> = registry
+        .messages
+        .iter()
+        .filter(|message| {
+            message.recipient_session_id == recipient_id && message.state != "deleted"
+        })
+        .collect();
+    let recipient_bytes: usize = live_for_recipient
+        .iter()
+        .map(|message| message.body_bytes)
+        .sum();
+    let registry_bytes: usize = registry
+        .messages
+        .iter()
+        .filter(|message| message.state != "deleted")
+        .map(|message| message.body_bytes)
+        .sum();
+    if live_for_recipient.len() >= MAX_SESSION_MESSAGES
+        || recipient_bytes.saturating_add(body_bytes) > MAX_SESSION_BYTES
+        // Mirror the enforced whole-registry cap (`super::MAX_REGISTRY_BYTES`,
+        // 68 MiB) so a send is refused before the persisted registry can exceed it.
+        || registry_bytes.saturating_add(body_bytes) > super::MAX_REGISTRY_BYTES as usize
+    {
+        return Err(CliError::data(
+            "quota-exceeded",
+            "coordination mailbox quota exceeded",
+            None,
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

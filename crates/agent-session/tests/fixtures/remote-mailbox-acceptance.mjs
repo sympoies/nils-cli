@@ -57,6 +57,12 @@ async function send(source,target,label){return cli(source,['send','--from',sour
 async function inspect(target,id,text){const value=await cli(target,['show','--session',target.session,'--message',id]);assert.equal(value.body.text,text);assert.equal(value.body.classification,'untrusted_peer_data');return value;}
 try {
   hosts.forEach(seed);
+  for(const collision of ['relay','ingress']){
+    const h=hosts[0];const env={...process.env,AGENT_SESSION_RELAY_URL:'https://relay.example',AGENT_SESSION_RELAY_TOKEN:h.relay,AGENT_SESSION_RELAY_INGRESS_TOKEN:h.ingress};
+    const result=spawnSync(binary,['--state-dir',h.root,'serve','--bind','127.0.0.1:0','--machine',h.machine,'--token-stdin','--tmux-bin','/bin/false'],{env,input:h[collision],encoding:'utf8',timeout:10000});
+    assert.equal(result.status,64,'operator and federation service credentials must be distinct');
+  }
+  checks.push('operator-service-credential-collision-rejected');
   const server=createServer(async(req,res)=>{
     const source=hosts.find(h=>req.headers.authorization===`Bearer ${h.relay}`);
     if(!source){res.writeHead(401);res.end(JSON.stringify({error:{code:'unauthorized'}}));return;}
@@ -69,6 +75,7 @@ try {
     const chunks=[];for await(const chunk of req)chunks.push(chunk);
     const message=JSON.parse(Buffer.concat(chunks));
     assert.deepEqual(message.from,address(source));
+    if(message.body==='timeout-first'){await delay(16000);res.destroy();return;}
     if(denyRelay){res.writeHead(403);res.end(JSON.stringify({error:{code:denyRelay}}));return;}
     if(hold){res.writeHead(503);res.end(JSON.stringify({error:{code:'remote-messaging-unavailable'}}));return;}
     if(blockRelay){relayBlocked=true;await delay(2500);relayBlocked=false;}
@@ -85,6 +92,16 @@ try {
   const [alpha,beta]=hosts;
   assert.equal(JSON.parse(readFileSync(join(alpha.root,'coordination','registry.json'),'utf8')).schema_version,'agent-session.coordination-registry.v2');
   assert.equal((await cli(alpha,['peers','--session',alpha.session])).peers.length,2);checks.push('v2-read-before-federation');
+  const timed=await send(alpha,beta,'timeout-first');
+  const following=await send(alpha,beta,'timeout-following');
+  await waitFor(async()=>{const v=await status(alpha,following.message_id);return v.state==='delivered';},'later queued entry bypasses repeated timeout',35000);
+  const timedState=await status(alpha,timed.message_id);assert(timedState.attempts>0);
+  const timedJournal=JSON.parse(readFileSync(join(alpha.root,'coordination','federation-journal.json'),'utf8')).remote_outbox.find(i=>i.envelope.message_id===timed.message_id);
+  assert(timedJournal.next_attempt_epoch>now(),'retry deadline begins after request completion');
+  await stop(alpha);
+  const journalPath=join(alpha.root,'coordination','federation-journal.json');const journal=JSON.parse(readFileSync(journalPath,'utf8'));journal.remote_outbox.find(i=>i.envelope.message_id===timed.message_id).state='delivery-unknown';privateWrite(journalPath,journal);
+  const betaRegistryPath=join(beta.root,'coordination','registry.json');const betaRegistry=JSON.parse(readFileSync(betaRegistryPath,'utf8'));betaRegistry.messages=betaRegistry.messages.filter(m=>m.message_id!==following.message_id);privateWrite(betaRegistryPath,betaRegistry);
+  await start(alpha);checks.push('fair-two-entry-timeout-post-request-deadline');
   dropOnce=true;
   const initial=await send(alpha,beta,'response-loss');assert.equal(initial.state,'queued');
   await waitFor(()=>JSON.parse(readFileSync(join(beta.root,'coordination','registry.json'),'utf8')).messages.length===1,'destination persisted before lost response');
@@ -127,21 +144,40 @@ const started=Date.now();await cli(alpha,['inbox','--session',alpha.session]);as
 const original=await inspect
 (beta,initial.message_id,'response-loss');assert.equal(original.sender.machine,'alpha');assert.equal(original.sender.session_incarnation,alpha.incarnation);
   const replied=await cli(beta,['reply','--session',beta.session,'--message',initial.message_id,'--if-revision',String(original.revision),'--body-file',bodyFile('reply','reply'),'--idempotency-key','reply-0001']);
-  await delivered(beta,replied.message_id);await inspect(alpha,replied.message_id,'reply');
+  await delivered(beta,replied.message_id);const shownReply=await inspect(alpha,replied.message_id,'reply');
+  assert.equal(shownReply.reply_to,initial.message_id);assert.equal(JSON.parse(readFileSync(join(beta.root,'coordination','federation-journal.json'),'utf8')).remote_outbox.find(i=>i.envelope.message_id===replied.message_id).envelope.reply_depth,1);
   const replyReplay=await cli(beta,['reply','--session',beta.session,'--message',initial.message_id,'--if-revision',String(original.revision),'--body-file',bodyFile('reply','reply'),'--idempotency-key','reply-0001']);assert.equal(replyReplay.message_id,replied.message_id);
 checks.push('bidirectional-reply-show-status');
+  const alphaPath=join(alpha.root,'sessions',alpha.session,'session.json');const alphaRecord=JSON.parse(readFileSync(alphaPath,'utf8'));const originalAlphaIncarnation=alpha.incarnation;
+  alpha.incarnation=randomUUID();alphaRecord.runtime.launch_id=alpha.incarnation;privateWrite(alphaPath,alphaRecord);
+  const fencedReply=await cli(beta,['reply','--session',beta.session,'--message',initial.message_id,'--if-revision',String(original.revision),'--body-file',bodyFile('fenced-reply','fenced reply'),'--idempotency-key','fenced-reply-0001']);
+  assert.equal(fencedReply.recipient.session_incarnation,originalAlphaIncarnation);
+  const fencedReplyResult=await waitFor(async()=>{const v=await status(beta,fencedReply.message_id);return v.state==='rejected'?v:false;},'reply exact old source incarnation refused');assert.equal(fencedReplyResult.reason,'session-incarnation-conflict');
+  assert(!JSON.parse(readFileSync(join(alpha.root,'coordination','registry.json'),'utf8')).messages.some(m=>m.message_id===fencedReply.message_id));
+  alpha.incarnation=originalAlphaIncarnation;alphaRecord.runtime.launch_id=alpha.incarnation;privateWrite(alphaPath,alphaRecord);privateWrite(join(alpha.root,'sessions',alpha.session,'coordination','heartbeat'),alpha.incarnation+':'+now()+'\n');checks.push('reply-origin-replacement-no-retarget');
   const bad=await fetch(beta.url+'/coordination/messages/receive/v1',{method:'POST',headers:{Authorization:`Bearer ${beta.operator}`,'Content-Type':'application/json'},body:'{}'});assert.equal(bad.status,401);checks.push('dedicated-ingress-required');
   for(const reason of ['origin-forbidden','coordination-unauthorized']){
     denyRelay=reason;const refused=await send(alpha,beta,'reject-'+reason);
     const result=await waitFor(async()=>{const value=await status(alpha,refused.message_id);return value.state==='rejected'?value:false;},'terminal source rejection');assert.equal(result.reason,reason);
   }
   denyRelay=null;checks.push('authorization-rejection-terminal-status');
+  denyRelay='rate-limited';const limited=await send(alpha,beta,'rate-limit-retry');
+  const limitedPending=await waitFor(async()=>{const v=await status(alpha,limited.message_id);return v.attempts>0?v:false;},'rate-limit remains queued');assert.equal(limitedPending.state,'queued');assert.equal(limitedPending.reason,'rate-limited');
+  denyRelay=null;await delivered(alpha,limited.message_id);assert.equal(JSON.parse(readFileSync(join(beta.root,'coordination','registry.json'),'utf8')).messages.filter(m=>m.message_id===limited.message_id).length,1);checks.push('rate-limit-retry-once-delivery');
+  dropOnce=true;const ambiguous=await send(alpha,beta,'lost-before-replacement');
+  await waitFor(()=>JSON.parse(readFileSync(join(beta.root,'coordination','registry.json'),'utf8')).messages.some(m=>m.message_id===ambiguous.message_id),'commit before response loss');
+  await waitFor(async()=>(await status(alpha,ambiguous.message_id)).attempts>0,'unconfirmed attempt recorded');
+  const betaPath=join(beta.root,'sessions',beta.session,'session.json');const betaRecord=JSON.parse(readFileSync(betaPath,'utf8'));const originalBetaIncarnation=beta.incarnation;
+  beta.incarnation=randomUUID();betaRecord.runtime.launch_id=beta.incarnation;privateWrite(betaPath,betaRecord);
+  const ambiguousResult=await waitFor(async()=>{const v=await status(alpha,ambiguous.message_id);return v.state==='delivery-unknown'?v:false;},'response loss plus replacement remains unknown');assert.equal(ambiguousResult.reason,'session-incarnation-conflict');
+  assert.equal(JSON.parse(readFileSync(join(beta.root,'coordination','registry.json'),'utf8')).messages.filter(m=>m.message_id===ambiguous.message_id).length,1);
+  beta.incarnation=originalBetaIncarnation;betaRecord.runtime.launch_id=beta.incarnation;privateWrite(betaPath,betaRecord);privateWrite(join(beta.root,'sessions',beta.session,'coordination','heartbeat'),beta.incarnation+':'+now()+'\n');checks.push('lost-response-replacement-preserves-delivery-ambiguity');
   hold=true;const fenced=await send(alpha,beta,'replacement');
   await waitFor(async()=>(await status(alpha,fenced.message_id)).attempts>0,'pending failed attempt');
   const recordPath=join(beta.root,'sessions',beta.session,'session.json');const record=JSON.parse(readFileSync(recordPath,'utf8'));beta.incarnation=randomUUID();record.runtime.launch_id=beta.incarnation;privateWrite(recordPath,record);
   hold=false;
-  const rejected=await waitFor(async()=>{const value=await status(alpha,fenced.message_id);return value.state==='rejected'?value:false;},'replacement rejected');assert.equal(rejected.reason,'session-incarnation-conflict');
-  assert.equal(JSON.parse(readFileSync(join(beta.root,'coordination','registry.json'),'utf8')).messages.length,2);checks.push('exact-incarnation-no-retarget');
+  const rejected=await waitFor(async()=>{const value=await status(alpha,fenced.message_id);return value.state==='delivery-unknown'?value:false;},'replacement cannot prove nondelivery');assert.equal(rejected.reason,'session-incarnation-conflict');
+  assert(!JSON.parse(readFileSync(join(beta.root,'coordination','registry.json'),'utf8')).messages.some(m=>m.message_id===fenced.message_id));checks.push('exact-incarnation-no-retarget');
   await stop(alpha);await start(alpha,false);
   const localPeer={...alpha,session:alpha.session+'-local-peer',incarnation:randomUUID(),capability:randomUUID()+randomUUID()};
   const peerRoot=join(alpha.root,'sessions',localPeer.session);mkdirSync(join(peerRoot,'coordination'),{recursive:true,mode:0o700});

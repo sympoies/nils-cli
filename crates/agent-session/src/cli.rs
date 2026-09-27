@@ -696,6 +696,7 @@ pub struct MessageSendArgs {
 
 #[derive(Debug, Args)]
 pub struct MessagePeersArgs {
+    /// Authenticated source session id.
     #[arg(long)]
     pub session: String,
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
@@ -706,8 +707,10 @@ pub struct MessagePeersArgs {
 
 #[derive(Debug, Args)]
 pub struct MessageDeliveryArgs {
+    /// Authenticated source session id.
     #[arg(long)]
     pub session: String,
+    /// Remote message id returned by send or reply.
     #[arg(long)]
     pub message: String,
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
