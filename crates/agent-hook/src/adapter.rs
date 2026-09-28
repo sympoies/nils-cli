@@ -545,18 +545,60 @@ pub fn render_provider(decision: &NormalizedDecision) -> Result<String, HookErro
         DecisionAction::Warn if decision.product == Product::Codex && decision.event == "Stop" => {
             json!({})
         }
-        DecisionAction::Context | DecisionAction::Warn => json!({
-            "hookSpecificOutput": {
-                "hookEventName": decision.event,
-                "additionalContext": decision.context.as_deref().unwrap_or(&reason),
+        DecisionAction::Context | DecisionAction::Warn
+            if matches!(decision.product, Product::Codex | Product::Claude) =>
+        {
+            match native_context_text(decision) {
+                Some(context) => context_output(&decision.event, &context),
+                None => json!({}),
             }
-        }),
+        }
+        DecisionAction::Context | DecisionAction::Warn => context_output(
+            &decision.event,
+            decision.context.as_deref().unwrap_or(&reason),
+        ),
     };
     serde_json::to_string(&output).map_err(|_| {
         HookError::runtime(
             "provider-output-render-failed",
             "provider output could not be rendered",
         )
+    })
+}
+
+/// Model-facing text for a Codex or Claude context or warning decision.
+///
+/// Rule-supplied text is rendered as is. Without it, a context decision has
+/// nothing to say, and a warning names only the `warn` reason codes that
+/// fired. Allow, context, and absent-evidence (`observation`) reasons are
+/// never listed; when nothing remains the provider receives `{}`
+/// (sympoies/nils-cli#1878).
+fn native_context_text(decision: &NormalizedDecision) -> Option<String> {
+    if let Some(context) = decision
+        .context
+        .as_deref()
+        .filter(|context| !context.trim().is_empty())
+    {
+        return Some(context.to_string());
+    }
+    if decision.action != DecisionAction::Warn {
+        return None;
+    }
+    let warnings = decision
+        .reasons
+        .iter()
+        .filter(|reason| reason.disposition == "warn" && !reason.observation)
+        .map(|reason| reason.code.as_str())
+        .collect::<Vec<_>>();
+    (!warnings.is_empty()).then(|| warnings.join(","))
+}
+
+fn context_output(event: &str, context: &str) -> Value {
+    json!({
+        "hookSpecificOutput": {
+            "hookEventName": event,
+            "additionalContext": context,
+        }
     })
 }
 
@@ -1495,6 +1537,7 @@ mod tests {
                     rule_id: "fixture.context".to_string(),
                     code: "fixture-context".to_string(),
                     disposition: "context".to_string(),
+                    observation: false,
                 }],
                 context: Some("first context\nsecond context".to_string()),
                 replacement: None,
@@ -1560,6 +1603,167 @@ mod tests {
                     serde_json::from_str(&render_provider(&decision).expect("provider output"))
                         .expect("provider JSON");
                 assert_eq!(rendered, provider_output);
+            }
+        }
+    }
+
+    fn reason(rule_id: &str, code: &str, disposition: &str, observation: bool) -> DecisionReason {
+        DecisionReason {
+            rule_id: rule_id.to_string(),
+            code: code.to_string(),
+            disposition: disposition.to_string(),
+            observation,
+        }
+    }
+
+    fn textless_decision(
+        product: Product,
+        event: &str,
+        action: DecisionAction,
+        context: Option<&str>,
+    ) -> NormalizedDecision {
+        NormalizedDecision {
+            schema_version: "agent-hook.decision.v1".to_string(),
+            request_id: "request:textless".to_string(),
+            product,
+            event: event.to_string(),
+            action,
+            reasons: vec![
+                reason("coord.activity", "agent-activity", "allow", false),
+                // An unknown semantic conflict warns without any evidence.
+                reason("coord.semantic-conflict", "semantic-conflict", "warn", true),
+                reason("coord.owner-liveness", "owner-unclaimed", "allow", false),
+                reason("runtime.reminder", "forge-label-reminder", "allow", false),
+                reason("runtime.context", "empty-context", "context", false),
+            ],
+            context: context.map(str::to_string),
+            replacement: None,
+            shadow: Vec::<ShadowObservation>::new(),
+            config_digest: "sha256:config".to_string(),
+            policy_digest: "sha256:policy".to_string(),
+            recovery_applied: false,
+            enforcement: None,
+            downgraded_by: None,
+            provider_output: None,
+        }
+    }
+
+    fn rendered(decision: &NormalizedDecision) -> Value {
+        serde_json::from_str(&render_provider(decision).expect("provider output"))
+            .expect("provider JSON")
+    }
+
+    #[test]
+    fn provider_render_omits_context_decision_without_text() {
+        for product in [Product::Codex, Product::Claude] {
+            for event in ["PreToolUse", "UserPromptSubmit"] {
+                for context in [None, Some(""), Some(" \n\t")] {
+                    let decision =
+                        textless_decision(product, event, DecisionAction::Context, context);
+                    assert_eq!(
+                        rendered(&decision),
+                        json!({}),
+                        "{product:?}/{event} context={context:?} must not inject reason codes"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn provider_render_omits_unknown_evidence_warnings_without_text() {
+        for product in [Product::Codex, Product::Claude] {
+            for event in ["PreToolUse", "UserPromptSubmit", "Stop"] {
+                for context in [None, Some(""), Some("  ")] {
+                    let decision = textless_decision(product, event, DecisionAction::Warn, context);
+                    assert_eq!(
+                        rendered(&decision),
+                        json!({}),
+                        "{product:?}/{event} context={context:?} must not inject reason codes"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn provider_render_names_only_fired_warning_codes_without_text() {
+        for product in [Product::Codex, Product::Claude] {
+            let mut decision = textless_decision(product, "PreToolUse", DecisionAction::Warn, None);
+            decision.reasons = vec![
+                reason("coord.owner-liveness", "owner-unclaimed", "allow", false),
+                reason(
+                    "coord.owner-liveness",
+                    "owner-active-foreign",
+                    "warn",
+                    false,
+                ),
+            ];
+            assert_eq!(
+                rendered(&decision),
+                json!({
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "additionalContext": "owner-active-foreign",
+                    }
+                }),
+                "{product:?} must name only the warning that fired"
+            );
+
+            let mut mixed = textless_decision(product, "PreToolUse", DecisionAction::Warn, None);
+            mixed.reasons.push(reason(
+                "coord.owner-liveness",
+                "owner-orphaned-clean",
+                "warn",
+                false,
+            ));
+            assert_eq!(
+                rendered(&mixed)["hookSpecificOutput"]["additionalContext"],
+                "owner-orphaned-clean",
+                "{product:?} must drop the unknown-evidence warning"
+            );
+        }
+
+        // The documented Claude Stop warning keeps naming its warn codes, and
+        // Codex Stop stays neutral because it cannot carry context.
+        for (product, expected) in [
+            (
+                Product::Claude,
+                json!({
+                    "hookSpecificOutput": {
+                        "hookEventName": "Stop",
+                        "additionalContext": "activity-stop-reconciliation-required",
+                    }
+                }),
+            ),
+            (Product::Codex, json!({})),
+        ] {
+            let mut stop = textless_decision(product, "Stop", DecisionAction::Warn, None);
+            stop.reasons = vec![reason(
+                "coord.activity",
+                "activity-stop-reconciliation-required",
+                "warn",
+                false,
+            )];
+            assert_eq!(rendered(&stop), expected, "{product:?} Stop");
+        }
+    }
+
+    #[test]
+    fn provider_render_keeps_block_reasons_and_supplied_text() {
+        for product in [Product::Codex, Product::Claude] {
+            let block = textless_decision(product, "PreToolUse", DecisionAction::Block, None);
+            assert_eq!(
+                rendered(&block)["hookSpecificOutput"]["permissionDecisionReason"],
+                "agent-hook:agent-activity,semantic-conflict,owner-unclaimed,forge-label-reminder,empty-context"
+            );
+            for action in [DecisionAction::Context, DecisionAction::Warn] {
+                let supplied =
+                    textless_decision(product, "PreToolUse", action, Some("rule guidance"));
+                assert_eq!(
+                    rendered(&supplied)["hookSpecificOutput"]["additionalContext"],
+                    "rule guidance"
+                );
             }
         }
     }

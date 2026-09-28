@@ -237,6 +237,30 @@ fn forged_payload_conflict_is_ignored_but_registry_conflict_blocks() {
             expected_action,
             "current={current_mode} peer={peer_mode}"
         );
+        if current_mode == "advisory" {
+            // A downgraded real conflict is a fired warning, so providers see
+            // its code even though it carries no text (sympoies/nils-cli#1878).
+            for product in ["codex", "claude"] {
+                let rendered = run_managed_as(
+                    &payload,
+                    managed_options(&fixture)
+                        .with_env("AGENT_SESSION_COORDINATION_MODE", current_mode),
+                    product,
+                    "provider",
+                );
+                assert_eq!(rendered.code, 0, "stderr={}", rendered.stderr_text());
+                assert_eq!(
+                    rendered.stdout_json(),
+                    json!({
+                        "hookSpecificOutput": {
+                            "hookEventName": "PreToolUse",
+                            "additionalContext": "semantic-conflict",
+                        }
+                    }),
+                    "{product} advisory conflict warning"
+                );
+            }
+        }
 
         if matches!(current_mode, "advisory" | "off") {
             let missing = dispatch_managed_without_hint(&fixture, &payload);
@@ -274,6 +298,89 @@ fn forged_payload_conflict_is_ignored_but_registry_conflict_blocks() {
                 "present non-Unicode hint current={current_mode}"
             );
         }
+    }
+}
+
+/// Provider context carries rule text, never the configured rule list: an
+/// allow-only dispatch and a textless warning both render the neutral `{}`,
+/// while service JSON keeps the warning visible (sympoies/nils-cli#1878).
+#[test]
+fn provider_context_never_lists_allow_reason_codes() {
+    let allow_rules = r#"schema_version = "agent-hook.policy.v1"
+bundle_id = "runtime-kit"
+version = "2026.07.20.1"
+
+[[rules]]
+id = "runtime.first-allow"
+products = ["codex", "claude"]
+events = ["PreToolUse", "UserPromptSubmit"]
+priority = 100
+mode = "enforce"
+failure_posture = "closed"
+override_class = "locked"
+capability = { id = "decision.allow.v1", reason_code = "first-allow" }
+
+[[rules]]
+id = "runtime.second-allow"
+products = ["codex", "claude"]
+events = ["PreToolUse", "UserPromptSubmit"]
+priority = 120
+mode = "enforce"
+failure_posture = "closed"
+override_class = "locked"
+capability = { id = "decision.allow.v1", reason_code = "second-allow" }
+"#;
+    let with_conflict = format!(
+        r#"{allow_rules}
+[[rules]]
+id = "runtime.semantic-conflict"
+products = ["codex", "claude"]
+events = ["PreToolUse"]
+priority = 110
+mode = "enforce"
+failure_posture = "closed"
+override_class = "locked"
+capability = {{ id = "agent-session.semantic-conflict.v1", reason_code = "semantic-conflict" }}
+"#
+    );
+    let allow_only = Fixture::new(allow_rules);
+    let warned = Fixture::new(&with_conflict);
+    let bash = json!({
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "cwd": warned.root,
+        "tool_input": {"command": "true"}
+    })
+    .to_string();
+    let prompt = r#"{"hook_event_name":"UserPromptSubmit","prompt":"hello"}"#;
+
+    for product in ["codex", "claude"] {
+        for payload in [bash.as_str(), prompt] {
+            let quiet = allow_only.run(
+                &["dispatch", "--product", product, "--format", "provider"],
+                Some(payload),
+            );
+            assert_eq!(quiet.code, 0, "stderr={}", quiet.stderr_text());
+            assert_eq!(quiet.stdout_json(), json!({}), "{product} {payload}");
+        }
+
+        let decision = warned.run(
+            &["dispatch", "--product", product, "--format", "json"],
+            Some(&bash),
+        );
+        assert_eq!(decision.code, 0, "stderr={}", decision.stderr_text());
+        assert_eq!(decision.stdout_json()["data"]["action"], "warn");
+
+        let rendered = warned.run(
+            &["dispatch", "--product", product, "--format", "provider"],
+            Some(&bash),
+        );
+        assert_eq!(rendered.code, 0, "stderr={}", rendered.stderr_text());
+        assert_eq!(
+            rendered.stdout_json(),
+            json!({}),
+            "{product} textless warning must not inject reason codes"
+        );
     }
 }
 
@@ -393,10 +500,19 @@ fn run_managed(
     payload: &str,
     options: nils_test_support::cmd::CmdOptions,
 ) -> nils_test_support::cmd::CmdOutput {
+    run_managed_as(payload, options, "codex", "json")
+}
+
+fn run_managed_as(
+    payload: &str,
+    options: nils_test_support::cmd::CmdOptions,
+    product: &str,
+    format: &str,
+) -> nils_test_support::cmd::CmdOutput {
     let options = options.with_stdin_str(payload);
     nils_test_support::cmd::run_resolved(
         "agent-hook",
-        &["dispatch", "--product", "codex", "--format", "json"],
+        &["dispatch", "--product", product, "--format", format],
         &options,
     )
 }

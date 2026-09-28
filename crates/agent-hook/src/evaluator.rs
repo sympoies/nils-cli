@@ -52,6 +52,8 @@ struct RuleOutcome {
     context: Option<String>,
     replacement: Option<Value>,
     provider_output: Option<Value>,
+    /// Absent or indeterminate evidence; see `DecisionReason::observation`.
+    observation: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -446,6 +448,7 @@ fn evaluate_with_io(
                     context: None,
                     replacement: None,
                     provider_output: None,
+                    observation: false,
                 },
             ));
             continue;
@@ -545,6 +548,7 @@ fn evaluate_with_io(
                     ),
                     replacement: None,
                     provider_output: None,
+                    observation: false,
                 }
             }
             Err(error)
@@ -705,6 +709,7 @@ fn activity_degradation_outcome(
             )),
             replacement: None,
             provider_output: None,
+            observation: false,
         },
         lane_reason,
     )
@@ -790,6 +795,7 @@ fn evaluate_capability(
             context: Some(message.clone()),
             replacement: None,
             provider_output: None,
+            observation: false,
         },
         Capability::Block {
             reason_code,
@@ -800,6 +806,7 @@ fn evaluate_capability(
             context: Some(message.clone()),
             replacement: None,
             provider_output: None,
+            observation: false,
         },
         Capability::Context { reason_code, text } => RuleOutcome {
             action: DecisionAction::Context,
@@ -807,6 +814,7 @@ fn evaluate_capability(
             context: Some(text.clone()),
             replacement: None,
             provider_output: None,
+            observation: false,
         },
         Capability::Transform {
             reason_code,
@@ -817,18 +825,27 @@ fn evaluate_capability(
             context: None,
             replacement: Some(replacement.clone()),
             provider_output: None,
+            observation: false,
         },
         Capability::SemanticConflict { reason_code } => {
             if liveness.is_some_and(liveness::DispatchProjection::is_unmanaged) {
                 simple(DecisionAction::Allow, "coordination-unmanaged")
             } else {
-                simple(
+                let mut outcome = simple(
                     liveness::semantic_conflict_action(
                         request.semantic_conflict,
                         liveness.and_then(liveness::DispatchProjection::mode),
                     ),
                     reason_code,
-                )
+                );
+                // An unknown or underived conflict is the absence of evidence,
+                // not a detected overlap. It still warns, but it is not a
+                // situation to surface to the model (sympoies/nils-cli#1878).
+                outcome.observation = matches!(
+                    request.semantic_conflict,
+                    None | Some(crate::model::SemanticConflict::Unknown)
+                );
+                outcome
             }
         }
         Capability::OwnerLiveness {
@@ -936,6 +953,7 @@ fn evaluate_capability(
                     context: outcome.context,
                     replacement: None,
                     provider_output: None,
+                    observation: false,
                 }
             }
         },
@@ -984,6 +1002,7 @@ fn terminal_coordination_failure_outcome(
         )),
         replacement: None,
         provider_output: None,
+        observation: false,
     })
 }
 
@@ -1076,6 +1095,7 @@ pub fn apply_session_coordination(
                     context: native.message,
                     replacement: None,
                     provider_output: None,
+                    observation: false,
                 },
                 status,
             }
@@ -1248,6 +1268,7 @@ fn coordination_timeout_outcome(
                 )),
                 replacement: None,
                 provider_output: None,
+                observation: false,
             },
             _ => simple(
                 DecisionAction::Block,
@@ -1300,6 +1321,7 @@ fn merge_coordination_outcome(
         rule_id: rule_id.to_string(),
         code: outcome.code,
         disposition: disposition(outcome.action).to_string(),
+        observation: outcome.observation,
     });
     Ok(())
 }
@@ -1410,6 +1432,7 @@ fn timeout_outcome(
                 )),
                 replacement: None,
                 provider_output: None,
+                observation: false,
             },
             Err(_) => simple(
                 DecisionAction::Block,
@@ -1429,6 +1452,7 @@ fn simple(action: DecisionAction, code: &str) -> RuleOutcome {
         context: None,
         replacement: None,
         provider_output: None,
+        observation: false,
     }
 }
 
@@ -1448,6 +1472,7 @@ fn advise_projection(outcome: RuleOutcome, source: &str) -> RuleOutcome {
         context: Some(format!("{remediation}\ndowngraded to advise by {source}")),
         replacement: None,
         provider_output: None,
+        observation: false,
     }
 }
 
@@ -1548,6 +1573,7 @@ fn aggregate(
                     rule_id,
                     code: "transform-conflict".to_string(),
                     disposition: "block".to_string(),
+                    observation: false,
                 });
                 replacement = None;
                 provider_output = None;
@@ -1576,6 +1602,7 @@ fn aggregate(
             rule_id,
             code: outcome.code,
             disposition: disposition(outcome.action).to_string(),
+            observation: outcome.observation,
         });
     }
     let context = if contexts.is_empty() {
@@ -1903,6 +1930,7 @@ fn session_coordination_outcome(stdout: &[u8]) -> Result<CoordinationHandlerOutc
                 context: result.message,
                 replacement: None,
                 provider_output: None,
+                observation: false,
             },
             status,
         });
@@ -1943,6 +1971,7 @@ fn handler_outcome(handler_id: &str, stdout: &[u8]) -> Result<RuleOutcome, HookE
         context,
         replacement,
         provider_output: Some(value),
+        observation: false,
     })
 }
 

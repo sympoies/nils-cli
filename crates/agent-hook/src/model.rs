@@ -335,6 +335,11 @@ pub struct DecisionReason {
     pub rule_id: String,
     pub code: String,
     pub disposition: String,
+    /// The reason records absent or indeterminate evidence rather than a
+    /// situation that fired. Service JSON and traces keep it; provider context
+    /// never surfaces it (sympoies/nils-cli#1878).
+    #[serde(skip)]
+    pub observation: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

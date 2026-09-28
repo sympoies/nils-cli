@@ -184,11 +184,13 @@ pub(crate) fn degraded_decision(
                 rule_id: DEGRADATION_RULE_ID.to_string(),
                 code: fault.code.to_string(),
                 disposition: "warn".to_string(),
+                observation: false,
             },
             DecisionReason {
                 rule_id: DEGRADATION_RULE_ID.to_string(),
                 code: lane_code.to_string(),
                 disposition: "warn".to_string(),
+                observation: false,
             },
         ],
         context: Some(context),
@@ -241,11 +243,13 @@ pub(crate) fn terminal_exit_for_error(
                 rule_id: DEGRADATION_RULE_ID.to_string(),
                 code: error.code.clone(),
                 disposition: "warn".to_string(),
+                observation: false,
             },
             DecisionReason {
                 rule_id: DEGRADATION_RULE_ID.to_string(),
                 code: STOP_REENTRY_TERMINAL.to_string(),
                 disposition: "warn".to_string(),
+                observation: false,
             },
         ],
         context: Some(format!(
@@ -308,6 +312,7 @@ pub(crate) fn apply_stop_reentry(
         rule_id: DEGRADATION_RULE_ID.to_string(),
         code: reentry_code.to_string(),
         disposition: "warn".to_string(),
+        observation: false,
     });
     let context = if reconciliation_pending {
         format!(
@@ -429,6 +434,7 @@ mod tests {
                 rule_id: "runtime.stop-coordination".to_string(),
                 code: "operation-uncertain".to_string(),
                 disposition: "block".to_string(),
+                observation: false,
             }],
             context: None,
             replacement: None,
@@ -572,6 +578,7 @@ mod tests {
             rule_id: "runtime.stop-coordination".to_string(),
             code: "coordination-admitted".to_string(),
             disposition: "allow".to_string(),
+            observation: false,
         });
 
         let resolved = apply_stop_reentry(
