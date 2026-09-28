@@ -97,6 +97,9 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
+          # release-cache.yml warms this per-target key on main, and a tag run
+          # can restore default-branch caches.
+          shared-key: release-${{ matrix.target }}
           # A tag-scoped cache is visible only to that tag, so it is never
           # restored; saving it just evicts the main CI caches.
           save-if: false

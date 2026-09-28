@@ -83,6 +83,18 @@ assert_contains .github/workflows/ci.yml "save-if: \${{ github.ref == 'refs/head
   "CI saves the Rust cache only from main"
 assert_contains .github/workflows/release.yml "save-if: false" \
   "release builds do not save tag-scoped Rust caches"
+assert_contains .github/workflows/release.yml "shared-key: release-\${{ matrix.target }}" \
+  "release builds restore the per-target dependency cache warmed on main"
+assert_contains .github/workflows/release-cache.yml "shared-key: release-\${{ matrix.target }}" \
+  "the release cache warmer saves under the key release builds restore"
+assert_contains .github/workflows/release-cache.yml "save-if: \${{ github.ref == 'refs/heads/main' }}" \
+  "the release cache warmer saves only from main, where tag runs can read it"
+assert_contains .github/workflows/release-cache.yml "cargo build --release --workspace --locked --target \${{ matrix.target }}" \
+  "the release cache warmer runs the release build command"
+for release_target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin; do
+  assert_contains .github/workflows/release-cache.yml "target: $release_target" \
+    "the release cache warmer covers $release_target"
+done
 assert_contains .github/workflows/ci.yml "key: llvm-cov" \
   "the instrumented macOS job caches its llvm-cov dependencies under their own key"
 assert_contains .github/workflows/ci.yml "NILS_CLI_TEST_RUNNER: llvm-cov" \

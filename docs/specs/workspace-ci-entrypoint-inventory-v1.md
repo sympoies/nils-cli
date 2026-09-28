@@ -50,6 +50,13 @@ out of scope for this governance inventory; flag it as a follow-up.
 | `build` | `Package` | `scripts/workspace-bins.sh` + inline packaging shell | keep | Packaging owns workspace binary discovery through script entrypoint. |
 | `build` | `Audit release tarball third-party artifacts` | `scripts/ci/release-tarball-third-party-audit.sh` | keep | Canonical release artifact audit. |
 | `release` | publish GitHub release | `softprops/action-gh-release@v2` | keep | Standard release publication action. |
+| `build` | `Cache cargo` | `Swatinem/rust-cache` restore-only (`save-if: false`) | keep | Restores `shared-key: release-<target>`, which `.github/workflows/release-cache.yml` saves on `main`. A tag run can restore default-branch caches, but not caches saved on another tag. |
+
+### `.github/workflows/release-cache.yml`
+
+| Job | Step | Canonical owner | Decision | Notes |
+| --- | --- | --- | --- | --- |
+| `warm` | `Cache cargo`, `Build (release)` | `Swatinem/rust-cache` + the release build command | keep | Runs daily, on dispatch, and when the workflow itself changes on `main`. For each `release.yml` target it runs `cargo build --release --workspace --locked --target <target>`, saving the dependency cache under `release-<target>`. On an exact cache hit it skips the build. It does not trigger on `Cargo.lock`, because every release bump rewrites it, and warming then would start two macOS jobs beside the release. The restore key omits the lockfile hash, so the cache stays mostly warm across dependency bumps. |
 
 ### `.github/workflows/publish-crates.yml`
 
