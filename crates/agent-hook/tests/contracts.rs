@@ -278,8 +278,8 @@ fn forged_payload_conflict_is_ignored_but_registry_conflict_blocks() {
 }
 
 /// Provider context carries rule text, never the configured rule list: an
-/// allow-only dispatch renders the neutral `{}` and a textless warning names
-/// only the warning codes (sympoies/nils-cli#1878).
+/// allow-only dispatch and a textless warning both render the neutral `{}`,
+/// while service JSON keeps the warning visible (sympoies/nils-cli#1878).
 #[test]
 fn provider_context_never_lists_allow_reason_codes() {
     let allow_rules = r#"schema_version = "agent-hook.policy.v1"
@@ -354,13 +354,8 @@ capability = {{ id = "agent-session.semantic-conflict.v1", reason_code = "semant
         assert_eq!(rendered.code, 0, "stderr={}", rendered.stderr_text());
         assert_eq!(
             rendered.stdout_json(),
-            json!({
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "additionalContext": "semantic-conflict",
-                }
-            }),
-            "{product} textless warning must not list allow codes"
+            json!({}),
+            "{product} textless warning must not inject reason codes"
         );
     }
 }

@@ -568,10 +568,11 @@ pub fn render_provider(decision: &NormalizedDecision) -> Result<String, HookErro
 
 /// Model-facing text for a Codex or Claude context or warning decision.
 ///
-/// Rule-supplied text is rendered as is. Without it, a context decision has
-/// nothing to say and a warning names only the codes that raised it. The
-/// complete reason list is the configured rule set, not what fired, so it is
-/// never provider context (sympoies/nils-cli#1878).
+/// Rule-supplied text is rendered as is. Without it, a context or warning
+/// decision renders nothing, except the documented Claude `Stop` warning,
+/// which names only the codes that raised it. The complete reason list is the
+/// configured rule set, not what fired, so it is never provider context
+/// (sympoies/nils-cli#1878).
 fn native_context_text(decision: &NormalizedDecision) -> Option<String> {
     if let Some(context) = decision
         .context
@@ -580,7 +581,12 @@ fn native_context_text(decision: &NormalizedDecision) -> Option<String> {
     {
         return Some(context.to_string());
     }
-    if decision.action != DecisionAction::Warn {
+    // Only the documented Claude `Stop` warning names its codes; elsewhere the
+    // service JSON, trace, and doctor keep a textless warning visible.
+    if decision.action != DecisionAction::Warn
+        || decision.product != Product::Claude
+        || decision.event != "Stop"
+    {
         return None;
     }
     let warnings = decision
@@ -1664,25 +1670,32 @@ mod tests {
     }
 
     #[test]
-    fn provider_render_names_only_warning_codes_for_warn_without_text() {
+    fn provider_render_omits_warn_decision_without_text() {
         for product in [Product::Codex, Product::Claude] {
-            for context in [None, Some(""), Some("  ")] {
-                let decision =
-                    textless_decision(product, "PreToolUse", DecisionAction::Warn, context);
-                assert_eq!(
-                    rendered(&decision),
-                    json!({
-                        "hookSpecificOutput": {
-                            "hookEventName": "PreToolUse",
-                            "additionalContext": "semantic-conflict",
-                        }
-                    }),
-                    "{product:?} context={context:?} must not list allow or context codes"
-                );
+            for event in ["PreToolUse", "UserPromptSubmit"] {
+                for context in [None, Some(""), Some("  ")] {
+                    let decision = textless_decision(product, event, DecisionAction::Warn, context);
+                    assert_eq!(
+                        rendered(&decision),
+                        json!({}),
+                        "{product:?}/{event} context={context:?} must not inject reason codes"
+                    );
+                }
             }
         }
         let codex_stop = textless_decision(Product::Codex, "Stop", DecisionAction::Warn, None);
         assert_eq!(rendered(&codex_stop), json!({}));
+        // The documented Claude Stop warning keeps naming only its warn codes.
+        let claude_stop = textless_decision(Product::Claude, "Stop", DecisionAction::Warn, None);
+        assert_eq!(
+            rendered(&claude_stop),
+            json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "Stop",
+                    "additionalContext": "semantic-conflict",
+                }
+            })
+        );
     }
 
     #[test]
