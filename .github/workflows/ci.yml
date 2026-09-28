@@ -9,6 +9,9 @@ on:
 jobs:
   changes:
     runs-on: ubuntu-latest
+    # A release candidate waits up to ~40 minutes for its base commit's push CI
+    # and then falls back to full CI; this bound only stops a hung job.
+    timeout-minutes: 50
     permissions:
       actions: read
       contents: read
@@ -95,13 +98,22 @@ jobs:
           BASE_SHA: ${{ steps.detect.outputs.base_sha }}
         with:
           script: |
-            const { findTrustedMainCi } = require(process.env.RELEASE_GATE_PATH);
+            const { findTrustedMainCi, waitForTrustedMainCi } = require(process.env.RELEASE_GATE_PATH);
             try {
-              const trusted = await findTrustedMainCi({
-                github,
-                context,
-                sha: process.env.BASE_SHA,
-              });
+              // The gate module comes from the exact base commit; a base that
+              // predates waitForTrustedMainCi keeps the single lookup.
+              const trusted = typeof waitForTrustedMainCi === "function"
+                ? await waitForTrustedMainCi({
+                    github,
+                    context,
+                    core,
+                    sha: process.env.BASE_SHA,
+                  })
+                : await findTrustedMainCi({
+                    github,
+                    context,
+                    sha: process.env.BASE_SHA,
+                  });
               core.setOutput("trusted", trusted ? "true" : "false");
               if (trusted) {
                 core.info(`Reusing full base CI run ${trusted.runId}: ${trusted.runUrl}`);

@@ -24,6 +24,7 @@ if (fs.existsSync(modulePath)) {
     findTrustedMainCi,
     findTrustedPullRequestCi,
     runReleaseGate,
+    waitForTrustedMainCi,
   } = require(modulePath);
 
   const owner = "sympoies";
@@ -249,6 +250,121 @@ if (fs.existsSync(modulePath)) {
     missingMarker.state.jobsByRun[200][1].steps = [];
     assert.equal(
       await findTrustedMainCi({ github: missingMarker.github, context, sha: baseSha }),
+      null,
+    );
+  });
+
+  function quietCore() {
+    const messages = [];
+    return {
+      messages,
+      core: {
+        info: (message) => messages.push(message),
+        warning: (message) => messages.push(message),
+        setFailed: assert.fail,
+      },
+    };
+  }
+
+  test("base main CI still running is awaited until it succeeds", async () => {
+    const { state, github } = fixture();
+    const mainRun = state.workflowRuns[1];
+    mainRun.status = "in_progress";
+    mainRun.conclusion = null;
+    let sleeps = 0;
+    const sleep = async () => {
+      sleeps += 1;
+      if (sleeps === 2) {
+        mainRun.status = "completed";
+        mainRun.conclusion = "success";
+      }
+    };
+    const { core, messages } = quietCore();
+
+    assert.deepEqual(
+      await waitForTrustedMainCi({ github, context, core, sha: baseSha, attempts: 5, sleep }),
+      { runId: 200, runUrl: `https://github.com/${fullName}/actions/runs/200` },
+    );
+    assert.equal(sleeps, 2);
+    assert.match(messages.join("\n"), /Waiting for base main CI/);
+  });
+
+  test("base main CI that fails while awaited stops polling and fails closed", async () => {
+    const { state, github } = fixture();
+    const mainRun = state.workflowRuns[1];
+    mainRun.status = "in_progress";
+    mainRun.conclusion = null;
+    let sleeps = 0;
+    const sleep = async () => {
+      sleeps += 1;
+      mainRun.status = "completed";
+      mainRun.conclusion = "failure";
+    };
+
+    assert.equal(
+      await waitForTrustedMainCi({
+        github,
+        context,
+        core: quietCore().core,
+        sha: baseSha,
+        attempts: 5,
+        sleep,
+      }),
+      null,
+    );
+    assert.equal(sleeps, 1);
+  });
+
+  test("base main CI without any push run fails closed without waiting", async () => {
+    const { state, github } = fixture();
+    state.workflowRuns = state.workflowRuns.filter((run) => run.event !== "push");
+    const sleep = async () => assert.fail("nothing to wait for");
+
+    assert.equal(
+      await waitForTrustedMainCi({
+        github,
+        context,
+        core: quietCore().core,
+        sha: baseSha,
+        sleep,
+      }),
+      null,
+    );
+  });
+
+  test("base main CI that outlasts the wait budget fails closed", async () => {
+    const { state, github } = fixture();
+    state.workflowRuns[1].status = "queued";
+    state.workflowRuns[1].conclusion = null;
+    let sleeps = 0;
+    const sleep = async () => {
+      sleeps += 1;
+    };
+    const { core, messages } = quietCore();
+
+    assert.equal(
+      await waitForTrustedMainCi({ github, context, core, sha: baseSha, attempts: 3, sleep }),
+      null,
+    );
+    assert.equal(sleeps, 2);
+    assert.match(messages.join("\n"), /still running after 3 checks/);
+  });
+
+  test("a pending push run from another repository is not awaited", async () => {
+    const { state, github } = fixture();
+    state.workflowRuns[1].status = "in_progress";
+    state.workflowRuns[1].conclusion = null;
+    state.workflowRuns[1].repository.full_name = "someone/nils-cli";
+    const sleep = async () => assert.fail("foreign runs must not hold the lane");
+
+    assert.equal(
+      await waitForTrustedMainCi({
+        github,
+        context,
+        core: quietCore().core,
+        sha: baseSha,
+        sleep,
+      }),
       null,
     );
   });

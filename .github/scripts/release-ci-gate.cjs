@@ -269,6 +269,64 @@ async function findTrustedMainCi({
   return { runId: run.id, runUrl: run.html_url };
 }
 
+async function hasPendingMainCi({ github, context, sha }) {
+  const fullName = `${context.repo.owner}/${context.repo.repo}`;
+  const runs = await listAll(
+    github,
+    github.rest.actions.listWorkflowRuns,
+    {
+      owner: context.repo.owner,
+      repo: context.repo.repo,
+      workflow_id: "ci.yml",
+      branch: "main",
+      event: "push",
+      head_sha: sha,
+      per_page: 100,
+    },
+    "workflow_runs",
+  );
+  return runs.some(
+    (run) =>
+      run.event === "push" &&
+      run.status !== "completed" &&
+      run.head_branch === "main" &&
+      run.head_sha === sha &&
+      run.repository?.full_name === fullName,
+  );
+}
+
+// A release PR is usually opened minutes after the base commit lands, while
+// that commit's push CI is still running, so a single lookup always missed and
+// sent the release PR through the full suite. Wait while the exact base run is
+// still pending; stop as soon as it is trusted, or as soon as nothing is left
+// to wait for (no run, or a run that concluded without full success).
+async function waitForTrustedMainCi({
+  github,
+  context,
+  core,
+  sha,
+  attempts = 80,
+  intervalMs = 30_000,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+}) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const trusted = await findTrustedMainCi({ github, context, sha });
+    if (trusted) {
+      return trusted;
+    }
+    if (!(await hasPendingMainCi({ github, context, sha }))) {
+      return null;
+    }
+    if (attempt === attempts) {
+      core.info(`Base main CI on ${sha} is still running after ${attempts} checks.`);
+      return null;
+    }
+    core.info(`Waiting for base main CI on ${sha} (${attempt}/${attempts}).`);
+    await sleep(intervalMs);
+  }
+  return null;
+}
+
 async function runReleaseGate({
   github,
   context,
@@ -345,4 +403,5 @@ module.exports = {
   findTrustedMainCi,
   findTrustedPullRequestCi,
   runReleaseGate,
+  waitForTrustedMainCi,
 };

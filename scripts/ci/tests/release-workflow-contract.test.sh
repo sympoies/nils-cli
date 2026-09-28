@@ -85,6 +85,8 @@ assert_contains .github/workflows/ci.yml "\${{ needs.changes.outputs.base_sha }}
   "reduced checks load the exact base checker"
 assert_contains .github/workflows/ci.yml "findTrustedMainCi" \
   "release-only CI requires exact-base full CI proof"
+assert_contains .github/workflows/ci.yml "waitForTrustedMainCi" \
+  "release-only CI waits for an in-flight exact-base full CI run"
 assert_contains .github/workflows/ci.yml "Full validation marker" \
   "full CI is distinguishable from reduced lanes"
 assert_contains .github/workflows/ci.yml "scripts/ci/release-only-checks.sh" \
