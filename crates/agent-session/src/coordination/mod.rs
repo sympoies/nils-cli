@@ -4,6 +4,7 @@ pub mod claims;
 pub mod context;
 pub mod mailbox;
 mod notification;
+pub use notification::NotificationProjection;
 pub(crate) mod remote;
 pub(crate) mod server;
 
@@ -356,9 +357,32 @@ pub struct SessionQuiescenceGuard {
     pub claim_expires_at_epoch: Option<i64>,
     pub active_operation: bool,
     pub uncertain_operation: bool,
+    /// The exact session incarnation's oldest nonterminal operation lease, if
+    /// any. It carries selectors only, never the execution token digest.
+    pub operation: Option<OperationLeaseSummary>,
+}
+
+/// Public selectors of one nonterminal operation lease.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct OperationLeaseSummary {
+    pub lease_id: String,
+    pub revision: u64,
+    pub state: String,
+    pub expires_at_epoch: i64,
 }
 
 impl SessionQuiescenceGuard {
+    /// The exact recipient incarnation's notification receipt, projected from
+    /// the same locked registry snapshot as the quiescence facts.
+    pub fn notification_projection(&mut self) -> Option<NotificationProjection> {
+        notification::projection_for(
+            &mut self._locked.registry,
+            &self.session_id,
+            &self.incarnation,
+            false,
+        )
+    }
+
     pub(crate) fn begin_notification_attempt(
         &mut self,
         candidate: &NotificationCandidate,
@@ -1802,10 +1826,29 @@ fn lock_session_quiescence_with_maintenance(
                 "active" | "completed" | "failed" | "abandoned"
             )
     });
+    let operation = locked
+        .registry
+        .operations
+        .iter()
+        .find(|operation| {
+            operation.session_id == session_id
+                && operation.session_incarnation == incarnation
+                && !matches!(
+                    operation.state.as_str(),
+                    "completed" | "failed" | "abandoned" | "expired"
+                )
+        })
+        .map(|operation| OperationLeaseSummary {
+            lease_id: operation.lease_id.clone(),
+            revision: operation.revision,
+            state: operation.state.clone(),
+            expires_at_epoch: operation.expires_at_epoch,
+        });
     Ok(SessionQuiescenceGuard {
         _locked: locked,
         session_id: session_id.to_string(),
         incarnation: incarnation.to_string(),
+        operation,
         broker_present,
         broker_identity_matched,
         broker_authoritative,

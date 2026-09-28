@@ -592,6 +592,30 @@ States are `active`, `completing`, `reconcile_pending`, `completed`, `failed`, a
 - Uncertain heartbeat or proof blocks later owner operations and competing
   admission until validated recovery; it does not silently expire an active
   mutation.
+- An expired lease is reclaimable by its own session. Registry maintenance
+  keeps a lease `active` while its own turn is working or its exact descendant
+  is live, so a lease that reaches the safety TTL showed no liveness for the
+  whole TTL. When the same authenticated session incarnation next calls
+  `admit`, each of its `completing` or `reconcile_pending` leases whose TTL has
+  expired is first drained of any persisted completion event, whose outcome
+  wins. A remaining one is changed to `abandoned` with outcome
+  `ttl-expired-inactive` only when the unchanged exact persisted runtime still
+  runs and controller-owned evidence shows the lease's own turn superseded with
+  no live descendant; admission then proceeds. Otherwise admission still fails
+  with `coordination-unavailable`. Reclaim needs no execution token, never
+  touches another session or incarnation, and never changes the bound claim.
+- Recovery evidence is turn-scoped. Both `reconcile` and the expired-lease
+  reclaim treat a newer controller turn with no live exact descendant as proof
+  that the lease's call is inactive; neither receives agent-scoped evidence.
+  A mutation still running from a background subagent after its admitting turn
+  ended, which also supplies no descendant identity, is therefore unsupported
+  under `enforce` coordination: it can be finalized while it runs. Run
+  mutations in the foreground turn that admitted them.
+- No `broker prepare-admission-proof` or `broker proof` command exists. A
+  guard that lost an admission reply replays the exact `admit` request by its
+  idempotency key to recover the lease and its execution token, then finalizes
+  it with `complete` or `reconcile`; that replay, together with the reclaim
+  above, is the supported recovery for a lost admission.
 
 ## Idempotency
 
@@ -719,8 +743,11 @@ submission fence: claim and operation admission returns
 until the submission boundary completes. Stop, delete, resume, runtime
 replacement, and maintenance mutations for the exact incarnation share this
 admission fence, while account refresh and unrelated coordination registry
-work remain available. Claude additionally requires a `Stop` hook
-that survived a no-reactivation debounce. Terminal acceptance requires the
+work remain available. Claude additionally requires that its latest provider
+event, surviving a no-reactivation debounce, be a `Stop` hook or the later
+`idle_prompt` completion that Claude emits once its composer has been idle for
+about a minute; the completion replaces the Stop as the latest event, so
+refusing it would leave guidance for an idle worker queued indefinitely. Terminal acceptance requires the
 byte-exact prompt as the content of a newer transcript-observed turn. A later
 provider observation reconciles `attempting` or `attempt_unknown`: an exact prompt proves
 `prompt_submitted`, a current transcript without it safely requeues, and

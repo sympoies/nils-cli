@@ -2388,7 +2388,17 @@ fn ensure_activity_lock_owns(
     ))
 }
 
-pub(crate) fn claude_notification_waiting(
+/// Settle time between Claude's last idle signal and a coordination prompt.
+pub const CLAUDE_NOTIFICATION_STOP_DEBOUNCE: std::time::Duration =
+    std::time::Duration::from_secs(1);
+
+/// Whether a Claude recipient is at an idle composer that may receive the
+/// fixed coordination prompt. Claude never reports an authoritative idle
+/// state: its evidence is a Stop, then about a minute later an `idle_prompt`
+/// completion that replaces the Stop as the last provider event. Either, when
+/// still the latest provider event after the debounce, proves the composer
+/// idle; any newer turn or attention event reactivates the recipient.
+pub fn claude_notification_waiting(
     context: &CliContext,
     record: &SessionRecord,
     debounce: std::time::Duration,
@@ -2415,8 +2425,10 @@ pub(crate) fn claude_notification_waiting(
     {
         return true;
     }
-    if document.last_provider_event_kind != Some(TurnEventKind::StopObserved)
-        || document.last_provider_event_provider.as_deref() != Some(AgentKind::Claude.as_str())
+    if !matches!(
+        document.last_provider_event_kind,
+        Some(TurnEventKind::StopObserved | TurnEventKind::TurnCompleted)
+    ) || document.last_provider_event_provider.as_deref() != Some(AgentKind::Claude.as_str())
     {
         return false;
     }
@@ -6396,10 +6408,12 @@ mod tests {
             &created.record,
             Duration::ZERO
         ));
+        // Whole-second timestamps make a one-second debounce race the clock;
+        // an hour cannot elapse during the test.
         assert!(!claude_notification_waiting(
             &context,
             &created.record,
-            Duration::from_secs(1)
+            Duration::from_secs(3600)
         ));
 
         let mut reactivated = event(TurnEventKind::Progress, "claude-reactivated");
@@ -6412,6 +6426,70 @@ mod tests {
             &created.record,
             Duration::ZERO
         ));
+    }
+
+    /// Claude reports an idle composer only as an observed `idle_prompt`
+    /// completion about a minute after its last Stop. That completion replaces
+    /// the Stop as the last provider event, so it must keep the recipient
+    /// deliverable: otherwise queued guidance for a worker whose turn ended
+    /// minutes ago waits forever (sympoies/nils-cli#1886).
+    #[test]
+    fn claude_notification_waiting_accepts_an_idle_prompt_completion_after_stop() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);
+        activate_runtime(&context, &created.record).expect("activate runtime");
+        let runtime_id = created
+            .record
+            .runtime
+            .as_ref()
+            .expect("runtime")
+            .launch_id
+            .clone();
+        let claude_event = |kind, id: &str| {
+            let mut event = event(kind, id);
+            event.runtime_id = runtime_id.clone();
+            event.provider = AgentKind::Claude.as_str().to_string();
+            event.provider_turn_id = None;
+            event
+        };
+        ingest_event(
+            &context,
+            &created.record.id,
+            claude_event(TurnEventKind::TurnStarted, "claude-turn"),
+        )
+        .expect("ingest turn start");
+        ingest_event(
+            &context,
+            &created.record.id,
+            claude_event(TurnEventKind::StopObserved, "claude-stop"),
+        )
+        .expect("ingest stop");
+        ingest_event(
+            &context,
+            &created.record.id,
+            claude_event(TurnEventKind::TurnCompleted, "claude-idle-prompt"),
+        )
+        .expect("ingest idle prompt");
+
+        assert!(
+            claude_notification_waiting(&context, &created.record, Duration::ZERO),
+            "an idle_prompt completion is the idle composer Claude reports"
+        );
+        assert!(
+            !claude_notification_waiting(&context, &created.record, Duration::from_secs(3600)),
+            "the idle completion obeys the same debounce as a Stop"
+        );
+
+        ingest_event(
+            &context,
+            &created.record.id,
+            claude_event(TurnEventKind::TurnStarted, "claude-next-turn"),
+        )
+        .expect("ingest next turn");
+        assert!(
+            !claude_notification_waiting(&context, &created.record, Duration::ZERO),
+            "a newer turn reactivates the recipient"
+        );
     }
 
     #[test]

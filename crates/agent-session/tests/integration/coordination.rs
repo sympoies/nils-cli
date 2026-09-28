@@ -7671,6 +7671,163 @@ fn main_agent_rebind_serializes_direct_claim_mutations_through_rollback() {
     );
 }
 
+/// An admitted lease whose PostToolUse never arrived reaches its safety TTL
+/// and fails closed to `completing`. Without its execution token nothing made
+/// it terminal, so every later admission by the same session was refused
+/// forever (sympoies/nils-cli#1881). Once the TTL has expired and the
+/// controller proves the lease's own turn superseded with no live descendant,
+/// the session's next admission reclaims it; before either proof it still
+/// refuses.
+#[test]
+fn work_context_admit_reclaims_only_an_expired_superseded_lease() {
+    let (tmp, state_dir, checkout, capability_file) = init_main_with_closed_historical_run();
+    let set_turn = |turn: &str| {
+        seed_activity_state(
+            &state_dir,
+            "main-one",
+            "main-incarnation-one",
+            "working",
+            json!({
+                "provider_turn_id": turn,
+                "started_at": "2030-01-01T00:00:01Z"
+            }),
+            serde_json::Value::Null,
+        );
+    };
+    set_turn("turn-orphaned-lease");
+    let _runtime = seed_live_runtime_identity(&state_dir, "main-one", "main-incarnation-one", 196);
+    let active_claim = load_coordination_registry(&state_dir)["claims"]
+        .as_array()
+        .expect("claims")
+        .iter()
+        .find(|claim| claim["session_id"] == "main-one" && claim["state"] == "active")
+        .expect("active main claim")
+        .clone();
+    let claim_id = active_claim["claim_id"]
+        .as_str()
+        .expect("claim id")
+        .to_string();
+    let claim_revision = active_claim["revision"]
+        .as_u64()
+        .expect("claim revision")
+        .to_string();
+    let targets = tmp.path().join("orphaned-lease-targets.json");
+    write_private_json(
+        &targets,
+        &json!({
+            "schema_version": "agent-session.operation-targets.v1",
+            "targets": [{
+                "kind": "path-exact",
+                "repository": "example/repository",
+                "value": "controller-owned/main_agent.rs"
+            }]
+        }),
+    );
+    let state_arg = state_dir.to_string_lossy().into_owned();
+    let admit = |token: &str, key: &str| {
+        let token_path = tmp.path().join(format!("{key}-execution-token"));
+        fs::write(&token_path, token).expect("execution token");
+        fs::set_permissions(&token_path, fs::Permissions::from_mode(0o600))
+            .expect("execution token mode");
+        run(
+            &checkout,
+            &[
+                "--state-dir",
+                state_arg.as_str(),
+                "work-context",
+                "admit",
+                "--session",
+                "main-one",
+                "--claim",
+                claim_id.as_str(),
+                "--if-revision",
+                claim_revision.as_str(),
+                "--targets-file",
+                targets.to_str().expect("targets"),
+                "--operation",
+                "edit",
+                "--execution-token-file",
+                token_path.to_str().expect("execution token"),
+                "--capability-file",
+                capability_file.as_str(),
+                "--idempotency-key",
+                key,
+                "--format",
+                "json",
+            ],
+        )
+    };
+    let orphaned = admit(
+        "orphaned-lease-execution-token",
+        "admit-orphaned-lease-0001",
+    );
+    assert_eq!(orphaned.code, 0, "{}", orphaned.stdout_text());
+    let orphaned_lease = data(&orphaned)["lease_id"]
+        .as_str()
+        .expect("lease id")
+        .to_string();
+    let lease_state = || {
+        load_coordination_registry(&state_dir)["operations"]
+            .as_array()
+            .expect("operations")
+            .iter()
+            .find(|lease| lease["lease_id"] == orphaned_lease.as_str())
+            .expect("orphaned lease")
+            .clone()
+    };
+    let expire = || {
+        rewrite_registry(&state_dir, |registry| {
+            let lease = registry["operations"]
+                .as_array_mut()
+                .expect("operations")
+                .iter_mut()
+                .find(|lease| lease["lease_id"] == orphaned_lease.as_str())
+                .expect("orphaned lease");
+            lease["state"] = json!("completing");
+            lease["expires_at"] = json!("2001-01-01T00:00:00Z");
+            lease["expires_at_epoch"] = json!(978_307_200_i64);
+        });
+    };
+
+    // A later turn alone does not reclaim a lease inside its safety TTL.
+    set_turn("turn-after-orphaned-lease");
+    let unexpired = admit("unexpired-execution-token", "admit-unexpired-0001");
+    assert_ne!(unexpired.code, 0, "{}", unexpired.stdout_text());
+    assert_eq!(
+        unexpired.stdout_json()["error"]["code"],
+        "coordination-unavailable"
+    );
+    assert_eq!(lease_state()["state"], "active");
+
+    // An expired lease whose own turn is still current is not proven inactive.
+    set_turn("turn-orphaned-lease");
+    expire();
+    let same_turn = admit("same-turn-execution-token", "admit-same-turn-0001");
+    assert_ne!(same_turn.code, 0, "{}", same_turn.stdout_text());
+    assert_eq!(
+        same_turn.stdout_json()["error"]["code"],
+        "coordination-unavailable"
+    );
+    assert_ne!(lease_state()["state"], "abandoned");
+
+    // Expired and superseded: the next admission reclaims it and proceeds.
+    set_turn("turn-after-orphaned-lease");
+    expire();
+    let reclaimed = admit("reclaimed-execution-token", "admit-reclaimed-0001");
+    assert_eq!(
+        reclaimed.code,
+        0,
+        "stdout={} stderr={}",
+        reclaimed.stdout_text(),
+        reclaimed.stderr_text()
+    );
+    let abandoned = lease_state();
+    assert_eq!(abandoned["state"], "abandoned");
+    assert_eq!(abandoned["outcome"], "ttl-expired-inactive");
+    assert_ne!(data(&reclaimed)["lease_id"], orphaned_lease.as_str());
+    assert_eq!(data(&reclaimed)["state"], "active");
+}
+
 #[test]
 fn work_context_admit_revalidates_the_authenticated_capability_after_preparation() {
     let (tmp, state_dir, checkout, capability_file) = init_main_with_closed_historical_run();
@@ -32662,6 +32819,303 @@ fn main_agent_worker_reenter_wakes_an_idle_resumed_worker() {
     assert_eq!(data(&reentered)["assignment_revision"], 6);
     assert_eq!(data(&reentered)["notification"]["state"], "queued");
     assert_eq!(data(&reentered)["assignment_prompt_resent"], false);
+}
+
+/// Seed the activity a Claude worker leaves once its turn ended minutes ago:
+/// Claude never reports an authoritative idle composer, only an observed
+/// `idle_prompt` completion after its last Stop.
+fn seed_idle_claude_activity(state_dir: &Path, id: &str, incarnation: &str) {
+    let path = state_dir.join("sessions").join(id).join("activity.json");
+    write_private_json(
+        &path,
+        &json!({
+            "schema_version": "agent-session.activity.v1",
+            "runtime_id": incarnation,
+            "runtime_generation": 1,
+            "state": {
+                "schema_version": "agent-session.turn-state.v1",
+                "phase": "waiting",
+                "phase_changed_at": "2020-01-01T00:01:00Z",
+                "revision": 3,
+                "source": {
+                    "kind": "provider_hook",
+                    "provider": "claude",
+                    "confidence": "observed"
+                },
+                "semantic_event": {
+                    "kind": "turn_completed",
+                    "observed_at": "2020-01-01T00:01:00Z"
+                },
+                "current_turn": null,
+                "last_turn": {
+                    "provider_turn_id": "claude-blocked-turn",
+                    "started_at": "2020-01-01T00:00:00Z",
+                    "completed_at": "2020-01-01T00:01:00Z",
+                    "outcome": "completed"
+                }
+            },
+            "pending_attention": [],
+            "seen_event_count": 0,
+            "last_provider_event_kind": "turn_completed",
+            "last_provider_event_provider": "claude",
+            "last_provider_event_at": "2020-01-01T00:01:00Z"
+        }),
+    );
+}
+
+fn detached_tmux_stub(tmp: &Path) -> String {
+    let tmux = tmp.join("tmux-detached-worker");
+    fs::write(
+        &tmux,
+        "#!/bin/sh\ncase \"$1\" in\n  has-session) exit 0 ;;\n  display-message) printf '0\\n'; exit 0 ;;\n  *) exit 1 ;;\nesac\n",
+    )
+    .expect("tmux script");
+    fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).expect("tmux mode");
+    tmux.to_string_lossy().into_owned()
+}
+
+fn convert_worker_to_claude(state_dir: &Path, id: &str) {
+    let path = state_dir.join("sessions").join(id).join("session.json");
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).expect("session record")).expect("session json");
+    record["agent"] = json!("claude");
+    write_private_json(&path, &record);
+}
+
+/// sympoies/nils-cli#1886: a resumed Claude worker whose turn ended before the
+/// Main Agent's guidance arrived never consumes it on its own. Supervision
+/// must name that stall with the exact typed wake instead of reporting
+/// progress, and the wake must re-queue only that notification generation once.
+#[test]
+fn main_agent_supervise_wakes_an_idle_claude_worker_with_queued_guidance() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let (state_dir, _worker_checkout, _worker_capability, main_capability) =
+        strand_blocked_delivery_worker(tmp.path(), "released");
+    let main_checkout = tmp.path().join("main-checkout");
+    let state = state_dir.to_string_lossy().into_owned();
+    convert_worker_to_claude(&state_dir, "worker-one");
+    let resumed = resume_assignment(
+        &state_dir,
+        &main_checkout,
+        &main_capability,
+        "assignment-delivery",
+        "4",
+        "worker-delivery-wake-resume-0001",
+    );
+    assert_eq!(resumed.code, 0, "{}", resumed.stdout_text());
+    let body = tmp.path().join("wake-guidance.txt");
+    fs::write(&body, "re-run your bootstrap argv").expect("guidance body");
+    let messaged = run_main_agent(
+        &main_checkout,
+        &[
+            "--state-dir",
+            &state,
+            "worker",
+            "message",
+            "assignment-delivery",
+            "--body-file",
+            body.to_str().expect("body"),
+            "--idempotency-key",
+            "worker-delivery-wake-message-0001",
+            "--format",
+            "json",
+        ],
+        &[("AGENT_SESSION_CAPABILITY_FILE", &main_capability)],
+    );
+    assert_eq!(messaged.code, 0, "{}", messaged.stdout_text());
+    let generation = data(&messaged)["notification"]["generation"]
+        .as_u64()
+        .expect("notification generation");
+    seed_idle_claude_activity(&state_dir, "worker-one", "worker-incarnation-one");
+    let tmux = detached_tmux_stub(tmp.path());
+    let supervise = || {
+        let supervised = run_main_agent(
+            &main_checkout,
+            &[
+                "--state-dir",
+                &state,
+                "worker",
+                "supervise",
+                "assignment-delivery",
+                "--format",
+                "json",
+            ],
+            &[
+                ("AGENT_SESSION_CAPABILITY_FILE", main_capability.as_str()),
+                ("AGENT_SESSION_TMUX_BIN", tmux.as_str()),
+            ],
+        );
+        assert_eq!(supervised.code, 0, "{}", supervised.stdout_text());
+        data(&supervised)
+    };
+
+    let supervised = supervise();
+    assert_eq!(
+        supervised["classification"], "idle_guidance_wake_required",
+        "{supervised}"
+    );
+    let action = &supervised["recovery_action"];
+    assert_eq!(action["kind"], "exact_worker_notification_reentry");
+    assert_eq!(action["owner"]["role"], "main");
+    assert_eq!(action["executable"], true);
+    let argv = action["argv"].as_array().expect("wake argv").clone();
+    let argv: Vec<String> = argv
+        .iter()
+        .map(|part| part.as_str().expect("argv part").to_string())
+        .collect();
+    assert_eq!(
+        argv[..10],
+        [
+            "main-agent",
+            "worker",
+            "reenter",
+            "assignment-delivery",
+            "--worker-incarnation",
+            "worker-incarnation-one",
+            "--if-revision",
+            "5",
+            "--if-notification-generation",
+            &generation.to_string(),
+        ]
+    );
+    assert!(argv.iter().all(|part| part != "<idempotency-key>"));
+    assert!(!action.to_string().contains("\"supervise\""), "{action}");
+
+    let mut wake_args = vec!["--state-dir", state.as_str()];
+    wake_args.extend(argv[1..].iter().map(String::as_str));
+    let wake = || {
+        run_main_agent(
+            &main_checkout,
+            &wake_args,
+            &[
+                ("AGENT_SESSION_CAPABILITY_FILE", main_capability.as_str()),
+                ("AGENT_SESSION_TMUX_BIN", tmux.as_str()),
+            ],
+        )
+    };
+    let woken = wake();
+    assert_eq!(woken.code, 0, "{}", woken.stdout_text());
+    assert_eq!(
+        data(&woken)["schema_version"],
+        "main-agent.worker-reenter-result.v1"
+    );
+    assert_eq!(data(&woken)["notification"]["state"], "queued");
+    assert_eq!(data(&woken)["notification"]["generation"], generation);
+    assert_eq!(data(&woken)["message_generation_created"], false);
+    assert_eq!(data(&woken)["assignment_prompt_resent"], false);
+
+    // The exact replay is a receipt read: it neither re-queues nor creates a
+    // new notification generation.
+    let replayed = wake();
+    assert_eq!(replayed.code, 0, "{}", replayed.stdout_text());
+    assert_eq!(data(&replayed), data(&woken));
+    let notification = load_coordination_registry(&state_dir)["notifications"]
+        .as_object()
+        .expect("notifications")
+        .values()
+        .find(|notification| notification["target_session_id"] == "worker-one")
+        .expect("worker notification")
+        .clone();
+    assert_eq!(notification["generation"], generation);
+
+    // Once the controller delivered that generation, supervision stops asking
+    // for another wake of it.
+    rewrite_registry(&state_dir, |registry| {
+        let notification = registry["notifications"]
+            .as_object_mut()
+            .expect("notifications")
+            .values_mut()
+            .find(|notification| notification["target_session_id"] == "worker-one")
+            .expect("worker notification");
+        notification["state"] = json!("prompt_submitted");
+        notification["notified_generation"] = json!(generation);
+        notification["attempted_generation"] = json!(generation);
+    });
+    let delivered = supervise();
+    assert_ne!(
+        delivered["classification"], "idle_guidance_wake_required",
+        "{delivered}"
+    );
+}
+
+/// sympoies/nils-cli#1881: an operation lease whose PostToolUse never arrived
+/// made supervision return `worker supervise` itself, so the controller
+/// looped. The recovery must point at the worker-owned reconcile of the exact
+/// lease instead.
+#[test]
+fn main_agent_supervise_routes_an_orphaned_worker_lease_to_worker_owned_recovery() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let (state_dir, _worker_checkout, _worker_capability, main_capability) =
+        strand_blocked_delivery_worker(tmp.path(), "released");
+    let main_checkout = tmp.path().join("main-checkout");
+    rewrite_registry(&state_dir, |registry| {
+        registry["operations"]
+            .as_array_mut()
+            .expect("operations")
+            .push(json!({
+                "schema_version": "agent-session.operation-lease.v1",
+                "lease_id": "orphaned-worker-lease",
+                "session_id": "worker-one",
+                "session_incarnation": "worker-incarnation-one",
+                "claim_id": "worker-claim",
+                "claim_revision": 1,
+                "operation": "shell",
+                "targets": [{"kind":"path-exact","repository":"example/repository","value":"src/lib.rs"}],
+                "state": "completing",
+                "revision": 2,
+                "started_at": "2001-01-01T00:00:00Z",
+                "expires_at": "2001-01-01T00:30:00Z",
+                "expires_at_epoch": 978_309_000_i64,
+                "execution_token_digest": digest("orphaned-worker-execution-token"),
+                "activity_revision": 1,
+                "runtime_identity_digest": "runtime"
+            }));
+    });
+    let supervised = supervise_assignment(
+        &state_dir,
+        &main_checkout,
+        &main_capability,
+        "assignment-delivery",
+    );
+    assert_eq!(supervised["classification"], "uncertain_mutation");
+    let action = &supervised["recovery_action"];
+    assert!(
+        !action.to_string().contains("\"supervise\""),
+        "the recovery must not loop back to supervise: {action}"
+    );
+    assert_eq!(action["kind"], "worker_guard_operation_reconcile");
+    assert_eq!(action["owner"]["role"], "worker");
+    assert_eq!(action["owner"]["session_id"], "worker-one");
+    assert_eq!(action["executable"], false);
+    assert_eq!(action["argv"], json!(null));
+    assert_eq!(action["operation"]["lease_id"], "orphaned-worker-lease");
+    assert_eq!(action["operation"]["revision"], 2);
+    assert_eq!(action["operation"]["state"], "completing");
+    assert_eq!(action["operation"]["safety_ttl_expired"], true);
+    assert_eq!(
+        action["argv_template"],
+        json!([
+            "agent-session",
+            "work-context",
+            "reconcile",
+            "--session",
+            "worker-one",
+            "--lease",
+            "orphaned-worker-lease",
+            "--if-revision",
+            "2",
+            "--proof-file",
+            "<operation-reconcile-proof>",
+            "--idempotency-key",
+            "<idempotency-key>",
+            "--format",
+            "json"
+        ])
+    );
+    assert!(
+        !action.to_string().contains("execution_token"),
+        "the execution token never leaves the worker: {action}"
+    );
 }
 
 #[test]

@@ -1274,6 +1274,7 @@ pub(crate) fn admit(context: &CliContext, args: WorkContextAdmitArgs) -> Result<
         &record.id,
         &incarnation,
     )?;
+    reclaim_expired_inactive_operations(context, &mut locked.registry, &record, &incarnation, now)?;
     if locked.registry.operations.iter().any(|lease| {
         lease.session_id == record.id
             && matches!(
@@ -2521,7 +2522,7 @@ pub(crate) fn operator_reconcile_in_registry(
             None,
         ));
     }
-    abandon_exact_operation(registry, &snapshot, now)
+    abandon_exact_operation(registry, &snapshot, now, OPERATOR_ATTESTED_INACTIVE_OUTCOME)
 }
 
 #[derive(Clone, Copy)]
@@ -2558,10 +2559,80 @@ pub(crate) fn exact_nonterminal_operation_snapshot(
     Ok(snapshot)
 }
 
+/// Outcome recorded when an operator attests an orphaned lease inactive.
+const OPERATOR_ATTESTED_INACTIVE_OUTCOME: &str = "operator-attested-inactive";
+
+/// Outcome recorded when a session reclaims its own expired, inactive lease.
+const TTL_EXPIRED_INACTIVE_OUTCOME: &str = "ttl-expired-inactive";
+
+/// Reclaim this exact session incarnation's expired, provably inactive leases
+/// before an admission (sympoies/nils-cli#1881).
+///
+/// A lease stays `active` while its own turn is working or its exact
+/// descendant is live, because registry maintenance renews it on that
+/// evidence. One that reaches the safety TTL has therefore shown no liveness
+/// for the whole TTL, and fails closed to `completing`. Only `complete` or
+/// `reconcile` with the execution token could end it, so a lease whose
+/// PostToolUse and token were both lost blocked every later admission of the
+/// session forever.
+///
+/// The authenticated session reclaims such a lease on its next admission only
+/// when the TTL has expired, a recorded completion event is absent (one is
+/// drained into the real outcome instead), the unchanged exact runtime still
+/// runs, and controller-owned evidence shows the lease's own turn superseded
+/// with no live descendant. The lease becomes `abandoned` with outcome
+/// `ttl-expired-inactive`; nothing else about the claim changes.
+fn reclaim_expired_inactive_operations(
+    context: &CliContext,
+    registry: &mut Registry,
+    record: &crate::SessionRecord,
+    incarnation: &str,
+    now: i64,
+) -> Result<(), CliError> {
+    let expired: Vec<OperationLease> = registry
+        .operations
+        .iter()
+        .filter(|lease| {
+            lease.session_id == record.id
+                && lease.session_incarnation == incarnation
+                && matches!(lease.state.as_str(), "completing" | "reconcile_pending")
+                && lease.expires_at_epoch <= now
+        })
+        .cloned()
+        .collect();
+    if expired.is_empty() {
+        return Ok(());
+    }
+    let runtime = crate::coordination_runtime_evidence(context, record).ok();
+    for lease in expired {
+        if drain_completion_events_for_lease_in_registry(
+            registry,
+            &record.id,
+            incarnation,
+            &lease.lease_id,
+            now,
+        )? > 0
+        {
+            continue;
+        }
+        let runtime_unchanged = runtime.as_ref().is_some_and(|runtime| {
+            runtime.status == crate::CoordinationRuntimeStatus::Running
+                && !lease.runtime_identity_digest.is_empty()
+                && runtime.identity_digest == lease.runtime_identity_digest
+        });
+        if !runtime_unchanged || !controller_observed_quiescent(context, record, &lease) {
+            continue;
+        }
+        abandon_exact_operation(registry, &lease, now, TTL_EXPIRED_INACTIVE_OUTCOME)?;
+    }
+    Ok(())
+}
+
 fn abandon_exact_operation(
     registry: &mut Registry,
     snapshot: &OperationLease,
     now: i64,
+    outcome: &str,
 ) -> Result<Value, CliError> {
     let lease = registry
         .operations
@@ -2581,7 +2652,7 @@ fn abandon_exact_operation(
     lease.revision = lease.revision.saturating_add(1);
     lease.terminal_at_epoch = Some(now);
     lease.reconcile_observed_at_epoch = None;
-    lease.outcome = Some("operator-attested-inactive".to_string());
+    lease.outcome = Some(outcome.to_string());
     public_lease(lease)
 }
 
@@ -2656,7 +2727,7 @@ pub(crate) fn operator_attested_transition_in_registry(
             None,
         ));
     }
-    abandon_exact_operation(registry, &snapshot, now)
+    abandon_exact_operation(registry, &snapshot, now, OPERATOR_ATTESTED_INACTIVE_OUTCOME)
 }
 
 pub(crate) fn activity_identity_digest(activity: &crate::activity::TurnState) -> String {
