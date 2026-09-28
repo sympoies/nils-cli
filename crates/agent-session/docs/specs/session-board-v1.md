@@ -110,7 +110,7 @@ field.
 
 | Group | Field | Type | Source |
 | --- | --- | --- | --- |
-| Identity | `machine` | string | New per-record field. Its value is the existing serve machine identity (`--machine`, `AGENT_SESSION_MACHINE`, `--host`, short hostname), today only in the serve envelope `data.machine`. |
+| Identity | `machine` | string | New per-record field, stamped by the process that serves the record, never stored: on daemon routes it is the existing serve machine identity (`--machine`, `AGENT_SESSION_MACHINE`, `--host`, short hostname), today only in the serve envelope `data.machine`; in CLI local mode see [Mode selection](#mode-selection). It always equals the enclosing envelope `machine`. |
 | Identity | `session_id` | string | `SessionView.id`. |
 | Identity | `session_incarnation` | string or null | `SessionView.session_incarnation`; null when the record has no current runtime launch. |
 | Identity | `messaging_supported` | bool | New derivation, same meaning as `messaging_supported` in `agent-session.remote-peers.v1`: this session can currently receive a remote message. See [Messaging support](#messaging-support). |
@@ -281,6 +281,10 @@ A closed record, whether written to the ledger or produced by the aggregator's
   removed record last showed;
 - every other field set to the last value the removed record held (for a
   vanished row, the last value the aggregator ingested).
+
+Ledger entries do not store `machine`, because they are also written by CLI
+processes that cannot see the serve identity. The daemon stamps each served
+closed record with its own serve identity, as for snapshot records.
 
 ### Append
 
@@ -633,6 +637,8 @@ Implementation items must cover:
 - ledger append for delete, archive, group cleanup, group archive, and
   `remove_console_record`, including a CLI-process delete while the board is
   disabled, and no entry on runtime exit;
+- a CLI-written ledger entry served by a daemon whose `--machine` differs from
+  the short hostname carrying the daemon's `machine`;
 - a ledger entry for a session deleted while running carrying
   `runtime_status: null` and `messaging_supported: false`;
 - ledger failure not failing deletion, and a corrupt or unsupported-version
