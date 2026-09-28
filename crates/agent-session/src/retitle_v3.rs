@@ -916,9 +916,13 @@ fn refresh_admitted_once(
         managed.as_ref().map(|objective| objective.role)
             != Some(crate::orchestration::ManagedTitleRole::Worker),
     );
-    let managed_pivot = managed
-        .as_ref()
-        .is_some_and(|objective| apply_managed_objective(&mut memory, objective));
+    // Fold the orchestration objective only once history has caught up, so a
+    // multi-page replay (such as a projection rebuild) cannot let page
+    // boundaries decide whether replayed human pivots land before or after it.
+    let managed_pivot = page.caught_up
+        && managed
+            .as_ref()
+            .is_some_and(|objective| apply_managed_objective(&mut memory, objective));
     let had_semantic_delta = !page.messages.is_empty() || managed_pivot;
     memory.cursor = Some(page.cursor);
     memory.last_delta_hash = Some(delta_hash);
@@ -7013,6 +7017,49 @@ mod tests {
                 "the {turn} refresh must keep the human pivot"
             );
         }
+    }
+
+    #[test]
+    fn a_main_run_objective_folds_only_after_a_multi_page_catch_up() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "managed-main-rebuild";
+        let (context, catalog, transcript) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row("user", "wait for the release to complete", "turn-one"),
+        );
+        let mut transcript_file = fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .unwrap();
+        transcript_file
+            .write_all(&vec![b'x'; REFRESH_CHUNK_BYTES * 2])
+            .unwrap();
+        transcript_file.write_all(b"\n").unwrap();
+        transcript_file
+            .write_all(codex_row("user", "switch to reviewing the docs", "turn-two").as_bytes())
+            .unwrap();
+        write_managed_registry(&context, id, "active", "Deliver the program wave", None);
+
+        let mut response = refresh_once(&context, &catalog, id, &request(id, 0, 0)).unwrap();
+        for _ in 0..8 {
+            let memory = memory_from_record(&load_session_record(&context, id).unwrap()).unwrap();
+            if memory.readiness == MemoryReadiness::Ready {
+                break;
+            }
+            response =
+                refresh_operation_once(&context, &catalog, id, &response.operation_hash).unwrap();
+        }
+
+        let memory = memory_from_record(&load_session_record(&context, id).unwrap()).unwrap();
+        assert_eq!(memory.readiness, MemoryReadiness::Ready);
+        // Page boundaries must not decide precedence: the run objective folds
+        // once the replayed history has caught up.
+        assert_eq!(
+            memory.active_objective.as_ref().unwrap().display.as_deref(),
+            Some("Deliver the program wave")
+        );
     }
 
     #[test]

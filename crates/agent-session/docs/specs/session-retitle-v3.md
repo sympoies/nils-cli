@@ -430,7 +430,11 @@ from the summary, appends a `human_objective` journey entry, and counts as a
 semantic change. The next retitle therefore re-evaluates the title even
 without new history. Because the pivot fires only when that identity changes,
 a later explicit human pivot in a Main session still wins until the session
-starts a different run. The orchestration writer has already bounded and
+starts a different run. The pivot also clears the current request. It is folded
+only on a refresh page that has caught up with provider history; a multi-page
+replay, such as a projection rebuild, folds it after the replayed history, so
+page boundaries never decide precedence. A rebuilt Main session therefore ends
+on its active run objective until the next explicit human pivot. The orchestration writer has already bounded and
 validated the summary, and it is sanitized like any human objective before it
 enters memory. An unreadable registry is treated as no managed objective.
 
