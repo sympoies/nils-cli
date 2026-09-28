@@ -3747,6 +3747,7 @@ fn shell_write_model_allows_fd_duplication_and_quoted_or_mid_word_literals() {
             "gpg --list-secret-keys --keyid-format long 2>&1 | grep -c sec",
             "forge-cli pr create --title 'feat(cli): add the report subcommand' --body-file body.md",
             "forge-cli pr deliver --kind feature --title 'feat(cli): add the report subcommand' --no-merge 2>&1 | tail -20",
+            "sed -e 'w $TARGET' input",
         ],
         "allow",
     );
@@ -3771,6 +3772,12 @@ fn shell_write_model_still_blocks_protected_dynamic_and_malformed_writes() {
             "custom-tool .mcp{.json,}",
             "custom-tool '.mcp.json' 2>&1",
             "git log --output=.mcp.json 2>&1",
+            "echo x >!.mcp.json",
+            "echo x >&!.mcp.json",
+            "echo x >>&!.mcp.json",
+            "sed -e \"w $TARGET\" input",
+            "custom-tool ~",
+            "custom-tool --dir=~",
         ],
         "block",
     );

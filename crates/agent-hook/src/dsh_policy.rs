@@ -2233,10 +2233,11 @@ fn parse_output_redirections(source: &str) -> (Vec<String>, bool) {
             None if byte == b'\\' => escaped = true,
             None if matches!(byte, b'\'' | b'"') => quote = Some(byte),
             None if byte == b'>' => {
+                // `>|` and zsh's `>!` are clobbering forms of `>` and `>>`.
                 let mut cursor = index + 1;
                 while bytes
                     .get(cursor)
-                    .is_some_and(|byte| matches!(byte, b'>' | b'|'))
+                    .is_some_and(|byte| matches!(byte, b'>' | b'|' | b'!'))
                 {
                     cursor += 1;
                 }
@@ -2246,8 +2247,12 @@ fn parse_output_redirections(source: &str) -> (Vec<String>, bool) {
                 if bytes.get(cursor) == Some(&b'&') {
                     // `>&N` duplicates and `>&-` closes a descriptor. Bash
                     // opens any other word after `>&` as a file for output,
-                    // so that word is parsed as an ordinary destination.
+                    // so that word is parsed as an ordinary destination; zsh
+                    // also accepts the clobbering `>&!` and `>&|` spellings.
                     cursor += 1;
+                    if matches!(bytes.get(cursor), Some(b'!' | b'|')) {
+                        cursor += 1;
+                    }
                     if let Some(end) = shell_word_end(source, cursor) {
                         let word = &source[cursor..end];
                         if word == "-" || word.bytes().all(|byte| byte.is_ascii_digit()) {
@@ -2633,7 +2638,8 @@ fn dynamic(value: &str) -> bool {
 /// Single-quoted and backslash-escaped characters stay literal. Inside double
 /// quotes only `$` and backtick expansion remain live. Unquoted text keeps the
 /// `DYNAMIC_BYTES` set, except that a tilde expands only where it starts a
-/// word or follows `=` or `:`, so a revision such as `HEAD~1` stays literal.
+/// word or follows `=`, `:`, `<`, or `>`, so a revision such as `HEAD~1`
+/// stays literal.
 fn shell_text_expands(source: &str) -> bool {
     let mut quote = None;
     let mut escaped = false;
