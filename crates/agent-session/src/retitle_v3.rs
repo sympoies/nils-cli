@@ -2202,6 +2202,12 @@ fn reduce_messages_with(
 /// Folds an orchestration objective into memory as an objective pivot, once per
 /// distinct objective. Returns whether memory changed. A later human pivot in a
 /// Main session still wins until the orchestration objective itself changes.
+///
+/// A worker objective also replaces `origin` and drops earlier human-objective
+/// journey entries. A worker's prompts are all controller-delivered, but a
+/// refresh can run before the worker is bound to its assignment (the launch
+/// prompt is delivered first) or while the registry is unreadable; either way
+/// the bootstrap prompt must not survive in memory once the task is known.
 fn apply_managed_objective(
     memory: &mut SemanticMemory,
     objective: &crate::orchestration::ManagedTitleObjective,
@@ -2226,7 +2232,12 @@ fn apply_managed_objective(
         text: projected.clone(),
         display: objective_display(&objective.summary),
     };
-    if memory.origin.is_none() {
+    if objective.role == crate::orchestration::ManagedTitleRole::Worker {
+        memory.origin = Some(fact.clone());
+        memory
+            .journey
+            .retain(|entry| entry.kind != "human_objective");
+    } else if memory.origin.is_none() {
         memory.origin = Some(fact.clone());
     }
     memory.active_objective = Some(fact);
@@ -6714,6 +6725,78 @@ mod tests {
             .unwrap()
             .expect("a local title from the run objective");
         assert_eq!(second.title.as_deref(), Some("Deliver the program wave"));
+
+        // The same run objective is folded in once: a later explicit human
+        // pivot wins, and further refreshes do not re-pivot to the run.
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .unwrap()
+            .write_all(codex_row("user", "switch to reviewing the docs", "turn-three").as_bytes())
+            .unwrap();
+        for (turn, key) in [("pivot", "human"), ("again", "steady")] {
+            let record = load_session_record(&context, id).unwrap();
+            let mut next = request(id, record.title_revision, memory_revision(&record));
+            next.idempotency_key = format!("request-{id}-{key}");
+            let accepted = refresh_once(&context, &catalog, id, &next).unwrap();
+            let terminal =
+                complete_manual_locally(&context, &catalog, id, &accepted.operation_hash)
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("a local title after the {turn} refresh"));
+            assert_eq!(
+                terminal.title.as_deref(),
+                Some("switch to reviewing the docs"),
+                "the {turn} refresh must keep the human pivot"
+            );
+        }
+    }
+
+    #[test]
+    fn a_worker_bound_after_its_launch_prompt_drops_the_prompt_from_memory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "late-bound-worker";
+        let (context, catalog, transcript) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row("user", MANAGED_LAUNCH_PROMPT, "turn-one"),
+        );
+        // The launch prompt is delivered before main-agent binds the worker.
+        write_managed_registry(&context, "managed-main", "active", "Deliver the wave", None);
+        refresh_once(&context, &catalog, id, &request(id, 0, 0)).unwrap();
+        let unbound = memory_from_record(&load_session_record(&context, id).unwrap()).unwrap();
+        assert!(
+            render_provider_input(&unbound)
+                .unwrap()
+                .to_lowercase()
+                .contains("bootstrap"),
+            "the fixture must reproduce an unbound worker reducing its launch prompt"
+        );
+
+        write_managed_registry(
+            &context,
+            "managed-main",
+            "active",
+            "Deliver the wave",
+            Some((id, "Project worker task summaries")),
+        );
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .unwrap()
+            .write_all(codex_row("assistant", "Bootstrap succeeded", "turn-one").as_bytes())
+            .unwrap();
+        let record = load_session_record(&context, id).unwrap();
+        let mut bound = request(id, record.title_revision, memory_revision(&record));
+        bound.idempotency_key = format!("request-{id}-bound");
+        refresh_once(&context, &catalog, id, &bound).unwrap();
+        let memory = memory_from_record(&load_session_record(&context, id).unwrap()).unwrap();
+        let input = render_provider_input(&memory).unwrap();
+        assert!(input.contains("Project worker task summaries"), "{input}");
+        assert!(
+            !input.to_lowercase().contains("bootstrap") && !input.contains("/opt/pkg"),
+            "binding the worker must drop its launch prompt from memory: {input}"
+        );
     }
 
     #[test]

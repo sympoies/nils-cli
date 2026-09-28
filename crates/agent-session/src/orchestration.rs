@@ -2124,42 +2124,54 @@ pub(crate) struct ManagedTitleObjective {
     pub summary: String,
 }
 
-/// Resolves the session's orchestration objective for retitling: a worker's
-/// assignment `task_summary`, or the `objective_summary` of an active run the
-/// session controls (the most recently created one when several are active).
+/// Resolves the session's orchestration objective for retitling. The role is
+/// classified in the same order as [`session_projection`]: a session that
+/// controls any run is a Main session, and otherwise a session bound as an
+/// assignment's worker is a worker. A Main session takes the `objective_summary`
+/// of its most recently created `active` run and has no managed objective when
+/// none of its runs is active; a worker takes its assignment `task_summary`.
 /// An unreadable registry or an unmanaged session yields `None`.
 pub(crate) fn managed_title_objective(
     context: &CliContext,
     record: &SessionRecord,
 ) -> Option<ManagedTitleObjective> {
     let registry = load_registry_readonly(context).ok()?;
-    if let Some(assignment) = registry.assignments.values().find(|assignment| {
-        assignment.worker.as_ref().is_some_and(|worker| {
-            worker.session_id == record.id && worker.session_created_at == record.created_at
-        })
-    }) {
-        return Some(ManagedTitleObjective {
-            role: ManagedTitleRole::Worker,
-            owner_id: assignment.assignment_id.clone(),
-            summary: assignment.task_summary.clone(),
-        });
-    }
     let incarnation = record
         .runtime
         .as_ref()
         .map(|runtime| runtime.launch_id.as_str())
-        .filter(|value| !value.is_empty())?;
-    registry
+        .filter(|value| !value.is_empty());
+    let mut controlled = registry
         .runs
         .values()
         .filter(|run| {
-            run.state == "active" && session_ref_matches(&run.controller, record, incarnation)
+            incarnation.is_some_and(|incarnation| {
+                session_ref_matches(&run.controller, record, incarnation)
+            })
         })
-        .max_by(|left, right| left.created_at.cmp(&right.created_at))
-        .map(|run| ManagedTitleObjective {
-            role: ManagedTitleRole::Main,
-            owner_id: run.run_id.clone(),
-            summary: run.objective_summary.clone(),
+        .peekable();
+    if controlled.peek().is_some() {
+        return controlled
+            .filter(|run| run.state == "active")
+            .max_by(|left, right| left.created_at.cmp(&right.created_at))
+            .map(|run| ManagedTitleObjective {
+                role: ManagedTitleRole::Main,
+                owner_id: run.run_id.clone(),
+                summary: run.objective_summary.clone(),
+            });
+    }
+    registry
+        .assignments
+        .values()
+        .find(|assignment| {
+            assignment.worker.as_ref().is_some_and(|worker| {
+                worker.session_id == record.id && worker.session_created_at == record.created_at
+            })
+        })
+        .map(|assignment| ManagedTitleObjective {
+            role: ManagedTitleRole::Worker,
+            owner_id: assignment.assignment_id.clone(),
+            summary: assignment.task_summary.clone(),
         })
 }
 
