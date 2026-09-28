@@ -31275,6 +31275,434 @@ fn main_agent_quick_rejects_scope_overlap_before_creating_its_run() {
     assert_eq!(narrowed.code, 0, "{}", narrowed.stdout_text());
 }
 
+/// Bootstrap one delivery worker whose checkout is on `fix/worker-delivery`,
+/// declaring `head_branch` in its packet, and return its active claim.
+fn bootstrap_delivery_worker(
+    tmp: &Path,
+    head_branch: Option<&str>,
+) -> (PathBuf, PathBuf, String, serde_json::Value) {
+    let state_dir = tmp.join("state");
+    let main_checkout = tmp.join("main-checkout");
+    let worker_checkout = tmp.join("worker-checkout");
+    fs::create_dir(&state_dir).expect("state");
+    init_checkout(
+        &main_checkout,
+        "https://example.invalid/example/repository.git",
+    );
+    init_checkout(
+        &worker_checkout,
+        "https://example.invalid/example/repository.git",
+    );
+    git_stdout(
+        &worker_checkout,
+        &["symbolic-ref", "HEAD", "refs/heads/fix/worker-delivery"],
+    );
+    seed_brokers_at(
+        &state_dir,
+        &[
+            (
+                "main-one",
+                "main-incarnation-one",
+                "main-private-capability-material-0000000001",
+                main_checkout.as_path(),
+                Some("enforce"),
+            ),
+            (
+                "worker-one",
+                "worker-incarnation-one",
+                "worker-private-capability-material-0000000001",
+                worker_checkout.as_path(),
+                Some("enforce"),
+            ),
+        ],
+    );
+    let _main_capability = init_main_run(tmp, &state_dir, &main_checkout, "main-one", "run-one");
+    let packet = json!({
+        "schema_version": "main-agent.assignment-input.v1",
+        "assignment_id": "assignment-delivery",
+        "task_summary": "Deliver the child through its own pull request",
+        "task": {},
+        "launch": {
+            "agent": "codex",
+            "cwd": worker_checkout,
+            "title": null,
+            "session_id": "worker-one",
+            "coordination_mode": "enforce",
+            "agent_args": []
+        },
+        "repository": "example/repository",
+        "worktree": worker_checkout,
+        "base_ref": "main",
+        "scopes": ["docs/delivery-lane"],
+        "durable_refs": [],
+        "provider_refs": [{"kind": "issue", "repository": "example/repository", "number": 1837}]
+    });
+    let mut packet = packet;
+    if let Some(head_branch) = head_branch {
+        packet["head_branch"] = json!(head_branch);
+    }
+    insert_orchestration_assignment(
+        &state_dir,
+        "assignment-delivery",
+        json!({
+            "schema_version": "agent-session.orchestration-assignment.v1",
+            "assignment_id": "assignment-delivery",
+            "run_id": "run-one",
+            "revision": 2,
+            "state": "starting",
+            "task_summary": "Deliver the child through its own pull request",
+            "private_packet_digest": "replaced-by-fixture",
+            "primary_manager": {
+                "session_id": "main-one",
+                "session_incarnation": "main-incarnation-one",
+                "session_created_at": "2030-01-01T00:00:00Z"
+            },
+            "worker": {
+                "session_id": "worker-one",
+                "session_incarnation": "worker-incarnation-one",
+                "session_created_at": "2030-01-01T00:00:00Z"
+            },
+            "collaborators": [],
+            "borrowed_by": [],
+            "repository": "example/repository",
+            "worktree": worker_checkout,
+            "base_ref": "main",
+            "scopes": ["docs/delivery-lane"],
+            "durable_refs": [],
+            "checkpoint": null,
+            "result_summary": null,
+            "blocker_summary": null,
+            "created_at": "2030-01-01T00:00:01Z",
+            "updated_at": "2030-01-01T00:00:02Z"
+        }),
+        &packet,
+    );
+    let state = state_dir.to_string_lossy().into_owned();
+    let worker_capability = capability(&state_dir, "worker-one");
+    let bootstrapped = run_main_agent(
+        &worker_checkout,
+        &[
+            "--state-dir",
+            &state,
+            "bootstrap",
+            "--idempotency-key",
+            "worker-delivery-bootstrap-0001",
+            "--format",
+            "json",
+        ],
+        &[("AGENT_SESSION_CAPABILITY_FILE", &worker_capability)],
+    );
+    assert_eq!(
+        bootstrapped.code,
+        0,
+        "stdout={} stderr={}",
+        bootstrapped.stdout_text(),
+        bootstrapped.stderr_text()
+    );
+    let coordination: serde_json::Value = serde_json::from_slice(
+        &fs::read(state_dir.join("coordination/registry.json")).expect("coordination registry"),
+    )
+    .expect("coordination registry json");
+    let claim = coordination["claims"]
+        .as_array()
+        .expect("claims")
+        .iter()
+        .find(|claim| claim["session_id"] == "worker-one" && claim["state"] == "active")
+        .expect("worker claim")
+        .clone();
+    (state_dir, worker_checkout, worker_capability, claim)
+}
+
+#[test]
+fn main_agent_bootstrapped_worker_claim_covers_its_child_issue_and_own_pull_request_head() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let (state_dir, worker_checkout, worker_capability, claim) =
+        bootstrap_delivery_worker(tmp.path(), Some("fix/worker-delivery"));
+    let state = state_dir.to_string_lossy().into_owned();
+    assert_eq!(claim["checkout_shell_grant"], true);
+    assert_eq!(
+        claim["provider_refs"],
+        json!([{"kind": "issue", "repository": "example/repository", "number": 1837}])
+    );
+    assert_eq!(
+        claim["pull_request_head"],
+        json!({"repository": "example/repository", "head": "fix/worker-delivery"}),
+        "bootstrap binds the worker's own checkout branch as its pull-request head"
+    );
+    let claim_id = claim["claim_id"].as_str().expect("claim id").to_string();
+    let shown = run(
+        &worker_checkout,
+        &[
+            "--state-dir",
+            &state,
+            "work-context",
+            "show",
+            "--session",
+            "worker-one",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(shown.code, 0, "{}", shown.stdout_text());
+    assert!(
+        !shown.stdout_text().contains("pull_request_head"),
+        "the private pull-request head grant never enters a public projection"
+    );
+
+    seed_activity_state(
+        &state_dir,
+        "worker-one",
+        "worker-incarnation-one",
+        "working",
+        json!({
+            "provider_turn_id": "turn-worker-delivery",
+            "started_at": "2030-01-01T00:00:01Z"
+        }),
+        serde_json::Value::Null,
+    );
+    let _runtime =
+        seed_live_runtime_identity(&state_dir, "worker-one", "worker-incarnation-one", 93);
+    let execution_token = tmp.path().join("worker-delivery-token");
+    fs::write(&execution_token, "execution-token-worker-delivery").expect("execution token");
+    fs::set_permissions(&execution_token, fs::Permissions::from_mode(0o600))
+        .expect("execution token mode");
+    let admit = |name: &str, targets: serde_json::Value| {
+        let path = tmp.path().join(format!("{name}-targets.json"));
+        let mut document = targets;
+        document["schema_version"] = json!("agent-session.operation-targets.v1");
+        fs::write(&path, serde_json::to_vec(&document).expect("targets")).expect("targets file");
+        run(
+            &worker_checkout,
+            &[
+                "--state-dir",
+                &state,
+                "work-context",
+                "admit",
+                "--session",
+                "worker-one",
+                "--claim",
+                &claim_id,
+                "--if-revision",
+                "1",
+                "--targets-file",
+                path.to_str().expect("targets"),
+                "--operation",
+                "provider",
+                "--execution-token-file",
+                execution_token.to_str().expect("execution token"),
+                "--capability-file",
+                &worker_capability,
+                "--idempotency-key",
+                &format!("worker-delivery-admit-{name}"),
+                "--format",
+                "json",
+            ],
+        )
+    };
+    for (name, targets) in [
+        (
+            "other-issue",
+            json!({"provider_refs": [{"kind": "issue", "repository": "example/repository", "number": 1838}]}),
+        ),
+        (
+            "other-branch",
+            json!({"pull_requests": [{"kind": "pull-request-head", "repository": "example/repository", "head": "fix/other-lane"}]}),
+        ),
+        (
+            "other-repository",
+            json!({"pull_requests": [{"kind": "pull-request-head", "repository": "example/other", "head": "fix/worker-delivery"}]}),
+        ),
+    ] {
+        let refused = admit(name, targets);
+        assert_ne!(refused.code, 0, "{name}: {}", refused.stdout_text());
+        assert_eq!(
+            refused.stdout_json()["error"]["code"],
+            "uncovered-mutation-scope",
+            "{name}"
+        );
+    }
+    let admitted = admit(
+        "own-child-and-pull-request",
+        json!({
+            "provider_refs": [{"kind": "issue", "repository": "example/repository", "number": 1837}],
+            "pull_requests": [{"kind": "pull-request-head", "repository": "Example/Repository", "head": "fix/worker-delivery"}]
+        }),
+    );
+    assert_eq!(
+        admitted.code,
+        0,
+        "stdout={} stderr={}",
+        admitted.stdout_text(),
+        admitted.stderr_text()
+    );
+    assert_eq!(
+        data(&admitted)["pull_request_targets"],
+        json!([{"kind": "pull-request-head", "repository": "example/repository", "head": "fix/worker-delivery"}])
+    );
+}
+
+#[test]
+fn main_agent_worker_bootstrap_grants_no_pull_request_head_without_a_matching_declared_branch() {
+    for declared in [None, Some("fix/other-lane")] {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let (_, _, _, claim) = bootstrap_delivery_worker(tmp.path(), declared);
+        assert_eq!(claim["checkout_shell_grant"], true, "{declared:?}");
+        assert!(
+            claim.get("pull_request_head").is_none(),
+            "a checkout branch the packet did not declare mints no pull-request head grant: {declared:?}"
+        );
+    }
+}
+
+#[test]
+fn main_agent_worker_start_rejects_invalid_or_foreign_provider_refs() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state_dir = tmp.path().join("state");
+    let checkout = tmp.path().join("checkout");
+    fs::create_dir(&state_dir).expect("state");
+    init_checkout(&checkout, "https://example.invalid/example/repository.git");
+    seed_brokers_at(
+        &state_dir,
+        &[(
+            "main-one",
+            "main-incarnation-one",
+            "main-private-capability-material-0000000001",
+            checkout.as_path(),
+            Some("enforce"),
+        )],
+    );
+    let main_capability = init_main_run(tmp.path(), &state_dir, &checkout, "main-one", "run-one");
+    let state = state_dir.to_string_lossy().into_owned();
+    for (name, provider_refs) in [
+        (
+            "foreign-repository",
+            json!([{"kind": "issue", "repository": "example/other", "number": 1}]),
+        ),
+        (
+            "pull-request-kind",
+            json!([{"kind": "pr", "repository": "example/repository", "number": 1}]),
+        ),
+    ] {
+        let path = tmp.path().join(format!("{name}.json"));
+        let mut packet = overlap_assignment_packet(name, &checkout, &[&format!("docs/{name}")]);
+        packet["provider_refs"] = provider_refs;
+        write_private_json(&path, &packet);
+        let refused = run_main_agent(
+            &checkout,
+            &[
+                "--state-dir",
+                &state,
+                "worker",
+                "start",
+                "--assignment-file",
+                path.to_str().expect("assignment path"),
+                "--await-ready",
+                "0",
+                "--idempotency-key",
+                &format!("start-{name}"),
+                "--format",
+                "json",
+            ],
+            &[("AGENT_SESSION_CAPABILITY_FILE", &main_capability)],
+        );
+        assert_eq!(refused.code, 65, "{name}: {}", refused.stdout_text());
+        assert_eq!(
+            refused.stdout_json()["error"]["code"],
+            "invalid-orchestration-input",
+            "{name}"
+        );
+        assert!(
+            orchestration_registry(&state_dir)["assignments"]
+                .get(name)
+                .is_none()
+        );
+    }
+
+    // A child issue already held by a live worker's claim is refused before launch.
+    insert_overlap_assignment_with(
+        &state_dir,
+        &checkout,
+        ("run-one", "main-one", "main-incarnation-one"),
+        "assignment-issue-holder",
+        "working",
+        &["docs/issue-holder"],
+        json!({
+            "session_id": "worker-issue-holder",
+            "session_incarnation": "worker-issue-holder-incarnation",
+            "session_created_at": "2030-01-01T00:00:00Z"
+        }),
+    );
+    rewrite_registry(&state_dir, |registry| {
+        registry["claims"]
+            .as_array_mut()
+            .expect("claims")
+            .push(json!({
+                "schema_version": "agent-session.work-context.v1",
+                "session_id": "worker-issue-holder",
+                "session_incarnation": "worker-issue-holder-incarnation",
+                "claim_id": "worker-issue-holder-claim",
+                "revision": 1,
+                "state": "active",
+                "intent": "implementation",
+                "tier": "direct",
+                "repositories": ["example/repository"],
+                "worktrees": [],
+                "provider_refs": [{"kind": "issue", "repository": "example/repository", "number": 7}],
+                "plan_refs": [],
+                "scopes": [{"kind": "path-prefix", "repository": "example/repository", "value": "docs/issue-holder"}],
+                "summary": "Issue holder",
+                "updated_at": "2030-01-01T00:00:00Z",
+                "expires_at": "9999-12-31T23:59:59Z",
+                "expires_at_epoch": i64::MAX
+            }));
+    });
+    let path = tmp.path().join("issue-overlap.json");
+    let mut packet = overlap_assignment_packet("issue-overlap", &checkout, &["docs/issue-overlap"]);
+    packet["provider_refs"] =
+        json!([{"kind": "issue", "repository": "example/repository", "number": 7}]);
+    write_private_json(&path, &packet);
+    let (tmux_bin, tmux_log) = fake_tmux(tmp.path());
+    let codex_bin = fake_agent(tmp.path(), "codex-worker");
+    let tmux_arg = tmux_bin.to_string_lossy().into_owned();
+    let tmux_log_arg = tmux_log.to_string_lossy().into_owned();
+    let codex_arg = codex_bin.to_string_lossy().into_owned();
+    let refused = run_main_agent_with_codex_trust(
+        &checkout,
+        &[
+            "--state-dir",
+            &state,
+            "worker",
+            "start",
+            "--assignment-file",
+            path.to_str().expect("assignment path"),
+            "--await-ready",
+            "0",
+            "--idempotency-key",
+            "start-issue-overlap",
+            "--format",
+            "json",
+        ],
+        &[
+            ("AGENT_SESSION_CAPABILITY_FILE", main_capability.as_str()),
+            ("AGENT_SESSION_TMUX_BIN", tmux_arg.as_str()),
+            ("AGENT_SESSION_CODEX_BIN", codex_arg.as_str()),
+            ("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log_arg.as_str()),
+        ],
+        &tmp.path().join("codex-home"),
+        &[&checkout],
+    );
+    assert!(tmux_calls(&tmux_log).is_empty());
+    assert_eq!(refused.code, 65, "{}", refused.stdout_text());
+    assert_eq!(
+        refused.stdout_json()["error"]["details"]["conflicts"],
+        json!([{
+            "owner": "assignment",
+            "assignment_id": "assignment-issue-holder",
+            "repository": "example/repository",
+            "provider_ref": {"kind": "issue", "repository": "example/repository", "number": 7}
+        }])
+    );
+}
 #[test]
 fn main_agent_checkpoint_summary_limit_error_names_the_field_and_limit() {
     let tmp = tempfile::TempDir::new().expect("tempdir");

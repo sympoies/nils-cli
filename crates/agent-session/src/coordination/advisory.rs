@@ -733,6 +733,7 @@ fn presence_record(
         repositories: presence.repositories,
         worktrees: presence.worktrees,
         checkout_shell_grant: false,
+        pull_request_head: None,
         provider_refs: presence.provider_refs,
         plan_refs: presence.plan_refs,
         scopes: presence.scopes,

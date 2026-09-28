@@ -90,7 +90,13 @@ worker is launched:
 }
 ```
 
-`assignment_id`, `task`, `base_ref`, and `durable_refs` are optional. A
+`assignment_id`, `task`, `base_ref`, `durable_refs`, `provider_refs`, and
+`head_branch` are optional. `provider_refs` lists the child issues the worker may
+comment on, as `{"kind": "issue", "repository": "owner/repository", "number":
+123}` entries in the assignment `repository` only (at most 16). `head_branch`
+names the branch of the managed worktree you created for the worker (for
+example the `Branch:` that `git-cli worktree add` printed); it is required for
+the worker to operate on its own pull request. A
 mutating enforce-mode worker requires `repository`, narrow `scopes`, and an
 absolute `worktree` that resolves to the same checkout root as `launch.cwd`.
 Launch options also accept `title`, `session_id`, and `agent_args`. An omitted
@@ -398,6 +404,24 @@ review, checkpoint `state: "submitted"` with a bounded `result_summary`:
   "result_summary": "Focused tests and required checks passed"
 }
 ```
+
+#### Worker delivery boundary
+
+A worker owns delivery of its own child through a ready pull request. Its
+bootstrap claim covers:
+
+- edits, commits, and pushes in its own managed worktree (checkout-shell grant
+  and path scopes);
+- comments on the issues listed in the packet `provider_refs`;
+- creating, updating, and reviewing the pull request whose head is the packet
+  `head_branch`, while its checkout is on that branch, in the assignment
+  repository (`pull-request-head` target).
+
+The worker does not merge, create issues, edit trackers, or touch another
+repository's records; those need the Main Agent, which accepts the pull request
+before merge and owns every cross-repository record. A pull-request target for
+another branch or repository, or a comment on an unlisted issue, fails with
+`uncovered-mutation-scope`.
 
 After the submitted checkpoint is durable, the worker should finish or release
 its mutation operation and clear its own work context when it no longer needs

@@ -41,6 +41,27 @@ pub struct ProviderRef {
     pub number: u64,
 }
 
+/// A pull request identified by its repository and head branch, which is how a
+/// pull request is named before it exists (`pr create`) and after.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(deny_unknown_fields)]
+pub struct PullRequestHead {
+    pub repository: String,
+    pub head: String,
+}
+
+/// Operation target kind for a pull request named by its head branch.
+pub const PULL_REQUEST_HEAD_TARGET_KIND: &str = "pull-request-head";
+
+/// One `pull_requests` entry of `agent-session.operation-targets.v1`.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(deny_unknown_fields)]
+pub struct PullRequestTarget {
+    pub kind: String,
+    pub repository: String,
+    pub head: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(deny_unknown_fields)]
 pub struct CheckoutBinding {
@@ -84,6 +105,12 @@ pub struct WorkContextRecord {
     /// from every public work-context projection.
     #[serde(default, skip_serializing_if = "is_false")]
     pub checkout_shell_grant: bool,
+    /// Private pull-request head grant minted beside `checkout_shell_grant` from
+    /// the authenticated worker checkout's branch. It covers pull-request
+    /// operation targets for that exact repository and head and is removed from
+    /// every public projection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pull_request_head: Option<PullRequestHead>,
     pub provider_refs: Vec<ProviderRef>,
     pub plan_refs: Vec<String>,
     pub scopes: Vec<Scope>,
@@ -570,12 +597,39 @@ pub(crate) fn repository_for_checkout_with_timeout(
     root: &Path,
     timeout: Duration,
 ) -> Option<String> {
+    let remote = git_stdout_with_timeout(root, &["remote", "get-url", "origin"], timeout)?;
+    let remote = remote.trim().trim_end_matches(".git");
+    let path = remote
+        .rsplit_once(':')
+        .filter(|(prefix, _)| !prefix.contains('/'))
+        .map_or(remote, |(_, path)| path)
+        .trim_end_matches('/');
+    let mut parts = path.rsplit('/');
+    let repository = parts.next()?;
+    let owner = parts.next()?;
+    canonical_repository(format!("{owner}/{repository}")).ok()
+}
+
+/// The branch checked out at `root`, or `None` for a detached or unreadable
+/// HEAD. An unborn branch still resolves to its name.
+pub(crate) fn checkout_branch(root: &Path) -> Option<String> {
+    let branch = git_stdout_with_timeout(
+        root,
+        &["symbolic-ref", "--quiet", "--short", "HEAD"],
+        GIT_REMOTE_TIMEOUT,
+    )?;
+    canonical_branch(branch.trim()).ok()
+}
+
+fn git_stdout_with_timeout(root: &Path, args: &[&str], timeout: Duration) -> Option<String> {
     let deadline = Instant::now().checked_add(timeout)?;
     if timeout.is_zero() {
         return None;
     }
     let mut child = Command::new("git")
-        .args(["-C", root.to_str()?, "remote", "get-url", "origin"])
+        .arg("-C")
+        .arg(root.to_str()?)
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -598,17 +652,52 @@ pub(crate) fn repository_for_checkout_with_timeout(
     if !output.status.success() {
         return None;
     }
-    let remote = String::from_utf8(output.stdout).ok()?;
-    let remote = remote.trim().trim_end_matches(".git");
-    let path = remote
-        .rsplit_once(':')
-        .filter(|(prefix, _)| !prefix.contains('/'))
-        .map_or(remote, |(_, path)| path)
-        .trim_end_matches('/');
-    let mut parts = path.rsplit('/');
-    let repository = parts.next()?;
-    let owner = parts.next()?;
-    canonical_repository(format!("{owner}/{repository}")).ok()
+    String::from_utf8(output.stdout).ok()
+}
+
+/// Canonicalize a pull-request head branch name. This is a bounded subset of
+/// Git's ref-name rules, enough to compare names byte for byte.
+pub fn canonical_branch(value: &str) -> Result<String, CliError> {
+    let value = value.trim();
+    if value.is_empty()
+        || value.len() > 255
+        || value.starts_with(['-', '/', '.'])
+        || value.ends_with(['/', '.'])
+        || value.ends_with(".lock")
+        || value.contains("..")
+        || value.contains("//")
+        || value.contains("@{")
+        || value
+            .chars()
+            .any(|ch| ch.is_control() || ch.is_whitespace() || "~^:?*[\\".contains(ch))
+    {
+        return Err(invalid_scope(
+            "pull request head must be a valid branch name",
+        ));
+    }
+    Ok(value.to_string())
+}
+
+pub fn canonicalize_pull_request_targets(
+    mut targets: Vec<PullRequestTarget>,
+) -> Result<Vec<PullRequestTarget>, CliError> {
+    if targets.len() > 16 {
+        return Err(invalid_scope(
+            "operation targets exceed the pull request limit",
+        ));
+    }
+    for target in &mut targets {
+        if target.kind != PULL_REQUEST_HEAD_TARGET_KIND {
+            return Err(invalid_scope(
+                "pull request target kind must be pull-request-head",
+            ));
+        }
+        target.repository = canonical_repository(target.repository.clone())?;
+        target.head = canonical_branch(&target.head)?;
+    }
+    targets.sort();
+    reject_duplicates(&targets, "pull request target")?;
+    Ok(targets)
 }
 
 fn repository_root(path: &Path) -> Option<&Path> {

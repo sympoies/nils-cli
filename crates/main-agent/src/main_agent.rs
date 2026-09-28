@@ -25,8 +25,8 @@ use sha2::{Digest, Sha256};
 
 use agent_session::internal::cli::{self, AgentKind, CoordinationMode};
 use agent_session::internal::coordination::context::{
-    Scope, ScopeKind, WORK_CONTEXT_INPUT_VERSION, WorkContextInput, canonical_work_mode,
-    checkout_root,
+    ProviderRef, Scope, ScopeKind, WORK_CONTEXT_INPUT_VERSION, WorkContextInput,
+    canonical_work_mode, checkout_root,
 };
 use agent_session::internal::orchestration::{
     self, ACCOUNT_HANDOFF_RESERVATION_SCHEMA, ASSIGNMENT_INPUT_SCHEMA, ASSIGNMENT_SCHEMA,
@@ -805,6 +805,16 @@ struct AssignmentInput {
     scopes: Vec<String>,
     #[serde(default)]
     durable_refs: Vec<String>,
+    /// Issue references in the assignment repository that the worker may
+    /// comment on. Bootstrap copies them into the worker claim. Empty is
+    /// serialized away so older packets keep an identical digest.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    provider_refs: Vec<ProviderRef>,
+    /// The branch the Main Agent created for this worker's checkout. Bootstrap
+    /// grants pull-request operations for this head only while the worker
+    /// checkout is on it. Omitted when absent so older packets keep their digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    head_branch: Option<String>,
     /// Assignment ids in the same run that must be accepted before this
     /// assignment's worker may launch. Empty is serialized away so packets that
     /// omit it keep an identical request digest and stored-packet digest.
@@ -2925,6 +2935,7 @@ fn run_bootstrap(context: &CliContext, args: BootstrapArgs) -> Result<Value, Cli
         &args.idempotency_key,
         rebind_from.as_ref(),
         true,
+        packet.head_branch.as_deref(),
     ) {
         if rebind_from.is_none() && assignment.state == "starting" {
             record_preclaim_bootstrap_blocker(
@@ -13179,7 +13190,7 @@ fn assignment_worker_work_context_from_packet(
         // Claim acquisition derives the private checkout fingerprint from the
         // authenticated worker cwd instead.
         worktrees: Vec::new(),
-        provider_refs: Vec::new(),
+        provider_refs: packet.provider_refs.clone(),
         plan_refs: Vec::new(),
         scopes: packet
             .scopes
@@ -13228,13 +13239,21 @@ fn ensure_assignment_scopes_disjoint(
         Some(assignment_id) => format!("live assignment {assignment_id}"),
         None => "the Main Agent controller claim".to_string(),
     };
-    Err(CliError::data(
-        "assignment-scope-conflict",
-        format!(
+    let message = match first.get("provider_ref") {
+        Some(reference) => format!(
+            "assignment provider ref {}#{} is already claimed by {owner}; remove it before launch",
+            reference["repository"].as_str().unwrap_or_default(),
+            reference["number"],
+        ),
+        None => format!(
             "assignment scope {} overlaps {owner} scope {}; choose disjoint scopes before launch",
             first["scope"].as_str().unwrap_or_default(),
             first["conflicting_scope"].as_str().unwrap_or_default(),
         ),
+    };
+    Err(CliError::data(
+        "assignment-scope-conflict",
+        message,
         Some(json!({ "conflicts": conflicts })),
     ))
 }
@@ -13245,21 +13264,35 @@ fn assignment_scope_conflicts(
     registry: &orchestration::Registry,
     active_claims: &[agent_session::internal::coordination::claims::ActiveClaimContext],
 ) -> Vec<Value> {
-    let claim_scopes = |session_id: &str, incarnation: &str| {
+    let claims_of = |session_id: &str, incarnation: &str| {
         active_claims
             .iter()
-            .filter(|claim| {
+            .filter(move |claim| {
                 claim.session_id == session_id && claim.session_incarnation == incarnation
             })
-            .flat_map(|claim| claim.context.scopes.iter().cloned())
+            .map(|claim| &claim.context)
             .collect::<Vec<_>>()
     };
-    let mut owners: Vec<(Option<&str>, Vec<Scope>)> = controller
-        .map(|(session_id, incarnation)| (None, claim_scopes(session_id, incarnation)))
+    let mut owners: Vec<(Option<&str>, Vec<Scope>, Vec<ProviderRef>)> = controller
+        .map(|(session_id, incarnation)| {
+            let claims = claims_of(session_id, incarnation);
+            (
+                None,
+                claims
+                    .iter()
+                    .flat_map(|claim| claim.scopes.clone())
+                    .collect(),
+                claims
+                    .iter()
+                    .flat_map(|claim| claim.provider_refs.clone())
+                    .collect(),
+            )
+        })
         .into_iter()
         .collect();
     for assignment in registry.assignments.values() {
         let mut scopes = Vec::new();
+        let mut provider_refs = Vec::new();
         if SCOPE_RESERVING_ASSIGNMENT_STATES.contains(&assignment.state.as_str())
             && let Some(repository) = assignment.repository.as_ref()
         {
@@ -13274,19 +13307,24 @@ fn assignment_scope_conflicts(
             }));
         }
         if let Some(worker) = assignment.worker.as_ref() {
-            scopes.extend(claim_scopes(
-                &worker.session_id,
-                &worker.session_incarnation,
-            ));
+            for claim in claims_of(&worker.session_id, &worker.session_incarnation) {
+                scopes.extend(claim.scopes.iter().cloned());
+                provider_refs.extend(claim.provider_refs.iter().cloned());
+            }
         }
-        owners.push((Some(assignment.assignment_id.as_str()), scopes));
+        owners.push((
+            Some(assignment.assignment_id.as_str()),
+            scopes,
+            provider_refs,
+        ));
     }
-    let mut conflicts = std::collections::BTreeSet::new();
-    for (assignment_id, scopes) in &owners {
+    let mut scope_conflicts = std::collections::BTreeSet::new();
+    let mut provider_ref_conflicts = std::collections::BTreeSet::new();
+    for (assignment_id, scopes, provider_refs) in &owners {
         for scope in &candidate.scopes {
             for other in scopes {
                 if agent_session::internal::coordination::context::scopes_overlap(scope, other) {
-                    conflicts.insert((
+                    scope_conflicts.insert((
                         assignment_id.map(str::to_string),
                         scope.repository.clone(),
                         scope.value.clone(),
@@ -13295,22 +13333,50 @@ fn assignment_scope_conflicts(
                 }
             }
         }
-    }
-    conflicts
-        .into_iter()
-        .take(MAX_REPORTED_SCOPE_CONFLICTS)
-        .map(|(assignment_id, repository, scope, conflicting_scope)| {
-            let mut conflict = json!({
-                "owner": if assignment_id.is_some() { "assignment" } else { "controller" },
-                "repository": repository,
-                "scope": scope,
-                "conflicting_scope": conflicting_scope,
-            });
-            if let Some(assignment_id) = assignment_id {
-                conflict["assignment_id"] = json!(assignment_id);
+        for reference in &candidate.provider_refs {
+            if provider_refs.contains(reference) {
+                provider_ref_conflicts
+                    .insert((assignment_id.map(str::to_string), reference.clone()));
             }
-            conflict
+        }
+    }
+    let owned = |assignment_id: Option<String>, mut conflict: Value| {
+        conflict["owner"] = json!(if assignment_id.is_some() {
+            "assignment"
+        } else {
+            "controller"
+        });
+        if let Some(assignment_id) = assignment_id {
+            conflict["assignment_id"] = json!(assignment_id);
+        }
+        conflict
+    };
+    scope_conflicts
+        .into_iter()
+        .map(|(assignment_id, repository, scope, conflicting_scope)| {
+            owned(
+                assignment_id,
+                json!({
+                    "repository": repository,
+                    "scope": scope,
+                    "conflicting_scope": conflicting_scope,
+                }),
+            )
         })
+        .chain(
+            provider_ref_conflicts
+                .into_iter()
+                .map(|(assignment_id, reference)| {
+                    owned(
+                        assignment_id,
+                        json!({
+                            "repository": reference.repository.clone(),
+                            "provider_ref": reference,
+                        }),
+                    )
+                }),
+        )
+        .take(MAX_REPORTED_SCOPE_CONFLICTS)
         .collect()
 }
 
@@ -21951,6 +22017,7 @@ fn run_quick(context: &CliContext, args: QuickArgs) -> Result<Value, CliError> {
         &idempotency_key,
         None,
         false,
+        None,
     )?;
 
     let run_id = {
@@ -22176,6 +22243,7 @@ fn ensure_or_acquire_claim(
     idempotency_key: &str,
     rebind_from: Option<&SessionRef>,
     checkout_shell_grant: bool,
+    pull_request_head: Option<&str>,
 ) -> Result<(), CliError> {
     if checkout_shell_grant {
         match agent_session::internal::coordination::claims::main_agent_worker_claim_match(
@@ -22205,6 +22273,7 @@ fn ensure_or_acquire_claim(
             context,
             claim_args,
             rebind_from.map(|previous| previous.session_incarnation.as_str()),
+            pull_request_head,
         )
     } else {
         agent_session::internal::coordination::claims::claim(context, claim_args)
@@ -22636,6 +22705,56 @@ fn validate_objective_packet(packet: &ObjectivePacket) -> Result<(), CliError> {
     Ok(())
 }
 
+/// Maximum packet provider references; the work-context claim limit.
+const MAX_ASSIGNMENT_PROVIDER_REFS: usize = 16;
+
+/// A worker may be granted comments on issues in its own assignment
+/// repository only. Pull requests are covered by the worker's own head branch,
+/// and other repositories' records stay with the Main Agent.
+fn validate_assignment_provider_refs(input: &AssignmentInput) -> Result<(), CliError> {
+    if let Some(head_branch) = input.head_branch.as_deref() {
+        if input.repository.is_none() {
+            return Err(invalid_input(
+                "assignment head_branch requires a repository",
+            ));
+        }
+        agent_session::internal::coordination::context::canonical_branch(head_branch)
+            .map_err(|_| invalid_input("assignment head_branch must be a valid branch name"))?;
+    }
+    if input.provider_refs.is_empty() {
+        return Ok(());
+    }
+    if input.provider_refs.len() > MAX_ASSIGNMENT_PROVIDER_REFS {
+        return Err(invalid_input(&format!(
+            "assignment provider_refs exceeds {MAX_ASSIGNMENT_PROVIDER_REFS} entries"
+        )));
+    }
+    let repository = input
+        .repository
+        .as_deref()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .ok_or_else(|| invalid_input("assignment provider_refs requires a repository"))?;
+    let mut seen = std::collections::BTreeSet::new();
+    for reference in &input.provider_refs {
+        if reference.kind != "issue" {
+            return Err(invalid_input(
+                "assignment provider_refs kind must be \"issue\"",
+            ));
+        }
+        if reference.repository.trim().to_ascii_lowercase() != repository {
+            return Err(invalid_input(
+                "assignment provider_refs must name issues in the assignment repository",
+            ));
+        }
+        if reference.number == 0 || !seen.insert(reference.number) {
+            return Err(invalid_input(
+                "assignment provider_refs numbers must be positive and unique",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_assignment_input(input: &AssignmentInput) -> Result<(), CliError> {
     if input.schema_version != ASSIGNMENT_INPUT_SCHEMA {
         return Err(invalid_input(&format!(
@@ -22653,6 +22772,7 @@ fn validate_assignment_input(input: &AssignmentInput) -> Result<(), CliError> {
     for dependency in &input.depends_on {
         orchestration::validate_slug("assignment dependency id", dependency, 128)?;
     }
+    validate_assignment_provider_refs(input)?;
     if AgentKind::from_name(&input.launch.agent).is_none() {
         return Err(invalid_input("assignment launch agent is invalid"));
     }
@@ -26995,6 +27115,8 @@ mod tests {
             base_ref: None,
             scopes: Vec::new(),
             durable_refs: Vec::new(),
+            provider_refs: Vec::new(),
+            head_branch: None,
             depends_on: Vec::new(),
             provider_stop_canary: None,
         };
@@ -27034,6 +27156,8 @@ mod tests {
             base_ref: None,
             scopes: Vec::new(),
             durable_refs: Vec::new(),
+            provider_refs: Vec::new(),
+            head_branch: None,
             depends_on: Vec::new(),
             provider_stop_canary: Some(ProviderStopCanaryInput {
                 schema_version: "main-agent.provider-process-stop-canary.v1".to_string(),
