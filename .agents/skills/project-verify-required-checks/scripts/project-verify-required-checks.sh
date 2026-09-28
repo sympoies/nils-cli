@@ -62,6 +62,9 @@ Environment:
     --output-path target/coverage/lcov.info --fail-under-lines <N>`, then
     `cargo test --workspace --doc`. <N> is NILS_CLI_COVERAGE_FAIL_UNDER_LINES
     (default: 85). Requires cargo-nextest and cargo-llvm-cov.
+  NILS_CLI_SKIP_DOCTESTS=1
+    With the nextest or llvm-cov runner, skip `cargo test --workspace --doc`.
+    For a CI lane whose sibling lane already runs the doc tests.
 
 Exit codes:
   0  all checks passed
@@ -145,6 +148,14 @@ run() {
   fi
 }
 
+run_doc_tests() {
+  if [[ "${NILS_CLI_SKIP_DOCTESTS:-0}" == "1" ]]; then
+    echo "skip: cargo test --workspace --doc (NILS_CLI_SKIP_DOCTESTS=1)"
+    return 0
+  fi
+  run cargo test --workspace --doc
+}
+
 run bash scripts/ci/docs-placement-audit.sh --strict
 run bash scripts/ci/docs-hygiene-audit.sh --strict
 run bash scripts/ci/markdownlint-audit.sh --strict
@@ -184,7 +195,7 @@ run cargo fmt --all -- --check
 run cargo clippy --all-targets --all-features -- -D warnings
 if [[ "$test_runner" == "nextest" ]]; then
   run cargo nextest run --profile ci --workspace
-  run cargo test --workspace --doc
+  run_doc_tests
 elif [[ "$test_runner" == "llvm-cov" ]]; then
   # One instrumented run both gates the tests and measures coverage, so a
   # platform needs no second full test run for the coverage floor.
@@ -194,7 +205,7 @@ elif [[ "$test_runner" == "llvm-cov" ]]; then
   run cargo llvm-cov nextest --profile ci --workspace --no-fail-fast \
     --lcov --output-path target/coverage/lcov.info \
     --fail-under-lines "${NILS_CLI_COVERAGE_FAIL_UNDER_LINES:-85}"
-  run cargo test --workspace --doc
+  run_doc_tests
 else
   run cargo test --workspace
 fi
