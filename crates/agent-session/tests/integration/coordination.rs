@@ -32751,13 +32751,195 @@ fn main_agent_worker_extend_scope_admits_a_new_path_without_rebootstrap() {
     assert_eq!(updated["worktrees"], claim["worktrees"]);
     assert_eq!(updated["pull_request_head"], claim["pull_request_head"]);
 
-    let after = admit("worker-extend-admit-after", 2);
+    // A child-issue ref extends the claim's provider refs in place.
+    let with_ref = run_main_agent(
+        &main_checkout,
+        &[
+            "--state-dir",
+            &state,
+            "worker",
+            "extend-scope",
+            "assignment-delivery",
+            "--provider-ref",
+            "1838",
+            "--if-revision",
+            &(revision + 1).to_string(),
+            "--idempotency-key",
+            "worker-extend-ref-0001",
+            "--format",
+            "json",
+        ],
+        &[("AGENT_SESSION_CAPABILITY_FILE", &main_capability)],
+    );
+    assert_eq!(with_ref.code, 0, "{}", with_ref.stdout_text());
+    assert_eq!(data(&with_ref)["claim"]["revision"], 3);
+    let coordination: serde_json::Value = serde_json::from_slice(
+        &fs::read(state_dir.join("coordination/registry.json")).expect("coordination registry"),
+    )
+    .expect("coordination registry json");
+    let extended_claim = coordination["claims"]
+        .as_array()
+        .expect("claims")
+        .iter()
+        .find(|candidate| candidate["claim_id"] == claim_id.as_str())
+        .expect("same claim identity");
+    assert_eq!(
+        extended_claim["provider_refs"],
+        json!([
+            {"kind": "issue", "repository": "example/repository", "number": 1837},
+            {"kind": "issue", "repository": "example/repository", "number": 1838}
+        ])
+    );
+
+    let after = admit("worker-extend-admit-after", 3);
     assert_eq!(
         after.code,
         0,
         "stdout={} stderr={}",
         after.stdout_text(),
         after.stderr_text()
+    );
+
+    // Only the controller can extend; the worker's own capability is refused.
+    let current_revision = orchestration_registry(&state_dir)["assignments"]["assignment-delivery"]
+        ["revision"]
+        .as_u64()
+        .expect("assignment revision");
+    let by_worker = run_main_agent(
+        &worker_checkout,
+        &[
+            "--state-dir",
+            &state,
+            "worker",
+            "extend-scope",
+            "assignment-delivery",
+            "--scope",
+            "docs/worker-chosen",
+            "--if-revision",
+            &current_revision.to_string(),
+            "--idempotency-key",
+            "worker-extend-by-worker-0001",
+            "--format",
+            "json",
+        ],
+        &[("AGENT_SESSION_CAPABILITY_FILE", &worker_capability)],
+    );
+    assert_ne!(by_worker.code, 0, "{}", by_worker.stdout_text());
+    assert_eq!(
+        orchestration_registry(&state_dir)["assignments"]["assignment-delivery"]["revision"],
+        current_revision,
+        "a refused worker call changes nothing"
+    );
+
+    // The admitted edit is still active, so an extension waits for it to finish.
+    let during_operation = run_main_agent(
+        &main_checkout,
+        &[
+            "--state-dir",
+            &state,
+            "worker",
+            "extend-scope",
+            "assignment-delivery",
+            "--scope",
+            "docs/during-operation",
+            "--if-revision",
+            &current_revision.to_string(),
+            "--idempotency-key",
+            "worker-extend-during-operation-0001",
+            "--format",
+            "json",
+        ],
+        &[("AGENT_SESSION_CAPABILITY_FILE", &main_capability)],
+    );
+    assert_eq!(
+        during_operation.code,
+        65,
+        "{}",
+        during_operation.stdout_text()
+    );
+    assert_eq!(
+        during_operation.stdout_json()["error"]["code"],
+        "operation-in-progress"
+    );
+    assert_eq!(
+        orchestration_registry(&state_dir)["assignments"]["assignment-delivery"]["revision"],
+        current_revision,
+        "a refused extension leaves the assignment unchanged"
+    );
+}
+
+#[test]
+fn main_agent_packet_scopes_accept_a_trailing_slash_as_a_path_prefix() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state_dir = tmp.path().join("state");
+    let checkout = tmp.path().join("checkout");
+    fs::create_dir(&state_dir).expect("state");
+    init_checkout(&checkout, "https://example.invalid/example/repository.git");
+    seed_brokers_at(
+        &state_dir,
+        &[(
+            "main-one",
+            "main-incarnation-one",
+            "main-private-capability-material-0000000001",
+            checkout.as_path(),
+            Some("enforce"),
+        )],
+    );
+    let main_capability = init_main_run(tmp.path(), &state_dir, &checkout, "main-one", "run-one");
+    let (tmux_bin, tmux_log) = fake_tmux(tmp.path());
+    let codex_bin = fake_agent(tmp.path(), "codex-worker");
+    let codex_home = tmp.path().join("codex-home");
+    write_trusted_codex_config(&codex_home, &[&checkout]);
+    let state = state_dir.to_string_lossy().into_owned();
+    let tmux_arg = tmux_bin.to_string_lossy().into_owned();
+    let tmux_log_arg = tmux_log.to_string_lossy().into_owned();
+    let codex_arg = codex_bin.to_string_lossy().into_owned();
+    let codex_home_arg = codex_home.to_string_lossy().into_owned();
+    let start = |assignment_id: &str, scopes: &[&str]| {
+        let path = tmp.path().join(format!("{assignment_id}.json"));
+        write_private_json(
+            &path,
+            &overlap_assignment_packet(assignment_id, &checkout, scopes),
+        );
+        run_main_agent(
+            &checkout,
+            &[
+                "--state-dir",
+                &state,
+                "worker",
+                "start",
+                "--assignment-file",
+                path.to_str().expect("assignment path"),
+                "--await-ready",
+                "0",
+                "--idempotency-key",
+                &format!("start-{assignment_id}"),
+                "--format",
+                "json",
+            ],
+            &[
+                ("AGENT_SESSION_CAPABILITY_FILE", main_capability.as_str()),
+                ("AGENT_SESSION_TMUX_BIN", tmux_arg.as_str()),
+                ("AGENT_SESSION_CODEX_BIN", codex_arg.as_str()),
+                ("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log_arg.as_str()),
+                ("CODEX_HOME", codex_home_arg.as_str()),
+            ],
+        )
+    };
+    let slashed = start("assignment-slash", &["docs/slash-lane/"]);
+    assert_eq!(slashed.code, 0, "{}", slashed.stdout_text());
+    let child = start("assignment-slash-child", &["docs/slash-lane/sub"]);
+    assert_eq!(child.code, 65, "{}", child.stdout_text());
+    assert_eq!(
+        child.stdout_json()["error"]["details"]["conflicts"],
+        json!([{
+            "owner": "assignment",
+            "assignment_id": "assignment-slash",
+            "repository": "example/repository",
+            "scope": "docs/slash-lane/sub",
+            "conflicting_scope": "docs/slash-lane"
+        }]),
+        "a trailing slash is a path prefix in both claim derivation and overlap"
     );
 }
 

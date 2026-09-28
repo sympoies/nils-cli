@@ -646,7 +646,8 @@ assignment `--if-revision`, idempotent by key, and accepts a `working`,
 packet). At least one `--scope` or `--provider-ref` is required
 (`worker-extend-scope-empty`, usage). Each `--scope` adds a path prefix and each
 `--provider-ref` adds an issue number in the assignment repository; values
-already present are ignored. The extended packet is validated like a new one
+already present are ignored, and a request that adds nothing fails with
+`worker-extend-scope-unchanged`. The extended packet is validated like a new one
 (`invalid-orchestration-input` or `invalid-scope`) and compared with the
 controller claim and every other live assignment exactly as `worker start`
 does (`assignment-scope-conflict`). The command stores the extended packet as a
@@ -669,7 +670,12 @@ bootstrap derives the extended claim. The result
 `claim: {state: "updated", claim_id, revision} | {state: "absent"}`, and
 `notification: {state: "sent", message_id} | {state: "failed", code} |
 {state: "skipped", reason}` for the mailbox message that tells the worker its
-scope changed. A notification failure never undoes the extension.
+scope changed. A notification failure never undoes the extension. The
+idempotency receipt is committed with the assignment change and a `pending`
+notification, so a same-key retry after any later failure replays the result
+and completes the notification with its idempotent child mailbox key. Assignment
+mutation fences (runtime stop, claim revocation, re-entry, delete, and similar
+reservations) are re-checked under the orchestration lock before the commit.
 
 `worker wait` is read-only completion-awareness for the orchestrating Main
 Agent — the CLI counterpart to the operator console's sub-second SSE push. It is

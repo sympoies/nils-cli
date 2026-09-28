@@ -19494,7 +19494,15 @@ fn run_worker_extend_scope(
         "worker-extend-scope",
         &request_digest,
     )? {
-        return Ok(value);
+        drop(registry);
+        return finish_worker_extend_scope_notification(
+            context,
+            &record,
+            &incarnation,
+            &args.idempotency_key,
+            &request_digest,
+            value,
+        );
     }
     let assignment = registry
         .assignments
@@ -19548,6 +19556,13 @@ fn run_worker_extend_scope(
             });
         }
     }
+    if extended.scopes == packet.scopes && extended.provider_refs == packet.provider_refs {
+        return Err(CliError::data(
+            "worker-extend-scope-unchanged",
+            "every requested scope and provider ref is already assigned",
+            Some(json!({ "assignment_id": assignment.assignment_id })),
+        ));
+    }
     validate_assignment_input(&extended)?;
     let mut others = registry.clone();
     others.assignments.remove(&assignment.assignment_id);
@@ -19579,7 +19594,8 @@ fn run_worker_extend_scope(
         .map(|scope| packet_scope_value(scope).to_string())
         .collect::<Vec<_>>();
     let mut outcome = None;
-    let mut commit = || -> Result<(), CliError> {
+    let mut commit = |claim: &agent_session::internal::coordination::claims::WorkerClaimExtension|
+        -> Result<(), CliError> {
         let mut locked = orchestration::lock_registry(context)?;
         let run = require_current_main(&locked.registry, &record, &incarnation)?.clone();
         let current = locked
@@ -19590,6 +19606,7 @@ fn run_worker_extend_scope(
             .ok_or_else(|| not_found("assignment-not-found", "assignment was not found"))?;
         ensure_primary_manager(current, &record, &incarnation)?;
         ensure_revision(args.if_revision, current.revision, "assignment")?;
+        ensure_assignment_mutation_admitted(context, current, AssignmentMutationOwner::Ordinary)?;
         if current.private_packet_digest != assignment.private_packet_digest
             || current.state != assignment.state
             || current.worker != assignment.worker
@@ -19608,10 +19625,29 @@ fn run_worker_extend_scope(
         current.scopes = record_scopes.clone();
         current.revision = current.revision.saturating_add(1);
         current.updated_at = timestamp();
-        outcome = Some(public_assignment_view(current));
-        locked.save()
+        // The receipt commits with the assignment change, so a same-key retry
+        // after any later failure replays instead of hitting the revision
+        // fence; the pending notification is completed on replay.
+        let result = json!({
+            "schema_version": "main-agent.worker-extend-scope-result.v1",
+            "assignment": public_assignment_view(current),
+            "claim": worker_claim_extension_view(claim),
+            "notification": { "state": "pending" },
+        });
+        store_receipt(
+            &mut locked.registry,
+            &record,
+            &incarnation,
+            &args.idempotency_key,
+            "worker-extend-scope",
+            &request_digest,
+            result.clone(),
+        )?;
+        locked.save()?;
+        outcome = Some(result);
+        Ok(())
     };
-    let claim = match assignment.worker.as_ref() {
+    match assignment.worker.as_ref() {
         Some(worker) => {
             agent_session::internal::coordination::claims::extend_main_agent_worker_claim(
                 context,
@@ -19620,14 +19656,29 @@ fn run_worker_extend_scope(
                 &current_context,
                 &extended_context,
                 commit,
-            )?
+            )?;
         }
         None => {
-            commit()?;
-            agent_session::internal::coordination::claims::WorkerClaimExtension::NoActiveClaim
+            commit(
+                &agent_session::internal::coordination::claims::WorkerClaimExtension::NoActiveClaim,
+            )?;
         }
-    };
-    let claim = match claim {
+    }
+    let pending = outcome.ok_or_else(|| invalid_input("worker extend-scope did not commit"))?;
+    finish_worker_extend_scope_notification(
+        context,
+        &record,
+        &incarnation,
+        &args.idempotency_key,
+        &request_digest,
+        pending,
+    )
+}
+
+fn worker_claim_extension_view(
+    claim: &agent_session::internal::coordination::claims::WorkerClaimExtension,
+) -> Value {
+    match claim {
         agent_session::internal::coordination::claims::WorkerClaimExtension::Updated {
             claim_id,
             revision,
@@ -19635,30 +19686,40 @@ fn run_worker_extend_scope(
         agent_session::internal::coordination::claims::WorkerClaimExtension::NoActiveClaim => {
             json!({ "state": "absent" })
         }
-    };
-    let assignment_view =
-        outcome.ok_or_else(|| invalid_input("worker extend-scope did not commit"))?;
-    let notification = notify_worker_scope_extended(
+    }
+}
+
+/// Send the scope-change notification for a committed extension whose receipt
+/// is still pending, then record its outcome. The mailbox send is idempotent by
+/// a key derived from the command key, so a replay never sends twice.
+fn finish_worker_extend_scope_notification(
+    context: &CliContext,
+    record: &SessionRecord,
+    incarnation: &str,
+    idempotency_key: &str,
+    request_digest: &str,
+    mut result: Value,
+) -> Result<Value, CliError> {
+    if result["notification"]["state"] != "pending" {
+        return Ok(result);
+    }
+    result["notification"] = notify_worker_scope_extended(
         context,
-        &record,
-        &args.assignment_id,
-        &args.idempotency_key,
-        &assignment_view,
+        record,
+        result["assignment"]["assignment_id"]
+            .as_str()
+            .unwrap_or_default(),
+        idempotency_key,
+        &result["assignment"],
     );
-    let result = json!({
-        "schema_version": "main-agent.worker-extend-scope-result.v1",
-        "assignment": assignment_view,
-        "claim": claim,
-        "notification": notification,
-    });
     let mut locked = orchestration::lock_registry(context)?;
     store_receipt(
         &mut locked.registry,
-        &record,
-        &incarnation,
-        &args.idempotency_key,
+        record,
+        incarnation,
+        idempotency_key,
         "worker-extend-scope",
-        &request_digest,
+        request_digest,
         result.clone(),
     )?;
     locked.save()?;
