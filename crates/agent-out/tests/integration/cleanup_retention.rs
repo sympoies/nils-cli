@@ -433,10 +433,13 @@ fn symlinked_repo_directories_never_yield_project_run_deletes() {
     // A forged row that reaches the hidden run through the link is refused.
     let mut forged = item(&plan, "20200101-000000-real").clone();
     forged["name"] = Value::from("20200101-000000-hidden");
+    // Build from the plan's own out_root: on macOS it is the canonical
+    // /private/var form, and the forged row must stay lexically inside it so
+    // the symlink check (not the out-of-root check) is what refuses it.
+    let out_root = PathBuf::from(plan["result"]["out_root"].as_str().expect("out_root"));
     forged["path"] = Value::from(
-        fixture
-            .projects
-            .join("linked/20200101-000000-hidden")
+        out_root
+            .join("projects/linked/20200101-000000-hidden")
             .to_string_lossy()
             .to_string(),
     );
