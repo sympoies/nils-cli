@@ -164,6 +164,10 @@ impl Drop for LockedRegistry {
 }
 
 impl LockedRegistry {
+    fn into_registry(mut self) -> Registry {
+        std::mem::take(&mut self.registry)
+    }
+
     pub fn save(&mut self) -> Result<(), CliError> {
         if self.registry.schema_version.is_empty() {
             self.registry.schema_version = REGISTRY_VERSION.to_string();
@@ -3172,18 +3176,31 @@ fn store_unavailable() -> CliError {
 }
 
 pub(crate) fn public_summary(context: &CliContext, session_id: &str) -> CoordinationSummary {
+    public_summary_registry_snapshot(context)
+        .as_ref()
+        .map(|registry| public_summary_from_registry(context, registry, session_id))
+        .unwrap_or_default()
+}
+
+pub(crate) fn public_summary_registry_snapshot(context: &CliContext) -> Option<Registry> {
     let registry_path = context.state_dir.join("coordination").join(REGISTRY_FILE);
     if matches!(
         fs::symlink_metadata(&registry_path),
         Err(error) if error.kind() == io::ErrorKind::NotFound
     ) {
-        return CoordinationSummary::default();
+        return None;
     }
-    let Ok(locked) = lock_registry(context) else {
-        return CoordinationSummary::default();
-    };
-    let claim = locked
-        .registry
+    // Move the data out, then release the flock. A session list reuses this one
+    // snapshot across all rows and runs filesystem-backed checks outside it.
+    Some(lock_registry_observational(context).ok()?.into_registry())
+}
+
+pub(crate) fn public_summary_from_registry(
+    context: &CliContext,
+    registry: &Registry,
+    session_id: &str,
+) -> CoordinationSummary {
+    let claim = registry
         .claims
         .iter()
         .find(|claim| claim.session_id == session_id && claim.state == "active");
@@ -3191,8 +3208,7 @@ pub(crate) fn public_summary(context: &CliContext, session_id: &str) -> Coordina
         work_context_state: claim.map(|claim| claim.state.clone()),
         claim_id: claim.map(|claim| claim.claim_id.clone()),
         claim_expires_at: claim.map(|claim| claim.expires_at.clone()),
-        unread_message_count: locked
-            .registry
+        unread_message_count: registry
             .messages
             .iter()
             .filter(|message| {
@@ -3200,29 +3216,23 @@ pub(crate) fn public_summary(context: &CliContext, session_id: &str) -> Coordina
             })
             .count(),
         coordination_conflict_severity: claims::conflict_severity_for_session(
-            context,
-            &locked.registry,
-            session_id,
+            context, registry, session_id,
         ),
-        coordination_available: locked
-            .registry
-            .brokers
-            .get(session_id)
-            .is_some_and(|broker| {
-                broker.state == "ready"
-                    && broker::capability_available(
-                        context,
-                        session_id,
-                        &broker.incarnation,
-                        &broker.capability_digest,
-                    )
-                    && broker::heartbeat_fresh(
-                        context,
-                        session_id,
-                        &broker.incarnation,
-                        broker.heartbeat_epoch,
-                    )
-            }),
+        coordination_available: registry.brokers.get(session_id).is_some_and(|broker| {
+            broker.state == "ready"
+                && broker::capability_available(
+                    context,
+                    session_id,
+                    &broker.incarnation,
+                    &broker.capability_digest,
+                )
+                && broker::heartbeat_fresh(
+                    context,
+                    session_id,
+                    &broker.incarnation,
+                    broker.heartbeat_epoch,
+                )
+        }),
     }
 }
 
@@ -3377,6 +3387,50 @@ pub fn read_bounded_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_summary_does_not_maintain_the_registry() {
+        let temporary = tempfile::TempDir::new().expect("temporary state");
+        let state_dir = temporary.path().join("state");
+        let coordination = state_dir.join("coordination");
+        fs::create_dir_all(&coordination).expect("coordination directory");
+        let registry_path = coordination.join(REGISTRY_FILE);
+        let registry = json!({
+            "schema_version": REGISTRY_VERSION,
+            "notifications": {
+                "invalid": {
+                    "target_session_id": "",
+                    "target_incarnation": "incarnation",
+                    "generation": 1
+                }
+            }
+        });
+        let before = serde_json::to_vec_pretty(&registry).expect("registry bytes");
+        write_atomic(&registry_path, &before, SECRET_FILE_MODE).expect("registry fixture");
+        let context = CliContext {
+            state_dir,
+            host: None,
+        };
+
+        let summary = public_summary(&context, "missing");
+
+        assert!(!summary.coordination_available);
+        assert_eq!(summary.unread_message_count, 0);
+        assert_eq!(fs::read(registry_path).expect("registry remains"), before);
+
+        let snapshot = public_summary_registry_snapshot(&context).expect("registry snapshot");
+        assert_eq!(snapshot.notifications.len(), 1);
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(coordination.join(REGISTRY_LOCK))
+            .expect("registry lock");
+        // The snapshot must not retain the lock while row projections use it.
+        assert_eq!(
+            unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+            0
+        );
+    }
 
     #[test]
     fn recovery_version_skew_preserves_singular_and_adds_supported_versions() {
