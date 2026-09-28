@@ -328,12 +328,16 @@ The marker contains:
   rebuild an older projection from provider history before sending it across a
   title-provider boundary; operation receipts survive that rebuild;
 - monotonic `revision`;
-- immutable `origin`, set from the first eligible sanitized human prompt;
+- immutable `origin`, set from the first eligible sanitized human prompt, or
+  from a managed orchestration objective (see
+  [Managed orchestration objectives](#managed-orchestration-objectives), the
+  only case that replaces it);
 - `active_objective`, initially the origin and replaceable by an explicit
-  sanitized human objective pivot, or by the first substantive human prompt
-  after a greeting-only origin;
+  sanitized human objective pivot, by the first substantive human prompt
+  after a greeting-only origin, or by a managed orchestration objective;
 - a readable objective stored beside `origin` and `active_objective`. It is set
-  only from a sanitized human prompt, is capped at the public session-title
+  only from a sanitized human prompt or a managed orchestration objective's
+  sanitized summary, is capped at the public session-title
   bound, excludes image transport scaffolding and every image-reference marker
   wherever it appears rather than only a leading one, is
   absent when sanitization redacted any of its material, is never set from
@@ -348,6 +352,8 @@ The marker contains:
   `repo #N` for another repository. A nearby prose word does not qualify a
   bare `#N` as cross-repository; the compact form requires a repository-shaped
   token with punctuation, or an explicit GitHub issue or pull URL;
+- an optional opaque hash of the last managed orchestration objective folded
+  into memory (see [Managed orchestration objectives](#managed-orchestration-objectives));
 - `current_activity`, which assistant progress may update;
 - bounded `milestones`, `decisions`, `blockers`, and `journey` ledgers;
 - bounded source `segments` and the current incremental `cursor`;
@@ -379,6 +385,39 @@ provider identity fields. When readable human context is present, the provider
 projection excludes assistant-derived activity and ledgers so instructions in
 the human prompt cannot copy that private memory into a public title.
 Repeated rendering of the same memory revision MUST produce identical bytes.
+
+## Managed orchestration objectives
+
+A session in a [Main Agent run](main-agent-orchestration-v1.md) takes its
+objective from the orchestration registry, read at each memory refresh. The
+role is classified in the same order as the session orchestration projection:
+a session that controls any run is a Main session, and otherwise a session
+bound as an assignment's worker is a worker.
+
+- A Main session takes the `objective_summary` of its `active` run (the most
+  recently created one if it controls several). A closed, orphaned, or
+  recovery-needed run contributes nothing.
+- A managed worker's objective is its assignment `task_summary`. Every
+  user-role prompt of a worker is delivered by its controller, starting with
+  the generated bootstrap prompt, so once the worker is bound those prompts
+  update neither `origin`, `active_objective`, the objective context, work
+  references, nor the journey. The launch prompt is delivered before
+  `main-agent` binds the worker, so a refresh can reduce it first. The worker
+  pivot therefore also replaces `origin` and drops earlier `human_objective`
+  journey entries, and the bootstrap prompt stops reaching the title provider
+  as soon as the task is known.
+
+The objective is folded in as an objective pivot once per distinct
+role, owner (assignment or run id), and summary, recorded as the opaque
+`managed_objective` hash. The pivot sets `active_objective` (and, for a Main
+session, `origin` when absent), the objective context, and work references
+from the summary, appends a `human_objective` journey entry, and counts as a
+semantic change. The next retitle therefore re-evaluates the title even
+without new history. Because the pivot fires only when that identity changes,
+a later explicit human pivot in a Main session still wins until the session
+starts a different run. The orchestration writer has already bounded and
+validated the summary, and it is sanitized like any human objective before it
+enters memory. An unreadable registry is treated as no managed objective.
 
 ## Incremental history and discontinuity
 

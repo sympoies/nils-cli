@@ -97,6 +97,12 @@ Launch options also accept `title`, `session_id`, and `agent_args`. An omitted
 `session_id` is derived deterministically so an exact retry does not create a
 second worker.
 
+Keep the assignment `task_summary` short and specific: the serve daemon titles
+a worker from it, and the generated bootstrap prompt never becomes the worker's
+title or latest-prompt preview. The Main session's title follows the
+`objective_summary` of the active run it starts. See
+[Session Retitle v3](../specs/session-retitle-v3.md#managed-orchestration-objectives).
+
 ### Checkpoint packet
 
 Save as `checkpoint.json`:

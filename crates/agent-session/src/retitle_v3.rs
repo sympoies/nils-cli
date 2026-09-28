@@ -152,6 +152,11 @@ pub(crate) struct SemanticMemory {
     objective_context: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     work_references: Vec<String>,
+    /// Opaque hash of the last orchestration objective (worker task or active
+    /// run objective) folded into the active objective. A changed hash is a
+    /// managed objective pivot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    managed_objective: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     current_activity: Option<MemoryFact>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -187,6 +192,7 @@ impl Default for SemanticMemory {
             active_objective: None,
             objective_context: None,
             work_references: Vec::new(),
+            managed_objective: None,
             current_activity: None,
             milestones: Vec::new(),
             decisions: Vec::new(),
@@ -898,8 +904,17 @@ fn refresh_admitted_once(
         });
     }
     let previous_readiness = memory.readiness.clone();
-    let had_semantic_delta = !page.messages.is_empty();
-    reduce_messages(&mut memory, &page.messages);
+    let managed = crate::orchestration::managed_title_objective(context, &observed);
+    reduce_messages_with(
+        &mut memory,
+        &page.messages,
+        managed.as_ref().map(|objective| objective.role)
+            != Some(crate::orchestration::ManagedTitleRole::Worker),
+    );
+    let managed_pivot = managed
+        .as_ref()
+        .is_some_and(|objective| apply_managed_objective(&mut memory, objective));
+    let had_semantic_delta = !page.messages.is_empty() || managed_pivot;
     memory.cursor = Some(page.cursor);
     memory.last_delta_hash = Some(delta_hash);
     memory.readiness = if page.discontinuity {
@@ -1016,6 +1031,7 @@ fn reset_prior_semantic_projection(
     })?;
     memory.origin = None;
     memory.active_objective = None;
+    memory.managed_objective = None;
     memory.current_activity = None;
     memory.milestones.clear();
     memory.decisions.clear();
@@ -2073,9 +2089,31 @@ fn memory_commit_fence_matches(
         })
 }
 
+#[cfg(test)]
 fn reduce_messages(memory: &mut SemanticMemory, messages: &[HistoryMessage]) {
+    reduce_messages_with(memory, messages, true);
+}
+
+/// Folds history into semantic memory. When `prompts_set_objective` is false
+/// (a managed worker, whose user-role prompts are delivered by its controller),
+/// those prompts are consumed without touching the objective or the journey;
+/// the assignment task supplies the objective instead.
+fn reduce_messages_with(
+    memory: &mut SemanticMemory,
+    messages: &[HistoryMessage],
+    prompts_set_objective: bool,
+) {
     for message in messages {
         if memory.applied_message_ids.contains(&message.id) {
+            continue;
+        }
+        if !prompts_set_objective && message.human_prompt && message.role == "user" {
+            memory.last_turn_id = Some(message.id.clone());
+            push_bounded(
+                &mut memory.applied_message_ids,
+                message.id.clone(),
+                MAX_APPLIED_MESSAGE_IDS,
+            );
             continue;
         }
         let source_text = if message.human_prompt && message.role == "user" {
@@ -2159,6 +2197,65 @@ fn reduce_messages(memory: &mut SemanticMemory, messages: &[HistoryMessage]) {
             MAX_APPLIED_MESSAGE_IDS,
         );
     }
+}
+
+/// Folds an orchestration objective into memory as an objective pivot, once per
+/// distinct objective. Returns whether memory changed. A later human pivot in a
+/// Main session still wins until the orchestration objective itself changes.
+///
+/// A worker objective also replaces `origin` and drops earlier human-objective
+/// journey entries. A worker's prompts are all controller-delivered, but a
+/// refresh can run before the worker is bound to its assignment (the launch
+/// prompt is delivered first) or while the registry is unreadable; either way
+/// the bootstrap prompt must not survive in memory once the task is known.
+fn apply_managed_objective(
+    memory: &mut SemanticMemory,
+    objective: &crate::orchestration::ManagedTitleObjective,
+) -> bool {
+    let role = match objective.role {
+        crate::orchestration::ManagedTitleRole::Worker => "worker",
+        crate::orchestration::ManagedTitleRole::Main => "main",
+    };
+    let key = hash_value(&format!(
+        "managed-objective\0{role}\0{}\0{}",
+        objective.owner_id, objective.summary
+    ));
+    if memory.managed_objective.as_deref() == Some(key.as_str()) {
+        return false;
+    }
+    let Some(text) = sanitize_text(&objective.summary, MAX_TEXT_CHARS) else {
+        return false;
+    };
+    let projected = semantic_label("objective", &text, MAX_TEXT_CHARS);
+    let fact = MemoryFact {
+        turn_id: key.clone(),
+        text: projected.clone(),
+        display: objective_display(&objective.summary),
+    };
+    if objective.role == crate::orchestration::ManagedTitleRole::Worker {
+        memory.origin = Some(fact.clone());
+        memory
+            .journey
+            .retain(|entry| entry.kind != "human_objective");
+    } else if memory.origin.is_none() {
+        memory.origin = Some(fact.clone());
+    }
+    memory.active_objective = Some(fact);
+    memory.objective_context = objective_context(&objective.summary);
+    memory.work_references = extract_work_references(&strip_image_reference_markers(
+        &crate::retitle::filter_text(&objective.summary),
+    ));
+    push_bounded(
+        &mut memory.journey,
+        LedgerEntry {
+            kind: "human_objective".to_string(),
+            turn_id: key.clone(),
+            text: projected,
+        },
+        MAX_LEDGER_ENTRIES,
+    );
+    memory.managed_objective = Some(key);
+    true
 }
 
 fn explicit_objective_pivot(text: &str) -> bool {
@@ -6490,5 +6587,233 @@ mod tests {
             },
         });
         assert_ne!(one, two);
+    }
+
+    const MANAGED_LAUNCH_PROMPT: &str = "Main Agent Mode is explicitly active for this managed worker assignment. Run exactly `/opt/pkg/Cellar/nils-cli/1.29.0/bin/main-agent bootstrap --idempotency-key bootstrap-0123 --format json` now. Do not perform any other action before it succeeds; then follow the returned `worker_instructions` and private assignment.";
+
+    fn managed_session_ref(id: &str) -> serde_json::Value {
+        json!({
+            "session_id": id,
+            "session_incarnation": format!("launch-{id}"),
+            "session_created_at": "2026-09-09T00:00:00Z"
+        })
+    }
+
+    fn write_managed_registry(
+        context: &CliContext,
+        controller: &str,
+        run_state: &str,
+        objective: &str,
+        worker: Option<(&str, &str)>,
+    ) {
+        use std::os::unix::fs::PermissionsExt;
+        let digest = |fill: &str| format!("sha256:{}", fill.repeat(64));
+        let assignments = worker.map_or_else(
+            || json!({}),
+            |(worker, task)| {
+                json!({
+                    "assignment-one": {
+                        "schema_version": "agent-session.orchestration-assignment.v2",
+                        "assignment_id": "assignment-one",
+                        "run_id": "run-one",
+                        "revision": 3,
+                        "state": "working",
+                        "task_summary": task,
+                        "private_packet_digest": digest("b"),
+                        "primary_manager": managed_session_ref(controller),
+                        "worker": managed_session_ref(worker),
+                        "created_at": "2026-09-09T00:00:01Z",
+                        "updated_at": "2026-09-09T00:00:02Z"
+                    }
+                })
+            },
+        );
+        let registry = json!({
+            "schema_version": "agent-session.orchestration-registry.v2",
+            "runs": {
+                "run-one": {
+                    "schema_version": "agent-session.orchestration-run.v1",
+                    "run_id": "run-one",
+                    "revision": 2,
+                    "state": run_state,
+                    "tier": "L0",
+                    "objective_summary": objective,
+                    "objective_packet_digest": digest("a"),
+                    "controller": managed_session_ref(controller),
+                    "created_at": "2026-09-09T00:00:01Z",
+                    "updated_at": "2026-09-09T00:00:01Z"
+                }
+            },
+            "assignments": assignments,
+            "receipts": {}
+        });
+        let root = context.state_dir.join("orchestration");
+        fs::create_dir_all(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let path = root.join("registry.json");
+        fs::write(&path, serde_json::to_vec_pretty(&registry).unwrap()).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    #[test]
+    fn a_managed_worker_is_titled_from_its_task_not_its_launch_prompt() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "managed-worker";
+        let (context, catalog, _) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row("user", MANAGED_LAUNCH_PROMPT, "turn-one"),
+        );
+        write_managed_registry(
+            &context,
+            "managed-main",
+            "active",
+            "Deliver the program wave",
+            Some((id, "Project worker task summaries")),
+        );
+
+        let accepted = refresh_once(&context, &catalog, id, &request(id, 0, 0)).unwrap();
+        let memory = memory_from_record(&load_session_record(&context, id).unwrap()).unwrap();
+        let input = render_provider_input(&memory).unwrap();
+        assert!(input.contains("Project worker task summaries"), "{input}");
+        assert!(
+            !input.to_lowercase().contains("bootstrap"),
+            "the generated launch prompt must not reach title inference: {input}"
+        );
+
+        let terminal = complete_manual_locally(&context, &catalog, id, &accepted.operation_hash)
+            .unwrap()
+            .expect("a local title from the assignment task");
+        assert_eq!(
+            terminal.title.as_deref(),
+            Some("Project worker task summaries")
+        );
+    }
+
+    #[test]
+    fn a_main_session_title_follows_the_run_it_starts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "managed-main";
+        let (context, catalog, transcript) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row("user", "wait for the release to complete", "turn-one"),
+        );
+        let first = refresh_once(&context, &catalog, id, &request(id, 0, 0)).unwrap();
+        let first = complete_manual_locally(&context, &catalog, id, &first.operation_hash)
+            .unwrap()
+            .expect("first local title");
+        assert_eq!(
+            first.title.as_deref(),
+            Some("wait for the release to complete")
+        );
+
+        write_managed_registry(&context, id, "active", "Deliver the program wave", None);
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .unwrap()
+            .write_all(codex_row("user", "start the wave", "turn-two").as_bytes())
+            .unwrap();
+        let record = load_session_record(&context, id).unwrap();
+        let mut second = request(id, record.title_revision, memory_revision(&record));
+        second.idempotency_key = format!("request-{id}-run");
+        let second = refresh_once(&context, &catalog, id, &second).unwrap();
+        let second = complete_manual_locally(&context, &catalog, id, &second.operation_hash)
+            .unwrap()
+            .expect("a local title from the run objective");
+        assert_eq!(second.title.as_deref(), Some("Deliver the program wave"));
+
+        // The same run objective is folded in once: a later explicit human
+        // pivot wins, and further refreshes do not re-pivot to the run.
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .unwrap()
+            .write_all(codex_row("user", "switch to reviewing the docs", "turn-three").as_bytes())
+            .unwrap();
+        for (turn, key) in [("pivot", "human"), ("again", "steady")] {
+            let record = load_session_record(&context, id).unwrap();
+            let mut next = request(id, record.title_revision, memory_revision(&record));
+            next.idempotency_key = format!("request-{id}-{key}");
+            let accepted = refresh_once(&context, &catalog, id, &next).unwrap();
+            let terminal =
+                complete_manual_locally(&context, &catalog, id, &accepted.operation_hash)
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("a local title after the {turn} refresh"));
+            assert_eq!(
+                terminal.title.as_deref(),
+                Some("switch to reviewing the docs"),
+                "the {turn} refresh must keep the human pivot"
+            );
+        }
+    }
+
+    #[test]
+    fn a_worker_bound_after_its_launch_prompt_drops_the_prompt_from_memory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "late-bound-worker";
+        let (context, catalog, transcript) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row("user", MANAGED_LAUNCH_PROMPT, "turn-one"),
+        );
+        // The launch prompt is delivered before main-agent binds the worker.
+        write_managed_registry(&context, "managed-main", "active", "Deliver the wave", None);
+        refresh_once(&context, &catalog, id, &request(id, 0, 0)).unwrap();
+        let unbound = memory_from_record(&load_session_record(&context, id).unwrap()).unwrap();
+        assert!(
+            render_provider_input(&unbound)
+                .unwrap()
+                .to_lowercase()
+                .contains("bootstrap"),
+            "the fixture must reproduce an unbound worker reducing its launch prompt"
+        );
+
+        write_managed_registry(
+            &context,
+            "managed-main",
+            "active",
+            "Deliver the wave",
+            Some((id, "Project worker task summaries")),
+        );
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .unwrap()
+            .write_all(codex_row("assistant", "Bootstrap succeeded", "turn-one").as_bytes())
+            .unwrap();
+        let record = load_session_record(&context, id).unwrap();
+        let mut bound = request(id, record.title_revision, memory_revision(&record));
+        bound.idempotency_key = format!("request-{id}-bound");
+        refresh_once(&context, &catalog, id, &bound).unwrap();
+        let memory = memory_from_record(&load_session_record(&context, id).unwrap()).unwrap();
+        let input = render_provider_input(&memory).unwrap();
+        assert!(input.contains("Project worker task summaries"), "{input}");
+        assert!(
+            !input.to_lowercase().contains("bootstrap") && !input.contains("/opt/pkg"),
+            "binding the worker must drop its launch prompt from memory: {input}"
+        );
+    }
+
+    #[test]
+    fn a_closed_run_does_not_retitle_its_main_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "closed-main";
+        let (context, catalog, _) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row("user", "review the release notes", "turn-one"),
+        );
+        write_managed_registry(&context, id, "closed", "Deliver the program wave", None);
+        let accepted = refresh_once(&context, &catalog, id, &request(id, 0, 0)).unwrap();
+        let terminal = complete_manual_locally(&context, &catalog, id, &accepted.operation_hash)
+            .unwrap()
+            .expect("local title");
+        assert_eq!(terminal.title.as_deref(), Some("review the release notes"));
     }
 }
