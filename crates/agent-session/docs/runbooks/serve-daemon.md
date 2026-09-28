@@ -32,6 +32,14 @@ thereby grant a provider the machine-operator bearer. Prefer a private
 credential source connected to stdin. When no non-empty token is configured,
 authenticated endpoints fail closed.
 
+One serve owns a state root for its whole lifetime through an exclusive lock on
+`<state-dir>/serve.lock`, taken before any recovery, account fencing, endpoint
+publication, or background loop. A second serve on the same canonical root,
+including through a symlinked spelling, waits briefly for a restarting
+predecessor, then exits `69` with `serve-state-root-owned` and the holder's pid
+and bind address. Give a development or test serve its own `--state-dir` or
+`AGENT_SESSION_STATE_DIR`; separate roots run side by side.
+
 ## Authentication boundaries
 
 | Endpoint class | Authentication and exposure |
