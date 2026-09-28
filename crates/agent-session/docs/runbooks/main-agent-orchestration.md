@@ -229,7 +229,12 @@ therefore means the ownership plan is wrong, not that prompt transport failed.
 controller claim or a live assignment fails with `assignment-scope-conflict`
 naming the conflicting assignment and scope in `details.conflicts`, and no
 assignment, session, or provider process is created. Narrow the scopes, or
-wait for the conflicting assignment to finish, then start again.
+wait for the conflicting assignment to finish, then start again. Only owners
+that bootstrap could actually collide with count: the controller claim, an
+active unexpired worker claim, and an assignment whose launch is still in
+flight or whose worker session still exists. An assignment left `working`,
+`blocked`, or `submitted` by an abandoned run, whose worker session was deleted
+and whose claim is gone or expired, does not block.
 
 Fresh launch is preflighted before any durable assignment or provider side
 effect. `assignment-launch-cwd-unavailable` means `launch.cwd` does not resolve
@@ -1232,7 +1237,9 @@ main-agent worker extend-scope ASSIGNMENT_ID \
 ```
 
 The new scopes and issue refs are checked against the controller claim and
-every other live assignment (`assignment-scope-conflict`). The worker's live
+every other live assignment (`assignment-scope-conflict`), using the same
+live-owner set as `worker start`, so orphaned assignments do not block. The
+worker's live
 claim is updated in place, keeping its claim ID and grants, so the worker keeps
 working without a new session, worktree, or bootstrap. The worker receives a
 mailbox message; `notification.state` in the result reports whether it was
