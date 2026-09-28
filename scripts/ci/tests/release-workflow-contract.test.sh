@@ -110,8 +110,25 @@ assert_contains .github/workflows/ci.yml "key: llvm-cov" \
   "the instrumented macOS job caches its llvm-cov dependencies under their own key"
 assert_contains .github/workflows/ci.yml "NILS_CLI_TEST_RUNNER: llvm-cov" \
   "the macOS full lane runs the instrumented tests that enforce the coverage floor"
-assert_contains .github/workflows/ci.yml "needs: [changes, test_macos]" \
+assert_contains .github/workflows/ci.yml "needs: [changes, test_macos, test_containment]" \
   "coverage reports from the macOS instrumented run instead of repeating it"
+# test_containment is not a required check; only the coverage job's own guard
+# connects it to merge and the release gate, so assert inside that job.
+coverage_job="$(mktemp "${TMPDIR:-/tmp}/ci-coverage-job.XXXXXX")"
+trap 'rm -f "$coverage_job"' EXIT
+awk '/^  coverage:$/ {in_job = 1; print; next} in_job && /^  [a-z_]+:$/ {exit} in_job {print}' \
+  .github/workflows/ci.yml >"$coverage_job"
+assert_contains "$coverage_job" "if: \${{ !cancelled() }}" \
+  "coverage runs after a failed upstream lane so it reports failure instead of a passing skip"
+assert_contains "$coverage_job" "TEST_CONTAINMENT_RESULT: \${{ needs.test_containment.result }}" \
+  "coverage reads the parallel containment canaries' result"
+assert_contains "$coverage_job" "[ \"\${TEST_CONTAINMENT_RESULT}\" != \"success\" ]; then" \
+  "coverage fails closed unless the parallel containment canaries succeeded"
+assert_contains .github/workflows/ci.yml "NILS_CLI_SKIP_DOCTESTS: \"1\"" \
+  "the macOS lane leaves the workspace doc tests to the Linux lane"
+assert_contains .agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh \
+  "NILS_CLI_SKIP_DOCTESTS" \
+  "the required-checks runner honours the doc-test skip"
 assert_contains .github/workflows/ci.yml "test -s target/coverage/lcov.info" \
   "coverage fails closed when the instrumented run produced no LCOV"
 assert_contains .agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh \

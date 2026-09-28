@@ -228,6 +228,10 @@ Notes:
 - `nextest` mode runs `cargo nextest run --profile ci --workspace`.
 - Because doctests are not included in nextest, the entrypoint also runs
   `cargo test --workspace --doc` when `NILS_CLI_TEST_RUNNER=nextest`.
+- `NILS_CLI_SKIP_DOCTESTS=1` skips that doc run in both the `nextest` and
+  `llvm-cov` runner modes. CI sets it only on `test_macos` (llvm-cov runner),
+  because the Linux `test` job already runs the same doc tests. It does not
+  affect the trailing doc run of `--with-coverage`.
 
 ### 3.4 Full coverage flow (CI gate / explicit local parity)
 
@@ -236,6 +240,8 @@ release-quality verification (total line coverage must stay `>= 85.00%`).
 In CI, the `test_macos` job runs the workspace tests once under
 `NILS_CLI_TEST_RUNNER=llvm-cov`, which enforces the floor, and the `coverage`
 job publishes the summary from that run's LCOV artifact.
+The Linux cgroup containment and provider-stop canaries run in their own
+`test_containment` job beside `test`; `coverage` requires it to succeed.
 Normal local development does not need to run coverage before opening a PR:
 
 ```bash

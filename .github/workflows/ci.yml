@@ -183,6 +183,8 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
+          # test_containment restores this cache under the same shared key.
+          shared-key: linux-test
           # Only main saves. rust-cache stores dependencies, not workspace
           # crates, so a PR copy (~1 GB) adds nothing over main's and just
           # evicts the main caches every run restores.
@@ -204,6 +206,103 @@ jobs:
         with:
           tool: cargo-nextest
 
+      # Keep identical to the copy in the test_containment job.
+      - name: Provision systemd user scopes
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
+        run: |
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            # Ubuntu 24.04 denies capabilities inside unprivileged user namespaces
+            # by default; this ephemeral runner must exercise bubblewrap itself.
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          uid="$(id -u)"
+          sudo loginctl enable-linger "${USER}"
+          sudo systemctl start "user@${uid}.service"
+          echo "XDG_RUNTIME_DIR=/run/user/${uid}" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${uid}/bus" >> "$GITHUB_ENV"
+          test -S "/run/user/${uid}/systemd/private"
+
+      - name: Nils CLI checks (includes third-party-artifacts-audit, completion audits, docs-hygiene-audit, tempdir-leak-audit, test-stale-audit)
+        env:
+          NILS_CLI_TEST_RUNNER: nextest
+          # A skip here would mean a lane that builds every binary lost coverage
+          # silently; make it fatal instead. See `bin::sibling_or_skip`.
+          NILS_TEST_REQUIRE_SIBLING_BINS: "1"
+        run: |
+          if [ "${{ needs.changes.outputs.docs_only }}" = "true" ]; then
+            bash scripts/ci/nils-cli-checks-entrypoint.sh --docs-only
+          elif [ "${{ needs.changes.outputs.release_only }}" = "true" ]; then
+            policy_dir="${RUNNER_TEMP}/release-policy"
+            mkdir -p "${policy_dir}"
+            git show "${{ needs.changes.outputs.base_sha }}:scripts/ci/detect-release-only.sh" \
+              >"${policy_dir}/detect-release-only.sh"
+            git show "${{ needs.changes.outputs.base_sha }}:scripts/ci/release-only-checks.sh" \
+              >"${policy_dir}/release-only-checks.sh"
+            bash "${policy_dir}/release-only-checks.sh" \
+              --base "${{ needs.changes.outputs.base_sha }}" \
+              --head "${{ needs.changes.outputs.head_sha }}" \
+              --branch "${{ needs.changes.outputs.release_branch }}"
+          else
+            bash scripts/ci/nils-cli-checks-entrypoint.sh --xvfb
+          fi
+
+      - name: Full validation marker
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
+        run: true
+
+      - name: Publish JUnit report
+        if: always() && hashFiles('target/nextest/ci/junit.xml') != ''
+        uses: mikepenz/action-junit-report@v6
+        with:
+          token: ${{ github.token }}
+          check_name: JUnit Test Report
+          report_paths: target/nextest/ci/junit.xml
+          detailed_summary: true
+          group_suite: true
+          include_passed: true
+          flaky_summary: true
+
+      - name: Upload JUnit XML
+        if: always() && hashFiles('target/nextest/ci/junit.xml') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-nextest
+          path: target/nextest/ci/junit.xml
+
+  # The cgroup containment and provider-stop canaries need a systemd user
+  # scope and compile their own agent-session targets (~5.5 min). They run
+  # beside `test` instead of in front of it. `coverage` requires this job, so a
+  # failure here still blocks merge and the release gate.
+  test_containment:
+    needs: changes
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Restore the `test` job's main cache; only that job saves it.
+          shared-key: linux-test
+          save-if: false
+
+      - name: Set up Node.js
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Install zsh + xvfb + ripgrep + tmux + bubblewrap
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
+        run: sudo apt-get update && sudo apt-get install -y zsh xvfb xauth ripgrep tmux bubblewrap
+
+      # Keep identical to the copy in the test job.
       - name: Provision systemd user scopes
         if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
         run: |
@@ -257,52 +356,6 @@ jobs:
               tests::provider_stop_canary_never_signals_an_injected_same_uid_cgroup_member \
               -- --exact --nocapture
 
-      - name: Nils CLI checks (includes third-party-artifacts-audit, completion audits, docs-hygiene-audit, tempdir-leak-audit, test-stale-audit)
-        env:
-          NILS_CLI_TEST_RUNNER: nextest
-          # A skip here would mean a lane that builds every binary lost coverage
-          # silently; make it fatal instead. See `bin::sibling_or_skip`.
-          NILS_TEST_REQUIRE_SIBLING_BINS: "1"
-        run: |
-          if [ "${{ needs.changes.outputs.docs_only }}" = "true" ]; then
-            bash scripts/ci/nils-cli-checks-entrypoint.sh --docs-only
-          elif [ "${{ needs.changes.outputs.release_only }}" = "true" ]; then
-            policy_dir="${RUNNER_TEMP}/release-policy"
-            mkdir -p "${policy_dir}"
-            git show "${{ needs.changes.outputs.base_sha }}:scripts/ci/detect-release-only.sh" \
-              >"${policy_dir}/detect-release-only.sh"
-            git show "${{ needs.changes.outputs.base_sha }}:scripts/ci/release-only-checks.sh" \
-              >"${policy_dir}/release-only-checks.sh"
-            bash "${policy_dir}/release-only-checks.sh" \
-              --base "${{ needs.changes.outputs.base_sha }}" \
-              --head "${{ needs.changes.outputs.head_sha }}" \
-              --branch "${{ needs.changes.outputs.release_branch }}"
-          else
-            bash scripts/ci/nils-cli-checks-entrypoint.sh --xvfb
-          fi
-
-      - name: Full validation marker
-        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
-        run: true
-
-      - name: Publish JUnit report
-        if: always() && hashFiles('target/nextest/ci/junit.xml') != ''
-        uses: mikepenz/action-junit-report@v6
-        with:
-          token: ${{ github.token }}
-          check_name: JUnit Test Report
-          report_paths: target/nextest/ci/junit.xml
-          detailed_summary: true
-          group_suite: true
-          include_passed: true
-          flaky_summary: true
-
-      - name: Upload JUnit XML
-        if: always() && hashFiles('target/nextest/ci/junit.xml') != ''
-        uses: actions/upload-artifact@v7
-        with:
-          name: junit-nextest
-          path: target/nextest/ci/junit.xml
 
   test_macos:
     needs: changes
@@ -366,6 +419,10 @@ jobs:
         env:
           NILS_CLI_TEST_RUNNER: llvm-cov
           NILS_CLI_COVERAGE_FAIL_UNDER_LINES: "85"
+          # The Linux lane runs the workspace doc tests. Here they cost ~85 s,
+          # because llvm-cov builds into its own target directory and the doc
+          # run rebuilds the workspace un-instrumented.
+          NILS_CLI_SKIP_DOCTESTS: "1"
           # A skip here would mean a lane that builds every binary lost coverage
           # silently; make it fatal instead. See `bin::sibling_or_skip`.
           NILS_TEST_REQUIRE_SIBLING_BINS: "1"
@@ -440,13 +497,30 @@ jobs:
   # job keeps the required `coverage` check by proving that run produced its
   # LCOV report and by publishing the summary. It needs no macOS runner.
   coverage:
-    needs: [changes, test_macos]
+    needs: [changes, test_macos, test_containment]
+    # A job skipped because a needed job failed concludes `skipped`, which a
+    # required check accepts. Run anyway and fail below instead, because
+    # test_containment is not itself a required check.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       actions: read
       contents: read
       pull-requests: write
     steps:
+      - name: Require the upstream lanes
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          TEST_MACOS_RESULT: ${{ needs.test_macos.result }}
+          TEST_CONTAINMENT_RESULT: ${{ needs.test_containment.result }}
+        run: |
+          if [ "${CHANGES_RESULT}" != "success" ] || \
+             [ "${TEST_MACOS_RESULT}" != "success" ] || \
+             [ "${TEST_CONTAINMENT_RESULT}" != "success" ]; then
+            echo "error: changes=${CHANGES_RESULT} test_macos=${TEST_MACOS_RESULT} test_containment=${TEST_CONTAINMENT_RESULT}; coverage requires all three to succeed" >&2
+            exit 1
+          fi
+
       # Docs-only and proven release-only change sets skip coverage work at the
       # step level so the required `coverage` job still concludes `success`.
       - name: Checkout
