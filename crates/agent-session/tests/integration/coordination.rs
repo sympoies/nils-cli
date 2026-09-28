@@ -32928,6 +32928,11 @@ fn main_agent_packet_scopes_accept_a_trailing_slash_as_a_path_prefix() {
     };
     let slashed = start("assignment-slash", &["docs/slash-lane/"]);
     assert_eq!(slashed.code, 0, "{}", slashed.stdout_text());
+    assert_eq!(
+        orchestration_registry(&state_dir)["assignments"]["assignment-slash"]["scopes"],
+        json!(["docs/slash-lane"]),
+        "the assignment record stores the normalized scope"
+    );
     let child = start("assignment-slash-child", &["docs/slash-lane/sub"]);
     assert_eq!(child.code, 65, "{}", child.stdout_text());
     assert_eq!(

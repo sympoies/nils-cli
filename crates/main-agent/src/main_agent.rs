@@ -3752,7 +3752,11 @@ fn run_worker_start_single_input(
             repository: input.repository.clone(),
             worktree: input.worktree.clone(),
             base_ref: input.base_ref.clone(),
-            scopes: input.scopes.clone(),
+            scopes: input
+                .scopes
+                .iter()
+                .map(|scope| packet_scope_value(scope).to_string())
+                .collect(),
             durable_refs: input.durable_refs.clone(),
             depends_on: input.depends_on.clone(),
             checkpoint: None,
