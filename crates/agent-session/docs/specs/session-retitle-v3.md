@@ -59,6 +59,9 @@ provider or history source is degraded.
 - `reason_code`: a stable content-free code;
 - `next_action`: a stable operator/client action.
 
+These five keys are the complete allowlist; machine readiness MUST NOT emit
+any other key.
+
 Machine readiness MUST describe v3 execution/provider availability only. It
 MUST NOT claim a session memory revision, usable memory, pending operation, or
 history freshness. Clients obtain those facts from the session route.
@@ -91,6 +94,13 @@ plus:
 - `pending_operation`, indicating a durable non-terminal operation;
 - optional opaque SHA-256 `cursor_fence_hash`, computed from the complete
   durable cursor rather than exposing its segment, source, or byte offset.
+
+`schema_version`, `capability`, and the fields above are the complete
+allowlist; session readiness MUST NOT emit any other key. Only
+`cursor_fence_hash` is optional, and it is present once memory holds a durable
+cursor. Values are drawn from the stable vocabulary in the table below and
+carry no transcript content, credential, provider identity, or private path.
+Both readiness allowlists are pinned by `tests/retitle_readiness_contract.rs`.
 
 `context_status` is the bounded freshness projection. `cursor_fence_hash`
 allows a client to distinguish progress without learning a provider session
