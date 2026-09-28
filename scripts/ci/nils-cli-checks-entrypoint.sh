@@ -183,7 +183,9 @@ if ! cargo llvm-cov --version >/dev/null 2>&1; then
   exit 2
 fi
 
-# Keep this floor aligned with the `coverage` job in .github/workflows/ci.yml.
+# Keep this floor aligned with CI: NILS_CLI_COVERAGE_FAIL_UNDER_LINES on the
+# `test_macos` "Nils CLI checks" step in .github/workflows/ci.yml, and the
+# llvm-cov runner default in project-verify-required-checks.sh.
 coverage_fail_under="${NILS_CLI_COVERAGE_FAIL_UNDER_LINES:-85}"
 
 run mkdir -p target/coverage

@@ -92,6 +92,8 @@ assert_contains .github/workflows/ci.yml "test -s target/coverage/lcov.info" \
 assert_contains .agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh \
   "--fail-under-lines \"\${NILS_CLI_COVERAGE_FAIL_UNDER_LINES:-85}\"" \
   "the llvm-cov runner enforces the 85% coverage floor"
+assert_contains .github/workflows/ci.yml "NILS_CLI_COVERAGE_FAIL_UNDER_LINES: \"85\"" \
+  "CI pins the 85% coverage floor on the instrumented macOS run"
 assert_contains .github/workflows/ci.yml "release_only:" \
   "CI publishes the release-only decision"
 assert_contains .github/workflows/ci.yml "scripts/ci/detect-release-only.sh" \
