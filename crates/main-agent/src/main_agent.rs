@@ -48,6 +48,8 @@ use agent_session::internal::{
     session_status,
 };
 
+mod orphaned_runs;
+
 const BINARY: &str = "main-agent";
 const IDEMPOTENCY_KEY_HELP: &str = "Retry an ambiguous outcome with the same idempotency key and the same logical request; use a new key for a changed request.";
 const ASSIGNMENT_REVISION_HELP: &str =
@@ -126,6 +128,9 @@ enum MainAgentCommand {
     /// Print an example objective packet (schema, required fields, and the
     /// nested work-context) that `init --packet-file` accepts.
     PacketSchema(PacketSchemaArgs),
+    /// Operator maintenance of durable runs in this state directory: list and
+    /// close orphaned runs whose controller and workers are all gone.
+    Runs(orphaned_runs::RunsArgs),
     /// Print shell completion script.
     Completion(CompletionArgs),
 }
@@ -999,6 +1004,7 @@ fn run_command(context: &CliContext, command: &MainAgentCommand) -> Result<Value
         MainAgentCommand::Closeout(args) => run_closeout(context, args.clone()),
         MainAgentCommand::Quick(args) => run_quick(context, args.clone()),
         MainAgentCommand::PacketSchema(_) => Ok(objective_packet_schema_example()),
+        MainAgentCommand::Runs(args) => orphaned_runs::run_runs(context, args),
         MainAgentCommand::Completion(_) => unreachable!(),
     }
 }
@@ -13367,6 +13373,19 @@ fn worker_session_may_exist(context: &CliContext, session_id: &str) -> bool {
         .unwrap_or(true)
 }
 
+/// The live-owner rule for an assignment's worker: it may still be live while
+/// no worker is bound yet (launch in flight), its worker holds an active
+/// unexpired claim, or its worker session may still exist. Only a bound worker
+/// with no active claim and a definitely deleted session is gone. The overlap
+/// check and orphaned-run cleanup share this rule so they cannot disagree.
+fn assignment_worker_may_be_live(
+    worker: Option<&SessionRef>,
+    worker_holds_active_claim: bool,
+    worker_session_may_exist: impl Fn(&SessionRef) -> bool,
+) -> bool {
+    worker.is_none_or(|worker| worker_holds_active_claim || worker_session_may_exist(worker))
+}
+
 /// Collect the owners a fresh worker claim could actually conflict with at
 /// bootstrap: the controller claim, every active unexpired worker claim bound
 /// to an assignment, and the declared scopes of a scope-reserving assignment
@@ -13417,10 +13436,11 @@ fn assignment_scope_conflicts(
             .unwrap_or_default();
         if SCOPE_RESERVING_ASSIGNMENT_STATES.contains(&assignment.state.as_str())
             && let Some(repository) = assignment.repository.as_ref()
-            && assignment
-                .worker
-                .as_ref()
-                .is_none_or(|worker| !worker_claims.is_empty() || worker_session_may_exist(worker))
+            && assignment_worker_may_be_live(
+                assignment.worker.as_ref(),
+                !worker_claims.is_empty(),
+                &worker_session_may_exist,
+            )
         {
             scopes.extend(assignment.scopes.iter().filter_map(|value| {
                 agent_session::internal::coordination::context::canonicalize_targets(vec![Scope {
@@ -23751,6 +23771,7 @@ fn command_name(command: &MainAgentCommand) -> &'static str {
         MainAgentCommand::Closeout(_) => "closeout",
         MainAgentCommand::Quick(_) => "quick",
         MainAgentCommand::PacketSchema(_) => "packet-schema",
+        MainAgentCommand::Runs(args) => orphaned_runs::command_name(args),
         MainAgentCommand::Completion(_) => "completion",
     }
 }
@@ -23810,6 +23831,7 @@ fn command_output_format(command: &MainAgentCommand) -> OutputFormat {
         MainAgentCommand::Closeout(args) => args.format,
         MainAgentCommand::Quick(args) => args.format,
         MainAgentCommand::PacketSchema(args) => args.format,
+        MainAgentCommand::Runs(args) => orphaned_runs::output_format(args),
         MainAgentCommand::Completion(_) => OutputFormat::Text,
     }
 }

@@ -1684,6 +1684,61 @@ the same request can resume after the identity is repaired. Collaborators,
 borrowed sessions, handed-off workers, and assignments from other runs remain
 outside the inherited plan and are never archived by this route.
 
+### Operator orphaned-run close
+
+`main-agent runs orphaned` and `main-agent runs close-orphaned` let the local
+operator terminalize runs whose controller can no longer authenticate. They
+require no session capability: the operator is authorized by ownership of the
+state directory. Both observe active claims before reading the registry, and
+`--apply` evaluates under the exclusive registry lock.
+
+An `active` run is a candidate only when its controller session directory is
+definitely absent. A candidate is orphaned when all of these hold:
+
+- no active unexpired claim is held by the controller session, in any
+  incarnation;
+- every assignment of the run fails the live-owner rule used by the pre-launch
+  overlap check: a bound worker is live while it holds an active unexpired
+  claim (any incarnation) or its session directory may exist, and a
+  non-terminal assignment with no bound worker is a launch in flight;
+- no assignment has a submit recovery in flight, a worker quarantine, or any
+  operation fence that ordinary assignment mutation refuses, including an
+  unreadable fence;
+- no receipt owned by the controller or a bound worker records an operation
+  still in progress;
+- its most recent run or assignment `updated_at` is at least `--older-than`
+  old. An unparseable run or assignment time never ages in, whatever the
+  bound, including `--older-than 0`.
+
+`main-agent.orphaned-runs.v1` reports `active_runs`, `controller_live_runs`,
+`plan_digest`, the orphaned runs, and the refused candidates. Each refused run
+carries the first blocker `code` and every blocker:
+`orphaned-run-controller-claim-active`, `orphaned-run-worker-live` (with
+`reason` `worker-claim-active`, `worker-session-present`, or
+`worker-launch-pending`), `orphaned-run-operation-pending` (with the fence code
+or receipt operation), and `orphaned-run-too-recent` (with `reason`
+`activity-time-unparseable` when an activity time cannot be parsed).
+
+`close-orphaned` requires `--older-than` and returns
+`main-agent.close-orphaned-runs.v1` with `mode` `dry-run` or `apply`. The dry
+run is the default and changes nothing. Each planned run lists
+`from_revision`, `to_revision`, `to_state: closed`, `reason: orphaned`, and each
+non-terminal assignment's `from_state`, `to_state`, revisions, and
+`reason: orphaned-run`. `accepted` becomes `released`; every other non-terminal
+state becomes `cancelled` with a bounded blocker summary. Terminal
+assignments are not changed.
+
+`plan_digest` is a SHA-256 digest over each planned run's ID and revision and
+each planned assignment's ID, revision, and state. `--apply` requires
+`--if-plan-digest` and `--idempotency-key`; it re-evaluates under the lock and
+fails with `orphaned-run-plan-conflict` and `current_plan_digest` when the plan
+differs. A committed apply stores its result as a receipt for the
+`local-operator` principal; an identical replay returns it unchanged, and a
+different request under the same key fails with `idempotency-conflict`. The
+commands change registry records only. They never delete sessions, worktrees,
+packets, or claims; the stored apply receipt follows the normal bounded
+receipt retention.
+
 ## Recovery and failure semantics
 
 Revision conflict returns `orchestration-revision-conflict` with
