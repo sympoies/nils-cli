@@ -33,7 +33,8 @@ jobs:
       contents: read
     strategy:
       fail-fast: false
-      # Keep this matrix and the build command in step with release.yml.
+      # Keep this matrix, the toolchain step, and the build command in step
+      # with release.yml; release-workflow-contract.test.sh enforces it.
       matrix:
         include:
           - runs_on: ubuntu-latest
