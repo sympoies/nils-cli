@@ -7673,13 +7673,13 @@ fn main_agent_rebind_serializes_direct_claim_mutations_through_rollback() {
 
 /// An admitted lease whose PostToolUse never arrived reaches its safety TTL
 /// and fails closed to `completing`. Without its execution token nothing made
-/// it terminal, so every later admission by the same session was refused
-/// forever (sympoies/nils-cli#1881). Once the TTL has expired and the
-/// controller proves the lease's own turn superseded with no live descendant,
-/// the session's next admission reclaims it; before either proof it still
-/// refuses.
+/// it terminal, so every later admission and every wake of the same session
+/// was refused forever (sympoies/nils-cli#1881). Once the TTL has expired and
+/// the controller proves the lease's own turn superseded with no live
+/// descendant under an unchanged runtime, registry maintenance reclaims it;
+/// before any of those proofs admission still refuses.
 #[test]
-fn work_context_admit_reclaims_only_an_expired_superseded_lease() {
+fn expired_superseded_lease_is_reclaimed_only_with_inactivity_proof() {
     let (tmp, state_dir, checkout, capability_file) = init_main_with_closed_historical_run();
     let set_turn = |turn: &str| {
         seed_activity_state(
@@ -7857,9 +7857,45 @@ fn work_context_admit_reclaims_only_an_expired_superseded_lease() {
     );
     assert_ne!(lease_state()["state"], "abandoned");
 
-    // Expired and superseded: the next admission reclaims it and proceeds.
-    set_turn("turn-after-orphaned-lease");
+    // Expired and superseded by an idle composer: ordinary registry
+    // maintenance reclaims it without any admission, so an idle worker that
+    // will never mutate again is not blocked from its next wake.
+    seed_activity_state(
+        &state_dir,
+        "main-one",
+        "main-incarnation-one",
+        "waiting",
+        serde_json::Value::Null,
+        json!({
+            "provider_turn_id": "turn-orphaned-lease",
+            "started_at": "2030-01-01T00:00:01Z",
+            "completed_at": "2030-01-01T00:00:02Z",
+            "outcome": "completed"
+        }),
+    );
     expire();
+    let shown = run(
+        &checkout,
+        &[
+            "--state-dir",
+            state_arg.as_str(),
+            "work-context",
+            "show",
+            "--session",
+            "main-one",
+            "--capability-file",
+            capability_file.as_str(),
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(shown.code, 0, "{}", shown.stdout_text());
+    let abandoned = lease_state();
+    assert_eq!(abandoned["state"], "abandoned");
+    assert_eq!(abandoned["outcome"], "ttl-expired-inactive");
+
+    // The session's next admission then proceeds.
+    set_turn("turn-after-orphaned-lease");
     let reclaimed = admit("reclaimed-execution-token", "admit-reclaimed-0001");
     assert_eq!(
         reclaimed.code,
@@ -7868,9 +7904,6 @@ fn work_context_admit_reclaims_only_an_expired_superseded_lease() {
         reclaimed.stdout_text(),
         reclaimed.stderr_text()
     );
-    let abandoned = lease_state();
-    assert_eq!(abandoned["state"], "abandoned");
-    assert_eq!(abandoned["outcome"], "ttl-expired-inactive");
     assert_ne!(data(&reclaimed)["lease_id"], orphaned_lease.as_str());
     assert_eq!(data(&reclaimed)["state"], "active");
 }
@@ -33179,6 +33212,17 @@ fn main_agent_supervise_routes_an_orphaned_worker_lease_to_worker_owned_recovery
     assert_eq!(action["operation"]["revision"], 2);
     assert_eq!(action["operation"]["state"], "completing");
     assert_eq!(action["operation"]["safety_ttl_expired"], true);
+    assert_eq!(
+        action["operation"]["safety_ttl_expires_at_epoch"],
+        978_309_000_i64
+    );
+    assert_eq!(
+        action["automatic_recovery"],
+        json!([
+            "worker-coordination-guard-next-managed-mutation",
+            "coordination-maintenance-after-safety-ttl"
+        ])
+    );
     assert_eq!(
         action["argv_template"],
         json!([

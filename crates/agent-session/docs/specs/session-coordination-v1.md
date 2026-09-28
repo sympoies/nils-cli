@@ -592,18 +592,19 @@ States are `active`, `completing`, `reconcile_pending`, `completed`, `failed`, a
 - Uncertain heartbeat or proof blocks later owner operations and competing
   admission until validated recovery; it does not silently expire an active
   mutation.
-- An expired lease is reclaimable by its own session. Registry maintenance
-  keeps a lease `active` while its own turn is working or its exact descendant
-  is live, so a lease that reaches the safety TTL showed no liveness for the
-  whole TTL. When the same authenticated session incarnation next calls
-  `admit`, each of its `completing` or `reconcile_pending` leases whose TTL has
-  expired is first drained of any persisted completion event, whose outcome
-  wins. A remaining one is changed to `abandoned` with outcome
-  `ttl-expired-inactive` only when the unchanged exact persisted runtime still
-  runs and controller-owned evidence shows the lease's own turn superseded with
-  no live descendant; admission then proceeds. Otherwise admission still fails
-  with `coordination-unavailable`. Reclaim needs no execution token, never
-  touches another session or incarnation, and never changes the bound claim.
+- An expired lease is reclaimable. Registry maintenance renews a lease while
+  its own turn is working or its exact descendant is live and the broker
+  heartbeat is fresh, so a lease that reaches the safety TTL produced no
+  renewal evidence for the whole TTL. Full registry maintenance, the
+  counterpart of that renewal, first drains any persisted completion event of
+  an expired nonterminal lease, whose outcome wins. It changes a remaining one
+  to `abandoned` with outcome `ttl-expired-inactive` only when the lease
+  belongs to its session's current incarnation, the unchanged exact persisted
+  runtime still runs, and controller-owned evidence shows the lease's own turn
+  superseded with no live descendant. Until then, admission fails with
+  `coordination-unavailable` and notifications stay fenced. Reclaim needs no
+  execution token and never changes the bound claim, so an idle worker whose
+  lost lease blocked its own wake becomes deliverable again.
 - Recovery evidence is turn-scoped. Both `reconcile` and the expired-lease
   reclaim treat a newer controller turn with no live exact descendant as proof
   that the lease's call is inactive; neither receives agent-scoped evidence.

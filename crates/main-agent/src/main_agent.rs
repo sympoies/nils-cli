@@ -10767,14 +10767,20 @@ fn worker_recovery_action(
         "uncertain_mutation" => {
             // Only the worker holds the execution token that `work-context
             // reconcile` requires, and its coordination guard runs that
-            // reconcile itself on the worker's next managed mutation. Re-running
+            // reconcile itself on the worker's next managed mutation. A worker
+            // that will not mutate again is covered by coordination
+            // maintenance, which reclaims the lease once its safety TTL has
+            // expired and controller evidence proves it inactive. Re-running
             // supervision would never change the lease.
             action["schema_version"] = json!("main-agent.worker-recovery-action.v9");
             action["kind"] = json!("worker_guard_operation_reconcile");
             action["owner"] = worker_owner.unwrap_or(Value::Null);
             action["capability_delivery"] =
                 json!("worker-owned-capability-file-from-local-environment");
-            action["automatic_recovery"] = json!("worker-coordination-guard-next-managed-mutation");
+            action["automatic_recovery"] = json!([
+                "worker-coordination-guard-next-managed-mutation",
+                "coordination-maintenance-after-safety-ttl"
+            ]);
             action["argv"] = Value::Null;
             action["executable"] = json!(false);
             let session_id = assignment
@@ -10817,6 +10823,7 @@ fn worker_recovery_action(
                     "lease_id": operation.lease_id,
                     "revision": operation.revision,
                     "state": operation.state,
+                    "safety_ttl_expires_at_epoch": operation.expires_at_epoch,
                     "safety_ttl_expired": evidence.operation_safety_ttl_expired
                 })
             });

@@ -523,16 +523,18 @@ and an explicit false `raw_terminal_input_authorized`.
 action is now `main-agent.worker-recovery-action.v9` with kind
 `worker_guard_operation_reconcile`. Only the worker's coordination guard holds
 the execution token that `agent-session work-context reconcile` requires, and
-the guard runs that reconcile on the worker's next managed mutation. The
-action is worker-owned and non-executable, carries a null `argv`, an
-`argv_template` for `work-context reconcile` naming the exact `lease` and
-`if-revision`, and an `operation` projection with the lease id, revision,
-state, and whether its safety TTL has expired; its `required_inputs` are
-`operation_reconcile_proof` and `idempotency_key`. It MUST NOT name
-`worker supervise`, which never changes a lease. A lease whose safety TTL has
-expired is also reclaimed by the worker's next admission once controller
-evidence proves it inactive (see the operation lease state machine in
-`session-coordination-v1.md`).
+the guard runs that reconcile on the worker's next managed mutation. A worker
+that will not mutate again, such as one whose turn ended, is covered by
+coordination maintenance, which reclaims the lease once its safety TTL has
+expired and controller evidence proves it inactive (see the operation lease
+state machine in `session-coordination-v1.md`). The action is worker-owned and
+non-executable, carries a null `argv`, an `argv_template` for
+`work-context reconcile` naming the exact `lease` and `if-revision`, an
+`automatic_recovery` list naming both paths, and an `operation` projection with
+the lease id, revision, state, `safety_ttl_expires_at_epoch`, and whether that
+TTL has expired; its `required_inputs` are `operation_reconcile_proof` and
+`idempotency_key`. It MUST NOT name `worker supervise`, which never changes a
+lease.
 
 `worker stop-runtime` MUST authenticate the exact current Main controller and
 its active, unexpired claim; revalidate run ownership, assignment revision,

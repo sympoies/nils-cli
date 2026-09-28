@@ -2727,6 +2727,9 @@ fn lock_registry_with_maintenance(
             }
         }
     }
+    if maintenance == RegistryMaintenance::Full {
+        renewed |= claims::reclaim_expired_inactive_operations(context, &mut registry, now);
+    }
     if renewed {
         let bytes = serde_json::to_vec_pretty(&registry).map_err(|_| store_corrupt())?;
         write_atomic(&path, &bytes, SECRET_FILE_MODE).map_err(|_| store_unavailable())?;
