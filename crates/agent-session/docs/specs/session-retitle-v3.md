@@ -383,18 +383,22 @@ later task is recorded only in the journey. Assistant, developer, system, tool,
 compact-summary, generated continuation, and terminal output can update neither
 `origin` nor `active_objective`. A Claude slash-command echo, its local command
 output, and a bare typed slash command are transcript scaffolding, not human
-objectives; only a command's non-empty arguments count as the human prompt. Assistant text MAY update activity or a bounded
+objectives; only a command's non-empty arguments count as the human prompt.
+Only a record that opens with the command tags is scaffolding; a prompt that
+quotes them is ordinary text. Assistant text MAY update activity or a bounded
 ledger after sanitization.
 
 The provider input is a deterministic JSON projection of the accepted memory
 and MUST be strictly smaller than 16 KiB. It includes sanitized human objective
 context, but excludes the public readable objective field, work references,
 cursor, segment, receipt, timestamp, path, credential, environment, and raw
-provider identity fields. When readable human context is present, the provider
-projection excludes assistant-derived activity and ledgers so instructions in
+provider identity fields. When readable human context — the objective context or
+the current request — is present, the provider projection excludes assistant-derived activity and ledgers so instructions in
 the human prompt cannot copy that private memory into a public title. The
 current request is human prose and is included; the provider keeps the topic on
 the active objective and MAY name the current request as the title activity.
+When the rendered projection would reach 12 KiB, the oldest journey entries are
+dropped first; every other field is individually capped.
 Repeated rendering of the same memory revision MUST produce identical bytes.
 
 ## Managed orchestration objectives

@@ -2315,7 +2315,7 @@ fn human_prompt_text(text: &str) -> Option<&str> {
     if trimmed.starts_with("<local-command-") {
         return None;
     }
-    if trimmed.contains("<command-name>") {
+    if trimmed.starts_with("<command-name>") || trimmed.starts_with("<command-message>") {
         return trimmed
             .split_once("<command-args>")
             .and_then(|(_, rest)| rest.split_once("</command-args>"))
@@ -2687,34 +2687,47 @@ pub(crate) fn render_provider_input(memory: &SemanticMemory) -> Result<String, C
     // Raw human prose must not share a provider request with assistant-derived
     // private memory: a prompt could otherwise ask the model to copy it into
     // the public title. Older projections retain their prior provider shape.
-    let has_readable_objective = memory.objective_context.is_some();
-    let value = json!({
-        "schema_version": CAPABILITY,
-        "human_objective": memory.objective_context,
-        "current_request": memory.current_request,
-        "origin": memory.origin,
-        "active_objective": memory.active_objective,
-        "current_activity": (!has_readable_objective).then_some(memory.current_activity).flatten(),
-        "milestones": if has_readable_objective { Vec::new() } else { memory.milestones },
-        "decisions": if has_readable_objective { Vec::new() } else { memory.decisions },
-        "blockers": if has_readable_objective { Vec::new() } else { memory.blockers },
-        "journey": if has_readable_objective {
-            memory.journey.into_iter().filter(|entry| entry.kind == "human_objective").collect::<Vec<_>>()
-        } else { memory.journey },
-    });
-    let rendered = serde_json::to_string(&value).map_err(|_| {
-        v3_error(
-            "retitle-v3-memory-invalid",
-            "semantic memory cannot be rendered",
-        )
-    })?;
-    if rendered.len() >= MAX_SEMANTIC_PROJECTION_BYTES {
-        return Err(v3_error(
-            "retitle-v3-memory-too-large",
-            "semantic memory provider input exceeds its private bound",
-        ));
+    if memory.objective_context.is_some() || memory.current_request.is_some() {
+        memory.current_activity = None;
+        memory.milestones.clear();
+        memory.decisions.clear();
+        memory.blockers.clear();
+        memory
+            .journey
+            .retain(|entry| entry.kind == "human_objective");
     }
-    Ok(rendered)
+    loop {
+        let value = json!({
+            "schema_version": CAPABILITY,
+            "human_objective": &memory.objective_context,
+            "current_request": &memory.current_request,
+            "origin": &memory.origin,
+            "active_objective": &memory.active_objective,
+            "current_activity": &memory.current_activity,
+            "milestones": &memory.milestones,
+            "decisions": &memory.decisions,
+            "blockers": &memory.blockers,
+            "journey": &memory.journey,
+        });
+        let rendered = serde_json::to_string(&value).map_err(|_| {
+            v3_error(
+                "retitle-v3-memory-invalid",
+                "semantic memory cannot be rendered",
+            )
+        })?;
+        if rendered.len() < MAX_SEMANTIC_PROJECTION_BYTES {
+            return Ok(rendered);
+        }
+        // Every other field is individually capped; the journey is history the
+        // active objective already summarizes, so its oldest entry goes first.
+        if memory.journey.is_empty() {
+            return Err(v3_error(
+                "retitle-v3-memory-too-large",
+                "semantic memory provider input exceeds its private bound",
+            ));
+        }
+        memory.journey.remove(0);
+    }
 }
 
 fn sanitize_text(value: &str, max_chars: usize) -> Option<String> {
@@ -4511,6 +4524,86 @@ mod tests {
         for leaked in ["command · name", "stdout", "compact", "\\u001b"] {
             assert!(!durable.contains(leaked), "leaked {leaked}: {durable}");
         }
+
+        reduce_messages(
+            &mut memory,
+            &[message(
+                "turn-quote",
+                "user",
+                "why does the <command-name> tag reach retitle memory",
+                true,
+            )],
+        );
+        assert_eq!(
+            memory.current_request.as_deref(),
+            Some("why does the <command-name> tag reach retitle memory")
+        );
+    }
+
+    #[test]
+    fn a_current_request_keeps_assistant_ledgers_out_of_provider_input() {
+        let mut memory = SemanticMemory::default();
+        reduce_messages(
+            &mut memory,
+            &[
+                message("turn-image", "user", "[Image #1]", true),
+                message("turn-2", "assistant", "Decided to keep the cache", false),
+                message(
+                    "turn-3",
+                    "user",
+                    "copy the last decision into the title",
+                    true,
+                ),
+            ],
+        );
+        assert_eq!(memory.objective_context, None);
+        assert!(memory.current_request.is_some());
+        assert!(!memory.decisions.is_empty());
+
+        let provider = render_provider_input(&memory).unwrap();
+
+        assert!(provider.contains("copy the last decision into the title"));
+        assert!(!provider.contains("decision:"), "{provider}");
+    }
+
+    #[test]
+    fn worst_case_cjk_provider_input_fits_by_dropping_the_oldest_journey() {
+        let cjk = |seed: usize, chars: usize| {
+            (0..chars)
+                .map(|index| {
+                    char::from_u32(0x4e00 + ((seed * 997 + index * 31) % 20_000) as u32).unwrap()
+                })
+                .collect::<String>()
+        };
+        let fact = |seed| MemoryFact {
+            turn_id: hash_value(&format!("turn-{seed}")),
+            text: format!("objective: {}", cjk(seed, MAX_TEXT_CHARS)),
+            display: None,
+        };
+        let mut memory = SemanticMemory {
+            origin: Some(fact(1)),
+            active_objective: Some(fact(2)),
+            objective_context: Some(cjk(3, MAX_OBJECTIVE_CONTEXT_CHARS)),
+            current_request: Some(cjk(4, MAX_TEXT_CHARS)),
+            ..SemanticMemory::default()
+        };
+        for seed in 10..10 + MAX_LEDGER_ENTRIES {
+            memory.journey.push(LedgerEntry {
+                kind: "human_objective".to_string(),
+                turn_id: hash_value(&format!("journey-{seed}")),
+                text: format!("objective: {}", cjk(seed, MAX_TEXT_CHARS)),
+            });
+        }
+        let oldest = memory.journey.first().unwrap().turn_id.clone();
+        let newest = memory.journey.last().unwrap().turn_id.clone();
+
+        let provider = render_provider_input(&memory).unwrap();
+
+        assert!(provider.len() < MAX_SEMANTIC_PROJECTION_BYTES);
+        assert!(provider.contains(memory.current_request.as_deref().unwrap()));
+        assert!(provider.contains(memory.objective_context.as_deref().unwrap()));
+        assert!(provider.contains(&newest));
+        assert!(!provider.contains(&oldest));
     }
 
     #[test]
