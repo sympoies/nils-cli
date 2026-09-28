@@ -748,6 +748,75 @@ async fn bind_listener_and_start_delete_tombstone_cleanup(
     Ok(listener)
 }
 
+const SERVE_OWNER_LOCK: &str = "serve.lock";
+// Long enough for a supervised restart whose predecessor is still exiting.
+const SERVE_OWNER_GRACE: Duration = Duration::from_secs(2);
+
+/// Exclusive, daemon-lifetime ownership of one canonical state root. Every
+/// serve on a root shares its sessions, registry lock, and published local
+/// endpoint, so a second one contends with and redirects the first
+/// (sympoies/nils-cli#1856). The flock is released when the process exits, and
+/// the descriptor is close-on-exec so spawned panes never inherit it.
+struct ServeOwnership {
+    _lock: fs::File,
+}
+
+enum ServeOwnershipError {
+    Owned { root: PathBuf, holder: String },
+    Unavailable(String),
+}
+
+fn acquire_serve_ownership(
+    context: &CliContext,
+    bind: SocketAddr,
+) -> Result<ServeOwnership, ServeOwnershipError> {
+    use std::io::{Seek, Write};
+    use std::os::fd::AsRawFd;
+
+    let unavailable = |what: &str, error: &dyn fmt::Display| {
+        ServeOwnershipError::Unavailable(format!("failed to {what}: {error}"))
+    };
+    fs::create_dir_all(&context.state_dir)
+        .map_err(|error| unavailable("create the state directory", &error))?;
+    // Symlinked spellings of one root resolve to the same lock inode.
+    let root = fs::canonicalize(&context.state_dir)
+        .map_err(|error| unavailable("resolve the state directory", &error))?;
+    let mut lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(root.join(SERVE_OWNER_LOCK))
+        .map_err(|error| unavailable("open the serve ownership lock", &error))?;
+    let started = Instant::now();
+    loop {
+        // SAFETY: flock is called with a valid, owned file descriptor.
+        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            break;
+        }
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(libc::EWOULDBLOCK) {
+            return Err(unavailable("lock the state directory", &error));
+        }
+        if started.elapsed() >= SERVE_OWNER_GRACE {
+            let mut holder = String::new();
+            let _ = lock.read_to_string(&mut holder);
+            return Err(ServeOwnershipError::Owned {
+                root,
+                holder: holder.trim().to_string(),
+            });
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let owner = format!("pid {} on {bind}\n", std::process::id());
+    lock.set_len(0)
+        .and_then(|()| lock.rewind())
+        .and_then(|()| lock.write_all(owner.as_bytes()))
+        .map_err(|error| unavailable("record the serve owner", &error))?;
+    Ok(ServeOwnership { _lock: lock })
+}
+
 pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
     let bind: SocketAddr = match args.bind.parse() {
         Ok(addr) => addr,
@@ -820,6 +889,29 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
         Err(err) => {
             eprintln!("error: {}", err.message());
             return exit::USAGE;
+        }
+    };
+
+    // Held until the process exits, before any recovery, fencing, endpoint
+    // write, or background loop touches the shared state root.
+    let _ownership = match acquire_serve_ownership(context, bind) {
+        Ok(ownership) => ownership,
+        Err(ServeOwnershipError::Owned { root, holder }) => {
+            eprintln!(
+                "error: serve-state-root-owned: {} is already served by {}; give a development \
+                 or test serve its own --state-dir or AGENT_SESSION_STATE_DIR",
+                root.display(),
+                if holder.is_empty() {
+                    "another serve"
+                } else {
+                    holder.as_str()
+                }
+            );
+            return exit::UNAVAILABLE;
+        }
+        Err(ServeOwnershipError::Unavailable(message)) => {
+            eprintln!("error: {message}");
+            return exit::RUNTIME;
         }
     };
 

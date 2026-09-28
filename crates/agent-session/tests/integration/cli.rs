@@ -880,6 +880,180 @@ pub(super) fn tmux_calls(log: &Path) -> Vec<Vec<String>> {
         .collect()
 }
 
+/// A development `serve` confined to a disposable state root and HOME, with the
+/// managed-pane overrides stripped so an inherited `AGENT_SESSION_STATE_DIR`
+/// cannot point it at a live daemon's root (sympoies/nils-cli#1856).
+fn isolated_serve_command(root: &Path, state_dir: &Path, addr: std::net::SocketAddr) -> Command {
+    let home = root.join("home");
+    fs::create_dir_all(&home).expect("serve home");
+    let (tmux, tmux_log) = fake_tmux(root);
+    let mut command = Command::new(nils_test_support::bin::resolve("agent-session"));
+    command
+        .arg("serve")
+        .arg("--bind")
+        .arg(addr.to_string())
+        .arg("--state-dir")
+        .arg(state_dir)
+        .env("HOME", &home)
+        .env_remove("XDG_STATE_HOME")
+        .env("AGENT_SESSION_TMUX_BIN", tmux)
+        .env("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log)
+        .env("AGENT_SESSION_FAKE_TMUX_LIST_WINDOWS", "")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null());
+    for key in nils_test_support::cmd::MANAGED_SESSION_ENV {
+        command.env_remove(key);
+    }
+    command
+}
+
+/// Kills its serve on drop, so a failed wait or assertion cannot orphan a
+/// daemon that keeps working against the state it was started on.
+struct ServeGuard {
+    child: Child,
+    addr: std::net::SocketAddr,
+    stderr_path: PathBuf,
+}
+
+impl ServeGuard {
+    fn spawn(mut command: Command, addr: std::net::SocketAddr, stderr_path: PathBuf) -> Self {
+        let stderr = fs::File::create(&stderr_path).expect("serve stderr");
+        let child = command
+            .stderr(Stdio::from(stderr))
+            .spawn()
+            .expect("spawn serve");
+        Self {
+            child,
+            addr,
+            stderr_path,
+        }
+    }
+
+    fn wait_listening(&mut self) {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while TcpStream::connect(self.addr).is_err() {
+            if let Some(status) = self.child.try_wait().expect("poll serve") {
+                panic!("serve exited before listening: {status}; {}", self.stderr());
+            }
+            assert!(
+                Instant::now() < deadline,
+                "serve did not listen: {}",
+                self.stderr()
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn wait_exit(&mut self, timeout: Duration) -> Option<std::process::ExitStatus> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(status) = self.child.try_wait().expect("poll serve") {
+                return Some(status);
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn stderr(&self) -> String {
+        fs::read_to_string(&self.stderr_path).unwrap_or_default()
+    }
+}
+
+impl Drop for ServeGuard {
+    fn drop(&mut self) {
+        stop_child(&mut self.child);
+    }
+}
+
+/// The published local endpoint port once it names `expected`, or whatever it
+/// last named when the deadline passes; serve publishes it just after binding.
+fn endpoint_port(state_dir: &Path, expected: u16) -> Option<u16> {
+    let path = state_dir.join("coordination/daemon-endpoint.json");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let port = fs::read(&path).ok().and_then(|raw| {
+            serde_json::from_slice::<Value>(&raw).ok()?["url"]
+                .as_str()?
+                .rsplit(':')
+                .next()?
+                .parse()
+                .ok()
+        });
+        if port == Some(expected) || Instant::now() >= deadline {
+            return port;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn serve_rejects_a_second_daemon_on_the_same_state_root() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let state_dir = tmp.path().join("state");
+    let serve = |name: &str, state_dir: &Path| {
+        let root = tmp.path().join(name);
+        fs::create_dir_all(&root).expect("serve root");
+        let addr = unused_loopback_addr();
+        ServeGuard::spawn(
+            isolated_serve_command(&root, state_dir, addr),
+            addr,
+            root.join("serve.stderr"),
+        )
+    };
+
+    let mut live = serve("live", &state_dir);
+    live.wait_listening();
+    assert_eq!(
+        endpoint_port(&state_dir, live.addr.port()),
+        Some(live.addr.port())
+    );
+
+    // A second daemon on the same canonical root, spelled through a symlink,
+    // must refuse promptly and before it touches shared coordination state.
+    let alias = tmp.path().join("state-alias");
+    symlink(&state_dir, &alias).expect("state alias");
+    let mut extra = serve("extra", &alias);
+    let status = extra
+        .wait_exit(Duration::from_secs(10))
+        .expect("second serve on a live state root must exit");
+    assert!(
+        !status.success(),
+        "second serve must fail: {}",
+        extra.stderr()
+    );
+    let stderr = extra.stderr();
+    assert!(
+        stderr.contains("serve-state-root-owned"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains(&live.child.id().to_string()),
+        "stderr: {stderr}"
+    );
+    assert!(TcpStream::connect(extra.addr).is_err());
+    assert_eq!(
+        endpoint_port(&state_dir, live.addr.port()),
+        Some(live.addr.port())
+    );
+    assert!(TcpStream::connect(live.addr).is_ok());
+
+    // A separate scratch root is independent and starts alongside it.
+    let mut scratch = serve("scratch", &tmp.path().join("scratch-state"));
+    scratch.wait_listening();
+
+    // Ownership ends with the process, so a supervised restart takes over.
+    drop(live);
+    let mut restarted = serve("restarted", &state_dir);
+    restarted.wait_listening();
+    assert_eq!(
+        endpoint_port(&state_dir, restarted.addr.port()),
+        Some(restarted.addr.port())
+    );
+}
+
 #[test]
 fn serve_usage_returns_partial_provider_results_from_helpers() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -909,30 +1083,21 @@ exit 1
 "#,
     );
 
-    let (tmux, tmux_log) = fake_tmux(tmp.path());
     let addr = unused_loopback_addr();
     let mut paths = vec![fake_bin];
     if let Some(current_path) = std::env::var_os("PATH") {
         paths.extend(std::env::split_paths(&current_path));
     }
     let path = std::env::join_paths(paths).expect("join PATH");
-    let mut child = Command::new(nils_test_support::bin::resolve("agent-session"))
-        .arg("serve")
-        .arg("--bind")
-        .arg(addr.to_string())
-        .env("AGENT_SESSION_TMUX_BIN", tmux)
-        .env("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log)
-        .env("AGENT_SESSION_FAKE_TMUX_LIST_WINDOWS", "")
+    let mut command = isolated_serve_command(tmp.path(), &tmp.path().join("state"), addr);
+    command
         .env("AGENT_SESSION_USAGE_TIMEOUT_MS", "45000")
         .env_remove("CLAUDE_PROMPT_SEGMENT_CLAUDE_TIMEOUT_SECONDS")
-        .env("PATH", path)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn serve");
+        .env("PATH", path);
+    let serve = ServeGuard::spawn(command, addr, tmp.path().join("serve.stderr"));
 
     let payload = wait_for_http_json(addr, "/usage", Duration::from_secs(5));
-    stop_child(&mut child);
+    drop(serve);
 
     assert_eq!(payload["ok"], true);
     let usage = &payload["data"]["usage"];
@@ -989,30 +1154,21 @@ JSON
 "#,
     );
 
-    let (tmux, tmux_log) = fake_tmux(tmp.path());
     let addr = unused_loopback_addr();
     let mut paths = vec![fake_bin];
     if let Some(current_path) = std::env::var_os("PATH") {
         paths.extend(std::env::split_paths(&current_path));
     }
     let path = std::env::join_paths(paths).expect("join PATH");
-    let mut child = Command::new(nils_test_support::bin::resolve("agent-session"))
-        .arg("serve")
-        .arg("--bind")
-        .arg(addr.to_string())
-        .env("AGENT_SESSION_TMUX_BIN", tmux)
-        .env("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log)
-        .env("AGENT_SESSION_FAKE_TMUX_LIST_WINDOWS", "")
+    let mut command = isolated_serve_command(tmp.path(), &tmp.path().join("state"), addr);
+    command
         .env("AGENT_SESSION_USAGE_TIMEOUT_MS", "45000")
         .env("CLAUDE_PROMPT_SEGMENT_CLAUDE_TIMEOUT_SECONDS", "9")
-        .env("PATH", path)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn serve");
+        .env("PATH", path);
+    let serve = ServeGuard::spawn(command, addr, tmp.path().join("serve.stderr"));
 
     let payload = wait_for_http_json(addr, "/usage", Duration::from_secs(5));
-    stop_child(&mut child);
+    drop(serve);
 
     let usage = &payload["data"]["usage"];
     let providers = usage["providers"].as_array().expect("providers");
