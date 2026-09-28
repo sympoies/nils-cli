@@ -27993,7 +27993,7 @@ mod tests {
             ..base
         });
         assert_eq!(wake.0, "idle_guidance_wake_required");
-        assert!(wake.1.contains("worker reenter"), "{}", wake.1);
+        assert!(wake.1.contains("worker reenter"));
         assert!(!wake.2);
         for dominant in [
             (
