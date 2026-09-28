@@ -791,6 +791,18 @@ coordination state before session removal is reported complete.
 The optional HTTP server is not the heartbeat owner and is not required for
 coordination after launch.
 
+The sidecar re-checks its authorization on every beat through a read-only
+registry observation that runs no maintenance and never rewrites the registry.
+It exits only when that check proves revocation: a missing capability, or a
+broker entry for another incarnation, generation, capability, or non-live
+state. When the registry cannot be read, for example because the lock stays busy
+past its timeout, the sidecar skips that beat and retries on the next one
+instead of exiting.
+
+Full registry maintenance prunes a `stopped`, capability-less broker entry once
+its stop is at least 24 hours old, no active claim or operation names its
+incarnation, and its session record no longer exists.
+
 Broker recovery is an authenticated owner mutation, not an operator-only
 repair. The canonical HTTP routes are
 `POST /sessions/{id}/broker/{adopt,reconcile}/v2`; they require both the server

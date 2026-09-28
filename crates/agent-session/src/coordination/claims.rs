@@ -389,12 +389,26 @@ fn claim_impl(
     let candidate: WorkContextInput =
         read_bounded_json(&args.file, 16 * 1024, "invalid-work-context")?;
     let mut candidate = candidate.validate_and_canonicalize()?;
+    // Resolve checkout facts before taking the registry lock: each is a `git`
+    // subprocess, and every coordination caller waits while the lock is held
+    // (sympoies/nils-cli#1860).
+    let record_cwd = std::path::Path::new(&record.cwd);
+    let checkout = checkout_root(record_cwd).unwrap_or_else(|_| record_cwd.to_path_buf());
+    // The worker bootstrap grant also covers pull requests whose head is the
+    // assignment-declared branch, when the authenticated worker checkout is on
+    // that branch.
+    let declared_checkout_head = checkout_shell_grant
+        .then_some(declared_pull_request_head)
+        .flatten()
+        .and_then(|declared| {
+            let head = checkout_branch(&checkout)?;
+            (head == declared).then_some(())?;
+            Some((head, repository_for_checkout(&checkout)?))
+        });
     let now = now_epoch();
     let mut locked = lock_registry(context)?;
     crate::orchestration::ensure_session_not_quarantined(context, &record)?;
     ensure_fingerprint_key(&mut locked.registry);
-    let record_cwd = std::path::Path::new(&record.cwd);
-    let checkout = checkout_root(record_cwd).unwrap_or_else(|_| record_cwd.to_path_buf());
     let checkout_fingerprint = worktree_fingerprint(&locked.registry, &checkout)?;
     if !candidate.worktrees.contains(&checkout_fingerprint) {
         if candidate.worktrees.len() >= 8 {
@@ -539,21 +553,12 @@ fn claim_impl(
             Some(json!({ "evaluation": evaluation })),
         ));
     }
-    // The worker bootstrap grant also covers pull requests whose head is the
-    // assignment-declared branch, when the authenticated worker checkout is on
-    // that branch.
-    let pull_request_head = checkout_shell_grant
-        .then_some(declared_pull_request_head)
-        .flatten()
-        .and_then(|declared| {
-            let head = checkout_branch(&checkout)?;
-            (head == declared).then_some(())?;
-            let repository = repository_for_checkout(&checkout)?;
-            candidate
-                .repositories
-                .contains(&repository)
-                .then_some(PullRequestHead { repository, head })
-        });
+    let pull_request_head = declared_checkout_head.and_then(|(head, repository)| {
+        candidate
+            .repositories
+            .contains(&repository)
+            .then_some(PullRequestHead { repository, head })
+    });
     let claim = WorkContextRecord {
         schema_version: WORK_CONTEXT_VERSION.to_string(),
         session_id: record.id.clone(),
