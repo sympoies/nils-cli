@@ -319,7 +319,7 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: rustfmt, clippy, llvm-tools-preview
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -345,15 +345,22 @@ jobs:
             brew install ripgrep
           fi
 
-      - name: Install cargo-nextest
+      - name: Install cargo-nextest + cargo-llvm-cov
         if: needs.changes.outputs.release_only != 'true'
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-nextest
+          tool: |
+            cargo-llvm-cov
+            cargo-nextest
 
+      # The full lane runs the workspace tests once, instrumented, and enforces
+      # the coverage floor here (NILS_CLI_TEST_RUNNER=llvm-cov). The `coverage`
+      # job then reports from this run's LCOV instead of repeating the whole
+      # suite on a second macOS runner.
       - name: Nils CLI checks (includes third-party-artifacts-audit, completion audits, docs-hygiene-audit, tempdir-leak-audit, test-stale-audit)
         env:
-          NILS_CLI_TEST_RUNNER: nextest
+          NILS_CLI_TEST_RUNNER: llvm-cov
+          NILS_CLI_COVERAGE_FAIL_UNDER_LINES: "85"
           # A skip here would mean a lane that builds every binary lost coverage
           # silently; make it fatal instead. See `bin::sibling_or_skip`.
           NILS_TEST_REQUIRE_SIBLING_BINS: "1"
@@ -379,98 +386,9 @@ jobs:
         if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
         run: true
 
-      - name: Publish JUnit report
-        if: always() && hashFiles('target/nextest/ci/junit.xml') != ''
-        uses: mikepenz/action-junit-report@v6
-        with:
-          token: ${{ github.token }}
-          check_name: JUnit Test Report (macOS)
-          report_paths: target/nextest/ci/junit.xml
-          detailed_summary: true
-          group_suite: true
-          include_passed: true
-          flaky_summary: true
-
-      - name: Upload JUnit XML
-        if: always() && hashFiles('target/nextest/ci/junit.xml') != ''
-        uses: actions/upload-artifact@v7
-        with:
-          name: junit-nextest-macos
-          path: target/nextest/ci/junit.xml
-
-  coverage:
-    needs: changes
-    runs-on: macos-14
-    permissions:
-      contents: read
-      pull-requests: write
-    env:
-      COVERAGE_FAIL_UNDER_LINES: "85"
-      # A skip here would mean a lane that builds every binary lost coverage
-      # silently; make it fatal instead. See `bin::sibling_or_skip`.
-      NILS_TEST_REQUIRE_SIBLING_BINS: "1"
-    steps:
-      # Docs-only and proven release-only change sets skip coverage work at the
-      # step level so the required `coverage` job still concludes `success`.
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Rust
-        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-
-      - name: Cache cargo
-        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
-        uses: Swatinem/rust-cache@v2
-        with:
-          # Only main saves. rust-cache stores dependencies, not workspace
-          # crates, so a PR copy (~1 GB) adds nothing over main's and just
-          # evicts the main caches every run restores.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Install cargo tools
-        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
-        uses: taiki-e/install-action@v2
-        with:
-          tool: |
-            cargo-llvm-cov
-            cargo-nextest
-
-      - name: Clear previous coverage outputs
-        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
-        run: rm -rf target/coverage && mkdir -p target/coverage
-
-      - name: Generate LCOV report
-        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
-        # Preserve the full native failure inventory instead of stopping at the first failing test.
-        run: cargo llvm-cov nextest --profile ci --workspace --no-fail-fast --lcov --output-path target/coverage/lcov.info --fail-under-lines "$COVERAGE_FAIL_UNDER_LINES"
-
-      - name: Generate HTML report
+      - name: Generate HTML coverage report
         if: always() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && hashFiles('target/coverage/lcov.info') != ''
         run: cargo llvm-cov report --html --output-dir target/coverage
-
-      - name: Run doctests (not included in coverage)
-        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
-        run: cargo test --workspace --doc
-
-      - name: Full validation marker
-        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
-        run: true
-
-      - name: Coverage summary
-        if: always() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
-        run: |
-          env GITHUB_STEP_SUMMARY=/dev/stdout bash scripts/ci/coverage-summary.sh target/coverage/lcov.info \
-            | tee target/coverage/coverage-summary.md >> "$GITHUB_STEP_SUMMARY"
-
-      - name: PR comment (sticky coverage summary)
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && hashFiles('target/coverage/lcov.info') != ''
-        uses: marocchino/sticky-pull-request-comment@v3
-        with:
-          header: coverage
-          path: target/coverage/coverage-summary.md
 
       - name: Upload coverage LCOV
         if: always() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && hashFiles('target/coverage/lcov.info') != ''
@@ -491,6 +409,71 @@ jobs:
       - name: Cleanup coverage outputs (avoid bloating cache)
         if: always() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
         run: rm -rf target/coverage
+
+      # cargo-llvm-cov runs nextest with its own target directory, so the JUnit
+      # report lands under target/llvm-cov-target on this job.
+      - name: Publish JUnit report
+        if: always() && hashFiles('target/**/nextest/ci/junit.xml') != ''
+        uses: mikepenz/action-junit-report@v6
+        with:
+          token: ${{ github.token }}
+          check_name: JUnit Test Report (macOS)
+          report_paths: target/**/nextest/ci/junit.xml
+          detailed_summary: true
+          group_suite: true
+          include_passed: true
+          flaky_summary: true
+
+      - name: Upload JUnit XML
+        if: always() && hashFiles('target/**/nextest/ci/junit.xml') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-nextest-macos
+          path: target/**/nextest/ci/junit.xml
+
+  # The coverage floor is enforced by test_macos's instrumented test run; this
+  # job keeps the required `coverage` check by proving that run produced its
+  # LCOV report and by publishing the summary. It needs no macOS runner.
+  coverage:
+    needs: [changes, test_macos]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    steps:
+      # Docs-only and proven release-only change sets skip coverage work at the
+      # step level so the required `coverage` job still concludes `success`.
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download coverage LCOV
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: coverage-lcov
+          path: target/coverage
+
+      - name: Require LCOV from the instrumented test run
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
+        run: test -s target/coverage/lcov.info
+
+      - name: Full validation marker
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
+        run: true
+
+      - name: Coverage summary
+        if: always() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
+        run: |
+          env GITHUB_STEP_SUMMARY=/dev/stdout bash scripts/ci/coverage-summary.sh target/coverage/lcov.info \
+            | tee target/coverage/coverage-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: PR comment (sticky coverage summary)
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && hashFiles('target/coverage/lcov.info') != ''
+        uses: marocchino/sticky-pull-request-comment@v3
+        with:
+          header: coverage
+          path: target/coverage/coverage-summary.md
 
   coverage_badge:
     if: github.event_name == 'push' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'

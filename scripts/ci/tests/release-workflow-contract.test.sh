@@ -83,6 +83,15 @@ assert_contains .github/workflows/ci.yml "save-if: \${{ github.ref == 'refs/head
   "CI saves the Rust cache only from main"
 assert_contains .github/workflows/release.yml "save-if: false" \
   "release builds do not save tag-scoped Rust caches"
+assert_contains .github/workflows/ci.yml "NILS_CLI_TEST_RUNNER: llvm-cov" \
+  "the macOS full lane runs the instrumented tests that enforce the coverage floor"
+assert_contains .github/workflows/ci.yml "needs: [changes, test_macos]" \
+  "coverage reports from the macOS instrumented run instead of repeating it"
+assert_contains .github/workflows/ci.yml "test -s target/coverage/lcov.info" \
+  "coverage fails closed when the instrumented run produced no LCOV"
+assert_contains .agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh \
+  "--fail-under-lines \"\${NILS_CLI_COVERAGE_FAIL_UNDER_LINES:-85}\"" \
+  "the llvm-cov runner enforces the 85% coverage floor"
 assert_contains .github/workflows/ci.yml "release_only:" \
   "CI publishes the release-only decision"
 assert_contains .github/workflows/ci.yml "scripts/ci/detect-release-only.sh" \

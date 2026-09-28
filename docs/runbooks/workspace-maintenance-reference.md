@@ -233,6 +233,9 @@ Notes:
 
 Coverage gate is mandatory in CI for non-doc changes and in explicit
 release-quality verification (total line coverage must stay `>= 85.00%`).
+In CI, the `test_macos` job runs the workspace tests once under
+`NILS_CLI_TEST_RUNNER=llvm-cov`, which enforces the floor, and the `coverage`
+job publishes the summary from that run's LCOV artifact.
 Normal local development does not need to run coverage before opening a PR:
 
 ```bash
