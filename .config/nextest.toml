@@ -44,18 +44,26 @@
 # passing run.
 retries = 1
 
+# Every `threads-required = "num-test-threads"` fixture below also carries
+# `priority = 100`. nextest starts such a test only once every running test
+# has finished, so one queued behind a 74-87 s coordination test left the
+# rest of the pool idle for minutes (macOS run 36457009394 sat at ~1 busy
+# thread of 3 from 210 s to 390 s). Run first, they start on an idle pool.
+
 # Process-containment fixtures own kernel tracking resources that cannot be
 # shared safely across parallel tests. Reserve the full CI thread pool for
 # those fixtures so retries do not mask deterministic resource contention.
 [[profile.ci.overrides]]
 filter = 'package(nils-git-cli) & test(/(supervisor|output_cleanup|detached_double_fork|successful_git_output|signal_terminated_target)/)'
 threads-required = "num-test-threads"
+priority = 100
 
 # This fixture deliberately queues two adoption workers behind one lease lock.
 # Keep unrelated suite load from consuming the bounded lock-wait window.
 [[profile.ci.overrides]]
 filter = 'package(nils-git-cli) & test(concurrent_adoption_consumes_a_challenge_exactly_once)'
 threads-required = "num-test-threads"
+priority = 100
 
 # This fixture verifies two products by invoking same-release descriptor
 # producers and runtime handlers. Reserve process capacity so full-workspace
@@ -63,6 +71,7 @@ threads-required = "num-test-threads"
 [[profile.ci.overrides]]
 filter = 'package(nils-agent-hook) & test(enforce_valid_read_only_bypasses_only_the_declared_fallback_handler)'
 threads-required = "num-test-threads"
+priority = 100
 
 # These fixtures coordinate same-release subprocesses across bounded barrier
 # and transcript-observation windows. Give each the complete CI thread pool so
@@ -70,6 +79,13 @@ threads-required = "num-test-threads"
 [[profile.ci.overrides]]
 filter = 'package(nils-agent-session) & test(/(main_agent_worker_start_(definitive_recovery_failure_converges_at_(deadline|final_checkpoint|takeover)_boundary|preserves_ambiguous_initial_enter_without_redelivery|timeout_reports_exact_submitted_prompt|waits_for_late_bootstrap_after_recovery_failure))/)'
 threads-required = "num-test-threads"
+priority = 100
+
+# The longest tests (20-90 s each) start right after the exclusive ones, so
+# they overlap with the short tests instead of forming the tail of the run.
+[[profile.ci.overrides]]
+filter = 'package(nils-agent-session) & test(/(main_agent_worker_start_finalizer_takeover_resumes_the_same_recovery_attempt|main_agent_submit_recovery_rechecks_authority_inside_the_serialized_send_boundary|main_agent_submit_recovery_fences_concurrent_manager_mutations_until_resolved|two_root_http_federation_acceptance|claimed_runtime_stop_preserves_the_active_claim_for_reconcile_stopped|generated_200_mib_history_converges_through_catalog_refresh_reload_reducer_and_title)/)'
+priority = 50
 
 [profile.ci.junit]
 path = "junit.xml"
