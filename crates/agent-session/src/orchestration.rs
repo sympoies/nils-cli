@@ -7268,8 +7268,14 @@ fn validate_state(value: &str, allowed: &[&str]) -> Result<(), CliError> {
     Ok(())
 }
 
+/// Maximum Unicode character count of every bounded orchestration summary,
+/// next action, and reason.
+pub const SUMMARY_MAX_CHARACTERS: usize = 240;
+
 pub fn validate_summary(name: &str, value: &str) -> Result<(), CliError> {
-    if value.trim().is_empty() || value.chars().count() > 240 || value.chars().any(char::is_control)
+    if value.trim().is_empty()
+        || value.chars().count() > SUMMARY_MAX_CHARACTERS
+        || value.chars().any(char::is_control)
     {
         return Err(store_invalid(&format!("{name} is invalid")));
     }

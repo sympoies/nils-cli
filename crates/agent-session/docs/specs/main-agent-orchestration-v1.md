@@ -205,11 +205,12 @@ claim and with every assignment that still reserves its declared scopes
 (`assigned`, `starting`, `working`, `blocked`, or `submitted`, in any run), plus
 any active claim still held by an assignment's bound worker. Overlap under the
 closed scope rules fails closed with `assignment-scope-conflict` before
-assignment persistence, session creation, or tmux launch. A `quick` run skips
-only the controller comparison, because its ephemeral controller claim is
-synthesized from that same assignment. The message names the
-first conflicting assignment (or the controller claim) and scope, and
-`details.conflicts` lists up to 16 entries of `{owner: "controller" |
+assignment persistence, session creation, or tmux launch. `quick` runs the same
+comparison, without the controller claim, before it acquires that claim or
+persists its ephemeral run, because its controller claim is synthesized from
+the same assignment; a refused `quick` therefore leaves nothing behind. The
+message names the first conflicting assignment (or the controller claim) and
+scope, and `details.conflicts` lists up to 16 entries of `{owner: "controller" |
 "assignment", assignment_id?, repository, scope, conflicting_scope}`. Claims
 are observed before the orchestration lock, preserving the
 coordination-to-orchestration lock order; bootstrap claim acquisition remains

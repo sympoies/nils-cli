@@ -3686,10 +3686,12 @@ fn run_worker_start_single_input(
                 Some(json!({ "assignment_id": assignment_id, "blocked_on": blocked_on })),
             ));
         }
+        // A `quick` run synthesizes its ephemeral controller claim from this
+        // same assignment and checks the other assignments before creating it.
         ensure_assignment_scopes_disjoint(
             &input,
-            &run,
-            (&record.id, &incarnation),
+            &run.tier,
+            (!run.ephemeral).then_some((record.id.as_str(), incarnation.as_str())),
             &locked.registry,
             &active_claims,
         )?;
@@ -13204,8 +13206,8 @@ const MAX_REPORTED_SCOPE_CONFLICTS: usize = 16;
 /// Bootstrap claim acquisition remains the authority; this only fails early.
 fn ensure_assignment_scopes_disjoint(
     input: &AssignmentInput,
-    run: &RunRecord,
-    controller: (&str, &str),
+    tier: &str,
+    controller: Option<(&str, &str)>,
     registry: &orchestration::Registry,
     active_claims: &[agent_session::internal::coordination::claims::ActiveClaimContext],
 ) -> Result<(), CliError> {
@@ -13214,13 +13216,10 @@ fn ensure_assignment_scopes_disjoint(
     }
     let candidate = assignment_worker_work_context_from_packet(
         input,
-        run.tier.clone(),
+        tier.to_string(),
         "worker start requires the assignment packet to declare a repository",
     )?
     .validate_and_canonicalize()?;
-    // A `quick` run synthesizes its ephemeral controller claim from this same
-    // assignment, so only other assignments are compared for it.
-    let controller = (!run.ephemeral).then_some(controller);
     let conflicts = assignment_scope_conflicts(&candidate, controller, registry, active_claims);
     let Some(first) = conflicts.first() else {
         return Ok(());
@@ -21901,14 +21900,6 @@ fn run_quick(context: &CliContext, args: QuickArgs) -> Result<Value, CliError> {
             .collect(),
         summary: input.task_summary.clone(),
     };
-    ensure_or_acquire_claim(
-        context,
-        &record,
-        &work_context,
-        &idempotency_key,
-        None,
-        false,
-    )?;
 
     let objective = json!({
         "schema_version": PACKET_SCHEMA,
@@ -21933,6 +21924,34 @@ fn run_quick(context: &CliContext, args: QuickArgs) -> Result<Value, CliError> {
             "await_ready_seconds": await_ready_seconds
         }),
     );
+
+    // Fail a fresh quick scope overlap before its ephemeral run or controller
+    // claim exists, so a narrowed retry is not refused as `quick-run-exists`.
+    let active_claims =
+        agent_session::internal::coordination::claims::active_claim_contexts(context)?;
+    {
+        let registry = orchestration::load_registry_readonly(context)?;
+        if idempotency_replay_compatible(
+            &registry,
+            &record,
+            &incarnation,
+            &idempotency_key,
+            "quick",
+            &[&request_digest, &legacy_request_digest],
+        )?
+        .is_none()
+        {
+            ensure_assignment_scopes_disjoint(&input, &tier, None, &registry, &active_claims)?;
+        }
+    }
+    ensure_or_acquire_claim(
+        context,
+        &record,
+        &work_context,
+        &idempotency_key,
+        None,
+        false,
+    )?;
 
     let run_id = {
         let mut locked = orchestration::lock_registry(context)?;
@@ -22890,8 +22909,6 @@ fn exact_assignment_checkout_root(raw: &str, label: &str) -> Result<PathBuf, Cli
     Ok(root)
 }
 
-const INPUT_SUMMARY_MAX_CHARACTERS: usize = 240;
-
 /// Validate one caller-supplied bounded text field. The stored-record
 /// validator reports store corruption; a caller's input instead fails with the
 /// input code and names the field and its limit so the caller can correct it.
@@ -22902,11 +22919,12 @@ fn validate_input_summary(name: &str, value: &str) -> Result<(), CliError> {
     Err(CliError::data(
         "invalid-orchestration-input",
         format!(
-            "{name} must be non-empty, at most {INPUT_SUMMARY_MAX_CHARACTERS} characters, and free of control characters"
+            "{name} must be non-empty, at most {} characters, and free of control characters",
+            orchestration::SUMMARY_MAX_CHARACTERS
         ),
         Some(json!({
             "field": name,
-            "max_characters": INPUT_SUMMARY_MAX_CHARACTERS,
+            "max_characters": orchestration::SUMMARY_MAX_CHARACTERS,
             "characters": value.chars().count(),
         })),
     ))
