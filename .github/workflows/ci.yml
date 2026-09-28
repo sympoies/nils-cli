@@ -206,6 +206,7 @@ jobs:
         with:
           tool: cargo-nextest
 
+      # Keep identical to the copy in the test_containment job.
       - name: Provision systemd user scopes
         if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
         run: |
@@ -301,6 +302,7 @@ jobs:
         if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
         run: sudo apt-get update && sudo apt-get install -y zsh xvfb xauth ripgrep tmux bubblewrap
 
+      # Keep identical to the copy in the test job.
       - name: Provision systemd user scopes
         if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
         run: |
