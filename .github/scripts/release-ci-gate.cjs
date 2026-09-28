@@ -300,9 +300,12 @@ async function waitForTrustedMainCi({
   context,
   core,
   sha,
-  attempts = 80,
+  // Base push CI takes ~30 minutes plus any macOS runner queueing. Waiting
+  // is almost always cheaper than the ~30 minute full-CI fallback, so the
+  // deadline allows for a queued base run; attempts are only a backstop.
+  attempts = 100,
   intervalMs = 30_000,
-  deadlineMs = 35 * 60_000,
+  deadlineMs = 45 * 60_000,
   now = () => Date.now(),
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 }) {

@@ -16,10 +16,10 @@ concurrency:
 jobs:
   changes:
     runs-on: ubuntu-latest
-    # A release candidate waits at most 35 minutes (wall clock) for its base
+    # A release candidate waits at most 45 minutes (wall clock) for its base
     # commit's push CI and then falls back to full CI. This bound only stops a
     # hung job: a timed-out changes job skips the required checks.
-    timeout-minutes: 50
+    timeout-minutes: 60
     permissions:
       actions: read
       contents: read

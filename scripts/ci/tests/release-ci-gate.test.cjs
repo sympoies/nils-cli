@@ -422,6 +422,34 @@ if (fs.existsSync(modulePath)) {
     assert.match(messages.join("\n"), /still running at the wait deadline/);
   });
 
+  test("default wait budget covers a base main CI run that queues before its ~30 minute run", async () => {
+    const { state, github } = fixture();
+    const mainRun = state.workflowRuns[1];
+    mainRun.status = "in_progress";
+    mainRun.conclusion = null;
+    let clock = 0;
+    const sleep = async (ms) => {
+      clock += ms;
+      // Base CI completes 42 minutes after the release PR starts waiting.
+      if (clock >= 42 * 60_000) {
+        mainRun.status = "completed";
+        mainRun.conclusion = "success";
+      }
+    };
+
+    assert.deepEqual(
+      await waitForTrustedMainCi({
+        github,
+        context,
+        core: quietCore().core,
+        sha: baseSha,
+        now: () => clock,
+        sleep,
+      }),
+      { runId: 200, runUrl: `https://github.com/${fullName}/actions/runs/200` },
+    );
+  });
+
   test("a pending push run from another repository is not awaited", async () => {
     const { state, github } = fixture();
     state.workflowRuns[1].status = "in_progress";
