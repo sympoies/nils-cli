@@ -8,8 +8,8 @@ use std::path::Path;
 use std::process::Command;
 
 use nils_test_support::bin;
-use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 const OLD: &str = "2026-07-01T00:00:00Z";
 /// A far-future activity time keeps a run inside any `--older-than` window
@@ -159,6 +159,11 @@ fn seed(state_dir: &Path) {
     add_run(run("run-receipt", "main-gone-6", OLD));
     add_run(run("run-recent", "main-gone-7", RECENT));
     add_run(run("run-cleanup-pending", "main-gone-9", OLD));
+    add_run(run("run-canary-fence", "main-gone-10", OLD));
+    add_run(run("run-quarantined", "main-gone-11", OLD));
+    add_run(run("run-worker-receipt", "main-gone-12", OLD));
+    add_run(run("run-assignment-recent", "main-gone-13", OLD));
+    add_run(run("run-bad-time", "main-gone-14", "not-a-timestamp"));
     let mut closed = run("run-closed", "main-gone-8", OLD);
     closed["state"] = json!("closed");
     add_run(closed);
@@ -249,6 +254,63 @@ fn seed(state_dir: &Path) {
     });
     add_assignment(fenced);
     add_assignment(assignment(
+        "canary-working",
+        "run-canary-fence",
+        "main-gone-10",
+        "working",
+        Some("worker-gone-h"),
+    ));
+    let mut quarantined = assignment(
+        "quarantined-working",
+        "run-quarantined",
+        "main-gone-11",
+        "working",
+        Some("worker-gone-i"),
+    );
+    quarantined["submit_recovery"] = json!({
+        "schema_version": "main-agent.submit-recovery.v1",
+        "attempt_id": "attempt-two",
+        "origin": "explicit",
+        "session_incarnation": "worker-gone-i-incarnation",
+        "reserved_revision": 4,
+        "state": "reconciled",
+        "attempt_count": 1,
+        "result": "Submit recovery reconciled",
+        "attempted_at": OLD,
+        "updated_at": OLD
+    });
+    quarantined["worker_quarantine"] = json!({
+        "schema_version": "main-agent.worker-quarantine.v1",
+        "worker": session_ref("worker-gone-i"),
+        "reason": "Fixture worker quarantine",
+        "runtime_identity_digest": DIGEST,
+        "created_at": OLD
+    });
+    add_assignment(quarantined);
+    add_assignment(assignment(
+        "worker-receipt-working",
+        "run-worker-receipt",
+        "main-gone-12",
+        "working",
+        Some("worker-gone-j"),
+    ));
+    let mut recently_touched = assignment(
+        "assignment-recent-working",
+        "run-assignment-recent",
+        "main-gone-13",
+        "working",
+        Some("worker-gone-k"),
+    );
+    recently_touched["updated_at"] = json!(RECENT);
+    add_assignment(recently_touched);
+    add_assignment(assignment(
+        "bad-time-working",
+        "run-bad-time",
+        "main-gone-14",
+        "working",
+        Some("worker-gone-l"),
+    ));
+    add_assignment(assignment(
         "receipt-submitted",
         "run-receipt",
         "main-gone-6",
@@ -278,10 +340,30 @@ fn seed(state_dir: &Path) {
                     "run_id": "run-receipt"
                 },
                 "created_at_epoch": 1
+            },
+            "worker-gone-j:worker-gone-j-incarnation:delete-0001": {
+                "principal_session_id": "worker-gone-j",
+                "principal_incarnation": "worker-gone-j-incarnation",
+                "operation": "worker-delete",
+                "request_digest": "1".repeat(64),
+                "outcome": { "schema_version": "main-agent.worker-delete-pending.v1" },
+                "created_at_epoch": 1
             }
         }
     });
     private_json(&state_dir.join("orchestration/registry.json"), &registry);
+    // An unreadable file-backed operation fence is as uncertain as a valid one.
+    let canary_fences = state_dir.join("orchestration/provider-stop-canary-reservations");
+    private_dir(&canary_fences);
+    private_json(
+        &canary_fences.join(
+            Sha256::digest(b"canary-working")
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>(),
+        ),
+        &json!({ "schema_version": "fixture-unreadable-reservation" }),
+    );
     private_json(
         &state_dir.join("coordination/registry.json"),
         &json!({
@@ -341,10 +423,19 @@ fn runs_orphaned_lists_only_runs_without_any_live_owner() {
     assert_eq!(listed.code, 0, "{}", listed.json);
     let data = &listed.json["data"];
     assert_eq!(data["schema_version"], "main-agent.orphaned-runs.v1");
-    assert_eq!(run_ids(&data["orphaned"]), ["run-orphan", "run-recent"]);
+    assert_eq!(
+        run_ids(&data["orphaned"]),
+        [
+            "run-assignment-recent",
+            "run-bad-time",
+            "run-orphan",
+            "run-recent"
+        ]
+    );
     assert_eq!(
         refusal_codes(data),
         owned(&[
+            ("run-canary-fence", "orphaned-run-operation-pending"),
             ("run-cleanup-pending", "orphaned-run-worker-live"),
             (
                 "run-controller-claim",
@@ -352,14 +443,46 @@ fn runs_orphaned_lists_only_runs_without_any_live_owner() {
             ),
             ("run-launch-pending", "orphaned-run-worker-live"),
             ("run-operation", "orphaned-run-operation-pending"),
+            ("run-quarantined", "orphaned-run-operation-pending"),
             ("run-receipt", "orphaned-run-operation-pending"),
             ("run-worker-claim", "orphaned-run-worker-live"),
+            ("run-worker-receipt", "orphaned-run-operation-pending"),
             ("run-worker-session", "orphaned-run-worker-live"),
         ])
     );
-    assert_eq!(data["active_runs"], 10);
+    let blockers = |run_id: &str| {
+        data["refused"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|refused| refused["run_id"] == run_id)
+            .map(|refused| refused["blockers"].clone())
+            .unwrap_or_else(|| panic!("{run_id} was not refused"))
+    };
+    assert_eq!(
+        blockers("run-quarantined")[0]["operation"],
+        "worker-quarantined"
+    );
+    assert_eq!(
+        blockers("run-worker-receipt")[0],
+        json!({
+            "code": "orphaned-run-operation-pending",
+            "session_id": "worker-gone-j",
+            "operation": "worker-delete"
+        })
+    );
+    assert_eq!(
+        blockers("run-canary-fence")[0]["assignment_id"],
+        "canary-working"
+    );
+    assert_eq!(data["active_runs"], 15);
     assert_eq!(data["controller_live_runs"], 1);
-    let orphan = &data["orphaned"][0];
+    let orphan = data["orphaned"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|run| run["run_id"] == "run-orphan")
+        .expect("run-orphan is orphaned");
     assert_eq!(orphan["from_revision"], 3);
     assert_eq!(orphan["to_state"], "closed");
     assert_eq!(orphan["reason"], "orphaned");
@@ -416,12 +539,22 @@ fn close_orphaned_defaults_to_a_dry_run_and_applies_only_the_reviewed_plan() {
     assert_eq!(plan["applied"], false);
     assert_eq!(plan["older_than_seconds"], 7 * 24 * 60 * 60);
     assert_eq!(run_ids(&plan["runs"]), ["run-orphan"]);
-    assert!(
-        refusal_codes(plan).contains(&(
-            "run-recent".to_string(),
-            "orphaned-run-too-recent".to_string()
-        )),
-        "{plan}"
+    for recent in ["run-recent", "run-assignment-recent", "run-bad-time"] {
+        assert!(
+            refusal_codes(plan)
+                .contains(&(recent.to_string(), "orphaned-run-too-recent".to_string())),
+            "{recent}: {plan}"
+        );
+    }
+    let recent_activity = plan["refused"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|refused| refused["run_id"] == "run-assignment-recent")
+        .expect("recently touched run");
+    assert_eq!(
+        recent_activity["last_activity_at"], RECENT,
+        "the newest assignment activity keeps the run too recent"
     );
     let digest = plan["plan_digest"]
         .as_str()
@@ -518,6 +651,11 @@ fn close_orphaned_defaults_to_a_dry_run_and_applies_only_the_reviewed_plan() {
         "run-receipt",
         "run-recent",
         "run-cleanup-pending",
+        "run-canary-fence",
+        "run-quarantined",
+        "run-worker-receipt",
+        "run-assignment-recent",
+        "run-bad-time",
     ] {
         assert_eq!(after["runs"][untouched]["state"], "active", "{untouched}");
         assert_eq!(after["runs"][untouched]["revision"], 3, "{untouched}");
@@ -531,6 +669,11 @@ fn close_orphaned_defaults_to_a_dry_run_and_applies_only_the_reviewed_plan() {
         "receipt-submitted",
         "recent-working",
         "cleanup-pending-released",
+        "canary-working",
+        "quarantined-working",
+        "worker-receipt-working",
+        "assignment-recent-working",
+        "bad-time-working",
     ] {
         assert_eq!(
             after["assignments"][untouched]["revision"], 5,
@@ -573,7 +716,64 @@ fn close_orphaned_defaults_to_a_dry_run_and_applies_only_the_reviewed_plan() {
     assert_eq!(conflicting.json["error"]["code"], "idempotency-conflict");
 
     let listed = main_agent(&state_dir, &["runs", "orphaned", "--format", "json"]);
-    assert_eq!(run_ids(&listed.json["data"]["orphaned"]), ["run-recent"]);
+    assert_eq!(
+        run_ids(&listed.json["data"]["orphaned"]),
+        ["run-assignment-recent", "run-bad-time", "run-recent"]
+    );
+}
+
+#[test]
+fn close_orphaned_refuses_a_plan_whose_records_changed_after_review() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state_dir = tmp.path().join("state");
+    seed(&state_dir);
+    let dry_run = main_agent(
+        &state_dir,
+        &[
+            "runs",
+            "close-orphaned",
+            "--older-than",
+            "7d",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(dry_run.code, 0, "{}", dry_run.json);
+    let reviewed = dry_run.json["data"]["plan_digest"]
+        .as_str()
+        .expect("plan digest")
+        .to_string();
+
+    // Another writer advances a planned assignment between review and apply.
+    let path = state_dir.join("orchestration/registry.json");
+    let mut changed = registry(&state_dir);
+    changed["assignments"]["orphan-working"]["revision"] = json!(6);
+    private_json(&path, &changed);
+    let before = fs::read(&path).expect("registry");
+
+    let applied = main_agent(
+        &state_dir,
+        &[
+            "runs",
+            "close-orphaned",
+            "--older-than",
+            "7d",
+            "--apply",
+            "--if-plan-digest",
+            reviewed.as_str(),
+            "--idempotency-key",
+            "close-orphaned-stale",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(applied.code, 65, "{}", applied.json);
+    assert_eq!(applied.json["error"]["code"], "orphaned-run-plan-conflict");
+    let current = applied.json["error"]["details"]["current_plan_digest"]
+        .as_str()
+        .expect("current digest");
+    assert_ne!(current, reviewed);
+    assert_eq!(fs::read(&path).expect("registry"), before);
 }
 
 #[test]

@@ -1734,7 +1734,8 @@ differs. A committed apply stores its result as a receipt for the
 `local-operator` principal; an identical replay returns it unchanged, and a
 different request under the same key fails with `idempotency-conflict`. The
 commands change registry records only. They never delete sessions, worktrees,
-packets, receipts, or claims.
+packets, or claims; the stored apply receipt follows the normal bounded
+receipt retention.
 
 ## Recovery and failure semantics
 

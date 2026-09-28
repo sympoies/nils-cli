@@ -1521,8 +1521,8 @@ still has that exact digest; otherwise it fails with
 Review the new dry run before applying again. Each closed run becomes `closed`
 (reason `orphaned`), and each non-terminal assignment becomes `cancelled`, or
 `released` when it was already `accepted` (reason `orphaned-run`), each with
-its revision advanced by one. Sessions, worktrees, packets, receipts, and
-history are never deleted. Replaying the same key and request returns the
+its revision advanced by one. Sessions, worktrees, packets, and history are
+never deleted. Replaying the same key and request returns the
 stored result without changing anything.
 
 ## Revision and idempotency rules

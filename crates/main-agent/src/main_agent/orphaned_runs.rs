@@ -172,8 +172,8 @@ fn close_orphaned(context: &CliContext, args: &CloseOrphanedArgs) -> Result<Valu
         ));
     }
     let updated_at = timestamp();
-    for entry in &evaluation.closable {
-        terminalize(&mut locked.registry, entry, &updated_at)?;
+    for planned in &evaluation.closable {
+        terminalize(&mut locked.registry, planned, &updated_at);
     }
     let outcome = close_result(true, older_than, evaluation);
     store_receipt_for_principal(
@@ -240,25 +240,50 @@ fn operator_replay(
     Ok(Some(receipt.outcome.clone()))
 }
 
+/// One run the plan closes. Serialized as-is into the command output.
+#[derive(Debug, Serialize)]
+struct PlannedRun {
+    run_id: String,
+    objective_summary: String,
+    controller_session_id: String,
+    created_at: String,
+    last_activity_at: String,
+    from_state: String,
+    to_state: &'static str,
+    from_revision: u64,
+    to_revision: u64,
+    reason: &'static str,
+    assignments: Vec<PlannedAssignment>,
+}
+
+/// One non-terminal assignment of a planned run.
+#[derive(Debug, Serialize)]
+struct PlannedAssignment {
+    assignment_id: String,
+    from_state: String,
+    to_state: &'static str,
+    from_revision: u64,
+    to_revision: u64,
+    reason: &'static str,
+}
+
 /// The digest binds the apply to exactly the reviewed records: every closable
 /// run and non-terminal assignment with the revision and state it had. Arrays
 /// keep the encoding independent of JSON object key ordering.
-fn plan_digest(closable: &[Value]) -> String {
+fn plan_digest(closable: &[PlannedRun]) -> String {
     let identity = closable
         .iter()
         .map(|run| {
             json!([
-                run["run_id"],
-                run["from_revision"],
-                run["assignments"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
+                run.run_id,
+                run.from_revision,
+                run.assignments
+                    .iter()
                     .map(|assignment| {
                         json!([
-                            assignment["assignment_id"],
-                            assignment["from_revision"],
-                            assignment["from_state"]
+                            assignment.assignment_id,
+                            assignment.from_revision,
+                            assignment.from_state
                         ])
                     })
                     .collect::<Vec<_>>()
@@ -271,40 +296,32 @@ fn plan_digest(closable: &[Value]) -> String {
     )
 }
 
-fn terminalize(
-    registry: &mut orchestration::Registry,
-    entry: &Value,
-    updated_at: &str,
-) -> Result<(), CliError> {
-    let changed = || invalid_input("orphaned-run plan no longer matches the registry");
-    for change in entry["assignments"].as_array().into_iter().flatten() {
-        let assignment = change["assignment_id"]
-            .as_str()
-            .and_then(|id| registry.assignments.get_mut(id))
-            .ok_or_else(changed)?;
-        assignment.state = change["to_state"].as_str().ok_or_else(changed)?.to_string();
-        assignment.revision = assignment.revision.saturating_add(1);
-        assignment.updated_at = updated_at.to_string();
-        if assignment.state == "cancelled" {
-            assignment.blocker_summary = Some(format!(
-                "Terminalized by the local operator after its run was orphaned: {ASSIGNMENT_REASON}"
-            ));
+/// Apply one planned run. The plan was evaluated from this same registry under
+/// the held lock, so every record it names exists with its planned revision.
+fn terminalize(registry: &mut orchestration::Registry, planned: &PlannedRun, updated_at: &str) {
+    for change in &planned.assignments {
+        if let Some(assignment) = registry.assignments.get_mut(&change.assignment_id) {
+            assignment.state = change.to_state.to_string();
+            assignment.revision = change.to_revision;
+            assignment.updated_at = updated_at.to_string();
+            if change.to_state == "cancelled" {
+                assignment.blocker_summary = Some(format!(
+                    "Terminalized by the local operator after its run was orphaned: {ASSIGNMENT_REASON}"
+                ));
+            }
         }
     }
-    let run = entry["run_id"]
-        .as_str()
-        .and_then(|id| registry.runs.get_mut(id))
-        .ok_or_else(changed)?;
-    run.state = "closed".to_string();
-    run.revision = run.revision.saturating_add(1);
-    run.updated_at = updated_at.to_string();
-    Ok(())
+    if let Some(run) = registry.runs.get_mut(&planned.run_id) {
+        run.state = planned.to_state.to_string();
+        run.revision = planned.to_revision;
+        run.updated_at = updated_at.to_string();
+    }
 }
 
 struct Evaluation {
     active_runs: usize,
     controller_live_runs: usize,
-    closable: Vec<Value>,
+    closable: Vec<PlannedRun>,
     refused: Vec<Value>,
 }
 
@@ -486,35 +503,32 @@ fn evaluate(
         let changes = assignments
             .iter()
             .filter(|assignment| !TERMINAL_ASSIGNMENT_STATES.contains(&assignment.state.as_str()))
-            .map(|assignment| {
-                let to_state = if assignment.state == "accepted" {
+            .map(|assignment| PlannedAssignment {
+                assignment_id: assignment.assignment_id.clone(),
+                from_state: assignment.state.clone(),
+                to_state: if assignment.state == "accepted" {
                     "released"
                 } else {
                     "cancelled"
-                };
-                json!({
-                    "assignment_id": assignment.assignment_id,
-                    "from_state": assignment.state,
-                    "to_state": to_state,
-                    "from_revision": assignment.revision,
-                    "to_revision": assignment.revision.saturating_add(1),
-                    "reason": ASSIGNMENT_REASON,
-                })
+                },
+                from_revision: assignment.revision,
+                to_revision: assignment.revision.saturating_add(1),
+                reason: ASSIGNMENT_REASON,
             })
-            .collect::<Vec<_>>();
-        evaluation.closable.push(json!({
-            "run_id": run.run_id,
-            "objective_summary": run.objective_summary,
-            "controller_session_id": controller,
-            "created_at": run.created_at,
-            "last_activity_at": last_activity,
-            "from_state": run.state,
-            "to_state": "closed",
-            "from_revision": run.revision,
-            "to_revision": run.revision.saturating_add(1),
-            "reason": RUN_REASON,
-            "assignments": changes,
-        }));
+            .collect();
+        evaluation.closable.push(PlannedRun {
+            run_id: run.run_id.clone(),
+            objective_summary: run.objective_summary.clone(),
+            controller_session_id: controller.to_string(),
+            created_at: run.created_at.clone(),
+            last_activity_at: last_activity.to_string(),
+            from_state: run.state.clone(),
+            to_state: "closed",
+            from_revision: run.revision,
+            to_revision: run.revision.saturating_add(1),
+            reason: RUN_REASON,
+            assignments: changes,
+        });
     }
     evaluation
 }
