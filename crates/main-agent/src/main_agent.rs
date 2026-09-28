@@ -10012,7 +10012,8 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
     // A worker whose provider turn already ended never reads guidance queued
     // after that boundary on its own. Only the typed re-entry of the exact
     // request-changes or resume revision can wake it, so this mirrors every
-    // precondition `worker reenter` re-checks before it re-queues.
+    // precondition `worker reenter` re-checks before it re-queues, including
+    // a detached session.
     let idle_guidance_wake_required = assignment.state == "working"
         && worker_status == "running"
         && reentry_notification_generation.is_some()
@@ -10038,7 +10039,16 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
                 && worker_provider_idle_for_guidance(context, record, activity)
         })
         && orchestration::request_changes_identity_matches(context, &registry, &assignment)
-            .unwrap_or(false);
+            .unwrap_or(false)
+        // Evaluated last so tmux is queried only for an otherwise eligible
+        // worker. An attached human owns the pane, and an unobservable
+        // attachment state fails closed, so neither projects a wake argv.
+        && session_evidence.value().is_some_and(|record| {
+            matches!(
+                worker_session_attached(&resolve_tmux_bin(None), &record.tmux_session),
+                Ok(false)
+            )
+        });
 
     let facts = WorkerDiagnosisFacts {
         evidence_unavailable,
@@ -20126,7 +20136,8 @@ fn run_worker_reenter(context: &CliContext, args: WorkerReenterArgs) -> Result<V
             )
         })?;
     drop(registry);
-    verify_worker_reenter_runtime(context, &worker, &assignment.primary_manager)?;
+    let idle_composer_proof =
+        verify_worker_reenter_runtime(context, &worker, &assignment.primary_manager)?;
 
     let reservation = json!({
         "schema_version": "main-agent.worker-reenter-progress.v1",
@@ -20136,7 +20147,7 @@ fn run_worker_reenter(context: &CliContext, args: WorkerReenterArgs) -> Result<V
         "assignment_revision": assignment.revision,
         "worker": worker,
         "notification_generation": args.if_notification_generation,
-        "idle_composer_proof": "authoritative-turn-completed-and-detached",
+        "idle_composer_proof": idle_composer_proof,
         "message_generation_created": false,
         "assignment_prompt_resent": false
     });
@@ -20432,11 +20443,13 @@ fn persist_worker_reenter_receipt(
     locked.save()
 }
 
+/// Verify every live re-entry precondition and return the provider's idle
+/// composer proof label recorded in the reservation and receipt.
 fn verify_worker_reenter_runtime(
     context: &CliContext,
     worker: &SessionRef,
     primary_manager: &SessionRef,
-) -> Result<(), CliError> {
+) -> Result<&'static str, CliError> {
     // Keep the exact session record stable through every runtime observation.
     let _record_lock = acquire_session_record_lock(context, &worker.session_id)?;
     let worker_record = load_session_record(context, &worker.session_id)?;
@@ -20479,7 +20492,7 @@ fn verify_worker_reenter_runtime(
     if !worker_provider_idle_for_guidance(context, &worker_record, Some(&turn)) {
         return Err(CliError::data(
             "worker-reentry-composer-not-idle",
-            "typed re-entry requires authoritative completion at the idle composer",
+            "typed re-entry requires the worker's idle composer at its provider turn boundary",
             Some(worker_reentry_details(
                 true,
                 "wait-for-idle-turn",
@@ -20551,7 +20564,16 @@ fn verify_worker_reenter_runtime(
             )),
         ));
     }
-    Ok(())
+    Ok(worker_reentry_idle_composer_proof(&worker_record))
+}
+
+/// The receipt label for the evidence that proved the worker's composer idle.
+fn worker_reentry_idle_composer_proof(record: &SessionRecord) -> &'static str {
+    if AgentKind::from_name(&record.agent) == Some(AgentKind::Claude) {
+        "claude-debounced-stop-or-idle-prompt-and-detached"
+    } else {
+        "authoritative-turn-completed-and-detached"
+    }
 }
 
 /// Whether the exact worker's provider sits at an idle composer that the

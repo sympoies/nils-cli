@@ -499,8 +499,10 @@ assignment's live, coordinated Codex or Claude worker sits at an idle provider
 boundary with unread guidance that belongs only to its incarnation, while its
 notification generation is still undelivered and every other `worker reenter`
 precondition holds: the typed request-changes or resume identity matches the
-current revision and checkpoint, the broker is authoritative, and the worker
-holds no claim, operation, or in-flight recovery reservation. Codex is idle at
+current revision and checkpoint, the broker is authoritative, the worker
+holds no claim, operation, or in-flight recovery reservation, and its session is
+detached. An attached or unobservable session fails closed to the ordinary
+classification, because a human owns an attached pane. Codex is idle at
 an authoritative completed turn. Claude never reports an authoritative idle
 state, so it is idle when its latest provider event is a Stop or an
 `idle_prompt` completion older than the notification controller's debounce,
@@ -511,7 +513,9 @@ bootstrap instruction arrives only through that guidance. Its Main-owned,
 executable action has kind `exact_worker_notification_reentry` and an `argv`
 for `worker reenter` with the current revision, worker incarnation, the
 undelivered `notification_generation`, and a stable idempotency key derived
-from those selectors, so repeating it is a receipt replay. The v9 diagnosis
+from those selectors, so repeating it is a receipt replay. The re-entry receipt
+records `idle_composer_proof` as `authoritative-turn-completed-and-detached` for
+Codex and `claude-debounced-stop-or-idle-prompt-and-detached` for Claude. The v9 diagnosis
 adds a `notification` projection with the `generation`, `provider_idle: true`,
 and an explicit false `raw_terminal_input_authorized`.
 

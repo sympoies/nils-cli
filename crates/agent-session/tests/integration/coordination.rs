@@ -7789,7 +7789,8 @@ fn work_context_admit_reclaims_only_an_expired_superseded_lease() {
         });
     };
 
-    // A later turn alone does not reclaim a lease inside its safety TTL.
+    // A later turn alone does not reclaim a lease inside its safety TTL, even
+    // one already `completing`.
     set_turn("turn-after-orphaned-lease");
     let unexpired = admit("unexpired-execution-token", "admit-unexpired-0001");
     assert_ne!(unexpired.code, 0, "{}", unexpired.stdout_text());
@@ -7798,6 +7799,52 @@ fn work_context_admit_reclaims_only_an_expired_superseded_lease() {
         "coordination-unavailable"
     );
     assert_eq!(lease_state()["state"], "active");
+    rewrite_registry(&state_dir, |registry| {
+        let lease = registry["operations"]
+            .as_array_mut()
+            .expect("operations")
+            .iter_mut()
+            .find(|lease| lease["lease_id"] == orphaned_lease.as_str())
+            .expect("orphaned lease");
+        lease["state"] = json!("completing");
+    });
+    let completing = admit("completing-execution-token", "admit-completing-0001");
+    assert_ne!(completing.code, 0, "{}", completing.stdout_text());
+    assert_eq!(
+        completing.stdout_json()["error"]["code"],
+        "coordination-unavailable"
+    );
+    assert_eq!(lease_state()["state"], "completing");
+
+    // An expired, superseded lease admitted by a different runtime identity is
+    // not proven inactive by this runtime's evidence.
+    expire();
+    let original_runtime_digest = lease_state()["runtime_identity_digest"].clone();
+    rewrite_registry(&state_dir, |registry| {
+        let lease = registry["operations"]
+            .as_array_mut()
+            .expect("operations")
+            .iter_mut()
+            .find(|lease| lease["lease_id"] == orphaned_lease.as_str())
+            .expect("orphaned lease");
+        lease["runtime_identity_digest"] = json!(digest("another-runtime"));
+    });
+    let other_runtime = admit("other-runtime-execution-token", "admit-other-runtime-0001");
+    assert_ne!(other_runtime.code, 0, "{}", other_runtime.stdout_text());
+    assert_eq!(
+        other_runtime.stdout_json()["error"]["code"],
+        "coordination-unavailable"
+    );
+    assert_ne!(lease_state()["state"], "abandoned");
+    rewrite_registry(&state_dir, |registry| {
+        let lease = registry["operations"]
+            .as_array_mut()
+            .expect("operations")
+            .iter_mut()
+            .find(|lease| lease["lease_id"] == orphaned_lease.as_str())
+            .expect("orphaned lease");
+        lease["runtime_identity_digest"] = original_runtime_digest.clone();
+    });
 
     // An expired lease whose own turn is still current is not proven inactive.
     set_turn("turn-orphaned-lease");
@@ -32949,6 +32996,42 @@ fn main_agent_supervise_wakes_an_idle_claude_worker_with_queued_guidance() {
         data(&supervised)
     };
 
+    // A human attached to the worker pane owns it: no wake argv is offered.
+    let attached_tmux = tmp.path().join("tmux-attached-worker");
+    fs::write(
+        &attached_tmux,
+        "#!/bin/sh\ncase \"$1\" in\n  has-session) exit 0 ;;\n  display-message) printf '1\\n'; exit 0 ;;\n  *) exit 1 ;;\nesac\n",
+    )
+    .expect("attached tmux script");
+    fs::set_permissions(&attached_tmux, fs::Permissions::from_mode(0o700))
+        .expect("attached tmux mode");
+    let attached = run_main_agent(
+        &main_checkout,
+        &[
+            "--state-dir",
+            &state,
+            "worker",
+            "supervise",
+            "assignment-delivery",
+            "--format",
+            "json",
+        ],
+        &[
+            ("AGENT_SESSION_CAPABILITY_FILE", main_capability.as_str()),
+            (
+                "AGENT_SESSION_TMUX_BIN",
+                attached_tmux.to_str().expect("attached tmux"),
+            ),
+        ],
+    );
+    assert_eq!(attached.code, 0, "{}", attached.stdout_text());
+    assert_ne!(
+        data(&attached)["classification"],
+        "idle_guidance_wake_required",
+        "{}",
+        attached.stdout_text()
+    );
+
     let supervised = supervise();
     assert_eq!(
         supervised["classification"], "idle_guidance_wake_required",
@@ -33002,6 +33085,10 @@ fn main_agent_supervise_wakes_an_idle_claude_worker_with_queued_guidance() {
     assert_eq!(data(&woken)["notification"]["state"], "queued");
     assert_eq!(data(&woken)["notification"]["generation"], generation);
     assert_eq!(data(&woken)["message_generation_created"], false);
+    assert_eq!(
+        data(&woken)["idle_composer_proof"],
+        "claude-debounced-stop-or-idle-prompt-and-detached"
+    );
     assert_eq!(data(&woken)["assignment_prompt_resent"], false);
 
     // The exact replay is a receipt read: it neither re-queues nor creates a
