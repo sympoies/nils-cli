@@ -92,6 +92,22 @@ validations_catalog:
     rule: "when enabled, the initial provider head and every review commit OID are non-empty, a complete paginated current-head native-review snapshot has no effective CHANGES_REQUESTED, already-observed configured bot activity stays quiet for the resolved quiet_period, and a final pre-merge snapshot has not changed; absent observed bots never wait"
     error_kind: review_changes_requested | review_convergence_head_missing | review_convergence_head_changed | review_convergence_activity_changed | review_snapshot_incomplete | invalid_review_convergence_config | review_convergence_timeout | backend_output_limit | provider_unsupported
     exit: DATA | UNAVAILABLE | USAGE
+  merge_freeze_active:
+    rule: "GitHub: no open merge-freeze issue at the first policy read or at the re-read immediately before the merge or enqueue mutation, unless every active freeze is named by --allow-merge-freeze with --allow-merge-freeze-reason; a host whose schema lacks mergeQueue is read as queueless (freeze list only)"
+    error_kind: merge_freeze_active | merge_policy_unavailable
+    exit: DATA | UNAVAILABLE
+  merge_queue_method_mismatch:
+    rule: "GitHub: an explicit --method must equal the required merge queue's configured method"
+    error_kind: merge_queue_method_mismatch
+    exit: DATA
+  merge_queue_landed:
+    rule: "GitHub: a required merge queue lands the enqueued head within --queue-timeout; enqueue is skipped when the PR is already queued or merged"
+    error_kind: merge_queue_enqueue_rejected | merge_queue_dequeued | merge_queue_checks_failed | merge_queue_poll_failed | merge_queue_timeout
+    exit: RUNTIME | UNAVAILABLE
+  merge_freeze_record:
+    rule: "repo freeze end closes exactly one open merge-freeze issue"
+    error_kind: merge_freeze_not_active | merge_freeze_ambiguous
+    exit: DATA
   tasklist_complete:
     rule: "no unchecked task-list items in the PR/MR description at merge time unless --allow-unchecked-tasks (with --allow-unchecked-tasks-reason) is set"
     error_kind: unchecked_task_items
@@ -885,6 +901,7 @@ operations:
       - default_branch_protected
       - merge_freeze_active     # GitHub: an open `merge-freeze` issue blocks unless every one is named by --allow-merge-freeze with a reason; policy read failure is merge_policy_unavailable
       - merge_queue_method_mismatch # GitHub: an explicit --method that differs from the required merge queue's method
+      - merge_queue_landed      # GitHub: queued merge outcome (enqueue rejected, dequeued, checks failed, poll failed, timeout)
       - required_checks_green   # TTL-zero re-check
       - merge_method_supported
       - keep_branch_conflict
@@ -1186,7 +1203,7 @@ operations:
       - { name: start --until,    type: string,  default: null }
       - { name: end --issue,      type: integer, default: null } # omitted: ends the single active freeze
       - { name: status,           type: flag,    default: null }
-    validations: [merge_freeze_not_active, merge_freeze_ambiguous]
+    validations: [merge_freeze_record]
     backends:
       github: { status: [issue, list, --label, merge-freeze, --state, open, --json, "number,title,url,author,createdAt"], start: [[label, list, --search, merge-freeze], [label, create, merge-freeze], [issue, create, --title, "Merge freeze: {reason}", --body, "{body}", --label, merge-freeze]], end: [issue, close, "{issue}", --comment, "{comment}"] }
       gitlab: provider_unsupported
@@ -1368,7 +1385,7 @@ macros:
       - { name: --body-file,                type: path,                         required: false }
       - { name: --head,                     type: string,                       default: current-branch } # GitHub-only <user>:<branch> seam; user forks only
       - { name: --base,                     type: string,                       default: repo-default-branch }
-      - { name: --method,                   type: enum<squash|merge|rebase>,    default: squash }
+      - { name: --method,                   type: enum<squash|merge|rebase>,    default: resolved-config } # omitted: .forge-cli.toml [merge].method, else squash; a required merge queue's method wins. pr deliver has no freeze bypass (use pr merge --allow-merge-freeze)
       - { name: --reviewer,                 type: list<string>,                 default: [] }
       - { name: --label,                    type: list<string>,                 default: [] }
       - { name: --label-catalog,            type: path,                         required: false }

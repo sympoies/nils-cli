@@ -461,38 +461,10 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
         ));
     }
 
-    // Rule 5 — GitHub merge policy: an active repository merge freeze blocks
+    // Rule 18 — GitHub merge policy: an active repository merge freeze blocks
     // the merge before any provider mutation, and a required merge queue
     // replaces the direct merge API and decides the merge method.
-    let policy = if ctx.provider == Provider::GitHub {
-        Some(merge_policy::read_policy(
-            runner,
-            ctx,
-            &repo.owner,
-            &repo.name,
-            &pr.base,
-            args.id,
-        )?)
-    } else {
-        None
-    };
-    let merge_freeze_override = match policy.as_ref() {
-        Some(policy) => merge_policy::enforce_freeze(
-            &policy.freezes,
-            &args.allow_merge_freeze,
-            args.allow_merge_freeze_reason.as_deref(),
-        )?,
-        None => None,
-    };
-    let queue = policy.as_ref().and_then(|policy| policy.queue.as_ref());
-    let method = match queue {
-        Some(queue) => merge_policy::resolve_queue_method(
-            queue,
-            args.method.map(|method| method.into_method()),
-            settings.method,
-        )?,
-        None => settings.method,
-    };
+    let (_, _, method) = apply_merge_policy(runner, ctx, &repo, &pr, args, settings.method)?;
 
     let no_checks = NoChecksAllowance::resolve(args, ctx, workdir, &global.remote, &pr.base);
 
@@ -617,6 +589,14 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
         )?);
     }
 
+    // Rule 18 recheck — a freeze started or a queue enabled while the gates
+    // above ran must still decide this merge, so the policy is read once more
+    // immediately before the merge or enqueue mutation.
+    let (policy, merge_freeze_override, method) =
+        apply_merge_policy(runner, ctx, &repo, &pr, args, settings.method)?;
+    enforce_method_supported(method, &repo)?;
+    let queue = policy.as_ref().and_then(|policy| policy.queue.as_ref());
+
     // All gates clear — invoke the backend, or hand the verified head to the
     // required merge queue and wait for it to land.
     let merge_sha = if let (Some(policy), Some(_)) = (policy.as_ref(), queue) {
@@ -632,7 +612,9 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
                     None,
                 )
             })?;
-        if !policy.in_queue {
+        // A retried merge may find the queue already merged or still holding the
+        // PR; only a PR in neither state is enqueued.
+        if !policy.in_queue && !policy.merged {
             let node_id = policy.pr_node_id.as_deref().ok_or_else(|| {
                 ForgeError::unavailable(
                     schema_err(),
@@ -699,6 +681,45 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
         review_convergence: review_snapshot,
         review_loop,
     })
+}
+
+/// Rule 18: read the GitHub merge policy, refuse an active freeze the caller
+/// does not hold, and resolve the merge method a required queue imposes.
+/// Other providers have no policy and keep the configured method.
+fn apply_merge_policy<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    repo: &RepoViewPayload,
+    pr: &PrView,
+    args: &PrMergeArgs,
+    configured: MergeMethod,
+) -> Result<
+    (
+        Option<merge_policy::MergePolicy>,
+        Option<merge_policy::FreezeOverride>,
+        MergeMethod,
+    ),
+    ForgeError,
+> {
+    if ctx.provider != Provider::GitHub {
+        return Ok((None, None, configured));
+    }
+    let policy =
+        merge_policy::read_policy(runner, ctx, &repo.owner, &repo.name, &pr.base, args.id)?;
+    let freeze_override = merge_policy::enforce_freeze(
+        &policy.freezes,
+        &args.allow_merge_freeze,
+        args.allow_merge_freeze_reason.as_deref(),
+    )?;
+    let method = match policy.queue.as_ref() {
+        Some(queue) => merge_policy::resolve_queue_method(
+            queue,
+            args.method.map(|method| method.into_method()),
+            configured,
+        )?,
+        None => configured,
+    };
+    Ok((Some(policy), freeze_override, method))
 }
 
 /// Build the backend merge invocation.

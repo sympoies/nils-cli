@@ -1565,9 +1565,10 @@ pub struct PrDeliverArgs {
     /// Target / base branch (defaults to the repo's default branch).
     #[arg(long)]
     pub base: Option<String>,
-    /// Merge method (default: squash).
-    #[arg(long, value_enum, default_value_t = MergeMethodFlag::Squash)]
-    pub method: MergeMethodFlag,
+    /// Merge method (default: squash). When omitted, `.forge-cli.toml`
+    /// `[merge].method` applies, and a required merge queue's own method wins.
+    #[arg(long, value_enum)]
+    pub method: Option<MergeMethodFlag>,
     /// Add a reviewer (repeatable).
     #[arg(long = "reviewer", value_name = "USER")]
     pub reviewers: Vec<String>,

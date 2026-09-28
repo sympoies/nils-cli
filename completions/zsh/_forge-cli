@@ -912,7 +912,7 @@ _arguments "${_arguments_options[@]}" : \
 '--body-file=[Read PR / MR body from a file. Use \`-\` to read from stdin]:PATH:_default' \
 '--head=[Source branch (defaults to the current branch)]:HEAD:_default' \
 '--base=[Target / base branch (defaults to the repo'\''s default branch)]:BASE:_default' \
-'--method=[Merge method (default\: squash)]:METHOD:(squash merge rebase)' \
+'--method=[Merge method (default\: squash). When omitted, \`.forge-cli.toml\` \`\[merge\].method\` applies, and a required merge queue'\''s own method wins]:METHOD:(squash merge rebase)' \
 '*--reviewer=[Add a reviewer (repeatable)]:USER:_default' \
 '*--label=[Add a label to the created PR / MR (repeatable)]:LABEL:_default' \
 '--label-catalog=[Validate labels against this catalog when \`--strict-labels\` is set]:PATH:_default' \

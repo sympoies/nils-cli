@@ -715,7 +715,7 @@ fn build_merge_args(
         id: pr_number,
         expected_head_sha,
         expected_base: Some(expected_base),
-        method: Some(args.method),
+        method: args.method,
         keep_branch: false,
         allow_non_default_base: args.allow_non_default_base,
         allow_unresolved_threads: args.allow_unresolved_threads,
@@ -1161,7 +1161,7 @@ fn pr_merge_dry_plan(ctx: &ProviderContext, args: &PrDeliverArgs, workdir: &Path
     pr_merge::build_dry_run_merge_call(
         ctx,
         0,
-        args.method.into_method(),
+        cfg.resolve_merge_method(args.method.map(|method| method.into_method())),
         cfg.resolve_delete_branch(None),
     )
     .plan_argv()
@@ -1405,7 +1405,7 @@ mod tests {
             body_file: None,
             head: Some("feat/demo".into()),
             base: Some("main".into()),
-            method: MergeMethodFlag::Squash,
+            method: Some(MergeMethodFlag::Squash),
             reviewers: Vec::new(),
             labels: Vec::new(),
             label_catalog: None,

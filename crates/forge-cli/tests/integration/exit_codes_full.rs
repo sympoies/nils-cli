@@ -100,6 +100,10 @@ const LOCKDOWN_DATA_KINDS: &[&str] = &[
     "pending_review_not_found",
     "pending_review_author_mismatch",
     "pending_review_not_deletable",
+    "merge_freeze_active",
+    "merge_freeze_not_active",
+    "merge_freeze_ambiguous",
+    "merge_queue_method_mismatch",
 ];
 
 #[test]
@@ -195,4 +199,30 @@ fn binary_only_emits_documented_exit_constants() {
         6,
         "exit constants must be six distinct values, got {canonical:?}"
     );
+}
+
+#[test]
+fn merge_queue_runtime_kinds_map_to_runtime_1() {
+    for kind in [
+        "merge_queue_enqueue_rejected",
+        "merge_queue_dequeued",
+        "merge_queue_checks_failed",
+    ] {
+        let err = ForgeError::runtime_failure(SCHEMA, kind, "x", None);
+        assert_eq!(err.exit_code(), exit::RUNTIME, "kind={kind}");
+        assert_eq!(err.kind(), kind);
+    }
+}
+
+#[test]
+fn merge_policy_unavailable_kinds_map_to_unavailable_69() {
+    for kind in [
+        "merge_policy_unavailable",
+        "merge_queue_poll_failed",
+        "merge_queue_timeout",
+    ] {
+        let err = ForgeError::unavailable(SCHEMA, kind, "x", None);
+        assert_eq!(err.exit_code(), exit::UNAVAILABLE, "kind={kind}");
+        assert_eq!(err.kind(), kind);
+    }
 }

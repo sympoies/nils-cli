@@ -176,16 +176,26 @@ closed with `merge_freeze_active`. The freeze holder can still merge by naming
 every active freeze with `--allow-merge-freeze <issue>` and giving a
 `--allow-merge-freeze-reason`, which is recorded as `merge_freeze_override`.
 The record lives on the provider, so it works on private repositories that
-cannot use branch protection or a merge queue.
+cannot use branch protection or a merge queue. The freeze is read again
+immediately before the merge or enqueue, so a freeze started while the gates
+ran still blocks. `pr deliver` has no freeze bypass; a freeze holder merges with
+`pr merge --allow-merge-freeze`. A GitHub Enterprise Server whose schema has no
+merge queue is treated as queueless, and only its freeze list is read.
 
 When the base branch requires a merge queue, `pr merge` still runs every gate.
 It then enqueues the verified head with `enqueuePullRequest` instead of calling
 the direct merge API, and waits for the queue to land it, bounded by
-`--queue-timeout <seconds>` (default 2700). Failures are typed:
+`--queue-timeout <seconds>` (default 2700). A PR that is already queued or
+already merged is not enqueued again, so a rerun resumes the wait. Without
+`--method`, `pr merge` and `pr deliver` use the queue's method. Failures are
+typed:
 
+- `merge_queue_enqueue_rejected`: the enqueue mutation was rejected.
+- `merge_queue_poll_failed`: a queue poll returned GraphQL errors.
 - `merge_queue_dequeued`: the PR left the queue without merging.
 - `merge_queue_checks_failed`: the queue reports the PR as unmergeable.
-- `merge_queue_timeout`: the wait exceeded `--queue-timeout`.
+- `merge_queue_timeout`: the wait exceeded `--queue-timeout`. The PR is still
+  queued and will merge unless it is dequeued; rerun `pr merge` to resume.
 - `merge_queue_method_mismatch`: an explicit `--method` differs from the
   queue's configured method.
 

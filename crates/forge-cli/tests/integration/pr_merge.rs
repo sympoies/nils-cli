@@ -2249,7 +2249,7 @@ fn pr_merge_enqueues_when_the_base_requires_a_merge_queue() {
         true,
         None,
         ONE_REQUIRED_PASS_CHECKS,
-        SQUASH_QUEUE_POLICY,
+        MERGE_QUEUE_POLICY,
         &extra,
     );
     let stub = stub.gh_stub(&body);
@@ -2260,6 +2260,11 @@ fn pr_merge_enqueues_when_the_base_requires_a_merge_queue() {
     let env = parse_envelope(&out.stdout);
     assert_eq!(env["data"]["merge_sha"], "merge456");
     assert_eq!(env["data"]["merge_queue"], true);
+    assert_eq!(
+        env["data"]["method"], "merge",
+        "the queue method wins over the squash default"
+    );
+    assert_eq!(env["data"]["deleted_branch"], false);
     assert!(enqueued.exists(), "a required queue must be entered");
     assert!(!merged.exists(), "the direct merge API must not be used");
 }
@@ -2327,4 +2332,220 @@ fn pr_merge_rejects_an_explicit_method_the_merge_queue_does_not_use() {
         !enqueued.exists(),
         "a mismatched method must fail before enqueue"
     );
+}
+
+/// A base branch whose ruleset requires a merge-commit merge queue.
+const MERGE_QUEUE_POLICY: &str = r#"{"data":{"repository":{"mergeQueue":{"configuration":{"mergeMethod":"MERGE"}},"issues":{"nodes":[]},"pullRequest":{"id":"PR_node7","isInMergeQueue":false,"state":"OPEN"}}}}"#;
+
+const MERGED_POLL: &str = r#"      *"ForgeMergeQueuePoll"*) printf '%s\n' '{"data":{"repository":{"pullRequest":{"state":"MERGED","mergeCommit":{"oid":"merge456"},"mergeQueueEntry":null}}}}' ;;"#;
+
+fn github_policy_stub(stub: &StubEnv, policy: &str, extra: &str) -> String {
+    github_merge_stub_full(
+        stub,
+        "",
+        "",
+        true,
+        None,
+        ONE_REQUIRED_PASS_CHECKS,
+        policy,
+        extra,
+    )
+}
+
+#[test]
+fn pr_merge_fails_closed_when_the_policy_read_returns_graphql_errors() {
+    let tempdir = make_github_repo(None);
+    let repo_path = tempdir.path().join("repo");
+    let stub = StubEnv::new();
+    let merged = stub.tempdir.path().join("github-merged");
+    let body = github_policy_stub(
+        &stub,
+        r#"{"data":null,"errors":[{"message":"Something went wrong"}]}"#,
+        "",
+    );
+    let stub = stub.gh_stub(&body);
+
+    let out = run_github_merge(&stub, &repo_path, &[]);
+
+    assert_eq!(out.code, 69, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    assert_eq!(
+        parse_envelope(&out.stdout)["error"]["code"],
+        "merge_policy_unavailable"
+    );
+    assert!(
+        !merged.exists(),
+        "an unreadable policy must not reach the merge"
+    );
+}
+
+#[test]
+fn pr_merge_fails_closed_when_the_policy_read_has_no_repository() {
+    let tempdir = make_github_repo(None);
+    let repo_path = tempdir.path().join("repo");
+    let stub = StubEnv::new();
+    let merged = stub.tempdir.path().join("github-merged");
+    let body = github_policy_stub(&stub, r#"{"data":{"repository":null}}"#, "");
+    let stub = stub.gh_stub(&body);
+
+    let out = run_github_merge(&stub, &repo_path, &[]);
+
+    assert_eq!(out.code, 69, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    assert_eq!(
+        parse_envelope(&out.stdout)["error"]["code"],
+        "merge_policy_unavailable"
+    );
+    assert!(!merged.exists());
+}
+
+#[test]
+fn pr_merge_treats_a_host_without_the_merge_queue_schema_as_queueless() {
+    let tempdir = make_github_repo(None);
+    let repo_path = tempdir.path().join("repo");
+    let stub = StubEnv::new();
+    let merged = stub.tempdir.path().join("github-merged");
+    let extra = r#"      *"ForgeMergeFreezes"*) printf '%s\n' '{"data":{"repository":{"issues":{"nodes":[]}}}}' ;;"#;
+    let body = github_policy_stub(
+        &stub,
+        r#"{"errors":[{"message":"Field \u0027mergeQueue\u0027 doesn\u0027t exist on type \u0027Repository\u0027"},{"message":"Field \u0027isInMergeQueue\u0027 doesn\u0027t exist on type \u0027PullRequest\u0027"}]}"#,
+        extra,
+    );
+    let stub = stub.gh_stub(&body);
+
+    let out = run_github_merge(&stub, &repo_path, &[]);
+
+    assert_eq!(out.code, 0, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    assert!(merged.exists(), "a queueless host keeps the direct merge");
+}
+
+#[test]
+fn pr_merge_still_honors_a_freeze_on_a_host_without_the_merge_queue_schema() {
+    let tempdir = make_github_repo(None);
+    let repo_path = tempdir.path().join("repo");
+    let stub = StubEnv::new();
+    let merged = stub.tempdir.path().join("github-merged");
+    let extra = r#"      *"ForgeMergeFreezes"*) printf '%s\n' '{"data":{"repository":{"issues":{"nodes":[{"number":42,"title":"Merge freeze: release","url":"https://ghe.example/acme/widgets/issues/42","author":{"login":"release-bot"},"createdAt":"2026-09-29T00:00:00Z"}]}}}}' ;;"#;
+    let body = github_policy_stub(
+        &stub,
+        r#"{"errors":[{"message":"Field \u0027mergeQueue\u0027 doesn\u0027t exist on type \u0027Repository\u0027"}]}"#,
+        extra,
+    );
+    let stub = stub.gh_stub(&body);
+
+    let out = run_github_merge(&stub, &repo_path, &[]);
+
+    assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    assert_eq!(
+        parse_envelope(&out.stdout)["error"]["code"],
+        "merge_freeze_active"
+    );
+    assert!(!merged.exists());
+}
+
+#[test]
+fn pr_merge_rereads_the_freeze_immediately_before_the_merge() {
+    let tempdir = make_github_repo(None);
+    let repo_path = tempdir.path().join("repo");
+    let stub = StubEnv::new();
+    let merged = stub.tempdir.path().join("github-merged");
+    let calls = stub.tempdir.path().join("policy-calls");
+    let extra = format!(
+        r#"      *"ForgeMergePolicy"*)
+        count=0
+        if [ -f {calls} ]; then count=$(cat {calls}); fi
+        count=$((count + 1))
+        printf '%s\n' "$count" > {calls}
+        if [ "$count" -ge 2 ]; then printf '%s\n' '{freeze}'; else printf '%s\n' '{open}'; fi
+        ;;"#,
+        calls = calls.display(),
+        freeze = ACTIVE_FREEZE_POLICY,
+        open = NO_MERGE_POLICY,
+    );
+    let body = github_policy_stub(&stub, NO_MERGE_POLICY, &extra);
+    let stub = stub.gh_stub(&body);
+
+    let out = run_github_merge(&stub, &repo_path, &[]);
+
+    assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    assert_eq!(
+        parse_envelope(&out.stdout)["error"]["code"],
+        "merge_freeze_active"
+    );
+    assert!(
+        !merged.exists(),
+        "a freeze started during the gates must block"
+    );
+}
+
+#[test]
+fn pr_merge_resumes_a_pull_request_already_in_the_merge_queue() {
+    let tempdir = make_github_repo(None);
+    let repo_path = tempdir.path().join("repo");
+    let stub = StubEnv::new();
+    let enqueued = stub.tempdir.path().join("enqueued");
+    let extra = format!(
+        "      *\"ForgeEnqueuePullRequest\"*) touch {enqueued}; exit 99 ;;\n{MERGED_POLL}",
+        enqueued = enqueued.display()
+    );
+    let body = github_policy_stub(
+        &stub,
+        r#"{"data":{"repository":{"mergeQueue":{"configuration":{"mergeMethod":"SQUASH"}},"issues":{"nodes":[]},"pullRequest":{"id":"PR_node7","isInMergeQueue":true,"state":"OPEN"}}}}"#,
+        &extra,
+    );
+    let stub = stub.gh_stub(&body);
+
+    let out = run_github_merge(&stub, &repo_path, &[]);
+
+    assert_eq!(out.code, 0, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    assert_eq!(parse_envelope(&out.stdout)["data"]["merge_sha"], "merge456");
+    assert!(
+        !enqueued.exists(),
+        "a queued pull request must not be re-enqueued"
+    );
+}
+
+#[test]
+fn pr_merge_does_not_enqueue_a_pull_request_the_queue_already_merged() {
+    let tempdir = make_github_repo(None);
+    let repo_path = tempdir.path().join("repo");
+    let stub = StubEnv::new();
+    let enqueued = stub.tempdir.path().join("enqueued");
+    let extra = format!(
+        "      *\"ForgeEnqueuePullRequest\"*) touch {enqueued}; exit 99 ;;\n{MERGED_POLL}",
+        enqueued = enqueued.display()
+    );
+    let body = github_policy_stub(
+        &stub,
+        r#"{"data":{"repository":{"mergeQueue":{"configuration":{"mergeMethod":"SQUASH"}},"issues":{"nodes":[]},"pullRequest":{"id":"PR_node7","isInMergeQueue":false,"state":"MERGED"}}}}"#,
+        &extra,
+    );
+    let stub = stub.gh_stub(&body);
+
+    let out = run_github_merge(&stub, &repo_path, &[]);
+
+    assert_eq!(out.code, 0, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    assert_eq!(parse_envelope(&out.stdout)["data"]["merge_sha"], "merge456");
+    assert!(
+        !enqueued.exists(),
+        "a retried merge must not enqueue a merged pull request"
+    );
+}
+
+#[test]
+fn pr_merge_reports_an_enqueue_graphql_error_as_rejected() {
+    let tempdir = make_github_repo(None);
+    let repo_path = tempdir.path().join("repo");
+    let stub = StubEnv::new();
+    let extra = r#"      *"ForgeEnqueuePullRequest"*) printf '%s\n' '{"data":{"enqueuePullRequest":null},"errors":[{"message":"Pull request is not mergeable"}]}' ;;"#;
+    let body = github_policy_stub(&stub, SQUASH_QUEUE_POLICY, extra);
+    let stub = stub.gh_stub(&body);
+
+    let out = run_github_merge(&stub, &repo_path, &[]);
+
+    assert_ne!(out.code, 0, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let env = parse_envelope(&out.stdout);
+    assert_eq!(env["error"]["code"], "merge_queue_enqueue_rejected");
+    let detail = env["error"]["details"]["detail"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(detail.contains("not mergeable"), "{detail}");
 }

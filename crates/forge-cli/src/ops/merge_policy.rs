@@ -31,7 +31,11 @@ pub const FREEZE_LABEL: &str = "merge-freeze";
 pub const DEFAULT_QUEUE_TIMEOUT: Duration = Duration::from_secs(45 * 60);
 const QUEUE_POLL_INTERVAL: Duration = Duration::from_secs(15);
 
-const POLICY_QUERY: &str = "query ForgeMergePolicy($owner:String!,$name:String!,$base:String!,$pr:Int!){repository(owner:$owner,name:$name){mergeQueue(branch:$base){configuration{mergeMethod}} issues(first:20,states:OPEN,labels:[\"merge-freeze\"]){nodes{number title url author{login} createdAt}} pullRequest(number:$pr){id isInMergeQueue}}}";
+const POLICY_QUERY: &str = "query ForgeMergePolicy($owner:String!,$name:String!,$base:String!,$pr:Int!){repository(owner:$owner,name:$name){mergeQueue(branch:$base){configuration{mergeMethod}} issues(first:20,states:OPEN,labels:[\"merge-freeze\"]){nodes{number title url author{login} createdAt}} pullRequest(number:$pr){id isInMergeQueue state}}}";
+
+/// Freeze-only read for a GitHub host whose schema has no merge queue (older
+/// GitHub Enterprise Server). Such a host cannot require a queue.
+const FREEZE_QUERY: &str = "query ForgeMergeFreezes($owner:String!,$name:String!){repository(owner:$owner,name:$name){issues(first:20,states:OPEN,labels:[\"merge-freeze\"]){nodes{number title url author{login} createdAt}}}}";
 
 const ENQUEUE_MUTATION: &str = "mutation ForgeEnqueuePullRequest($pullRequestId:ID!,$expectedHeadOid:GitObjectID!){enqueuePullRequest(input:{pullRequestId:$pullRequestId,expectedHeadOid:$expectedHeadOid}){mergeQueueEntry{state position}}}";
 
@@ -85,6 +89,8 @@ pub struct MergePolicy {
     pub queue: Option<MergeQueue>,
     pub pr_node_id: Option<String>,
     pub in_queue: bool,
+    /// The provider already reports the PR as merged (a retried queue merge).
+    pub merged: bool,
 }
 
 pub fn read_policy<R: BackendRunner>(
@@ -103,7 +109,10 @@ pub fn read_policy<R: BackendRunner>(
     );
     let output = runner.run(&call)?;
     let value = parse_json(&output.stdout, "merge policy")?;
-    reject_errors(&value, "merge policy")?;
+    if lacks_merge_queue_schema(&value) {
+        return read_freezes_only(runner, ctx, owner, name);
+    }
+    reject_errors(&value, "merge policy", policy_unavailable)?;
     let repository = &value["data"]["repository"];
     if repository.is_null() {
         return Err(policy_unavailable(
@@ -132,6 +141,48 @@ pub fn read_policy<R: BackendRunner>(
         in_queue: repository["pullRequest"]["isInMergeQueue"]
             .as_bool()
             .unwrap_or(false),
+        merged: repository["pullRequest"]["state"]
+            .as_str()
+            .is_some_and(|state| state.eq_ignore_ascii_case("MERGED")),
+    })
+}
+
+fn read_freezes_only<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    owner: &str,
+    name: &str,
+) -> Result<MergePolicy, ForgeError> {
+    let call = graphql_call(ctx, FREEZE_QUERY, &[("owner", owner), ("name", name)], &[]);
+    let output = runner.run(&call)?;
+    let value = parse_json(&output.stdout, "merge freeze")?;
+    reject_errors(&value, "merge freeze", policy_unavailable)?;
+    let freezes = value["data"]["repository"]["issues"]["nodes"]
+        .as_array()
+        .ok_or_else(|| policy_unavailable("merge freeze response has no freeze list", None))?
+        .iter()
+        .filter_map(parse_freeze)
+        .collect();
+    Ok(MergePolicy {
+        freezes,
+        queue: None,
+        pr_node_id: None,
+        in_queue: false,
+        merged: false,
+    })
+}
+
+/// True when every GraphQL error only says the merge-queue fields are absent
+/// from the host schema.
+fn lacks_merge_queue_schema(value: &serde_json::Value) -> bool {
+    value["errors"].as_array().is_some_and(|errors| {
+        !errors.is_empty()
+            && errors.iter().all(|error| {
+                error["message"].as_str().is_some_and(|message| {
+                    (message.contains("mergeQueue") || message.contains("isInMergeQueue"))
+                        && message.contains("doesn't exist")
+                })
+            })
     })
 }
 
@@ -217,11 +268,9 @@ pub fn enqueue<R: BackendRunner>(
     );
     let output = runner.run(&call)?;
     let value = parse_json(&output.stdout, "merge queue enqueue")?;
-    reject_errors(&value, "merge queue enqueue")?;
+    reject_errors(&value, "merge queue enqueue", enqueue_rejected)?;
     if value["data"]["enqueuePullRequest"]["mergeQueueEntry"].is_null() {
-        return Err(ForgeError::runtime_failure(
-            schema_err(),
-            "merge_queue_dequeued",
+        return Err(enqueue_rejected(
             "the merge queue did not accept the pull request",
             None,
         ));
@@ -250,7 +299,7 @@ pub fn wait_for_merge<R: BackendRunner, C: Clock>(
         );
         let output = runner.run(&call)?;
         let value = parse_json(&output.stdout, "merge queue poll")?;
-        reject_errors(&value, "merge queue poll")?;
+        reject_errors(&value, "merge queue poll", poll_failed)?;
         let pull = &value["data"]["repository"]["pullRequest"];
         let state = pull["state"].as_str().unwrap_or_default();
         if state.eq_ignore_ascii_case("MERGED") {
@@ -280,7 +329,7 @@ pub fn wait_for_merge<R: BackendRunner, C: Clock>(
             return Err(ForgeError::unavailable(
                 schema_err(),
                 "merge_queue_timeout",
-                "the merge queue did not merge the pull request before the timeout",
+                "the pull request is still queued and will merge unless it is dequeued; the wait timed out before it landed",
                 Some(format!(
                     "pr={pr}; entry_state={}; timeout_secs={}",
                     entry["state"].as_str().unwrap_or("unknown"),
@@ -341,9 +390,13 @@ fn parse_json(stdout: &str, label: &str) -> Result<serde_json::Value, ForgeError
     })
 }
 
-fn reject_errors(value: &serde_json::Value, label: &str) -> Result<(), ForgeError> {
+fn reject_errors(
+    value: &serde_json::Value,
+    label: &str,
+    error: fn(String, Option<String>) -> ForgeError,
+) -> Result<(), ForgeError> {
     match value["errors"].as_array() {
-        Some(errors) if !errors.is_empty() => Err(policy_unavailable(
+        Some(errors) if !errors.is_empty() => Err(error(
             format!("{label} returned GraphQL errors"),
             Some(
                 errors
@@ -361,6 +414,19 @@ fn policy_unavailable(message: impl Into<String>, detail: Option<String>) -> For
     ForgeError::unavailable(schema_err(), "merge_policy_unavailable", message, detail)
 }
 
+fn enqueue_rejected(message: impl Into<String>, detail: Option<String>) -> ForgeError {
+    ForgeError::runtime_failure(
+        schema_err(),
+        "merge_queue_enqueue_rejected",
+        message,
+        detail,
+    )
+}
+
+fn poll_failed(message: impl Into<String>, detail: Option<String>) -> ForgeError {
+    ForgeError::unavailable(schema_err(), "merge_queue_poll_failed", message, detail)
+}
+
 fn schema_err() -> String {
     schema_version_for(BINARY, "error", 1)
 }
@@ -368,6 +434,131 @@ fn schema_err() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::{Cell, RefCell};
+    use std::time::Instant;
+
+    use crate::backend::BackendSuccess;
+    use crate::provider::{DetectionSource, Provider};
+
+    struct ScriptedRunner {
+        responses: RefCell<Vec<String>>,
+    }
+
+    impl ScriptedRunner {
+        fn new(responses: &[&str]) -> Self {
+            Self {
+                responses: RefCell::new(responses.iter().rev().map(|r| r.to_string()).collect()),
+            }
+        }
+    }
+
+    impl BackendRunner for ScriptedRunner {
+        fn run(&self, _call: &BackendCall) -> Result<BackendSuccess, ForgeError> {
+            let mut responses = self.responses.borrow_mut();
+            let stdout = if responses.len() > 1 {
+                responses.pop().unwrap()
+            } else {
+                responses.last().cloned().expect("scripted response")
+            };
+            Ok(BackendSuccess {
+                stdout,
+                stderr: String::new(),
+            })
+        }
+    }
+
+    /// Advances by the requested sleep instead of sleeping.
+    struct StepClock {
+        start: Instant,
+        offset: Cell<Duration>,
+    }
+
+    impl StepClock {
+        fn new() -> Self {
+            Self {
+                start: Instant::now(),
+                offset: Cell::new(Duration::ZERO),
+            }
+        }
+    }
+
+    impl Clock for StepClock {
+        fn now(&self) -> Instant {
+            self.start + self.offset.get()
+        }
+        fn sleep(&self, dur: Duration) {
+            self.offset.set(self.offset.get() + dur);
+        }
+    }
+
+    fn github() -> ProviderContext {
+        ProviderContext {
+            provider: Provider::GitHub,
+            host: "github.com".into(),
+            source: DetectionSource::Flag,
+            repo: Some("acme/widgets".into()),
+        }
+    }
+
+    fn poll(state: &str, entry: &str) -> String {
+        format!(
+            r#"{{"data":{{"repository":{{"pullRequest":{{"state":"{state}","mergeCommit":null,"mergeQueueEntry":{entry}}}}}}}}}"#
+        )
+    }
+
+    fn wait(responses: &[&str], timeout: Duration) -> Result<Option<String>, ForgeError> {
+        wait_for_merge(
+            &ScriptedRunner::new(responses),
+            &StepClock::new(),
+            &github(),
+            "acme",
+            "widgets",
+            7,
+            timeout,
+        )
+    }
+
+    #[test]
+    fn an_unmergeable_queue_entry_reports_failed_queue_checks() {
+        let queued = poll("OPEN", r#"{"state":"QUEUED","position":1}"#);
+        let unmergeable = poll("OPEN", r#"{"state":"UNMERGEABLE","position":1}"#);
+        let err = wait(&[&queued, &unmergeable], Duration::from_secs(600)).unwrap_err();
+        assert_eq!(err.kind(), "merge_queue_checks_failed");
+    }
+
+    #[test]
+    fn a_queue_entry_stuck_past_the_bound_times_out() {
+        let queued = poll("OPEN", r#"{"state":"QUEUED","position":3}"#);
+        let err = wait(&[&queued], Duration::from_secs(60)).unwrap_err();
+        assert_eq!(err.kind(), "merge_queue_timeout");
+        assert!(err.message().contains("still queued"), "{}", err.message());
+    }
+
+    #[test]
+    fn a_closed_pull_request_reports_dequeued() {
+        let closed = poll("CLOSED", "null");
+        let err = wait(&[&closed], Duration::from_secs(600)).unwrap_err();
+        assert_eq!(err.kind(), "merge_queue_dequeued");
+    }
+
+    #[test]
+    fn a_poll_graphql_error_has_its_own_kind() {
+        let err = wait(
+            &[r#"{"data":null,"errors":[{"message":"timeout"}]}"#],
+            Duration::from_secs(600),
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), "merge_queue_poll_failed");
+    }
+
+    #[test]
+    fn a_merged_pull_request_returns_its_merge_commit() {
+        let merged = r#"{"data":{"repository":{"pullRequest":{"state":"MERGED","mergeCommit":{"oid":"abc"},"mergeQueueEntry":null}}}}"#;
+        assert_eq!(
+            wait(&[merged], Duration::from_secs(60)).unwrap().as_deref(),
+            Some("abc")
+        );
+    }
 
     fn freeze(number: u64) -> Freeze {
         Freeze {
