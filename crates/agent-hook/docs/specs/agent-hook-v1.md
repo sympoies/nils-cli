@@ -1348,6 +1348,15 @@ plan digest before it is moved outside that range. A foreign range inside or
 partially crossing the owned span cannot be preserved by regeneration and fails
 closed, as do orphaned, reversed, crossed, partial, or duplicate foreign markers
 anywhere in the document.
+Because the owned block is rendered last, Codex saves new tables such as
+`[hooks.state.*]` trust records, `[marketplaces.*]`, and `[plugins.*]` inside
+the markers. Only the prefix before the first table outside `[[hooks.<event>]]`
+(with its directly preceding comments) is compared with the rendered block.
+The appended suffix is drift that needs the exact reviewed plan digest. Apply,
+repair, and remove move that suffix byte-for-byte ahead of the regenerated
+block, or to the block's place on removal, and never drop it. Owned hook tables
+after that suffix cannot be moved without reordering hook arrays, so setup fails
+closed.
 Owned groups contain exactly one dispatcher command for each required
 event/matcher. Install, upgrade, repair, remove, and rollback preserve
 unrelated hooks, comments, formatting, provider metadata, and unsupported
