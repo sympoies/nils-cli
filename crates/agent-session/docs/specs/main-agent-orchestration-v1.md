@@ -67,6 +67,20 @@ references, and worker counts. It never contains packet digests, packet bodies,
 capabilities, prompts, transcripts, mailbox bodies, raw private paths, tokens,
 environment values, tmux IDs, or PIDs.
 
+The bounded summaries are `objective_summary` (always, from the run) plus
+these additive optional members, each omitted when absent, empty, or carrying
+a control character, and truncated to 240 characters:
+
+- `task_summary` (worker only): the assignment's task summary.
+- `checkpoint_summary`: the latest run checkpoint `summary` for `role: "main"`,
+  or the latest assignment checkpoint `summary` for `role: "worker"`. The
+  checkpoint `next_action` is not projected.
+- `blocker_summary` (worker only): the assignment blocker, present only while
+  `assignment_state` is `blocked`, so a stale blocker never outlives a resume.
+
+A consumer that labels a worker should prefer `task_summary`, then
+`checkpoint_summary`, then `objective_summary`.
+
 Current relationships retain their exact incarnation identity. A resumed
 worker with the same session ID and original `created_at` remains visible as
 `role: "worker"` with `relationship_state: "rebind_required"` until its

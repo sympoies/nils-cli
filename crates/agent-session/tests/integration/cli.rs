@@ -8028,6 +8028,211 @@ fn list_projects_main_agent_relationship_without_changing_existing_sessions() {
 }
 
 #[test]
+fn list_projects_worker_task_checkpoint_and_blocker_summaries() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state_dir = tmp.path().join("state");
+    let sessions = [
+        ("summary-main", "main-incarnation"),
+        ("summary-blocked-worker", "blocked-incarnation"),
+        ("summary-working-worker", "working-incarnation"),
+    ];
+    for (id, incarnation) in sessions {
+        let record_dir = write_session_record(&state_dir, id, "codex", &format!("hs-codex-{id}"));
+        let record_path = record_dir.join("session.json");
+        let mut record: Value =
+            serde_json::from_slice(&fs::read(&record_path).expect("session record"))
+                .expect("session json");
+        record["runtime"] = json!({
+            "kind": "tmux",
+            "tmux_session": format!("hs-codex-{id}"),
+            "generation": 1,
+            "started_at": "2030-01-01T00:00:00Z",
+            "launch_id": incarnation
+        });
+        fs::write(
+            &record_path,
+            serde_json::to_vec_pretty(&record).expect("session json"),
+        )
+        .expect("write session record");
+    }
+    let session_ref = |id: &str, incarnation: &str| {
+        json!({
+            "machine": "workstation",
+            "session_id": id,
+            "session_incarnation": incarnation,
+            "session_created_at": "2000-01-01T00:00:00Z"
+        })
+    };
+    let assignment = |id: &str,
+                      state: &str,
+                      task: &str,
+                      worker: Value,
+                      checkpoint: Value,
+                      blocker: Value| {
+        json!({
+            "schema_version": "agent-session.orchestration-assignment.v2",
+            "assignment_id": id,
+            "run_id": "run-summaries",
+            "revision": 3,
+            "state": state,
+            "task_summary": task,
+            "private_packet_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "primary_manager": session_ref("summary-main", "main-incarnation"),
+            "worker": worker,
+            "collaborators": [],
+            "borrowed_by": [],
+            "repository": "example/repository",
+            "worktree": "/tmp/private-worker-path",
+            "base_ref": "main",
+            "scopes": ["crates/agent-session"],
+            "durable_refs": [],
+            "depends_on": [],
+            "checkpoint": checkpoint,
+            "result_summary": null,
+            "blocker_summary": blocker,
+            "submit_recovery": null,
+            "created_at": "2030-01-01T00:00:01Z",
+            "updated_at": "2030-01-01T00:00:02Z"
+        })
+    };
+
+    let orchestration_root = state_dir.join("orchestration");
+    fs::create_dir_all(&orchestration_root).expect("orchestration root");
+    fs::set_permissions(&orchestration_root, fs::Permissions::from_mode(0o700))
+        .expect("orchestration mode");
+    let registry = orchestration_root.join("registry.json");
+    fs::write(
+        &registry,
+        serde_json::to_vec_pretty(&json!({
+            "schema_version": "agent-session.orchestration-registry.v2",
+            "runs": {
+                "run-summaries": {
+                    "schema_version": "agent-session.orchestration-run.v1",
+                    "run_id": "run-summaries",
+                    "revision": 5,
+                    "state": "active",
+                    "tier": "L0",
+                    "objective_summary": "Deliver the program wave",
+                    "objective_packet_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "controller": session_ref("summary-main", "main-incarnation"),
+                    "durable_refs": [],
+                    "checkpoint": {
+                        "revision": 5,
+                        "summary": "Wave one started with two workers",
+                        "next_action": "Review the first submitted worker",
+                        "updated_at": "2030-01-01T00:00:03Z"
+                    },
+                    "created_at": "2030-01-01T00:00:00Z",
+                    "updated_at": "2030-01-01T00:00:03Z"
+                }
+            },
+            "assignments": {
+                "assignment-blocked": assignment(
+                    "assignment-blocked",
+                    "blocked",
+                    "Project worker task summaries",
+                    session_ref("summary-blocked-worker", "blocked-incarnation"),
+                    json!({
+                        "revision": 3,
+                        "summary": "Waiting on the projection review",
+                        "next_action": "Controller decides the field name",
+                        "updated_at": "2030-01-01T00:00:02Z"
+                    }),
+                    json!("Needs a maintainer decision on the field name"),
+                ),
+                "assignment-working": assignment(
+                    "assignment-working",
+                    "working",
+                    "Title workers from their task",
+                    session_ref("summary-working-worker", "working-incarnation"),
+                    json!({
+                        "revision": 3,
+                        "summary": "Resumed after the blocker cleared",
+                        "next_action": "Finish the retitle change",
+                        "updated_at": "2030-01-01T00:00:02Z"
+                    }),
+                    json!("Stale blocker from an earlier pause"),
+                )
+            },
+            "receipts": {}
+        }))
+        .expect("orchestration registry json"),
+    )
+    .expect("write orchestration registry");
+    fs::set_permissions(&registry, fs::Permissions::from_mode(0o600))
+        .expect("orchestration registry mode");
+
+    let state_arg = state_dir.to_string_lossy().into_owned();
+    let list = run(
+        tmp.path(),
+        &["--state-dir", &state_arg, "list", "--format", "json"],
+        &[],
+    );
+    assert_eq!(list.code, 0, "stderr={}", list.stderr_text());
+    let payload = list.stdout_json();
+    let listed = data(&payload).as_array().expect("session list");
+    let projection = |id: &str| {
+        listed
+            .iter()
+            .find(|session| session["id"] == id)
+            .unwrap_or_else(|| panic!("session {id}"))["orchestration"]
+            .clone()
+    };
+    let main = projection("summary-main");
+    let blocked = projection("summary-blocked-worker");
+    let working = projection("summary-working-worker");
+
+    assert_eq!(main["role"], "main");
+    assert_eq!(
+        main["checkpoint_summary"],
+        "Wave one started with two workers"
+    );
+    assert!(main.get("task_summary").is_none());
+    assert!(main.get("blocker_summary").is_none());
+
+    assert_eq!(blocked["role"], "worker");
+    assert_eq!(blocked["assignment_state"], "blocked");
+    assert_eq!(blocked["objective_summary"], "Deliver the program wave");
+    assert_eq!(blocked["task_summary"], "Project worker task summaries");
+    assert_eq!(
+        blocked["checkpoint_summary"],
+        "Waiting on the projection review"
+    );
+    assert_eq!(
+        blocked["blocker_summary"],
+        "Needs a maintainer decision on the field name"
+    );
+
+    assert_eq!(working["assignment_state"], "working");
+    assert_eq!(working["task_summary"], "Title workers from their task");
+    assert_eq!(
+        working["checkpoint_summary"],
+        "Resumed after the blocker cleared"
+    );
+    assert!(
+        working.get("blocker_summary").is_none(),
+        "a blocker is projected only while the assignment is blocked"
+    );
+
+    for worker in [&blocked, &working] {
+        for private_field in [
+            "private_packet_digest",
+            "repository",
+            "worktree",
+            "scopes",
+            "durable_refs",
+            "next_action",
+        ] {
+            assert!(
+                worker.get(private_field).is_none(),
+                "private assignment field leaked: {private_field}"
+            );
+        }
+        assert!(!worker.to_string().contains("private-worker-path"));
+    }
+}
+
+#[test]
 fn list_json_projects_managed_handoff_capability_without_private_session_metadata() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let state_dir = tmp.path().join("state");
