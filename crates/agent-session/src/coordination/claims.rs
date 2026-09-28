@@ -2060,6 +2060,108 @@ pub fn main_agent_controller_claim_snapshot(
     Ok(Some(controller_claim_snapshot(claim)?))
 }
 
+/// Result of growing an assignment-derived worker claim in place.
+#[derive(Clone, Debug)]
+pub enum WorkerClaimExtension {
+    /// The worker holds no active claim; only the assignment changed.
+    NoActiveClaim,
+    /// The claim now matches the replacement context.
+    Updated { claim_id: String, revision: u64 },
+}
+
+/// Replace the scopes and provider references of the exact worker's active
+/// assignment-derived claim with `replacement`, keeping its claim identity,
+/// grants, worktree fingerprint, and expiry. `current` is the context derived
+/// from the assignment before the change; a claim already equal to
+/// `replacement` is treated as an interrupted earlier extension and converges.
+///
+/// The claim is saved under the coordination lock before `commit` persists the
+/// matching assignment change (coordination before orchestration), and it is
+/// restored if `commit` fails.
+pub fn extend_main_agent_worker_claim(
+    context: &CliContext,
+    session_id: &str,
+    incarnation: &str,
+    current: &WorkContextInput,
+    replacement: &WorkContextInput,
+    commit: impl FnOnce() -> Result<(), CliError>,
+) -> Result<WorkerClaimExtension, CliError> {
+    let current = current.clone().validate_and_canonicalize()?;
+    let replacement = replacement.clone().validate_and_canonicalize()?;
+    let mut locked = lock_registry(context)?;
+    let now = now_epoch();
+    clean_expired(&mut locked.registry, now);
+    let Some(index) = locked.registry.claims.iter().position(|claim| {
+        claim.session_id == session_id
+            && claim.session_incarnation == incarnation
+            && claim.state == "active"
+    }) else {
+        commit()?;
+        return Ok(WorkerClaimExtension::NoActiveClaim);
+    };
+    let claim = locked.registry.claims[index].clone();
+    let with_claim_worktrees = |mut input: WorkContextInput| {
+        input.worktrees = claim.worktrees.clone();
+        input
+    };
+    let observed = input_from_record(&claim);
+    let replacement = with_claim_worktrees(replacement);
+    if !claim.checkout_shell_grant
+        || (observed != with_claim_worktrees(current) && observed != replacement)
+    {
+        return Err(CliError::data(
+            "worker-claim-mismatch",
+            "the worker's active claim is not the exact assignment-derived claim",
+            None,
+        ));
+    }
+    if observed == replacement {
+        commit()?;
+        return Ok(WorkerClaimExtension::Updated {
+            claim_id: claim.claim_id,
+            revision: claim.revision,
+        });
+    }
+    if has_nonterminal_operation(&locked.registry, &claim.claim_id) {
+        return Err(operation_in_progress());
+    }
+    super::ensure_claim_mutation_not_fenced(context, session_id, incarnation, &claim)?;
+    let complete =
+        complete_relevant_universe(context, &locked.registry, Some((session_id, incarnation)));
+    let evaluation = evaluate(
+        Some((session_id, incarnation)),
+        &replacement,
+        &locked.registry.claims,
+        complete,
+        false,
+    );
+    if evaluation.classification == ConflictClassification::Conflict {
+        return Err(CliError::data(
+            "claim-conflict",
+            "extended worker scope conflicts with an active claim",
+            Some(json!({ "evaluation": evaluation })),
+        ));
+    }
+    {
+        let updated = &mut locked.registry.claims[index];
+        updated.scopes = replacement.scopes.clone();
+        updated.provider_refs = replacement.provider_refs.clone();
+        updated.revision = updated.revision.saturating_add(1);
+        updated.updated_at = timestamp(now);
+    }
+    let revision = locked.registry.claims[index].revision;
+    locked.save()?;
+    if let Err(error) = commit() {
+        locked.registry.claims[index] = claim;
+        locked.save()?;
+        return Err(error);
+    }
+    Ok(WorkerClaimExtension::Updated {
+        claim_id: locked.registry.claims[index].claim_id.clone(),
+        revision,
+    })
+}
+
 /// One unexpired active claim's owner and public work context.
 #[derive(Clone, Debug)]
 pub struct ActiveClaimContext {

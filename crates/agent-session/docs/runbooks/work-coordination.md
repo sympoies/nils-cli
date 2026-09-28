@@ -68,6 +68,10 @@ Use a trailing slash when declaring a directory subtree. The stored value is
 normalized without the trailing slash; its scope kind preserves the exact or
 prefix distinction.
 
+Main Agent assignment packet `scopes` are different: every entry is a
+`path-prefix` scope, and a trailing slash is optional and normalized away. See
+[Main Agent orchestration](main-agent-orchestration.md).
+
 ## Understand the authority boundaries
 
 Identifiers such as session, incarnation, claim, operation, message, and

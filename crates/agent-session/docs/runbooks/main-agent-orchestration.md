@@ -96,7 +96,8 @@ comment on, as `{"kind": "issue", "repository": "owner/repository", "number":
 123}` entries in the assignment `repository` only (at most 16). `head_branch`
 names the branch of the managed worktree you created for the worker (for
 example the `Branch:` that `git-cli worktree add` printed); it is required for
-the worker to operate on its own pull request. A
+the worker to operate on its own pull request. Every `scopes` entry is a path prefix; a
+trailing `/` is optional. A
 mutating enforce-mode worker requires `repository`, narrow `scopes`, and an
 absolute `worktree` that resolves to the same checkout root as `launch.cwd`.
 Launch options also accept `title`, `session_id`, and `agent_args`. An omitted
@@ -1215,6 +1216,28 @@ assignment-derived worker claim, that same replay revokes the quiescent claim
 under the retire proof before deletion. Reconcile any active or uncertain
 operation first; a standalone released-state `worker revoke-claim` remains
 forbidden.
+
+#### Extend a live worker's scope
+
+When a working, blocked, or submitted worker needs one more path or child
+issue, grow its assignment in place instead of reassigning it:
+
+```bash
+main-agent worker extend-scope ASSIGNMENT_ID \
+  --scope docs/extra \
+  --provider-ref 123 \
+  --if-revision ASSIGNMENT_REVISION \
+  --idempotency-key extend-001 \
+  --format json
+```
+
+The new scopes and issue refs are checked against the controller claim and
+every other live assignment (`assignment-scope-conflict`). The worker's live
+claim is updated in place, keeping its claim ID and grants, so the worker keeps
+working without a new session, worktree, or bootstrap. The worker receives a
+mailbox message; `notification.state` in the result reports whether it was
+sent. `operation-in-progress` means the worker is mid-operation; retry the same
+command after it finishes.
 
 ### 5. Review, accept, and release
 

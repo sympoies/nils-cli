@@ -32582,6 +32582,186 @@ fn main_agent_worker_start_rejects_invalid_or_foreign_provider_refs() {
     );
 }
 #[test]
+fn main_agent_worker_extend_scope_admits_a_new_path_without_rebootstrap() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let (state_dir, worker_checkout, worker_capability, claim) =
+        bootstrap_delivery_worker(tmp.path(), Some("fix/worker-delivery"));
+    let state = state_dir.to_string_lossy().into_owned();
+    let main_checkout = tmp.path().join("main-checkout");
+    let main_capability = capability(&state_dir, "main-one");
+    let claim_id = claim["claim_id"].as_str().expect("claim id").to_string();
+    seed_activity_state(
+        &state_dir,
+        "worker-one",
+        "worker-incarnation-one",
+        "working",
+        json!({
+            "provider_turn_id": "turn-worker-extend",
+            "started_at": "2030-01-01T00:00:01Z"
+        }),
+        serde_json::Value::Null,
+    );
+    let _runtime =
+        seed_live_runtime_identity(&state_dir, "worker-one", "worker-incarnation-one", 94);
+    let execution_token = tmp.path().join("worker-extend-token");
+    fs::write(&execution_token, "execution-token-worker-extend").expect("execution token");
+    fs::set_permissions(&execution_token, fs::Permissions::from_mode(0o600))
+        .expect("execution token mode");
+    let admit = |key: &str, claim_revision: u64| {
+        let path = tmp.path().join(format!("{key}-targets.json"));
+        fs::write(
+            &path,
+            serde_json::to_vec(&json!({
+                "schema_version": "agent-session.operation-targets.v1",
+                "targets": [{
+                    "kind": "path-exact",
+                    "repository": "example/repository",
+                    "value": "docs/extra/notes.md"
+                }]
+            }))
+            .expect("targets"),
+        )
+        .expect("targets file");
+        run(
+            &worker_checkout,
+            &[
+                "--state-dir",
+                &state,
+                "work-context",
+                "admit",
+                "--session",
+                "worker-one",
+                "--claim",
+                &claim_id,
+                "--if-revision",
+                &claim_revision.to_string(),
+                "--targets-file",
+                path.to_str().expect("targets"),
+                "--operation",
+                "edit",
+                "--execution-token-file",
+                execution_token.to_str().expect("execution token"),
+                "--capability-file",
+                &worker_capability,
+                "--idempotency-key",
+                key,
+                "--format",
+                "json",
+            ],
+        )
+    };
+    let before = admit("worker-extend-admit-before", 1);
+    assert_ne!(before.code, 0, "{}", before.stdout_text());
+    assert_eq!(
+        before.stdout_json()["error"]["code"],
+        "uncovered-mutation-scope"
+    );
+
+    let revision =
+        orchestration_registry(&state_dir)["assignments"]["assignment-delivery"]["revision"]
+            .as_u64()
+            .expect("assignment revision");
+    let extend = |key: &str, if_revision: u64, scopes: &[&str]| {
+        let mut args = vec![
+            "--state-dir".to_string(),
+            state.clone(),
+            "worker".to_string(),
+            "extend-scope".to_string(),
+            "assignment-delivery".to_string(),
+        ];
+        for scope in scopes {
+            args.push("--scope".to_string());
+            args.push((*scope).to_string());
+        }
+        args.extend([
+            "--if-revision".to_string(),
+            if_revision.to_string(),
+            "--idempotency-key".to_string(),
+            key.to_string(),
+            "--format".to_string(),
+            "json".to_string(),
+        ]);
+        let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+        run_main_agent(
+            &main_checkout,
+            &args,
+            &[("AGENT_SESSION_CAPABILITY_FILE", &main_capability)],
+        )
+    };
+    let stale = extend("worker-extend-stale-0001", revision - 1, &["docs/extra"]);
+    assert_eq!(stale.code, 65, "{}", stale.stdout_text());
+    assert_eq!(
+        stale.stdout_json()["error"]["code"],
+        "orchestration-revision-conflict"
+    );
+    let overlap = extend(
+        "worker-extend-overlap-0001",
+        revision,
+        &["controller-owned/x"],
+    );
+    assert_eq!(overlap.code, 65, "{}", overlap.stdout_text());
+    assert_eq!(
+        overlap.stdout_json()["error"]["code"],
+        "assignment-scope-conflict"
+    );
+
+    let extended = extend("worker-extend-0001", revision, &["docs/extra/"]);
+    assert_eq!(
+        extended.code,
+        0,
+        "stdout={} stderr={}",
+        extended.stdout_text(),
+        extended.stderr_text()
+    );
+    let result = data(&extended);
+    assert_eq!(
+        result["schema_version"],
+        "main-agent.worker-extend-scope-result.v1"
+    );
+    assert_eq!(
+        result["assignment"]["scopes"],
+        json!(["docs/delivery-lane", "docs/extra"]),
+        "a trailing slash is accepted and normalized away"
+    );
+    assert_eq!(result["assignment"]["revision"], revision + 1);
+    assert_eq!(result["claim"]["state"], "updated");
+    assert_eq!(result["claim"]["claim_id"], claim_id.as_str());
+    assert_eq!(result["claim"]["revision"], 2);
+    assert_eq!(result["notification"]["state"], "sent");
+    let replay = extend("worker-extend-0001", revision, &["docs/extra/"]);
+    assert_eq!(replay.code, 0, "{}", replay.stdout_text());
+    assert_eq!(
+        data(&replay),
+        result,
+        "exact replay returns the stored result"
+    );
+
+    let coordination: serde_json::Value = serde_json::from_slice(
+        &fs::read(state_dir.join("coordination/registry.json")).expect("coordination registry"),
+    )
+    .expect("coordination registry json");
+    let updated = coordination["claims"]
+        .as_array()
+        .expect("claims")
+        .iter()
+        .find(|candidate| candidate["claim_id"] == claim_id.as_str())
+        .expect("same claim identity");
+    assert_eq!(updated["state"], "active");
+    assert_eq!(updated["checkout_shell_grant"], true);
+    assert_eq!(updated["worktrees"], claim["worktrees"]);
+    assert_eq!(updated["pull_request_head"], claim["pull_request_head"]);
+
+    let after = admit("worker-extend-admit-after", 2);
+    assert_eq!(
+        after.code,
+        0,
+        "stdout={} stderr={}",
+        after.stdout_text(),
+        after.stderr_text()
+    );
+}
+
+#[test]
 fn main_agent_checkpoint_summary_limit_error_names_the_field_and_limit() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let state_dir = tmp.path().join("state");
