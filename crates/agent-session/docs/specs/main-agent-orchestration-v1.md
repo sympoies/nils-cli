@@ -135,6 +135,13 @@ Worker launch returns `pending-worker-checkpoint` until authenticated worker
 self-check/checkpoint evidence advances the assignment; transport is never
 reported as acceptance.
 
+Caller-supplied summaries, next actions, result and blocker summaries, and
+reasons are each bounded to 240 characters with no control characters. A
+violation is an input error, `invalid-orchestration-input`, whose message
+names the field and limit and whose details are `{field, max_characters,
+characters}`. `orchestration-store-invalid` remains reserved for persisted
+state that fails validation.
+
 Assignment creation is fenced by the caller's active claim, the current-main
 check, and assignment-absence — not by the run revision. `--if-run-revision` is
 therefore optional on `worker start`: supply it to assert an expected run
@@ -188,6 +195,25 @@ so it survives compaction. Dependency existence is enforced only at this gate,
 never as a registry invariant, so releasing and deleting a dependency after a
 dependent launches cannot brick registry reads. This is advisory ordering, not an
 access-control boundary.
+
+Before persisting a fresh assignment that declares a `repository`, `worker
+start` (single, each `--batch` lane, and `quick`) derives the exact claim its
+worker bootstrap will request and validates it with the work-context rules, so
+an invalid scope or an over-long claim summary fails before launch rather than
+at bootstrap. It then compares that claim's scopes with the controller's active
+claim and with every assignment that still reserves its declared scopes
+(`assigned`, `starting`, `working`, `blocked`, or `submitted`, in any run), plus
+any active claim still held by an assignment's bound worker. Overlap under the
+closed scope rules fails closed with `assignment-scope-conflict` before
+assignment persistence, session creation, or tmux launch. A `quick` run skips
+only the controller comparison, because its ephemeral controller claim is
+synthesized from that same assignment. The message names the
+first conflicting assignment (or the controller claim) and scope, and
+`details.conflicts` lists up to 16 entries of `{owner: "controller" |
+"assignment", assignment_id?, repository, scope, conflicting_scope}`. Claims
+are observed before the orchestration lock, preserving the
+coordination-to-orchestration lock order; bootstrap claim acquisition remains
+the authoritative conflict check.
 
 An assignment packet may also declare the Linux-only, Codex-only
 `provider_stop_canary` object with the exact schema

@@ -1994,6 +1994,32 @@ pub fn main_agent_controller_claim_snapshot(
     Ok(Some(controller_claim_snapshot(claim)?))
 }
 
+/// One unexpired active claim's owner and public work context.
+#[derive(Clone, Debug)]
+pub struct ActiveClaimContext {
+    pub session_id: String,
+    pub session_incarnation: String,
+    pub context: WorkContextInput,
+}
+
+/// Observe every unexpired active claim for a pre-launch overlap check. This is
+/// an observational read: the claim transaction remains the authority.
+pub fn active_claim_contexts(context: &CliContext) -> Result<Vec<ActiveClaimContext>, CliError> {
+    let locked = lock_registry_observational(context)?;
+    let now = now_epoch();
+    Ok(locked
+        .registry
+        .claims
+        .iter()
+        .filter(|claim| claim.state == "active" && claim.expires_at_epoch > now)
+        .map(|claim| ActiveClaimContext {
+            session_id: claim.session_id.clone(),
+            session_incarnation: claim.session_incarnation.clone(),
+            context: input_from_record(claim),
+        })
+        .collect())
+}
+
 /// Observe the caller's current active claim without treating context equality
 /// as ownership. Closeout compares this snapshot to retained run provenance.
 pub fn active_controller_claim_snapshot(
