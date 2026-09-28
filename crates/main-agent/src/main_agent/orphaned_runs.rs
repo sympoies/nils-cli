@@ -473,21 +473,37 @@ fn evaluate(
                 ));
             }
         }
-        let last_activity = std::iter::once(run.updated_at.as_str())
-            .chain(
-                assignments
-                    .iter()
-                    .map(|assignment| assignment.updated_at.as_str()),
-            )
-            .max_by_key(|value| activity_epoch(value).unwrap_or(i64::MAX))
-            .unwrap_or(run.updated_at.as_str());
-        // An unparseable activity time counts as now, so it never ages in.
-        let age = now.saturating_sub(activity_epoch(last_activity).unwrap_or(now));
-        if u64::try_from(age).unwrap_or(0) < older_than {
-            blockers.push(blocker(
+        let activity = std::iter::once(run.updated_at.as_str()).chain(
+            assignments
+                .iter()
+                .map(|assignment| assignment.updated_at.as_str()),
+        );
+        let mut last_activity = run.updated_at.as_str();
+        let mut last_epoch = Some(i64::MIN);
+        for value in activity {
+            let epoch = activity_epoch(value);
+            // An unparseable time never ages in, whatever the bound, so it
+            // wins and stays unparsed.
+            if last_epoch.is_some() && epoch.is_none_or(|epoch| Some(epoch) > last_epoch) {
+                last_activity = value;
+                last_epoch = epoch;
+            }
+        }
+        match last_epoch {
+            None => blockers.push(blocker(
                 "orphaned-run-too-recent",
-                json!({ "last_activity_at": last_activity }),
-            ));
+                json!({
+                    "last_activity_at": last_activity,
+                    "reason": "activity-time-unparseable"
+                }),
+            )),
+            Some(epoch) if u64::try_from(now.saturating_sub(epoch)).unwrap_or(0) < older_than => {
+                blockers.push(blocker(
+                    "orphaned-run-too-recent",
+                    json!({ "last_activity_at": last_activity }),
+                ));
+            }
+            Some(_) => {}
         }
         if let Some(first) = blockers.first() {
             evaluation.refused.push(json!({

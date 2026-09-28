@@ -1707,7 +1707,8 @@ definitely absent. A candidate is orphaned when all of these hold:
 - no receipt owned by the controller or a bound worker records an operation
   still in progress;
 - its most recent run or assignment `updated_at` is at least `--older-than`
-  old. An unparseable time never ages in.
+  old. An unparseable run or assignment time never ages in, whatever the
+  bound, including `--older-than 0`.
 
 `main-agent.orphaned-runs.v1` reports `active_runs`, `controller_live_runs`,
 `plan_digest`, the orphaned runs, and the refused candidates. Each refused run
@@ -1715,7 +1716,8 @@ carries the first blocker `code` and every blocker:
 `orphaned-run-controller-claim-active`, `orphaned-run-worker-live` (with
 `reason` `worker-claim-active`, `worker-session-present`, or
 `worker-launch-pending`), `orphaned-run-operation-pending` (with the fence code
-or receipt operation), and `orphaned-run-too-recent`.
+or receipt operation), and `orphaned-run-too-recent` (with `reason`
+`activity-time-unparseable` when an activity time cannot be parsed).
 
 `close-orphaned` requires `--older-than` and returns
 `main-agent.close-orphaned-runs.v1` with `mode` `dry-run` or `apply`. The dry

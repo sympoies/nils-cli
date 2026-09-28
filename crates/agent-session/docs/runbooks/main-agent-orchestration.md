@@ -1499,7 +1499,7 @@ is gone but something else is still live, with `code` and every blocker:
   a runtime stop, claim revocation, account handoff, or provider stop canary)
   or a controller or worker progress receipt is still in flight.
 - `orphaned-run-too-recent`: the last run or assignment activity is newer than
-  `--older-than`.
+  `--older-than`, or an activity time cannot be parsed.
 
 Resolve a refused run through its normal owner, or leave it. The cleanup never
 overrides a live owner or an unfinished operation.

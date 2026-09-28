@@ -425,16 +425,12 @@ fn runs_orphaned_lists_only_runs_without_any_live_owner() {
     assert_eq!(data["schema_version"], "main-agent.orphaned-runs.v1");
     assert_eq!(
         run_ids(&data["orphaned"]),
-        [
-            "run-assignment-recent",
-            "run-bad-time",
-            "run-orphan",
-            "run-recent"
-        ]
+        ["run-assignment-recent", "run-orphan", "run-recent"]
     );
     assert_eq!(
         refusal_codes(data),
         owned(&[
+            ("run-bad-time", "orphaned-run-too-recent"),
             ("run-canary-fence", "orphaned-run-operation-pending"),
             ("run-cleanup-pending", "orphaned-run-worker-live"),
             (
@@ -474,6 +470,11 @@ fn runs_orphaned_lists_only_runs_without_any_live_owner() {
     assert_eq!(
         blockers("run-canary-fence")[0]["assignment_id"],
         "canary-working"
+    );
+    assert_eq!(
+        blockers("run-bad-time")[0]["reason"],
+        "activity-time-unparseable",
+        "an unparseable activity time never ages in, even with no bound"
     );
     assert_eq!(data["active_runs"], 15);
     assert_eq!(data["controller_live_runs"], 1);
@@ -718,7 +719,7 @@ fn close_orphaned_defaults_to_a_dry_run_and_applies_only_the_reviewed_plan() {
     let listed = main_agent(&state_dir, &["runs", "orphaned", "--format", "json"]);
     assert_eq!(
         run_ids(&listed.json["data"]["orphaned"]),
-        ["run-assignment-recent", "run-bad-time", "run-recent"]
+        ["run-assignment-recent", "run-recent"]
     );
 }
 
