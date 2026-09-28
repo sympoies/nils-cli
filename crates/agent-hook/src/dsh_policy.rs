@@ -854,7 +854,7 @@ fn shell_write_targets(invocations: &[Invocation]) -> ShellWriteTargets {
             }
             "sed" => {
                 if !sed_proven_read_only(words) {
-                    targets.unresolved |= words.iter().skip(1).any(|word| dynamic(word));
+                    targets.unresolved |= invocation.operands_expand;
                     targets.indeterminate.push(words.clone());
                 }
             }
@@ -864,7 +864,7 @@ fn shell_write_targets(invocations: &[Invocation]) -> ShellWriteTargets {
             | "realpath" | "pwd" | "wc" | "cut" | "tr" | "true" | "false" | "bash" | "sh"
             | "dash" | "ksh" | "zsh" | "eval" => {}
             _ => {
-                targets.unresolved |= words.iter().skip(1).any(|word| dynamic(word));
+                targets.unresolved |= invocation.operands_expand;
                 targets.indeterminate.push(words.clone());
             }
         }
@@ -1803,6 +1803,9 @@ struct Invocation {
     unresolved_nested: bool,
     output_targets: Vec<String>,
     unresolved_output: bool,
+    /// Whether the segment text can expand into operands its literal words
+    /// do not show; see `shell_text_expands`.
+    operands_expand: bool,
 }
 
 fn parse_invocations(command: &str) -> Vec<Invocation> {
@@ -1860,6 +1863,7 @@ fn visit_source(source: &str, depth: usize, output: &mut Vec<Invocation>) {
             unresolved_nested: true,
             output_targets: Vec::new(),
             unresolved_output: false,
+            operands_expand: false,
         });
         return;
     }
@@ -1870,6 +1874,7 @@ fn visit_source(source: &str, depth: usize, output: &mut Vec<Invocation>) {
             unresolved_nested: true,
             output_targets: Vec::new(),
             unresolved_output: false,
+            operands_expand: false,
         });
         return;
     };
@@ -1881,6 +1886,7 @@ fn visit_source(source: &str, depth: usize, output: &mut Vec<Invocation>) {
                 unresolved_nested: true,
                 output_targets: Vec::new(),
                 unresolved_output: false,
+                operands_expand: false,
             });
             continue;
         };
@@ -1911,6 +1917,7 @@ fn visit_source(source: &str, depth: usize, output: &mut Vec<Invocation>) {
                 unresolved_nested: true,
                 output_targets: Vec::new(),
                 unresolved_output: false,
+                operands_expand: false,
             });
             continue;
         }
@@ -1930,6 +1937,7 @@ fn visit_source(source: &str, depth: usize, output: &mut Vec<Invocation>) {
                 || git_command_consumer(&words),
             output_targets,
             unresolved_output,
+            operands_expand: shell_text_expands(segment),
         });
         if let Some(nested) = nested {
             if depth == MAX_PARSE_DEPTH {
@@ -1939,6 +1947,7 @@ fn visit_source(source: &str, depth: usize, output: &mut Vec<Invocation>) {
                     unresolved_nested: true,
                     output_targets: Vec::new(),
                     unresolved_output: false,
+                    operands_expand: false,
                 });
             } else {
                 visit_source(&nested, depth + 1, output);
@@ -2137,9 +2146,11 @@ fn shell_segments(source: &str) -> Option<Vec<&str>> {
     let mut start = 0;
     let mut quote = None;
     let mut escaped = false;
+    let mut redirect_operator = false;
     let mut index = 0;
     while index < bytes.len() {
         let byte = bytes[index];
+        let after_redirect_operator = std::mem::take(&mut redirect_operator);
         if escaped {
             escaped = false;
             index += 1;
@@ -2161,6 +2172,10 @@ fn shell_segments(source: &str) -> Option<Vec<&str>> {
             None => match byte {
                 b'\'' | b'"' => quote = Some(byte),
                 b'\\' => escaped = true,
+                b'>' | b'<' => redirect_operator = true,
+                // In `N>&M`, `>&M`, and `<&M` the ampersand belongs to the
+                // redirection operator; it neither separates nor backgrounds.
+                b'&' if after_redirect_operator => {}
                 b';' | b'\n' | b'\r' | b'&' | b'|' | b'(' | b')' => {
                     if start < index {
                         segments.push(&source[start..index]);
@@ -2228,17 +2243,18 @@ fn parse_output_redirections(source: &str) -> (Vec<String>, bool) {
                 while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
                     cursor += 1;
                 }
-                if bytes.get(cursor) == Some(&b'&')
-                    && bytes
-                        .get(cursor + 1)
-                        .is_some_and(|byte| byte.is_ascii_digit() || *byte == b'-')
-                {
-                    cursor += 2;
-                    while bytes.get(cursor).is_some_and(u8::is_ascii_digit) {
-                        cursor += 1;
+                if bytes.get(cursor) == Some(&b'&') {
+                    // `>&N` duplicates and `>&-` closes a descriptor. Bash
+                    // opens any other word after `>&` as a file for output,
+                    // so that word is parsed as an ordinary destination.
+                    cursor += 1;
+                    if let Some(end) = shell_word_end(source, cursor) {
+                        let word = &source[cursor..end];
+                        if word == "-" || word.bytes().all(|byte| byte.is_ascii_digit()) {
+                            index = end;
+                            continue;
+                        }
                     }
-                    index = cursor;
-                    continue;
                 }
                 let Some(end) = shell_word_end(source, cursor) else {
                     unresolved = true;
@@ -2605,8 +2621,57 @@ fn basename(value: &str) -> &str {
         .unwrap_or(value)
 }
 
+const DYNAMIC_BYTES: &[u8] = b"$`*?[]{}()#^~";
+
 fn dynamic(value: &str) -> bool {
-    value.bytes().any(|byte| b"$`*?[]{}()#^~".contains(&byte))
+    value.bytes().any(|byte| DYNAMIC_BYTES.contains(&byte))
+}
+
+/// Whether raw shell text can expand into words its literal text does not
+/// show, so an operand of an unmodeled executable could name a protected path.
+///
+/// Single-quoted and backslash-escaped characters stay literal. Inside double
+/// quotes only `$` and backtick expansion remain live. Unquoted text keeps the
+/// `DYNAMIC_BYTES` set, except that a tilde expands only where it starts a
+/// word or follows `=` or `:`, so a revision such as `HEAD~1` stays literal.
+fn shell_text_expands(source: &str) -> bool {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut previous: Option<u8> = None;
+    for byte in source.bytes() {
+        let before = previous.replace(byte);
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match quote {
+            Some(b'\'') => {
+                if byte == b'\'' {
+                    quote = None;
+                }
+            }
+            Some(_) => match byte {
+                b'\\' => escaped = true,
+                b'"' => quote = None,
+                b'$' | b'`' => return true,
+                _ => {}
+            },
+            None => match byte {
+                b'\\' => escaped = true,
+                b'\'' | b'"' => quote = Some(byte),
+                b'~' => {
+                    if before.is_none_or(|before| {
+                        before.is_ascii_whitespace() || matches!(before, b'=' | b':' | b'<' | b'>')
+                    }) {
+                        return true;
+                    }
+                }
+                _ if DYNAMIC_BYTES.contains(&byte) => return true,
+                _ => {}
+            },
+        }
+    }
+    false
 }
 
 fn direct_git_commit(

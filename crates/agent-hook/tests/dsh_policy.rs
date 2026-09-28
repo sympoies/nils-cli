@@ -3690,6 +3690,93 @@ fn task_3_3_privacy_guards_deny_secret_memory_and_machine_local_output() {
     assert_eq!(read_only.code, 0, "envelope={}", read_only.stdout_text());
 }
 
+/// The Bash-matched DSH groups that model shell writes and git delivery,
+/// loaded together as the shipped DSH policy does.
+fn shell_write_model_policy() -> String {
+    policy_for_groups(&[
+        "block-direct-git-commit",
+        "block-direct-git-worktree",
+        "block-direct-pr-create",
+        "block-project-memory-write",
+        "mcp-secret-scan",
+        "memory-write-principle-reminder",
+        "portable-paths-scan",
+    ])
+}
+
+/// Dispatch each command and return `command => action (codes)` for every
+/// command whose aggregate action differs from `expected`.
+fn shell_write_model_mismatches(commands: &[&str], expected: &str) -> Vec<String> {
+    let fixture = Fixture::new(&shell_write_model_policy());
+    git(&fixture, &["init", "--quiet", "--initial-branch=main"]);
+    let expected_code = if expected == "block" { 1 } else { 0 };
+    commands
+        .iter()
+        .filter_map(|command| {
+            let output = fixture.run(
+                &["dispatch", "--product", "dsh", "--format", "json"],
+                Some(&request(&fixture, "bash", json!({"command": command}))),
+            );
+            let envelope = output.stdout_json();
+            let action = envelope["data"]["action"].as_str().unwrap_or("<none>");
+            (output.code != expected_code || action != expected).then(|| {
+                let codes = envelope["data"]["reasons"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|reason| reason["disposition"] != "allow")
+                    .filter_map(|reason| reason["code"].as_str())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("{command} => {action} [{codes}]")
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn shell_write_model_allows_fd_duplication_and_quoted_or_mid_word_literals() {
+    let mismatches = shell_write_model_mismatches(
+        &[
+            "gh auth status 2>&1 | head -3",
+            "git status --short 2>&1",
+            "git diff --stat >&2",
+            "git log -1 --format='%G? %s'",
+            "git log -1 --format=\"%G? %s\"",
+            "git log HEAD~1 --oneline",
+            "gpg --list-secret-keys --keyid-format long 2>&1 | grep -c sec",
+            "forge-cli pr create --title 'feat(cli): add the report subcommand' --body-file body.md",
+            "forge-cli pr deliver --kind feature --title 'feat(cli): add the report subcommand' --no-merge 2>&1 | tail -20",
+        ],
+        "allow",
+    );
+    assert_eq!(mismatches, Vec::<String>::new());
+}
+
+#[test]
+fn shell_write_model_still_blocks_protected_dynamic_and_malformed_writes() {
+    let mismatches = shell_write_model_mismatches(
+        &[
+            "printf x > .config/agent-memory/candidates/dsh/project_state.md",
+            "gh auth status > .config/agent-memory/candidates/dsh/project_state.md 2>&1",
+            "gh auth status 2>&1 > .mcp.json",
+            "echo x 1>&.mcp.json",
+            "echo x >&.mcp.json",
+            "echo x 1>&1/.config/agent-memory/candidates/dsh/project_state.md",
+            "echo x > \"$TARGET\"",
+            "echo x >",
+            "echo x >&",
+            "custom-tool \"$TARGET\"",
+            "custom-tool .m?p.json",
+            "custom-tool .mcp{.json,}",
+            "custom-tool '.mcp.json' 2>&1",
+            "git log --output=.mcp.json 2>&1",
+        ],
+        "block",
+    );
+    assert_eq!(mismatches, Vec::<String>::new());
+}
+
 #[test]
 fn task_3_3_tool_reminders_are_context_only_and_inline_env_cannot_suppress_them() {
     let memory = Fixture::new(&task_3_3_policy(

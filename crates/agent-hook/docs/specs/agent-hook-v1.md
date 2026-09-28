@@ -954,7 +954,13 @@ syntax and resolve adjacent quoted target fragments before comparing paths.
 Known writers expose literal destinations, destination-directory options are
 joined with source basenames, dynamic or malformed destinations fail closed,
 and an otherwise unknown executable with a protected-path operand is
-indeterminate rather than read-only. A small closed set of non-writing tools
+indeterminate rather than read-only. Descriptor duplication and closing
+(`N>&M`, `>&M`, `>&-`) are not file destinations, while any other `>&word`
+names a file. An unknown executable's operands make the write model
+unresolved only when the quote-aware segment text can expand: `$` or
+backtick outside single quotes, or unquoted glob, brace, or word-leading
+tilde syntax; quoted literals and a mid-word tilde such as `HEAD~1` stay
+literal. A small closed set of non-writing tools
 remains readable when no output redirection is present. MCP native writes and
 partial edits scan maintained credential shapes, generic credential labels,
 and structural sensitive JSON keys. Edit and str-replace old/new value pairs
