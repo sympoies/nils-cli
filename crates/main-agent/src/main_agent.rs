@@ -810,6 +810,11 @@ struct AssignmentInput {
     /// serialized away so older packets keep an identical digest.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     provider_refs: Vec<ProviderRef>,
+    /// The branch the Main Agent created for this worker's checkout. Bootstrap
+    /// grants pull-request operations for this head only while the worker
+    /// checkout is on it. Omitted when absent so older packets keep their digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    head_branch: Option<String>,
     /// Assignment ids in the same run that must be accepted before this
     /// assignment's worker may launch. Empty is serialized away so packets that
     /// omit it keep an identical request digest and stored-packet digest.
@@ -2930,6 +2935,7 @@ fn run_bootstrap(context: &CliContext, args: BootstrapArgs) -> Result<Value, Cli
         &args.idempotency_key,
         rebind_from.as_ref(),
         true,
+        packet.head_branch.as_deref(),
     ) {
         if rebind_from.is_none() && assignment.state == "starting" {
             record_preclaim_bootstrap_blocker(
@@ -22011,6 +22017,7 @@ fn run_quick(context: &CliContext, args: QuickArgs) -> Result<Value, CliError> {
         &idempotency_key,
         None,
         false,
+        None,
     )?;
 
     let run_id = {
@@ -22236,6 +22243,7 @@ fn ensure_or_acquire_claim(
     idempotency_key: &str,
     rebind_from: Option<&SessionRef>,
     checkout_shell_grant: bool,
+    pull_request_head: Option<&str>,
 ) -> Result<(), CliError> {
     if checkout_shell_grant {
         match agent_session::internal::coordination::claims::main_agent_worker_claim_match(
@@ -22265,6 +22273,7 @@ fn ensure_or_acquire_claim(
             context,
             claim_args,
             rebind_from.map(|previous| previous.session_incarnation.as_str()),
+            pull_request_head,
         )
     } else {
         agent_session::internal::coordination::claims::claim(context, claim_args)
@@ -22703,6 +22712,15 @@ const MAX_ASSIGNMENT_PROVIDER_REFS: usize = 16;
 /// repository only. Pull requests are covered by the worker's own head branch,
 /// and other repositories' records stay with the Main Agent.
 fn validate_assignment_provider_refs(input: &AssignmentInput) -> Result<(), CliError> {
+    if let Some(head_branch) = input.head_branch.as_deref() {
+        if input.repository.is_none() {
+            return Err(invalid_input(
+                "assignment head_branch requires a repository",
+            ));
+        }
+        agent_session::internal::coordination::context::canonical_branch(head_branch)
+            .map_err(|_| invalid_input("assignment head_branch must be a valid branch name"))?;
+    }
     if input.provider_refs.is_empty() {
         return Ok(());
     }
@@ -27098,6 +27116,7 @@ mod tests {
             scopes: Vec::new(),
             durable_refs: Vec::new(),
             provider_refs: Vec::new(),
+            head_branch: None,
             depends_on: Vec::new(),
             provider_stop_canary: None,
         };
@@ -27138,6 +27157,7 @@ mod tests {
             scopes: Vec::new(),
             durable_refs: Vec::new(),
             provider_refs: Vec::new(),
+            head_branch: None,
             depends_on: Vec::new(),
             provider_stop_canary: Some(ProviderStopCanaryInput {
                 schema_version: "main-agent.provider-process-stop-canary.v1".to_string(),

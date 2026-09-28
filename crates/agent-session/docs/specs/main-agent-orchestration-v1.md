@@ -223,9 +223,11 @@ assignment persistence, session creation, or tmux launch. `quick` runs the same
 comparison, without the controller claim, before it acquires that claim or
 persists its ephemeral run, because its controller claim is synthesized from
 the same assignment; a refused `quick` therefore leaves nothing behind. The
-message names the first conflicting assignment (or the controller claim) and
-scope, and `details.conflicts` lists up to 16 entries of `{owner: "controller" |
-"assignment", assignment_id?, repository, scope, conflicting_scope}`. Claims
+message names the first conflicting assignment (or the controller claim).
+`details.conflicts` lists up to 16 entries, scope entries first: a scope entry
+is `{owner: "controller" | "assignment", assignment_id?, repository, scope,
+conflicting_scope}`, and a provider-reference entry (see `provider_refs` below)
+is `{owner, assignment_id?, repository, provider_ref}`. Claims
 are observed before the orchestration lock, preserving the
 coordination-to-orchestration lock order; bootstrap claim acquisition remains
 the authoritative conflict check.
@@ -602,11 +604,14 @@ without it keep their request and packet digests. Bootstrap copies the list
 into the worker claim's `provider_refs`, which covers provider mutations such
 as a comment on the worker's child issue. With the checkout-shell grant,
 bootstrap also mints the private pull-request head grant for the worker
-checkout's branch (see Session Coordination V1), so the worker can create,
-update, and review the pull request whose head is its own branch. Worker start
-also rejects, as an `assignment-scope-conflict` entry `{owner, assignment_id?,
-repository, provider_ref}`, a packet issue already held by the controller claim
-or by a live worker claim. Creating issues and touching another repository's
+checkout's branch when the packet declares it as `head_branch` (see Session
+Coordination V1), so the worker can create, update, and review the pull request
+whose head is its own branch. `head_branch` is optional, requires `repository`,
+must be a valid branch name (`invalid-orchestration-input` otherwise), and is
+serialized away when absent. Worker start also rejects, as an
+`assignment-scope-conflict` entry `{owner, assignment_id?, repository,
+provider_ref}`, a packet issue already held by the controller claim or by a
+live worker claim. Creating issues and touching another repository's
 records are not covered and remain Main Agent work.
 
 `worker wait` is read-only completion-awareness for the orchestrating Main

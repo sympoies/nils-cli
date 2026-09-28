@@ -275,9 +275,11 @@ an adversarial same-user process requires an OS security boundary outside this
 contract.
 
 The same authenticated bootstrap mints a private pull-request head grant
-`{repository, head}` on the claim when the checkout's `origin` resolves to a
-claimed repository and its HEAD is a branch (an unborn branch counts; a
-detached HEAD grants nothing). The grant is stored as `pull_request_head` in
+`{repository, head}` on the claim only when the assignment declared that head
+branch, the checkout is on it (an unborn branch counts; a detached HEAD or any
+other branch grants nothing), and the checkout's `origin` resolves to a claimed
+repository. Switching branches and bootstrapping again therefore cannot move
+the grant to another pull request. The grant is stored as `pull_request_head` in
 the private registry, omitted from every public work-context projection, and
 absent from older records. It covers a `pull-request-head` target only for that
 exact repository and head, which lets a worker create, update, and review the

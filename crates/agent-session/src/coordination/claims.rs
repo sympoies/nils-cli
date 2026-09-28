@@ -325,15 +325,28 @@ struct ReconcileProof {
 }
 
 pub fn claim(context: &CliContext, args: WorkContextClaimArgs) -> Result<Value, CliError> {
-    claim_impl(context, args, None, false, false, None).map(|result| result.outcome)
+    claim_impl(context, args, None, false, None, false, None).map(|result| result.outcome)
 }
 
+/// Acquire the assignment-derived worker claim with the checkout-shell grant.
+/// `pull_request_head` is the head branch the assignment declared; the
+/// pull-request head grant is minted only when the checkout is on it.
 pub fn claim_main_agent_worker(
     context: &CliContext,
     args: WorkContextClaimArgs,
     previous_incarnation: Option<&str>,
+    pull_request_head: Option<&str>,
 ) -> Result<Value, CliError> {
-    claim_impl(context, args, previous_incarnation, true, false, None).map(|result| result.outcome)
+    claim_impl(
+        context,
+        args,
+        previous_incarnation,
+        true,
+        pull_request_head,
+        false,
+        None,
+    )
+    .map(|result| result.outcome)
 }
 
 pub fn claim_tracked(
@@ -341,7 +354,15 @@ pub fn claim_tracked(
     args: WorkContextClaimArgs,
     session_authority: &crate::LockedSessionAuthority,
 ) -> Result<ClaimTransactionResult, CliError> {
-    claim_impl(context, args, None, false, true, Some(session_authority))
+    claim_impl(
+        context,
+        args,
+        None,
+        false,
+        None,
+        true,
+        Some(session_authority),
+    )
 }
 
 fn claim_impl(
@@ -349,6 +370,7 @@ fn claim_impl(
     args: WorkContextClaimArgs,
     resume_from_incarnation: Option<&str>,
     checkout_shell_grant: bool,
+    declared_pull_request_head: Option<&str>,
     resume_inactive_replay: bool,
     session_authority: Option<&crate::LockedSessionAuthority>,
 ) -> Result<ClaimTransactionResult, CliError> {
@@ -385,15 +407,19 @@ fn claim_impl(
         candidate.worktrees.push(checkout_fingerprint);
         candidate.worktrees.sort();
     }
-    let digest = request_digest(
-        "work-context-claim",
-        &json!({
+    let digest = request_digest("work-context-claim", &{
+        let mut digest_input = json!({
             "candidate": candidate,
             "if_revision": args.if_revision,
             "resume_from_incarnation": resume_from_incarnation,
             "checkout_shell_grant": checkout_shell_grant,
-        }),
-    );
+        });
+        // Omitted when absent so released claim requests keep their digest.
+        if let Some(head) = declared_pull_request_head {
+            digest_input["pull_request_head"] = json!(head);
+        }
+        digest_input
+    });
     clean_expired(&mut locked.registry, now);
     ensure_current_broker(context, &locked.registry, &record.id, &incarnation)?;
     if let Some(replay) = idempotency_replay(
@@ -514,17 +540,20 @@ fn claim_impl(
         ));
     }
     // The worker bootstrap grant also covers pull requests whose head is the
-    // branch checked out in the authenticated worker checkout.
+    // assignment-declared branch, when the authenticated worker checkout is on
+    // that branch.
     let pull_request_head = checkout_shell_grant
-        .then(|| {
+        .then_some(declared_pull_request_head)
+        .flatten()
+        .and_then(|declared| {
+            let head = checkout_branch(&checkout)?;
+            (head == declared).then_some(())?;
             let repository = repository_for_checkout(&checkout)?;
-            candidate.repositories.contains(&repository).then_some(())?;
-            Some(PullRequestHead {
-                repository,
-                head: checkout_branch(&checkout)?,
-            })
-        })
-        .flatten();
+            candidate
+                .repositories
+                .contains(&repository)
+                .then_some(PullRequestHead { repository, head })
+        });
     let claim = WorkContextRecord {
         schema_version: WORK_CONTEXT_VERSION.to_string(),
         session_id: record.id.clone(),

@@ -31275,12 +31275,15 @@ fn main_agent_quick_rejects_scope_overlap_before_creating_its_run() {
     assert_eq!(narrowed.code, 0, "{}", narrowed.stdout_text());
 }
 
-#[test]
-fn main_agent_bootstrapped_worker_claim_covers_its_child_issue_and_own_pull_request_head() {
-    let tmp = tempfile::TempDir::new().expect("tempdir");
-    let state_dir = tmp.path().join("state");
-    let main_checkout = tmp.path().join("main-checkout");
-    let worker_checkout = tmp.path().join("worker-checkout");
+/// Bootstrap one delivery worker whose checkout is on `fix/worker-delivery`,
+/// declaring `head_branch` in its packet, and return its active claim.
+fn bootstrap_delivery_worker(
+    tmp: &Path,
+    head_branch: Option<&str>,
+) -> (PathBuf, PathBuf, String, serde_json::Value) {
+    let state_dir = tmp.join("state");
+    let main_checkout = tmp.join("main-checkout");
+    let worker_checkout = tmp.join("worker-checkout");
     fs::create_dir(&state_dir).expect("state");
     init_checkout(
         &main_checkout,
@@ -31313,13 +31316,7 @@ fn main_agent_bootstrapped_worker_claim_covers_its_child_issue_and_own_pull_requ
             ),
         ],
     );
-    let _main_capability = init_main_run(
-        tmp.path(),
-        &state_dir,
-        &main_checkout,
-        "main-one",
-        "run-one",
-    );
+    let _main_capability = init_main_run(tmp, &state_dir, &main_checkout, "main-one", "run-one");
     let packet = json!({
         "schema_version": "main-agent.assignment-input.v1",
         "assignment_id": "assignment-delivery",
@@ -31340,6 +31337,10 @@ fn main_agent_bootstrapped_worker_claim_covers_its_child_issue_and_own_pull_requ
         "durable_refs": [],
         "provider_refs": [{"kind": "issue", "repository": "example/repository", "number": 1837}]
     });
+    let mut packet = packet;
+    if let Some(head_branch) = head_branch {
+        packet["head_branch"] = json!(head_branch);
+    }
     insert_orchestration_assignment(
         &state_dir,
         "assignment-delivery",
@@ -31409,6 +31410,15 @@ fn main_agent_bootstrapped_worker_claim_covers_its_child_issue_and_own_pull_requ
         .find(|claim| claim["session_id"] == "worker-one" && claim["state"] == "active")
         .expect("worker claim")
         .clone();
+    (state_dir, worker_checkout, worker_capability, claim)
+}
+
+#[test]
+fn main_agent_bootstrapped_worker_claim_covers_its_child_issue_and_own_pull_request_head() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let (state_dir, worker_checkout, worker_capability, claim) =
+        bootstrap_delivery_worker(tmp.path(), Some("fix/worker-delivery"));
+    let state = state_dir.to_string_lossy().into_owned();
     assert_eq!(claim["checkout_shell_grant"], true);
     assert_eq!(
         claim["provider_refs"],
@@ -31529,6 +31539,19 @@ fn main_agent_bootstrapped_worker_claim_covers_its_child_issue_and_own_pull_requ
         data(&admitted)["pull_request_targets"],
         json!([{"kind": "pull-request-head", "repository": "example/repository", "head": "fix/worker-delivery"}])
     );
+}
+
+#[test]
+fn main_agent_worker_bootstrap_grants_no_pull_request_head_without_a_matching_declared_branch() {
+    for declared in [None, Some("fix/other-lane")] {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let (_, _, _, claim) = bootstrap_delivery_worker(tmp.path(), declared);
+        assert_eq!(claim["checkout_shell_grant"], true, "{declared:?}");
+        assert!(
+            claim.get("pull_request_head").is_none(),
+            "a checkout branch the packet did not declare mints no pull-request head grant: {declared:?}"
+        );
+    }
 }
 
 #[test]

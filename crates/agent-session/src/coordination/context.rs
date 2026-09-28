@@ -657,7 +657,7 @@ fn git_stdout_with_timeout(root: &Path, args: &[&str], timeout: Duration) -> Opt
 
 /// Canonicalize a pull-request head branch name. This is a bounded subset of
 /// Git's ref-name rules, enough to compare names byte for byte.
-pub(crate) fn canonical_branch(value: &str) -> Result<String, CliError> {
+pub fn canonical_branch(value: &str) -> Result<String, CliError> {
     let value = value.trim();
     if value.is_empty()
         || value.len() > 255
