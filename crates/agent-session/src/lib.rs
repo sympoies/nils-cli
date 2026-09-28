@@ -11327,6 +11327,7 @@ fn list_sessions_with_shadow_sampling(
         .map(Path::to_path_buf)
         .unwrap_or_else(|| resolve_tmux_bin(None));
     let tmux_snapshots = tmux_session_snapshots(&tmux_bin);
+    let coordination_registry = coordination::public_summary_registry_snapshot(context);
     let mut records = Vec::new();
     for entry in fs::read_dir(&sessions_root).map_err(|err| {
         CliError::runtime(
@@ -11386,6 +11387,14 @@ fn list_sessions_with_shadow_sampling(
                     last_terminal_activity_at,
                     &tmux_bin,
                     schedule_shadow_sampling,
+                    coordination_registry
+                        .as_ref()
+                        .map(|registry| {
+                            coordination::public_summary_from_registry(
+                                context, registry, &record.id,
+                            )
+                        })
+                        .unwrap_or_default(),
                 ));
             }
         }
@@ -12251,6 +12260,7 @@ fn session_view(
         last_terminal_activity_at,
         tmux_bin,
         false,
+        coordination::public_summary(context, &record.id),
     )
 }
 
@@ -12261,6 +12271,7 @@ fn session_view_from_parts(
     last_terminal_activity_at: Option<String>,
     tmux_bin: &Path,
     schedule_shadow_sampling: bool,
+    coordination_summary: coordination::CoordinationSummary,
 ) -> SessionView {
     let resume_blocked_reason =
         match orchestration::session_authority_blocked_reason(context, record) {
@@ -12343,7 +12354,7 @@ fn session_view_from_parts(
         startup: startup_projection_for_view(record),
         auto_resume: auto_resume::view_for_record(context, record),
         codex_account: codex_account::view_for_record(record),
-        coordination: coordination::public_summary(context, &record.id),
+        coordination: coordination_summary,
         orchestration: orchestration::session_projection(context, record)
             .ok()
             .flatten(),

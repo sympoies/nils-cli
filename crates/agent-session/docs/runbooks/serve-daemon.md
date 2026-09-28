@@ -112,6 +112,11 @@ sensitive local-user data. Aggregate health checks should count preview presence
 by provider without printing prompt text, session ids, resume ids, or transcript
 paths.
 
+Session-list coordination summaries read an observational registry snapshot.
+They do not renew claims or operation leases, and filesystem-backed conflict
+checks run after the registry lock is released. Registry maintenance remains on
+the mutating coordination paths.
+
 ## Create a session
 
 `POST /sessions` accepts JSON. For example:
