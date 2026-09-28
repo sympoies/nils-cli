@@ -233,7 +233,13 @@ send; a cross-principal send is still rejected by the relay ownership checks.
 
 `ledger_cursor` is the closed-ledger head read **before** records are
 enumerated. Any record removed after that point therefore appears in
-`GET /board/closed/v1?since=<ledger_cursor>`. Records are sorted by
+`GET /board/closed/v1?since=<ledger_cursor>`. A consumer uses it only as the
+starting closed cursor when it holds none for that machine (first contact or
+[Full resync](#full-resync)); otherwise it keeps advancing its stored cursor
+from `next_cursor` and ignores `ledger_cursor`, because replacing a stored
+cursor that is behind would skip entries. When the ledger head cannot be read
+(lock timeout or untrusted store), the snapshot fails with
+`board-ledger-unavailable` rather than omitting the cursor. Records are sorted by
 `session_id` ascending. The route takes no filters: the aggregator filters.
 A record whose projection fails (corrupt or unreadable) is omitted and counted
 in `skipped_count`; it is never guessed. The aggregator treats a snapshot with
@@ -262,8 +268,19 @@ reads.
 
 `ledger_id` is a random UUID minted when the ledger file is created. `seq`
 starts at 1 and increases by 1 per append under that `ledger_id`. Each
-`record` is a board record with `state: closed`, `closed_at`, `close_reason`,
-and every other field set to the last value the removed record held.
+`record` is a [closed record](#closed-record-values).
+
+### Closed record values
+
+A closed record, whether written to the ledger or produced by the aggregator's
+[Vanished records](#vanished-records) conversion, has:
+
+- `state: closed`, and `closed_at` and `close_reason` as defined in
+  [Field sources](#field-sources);
+- `runtime_status: null` and `messaging_supported: false`, whatever the
+  removed record last showed;
+- every other field set to the last value the removed record held (for a
+  vanished row, the last value the aggregator ingested).
 
 ### Append
 
@@ -277,9 +294,13 @@ only through the enabled routes.
 
 A ledger failure never fails, delays, or rolls back the deletion. The failure
 is recorded content-free, and the aggregator later classifies the record as
-`vanished`. An unreadable, corrupt, or unsupported-version ledger is moved
-aside at the next append and replaced by an empty ledger with a new
-`ledger_id`, so earlier cursors become `board-cursor-expired`.
+`vanished`. An unreadable, corrupt, or unsupported-version ledger file is
+moved aside and replaced by an empty ledger with a new `ledger_id` at the
+next append **or read**, under the ledger lock, so earlier cursors become
+`board-cursor-expired` and reads recover without waiting for a deletion.
+`board-ledger-unavailable` is reserved for a lock timeout or an untrusted
+store (wrong owner, mode, symlink, or location), which is never repaired
+automatically.
 
 ### Bound
 
@@ -316,11 +337,13 @@ result in `data.board_closed`:
   guaranteed ordering key.
 - The retained ledger holds at most 256 entries, so one response always
   returns the whole tail. There is no pagination in v1.
-- A malformed cursor, or one whose `seq` is ahead of the ledger head, fails
-  with `board-cursor-invalid` (HTTP 400).
-- A cursor that predates the bound, where entries after it were pruned, or
-  one with a different `ledger_id`, fails with `board-cursor-expired`
-  (HTTP 410).
+- A malformed cursor (not one this daemon could have issued) fails with
+  `board-cursor-invalid` (HTTP 400). This is the only invalid case.
+- A well-formed cursor fails with `board-cursor-expired` (HTTP 410) when its
+  `ledger_id` differs from the current one, when its `seq` is ahead of the
+  ledger head (for example after the file was restored from an older copy),
+  or when entries after it were pruned. The `ledger_id` comparison runs
+  first. Every expired case sends the consumer to [Full resync](#full-resync).
 
 ### Full resync
 
@@ -354,10 +377,14 @@ query from a managed session to the aggregator.
   after the daemon checks its `schema_version`. Failures use the serve error
   envelope.
 - With federation unconfigured, the route fails with `board-relay-disabled`
-  (HTTP 409) and makes no network call. Network failure, a non-success status,
-  or an unexpected schema fails with `board-relay-unavailable` (HTTP 502). An
-  aggregator 401 or 403 fails with `board-relay-unauthorized` (HTTP 502). An
-  aggregator `board-query-invalid` is passed through (HTTP 400).
+  (HTTP 409) and makes no network call. An aggregator 401 or 403 fails with
+  `board-relay-unauthorized` (HTTP 502). An aggregator 400 whose
+  [failure body](#aggregator-failures) carries `error.code`
+  `board-query-invalid` is passed through as `board-query-invalid` (HTTP 400),
+  forwarding `error.message` when it is a bounded single-line string and a
+  fixed message otherwise. Network failure, any other non-success status or
+  code, an unreadable failure body, or an unexpected success schema fails with
+  `board-relay-unavailable` (HTTP 502).
 - No lock is held across the network call. The CLI never reads relay
   secrets; it reaches this route only through the private
   `coordination/daemon-endpoint.json`, as federated messaging does.
@@ -374,15 +401,22 @@ are outside this contract.
 - Ingest from every configured machine, including machines with no relay
   configuration, using `GET /board/v1` and `GET /board/closed/v1` with that
   machine's operator bearer.
-- Keep one cursor per `(machine, ledger_id)` and follow
-  [Full resync](#full-resync) on `board-cursor-expired`.
+- Keep one opaque closed cursor per machine, advanced only from
+  `next_cursor`, and follow [Full resync](#full-resync) on
+  `board-cursor-expired`. A `ledger_id` change always surfaces as
+  `board-cursor-expired`; the aggregator never parses a cursor.
+- Bind each response to the configured machine it was fetched from. A
+  snapshot or closed read whose envelope `machine`, or any record `machine`,
+  differs from that configured name is a failed ingestion attempt and is not
+  applied.
 - Treat a machine as unavailable when its last ingestion attempt failed or its
   last success is older than the aggregator's freshness window. Retain its
   `last_seen_at` (time of the last successful snapshot).
 
 ### Vanished records
 
-A row becomes `closed` with `close_reason: vanished` only when all hold:
+A row becomes a [closed record](#closed-record-values) with
+`close_reason: vanished` only when all hold:
 
 - its machine is available;
 - the row is absent from two consecutive successful snapshots taken at least
@@ -416,6 +450,14 @@ retention is `3d`, and a deployment may configure `7d`, `2w`, or `1mo`
 (31 days, the maximum). A larger `since` is clamped, not rejected. An unknown
 parameter, repeated parameter, or invalid value fails with
 `board-query-invalid` (HTTP 400).
+
+### Aggregator failures
+
+Aggregator failures use the same JSON error body as the existing federation
+edge routes (for example `/api/coordination/peers/v1`): the stable code at
+`error.code` and an optional bounded, single-line `error.message` that never
+echoes a token, capability, or absolute path. A missing or invalid relay
+bearer is HTTP 401 or 403.
 
 ### View
 
@@ -507,7 +549,9 @@ an omitted `--since` means the full retained window of the source.
 
 Local mode builds the same records as `GET /board/v1` from the local state
 directory, adds closed rows from the local ledger, and applies the filters
-itself. `machines` has one available entry for the local machine, `retention`
+itself. Because a CLI process cannot see daemon configuration, local mode
+takes `machine` from `AGENT_SESSION_MACHINE`, else the short hostname, and
+always emits `messaging_supported: false`. `machines` has one available entry for the local machine, `retention`
 is `7d` (the ledger bound), and `since` is clamped to it.
 
 ### Output
@@ -554,9 +598,9 @@ type within v1.
 | --- | --- | --- |
 | `board-disabled` | 404 | Daemon board and relay routes when the board is disabled |
 | `board-query-invalid` | 400 | Aggregator query, relay route, CLI filter validation |
-| `board-cursor-invalid` | 400 | Closed-ledger read |
+| `board-cursor-invalid` | 400 | Closed-ledger read with a malformed cursor |
 | `board-cursor-expired` | 410 | Closed-ledger read; triggers [Full resync](#full-resync) |
-| `board-ledger-unavailable` | 503 | Closed-ledger lock timeout, untrusted store, or unreadable file on read |
+| `board-ledger-unavailable` | 503 | Snapshot or closed-ledger read on lock timeout or untrusted store |
 | `board-relay-disabled` | 409 | Relay route with federation unconfigured |
 | `board-relay-unavailable` | 502 | Relay network failure, non-success, or unexpected schema |
 | `board-relay-unauthorized` | 502 | Aggregator rejected the relay credential |
@@ -573,19 +617,38 @@ Implementation items must cover:
 - every field source in [Field sources](#field-sources), including `null`
   `title_state`, absent `turn_state`, and unknown upstream `turn_state` fields
   being dropped;
+- the exact record key set and allowlisted `turn_state` subkeys, on a fixture
+  where every excluded `SessionView` field is populated, with unavailable
+  values `null` rather than omitted;
 - `cwd` home-relative projection, including a `cwd` outside home projecting
   `null`;
 - the `live` and `stopped` mapping for every `SessionView.status` value;
+- a corrupt record omitted from the snapshot and counted in `skipped_count`,
+  with the other records still returned in order;
+- `GET /board/v1` and `GET /board/closed/v1` rejecting a missing operator
+  bearer and a session capability, and the relay route rejecting operator
+  authority;
 - a disabled board: all three routes return `board-disabled`, and existing
-  list, glance, work-context, and mailbox outputs are byte-identical;
+  list, glance, work-context, broker, and mailbox outputs are byte-identical;
 - ledger append for delete, archive, group cleanup, group archive, and
-  `remove_console_record`, and no entry on runtime exit;
-- ledger failure not failing deletion, and corrupt-ledger replacement minting
-  a new `ledger_id`;
-- the 7-day and 256-entry bounds, cursor order, `board-cursor-invalid`, and
-  `board-cursor-expired` after pruning and after `ledger_id` change;
+  `remove_console_record`, including a CLI-process delete while the board is
+  disabled, and no entry on runtime exit;
+- a ledger entry for a session deleted while running carrying
+  `runtime_status: null` and `messaging_supported: false`;
+- ledger failure not failing deletion, and a corrupt or unsupported-version
+  ledger replaced with a new `ledger_id` on read as well as on append;
+- the snapshot `ledger_cursor` read before enumeration: a record removed
+  between the two steps (through a test hook, not timing) appears in
+  `GET /board/closed/v1?since=<ledger_cursor>`;
+- the 7-day and 256-entry bounds, cursor order, an empty-ledger `next_cursor`
+  round trip, `board-cursor-invalid` only for a malformed cursor, and
+  `board-cursor-expired` after pruning, after a `ledger_id` change (checked
+  before the `seq` bound), and for a same-ledger cursor ahead of the head;
 - relay route capability authentication, `board-relay-disabled` without a
-  network call, and error mapping;
+  network call, and error mapping, including an aggregator
+  `error.code` `board-query-invalid` passed through and any other failure
+  mapped to `board-relay-unavailable`;
 - CLI mode selection, including no silent fallback on relay failure, local
-  mode clamping `since` to `7d` with `since_capped`, a relay view carrying
-  `console_owner` passing through, and text and JSON golden output.
+  mode `machine` and `messaging_supported: false`, local mode clamping `since`
+  to `7d` with `since_capped`, a relay view carrying `console_owner` passing
+  through, and text and JSON golden output.
